@@ -20,6 +20,25 @@ needed in either direction.
 Bridge ABI 26. See [[../data-model/PZ7035-Records]],
 [[../architecture/Desktop-Shell]].
 
+## 2026-10-05 — StageService: read-only start-up, Home at mid-travel (#464, slice 3)
+
+[[../services/StageService]] owns the Z stage, and `AppBackend::stage()`
+exposes it.
+- **Start-up is read-only.** `startup()` connects and checks the profile and
+  the power-up token, with zero writes and zero motion.
+- **Before Home**, only Home and Stop are accepted.
+- **Home** probes both limits, checks the span (6000 ± 300 µm), zeroes at
+  mid-travel with a one-sided approach, and sets ±(span/2 − 100) µm soft
+  limits.
+- **The reference survives application restarts** while the controller stays
+  powered: a token on register 30054 plus `<dataDir>/stage_reference.json`.
+- **Failures** stop the axis. Failures that can desync the counter drop the
+  reference.
+- One worker thread; a stop epoch makes a racing Stop cancel the operation.
+
+Tested against the fake controller only (bench hold); the TSan stress test
+races moves against Stop. The Rust bridge links the stage archives.
+
 ## 2026-10-05 — ZC300 Z stage driver and `zc300ctl` (#464, slice 2)
 
 `IMotionStage` and the ZC300 driver landed. They are not wired into
@@ -104,6 +123,24 @@ most significant word in ID3. Register map, header and fixtures are
 unchanged. `vendor_pz7035_abi.py --tag` records the tag in `PROVENANCE.json`
 and refuses a tag that does not resolve to the checkout's commit. See
 [[../data-model/PZ7035-Records]].
+
+## 2026-10-04 — Central method provenance + `method.revision` gate (#398 M2a, backend)
+
+The applied config.json is now recognised as a cached central revision by its
+canonical config hash, gated at Start and frozen into `/run_provenance`
+(`run_snapshot_schema_version` 2, `method` block: exact revision, content
+hash, central state, instrument UUID + name, context hash, local validation +
+evidence test-run SHA-256). Policy as decided on #398: unvalidated → Warn
+(Start allowed), validated on this instrument/context → Pass, revoked → Fail.
+New: `InstrumentIdentity` (UUID file + `MIB_INSTRUMENT_NAME`), worker
+`Materialize` (read-only files under `<dataDir>/methods/`) and
+`RecordValidation` (signed-in validator, cancellable evidence hashing) jobs —
+appended to `registry_job_kinds` (4, 5) inside ABI 25 —, the pure
+`MethodProvenance` resolver, and `processing::fileSha256` with cancellation.
+No Apply / "Mark validated" UI yet (M2b). Guards: `profiles.instrument_identity`,
+`profiles.registry_method`, `backend.method_provenance`, `e2e.method_gate`; four
+behaviour mutations of the gate/memo/invalidation were each caught.
+See [[../architecture/ExperimentCoordinator]], [[../services/ProfileRegistryService]].
 
 ## 2026-10-04 — Central registry in the React/Tauri shell (#398 M1, bridge ABI 25)
 

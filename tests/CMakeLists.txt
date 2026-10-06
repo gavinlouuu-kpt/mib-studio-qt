@@ -232,6 +232,20 @@ mib_backend_test_link(zc300_stage_test PRIVATE stage_zc300)
 add_test(NAME backend.zc300_stage COMMAND $<TARGET_FILE:mib_backend_tests> zc300_stage_test)
 set_tests_properties(backend.zc300_stage PROPERTIES LABELS "backend;stage;safety" TIMEOUT 90)
 
+mib_add_backend_test_executable(stage_config_test backend/stage_config_test.cpp)
+add_test(NAME backend.stage_config COMMAND $<TARGET_FILE:mib_backend_tests> stage_config_test)
+set_tests_properties(backend.stage_config PROPERTIES LABELS "backend;stage" TIMEOUT 30)
+
+mib_add_backend_test_executable(stage_service_test backend/stage_service_test.cpp)
+mib_backend_test_link(stage_service_test PRIVATE Threads::Threads)
+add_test(NAME backend.stage_service COMMAND $<TARGET_FILE:mib_backend_tests> stage_service_test)
+set_tests_properties(backend.stage_service PROPERTIES LABELS "backend;stage;safety" TIMEOUT 120)
+
+mib_add_backend_test_executable(stage_service_stress_test backend/stage_service_stress_test.cpp)
+mib_backend_test_link(stage_service_stress_test PRIVATE Threads::Threads)
+add_test(NAME backend.stage_service_stress COMMAND $<TARGET_FILE:mib_backend_tests> stage_service_stress_test)
+set_tests_properties(backend.stage_service_stress PROPERTIES LABELS "backend;stage;concurrency;stress" TIMEOUT 180)
+
 mib_add_backend_test_executable(oeabt_protocol_test backend/oeabt_protocol_test.cpp)
 add_test(NAME backend.oeabt_protocol COMMAND $<TARGET_FILE:mib_backend_tests> oeabt_protocol_test)
 set_tests_properties(backend.oeabt_protocol PROPERTIES LABELS "backend;nanopositioner" TIMEOUT 30)
@@ -823,6 +837,11 @@ set_tests_properties(integration.e2e_pipeline_stress PROPERTIES LABELS "integrat
 # Issue #419: end-to-end device-discovery lifecycle over a real AppBackend
 # (startup policy, explicit pulse-generator scan on the fake Modbus bench,
 # cancel, shutdown ordering versus hardware release).
+mib_add_backend_test_executable(e2e_stage_startup_test integration/e2e_stage_startup_test.cpp)
+mib_backend_test_link(e2e_stage_startup_test PRIVATE Threads::Threads)
+add_test(NAME integration.e2e_stage_startup COMMAND $<TARGET_FILE:mib_backend_tests> e2e_stage_startup_test)
+set_tests_properties(integration.e2e_stage_startup PROPERTIES LABELS "integration;e2e;stage" TIMEOUT 120)
+
 mib_add_backend_test_executable(e2e_device_discovery_lifecycle_test integration/e2e_device_discovery_lifecycle_test.cpp)
 mib_backend_test_link(e2e_device_discovery_lifecycle_test PRIVATE Threads::Threads)
 add_test(NAME integration.e2e_device_discovery_lifecycle COMMAND $<TARGET_FILE:mib_backend_tests> e2e_device_discovery_lifecycle_test)
@@ -1357,6 +1376,24 @@ mib_add_backend_test_executable(registry_facade_test profiles/registry_facade_te
 mib_backend_test_link(registry_facade_test PRIVATE Threads::Threads)
 add_test(NAME profiles.registry_facade COMMAND $<TARGET_FILE:mib_backend_tests> registry_facade_test)
 set_tests_properties(profiles.registry_facade PROPERTIES LABELS "backend;profiles;contract" TIMEOUT 60)
+
+mib_add_backend_test_executable(instrument_identity_test profiles/instrument_identity_test.cpp)
+add_test(NAME profiles.instrument_identity COMMAND $<TARGET_FILE:mib_backend_tests> instrument_identity_test)
+set_tests_properties(profiles.instrument_identity PROPERTIES LABELS "backend;profiles;fault-injection" TIMEOUT 30)
+
+mib_add_backend_test_executable(registry_method_test profiles/registry_method_test.cpp)
+mib_backend_test_link(registry_method_test PRIVATE Threads::Threads)
+add_test(NAME profiles.registry_method COMMAND $<TARGET_FILE:mib_backend_tests> registry_method_test)
+set_tests_properties(profiles.registry_method PROPERTIES LABELS "backend;profiles;roundtrip;fault-injection" TIMEOUT 60)
+
+mib_add_backend_test_executable(method_provenance_test backend/method_provenance_test.cpp)
+add_test(NAME backend.method_provenance COMMAND $<TARGET_FILE:mib_backend_tests> method_provenance_test)
+set_tests_properties(backend.method_provenance PROPERTIES LABELS "backend;profiles;contract" TIMEOUT 30)
+
+mib_add_backend_test_executable(method_gate_e2e_test profiles/method_gate_e2e_test.cpp)
+mib_backend_test_link(method_gate_e2e_test PRIVATE Threads::Threads)
+add_test(NAME e2e.method_gate COMMAND $<TARGET_FILE:mib_backend_tests> method_gate_e2e_test)
+set_tests_properties(e2e.method_gate PROPERTIES LABELS "e2e;profiles;hdf5;roundtrip" TIMEOUT 120)
 
 mib_test_runner_finalize(mib_backend_tests)
 target_link_libraries(mib_backend_tests PRIVATE mib_backend)

@@ -129,14 +129,28 @@ std::string processingCoreBytesSha256(const uint8_t* bytes, size_t count) {
 }
 
 std::string processingCoreFileSha256(const std::filesystem::path& path, std::string* error) {
+    std::string why;
+    auto digest = fileSha256(path, &why, {});
+    if (digest.empty() && error)
+        *error = why == "open" ? "cannot open processing core for hashing"
+                               : "failed while hashing processing core";
+    return digest;
+}
+
+std::string fileSha256(const std::filesystem::path& path, std::string* error,
+                       const std::function<bool()>& cancelled) {
     std::ifstream input(path, std::ios::binary);
     if (!input) {
-        if (error) *error = "cannot open processing core for hashing";
+        if (error) *error = "open";
         return {};
     }
     Sha256 sha;
     std::array<char, 64 * 1024> buffer{};
     while (input) {
+        if (cancelled && cancelled()) {
+            if (error) *error = "cancelled";
+            return {};
+        }
         input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
         const auto count = input.gcount();
         if (count > 0) {
@@ -145,7 +159,7 @@ std::string processingCoreFileSha256(const std::filesystem::path& path, std::str
         }
     }
     if (!input.eof()) {
-        if (error) *error = "failed while hashing processing core";
+        if (error) *error = "read";
         return {};
     }
     std::ostringstream output;

@@ -13,6 +13,7 @@
 #include "backend/processing/EModulusLutCatalog.h" // HttpGetFn seam (ADR 0002)
 #include "backend/app/ExperimentReadiness.h"
 #include "backend/diagnostics/MemoryBudget.h"
+#include "backend/profiles/InstrumentIdentity.h"
 #include "backend/profiles/SupabaseProfileRegistry.h" // RegistryHttpTransport seam (ADR 0002)
 #include "backend/recording/RecordingAccounting.h"
 
@@ -33,6 +34,7 @@ namespace backend::services
     class YoloService;
     class SyringePumpService;
     class PulseGeneratorService;
+    class StageService;
     class MonitoringDensityService;
     namespace serialbus
     {
@@ -139,6 +141,8 @@ namespace backend
         services::YoloService &yolo();
         services::SyringePumpService &syringePump();
         services::PulseGeneratorService &pulseGenerator();
+        // Motorized Z stage (ADR 0013): observe-only until an operator homes it.
+        services::StageService &stage();
         // Device discovery job service (issue #419, ADR 0005): every camera /
         // nanopositioner / pulse-generator scan runs through it. Frontends
         // start jobs and poll snapshots; they never enumerate hardware.
@@ -151,6 +155,14 @@ namespace backend
         // the per-user revision cache on its own thread. Shells enqueue commands
         // and poll snapshots; it never touches capture, recording or Start.
         profiles::ProfileRegistryWorker &profileRegistry();
+        // This instrument PC's stable identity (#398 M2): UUID persisted in
+        // <dataDir>/instrument_identity.json plus MIB_INSTRUMENT_NAME. Local
+        // method validations and run provenance are keyed by it. Empty id
+        // before initialize() or when the data dir is unwritable.
+        const profiles::InstrumentIdentity &instrumentIdentity() const { return instrumentIdentity_; }
+        // The local context a method validation binds to: this instrument,
+        // the active processing core build and the effective camera source.
+        profiles::MethodContext methodContext() const;
         
         // Get frame store for service lifecycle management
         std::shared_ptr<playback::FrameStore> getFrameStore() const { return frameStore_; }
@@ -339,6 +351,8 @@ namespace backend
         std::unique_ptr<services::serialbus::SerialBusManager> serialBusManager_;
         std::unique_ptr<services::SyringePumpService> syringePumpService_;
         std::unique_ptr<services::PulseGeneratorService> pulseGeneratorService_;
+        // After serialBusManager_: destroyed first, so its port closes on a live bus.
+        std::unique_ptr<services::StageService> stageService_;
         // Declared after every service the providers/hooks reference so the
         // discovery workers and the coordinator are destroyed first.
         std::unique_ptr<discovery::DeviceDiscoveryService> deviceDiscovery_;
@@ -347,6 +361,7 @@ namespace backend
 
         profiles::RegistryHttpTransport profileRegistryTransport_;
         std::unique_ptr<profiles::ProfileRegistryWorker> profileRegistry_;
+        profiles::InstrumentIdentity instrumentIdentity_;
 
         // Shell-injected LUT fetch config (ADR 0002).
         HttpGetFn lutHttpGet_;

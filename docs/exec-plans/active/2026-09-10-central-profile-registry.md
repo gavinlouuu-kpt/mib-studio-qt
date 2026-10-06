@@ -59,12 +59,20 @@ freeze exact revision identity/content into historical runs.
   24 (`registry_*` contract groups, `set_registry_transport` with polled cancel
   handles), Tauri `ureq` HTTPS transport (desktop-only `registry` module), React
   Central Methods panel over a pure view model.
-- [ ] M2: authoritative selected/applied/verified method aggregate; compatibility
-  validator tied to real core/camera/calibration context; explicit update selection.
-- [ ] M2: Start readiness binds revision/hash and local execution permission;
-  exact canonical content + identities frozen into HDF5 without network lookup.
-- [ ] M2: hardware/mock run continues unchanged during update and registry outage;
-  reopen historical HDF5 proves exact revision independently of the registry.
+- [x] M2a (backend): instrument identity (UUID + name); worker Materialize and
+  RecordValidation jobs; the applied config.json matched to a cached revision by
+  canonical config hash; `method.revision` gate (unvalidated → Warn, validated
+  here → Pass, revoked/not published → Fail) bound into the readiness
+  generation; exact revision, content hash, validation and evidence hash frozen
+  into `/run_provenance` (schema v2) with no network lookup.
+- [ ] M2b: Apply (materialized config → config.json with confirmation) and
+  "Mark validated" (pick the test-run file) in React; bridge commands for
+  materialize / record validation; method row in the readiness panels.
+- [ ] M2: compatibility validator against declared hardware compatibility and
+  calibration context; camera script compared as well as config.json; explicit
+  update selection when a newer revision is published.
+- [ ] M2: hardware run continues unchanged during update and registry outage
+  (mock-run and HDF5 reopen are covered by `e2e.method_gate`; hardware not yet).
 - [ ] M3: local drafts, authoring/submission UI, conflict comparison/branch handling,
   release notes and review/publication management UI.
 - [ ] M4: operator execution entitlements, project distribution, role management,
@@ -110,6 +118,22 @@ freeze exact revision identity/content into historical runs.
   develop; the registry commands stay in the desktop crate (`registry` module)
   because they need the shell's transport and a sign-in carries a password that must
   not cross the YOFO Studio WebSocket.
+
+- 2026-10-04 (M2a backend): decisions — (1) operator choices on #398: an
+  unvalidated central revision warns and Start is allowed; validation is an
+  explicit operator confirmation (who = signed-in registry user, when, instrument
+  UUID + context hash, test-run file + SHA-256); a known-revoked revision blocks
+  Start; instrument identity = generated UUID + optional name. (2) The Qt
+  `AppConfigWatcher` stays the applier of config.json, so the backend recognises
+  the applied method by canonical config hash instead of tracking an "applied"
+  flag that could drift from what is really loaded; any local edit makes it a
+  local method. (3) The coordinator reads only the worker's value snapshot
+  (memoized on registry generation), keeping the network and SQLite off the
+  readiness path. (4) A failed local validation warns rather than blocks (not
+  decided on the issue; easy to tighten). (5) Validation needs an authenticated
+  session; the offline cache can materialize but not validate. (6) Context =
+  instrument + core version/SHA + camera source; the free-form camera label is
+  excluded because it is not stable across sessions.
 
 ## Validation
 

@@ -734,7 +734,17 @@ fn rust_enums_match_contract_json() {
         ("registry_session_states", &[("SignedOut", 0), ("SignedIn", 1), ("CachedOffline", 2)]),
         ("registry_connectivity", &[("Unknown", 0), ("Online", 1), ("Offline", 2), ("AuthenticationRequired", 3),
                                     ("PermissionDenied", 4), ("Failed", 5)]),
-        ("registry_job_kinds", &[("SignIn", 0), ("SignOut", 1), ("Refresh", 2), ("Download", 3)]),
+        (
+            "registry_job_kinds",
+            &[
+                ("SignIn", 0),
+                ("SignOut", 1),
+                ("Refresh", 2),
+                ("Download", 3),
+                ("Materialize", 4),
+                ("RecordValidation", 5),
+            ],
+        ),
         ("registry_job_states", &[("Queued", 0), ("Running", 1), ("Succeeded", 2), ("Partial", 3), ("Failed", 4),
                                   ("Cancelled", 5)]),
         ("registry_central_states", &[("Submitted", 0), ("Approved", 1), ("Rejected", 2), ("Published", 3),

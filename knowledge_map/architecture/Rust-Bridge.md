@@ -96,7 +96,9 @@ Rust owns an opaque `BackendBridge` (`UniquePtr`) that composes an `AppBackend`
   `BridgeRegistrySnapshot` (session, connectivity, projects, cached
   revisions with `central_state`, corrupt IDs, last job; never a token or
   password), `fetch_registry_job(job_id)`. New contract groups:
-  `registry_session_states`, `registry_connectivity`, `registry_job_kinds`,
+  `registry_session_states`, `registry_connectivity`, `registry_job_kinds`
+  (`Materialize` = 4 and `RecordValidation` = 5 appended for #398 M2 before
+  the registry ABI was released; no bridge command enqueues them yet),
   `registry_job_states`, `registry_central_states`. **Transport seam (ADR
   0002 addendum):** the shell installs its HTTPS POST with
   `set_registry_transport(fn(&BridgeHttpRequest) -> BridgeHttpResponse)`
@@ -266,6 +268,11 @@ terminal event, file reloads), `rust_enums_match_contract_json`.
 
 
 ### OEABT link dependencies
+
+Since #464 slice 3 the backend links the Z-stage archives too: the bridge
+links `stage_zc300` and `stage_zc300_protocol` between the backend/processing
+archives and the OEABT ones, and the Windows manifest path marks them static
+(`crates/mib-bridge/build.rs`). `SerialBus.cpp` lives in `oeabt_serial`.
 
 The Linux bridge links `oeabt_serial` and then `oeabt_core` from
 `<build-dir>` (the CMake archive output directory), after the backend/processing archives. These contain

@@ -400,6 +400,7 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/profiles/SupabaseProfileRegistry.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/profiles/SupabaseAuth.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/profiles/ProfileRegistryWorker.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/profiles/InstrumentIdentity.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/AppBackend.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/BackendFacade.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ReviewReanalysis.cpp
@@ -410,6 +411,7 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/app/ProcessingCoreTrust.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ProcessingCoreManagement.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ExperimentCoordinator.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/MethodProvenance.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/ReviewExport.cpp
     ${PROJECT_SOURCE_DIR}/include/backend/app/BackendFacade.h
     ${PROJECT_SOURCE_DIR}/include/backend/app/BackgroundFrame.h
@@ -424,6 +426,8 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/playback/PlaybackService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/SyringePumpService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/PulseGeneratorService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/services/StageConfig.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/services/StageService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/TriggerService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/DotGridService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/MonitoringDensityService.cpp
@@ -448,7 +452,7 @@ if(MIB_HAS_ARAVIS)
     )
 endif()
 
-target_link_libraries(mib_backend PUBLIC mib_processing oeabt_serial)
+target_link_libraries(mib_backend PUBLIC mib_processing stage_zc300 oeabt_serial)
 
 
 

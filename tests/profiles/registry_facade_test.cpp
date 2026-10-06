@@ -6,7 +6,8 @@
 //  - sign-in / refresh / download through the facade over a fake Supabase,
 //    with contract-pinned integer enums (session, connectivity, job kind and
 //    state, central state) and no credential in any value;
-//  - facade shutdown aborts a hung registry request promptly.
+//  - facade shutdown aborts a hung registry request promptly;
+//  - AppBackend loads the instrument identity (#398 M2) at initialize.
 #include "backend/app/AppBackend.h"
 #include "backend/app/BackendFacade.h"
 #include "backend/profiles/ProfileRegistryWorker.h"
@@ -73,6 +74,7 @@ int main() {
     setEnv("MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL", "file:///nonexistent/mib-lut-manifest.json");
     setEnv("MIB_PROFILE_REGISTRY_URL", mib::test::kOrigin);
     setEnv("MIB_PROFILE_REGISTRY_PUBLISHABLE_KEY", mib::test::kKey);
+    setEnv("MIB_INSTRUMENT_NAME", "MIB-test");
 
     FakeSupabase fake;
     fake.users["bob@lab"] = {"user-bob", "pw-bob", {"p1"}};
@@ -98,6 +100,9 @@ int main() {
         app.setProfileRegistryTransport(mib::test::transportFor(fake));
         BackendFacade facade(app);
         MIB_REQUIRE(facade.initialize((scratch / "data").string()), "facade initialize");
+        MIB_EXPECT(backend::profiles::isInstrumentUuid(app.instrumentIdentity().id) &&
+                       app.instrumentIdentity().name == "MIB-test",
+                   "AppBackend loads the instrument identity at initialize");
 
         BackendRegistrySnapshot s;
         MIB_REQUIRE(facade.fetchRegistrySnapshot(s) && s.valid && s.configured,
