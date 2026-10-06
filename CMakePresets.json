@@ -91,6 +91,30 @@
       }
     },
     {
+      "name": "linux-armhf-smoke",
+      "displayName": "Linux ARMv7 compile smoke (distro armhf toolchain)",
+      "description": "CI compile smoke for the PZ7035 PS code (ADR 0011): mib_processing + mib_backend with MIB_PL_SCIENCE, cross-compiled with gcc-arm-linux-gnueabihf and the armhf apt libraries (apt section armhf-cross; run scripts/ci/enable-armhf-apt.sh first). Aravis and tests off. Not the shipped target: that is linux-armv7-yocto.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-armhf-smoke",
+      "toolchainFile": "${sourceDir}/cmake/toolchains/linux-armhf.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "MIB_BUILD_BACKEND_ONLY": "ON",
+        "BUILD_TESTING": "OFF",
+        "MIB_ENABLE_HARDWARE_SDKS": "OFF",
+        "MIB_ENABLE_MINDVISION": "OFF",
+        "MIB_ENABLE_ARAVIS": "OFF",
+        "MIB_ENABLE_WINDOWS_PACKAGING": "OFF",
+        "MIB_USE_SENTRY": "OFF",
+        "MIB_PL_SCIENCE": "ON"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
       "name": "linux-sentry-release",
       "displayName": "Linux Release (Conan, sentry-native)",
       "description": "linux-release with its own binary dir and Conan toolchain under build/linux-sentry (sentry-native variant).",
@@ -163,6 +187,12 @@
       "name": "linux-armv7-yocto-build",
       "displayName": "Build Linux ARMv7 backend",
       "configurePreset": "linux-armv7-yocto"
+    },
+    {
+      "name": "linux-armhf-smoke-build",
+      "displayName": "Build Linux ARMv7 compile smoke",
+      "configurePreset": "linux-armhf-smoke",
+      "targets": ["mib_processing", "mib_backend"]
     },
     {
       "name": "linux-sentry-release-build",

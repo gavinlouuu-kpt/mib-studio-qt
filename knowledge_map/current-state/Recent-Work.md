@@ -1,5 +1,14 @@
 # Recent Work
 
+## 2026-10-06 — ARMv7 compile smoke in CI (ADR 0011)
+
+A new `armv7-smoke` workflow cross-compiles `mib_processing` and `mib_backend`
+with `MIB_PL_SCIENCE=ON` for the Cortex-A9 on every PR that touches the
+backend, so a 32-bit or ARM break in the PZ7035 code no longer waits for a
+board build. It uses the distro armhf toolchain, not the Yocto SDK, and leaves
+Aravis out; the SDK artifact job remains a follow-up. See
+[[../build-and-run/Build]].
+
 ## 2026-10-06 — ZC300 driver: status polls can no longer starve commands (#511)
 
 PR #511's TSan lane stalled 60 s in `backend.zc300_stage`: a back-to-back
