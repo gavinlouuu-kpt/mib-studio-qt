@@ -6,8 +6,12 @@
 //  - revoked / not published -> Fail (blocks Start);
 //  - several revisions sharing the config: usable state first, then validated
 //    here, then published over superseded, then the newest;
+//  - (M2b) configDifferences lists changed dotted keys; checkValidationEvidence
+//    accepts only a run naming this revision/content/instrument/context;
+//    localValidationFor reports the newest matching validation;
 //  - the invalidation key moves with every gate input; the JSON block
 //    round-trips every provenance field.
+#include "backend/app/MethodApply.h"
 #include "backend/app/MethodProvenance.h"
 #include "backend/profiles/ProfileRegistryWorker.h"
 
@@ -209,6 +213,74 @@ int main() {
         auto odd = validated;
         odd.displayName = std::string("bad\xff utf8 \"quoted\"");
         MIB_EXPECT(Json::accept(methodProvenanceToJson(odd)), "invalid UTF-8 / quotes still yield valid JSON");
+    }
+    // M2b: config differences.
+    {
+        const auto d = configDifferences(R"({"a":1,"b":{"x":1,"y":[1,2]},"c":true})",
+                                         R"({"a":1.0,"b":{"x":2,"y":[1,2]},"d":0})");
+        MIB_EXPECT((d == std::vector<std::string>{"b.x", "c (removed)", "d (added)"}),
+                   "nested change, removal and addition; 1 == 1.0");
+        MIB_EXPECT(configDifferences("{}", "{}").empty(), "identical: no changes");
+        MIB_EXPECT(configDifferences("{bad", "{}") == std::vector<std::string>{"<entire document>"},
+                   "unparsable: whole document");
+    }
+
+    // M2b: validation evidence.
+    {
+        const auto ctx = methodContextHash(context());
+        const auto content = std::string(64, 'h');
+        const auto run = [&](const std::string& revisionId, const std::string& hash,
+                             const std::string& instrument, const std::string& contextHash) {
+            return Json({{"schema_version", 2},
+                         {"method",
+                          {{"source", "central"},
+                           {"revision_id", revisionId},
+                           {"content_hash", hash},
+                           {"instrument_id", instrument},
+                           {"context_hash", contextHash}}}})
+                .dump();
+        };
+        MIB_EXPECT(checkValidationEvidence(run("r1", content, kInstrument, ctx), "r1", content, kInstrument, ctx)
+                       .empty(),
+                   "matching run accepted");
+        MIB_EXPECT(checkValidationEvidence(run("r2", content, kInstrument, ctx), "r1", content, kInstrument, ctx)
+                           .find("(it used r2)") != std::string::npos,
+                   "other revision refused, named");
+        MIB_EXPECT(!checkValidationEvidence(run("r1", std::string(64, 'x'), kInstrument, ctx), "r1", content,
+                                            kInstrument, ctx)
+                        .empty(),
+                   "other content refused");
+        MIB_EXPECT(checkValidationEvidence(run("r1", content, "other", ctx), "r1", content, kInstrument, ctx)
+                           .find("different instrument") != std::string::npos,
+                   "other instrument refused");
+        MIB_EXPECT(checkValidationEvidence(run("r1", content, kInstrument, "other"), "r1", content, kInstrument,
+                                           ctx)
+                           .find("processing core or camera source") != std::string::npos,
+                   "other context refused");
+        MIB_EXPECT(!checkValidationEvidence(run("r1", content, kInstrument, ctx), "r1", content, "", "").empty(),
+                   "unknown instrument cannot validate");
+        MIB_EXPECT(checkValidationEvidence(R"({"schema_version":1})", "r1", content, kInstrument, ctx)
+                           .find("predates") != std::string::npos,
+                   "schema-1 run refused");
+        MIB_EXPECT(!checkValidationEvidence("", "r1", content, kInstrument, ctx).empty(), "no provenance refused");
+        MIB_EXPECT(!checkValidationEvidence("{bad", "r1", content, kInstrument, ctx).empty(), "garbage refused");
+    }
+
+    // M2b: local validation view.
+    {
+        const auto r1 = revision("r1", 1, CentralState::Published);
+        auto older = validation(r1, true);
+        older.validatedAtUtc = "2026-10-01 00:00:00";
+        const auto newer = validation(r1, false);
+        const auto snap = registry({r1}, {newer, older}); // newest first
+        const auto v = localValidationFor(snap, r1, kInstrument, methodContextHash(context()));
+        MIB_EXPECT(v.state == LocalValidationState::Failed && v.validatedAtUtc == "2026-10-04 10:00:00",
+                   "newest validation wins");
+        MIB_EXPECT(localValidationFor(snap, r1, "other", methodContextHash(context())).state ==
+                       LocalValidationState::None,
+                   "other instrument: none");
+        MIB_EXPECT(localValidationFor(snap, r1, kInstrument, "").state == LocalValidationState::None,
+                   "unknown context: none");
     }
     return mib::test::exitCode();
 }

@@ -5,6 +5,7 @@
 #include "backend/app/ProcessingCoreManagement.h"
 #include "backend/discovery/DeviceDiscoveryService.h"
 #include "backend/discovery/StartupDiscoveryCoordinator.h"
+#include "backend/app/MethodApply.h"
 #include "backend/profiles/ProfileRegistryWorker.h"
 
 #include "backend/app/ExperimentCoordinator.h"
@@ -2534,10 +2535,17 @@ namespace backend::bridge
         out.rejectedRevisions = s.health.rejectedRevisions;
         for (const auto &p : s.projects)
             out.projects.push_back({p.projectId, p.displayName, p.roles});
+        const auto context = backend_.methodContext();
+        const auto contextHash = profiles::methodContextHash(context);
         for (const auto &r : s.revisions)
+        {
+            const auto local = app::localValidationFor(s, r, context.instrumentId, contextHash);
             out.revisions.push_back({r.revisionId, r.methodId, r.projectId, r.displayName, r.authorId,
                                      r.contentHash, r.revisionNumber, r.metadataVersion,
-                                     static_cast<int>(r.state)});
+                                     static_cast<int>(r.state), r.materializedDir,
+                                     static_cast<int>(local.state), local.validatorId,
+                                     local.validatedAtUtc});
+        }
         out.corruptRevisionIds = s.corruptRevisionIds;
         out.cacheError = s.cacheError;
         if (s.lastSuccessfulRefresh)
@@ -2551,7 +2559,23 @@ namespace backend::bridge
         out.lastJob = toRegistryJob(s.lastJob);
         out.queuedJobs = s.queuedJobs;
         out.busy = s.busy;
+        out.instrumentId = backend_.instrumentIdentity().id;
+        out.instrumentName = backend_.instrumentIdentity().name;
         return true;
+    }
+
+    std::uint64_t BackendFacade::registryMaterialize(const std::string &revisionId)
+    {
+        return initialized_ ? backend_.profileRegistry().requestMaterialize(revisionId) : 0;
+    }
+
+    BackendRegistryValidationRequest BackendFacade::registryRecordValidation(const std::string &revisionId,
+                                                                             const std::string &evidenceFile,
+                                                                             bool passed)
+    {
+        if (!initialized_) return {0, "Backend not initialized"};
+        const auto r = backend_.requestMethodValidation(revisionId, evidenceFile, passed);
+        return {r.jobId, r.error};
     }
 
     bool BackendFacade::fetchRegistryJob(std::uint64_t jobId, BackendRegistryJob &out) const

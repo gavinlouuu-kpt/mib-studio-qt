@@ -98,8 +98,14 @@ Rust owns an opaque `BackendBridge` (`UniquePtr`) that composes an `AppBackend`
   password), `fetch_registry_job(job_id)`. New contract groups:
   `registry_session_states`, `registry_connectivity`, `registry_job_kinds`
   (`Materialize` = 4 and `RecordValidation` = 5 appended for #398 M2 before
-  the registry ABI was released; no bridge command enqueues them yet),
-  `registry_job_states`, `registry_central_states`. **Transport seam (ADR
+  the registry ABI was released),
+  `registry_job_states`, `registry_central_states`, `registry_local_validation`
+  (M2b). M2b also adds `registry_materialize(revision_id)` → job ID and
+  `registry_record_validation(revision_id, evidence_file, passed)` →
+  `BridgeRegistryValidationRequest { job_id, error }` (the evidence check runs
+  before queueing), per-revision `materialized_dir` / `local_validation` /
+  `validated_by` / `validated_at_utc`, and snapshot `instrument_id` /
+  `instrument_name` — all part of ABI 25. **Transport seam (ADR
   0002 addendum):** the shell installs its HTTPS POST with
   `set_registry_transport(fn(&BridgeHttpRequest) -> BridgeHttpResponse)`
   *before* `initialize` (refused afterwards). Each request carries a
