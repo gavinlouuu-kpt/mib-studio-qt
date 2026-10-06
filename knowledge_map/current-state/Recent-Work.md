@@ -1,5 +1,13 @@
 # Recent Work
 
+## 2026-10-06 — ARMv7 compile smoke in CI (ADR 0011)
+
+A new `armv7-smoke` workflow cross-compiles `mib_processing` and `mib_backend`
+with `MIB_PL_SCIENCE=ON` for the Cortex-A9 on every PR that touches the
+backend, so a 32-bit or ARM break in the PZ7035 code no longer waits for a
+board build. It uses the distro armhf toolchain, not the Yocto SDK, and leaves
+Aravis out; the SDK artifact job remains a follow-up. See
+[[../build-and-run/Build]].
 ## 2026-10-05 — PZ7035 Align/Run camera modes and the PL run preview (#501 P1)
 
 Opening Camera & Alignment puts the instrument in Align: full sensor at
@@ -50,6 +58,20 @@ after 15 s while every command was fine (slowest 40 ms).
 - **Test:** a new fairness block with six tight pollers fails on the old lock
   every run (fewest 1 of mean 25; waits of 5–8 s) and passes on the new one
   (25 of 25; worst ~60 ms).
+
+## 2026-10-06 — Z stage panel in the Tauri app (#464, slice 5)
+
+The Connect tab gains a Z stage panel (`StageControls`) under the pump and
+autofocus panel. It uses only the existing `stage_*` bridge commands
+(ABI 26), and is hidden on the PZ7035.
+- **Position:** unknown until Home.
+- **Home:** disabled until the limit switches are verified, then needs a
+  confirmation, Service mode and arming.
+- **Moves:** whole micrometres, pre-checked against the soft limits.
+- **Stop:** always available, and never waits for another panel command.
+- **Everything else:** locked during an experiment.
+
+See [[../architecture/Desktop-Shell]] (Z stage panel).
 
 ## 2026-10-06 — Z stage on the bridge, with a limits-verified Home gate (#464, slice 4)
 

@@ -141,6 +141,33 @@ then `yofo_preview_soak` against the live producer (preview and Overview);
 `deploy_target.sh` reads `YOFO_TARGET`, `YOFO_SSH_OPTS` and
 `YOFO_SUDO_PASSWORD_FILE`.
 
+#### CI compile smoke (`armv7-smoke.yml`)
+
+The Yocto SDK exists only on the build host, so CI cannot build the shipped
+binary. `.github/workflows/armv7-smoke.yml` instead cross-compiles
+`mib_processing` and `mib_backend` with `MIB_PL_SCIENCE=ON` using the distro
+toolchain (preset `linux-armhf-smoke`, toolchain
+`cmake/toolchains/linux-armhf.cmake`, Cortex-A9 NEON hard-float). It catches
+32-bit and ARM breaks in the PL code (a `long` assumed 64-bit, `time_t`, an
+unguarded Linux-only call); a 64-bit-`long` `static_assert` in a PL source
+fails it.
+
+- **Packages:** `scripts/ci/enable-armhf-apt.sh` adds the armhf architecture
+  (ports.ubuntu.com; the existing sources become amd64-only). Then
+  `setup-linux-env` installs `base,armhf-cross` from `env/apt-packages.txt`.
+- **Cost:** the armhf packages take about 8 minutes to install, and the build
+  about 2 minutes at 4 jobs (a runner has 4 vCPU; more parallel compiles than
+  cores can exhaust memory).
+- **Gating:** like `sanitizers.yml`, a path filter gates the steps, not the
+  job, so docs-only PRs finish in seconds and the status context exists.
+- **After the build:** the job checks the objects are 32-bit ARM hard-float (a
+  silently fallen-back host compiler would otherwise pass), and compiles
+  `tools/pz_provider_probe/main.cpp` syntax-only.
+- **Not covered:** Aravis (Ubuntu's armhf libaravis is older than the 0.9.3 the
+  build needs), the Rust server link and the UI, library versions of the real
+  image, and any artifact for `meta-yofo`. That job needs the SDK published
+  for CI (ADR 0011, decision 14) and is a follow-up.
+
 | Target | Kind | Purpose |
 |---|---|---|
 | `mib_processing` | STATIC library | Qt-free processing core: `ProcessingService`, `EModulusLut`, `BatchMaskSources`, `Hdf5Service`, `FrameStore`, `Tools`, `CrashStateMirror`. Links only OpenCV + HDF5 + spdlog + STL. |

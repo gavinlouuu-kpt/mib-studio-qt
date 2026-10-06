@@ -50,6 +50,7 @@ import { CentralMethodsPanel } from "./CentralMethodsPanel";
 import { CameraScriptControls, useCameraScript } from "./cameraScript";
 import { MonitoringCharts } from "./components/MonitoringCharts";
 import { HardwareControls } from "./components/HardwareControls";
+import { StageControls } from "./components/StageControls";
 import { useLiveConfigDraft } from "./liveConfigDraft";
 import { previewIntervalMs } from "./previewPacing";
 import {CameraDocumentEditor,useCameraDocument} from "./cameraDocument";
@@ -1466,6 +1467,9 @@ export default function App() {
             <div hidden={tab !== "connect"}>
               <HardwareControls ready={ready} experimentActive={expActive} append={append} capabilities={caps}
                 mode={operatingMode} armed={triggerArmed} onDisarm={() => setTriggerArmed(false)} onSelectionChanged={refreshCameraState} />
+              {/* Z stage (#464): hidden on the PZ7035 until the board has a serial path for it. */}
+              {!pz7035 && <StageControls ready={ready} experimentActive={expActive} append={append}
+                mode={operatingMode} armed={triggerArmed} onDisarm={() => setTriggerArmed(false)} />}
             </div>
             {/* ---- Connect ---- */}
             {tab === "connect" && (
