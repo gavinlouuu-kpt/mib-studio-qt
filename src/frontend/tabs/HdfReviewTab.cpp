@@ -1,3 +1,4 @@
+#include "backend/recording/ReviewChartData.h"
 #include "frontend/tabs/HdfReviewTab.h"
 #include "ui_HdfReviewTab.h"
 #include "backend/review/ReviewSession.h"
@@ -2432,10 +2433,7 @@ void HdfReviewTab::onFullRunCoreFinished() {
 }
 
 void HdfReviewTab::generateScatterPlot(const std::vector<backend::services::ProcessedFrame>& validFrames) {
-    if (!scatterSeries_ || !scatterXAxis_ || !scatterYAxis_) {
-        return;
-    }
-
+    if (!scatterSeries_ || !scatterXAxis_ || !scatterYAxis_) return;
     scatterSeries_->clear();
     drawStoredKdeContours();
     updateComputeCoreActionState();
@@ -2479,6 +2477,8 @@ void HdfReviewTab::generateScatterPlot(const std::vector<backend::services::Proc
             double areaPixels = frame.validation.area;
             double areaMicrons = areaPixels * areaConversionFactor;
             double deform = frame.validation.deformability;
+            // Same rule as the shared chart data (makeReviewChartData).
+            if (!std::isfinite(areaMicrons) || !std::isfinite(deform)) continue;
             frameToScatterPoint_[i] = static_cast<int>(scatterPoints_.size());
             scatterPointToFrame_.push_back(static_cast<int>(i));
             scatterPoints_.push_back({areaMicrons, deform, static_cast<int>(i)});
@@ -2502,17 +2502,30 @@ void HdfReviewTab::generateScatterPlot(const std::vector<backend::services::Proc
     // O(n²); a 20 000-cell file took minutes to open.
     scatterSeries_->replace(seriesPoints);
 
-    // Axis ranges with padding
+    // Axis ranges from the shared chart data, so the Qt and Tauri review
+    // charts show the same extents; padded local extents if it rejects the
+    // calibration or histogram range.
     double x0 = 0, x1 = 1000, y0 = 0, y1 = 1;
-    if (minArea < maxArea) {
-        const double areaPadding = (maxArea - minArea) * 0.1;
-        x0 = minArea - areaPadding;
-        x1 = maxArea + areaPadding;
-    }
-    if (minDeform < maxDeform) {
-        const double deformPadding = (maxDeform - minDeform) * 0.1;
-        y0 = minDeform - deformPadding;
-        y1 = maxDeform + deformPadding;
+    try {
+        const auto cfg = backend_.processing().getProcessingConfig();
+        const auto data = backend::recording::makeReviewChartData(validFrames, conversionFactor,
+                                                                  cfg.ring_ratio_min, cfg.ring_ratio_max);
+        x0 = data.areaMin;
+        x1 = data.areaMax;
+        y0 = data.deformMin;
+        y1 = data.deformMax;
+    } catch (const std::exception& error) {
+        SPDLOG_WARN("Review scatter: shared chart ranges unavailable ({}); using local extents", error.what());
+        if (minArea < maxArea) {
+            const double areaPadding = (maxArea - minArea) * 0.1;
+            x0 = minArea - areaPadding;
+            x1 = maxArea + areaPadding;
+        }
+        if (minDeform < maxDeform) {
+            const double deformPadding = (maxDeform - minDeform) * 0.1;
+            y0 = minDeform - deformPadding;
+            y1 = maxDeform + deformPadding;
+        }
     }
     setHome(x0, x1, y0, y1);
 }
@@ -2544,13 +2557,11 @@ void HdfReviewTab::generateHistogram(const std::vector<backend::services::Proces
     }
 #endif
 
-    // Collect ring ratio values from valid frames
-    std::vector<double> ringRatios;
-    for (const auto& frame : validFrames) {
-        if (frame.validation.isValid && frame.validation.ringRatio > 0.0) {
-            ringRatios.push_back(frame.validation.ringRatio);
-        }
-    }
+    backend::recording::ReviewChartData shared;
+    try { shared=backend::recording::makeReviewChartData(validFrames,
+        backend_.processing().getPixelToMicronFactor(),HISTOGRAM_MIN,HISTOGRAM_MAX); }
+    catch(const std::exception& error) {SPDLOG_WARN("Review histogram unavailable: {}",error.what());return;}
+    const auto& ringRatios=shared.ringRatios;
 
     // If no data, show empty histogram with fixed range
     if (ringRatios.empty()) {
@@ -2581,17 +2592,9 @@ void HdfReviewTab::generateHistogram(const std::vector<backend::services::Proces
         return;
     }
 
-    // Count values in each bin
-    std::vector<int> binCounts(HISTOGRAM_BINS, 0);
-    for (double val : ringRatios) {
-        double clampedVal = std::clamp(val, HISTOGRAM_MIN, HISTOGRAM_MAX);
-        int binIndex = static_cast<int>((clampedVal - HISTOGRAM_MIN) / HISTOGRAM_BIN_WIDTH);
-        if (binIndex >= HISTOGRAM_BINS) {
-            binIndex = HISTOGRAM_BINS - 1;
-        }
-        binIndex = std::clamp(binIndex, 0, HISTOGRAM_BINS - 1);
-        binCounts[binIndex]++;
-    }
+    std::vector<int> binCounts;
+    binCounts.reserve(shared.bins.size());
+    for(const auto count:shared.bins)binCounts.push_back(static_cast<int>(std::min<uint64_t>(count,std::numeric_limits<int>::max())));
 
     int maxCount = 0;
     for (int count : binCounts) {
@@ -2937,60 +2940,7 @@ void HdfReviewTab::loadIsoelasticCurves() {
     }
     isoelasticCurves_.clear();
     
-    // Find the isoelastic curve data file
-    QString appDir = QCoreApplication::applicationDirPath();
-    QString filePath = QDir(appDir).absoluteFilePath("../resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt");
-    
-    // Try alternative path if file doesn't exist
-    if (!QFile::exists(filePath)) {
-        filePath = QDir(appDir).absoluteFilePath("resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt");
-    }
-    
-    // Try source directory path for development
-    if (!QFile::exists(filePath)) {
-        filePath = QDir(QCoreApplication::applicationDirPath()).absoluteFilePath("../../resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt");
-    }
-
-    QFile file(filePath);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        SPDLOG_WARN("Failed to open isoelastic curve file: {}", filePath.toStdString());
-        return;
-    }
-
-    // Group data points by emodulus value
-    std::map<double, std::vector<std::pair<double, double>>> curvesByModulus;
-
-    QTextStream in(&file);
-    while (!in.atEnd()) {
-        QString line = in.readLine().trimmed();
-        
-        // Skip empty lines and comments
-        if (line.isEmpty() || line.startsWith('#')) {
-            continue;
-        }
-
-        // Parse tab-separated values: area_um, deform, emodulus
-        QStringList parts = line.split('\t', Qt::SkipEmptyParts);
-        if (parts.size() < 3) {
-            continue;
-        }
-
-        bool ok1, ok2, ok3;
-        double areaUm = parts[0].toDouble(&ok1);
-        double deform = parts[1].toDouble(&ok2);
-        double emodulus = parts[2].toDouble(&ok3);
-
-        if (ok1 && ok2 && ok3) {
-            curvesByModulus[emodulus].push_back({areaUm, deform});
-        }
-    }
-
-    file.close();
-
-    if (curvesByModulus.empty()) {
-        SPDLOG_WARN("No isoelastic curve data found in file: {}", filePath.toStdString());
-        return;
-    }
+    const auto& curvesByModulus=backend::recording::bundledIsoelasticCurves();
 
     // Create QLineSeries for each modulus value (in reverse order for legend)
     for (auto it = curvesByModulus.rbegin(); it != curvesByModulus.rend(); ++it) {
@@ -3017,7 +2967,7 @@ void HdfReviewTab::loadIsoelasticCurves() {
     scatterPlotChart_->legend()->setAlignment(Qt::AlignRight);
     raiseScatterHighlight();
     
-    SPDLOG_INFO("Loaded {} isoelastic curves from {}", curvesByModulus.size(), filePath.toStdString());
+    SPDLOG_INFO("Loaded {} bundled isoelastic curves", curvesByModulus.size());
 }
 
 } // namespace frontend

@@ -1,6 +1,11 @@
 #include "backend/app/BackendFacade.h"
+#include "backend/app/SciencePlacement.h"
+#include "backend/app/ProfileStore.h"
+#include "backend/app/ProfileCatalog.h"
+#include "backend/app/ProcessingCoreManagement.h"
 #include "backend/discovery/DeviceDiscoveryService.h"
 #include "backend/discovery/StartupDiscoveryCoordinator.h"
+#include "backend/profiles/ProfileRegistryWorker.h"
 
 #include "backend/app/ExperimentCoordinator.h"
 
@@ -8,11 +13,12 @@
 #include "backend/app/BackgroundFrame.h"
 #include "backend/camera/mock/MockCamera.h"
 #include "backend/processing/ProcessingConfigJson.h"
-#include "backend/recording/ReviewExport.h"
+#include "backend/recording/HdfExportService.h"
 
 #include <nlohmann/json.hpp>
 
 #include <cstring>
+#include <cmath>
 #include <thread>
 #include "backend/playback/FrameStore.h"
 #include "backend/playback/PlaybackService.h"
@@ -23,8 +29,11 @@
 #include "backend/services/CaptureService.h"
 #include "backend/services/SyringePumpService.h"
 #include "backend/services/TriggerService.h"
+#include "backend/services/PulseGeneratorService.h"
 
 #include <algorithm>
+#include "backend/pz/PzPlatformMonitor.h"
+#include "backend/services/TushuiPumpProtocol.h"
 #include <atomic>
 #include <chrono>
 #include <filesystem>
@@ -110,6 +119,8 @@ namespace backend::bridge
         {
             BackendFrame out;
             out.frameIndex = frameIndex;
+            out.captureSession = frame.captureSession;
+            out.storeGeneration = frame.storeGeneration;
             out.timestampNs = frame.timestamp;
             out.width = frame.width;
             out.height = frame.height;
@@ -165,13 +176,14 @@ namespace backend::bridge
         backend_.setBackgroundCaptureCallback({});
     }
 
-    bool BackendFacade::initialize(const std::string &dataDir)
+    bool BackendFacade::initialize(const std::string &dataDir, const std::string &resourceRoot)
     {
         if (initialized_)
         {
             return true;
         }
 
+        if (!resourceRoot.empty()) backend_.setResourceRoot(resourceRoot);
         if (!backend_.initialize(dataDir))
         {
             emitEvent(BackendErrorEvent{
@@ -223,6 +235,12 @@ namespace backend::bridge
             return;
         }
 
+        // Central profile registry (issue #398): shares nothing with the
+        // instrument; stop it first so an in-flight registry request is
+        // aborted rather than waited out. AppBackend::shutdown() repeats this
+        // idempotently.
+        backend_.profileRegistry().shutdown();
+
         // Finish/abort an active experiment first (finalizes the HDF5 file so
         // shutdown never corrupts it — BE-4), then drain/cancel the remaining
         // tracked operations so their consumers see a terminal event before
@@ -230,6 +248,8 @@ namespace backend::bridge
         backend_.experiment().shutdown();
         backend_.experiment().setStatusCallback({});
         cancelAllOperations("Backend shutdown");
+        if (exportThread_.joinable()) exportThread_.join();
+        if (reanalysisThread_.joinable()) reanalysisThread_.join();
         // Review export jobs observe their (now set) cancel flags and clean
         // partial outputs; join them so no callback fires after destruction.
         {
@@ -246,7 +266,6 @@ namespace backend::bridge
                 }
             }
         }
-        reviewSession_.close();
 
         // Device discovery (issue #419): stop the startup policy and drain
         // every discovery worker before capture/serial teardown so no probe
@@ -500,7 +519,10 @@ namespace backend::bridge
         }
 
         playback::Frame frame;
-        if (!backend_.playback().fetchLatest(frame))
+        // Fetch exactly the committed identity queried above. Capture can advance
+        // between these calls; eviction is an explicit empty response, never
+        // newer pixels labelled with an older index.
+        if (!backend_.playback().fetchByIndex(latest, frame))
         {
             return false;
         }
@@ -627,6 +649,44 @@ namespace backend::bridge
             emitEvent(makeCameraStatus(CameraState::Configured));
             return {true, BackendCommandType::Camera, "Camera reset requested"};
         }
+        case CameraCommandAction::SetCameraOverview:
+        {
+            const bool wasRunning = backend_.capture().isRunning();
+            std::string error;
+            if (!backend_.setCameraOverview(command.cameraOverview, &error))
+            {
+                const std::string message = error.empty() ? "Camera mode change failed" : error;
+                emitEvent(BackendErrorEvent{BackendErrorSource::Camera, BackendCommandType::Camera, message});
+                return {false, BackendCommandType::Camera, message};
+            }
+            const std::string mode = command.cameraOverview ? "full sensor overview" : "experiment window";
+            if (wasRunning && !backend_.capture().isRunning())
+            {
+                emitEvent(makeCameraStatus(CameraState::Starting));
+                if (!backend_.capture().start())
+                {
+                    emitEvent(makeCameraStatus(CameraState::Error));
+                    const std::string message = "Camera switched to the " + mode + " but did not restart";
+                    emitEvent(BackendErrorEvent{BackendErrorSource::Camera, BackendCommandType::Camera, message});
+                    return {false, BackendCommandType::Camera, message};
+                }
+                emitEvent(makeCameraStatus(CameraState::Running));
+            }
+            return {true, BackendCommandType::Camera, "Camera shows the " + mode};
+        }
+        case CameraCommandAction::SaveCameraRoi:
+        {
+            std::string error;
+            if (!backend_.saveCameraRoi(command.roiX, command.roiY, command.roiWidth, command.roiHeight, &error))
+            {
+                const std::string message = error.empty() ? "Camera ROI was not saved" : error;
+                emitEvent(BackendErrorEvent{BackendErrorSource::Camera, BackendCommandType::Camera, message});
+                return {false, BackendCommandType::Camera, message};
+            }
+            return {true, BackendCommandType::Camera,
+                    "Camera ROI saved: " + std::to_string(command.roiWidth) + "x" + std::to_string(command.roiHeight) +
+                        " at (" + std::to_string(command.roiX) + ", " + std::to_string(command.roiY) + ")"};
+        }
         case CameraCommandAction::StartCapture:
             emitEvent(makeCameraStatus(CameraState::Starting));
             if (!backend_.capture().start())
@@ -721,107 +781,162 @@ namespace backend::bridge
         return {false, BackendCommandType::Recording, "Unknown recording command"};
     }
 
-    BackendCommandResult BackendFacade::handleProcessingSettingsCommand(const ProcessingSettingsCommand &command)
-    {
-        auto &processing = backend_.processing();
-        if (command.configJson)
-        {
-            // Merge-apply (BE-3): parse against the current config so absent
-            // keys keep their values; a malformed document fails the whole
-            // command without touching state.
-            nlohmann::json doc;
-            try
-            {
-                doc = nlohmann::json::parse(*command.configJson);
-            }
-            catch (const nlohmann::json::exception &e)
-            {
-                const std::string message = std::string("Invalid config JSON: ") + e.what();
-                emitEvent(BackendErrorEvent{BackendErrorSource::ConfigCore,
-                                            BackendCommandType::ProcessingSettings, message});
-                return {false, BackendCommandType::ProcessingSettings, message};
-            }
+    BackendCommandResult
+    BackendFacade::handleProcessingSettingsCommand(const ProcessingSettingsCommand& command) {
+        BackendCommandResult result{false, BackendCommandType::ProcessingSettings, "Processing settings are locked during an experiment"};
+        backend_.experiment().withIdleConfiguration([&] {
+            result = [&]() -> BackendCommandResult {
 
-            services::ProcessingConfig merged = processing.getProcessingConfig();
-            std::string error;
-            const auto image = doc.contains("image_processing") ? doc["image_processing"] : doc;
-            if (!processing::config_json::fromJson(image, merged, &error))
-            {
-                emitEvent(BackendErrorEvent{BackendErrorSource::ConfigCore,
-                                            BackendCommandType::ProcessingSettings, error});
-                return {false, BackendCommandType::ProcessingSettings, error};
-            }
-            processing.setProcessingConfig(merged);
-
-            if (const auto rt = doc.find("realtime_processing"); rt != doc.end())
-            {
-                if (const auto mode = rt->find("mode"); mode != rt->end() && mode->is_string())
-                {
-                    processing.setRealtimeProcessingMode(
-                        mode->get<std::string>() == "async_batch"
-                            ? services::ProcessingService::RealtimeProcessingMode::AsyncBatch
-                            : services::ProcessingService::RealtimeProcessingMode::Inline);
+        auto& processing = backend_.processing();
+        auto merged = processing.getProcessingConfig();
+        auto mode = processing.getRealtimeProcessingMode();
+        auto batch = processing.getRealtimeBatchSettings();
+        auto roi = processing.getRealtimeRoi();
+        bool enabled = processing.isRealtimeEnabled(), drop = processing.getRealtimeDropFrames();
+        double factor = processing.getPixelToMicronFactor();
+        size_t flush = processing.getFlushInterval();
+        bool touchesImage = command.config.has_value(), touchesRoi = command.roi.has_value();
+        std::string provenance;
+        try {
+            const auto integer = [](const nlohmann::json& value, const char* name, int low,
+                                    int high) {
+                if (!value.is_number_integer())
+                    throw std::runtime_error(std::string("Expected integer: ") + name);
+                const auto number = value.get<double>();
+                if (number < low || number > high)
+                    throw std::runtime_error(std::string("Out of range: ") + name);
+                return static_cast<int>(number);
+            };
+            if (command.configJson) {
+                if (command.configJson->size() > 4 * 1024 * 1024)
+                    throw std::runtime_error("Processing config exceeds 4 MiB");
+                const auto doc = nlohmann::json::parse(*command.configJson);
+                if (!doc.is_object())
+                    throw std::runtime_error("Processing config root must be an object");
+                if (doc.contains("config_version")) {
+                    const auto& revision = doc.at("config_version");
+                    if (!revision.is_number_integer() || revision.get<double>() < 0 ||
+                        revision.get<uint64_t>() != processing.getConfigVersion())
+                        throw std::runtime_error(
+                            "Live configuration changed; reload and reconcile the draft");
                 }
-                auto batch = processing.getRealtimeBatchSettings();
-                if (const auto v = rt->find("batch_size"); v != rt->end())
-                    batch.batchSize = v->get<std::size_t>();
-                if (const auto v = rt->find("max_queued_frames"); v != rt->end())
-                    batch.maxQueuedFrames = v->get<std::size_t>();
-                if (const auto v = rt->find("worker_count"); v != rt->end())
-                    batch.workerCount = v->get<std::size_t>();
-                if (const auto v = rt->find("max_batch_delay_ms"); v != rt->end())
-                    batch.maxBatchDelayMs = v->get<int>();
-                processing.setRealtimeBatchSettings(batch);
-                if (const auto v = rt->find("drop_frames"); v != rt->end())
-                    processing.setRealtimeDropFrames(v->get<bool>());
+                merged = app::validatedProcessingConfig(
+                    nlohmann::json{{"image_processing", doc.contains("image_processing")
+                                                            ? doc.at("image_processing")
+                                                            : doc}}
+                        .dump(),
+                    merged);
+                touchesImage = true;
+                if (doc.contains("realtime_processing")) {
+                    const auto& rt = doc.at("realtime_processing");
+                    if (!rt.is_object())
+                        throw std::runtime_error("realtime_processing must be an object");
+                    if (rt.contains("mode")) {
+                        const auto text = rt.at("mode").get<std::string>();
+                        if (text == "inline")
+                            mode = services::ProcessingService::RealtimeProcessingMode::Inline;
+                        else if (text == "async_batch" || text == "batch" || text == "kin6")
+                            mode = services::ProcessingService::RealtimeProcessingMode::AsyncBatch;
+                        else
+                            throw std::runtime_error("Unknown realtime mode");
+                    }
+                    if (rt.contains("enabled")) enabled = rt.at("enabled").get<bool>();
+                    if (rt.contains("drop_frames")) drop = rt.at("drop_frames").get<bool>();
+                    if (rt.contains("batch_size"))
+                        batch.batchSize = integer(rt.at("batch_size"), "batch_size", 1, 1000000);
+                    if (rt.contains("max_queued_frames"))
+                        batch.maxQueuedFrames =
+                            integer(rt.at("max_queued_frames"), "max_queued_frames", 1, 10000000);
+                    if (rt.contains("worker_count"))
+                        batch.workerCount = integer(rt.at("worker_count"), "worker_count", 1, 256);
+                    if (rt.contains("max_batch_delay_ms"))
+                        batch.maxBatchDelayMs =
+                            integer(rt.at("max_batch_delay_ms"), "max_batch_delay_ms", 1, 60000);
+                }
+                if (doc.contains("flush_interval"))
+                    flush = integer(doc.at("flush_interval"), "flush_interval", 1, 10000000);
+                if (doc.contains("pixel_to_micron"))
+                    factor = doc.at("pixel_to_micron").get<double>();
+                if (doc.contains("roi")) {
+                    const auto& r = doc.at("roi");
+                    if (!r.is_object()) throw std::runtime_error("roi must be an object");
+                    roi = {integer(r.value("x", nlohmann::json(0)), "roi.x", 0, 1000000),
+                           integer(r.value("y", nlohmann::json(0)), "roi.y", 0, 1000000),
+                           integer(r.value("w", nlohmann::json(0)), "roi.w", 0, 1000000),
+                           integer(r.value("h", nlohmann::json(0)), "roi.h", 0, 1000000)};
+                    touchesRoi = true;
+                }
             }
-            if (const auto v = doc.find("flush_interval"); v != doc.end())
-                processing.setFlushInterval(v->get<std::size_t>());
-            if (const auto v = doc.find("pixel_to_micron"); v != doc.end())
-                processing.setPixelToMicronFactor(v->get<double>());
-            if (const auto roi = doc.find("roi"); roi != doc.end() && roi->is_object())
-            {
-                services::ProcessingService::Roi r{};
-                r.x = roi->value("x", 0);
-                r.y = roi->value("y", 0);
-                r.w = roi->value("w", 0);
-                r.h = roi->value("h", 0);
-                processing.setRealtimeRoi(r);
-            }
+            if (command.config)
+                merged = app::validatedProcessingConfig(
+                    nlohmann::json{
+                        {"image_processing", processing::config_json::toJson(*command.config)}}
+                        .dump(),
+                    merged);
+            if (command.roi) roi = *command.roi;
+            if (command.realtimeEnabled) enabled = *command.realtimeEnabled;
+            if (enabled && !app::hostProcessingAvailable())
+                throw std::runtime_error("realtime processing runs on the PL on this instrument; the host pipeline is not available");
+            if (command.realtimeDropFrames) drop = *command.realtimeDropFrames;
+            if (command.realtimeProcessingMode) mode = *command.realtimeProcessingMode;
+            if (command.realtimeBatchSettings) batch = *command.realtimeBatchSettings;
+            if (command.pixelToMicronFactor) factor = *command.pixelToMicronFactor;
+            if (command.flushInterval) flush = *command.flushInterval;
+            if (!std::isfinite(factor) || factor <= 0 || factor > 1e12)
+                throw std::runtime_error("pixel_to_micron must be finite and positive");
+            if (!flush || flush > 10000000) throw std::runtime_error("Invalid flush interval");
+            if (!batch.batchSize || batch.batchSize > 1000000 ||
+                batch.maxQueuedFrames < batch.batchSize || batch.maxQueuedFrames > 10000000 ||
+                !batch.workerCount || batch.workerCount > 256 || batch.maxBatchDelayMs < 1 ||
+                batch.maxBatchDelayMs > 60000)
+                throw std::runtime_error("Invalid realtime batch settings");
+            if (roi.x < 0 || roi.y < 0 || roi.w < 0 || roi.h < 0 || roi.x > 1000000 ||
+                roi.y > 1000000 || roi.w > 1000000 || roi.h > 1000000 ||
+                (roi.w == 0) != (roi.h == 0))
+                throw std::runtime_error("Invalid ROI geometry");
+            if (mode != services::ProcessingService::RealtimeProcessingMode::Inline &&
+                mode != services::ProcessingService::RealtimeProcessingMode::AsyncBatch)
+                throw std::runtime_error("Invalid realtime mode");
+            auto runtime = nlohmann::json::parse(
+                backend_.getLastConfigJson().empty() ? "{}" : backend_.getLastConfigJson());
+            if (!runtime.is_object())
+                throw std::runtime_error(
+                    "Current runtime configuration provenance must be an object");
+            runtime["image_processing"] = processing::config_json::toJson(merged);
+            runtime["pixel_to_micron_factor"] = factor;
+            runtime["buffer_threshold"] = flush;
+            runtime["realtime_processing"] = {
+                {"enabled", enabled},
+                {"drop_frames", drop},
+                {"mode", mode == services::ProcessingService::RealtimeProcessingMode::Inline
+                             ? "inline"
+                             : "async_batch"},
+                {"batch_size", batch.batchSize},
+                {"max_queued_frames", batch.maxQueuedFrames},
+                {"worker_count", batch.workerCount},
+                {"max_batch_delay_ms", batch.maxBatchDelayMs}};
+            runtime["roi"] = {{"x", roi.x}, {"y", roi.y}, {"w", roi.w}, {"h", roi.h}};
+            provenance = runtime.dump();
+        } catch (const std::exception& e) {
+            const std::string message =
+                std::string("Invalid processing configuration: ") + e.what();
+            emitEvent(BackendErrorEvent{BackendErrorSource::ConfigCore,
+                                        BackendCommandType::ProcessingSettings, message});
+            return {false, BackendCommandType::ProcessingSettings, message};
         }
-        if (command.config)
-        {
-            processing.setProcessingConfig(*command.config);
-        }
-        if (command.roi)
-        {
-            processing.setRealtimeRoi(*command.roi);
-        }
-        if (command.realtimeEnabled)
-        {
-            processing.setRealtimeEnabled(*command.realtimeEnabled);
-        }
-        if (command.realtimeDropFrames)
-        {
-            processing.setRealtimeDropFrames(*command.realtimeDropFrames);
-        }
-        if (command.realtimeProcessingMode)
-        {
-            processing.setRealtimeProcessingMode(*command.realtimeProcessingMode);
-        }
-        if (command.realtimeBatchSettings)
-        {
-            processing.setRealtimeBatchSettings(*command.realtimeBatchSettings);
-        }
-        if (command.pixelToMicronFactor)
-        {
-            processing.setPixelToMicronFactor(*command.pixelToMicronFactor);
-        }
-        if (command.flushInterval)
-        {
-            processing.setFlushInterval(*command.flushInterval);
-        }
+        // No setter is reached until the entire JSON and typed candidate is valid.
+        if (touchesImage) processing.setProcessingConfig(merged);
+        if (touchesRoi) processing.setRealtimeRoi(roi);
+        processing.setRealtimeBatchSettings(batch);
+        processing.setRealtimeProcessingMode(mode);
+        processing.setRealtimeEnabled(enabled);
+        processing.setRealtimeDropFrames(drop);
+        processing.setPixelToMicronFactor(factor);
+        processing.setFlushInterval(flush);
+        backend_.setLastConfigJson(provenance);
 
+        if (processing.isRealtimeEnabled()) processing.startRealtime(backend_.getFrameStore());
+        else processing.stopRealtime();
         emitEvent(ProcessingResultEvent{
             0,
             0,
@@ -831,23 +946,38 @@ namespace backend::bridge
             {},
         });
         return {true, BackendCommandType::ProcessingSettings, "Processing settings applied"};
+            }();
+        });
+        return result;
     }
 
     BackendCommandResult BackendFacade::handleRecordingLoadCommand(const RecordingLoadCommand &command)
     {
+        BackendCommandResult result{false, BackendCommandType::RecordingLoad, "Experiment must be idle before loading review data"};
+        backend_.experiment().withIdleConfiguration([&] {
+            result = [&]() -> BackendCommandResult {
+                if (backend_.isFrameRecording())
+                    return {false, BackendCommandType::RecordingLoad, "Stop raw recording before loading review data"};
         // Tracked as an operation (BE-1): synchronous today, but the shell
         // already correlates Started/terminal events by operationId so the
         // load can move off-thread without a contract change.
         const std::uint64_t operationId =
             beginOperation(BackendOperationKind::RecordingLoad, nullptr, command.filePath);
 
-        // The review session owns its own reader (ADR 0008), so loading never
-        // touches the experiment writer's handle and is allowed while an
-        // experiment runs. Loading replaces the currently reviewed file (Qt
-        // parity: selecting a new HDF file closes the previous one).
-        reviewSession_.setFallbackPixelToMicron(backend_.processing().getPixelToMicronFactor());
-        std::string error;
-        if (!reviewSession_.open(command.filePath, &error))
+        auto &hdf5 = backend_.hdf5();
+        // Clear identities before replacing the handle, including a failed open.
+        {
+            std::scoped_lock lock(reviewMutex_);
+            loadedRecordingPath_.clear(); reviewMetricsLoaded_ = false;
+            reviewValidMeta_.clear(); reviewInvalidMeta_.clear();
+        }
+        // Loading replaces the currently reviewed file (Qt parity: selecting
+        // a new HDF file closes the previous one).
+        if (hdf5.isFileOpen())
+        {
+            hdf5.closeFile();
+        }
+        if (!hdf5.loadFile(command.filePath))
         {
             emitEvent(RecordingStatusEvent{
                 RecordingState::Error,
@@ -860,7 +990,7 @@ namespace backend::bridge
             });
             emitEvent(BackendErrorEvent{BackendErrorSource::Recording,
                                         BackendCommandType::RecordingLoad,
-                                        "Recording load failed: " + error});
+                                        "Recording load failed"});
             finishOperation(operationId, BackendOperationState::Failed, "Recording load failed");
             return {false, BackendCommandType::RecordingLoad, "Recording load failed", operationId};
         }
@@ -868,21 +998,58 @@ namespace backend::bridge
         RecordingStatusEvent event;
         event.state = RecordingState::Loaded;
         event.filePath = command.filePath;
+
         if (command.readMetadata)
         {
-            const review::ReviewMetadata meta = reviewSession_.metadata();
-            event.recordingFile = meta.recordingFile;
-            if (meta.recordingFile)
+            event.recordingFile = hdf5.isRecordingFile();
+            if (event.recordingFile)
             {
-                event.framesWritten = meta.totalValid;
-                event.framesFiltered = meta.filteredFrames;
+                std::uint64_t startTimeNs = 0;
+                std::uint64_t endTimeNs = 0;
+                std::uint64_t totalFrames = 0;
+                std::uint64_t filteredFrames = 0;
+                if (hdf5.readRecordingInfo(startTimeNs, endTimeNs, totalFrames, filteredFrames))
+                {
+                    event.framesWritten = totalFrames;
+                    event.framesFiltered = filteredFrames;
+                }
+
+                std::vector<services::ProcessedFrame> frames;
+                if (hdf5.readRecordingMetadata(frames))
+                {
+                    event.loadedValidFrames = frames.size();
+                }
             }
-            event.loadedValidFrames = reviewSession_.frameCount(true);
-            event.loadedInvalidFrames = reviewSession_.frameCount(false);
+            else
+            {
+                std::vector<services::ProcessedFrame> validFrames;
+                std::vector<services::ProcessedFrame> invalidFrames;
+                if (hdf5.readValidMetadata(validFrames))
+                {
+                    event.loadedValidFrames = validFrames.size();
+                }
+                if (hdf5.readInvalidMetadata(invalidFrames))
+                {
+                    event.loadedInvalidFrames = invalidFrames.size();
+                }
+            }
         }
+
         emitEvent(event);
+        {
+            // Remember the loaded path for review jobs and invalidate the
+            // paged-metrics cache (BE-6).
+            std::scoped_lock lock(reviewMutex_);
+            loadedRecordingPath_ = command.filePath;
+            reviewMetricsLoaded_ = false;
+            reviewValidMeta_.clear();
+            reviewInvalidMeta_.clear();
+        }
         finishOperation(operationId, BackendOperationState::Completed, command.filePath);
         return {true, BackendCommandType::RecordingLoad, "Recording loaded", operationId};
+            }();
+        });
+        return result;
     }
 
     BackendCommandResult BackendFacade::handleOperationCommand(const OperationCommand &command)
@@ -1055,6 +1222,7 @@ namespace backend::bridge
             row.areaRatio = v.areaRatio;
             row.ringRatio = v.ringRatio;
             row.youngsModulus = v.youngsModulus;
+            row.pixelToMicronFactor = v.analysisPixelToMicronFactor;
             out.rows.push_back(row);
             out.latestTimestampNs = std::max(out.latestTimestampNs, frame.timestampNs);
         };
@@ -1147,45 +1315,110 @@ namespace backend::bridge
         return true;
     }
 
+    namespace
+    {
+        const char *reviewDatasetPath(ReviewImageDataset dataset)
+        {
+            switch (dataset)
+            {
+            case ReviewImageDataset::ValidImage:
+                return "/valid_frames/images";
+            case ReviewImageDataset::InvalidImage:
+                return "/invalid_frames/images";
+            case ReviewImageDataset::RecordedImage:
+                return "/recorded_frames/images";
+            case ReviewImageDataset::ValidMask:
+                return "/valid_frames/masks";
+            case ReviewImageDataset::InvalidMask:
+                return "/invalid_frames/masks";
+            }
+            return nullptr;
+        }
+
+        MonitoringObjectRow metricsRowFromFrame(const services::ProcessedFrame &frame)
+        {
+            const auto &v = frame.validation;
+            MonitoringObjectRow row;
+            row.frameIndex = frame.index;
+            row.timestampNs = frame.timestampNs;
+            row.valid = v.isValid;
+            row.targetGroup = v.isTargetGroup;
+            row.objectId = v.objectId;
+            row.objectCount = v.objectCount;
+            row.trackId = v.trackId;
+            row.centroidX = v.centroidX;
+            row.centroidY = v.centroidY;
+            row.area = v.area;
+            row.deformability = v.deformability;
+            row.areaRatio = v.areaRatio;
+            row.ringRatio = v.ringRatio;
+            row.youngsModulus = v.youngsModulus;
+            row.pixelToMicronFactor = v.analysisPixelToMicronFactor;
+            return row;
+        }
+    } // namespace
+
     bool BackendFacade::fetchReviewMetadata(BackendReviewMetadata &out) const
     {
         if (!initialized_)
         {
             return false;
         }
+        auto &hdf5 = backend_.hdf5();
         out = BackendReviewMetadata{};
-        const review::ReviewMetadata meta = reviewSession_.metadata();
-        out.fileOpen = meta.fileOpen;
+        out.fileOpen = hdf5.isFileOpen();
         if (!out.fileOpen)
         {
             return true;
         }
-        out.filePath = meta.filePath;
-        out.recordingFile = meta.recordingFile;
-        out.startTimeNs = meta.startTimeNs;
-        out.endTimeNs = meta.endTimeNs;
-        out.totalValid = meta.totalValid;
-        out.totalInvalid = meta.totalInvalid;
-        out.roi = meta.roi;
-        out.hasBackground = meta.hasBackground;
-        out.hasCoreIdentity = meta.hasCoreIdentity;
-        out.coreVersion = meta.coreVersion;
-        out.coreSource = meta.coreSource;
-        out.coreReleaseTag = meta.coreReleaseTag;
-        auto toInfo = [](const review::DatasetInfo &in) {
-            BackendReviewDatasetInfo info;
-            info.present = in.present;
-            info.count = in.count;
-            info.height = in.height;
-            info.width = in.width;
-            info.channels = in.channels;
-            return info;
+        {
+            std::scoped_lock lock(reviewMutex_);
+            out.filePath = loadedRecordingPath_;
+        }
+        // The shared HDF handle may belong to a live writer, not a review source.
+        // Only loadRecording publishes this path; do not inspect writer datasets.
+        if (out.filePath.empty()) { out.fileOpen = false; return true; }
+        out.recordingFile = hdf5.isRecordingFile();
+
+        if (out.recordingFile)
+        {
+            std::uint64_t total = 0;
+            std::uint64_t filtered = 0;
+            hdf5.readRecordingInfo(out.startTimeNs, out.endTimeNs, total, filtered);
+            out.totalValid = total;
+        }
+        else
+        {
+            std::size_t totalValid = 0;
+            std::size_t totalInvalid = 0;
+            hdf5.readExperimentInfo(out.startTimeNs, out.endTimeNs, totalValid, totalInvalid, &out.roi);
+            out.totalValid = totalValid;
+            out.totalInvalid = totalInvalid;
+        }
+
+        backend::processing::ProcessingCoreIdentity identity;
+        if (hdf5.readProcessingCoreIdentity(identity))
+        {
+            out.hasCoreIdentity = true;
+            out.coreVersion = identity.version;
+            out.coreSource = identity.source;
+            out.coreReleaseTag = identity.releaseTag;
+        }
+        {
+            cv::Mat bg;
+            out.hasBackground = hdf5.readBackgroundImage(bg) && !bg.empty();
+        }
+
+        auto fillInfo = [&hdf5](const char *path, BackendReviewDatasetInfo &info) {
+            std::size_t count = 0;
+            info.present = hdf5.getDatasetInfo(path, count, info.height, info.width, info.channels);
+            info.count = count;
         };
-        out.validImages = toInfo(meta.validImages);
-        out.invalidImages = toInfo(meta.invalidImages);
-        out.validMasks = toInfo(meta.validMasks);
-        out.invalidMasks = toInfo(meta.invalidMasks);
-        out.recordedImages = toInfo(meta.recordedImages);
+        fillInfo("/valid_frames/images", out.validImages);
+        fillInfo("/invalid_frames/images", out.invalidImages);
+        fillInfo("/valid_frames/masks", out.validMasks);
+        fillInfo("/invalid_frames/masks", out.invalidMasks);
+        fillInfo("/recorded_frames/images", out.recordedImages);
         return true;
     }
 
@@ -1195,35 +1428,43 @@ namespace backend::bridge
                                                std::vector<MonitoringObjectRow> &rows,
                                                std::uint64_t &totalOut) const
     {
-        if (!initialized_ || !reviewSession_.isOpen())
+        if (!initialized_ || !backend_.hdf5().isFileOpen())
         {
             return false;
         }
-        std::vector<review::MetricRow> page;
-        if (!reviewSession_.metricsPage(valid, offset, count, page, totalOut))
+
+        std::scoped_lock lock(reviewMutex_);
+        if (!reviewMetricsLoaded_)
         {
-            return false;
+            // One metadata-only read per loaded file (no image payloads) —
+            // pages are then served from the cache with bounded IPC size.
+            auto &hdf5 = backend_.hdf5();
+            reviewValidMeta_.clear();
+            reviewInvalidMeta_.clear();
+            if (hdf5.isRecordingFile())
+            {
+                hdf5.readRecordingMetadata(reviewValidMeta_);
+            }
+            else
+            {
+                hdf5.readValidMetadata(reviewValidMeta_);
+                hdf5.readInvalidMetadata(reviewInvalidMeta_);
+            }
+            reviewMetricsLoaded_ = true;
         }
+
+        const auto &source = valid ? reviewValidMeta_ : reviewInvalidMeta_;
+        totalOut = source.size();
         rows.clear();
-        rows.reserve(page.size());
-        for (const auto &r : page)
+        if (offset >= source.size())
         {
-            MonitoringObjectRow row;
-            row.frameIndex = r.frameIndex;
-            row.timestampNs = r.timestampNs;
-            row.valid = r.valid;
-            row.targetGroup = r.targetGroup;
-            row.objectId = r.objectId;
-            row.objectCount = r.objectCount;
-            row.trackId = r.trackId;
-            row.centroidX = r.centroidX;
-            row.centroidY = r.centroidY;
-            row.area = r.area;
-            row.deformability = r.deformability;
-            row.areaRatio = r.areaRatio;
-            row.ringRatio = r.ringRatio;
-            row.youngsModulus = r.youngsModulus;
-            rows.push_back(row);
+            return true;
+        }
+        const std::uint64_t end = std::min<std::uint64_t>(source.size(), offset + count);
+        rows.reserve(end - offset);
+        for (std::uint64_t i = offset; i < end; ++i)
+        {
+            rows.push_back(metricsRowFromFrame(source[i]));
         }
         return true;
     }
@@ -1232,25 +1473,195 @@ namespace backend::bridge
                                          std::uint64_t index,
                                          BackendFrame &out) const
     {
-        if (!initialized_ || !reviewSession_.isOpen())
+        if (!initialized_ || !backend_.hdf5().isFileOpen())
         {
             return false;
         }
-        review::ReviewImage image;
-        if (!reviewSession_.fetchImage(static_cast<review::ReviewDataset>(dataset), index,
-                                       review::OverlayMode::None, false, image) ||
-            image.channels != 1)
+        const char *path = reviewDatasetPath(dataset);
+        if (!path)
         {
             return false;
+        }
+        cv::Mat image;
+        if (!backend_.hdf5().readImageByIndex(path, index, image) || image.empty())
+        {
+            return false;
+        }
+        cv::Mat gray;
+        if (image.channels() == 1)
+        {
+            gray = image;
+        }
+        else
+        {
+            cv::extractChannel(image, gray, 0);
         }
         out = BackendFrame{};
         out.frameIndex = index;
-        out.width = image.width;
-        out.height = image.height;
+        out.width = static_cast<std::uint64_t>(gray.cols);
+        out.height = static_cast<std::uint64_t>(gray.rows);
         out.pixelFormat = 0;
-        out.strideBytes = static_cast<std::size_t>(image.width);
-        out.data = std::move(image.data);
+        out.strideBytes = static_cast<std::size_t>(gray.cols);
+        out.data.resize(static_cast<std::size_t>(gray.cols) * gray.rows);
+        if (gray.isContinuous())
+        {
+            std::memcpy(out.data.data(), gray.data, out.data.size());
+        }
+        else
+        {
+            for (int row = 0; row < gray.rows; ++row)
+            {
+                std::memcpy(out.data.data() + static_cast<std::size_t>(row) * gray.cols,
+                            gray.ptr(row), static_cast<std::size_t>(gray.cols));
+            }
+        }
         return true;
+    }
+
+    std::string BackendFacade::fetchReviewExportStatusJson() const
+    {
+        std::scoped_lock lock(exportMutex_);
+        return exportStatusJson_;
+    }
+
+    BackendCommandResult BackendFacade::submitReviewExportJson(const std::string &json)
+    {
+        using namespace backend::recording;
+        if (!initialized_) return {false, BackendCommandType::Review, "Backend not initialized"};
+        HdfExportRequest request;
+        std::vector<std::string> sources;
+        try {
+            const auto input = nlohmann::json::parse(json);
+            request.outputRoot = input.at("output_root").get<std::string>();
+            if (input.contains("source_paths")) {
+                sources = input.at("source_paths").get<std::vector<std::string>>();
+                if (sources.empty() || sources.size() > 256 ||
+                    std::any_of(sources.begin(), sources.end(), [](const auto& p) { return p.empty(); }))
+                    throw std::invalid_argument("Batch requires 1 to 256 nonempty source paths");
+            }
+            request.explicitDestination = input.value("explicit_destination", std::string{});
+            if (sources.size() > 1 && !request.explicitDestination.empty())
+                throw std::invalid_argument("Batch exports use generated destinations, not an explicit destination");
+            if (request.outputRoot.empty() && !request.explicitDestination.empty())
+                request.outputRoot = ".";
+            const auto format = input.value("format", std::string{"all"});
+            if (format != "metrics_csv" && format != "images" && format != "all" && format != "charts")
+                throw std::invalid_argument("Unknown export format");
+            request.format = format == "metrics_csv" ? HdfExportFormat::MetricsCsv :
+                             format == "images" ? HdfExportFormat::Images : format == "charts" ? HdfExportFormat::Charts : HdfExportFormat::All;
+            request.generateReviewCharts=true;
+            const auto chartConfig=backend_.processing().getProcessingConfig();
+            request.chartRingMin=chartConfig.ring_ratio_min;request.chartRingMax=chartConfig.ring_ratio_max;
+            request.chartIsoelasticOverlays=input.value("isoelastic_overlays",true);
+            const auto frames = input.value("frames", std::string{"both"});
+            if (frames != "valid" && frames != "invalid" && frames != "both")
+                throw std::invalid_argument("Unknown frame selection");
+            request.frames = frames == "valid" ? HdfExportFrames::Valid :
+                             frames == "invalid" ? HdfExportFrames::Invalid : HdfExportFrames::Both;
+            if(input.contains("series")) {
+                const auto& series=input.at("series");
+                request.series.exportSeries=series.value("enabled",true);
+                const auto index=[&](const char* name) {
+                    if(!series.at(name).is_number_integer() || series.at(name)<0)throw std::invalid_argument("Series indices must be nonnegative integers");
+                    return series.at(name).get<size_t>();
+                };
+                if(series.contains("start"))request.series.startInclusive=index("start");
+                if(series.contains("end")) {
+                    request.series.endInclusive=index("end");
+                    if(request.series.endInclusive<request.series.startInclusive)throw std::invalid_argument("Series end must not precede start");
+                }
+            }
+            request.conversionFactor = input.value("conversion_factor", backend_.processing().getPixelToMicronFactor());
+            if (!std::isfinite(request.conversionFactor) || request.conversionFactor <= 0)
+                throw std::invalid_argument("Conversion factor must be finite and positive");
+            request.keepPartialOnFailure = input.value("keep_partial_on_failure", false);
+            if (request.outputRoot.empty() && request.explicitDestination.empty())
+                throw std::invalid_argument("Export destination is empty");
+        } catch (const std::exception &e) {
+            return {false, BackendCommandType::Review, e.what()};
+        }
+        {
+            std::scoped_lock lock(reviewMutex_);
+            request.sourcePath = loadedRecordingPath_;
+        }
+        if (sources.empty()) {
+            if (request.sourcePath.empty())
+                return {false, BackendCommandType::Review, "No recording loaded to export"};
+            sources.push_back(request.sourcePath);
+        }
+        request.sourcePath = sources.front();
+        {
+            std::scoped_lock lock(exportMutex_);
+            if (exportActive_) return {false, BackendCommandType::Review, "An export is already active"};
+            exportActive_ = true;
+        }
+        // Reap completed exports before creating another worker: bounded thread storage.
+        if (exportThread_.joinable()) exportThread_.join();
+        CancelFlag cancelFlag;
+        const auto operationId = beginOperation(BackendOperationKind::Export, &cancelFlag, request.sourcePath);
+        {
+            std::scoped_lock lock(exportMutex_);
+            exportStatusJson_ = nlohmann::json{{"operation_id", std::to_string(operationId)},
+                {"state", "running"}, {"phase", "validating"}, {"completed", "0"}, {"total", "0"}}.dump();
+        }
+        try {
+            exportThread_ = std::thread([this, operationId, cancelFlag, request, sources]() mutable {
+                HdfExportService service;
+                nlohmann::json results = nlohmann::json::array();
+                bool failed = false;
+                HdfExportResult result;
+                for (size_t index = 0; index < sources.size(); ++index) {
+                    if (cancelFlag->load(std::memory_order_acquire)) break;
+                    request.sourcePath = sources[index];
+                    result = service.run(request, HdfExportCancelToken(cancelFlag),
+                        [this, operationId, index, &sources, &results](const HdfExportProgress &progress) {
+                            {
+                                std::scoped_lock lock(exportMutex_);
+                                exportStatusJson_ = nlohmann::json{{"operation_id", std::to_string(operationId)},
+                                    {"job_id", progress.jobId}, {"state", "running"}, {"phase", toString(progress.phase)},
+                                    {"completed", std::to_string(progress.completed)}, {"total", std::to_string(progress.total)},
+                                    {"source_path", sources[index]}, {"file_index", index + 1}, {"file_count", sources.size()},
+                                    {"results", results}, {"current_output", progress.currentOutput}}.dump();
+                            }
+                            reportOperationProgress(operationId, progress.completed, progress.total);
+                        });
+                    failed = failed || result.status == HdfExportStatus::Failed;
+                    results.push_back(nlohmann::json{{"source_path", request.sourcePath}, {"state", toString(result.status)},
+                        {"final_path", result.finalPath}, {"retained_partial_path", result.retainedPartialPath},
+                        {"error", result.error}});
+                    if (result.status == HdfExportStatus::Cancelled) break;
+                }
+                // A cancellation accepted after a commit cannot undo that commit. If
+                // every file completed, report completion; otherwise retain each outcome.
+                const bool cancelled = results.size() < sources.size() || result.status == HdfExportStatus::Cancelled;
+                const auto state = cancelled ? BackendOperationState::Cancelled : failed ? BackendOperationState::Failed : BackendOperationState::Completed;
+                const auto error = cancelled ? std::string("Batch cancelled; completed files remain published") :
+                    failed ? std::string("One or more exports failed; see per-file results") : std::string{};
+                {
+                    std::scoped_lock lock(exportMutex_);
+                    exportStatusJson_ = nlohmann::json{{"operation_id", std::to_string(operationId)},
+                        {"job_id", result.jobId}, {"state", cancelled ? "cancelled" : failed ? "failed" : "completed"},
+                        {"final_path", result.finalPath}, {"retained_partial_path", result.retainedPartialPath},
+                        {"images_exported", std::to_string(result.imagesExported)},
+                        {"images_failed", std::to_string(result.imagesFailed)}, {"metrics_written", result.metricsWritten},
+                        {"file_count", sources.size()}, {"results", results},
+                        {"warnings", result.warnings}, {"error", sources.size() == 1 ? result.error : error}}.dump();
+                }
+                finishOperation(operationId, state, state == BackendOperationState::Completed ? result.finalPath : error);
+                std::scoped_lock lock(exportMutex_);
+                exportActive_ = false;
+            });
+        } catch (const std::exception &e) {
+            {
+                std::scoped_lock lock(exportMutex_);
+                exportActive_ = false;
+                exportStatusJson_ = nlohmann::json{{"operation_id", std::to_string(operationId)},
+                    {"state", "failed"}, {"error", e.what()}}.dump();
+            }
+            finishOperation(operationId, BackendOperationState::Failed, e.what());
+            return {false, BackendCommandType::Review, e.what(), operationId};
+        }
+        return {true, BackendCommandType::Review, "Export started", operationId};
     }
 
     BackendCommandResult BackendFacade::handleReviewCommand(const ReviewCommand &command)
@@ -1259,81 +1670,10 @@ namespace backend::bridge
         {
         case ReviewCommandAction::ExportMetricsCsv:
         {
-            const std::string sourcePath = reviewSession_.filePath();
-            if (sourcePath.empty())
-            {
-                const std::string message = "No recording loaded to export";
-                emitEvent(BackendErrorEvent{BackendErrorSource::Export,
-                                            BackendCommandType::Review, message});
-                return {false, BackendCommandType::Review, message};
-            }
-            if (command.outputPath.empty())
-            {
-                return {false, BackendCommandType::Review, "Export output path is empty"};
-            }
-
-            CancelFlag cancelFlag;
-            const std::uint64_t operationId =
-                beginOperation(BackendOperationKind::Export, &cancelFlag, command.outputPath);
-            // TD-17: the factor the file was recorded with, else the live one.
-            const double pixelToMicron = reviewSession_.pixelToMicron();
-            const std::string outputPath = command.outputPath;
-
-            // The job opens its own read-only reader so it never races the
-            // interactive review reads, and the source file stays intact.
-            std::thread worker([this, operationId, cancelFlag, sourcePath, outputPath,
-                                pixelToMicron]() {
-                services::Hdf5Service reader;
-                std::vector<services::ProcessedFrame> valid;
-                std::vector<services::ProcessedFrame> invalid;
-                if (!reader.loadFile(sourcePath))
-                {
-                    finishOperation(operationId, BackendOperationState::Failed,
-                                    "Failed to open source recording: " + sourcePath);
-                    return;
-                }
-                if (reader.isRecordingFile())
-                {
-                    reader.readRecordingMetadata(valid);
-                }
-                else
-                {
-                    reader.readValidMetadata(valid);
-                    reader.readInvalidMetadata(invalid);
-                }
-                reader.closeFile();
-
-                std::string error;
-                const bool ok = review::writeMetricsCsv(
-                    outputPath, valid, invalid, pixelToMicron, &error,
-                    [this, operationId, &cancelFlag](std::uint64_t done, std::uint64_t total) {
-                        if (cancelFlag->load(std::memory_order_relaxed))
-                        {
-                            return false;
-                        }
-                        reportOperationProgress(operationId, done, total);
-                        return true;
-                    });
-                if (ok)
-                {
-                    finishOperation(operationId, BackendOperationState::Completed, outputPath);
-                }
-                else if (cancelFlag->load(std::memory_order_relaxed))
-                {
-                    finishOperation(operationId, BackendOperationState::Cancelled, error);
-                }
-                else
-                {
-                    emitEvent(BackendErrorEvent{BackendErrorSource::Export,
-                                                BackendCommandType::Review, error});
-                    finishOperation(operationId, BackendOperationState::Failed, error);
-                }
-            });
-            {
-                std::scoped_lock lock(reviewJobsMutex_);
-                reviewJobThreads_.push_back(std::move(worker));
-            }
-            return {true, BackendCommandType::Review, "Metrics CSV export started", operationId};
+            return submitReviewExportJson(nlohmann::json{
+                {"format", "metrics_csv"}, {"output_root", std::filesystem::path(command.outputPath).parent_path().string()},
+                {"explicit_destination", command.outputPath},
+                {"conversion_factor", backend_.processing().getPixelToMicronFactor()}}.dump());
         }
         }
         return {false, BackendCommandType::Review, "Unknown review command"};
@@ -1358,32 +1698,48 @@ namespace backend::bridge
         {
         case PumpCommandAction::Connect:
         {
-            if (command.comPort < 0)
-            {
-                return fail("Invalid COM port");
-            }
+            if (command.portName.empty() && command.comPort < 0) return fail("Invalid COM port");
+            const auto port = command.portName.empty() ? "COM" + std::to_string(command.comPort)
+                                                       : command.portName;
+            if (port.size() > 512 || port.find('\0') != std::string::npos ||
+                port.find_first_not_of(" \t") == std::string::npos || command.baudRate < 1 ||
+                command.baudRate > 4000000)
+                return fail("Invalid pump serial endpoint");
             if (command.modbusAddress < 1 || command.modbusAddress > 247)
-            {
                 return fail("Invalid Modbus address (1-247)");
-            }
-            // Serial-port conflict rules (BE-7): the other pump and the
-            // autofocus controller must not share the port.
-            const auto otherId = pumpId == Pump::PumpId::Sample ? Pump::PumpId::Sheath
-                                                                : Pump::PumpId::Sample;
-            if (pumps.isConnected(otherId) && pumps.getComPort(otherId) == command.comPort)
-            {
-                return fail("COM port already in use by the other pump");
-            }
-            if (backend_.autofocus().isConnected() &&
-                backend_.autofocus().getComPort() == command.comPort)
-            {
-                return fail("COM port already in use by the autofocus controller");
-            }
-            if (!pumps.connect(pumpId, command.comPort, command.baudRate,
-                               static_cast<std::uint8_t>(command.modbusAddress)))
-            {
-                return fail("Pump connect failed (no Modbus response)");
-            }
+            if (command.model != static_cast<int>(Pump::PumpModel::DlspSyringe) &&
+                command.model != static_cast<int>(Pump::PumpModel::TushuiPeristaltic))
+                return fail("Invalid pump model");
+            if (!(command.microlitersPerRev > 0.0 && command.microlitersPerRev <= 100000.0))
+                return fail("Invalid peristaltic calibration (µL per revolution)");
+            using Bus = services::serialbus::SerialBusManager;
+            const auto otherId =
+                pumpId == Pump::PumpId::Sample ? Pump::PumpId::Sheath : Pump::PumpId::Sample;
+            const auto other = pumps.getConfig(otherId);
+            if (pumps.isConnected(otherId) && Bus::samePort(other.portName, port) &&
+                other.modbusAddress == command.modbusAddress)
+                return fail("Modbus address already claimed by the other pump on this bus");
+            auto& pulse = backend_.pulseGenerator();
+            const auto pulseConfig = pulse.getConfig();
+            if (pulse.isConnected() && Bus::samePort(pulseConfig.portName, port) &&
+                pulseConfig.modbusAddress == command.modbusAddress)
+                return fail("Modbus address already claimed by the acquisition pulse generator");
+            auto& autofocus = backend_.autofocus();
+            const auto autofocusPort =
+                autofocus.getBackendKind() == nanopositioner::BackendKind::Coremor
+                    ? "COM" + std::to_string(autofocus.getComPort())
+                    : autofocus.getEndpointId();
+            if (autofocus.isConnected() && Bus::samePort(autofocusPort, port))
+                return fail("Serial endpoint already in use by autofocus");
+            const auto model = static_cast<Pump::PumpModel>(command.model);
+            const bool connected =
+                command.portName.empty() && model == Pump::PumpModel::DlspSyringe
+                    ? pumps.connect(pumpId, command.comPort, command.baudRate,
+                                    static_cast<std::uint8_t>(command.modbusAddress))
+                    : pumps.connect(pumpId, port, command.baudRate,
+                                    static_cast<std::uint8_t>(command.modbusAddress), model,
+                                    command.microlitersPerRev);
+            if (!connected) return fail("Pump connect failed (no Modbus response)");
             return {true, BackendCommandType::Pump, "Pump connected"};
         }
         case PumpCommandAction::Disconnect:
@@ -1513,9 +1869,13 @@ namespace backend::bridge
         out.comPort = config.comPort;
         out.baudRate = config.baudRate;
         out.modbusAddress = config.modbusAddress;
+        out.portName = config.portName;
         out.configuredFlowRate = config.flowRate;
         out.flowRateUnit = config.flowRateUnit;
         out.direction = static_cast<int>(config.direction);
+        out.model = static_cast<int>(config.model);
+        out.microlitersPerRev = config.microlitersPerRev;
+        out.speedRpm = status.speedRpm;
         return true;
     }
 
@@ -1532,7 +1892,12 @@ namespace backend::bridge
         {
         case AutofocusCommandAction::Connect:
         {
-            if (command.comPort < 0)
+            if (command.endpoint && (command.endpoint->backend == nanopositioner::BackendKind::Auto ||
+                command.endpoint->persistentId.empty()))
+                return fail("An explicit backend and endpoint identity are required");
+            const bool coremor = !command.endpoint || command.endpoint->backend == nanopositioner::BackendKind::Coremor;
+            const int port = command.endpoint ? command.endpoint->coremorPort : command.comPort;
+            if (coremor && port < 0)
             {
                 return fail("Invalid COM port");
             }
@@ -1547,13 +1912,19 @@ namespace backend::bridge
             for (int pumpId = 0; pumpId < Pump::PUMP_COUNT; ++pumpId)
             {
                 const auto id = static_cast<Pump::PumpId>(pumpId);
-                if (pumps.isConnected(id) && pumps.getComPort(id) == command.comPort)
-                {
+                if (pumps.isConnected(id) &&
+                    services::serialbus::SerialBusManager::samePort(
+                        pumps.getConfig(id).portName,
+                        coremor ? "COM" + std::to_string(port)
+                                : (!command.endpoint->systemPath.empty()
+                                       ? command.endpoint->systemPath
+                                       : command.endpoint->persistentId))) {
                     return fail("COM port already in use by a syringe pump");
                 }
             }
-            if (!autofocus.connect(command.comPort, command.baudRate,
-                                   static_cast<unsigned char>(command.deviceAddress)))
+            if (!(command.endpoint ? autofocus.connect(*command.endpoint) :
+                  autofocus.connect(command.comPort, command.baudRate,
+                                   static_cast<unsigned char>(command.deviceAddress))))
             {
                 return fail("Autofocus controller connect failed");
             }
@@ -1609,6 +1980,8 @@ namespace backend::bridge
         out.enabled = autofocus.isEnabled();
         out.currentVoltage = autofocus.getCurrentVoltage();
         out.comPort = autofocus.getComPort();
+        out.backendName = nanopositioner::backendKindName(autofocus.getBackendKind());
+        out.endpointId = autofocus.getEndpointId();
         out.averageRingRatio = autofocus.getAverageRingRatio();
         out.medianRingRatio = autofocus.getMedianRingRatio();
         out.lastRingRatioUpdateUs = autofocus.getLastRingRatioUpdateUs();
@@ -1857,6 +2230,108 @@ namespace backend::bridge
         return out.valid;
     }
 
+    // ---- Central profile registry (issue #398, ABI 25) ----
+    namespace
+    {
+        BackendRegistryJob toRegistryJob(const profiles::RegistryJobStatus &job)
+        {
+            BackendRegistryJob out;
+            out.jobId = job.id;
+            out.kind = static_cast<int>(job.kind);
+            out.state = static_cast<int>(job.state);
+            out.message = job.message;
+            return out;
+        }
+    } // namespace
+
+    std::uint64_t BackendFacade::registrySignIn(const std::string &email, std::string password)
+    {
+        if (!initialized_)
+        {
+            std::fill(password.begin(), password.end(), '\0');
+            return 0;
+        }
+        return backend_.profileRegistry().requestSignIn(email, std::move(password));
+    }
+
+    std::uint64_t BackendFacade::registrySignOut()
+    {
+        return initialized_ ? backend_.profileRegistry().requestSignOut() : 0;
+    }
+
+    std::uint64_t BackendFacade::registryRefresh()
+    {
+        return initialized_ ? backend_.profileRegistry().requestRefresh() : 0;
+    }
+
+    std::uint64_t BackendFacade::registryDownload(const std::string &revisionId)
+    {
+        return initialized_ ? backend_.profileRegistry().requestDownload(revisionId) : 0;
+    }
+
+    bool BackendFacade::registryCancelAll()
+    {
+        if (!initialized_)
+        {
+            return false;
+        }
+        backend_.profileRegistry().cancelAll();
+        return true;
+    }
+
+    bool BackendFacade::fetchRegistrySnapshot(BackendRegistrySnapshot &out) const
+    {
+        out = BackendRegistrySnapshot{};
+        if (!initialized_)
+        {
+            return false;
+        }
+        const auto s = backend_.profileRegistry().snapshot();
+        out.valid = true;
+        out.configured = s.configured;
+        out.generation = s.generation;
+        out.origin = s.origin;
+        out.session = static_cast<int>(s.session);
+        out.subjectId = s.subjectId;
+        out.email = s.email;
+        out.connectivity = static_cast<int>(s.health.connectivity);
+        out.healthMessage = s.health.message;
+        out.successfulRequests = s.health.successfulRequests;
+        out.failedRequests = s.health.failedRequests;
+        out.rejectedRevisions = s.health.rejectedRevisions;
+        for (const auto &p : s.projects)
+            out.projects.push_back({p.projectId, p.displayName, p.roles});
+        for (const auto &r : s.revisions)
+            out.revisions.push_back({r.revisionId, r.methodId, r.projectId, r.displayName, r.authorId,
+                                     r.contentHash, r.revisionNumber, r.metadataVersion,
+                                     static_cast<int>(r.state)});
+        out.corruptRevisionIds = s.corruptRevisionIds;
+        out.cacheError = s.cacheError;
+        if (s.lastSuccessfulRefresh)
+        {
+            out.hasLastSuccessfulRefresh = true;
+            out.lastSuccessfulRefreshUnixMs =
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    s.lastSuccessfulRefresh->time_since_epoch())
+                    .count();
+        }
+        out.lastJob = toRegistryJob(s.lastJob);
+        out.queuedJobs = s.queuedJobs;
+        out.busy = s.busy;
+        return true;
+    }
+
+    bool BackendFacade::fetchRegistryJob(std::uint64_t jobId, BackendRegistryJob &out) const
+    {
+        out = BackendRegistryJob{};
+        if (!initialized_)
+        {
+            return false;
+        }
+        out = toRegistryJob(backend_.profileRegistry().job(jobId));
+        return out.jobId != 0;
+    }
+
     bool BackendFacade::fetchCameraDiscovery(BackendCameraDiscovery &out) const
     {
         if (!initialized_)
@@ -2022,11 +2497,15 @@ namespace backend::bridge
         {
             std::scoped_lock lock(operationsMutex_);
             drained.assign(activeOperations_.begin(), activeOperations_.end());
-            activeOperations_.clear();
+            for (auto it = activeOperations_.begin(); it != activeOperations_.end();) {
+                if (it->second.kind == BackendOperationKind::Export) ++it;
+                else it = activeOperations_.erase(it);
+            }
         }
         for (auto &[operationId, op] : drained)
         {
             op.cancelRequested->store(true, std::memory_order_relaxed);
+            if (op.kind == BackendOperationKind::Export) continue; // worker publishes only after cleanup
             emitEvent(OperationStatusEvent{operationId, op.kind,
                                            BackendOperationState::Cancelled, 0, 0, reason});
         }
@@ -2046,4 +2525,599 @@ namespace backend::bridge
         };
     }
 
+} // namespace backend::bridge
+
+namespace backend::bridge {
+app::ConfigDocumentSnapshot BackendFacade::fetchConfigDocument(const std::string& path) const { return app::readConfigDocument(path); }
+app::ProcessingConfigTransactionResult BackendFacade::applyConfigDocument(const std::string& path, const std::string& baseline, const std::string& patch) { if (!isInitialized()) { app::ProcessingConfigTransactionResult r; r.error = "backend is not initialized"; return r; } return app::applyProcessingConfigTransaction(backend_, path, baseline, patch); }
+}
+
+namespace backend::bridge {
+std::string BackendFacade::fetchPlatformInfoJson() const {
+    const bool host = app::hostProcessingAvailable();
+    // The PZ7035 has no nanopositioner, host trigger, host background, live frame
+    // buffer, host reanalysis, core updater or EGrabber script (ADR 0011 §8, #501).
+    nlohmann::json capabilities{
+        {"instrument", host ? "desktop" : "pz7035"},
+        {"autofocus", host},
+        {"trigger", host},
+        {"host_background", host},
+        {"frame_buffer", host},
+        {"reanalysis", host},
+        {"core_updates", host},
+        {"egrabber_script", host},
+        {"pl_identity", !host},
+        {"led_strobe", !host},
+        // Backend-owned camera modes arrive with P0b.
+        {"align_mode", false},
+        {"run_mode", false},
+    };
+    // The PZ7035's two peristaltic pumps share RS485 on /dev/ttyPS1: slave 3
+    // feeds the sample, slave 4 the sheath (confirmed on the bench 2026-10-05).
+    capabilities["pump"] = host ? nlohmann::json(nullptr)
+                                : nlohmann::json{{"model", "tushui_peristaltic"},
+                                                 {"port", "/dev/ttyPS1"},
+                                                 {"sample_address", 3},
+                                                 {"sheath_address", 4},
+                                                 {"microliters_per_rev", services::tushui::kDefaultMicrolitersPerRev}};
+    return nlohmann::json{
+        {"science", app::sciencePlacement()},
+        {"host_processing", host},
+        {"aravis", MIB_HAS_ARAVIS != 0},
+        {"capabilities", std::move(capabilities)},
+    }.dump();
+}
+
+std::string BackendFacade::fetchInstrumentStatusJson() {
+    auto* monitor = initialized_ ? backend_.pzPlatformMonitor() : nullptr;
+    if (!monitor) {
+        return nlohmann::json{{"available", false},
+                              {"error", initialized_ ? "not a PZ7035 instrument" : "backend is not initialized"}}
+            .dump();
+    }
+    const auto nowUs = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch())
+            .count());
+    const auto s = monitor->sample(nowUs);
+    if (!s.available) {
+        return nlohmann::json{{"available", false}, {"error", s.error}, {"pinned_profile_id", s.pinnedProfileId}}
+            .dump();
+    }
+    nlohmann::json expected = nullptr;
+    if (s.expectedPresent) {
+        expected = {{"build_id", s.expected.buildId},
+                    {"profile_id", s.expected.profileId},
+                    {"commit", s.expected.commit},
+                    {"image", s.expected.image},
+                    {"abi_major", s.expected.abiMajor},
+                    {"abi_minor", s.expected.abiMinor}};
+    }
+    return nlohmann::json{
+        {"available", true},
+        {"core",
+         {{"build_id", s.buildId},
+          {"profile_id", s.profileId},
+          {"abi_version", s.abiVersion},
+          {"science_profile", s.scienceProfile},
+          {"profile_version", s.profileVersion},
+          {"expected", std::move(expected)},
+          {"pinned_profile_id", s.pinnedProfileId},
+          {"build_match", pz::idMatchName(s.buildMatch)},
+          {"profile_match", pz::idMatchName(s.profileMatch)}}},
+        {"led",
+         {{"on", s.ledOn},
+          {"preset", s.ledPreset},
+          {"delay_us", s.ledDelayUs},
+          {"width_us", s.ledWidthUs},
+          {"guard_fault", s.guardFault},
+          {"guard_trips", s.guardTrips}}},
+        {"link",
+         {{"rates_valid", s.ratesValid},
+          {"ingress_errors_per_s", s.ingressErrorsPerS},
+          {"resyncs_per_s", s.resyncsPerS},
+          {"bad_frames_per_s", s.badFramesPerS},
+          {"dropped_per_s", s.droppedPerS},
+          {"ingress_errors_warn_per_s", pz::kIngressErrorWarnPerS},
+          {"resyncs_warn_per_s", pz::kResyncWarnPerS}}},
+        {"latency",
+         {{"last_us", s.latencyLastUs},
+          {"max_us", s.latencyMaxUs},
+          {"over_budget", s.latencyOverBudget},
+          {"frames", s.latencyFrames}}},
+    }.dump();
+}
+
+std::string BackendFacade::fetchCameraGeometryJson() const {
+    if (!initialized_) return nlohmann::json{{"supported", false}}.dump();
+    const auto g = backend_.cameraGeometry();
+    nlohmann::json session = nlohmann::json::parse(g.sessionJson, nullptr, false);
+    if (session.is_discarded()) session = nlohmann::json::object();
+    return nlohmann::json{
+        {"supported", g.supported},
+        {"overview", g.overview},
+        {"camera", g.camera},
+        {"sensor_width", g.sensorWidth},
+        {"sensor_height", g.sensorHeight},
+        {"roi", {{"x", g.roiX}, {"y", g.roiY}, {"width", g.roiWidth}, {"height", g.roiHeight}}},
+        {"width_increment", g.widthIncrement},
+        {"height_increment", g.heightIncrement},
+        {"offset_x_increment", g.offsetXIncrement},
+        {"offset_y_increment", g.offsetYIncrement},
+        {"min_width", g.minWidth},
+        {"min_height", g.minHeight},
+        {"session", session},
+    }.dump();
+}
+
+std::string BackendFacade::fetchPreviewBufferJson() const {
+    uint64_t first = 0, last = 0; size_t count = 0;
+    const bool available = initialized_ && backend_.playback().queryRange(first, last, count);
+    playback::TimestampRange timestamps{};
+    playback::Frame frame;
+    const bool hasTimestamps = available && backend_.playback().getAvailableTimestampRange(timestamps);
+    const bool hasFrame = available && backend_.playback().fetchByIndex(last, frame);
+    return nlohmann::json{{"capacity", std::to_string(initialized_ ? backend_.playback().capacity() : 0)},
+        {"generation", std::to_string(hasFrame ? frame.storeGeneration : 0)},
+        {"timestamps_available",hasTimestamps}, {"timestamp_first",std::to_string(timestamps.start)},
+        {"timestamp_last",std::to_string(timestamps.end)},
+        {"available", available}, {"first", std::to_string(first)},
+        {"last", std::to_string(last)}, {"count", std::to_string(count)},
+        {"capture_running", initialized_ && backend_.capture().isRunning()},
+        {"recording", initialized_ && backend_.isFrameRecording()}}.dump();
+}
+std::string BackendFacade::savePreviewBufferJson(const std::string& request) {
+    using nlohmann::json;
+    json result{{"ok", false}, {"output_path", ""}, {"error", ""}};
+    try {
+        if (!initialized_) throw std::runtime_error("backend is not initialized");
+        if (request.size() > 16384) throw std::runtime_error("buffer request exceeds limit");
+        const auto input = json::parse(request);
+        const auto action = input.value("action",std::string("save"));
+        if (action != "save" && action != "resize" && action != "background") throw std::runtime_error("unsupported buffer action");
+        const auto format = input.value("format",std::string("tiff"));
+        if (format != "tiff" && format != "avi") throw std::runtime_error("format must be tiff or avi");
+        const auto parseIndex = [](const json& v) {
+            const auto text = v.get<std::string>();
+            if (text.empty() || text.size() > 20 || text.find_first_not_of("0123456789") != std::string::npos)
+                throw std::runtime_error("invalid frame index");
+            return std::stoull(text);
+        };
+        const auto first = action == "save" ? parseIndex(input.at("first")) : 0;
+        const auto last = action == "save" ? parseIndex(input.at("last")) : 0;
+        const auto mode = input.value("range_mode",std::string("index"));
+        if(mode != "index" && mode != "timestamp") throw std::runtime_error("invalid range mode");
+        const bool filterEmpty = input.value("filter_empty",false);
+        const double fps = input.value("fps", 30.0);
+        if (!std::isfinite(fps) || fps <= 0 || fps > 1000) throw std::runtime_error("invalid AVI playback fps");
+        const std::filesystem::path root(input.value("output_root",std::string()));
+        if (action == "save" && !std::filesystem::is_directory(root)) throw std::runtime_error("output root must be an existing directory");
+        const bool idle = backend_.experiment().withIdleConfiguration([&] {
+            if (backend_.capture().isRunning()) throw std::runtime_error("stop capture before saving a stable preview buffer");
+            uint64_t earliest = 0, latest = 0; size_t count = 0;
+            const bool available = backend_.playback().queryRange(earliest, latest, count);
+            playback::Frame latestFrame;
+            if(input.contains("generation") && (!available || !backend_.playback().fetchByIndex(latest,latestFrame) || parseIndex(input.at("generation")) != latestFrame.storeGeneration))
+                throw std::runtime_error("buffer identity changed; refresh before applying this operation");
+            if(action == "resize") {
+                const auto capacity=parseIndex(input.at("capacity"));
+                if(capacity==0 || capacity>1000000) throw std::runtime_error("capacity must be 1..1000000 frames");
+                if(capacity<count && !input.value("confirm_clear",false)) throw std::runtime_error("shrinking below retained count clears all frames; explicit confirmation required");
+                const auto estimate=backend_.playback().estimateMemoryBytesForCapacity(capacity);
+                const auto ram=backend::Tools::getAvailableSystemRAMBytes();
+                if(ram==0 || estimate>ram/4*3) throw std::runtime_error("requested buffer exceeds available memory budget");
+                if(!backend_.playback().resize(capacity)) throw std::runtime_error("buffer resize failed");
+                result["ok"]=true; return;
+            }
+            if(!available) throw std::runtime_error("buffer is empty");
+            if(action == "background") {
+                playback::Frame frame;
+                if(!backend_.playback().fetchByIndex(parseIndex(input.at("index")),frame)) throw std::runtime_error("selected background frame is no longer retained");
+                if(frame.pixelFormat!=0x01080001 || frame.width==0 || frame.height==0 || frame.width>INT_MAX || frame.height>INT_MAX || frame.linePitch<frame.width || frame.height>frame.data.size()/frame.linePitch)
+                    throw std::runtime_error("background requires a valid Mono8 frame");
+                backend_.processing().setRealtimeBackgroundGray(cv::Mat(static_cast<int>(frame.height),static_cast<int>(frame.width),CV_8UC1,frame.data.data(),frame.linePitch).clone());
+                result["ok"]=true; return;
+            }
+            playback::TimestampRange timestamps{};
+            if(mode=="timestamp") {
+                if(!backend_.playback().getAvailableTimestampRange(timestamps) || first>last || first<timestamps.start || last>timestamps.end)
+                    throw std::runtime_error("requested timestamps are outside the retained range");
+            } else if(first>last || first<earliest || last>latest) throw std::runtime_error("requested frames are no longer retained; refresh the buffer range");
+            std::function<bool(const playback::Frame&)> filter;
+            if(filterEmpty) {
+                const auto config=backend_.processing().getProcessingConfig();
+                const auto roi=backend_.processing().getRealtimeRoi();
+                const auto bg=backend_.processing().getRealtimeBackgroundGrayShared();
+                filter=[&,config,roi,bg](const playback::Frame& frame){return backend_.processing().isFrameEmptyWithActiveKernel(frame,config,roi,bg);};
+            }
+            std::filesystem::path output;
+            for (unsigned i = 0; i < 10000; ++i) {
+                auto candidate = root / ("preview-buffer-" + std::to_string(i));
+                std::error_code ec;
+                if (std::filesystem::create_directory(candidate, ec)) { output = candidate; break; }
+                if (ec) throw std::runtime_error("cannot reserve output directory: " + ec.message());
+            }
+            if (output.empty()) throw std::runtime_error("cannot reserve a unique output directory");
+            // Retain any partial output and report its path on failure. Never overwrite.
+            result["output_path"] = output.string();
+            const bool ok = format == "tiff"
+                ? backend_.playback().saveFramesToDisk(output.string(), first, last, mode=="timestamp",filter)
+                : backend_.playback().saveFramesToAvi((output / "frames.avi").string(), first, last, mode=="timestamp",fps,filter);
+            if (!ok) throw std::runtime_error("buffer save failed; partial output is retained");
+            result["ok"] = true;
+        });
+        if (!idle) throw std::runtime_error("experiment must be idle before buffer save");
+    } catch (const std::exception& e) { result["error"] = e.what(); }
+    return result.dump();
+}
+BackendCommandResult BackendFacade::pulseGeneratorCommandJson(const std::string& text) {
+    const auto type = BackendCommandType::PulseGenerator;
+    if (!initialized_) return {false, type, "Backend is not initialized"};
+    if (text.size() > 4096) return {false, type, "Pulse command is too large"};
+    try {
+        const auto json = nlohmann::json::parse(text);
+        const auto action = json.at("action").get<std::string>();
+        for (const auto* key : {"baud", "data_bits", "stop_bits", "address", "channel"})
+            if (json.contains(key) && !json.at(key).is_number_integer())
+                return {false, type, "Pulse-generator integer fields must not be fractional"};
+        auto& pulse = backend_.pulseGenerator();
+        BackendCommandResult result{false, type, "Pulse command failed"};
+        auto apply = [&] {
+            if (pulse.liveViewOwned()) { result.message = "Pulse generator is owned by coordinated live view"; return; }
+            bool ok = false;
+            if (action == "connect") {
+                const auto port = json.at("port").get<std::string>();
+                services::SerialSettings settings;
+                settings.baudRate = json.value("baud", 9600);
+                settings.dataBits = json.value("data_bits", 8);
+                settings.stopBits = json.value("stop_bits", 1);
+                const auto parity = json.value("parity", std::string("N"));
+                const int address = json.value("address", 1);
+                if (port.empty() || port.size() > 512 || settings.baudRate <= 0 || settings.baudRate > 4000000 ||
+                    settings.dataBits < 5 || settings.dataBits > 8 || settings.stopBits < 1 || settings.stopBits > 2 ||
+                    (parity != "N" && parity != "E" && parity != "O") || address < 1 || address > 247) {
+                    result.message = "Invalid pulse-generator serial endpoint"; return;
+                }
+                for (int id = 0; id < services::SyringePumpService::PUMP_COUNT; ++id) {
+                    const auto pumpId = static_cast<services::SyringePumpService::PumpId>(id);
+                    const auto pumpConfig = backend_.syringePump().getConfig(pumpId);
+                    if (backend_.syringePump().isConnected(pumpId) &&
+                        services::serialbus::SerialBusManager::samePort(pumpConfig.portName,
+                                                                        port) &&
+                        pumpConfig.modbusAddress == address) {
+                        result.message = "Modbus address already claimed by a syringe pump";
+                        return;
+                    }
+                }
+                settings.parity = parity[0];
+                if (pulse.isConnected()) { result.message = "Disconnect the current pulse generator first"; return; }
+                ok = pulse.connect(port, settings, static_cast<std::uint8_t>(address));
+            } else if (action == "disconnect") {
+                pulse.disconnect(); ok = !pulse.isConnected();
+            } else {
+                const int channel = json.at("channel").get<int>();
+                if (channel < 0 || channel >= services::PulseGeneratorService::CHANNEL_COUNT) {
+                    result.message = "Invalid pulse channel"; return;
+                }
+                if (action == "frequency" || action == "duty") {
+                    const double value = json.at("value").get<double>();
+                    const double minimum = action == "frequency" ? 400.0 : 0.0;
+                    const double maximum = action == "frequency" ? 40000.0 : 100.0;
+                    if (!std::isfinite(value) || value < minimum || value > maximum) {
+                        result.message = "Pulse value is outside the supported range"; return;
+                    }
+                    ok = action == "frequency" ? pulse.setFrequency(channel, value) : pulse.setDutyCycle(channel, value);
+                } else if (action == "enable") ok = pulse.setOutputEnabled(channel, json.at("enabled").get<bool>());
+                else { result.message = "Unknown pulse action"; return; }
+            }
+            result.ok = ok;
+            result.message = ok ? "Pulse-generator command completed" : services::PulseGeneratorService::toString(pulse.lastError());
+        };
+        // Serialize configuration/actuation against experiment Start. Output-off
+        // remains available unless coordinated live view owns the generator.
+        const bool stop = action == "enable" && !json.at("enabled").get<bool>();
+        if (stop) apply();
+        else if (!backend_.experiment().withIdleConfiguration(apply)) result.message = "Experiment must be idle";
+        return result;
+    } catch (const std::exception& e) { return {false, type, e.what()}; }
+}
+std::string BackendFacade::fetchPulseGeneratorStatusJson() const {
+    if (!initialized_) return R"({"valid":false})";
+    auto& pulse = backend_.pulseGenerator();
+    const auto status = pulse.getStatus();
+    const auto config = pulse.getConfig();
+    nlohmann::json channels = nlohmann::json::array();
+    for (const auto& channel : status.channels) channels.push_back({{"frequency_hz", channel.frequencyHz}, {"duty_percent", channel.dutyPercent}, {"output_enabled", channel.outputEnabled}});
+    return nlohmann::json{{"valid", true}, {"connected", status.connected}, {"owned", pulse.liveViewOwned()},
+        {"error", services::PulseGeneratorService::toString(status.lastError)}, {"port", config.portName},
+        {"baud", config.serial.baudRate}, {"address", config.modbusAddress}, {"channels", channels}}.dump();
+}
+
+std::string BackendFacade::fetchProfileCatalogUrl(const std::string& url) { return app::fetchProfileUrl(url); }
+std::string BackendFacade::profileCommand(const std::string& base, const std::string& request) {
+    if (!isInitialized()) return R"({"ok":false,"error":"Backend is not initialized"})";
+    try {const auto q=nlohmann::json::parse(request);const auto op=q.value("operation","");if(op=="selection"||op=="list"||op=="read")return app::profileStoreCommand(backend_,base,request);}catch(const std::exception&e){return nlohmann::json{{"ok",false},{"error",e.what()}}.dump();}
+    std::string result;
+    if (!backend_.experiment().withIdleConfiguration([&] { result=app::profileStoreCommand(backend_,base,request); }))
+        return R"({"ok":false,"error":"Profiles cannot change during an experiment"})";
+    return result;
+}
+}
+
+namespace backend::bridge {
+std::string BackendFacade::setStartupDiscoveryPreferenceJson(const std::string& text) {
+    using nlohmann::json;
+    const auto refused = [](const std::string& message) {
+        return json{{"accepted", false}, {"message", message}}.dump();
+    };
+    if (!initialized_) return refused("Backend is not initialized");
+    auto& startup = backend_.startupDiscovery();
+    if (startup.cameraStepRunning() || startup.nanopositionerStepRunning())
+        return refused("Wait for the current startup discovery before changing its preference");
+    if (text.size() > 4096) return refused("Startup preference too large");
+    try {
+        const auto value = json::parse(text);
+        const auto kind = nanopositioner::parseBackendKind(value.at("backend").get<std::string>());
+        if (!kind) return refused("Unknown nanopositioner backend");
+        const auto endpoint = value.at("endpoint").get<std::string>();
+        if (endpoint.size() > 512 || endpoint.find('\0') != std::string::npos)
+            return refused("Invalid endpoint identity");
+        for (const auto* name : {"com_port", "baud", "address"})
+            if (!value.at(name).is_number_integer())
+                return refused("Serial preferences must be integers");
+        const auto port = value.at("com_port").get<std::int64_t>();
+        const auto baud = value.at("baud").get<std::int64_t>();
+        const auto address = value.at("address").get<std::int64_t>();
+        if (port < -1 || port > 65535 || baud < 1 || baud > 4000000 || address < 0 ||
+            address > 255 || (*kind == nanopositioner::BackendKind::Coremor && port < 1))
+            return refused("Invalid nanopositioner serial preference");
+        nanopositioner::Endpoint preferred;
+        preferred.backend = *kind;
+        preferred.persistentId = endpoint;
+        preferred.systemPath = endpoint;
+        preferred.coremorPort = static_cast<int>(port);
+        preferred.coremorBaudRate = static_cast<int>(baud);
+        preferred.coremorAddress = static_cast<std::uint8_t>(address);
+        if (preferred.persistentId.empty() && port > 0)
+            preferred.persistentId = preferred.systemPath = "COM" + std::to_string(port);
+        startup.setPreferredNanopositionerHook(
+            [preferred] { return std::optional<nanopositioner::Endpoint>(preferred); });
+        const json canonical{{"backend", nanopositioner::backendKindName(*kind)},
+                             {"endpoint", preferred.persistentId},
+                             {"com_port", port},
+                             {"baud", baud},
+                             {"address", address}};
+        startupPreferenceJson_ = canonical.dump();
+        return json{{"accepted", true},
+                    {"message", "Startup preference applied; no connection was made"},
+                    {"preference", canonical}}
+            .dump();
+    } catch (const std::exception& error) {
+        return refused(error.what());
+    }
+}
+
+std::string BackendFacade::runStartupDiscoveryJson(const std::string& action) {
+    using nlohmann::json;
+    if (!initialized_) return json{{"accepted", false}, {"message", "Backend is not initialized"}}.dump();
+    if (backend_.experiment().state() != app::ExperimentRunState::Idle || backend_.capture().isRunning())
+        return json{{"accepted", false}, {"message", "Stop capture and return the experiment to Idle before auto-selection"}}.dump();
+    auto& startup = backend_.startupDiscovery();
+    if (startup.isStopped() || startup.cameraStepRunning() || startup.nanopositionerStepRunning())
+        return json{{"accepted", false}, {"message", "Startup discovery is stopped or already running"}}.dump();
+    // Match Qt's queued executor: workers publish actions, the serialized
+    // bridge caller drains them. Camera selection fields are shell-thread-owned.
+    startup.setExecutor([this](std::function<void()> action) {
+        std::lock_guard<std::mutex> lock(startupActionsMutex_);
+        startupActions_.push_back(std::move(action));
+    });
+    bool accepted = false;
+    if (action == "start") { startup.start(); accepted = true; }
+    else if (action == "camera") accepted = startup.runCameraStep();
+    else if (action == "nanopositioner") accepted = startup.runNanopositionerStep();
+    else return json{{"accepted", false}, {"message", "Unknown startup action"}}.dump();
+    return json{{"accepted", accepted}, {"message", accepted ? "Auto-selection scheduled; completion is reported separately" : "Selection is already configured or action was refused"}}.dump();
+}
+std::string BackendFacade::fetchStartupDiscoveryStatusJson() const {
+    using nlohmann::json;
+    if (!initialized_) return json{{"valid", false}}.dump();
+    std::vector<std::function<void()>> actions;
+    { std::lock_guard<std::mutex> lock(startupActionsMutex_); actions.swap(startupActions_); }
+    for (auto& action : actions) action();
+    auto& startup = backend_.startupDiscovery();
+    auto job = [&](std::uint64_t id) {
+        json value{{"job_id", std::to_string(id)}, {"errors", json::array()}};
+        if (id) {
+            const auto snap = backend_.deviceDiscovery().discoverySnapshot(id);
+            value["state"] = static_cast<int>(snap.state);
+            value["complete"] = snap.complete;
+            value["candidate_count"] = snap.candidates.size();
+            for (const auto& error : snap.errors) value["errors"].push_back(error.message);
+        }
+        return value;
+    };
+    return json{{"valid", true},
+                {"camera_running", startup.cameraStepRunning()},
+                {"nanopositioner_running", startup.nanopositionerStepRunning()},
+                {"camera_configured", backend_.isCameraConfigured()},
+                {"nanopositioner_connected", backend_.autofocus().isConnected()},
+                {"preference", json::parse(startupPreferenceJson_)},
+                {"camera", job(startup.cameraJobId())},
+                {"nanopositioner", job(startup.nanopositionerJobId())}}
+        .dump();
+}
+}
+
+namespace backend::bridge {
+BackendCommandResult BackendFacade::closeReview() {
+    BackendCommandResult result{false, BackendCommandType::RecordingLoad, "Experiment must be idle before closing review data"};
+    if (!initialized_) return {false, BackendCommandType::RecordingLoad, "Backend is not initialized"};
+    backend_.experiment().withIdleConfiguration([&] {
+        if (backend_.isFrameRecording()) { result.message = "Stop raw recording before closing review data"; return; }
+        backend_.hdf5().closeFile();
+        std::scoped_lock lock(reviewMutex_);
+        loadedRecordingPath_.clear(); reviewMetricsLoaded_ = false;
+        reviewValidMeta_.clear(); reviewInvalidMeta_.clear();
+        result = {true, BackendCommandType::RecordingLoad, "Review file closed"};
+    });
+    return result;
+}
+BackendCommandResult BackendFacade::backgroundCalibrationCommandJson(const std::string& text) {
+    const auto type = BackendCommandType::ProcessingSettings;
+    if (!initialized_) return {false, type, "Backend is not initialized"};
+    if (text.size() > 4096) return {false, type, "Calibration request too large"};
+    try {
+        const auto json = nlohmann::json::parse(text);
+        const auto action = json.at("action").get<std::string>();
+        if (action == "cancel") {backend_.processing().cancelBackgroundCalibration(); return {true, type, "Calibration cancellation requested"};}
+        if (action != "start") return {false, type, "Unknown calibration action"};
+        for (const auto* key : {"required_accepted", "max_attempts", "timeout_ms"})
+            if (!json.at(key).is_number_integer())
+                return {false, type, "Calibration counts and timeout must be integers"};
+        const auto accepted = json.at("required_accepted").get<std::int64_t>();
+        const auto attempts = json.at("max_attempts").get<std::int64_t>();
+        const auto timeout = json.at("timeout_ms").get<std::int64_t>();
+        if (accepted < 1 || accepted > 100000 || attempts < accepted || attempts > 1000000 || timeout < 1 || timeout > 600000)
+            return {false, type, "Calibration bounds invalid (accepted <= 100000, attempts <= 1000000, timeout <= 600000 ms)"};
+        services::ProcessingService::BackgroundCalibrationRequest request;
+        request.requiredAccepted = static_cast<std::uint32_t>(accepted);
+        request.maxAttempts = static_cast<std::uint32_t>(attempts);
+        request.timeoutMs = static_cast<std::uint64_t>(timeout);
+        BackendCommandResult result{false, type, "Experiment must be idle for background calibration"};
+        backend_.experiment().withIdleConfiguration([&] {
+            // PL science: no host frame is classified; median of preview frames.
+            result.ok = app::hostProcessingAvailable()
+                            ? backend_.processing().startBackgroundCalibration(request, &result.message)
+                            : backend_.processing().startPreviewBackgroundCalibration(backend_.getFrameStore(),
+                                                                                      request, &result.message);
+            if (result.ok) result.message = "Background calibration started; previous background remains active until success";
+        });
+        return result;
+    } catch (const std::exception& error) {return {false, type, error.what()};}
+}
+std::string BackendFacade::fetchBackgroundCalibrationStatusJson() const {
+    if (!initialized_) return R"({"valid":false})";
+    const auto status = backend_.processing().backgroundCalibrationStatus();
+    static constexpr const char* names[] = {"idle", "running", "succeeded", "failed_insufficient", "failed_timeout", "failed_processing", "cancelled"};
+    return nlohmann::json{{"valid", true}, {"state", names[static_cast<int>(status.state)]},
+        {"operation_generation", std::to_string(status.operationGeneration)}, {"frozen_config_version", std::to_string(status.frozenConfigVersion)},
+        {"attempted", status.attempted}, {"accepted", status.accepted}, {"rejected_non_empty", status.rejectedNonEmpty},
+        {"rejected_processing_failed", status.rejectedProcessingFailed}, {"published_background_generation", std::to_string(status.publishedBackgroundGeneration)},
+        {"published_sha256", status.publishedSha256}, {"message", status.message}}.dump();
+}
+}
+
+namespace backend::bridge {
+void BackendFacade::setProcessedPreviewEnabled(bool enabled) {
+    if (initialized_) backend_.processing().setProcessedPreviewEnabled(enabled);
+}
+std::vector<std::uint8_t> BackendFacade::fetchProcessedPreviewPacket() const {
+    using nlohmann::json;
+    services::ProcessingService::RealtimeSnapshot snap;
+    json meta{{"valid", false}, {"image_bytes", 0}, {"mask_bytes", 0}};
+    cv::Mat pixels, mask;
+    if (initialized_ && backend_.processing().getLatestSnapshot(snap) &&
+        !snap.originalImage.empty() && snap.originalImage.type() == CV_8UC1 &&
+        snap.mask.type() == CV_8UC1 && snap.mask.size() == snap.originalImage.size() &&
+        snap.originalImage.total() <= 32 * 1024 * 1024 && !snap.recipeSha256.empty()) {
+        pixels =
+            snap.originalImage.isContinuous() ? snap.originalImage : snap.originalImage.clone();
+        mask = snap.mask.isContinuous() ? snap.mask : snap.mask.clone();
+        json contours = json::array();
+        std::size_t remaining = 20000;
+        bool truncated = false;
+        for (const auto& contour : snap.contours) {
+            if (contours.size() >= 512 || contour.size() > remaining) {
+                truncated = true;
+                break;
+            }
+            json points = json::array();
+            for (const auto& point : contour)
+                points.push_back({point.x, point.y});
+            remaining -= contour.size();
+            contours.push_back(std::move(points));
+        }
+        const auto currentCapture = backend_.capture().lifecycleSnapshot();
+        meta = {{"valid", true},
+                {"image_bytes", pixels.total()},
+                {"mask_bytes", mask.total()},
+                {"width", pixels.cols},
+                {"height", pixels.rows},
+                {"source", "live_processing"},
+                {"frame_index", std::to_string(snap.index)},
+                {"source_timestamp", std::to_string(snap.sourceTimestamp)},
+                {"source_timestamp_unit", "source_native_unknown"},
+                {"host_timestamp_us", std::to_string(snap.hostTimestampUs)},
+                {"processing_session", std::to_string(snap.processingSession)},
+                {"store_generation", std::to_string(snap.storeGeneration)},
+                {"capture_session", std::to_string(snap.captureSession)},
+                {"capture_stale",
+                 snap.captureSession != 0 && (snap.captureSession != currentCapture.generation ||
+                                              !currentCapture.isActive())},
+                {"recipe_sha256", snap.recipeSha256},
+                {"recipe_scope", "processing_parameters_roi_background"},
+                {"roi", {snap.roi.x, snap.roi.y, snap.roi.w, snap.roi.h}},
+                {"contours", contours},
+                {"contours_truncated", truncated},
+                {"primary_bounds",
+                 {snap.primaryBounds.x, snap.primaryBounds.y, snap.primaryBounds.width,
+                  snap.primaryBounds.height}},
+                {"primary_object_valid", snap.validation.isValid},
+                {"primary_object_target", snap.validation.isTargetGroup}};
+    }
+    const auto text = meta.dump();
+    const auto count = static_cast<std::uint32_t>(text.size());
+    std::vector<std::uint8_t> packet{'M', 'I', 'P', 'O', 1, 0, 0, 0};
+    for (int i = 0; i < 4; ++i)
+        packet.push_back(static_cast<std::uint8_t>(count >> (8 * i)));
+    packet.insert(packet.end(), text.begin(), text.end());
+    if (!pixels.empty()) packet.insert(packet.end(), pixels.data, pixels.data + pixels.total());
+    if (!mask.empty()) packet.insert(packet.end(), mask.data, mask.data + mask.total());
+    return packet;
+}
+} // namespace backend::bridge
+namespace backend::bridge {
+std::string BackendFacade::processingCoreCommand(const std::string& root, const std::string& request) {
+ if(!isInitialized())return R"({"ok":false,"error":"Backend is not initialized"})";
+ try{if(nlohmann::json::parse(request).value("operation","")=="info")return app::processingCoreCommand(backend_,root,request);}catch(const std::exception&e){return nlohmann::json{{"ok",false},{"error",e.what()}}.dump();}
+ std::string result;
+ if(!backend_.experiment().withIdleConfiguration([&]{result=app::processingCoreCommand(backend_,root,request);}))return R"({"ok":false,"error":"Stop the experiment before core changes"})";
+ return result;
+}
+}
+
+namespace backend::bridge {
+BackendCommandResult BackendFacade::acknowledgeExperimentFault(std::uint64_t expectedRun,
+                                                               std::uint64_t faultRevision,
+                                                               const std::string& code,
+                                                               const std::string& message,
+                                                               bool confirmed) {
+    BackendCommandResult result{false, BackendCommandType::Experiment,
+                                "Explicit operator acknowledgment is required"};
+    if (!initialized_) {
+        result.message = "Backend is not initialized";
+        return result;
+    }
+    if (!confirmed) return result;
+    result.ok = backend_.experiment().acknowledgeFault(expectedRun, faultRevision, code, message,
+                                                       result.message);
+    if (result.ok)
+        result.message = "Fault acknowledged; readiness must pass again. Failed output was not "
+                         "repaired or deleted.";
+    return result;
+}
+} // namespace backend::bridge
+
+namespace backend::bridge {
+std::string BackendFacade::fetchCaptureLifecycleJson() const {
+    if (!initialized_) return R"({"valid":false})";
+    const auto value = backend_.capture().lifecycleSnapshot();
+    return nlohmann::json{{"valid", true},
+                          {"state", services::toString(value.state)},
+                          {"generation", std::to_string(value.generation)},
+                          {"camera_ready", value.cameraReady},
+                          {"failure", services::toString(value.lastFailure)},
+                          {"message", value.lastFailureMessage},
+                          {"failure_generation", std::to_string(value.lastFailureGeneration)}}
+        .dump();
+}
 } // namespace backend::bridge

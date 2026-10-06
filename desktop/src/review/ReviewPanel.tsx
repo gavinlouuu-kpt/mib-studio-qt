@@ -20,7 +20,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import { open, save } from "@tauri-apps/plugin-dialog";
 import type { FramePacket } from "../framePacket";
 import type { FramePullScheduler } from "../framePullScheduler";
-import { REVIEW_OPERATION_KINDS } from "../bridgeContract";
+import { REVIEW_OPERATION_KINDS } from "./reviewContract";
 import { ChartsView } from "./charts/ChartsView";
 import { gatherChartInputs, renderChartPngs, stageCharts, type ChartViewState } from "./charts/chartExport";
 import { JobDialog, SeriesPrompt } from "./exports/ExportDialogs";

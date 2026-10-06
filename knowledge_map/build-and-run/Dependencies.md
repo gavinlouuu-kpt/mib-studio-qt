@@ -24,6 +24,7 @@ directly and simulates driver calls without connecting hardware.
 | onnxruntime | 1.18.1 | | Optional in Linux cloud builds; when unavailable the build uses `YoloService.stub.cpp` and disables YOLO runtime features while keeping the rest of the app buildable — [[../services/YoloService]] |
 | nlohmann_json | 3.11.3 | | Config parsing / serialization |
 | openssl (libcrypto) | system | ✓ | Linux desktop builds only (`find_package(OpenSSL REQUIRED)` under `UNIX AND NOT APPLE`): Ed25519 detached-signature verification for native processing cores. Optional for the Qt-less wheel configure, whose verifier then fails closed. |
+| aravis | 0.9.3 (`aravis-0.10`) | ✓ | Optional Qt-free camera consumer; enabled only with `MIB_ENABLE_ARAVIS=ON`, source/build pin in `env/aravis.toml` |
 
 ## Vendored / checked-in
 
@@ -78,7 +79,10 @@ directly and simulates driver calls without connecting hardware.
   - Desktop and backend-only presets set `MIB_ENABLE_MINDVISION=ON`; Linux CI
     provisions the pinned SDK before configure.
   - Processing-only builds remain SDK-free so portable processing artifacts
-    do not acquire camera dependencies.
+  do not acquire camera dependencies.
+- Aravis linkage is gated separately by `MIB_ENABLE_ARAVIS`; missing
+  `aravis-0.10 >= 0.9.3` fails an explicitly enabled non-processing build,
+  while default and processing-only builds do not search for it.
 - `QtNetwork` is linked by the backend library so `AppBackend` can manage the
   Young's modulus LUT manifest/cache directly during startup.
 
@@ -136,6 +140,12 @@ container WebKitGTK workarounds (`WEBKIT_DISABLE_DMABUF_RENDERER=1`,
 - [[Build]] for presets and commands.
 - `docs/howto/runtime-deploy.md` for runtime deployment details.
 
+## Profile registry (#398)
+
+No new C++ dependency: registry sources reuse nlohmann JSON, SQLite and the
+shared SHA-256 already in `mib_backend`. The PostgreSQL policy tests need Node
+(`.nvmrc`) and the pinned PGlite dev dependency in `supabase/package-lock.json`;
+commands are in [[Build]].
 
 ### Independent nanopositioner support (2026-09-15)
 

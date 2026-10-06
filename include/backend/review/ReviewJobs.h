@@ -1,5 +1,5 @@
 // Review jobs — the long-running work behind the review surface (plan
-// 2026-10-01-standalone-review-app, ADR 0008): metrics / full / batch
+// 2026-10-01-standalone-review-app, ADR 0014): metrics / full / batch
 // exports over HdfExportService, mask regeneration over
 // ProcessingService::processBatch, the full-run KDE core contour and the
 // review density estimate. Qt-free; lives in mib_review_core.

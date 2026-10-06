@@ -24,12 +24,20 @@
         "auto_background_enabled": false,
         "auto_background_empty_frames": 30,
         "auto_background_cooldown_frames": 1000,
+        "auto_roi_from_background": false,
+        "auto_roi_wall_gradient_ratio": 2.5,
+        "auto_roi_wall_margin": 1,
+        "laplacian_variance_min": 0.0,
+        "laplacian_variance_max": 0.0,
+        "min_cell_area_px": 250,
+        "laplacian_kernel_size": 3,
         "filters": {
             "enable_area_range_check": true,
             "enable_border_check": true,
             "enable_area_ratio_check": false,
             "enable_deformability_range_check": true,
             "enable_ring_ratio_check": true,
+            "enable_laplacian_variance_check": false,
             "enable_multiple_contours_check": true,
             "require_single_inner_contour": true
         },
@@ -73,5 +81,24 @@
     "display_fps": 60,
     "safe_shutdown_voltage": 0.0,
     "focus_direction": true,
-    "pixel_to_micron_factor": 0.4886
+    "pixel_to_micron_factor": 0.4886,
+    "dot_grid": {
+        "enabled": false,
+        "interval_ms": 250,
+        "um_per_px_hint": 0.0,
+        "min_votes": 3,
+        "min_agreement": 0.9,
+        "registry_path": "",
+        "codebook_path": "",
+        "codebook": {
+            "seed": 7,
+            "columns": 3700,
+            "rows": 3700,
+            "pitch_um": 30.0,
+            "dot_diameter_um": 12.0,
+            "displacement_um": 5.0,
+            "origin_x_um": 0.0,
+            "origin_y_um": 0.0
+        }
+    }
 }

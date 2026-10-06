@@ -23,6 +23,14 @@ option(MIB_ENABLE_MINDVISION
     "Enable MindVision camera SDK integration (requires the platform SDK)"
     ${MIB_ENABLE_MINDVISION_DEFAULT})
 
+option(MIB_ENABLE_ARAVIS
+    "Enable the optional Qt-free Aravis camera consumer (requires aravis-0.10)"
+    OFF)
+
+option(MIB_PL_SCIENCE
+    "Per-frame science runs on the instrument's PL (YOFO Studio ADR 0008): the host processing pipeline is refused"
+    OFF)
+
 option(MIB_BUILD_BACKEND_ONLY
     "Build only backend targets (no frontend executables)"
     OFF)
@@ -42,6 +50,10 @@ option(MIB_BUILD_OEABT_TOOLS
     "Build the oeabtctl serial diagnostic and hardware acceptance tool"
     ON)
 
+option(MIB_BUILD_STAGE_TOOLS
+    "Build the zc300ctl motorized-stage diagnostic tool"
+    ON)
+
 option(MIB_BUILD_PYTHON_BINDINGS
     "Build the pybind11 Python bindings for mib_processing (bindings/python/)"
     OFF)
@@ -50,7 +62,7 @@ option(MIB_BUILD_PROCESSING_ONLY
     "Configure only the Qt-free mib_processing target and Python bindings"
     OFF)
 
-# YOFO Review (ADR 0008): a tiny executable linking mib_review_core whose
+# YOFO Review (ADR 0014): a tiny executable linking mib_review_core whose
 # CMake-resolved link line tools/gen_review_link_manifest.py turns into the
 # Rust bridge's link manifest on macOS / Windows (*-review-core presets).
 option(MIB_BUILD_REVIEW_LINK_PROBE

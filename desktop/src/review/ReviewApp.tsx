@@ -1,5 +1,5 @@
 // YOFO Review — the standalone review product (plan
-// 2026-10-01-standalone-review-app, ADR 0008). Mounted by `review.html` /
+// 2026-10-01-standalone-review-app, ADR 0014). Mounted by `review.html` /
 // `main.tsx`; MIB Studio mounts the same `ReviewPanel` in its Review tab.
 //
 // This shell owns what the panel does not: backend initialization, the
@@ -11,7 +11,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
 import { bridge } from "../bridge";
-import { BRIDGE_ABI_VERSION } from "../bridgeContract";
+import { REVIEW_ABI_VERSION } from "./reviewContract";
 import { FramePullScheduler } from "../framePullScheduler";
 import { ReviewPanel, type ReviewPanelHandle } from "./ReviewPanel";
 import { reviewBridge, type ReviewInfo } from "./reviewBridge";
@@ -156,7 +156,7 @@ export default function ReviewApp() {
       .abiVersion()
       .then((v) => {
         setAbi(v);
-        if (v < BRIDGE_ABI_VERSION) append(`bridge ABI ${v} is older than the UI contract (${BRIDGE_ABI_VERSION})`);
+        if (v < REVIEW_ABI_VERSION) append(`review bridge ABI ${v} is older than the UI contract (${REVIEW_ABI_VERSION})`);
       })
       .catch((e) => append(`abi error: ${e}`));
     (async () => {
@@ -302,7 +302,7 @@ export default function ReviewApp() {
             <p>
               Reviews HDF5 files recorded by MIB Studio.
               <br />
-              Bridge ABI version: {abi ?? "unknown"} · backend {ready ? "initialized" : "not initialized"}.
+              Review bridge ABI version: {abi ?? "unknown"} · backend {ready ? "initialized" : "not initialized"}.
             </p>
             <div className="actions">
               <button className="btn" onClick={() => setShowAbout(false)}>Close</button>

@@ -1,5 +1,5 @@
 //! Review bridge: `cxx` FFI over `backend::review::ReviewSession` (plan
-//! 2026-10-01-standalone-review-app, ADR 0008).
+//! 2026-10-01-standalone-review-app, ADR 0014).
 //!
 //! This is the one review surface every React shell uses — MIB Studio's
 //! Review tab and the whole YOFO Review window. It is a separate bridge
@@ -214,8 +214,8 @@ pub mod review_ffi {
 
         fn new_review_bridge() -> UniquePtr<ReviewBridge>;
 
-        /// Same number as `bridge_abi_version()`; both bridges share the
-        /// contract document.
+        /// `review-contract.json` `review_abi_version` (ADR 0014); independent
+        /// of the backend bridge's `bridge_abi_version()`.
         fn review_bridge_abi_version() -> u32;
 
         /// Test fixture (never a Tauri command): writes a small experiment

@@ -6,7 +6,7 @@
 
 **Source:** `crates/mib-bridge/` (`src/lib.rs`, `src/shim.h`, `src/shim.cpp`,
 `build.rs`, `tests/contract.rs`); review bridge `src/review_bridge.rs`,
-`src/review_shim.{h,cpp}`, `tests/review_bridge.rs` (ADR 0008)
+`src/review_shim.{h,cpp}`, `tests/review_bridge.rs` (ADR 0014)
 **Backend seam:** `include/backend/app/BackendFacade.h`,
 `src/backend/app/BackendFacade.cpp`
 **Decision:** [`docs/decisions/0003-rust-cxx-bridge.md`](../../docs/decisions/0003-rust-cxx-bridge.md)
@@ -90,6 +90,26 @@ Rust owns an opaque `BackendBridge` (`UniquePtr`) that composes an `AppBackend`
   `discovery_identity_strengths`, `discovery_identification_statuses`,
   `discovery_error_kinds`. Windows `cargo test` against the `windows-ninja`
   tree uses `tools/gen_bridge_link_manifest_ninja.py`.
+- **Central profile registry (v25, #398):** `registry_sign_in(email,
+  password)`, `registry_sign_out()`, `registry_refresh()`,
+  `registry_download(revision_id)` → job ID (0 = refused),
+  `registry_cancel_all()`, `fetch_registry_snapshot()` →
+  `BridgeRegistrySnapshot` (session, connectivity, projects, cached
+  revisions with `central_state`, corrupt IDs, last job; never a token or
+  password), `fetch_registry_job(job_id)`. New contract groups:
+  `registry_session_states`, `registry_connectivity`, `registry_job_kinds`
+  (`Materialize` = 4 and `RecordValidation` = 5 appended for #398 M2 before
+  the registry ABI was released; no bridge command enqueues them yet),
+  `registry_job_states`, `registry_central_states`. **Transport seam (ADR
+  0002 addendum):** the shell installs its HTTPS POST with
+  `set_registry_transport(fn(&BridgeHttpRequest) -> BridgeHttpResponse)`
+  *before* `initialize` (refused afterwards). Each request carries a
+  `cancel_handle`; the transport polls the free function
+  `registry_request_cancelled(handle)` and returns status 0 once it is true
+  (registry cancel or backend shutdown). Response bodies cross as bytes, and
+  every snapshot/job conversion catches exceptions so non-UTF-8 text can
+  never cross the FFI. The Rust test transports are plain `fn`s reporting
+  through statics (a `fn` pointer cannot capture).
 - **Camera selection (v7, BE-2):** `fetch_camera_selection` (authoritative
   snapshot incl. mock params, applied script/config paths,
   configured/running), `select_hardware_camera`,
@@ -267,6 +287,11 @@ terminal event, file reloads), `rust_enums_match_contract_json`.
 
 ### OEABT link dependencies
 
+Since #464 slice 3 the backend links the Z-stage archives too: the bridge
+links `stage_zc300` and `stage_zc300_protocol` between the backend/processing
+archives and the OEABT ones, and the Windows manifest path marks them static
+(`crates/mib-bridge/build.rs`). `SerialBus.cpp` lives in `oeabt_serial`.
+
 The Linux bridge links `oeabt_serial` and then `oeabt_core` from
 `<build-dir>` (the CMake archive output directory), after the backend/processing archives. These contain
 both the nanopositioner protocol and the shared native serial transport. The
@@ -275,13 +300,150 @@ for relinking. Windows uses the CMake-generated dependency manifest and marks
 the OEABT libraries as static. Missing these dependencies produces undefined
 SerialTransport/ControllerSession and platform serial symbols in bridge CI.
 
-## Review bridge (ABI 15, ADR 0008)
+## Checked processing document seam
+
+`BackendFacade::fetchConfigDocument` / `applyConfigDocument` provide required
+SHA256 baselines and separate saved/applied/verified/conflict outcomes for
+image-processing patches; see [[task/2026-09-23-tauri-config-transactions]].
+
+
+## ABI 15: checked config and shared exports
+
+Additive `fetch_config_document` and `apply_config_document` carry typed
+snapshot/result structs (required SHA256 baseline; 4 MiB documents, 64 KiB
+image_processing-only patches). Outcomes saved/applied/verified/conflict are
+independent. The facade owns lifecycle serialization and durable replacement.
+Only effective processing fields update runtime provenance: selecting a saved
+file does not claim its other device/ROI settings were applied.
+
+Shared exporter request/status JSON is carried through the cxx/Tauri bridge;
+operation identity and counters remain decimal strings. The previous CSV entry
+point delegates to the same HdfExportService. Terminal status is retained for
+reconciliation even if operation events are missed. Full general resnapshot,
+frame source/session/config identities and native cross-shell acceptance remain
+open; this addition does not close #372/#246.
+
+ABI 16 adds preview-buffer range/save JSON. Latest-frame facade pulls now fetch
+the exact queried committed index, never a later frame under an earlier label;
+concurrent frame-identity stress regression covers index/timestamp/pixel agreement.
+
+### Typed hardware and acquisition pulse controls (2026-09-23)
+
+The additive `autofocus_connect_endpoint` command preserves an explicit OEABT/CoreMOR
+backend and persistent endpoint ID; status carries the actual connected backend and
+endpoint. Legacy numeric COM commands remain compatible. The facade rejects missing
+identity and ambiguous `auto` connections before opening a driver.
+
+`pulse_generator_command` and `pulse_generator_status` route through BackendFacade
+and the existing PulseGeneratorService, not a second serial implementation. Commands
+validate serial settings, address, channel and numeric ranges before driver access.
+Configuration/output-on serialize against experiment Start with `withIdleConfiguration`;
+output-off remains possible while an experiment runs unless coordinated live view owns
+the generator. Status preserves that ownership so manual controls cannot steal it.
+
+`startup_discovery_run(start|camera|nanopositioner)` schedules the shared startup policy;
+`startup_discovery_status` drains its queued completion actions on the serialized bridge
+caller before reporting running flags, selected state and bounded per-job errors. The
+status call is therefore also the startup event-pump tick, not a passive hardware read.
+Shutdown stops the coordinator and drains discovery workers before facade destruction.
+
+`set_processed_preview_enabled` opts into immutable source retention;
+`fetch_processed_preview` returns an atomic binary MIPO envelope (magic, LE u32 version,
+LE u32 JSON byte length, UTF-8 JSON, tightly packed Mono8 source, tightly packed mask).
+The TS decoder validates envelope/geometry/lengths/contour budgets and canonical exact
+u64 identities before drawing. It reports unavailable snapshots without stale bytes.
+
+## Remembered discovery and named pump endpoints (2026-09-23)
+
+Startup selection now installs validated, per-user remembered vendor/endpoint/baud/address preferences into the shared startup coordinator before optional automatic selection. Malformed persistence skips automatic selection; failed persistence is distinguished from a session-only applied preference. Preference changes do not connect hardware.
+
+Pump connections accept system serial names (including Linux paths), reusing the existing shared SerialBus string transport. Status exposes the actual port name; legacy Qt config edits preserve connected transport identity. Two pumps can share a bus at distinct slave addresses, while duplicate pump/pulse slave identities and autofocus port collisions are refused before connection writes. Legacy numeric COM bridge calls remain supported. Native fake-serial tests cover named endpoint roundtrip and shared-bus identity guards; real hardware acceptance remains deferred.
+
+### Windows manifest XML decoding
+
+The VS link-manifest reader decodes XML entities before splitting MSBuild semicolon lists, including per-source include paths. This preserves quoted version/signer macros and ampersands in dependency paths instead of turning entity terminators into invalid linker/compiler arguments. Portable CLI regression: `python3 tools/test_gen_bridge_link_manifest.py` exercises dependency paths, compile macros, inherited-list filtering and Release-only include selection without requiring Windows.
+
+The Windows candidate CI runs the portable escaped-XML manifest regression before
+provisioning native dependencies.
+
+Windows regression fixtures canonicalize temporary paths before comparison,
+matching the generator when RUNNER~1 and runneradmin name the same directory.
+
+## ABI 20: Camera & Alignment (2026-10-01)
+
+`set_camera_overview(overview)`, `save_camera_roi(x, y, w, h)` and
+`fetch_camera_geometry() -> JSON` expose the Qt Overview-tab workflow to every
+shell: the whole sensor is shown, the experiment window (ROI 1, sensor
+coordinates) is placed on it and saved, and Experiment acquires that window.
+They go through `BackendFacade` camera actions `SetCameraOverview` (restarts a
+capture that was running) and `SaveCameraRoi`, and `fetchCameraGeometryJson`.
+MindVision keeps its profile-based overview; Aravis cameras gained one (see
+[[AppBackend]]). `crates/mib-bridge/tests/contract.rs`
+`camera_alignment_commands_without_overview_camera` covers a camera without
+an overview (mock).
+
+## ABI 21: science on the PL (2026-10-01)
+
+`fetch_platform_info() -> {science: host|pl, host_processing, aravis}`.
+With `MIB_PL_SCIENCE` (the `linux-armv7-yocto` preset) or `MIB_PL_SCIENCE=1`
+in the environment, `backend::app::hostProcessingAvailable()` is false:
+`ProcessingService::setRealtimeEnabled(true)` is refused and `startRealtime`
+is a no-op, `apply_processing` with realtime on fails with the reason,
+experiment start does not start the host pipeline, and the readiness gates
+`processing.*` are replaced by `science.pl` (Warn until the record path B3
+connects the PL's results). Test: `backend.pl_science`.
+
+## ABI 22: pump models (2026-10-04)
+
+`pump_connect_model(pump, model, port_name, baud_rate, modbus_address,
+microliters_per_rev)` connects a Sample or Sheath slot to a contract
+`pump_models` device: 0 Longer dLSP syringe, 1 Tushui peristaltic.
+`BridgePumpStatus` gains `model`, `microliters_per_rev` and `speed_rpm`.
+`BackendFacade` validates the model and a calibration in (0, 100000] µL/rev;
+the peristaltic semantics are in [[../services/SyringePumpService]]. The old
+`pump_connect_endpoint` / `pump_connect` stay and connect a dLSP. Test:
+`contract.rs` `pump_commands_fail_safely_without_hardware`.
+
+## ABI 23: one contract for develop and the instrument (2026-10-05)
+
+ADR 0011's single renumber. `develop` was at 19 and the instrument line at
+20 (Camera & Alignment), 21 (`fetch_platform_info`) and 22 (pump models). The
+merged contract is all of them, so it takes a number no earlier build has
+carried. It adds no commands of its own. The #398 profile-registry stack
+takes 25 (24 went to #501 P0).
+
+## ABI 24: PZ7035 status and capabilities (#501 P0a, 2026-10-05)
+
+- `fetch_platform_info` gains `capabilities`: instrument (desktop or
+  pz7035), the MIB-only surfaces, `pl_identity`, `led_strobe`, align and run
+  mode, and the pump model, port, per-slot address (Sample 3, Sheath 4) and
+  µL/rev.
+- `fetch_instrument_status` returns the read-only `PzPlatformMonitor` sample:
+  - the PL core against the expected core and the pinned weights;
+  - LED preset and guard;
+  - link rates;
+  - latency.
+
+  `available: false` with the reason off the PZ7035. Test: `contract.rs`
+  `platform_capabilities_and_instrument_status_on_the_desktop`.
+- `yofo-studio-server` serves `GET /auth` (200/401 JSON) so the browser can
+  prompt for the token (test `auth_probe_reports_the_token_without_a_socket`).
+- 25 is reserved for the #398 profile-registry stack, 26 for #501 P1.
+
+**Bulk byte copies.** C++ fills every `Vec<u8>` it returns (frame packets,
+processed previews, review overlays) through the Rust function
+`bytes_to_vec(&[u8])`, one FFI call and one memcpy. `rust::Vec::push_back`
+crosses the bridge per element: a 509 KB full-field frame took ~75 ms on the
+PZ7035's Cortex-A9 that way (88 ms per pull, ~10 fps in the browser; now
+27 ms per pull, display ~26 fps = all delivered images).
+
+## Review bridge (YOFO Review, review contract v1, ADR 0014)
 
 A second `#[cxx::bridge]` module, `review_ffi` (namespace
 `mib_review_bridge`), wraps [[../services/ReviewSession]] as an opaque
-`ReviewBridge`. It is the one review surface every React shell uses (MIB
-Studio's Review tab and the whole YOFO Review window) and is deliberately
-separate from `ffi::BackendBridge`:
+`ReviewBridge`. It is YOFO Review's whole backend surface and is deliberately
+separate from `ffi::BackendBridge`; MIB Studio's Review tab does not use it
+(it keeps the facade's review commands, ADR 0014 decision A):
 
 - **Link set.** `review_shim.cpp` includes only `backend/review/*`,
   `Hdf5Service.h` and `KdeCoreRecord.h`, so it links `mib_review_core` +
@@ -289,7 +451,7 @@ separate from `ffi::BackendBridge`:
   bridge (`build.rs`: `bridge_sources()` / `shim_sources()` /
   `archives()`), and the YOFO Review binary carries no `AppBackend`
   (`review-ci.yml` checks `nm` for `backend::AppBackend`). Without the
-  feature both bridges compile and a MIB Studio shell holds one of each.
+  feature both bridges compile (the review tests run in both configurations).
 - **Calls:** `review_open/close`, `set_fallback_pixel_to_micron`,
   `fetch_review_info` (counts, ROI, datasets, series, multi-image window,
   accounting + summary text, recorded factor, KDE JSON, recorded
@@ -307,16 +469,23 @@ separate from `ffi::BackendBridge`:
   `review_compute_core` + `fetch_review_computed_core_json`,
   `review_request_density` + `fetch_review_density` (contract
   `review_density` constants), `review_jobs_busy`,
-  `review_bridge_abi_version()` (same number as `bridge_abi_version()`),
+  `review_bridge_abi_version()` (`review-contract.json` `review_abi_version`,
+  independent of `bridge_abi_version()`),
   and the fixtures `review_fixture_write_experiment(path)` and
   `review_fixture_write_population(path, cells, seed)` (two seeded
   populations for the Charts view; `examples/review_fixture --population N`).
-- **Contract.** `bridge-contract.json` 15 adds `overlay_modes`,
+- **Contract.** YOFO Review has its own versioned contract,
+  `contract/review-contract.json` (`review_abi_version` 1), so the shared
+  `bridge-contract.json` is never touched for it: `overlay_modes`,
   `review_density` (incl. `ramp_rgb`, checked against `MonitoringDensity.h`
-  `kStops` by the generator),
-  `review_pixel_formats`, `review_operation_kinds`, frame-packet pull kinds
-  `review_thumbnails` (5) / `review_series` (6) and the `pixel_formats`
-  table; `review_shim.cpp` pins the enums with `static_assert`s;
+  `kStops` by the generator), `review_pixel_formats`,
+  `review_operation_kinds`, `review_regenerate_sources`, and the review
+  frame packets (the bridge contract's header with pull kinds `review` (3),
+  `review_thumbnails` (5), `review_series` (6), RGB8 and zero capture
+  identities). `scripts/gen_bridge_contract.py` renders it to
+  `desktop/src/review/reviewContract.ts` and
+  `desktop/src-tauri/src/review_packet_contract.rs` (same `--check` gate);
+  `review_shim.cpp` pins the enums with `static_assert`s;
   `tests/review_bridge.rs` runs in both feature configurations;
   `tests/contract.rs` is `#![cfg(not(feature = "review-only"))]`.
 - **Tauri:** chart snapshots reach the jobs over the raw IPC body, not
@@ -325,7 +494,9 @@ separate from `ffi::BackendBridge`:
   `review_clear_charts`; `review_export_all` / `review_export_charts` take
   the staged set. `review_list_dir(dir)` lists file names for the shell's
   default export names.
-- **Tauri:** `desktop/src-tauri/src/review.rs` exposes the commands;
-  `frame_packet.rs` now encodes a bridge-neutral `Frame` (RGB8 allowed,
-  stride = width × bytes/pixel). `desktop/src/review/reviewBridge.ts` is the
-  TypeScript client.
+- **Tauri:** `desktop/src-tauri/src/review.rs` exposes the commands to
+  YOFO Review's binary (`review_app.rs`); `review_packet.rs` /
+  `desktop/src/review/reviewPacket.ts` encode and decode its packets (RGB8
+  allowed, stride = width × bytes/pixel), leaving MIB Studio's
+  `frame_packet.rs` / `framePacket.ts` as develop has them.
+  `desktop/src/review/reviewBridge.ts` is the TypeScript client.

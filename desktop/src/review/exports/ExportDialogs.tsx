@@ -4,7 +4,7 @@
 // QProgressDialog and series QMessageBox.
 import { useState } from "react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { REVIEW_OPERATION_KINDS } from "../../bridgeContract";
+import { REVIEW_OPERATION_KINDS } from "../reviewContract";
 import { batchSummaryText, parseBatchSummary, parseSeriesRange, type SeriesChoice } from "./exportHelpers";
 import type { TrackedJob } from "./useReviewJobs";
 

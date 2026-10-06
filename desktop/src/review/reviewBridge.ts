@@ -1,12 +1,13 @@
 // Typed client for the review bridge commands (src-tauri/src/review.rs;
-// ADR 0008, plan 2026-10-01-standalone-review-app). The one review surface
+// ADR 0014, plan 2026-10-01-standalone-review-app). The one review surface
 // for both products: MIB Studio's Review tab and YOFO Review call these and
 // nothing else for review. Images arrive as binary frame packets (Mono8 or
 // RGB8 when the backend composed an overlay / ROI); everything else is
 // lossless JSON (u64 as decimal strings).
 import { invoke } from "@tauri-apps/api/core";
-import { FRAME_PACKET, REVIEW_PIXEL_FORMATS } from "../bridgeContract";
-import { decodeFramePacket, decimalU64, type FramePacket } from "../framePacket";
+import { REVIEW_FRAME_PACKET, REVIEW_PIXEL_FORMATS } from "./reviewContract";
+import { decimalU64, type FramePacket } from "../framePacket";
+import { decodeReviewPacket } from "./reviewPacket";
 
 export interface ReviewDatasetInfo {
   present: boolean;
@@ -166,9 +167,9 @@ export const REVIEW_DATASET = { ValidImage: 0, InvalidImage: 1, RecordedImage: 2
 export const OVERLAY = { None: 0, AllContour: 1, OuterInnerColorCoded: 2, AllMask: 3, FilteredMask: 4 } as const;
 export type OverlayMode = (typeof OVERLAY)[keyof typeof OVERLAY];
 
-export const PULL_REVIEW = FRAME_PACKET.pull_kinds.review;
-export const PULL_REVIEW_THUMBNAILS = FRAME_PACKET.pull_kinds.review_thumbnails;
-export const PULL_REVIEW_SERIES = FRAME_PACKET.pull_kinds.review_series;
+export const PULL_REVIEW = REVIEW_FRAME_PACKET.pull_kinds.review;
+export const PULL_REVIEW_THUMBNAILS = REVIEW_FRAME_PACKET.pull_kinds.review_thumbnails;
+export const PULL_REVIEW_SERIES = REVIEW_FRAME_PACKET.pull_kinds.review_series;
 
 // Local generation guard: a reply that started before a file change is
 // retired by the FramePullScheduler's epochs; this only rejects replies that
@@ -179,7 +180,7 @@ async function pull(command: string, kind: number, args: Record<string, unknown>
   const g = generation;
   const buffer = await invoke<ArrayBuffer>(command, args);
   if (g !== generation) throw new Error("FRAME_REPLY_STALE");
-  return decodeFramePacket(buffer, kind);
+  return decodeReviewPacket(buffer, kind);
 }
 
 async function command(name: string, args?: Record<string, unknown>): Promise<ReviewCmdResult> {

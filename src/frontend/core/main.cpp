@@ -10,6 +10,7 @@
 
 #include "backend/app/AppBackend.h"
 #include "frontend/system/LutHttpFetcher.h"
+#include "frontend/system/RegistryHttpTransport.h"
 #include "frontend/system/QtLogBridge.h"
 #include "frontend/system/DesktopInstance.h"
 #include "backend/diagnostics/CrashStateMirror.h"
@@ -249,6 +250,9 @@ int main(int argc, char* argv[]) {
         // no Qt networking, ADR 0002) can update the E-modulus LUT and cache it
         // in the historical location.
         backend.setLutHttpFetcher(mib::frontend::makeQtLutHttpGet());
+        // Same seam for the central profile registry (#398): enabled only when
+        // MIB_PROFILE_REGISTRY_URL / _PUBLISHABLE_KEY are set.
+        backend.setProfileRegistryTransport(mib::frontend::makeQtRegistryHttpTransport());
         backend.setLutAppDataDir(
             QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation).toStdString());
         if (!backend.initialize(dataDirStd)) {

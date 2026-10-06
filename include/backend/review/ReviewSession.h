@@ -1,5 +1,5 @@
 // ReviewSession — the one review implementation behind every shell (plan
-// 2026-10-01-standalone-review-app, ADR 0008).
+// 2026-10-01-standalone-review-app, ADR 0014).
 //
 // Owns the open HDF5 file through its own Hdf5Service reader (never the
 // experiment writer's handle), caches the metadata rows once per open, and

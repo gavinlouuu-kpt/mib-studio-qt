@@ -1,4 +1,4 @@
-//! Write a review fixture HDF5 through the review bridge (ADR 0008).
+//! Write a review fixture HDF5 through the review bridge (ADR 0014).
 //!
 //! Dev / screenshot / manual-test helper, no AppBackend needed:
 //!

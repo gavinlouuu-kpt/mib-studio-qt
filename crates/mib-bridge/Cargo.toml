@@ -13,7 +13,7 @@ crate-type = ["rlib"]
 [features]
 # Test-only producer fixtures; never exposed as a Tauri command or fallback.
 contract-fixtures = []
-# YOFO Review (ADR 0008): compile and link only the review bridge
+# YOFO Review (ADR 0014): compile and link only the review bridge
 # (ReviewSession over mib_review_core + mib_processing) — no AppBackend.
 review-only = []
 

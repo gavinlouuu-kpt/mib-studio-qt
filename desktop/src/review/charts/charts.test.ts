@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import hits from "../../../../tests/fixtures/review_scatter_hits.json";
-import { REVIEW_DENSITY } from "../../bridgeContract";
+import { REVIEW_DENSITY } from "../reviewContract";
 import {
   levelColor,
   niceTicks,

@@ -18,6 +18,7 @@ below is the policy it cannot check for you.
 | Review core (`src/backend/review/`, `include/backend/review/`) | [[services/ReviewSession]] (+ [[frontend/HdfReviewTab]] when shared behaviour moves) |
 | Review bridge / YOFO Review (`crates/mib-bridge/src/review_*`, `desktop/src/review/`, `desktop/src-tauri/src/{review,review_update,isoelastic}.rs`, `scripts/release/publish-review-update.py`, `tauri.review.conf.json`) | [[frontend/YofoReview]] + [[architecture/Rust-Bridge]] |
 | Camera code under `src/backend/camera/` (ICamera, EGrabber, Mock) | The matching note under `knowledge_map/camera/` |
+| Rust command layer and transports (`crates/mib-app-commands/`, `desktop/src-tauri/`, `crates/mib-bridge-server/`) | [[architecture/Desktop-Shell]], [[architecture/Rust-Bridge]] |
 | `CMakeLists.txt`, `conanfile.py`, `CMakePresets.json` | [[build-and-run/Build]], [[build-and-run/Dependencies]], [[build-and-run/Run-Modes]] |
 | `env/assets.json`, `scripts/assets_manifest.py`, `scripts/provision-assets.py` | [[build-and-run/Assets]] |
 | Conventions / logging patterns | [[conventions/Code-Conventions]], [[conventions/Logging]] |

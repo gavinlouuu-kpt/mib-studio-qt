@@ -11,7 +11,12 @@
 #include "backend/processing/EModulusLutCatalog.h" // HttpGetFn seam (ADR 0002)
 #include "backend/app/ExperimentReadiness.h"
 #include "backend/diagnostics/MemoryBudget.h"
+#include "backend/profiles/InstrumentIdentity.h"
+#include "backend/profiles/SupabaseProfileRegistry.h" // RegistryHttpTransport seam (ADR 0002)
 #include "backend/recording/RecordingAccounting.h"
+
+namespace backend::processing { class IExecutionProvider; }
+namespace backend::pz { class PzPlatformMonitor; }
 
 namespace backend::services
 {
@@ -23,9 +28,11 @@ namespace backend::services
     class CameraControlService;
     class AutofocusService;
     class TriggerService;
+    class DotGridService;
     class YoloService;
     class SyringePumpService;
     class PulseGeneratorService;
+    class StageService;
     class MonitoringDensityService;
     namespace serialbus
     {
@@ -46,6 +53,7 @@ namespace camera::mock
 }
 
 namespace backend::app { class ExperimentCoordinator; }
+namespace backend::profiles { class ProfileRegistryWorker; }
 namespace backend::discovery
 {
     class DeviceDiscoveryService;
@@ -62,6 +70,8 @@ namespace backend
         ~AppBackend();
 
         bool initialize(const std::string &dataDir);
+        // Shell-resolved read-only install resources; set before initialize.
+        void setResourceRoot(std::string path) { resourceRoot_ = std::move(path); }
 
         // Inject the HTTP GET used to fetch the E-modulus LUT manifest/blob
         // (ADR 0002); the shell supplies it so the backend links no Qt
@@ -74,6 +84,16 @@ namespace backend
         // still takes precedence.)
         void setLutAppDataDir(std::string dir) { lutAppDataDir_ = std::move(dir); }
 
+        // Central profile registry (#398): the shell injects the HTTPS POST the
+        // registry worker uses (ADR 0002: the backend links no HTTP client).
+        // The registry is enabled by MIB_PROFILE_REGISTRY_URL +
+        // MIB_PROFILE_REGISTRY_PUBLISHABLE_KEY; without them (or without a
+        // transport) the worker is inert. Call before initialize().
+        void setProfileRegistryTransport(profiles::RegistryHttpTransport transport)
+        {
+            profileRegistryTransport_ = std::move(transport);
+        }
+
         // Stop every service-owned thread in dependency order (capture →
         // trigger → recording → realtime/processing). Idempotent; called by
         // the destructor so teardown never depends on GUI close handling.
@@ -83,13 +103,21 @@ namespace backend
         services::Hdf5Service &hdf5();
         services::CaptureService &capture();
         services::ProcessingService &processing();
+        // Source of per-frame results when the science runs on the PL
+        // (MIB_EXECUTION_PROVIDER, YOFO S1); null when none is configured.
+        processing::IExecutionProvider *executionProvider();
+        // Read-only PZ7035 identity and health (#501); null off the instrument.
+        pz::PzPlatformMonitor *pzPlatformMonitor();
         services::PlaybackService &playback();
         services::CameraControlService &cameraControl();
         services::AutofocusService &autofocus();
         services::TriggerService &trigger();
+        services::DotGridService &dotGrid();
         services::YoloService &yolo();
         services::SyringePumpService &syringePump();
         services::PulseGeneratorService &pulseGenerator();
+        // Motorized Z stage (ADR 0013): observe-only until an operator homes it.
+        services::StageService &stage();
         // Device discovery job service (issue #419, ADR 0005): every camera /
         // nanopositioner / pulse-generator scan runs through it. Frontends
         // start jobs and poll snapshots; they never enumerate hardware.
@@ -98,6 +126,18 @@ namespace backend
         // Constructed here but started by the shell (Qt adapter) so headless
         // consumers keep today's no-auto-connect behaviour.
         discovery::StartupDiscoveryCoordinator &startupDiscovery();
+        // Central profile registry worker (#398): sign-in, refresh, download and
+        // the per-user revision cache on its own thread. Shells enqueue commands
+        // and poll snapshots; it never touches capture, recording or Start.
+        profiles::ProfileRegistryWorker &profileRegistry();
+        // This instrument PC's stable identity (#398 M2): UUID persisted in
+        // <dataDir>/instrument_identity.json plus MIB_INSTRUMENT_NAME. Local
+        // method validations and run provenance are keyed by it. Empty id
+        // before initialize() or when the data dir is unwritable.
+        const profiles::InstrumentIdentity &instrumentIdentity() const { return instrumentIdentity_; }
+        // The local context a method validation binds to: this instrument,
+        // the active processing core build and the effective camera source.
+        profiles::MethodContext methodContext() const;
         
         // Get frame store for service lifecycle management
         std::shared_ptr<playback::FrameStore> getFrameStore() const { return frameStore_; }
@@ -137,6 +177,28 @@ namespace backend
         bool saveMindVisionRoi(int x, int y, int width, int height,
                                std::string* errorOut = nullptr);
 
+        // Camera & Alignment (Overview) for any camera that has one, as the Qt Overview tab
+        // does for MindVision: the whole sensor is shown and the experiment window (ROI 1,
+        // sensor coordinates) is placed on it. MindVision uses its profile; an Aravis camera
+        // (YOFO Studio, PZ7035 producer) uses <data>/config/aravis-camera.json and the
+        // Overview preset there. Same rules as setMindVisionOverview: stops capture and
+        // realtime processing, swaps the frame store, rejected during an experiment or
+        // recording; the caller restarts capture.
+        struct CameraGeometry {
+            bool supported{false};   // the selected camera has an Overview mode
+            bool overview{false};
+            std::string camera;      // "mindvision" | "aravis" | ""
+            int sensorWidth{0}, sensorHeight{0};   // 0 = not known yet (no start so far)
+            int roiX{0}, roiY{0}, roiWidth{0}, roiHeight{0};
+            int widthIncrement{1}, heightIncrement{1}, offsetXIncrement{1}, offsetYIncrement{1};
+            int minWidth{1}, minHeight{1};
+            std::string sessionJson{"{}"}; // last camera read-back (Aravis: rate model)
+        };
+        CameraGeometry cameraGeometry() const;
+        bool setCameraOverview(bool overview, std::string* errorOut = nullptr);
+        bool isCameraOverview() const;
+        bool saveCameraRoi(int x, int y, int width, int height, std::string* errorOut = nullptr);
+
         // Fire one software acquisition trigger on the live capture camera
         // (camera must be running in soft-trigger mode). NOT the sort pulse.
         bool softTriggerCamera(std::string *errorOut = nullptr);
@@ -159,6 +221,7 @@ namespace backend
                 Mock,
                 Hardware,
                 MindVision,
+                Aravis,
             };
             Mode mode{Mode::None};
             int interfaceIndex{-1};
@@ -243,25 +306,37 @@ namespace backend
         std::unique_ptr<services::Hdf5Service> hdf5Service_;
         std::unique_ptr<services::CaptureService> captureService_;
         std::unique_ptr<services::ProcessingService> processingService_;
+        // Declared after processingService_: destroyed (and its thread stopped)
+        // before the service it feeds.
+        std::unique_ptr<processing::IExecutionProvider> executionProvider_;
+        std::unique_ptr<pz::PzPlatformMonitor> pzPlatformMonitor_;
         std::unique_ptr<services::PlaybackService> playbackService_;
         std::unique_ptr<services::CameraControlService> cameraControlService_;
         std::unique_ptr<services::AutofocusService> autofocusService_;
         std::unique_ptr<services::TriggerService> triggerService_;
+        std::unique_ptr<services::DotGridService> dotGridService_;
         std::unique_ptr<services::YoloService> yoloService_;
         // Shared RS485/Modbus bus registry — declared before the serial
         // services so it outlives their sessions.
         std::unique_ptr<services::serialbus::SerialBusManager> serialBusManager_;
         std::unique_ptr<services::SyringePumpService> syringePumpService_;
         std::unique_ptr<services::PulseGeneratorService> pulseGeneratorService_;
+        // After serialBusManager_: destroyed first, so its port closes on a live bus.
+        std::unique_ptr<services::StageService> stageService_;
         // Declared after every service the providers/hooks reference so the
         // discovery workers and the coordinator are destroyed first.
         std::unique_ptr<discovery::DeviceDiscoveryService> deviceDiscovery_;
         std::unique_ptr<discovery::StartupDiscoveryCoordinator> startupDiscovery_;
         std::shared_ptr<playback::FrameStore> frameStore_;
 
+        profiles::RegistryHttpTransport profileRegistryTransport_;
+        std::unique_ptr<profiles::ProfileRegistryWorker> profileRegistry_;
+        profiles::InstrumentIdentity instrumentIdentity_;
+
         // Shell-injected LUT fetch config (ADR 0002).
         HttpGetFn lutHttpGet_;
         std::string lutAppDataDir_;
+        std::string resourceRoot_;
 
         // Last selected hardware device (for script apply)
         int selectedIfIndex_{-1};
@@ -276,6 +351,39 @@ namespace backend
         mutable std::mutex mindVisionSensorMutex_;
         MindVisionSensor mindVisionSensor_{};
         bool mockCameraConfigured_{false};
+        bool aravisCameraConfigured_{false};
+        bool aravisFake_{false};
+        std::string aravisDeviceId_;
+        bool aravisGigE_{false};
+        // Aravis camera profile (<data>/config/aravis-camera.json): experiment window and the
+        // rate/exposure of each mode. 0 = leave the device's value.
+        struct AravisProfile {
+            bool hasRoi{false};
+            int x{0}, y{0}, width{0}, height{0};
+            double experimentFps{0.0}, experimentExposureUs{0.0};
+            double overviewFps{830.0}, overviewExposureUs{900.0}; // lit full field (PZ7035)
+            // Previews the PS asks for per second (PzPreviewRate); the PL sees every frame.
+            // 60 keeps a 30 fps display fresh with margin; 0 = every delivered frame.
+            double previewRateHz{60.0};
+        };
+        AravisProfile aravisProfile_;
+        std::atomic<bool> aravisOverview_{false};
+        size_t aravisExperimentCapacity_{0};
+        bool aravisRealtimeBeforeOverview_{false};
+        struct AravisSessionGeometry {
+            int sensorWidth{0}, sensorHeight{0};
+            int widthIncrement{1}, heightIncrement{1}, offsetXIncrement{1}, offsetYIncrement{1};
+            std::string json{"{}"};
+        };
+        mutable std::mutex aravisSessionMutex_;
+        AravisSessionGeometry aravisSession_;
+        std::string dataDir_;
+        std::string aravisProfilePath() const;
+        void loadAravisProfile();
+        bool saveAravisProfile(const AravisProfile& profile, std::string* errorOut);
+        void installAravisFactory();
+        bool setAravisOverview(bool overview, std::string* errorOut);
+        bool saveAravisRoi(int x, int y, int width, int height, std::string* errorOut);
         // Selection-snapshot extras (BE-2): last applied camera script and the
         // active mock parameters.
         std::string lastCameraScriptPath_;

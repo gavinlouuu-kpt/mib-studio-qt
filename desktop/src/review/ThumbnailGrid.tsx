@@ -5,7 +5,7 @@
 // tab's "never load all images" rule).
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { FramePacket } from "../framePacket";
-import { REVIEW_PIXEL_FORMATS } from "../bridgeContract";
+import { REVIEW_PIXEL_FORMATS } from "./reviewContract";
 import { reviewBridge, type OverlayMode } from "./reviewBridge";
 import { gridGeometry, imageBand, PageCache, pagesFor, scrollToReveal, THUMB_PAGE, THUMB_SIZE, tileRgba, visibleRange } from "./thumbnails";
 

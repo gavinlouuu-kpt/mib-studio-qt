@@ -25,6 +25,7 @@
 #include "backend/recording/HdfWriteQueue.h"
 
 namespace backend { namespace playback { class FrameStore; struct Frame; } }
+namespace backend::processing { struct ProviderFrame; }
 
 namespace backend::services {
 
@@ -62,6 +63,14 @@ public:
     };
 
     struct RealtimeSnapshot {
+        cv::Mat originalImage; // frozen source pixels; opt-in preview retention
+        std::shared_ptr<const backend::playback::Frame>
+            sourceFrame; // owns ROI fast-path pixels without another copy
+        uint64_t sourceTimestamp{0}, hostTimestampUs{0};
+        uint64_t processingSession{0}, storeGeneration{0}, captureSession{0};
+        std::string recipeSha256;
+        cv::Rect2d primaryBounds;
+        Roi roi;
         uint64_t index{0};
         std::vector<std::vector<cv::Point>> contours;
         cv::Mat mask;
@@ -169,6 +178,7 @@ public:
     // Monotonic counter bumped by setProcessingConfig / setRealtimeRoi.
     uint64_t getConfigVersion() const;
     bool getLatestSnapshot(RealtimeSnapshot& out);
+    void setProcessedPreviewEnabled(bool enabled);
 
     // Experiment lifecycle
     void startExperiment();
@@ -296,7 +306,7 @@ public:
         uint64_t unservedTargetGroupObjects{0}; // target-group objects beyond the frame's
                                                 // first — no pulse is dispatched for them
         // Invalid-reason histogram, indexed by science::InvalidReasonCode:
-        // {NoContour, Border, Area, Ring, Deform, AreaRatio, Laplacian}.
+        // {NoContour, Border, Area, Ring, Deform, AreaRatio, Laplacian, Channel}.
         uint64_t reasonCounts[8]{};
     };
     IdentificationCounters getIdentificationCounters() const;
@@ -403,6 +413,13 @@ public:
     // maxAttempts, timeout, or cancel. Returns false if realtime is not
     // running or another calibration is active.
     bool startBackgroundCalibration(const BackgroundCalibrationRequest& request, std::string* error = nullptr);
+    // PL science (ADR 0008): no host frame is classified, so the background is
+    // the per-pixel median of `requiredAccepted` distinct preview frames from
+    // the store (cells passing through are rejected by the median); same
+    // status, cancel and publication as startBackgroundCalibration. Detects
+    // the channel band from it when auto_roi_from_background is on.
+    bool startPreviewBackgroundCalibration(std::shared_ptr<backend::playback::FrameStore> store,
+                                           const BackgroundCalibrationRequest& request, std::string* error);
     void cancelBackgroundCalibration();
     BackgroundCalibrationStatus backgroundCalibrationStatus() const;
 
@@ -449,6 +466,7 @@ public:
         backend::processing::ProcessingCoreIdentity* processingCore = nullptr);
 
     struct BatchPipelineConfig {
+        std::string previewRecipeSha256;
         size_t batchSize{64};
         size_t maxQueuedFrames{4096};
         size_t workerCount{1};
@@ -484,13 +502,28 @@ public:
     bool startBatchPipeline(BatchPipelineConfig config, BatchResultCallback callback);
     void stopBatchPipeline();
     bool enqueueBatchFrame(const cv::Mat& grayImage, uint64_t index, uint64_t timestampNs = 0,
-                           uint64_t hostTimestampUs = 0);
+                           uint64_t hostTimestampUs = 0, uint64_t storeGeneration = 0, uint64_t captureSession = 0);
     bool enqueueBatchFrame(const backend::playback::Frame& frame, uint64_t index);
     BatchPipelineStats getBatchPipelineStats() const;
 
-    // Ring ratio callback for autofocus (called when validated frames are processed)
+    // Autofocus feeds, chosen by the active contract: Contract 1 publishes the
+    // ring ratio of each valid object (finite and > 0); Contracts 2 and 3
+    // publish each valid object's finite Laplacian variance instead.
     using RingRatioCallback = std::function<void(double ringRatio, int64_t timestampNs)>;
     void setRingRatioCallback(RingRatioCallback callback);
+    using FocusSampleCallback = std::function<void(double laplacianVariance, int64_t timestampNs,
+                                                   uint64_t frameIndex, int objectId, int trackId)>;
+    void setFocusSampleCallback(FocusSampleCallback callback);
+
+    // PL science (ADR 0008, YOFO S1): one frame of results from an execution
+    // provider, called on the provider thread. Feeds what the inline loop
+    // feeds after metrics: run accounting (admitted; Empty, Processed /
+    // RejectedByScientificFilter, or StoreMalformed for an ingress-error
+    // FRAME.INVALID/PARTIAL), the identification funnel and reason histogram
+    // (from the PL's reasons), and monitoring rows (without images). It never
+    // calls the target-group callback: the PL owns the trigger, so a PL
+    // decision must not cause a second pulse from the PS.
+    void ingestProviderFrame(const backend::processing::ProviderFrame& frame);
 
     // Target group trigger callback (one deterministic event per source frame)
     using TargetGroupCallback = std::function<void(const TargetGroupEvent& event)>;
@@ -499,6 +532,9 @@ public:
 
     // Young's modulus LUT loading
     bool loadEModulusLut(const std::string& path);
+    // The loaded LUT (read-only; loaded at bootstrap), e.g. for the PZ7035
+    // profile compiler's E-modulus table.
+    const EModulusLut& eModulusLut() const { return eModulusLut_; }
 
     // Background capture callback for auto-capture (called when background is auto-captured)
     using BackgroundCaptureCallback = std::function<void(const cv::Mat& background, uint64_t frameIndex)>;
@@ -528,6 +564,7 @@ private:
     };
 
     struct QueuedBatchFrame {
+        uint64_t storeGeneration{0}, captureSession{0};
         cv::Mat gray;
         uint64_t index{0};
         uint64_t timestampNs{0};
@@ -564,6 +601,8 @@ private:
     void accumulateIdentificationCounters(const std::vector<FilterResult>& validations,
                                           const ProcessingConfig& config,
                                           double pixelToMicronFactor);
+    void appendProviderMonitoringRow(uint64_t index, uint64_t timestampNs, const FilterResult& validation);
+    void accumulateProviderIdentification(const backend::processing::ProviderFrame& frame);
     void appendRealtimeMonitoringFrame(uint64_t index,
                                        uint64_t timestampNs,
                                        const FilterResult& validation,
@@ -705,8 +744,15 @@ private:
     BackgroundCalibrationRequest bgCalRequest_;
     uint64_t bgCalOperationCounter_{0};
     cv::Mat bgCalAccumulator_; // CV_64FC1 running sum of accepted frames
+    std::thread bgCalPreviewThread_; // PL science: preview-median calibration
+    void runPreviewBackgroundCalibration(std::shared_ptr<backend::playback::FrameStore> store, uint64_t generation);
+    // Install a calibrated background (caller holds bgCalMutex_): the
+    // background, the channel band from it, and the generation bumps.
+    void publishCalibratedBackgroundLocked(cv::Mat background);
     std::chrono::steady_clock::time_point bgCalDeadline_{};
     std::atomic<bool> bgCalActive_{false};
+    std::atomic<bool> processedPreviewEnabled_{false};
+    std::atomic<uint64_t> processingSession_{0};
     std::atomic<uint64_t> backgroundGeneration_{0};
     void bgCalObserve(backend::recording::FrameOutcome outcome, const backend::playback::Frame* frame);
     void bgCalFinishLocked(BackgroundCalibrationState state, const std::string& message);
@@ -805,6 +851,10 @@ private:
     // Ring ratio callback for autofocus
     mutable std::mutex ringRatioCallbackMutex_;
     RingRatioCallback ringRatioCallback_;
+    FocusSampleCallback focusSampleCallback_; // guarded by ringRatioCallbackMutex_
+    // processing_contract_version of processingConfig_, read lock-free by the
+    // realtime callback publisher to choose the autofocus feed.
+    std::atomic<int> activeContract_{1};
 
     mutable std::mutex targetGroupCallbackMutex_;
     TargetGroupCallback targetGroupCallback_;

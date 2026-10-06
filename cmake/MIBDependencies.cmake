@@ -38,6 +38,20 @@ if(MIB_ENABLE_MINDVISION AND NOT MIB_BUILD_PROCESSING_ONLY)
 endif()
 message(STATUS "MindVision SDK integration: ${MIB_HAS_MINDVISION}")
 
+# Aravis is intentionally optional and is not part of processing-only builds.
+# The adapter is compiled only when the caller explicitly enables it; a
+# missing package is therefore an actionable configuration error rather than a
+# silent runtime fallback to MockCamera.
+set(MIB_HAS_ARAVIS OFF)
+if(MIB_ENABLE_ARAVIS AND NOT MIB_BUILD_PROCESSING_ONLY)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(MIB_ARAVIS REQUIRED IMPORTED_TARGET aravis-0.10>=0.9.3)
+    set(MIB_HAS_ARAVIS ON)
+    message(STATUS "Aravis integration: ${MIB_ARAVIS_VERSION}")
+elseif(MIB_ENABLE_ARAVIS)
+    message(STATUS "Aravis integration disabled for processing-only build")
+endif()
+
 set(MIB_HAS_ONNXRUNTIME OFF)
 if(TARGET onnxruntime::onnxruntime)
     set(MIB_HAS_ONNXRUNTIME ON)

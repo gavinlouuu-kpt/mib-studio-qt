@@ -1,4 +1,4 @@
-// C++ side of the review bridge (ADR 0008). See review_shim.h.
+// C++ side of the review bridge (ADR 0014). See review_shim.h.
 #include "mib-bridge/src/review_shim.h"
 
 // cxx-generated definitions of the shared structs.
@@ -558,11 +558,11 @@ bool ReviewBridge::review_jobs_busy() const { return impl_->jobs->busy(); }
 
 std::unique_ptr<ReviewBridge> new_review_bridge() { return std::make_unique<ReviewBridge>(); }
 
-// Shared with bridge_abi_version() (one contract document). v15 adds the
-// review bridge: ReviewSession-backed info/rows/frames/series/thumbnails/
-// scatter/core-record calls, overlay_modes, review_pixel_formats and the
-// review event queue.
-std::uint32_t review_bridge_abi_version() { return 15; }
+// review-contract.json `review_abi_version` (ADR 0014): YOFO Review's own
+// contract, independent of bridge_abi_version(). v1: ReviewSession-backed
+// info/rows/frames/series/thumbnails/scatter/core-record calls, overlay_modes,
+// review_pixel_formats and the review event queue.
+std::uint32_t review_bridge_abi_version() { return 1; }
 
 bool review_fixture_write_experiment(rust::Str path) {
     try {

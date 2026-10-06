@@ -63,14 +63,14 @@ is the 7 `frontend;utility` tests that link `Qt6::Core` directly
 
 Behavioural parity is the target; deliberate UX changes are tracked separately.
 
-| Workflow | Manual page | Qt | Tauri | YOFO Review (ADR 0008) |
+| Workflow | Manual page | Qt | Tauri | YOFO Review (ADR 0014) |
 |----------|-------------|----|-------|------------------------|
-| Install + update | getting-started | ships | not started | planned (PR 5–7 of `2026-10-01-standalone-review-app.md`) |
+| Install + update | getting-started | ships | not started | ships: unsigned DMG + per-user NSIS, signed Tauri updates (`review-v*` tags; `yofo-review.md`) |
 | Connect: EGrabber / MindVision / mock | connect | ships | not started | n/a |
 | Live view, zoom/pan, ROI, overlays, status | acquire-and-record | ships | not started | n/a |
 | Processing settings, profiles, trust gates, preview | acquire-and-record | ships | not started | n/a |
 | Experiment lifecycle, monitoring charts, HDF5 recording | acquire-and-record | ships | not started | n/a |
-| Review, playback, metrics, image/CSV export, reanalysis | review-and-postprocess | ships | not started | PR 0 scaffold landed; PR 1–4 build the module both shells mount |
+| Review, playback, metrics, image/CSV export, reanalysis | review-and-postprocess | ships | not started | ships: parity with Qt signed off 2026-10-04 (`tools/review_parity/`); own `ReviewSession` stack, MIB Studio's Tauri tab keeps #450's until #512 |
 | Autofocus, nanopositioner, syringe pump, trigger | (hardware dialogs) | ships | not started | n/a |
 | Logs, crash reports, docs, problem reporting | troubleshooting | ships | not started | logs: shell log sink; crash reports: non-goal v1 |
 

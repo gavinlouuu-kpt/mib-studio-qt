@@ -2,9 +2,9 @@ name: YOFO Review CI
 
 # YOFO Review: the review-only React + Tauri product built from the same
 # desktop/ tree as MIB Studio (plan docs/exec-plans/active/
-# 2026-10-01-standalone-review-app.md, ADR 0008). This Linux lane proves the
+# 2026-10-01-standalone-review-app.md, ADR 0014). This Linux lane proves the
 # product configuration: the review page builds, the review-only Tauri binary
-# (`--features review-only`, `tauri.review.conf.json`) links and boots under
+# (`--no-default-features --features review-only`, `tauri.review.conf.json`) links and boots under
 # Xvfb, and the version stamp agrees with cmake/MIBVersion.cmake.
 #
 # The macOS (PR 5) and Windows (PR 6) lanes that build the shipped bundles
@@ -137,10 +137,13 @@ jobs:
           MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL: "file:///nonexistent/mib-lut-manifest.json"
         run: |
           set -o pipefail
-          TAURI_CONFIG="$(cat tauri.review.conf.json)" cargo build --features review-only
+          # YOFO Review is the binary without the default `studio` feature (ADR 0014).
+          TAURI_CONFIG="$(cat tauri.review.conf.json)" cargo build --no-default-features --features review-only
+          TAURI_CONFIG="$(cat tauri.review.conf.json)" cargo test --no-fail-fast --no-default-features --features review-only
+          TAURI_CONFIG="$(cat tauri.review.conf.json)" cargo clippy --all-targets --no-default-features --features review-only -- -D warnings
           # The merged context must name the review product, not MIB Studio.
           strings target/debug/mib-studio-desktop | grep -q "bio.yofo.review"
-          # ADR 0008: the review product links no AppBackend (cameras, serial,
+          # ADR 0014: the review product links no AppBackend (cameras, serial,
           # SQLite, Sentry) — only the review bridge over ReviewSession.
           if nm -C target/debug/mib-studio-desktop | grep -q "backend::AppBackend"; then
             echo "review-only binary links AppBackend" >&2; exit 1

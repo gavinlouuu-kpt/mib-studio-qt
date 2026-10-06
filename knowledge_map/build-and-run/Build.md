@@ -93,6 +93,54 @@ sections and Conan profile it needs):
 
 ## Targets
 
+## Optional Aravis Fake validation
+
+Aravis is an optional Qt-free backend dependency and is disabled by default.
+For a local Fake-interface validation build, provision the pinned 0.9.3 source
+described by `env/aravis.toml` (USB, packet-socket, viewer and GStreamer can be
+disabled), then configure with `MIB_ENABLE_ARAVIS=ON` and set
+`PKG_CONFIG_PATH` to that prefix. Build `mib_backend_tests` and run the
+`camera.aravis_*` plus `backend.aravis_*` CTest cases. `MIB_CAMERA_MODE=aravis`
+requires `MIB_ARAVIS_FAKE=1` for the Fake device; it never silently falls back
+to the folder replay camera. Adding
+`-DMIB_PZ7035_GENTL_CTI=<pz7035-imx426>/gentl/build/libpz7035_gentl.cti`
+registers `camera.aravis_pz7035_pattern`, which runs the adapter against the
+PZ7035 producer's pattern device (no hardware). See [[../camera/AravisCamera]]
+and [[../task/2026-09-27-aravis-framework]].
+
+### ARMv7 cross-build for the PZ7035 PS (YOFO Studio)
+
+The `linux-armv7-yocto` preset cross-compiles the backend, the CTest runner and
+`yofo_preview_soak` for the Cortex-A9 with the YOFO Yocto SDK
+(pz7035-imx426 `yocto/meta-yofo`: `bitbake yofo-image -c populate_sdk`; the
+image carries the matching runtime libraries). Aravis on; Sentry and MindVision
+off; OpenCV, spdlog, SQLite, OpenSSL and HDF5 from the SDK sysroot.
+
+```bash
+. <sdk>/environment-setup-cortexa9t2hf-neon-amd-linux-gnueabi   # in a clean shell
+cmake --preset linux-armv7-yocto && cmake --build --preset linux-armv7-yocto-build -j16
+scripts/yofo/deploy_target.sh 20   # strips, copies to the PS, runs scripts/yofo/target_smoke.sh
+```
+
+The YOFO Studio server cross-compiles the same way after the CMake tree:
+`YOFO_SDK=<sdk> scripts/yofo/cargo-armv7.sh build --release --manifest-path
+crates/mib-bridge-server/Cargo.toml` (needs `rustup target add
+armv7-unknown-linux-gnueabihf`). The script maps the SDK compilers to cargo's
+target-specific variables (the generic `CC`/`CFLAGS` would hit host build
+scripts) and points the bridge at `build/linux-armv7-yocto`
+(`MIB_BRIDGE_BUILD_DIR`, `MIB_BRIDGE_SYSROOT`); `crates/mib-bridge/build.rs`
+links the Aravis libraries recorded in that tree's `CMakeCache.txt`.
+
+`cmake/toolchains/yocto-armv7.cmake` keeps every package search in the sysroot.
+HDF5 needs care: the SDK's HDF5 package config is unusable (absolute install
+dir, imported targets at `/usr/lib`) and FindHDF5 would otherwise ask the
+host's `h5cc` and compile against host headers, so the toolchain skips the
+config and gives FindHDF5 a failing wrapper, which makes it search the sysroot.
+`target_smoke.sh` runs the backend and Aravis lifecycle tests from the runner,
+then `yofo_preview_soak` against the live producer (preview and Overview);
+`deploy_target.sh` reads `YOFO_TARGET`, `YOFO_SSH_OPTS` and
+`YOFO_SUDO_PASSWORD_FILE`.
+
 | Target | Kind | Purpose |
 |---|---|---|
 | `mib_processing` | STATIC library | Qt-free processing core: `ProcessingService`, `EModulusLut`, `BatchMaskSources`, `Hdf5Service`, `FrameStore`, `Tools`, `CrashStateMirror`. Links only OpenCV + HDF5 + spdlog + STL. |
@@ -341,6 +389,14 @@ different Conan package IDs after reinstalls).
 - When `MIB_HAS_COREMOR=OFF`, build wiring skips the CoreMOR import library;
   the full autofocus service and OEABT serial backend still build.
 - `MIB_BUILD_OEABT_TOOLS=ON` builds `oeabtctl` in the build root.
+- `MIB_BUILD_STAGE_TOOLS=ON` (default) builds `zc300ctl` in the build root.
+  It is the ZC300 Z-stage diagnostic: `info` and `status` are read-only,
+  `move` needs `--allow-motion`, and `configure` needs `--allow-write`. It
+  links `stage_zc300` → `stage_zc300_protocol` + `oeabt_serial` (which also
+  carries `SerialBus.cpp`), not the backend. See [[../services/ZC300Stage]].
+  `mib_backend` itself links `stage_zc300` (for [[../services/StageService]]),
+  so the Rust bridge's archive list in `crates/mib-bridge/build.rs` names
+  `stage_zc300` and `stage_zc300_protocol`.
 - When `MIB_HAS_MINDVISION=ON`, CMake requires:
   - Windows: `CameraApiLoad.h` plus `MVCAMSDK.dll` / `MVCAMSDK_X64.dll`
   - Linux/macOS: `CameraApi.h` plus `libMVSDK.so` / `libmvsdk.dylib`
@@ -386,6 +442,14 @@ To keep non-hardware workflows buildable in cloud:
 - `docs/howto/runtime-deploy.md`
 - `docs/howto/release-workflow.md`
 
+## Profile registry foundation (#398)
+
+Registry sources are part of `mib_backend`; `profiles.registry` is in backend CTest.
+They use existing nlohmann JSON, SQLite and shared SHA-256 without Qt. Optional
+PostgreSQL policy tests run with `npm ci --prefix supabase && npm test --prefix supabase`
+(pinned PGlite development dependency); the `profile-registry-ci.yml` lane runs
+them on `supabase/**` changes. No new desktop run mode is enabled.
+
 ## Windows Authenticode test target
 
 `processing_core_authenticode_test` stays a standalone executable because the
@@ -406,3 +470,41 @@ truth only):
 - [[../task/2026-09-15-mindvision-overview-roi]] — MindVision overview test coverage
 - [[../task/2026-04-20-cloud-toolchain-cxx-libstdcpp-fix]] — `-lstdc++` cloud image fix
 - [[../task/2026-06-01-backend-only-build-test-mode]] — origin of `MIB_BUILD_BACKEND_ONLY`
+
+### Native GTK workflow acceptance
+
+The production-webview harness in `desktop/scripts/native-workflow.py` accepts
+the GTK folder picker with its real Open button while retaining the typed
+location. Escape discards that location and is not a valid acceptance action.
+The export gate asserts the exact selected destination parent, not just terminal
+success. Idle exit verifies native-window disappearance if WebKit closes its
+session before replying. Failure artifacts include the full X11 desktop so
+native dialogs are visible alongside webview screenshots.
+
+Windows Tauri candidate staging resolves model files with the same manifest root
+and `<kind>s/<id>/<file>` layout as the provisioner/CMake, honors `MIB_ASSETS_DIR`,
+and checks the declared SHA256 before packaging. The GTK harness tolerates only
+confirmed dialog unmapping between window search and focus; other X11 failures
+remain errors.
+
+Native packaged acceptance also regenerates a new HDF through the real UI/save
+dialog, verifies the source file digest is unchanged, waits for the frontend
+terminal status, and reopens the regenerated output with processing-core identity.
+
+Fresh GTK Recent mode is explicitly left via Home before folder selection; the
+harness uses in-memory GSettings to avoid depending on an operator desktop.
+Idle Exit verifies both native-window disappearance and owning-process exit via
+X11/procfs, avoiding hung WebDriver requests after its last window closes. It
+also avoids deleting the terminated session; the driver process is cleaned up.
+
+The Xvfb smoke script bounds and terminates its entire owned process group via
+GNU timeout, not only the xvfb-run wrapper. A real-child regression reproduces
+and prevents orphan applications holding the executable open during bundling.
+The smoke run uses disposable XDG state and mock-camera mode, never an operator
+profile or remembered hardware configuration.
+The alive timer starts inside Xvfb, after display startup; the regression delays
+display startup deliberately to prevent a false pass before the app launches.
+
+The Windows candidate saves successfully provisioned Conan dependencies before
+application compilation, so subsequent source/test failures do not discard the
+completed dependency cache. It never caches a failed dependency install.

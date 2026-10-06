@@ -2,7 +2,7 @@
 // 2026-10-01-standalone-review-app, PR 3). No DOM. Mirrors the Qt tab and
 // ZoomableChartView so both shells show and behave alike; unit-tested in
 // charts.test.ts.
-import { REVIEW_DENSITY } from "../../bridgeContract";
+import { REVIEW_DENSITY } from "../reviewContract";
 
 export interface Range {
   min: number;

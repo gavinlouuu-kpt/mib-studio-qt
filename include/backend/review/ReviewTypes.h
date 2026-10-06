@@ -1,5 +1,5 @@
 // Review data types shared by every shell (Qt, React + Tauri MIB Studio,
-// YOFO Review) — plan 2026-10-01-standalone-review-app, ADR 0008.
+// YOFO Review) — plan 2026-10-01-standalone-review-app, ADR 0014.
 //
 // Qt-free and OpenCV-light: images cross as packed byte buffers so the
 // bridge can hand them to a webview without re-encoding. Enumerations carry

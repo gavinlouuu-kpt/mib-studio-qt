@@ -13,8 +13,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "tauri": "tauri",
-    "tauri:review:dev": "tauri dev --config src-tauri/tauri.review.conf.json",
-    "tauri:review:build": "tauri build --config src-tauri/tauri.review.conf.json"
+    "tauri:review:dev": "node scripts/tauri-review.mjs dev",
+    "tauri:review:build": "node scripts/tauri-review.mjs build"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
@@ -28,6 +28,7 @@
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
+    "jsdom": "^26.1.0",
     "typescript": "^5.6.3",
     "vite": "^5.4.11",
     "vitest": "^2.1.8"

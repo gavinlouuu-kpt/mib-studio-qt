@@ -19,9 +19,15 @@ struct BridgeDiscoveryStart;
 struct BridgeDiscoveredDevice;
 struct BridgeDiscoveryError;
 struct BridgeDiscoverySnapshot;
+struct BridgeHttpRequest;
+struct BridgeHttpResponse;
+struct BridgeRegistrySnapshot;
+struct BridgeRegistryJob;
 struct BridgeCameraSelection;
 struct BridgeCommandResult;
 struct BridgeConfigDocument;
+struct BridgeCheckedConfigDocument;
+struct BridgeConfigTransactionResult;
 struct BridgeProcessingCoreStatus;
 struct BridgeAutofocusConfig;
 struct BridgeAutofocusStatus;
@@ -48,6 +54,7 @@ public:
     BackendBridge& operator=(const BackendBridge&) = delete;
 
     bool initialize(rust::Str data_dir);
+    bool initialize_with_resources(rust::Str data_dir, rust::Str resource_root);
     void shutdown();
     bool is_initialized() const;
 
@@ -65,9 +72,14 @@ public:
     BridgeCommandResult cancel_operation(std::uint64_t operation_id);
     BridgeCommandResult experiment_start(rust::Str output_path);
     BridgeCommandResult experiment_stop();
+    rust::String fetch_capture_lifecycle();
+    BridgeCommandResult experiment_acknowledge_fault(std::uint64_t expected_run,
+                                                     std::uint64_t fault_revision, rust::Str code,
+                                                     rust::Str message, bool confirmed);
     BridgeCommandResult experiment_cancel();
     BridgeExperimentStatus fetch_experiment_status();
     BridgeExperimentReadiness fetch_experiment_readiness(rust::Str output_path);
+    BridgeCommandResult autofocus_connect_endpoint(rust::Str backend, rust::Str endpoint, std::int32_t com_port, std::int32_t baud_rate, std::int32_t device_address);
     BridgeCommandResult autofocus_connect(std::int32_t com_port, std::int32_t baud_rate,
                                           std::int32_t device_address);
     BridgeCommandResult autofocus_disconnect();
@@ -76,8 +88,14 @@ public:
     BridgeCommandResult autofocus_set_config(BridgeAutofocusConfig config);
     BridgeAutofocusStatus fetch_autofocus_status();
     BridgeAutofocusConfig fetch_autofocus_config();
+    BridgeCommandResult pump_connect_endpoint(std::uint32_t pump, rust::Str port_name,
+                                              std::int32_t baud_rate, std::int32_t modbus_address);
     BridgeCommandResult pump_connect(std::uint32_t pump, std::int32_t com_port,
                                      std::int32_t baud_rate, std::int32_t modbus_address);
+    BridgeCommandResult pump_connect_model(std::uint32_t pump, std::uint32_t model,
+                                           rust::Str port_name, std::int32_t baud_rate,
+                                           std::int32_t modbus_address,
+                                           double microliters_per_rev);
     BridgeCommandResult pump_disconnect(std::uint32_t pump);
     BridgeCommandResult pump_set_flow_rate(std::uint32_t pump, double rate, std::int32_t unit);
     BridgeCommandResult pump_set_direction(std::uint32_t pump, std::uint32_t direction);
@@ -96,8 +114,30 @@ public:
     BridgeReviewMetricsPage fetch_review_metrics_page(bool valid, std::uint64_t offset,
                                                       std::uint64_t count);
     BridgeFrame fetch_review_image(std::uint32_t dataset, std::uint64_t index);
+    void set_processed_preview_enabled(bool enabled);
+    rust::Vec<std::uint8_t> fetch_processed_preview();
+    BridgeCommandResult background_calibration_command(rust::Str json);
+    rust::String background_calibration_status();
+    rust::String startup_discovery_set_preference(rust::Str json);
+    rust::String startup_discovery_run(rust::Str action);
+    rust::String startup_discovery_status();
+    BridgeCommandResult pulse_generator_command(rust::Str json);
+    rust::String pulse_generator_status();
+
+    rust::Vec<uint8_t> render_review_overlay(rust::Str json);
+    BridgeFrame fetch_review_reanalysis_preview(rust::Str json);
+    rust::String fetch_review_charts_json();
+    rust::String fetch_monitoring_chart_reference();
+    BridgeCommandResult review_reanalysis_json(rust::Str json);
+    rust::String review_reanalysis_status_json();
+    BridgeCommandResult review_export_json(rust::Str json);
+    rust::String review_export_status_json();
     BridgeCommandResult review_export_csv(rust::Str output_path);
     BridgeConfigDocument fetch_processing_config_json();
+    rust::String processing_core_command(rust::Str cache_root, rust::Str request);
+    rust::String profile_command(rust::Str base, rust::Str request);
+    BridgeCheckedConfigDocument fetch_config_document(rust::Str path);
+    BridgeConfigTransactionResult apply_config_document(rust::Str path, rust::Str baseline, rust::Str patch);
     BridgeCommandResult apply_processing_config_json(rust::Str json);
     BridgeCommandResult set_processing_roi(std::int32_t x, std::int32_t y,
                                            std::int32_t w, std::int32_t h);
@@ -111,6 +151,16 @@ public:
     bool cancel_device_discovery(std::uint64_t job_id);
     BridgeDiscoverySnapshot fetch_device_discovery(std::uint64_t job_id);
     BridgeCameraSelection fetch_camera_selection();
+    // Central profile registry (schema v25, #398).
+    bool set_registry_transport(
+        rust::Fn<BridgeHttpResponse(const BridgeHttpRequest&)> transport);
+    std::uint64_t registry_sign_in(rust::Str email, rust::Str password);
+    std::uint64_t registry_sign_out();
+    std::uint64_t registry_refresh();
+    std::uint64_t registry_download(rust::Str revision_id);
+    bool registry_cancel_all();
+    BridgeRegistrySnapshot fetch_registry_snapshot();
+    BridgeRegistryJob fetch_registry_job(std::uint64_t job_id);
     BridgeCommandResult select_hardware_camera(std::int32_t interface_index,
                                                std::int32_t device_index,
                                                rust::Str label);
@@ -119,6 +169,12 @@ public:
                                                  rust::Str config_path);
     BridgeCommandResult apply_camera_script(rust::Str script_path);
     BridgeCommandResult reset_hardware_camera();
+    BridgeCommandResult soft_trigger_camera();
+    BridgeCommandResult set_camera_overview(bool overview);
+    BridgeCommandResult save_camera_roi(std::int32_t x, std::int32_t y, std::int32_t width, std::int32_t height);
+    rust::String fetch_camera_geometry();
+    rust::String fetch_platform_info();
+    rust::String fetch_instrument_status();
     BridgeCommandResult monitoring_set_active(bool active);
     BridgeCommandResult monitoring_clear();
     BridgeMonitoringSnapshot fetch_monitoring_snapshot(std::uint64_t max_rows);
@@ -130,6 +186,9 @@ public:
 
     rust::Vec<BridgeEvent> poll_events();
     std::uint64_t queue_overflow_total() const;
+    BridgeCommandResult close_review();
+    rust::String fetch_preview_buffer();
+    rust::String save_preview_buffer(rust::Str request);
     BridgeFrame fetch_latest_frame();
     BridgeFrame fetch_frame_by_index(std::uint64_t frame_index);
     BridgeProcessingStats fetch_processing_stats();
@@ -140,6 +199,8 @@ private:
 };
 
 std::unique_ptr<BackendBridge> new_backend_bridge();
+rust::String profile_fetch_url(rust::Str url);
 std::uint32_t bridge_abi_version();
+bool registry_request_cancelled(std::uint64_t cancel_handle);
 
 } // namespace mib_bridge

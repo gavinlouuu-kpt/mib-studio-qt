@@ -1,5 +1,5 @@
 // C++ side of the review bridge (plan 2026-10-01-standalone-review-app,
-// ADR 0008). Wraps backend::review::ReviewSession behind an opaque
+// ADR 0014). Wraps backend::review::ReviewSession behind an opaque
 // ReviewBridge that cxx owns via UniquePtr. Links mib_review_core +
 // mib_processing only — no AppBackend, so the review-only product carries no
 // camera, serial, SQLite or Sentry code. No Qt, no exceptions cross the

@@ -11,9 +11,12 @@ menus, exports and update flow below).
 `ReviewApp.tsx`, `ReviewPanel.tsx`, `RegenerateMasks.tsx`, `review.css`,
 `charts/`, `exports/`),
 `desktop/src-tauri/tauri.review.conf.json`, cargo feature `review-only` in
-`desktop/src-tauri/Cargo.toml` + `src/lib.rs`,
+`desktop/src-tauri/Cargo.toml` (features `studio` / `review-only`),
+`src/main.rs` + `src/review_app.rs`, `src/review.rs`, `src/review_packet.rs`,
+`crates/mib-bridge/contract/review-contract.json` (→ `src/review/reviewContract.ts`,
+`src/review/reviewPacket.ts`), `desktop/scripts/tauri-review.mjs`,
 `scripts/release/stamp-tauri-version.py`, `.github/workflows/review-ci.yml`
-**Decision:** `docs/decisions/0008-yofo-review-on-react-tauri.md`
+**Decision:** `docs/decisions/0014-yofo-review-on-react-tauri.md`
 **Plan:** `docs/exec-plans/active/2026-10-01-standalone-review-app.md`
 **Related:** [[../architecture/Desktop-Shell]], [[../architecture/Rust-Bridge]],
 [[HdfReviewTab]] (the Qt behaviour being reproduced), [[../services/Hdf5Service]],
@@ -21,12 +24,18 @@ menus, exports and update flow below).
 
 ## How the two products share one tree
 
+Since the develop merge (ADR 0014 amendment, decision A) MIB Studio's
+Review tab is develop's own (#450 components and facade commands); the
+review module below is YOFO Review's. #512 tracks bringing them back to one
+implementation.
+
 | Concern | MIB Studio (Tauri) | YOFO Review |
 |---|---|---|
 | Page | `index.html` → `src/main.tsx` → `App.tsx` | `review.html` → `src/review/main.tsx` → `ReviewApp.tsx` |
-| Review UI | `App.tsx` mounts `ReviewPanel` in its Review tab | `ReviewApp.tsx` mounts `ReviewPanel` as the window |
+| Review UI | `App.tsx` with develop's review components (`ReviewCharts`, `SavedReviewImage`, export / reanalysis controls) | `ReviewApp.tsx` mounts `ReviewPanel` as the window |
 | Tauri config | `tauri.conf.json` | `tauri.conf.json` + overlay `tauri.review.conf.json` (`--config`): product name, identifier `bio.yofo.review`, `mainBinaryName` `yofo-review`, window → `review.html`, bundle targets `dmg` + `nsis`, `.h5`/`.hdf5` association |
-| Commands | full `generate_handler!` list | `--features review-only`: review, platform, dialog, operation control only (`invoke_handler()` in `lib.rs`) |
+| Rust | the library (`lib.rs`, default feature `studio`, over `mib-app-commands`) | the binary built with `--no-default-features --features review-only`: `main.rs` → `review_app.rs` registers review, platform, isoelastic and update commands only; the library is empty |
+| Contract | `bridge-contract.json` (MIB bridge ABI) | `review-contract.json` (`review_abi_version`), packets via `review_packet.rs` / `reviewPacket.ts` |
 | Version | both stamped from `cmake/MIBVersion.cmake` by `stamp-tauri-version.py`; committed files carry the numeric `X.Y.Z` (CI `--check` compares that core — develop's `vX.Y.Z-beta.<sha>` tags cannot be committed), a pre-release suffix is stamped at build time | same |
 
 Build locally:
@@ -34,9 +43,10 @@ Build locally:
 ```bash
 cd desktop && npm install && npm run build             # both pages into dist/
 cd src-tauri
-TAURI_CONFIG="$(cat tauri.review.conf.json)" cargo build --features review-only
-# or, with the bundler (macOS/Windows): npm run tauri:review:build -- --features review-only
-# (Tauri CLI v2 takes --config after the subcommand: tauri:review:dev / tauri:review:build)
+TAURI_CONFIG="$(cat tauri.review.conf.json)" cargo build --no-default-features --features review-only
+# or, with the bundler (macOS/Windows): npm run tauri:review:build -- --bundles dmg
+# (scripts/tauri-review.mjs adds --config, --features review-only and the runner's
+#  --no-default-features; tauri:review:dev the same for `tauri dev`)
 ```
 
 `TAURI_CONFIG` is how the Tauri CLI passes `--config` overlays to
@@ -48,8 +58,8 @@ to see the UI, or build a release binary.
 
 `src/review/ReviewPanel.tsx` owns the review state (file info, metrics
 page, selection, sub-tab) and the `"review"` / `"viewer"` slots of the
-host's `FramePullScheduler`, and imports `review.css` itself (both products
-get the styles). The host supplies: `ready` (backend initialized), the
+host's `FramePullScheduler`, and imports `review.css` itself (the host page
+needs no stylesheet). The host supplies: `ready` (backend initialized), the
 scheduler, `fitWindow`, a `log` sink and three hooks — `beforeLoad` (MIB
 Studio stops its live preview loop), `onFileChange` (host invalidates its
 scheduler views), `onInfo` (workflow facts, status bar) and
@@ -94,7 +104,7 @@ The Qt tab's layout per set (Valid / Invalid, or "Frames" for a recording):
   else the first existing `.h5`/`.hdf5` argument (`yofo-review run.h5`, the
   Windows/Linux file association); `?open=<path>` does the same for dev and
   the screenshot harness. macOS Finder opens arrive as `RunEvent::Opened`
-  (`run()` in `lib.rs`): the first HDF5 path is queued
+  (`run()` in `review_app.rs`): the first HDF5 path is queued
   (`review::set_pending_open`) and `review-open-file` is emitted;
   `ReviewApp` takes it with `review_take_open_request` — taking means a
   cold-launch open read at boot is never opened twice. Windows/Linux start a
@@ -153,8 +163,7 @@ cells render with density ready in ~2–3 s.
 ## Exports and jobs (PR 4)
 
 - **Job tracking** (`exports/useReviewJobs.ts`): the panel owns the review
-  event drain in both products (`poll_review_events` at 5 Hz; before PR 4
-  only YOFO Review drained it, so MIB Studio lost job outcomes), logs every
+  event drain (`poll_review_events` at 5 Hz), logs every
   terminal state and tracks the one job it started. Events are buffered per
   operation id, so a job that finishes before its start call returns still
   reaches its dialog. An optional `prepare` step (chart rendering) runs
@@ -297,4 +306,4 @@ signing or notarisation. How-tos: `docs/howto/macos-build.md`,
 - The cargo binary is still named `mib-studio-desktop` in `target/`;
   `mainBinaryName` applies when the Tauri CLI bundles.
 - Keep product identity in the config overlay and the feature flag only;
-  no `#ifdef`-style branching in React sources (ADR 0008).
+  no `#ifdef`-style branching in React sources (ADR 0014).

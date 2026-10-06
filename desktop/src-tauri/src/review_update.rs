@@ -88,7 +88,7 @@ pub async fn review_check_update(app: AppHandle, channel: String) -> Result<Upda
         current: app.package_info().version.to_string(),
         ..Default::default()
     };
-    if configured_pubkey(&app.config()).is_empty() {
+    if configured_pubkey(app.config()).is_empty() {
         return Ok(status);
     }
     status.configured = true;
@@ -105,7 +105,7 @@ pub async fn review_check_update(app: AppHandle, channel: String) -> Result<Upda
 /// install and restart. Returns only on failure.
 #[tauri::command]
 pub async fn review_install_update(app: AppHandle, channel: String) -> Result<(), String> {
-    if configured_pubkey(&app.config()).is_empty() {
+    if configured_pubkey(app.config()).is_empty() {
         return Err("this build has no update key".into());
     }
     let update = updater_for(&app, &channel)?

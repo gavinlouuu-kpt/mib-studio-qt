@@ -1,5 +1,5 @@
 // Link probe for YOFO Review's review core (plan
-// 2026-10-01-standalone-review-app, ADR 0008). Built only with
+// 2026-10-01-standalone-review-app, ADR 0014). Built only with
 // MIB_BUILD_REVIEW_LINK_PROBE (the *-review-core presets): CMake resolves its
 // full link line — mib_review_core, mib_processing and every static Conan
 // dependency, in order — and tools/gen_review_link_manifest.py hands that line

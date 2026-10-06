@@ -1,4 +1,4 @@
-//! Headless contract test for the review bridge (ADR 0008, plan
+//! Headless contract test for the review bridge (ADR 0014, plan
 //! 2026-10-01-standalone-review-app). Runs in both feature configurations:
 //! with `review-only` this is the only bridge in the crate and the binary
 //! links no AppBackend.
@@ -26,8 +26,8 @@ fn review_bridge_reads_the_fixture_file() {
     assert!(ffi::review_fixture_write_experiment(&path.to_string_lossy()), "fixture write failed");
 
     let contract: serde_json::Value =
-        serde_json::from_str(include_str!("../contract/bridge-contract.json")).unwrap();
-    assert_eq!(contract["abi_version"].as_u64().unwrap() as u32, ffi::review_bridge_abi_version());
+        serde_json::from_str(include_str!("../contract/review-contract.json")).unwrap();
+    assert_eq!(contract["review_abi_version"].as_u64().unwrap() as u32, ffi::review_bridge_abi_version());
     assert_eq!(contract["review_pixel_formats"]["Rgb8"].as_u64().unwrap(), RGB8);
     assert_eq!(contract["overlay_modes"]["FilteredMask"].as_u64().unwrap(), 4);
 

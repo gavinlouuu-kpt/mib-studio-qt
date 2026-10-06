@@ -1,0 +1,331 @@
+#include "backend/app/AppBackend.h"
+#include "backend/app/BackendFacade.h"
+#include "backend/recording/Hdf5Service.h"
+#include "support/assert.h"
+#include "support/tempdir.h"
+#include "support/watchdog.h"
+#include <nlohmann/json.hpp>
+#include <atomic>
+#include <fstream>
+#include <thread>
+#include <opencv2/imgcodecs.hpp>
+#include <opencv2/videoio.hpp>
+#include "backend/processing/BatchMaskSources.h"
+#include "backend/recording/ReviewChartData.h"
+#include "backend/recording/HdfExportService.h"
+
+using namespace backend::bridge;
+using nlohmann::json;
+namespace {
+uint64_t hash(const std::filesystem::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    uint64_t value = 14695981039346656037ULL;
+    char byte;
+    while (in.get(byte))
+        value = (value ^ static_cast<unsigned char>(byte)) * 1099511628211ULL;
+    return value;
+}
+json terminal(BackendFacade& facade, uint64_t id, bool reanalysis = false) {
+    for (int i = 0; i < 1000; ++i) {
+        auto status = json::parse(reanalysis ? facade.fetchReviewReanalysisStatusJson() : facade.fetchReviewExportStatusJson());
+        if (status.value("operation_id", "") == std::to_string(id) &&
+            status["state"] != "running" && facade.activeOperationCount() == 0) {
+            // Allow worker to complete its final publication before next submit.
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            return status;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    MIB_REQUIRE(false, "export terminal bounded wait");
+    return {};
+}
+} // namespace
+int main() {
+    mib::test::Watchdog watchdog(30);
+    mib::test::TempDir dir("export_bridge");
+    const auto source = dir / "fixture.h5";
+    {
+        backend::services::Hdf5Service writer;
+        MIB_REQUIRE(writer.openFile(source.string()), "fixture open");
+        MIB_REQUIRE(writer.initializeDatasets(), "fixture datasets");
+        std::vector<backend::services::ProcessedFrame> frames(24);
+        for (size_t i = 0; i < frames.size(); ++i) {
+            frames[i].index = i;
+            frames[i].timestampNs = 1000 + i;
+            frames[i].originalImage = cv::Mat(32, 32, CV_8UC1, cv::Scalar(i));
+            frames[i].processedImage = frames[i].originalImage.clone();
+            frames[i].validation.isValid = true;
+            frames[i].validation.objectCount = 1;
+        }
+        MIB_REQUIRE(writer.appendFrames(frames, {}), "fixture write");
+        MIB_REQUIRE(writer.writeExperimentInfo(1000, 1023, 24, 0, {}, {0,0,32,32}), "fixture experiment info");
+        writer.closeFile();
+    }
+    const auto originalHash = hash(source);
+#ifdef _WIN32
+    _putenv_s("MIB_CAMERA_MODE", "mock");
+#else
+    setenv("MIB_CAMERA_MODE", "mock", 1);
+#endif
+    backend::AppBackend backend;
+    BackendFacade facade(backend);
+    MIB_REQUIRE(facade.initialize(dir.path().string()), "initialize");
+    RecordingLoadCommand load;
+    load.filePath = source.string();
+    MIB_REQUIRE(facade.dispatch(load).ok, "load fixture");
+    const json request{{"output_root", dir.path().string()}, {"format", "all"}};
+    MIB_REQUIRE(!facade.submitReviewExportJson("{bad").ok, "reject malformed request");
+    for (int cycle = 0; cycle < 6; ++cycle) {
+        watchdog.mark("export lifecycle");
+        std::atomic<bool> cancelled{false};
+        std::atomic<bool> duplicateRejected{false};
+        facade.setEventSink([&](const BackendEvent& event) {
+            if (auto op = std::get_if<OperationStatusEvent>(&event)) {
+                if (op->kind == BackendOperationKind::Export &&
+                    op->state == BackendOperationState::Progress && !cancelled.exchange(true)) {
+                    duplicateRejected = !facade.submitReviewExportJson(request.dump()).ok;
+                    facade.requestOperationCancel(op->operationId);
+                }
+            }
+        });
+        auto started = facade.submitReviewExportJson(request.dump());
+        MIB_REQUIRE(started.ok, "cancel job accepted");
+        auto status = terminal(facade, started.operationId);
+        MIB_REQUIRE(status["state"] == "cancelled", "cancel not success");
+        MIB_REQUIRE(duplicateRejected, "one export at a time");
+        MIB_REQUIRE(status["final_path"] == "", "cancel never publishes final");
+        MIB_REQUIRE(status["retained_partial_path"] == "", "cancel cleanup");
+        facade.setEventSink({});
+        MIB_REQUIRE(facade.dispatch(load).ok, "reopen after cancel");
+        started = facade.submitReviewExportJson(request.dump());
+        MIB_REQUIRE(started.ok, "roundtrip accepted");
+        status = terminal(facade, started.operationId);
+        MIB_REQUIRE(status["state"] == "completed", "roundtrip completed");
+        MIB_REQUIRE(std::filesystem::exists(status["final_path"].get<std::string>()),
+                    "published output");
+        MIB_REQUIRE(status["images_exported"] == "24", "all images exported");
+        MIB_REQUIRE(hash(source) == originalHash, "source immutable");
+    }
+    // Retained cancellation must advertise a visibly partial directory/manifest.
+    facade.setEventSink([&](const BackendEvent& event) {
+        if (auto op = std::get_if<OperationStatusEvent>(&event)) {
+            if (op->kind == BackendOperationKind::Export &&
+                op->state == BackendOperationState::Progress &&
+                json::parse(facade.fetchReviewExportStatusJson()).value("phase", "") == "metadata")
+                facade.requestOperationCancel(op->operationId);
+        }
+    });
+    auto retainedRequest = request;
+    retainedRequest["keep_partial_on_failure"] = true;
+    auto retainedStart = facade.submitReviewExportJson(retainedRequest.dump());
+    MIB_REQUIRE(retainedStart.ok, "retained cancel accepted");
+    auto retained = terminal(facade, retainedStart.operationId);
+    MIB_REQUIRE(retained["state"] == "cancelled", "retained cancellation terminal");
+    auto partial = std::filesystem::path(retained["retained_partial_path"].get<std::string>());
+    MIB_REQUIRE(partial.filename().string().find(".partial-") != std::string::npos,
+                "partial clearly named");
+    MIB_REQUIRE(std::filesystem::exists(partial / "export-failure.json"),
+                "failure manifest retained");
+    facade.setEventSink({});
+    auto overwrite = request;
+    overwrite["format"] = "metrics_csv";
+    overwrite["explicit_destination"] = source.string();
+    auto overwriteStart = facade.submitReviewExportJson(overwrite.dump());
+    MIB_REQUIRE(overwriteStart.ok, "source overwrite checked by worker");
+    MIB_REQUIRE(terminal(facade, overwriteStart.operationId)["state"] == "failed",
+                "source overwrite refused");
+    MIB_REQUIRE(hash(source) == originalHash, "source protected from explicit overwrite");
+    auto bad = request;
+    bad["output_root"] = source.string(); // file, not directory: deterministic I/O fault
+    auto started = facade.submitReviewExportJson(bad.dump());
+    MIB_REQUIRE(started.ok, "fault job accepted asynchronously");
+    const auto failed = terminal(facade, started.operationId);
+    MIB_REQUIRE(failed["state"] == "failed", "fault is never success");
+    MIB_REQUIRE(failed["final_path"] == "", "fault never publishes final");
+    MIB_REQUIRE(!failed["error"].get<std::string>().empty(), "fault detail retained");
+    MIB_REQUIRE(json::parse(facade.fetchReviewExportStatusJson()) == failed,
+                "terminal survives missed events");
+    MIB_REQUIRE(hash(source) == originalHash, "fault source immutable");
+    // Batch sources use independent readers; failures do not drop later files
+    // or alter the currently loaded review source.
+    auto batch = request;
+    batch["format"] = "metrics_csv";
+    batch["source_paths"] = json::array({source.string(), (dir / "missing.h5").string(), source.string()});
+    auto batchStart = facade.submitReviewExportJson(batch.dump());
+    MIB_REQUIRE(batchStart.ok, "batch accepted");
+    auto batchResult = terminal(facade, batchStart.operationId);
+    MIB_REQUIRE(batchResult["state"] == "failed", "partial batch is not success");
+    MIB_REQUIRE(batchResult["results"].size() == 3, "all noncancelled files attempted");
+    MIB_REQUIRE(batchResult["results"][0]["state"] == "completed", "first succeeds");
+    MIB_REQUIRE(batchResult["results"][1]["state"] == "failed", "missing source reported");
+    MIB_REQUIRE(batchResult["results"][2]["state"] == "completed", "later source still attempted");
+    MIB_REQUIRE(batchResult["results"][0]["final_path"] != batchResult["results"][2]["final_path"], "duplicate names distinct");
+    BackendReviewMetadata review;
+    MIB_REQUIRE(facade.fetchReviewMetadata(review) && review.filePath == source.string(), "batch preserves current review");
+    batch["source_paths"] = json::array();
+    MIB_REQUIRE(!facade.submitReviewExportJson(batch.dump()).ok, "empty explicit batch rejected");
+    batch["source_paths"] = json::array({source.string(),source.string()});
+    batch["explicit_destination"] = source.string();
+    MIB_REQUIRE(!facade.submitReviewExportJson(batch.dump()).ok, "batch cannot target explicit shared destination");
+    MIB_REQUIRE(hash(source) == originalHash, "batch sources unchanged");
+    const auto regeneratedPath=dir / "regenerated.h5";
+    json regenerate{{"source_path",source.string()},{"output_path",regeneratedPath.string()},
+        {"dataset","all"},{"start",0},{"count",0}};
+    auto invalidRange=regenerate;invalidRange["start"]=1.5;
+    MIB_REQUIRE(!facade.submitReviewReanalysisJson(invalidRange.dump()).ok,"fractional range rejected");
+    invalidRange["start"]=-1;
+    MIB_REQUIRE(!facade.submitReviewReanalysisJson(invalidRange.dump()).ok,"negative range rejected");
+    auto regeneration=facade.submitReviewReanalysisJson(regenerate.dump());
+    MIB_REQUIRE(regeneration.ok,"reanalysis accepted");
+    auto regenerationStatus=terminal(facade,regeneration.operationId,true);
+    MIB_REQUIRE(regenerationStatus["state"]=="completed","reanalysis complete");
+    {
+        backend::services::Hdf5Service reader;
+        MIB_REQUIRE(reader.loadFile(regeneratedPath.string()),"regenerated output opens");
+        backend::processing::ProcessingCoreIdentity identity;
+        MIB_REQUIRE(reader.readProcessingCoreIdentity(identity),"output core identity recorded");
+        std::vector<backend::services::ProcessedFrame> validFrames,invalidFrames;
+        reader.readValidMetadata(validFrames);reader.readInvalidMetadata(invalidFrames);
+        validFrames.insert(validFrames.end(),invalidFrames.begin(),invalidFrames.end());
+        MIB_REQUIRE(validFrames.size()==24,"output source count preserved");
+        for(const auto& frame:validFrames) MIB_REQUIRE(frame.timestampNs==1000+frame.index,"source timestamps preserved");
+    }
+    MIB_REQUIRE(!facade.submitReviewReanalysisJson(regenerate.dump()).ok,"existing output cannot be replaced");
+    for(int cycle=0;cycle<4;++cycle) {
+        regenerate["output_path"]=(dir / ("cancel-reanalysis-"+std::to_string(cycle)+".h5")).string();
+        facade.setEventSink([&](const BackendEvent& event) {
+            if(auto op=std::get_if<OperationStatusEvent>(&event)) {
+                if(op->kind==BackendOperationKind::Reanalysis && op->state==BackendOperationState::Progress)
+                    facade.requestOperationCancel(op->operationId);
+            }
+        });
+        regeneration=facade.submitReviewReanalysisJson(regenerate.dump());
+        MIB_REQUIRE(regeneration.ok,"cancel reanalysis accepted");
+        MIB_REQUIRE(terminal(facade,regeneration.operationId,true)["state"]=="cancelled","cancelled reanalysis not success");
+        MIB_REQUIRE(!std::filesystem::exists(regenerate["output_path"].get<std::string>()),"cancel no published output");
+        facade.setEventSink({});
+    }
+    regenerate["source_path"]=(dir / "missing.h5").string();
+    regeneration=facade.submitReviewReanalysisJson(regenerate.dump());
+    MIB_REQUIRE(regeneration.ok,"invalid source checked asynchronously");
+    MIB_REQUIRE(terminal(facade,regeneration.operationId,true)["state"]=="failed","read fault never success");
+    regenerate["source_path"]=source.string();regenerate["output_path"]=(source / "output.h5").string();
+    regeneration=facade.submitReviewReanalysisJson(regenerate.dump());
+    MIB_REQUIRE(regeneration.ok,"write fault accepted asynchronously");
+    MIB_REQUIRE(terminal(facade,regeneration.operationId,true)["state"]=="failed","write fault never success");
+    MIB_REQUIRE(hash(source)==originalHash,"reanalysis source immutable");
+    const auto folder=dir / "source-images";
+    std::filesystem::create_directory(folder);
+    for(int i=0;i<4;++i) MIB_REQUIRE(cv::imwrite((folder/("frame"+std::to_string(i)+".png")).string(),cv::Mat(32,32,CV_8UC1,cv::Scalar(20+i))),"folder fixture");
+    regenerate["source_kind"]="folder";regenerate["source_path"]=folder.string();
+    regenerate["output_path"]=(dir / "folder-regenerated.h5").string();
+    regenerate["start"]=1;regenerate["count"]=2;regenerate["synthetic_background"]=true;
+    regenerate["roi"]={{"x",1},{"y",1},{"w",20},{"h",20}};
+    regeneration=facade.submitReviewReanalysisJson(regenerate.dump());
+    MIB_REQUIRE(regeneration.ok,"folder range reanalysis accepted");
+    MIB_REQUIRE(terminal(facade,regeneration.operationId,true)["state"]=="completed","folder range complete");
+    {
+        backend::services::Hdf5Service reader;
+        MIB_REQUIRE(reader.loadFile((dir / "folder-regenerated.h5").string()),"folder output readable");
+        cv::Mat background;MIB_REQUIRE(reader.readBackgroundImage(background),"synthetic background persisted");
+        uint64_t first=0,last=0;size_t valid=0,invalid=0;backend::services::ProcessingService::Roi roi;
+        MIB_REQUIRE(reader.readExperimentInfo(first,last,valid,invalid,&roi),"folder metadata readable");
+        MIB_REQUIRE(valid+invalid==2 && roi.x==1 && roi.w==20,"folder range and ROI applied");
+    }
+    const auto avi=dir / "source.avi";
+    {
+        cv::VideoWriter writer(avi.string(),cv::VideoWriter::fourcc('M','J','P','G'),30,cv::Size(32,32),false);
+        MIB_REQUIRE(writer.isOpened(),"AVI fixture codec available");
+        for(int i=0;i<4;++i)writer.write(cv::Mat(32,32,CV_8UC1,cv::Scalar(20+i)));
+    }
+    regenerate["source_kind"]="avi";regenerate["source_path"]=avi.string();regenerate["output_path"]=(dir / "avi-regenerated.h5").string();
+    regeneration=facade.submitReviewReanalysisJson(regenerate.dump());
+    MIB_REQUIRE(regeneration.ok,"AVI range accepted");
+    MIB_REQUIRE(terminal(facade,regeneration.operationId,true)["state"]=="completed","AVI range complete");
+    {
+        using namespace backend::services::batch_masks;
+        std::vector<cv::Mat> images;std::vector<std::string> names,errors;
+        LoadOptions budget;budget.maxFrames=1;
+        MIB_REQUIRE(!loadFromFolder(folder.string(),images,names,errors,budget),"folder limit rejects rather than truncates");
+        MIB_REQUIRE(!loadFromAvi(avi.string(),images,names,errors,budget),"AVI limit rejects rather than truncates");
+        budget.maxFrames=4;budget.maxBytes=1;
+        MIB_REQUIRE(!loadFromFolder(folder.string(),images,names,errors,budget),"folder memory cap");
+        budget.maxBytes=4096;budget.cancelled=[]{return true;};
+        MIB_REQUIRE(!loadFromAvi(avi.string(),images,names,errors,budget),"AVI load cancellation");
+        images=std::vector<cv::Mat>(10,cv::Mat(70,70,CV_8UC1,cv::Scalar(32)));
+        images.back()=cv::Mat(70,70,CV_8UC1,cv::Scalar(200));
+        const auto background=buildSyntheticBackground(images);
+        MIB_REQUIRE(cv::countNonZero(background!=32)==0,"synthetic quiet tiles reject moving outlier including edge tiles");
+    }
+    {
+        BackendFrame preview;
+        MIB_REQUIRE(facade.fetchReviewReanalysisPreviewJson(json{{"source_path",folder.string()},{"source_kind","folder"},{"index",1}}.dump(),preview),"independent folder preview");
+        MIB_REQUIRE(preview.width==32 && preview.height==32 && preview.data.front()==21,"preview pixels belong to requested frame");
+        MIB_REQUIRE(!facade.fetchReviewReanalysisPreviewJson(json{{"source_path",source.string()},{"source_kind","hdf"},{"dataset","/valid_frames/images"},{"index",99}}.dump(),preview),"out-of-range preview rejected");
+        regenerate["source_kind"]="folder";regenerate["source_path"]=folder.string();regenerate["output_path"]=(dir/"selected-background.h5").string();
+        regenerate["background_index"]=2;regenerate["synthetic_background"]=false;
+        const auto selected=facade.submitReviewReanalysisJson(regenerate.dump());
+        MIB_REQUIRE(selected.ok && terminal(facade,selected.operationId,true)["state"]=="completed","selected source background accepted");
+        backend::services::Hdf5Service reader;cv::Mat background;
+        MIB_REQUIRE(reader.loadFile((dir/"selected-background.h5").string()) && reader.readBackgroundImage(background),"selected background persisted");
+        MIB_REQUIRE(cv::countNonZero(background!=22)==0,"selected background pixels roundtrip");
+    }
+    const auto chartSnapshot=json::parse(facade.fetchReviewChartsJson());
+    MIB_REQUIRE(chartSnapshot["valid"]==true && chartSnapshot["finite_points"]=="24","chart snapshot covers full source");
+    uint64_t densityCount=0;for(const auto& cell:chartSnapshot["density"])densityCount+=std::stoull(cell[2].get<std::string>());
+    MIB_REQUIRE(densityCount==24,"density conserves all objects");
+    MIB_REQUIRE(!chartSnapshot["curves"].empty(),"bundled isoelastic references available without cwd assets");
+    auto charts=request;charts["format"]="charts";
+    const auto chartJob=facade.submitReviewExportJson(charts.dump());
+    MIB_REQUIRE(chartJob.ok,"chart export accepted");
+    const auto chartResult=terminal(facade,chartJob.operationId);
+    MIB_REQUIRE(chartResult["state"]=="completed" && chartResult["images_exported"]=="0","charts-only exports no frame images");
+    const auto chartPath=std::filesystem::path(chartResult["final_path"].get<std::string>());
+    const auto raster=cv::imread((chartPath/"scatter_plot.tiff").string());
+    MIB_REQUIRE(raster.rows==1200 && raster.cols==1200,"publication-size TIFF chart roundtrip");
+    MIB_REQUIRE(std::filesystem::exists(chartPath/"histogram.tiff"),"histogram TIFF published");
+    {
+        std::vector<backend::services::ProcessedFrame> rows(350);
+        for(auto& frame:rows){frame.validation.isValid=true;frame.validation.area=100;frame.validation.deformability=0.2;frame.validation.ringRatio=1.25;}
+        rows[0].validation.ringRatio=100;rows[1].validation.ringRatio=0.1;
+        const auto data=backend::recording::makeReviewChartData(rows,0.5,1,2);
+        MIB_REQUIRE(data.points.size()==350 && data.points.front().first==25,"all rows use squared calibration");
+        MIB_REQUIRE(data.bins[0]==349 && data.bins[1]==1,"Qt-equivalent edge-clamped histogram conserves counts");
+    }
+    {
+        backend::recording::HdfExportRequest request;
+        request.sourcePath=source.string();request.outputRoot=dir.path().string();
+        request.format=backend::recording::HdfExportFormat::Charts;request.generateReviewCharts=true;
+        backend::recording::HdfExportService writer;
+        writer.setImageWriterForTests([](const auto&,const auto&){return false;});
+        const auto failed=writer.run(request,{});
+        MIB_REQUIRE(failed.status==backend::recording::HdfExportStatus::Failed && failed.finalPath.empty(),"chart writer fault never publishes success");
+        MIB_REQUIRE(hash(source)==originalHash,"chart fault preserves source");
+    }
+    {
+        const json overlay{{"source_path",source.string()},{"valid",true},{"index",1},{"mode",3},{"roi",false}};
+        const auto bytes=facade.renderReviewOverlayJson(overlay.dump());
+        const auto image=cv::imdecode(bytes,cv::IMREAD_COLOR);
+        MIB_REQUIRE(image.rows==32 && image.cols==32,"saved-image overlay PNG roundtrip");
+        MIB_REQUIRE(image.at<cv::Vec3b>(10,10)[1]>image.at<cv::Vec3b>(10,10)[0],"valid mask overlay uses green classification");
+        auto invalidSeries=request;invalidSeries["series"]={{"start",5},{"end",2}};
+        MIB_REQUIRE(!facade.submitReviewExportJson(invalidSeries.dump()).ok,"reversed series range rejected");
+        const auto collision=dir/"late-output.h5";
+        regenerate={{"source_path",source.string()},{"output_path",collision.string()},{"dataset","all"}};
+        facade.setEventSink([&](const BackendEvent& event){if(auto op=std::get_if<OperationStatusEvent>(&event)){if(op->kind==BackendOperationKind::Reanalysis && op->state==BackendOperationState::Progress){std::ofstream existing(collision);existing<<"preserve concurrent output";}}});
+        const auto job=facade.submitReviewReanalysisJson(regenerate.dump());
+        MIB_REQUIRE(job.ok && terminal(facade,job.operationId,true)["state"]=="failed","late output collision not overwritten");
+        facade.setEventSink({});std::ifstream existing(collision);std::string contents;std::getline(existing,contents);
+        MIB_REQUIRE(contents=="preserve concurrent output","concurrent output bytes preserved");
+    }
+    {
+        const auto destination=dir/"pinned-source.csv";
+        const json pinned{{"source_paths",{source.string()}},{"output_root",dir.path().string()},{"explicit_destination",destination.string()},{"format","metrics_csv"}};
+        MIB_REQUIRE(facade.closeReview().ok,"close before explicitly pinned export");
+        const auto job=facade.submitReviewExportJson(pinned.dump());
+        MIB_REQUIRE(job.ok && terminal(facade,job.operationId)["state"]=="completed","single pinned source supports explicit CSV destination after review close");
+        MIB_REQUIRE(std::filesystem::exists(destination),"pinned CSV published");
+    }
+    facade.shutdown();
+    return mib::test::exitCode();
+}

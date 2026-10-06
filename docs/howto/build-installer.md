@@ -203,7 +203,7 @@ ISCC.exe /DAppVersion=<PROJECT_VERSION> mib-studio-qt.iss
 
 ## YOFO Review installer (NSIS, per-user)
 
-YOFO Review — the standalone review app (ADR 0008) — ships as a Tauri NSIS
+YOFO Review — the standalone review app (ADR 0014) — ships as a Tauri NSIS
 installer, not through InnoSetup. It installs per user (no administrator
 rights) under `%LOCALAPPDATA%\YOFO Review`, registers `.h5` / `.hdf5`, and
 carries no third-party DLLs (the review core links OpenCV / HDF5 statically).

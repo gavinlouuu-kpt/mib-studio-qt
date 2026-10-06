@@ -3,7 +3,7 @@
 // Regenerate with: python3 scripts/gen_bridge_contract.py
 // CI verifies this file with: python3 scripts/gen_bridge_contract.py --check
 
-export const BRIDGE_ABI_VERSION = 15;
+export const BRIDGE_ABI_VERSION = 25;
 
 export const EVENT_KINDS = {
   FrameReady: 0,
@@ -36,6 +36,7 @@ export const COMMAND_TYPES = {
   Review: 9,
   Pump: 10,
   Autofocus: 11,
+  PulseGenerator: 12,
 } as const;
 
 export const CAMERA_TYPES = {
@@ -96,38 +97,55 @@ export const DISCOVERY_ERROR_KINDS = {
   TooManyJobs: 13,
 } as const;
 
+export const REGISTRY_SESSION_STATES = {
+  SignedOut: 0,
+  SignedIn: 1,
+  CachedOffline: 2,
+} as const;
+
+export const REGISTRY_CONNECTIVITY = {
+  Unknown: 0,
+  Online: 1,
+  Offline: 2,
+  AuthenticationRequired: 3,
+  PermissionDenied: 4,
+  Failed: 5,
+} as const;
+
+export const REGISTRY_JOB_KINDS = {
+  SignIn: 0,
+  SignOut: 1,
+  Refresh: 2,
+  Download: 3,
+  Materialize: 4,
+  RecordValidation: 5,
+} as const;
+
+export const REGISTRY_JOB_STATES = {
+  Queued: 0,
+  Running: 1,
+  Succeeded: 2,
+  Partial: 3,
+  Failed: 4,
+  Cancelled: 5,
+} as const;
+
+export const REGISTRY_CENTRAL_STATES = {
+  Submitted: 0,
+  Approved: 1,
+  Rejected: 2,
+  Published: 3,
+  Superseded: 4,
+  Archived: 5,
+  Revoked: 6,
+} as const;
+
 export const REVIEW_IMAGE_DATASETS = {
   ValidImage: 0,
   InvalidImage: 1,
   RecordedImage: 2,
   ValidMask: 3,
   InvalidMask: 4,
-} as const;
-
-export const OVERLAY_MODES = {
-  None: 0,
-  AllContour: 1,
-  OuterInnerColorCoded: 2,
-  AllMask: 3,
-  FilteredMask: 4,
-} as const;
-
-export const REVIEW_OPERATION_KINDS = {
-  ExportMetrics: 0,
-  ExportAll: 1,
-  BatchExport: 2,
-  RegenerateMasks: 3,
-  ComputeCore: 4,
-  Density: 5,
-  ExportCharts: 6,
-} as const;
-
-export const REVIEW_REGENERATE_SOURCES = {
-  CurrentValid: 0,
-  CurrentInvalid: 1,
-  WholeFile: 2,
-  Avi: 3,
-  Folder: 4,
 } as const;
 
 export const PUMP_IDS = {
@@ -145,6 +163,11 @@ export const PUMP_RUN_STATES = {
 export const PUMP_DIRECTIONS = {
   Infuse: 0,
   Withdraw: 1,
+} as const;
+
+export const PUMP_MODELS = {
+  DlspSyringe: 0,
+  TushuiPeristaltic: 1,
 } as const;
 
 export const EXPERIMENT_STATES = {
@@ -246,88 +269,20 @@ export const RECORDING_STATES = {
   Error: 5,
 } as const;
 
-export const REVIEW_DENSITY = {
-  "level_count": 8,
-  "grid_above_points": 5000,
-  "sample_seed": 20260924,
-  "grid_nx": 256,
-  "grid_ny": 128,
-  "ramp_rgb": [
-    [
-      134,
-      182,
-      239
-    ],
-    [
-      109,
-      167,
-      236
-    ],
-    [
-      85,
-      152,
-      231
-    ],
-    [
-      57,
-      135,
-      229
-    ],
-    [
-      42,
-      120,
-      214
-    ],
-    [
-      37,
-      106,
-      191
-    ],
-    [
-      28,
-      92,
-      171
-    ],
-    [
-      24,
-      79,
-      149
-    ],
-    [
-      16,
-      66,
-      129
-    ],
-    [
-      13,
-      54,
-      107
-    ]
-  ],
-  "ramp_semantics": "backend/processing/MonitoringDensity.h densityRampColor: linear interpolation over the stops, t in [0,1]; level k of n uses t = k/(n-1) (kdeLevelColor)"
-} as const;
-
-export const REVIEW_PIXEL_FORMATS = {
-  "Mono8": 0,
-  "Rgb8": 35127316
-} as const;
-
 export const FRAME_PACKET = {
-  "version": 1,
+  "version": 2,
   "header_bytes": 96,
   "byte_order": "little",
   "max_payload_bytes": 33554432,
   "max_pixels": 16777216,
   "max_dimension": 8192,
   "timestamp_semantics": "legacy raw timestamp_ns; unit and clock validity unavailable",
-  "identity_semantics": "source/session/config unavailable; reserved u64 slots zero",
+  "identity_semantics": "Live raw frames carry CaptureService generation and FrameStore epoch stamped atomically with pixels. Zero means unavailable; raw processing config is inapplicable. Review/background have separate explicit source ownership and zero capture identities.",
   "pull_kinds": {
     "latest": 1,
     "indexed": 2,
     "review": 3,
-    "background": 4,
-    "review_thumbnails": 5,
-    "review_series": 6
+    "background": 4
   },
   "fields": {
     "magic": 0,
@@ -342,17 +297,10 @@ export const FRAME_PACKET = {
     "pixel_format": 48,
     "stride_bytes": 56,
     "payload_bytes": 64,
-    "session_id_reserved": 72,
     "config_revision_reserved": 80,
-    "source_id_reserved": 88
-  },
-  "pixel_formats": {
-    "mono8_legacy": 0,
-    "mono8": 17301505,
-    "rgb8": 35127316
-  },
-  "rgb8_semantics": "review pulls (kinds 3, 5, 6) may carry RGB8 (3 bytes per pixel, stride = width*3) when the backend composed an overlay or ROI; mono pulls are unchanged",
-  "thumbnail_strip_semantics": "pull kind 5 packs count tiles of size x size as one frame of width size and height size*count; frame_index = page offset"
+    "capture_session": 72,
+    "store_generation": 88
+  }
 } as const;
 
 export const JSON_TRANSPORT = {

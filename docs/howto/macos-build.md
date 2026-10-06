@@ -1,7 +1,7 @@
 # Building YOFO Review on macOS
 
 YOFO Review is the standalone review app (plan
-`docs/exec-plans/active/2026-10-01-standalone-review-app.md`, ADR 0008). On
+`docs/exec-plans/active/2026-10-01-standalone-review-app.md`, ADR 0014). On
 macOS it is built from the same `desktop/` tree as MIB Studio's React + Tauri
 shell, with the review core linked statically: the app carries no third-party
 dylibs, so the DMG is just `YOFO Review.app`. CI does exactly this on every

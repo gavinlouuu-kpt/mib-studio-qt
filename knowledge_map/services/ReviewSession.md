@@ -1,7 +1,9 @@
 # ReviewSession
 
-> The one review implementation behind every shell (ADR 0008, plan
-> `docs/exec-plans/active/2026-10-01-standalone-review-app.md`): Qt-free,
+> YOFO Review's review implementation (ADR 0014, plan
+> `docs/exec-plans/active/2026-10-01-standalone-review-app.md`), also used by
+> the Qt tab for the recorded factor. MIB Studio's Tauri shell keeps its own
+> facade review stack until #512 (ADR 0014 amendment, decision A). Qt-free,
 > owns the open HDF5 file through its **own** read-only `Hdf5Service`,
 > serves bounded reads with overlays composed in the backend, and will own
 > the review jobs (PR 1b).
@@ -11,13 +13,12 @@
 `src/backend/review/OverlayCompose.cpp` (+ header)
 **Library:** `mib_review_core` (static; `src/backend/CMakeLists.txt`) on
 `mib_processing` only — no `mib_backend`, so YOFO Review links it without
-cameras, serial, SQLite, curl or Sentry. `mib_backend` links it for the
-facade. `ReviewExport.cpp` (`review::writeMetricsCsv`) moved here too.
+cameras, serial, SQLite, curl or Sentry. `mib_backend` links it because
+`ReviewExport.cpp` (`review::writeMetricsCsv`, used by the facade's CSV
+export) is compiled here once.
 **Tests:** `tests/review/review_session_test.cpp` (`review.session`, labels
 `review;recording;backend;hdf5;safety`)
-**Consumers:** `BackendFacade` (`reviewSession()`; `RecordingLoad`,
-`fetchReviewMetadata/MetricsPage/Image`, CSV export factor),
-`crates/mib-bridge/src/review_shim.cpp` (`ReviewBridge`, [[../architecture/Rust-Bridge]]),
+**Consumers:** `crates/mib-bridge/src/review_shim.cpp` (`ReviewBridge`, [[../architecture/Rust-Bridge]]),
 the Qt [[../frontend/HdfReviewTab]] (`recordedPixelToMicron`, TD-17)
 **Related:** [[Hdf5Service]], [[HdfExportService]], [[BatchMaskSources]],
 [[../data-model/HDF5-Storage]], [[../frontend/YofoReview]]

@@ -1,1775 +1,632 @@
 //! MIB Studio desktop shell (React + Tauri v2) — Phase 3 of epic #246.
 //!
-//! Wraps the Phase 2 Rust ↔ C++ bridge (`mib-bridge`, ADR 0003) as Tauri
-//! commands so a React webview can drive the Qt-free C++ backend. The first
-//! vertical slice is the **mock camera end to end**: configure a mock camera,
-//! start capture, pull frames (raw Mono8 bytes — no per-frame base64), and
-//! drain status/frame events.
+//! The commands live in `mib-app-commands` (transport-neutral, shared with the YOFO Studio
+//! WebSocket server); this crate exposes them as typed Tauri commands and keeps what only a
+//! desktop shell has: app paths, preferences, the updater and native installers.
 //!
-//! The same crate also builds **YOFO Review** (feature `review-only`, config
-//! `tauri.review.conf.json`; plan 2026-10-01-standalone-review-app, ADR 0008):
-//! the review product registers only the review, platform and dialog
-//! commands, so the camera / experiment / hardware commands below are dead
-//! code in that build.
-#![cfg_attr(feature = "review-only", allow(dead_code))]
+//! Built with the default feature `studio`. YOFO Review (`review-only`, ADR 0014)
+//! is a separate app built from this crate's binary (main.rs → review_app.rs);
+//! without `studio` this library is empty.
+#![cfg(feature = "studio")]
 
-use std::sync::Mutex;
-
-#[cfg(not(feature = "review-only"))]
-use mib_bridge::ffi::{self, BridgeEventKind};
-use mib_bridge::review_ffi;
-use serde::{Deserialize, Serialize};
+use mib_app_commands as cmds;
+use cmds::AppState;
 use tauri::ipc::Response;
-use tauri::Manager;
-#[cfg(not(feature = "review-only"))]
-use tauri::State;
+use tauri::{Manager, State};
 
-#[cfg(not(feature = "review-only"))]
-mod event_transport;
-mod frame_packet;
-mod isoelastic;
 mod platform;
-mod review;
-#[cfg(feature = "review-only")]
-mod review_update;
+mod registry;
+mod registry_transport;
 pub mod updater;
-mod wire;
+mod app_update;
 
-struct AppState {
-    /// MIB Studio's backend bridge (cameras, experiment, hardware); absent
-    /// from the YOFO Review build.
-    #[cfg(not(feature = "review-only"))]
-    bridge: Mutex<cxx::UniquePtr<ffi::BackendBridge>>,
-    /// The review bridge both products use for the review module (ADR 0008).
-    review: Mutex<cxx::UniquePtr<review_ffi::ReviewBridge>>,
-}
-
-/// Flattened command result handed to JS.
-#[derive(Serialize, Clone)]
-struct CmdResult {
-    transport_version: u32,
-    ok: bool,
-    command: u32,
-    message: String,
-    /// Non-zero when the command started/targeted a tracked operation
-    /// (schema v4) — correlates with OperationStatus events.
-    #[serde(serialize_with = "wire::serialize_u64")]
-    operation_id: u64,
-}
-
-#[cfg(not(feature = "review-only"))]
-impl From<ffi::BridgeCommandResult> for CmdResult {
-    fn from(r: ffi::BridgeCommandResult) -> Self {
-        CmdResult {
-            transport_version: frame_packet::JSON_TRANSPORT_VERSION,
-            ok: r.ok,
-            command: r.command,
-            message: r.message,
-            operation_id: r.operation_id,
-        }
-    }
-}
-
-/// Realtime processing stats snapshot for the webview.
-#[derive(Serialize, Clone, Default)]
-struct ProcessingStats {
-    transport_version: u32,
-    valid: bool,
-    algo_fps1s: Option<f64>,
-    valid_fps1s: Option<f64>,
-    invalid_fps1s: Option<f64>,
-    pixel_to_micron: Option<f64>,
-}
-
-#[cfg(not(feature = "review-only"))]
-fn kind_name(k: BridgeEventKind) -> &'static str {
-    match k {
-        BridgeEventKind::FrameReady => "FrameReady",
-        BridgeEventKind::CameraStatus => "CameraStatus",
-        BridgeEventKind::RecordingStatus => "RecordingStatus",
-        BridgeEventKind::ProcessingResult => "ProcessingResult",
-        BridgeEventKind::PlaybackPosition => "PlaybackPosition",
-        BridgeEventKind::BackendError => "BackendError",
-        BridgeEventKind::OperationStatus => "OperationStatus",
-        BridgeEventKind::QueueOverflow => "QueueOverflow",
-        BridgeEventKind::ExperimentStatus => "ExperimentStatus",
-        // Fail-safe for additive kinds this build does not know (ADR 0004):
-        // consumers must ignore "Unknown" rather than crash.
-        _ => "Unknown",
-    }
-}
-
-#[cfg(not(feature = "review-only"))]
-#[tauri::command]
-fn abi_version() -> u32 {
-    ffi::bridge_abi_version()
-}
-
-#[cfg(not(feature = "review-only"))]
-#[tauri::command]
-fn is_initialized(state: State<AppState>) -> Result<bool, String> {
-    let guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.is_initialized())
-}
-
-/// Resolve the data directory: an empty `data_dir` means "use the platform
-/// app-data dir" — AppBackend rejects an empty path (found by the Xvfb E2E
-/// run: the UI passed "" and init always failed).
-fn resolve_data_dir(app: &tauri::AppHandle, data_dir: String) -> Result<String, String> {
-    if data_dir.trim().is_empty() {
-        Ok(app
-            .path()
-            .app_data_dir()
-            .map_err(|e| format!("resolve app data dir: {e}"))?
-            .to_string_lossy()
-            .into_owned())
-    } else {
-        Ok(data_dir)
-    }
-}
-
-/// MIB Studio: initialize the backend and the review bridge together.
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
 fn init(
     app: tauri::AppHandle,
     state: State<AppState>,
     data_dir: String,
 ) -> Result<bool, String> {
-    let dir = resolve_data_dir(&app, data_dir)?;
-    {
-        let mut review = state.review.lock().map_err(|e| e.to_string())?;
-        review.pin_mut().initialize(&dir);
-    }
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().initialize(&dir))
-}
-
-#[cfg(not(feature = "review-only"))]
-#[tauri::command]
-fn configure_mock(
-    state: State<AppState>,
-    frame_dir: String,
-    frame_interval_ms: i32,
-    loop_files: bool,
-) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard
-        .pin_mut()
-        .configure_mock_camera(&frame_dir, frame_interval_ms, loop_files)
-        .into())
-}
-
-#[cfg(not(feature = "review-only"))]
-#[tauri::command]
-fn start_capture(state: State<AppState>) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().start_capture().into())
-}
-
-#[cfg(not(feature = "review-only"))]
-#[tauri::command]
-fn stop_capture(state: State<AppState>) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().stop_capture().into())
-}
-
-#[cfg(not(feature = "review-only"))]
-#[tauri::command]
-fn seek_latest(state: State<AppState>) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().playback_seek_latest().into())
-}
-
-#[cfg(not(feature = "review-only"))]
-#[tauri::command]
-fn poll_events() -> Result<(), String> { Err("EVENT_PROTOCOL_UPGRADE_REQUIRED".into()) }
-
-#[cfg(not(feature = "review-only"))]
-#[tauri::command]
-fn poll_events_exact(state: State<AppState>) -> Result<event_transport::EventEnvelope, String> {
-    let events = {
-        let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-        guard.pin_mut().poll_events()
+    // An empty data_dir means "use the platform app-data dir" — AppBackend
+    // rejects an empty path, so resolve it here (found by the Xvfb E2E run:
+    // the UI passed "" and init always failed).
+    let dir = if data_dir.trim().is_empty() {
+        app.path()
+            .app_data_dir()
+            .map_err(|e| format!("resolve app data dir: {e}"))?
+            .to_string_lossy()
+            .into_owned()
+    } else {
+        data_dir
     };
-    Ok(event_transport::encode(events))
+    let resources = app.path().resource_dir().map_err(|e| e.to_string())?;
+    cmds::init(&state, &dir, &resources.to_string_lossy())
 }
 
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn start_recording(state: State<AppState>, file_path: String) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().start_frame_recording(&file_path).into())
+fn abi_version() -> u32 {
+    cmds::abi_version()
 }
 
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn stop_recording(state: State<AppState>) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().stop_frame_recording().into())
+fn is_initialized(state: State<AppState>) -> Result<bool, String> {
+    cmds::is_initialized(&state)
 }
 
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn load_recording(state: State<AppState>, file_path: String) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().load_recording(&file_path).into())
+fn configure_mock(state: State<AppState>, frame_dir: String, frame_interval_ms: i32, loop_files: bool) -> Result<cmds::CmdResult, String> {
+    cmds::configure_mock(&state, frame_dir, frame_interval_ms, loop_files)
 }
 
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn seek_index(state: State<AppState>, frame_index: String) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().playback_seek_index(parse_frame_index(&frame_index)?).into())
+fn start_capture(state: State<AppState>) -> Result<cmds::CmdResult, String> {
+    cmds::start_capture(&state)
 }
 
-// Legacy split-cache commands fail explicitly: an old webview must reload,
-// never receive a substitute frame from another request.
 #[tauri::command]
-fn fetch_frame() -> Result<Response, String> { Err("FRAME_PROTOCOL_UPGRADE_REQUIRED".into()) }
-#[tauri::command]
-fn fetch_frame_by_index() -> Result<Response, String> { Err("FRAME_PROTOCOL_UPGRADE_REQUIRED".into()) }
-#[tauri::command]
-fn frame_bytes() -> Result<Response, String> { Err("FRAME_PROTOCOL_UPGRADE_REQUIRED".into()) }
-
-fn parse_frame_index(value: &str) -> Result<u64, String> {
-    let n = value.parse::<u64>().map_err(|_| "INVALID_U64".to_string())?;
-    if n.to_string() != value { return Err("INVALID_U64".into()); }
-    Ok(n)
+fn stop_capture(state: State<AppState>) -> Result<cmds::CmdResult, String> {
+    cmds::stop_capture(&state)
 }
 
-#[cfg(not(feature = "review-only"))]
+#[tauri::command]
+fn seek_latest(state: State<AppState>) -> Result<cmds::CmdResult, String> {
+    cmds::seek_latest(&state)
+}
+
+#[tauri::command]
+fn poll_events() -> Result<(), String> {
+    cmds::poll_events()
+}
+
+#[tauri::command]
+fn poll_events_exact(state: State<AppState>) -> Result<cmds::event_transport::EventEnvelope, String> {
+    cmds::poll_events_exact(&state)
+}
+
+#[tauri::command]
+fn start_recording(state: State<AppState>, file_path: String) -> Result<cmds::CmdResult, String> {
+    cmds::start_recording(&state, file_path)
+}
+
+#[tauri::command]
+fn stop_recording(state: State<AppState>) -> Result<cmds::CmdResult, String> {
+    cmds::stop_recording(&state)
+}
+
+#[tauri::command]
+fn close_review(state: State<AppState>) -> Result<cmds::CmdResult, String> {
+    cmds::close_review(&state)
+}
+
+#[tauri::command]
+fn load_recording(state: State<AppState>, file_path: String) -> Result<cmds::CmdResult, String> {
+    cmds::load_recording(&state, file_path)
+}
+
+#[tauri::command]
+fn seek_index(state: State<AppState>, frame_index: String) -> Result<cmds::CmdResult, String> {
+    cmds::seek_index(&state, frame_index)
+}
+
+#[tauri::command]
+fn fetch_frame() -> Result<Response, String> {
+    cmds::fetch_frame().map(Response::new)
+}
+
+#[tauri::command]
+fn fetch_frame_by_index() -> Result<Response, String> {
+    cmds::fetch_frame_by_index().map(Response::new)
+}
+
+#[tauri::command]
+fn frame_bytes() -> Result<Response, String> {
+    cmds::frame_bytes().map(Response::new)
+}
+
 #[tauri::command]
 fn fetch_frame_packet(state: State<AppState>) -> Result<Response, String> {
-    let frame = {
-        let mut bridge = state.bridge.lock().map_err(|e| e.to_string())?;
-        bridge.pin_mut().fetch_latest_frame()
-    };
-    frame_packet::encode(frame, 1).map(Response::new)
+    cmds::fetch_frame_packet(&state).map(Response::new)
 }
 
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
 fn fetch_indexed_frame_packet(state: State<AppState>, frame_index: String) -> Result<Response, String> {
-    let index = parse_frame_index(&frame_index)?;
-    let frame = {
-        let mut bridge = state.bridge.lock().map_err(|e| e.to_string())?;
-        bridge.pin_mut().fetch_frame_by_index(index)
-    };
-    frame_packet::encode(frame, 2).map(Response::new)
+    cmds::fetch_indexed_frame_packet(&state, frame_index).map(Response::new)
 }
 
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn apply_processing(
-    state: State<AppState>,
-    realtime_enabled: bool,
-    pixel_to_micron: f64,
-) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard
-        .pin_mut()
-        .apply_processing(realtime_enabled, pixel_to_micron)
-        .into())
+fn apply_processing(state: State<AppState>, realtime_enabled: bool, pixel_to_micron: f64) -> Result<cmds::CmdResult, String> {
+    cmds::apply_processing(&state, realtime_enabled, pixel_to_micron)
 }
 
-/// Experiment lifecycle snapshot for the webview (schema v5, BE-4).
-#[cfg(not(feature = "review-only"))]
-#[derive(Serialize, Clone, Default)]
-struct ExperimentStatus {
-    transport_version: u32,
-    valid: bool,
-    state: u32,
-    #[serde(serialize_with = "event_transport::serialize_u64")]
-    start_time_ns: u64,
-    #[serde(serialize_with = "event_transport::serialize_u64")]
-    end_time_ns: u64,
-    #[serde(serialize_with = "event_transport::serialize_u64")]
-    valid_buffered: u64,
-    #[serde(serialize_with = "event_transport::serialize_u64")]
-    invalid_buffered: u64,
-    #[serde(serialize_with = "event_transport::serialize_u64")]
-    valid_saved: u64,
-    #[serde(serialize_with = "event_transport::serialize_u64")]
-    invalid_saved: u64,
-    #[serde(serialize_with = "event_transport::serialize_u64")]
-    dropped_valid: u64,
-    #[serde(serialize_with = "event_transport::serialize_u64")]
-    dropped_invalid: u64,
-    flushing: bool,
-    cancelled: bool,
-    output_path: String,
-    message: String,
-    // ABI 13: the shared coordinator's full status.
-    #[serde(serialize_with = "event_transport::serialize_u64")]
-    start_generation: u64,
-    #[serde(serialize_with = "event_transport::serialize_u64")]
-    readiness_generation: u64,
-    #[serde(serialize_with = "event_transport::serialize_u64")]
-    capture_generation: u64,
-    #[serde(serialize_with = "event_transport::serialize_u64")]
-    persistence_admitted: u64,
-    #[serde(serialize_with = "event_transport::serialize_u64")]
-    persistence_committed: u64,
-    #[serde(serialize_with = "event_transport::serialize_u64")]
-    persistence_failed: u64,
-    terminal: bool,
-    finalization_ok: bool,
-    completion: u32,
-    completion_reason: String,
-    fault_code: String,
-    fault_message: String,
-}
-
-/// One readiness gate for the webview (ABI 13).
-#[derive(Serialize, Clone, Default)]
-struct ReadinessGate {
-    id: String,
-    status: u32,
-    reason: String,
-    remediation: String,
-}
-
-/// Experiment readiness evaluation for the webview (ABI 13).
-#[cfg(not(feature = "review-only"))]
-#[derive(Serialize, Clone, Default)]
-struct ExperimentReadiness {
-    transport_version: u32,
-    valid: bool,
-    ready: bool,
-    #[serde(serialize_with = "event_transport::serialize_u64")]
-    generation: u64,
-    gates: Vec<ReadinessGate>,
-}
-
-/// Evaluate experiment readiness for a destination (ABI 13).
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn fetch_experiment_readiness(state: State<AppState>, output_path: String) -> Result<ExperimentReadiness, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    let r = guard.pin_mut().fetch_experiment_readiness(&output_path);
-    Ok(ExperimentReadiness {
-        transport_version: frame_packet::JSON_TRANSPORT_VERSION,
-        valid: r.valid,
-        ready: r.ready,
-        generation: r.generation,
-        gates: r
-            .gates
-            .into_iter()
-            .map(|g| ReadinessGate { id: g.id, status: g.status, reason: g.reason, remediation: g.remediation })
-            .collect(),
-    })
+fn fetch_experiment_readiness(state: State<AppState>, output_path: String) -> Result<cmds::ExperimentReadiness, String> {
+    cmds::fetch_experiment_readiness(&state, output_path)
 }
 
-/// Start an experiment (backend-owned lifecycle; schema v5).
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn experiment_start(state: State<AppState>, output_path: String) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().experiment_start(&output_path).into())
+fn experiment_start(state: State<AppState>, output_path: String) -> Result<cmds::CmdResult, String> {
+    cmds::experiment_start(&state, output_path)
 }
 
-/// Request an asynchronous experiment stop (final flush + metadata + close).
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn experiment_stop(state: State<AppState>) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().experiment_stop().into())
+fn fetch_capture_lifecycle(state: State<AppState>) -> Result<serde_json::Value, String> {
+    cmds::fetch_capture_lifecycle(&state)
 }
 
-/// Like stop, but the terminal status is marked cancelled.
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn experiment_cancel(state: State<AppState>) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().experiment_cancel().into())
+fn experiment_acknowledge_fault(state: State<AppState>, expected_run: String, fault_revision: String, code: String, message: String, confirmed: bool) -> Result<cmds::CmdResult, String> {
+    cmds::experiment_acknowledge_fault(&state, expected_run, fault_revision, code, message, confirmed)
 }
 
-/// Pull the current experiment lifecycle snapshot.
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn fetch_experiment_status(state: State<AppState>) -> Result<ExperimentStatus, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    let s = guard.pin_mut().fetch_experiment_status();
-    Ok(ExperimentStatus {
-        transport_version: frame_packet::JSON_TRANSPORT_VERSION,
-        valid: s.valid,
-        state: s.state,
-        start_time_ns: s.start_time_ns,
-        end_time_ns: s.end_time_ns,
-        valid_buffered: s.valid_buffered,
-        invalid_buffered: s.invalid_buffered,
-        valid_saved: s.valid_saved,
-        invalid_saved: s.invalid_saved,
-        dropped_valid: s.dropped_valid,
-        dropped_invalid: s.dropped_invalid,
-        flushing: s.flushing,
-        cancelled: s.cancelled,
-        output_path: s.output_path,
-        message: s.message,
-        start_generation: s.start_generation,
-        readiness_generation: s.readiness_generation,
-        capture_generation: s.capture_generation,
-        persistence_admitted: s.persistence_admitted,
-        persistence_committed: s.persistence_committed,
-        persistence_failed: s.persistence_failed,
-        terminal: s.terminal,
-        finalization_ok: s.finalization_ok,
-        completion: s.completion,
-        completion_reason: s.completion_reason,
-        fault_code: s.fault_code,
-        fault_message: s.fault_message,
-    })
+fn experiment_stop(state: State<AppState>) -> Result<cmds::CmdResult, String> {
+    cmds::experiment_stop(&state)
 }
 
-/// Autofocus/nanopositioner status for the webview (schema v11, BE-8).
-#[derive(Serialize, Clone, Default)]
-struct AutofocusStatus {
-    valid: bool,
-    connected: bool,
-    enabled: bool,
-    current_voltage: f64,
-    com_port: i32,
-    average_ring_ratio: f64,
-    median_ring_ratio: f64,
-    last_ring_ratio_update_us: u64,
-    ring_ratio_age_us: u64,
-}
-
-/// Autofocus configuration for the webview (schema v11, BE-8).
-#[derive(Serialize, serde::Deserialize, Clone, Default)]
-struct AutofocusConfig {
-    valid: bool,
-    focus_setpoint: f64,
-    focus_range: f64,
-    voltage_step: f64,
-    fine_voltage_step: f64,
-    max_voltage: f64,
-    min_voltage: f64,
-    initial_voltage: f64,
-    manual_voltage_step: f64,
-    ring_ratio_stale_ms: i32,
-    require_new_sample_per_step: bool,
-    min_samples_per_step: i32,
-    safe_shutdown_voltage: f64,
-    focus_direction: bool,
-}
-
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn autofocus_connect(
-    state: State<AppState>,
-    com_port: i32,
-    baud_rate: i32,
-    device_address: i32,
-) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().autofocus_connect(com_port, baud_rate, device_address).into())
+fn experiment_cancel(state: State<AppState>) -> Result<cmds::CmdResult, String> {
+    cmds::experiment_cancel(&state)
 }
 
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn autofocus_disconnect(state: State<AppState>) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().autofocus_disconnect().into())
+fn fetch_experiment_status(state: State<AppState>) -> Result<cmds::ExperimentStatus, String> {
+    cmds::fetch_experiment_status(&state)
 }
 
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn autofocus_set_enabled(state: State<AppState>, enabled: bool) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().autofocus_set_enabled(enabled).into())
+fn set_processed_preview_enabled(state: State<AppState>, enabled: bool) -> Result<(), String> {
+    cmds::set_processed_preview_enabled(&state, enabled)
 }
 
-/// Manual voltage jog: `up == true` increases, else decreases.
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn autofocus_jog(state: State<AppState>, up: bool) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().autofocus_jog(up).into())
+fn fetch_processed_preview(state: State<AppState>) -> Result<Response, String> {
+    cmds::fetch_processed_preview(&state).map(Response::new)
 }
 
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn autofocus_set_config(state: State<AppState>, config: AutofocusConfig) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    let c = ffi::BridgeAutofocusConfig {
-        valid: true,
-        focus_setpoint: config.focus_setpoint,
-        focus_range: config.focus_range,
-        voltage_step: config.voltage_step,
-        fine_voltage_step: config.fine_voltage_step,
-        max_voltage: config.max_voltage,
-        min_voltage: config.min_voltage,
-        initial_voltage: config.initial_voltage,
-        manual_voltage_step: config.manual_voltage_step,
-        ring_ratio_stale_ms: config.ring_ratio_stale_ms,
-        require_new_sample_per_step: config.require_new_sample_per_step,
-        min_samples_per_step: config.min_samples_per_step,
-        safe_shutdown_voltage: config.safe_shutdown_voltage,
-        focus_direction: config.focus_direction,
-    };
-    Ok(guard.pin_mut().autofocus_set_config(c).into())
+fn background_calibration_command(state: State<AppState>, json: String) -> Result<cmds::CmdResult, String> {
+    cmds::background_calibration_command(&state, json)
 }
 
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn fetch_autofocus_status(state: State<AppState>) -> Result<AutofocusStatus, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    let s = guard.pin_mut().fetch_autofocus_status();
-    Ok(AutofocusStatus {
-        valid: s.valid,
-        connected: s.connected,
-        enabled: s.enabled,
-        current_voltage: s.current_voltage,
-        com_port: s.com_port,
-        average_ring_ratio: s.average_ring_ratio,
-        median_ring_ratio: s.median_ring_ratio,
-        last_ring_ratio_update_us: s.last_ring_ratio_update_us,
-        ring_ratio_age_us: s.ring_ratio_age_us,
-    })
+fn background_calibration_status(state: State<AppState>) -> Result<serde_json::Value, String> {
+    cmds::background_calibration_status(&state)
 }
 
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn fetch_autofocus_config(state: State<AppState>) -> Result<AutofocusConfig, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    let c = guard.pin_mut().fetch_autofocus_config();
-    Ok(AutofocusConfig {
-        valid: c.valid,
-        focus_setpoint: c.focus_setpoint,
-        focus_range: c.focus_range,
-        voltage_step: c.voltage_step,
-        fine_voltage_step: c.fine_voltage_step,
-        max_voltage: c.max_voltage,
-        min_voltage: c.min_voltage,
-        initial_voltage: c.initial_voltage,
-        manual_voltage_step: c.manual_voltage_step,
-        ring_ratio_stale_ms: c.ring_ratio_stale_ms,
-        require_new_sample_per_step: c.require_new_sample_per_step,
-        min_samples_per_step: c.min_samples_per_step,
-        safe_shutdown_voltage: c.safe_shutdown_voltage,
-        focus_direction: c.focus_direction,
-    })
+fn startup_discovery_set_preference(state: State<AppState>, json: String) -> Result<serde_json::Value, String> {
+    cmds::startup_discovery_set_preference(&state, json)
 }
 
-/// Authoritative per-pump snapshot for the webview (schema v10, BE-7).
-#[derive(Serialize, Clone, Default)]
-struct PumpStatus {
-    valid: bool,
-    connected: bool,
-    run_status: u32,
-    current_flow_rate: f64,
-    accumulated_volume: f64,
-    min_flow_rate: f64,
-    max_flow_rate: f64,
-    stalled: bool,
-    com_port: i32,
-    baud_rate: i32,
-    modbus_address: i32,
-    configured_flow_rate: f64,
-    flow_rate_unit: i32,
-    direction: u32,
-}
-
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn pump_connect(
-    state: State<AppState>,
-    pump: u32,
-    com_port: i32,
-    baud_rate: i32,
-    modbus_address: i32,
-) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().pump_connect(pump, com_port, baud_rate, modbus_address).into())
+fn startup_discovery_run(state: State<AppState>, action: String) -> Result<serde_json::Value, String> {
+    cmds::startup_discovery_run(&state, action)
 }
 
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn pump_disconnect(state: State<AppState>, pump: u32) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().pump_disconnect(pump).into())
+fn startup_discovery_status(state: State<AppState>) -> Result<serde_json::Value, String> {
+    cmds::startup_discovery_status(&state)
 }
 
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn pump_set_flow_rate(
-    state: State<AppState>,
-    pump: u32,
-    rate: f64,
-    unit: i32,
-) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().pump_set_flow_rate(pump, rate, unit).into())
+fn pulse_generator_command(state: State<AppState>, json: String) -> Result<cmds::CmdResult, String> {
+    cmds::pulse_generator_command(&state, json)
 }
 
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn pump_set_direction(state: State<AppState>, pump: u32, direction: u32) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().pump_set_direction(pump, direction).into())
+fn pulse_generator_status(state: State<AppState>) -> Result<serde_json::Value, String> {
+    cmds::pulse_generator_status(&state)
 }
 
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn pump_start(state: State<AppState>, pump: u32) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().pump_start(pump).into())
+fn autofocus_connect_endpoint(state: State<AppState>, backend: String, endpoint: String, com_port: i32, baud_rate: i32, device_address: i32) -> Result<cmds::CmdResult, String> {
+    cmds::autofocus_connect_endpoint(&state, backend, endpoint, com_port, baud_rate, device_address)
 }
 
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn pump_stop(state: State<AppState>, pump: u32) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().pump_stop(pump).into())
+fn autofocus_connect(state: State<AppState>, com_port: i32, baud_rate: i32, device_address: i32) -> Result<cmds::CmdResult, String> {
+    cmds::autofocus_connect(&state, com_port, baud_rate, device_address)
 }
 
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn pump_purge(state: State<AppState>, pump: u32, direction: u32) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().pump_purge(pump, direction).into())
+fn autofocus_disconnect(state: State<AppState>) -> Result<cmds::CmdResult, String> {
+    cmds::autofocus_disconnect(&state)
 }
 
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn pump_stop_purge(state: State<AppState>, pump: u32) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().pump_stop_purge(pump).into())
+fn autofocus_set_enabled(state: State<AppState>, enabled: bool) -> Result<cmds::CmdResult, String> {
+    cmds::autofocus_set_enabled(&state, enabled)
 }
 
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn pump_set_syringe_volume(
-    state: State<AppState>,
-    pump: u32,
-    volume: i32,
-    unit: i32,
-) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().pump_set_syringe_volume(pump, volume, unit).into())
+fn autofocus_jog(state: State<AppState>, up: bool) -> Result<cmds::CmdResult, String> {
+    cmds::autofocus_jog(&state, up)
 }
 
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn pump_poll_status(state: State<AppState>, pump: u32) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().pump_poll_status(pump).into())
+fn autofocus_set_config(state: State<AppState>, config: cmds::AutofocusConfig) -> Result<cmds::CmdResult, String> {
+    cmds::autofocus_set_config(&state, config)
 }
 
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn fetch_pump_status(state: State<AppState>, pump: u32) -> Result<PumpStatus, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    let s = guard.pin_mut().fetch_pump_status(pump);
-    Ok(PumpStatus {
-        valid: s.valid,
-        connected: s.connected,
-        run_status: s.run_status,
-        current_flow_rate: s.current_flow_rate,
-        accumulated_volume: s.accumulated_volume,
-        min_flow_rate: s.min_flow_rate,
-        max_flow_rate: s.max_flow_rate,
-        stalled: s.stalled,
-        com_port: s.com_port,
-        baud_rate: s.baud_rate,
-        modbus_address: s.modbus_address,
-        configured_flow_rate: s.configured_flow_rate,
-        flow_rate_unit: s.flow_rate_unit,
-        direction: s.direction,
-    })
+fn fetch_autofocus_status(state: State<AppState>) -> Result<cmds::AutofocusStatus, String> {
+    cmds::fetch_autofocus_status(&state)
 }
 
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn pump_scan_addresses(
-    state: State<AppState>,
-    com_port: i32,
-    baud_rate: i32,
-    start_address: i32,
-    end_address: i32,
-    timeout_ms: i32,
-) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard
-        .pin_mut()
-        .pump_scan_addresses(com_port, baud_rate, start_address, end_address, timeout_ms)
-        .into())
+fn fetch_autofocus_config(state: State<AppState>) -> Result<cmds::AutofocusConfig, String> {
+    cmds::fetch_autofocus_config(&state)
 }
 
-/// Per-dataset capabilities of the loaded review file (schema v9, BE-6).
-#[derive(Serialize, Clone, Default)]
-struct ReviewDatasetInfo {
-    present: bool,
-    count: u64,
-    height: i32,
-    width: i32,
-    channels: i32,
-}
-
-/// Review metadata of the loaded HDF5 file (schema v9, BE-6).
-#[derive(Serialize, Clone, Default)]
-struct ReviewMetadata {
-    valid: bool,
-    file_open: bool,
-    recording_file: bool,
-    start_time_ns: u64,
-    end_time_ns: u64,
-    total_valid: u64,
-    total_invalid: u64,
-    roi_x: i32,
-    roi_y: i32,
-    roi_w: i32,
-    roi_h: i32,
-    has_background: bool,
-    has_core_identity: bool,
-    core_version: String,
-    core_source: String,
-    core_release_tag: String,
-    valid_images: ReviewDatasetInfo,
-    invalid_images: ReviewDatasetInfo,
-    valid_masks: ReviewDatasetInfo,
-    invalid_masks: ReviewDatasetInfo,
-    recorded_images: ReviewDatasetInfo,
-    file_path: String,
-}
-
-/// One page of review metrics (schema v9, BE-6).
-#[derive(Serialize, Clone, Default)]
-struct ReviewMetricsPage {
-    valid: bool,
-    total: u64,
-    offset: u64,
-    rows: Vec<MonitoringRow>,
-}
-
-#[cfg(not(feature = "review-only"))]
-fn dataset_info(d: ffi::BridgeReviewDatasetInfo) -> ReviewDatasetInfo {
-    ReviewDatasetInfo {
-        present: d.present,
-        count: d.count,
-        height: d.height,
-        width: d.width,
-        channels: d.channels,
-    }
-}
-
-/// Pull the review metadata of the loaded HDF5 file.
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn fetch_review_metadata(state: State<AppState>) -> Result<ReviewMetadata, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    let m = guard.pin_mut().fetch_review_metadata();
-    Ok(ReviewMetadata {
-        valid: m.valid,
-        file_open: m.file_open,
-        recording_file: m.recording_file,
-        start_time_ns: m.start_time_ns,
-        end_time_ns: m.end_time_ns,
-        total_valid: m.total_valid,
-        total_invalid: m.total_invalid,
-        roi_x: m.roi_x,
-        roi_y: m.roi_y,
-        roi_w: m.roi_w,
-        roi_h: m.roi_h,
-        has_background: m.has_background,
-        has_core_identity: m.has_core_identity,
-        core_version: m.core_version,
-        core_source: m.core_source,
-        core_release_tag: m.core_release_tag,
-        valid_images: dataset_info(m.valid_images),
-        invalid_images: dataset_info(m.invalid_images),
-        valid_masks: dataset_info(m.valid_masks),
-        invalid_masks: dataset_info(m.invalid_masks),
-        recorded_images: dataset_info(m.recorded_images),
-        file_path: m.file_path,
-    })
+fn pump_connect_endpoint(state: State<AppState>, pump: u32, port_name: String, baud_rate: i32, modbus_address: i32) -> Result<cmds::CmdResult, String> {
+    cmds::pump_connect_endpoint(&state, pump, port_name, baud_rate, modbus_address)
 }
 
-/// Pull one bounded page of review metrics.
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn fetch_review_metrics_page(
-    state: State<AppState>,
-    valid: bool,
-    offset: u64,
-    count: u64,
-) -> Result<ReviewMetricsPage, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    let p = guard.pin_mut().fetch_review_metrics_page(valid, offset, count);
-    Ok(ReviewMetricsPage {
-        valid: p.valid,
-        total: p.total,
-        offset: p.offset,
-        rows: p
-            .rows
-            .into_iter()
-            .map(|r| MonitoringRow {
-                frame_index: r.frame_index,
-                timestamp_ns: r.timestamp_ns,
-                valid: r.valid,
-                target_group: r.target_group,
-                object_id: r.object_id,
-                object_count: r.object_count,
-                track_id: r.track_id,
-                centroid_x: r.centroid_x,
-                centroid_y: r.centroid_y,
-                area: r.area,
-                deformability: r.deformability,
-                area_ratio: r.area_ratio,
-                ring_ratio: r.ring_ratio,
-                youngs_modulus: r.youngs_modulus,
-            })
-            .collect(),
-    })
+#[allow(clippy::too_many_arguments)]
+fn pump_connect_model(state: State<AppState>, pump: u32, model: u32, port_name: String, baud_rate: i32, modbus_address: i32, microliters_per_rev: f64) -> Result<cmds::CmdResult, String> {
+    cmds::pump_connect_model(&state, pump, model, port_name, baud_rate, modbus_address, microliters_per_rev)
 }
 
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn fetch_review_image() -> Result<Response, String> { Err("FRAME_PROTOCOL_UPGRADE_REQUIRED".into()) }
+fn pump_connect(state: State<AppState>, pump: u32, com_port: i32, baud_rate: i32, modbus_address: i32) -> Result<cmds::CmdResult, String> {
+    cmds::pump_connect(&state, pump, com_port, baud_rate, modbus_address)
+}
+
 #[tauri::command]
-fn review_image_bytes() -> Result<Response, String> { Err("FRAME_PROTOCOL_UPGRADE_REQUIRED".into()) }
-#[cfg(not(feature = "review-only"))]
+fn pump_disconnect(state: State<AppState>, pump: u32) -> Result<cmds::CmdResult, String> {
+    cmds::pump_disconnect(&state, pump)
+}
+
+#[tauri::command]
+fn pump_set_flow_rate(state: State<AppState>, pump: u32, rate: f64, unit: i32) -> Result<cmds::CmdResult, String> {
+    cmds::pump_set_flow_rate(&state, pump, rate, unit)
+}
+
+#[tauri::command]
+fn pump_set_direction(state: State<AppState>, pump: u32, direction: u32) -> Result<cmds::CmdResult, String> {
+    cmds::pump_set_direction(&state, pump, direction)
+}
+
+#[tauri::command]
+fn pump_start(state: State<AppState>, pump: u32) -> Result<cmds::CmdResult, String> {
+    cmds::pump_start(&state, pump)
+}
+
+#[tauri::command]
+fn pump_stop(state: State<AppState>, pump: u32) -> Result<cmds::CmdResult, String> {
+    cmds::pump_stop(&state, pump)
+}
+
+#[tauri::command]
+fn pump_purge(state: State<AppState>, pump: u32, direction: u32) -> Result<cmds::CmdResult, String> {
+    cmds::pump_purge(&state, pump, direction)
+}
+
+#[tauri::command]
+fn pump_stop_purge(state: State<AppState>, pump: u32) -> Result<cmds::CmdResult, String> {
+    cmds::pump_stop_purge(&state, pump)
+}
+
+#[tauri::command]
+fn pump_set_syringe_volume(state: State<AppState>, pump: u32, volume: i32, unit: i32) -> Result<cmds::CmdResult, String> {
+    cmds::pump_set_syringe_volume(&state, pump, volume, unit)
+}
+
+#[tauri::command]
+fn pump_poll_status(state: State<AppState>, pump: u32) -> Result<cmds::CmdResult, String> {
+    cmds::pump_poll_status(&state, pump)
+}
+
+#[tauri::command]
+fn fetch_pump_status(state: State<AppState>, pump: u32) -> Result<cmds::PumpStatus, String> {
+    cmds::fetch_pump_status(&state, pump)
+}
+
+#[tauri::command]
+fn pump_scan_addresses(state: State<AppState>, com_port: i32, baud_rate: i32, start_address: i32, end_address: i32, timeout_ms: i32) -> Result<cmds::CmdResult, String> {
+    cmds::pump_scan_addresses(&state, com_port, baud_rate, start_address, end_address, timeout_ms)
+}
+
+#[tauri::command]
+fn fetch_review_metadata(state: State<AppState>) -> Result<cmds::ReviewMetadata, String> {
+    cmds::fetch_review_metadata(&state)
+}
+
+#[tauri::command]
+fn fetch_review_metrics_page(state: State<AppState>, valid: bool, offset: u64, count: u64) -> Result<cmds::ReviewMetricsPage, String> {
+    cmds::fetch_review_metrics_page(&state, valid, offset, count)
+}
+
+#[tauri::command]
+fn fetch_review_image() -> Result<Response, String> {
+    cmds::fetch_review_image().map(Response::new)
+}
+
+#[tauri::command]
+fn review_image_bytes() -> Result<Response, String> {
+    cmds::review_image_bytes().map(Response::new)
+}
+
 #[tauri::command]
 fn fetch_review_frame_packet(state: State<AppState>, dataset: u32, index: String) -> Result<Response, String> {
-    let index = parse_frame_index(&index)?;
-    let frame = {
-        let mut bridge = state.bridge.lock().map_err(|e| e.to_string())?;
-        bridge.pin_mut().fetch_review_image(dataset, index)
-    };
-    frame_packet::encode(frame, 3).map(Response::new)
+    cmds::fetch_review_frame_packet(&state, dataset, index).map(Response::new)
 }
 
-/// Start a cancellable metrics CSV export job for the loaded file.
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn review_export_csv(state: State<AppState>, output_path: String) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().review_export_csv(&output_path).into())
+fn render_review_overlay(state: State<AppState>, json: String) -> Result<Response, String> {
+    cmds::render_review_overlay(&state, json).map(Response::new)
 }
 
-/// Full processing configuration document (schema v8, BE-3).
-#[derive(Serialize, Clone, Default)]
-struct ConfigDocument {
-    valid: bool,
-    json: String,
-}
-
-/// Processing-core identity/pin status (schema v8, BE-3).
-#[derive(Serialize, Clone, Default)]
-struct ProcessingCoreStatus {
-    valid: bool,
-    active_version: String,
-    contract_version: u32,
-    engine_abi_version: u32,
-    source: String,
-    release_tag: String,
-    build_id: String,
-    artifact_sha256: String,
-    required_version: String,
-    pin_satisfied: bool,
-}
-
-/// Pull the full processing configuration document (lossless JSON).
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn fetch_processing_config_json(state: State<AppState>) -> Result<ConfigDocument, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    let d = guard.pin_mut().fetch_processing_config_json();
-    Ok(ConfigDocument { valid: d.valid, json: d.json })
+fn fetch_review_reanalysis_preview(state: State<AppState>, json: String) -> Result<Response, String> {
+    cmds::fetch_review_reanalysis_preview(&state, json).map(Response::new)
 }
 
-/// Merge-apply a processing configuration document.
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn apply_processing_config_json(state: State<AppState>, json: String) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().apply_processing_config_json(&json).into())
+fn fetch_monitoring_chart_reference(state: State<AppState>) -> Result<String, String> {
+    cmds::fetch_monitoring_chart_reference(&state)
 }
 
-/// Set (or clear, with w/h == 0) the realtime processing ROI.
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn set_processing_roi(
-    state: State<AppState>,
-    x: i32,
-    y: i32,
-    w: i32,
-    h: i32,
-) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().set_processing_roi(x, y, w, h).into())
+fn fetch_review_charts_json(state: State<AppState>) -> Result<String, String> {
+    cmds::fetch_review_charts_json(&state)
 }
 
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn fetch_background() -> Result<Response, String> { Err("FRAME_PROTOCOL_UPGRADE_REQUIRED".into()) }
+fn review_reanalysis_json(state: State<AppState>, json: String) -> Result<cmds::CmdResult, String> {
+    cmds::review_reanalysis_json(&state, json)
+}
+
 #[tauri::command]
-fn background_bytes() -> Result<Response, String> { Err("FRAME_PROTOCOL_UPGRADE_REQUIRED".into()) }
-#[cfg(not(feature = "review-only"))]
+fn review_reanalysis_status_json(state: State<AppState>) -> Result<String, String> {
+    cmds::review_reanalysis_status_json(&state)
+}
+
+#[tauri::command]
+fn review_export_json(state: State<AppState>, json: String) -> Result<cmds::CmdResult, String> {
+    cmds::review_export_json(&state, json)
+}
+
+#[tauri::command]
+fn review_export_status_json(state: State<AppState>) -> Result<String, String> {
+    cmds::review_export_status_json(&state)
+}
+
+#[tauri::command]
+fn review_export_csv(state: State<AppState>, output_path: String) -> Result<cmds::CmdResult, String> {
+    cmds::review_export_csv(&state, output_path)
+}
+
+#[tauri::command]
+fn fetch_processing_config_json(state: State<AppState>) -> Result<cmds::ConfigDocument, String> {
+    cmds::fetch_processing_config_json(&state)
+}
+
+#[tauri::command]
+fn apply_processing_config_json(state: State<AppState>, json: String) -> Result<cmds::CmdResult, String> {
+    cmds::apply_processing_config_json(&state, json)
+}
+
+#[tauri::command]
+fn set_processing_roi(state: State<AppState>, x: i32, y: i32, w: i32, h: i32) -> Result<cmds::CmdResult, String> {
+    cmds::set_processing_roi(&state, x, y, w, h)
+}
+
+#[tauri::command]
+fn fetch_background() -> Result<Response, String> {
+    cmds::fetch_background().map(Response::new)
+}
+
+#[tauri::command]
+fn background_bytes() -> Result<Response, String> {
+    cmds::background_bytes().map(Response::new)
+}
+
 #[tauri::command]
 fn fetch_background_packet(state: State<AppState>) -> Result<Response, String> {
-    let frame = {
-        let mut bridge = state.bridge.lock().map_err(|e| e.to_string())?;
-        bridge.pin_mut().fetch_background_image()
-    };
-    frame_packet::encode(frame, 4).map(Response::new)
+    cmds::fetch_background_packet(&state).map(Response::new)
 }
 
-/// Set the processing background from the latest live frame — the operator's
-/// "Set Background" action. Pixels stay on the Rust side (no webview copy).
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn set_background_from_current_frame(state: State<AppState>) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    let frame = guard.pin_mut().fetch_latest_frame();
-    if !frame.valid {
-        return Ok(CmdResult {
-            transport_version: frame_packet::JSON_TRANSPORT_VERSION,
-            ok: false,
-            command: 2, // ProcessingSettings
-            message: "No live frame available to capture as background".into(),
-            operation_id: 0,
-        });
-    }
-    // The bridge background path expects tightly-packed Mono8 (len == w*h).
-    let width = frame.width as usize;
-    let height = frame.height as usize;
-    let stride = if frame.stride_bytes > 0 { frame.stride_bytes as usize } else { width };
-    let mut packed = Vec::with_capacity(width * height);
-    for row in 0..height {
-        let start = row * stride;
-        packed.extend_from_slice(&frame.data[start..start + width]);
-    }
-    Ok(guard
-        .pin_mut()
-        .set_background_image(frame.width, frame.height, &packed)
-        .into())
+fn set_background_from_current_frame(state: State<AppState>) -> Result<cmds::CmdResult, String> {
+    cmds::set_background_from_current_frame(&state)
 }
 
-/// Clear the processing background image.
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn clear_background_image(state: State<AppState>) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().clear_background_image().into())
+fn clear_background_image(state: State<AppState>) -> Result<cmds::CmdResult, String> {
+    cmds::clear_background_image(&state)
 }
 
-/// Pull the processing-core identity/pin status.
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn fetch_processing_core_status(state: State<AppState>) -> Result<ProcessingCoreStatus, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    let s = guard.pin_mut().fetch_processing_core_status();
-    Ok(ProcessingCoreStatus {
-        valid: s.valid,
-        active_version: s.active_version,
-        contract_version: s.contract_version,
-        engine_abi_version: s.engine_abi_version,
-        source: s.source,
-        release_tag: s.release_tag,
-        build_id: s.build_id,
-        artifact_sha256: s.artifact_sha256,
-        required_version: s.required_version,
-        pin_satisfied: s.pin_satisfied,
-    })
+fn fetch_processing_core_status(state: State<AppState>) -> Result<cmds::ProcessingCoreStatus, String> {
+    cmds::fetch_processing_core_status(&state)
 }
 
-/// Device-discovery request from the webview (schema v14, #419). Camelcase
-/// keys match the TypeScript client; every field is optional there.
-#[derive(Deserialize, Clone, Default)]
-#[serde(rename_all = "camelCase", default)]
-struct DiscoveryRequest {
-    kinds: Vec<u32>,
-    providers: Vec<String>,
-    has_serial_scope: bool,
-    serial_port_name: String,
-    baud_rate: i32,
-    data_bits: i32,
-    parity: String,
-    stop_bits: i32,
-    address_from: i32,
-    address_to: i32,
-    per_address_timeout_ms: i32,
-    initial_delay_ms: i32,
-    deadline_ms: i32,
-    max_retries: i32,
-    retry_delay_ms: i32,
-    origin: String,
-}
-
-/// Outcome of starting a discovery job (schema v14).
-#[cfg(not(feature = "review-only"))]
-#[derive(Serialize, Clone, Default)]
-struct DiscoveryStart {
-    accepted: bool,
-    coalesced: bool,
-    #[serde(serialize_with = "event_transport::serialize_u64")]
-    job_id: u64,
-    rejection: u32,
-    reason: String,
-}
-
-/// One discovered device for the webview (schema v14).
-#[derive(Serialize, Clone, Default)]
-struct DiscoveredDevice {
-    kind: u32,
-    provider_id: String,
-    display_name: String,
-    system_path: String,
-    persistent_id: String,
-    sdk_index: i32,
-    interface_index: i32,
-    device_index: i32,
-    stream_index: i32,
-    bus_address: i32,
-    stable_identity: String,
-    identity_strength: u32,
-    identification: u32,
-    claimed_by: Vec<String>,
-    capabilities: Vec<String>,
-    synthetic: bool,
-    camera_type: i32,
-    interface_id: String,
-    device_id: String,
-    stream_id: String,
-    model_name: String,
-    firmware_version: String,
-    label: String,
-}
-
-#[derive(Serialize, Clone, Default)]
-struct DiscoveryError {
-    provider_id: String,
-    kind: u32,
-    message: String,
-    endpoint: String,
-}
-
-/// Bounded discovery snapshot for the webview (schema v14).
-#[cfg(not(feature = "review-only"))]
-#[derive(Serialize, Clone, Default)]
-struct DiscoverySnapshot {
-    valid: bool,
-    #[serde(serialize_with = "event_transport::serialize_u64")]
-    job_id: u64,
-    #[serde(serialize_with = "event_transport::serialize_u64")]
-    generation: u64,
-    state: u32,
-    complete: bool,
-    overflow: bool,
-    attempt: i32,
-    max_attempts: i32,
-    kinds: Vec<u32>,
-    candidates: Vec<DiscoveredDevice>,
-    errors: Vec<DiscoveryError>,
-    providers_run: Vec<String>,
-    origin: String,
-}
-
-#[cfg(not(feature = "review-only"))]
-impl From<ffi::BridgeDiscoveryStart> for DiscoveryStart {
-    fn from(s: ffi::BridgeDiscoveryStart) -> Self {
-        DiscoveryStart {
-            accepted: s.accepted,
-            coalesced: s.coalesced,
-            job_id: s.job_id,
-            rejection: s.rejection,
-            reason: s.reason,
-        }
-    }
-}
-
-#[cfg(not(feature = "review-only"))]
-impl From<ffi::BridgeDiscoverySnapshot> for DiscoverySnapshot {
-    fn from(s: ffi::BridgeDiscoverySnapshot) -> Self {
-        DiscoverySnapshot {
-            valid: s.valid,
-            job_id: s.job_id,
-            generation: s.generation,
-            state: s.state,
-            complete: s.complete,
-            overflow: s.overflow,
-            attempt: s.attempt,
-            max_attempts: s.max_attempts,
-            kinds: s.kinds,
-            candidates: s
-                .candidates
-                .into_iter()
-                .map(|d| DiscoveredDevice {
-                    kind: d.kind,
-                    provider_id: d.provider_id,
-                    display_name: d.display_name,
-                    system_path: d.system_path,
-                    persistent_id: d.persistent_id,
-                    sdk_index: d.sdk_index,
-                    interface_index: d.interface_index,
-                    device_index: d.device_index,
-                    stream_index: d.stream_index,
-                    bus_address: d.bus_address,
-                    stable_identity: d.stable_identity,
-                    identity_strength: d.identity_strength,
-                    identification: d.identification,
-                    claimed_by: d.claimed_by,
-                    capabilities: d.capabilities,
-                    synthetic: d.synthetic,
-                    camera_type: d.camera_type,
-                    interface_id: d.interface_id,
-                    device_id: d.device_id,
-                    stream_id: d.stream_id,
-                    model_name: d.model_name,
-                    firmware_version: d.firmware_version,
-                    label: d.label,
-                })
-                .collect(),
-            errors: s
-                .errors
-                .into_iter()
-                .map(|e| DiscoveryError {
-                    provider_id: e.provider_id,
-                    kind: e.kind,
-                    message: e.message,
-                    endpoint: e.endpoint,
-                })
-                .collect(),
-            providers_run: s.providers_run,
-            origin: s.origin,
-        }
-    }
-}
-
-/// Authoritative selected-device snapshot for the webview (schema v7, BE-2).
-#[derive(Serialize, Clone, Default)]
-struct CameraSelection {
-    valid: bool,
-    mode: u32,
-    interface_index: i32,
-    device_index: i32,
-    label: String,
-    mindvision_index: i32,
-    mindvision_config_path: String,
-    camera_script_path: String,
-    mock_frame_dir: String,
-    mock_interval_ms: i32,
-    mock_loop: bool,
-    configured: bool,
-    running: bool,
-}
-
-/// Start a device-discovery job (schema v14, #419); never blocks on hardware.
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn start_device_discovery(state: State<AppState>, request: DiscoveryRequest) -> Result<DiscoveryStart, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    let req = ffi::BridgeDiscoveryRequest {
-        kinds: request.kinds,
-        providers: request.providers,
-        has_serial_scope: request.has_serial_scope,
-        serial_port_name: request.serial_port_name,
-        baud_rate: request.baud_rate,
-        data_bits: request.data_bits,
-        parity: request.parity.bytes().next().unwrap_or(b'N'),
-        stop_bits: request.stop_bits,
-        address_from: request.address_from,
-        address_to: request.address_to,
-        per_address_timeout_ms: request.per_address_timeout_ms,
-        initial_delay_ms: request.initial_delay_ms,
-        deadline_ms: request.deadline_ms,
-        max_retries: request.max_retries,
-        retry_delay_ms: request.retry_delay_ms,
-        origin: if request.origin.is_empty() { "tauri".to_string() } else { request.origin },
-    };
-    Ok(guard.pin_mut().start_device_discovery(&req).into())
+fn start_device_discovery(state: State<AppState>, request: cmds::DiscoveryRequest) -> Result<cmds::DiscoveryStart, String> {
+    cmds::start_device_discovery(&state, request)
 }
 
-/// Start the camera + framegrabber discovery job (schema v14).
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn start_camera_discovery(state: State<AppState>) -> Result<DiscoveryStart, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().start_camera_discovery().into())
+fn start_camera_discovery(state: State<AppState>) -> Result<cmds::DiscoveryStart, String> {
+    cmds::start_camera_discovery(&state)
 }
 
-/// Poll a discovery job's bounded snapshot (schema v14).
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn fetch_device_discovery(state: State<AppState>, job_id: String) -> Result<DiscoverySnapshot, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().fetch_device_discovery(parse_frame_index(&job_id)?).into())
+fn fetch_device_discovery(state: State<AppState>, job_id: String) -> Result<cmds::DiscoverySnapshot, String> {
+    cmds::fetch_device_discovery(&state, job_id)
 }
 
-/// Cancel a running discovery job (schema v14); false for unknown/ended jobs.
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
 fn cancel_device_discovery(state: State<AppState>, job_id: String) -> Result<bool, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().cancel_device_discovery(parse_frame_index(&job_id)?))
+    cmds::cancel_device_discovery(&state, job_id)
 }
 
-/// Pull the authoritative selected-device snapshot.
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn fetch_camera_selection(state: State<AppState>) -> Result<CameraSelection, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    let s = guard.pin_mut().fetch_camera_selection();
-    Ok(CameraSelection {
-        valid: s.valid,
-        mode: s.mode,
-        interface_index: s.interface_index,
-        device_index: s.device_index,
-        label: s.label,
-        mindvision_index: s.mindvision_index,
-        mindvision_config_path: s.mindvision_config_path,
-        camera_script_path: s.camera_script_path,
-        mock_frame_dir: s.mock_frame_dir,
-        mock_interval_ms: s.mock_interval_ms,
-        mock_loop: s.mock_loop,
-        configured: s.configured,
-        running: s.running,
-    })
+fn fetch_camera_selection(state: State<AppState>) -> Result<cmds::CameraSelection, String> {
+    cmds::fetch_camera_selection(&state)
 }
 
-/// Select a hardware (EGrabber) camera.
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn select_hardware_camera(
-    state: State<AppState>,
-    interface_index: i32,
-    device_index: i32,
-    label: String,
-) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard
-        .pin_mut()
-        .select_hardware_camera(interface_index, device_index, &label)
-        .into())
+fn select_hardware_camera(state: State<AppState>, interface_index: i32, device_index: i32, label: String) -> Result<cmds::CmdResult, String> {
+    cmds::select_hardware_camera(&state, interface_index, device_index, label)
 }
 
-/// Select a MindVision camera (optionally applying a JSON config).
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn select_mindvision_camera(
-    state: State<AppState>,
-    camera_index: i32,
-    label: String,
-    config_path: String,
-) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard
-        .pin_mut()
-        .select_mindvision_camera(camera_index, &label, &config_path)
-        .into())
+fn select_mindvision_camera(state: State<AppState>, camera_index: i32, label: String, config_path: String) -> Result<cmds::CmdResult, String> {
+    cmds::select_mindvision_camera(&state, camera_index, label, config_path)
 }
 
-/// Apply a JS camera script to the selected hardware camera.
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn apply_camera_script(state: State<AppState>, script_path: String) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().apply_camera_script(&script_path).into())
+fn apply_camera_script(state: State<AppState>, script_path: String) -> Result<cmds::CmdResult, String> {
+    cmds::apply_camera_script(&state, script_path)
 }
 
-/// Issue a GenICam DeviceReset to the selected hardware camera.
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn reset_hardware_camera(state: State<AppState>) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().reset_hardware_camera().into())
+fn set_camera_overview(state: State<AppState>, overview: bool) -> Result<cmds::CmdResult, String> {
+    cmds::set_camera_overview(&state, overview)
 }
 
-/// One monitoring metric row for the webview (schema v6, BE-5).
-#[derive(Serialize, Clone, Default)]
-struct MonitoringRow {
-    frame_index: u64,
-    timestamp_ns: u64,
-    valid: bool,
-    target_group: bool,
-    object_id: i32,
-    object_count: i32,
-    track_id: i32,
-    centroid_x: f64,
-    centroid_y: f64,
-    area: f64,
-    deformability: f64,
-    area_ratio: f64,
-    ring_ratio: f64,
-    youngs_modulus: f64,
-}
-
-/// Bounded monitoring snapshot for the webview (schema v6, BE-5).
-#[derive(Serialize, Clone, Default)]
-struct MonitoringSnapshot {
-    valid: bool,
-    monitoring_active: bool,
-    valid_held: u64,
-    invalid_held: u64,
-    valid_appended: u64,
-    invalid_appended: u64,
-    capacity: u64,
-    latest_timestamp_ns: u64,
-    rows: Vec<MonitoringRow>,
-}
-
-/// Sorter trigger status for the webview (schema v6, BE-5).
-#[derive(Serialize, Clone, Default)]
-struct TriggerStatus {
-    valid: bool,
-    camera_attached: bool,
-    pulse_duration_us: i32,
-    trigger_count: u64,
-    last_onset_us: f64,
-    last_object_id: i32,
-    last_track_id: i32,
-    periodic_active: bool,
-    periodic_interval_ms: i32,
-}
-
-/// Enable/disable monitoring accumulation (visibility-gated by the UI).
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn monitoring_set_active(state: State<AppState>, active: bool) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().monitoring_set_active(active).into())
+fn save_camera_roi(state: State<AppState>, x: i32, y: i32, w: i32, h: i32) -> Result<cmds::CmdResult, String> {
+    cmds::save_camera_roi(&state, x, y, w, h)
 }
 
-/// Atomically clear the monitoring buffers.
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn monitoring_clear(state: State<AppState>) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().monitoring_clear().into())
+fn fetch_platform_info(state: State<AppState>) -> Result<serde_json::Value, String> {
+    cmds::fetch_platform_info(&state)
 }
 
-/// Pull a bounded monitoring snapshot (metrics only — never image payloads).
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn fetch_monitoring_snapshot(
-    state: State<AppState>,
-    max_rows: u64,
-) -> Result<MonitoringSnapshot, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    let s = guard.pin_mut().fetch_monitoring_snapshot(max_rows);
-    Ok(MonitoringSnapshot {
-        valid: s.valid,
-        monitoring_active: s.monitoring_active,
-        valid_held: s.valid_held,
-        invalid_held: s.invalid_held,
-        valid_appended: s.valid_appended,
-        invalid_appended: s.invalid_appended,
-        capacity: s.capacity,
-        latest_timestamp_ns: s.latest_timestamp_ns,
-        rows: s
-            .rows
-            .into_iter()
-            .map(|r| MonitoringRow {
-                frame_index: r.frame_index,
-                timestamp_ns: r.timestamp_ns,
-                valid: r.valid,
-                target_group: r.target_group,
-                object_id: r.object_id,
-                object_count: r.object_count,
-                track_id: r.track_id,
-                centroid_x: r.centroid_x,
-                centroid_y: r.centroid_y,
-                area: r.area,
-                deformability: r.deformability,
-                area_ratio: r.area_ratio,
-                ring_ratio: r.ring_ratio,
-                youngs_modulus: r.youngs_modulus,
-            })
-            .collect(),
-    })
+fn fetch_instrument_status(state: State<AppState>) -> Result<serde_json::Value, String> {
+    cmds::fetch_instrument_status(&state)
 }
 
-/// Set the sorter trigger pulse duration (µs).
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn trigger_set_pulse_duration(state: State<AppState>, pulse_us: i32) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().trigger_set_pulse_duration(pulse_us).into())
+fn fetch_camera_geometry(state: State<AppState>) -> Result<serde_json::Value, String> {
+    cmds::fetch_camera_geometry(&state)
 }
 
-/// Fire one manual sorter pulse.
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn trigger_manual_pulse(state: State<AppState>) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().trigger_manual_pulse().into())
+fn soft_trigger_camera(state: State<AppState>) -> Result<cmds::CmdResult, String> {
+    cmds::soft_trigger_camera(&state)
 }
 
-/// Start the periodic trigger test generator.
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn trigger_periodic_start(state: State<AppState>, interval_ms: i32) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().trigger_periodic_start(interval_ms).into())
+fn reset_hardware_camera(state: State<AppState>) -> Result<cmds::CmdResult, String> {
+    cmds::reset_hardware_camera(&state)
 }
 
-/// Stop the periodic trigger test generator.
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn trigger_periodic_stop(state: State<AppState>) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().trigger_periodic_stop().into())
+fn monitoring_set_active(state: State<AppState>, active: bool) -> Result<cmds::CmdResult, String> {
+    cmds::monitoring_set_active(&state, active)
 }
 
-/// Pull the sorter trigger status snapshot.
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn fetch_trigger_status(state: State<AppState>) -> Result<TriggerStatus, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    let s = guard.pin_mut().fetch_trigger_status();
-    Ok(TriggerStatus {
-        valid: s.valid,
-        camera_attached: s.camera_attached,
-        pulse_duration_us: s.pulse_duration_us,
-        trigger_count: s.trigger_count,
-        last_onset_us: s.last_onset_us,
-        last_object_id: s.last_object_id,
-        last_track_id: s.last_track_id,
-        periodic_active: s.periodic_active,
-        periodic_interval_ms: s.periodic_interval_ms,
-    })
+fn monitoring_clear(state: State<AppState>) -> Result<cmds::CmdResult, String> {
+    cmds::monitoring_clear(&state)
 }
 
-/// Request cancellation of a tracked operation (schema v4). Fails safely for
-/// unknown/finished IDs.
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn cancel_operation(state: State<AppState>, operation_id: String) -> Result<CmdResult, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().cancel_operation(parse_frame_index(&operation_id)?).into())
+fn fetch_monitoring_snapshot(state: State<AppState>, max_rows: u64) -> Result<cmds::MonitoringSnapshot, String> {
+    cmds::fetch_monitoring_snapshot(&state, max_rows)
 }
 
-/// Total events dropped by the bounded bridge queue (schema v4 observability).
-#[cfg(not(feature = "review-only"))]
+#[tauri::command]
+fn trigger_set_pulse_duration(state: State<AppState>, pulse_us: i32) -> Result<cmds::CmdResult, String> {
+    cmds::trigger_set_pulse_duration(&state, pulse_us)
+}
+
+#[tauri::command]
+fn trigger_manual_pulse(state: State<AppState>) -> Result<cmds::CmdResult, String> {
+    cmds::trigger_manual_pulse(&state)
+}
+
+#[tauri::command]
+fn trigger_periodic_start(state: State<AppState>, interval_ms: i32) -> Result<cmds::CmdResult, String> {
+    cmds::trigger_periodic_start(&state, interval_ms)
+}
+
+#[tauri::command]
+fn trigger_periodic_stop(state: State<AppState>) -> Result<cmds::CmdResult, String> {
+    cmds::trigger_periodic_stop(&state)
+}
+
+#[tauri::command]
+fn fetch_trigger_status(state: State<AppState>) -> Result<cmds::TriggerStatus, String> {
+    cmds::fetch_trigger_status(&state)
+}
+
+#[tauri::command]
+fn cancel_operation(state: State<AppState>, operation_id: String) -> Result<cmds::CmdResult, String> {
+    cmds::cancel_operation(&state, operation_id)
+}
+
 #[tauri::command]
 fn queue_overflow_total(state: State<AppState>) -> Result<String, String> {
-    let guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.queue_overflow_total().to_string())
+    cmds::queue_overflow_total(&state)
 }
 
-#[cfg(not(feature = "review-only"))]
 #[tauri::command]
-fn fetch_processing_stats(state: State<AppState>) -> Result<ProcessingStats, String> {
-    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    let s = guard.pin_mut().fetch_processing_stats();
-    Ok(ProcessingStats {
-        transport_version: frame_packet::JSON_TRANSPORT_VERSION,
-        valid: s.valid,
-        algo_fps1s: if s.valid && s.algo_fps1s.is_finite() { Some(s.algo_fps1s) } else { None },
-        valid_fps1s: if s.valid && s.valid_fps1s.is_finite() { Some(s.valid_fps1s) } else { None },
-        invalid_fps1s: if s.valid && s.invalid_fps1s.is_finite() { Some(s.invalid_fps1s) } else { None },
-        pixel_to_micron: if s.valid && s.pixel_to_micron.is_finite() { Some(s.pixel_to_micron) } else { None },
+fn fetch_processing_stats(state: State<AppState>) -> Result<cmds::ProcessingStats, String> {
+    cmds::fetch_processing_stats(&state)
+}
+
+#[tauri::command]
+fn fetch_config_document(state: State<AppState>, path: String) -> Result<cmds::config_document::ConfigDocument, String> {
+    cmds::config_document::fetch_config_document(&state, path)
+}
+
+#[tauri::command]
+fn apply_config_document(state: State<AppState>, path: String, baseline: String, patch: String) -> Result<cmds::config_document::ConfigTransactionResult, String> {
+    cmds::config_document::apply_config_document(&state, path, baseline, patch)
+}
+
+#[tauri::command]
+fn profile_command(state: State<AppState>, base: String, request: String) -> Result<serde_json::Value, String> {
+    cmds::config_document::profile_command(&state, base, request)
+}
+
+#[tauri::command]
+async fn profile_fetch_url(url: String) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || cmds::config_document::profile_fetch_url(url))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn processing_core_command(app: tauri::AppHandle, request: String) -> Result<serde_json::Value, String> {
+    let cache = match std::env::var("MIB_STUDIO_PROCESSING_CORE_CACHE_DIR") {
+        Ok(path) if !path.trim().is_empty() => std::path::PathBuf::from(path.trim()),
+        _ => app.path().app_cache_dir().map_err(|e| e.to_string())?.join("processing-cores"),
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        cmds::config_document::processing_core_command(&state, &cache.to_string_lossy(), request)
     })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
-#[cfg(test)]
-#[cfg(not(feature = "review-only"))]
-mod tests {
-    use super::kind_name;
-    use mib_bridge::ffi::{self, BridgeEventKind};
-    use serial_test::serial;
-    use std::time::{Duration, Instant};
-
-    #[test]
-    fn event_kind_names_are_stable() {
-        assert_eq!(kind_name(BridgeEventKind::FrameReady), "FrameReady");
-        assert_eq!(kind_name(BridgeEventKind::CameraStatus), "CameraStatus");
-        assert_eq!(kind_name(BridgeEventKind::BackendError), "BackendError");
-        assert_eq!(kind_name(BridgeEventKind::OperationStatus), "OperationStatus");
-        assert_eq!(kind_name(BridgeEventKind::QueueOverflow), "QueueOverflow");
-        // Additive kinds from a newer bridge fail safely as "Unknown" (ADR
-        // 0004) — consumers ignore them instead of crashing.
-        assert_eq!(kind_name(BridgeEventKind { repr: 9999 }), "Unknown");
-    }
-
-    // Headless proof that the desktop crate links the bridge and the mock-camera
-    // vertical slice works end to end (no Tauri runtime, no display).
-    #[test]
-    #[serial]
-    fn mock_camera_slice_round_trip() {
-        let sample = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../data/mock_frames/frame_00000.tiff");
-        assert!(sample.exists(), "sample frame missing: {}", sample.display());
-        let dir = std::env::temp_dir().join(format!("mib_desktop_slice_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        for i in 0..4 {
-            std::fs::copy(&sample, dir.join(format!("frame_{i:04}.tiff"))).unwrap();
-        }
-        let data = std::env::temp_dir().join(format!("mib_desktop_data_{}", std::process::id()));
-
-        let mut bridge = ffi::new_backend_bridge();
-        assert!(bridge.pin_mut().initialize(&data.to_string_lossy()));
-        assert!(bridge
-            .pin_mut()
-            .configure_mock_camera(&dir.to_string_lossy(), 5, true)
-            .ok);
-        assert!(bridge.pin_mut().start_capture().ok);
-
-        let mut got = false;
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while Instant::now() < deadline {
-            let f = bridge.pin_mut().fetch_latest_frame();
-            if f.valid {
-                assert_eq!(f.width, 512);
-                assert_eq!(f.height, 96);
-                assert!(!f.data.is_empty());
-                got = true;
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        assert!(got, "no live frame within 5s");
-
-        assert!(bridge.pin_mut().stop_capture().ok);
-        bridge.pin_mut().shutdown();
-        let _ = std::fs::remove_dir_all(&dir);
-        let _ = std::fs::remove_dir_all(&data);
-    }
-
-    // Headless proof of the recording + review slice: record a clip, load it
-    // back, and pull a frame by index.
-    #[test]
-    #[serial]
-    fn record_and_review_round_trip() {
-        let sample = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../data/mock_frames/frame_00000.tiff");
-        let dir = std::env::temp_dir().join(format!("mib_desktop_rev_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        for i in 0..4 {
-            std::fs::copy(&sample, dir.join(format!("frame_{i:04}.tiff"))).unwrap();
-        }
-        let data = std::env::temp_dir().join(format!("mib_desktop_rev_data_{}", std::process::id()));
-        let rec = std::env::temp_dir().join(format!("mib_desktop_rev_{}.h5", std::process::id()));
-
-        let mut bridge = ffi::new_backend_bridge();
-        assert!(bridge.pin_mut().initialize(&data.to_string_lossy()));
-        assert!(bridge
-            .pin_mut()
-            .configure_mock_camera(&dir.to_string_lossy(), 5, true)
-            .ok);
-        assert!(bridge.pin_mut().start_capture().ok);
-
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while Instant::now() < deadline && !bridge.pin_mut().fetch_latest_frame().valid {
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        assert!(bridge.pin_mut().start_frame_recording(&rec.to_string_lossy()).ok);
-        std::thread::sleep(Duration::from_millis(200));
-        assert!(bridge.pin_mut().stop_frame_recording().ok);
-        assert!(bridge.pin_mut().stop_capture().ok);
-
-        assert!(bridge.pin_mut().load_recording(&rec.to_string_lossy()).ok);
-        assert!(bridge.pin_mut().playback_seek_index(0).ok);
-        let frame = bridge.pin_mut().fetch_frame_by_index(0);
-        assert!(frame.valid && frame.width == 512 && frame.height == 96);
-
-        bridge.pin_mut().shutdown();
-        let _ = std::fs::remove_dir_all(&dir);
-        let _ = std::fs::remove_dir_all(&data);
-        let _ = std::fs::remove_file(&rec);
-    }
-
-    // Headless proof of the processing slice: apply settings, then pull stats.
-    #[test]
-    #[serial]
-    fn processing_settings_round_trip() {
-        let sample = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../data/mock_frames/frame_00000.tiff");
-        let dir = std::env::temp_dir().join(format!("mib_desktop_proc_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        for i in 0..4 {
-            std::fs::copy(&sample, dir.join(format!("frame_{i:04}.tiff"))).unwrap();
-        }
-        let data = std::env::temp_dir().join(format!("mib_desktop_proc_data_{}", std::process::id()));
-
-        let mut bridge = ffi::new_backend_bridge();
-        assert!(bridge.pin_mut().initialize(&data.to_string_lossy()));
-        assert!(bridge
-            .pin_mut()
-            .configure_mock_camera(&dir.to_string_lossy(), 5, true)
-            .ok);
-        assert!(bridge.pin_mut().apply_processing(true, 3.0).ok);
-        assert!(bridge.pin_mut().start_capture().ok);
-        std::thread::sleep(Duration::from_millis(150));
-
-        let stats = bridge.pin_mut().fetch_processing_stats();
-        assert!(stats.valid);
-        assert!((stats.pixel_to_micron - 3.0).abs() < 1e-9);
-
-        assert!(bridge.pin_mut().stop_capture().ok);
-        bridge.pin_mut().shutdown();
-        let _ = std::fs::remove_dir_all(&dir);
-        let _ = std::fs::remove_dir_all(&data);
-    }
+#[tauri::command]
+fn fetch_preview_buffer(state: State<AppState>) -> Result<serde_json::Value, String> {
+    cmds::preview_buffer::fetch_preview_buffer(&state)
 }
 
-/// MIB Studio: every bridged command.
-#[cfg(not(feature = "review-only"))]
-fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {
-    tauri::generate_handler![
-        abi_version,
-        is_initialized,
-        init,
-        configure_mock,
-        start_capture,
-        stop_capture,
-        seek_latest,
-        poll_events,
-        poll_events_exact,
-        fetch_frame_packet,
-        fetch_indexed_frame_packet,
-        fetch_review_frame_packet,
-        fetch_background_packet,
-        fetch_frame,
-        frame_bytes,
-        start_recording,
-        stop_recording,
-        load_recording,
-        seek_index,
-        fetch_frame_by_index,
-        apply_processing,
-        fetch_processing_stats,
-        cancel_operation,
-        queue_overflow_total,
-        platform::app_paths,
-        platform::get_preferences,
-        platform::set_preferences,
-        platform::shell_log,
-        experiment_start,
-        experiment_stop,
-        experiment_cancel,
-        fetch_experiment_status,
-        fetch_experiment_readiness,
-        autofocus_connect,
-        autofocus_disconnect,
-        autofocus_set_enabled,
-        autofocus_jog,
-        autofocus_set_config,
-        fetch_autofocus_status,
-        fetch_autofocus_config,
-        pump_connect,
-        pump_disconnect,
-        pump_set_flow_rate,
-        pump_set_direction,
-        pump_start,
-        pump_stop,
-        pump_purge,
-        pump_stop_purge,
-        pump_set_syringe_volume,
-        pump_poll_status,
-        fetch_pump_status,
-        pump_scan_addresses,
-        fetch_review_metadata,
-        fetch_review_metrics_page,
-        fetch_review_image,
-        review_image_bytes,
-        review_export_csv,
-        fetch_processing_config_json,
-        apply_processing_config_json,
-        set_processing_roi,
-        fetch_background,
-        background_bytes,
-        set_background_from_current_frame,
-        clear_background_image,
-        fetch_processing_core_status,
-        start_device_discovery,
-        start_camera_discovery,
-        fetch_device_discovery,
-        cancel_device_discovery,
-        fetch_camera_selection,
-        select_hardware_camera,
-        select_mindvision_camera,
-        apply_camera_script,
-        reset_hardware_camera,
-        monitoring_set_active,
-        monitoring_clear,
-        fetch_monitoring_snapshot,
-        trigger_set_pulse_duration,
-        trigger_manual_pulse,
-        trigger_periodic_start,
-        trigger_periodic_stop,
-        fetch_trigger_status,
-        review::review_abi_version,
-        review::review_launch_path,
-        review::review_take_open_request,
-        isoelastic::fetch_isoelastic_curves,
-        review::review_open,
-        review::review_close,
-        review::review_set_pixel_to_micron,
-        review::fetch_review_info,
-        review::fetch_review_rows,
-        review::fetch_review_frame,
-        review::fetch_review_series_count,
-        review::fetch_review_series_packet,
-        review::fetch_review_thumbnails_packet,
-        review::fetch_review_scatter,
-        review::review_save_core_record,
-        review::review_export_metrics,
-        review::review_export_all,
-        review::review_export_charts,
-        review::review_stage_chart,
-        review::review_clear_charts,
-        review::review_list_dir,
-        review::review_batch_export,
-        review::review_regenerate_masks,
-        review::review_compute_core,
-        review::fetch_review_computed_core_json,
-        review::review_request_density,
-        review::fetch_review_density,
-        review::review_jobs_busy,
-        review::poll_review_events,
-        review::cancel_review_operation,
-    ]
+#[tauri::command]
+async fn save_preview_buffer(app: tauri::AppHandle, request: String) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        cmds::preview_buffer::save_preview_buffer(&state, request)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
-/// YOFO Review: the review bridge only — no camera, experiment or hardware
-/// commands exist in this product (plan 2026-10-01-standalone-review-app).
-#[cfg(feature = "review-only")]
-fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {
-    tauri::generate_handler![
-        review::abi_version,
-        review::is_initialized,
-        review::init,
-        platform::app_paths,
-        platform::get_preferences,
-        platform::set_preferences,
-        platform::shell_log,
-        review::review_abi_version,
-        review::review_launch_path,
-        review::review_take_open_request,
-        review_update::review_check_update,
-        review_update::review_install_update,
-        isoelastic::fetch_isoelastic_curves,
-        review::review_open,
-        review::review_close,
-        review::review_set_pixel_to_micron,
-        review::fetch_review_info,
-        review::fetch_review_rows,
-        review::fetch_review_frame,
-        review::fetch_review_series_count,
-        review::fetch_review_series_packet,
-        review::fetch_review_thumbnails_packet,
-        review::fetch_review_scatter,
-        review::review_save_core_record,
-        review::review_export_metrics,
-        review::review_export_all,
-        review::review_export_charts,
-        review::review_stage_chart,
-        review::review_clear_charts,
-        review::review_list_dir,
-        review::review_batch_export,
-        review::review_regenerate_masks,
-        review::review_compute_core,
-        review::fetch_review_computed_core_json,
-        review::review_request_density,
-        review::fetch_review_density,
-        review::review_jobs_busy,
-        review::poll_review_events,
-        review::cancel_review_operation,
-    ]
+#[tauri::command]
+fn camera_document(action: String, path: String, kind: String, baseline: String, text: String) -> Result<cmds::camera_document::CameraDocument, String> {
+    cmds::camera_document::camera_document(action, path, kind, baseline, text)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1777,39 +634,150 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .manage(AppState {
-            #[cfg(not(feature = "review-only"))]
-            bridge: Mutex::new(ffi::new_backend_bridge()),
-            review: Mutex::new(review_ffi::new_review_bridge()),
-        })
-        .invoke_handler(invoke_handler())
-        .setup(|_app| {
-            // YOFO Review's updater exists only in builds that carry the
-            // minisign public key (tauri.review.conf.json plugins.updater).
-            #[cfg(feature = "review-only")]
-            if !review_update::configured_pubkey(&_app.config()).is_empty() {
-                _app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+        .manage({
+            // The registry HTTPS transport must be installed before the
+            // backend initializes (it is read once in AppBackend::initialize).
+            let state = AppState::new();
+            if let Ok(mut bridge) = state.bridge.lock() {
+                bridge.pin_mut().set_registry_transport(registry_transport::post);
             }
-            Ok(())
+            state
         })
-        .build(tauri::generate_context!())
-        .expect("error while building tauri application")
-        .run(|_app, _event| {
-            // macOS Finder opens (YOFO Review's .h5 / .hdf5 association):
-            // queue the first HDF5 file and tell the window. Windows and
-            // Linux pass the file as an argument instead (review_launch_path).
-            #[cfg(target_os = "macos")]
-            if let tauri::RunEvent::Opened { urls } = &_event {
-                use tauri::Emitter;
-                let paths = urls
-                    .iter()
-                    .filter_map(|u| u.to_file_path().ok())
-                    .map(|p| p.to_string_lossy().into_owned());
-                let path = review::launch_path_from(paths);
-                if !path.is_empty() {
-                    review::set_pending_open(path.clone());
-                    let _ = _app.emit(review::OPEN_FILE_EVENT, path);
-                }
-            }
-        });
+        .invoke_handler(tauri::generate_handler![
+            registry::registry_sign_in,
+            registry::registry_sign_out,
+            registry::registry_refresh,
+            registry::registry_download,
+            registry::registry_cancel_all,
+            registry::fetch_registry_snapshot,
+            registry::fetch_registry_job,
+            abi_version,
+            is_initialized,
+            init,
+            configure_mock,
+            start_capture,
+            stop_capture,
+            seek_latest,
+            poll_events,
+            poll_events_exact,
+            fetch_frame_packet,
+            fetch_indexed_frame_packet,
+            fetch_review_frame_packet,
+            fetch_background_packet,
+            fetch_frame,
+            frame_bytes,
+            start_recording,
+            stop_recording,
+            load_recording,
+            close_review,
+            seek_index,
+            fetch_frame_by_index,
+            apply_processing,
+            fetch_processing_stats,
+            cancel_operation,
+            queue_overflow_total,
+            platform::app_paths,
+            platform::get_preferences,
+            platform::set_preferences,
+            platform::shell_log,
+            fetch_preview_buffer,
+            save_preview_buffer,
+
+
+            updater::inspect_app_update,
+            app_update::check_tauri_app_update,
+            app_update::verify_tauri_app_installer,
+            app_update::launch_tauri_app_installer,
+            app_update::clear_tauri_installer_cache,
+            processing_core_command,
+            profile_fetch_url,
+            profile_command,
+            camera_document,
+            fetch_config_document,
+            apply_config_document,
+            experiment_start,
+            experiment_stop,
+            experiment_acknowledge_fault,
+            fetch_capture_lifecycle,
+            experiment_cancel,
+            fetch_experiment_status,
+            fetch_experiment_readiness,
+            set_processed_preview_enabled,
+            fetch_processed_preview,
+            background_calibration_command,
+            background_calibration_status,
+            startup_discovery_set_preference,
+            startup_discovery_run,
+            startup_discovery_status,
+            pulse_generator_command,
+            pulse_generator_status,
+            autofocus_connect_endpoint,
+            autofocus_connect,
+            autofocus_disconnect,
+            autofocus_set_enabled,
+            autofocus_jog,
+            autofocus_set_config,
+            fetch_autofocus_status,
+            fetch_autofocus_config,
+            pump_connect_endpoint,
+            pump_connect_model,
+            pump_connect,
+            pump_disconnect,
+            pump_set_flow_rate,
+            pump_set_direction,
+            pump_start,
+            pump_stop,
+            pump_purge,
+            pump_stop_purge,
+            pump_set_syringe_volume,
+            pump_poll_status,
+            fetch_pump_status,
+            pump_scan_addresses,
+            fetch_review_metadata,
+            fetch_review_metrics_page,
+            fetch_review_image,
+            review_image_bytes,
+            review_export_csv,
+            review_export_json,
+            render_review_overlay,
+            fetch_review_charts_json,
+            fetch_monitoring_chart_reference,
+            fetch_review_reanalysis_preview,
+            review_reanalysis_json,
+            review_reanalysis_status_json,
+            review_export_status_json,
+            fetch_processing_config_json,
+            apply_processing_config_json,
+            set_processing_roi,
+            fetch_background,
+            background_bytes,
+            set_background_from_current_frame,
+            clear_background_image,
+            fetch_processing_core_status,
+            start_device_discovery,
+            start_camera_discovery,
+            fetch_device_discovery,
+            cancel_device_discovery,
+            fetch_camera_selection,
+            select_hardware_camera,
+            select_mindvision_camera,
+            apply_camera_script,
+            reset_hardware_camera,
+            soft_trigger_camera,
+            set_camera_overview,
+            save_camera_roi,
+            fetch_camera_geometry,
+            fetch_platform_info,
+            fetch_instrument_status,
+            monitoring_set_active,
+            monitoring_clear,
+            fetch_monitoring_snapshot,
+            trigger_set_pulse_duration,
+            trigger_manual_pulse,
+            trigger_periodic_start,
+            trigger_periodic_stop,
+            fetch_trigger_status,
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
 }

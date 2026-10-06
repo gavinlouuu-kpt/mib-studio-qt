@@ -318,6 +318,8 @@ Configure these outside the repo:
    - `profiles/*/<profile-id>/{profile.meta.json,config.json,egrabberConfig.js,CHANGELOG.md}`: moderate TTL because current profile revisions are mutable.
    - `*/processing-core/{latest.json,index.json,simple/**}`: short TTL because active selection and package history are mutable.
    - `*/processing-core/versions/*.json`: one-year immutable caching; these keys are never overwritten with different content.
+   - `*/processing-core-absdiff-laplacian/{latest.json,index.json}`: short TTL, as for `processing-core/` (the absdiff-laplacian core line, ADR 0007; no `simple/` page). Add this before the first `mib-processing-absdiff-laplacian-v*` release.
+   - `*/processing-core-absdiff-laplacian/versions/*.json`: one-year immutable caching.
    - Versioned `.exe` and `.zip` artifacts: long TTL because filenames are immutable.
 5. Create least-privilege write credentials for release publishing. Credentials need object write access to the updater bucket only.
 6. Store credentials in a local AWS profile such as `mib-studio-r2`, environment variables, or CI secrets.

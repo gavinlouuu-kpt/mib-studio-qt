@@ -30,15 +30,24 @@ The repo root `src/` is the C++ tree, so the whole Tauri app lives under
   toggle + px→µm, review load/scrub); controls whose backend surface is not
   bridged yet render disabled with a tooltip naming the blocking issue
   (BE-2…BE-9, #272–#279) — backend/hardware state is never simulated.
-- `desktop/src/review/` — the HDF5 review module (`ReviewPanel`), mounted
-  by `App.tsx` in the Review tab **and** as the whole window of **YOFO
-  Review**, the standalone review product built from this tree
-  (`review.html` → `src/review/main.tsx` → `ReviewApp.tsx`; cargo feature
-  `review-only`; config overlay `src-tauri/tauri.review.conf.json`). See
-  [[../frontend/YofoReview]] and ADR 0008.
-- `desktop/src-tauri/` — the Tauri v2 app. `src/lib.rs` holds `AppState`
-  (`Mutex<UniquePtr<BackendBridge>>` + a cached last-frame buffer) and the
-  `#[tauri::command]` layer; `main.rs` calls `run()`.
+- `crates/mib-app-commands/` — the transport-neutral command layer (YOFO
+  Studio S5): `AppState` (`Mutex<UniquePtr<BackendBridge>>`), the DTOs, every
+  backend command as a plain function over `&AppState`, the event JSON and
+  frame-packet encoders, and `dispatch::dispatch(state, host, name, args)` for
+  non-Tauri transports (camelCase argument keys, exactly what `invoke` sends;
+  `Reply::Json` or `Reply::Binary`). `dispatch::tests` asserts every Tauri
+  command except the desktop-only ones is dispatchable.
+- `desktop/src-tauri/` — the Tauri v2 app. `src/lib.rs` exposes the shared
+  commands as typed one-line `#[tauri::command]` shims and keeps the
+  desktop-only pieces (app paths, preferences, updater, installers);
+  `main.rs` calls `run()`.
+- `desktop/src/review/` + `review.html` — **YOFO Review**, the standalone
+  review app built from this tree: the binary without the default `studio`
+  feature (`--no-default-features --features review-only`; `main.rs` →
+  `src-tauri/src/review_app.rs`, config overlay `tauri.review.conf.json`,
+  `npm run tauri:review:build`). It holds only the review bridge; MIB
+  Studio's Review tab keeps its own components and commands (ADR 0014,
+  decision A). See [[../frontend/YofoReview]].
 - `desktop/scripts/xvfb-smoke.sh` — headless GUI smoke launcher.
 - `desktop/src/workflow.ts` — pure guided-workflow stage derivation (UX-1),
   with `desktop/src/workflow.test.ts` vitest coverage.
@@ -126,16 +135,111 @@ manifests fail-closed (SHA-256 pinning, unit tested). Native open-URL /
 reveal-in-dir actions go through `tauri-plugin-opener`, capability-scoped to
 `https://**` and directory reveals only.
 
+## Remote server (YOFO Studio)
+
+`crates/mib-bridge-server` (`yofo-studio-server`) runs the same command layer
+in a headless process for a browser UI, e.g. on the PZ7035 PS (ADR 0008, impl
+spec S5). Protocol on `/ws`, token on the upgrade (`?token=` or
+`Authorization: Bearer`, from `/etc/yofo-studio/token`; `--no-token` only on
+loopback):
+
+- request `{"request_id", "cmd", "args"}` with the `invoke` name and camelCase
+  arguments; reply `{"request_id", "ok"}` / `{"request_id", "error"}`;
+- binary replies: 8-byte little-endian request id, then the unchanged bytes
+  (MIBF frame packets); frames stay client-pulled;
+- events: the server alone drains the backend queue every 20 ms and pushes
+  `{"event": EventEnvelope}` to every client; `poll_events_exact` from a client
+  fails with `SERVER_OWNS_EVENTS` (two pollers would steal each other's
+  events). Live frames emit no FrameReady (they are pulled);
+- `init` is idempotent; commands of one connection run in order, each on a
+  blocking thread;
+- client loss: pings every 2 s, a connection silent for 5 s is dropped; when
+  the last client has been gone for 5 s the server stops and saves (active
+  experiment -> `experiment_stop`, raw recording -> `stop_recording`; capture
+  keeps running). The desktop close guard refuses to close instead; a remote
+  operator who lost the link cannot see the run. SIGTERM does the same, then
+  shuts the backend down. `/healthz` reports clients and passes.
+
+The desktop-only platform commands (`app_paths`, `get_preferences`,
+`set_preferences`, `shell_log`) are answered from the server's data
+directory (`config/preferences.json`, `logs/remote-shell.log`), shared by all
+clients.
+
+**Frontend transport.** Every call site imports `invoke` from
+`desktop/src/transport` instead of `@tauri-apps/api/core`: inside Tauri it is
+Tauri IPC, in a browser `wsTransport` (socket at `/ws` of the page origin, or
+`?server=`; token from `?token=`; `VITE_MIB_TRANSPORT=tauri|ws` forces one;
+unit tests use the mocked Tauri API). `wsTransport` returns binary replies as
+`ArrayBuffer` like Tauri, answers `poll_events_exact` from the pushed
+envelopes (so the event loop is unchanged), reconnects on the next call and
+rejects calls in flight with `TRANSPORT_LOST`. `transport/dialogs` replaces the
+dialog/opener plugins: native in Tauri, prompts for instrument paths and
+`window.open` in a browser. In a browser the close guard only warns on
+`beforeunload` (the server owns stop-and-save) and the installer updater is
+hidden. Verified in headless Chromium: the full UI, live mock frames at 30 fps
+over the socket.
+
+**One controller.** The first client controls the instrument; others are
+viewers whose instrument-changing commands (`CONTROL_COMMANDS` in the server)
+fail with `VIEWER_ONLY`. `take_control` claims control; it passes to the
+oldest remaining client when the controller disconnects. Every client gets
+`{"session": {"client_id", "controller_id"}}` on connect and on each change.
+Test: `one_client_controls_the_instrument`.
+
+**Packaging.** `scripts/yofo/stage_image.sh` builds the ARMv7 backend, the
+server and the UI and stages them for pz7035-imx426's `yofo-studio` recipe
+(meta-yofo), which installs `/usr/bin/yofo-studio-server`,
+`/usr/share/yofo-studio/dist` and `yofo-studio.service` (port 8427, token
+generated on first boot in `/etc/yofo-studio/token`, data in
+`/var/lib/yofo-studio`). The backend is not built by BitBake because it needs
+the SDK of the same image.
+
+**Science on the PL.** After `init` the UI reads `fetch_platform_info`; with
+`host_processing` false the realtime switch, backgrounds, calibration and the
+processed preview are hidden and the sidebar says processing runs on the PL
+(ABI 21, [[Rust-Bridge]]).
+
+On the PZ7035 PS (2026-10-01): the ARMv7 server with `MIB_CAMERA_MODE=aravis`,
+`MIB_ARAVIS_FPS=1000`, `MIB_ARAVIS_EXPOSURE_US=900` served the UI to a browser
+on the bench PC, which showed live lit 512x96 IMX426 previews at the UI's
+30 fps pull rate. Server footprint: ~2 % CPU and 12-15 MiB RSS idle; with
+capture running ~90 % CPU (the backend takes every preview the producer
+delivers, ~400/s, while the UI shows 30/s) and 266 MiB RSS after a UI session
+(desktop-sized buffers; a target profile is open in impl spec S6).
+
+`desktop/dist` is served at `/` with `--dist`. Tests: `tests/ws.rs` (mock
+capture over the socket, wrong token refused, client loss and quick reconnect).
+
+## Camera & Alignment (Qt Overview parity)
+
+With a camera that has an overview (MindVision, Aravis/PZ7035), entering the
+Camera & Alignment tab calls `set_camera_overview(true)` and entering
+Experiment `set_camera_overview(false)`, as Qt's tab change does; other tabs
+leave the camera alone and nothing changes during a run. The tab then shows
+the whole sensor with the experiment window as a yellow box (drag to move;
+release saves, as Qt saves on move) and X/Y/W/H fields with "Save camera ROI";
+`cameraAlignment.ts` snaps to the camera's steps and states "Sensor N Hz (max,
+limit) -> >= M images/s here (limit, bands)". For other cameras the fields keep
+setting the processing ROI. Verified on the PZ7035 through the browser:
+816x624 lit overview, window dragged to (232, 356) and saved, Experiment
+showed that 512x96 window. The browser shows the full field at ~26 fps (all
+the producer delivers at the 830 Hz preset) and the preview at the 30 fps
+display rate. Before `bytes_to_vec` (see [[Rust-Bridge]]) the full field was
+held at ~10 fps by per-byte frame copies in the bridge.
+`vitest` discovery is limited to `src/` (`vite.config.ts`): crawling
+`src-tauri/target`'s cxx symlink loop hung `vitest run`.
+
 ## Command layer
 
-Thin wrappers over the bridge (all take the managed `AppState`):
+Thin wrappers over the bridge (all take the managed `AppState`; bodies in
+`crates/mib-app-commands`, Tauri shims in `desktop/src-tauri/src/lib.rs`):
 
 - **Live capture:** existing lifecycle commands remain serialized through
   `AppState.bridge`. `fetch_frame_packet` returns one owned binary response.
 - **Recording/review:** `fetch_indexed_frame_packet(frame_index)` and
   `fetch_review_frame_packet(dataset,index)` accept canonical decimal-string
   indices. `fetch_background_packet` uses the same codec.
-- **Review (ADR 0008):** `src-tauri/src/review.rs` — `review_open/close`,
+- **Review (ADR 0014):** `src-tauri/src/review.rs` — `review_open/close`,
   `fetch_review_info/rows/frame/series_*/thumbnails_packet/scatter`,
   `review_save_core_record`, `poll_review_events`, `cancel_review_operation`
   over the review bridge ([[Rust-Bridge]]); the only commands the
@@ -243,3 +347,357 @@ completion / gate-status values; `bridge.ts` exposes
 `fetchExperimentReadiness`. Guards: `eventAdapter.test.ts` (golden decode
 with typed fields, readiness gates, unknown enum refusal),
 `event_transport::tests::cpp_rust_json_matches_shared_golden`.
+
+## Central profile registry (ABI 25, issue #398)
+
+**Settings → Central Methods…** opens `desktop/src/CentralMethodsPanel.tsx`:
+sign in/out, refresh (also on open when signed in), cancel, and the cached
+revisions with each central state shown as itself. All wording and enablement
+come from the pure `desktop/src/registry.ts` view model (vitest
+`registry.test.ts`). The panel polls
+`fetch_registry_snapshot` every 250 ms only while open and re-renders on a
+generation/busy change; the password field is cleared on submit. The HTTPS
+transport is `src-tauri/src/registry_transport.rs` (`ureq` + rustls with the
+platform verifier; HTTPS only, no redirects, global timeout, response cap,
+CR/LF header refusal, helper thread so a cancel returns at once, never panics
+across the FFI), installed with `set_registry_transport` when `AppState` is
+built — before the UI's `init`. Enabled by the same
+`MIB_PROFILE_REGISTRY_URL` / `_PUBLISHABLE_KEY` environment as the backend
+worker. The registry commands live in the desktop crate's `registry` module
+(`src-tauri/src/registry.rs`), not in `mib-app-commands`: they need the shell's
+transport, and a sign-in carries a password that must not cross the YOFO Studio
+WebSocket. `dispatch::tests::every_command_is_dispatchable` exempts `registry::`
+commands for that reason.
+
+
+## September 23 catch-up: camera setup
+
+`desktop/src/cameraScript.tsx` wires the existing EGrabber script apply/reset
+commands. Script selection and pending ownership live in App across navigation;
+a native picker selects an existing `.js` file without applying it. Apply and
+Reset require a stopped, configured EGrabber camera and no active experiment,
+then re-read selection to reject stale capture/device state. Script text editing
+is external; MindVision uses the Connect JSON path. DOM regressions cover stale
+selection, duplicate commands, errors and disabled setup states.
+
+
+## September 23 operator integrations (ABI 15)
+
+`HardwareControls` stays mounted across tabs so pending command ownership and
+hardware form drafts survive navigation. Connect exposes existing numeric-COM
+pump/autofocus APIs; manual actuation requires the shared service-mode arm,
+which clears on one action. Typed endpoints remain follow-up work.
+
+`configDocument.tsx` owns a saved processing-document draft in App. Open/reload
+are explicit; changed-field patches avoid resubmitting unknown additive keys.
+Save and Apply uses a SHA256 baseline through the shared Qt-free transaction,
+reports saved/applied/verified separately and preserves drafts on conflict or
+partial failure. It changes image_processing only, not startup file selection,
+ROI/calibration/realtime/camera settings. The old live JSON editor remains a
+separate, non-persistent path. DOM tests cover conflict, partial outcomes, repeated
+saves, navigation, command failures and duplicate submissions.
+
+`exportControls.tsx` uses the shared export engine for CSV/images/all, retains
+status across navigation, and exposes cancellation and partial paths. Polls are
+single-flight and status errors do not erase command failures. Conversion uses
+known current calibration or delegates to the backend's current factor; no
+fabricated UI fallback value is sent. Chart images/series range controls remain
+unexposed. Config and export controls have interaction tests, not just codec tests.
+
+
+Monitoring placeholders are now bounded SVG plots over existing snapshot rows:
+deformability vs raw pixel area and dimensionless ring-ratio histogram. They
+cap at 200 rows, discard non-finite values, retain negative/range extrema, and
+label ring ratio separately from physical ring width. No calibration, new metric
+computation, or identity-matched overlay is implied.
+
+## Software replacement follow-up (2026-09-23)
+
+Preview pause/scrub uses exact decimal frame identities and the bounded pull
+scheduler. Preview TIFF/AVI buffer export delegates to PlaybackService through
+the facade, requires stopped capture and idle experiment, rejects evicted ranges
+rather than silently clamping, reserves a new destination and reports retained
+partial output. AVI explicitly cannot preserve per-frame timestamps. Navigation
+retains the save owner. Shell status reconciliation continues independently of
+capture buttons and monitoring requests are single-flight with stale-view guards.
+
+### Hardware endpoint parity (2026-09-23)
+
+Connect now supports typed OEABT endpoint IDs alongside CoreMOR connections and
+read-only asynchronous nanopositioner discovery. Selecting a discovered endpoint only
+fills the draft; connection still requires an explicit command. Incomplete/ambiguous
+results are never auto-adopted. The acquisition pulse generator has system-port and
+Modbus-address selection, exact-address scoped discovery, channel frequency/duty and
+output enable/disable controls. Writes consume the shared commissioning arm; mounting,
+polling and discovery do not write. Disconnect does not stop a generator's physical
+pulse output, and the UI explains that distinction. Hardware acceptance remains a
+separate deferred bench run.
+
+Native workflow verification uses Tauri's supported tauri-driver/WebKitWebDriver
+protocol with embedded production assets (`custom-protocol` Cargo feature).
+A development-URL process-alive launch is not sufficient to verify the UI loads.
+The desktop-shell environment section includes the native WebDriver package.
+
+### Local profiles and checked activation (2026-09-23)
+
+The Experiment configuration page now hosts an App-owned local profile draft/library
+(`desktop/src/profiles.tsx`). Choose a Qt-compatible profiles directory; import a JSON
+document, preserve/edit optional `egrabberConfig.js`, save as new, duplicate, rename,
+or recoverably archive. Unknown config bytes survive copies. Mutations use a baseline
+hash over config, optional script and metadata. Existing names are never overwritten.
+Navigation retains drafts and pending commands; experiment-active operations are refused.
+
+`BackendFacade::profileCommand` owns the portable `app/ProfileStore` path. Apply validates
+all supported settings before changing stopped runtime services: processing, buffers,
+realtime batches/mode, frame delivery, calibration, autofocus configuration, and ROI
+bounded to an available preview frame. No camera script is executed, device connected,
+or voltage actuated. Processing-contract metadata incompatibility fails closed; declared app-version bounds are checked against the compiled application version. The saved processing editor remains
+a separate checked persistence workflow and can open the selected profile's config.
+
+Remaining shell integration: profile ID propagation into experiment requests and
+display-FPS presentation hookup. Remote/startup workflows are described below.
+The profile apply reply returns `profile_id`/`display_fps` for those shell integrations;
+these are not falsely reported as backend-applied settings. Directory publication is
+atomic within the filesystem; revisions serialize this backend, not external Qt writes.
+
+Native webview verification exposed a permanently disabled Start Experiment
+button left from pre-ABI-13 scaffolding. Start now selects an output path, fetches
+authoritative backend readiness, displays blocking gates, and invokes the shared
+backend Start transaction (which rechecks readiness). A synchronous pending owner
+prevents duplicate chooser/start requests; Starting joins Active/Stopping guards.
+
+Startup discovery is now available through an explicit auto-select/retry panel and a
+persisted opt-in preference for subsequent startup sessions (off by default). Scheduling
+acceptance is distinct from camera-configured/nanopositioner-connected completion.
+`onSelectionChanged` refreshes shell-owned camera state when startup results change it.
+
+The Tauri facade installs a queued startup executor: discovery workers enqueue bounded
+job callbacks, and serialized status polling drains them on the bridge caller. This
+matches Qt's UI executor ownership instead of mutating camera selection on a provider
+worker. AppBackend rechecks idle experiment/capture state at actual selection/connection,
+not merely when the scan starts. Empty/ambiguous/incomplete results retain manual choice.
+
+Review Close File now calls the shared facade rather than a disabled placeholder.
+The facade rejects active recording/experiment and clears cached source identity;
+the shell clears review pixels/metrics only after successful closure. Startup
+selection completion refreshes the camera selection in the main shell.
+
+### Finite background calibration
+
+`BackgroundCalibrationControls` exposes the shared realtime calibration operation:
+required empty frames, maximum examined frames, finite timeout, progress/rejection
+counts, cancellation and published generation/SHA-256. An experiment must be Idle to
+start; cancellation remains possible later. Scheduling success is not publication,
+and a failed/cancelled candidate never replaces the previous background. Mount this
+component with `onPublished` refreshing processing/background state.
+
+### Native acceptance gate
+
+`desktop/scripts/native-workflow.py` runs the embedded-assets application under
+Tauri WebDriver + Xvfb, configures mock frames using React controls, uses actual
+GTK file dialogs (xdotool), starts an experiment, navigates away, stops/finalizes,
+reopens HDF5, exports through the shared service and closes review. Backend IPC
+is never mocked. It requires nonzero conserved persistence and published export
+outputs, saves screenshot/status evidence, isolates app data and cleans up its
+owned session. Desktop CI now runs this in addition to unit tests and launch smoke.
+Initial local pass: 2 persistence-admitted/committed frames, 2 exported images.
+The gate exposed and drove fixes for the disabled Start button and missing
+realtime processing consumer. It does not establish physical hardware timing.
+
+### Managed profiles and startup provenance
+
+`profile_command` now also supports `selection`, `restore` and `install_remote`.
+A successful explicit apply persists a small `.selection.json` pointer in the selected
+profiles folder; the App-owned hook restores it once after backend readiness, only when
+the config/script/metadata aggregate revision still matches. No scripts, device connects
+or hardware actuation are performed by restore. `selection` separately returns the saved
+startup choice and actual runtime `profile_selection` provenance; a saved choice alone
+is never evidence of application. External edits fail closed for explicit review/reapply.
+
+Catalog transport is bounded to 4 MiB/HTTP(S), has finite timeouts, no redirects or URL
+credentials, and runs outside the backend bridge mutex in Tauri's blocking pool.
+`profileCatalog.tsx` provides passive catalog checks, full config-field and camera-script
+diffs, explicit install/update and local-name selection. Backend installation verifies
+required SHA256 checksums, app version bounds and active processing-contract compatibility
+before publishing; updates require the existing revision/profile identity and preserve
+the complete old directory under a hidden `.backup-*` path. An update never changes runtime
+settings, and an obsolete startup pointer consequently requires an explicit apply.
+
+### Packaged resource roots
+
+The Tauri shell passes its resolved read-only resource directory separately from the
+writable application data directory through `initialize_with_resources`. Bundles include
+the default configuration and isoelastic LUT resources; backend model/LUT lookup no
+longer assumes the application data directory is beside the executable. Legacy Qt
+initialization retains its existing data-parent fallback.
+### Atomic processed overlays
+
+`ProcessedPreview` is a separate coherent processed-frame viewer with ROI, mask,
+contours and explicitly primary-object target overlays. It fetches one bounded binary
+`MIPO` v1 envelope containing metadata plus grayscale source and mask bytes. It never
+pairs an independently fetched latest frame with independently fetched analytics.
+At most 32 MiB per image and 20,000 contour points/512 contours are delivered; contour
+truncation is displayed. Unknown timestamp units remain unknown. UI polls at 5 Hz with
+one request in flight, enables retention only while active and disables it on cleanup.
+Pass `ready` and `active` from the owning Preview page; only mount one consumer.
+### Core and application release controls
+
+`coreManagement.tsx` retains operations across navigation. Core restoration completes
+before profile restoration; `cores.initialized` is the shell startup gate. Reopening a
+webview during an active experiment reads status rather than switching the kernel.
+`processing_core_command` runs expensive signature/cache verification in Tauri's blocking
+pool and delegates lifecycle authorization to the facade. The native test covers bundled
+roundtrip, corrupt persisted selection, failure recovery, persistence faults, unsupported
+signature schemes and concurrent activation requests. See [[frontend/ProcessingCoreDialog]].
+
+Settings → Updates now reaches these controls and read-only application release checks.
+The existing Rust manifest verifier recognizes both its `url`/`sha256` names and Qt's
+published `installer_url`/`installer_sha256` names. It does not launch Qt installers as
+Tauri updates. Tauri-specific package publication/installer launch/rollback remain release
+work; a successful manifest check is not proof of installable Tauri delivery.
+
+### Integrated close and delivery checks
+
+File→Exit and native window-close share an authoritative close guard. Pending saves,
+exports/reanalysis/calibration, raw recording and nonterminal experiments postpone
+closing; configuration/profile drafts require explicit discard. Idle capture stops
+before close. Closing never implicitly cancels a scientific run. Settings and Help
+menus route to implemented controls and the issue page rather than disabled stubs.
+The integrated bridge ABI is 17 (processed/source review packets and core management).
+
+`desktop/scripts/bundle-deb.py` packages an already-built custom-protocol binary,
+deriving native Debian dependencies with `dpkg-shlibdeps` (including OpenCV/HDF5,
+not just GTK/WebKit). Use `--debug` for development verification; release packaging
+requires the release binary. Build on each supported target distro; a local package
+is not evidence of Windows/macOS delivery or signed automatic update acceptance.
+Live processing config refreshes preserve dirty drafts and detect changed runtime state;
+explicit reload cannot overwrite edits entered during a pending fetch. JSON submissions
+validate all fields before mutation and reject stale config_version snapshots. Profile
+selection provenance includes display_fps, which controls the live frame request cadence.
+
+The native acceptance harness additionally requests File→Exit during an active run
+and refreshes the entire webview, requiring the same native experiment/output to
+remain active. Shell statistics polling is independent of a possibly stale UI draft
+of the realtime-enabled toggle. Raw MIBF v2 acquisition/store epochs require bridge
+ABI 18; processed preview recipe identity remains separately scoped.
+
+## PZ7035 instrument surfaces (#501 P0a, 2026-10-05)
+
+The UI follows `fetch_platform_info` `capabilities` (`platformCapabilities.ts`;
+a server without them is the MIB desktop). On the PZ7035:
+
+- **Hidden:** host background, autofocus/nanopositioner (sidebar and
+  Hardware), framegrabbers and the EGrabber camera script, MindVision, the live
+  frame buffer, core updates, HDF reanalysis and the pulse generator.
+- **Pumps:** default to the instrument's two peristaltic pumps on
+  `/dev/ttyPS1`: Sample at Modbus address 3, Sheath at 4, 25 µL/rev
+  (confirmed on the bench 2026-10-05). Infuse turns the heads
+  counter-clockwise.
+- **Sidebar:** gains "PL core": build, weights, LED and latency max.
+- **Preflight** (`preflight.ts`) replaces the host core pin with:
+  - **PL core** (build vs `expected-core.json`, weights vs the pin);
+  - **Sensor link**: warn above 10 ingress errors/s or 1 resync/s;
+  - **LED strobe**: a guard trip fails.
+
+  Autofocus and trigger read "not on this instrument". The quality gates
+  keep only calibration until the image focus metric (P0b). A healthy
+  instrument at idle shows 0 warnings (`preflightPz7035.test.ts`).
+- **Token prompt** (`components/AuthGate.tsx`, `transport/auth.ts`): in a
+  browser the app mounts only after `GET /auth` accepts the token, taken
+  from `?token=` or typed once into sessionStorage. Otherwise it shows a
+  prompt or "unreachable". The socket URL is read when it opens, so a typed
+  token counts.
+
+## Pump model per slot (2026-10-04)
+
+The Pumps panel (`HardwareControls.tsx`) has a **Pump model** select per slot:
+Syringe (Longer dLSP) or Peristaltic (Tushui). Peristaltic adds a calibration
+field (µL per revolution, default 25), pre-fills the instrument endpoint
+`/dev/ttyPS1` address 3 when the fields are untouched, hides the syringe
+volume controls and shows head rpm and the estimated delivered volume.
+Connect goes through `pump_connect_model` (ABI 22, [[Rust-Bridge]]), which the
+WebSocket server allows for the controlling client.
+
+## Remembered discovery and named pump endpoints (2026-09-23)
+
+Startup selection now installs validated, per-user remembered vendor/endpoint/baud/address preferences into the shared startup coordinator before optional automatic selection. Malformed persistence skips automatic selection; failed persistence is distinguished from a session-only applied preference. Preference changes do not connect hardware.
+
+Pump connections accept system serial names (including Linux paths), reusing the existing shared SerialBus string transport. Status exposes the actual port name; legacy Qt config edits preserve connected transport identity. Two pumps can share a bus at distinct slave addresses, while duplicate pump/pulse slave identities and autofocus port collisions are refused before connection writes. Legacy numeric COM bridge calls remain supported. Native fake-serial tests cover named endpoint roundtrip and shared-bus identity guards; real hardware acceptance remains deferred.
+
+CI also builds and extracts the Linux development `.deb` and runs the same native
+workflow from its packaged path, retaining package and evidence artifacts. File-dialog
+acceptance waits for actual GTK dialog closure: a slower hosted runner exposed that
+a fixed 300 ms folder-navigation delay could leave the export chooser pending.
+Webview reload and native process startup are distinct: `is_initialized` selects a
+read-only reconciliation path for retained sessions. Runtime flags, experiment status
+and review metadata must all resolve before readiness permits startup hooks. A reload
+never reapplies saved profile/core selections over current native state. Existing export
+and reanalysis jobs are polled by App-owned hooks; unknown initial status is busy, not idle.
+
+Monitoring scientific scope: `MonitoringRow.area` is raw px²; `youngs_modulus` is the
+stored kernel/LUT kPa result (zero means unavailable). Tauri renders a bounded raw-area
+scatter plus valid-object ring-ratio and modulus histograms. It does not apply current
+calibration to retained historical rows. Live calibrated scatter/isoelastic parity needs
+per-row calibration provenance captured by every inline and batch processing path; the
+current Qt live scatter's use of the current factor is not authoritative for mixed epochs.
+## Windows nonpublishing candidate lane
+
+`.github/workflows/desktop-windows-candidate.yml` builds a Windows x64 SDK-free Tauri candidate on `dev/react-tauri` pushes or manual dispatch. This is separate from the existing Qt Windows release workflow and never creates tags, releases, update feeds or signed installers. It uses the repository VS2022/MSVC194 Conan profile, VS CMake backend-only build and existing bridge link-manifest generator, then release-mode Rust tests/build.
+
+`desktop/scripts/package-windows-candidate.ps1` creates a fresh portable directory and ZIP: recursive non-system native DLL dependencies (unresolved/conflicting names fail), app-local VC runtime, defaults, isoelastic LUT resources and the pinned YOLO model. The staged application is smoke-launched with development DLL search paths removed. WebView2 Evergreen remains an explicit prerequisite. The candidate disables EGrabber, MindVision and CoreMOR SDKs; SDK-enabled camera delivery and Windows hardware acceptance remain separate gates. Windows hosted execution is required before declaring this candidate validated.
+
+Local minimum path: VS2022 x64 developer PowerShell, Node22, stable Rust/MSVC, Python/Conan/CMake; install dependencies with `conan install . -of build --build=missing -s build_type=Release -pr conan/profiles/windows-msvc194`, provision required assets, configure `windows-default` with the workflow's SDK-free/backend-only flags, build backend libraries and `mib_backend_smoke_test`, run `tools/gen_bridge_link_manifest.py`, then `npm --prefix desktop ci`, frontend test/build and release Cargo desktop build with `custom-protocol`. Run the packaging script last. Never use Qt's release workflow to build this candidate.
+
+The close guard also queries native initialization while shell boot/recovery is still
+pending; a temporarily false React `ready` flag cannot bypass protection for an
+existing run. A refused close reveals the log so the reason is visible immediately.
+stored kernel/LUT kPa result (zero means unavailable). The host stamps each FilterResult
+with the exact pixel-to-micron factor passed to kernel object analysis, across inline and
+batch paths. Tauri and Qt live scatter use this per-row factor, never current calibration;
+unknown-factor rows are omitted from calibrated scatter. Tauri also renders valid-object
+ring-ratio and modulus histograms. Optional isoelastic reference curves reuse the bundled
+Qt/review resource and label channel/flow/viscosity conditions, not inferred hardware state.
+The calibration stamp is host-only, not a ProcessingCore C ABI or persisted HDF change.
+
+## Explicit operator recovery (Tauri)
+
+A persistent recovery panel displays failed experiment output path, exact committed/admitted/failed counters and terminal error. Matching Qt's explicit acknowledgment, the operator must review a checkbox before clearing the readiness fault. The coordinator compares the displayed run generation, monotonic fault occurrence revision, fault code and message under its lifecycle mutex and refuses active/flushing/replaced or already-cleared faults. Acknowledgment does not alter the recorded failed outcome, repair/delete its file or automatically restart. Start readiness is still evaluated again.
+
+Capture lifecycle polling exposes exact capture/failure generations, retained failure details and authoritative camera-ready state. Explicit retry reuses the existing configured-camera Start path; it is blocked during experiment finalization/recording, never retries automatically, and does not equate accepted start with a ready device. Configuration review remains available. These panels persist across stage tabs; no hardware execution is required by their tests.
+
+ABI 19 adds analysis-time monitoring calibration/reference curves and explicit
+fault-revision recovery/capture-lifecycle status. The full non-network/non-hardware
+115-test CTest selection now passes (one optional exporter soak skipped) after
+installing declared Python build requirements into an isolated verification venv.
+Hosted folder chooser acceptance clicks GTK's Open button while preserving the
+typed location and asserts the exact exported destination; failures also capture the full X11 desktop for diagnosis.
+Windows candidate runs are not cancelled mid-Conan build by each branch push; the
+latest queued candidate can reuse the completed dependency cache.
+### User-operated application installers
+
+The application updater reuses Qt's HTTPS manifest and SHA256 trust model; it is not a
+second signing authority. `check_tauri_app_update` uses only
+`https://updates.yofo.bio/{stable|beta}/tauri/{windows|linux}-{x86_64|aarch64}/latest.json`.
+The manifest must contain `version` (newer SemVer than native app_version), `installer_url`
+(HTTPS, no credentials), `installer_sha256`, `installer_size_bytes` (1..4 GiB), matching
+`channel`, `artifact_family: "tauri"`, `os`, and `arch`. Qt/unidentified artifacts are rejected.
+Supported package launch formats are Windows EXE/MSI and Linux DEB/RPM through the native
+opener/package installer; AppImage/macOS installation is not claimed.
+
+Browser download is followed by operator file selection, bounded streaming SHA256 copying
+into a private cache directory, then separate explicit launch confirmation. Native tickets
+expire after 15 minutes; a replaced ticket, changed manifest, wrong platform/version,
+size/digest mismatch or changed staged bytes fails closed. Both verification and launch
+re-fetch the canonical manifest. Capture, recording, experiment finalization, export,
+reanalysis, calibration, pending UI work and unsaved drafts must be inactive. Launch holds
+the native command mutex across the final idle check and opener request. The app never
+automatically exits; opener acceptance is not reported as completed installation. Feed
+publication, signing infrastructure and real-installer acceptance remain release tasks.
+
+### Qt-free Conan graph
+
+The root Conan recipe defaults `with_qt=True` to preserve Qt builds. The Windows Tauri candidate explicitly supplies `-o '&:with_qt=False'`; backend libraries retain all existing version pins, while Qt and its Linux-only xkbcommon/Wayland overrides are omitted. `tools/test_conan_recipe.py`, run using the Python environment containing Conan 2, verifies the default and disabled graphs' direct requirements without network access. Full dependency resolution still needs the pinned recipes/binaries in cache or configured remotes.
+
+### Portable camera-document Save As
+
+Camera editors stage bounded validated content in a randomized `tempfile::NamedTempFile` in the destination directory, sync file data, then use `persist_noclobber` for Save As. The maintained tempfile implementation uses non-replacing `MoveFileExW` on Windows (including filesystems without hard links) and native no-replace rename where supported on Unix; unavailable safe publication remains an error rather than an overwrite fallback. Existing Save retains its revision recheck and file permissions before replacement. RAII removes staging files on failure. Tests cover exact Unicode/revision roundtrip, existing file/directory conflicts, concurrent creators, bounded input and legacy staging-name collisions. Removable-media hardware/mount testing is not claimed.

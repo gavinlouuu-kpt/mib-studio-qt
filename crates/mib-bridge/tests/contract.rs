@@ -6,7 +6,7 @@
 //! Asserts the event contract and frame metadata. Runs with no Qt, no webkit,
 //! no display — this is the Phase 2 gate and the boundary regression guard.
 
-// The backend bridge is not compiled under `review-only` (ADR 0008); the
+// The backend bridge is not compiled under `review-only` (ADR 0014); the
 // review bridge has its own test (tests/review_bridge.rs).
 #![cfg(not(feature = "review-only"))]
 
@@ -65,8 +65,70 @@ fn abi_version_is_stable() {
     // stop outcomes, run completion states, readiness gate statuses, typed
     // ExperimentStatus companions and fetch_experiment_readiness.
     // v14 the asynchronous device-discovery jobs (#419, ADR 0005).
-    // v15 the review bridge over ReviewSession (ADR 0008).
-    assert_eq!(ffi::bridge_abi_version(), 15);
+    // v20 Camera & Alignment: set_camera_overview, save_camera_roi,
+    // fetch_camera_geometry (YOFO Studio; MindVision and Aravis cameras).
+    // v21 fetch_platform_info: science on the PL (YOFO Studio ADR 0008).
+    // v22 pump_connect_model: dLSP syringe or Tushui peristaltic per slot.
+    // v23 develop (19) and the instrument line (20-22) as one contract; no
+    // new commands (ADR 0011 single renumber, so no release build carries an
+    // interim number).
+    // v24 #501 instrument UI P0: fetch_platform_info capabilities and
+    // fetch_instrument_status (PZ7035 PL core, LED, link, latency).
+    // 25 is reserved for the #398 profile-registry stack, 26 for #501 P1.
+    // v25 the central profile registry (#398): registry_* commands, snapshot
+    // and contract groups, and the shell-injected HTTPS transport. Built as a
+    // provisional 15 and renumbered once; 24 = #501 P0; 15 and 19-24 are
+    // never reused.
+    assert_eq!(ffi::bridge_abi_version(), 25);
+}
+
+// ABI 20: a camera without a full-sensor overview (the mock) reports it and
+// refuses the overview and a window save cleanly; leaving overview is a no-op.
+#[test]
+#[serial]
+fn camera_alignment_commands_without_overview_camera() {
+    let dir = make_frame_dir();
+    let data = std::env::temp_dir().join(format!("mib_bridge_align_{}", std::process::id()));
+    let mut bridge = ffi::new_backend_bridge();
+    assert!(bridge.pin_mut().initialize(&data.to_string_lossy()));
+    assert!(bridge.pin_mut().configure_mock_camera(&dir.to_string_lossy(), 5, true).ok);
+    let geometry: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_camera_geometry()).unwrap();
+    assert_eq!(geometry["supported"], serde_json::json!(false), "{geometry}");
+    let refused = bridge.pin_mut().set_camera_overview(true);
+    assert!(!refused.ok);
+    assert!(refused.message.contains("no full-sensor overview"), "{}", refused.message);
+    assert!(bridge.pin_mut().set_camera_overview(false).ok, "leaving overview is always possible");
+    assert!(!bridge.pin_mut().save_camera_roi(0, 0, 64, 64).ok);
+    bridge.pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&data);
+}
+
+// #501: the desktop build reports MIB surfaces and no PZ7035; instrument
+// status is unavailable off the PZ7035 and never fails the call.
+#[test]
+#[serial]
+fn platform_capabilities_and_instrument_status_on_the_desktop() {
+    let data = std::env::temp_dir().join(format!("mib_bridge_platform_{}", std::process::id()));
+    let mut bridge = ffi::new_backend_bridge();
+    let early: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_instrument_status()).unwrap();
+    assert_eq!(early["available"], serde_json::json!(false), "{early}");
+    assert!(bridge.pin_mut().initialize(&data.to_string_lossy()));
+    let info: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_platform_info()).unwrap();
+    let caps = &info["capabilities"];
+    assert_eq!(caps["instrument"], serde_json::json!("desktop"), "{info}");
+    for host_only in ["autofocus", "trigger", "host_background", "frame_buffer", "reanalysis", "core_updates", "egrabber_script"] {
+        assert_eq!(caps[host_only], serde_json::json!(true), "{host_only}: {info}");
+    }
+    for pz_only in ["pl_identity", "led_strobe", "align_mode", "run_mode"] {
+        assert_eq!(caps[pz_only], serde_json::json!(false), "{pz_only}: {info}");
+    }
+    assert!(caps["pump"].is_null(), "{info}");
+    let status: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_instrument_status()).unwrap();
+    assert_eq!(status["available"], serde_json::json!(false), "{status}");
+    assert!(status["error"].as_str().is_some_and(|e| !e.is_empty()), "{status}");
+    bridge.pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(&data);
 }
 
 // BE-8: the autofocus command surface fails safely without hardware, the
@@ -86,6 +148,16 @@ fn autofocus_commands_and_config_roundtrip() {
     assert_eq!(status.last_ring_ratio_update_us, 0);
     assert_eq!(status.ring_ratio_age_us, 0);
 
+    // New typed endpoint validation never probes a device on malformed input.
+    assert!(!bridge.pin_mut().autofocus_connect_endpoint("auto", "x", -1, 115200, 1).ok);
+    assert!(!bridge.pin_mut().autofocus_connect_endpoint("oeabt", "", -1, 115200, 1).ok);
+    assert!(!bridge.pin_mut().autofocus_connect_endpoint("unknown", "x", -1, 115200, 1).ok);
+    let pulse: serde_json::Value = serde_json::from_str(&bridge.pin_mut().pulse_generator_status()).unwrap();
+    assert_eq!(pulse["valid"], true);
+    assert_eq!(pulse["connected"], false);
+    for request in [r#"{"action":"connect","port":"","address":1}"#, r#"{"action":"frequency","channel":0,"value":0}"#, r#"{"action":"duty","channel":5,"value":50}"#] {
+        assert!(!bridge.pin_mut().pulse_generator_command(request).ok);
+    }
     // Structured parameter errors and safe failure without hardware.
     assert!(!bridge.pin_mut().autofocus_connect(-1, 115200, 1).ok);
     assert!(!bridge.pin_mut().autofocus_connect(3, 115200, 999).ok);
@@ -153,6 +225,10 @@ fn pump_commands_fail_safely_without_hardware() {
     assert!(!bridge.pin_mut().pump_connect(0, 3, 115200, 300).ok);
     assert!(!bridge.pin_mut().pump_set_flow_rate(0, -5.0, 100).ok);
     assert!(!bridge.pin_mut().pump_set_syringe_volume(0, 0, 1).ok);
+    assert_eq!(sample.model, 0, "slots default to the dLSP syringe model");
+    assert!(!bridge.pin_mut().pump_connect_model(0, 2, "/dev/ttyPS1", 115200, 3, 25.0).ok);
+    assert!(!bridge.pin_mut().pump_connect_model(0, 1, "/dev/ttyPS1", 115200, 3, 0.0).ok);
+    assert!(!bridge.pin_mut().pump_connect_model(0, 1, "/dev/ttyPS1", 115200, 300, 25.0).ok);
 
     // No hardware on this platform: a real connect fails without hanging, and
     // control commands on a disconnected pump fail cleanly.
@@ -265,14 +341,18 @@ fn review_metadata_pages_images_and_export_job() {
         std::thread::sleep(Duration::from_millis(20));
     }
     assert!(completed, "export did not complete");
+    let retained: serde_json::Value = serde_json::from_str(&bridge.pin_mut().review_export_status_json()).unwrap();
+    assert_eq!(retained["state"], "completed");
+    assert_eq!(retained["operation_id"], export.operation_id.to_string());
+    assert_eq!(retained["final_path"], csv_path.to_string_lossy().as_ref());
     let csv = std::fs::read_to_string(&csv_path).unwrap();
     assert!(csv.starts_with("Frame Type,Index,Timestamp,Object Id"));
     assert!(csv.lines().count() as u64 >= meta.total_valid, "missing CSV rows");
 
     // Failure path cleans partial outputs: unwritable directory fails the
     // job and leaves no file behind.
-    let bad_path = "/nonexistent-dir/mib_export.csv";
-    let bad = bridge.pin_mut().review_export_csv(bad_path);
+    let bad_path = csv_path.join("mib_export.csv"); // existing file cannot be a parent
+    let bad = bridge.pin_mut().review_export_csv(&bad_path.to_string_lossy());
     assert!(bad.ok, "job starts, then fails asynchronously");
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut failed = false;
@@ -288,7 +368,7 @@ fn review_metadata_pages_images_and_export_job() {
         std::thread::sleep(Duration::from_millis(20));
     }
     assert!(failed, "bad-path export did not report Failed");
-    assert!(!std::path::Path::new(bad_path).exists());
+    assert!(!bad_path.exists());
     // Source recording is intact after the failed job.
     assert!(bridge.pin_mut().load_recording(&rec_path.to_string_lossy()).ok);
 
@@ -511,6 +591,9 @@ fn monitoring_and_trigger_contract() {
     assert!(!bridge.pin_mut().trigger_set_pulse_duration(0).ok);
     assert!(!bridge.pin_mut().trigger_periodic_start(0).ok);
 
+    let reference: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_monitoring_chart_reference()).unwrap();
+    assert!(!reference["curves"].as_array().unwrap().is_empty());
+    assert!(reference["curve_source"].as_str().unwrap().contains("30 um"));
     // Monitoring enable/disable/clear round-trip.
     assert!(bridge.pin_mut().monitoring_set_active(true).ok);
     let snap = bridge.pin_mut().fetch_monitoring_snapshot(50);
@@ -628,6 +711,25 @@ fn rust_enums_match_contract_json() {
                                     ("Timeout", 5), ("MalformedResponse", 6), ("Unsupported", 7), ("MissingSdk", 8),
                                     ("ProviderException", 9), ("Cancelled", 10), ("Overflow", 11), ("ShuttingDown", 12),
                                     ("TooManyJobs", 13)]),
+        // ABI 25 registry groups (#398): pinned in C++ by static_asserts in shim.cpp.
+        ("registry_session_states", &[("SignedOut", 0), ("SignedIn", 1), ("CachedOffline", 2)]),
+        ("registry_connectivity", &[("Unknown", 0), ("Online", 1), ("Offline", 2), ("AuthenticationRequired", 3),
+                                    ("PermissionDenied", 4), ("Failed", 5)]),
+        (
+            "registry_job_kinds",
+            &[
+                ("SignIn", 0),
+                ("SignOut", 1),
+                ("Refresh", 2),
+                ("Download", 3),
+                ("Materialize", 4),
+                ("RecordValidation", 5),
+            ],
+        ),
+        ("registry_job_states", &[("Queued", 0), ("Running", 1), ("Succeeded", 2), ("Partial", 3), ("Failed", 4),
+                                  ("Cancelled", 5)]),
+        ("registry_central_states", &[("Submitted", 0), ("Approved", 1), ("Rejected", 2), ("Published", 3),
+                                      ("Superseded", 4), ("Archived", 5), ("Revoked", 6)]),
     ];
     for (group, values) in groups {
         let obj = contract[*group].as_object().unwrap_or_else(|| panic!("missing contract group {group}"));
@@ -1095,4 +1197,229 @@ fn record_then_load_and_review() {
     let _ = std::fs::remove_dir_all(&frame_dir);
     let _ = std::fs::remove_dir_all(&data_dir);
     let _ = std::fs::remove_file(&rec_path);
+}
+
+// ---- Central profile registry (schema v25, #398) ----
+// The shell-injected transport is a plain `fn` pointer, so the test
+// transports report through statics.
+static REGISTRY_CALLS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static REGISTRY_HANDLE_LIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static REGISTRY_SAW_APIKEY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static REGISTRY_HUNG: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Answers every request like Supabase Auth rejecting the credentials.
+fn registry_transport_reject(request: &ffi::BridgeHttpRequest) -> ffi::BridgeHttpResponse {
+    use std::sync::atomic::Ordering;
+    REGISTRY_CALLS.fetch_add(1, Ordering::SeqCst);
+    REGISTRY_HANDLE_LIVE.store(!ffi::registry_request_cancelled(request.cancel_handle), Ordering::SeqCst);
+    REGISTRY_SAW_APIKEY.store(
+        request.headers.iter().any(|h| h.name == "apikey" && h.value == "sb_publishable_test")
+            && request.url.starts_with("https://registry.example/auth/v1/token")
+            && request.timeout_ms > 0
+            && request.max_response_bytes > 0,
+        Ordering::SeqCst,
+    );
+    ffi::BridgeHttpResponse { status: 400, body: br#"{"error_code":"invalid_credentials"}"#.to_vec() }
+}
+
+/// Blocks until the backend cancels the request, then reports a transport failure.
+fn registry_transport_hang(request: &ffi::BridgeHttpRequest) -> ffi::BridgeHttpResponse {
+    use std::sync::atomic::Ordering;
+    REGISTRY_HUNG.fetch_add(1, Ordering::SeqCst);
+    while !ffi::registry_request_cancelled(request.cancel_handle) {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    ffi::BridgeHttpResponse { status: 0, body: Vec::new() }
+}
+
+fn wait_registry_job(bridge: &mut cxx::UniquePtr<ffi::BackendBridge>, job_id: u64) -> ffi::BridgeRegistryJob {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let job = bridge.pin_mut().fetch_registry_job(job_id);
+        assert_eq!(job.job_id, job_id, "registry job {job_id} unknown");
+        // 2 Succeeded, 3 Partial, 4 Failed, 5 Cancelled (registry_job_states).
+        if job.state >= 2 {
+            return job;
+        }
+        assert!(Instant::now() < deadline, "registry job {job_id} did not finish");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[test]
+#[serial]
+fn registry_unconfigured_is_inert() {
+    std::env::remove_var("MIB_PROFILE_REGISTRY_URL");
+    std::env::remove_var("MIB_PROFILE_REGISTRY_PUBLISHABLE_KEY");
+    let data_dir = std::env::temp_dir().join(format!("mib_bridge_registry_off_{}", std::process::id()));
+    let mut bridge = ffi::new_backend_bridge();
+    let before = bridge.pin_mut().fetch_registry_snapshot();
+    assert!(!before.valid, "no registry snapshot before initialize");
+    assert_eq!(bridge.pin_mut().registry_refresh(), 0, "uninitialized bridge refuses");
+    assert!(bridge.pin_mut().initialize(&data_dir.to_string_lossy()));
+    let s = bridge.pin_mut().fetch_registry_snapshot();
+    assert!(s.valid && !s.configured, "no registry env: valid snapshot, not configured");
+    assert_eq!(bridge.pin_mut().registry_sign_in("a@b", "pw"), 0, "inert registry refuses sign-in");
+    assert_eq!(bridge.pin_mut().registry_refresh(), 0);
+    assert!(
+        !bridge.pin_mut().set_registry_transport(registry_transport_reject),
+        "the transport is fixed once the backend is initialized"
+    );
+    assert!(ffi::registry_request_cancelled(424_242), "unknown cancel handle reads as cancelled");
+    bridge.pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(&data_dir);
+}
+
+#[test]
+#[serial]
+fn checked_config_document_roundtrip_and_conflict() {
+    let data_dir = std::env::temp_dir().join(format!("mib_checked_config_{}", std::process::id()));
+    std::fs::create_dir_all(&data_dir).unwrap();
+    let path = data_dir.join("config.json");
+    std::fs::write(&path, r#"{"custom":{"keep":17},"image_processing":{"area_threshold_min":1}}"#).unwrap();
+    let mut bridge = ffi::new_backend_bridge();
+    assert!(bridge.pin_mut().initialize(&data_dir.to_string_lossy()));
+    let doc = bridge.pin_mut().fetch_config_document(&path.to_string_lossy());
+    assert!(doc.ok, "{}", doc.error);
+    assert_eq!(doc.revision.len(), 64);
+    let patch = r#"{"image_processing":{"area_threshold_min":2}}"#;
+    let result = bridge.pin_mut().apply_config_document(&doc.path, &doc.revision, patch);
+    assert!(result.saved && result.applied && result.verified, "{}", result.error);
+    assert!(!result.conflict);
+    assert_ne!(result.revision, doc.revision);
+    let stale = bridge.pin_mut().apply_config_document(&doc.path, &doc.revision, patch);
+    assert!(stale.conflict && !stale.saved && !stale.applied);
+    let after = bridge.pin_mut().fetch_config_document(&doc.path);
+    let parsed: serde_json::Value = serde_json::from_str(&after.document_json).unwrap();
+    assert_eq!(parsed["custom"]["keep"], 17);
+    assert_eq!(parsed["image_processing"]["area_threshold_min"], 2);
+    let missing = bridge.pin_mut().fetch_config_document(&data_dir.join("missing.json").to_string_lossy());
+    assert!(!missing.ok && !missing.error.is_empty());
+    bridge.pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(data_dir);
+}
+
+#[test]
+#[serial]
+fn registry_commands_through_shell_transport() {
+    use std::sync::atomic::Ordering;
+    std::env::set_var("MIB_PROFILE_REGISTRY_URL", "https://registry.example");
+    std::env::set_var("MIB_PROFILE_REGISTRY_PUBLISHABLE_KEY", "sb_publishable_test");
+    let data_dir = std::env::temp_dir().join(format!("mib_bridge_registry_{}", std::process::id()));
+
+    // A rejected sign-in travels through the shell transport and comes back
+    // as contract values: job kind 0 SignIn, state 4 Failed; connectivity 3
+    // AuthenticationRequired; session 0 SignedOut.
+    {
+        let mut bridge = ffi::new_backend_bridge();
+        assert!(bridge.pin_mut().set_registry_transport(registry_transport_reject));
+        assert!(bridge.pin_mut().initialize(&data_dir.to_string_lossy()));
+        let s = bridge.pin_mut().fetch_registry_snapshot();
+        assert!(s.valid && s.configured && s.origin == "https://registry.example");
+        let job_id = bridge.pin_mut().registry_sign_in("bob@lab", "wrong");
+        assert_ne!(job_id, 0, "sign-in queued");
+        let job = wait_registry_job(&mut bridge, job_id);
+        assert_eq!((job.kind, job.state), (0, 4), "rejected sign-in: {}", job.message);
+        let s = bridge.pin_mut().fetch_registry_snapshot();
+        assert_eq!(s.session, 0);
+        assert_eq!(s.connectivity, 3);
+        assert!(!s.health_message.contains("wrong"), "password never echoed");
+        assert!(REGISTRY_CALLS.load(Ordering::SeqCst) >= 1, "shell transport was used");
+        assert!(REGISTRY_HANDLE_LIVE.load(Ordering::SeqCst), "cancel handle live during the call");
+        assert!(REGISTRY_SAW_APIKEY.load(Ordering::SeqCst), "request shape (url, apikey, bounds)");
+        assert_eq!(s.last_job.job_id, job_id);
+        bridge.pin_mut().shutdown();
+    }
+
+    // A hung transport is aborted by registry_cancel_all (state 5 Cancelled)
+    // and by backend shutdown, through the polled cancel handle.
+    {
+        let mut bridge = ffi::new_backend_bridge();
+        assert!(bridge.pin_mut().set_registry_transport(registry_transport_hang));
+        assert!(bridge.pin_mut().initialize(&data_dir.to_string_lossy()));
+        let hung_before = REGISTRY_HUNG.load(Ordering::SeqCst);
+        let job_id = bridge.pin_mut().registry_sign_in("bob@lab", "pw");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while REGISTRY_HUNG.load(Ordering::SeqCst) == hung_before {
+            assert!(Instant::now() < deadline, "transport never called");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(bridge.pin_mut().fetch_registry_snapshot().busy, "snapshot answers while hung");
+        assert!(bridge.pin_mut().registry_cancel_all());
+        let job = wait_registry_job(&mut bridge, job_id);
+        assert_eq!(job.state, 5, "cancel aborts the hung request");
+        let s = bridge.pin_mut().fetch_registry_snapshot();
+        assert_ne!(s.connectivity, 2, "an aborted request is not an outage");
+
+        let hung_before = REGISTRY_HUNG.load(Ordering::SeqCst);
+        bridge.pin_mut().registry_sign_in("bob@lab", "pw");
+        while REGISTRY_HUNG.load(Ordering::SeqCst) == hung_before {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let started = Instant::now();
+        bridge.pin_mut().shutdown();
+        assert!(started.elapsed() < Duration::from_secs(8), "shutdown aborts the hung request");
+        assert_eq!(bridge.pin_mut().registry_refresh(), 0, "shut-down bridge refuses");
+    }
+
+    std::env::remove_var("MIB_PROFILE_REGISTRY_URL");
+    std::env::remove_var("MIB_PROFILE_REGISTRY_PUBLISHABLE_KEY");
+    let _ = std::fs::remove_dir_all(&data_dir);
+}
+
+#[test]
+#[serial]
+fn local_profiles_roundtrip_and_conflict() {
+    let data_dir = std::env::temp_dir().join(format!("mib_profile_contract_{}",std::process::id()));
+    let _ = std::fs::remove_dir_all(&data_dir);
+    std::fs::create_dir_all(&data_dir).unwrap();
+    let mut bridge = ffi::new_backend_bridge();
+    assert!(bridge.pin_mut().initialize(&data_dir.as_path().to_string_lossy()));
+    let base = data_dir.as_path().join("profiles").to_string_lossy().to_string();
+    let create = r#"{"operation":"create","name":"test","document_json":"{\"pixel_to_micron_factor\":0.5}"}"#;
+    let saved: serde_json::Value = serde_json::from_str(&bridge.pin_mut().profile_command(&base, create)).unwrap();
+    assert_eq!(saved["ok"], true);
+    let read: serde_json::Value = serde_json::from_str(&bridge.pin_mut().profile_command(&base,r#"{"operation":"read","name":"test"}"#)).unwrap();
+    assert_eq!(read["profile"]["document_json"], "{\"pixel_to_micron_factor\":0.5}");
+    let stale: serde_json::Value = serde_json::from_str(&bridge.pin_mut().profile_command(&base,r#"{"operation":"archive","name":"test","baseline":"stale"}"#)).unwrap();
+    assert_eq!(stale["ok"],false);
+    assert!(data_dir.as_path().join("profiles/test/config.json").exists());
+    bridge.pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(data_dir);
+}
+
+#[test]
+#[serial]
+fn processing_core_management_bundled_roundtrip() {
+    let data_dir=std::env::temp_dir().join(format!("mib_core_management_{}",std::process::id()));
+    std::fs::create_dir_all(&data_dir).unwrap();
+    let mut bridge=ffi::new_backend_bridge();
+    assert!(bridge.pin_mut().initialize(&data_dir.to_string_lossy()));
+    let cache=data_dir.join("cores").to_string_lossy().to_string();
+    let info:serde_json::Value=serde_json::from_str(&bridge.pin_mut().processing_core_command(&cache,r#"{"operation":"info"}"#)).unwrap();
+    assert_eq!(info["ok"],true);
+    let activate:serde_json::Value=serde_json::from_str(&bridge.pin_mut().processing_core_command(&cache,r#"{"operation":"bundled"}"#)).unwrap();
+    assert_eq!(activate["ok"],true);
+    let restored:serde_json::Value=serde_json::from_str(&bridge.pin_mut().processing_core_command(&cache,r#"{"operation":"restore"}"#)).unwrap();
+    assert_eq!(restored["ok"],true);
+    assert_eq!(activate["active_version"],restored["active_version"]);
+    bridge.pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(data_dir);
+}
+
+#[test]
+#[serial]
+fn recovery_refuses_unconfirmed_or_absent_fault_and_reports_capture_lifecycle() {
+    let mut bridge = ffi::new_backend_bridge();
+    let dir = std::env::temp_dir().join(format!("mib_recovery_contract_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    assert!(bridge.pin_mut().initialize(dir.to_str().unwrap()));
+    assert!(!bridge.pin_mut().experiment_acknowledge_fault(0, 0, "test", "fault", false).ok);
+    assert!(!bridge.pin_mut().experiment_acknowledge_fault(0, 0, "test", "fault", true).ok);
+    let status: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_capture_lifecycle()).unwrap();
+    assert_eq!(status["valid"], true);
+    assert_eq!(status["generation"], "0");
+    assert_eq!(status["state"], "idle");
+    bridge.pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(dir);
 }

@@ -1,8 +1,8 @@
-//! Review commands over the review bridge (ADR 0008, plan
-//! 2026-10-01-standalone-review-app). The one review surface for both
-//! products: MIB Studio's Review tab and the YOFO Review window call these
-//! and nothing else for review. Images travel as binary frame packets
-//! (`frame_packet`), everything else as lossless JSON.
+//! YOFO Review's commands over the review bridge (ADR 0014, plan
+//! 2026-10-01-standalone-review-app). Only the YOFO Review build registers
+//! them; MIB Studio's Review tab uses its own commands in `mib-app-commands`.
+//! Images travel as binary review packets (`review_packet`), everything else
+//! as lossless JSON.
 
 use mib_bridge::review_ffi;
 use serde::Serialize;
@@ -11,9 +11,9 @@ use tauri::State;
 
 use std::sync::Mutex;
 
-use crate::frame_packet;
+use crate::review_packet;
 use crate::wire::serialize_u64;
-use crate::AppState;
+use crate::review_app::AppState;
 
 /// Flattened review command result (`command` = contract command_types
 /// Review = 9).
@@ -30,7 +30,7 @@ pub struct ReviewCmdResult {
 impl From<review_ffi::ReviewResult> for ReviewCmdResult {
     fn from(r: review_ffi::ReviewResult) -> Self {
         ReviewCmdResult {
-            transport_version: frame_packet::JSON_TRANSPORT_VERSION,
+            transport_version: review_packet::JSON_TRANSPORT_VERSION,
             ok: r.ok,
             command: 9,
             message: r.message,
@@ -213,25 +213,21 @@ fn finite(n: f64) -> Option<f64> {
     if n.is_finite() { Some(n) } else { None }
 }
 
-/// YOFO Review: the review bridge's ABI (shared document with the backend
-/// bridge). The MIB Studio build keeps its `abi_version` command.
-#[cfg(feature = "review-only")]
+/// The review bridge's ABI (`review-contract.json` `review_abi_version`).
 #[tauri::command]
 pub fn abi_version() -> u32 {
     review_ffi::review_bridge_abi_version()
 }
 
-#[cfg(feature = "review-only")]
 #[tauri::command]
 pub fn is_initialized(state: State<AppState>) -> Result<bool, String> {
     let guard = state.review.lock().map_err(|e| e.to_string())?;
     Ok(guard.is_initialized())
 }
 
-#[cfg(feature = "review-only")]
 #[tauri::command]
 pub fn init(app: tauri::AppHandle, state: State<AppState>, data_dir: String) -> Result<bool, String> {
-    let dir = crate::resolve_data_dir(&app, data_dir)?;
+    let dir = crate::review_app::resolve_data_dir(&app, data_dir)?;
     let mut guard = state.review.lock().map_err(|e| e.to_string())?;
     Ok(guard.pin_mut().initialize(&dir))
 }
@@ -314,7 +310,7 @@ pub fn fetch_review_info(state: State<AppState>) -> Result<ReviewInfo, String> {
     let mut guard = state.review.lock().map_err(|e| e.to_string())?;
     let m = guard.pin_mut().fetch_review_info();
     Ok(ReviewInfo {
-        transport_version: frame_packet::JSON_TRANSPORT_VERSION,
+        transport_version: review_packet::JSON_TRANSPORT_VERSION,
         valid: m.valid,
         file_open: m.file_open,
         file_path: m.file_path,
@@ -374,7 +370,7 @@ pub fn fetch_review_rows(
     let mut guard = state.review.lock().map_err(|e| e.to_string())?;
     let p = guard.pin_mut().fetch_review_rows(valid, offset, u64::from(count));
     Ok(ReviewRows {
-        transport_version: frame_packet::JSON_TRANSPORT_VERSION,
+        transport_version: review_packet::JSON_TRANSPORT_VERSION,
         valid: p.valid,
         total: p.total,
         offset: p.offset,
@@ -435,7 +431,7 @@ pub fn fetch_review_frame(
         let mut guard = state.review.lock().map_err(|e| e.to_string())?;
         guard.pin_mut().fetch_review_frame(dataset, index, overlay, roi_overlay)
     };
-    frame_packet::encode(frame, 3).map(Response::new)
+    review_packet::encode(frame, review_packet::PULL_KIND_REVIEW).map(Response::new)
 }
 
 #[tauri::command]
@@ -460,7 +456,7 @@ pub fn fetch_review_series_packet(
         let mut guard = state.review.lock().map_err(|e| e.to_string())?;
         guard.pin_mut().fetch_review_series_frame(index, k, overlay, roi_overlay)
     };
-    frame_packet::encode(frame, 6).map(Response::new)
+    review_packet::encode(frame, review_packet::PULL_KIND_REVIEW_SERIES).map(Response::new)
 }
 
 /// A thumbnail page (pull kind 5): one frame of width `size` and height
@@ -482,7 +478,7 @@ pub fn fetch_review_thumbnails_packet(
             .pin_mut()
             .fetch_review_thumbnails(valid, offset, u64::from(count), size, overlay, roi_overlay)
     };
-    frame_packet::encode(frame, 5).map(Response::new)
+    review_packet::encode(frame, review_packet::PULL_KIND_REVIEW_THUMBNAILS).map(Response::new)
 }
 
 #[tauri::command]
@@ -490,7 +486,7 @@ pub fn fetch_review_scatter(state: State<AppState>) -> Result<ReviewScatter, Str
     let mut guard = state.review.lock().map_err(|e| e.to_string())?;
     let s = guard.pin_mut().fetch_review_scatter();
     Ok(ReviewScatter {
-        transport_version: frame_packet::JSON_TRANSPORT_VERSION,
+        transport_version: review_packet::JSON_TRANSPORT_VERSION,
         valid: s.valid,
         pixel_to_micron: s.pixel_to_micron,
         frame_index: s.frame_index.iter().map(|v| v.to_string()).collect(),
@@ -644,6 +640,7 @@ pub fn review_batch_export(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // one IPC argument per dialog field
 pub fn review_regenerate_masks(
     state: State<AppState>,
     source: u32,
@@ -695,7 +692,7 @@ pub fn fetch_review_density(state: State<AppState>) -> Result<ReviewDensity, Str
     let mut guard = state.review.lock().map_err(|e| e.to_string())?;
     let d = guard.pin_mut().fetch_review_density();
     Ok(ReviewDensity {
-        transport_version: frame_packet::JSON_TRANSPORT_VERSION,
+        transport_version: review_packet::JSON_TRANSPORT_VERSION,
         valid: d.valid,
         ready: d.ready,
         levels: d.levels,
@@ -717,7 +714,7 @@ pub fn poll_review_events(state: State<AppState>) -> Result<ReviewEvents, String
     let mut guard = state.review.lock().map_err(|e| e.to_string())?;
     let events = guard.pin_mut().poll_review_events();
     Ok(ReviewEvents {
-        transport_version: frame_packet::JSON_TRANSPORT_VERSION,
+        transport_version: review_packet::JSON_TRANSPORT_VERSION,
         events: events
             .into_iter()
             .map(|e| ReviewEvent {
@@ -792,8 +789,8 @@ mod tests {
         assert!(info.file_open && info.total_valid == 10);
         let frame = bridge.pin_mut().fetch_review_frame(0, 0, 1, true);
         assert!(frame.valid);
-        let packet = crate::frame_packet::encode(frame, 3).unwrap();
-        assert_eq!(u64::from_le_bytes(packet[48..56].try_into().unwrap()), crate::frame_packet::PIXEL_FORMAT_RGB8);
+        let packet = crate::review_packet::encode(frame, crate::review_packet::PULL_KIND_REVIEW).unwrap();
+        assert_eq!(u64::from_le_bytes(packet[48..56].try_into().unwrap()), crate::review_packet::PIXEL_FORMAT_RGB8);
         assert!(bridge.pin_mut().review_close().ok);
         let _ = std::fs::remove_file(&path);
     }

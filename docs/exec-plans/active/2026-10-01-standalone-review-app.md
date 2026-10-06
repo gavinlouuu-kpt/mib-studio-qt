@@ -101,7 +101,7 @@ What is missing or wrong today (evidence in the agent survey of
 ## Decision log
 
 - 2026-10-01: **Ship on React + Tauri; product name YOFO Review.** (User
-  decision, superseding the same-day Qt proposal.) Record as **ADR 0008**:
+  decision, superseding the same-day Qt proposal.) Record as **ADR 0014**:
   YOFO Review is the first product shipped on the Tauri shell and the
   reference for MIB Studio's Review tab (UI-4). The Qt tab keeps shipping
   in MIB Studio Qt until the Tauri cutover; it changes only where TD-17
@@ -244,6 +244,18 @@ What is missing or wrong today (evidence in the agent survey of
   [YofoReview.md](../../../knowledge_map/frontend/YofoReview.md) →
   "Differences from the Qt tab".
 
+- 2026-10-05: **Decision A at the develop merge** (merge coordination,
+  delegated by the owner). Develop's MIB Studio shell keeps its own review
+  stack (#450); `ReviewSession`, the review bridge and `desktop/src/review/`
+  serve YOFO Review (and the Qt tab's factor). The shared
+  `bridge-contract.json` stays exactly as develop has it (ADR 0011 freeze);
+  YOFO Review gets `review-contract.json` (`review_abi_version` 1) with its
+  own generated TS / Rust and packet codec. The Tauri crate builds MIB
+  Studio as the library (default feature `studio`) and YOFO Review as the
+  binary (`--no-default-features --features review-only`,
+  `scripts/tauri-review.mjs`). This plan's ADR is renumbered 0008 → 0014.
+  Convergence: #512, after the ABI renumber.
+
 ## Design
 
 ### Backend: `mib_review_core` and `ReviewSession`
@@ -365,9 +377,9 @@ PR 8 closes documentation and parity. Every PR carries vault updates and
 passes `python3 scripts/check_docs.py` and
 `python3 scripts/gen_bridge_contract.py --check`.
 
-### PR 0 — Product scaffolding, ADR 0008, bundling on
+### PR 0 — Product scaffolding, ADR 0014, bundling on
 
-Files: new `docs/decisions/0008-yofo-review-on-react-tauri.md`,
+Files: new `docs/decisions/0014-yofo-review-on-react-tauri.md`,
 `desktop/review.html`, `desktop/src/review/{main.tsx,ReviewApp.tsx}`
 (renders today's Review panel extracted from `App.tsx:1753-1927` and
 mounted in both entries), `desktop/vite.config.ts` (two inputs),
@@ -571,7 +583,7 @@ accounting text and the same saved core record; the differences list in
 - [ ] Unsigned artefacts install after the documented one-time Gatekeeper /
       SmartScreen step; the updater verifies its downloads against the
       project minisign key.
-- [ ] ADR 0008 accepted; manual page, howtos, vault notes, screenshot
+- [ ] ADR 0014 accepted; manual page, howtos, vault notes, screenshot
       harness and the decoupling-plan parity matrix updated;
       `check_docs.py` and `check_screenshots.py` clean.
 
@@ -592,7 +604,7 @@ accounting text and the same saved core record; the differences list in
 ## Progress
 
 - [x] PR 0 — scaffolding: review entry, config overlay, `review-only`
-      feature, bundling on, ADR 0008, `review-ci.yml` (Linux). Landed
+      feature, bundling on, ADR 0014, `review-ci.yml` (Linux). Landed
       2026-10-01 on `plan/standalone-review-app`. Deviations from the PR 0
       file list: no `capabilities/review.json` (the review window keeps
       label `main`, so `capabilities/default.json` covers both products);
@@ -708,8 +720,6 @@ accounting text and the same saved core record; the differences list in
       the manual README and `mkdocs.yml`) and `Recent-Work.md` are done.
       TD-18 is marked superseded by YOFO Review rather than fixed (Qt is
       fixes-only under ADR 0011). The screenshot harness moved out of PR 8
-      to a follow-up issue. Remaining: bring the branch up to date with
-      develop (blocked on the review-stack decision for MIB Studio's shell;
-      develop now carries its own review exports, reanalysis and charts on
-      the old `Hdf5Service` state), the decoupling-plan parity row, the
-      scatter plan → completed.
+      to #498. **2026-10-06:** develop merged in under decision A (decision
+      log 2026-10-05; ADR 0014 amendment). The decoupling-plan parity
+      row is updated. Remaining: the scatter plan → completed.

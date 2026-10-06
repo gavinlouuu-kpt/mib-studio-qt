@@ -7,7 +7,8 @@
 // Events are buffered per operation id so a job that finishes before its
 // start call returns (Export Charts on two images) still reaches its dialog.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { OPERATION_STATES, REVIEW_OPERATION_KINDS } from "../../bridgeContract";
+import { OPERATION_STATES } from "../../bridgeContract";
+import { REVIEW_OPERATION_KINDS } from "../reviewContract";
 import { reviewBridge, type ReviewCmdResult, type ReviewEvent } from "../reviewBridge";
 
 const POLL_MS = 200;

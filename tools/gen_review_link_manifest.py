@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Emit the link manifest the review-only Rust bridge links from (YOFO Review).
 
-YOFO Review (plan 2026-10-01-standalone-review-app, ADR 0008) links only
+YOFO Review (plan 2026-10-01-standalone-review-app, ADR 0014) links only
 `mib_review_core` + `mib_processing` and their static Conan dependencies.
 Which libraries, in which order, with which frameworks / system libraries is
 known only to CMake, and differs per platform (Apple frameworks, MSVC system

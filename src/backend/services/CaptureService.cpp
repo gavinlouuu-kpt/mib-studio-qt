@@ -350,13 +350,22 @@ void CaptureService::run(uint64_t generation) {
             cameraReadyCallback_(nullptr, generation);
         }
         if (camera) {
+            // stop() may be called concurrently by the lifecycle owner. Keep
+            // the non-owning active-camera pointer protected while invoking
+            // the adapter so the owner and worker use one lock order
+            // (cameraMutex_ -> adapter resources) and cannot free an adapter
+            // between observing the pointer and stopping it.
+            std::scoped_lock lk(cameraMutex_);
             camera->stop();
             const auto shutdown = camera->lastFailure();
-            if (shutdown.code == "mindvision.rig_shutdown_unconfirmed")
+            // Camera adapters report shutdown failures through their
+            // structured failure contract. Preserve both the legacy
+            // MindVision acknowledgement failure and Aravis's explicit
+            // AcquisitionStop failure so the lifecycle does not claim a
+            // clean shutdown while the device may still be acquiring.
+            if (shutdown.code == "mindvision.rig_shutdown_unconfirmed" ||
+                shutdown.code == "aravis.acquisition_stop")
                 recordFailure(CaptureFailureKind::ShutdownFailed, shutdown.message, generation);
-        }
-        {
-            std::scoped_lock lk(cameraMutex_);
             activeCamera_ = nullptr;
         }
         camera.reset();
@@ -567,7 +576,7 @@ void CaptureService::run(uint64_t generation) {
                                        frame.linePitch,
                                        frame.pixelFormat,
                                        frame.timestamp,
-                                       frame.hostTimestampUs);
+                                       frame.hostTimestampUs, generation);
             }
             {
                 const uint64_t published = Tools::getTimestamp();

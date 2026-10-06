@@ -14,7 +14,8 @@ import {
   seriesRangeFor,
   stem,
 } from "./exportHelpers";
-import { OPERATION_STATES, REVIEW_OPERATION_KINDS } from "../../bridgeContract";
+import { OPERATION_STATES } from "../../bridgeContract";
+import { REVIEW_OPERATION_KINDS } from "../reviewContract";
 import { REGENERATE_SOURCE, type ReviewEvent } from "../reviewBridge";
 import { regenerateRequest } from "../RegenerateMasks";
 import { loadPixelToMicron, PX_TO_UM_KEY } from "../ReviewApp";
