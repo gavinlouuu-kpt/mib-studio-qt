@@ -28,6 +28,8 @@
 
 #include "support/assert.h"
 #include "support/frames.h"
+#include "support/faultinject.h"
+#include "support/fault_kernel.h"
 #include "support/tempdir.h"
 #include "support/watchdog.h"
 
@@ -95,6 +97,13 @@ void stopCapture(backend::AppBackend& b)
 
 int main()
 {
+#ifdef _WIN32
+    _putenv_s("MIB_DISABLED_SERVICES",
+              "auto_update,autofocus,trigger,syringe_pump,pulse_generator");
+#else
+    setenv("MIB_DISABLED_SERVICES", "auto_update,autofocus,trigger,syringe_pump,pulse_generator",
+           1);
+#endif
     mib::test::Watchdog wd(90);
     mib::test::TempDir td("experiment_readiness");
     const fs::path frames = td.path() / "frames";
@@ -105,6 +114,10 @@ int main()
     auto& coord = backend.experiment();
     coord.setApplicationIdentity("test-version", "test-build", "test-os");
     auto& proc = backend.processing();
+    auto kernel = std::make_shared<mib::test::FaultKernel>();
+    std::string kernelError;
+    MIB_REQUIRE(proc.activateProcessingKernel(kernel, &kernelError),
+                "fault kernel active: " + kernelError);
     {
         auto cfg = proc.getProcessingConfig();
         cfg.empty_frame_pixel_threshold = 1;
@@ -529,6 +542,8 @@ int main()
         wd.mark("fatal save error");
         auto& coordinator = backend.experiment();
         const auto out = (td.path() / "fatal_run.h5").string();
+        proc.setFlushInterval(1000000);
+
         auto r = coordinator.evaluateReadiness(out);
         MIB_REQUIRE(r.ready, "ready for fatal test");
         ExperimentStartRequest req;
@@ -541,15 +556,27 @@ int main()
         MIB_EXPECT(!coordinator.acknowledgeFault(activeFault.startGeneration, activeFault.faultRevision,
                        activeFault.faultCode, activeFault.faultMessage, activeAckError),
                    "active experiment fault cannot be acknowledged before finalization");
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        coordinator.onFatalSaveError("injected writer failure");
+        MIB_REQUIRE(waitFor([&] { return proc.getBufferedFrameCounts().total() > 0; },
+                            std::chrono::seconds(20)),
+                    "frames buffered before save failure");
+        MIB_REQUIRE(proc.flushBufferedFrames(backend.hdf5()) > 0, "first batch submitted");
+        MIB_REQUIRE(proc.finishFlush(), "first batch persisted");
+        MIB_REQUIRE(backend.hdf5().flush(), "flush before injecting HDF5 fault");
+        MIB_REQUIRE(mib::test::blockHdf5ImageAppends(out), "inject HDF5 append failure");
+        MIB_REQUIRE(waitFor([&] { return proc.getBufferedFrameCounts().total() > 0; },
+                            std::chrono::seconds(20)),
+                    "second batch buffered");
+        proc.flushBufferedFrames(backend.hdf5());
         MIB_REQUIRE(waitFor([&] { return coordinator.status().terminal; }, std::chrono::seconds(20)),
                     "fatal error finalizes");
         const auto s = coordinator.status();
         MIB_EXPECT(s.state == backend::app::ExperimentRunState::Failed, "Failed after a fatal save error");
         MIB_EXPECT(!s.finalizationOk, "finalization not ok");
         MIB_EXPECT(s.completion == backend::recording::RunCompletionState::Failed, "completion Failed");
-        MIB_EXPECT(s.completionReason == "injected writer failure", "completion reason is the fault message");
+        MIB_EXPECT(s.completionReason.find("HDF5 write failed") != std::string::npos,
+                   "completion reason is the fault message");
+        MIB_EXPECT(s.persistenceCommitted > 0 && s.persistenceFailed > 0,
+                   "successful and failed batches counted separately");
         MIB_EXPECT(s.faultCode == "experiment.saveFailed", "fault code reported in status");
         MIB_EXPECT(!backend.hdf5().isFileOpen(), "file closed after failure");
         MIB_EXPECT(coordinator.hasUnresolvedFault(), "fault latched for the next preflight");
@@ -582,8 +609,22 @@ int main()
         MIB_EXPECT(!coordinator.acknowledgeFault(s.startGeneration, s.faultRevision, s.faultCode,
                                                  s.faultMessage, acknowledgmentError),
                    "duplicate acknowledgment rejected");
+        MIB_REQUIRE(mib::test::restoreHdf5ImageAppends(out), "restore image datasets after fault");
         backend::services::Hdf5Service reader;
         MIB_EXPECT(reader.loadFile(out), "failed run's file is readable");
+        backend::recording::RecordingAccountingSnapshot saved;
+        MIB_REQUIRE(reader.readRunAccounting(saved), "failed run accounting persisted");
+        MIB_EXPECT(saved.completion == backend::recording::RunCompletionState::Failed &&
+                       saved.persistenceFailed > 0 && saved.reconciled,
+                   "persisted write failure is Failed and reconciles");
+        MIB_EXPECT(saved.fatalMessage == s.completionReason,
+                   "persisted fatal reason matches terminal outcome");
+        backend::recording::RecordingAccountingSnapshot cached;
+        uint64_t generation = 0;
+        MIB_REQUIRE(coordinator.lastRunAccounting(cached, generation), "cached last accounting");
+        MIB_EXPECT(cached.completion == saved.completion &&
+                       cached.persistenceFailed == saved.persistenceFailed,
+                   "cached and persisted accounting agree after acknowledgement");
         reader.closeFile();
     }
     {

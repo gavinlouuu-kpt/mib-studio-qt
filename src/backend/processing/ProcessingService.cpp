@@ -572,6 +572,7 @@ void ProcessingService::startExperiment() {
         std::scoped_lock qlk(flushQueueMutex_);
         flushQueue_.reset();
     }
+    experimentPersistenceFailed_.store(false, std::memory_order_release);
     const size_t flushInterval = flushInterval_.load(std::memory_order_relaxed);
     const size_t maxBuffered = maxBufferedFrames_.load(std::memory_order_relaxed);
     experimentBuffer_.setPolicy({maxBuffered, maxBufferedBytes_.load(std::memory_order_relaxed)});
@@ -1066,10 +1067,10 @@ backend::recording::RecordingAccountingSnapshot ProcessingService::experimentAcc
     // but not confirmed written. A latched writer error turns the latter into
     // persistence failures instead of "pending".
     const size_t buffered = experimentBuffer_.counts().total();
-    bool queueErrored = false;
+    bool queueErrored = experimentPersistenceFailed_.load(std::memory_order_acquire);
     {
         std::scoped_lock qlk(flushQueueMutex_);
-        queueErrored = flushQueue_ && flushQueue_->hasError();
+        queueErrored = queueErrored || (flushQueue_ && flushQueue_->hasError());
     }
     const uint64_t accountedFor =
         s.persistenceCommitted + s.persistenceCancelledByPolicy + static_cast<uint64_t>(buffered);
@@ -2165,6 +2166,7 @@ size_t ProcessingService::flushBufferedFrames(class Hdf5Service& hdf5) {
             return true;
         };
         auto onError = [this](const std::string& msg) {
+            experimentPersistenceFailed_.store(true, std::memory_order_release);
             if (flushErrorCb_) flushErrorCb_("Experiment save failed: " + msg);
         };
         flushQueue_ = std::make_unique<backend::recording::HdfWriteQueue<ExperimentBatch>>(
@@ -2185,7 +2187,9 @@ bool ProcessingService::finishFlush() {
         q = std::move(flushQueue_);
     }
     if (!q) return true;
-    return q->flushAndStop(); // drains remaining batches, then joins
+    const bool ok = q->flushAndStop(); // drains remaining batches, then joins
+    if (!ok) experimentPersistenceFailed_.store(true, std::memory_order_release);
+    return ok;
 }
 
 void ProcessingService::setFlushErrorCallback(std::function<void(const std::string&)> cb) {

@@ -388,11 +388,13 @@ MainWindow::MainWindow(backend::AppBackend &backend, QWidget *parent)
                     runStatusModel_->setPhase(frontend::RunPhase::Saving, runOperationId_);
                     updateExperimentButtonStates();
                 }
-            } else {
+            } else if (!backend_.experiment().hasUnresolvedFault()) {
                 // A raw-recording save failure still blocks the next
                 // experiment until acknowledged.
                 backend_.experiment().reportUnresolvedFault("save.fatal", q.toStdString());
             }
+            const auto fault = backend_.experiment().status();
+            if (fault.faultMessage == q.toStdString()) presentedFault_ = fault;
             statusBar()->showMessage(tr("Save error: %1").arg(q));
             QMessageBox::critical(this, tr("Save Error"),
                 tr("Data could not be saved and the operation was stopped:\n\n%1").arg(q));
@@ -1179,6 +1181,8 @@ void MainWindow::setupStatusSurfaces()
     runStatusModel_ = new frontend::RunStatusModel(this);
     alertBanner_ = new frontend::AlertBanner(ui->centralwidget);
     alertBanner_->bind(alertModel_);
+    connect(alertBanner_->acknowledgeButton(), &QToolButton::clicked, this,
+            [this]() { acknowledgeFault(presentedFault_); });
     // Above the workspace splitter (inserted before setupSidebar adds it), so
     // it wraps across the full width and is never covered by a tab.
     ui->verticalLayout->insertWidget(0, alertBanner_);
@@ -1311,13 +1315,18 @@ bool MainWindow::explainReadiness(const backend::app::ExperimentReadinessSnapsho
 {
     if (readiness.ready)
         return true;
+    const auto fault = backend_.experiment().status();
     QStringList lines;
     bool onlyFault = true;
+    bool hasFault = false;
     for (const auto& g : readiness.gates)
     {
         if (!g.blocksStart())
             continue;
-        if (g.id != "lifecycle.fault")
+        if (g.id == "lifecycle.fault")
+            hasFault = true;
+        else if (g.id != "lifecycle.experiment" ||
+                 fault.state != backend::app::ExperimentRunState::Failed)
             onlyFault = false;
         QString line = QStringLiteral("%1 — %2: %3")
                            .arg(gateStatusLabel(g.status), QString::fromStdString(g.id),
@@ -1332,14 +1341,13 @@ bool MainWindow::explainReadiness(const backend::app::ExperimentReadinessSnapsho
     box.setText(tr("The experiment cannot start until every readiness check passes."));
     box.setInformativeText(lines.join(QStringLiteral("\n\n")));
     QPushButton* ackBtn = nullptr;
-    if (onlyFault)
+    if (onlyFault && hasFault)
         ackBtn = box.addButton(tr("Acknowledge fault and re-check"), QMessageBox::AcceptRole);
     box.addButton(QMessageBox::Close);
     box.exec();
     if (ackBtn && box.clickedButton() == ackBtn)
     {
-        backend_.experiment().clearUnresolvedFault();
-        SPDLOG_INFO("MainWindow: operator acknowledged the unresolved experiment fault");
+        acknowledgeFault(fault);
     }
     statusLabel_->setText(tr("Experiment not ready: %1")
                               .arg(QString::fromStdString([&] {
@@ -1349,6 +1357,24 @@ bool MainWindow::explainReadiness(const backend::app::ExperimentReadinessSnapsho
                                   return ids;
                               }())));
     return false;
+}
+
+bool MainWindow::acknowledgeFault(const backend::app::ExperimentStatus& status) {
+    if (status.faultCode.empty()) return false;
+    std::string error;
+    const bool ok = backend_.experiment().acknowledgeFault(
+        status.startGeneration, status.faultRevision, status.faultCode, status.faultMessage, error);
+    if (!ok) {
+        SPDLOG_WARN("MainWindow: fault acknowledgement refused: {}", error);
+        if (statusBar()) {
+            statusBar()->showMessage(
+                tr("Fault could not be acknowledged: %1").arg(QString::fromStdString(error)), 5000);
+        }
+        return false;
+    }
+    SPDLOG_INFO("MainWindow: operator acknowledged fault {}", status.faultCode);
+    presentedFault_ = {};
+    return true;
 }
 
 void MainWindow::onStartExperiment()
@@ -1581,6 +1607,14 @@ void MainWindow::onExperimentStatus(const backend::app::ExperimentStatus& status
         break;
     }
     if (!status.terminal) return;
+
+    // Acknowledging a fault republishes the already-terminal status. Do not
+    // replay completion dialogs while clearing the banner.
+    if (status.startGeneration != 0 && status.startGeneration == lastTerminalStartGeneration_)
+        return;
+    if (status.startGeneration != 0) lastTerminalStartGeneration_ = status.startGeneration;
+
+    if (!status.faultCode.empty()) presentedFault_ = status;
 
     // ---- Terminal: the file is closed; present the outcome ----------------
     QString deferredWarning;

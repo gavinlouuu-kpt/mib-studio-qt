@@ -537,3 +537,8 @@ the last reachable stable tag. `publish-update.py --release-notes-file` includes
 both installers copy release notes and the manual with images under resources;
 Linux builds also copy these beside the executable (there were no app install rules). Tauri bundles the same
 sources via Vite raw/URL imports. Templates live in `docs/release-notes/README.md`.
+
+The offscreen `experiment_fault_recovery_test` target /
+`frontend.experiment_fault_recovery` CTest checks Qt readiness and banner
+acknowledgement after failed backend runs, including ROI/background unlocking
+(#589). It uses a mock camera, isolated settings and no hardware discovery.

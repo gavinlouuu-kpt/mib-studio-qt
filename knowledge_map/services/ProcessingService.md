@@ -558,7 +558,7 @@ current/max queue depth, batch size, worker count, and running state. See
   persistence admission; frames evicted by the bounded experiment buffer are
   `persistenceCancelledByPolicy`; the flush writer adds `persistenceCommitted`.
   `experimentAccountingSnapshot()` derives the pending / failed persistence
-  terms from the current buffer and flush-queue error state and returns the
+  terms from the current buffer and a run-scoped flush-error latch and returns the
   reconciled snapshot (`RunCompletionState`). `setExperimentAccountingContext(
   captureGeneration, policyAllowsDrops)` must be called before
   `startExperiment()` ([[../architecture/ExperimentCoordinator]] does). Frame
@@ -811,3 +811,9 @@ background generation and processing version. Standalone services also refuse
 these changes while their experiment flag is active. Ordinary monitoring tuning
 that does not change background settings retains its existing behavior.
 Regression: `backend.experiment_readiness` checks direct setters during a run.
+
+Experiment save failures (#589) remain latched after `finishFlush()` destroys the
+queue and after a later remainder flush succeeds. Uncommitted submitted frames
+are `persistenceFailed`, not declared `persistencePendingAtStop`; the latch resets
+only when a new experiment starts. `experiment_accounting_test` injects an HDF5
+append failure and checks queue destruction, remainder writes and the next run.

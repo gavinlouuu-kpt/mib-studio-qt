@@ -255,7 +255,7 @@ avoid waiting on a configuration transaction that might join its worker (#542).
 
 `AppBackend::startFrameRecording` uses `withIdleConfiguration` through writer
 acquisition, so experiment Start and raw recording cannot both pass preflight.
-Starting/Active/Stopping (and Failed until reset) refuse recording; an already
+Starting/Active/Stopping (and Failed until fault acknowledgement) refuse recording; an already
 open HDF5 file is preserved. Raw recording remains busy until Stop joins its
 worker, including save-failure cleanup. See [[AppBackend]].
 
@@ -266,3 +266,13 @@ relocking the coordinator mutex. A scoped thread-local owner reuses only that
 enclosing idle authorization and restores it even on exceptions. Other threads
 still serialize against Start. This supports both facade transactions and Qt
 watched-document applies without bypassing the backend ROI/background gates.
+
+### Save failure accounting and recovery (#589)
+
+Finalization marks fatal save errors and unsuccessful flushes as fatal accounting
+before persisting `/experiment_info` and caching the last run. The persisted
+completion is Failed, with the save error reason and failed persistence counts,
+even when metadata can still be written. `acknowledgeFault()` returns the
+coordinator to Idle only after finalization and for the matching run/fault
+revision; it preserves the failed saved-run outcome. Qt readiness and banner
+actions both use this contract.
