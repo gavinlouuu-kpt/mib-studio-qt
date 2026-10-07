@@ -9,6 +9,9 @@ Enforces the harness invariants documented in docs/golden-principles.md:
 4. Every active execution plan declares a Status: line.
 5. Every Hugging Face Hub id referenced by scripts, tests, tools, workflows or
    how-tos is declared in env/assets.json (assets are pinned, not ad hoc).
+6. Recent-Work entries are one file each in knowledge_map/current-state/recent/
+   (YYYY-MM-DD-<slug>.md, matching dated H2), and the Recent-Work.md archive takes
+   no new dated entries.
 
 Error messages include remediation instructions so an agent can fix
 violations without extra context. Exit code 0 = clean, 1 = violations.
@@ -146,6 +149,49 @@ def check_hub_ids(errors: list[str]) -> None:
                 )
 
 
+RECENT_DIR = VAULT / "current-state" / "recent"
+RECENT_ARCHIVE = VAULT / "current-state" / "Recent-Work.md"
+# The archive takes no dated entries after this day; new entries are one file
+# each in RECENT_DIR, so concurrent PRs never conflict on a shared file.
+RECENT_ARCHIVE_CUTOFF = "2026-10-07"
+RECENT_NAME_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})-[a-z0-9][a-z0-9-]*\.md$")
+RECENT_HEADING_RE = re.compile(r"^## (\d{4}-\d{2}-\d{2}) — \S")
+ARCHIVE_ENTRY_RE = re.compile(r"^## (\d{4}-\d{2}-\d{2})\b", flags=re.MULTILINE)
+
+
+def check_recent_work(errors: list[str]) -> None:
+    """Recent-Work entries are one file per change in current-state/recent/."""
+    howto = "see knowledge_map/current-state/recent/README.md"
+    for path in sorted(RECENT_DIR.glob("*")):
+        if path.name == "README.md" or path.is_dir():
+            continue
+        rel = path.relative_to(REPO_ROOT)
+        match = RECENT_NAME_RE.match(path.name)
+        if not match:
+            errors.append(
+                f"{rel}: name must be YYYY-MM-DD-<slug>.md (lowercase a-z0-9-); {howto}."
+            )
+            continue
+        lines = [l for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
+        heading = RECENT_HEADING_RE.match(lines[0]) if lines else None
+        if not heading or heading.group(1) != match.group(1):
+            errors.append(
+                f"{rel}: the first line must be '## {match.group(1)} — <title>' (same date "
+                f"as the file name); {howto}."
+            )
+    if RECENT_ARCHIVE.exists():
+        late = sorted(
+            {d for d in ARCHIVE_ENTRY_RE.findall(RECENT_ARCHIVE.read_text(encoding="utf-8"))
+             if d > RECENT_ARCHIVE_CUTOFF}
+        )
+        if late:
+            errors.append(
+                f"{RECENT_ARCHIVE.relative_to(REPO_ROOT)}: new entries dated {', '.join(late)}. "
+                f"The archive is closed after {RECENT_ARCHIVE_CUTOFF}; move each entry into its "
+                f"own file in knowledge_map/current-state/recent/; {howto}."
+            )
+
+
 def main() -> int:
     errors: list[str] = []
     check_wikilinks(errors)
@@ -153,6 +199,7 @@ def main() -> int:
     check_agents_md_length(errors)
     check_active_plans(errors)
     check_hub_ids(errors)
+    check_recent_work(errors)
 
     if errors:
         print(f"check_docs: {len(errors)} violation(s)\n", file=sys.stderr)
