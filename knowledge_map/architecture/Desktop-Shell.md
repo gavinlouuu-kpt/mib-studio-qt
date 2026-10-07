@@ -692,8 +692,15 @@ declared loss: the run is "partial (declared)" and the notice is informational u
 frames exceed 0.1 % of the admitted frames (`MALFORMED_WARN_FRACTION`). `components/RunOutcomeNotice`
 shows it on the Experiment tab (an alert for undeclared loss, failure, an unknown outcome or that
 attention case, a status otherwise), with the backend's own text as the tooltip. The shell logs one line per finished run and adds a "Last run"
-row to the sidebar. Cancelled runs and a status that is not yet terminal show nothing. The Review
-tab does not show it yet. Tests: `runOutcome.test.ts`, `RunOutcomeNotice.test.tsx`.
+row to the sidebar. Cancelled runs and a status that is not yet terminal show nothing.
+
+The reconciled accounting (`fetch_run_accounting`, ABI 31) supplies the denominator: the frames
+the run admitted, not the rows it saved (a run with many EMPTY frames saves far fewer rows than it
+admits). `describeRunOutcome(status, accounting)` uses it when the accounting belongs to the same run
+(`start_generation`); `describeReviewOutcome(accounting)` describes the file loaded for review. The
+Review tab shows it above the export options: a raw recording or a legacy file without accounting is a
+quiet "no run accounting saved" note, and a file whose counters do not reconcile reads as a failure.
+Tests: `runOutcome.test.ts`, `RunOutcomeNotice.test.tsx`.
 
 ## Pump model per slot (2026-10-04)
 

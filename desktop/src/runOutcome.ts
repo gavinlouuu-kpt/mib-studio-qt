@@ -7,9 +7,10 @@
 // Pure module: no React/Tauri imports so it is unit-testable in plain Node.
 
 import { RUN_COMPLETION_STATES } from "./bridgeContract";
+import type { RunAccounting } from "./bridge";
 import type { ExperimentStatus } from "./eventAdapter";
 
-export type OutcomeSeverity = "ok" | "partial" | "loss" | "failed" | "unknown";
+export type OutcomeSeverity = "ok" | "partial" | "loss" | "failed" | "unknown" | "legacy";
 
 export interface OutcomeCount {
   key: string;
@@ -66,14 +67,10 @@ function noun(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`;
 }
 
-/** The outcome of the last finished run, or null while there is none to report (no terminal status,
- *  a cancelled run, or a status the backend has not filled in). */
-export function describeRunOutcome(s: ExperimentStatus | null): RunOutcome | null {
-  if (!s || !s.valid || !s.terminal || s.cancelled) return null;
-  const admitted = Number(s.persistence_admitted) || 0;
-  const reason = s.completion_reason;
+/** The outcome for a completion value, its reason text and the number of frames the run admitted. */
+export function describeCompletion(completion: number, reason: string, admitted: number): RunOutcome {
   const base = { admitted, reason, losses: [] as OutcomeCount[], lossFraction: null as number | null, attention: false };
-  switch (s.completion) {
+  switch (completion) {
     case RUN_COMPLETION_STATES.Complete:
       return { ...base, severity: "ok", headline: `Run complete: all ${admitted} admitted frames reconciled.` };
     case RUN_COMPLETION_STATES.IntentionallyPartial: {
@@ -108,6 +105,36 @@ export function describeRunOutcome(s: ExperimentStatus | null): RunOutcome | nul
     default:
       return { ...base, severity: "unknown", headline: `Run outcome unknown${reason ? `: ${reason}` : ""}.` };
   }
+}
+
+/** The outcome of the last finished run, or null while there is none to report (no terminal status,
+ *  a cancelled run, or a status the backend has not filled in). `accounting` is the run's
+ *  `fetch_run_accounting("last_run")`: with it the loss fractions use the frames the run admitted;
+ *  without it the status only knows the rows it saved, which understates the denominator when
+ *  frames are empty. */
+export function describeRunOutcome(s: ExperimentStatus | null, accounting?: RunAccounting | null): RunOutcome | null {
+  if (!s || !s.valid || !s.terminal || s.cancelled) return null;
+  const mine = !!accounting && accounting.available && accounting.recorded !== false && accounting.completion !== undefined &&
+    (accounting.start_generation === undefined || String(accounting.start_generation) === s.start_generation);
+  const admitted = mine ? Number(accounting!.admitted) || 0 : Number(s.persistence_admitted) || 0;
+  return describeCompletion(s.completion, s.completion_reason, admitted);
+}
+
+/** The outcome saved in the file loaded for review, or null when none is open. A raw recording or a
+ *  legacy file without accounting is a quiet "not recorded" note, not a warning. */
+export function describeReviewOutcome(a: RunAccounting | null): RunOutcome | null {
+  if (!a || !a.available) return null;
+  if (a.recorded === false || a.completion === undefined) {
+    return {
+      severity: "legacy", admitted: 0, losses: [], lossFraction: null, attention: false, reason: "",
+      headline: "No run accounting is saved in this file (a raw recording or an older file).",
+    };
+  }
+  const o = describeCompletion(a.completion, a.completion_reason ?? "", Number(a.admitted) || 0);
+  if (a.reconciled === false && o.severity !== "failed") {
+    return { ...o, severity: "failed", headline: `This file's run accounting does not reconcile. ${o.headline}` };
+  }
+  return o;
 }
 
 /** Identity of a finished run, so a notice or log line is made once per run. */
