@@ -128,6 +128,12 @@ band. The write is mandatory, like core provenance. `readRecordedProcessingConfi
 reads every `processing_config_*` attribute back into a `ProcessingConfig`;
 attributes an older file lacks keep the caller's values.
 
+`readRecordedProcessingContract` is the narrow export-reader path. It checks
+the root, `/experiment_info`, `/recording_info`, and `/run_provenance` groups,
+accepts only scalar integer values 1–3, and requires all present copies to
+agree. Arrays, non-integers, unsupported values, and conflicts return false;
+when no contract metadata exists it returns Contract 1 for legacy files.
+
 ## Run accounting (issue #367)
 
 `writeRunAccounting(RecordingAccountingSnapshot)` / `readRunAccounting(...)`

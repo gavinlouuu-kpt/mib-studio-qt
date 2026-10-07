@@ -172,6 +172,9 @@ public:
     void setRealtimeRoi(const Roi& roi);
     Roi getRealtimeRoi() const;
     void setRealtimeBackgroundGray(const cv::Mat& bg);
+    // Configure before workers start; publication uses the coordinator's idle transaction.
+    void setBackgroundPublicationTransaction(std::function<bool(const std::function<void()>&)> transaction);
+
     cv::Mat getRealtimeBackgroundGray() const;
     // Zero-copy background accessor for hot paths; returns the shared_ptr directly.
     std::shared_ptr<const cv::Mat> getRealtimeBackgroundGrayShared() const;
@@ -421,6 +424,7 @@ public:
     bool startPreviewBackgroundCalibration(std::shared_ptr<backend::playback::FrameStore> store,
                                            const BackgroundCalibrationRequest& request, std::string* error);
     void cancelBackgroundCalibration();
+    void stopBackgroundCalibration();
     BackgroundCalibrationStatus backgroundCalibrationStatus() const;
 
     // ---- Batch mask generation ----
@@ -746,9 +750,10 @@ private:
     cv::Mat bgCalAccumulator_; // CV_64FC1 running sum of accepted frames
     std::thread bgCalPreviewThread_; // PL science: preview-median calibration
     void runPreviewBackgroundCalibration(std::shared_ptr<backend::playback::FrameStore> store, uint64_t generation);
-    // Install a calibrated background (caller holds bgCalMutex_): the
-    // background, the channel band from it, and the generation bumps.
-    void publishCalibratedBackgroundLocked(cv::Mat background);
+    // Install a calibrated background under the idle transaction; temporarily
+    // releases the caller's bgCalMutex_ lock to preserve coordinator lock order.
+    bool publishCalibratedBackgroundLocked(cv::Mat background, std::unique_lock<std::mutex>& lock);
+    std::function<bool(const std::function<void()>&)> backgroundPublicationTransaction_;
     std::chrono::steady_clock::time_point bgCalDeadline_{};
     std::atomic<bool> bgCalActive_{false};
     std::atomic<bool> processedPreviewEnabled_{false};

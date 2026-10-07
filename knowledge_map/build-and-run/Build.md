@@ -53,6 +53,14 @@ match nothing. `network-tests.yml` (nightly + manual) runs
 `ctest --preset linux-network-test`; every default test preset excludes the
 `network` label.
 
+## Native FCS export
+
+Build the Qt-free `hdf_export_cli` target for `scripts/export_hdf5.py --format
+fcs`. `recording.fcs_writer` and `recording.hdf_export_service` cover the writer
+and transaction; `recording.fcs_flowio` runs the optional independent Python
+reader and skips when FlowIO is unavailable. See [[../services/HdfExportService]]
+and [[../../docs/howto/hdf5-export-app]] for detection semantics and commands.
+
 ## Presets
 
 Every configure preset carries a `description` naming the `env/` sections

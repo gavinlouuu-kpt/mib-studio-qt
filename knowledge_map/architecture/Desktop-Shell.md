@@ -852,6 +852,8 @@ disarms; #521).
 Tests: `stageControlModel.test.ts` (rules) and `StageControls.test.tsx`
 (panel behaviour with a mocked bridge).
 
+Background capture/clear and ROI editing are disabled during Starting, Active and
+Stopping. Setup command refusals refresh backend ROI/background state (#542).
 ### Metric rendering and panel recovery (#540, #543)
 
 `metricFormat.ts` renders absent/non-finite metrics as an em dash. Both Studio
