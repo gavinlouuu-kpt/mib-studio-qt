@@ -755,6 +755,17 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
         return result;
     }
 
+    // Writer conflicts must be refused before even changing processing mode.
+    // Raw recording acquires its writer under this same coordinator mutex.
+    if (backend_.isFrameRecording() || backend_.hdf5().isFileOpen()) {
+        result.outcome = ExperimentStartOutcome::NotReady;
+        result.message =
+            "stop raw recording and close the existing HDF5 file before starting an experiment";
+        result.readiness = evaluateLocked(request.outputPath, request.profileId);
+        SPDLOG_WARN("ExperimentCoordinator: start refused — {}", result.message);
+        return result;
+    }
+
     // Multi-image series capture requires inline realtime processing. Switch
     // before the evaluation so the frozen snapshot records the mode the run
     // actually uses; the finalization restores the previous mode.
