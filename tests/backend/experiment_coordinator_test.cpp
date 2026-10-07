@@ -149,6 +149,8 @@ int main()
         return 1;
     }
 
+    setEnv("MIB_CAMERA_MODE", "mock");
+    setEnv("MIB_STUDIO_EMODULUS_LUT_CACHE_DIR", (dataDir / "lut-cache").string().c_str());
     setEnv("MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL", "file:///nonexistent/manifest.json");
 
     int rc = 0;
@@ -158,7 +160,19 @@ int main()
 
         std::mutex eventsMutex;
         std::vector<bridge::BackendEvent> events;
-        facade.setEventSink([&](const bridge::BackendEvent &event) {
+        std::atomic<int> transitionRefusals{0};
+        std::atomic<bool> transitionConflictAccepted{false};
+        facade.setEventSink([&](const bridge::BackendEvent& event) {
+            if (const auto* status = std::get_if<bridge::ExperimentStatusEvent>(&event)) {
+                if (status->status.state == app::ExperimentRunState::Starting ||
+                    status->status.state == app::ExperimentRunState::Stopping) {
+                    if (backendApp.startFrameRecording(
+                            (dataDir / "transition-recording.h5").string()))
+                        transitionConflictAccepted.store(true);
+                    else
+                        transitionRefusals.fetch_add(1);
+                }
+            }
             std::scoped_lock lock(eventsMutex);
             events.push_back(event);
         });
@@ -239,6 +253,42 @@ int main()
             std::cerr << "experiment start failed: " << result.message << "\n";
             return 6;
         }
+        if (!waitFor([&] { return backendApp.processing().getBufferedFrameCounts().total() > 0; },
+                     10000))
+            return 53;
+        const auto persistedBeforeRefusal =
+            backendApp.processing().flushBufferedFrames(backendApp.hdf5());
+        if (persistedBeforeRefusal == 0 || !backendApp.processing().finishFlush()) return 59;
+        if (!waitFor([&] { return backendApp.processing().getBufferedFrameCounts().total() > 0; },
+                     10000))
+            return 60;
+        const auto bufferedBeforeRefusal = backendApp.processing().getBufferedFrameCounts().total();
+
+        // Conflicting requests must preserve the experiment writer, including
+        // a same-path request that would otherwise truncate its output.
+        const auto rejectedOutput = dataDir / "rejected-recording.h5";
+        for (const auto& path :
+             {rejectedOutput.string(), exp1, (mockDir / "frame_000.tiff" / "record.h5").string()}) {
+            if (backendApp.startFrameRecording(path) || !backendApp.hdf5().isFileOpen() ||
+                backendApp.experiment().state() != app::ExperimentRunState::Active) {
+                std::cerr << "raw recording replaced the experiment writer\n";
+                return 40;
+            }
+        }
+        if (std::filesystem::exists(rejectedOutput)) return 41;
+        bridge::RecordingCommand conflictingRecording;
+        conflictingRecording.action = bridge::RecordingCommandAction::StartFrameRecording;
+        conflictingRecording.filePath = rejectedOutput.string();
+        const auto refused = facade.dispatch(conflictingRecording);
+        if (refused.ok || refused.message.find("experiment") == std::string::npos) return 54;
+        if (!waitFor(
+                [&] {
+                    return backendApp.processing().getBufferedFrameCounts().total() >
+                           bufferedBeforeRefusal;
+                },
+                10000))
+            return 55;
+
         // The Monitoring view pushes its latest provisional KDE core record;
         // the last one before Stop is what the file must carry.
         backendApp.experiment().setLiveKdeCoreRecord("{\"schema_version\":1,\"n\":1}");
@@ -288,6 +338,10 @@ int main()
             return 11;
         }
 
+        if (transitionConflictAccepted.load() || transitionRefusals.load() < 2 ||
+            std::filesystem::exists(dataDir / "transition-recording.h5"))
+            return 61;
+
         // Double stop fails safely.
         if (facade.dispatch(stop).ok)
         {
@@ -302,6 +356,19 @@ int main()
             {
                 std::cerr << "finalized experiment file failed to load\n";
                 return 13;
+            }
+            std::vector<backend::services::ProcessedFrame> invalid;
+            if (!reader.readInvalidFrames(invalid) ||
+                invalid.size() <= persistedBeforeRefusal + bufferedBeforeRefusal) {
+                std::cerr << "experiment did not persist frames acquired after recording refusal\n";
+                return 56;
+            }
+            for (const auto& saved : invalid) {
+                if (saved.originalImage.empty() ||
+                    cv::countNonZero(saved.originalImage != 180) != 0) {
+                    std::cerr << "experiment pixels changed after recording refusal\n";
+                    return 57;
+                }
             }
             std::string stored;
             if (!reader.readKdeLiveJson(stored) || stored != kdeRecord)
@@ -408,6 +475,71 @@ int main()
             {
                 std::cerr << "stored service record is wrong: " << why << " " << stored.substr(0, 200) << "\n";
                 return 46;
+            }
+        }
+
+        // A reader/other owner must also survive a same-path recording request.
+        if (!backendApp.hdf5().loadFile(exp1) || backendApp.startFrameRecording(exp1) ||
+            !backendApp.hdf5().isFileOpen())
+            return 47;
+        backendApp.hdf5().closeFile();
+
+        // A failed recording open must release admission for a later writer.
+        if (backendApp.startFrameRecording((mockDir / "frame_000.tiff" / "record.h5").string()) ||
+            backendApp.isFrameRecording() || backendApp.hdf5().isFileOpen())
+            return 58;
+
+        // Barrier-controlled competing starts: exactly one writer may win.
+        for (int iteration = 0; iteration < 10; ++iteration) {
+            const auto experimentPath =
+                (dataDir / ("race-exp-" + std::to_string(iteration) + ".h5")).string();
+            const auto recordingPath =
+                (dataDir / ("race-rec-" + std::to_string(iteration) + ".h5")).string();
+            auto& coordinator = backendApp.experiment();
+            app::ExperimentStartRequest request;
+            request.outputPath = experimentPath;
+            const auto readiness = coordinator.evaluateReadiness(experimentPath);
+            if (!readiness.ready) return 48;
+            request.readinessGeneration = readiness.generation;
+            std::atomic<int> arrived{0};
+            std::atomic<bool> go{false};
+            bool recordingStarted = false;
+            app::ExperimentStartResult experimentStarted;
+            auto barrier = [&] {
+                arrived.fetch_add(1);
+                while (!go.load())
+                    std::this_thread::yield();
+            };
+            std::thread experimentThread([&] {
+                barrier();
+                experimentStarted = coordinator.start(request);
+            });
+            std::thread recordingThread([&] {
+                barrier();
+                recordingStarted = backendApp.startFrameRecording(recordingPath);
+            });
+            while (arrived.load() != 2)
+                std::this_thread::yield();
+            go.store(true);
+            experimentThread.join();
+            recordingThread.join();
+            if (recordingStarted == experimentStarted.started()) {
+                std::cerr << "competing starts did not admit exactly one writer\n";
+                return 49;
+            }
+            if (recordingStarted) {
+                if (std::filesystem::exists(experimentPath)) return 50;
+                backendApp.stopFrameRecording();
+            } else {
+                if (std::filesystem::exists(recordingPath)) return 51;
+                coordinator.requestStop(false);
+                if (!waitFor(
+                        [&] {
+                            return statusIsTerminal(coordinator.status(),
+                                                    app::ExperimentRunState::Idle);
+                        },
+                        15000))
+                    return 52;
             }
         }
 
