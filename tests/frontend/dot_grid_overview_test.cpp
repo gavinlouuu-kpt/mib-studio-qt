@@ -77,7 +77,7 @@ int main(int argc, char* argv[])
     qputenv("QT_QPA_PLATFORM", QByteArrayLiteral("offscreen"));
     // Keep playback + dot_grid; nothing that reaches for hardware or the network.
     qputenv("MIB_DISABLED_SERVICES",
-            QByteArrayLiteral("sqlite,hdf5,processing,yolo,autofocus,trigger,capture,auto_update"));
+            QByteArrayLiteral("sqlite,hdf5,processing,autofocus,trigger,capture,auto_update"));
     qputenv("MIB_STUDIO_PROCESSING_CORE_BASE_URL", QByteArrayLiteral("http://invalid-registry.example"));
     qputenv("MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL", QByteArrayLiteral("file:///nonexistent/mib-lut-manifest.json"));
     mib::test::serializeOpenCvUnderTsan();

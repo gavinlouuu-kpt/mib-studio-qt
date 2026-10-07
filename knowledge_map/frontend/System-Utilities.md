@@ -218,7 +218,9 @@ tested by `tests/frontend/update_catalog_test.cpp`), `OverlayRenderer`,
   `commit()`, returning `ConfigWriteResult{ok, conflict, error, fingerprint,
   bytesWritten}`. Atomic replacement, not a cross-process compare-and-swap.
   Pure companion `ConfigDocumentState` (`frontend/models/`) holds
-  path/fingerprints/dirty/conflict/last-save. Guard:
+  path/fingerprints/dirty/conflict/last-save. Its disk fingerprint hashes exact
+  file bytes; loaded/current editor fingerprints track normalized text so CRLF
+  defaults do not produce false Save conflicts. Guard:
   `frontend.config_document_state`.
 - **`ElidingLabel`** — `QLabel` whose painted text is elided (`ElideMiddle`
   by default) while `fullText()`/tooltip/accessible description keep the
@@ -289,3 +291,34 @@ tested by `tests/frontend/update_catalog_test.cpp`), `OverlayRenderer`,
   — tiny `QObject` that bridges non-Qt thread callbacks (e.g.
   background auto-capture from [[../services/ProcessingService]]) to Qt
   signals on the main thread. Owned by [[../architecture/AppBackend]].
+
+### Offline Help and inline update notes (#573)
+
+The viewer and local-navigation contract are documented in [[HelpDialog]].
+
+`HelpDialog` renders bundled Markdown with `QTextBrowser`: release notes from
+`<exe>/resources/release-notes/` (running version first, earlier versions newest
+first), and the manual from `resources/manual/`, including local page links and
+images. Development falls back to `docs/` in the compiled source root.
+`Help/LastSeenVersion` in QSettings suppresses fresh-install and repeated prompts;
+Qt opens What's New once on an upgrade. AutoUpdater and SoftwareUpdatesDialog
+accept optional `release_notes` alongside the existing URL and display Markdown
+inline. Publishing caps the UTF-8 plain-text summary at 16 KiB. Missing inline
+notes retain the URL button fallback. See [[frontend/MainWindow]].
+
+Profile path changes broadcast `AppConfigWatcher::configFileChanged` after the
+immediate load, keeping Monitoring’s document fingerprint synchronized (#583).
+Catalog-managed profile update checks compare installed and catalog revisions
+when present; legacy metadata falls back to checksums.
+
+## Experiment configuration ownership (#582)
+
+`PlaybackPanel` disables Clear ROI, ROI dragging, Set Background, Auto Background,
+and the background/calibration context actions while the coordinator is not idle;
+tooltips explain that the experiment must be stopped or reset. ROI persistence
+and manual background changes execute inside the idle transaction.
+`AppConfigWatcher` defers whole-document reloads during a run, warns once per
+file event, and retries the latest path on its existing 500 ms timer until idle.
+The loaded fingerprint and runtime recipe remain unchanged until application.
+Offscreen coverage: `frontend.config_apply` (Starting/Active/Stopping, drag,
+context menu, paused controls, deferred reload and idle restoration).

@@ -3,6 +3,7 @@
 #define NOMINMAX
 #endif
 #include "backend/app/AppBackend.h"
+#include "backend/app/ApplicationIdentity.h"
 #include <thread>
 #include "backend/app/ExperimentCoordinator.h"
 #include "backend/app/MethodApply.h"
@@ -30,7 +31,6 @@
 #include "backend/services/AutofocusService.h"
 #include "backend/services/TriggerService.h"
 #include "backend/services/DotGridService.h"
-#include "backend/services/YoloService.h"
 #include "backend/services/SerialBus.h"
 #include "backend/services/SyringePumpService.h"
 #include "backend/services/PulseGeneratorService.h"
@@ -368,6 +368,7 @@ namespace backend
         stopFrameRecording();
         if (processingService_) {
             SPDLOG_INFO("AppBackend: shutdown stopping processing");
+            processingService_->stopBackgroundCalibration();
             processingService_->stopRealtime();
             processingService_->stopBatchPipeline();
             processingService_->stop();
@@ -461,6 +462,21 @@ namespace backend
         captureService_ = std::make_unique<services::CaptureService>();
         processingService_ = std::make_unique<services::ProcessingService>();
         experimentCoordinator_ = std::make_unique<app::ExperimentCoordinator>(*this);
+        experimentCoordinator_->setApplicationIdentity(
+            MIB_APPLICATION_VERSION, MIB_APPLICATION_BUILD_ID, MIB_APPLICATION_OS);
+        processingService_->setBackgroundPublicationTransaction([this](const std::function<void()>& apply) {
+            // A worker must not block on a transaction that may join that worker,
+            // so it only try-locks. Status polls hold the coordinator mutex
+            // briefly, so retry for a bounded time before giving up. Otherwise a
+            // calibration would be cancelled by mere contention. A joiner that
+            // holds the mutex is only delayed by this bound.
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
+            do {
+                if (experimentCoordinator_->withIdleConfiguration(apply, false)) return true;
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            } while (std::chrono::steady_clock::now() < deadline);
+            return false;
+        });
         // Funnel experiment flush-write failures to the coordinator (which
         // finalizes the run as Failed) and to the fatal-save-error sink the UI
         // surfaces.
@@ -472,7 +488,6 @@ namespace backend
         cameraControlService_ = std::make_unique<services::CameraControlService>();
         autofocusService_ = std::make_unique<services::AutofocusService>();
         triggerService_ = std::make_unique<services::TriggerService>();
-        yoloService_ = std::make_unique<services::YoloService>();
         serialBusManager_ = std::make_unique<services::serialbus::SerialBusManager>();
         syringePumpService_ = std::make_unique<services::SyringePumpService>(*serialBusManager_);
         pulseGeneratorService_ = std::make_unique<services::PulseGeneratorService>(*serialBusManager_);
@@ -552,7 +567,6 @@ namespace backend
         bool bootSqlite = true;
         bool bootHdf5 = true;
         bool bootProcessing = true;
-        bool bootYolo = true;
         bool bootAutofocus = true;
         bool bootTrigger = true;
         bool bootDotGrid = true;
@@ -586,7 +600,6 @@ namespace backend
                     bootSqlite = false;
                     bootHdf5 = false;
                     bootProcessing = false;
-                    bootYolo = false;
                     bootAutofocus = false;
                     bootTrigger = false;
                     bootCapture = false;
@@ -607,7 +620,8 @@ namespace backend
                 }
                 else if (token == "yolo")
                 {
-                    bootYolo = false;
+                    // YoloService was removed (#565); the token stays accepted
+                    // so existing environments keep booting.
                 }
                 else if (token == "autofocus")
                 {
@@ -645,8 +659,8 @@ namespace backend
             }
         }
 
-        SPDLOG_INFO("AppBackend boot toggles: sqlite={}, hdf5={}, processing={}, yolo={}, autofocus={}, trigger={}, capture={}, playback={}, dot_grid={}",
-                    bootSqlite, bootHdf5, bootProcessing, bootYolo, bootAutofocus, bootTrigger, bootCapture, bootPlayback, bootDotGrid);
+        SPDLOG_INFO("AppBackend boot toggles: sqlite={}, hdf5={}, processing={}, autofocus={}, trigger={}, capture={}, playback={}, dot_grid={}",
+                    bootSqlite, bootHdf5, bootProcessing, bootAutofocus, bootTrigger, bootCapture, bootPlayback, bootDotGrid);
 
         // Dot-grid wafer localization: the thread idles until the frontend
         // enables it (config "dot_grid.enabled"); it only ever reads FrameStore.
@@ -677,22 +691,8 @@ namespace backend
             SPDLOG_WARN("AppBackend: hdf5 bootstrap disabled by MIB_DISABLED_SERVICES");
         }
 
-        // Initialize YOLO service - resolve model path relative to data directory
-        // dataDir is typically {exeDir}/data, so we go up one level to get exeDir
         std::filesystem::path dataPath(dataDir);
         std::filesystem::path exeDir = resourceRoot_.empty() ? dataPath.parent_path() : std::filesystem::path(resourceRoot_);
-        std::filesystem::path modelPath = exeDir / "resources" / "models" / "yolo11n-seg.onnx";
-        if (bootYolo)
-        {
-            if (!yoloService_->initialize(modelPath.string()))
-            {
-                SPDLOG_WARN("YOLO model not loaded - segmentation features will not be available");
-            }
-        }
-        else
-        {
-            SPDLOG_WARN("AppBackend: yolo bootstrap disabled by MIB_DISABLED_SERVICES");
-        }
 
         // Load Young's modulus LUT for emodulus gating
         if (bootProcessing)
@@ -1449,7 +1449,6 @@ namespace backend
     services::AutofocusService &AppBackend::autofocus() { return *autofocusService_; }
     services::TriggerService &AppBackend::trigger() { return *triggerService_; }
     services::DotGridService &AppBackend::dotGrid() { return *dotGridService_; }
-    services::YoloService &AppBackend::yolo() { return *yoloService_; }
     services::SyringePumpService &AppBackend::syringePump() { return *syringePumpService_; }
     services::PulseGeneratorService &AppBackend::pulseGenerator() { return *pulseGeneratorService_; }
     services::StageService &AppBackend::stage() { return *stageService_; }

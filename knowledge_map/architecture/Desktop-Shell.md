@@ -53,6 +53,9 @@ The repo root `src/` is the C++ tree, so the whole Tauri app lives under
   with `desktop/src/workflow.test.ts` vitest coverage.
 - `desktop/src/preflight.ts` — pure hardware-preflight checklist derivation
   (UX-3), with `desktop/src/preflight.test.ts` vitest coverage.
+- `desktop/src/experimentCounters.ts` — operator saved counts by class, pending
+  saves derived with exact u64 arithmetic, policy drops and writer failures
+  from the existing experiment status fields (#546); Vitest covers labels.
 - `desktop/src/quality.ts` — pure Camera & Alignment quality-gate derivation
   (UX-4), with `desktop/src/quality.test.ts` vitest coverage.
 - `desktop/src/contextBar.ts` — pure persistent active-context bar derivation
@@ -681,6 +684,60 @@ three places:
 
 None of them blocks a run. Desktop builds are unchanged.
 
+## How a run ended (#549)
+
+`desktop/src/runOutcome.ts` (pure) turns the finished run's experiment status
+(`completion`, `completion_reason`, `persistence_admitted`) into an operator message: the
+completion, the non-zero loss counts parsed from the backend's reason
+(`storeOverwritten`, `storeNotCommitted`, `storeMalformed`, `processingFailed`, `sequenceGaps`),
+and the lost fraction of the admitted frames. A booked malformed frame (an ingress error) is a
+declared loss: the run is "partial (declared)" and the notice is informational unless malformed
+frames exceed 0.1 % of the admitted frames (`MALFORMED_WARN_FRACTION`). `components/RunOutcomeNotice`
+shows it on the Experiment tab (an alert for undeclared loss, failure, an unknown outcome or that
+attention case, a status otherwise), with the backend's own text as the tooltip. The shell logs one line per finished run and adds a "Last run"
+row to the sidebar. Cancelled runs and a status that is not yet terminal show nothing.
+
+The reconciled accounting (`fetch_run_accounting`, ABI 31) supplies the denominator: the frames
+the run admitted, not the rows it saved (a run with many EMPTY frames saves far fewer rows than it
+admits). `describeRunOutcome(status, accounting)` uses it when the accounting belongs to the same run
+(`start_generation`); `describeReviewOutcome(accounting)` describes the file loaded for review. The
+Review tab shows it above the export options: a raw recording or a legacy file without accounting is a
+quiet "no run accounting saved" note, and a file whose counters do not reconcile reads as a failure.
+Tests: `runOutcome.test.ts`, `RunOutcomeNotice.test.tsx`.
+
+## PL mode, branding and reload (#550 m11–m15)
+
+- **Capability gating.** In PL mode (`hostProcessing` false) the legend, Clear ROI, manual ROI
+  fields, the host core line and the host rates in the status bar are hidden; Clear Background and
+  Auto background follow `caps.host_background`; the EGrabber script checkbox in the profiles panel
+  follows `caps.egrabber_script` (the `egrabberScript` prop of `ProfilesPanel`).
+- **Name.** `brand.ts` `productName({pz7035, remote})` is YOFO Studio on the instrument and in the
+  remote browser UI, MIB Studio on the desktop. The remote title is set in `main.tsx` before the
+  first render; `App` also sets `document.title` and the About heading.
+- **Reload.** `persistedState.ts` mirrors the event log and the two stage confirmations to
+  sessionStorage (per tab, guarded against missing storage). The workflow still compares a restored
+  confirmation with the current signature.
+- **Narrow windows.** Below 1100 px the tab labels and camera buttons do not wrap, the camera buttons
+  move below the tabs, and the status line wraps.
+
+**Align focus and brightness (#501).** There is no nanopositioner ring ratio on the PZ7035,
+so the operator focuses by hand against a number from the live image (`imageQuality.ts`,
+pure and unit tested):
+- **Focus number.** The variance of the 4-neighbour Laplacian over the interior of the Run
+  window, the 512×96 box the U-Net will see. It rises toward best focus. The window's best
+  value is held and restarts when the window moves, the mode changes, or the operator presses
+  "Restart focus peak" (after changing the sample). On a real lit 512×96 frame it falls from
+  339 to 1.5 as a box blur grows from radius 0 to 8.
+- **Brightness.** Mean, 99th percentile and the saturated fraction of the same box. The gate
+  warns below 40 DN (dark; a lit Align frame is about 143 DN, a dark one about 18) and above 1 %
+  saturated.
+- **Where it runs.** `draw()` measures each displayed whole frame (about 50 k pixels) and
+  publishes at most every 200 ms. It only measures an 816×624 Align frame while a window is
+  placed. Run has no live camera frame, so the gates read "unknown" there.
+- **Gates.** `quality.ts` adds Focus and Brightness for the PZ7035 only when the Align view
+  supplies an image. The focus gate has no absolute pass level, because it depends on the
+  sample; it reports the number and its share of the best seen.
+
 ## Pump model per slot (2026-10-04)
 
 The Pumps panel (`HardwareControls.tsx`) has a **Pump model** select per slot:
@@ -717,7 +774,7 @@ current Qt live scatter's use of the current factor is not authoritative for mix
 
 `.github/workflows/desktop-windows-candidate.yml` builds a Windows x64 SDK-free Tauri candidate on `dev/react-tauri` pushes or manual dispatch. This is separate from the existing Qt Windows release workflow and never creates tags, releases, update feeds or signed installers. It uses the repository VS2022/MSVC194 Conan profile, VS CMake backend-only build and existing bridge link-manifest generator, then release-mode Rust tests/build.
 
-`desktop/scripts/package-windows-candidate.ps1` creates a fresh portable directory and ZIP: recursive non-system native DLL dependencies (unresolved/conflicting names fail), app-local VC runtime, defaults, isoelastic LUT resources and the pinned YOLO model. The staged application is smoke-launched with development DLL search paths removed. WebView2 Evergreen remains an explicit prerequisite. The candidate disables EGrabber, MindVision and CoreMOR SDKs; SDK-enabled camera delivery and Windows hardware acceptance remain separate gates. Windows hosted execution is required before declaring this candidate validated.
+`desktop/scripts/package-windows-candidate.ps1` creates a fresh portable directory and ZIP: recursive non-system native DLL dependencies (unresolved/conflicting names fail), app-local VC runtime, defaults, isoelastic LUT resources. The staged application is smoke-launched with development DLL search paths removed. WebView2 Evergreen remains an explicit prerequisite. The candidate disables EGrabber, MindVision and CoreMOR SDKs; SDK-enabled camera delivery and Windows hardware acceptance remain separate gates. Windows hosted execution is required before declaring this candidate validated.
 
 Local minimum path: VS2022 x64 developer PowerShell, Node22, stable Rust/MSVC, Python/Conan/CMake; install dependencies with `conan install . -of build --build=missing -s build_type=Release -pr conan/profiles/windows-msvc194`, provision required assets, configure `windows-default` with the workflow's SDK-free/backend-only flags, build backend libraries and `mib_backend_smoke_test`, run `tools/gen_bridge_link_manifest.py`, then `npm --prefix desktop ci`, frontend test/build and release Cargo desktop build with `custom-protocol`. Run the packaging script last. Never use Qt's release workflow to build this candidate.
 
@@ -831,6 +888,8 @@ disarms; #521).
 Tests: `stageControlModel.test.ts` (rules) and `StageControls.test.tsx`
 (panel behaviour with a mocked bridge).
 
+Background capture/clear and ROI editing are disabled during Starting, Active and
+Stopping. Setup command refusals refresh backend ROI/background state (#542).
 ### Metric rendering and panel recovery (#540, #543)
 
 `metricFormat.ts` renders absent/non-finite metrics as an em dash. Both Studio
@@ -844,3 +903,9 @@ JSDOM has no flex layout engine; physical layout needs browser verification.
 Safety confirmations go through `desktop/src/transport/dialogs.ts` and must be
 awaited. Tauri uses the public dialog API (`dialog:allow-message`); browser
 confirmation and native dialog errors fail closed unless the result is true.
+
+Help ▸ What's New and User Manual use `OfflineHelp.tsx`. Vite eager raw imports
+bundle `docs/release-notes/v*.md` and `docs/manual/*.md`; URL imports bundle manual
+images. Local manual links navigate within the dialog, with an Index button and
+an explicit online-documentation button. Version discovery uses Tauri's app API,
+with the package version for development. This adds no bridge ABI surface.

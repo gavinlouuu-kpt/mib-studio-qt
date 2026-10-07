@@ -546,8 +546,60 @@ export interface InstrumentModeState {
  *  "" once the target is persistent (SATA). */
 export interface RecordingTargetState { path: string; writable: boolean; ram: boolean; free_bytes: number; filesystem: string; warning: string }
 
+/** The PL result stream while an experiment runs (#501): the provider's cumulative counters. */
+export interface ResultsStreamState {
+  available: boolean;
+  running?: boolean;
+  frames?: number;
+  results?: number;
+  empty_frames?: number;
+  invalid_frames?: number;
+  truncated_frames?: number;
+  incomplete_frames?: number;
+  decode_errors?: number;
+  sequence_gaps?: number;
+  overruns?: number;
+  last_error?: string;
+}
+
+/** The reconciled accounting of a run (ABI 31, `fetch_run_accounting`, #549). `source` "review" is the
+ *  file loaded for review, "last_run" the run that finished last in this session. */
+export interface RunAccounting {
+  available: boolean;
+  error?: string;
+  source: string;
+  /** false for a raw recording or a legacy file without accounting (review only). */
+  recorded?: boolean;
+  start_generation?: number;
+  file_path?: string;
+  /** Contract experiment_completion value. */
+  completion?: number;
+  completion_name?: string;
+  completion_reason?: string;
+  reconciled?: boolean;
+  /** Frames the run claimed: the true denominator of the loss fractions. */
+  admitted?: number;
+  empty?: number;
+  processed?: number;
+  scientifically_rejected?: number;
+  processing_failed?: number;
+  store_overwritten?: number;
+  store_not_committed?: number;
+  store_malformed?: number;
+  cancelled_by_policy?: number;
+  pending_at_stop?: number;
+  sequence_gaps?: number;
+  persistence_admitted?: number;
+  persistence_committed?: number;
+  persistence_failed?: number;
+  fatal_error?: boolean;
+  fatal_message?: string;
+  malformed_warn_fraction?: number;
+}
+
 export interface InstrumentStatus {
   available: boolean;
+  results?: ResultsStreamState;
   mode?: InstrumentModeState;
   storage?: RecordingTargetState;
   error?: string;
@@ -770,6 +822,7 @@ export const bridge = {
   saveCameraRoi: (x: number, y: number, w: number, h: number) => invokeCommand("save_camera_roi", {x, y, w, h}),
   fetchCameraGeometry: () => invoke<CameraGeometry>("fetch_camera_geometry"),
   fetchPlatformInfo: () => invoke<PlatformInfo>("fetch_platform_info"),
+  fetchRunAccounting: (source: "review" | "last_run") => invoke<RunAccounting>("fetch_run_accounting", { source }),
   fetchInstrumentStatus: () => invoke<InstrumentStatus>("fetch_instrument_status"),
   // PZ7035 camera modes (ABI 27, #501 P1). A mode switch restarts or stops the camera, so it
   // is a source mutation like the overview switch.

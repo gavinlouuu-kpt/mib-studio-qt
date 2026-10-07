@@ -281,3 +281,8 @@ already running; idle navigation does not enable illumination. The backend
 rejects mode changes during experiments/recording before services are stopped.
 MindVision ROI notifications use sensor offsets for the displayed selection and
 zero offsets for processing the hardware crop. The eGrabber script path is unchanged.
+
+Help also includes **What's New** and **User Manual**, provided by `HelpDialog`
+(see [[frontend/System-Utilities]]). Both work offline; the manual includes an
+index and an online-documentation button. QSettings records the last-seen version
+so Qt shows release notes once after upgrading, without prompting on fresh install.

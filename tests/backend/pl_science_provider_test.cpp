@@ -131,7 +131,7 @@ int main(int argc, char** argv) {
     setEnv("MIB_PL_SCIENCE", "1");
     setEnv("MIB_CAMERA_MODE", "mock");
     setEnv("MIB_MOCK_CAMERA_DIR", frames.string().c_str());
-    setEnv("MIB_DISABLED_SERVICES", "sqlite,yolo,autofocus,trigger,playback");
+    setEnv("MIB_DISABLED_SERVICES", "sqlite,autofocus,trigger,playback");
     setEnv("MIB_EXECUTION_PROVIDER", ("replay:" + records.string() + "@2000").c_str());
     MIB_REQUIRE(!backend::app::hostProcessingAvailable(), "science on the PL");
 

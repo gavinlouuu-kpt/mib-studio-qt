@@ -52,11 +52,10 @@ pub mod ffi {
         QueueOverflow = 7,
         /// Experiment lifecycle snapshot (schema v5; shared backend since
         /// #372): u0 state, u1 validBuffered, u2 invalidBuffered,
-        /// u3 persistenceCommitted (legacy "validSaved"), u4 0 (legacy
-        /// "invalidSaved", split no longer tracked), u5 startWallClockNs;
+        /// u3 validSaved, u4 invalidSaved, u5 startWallClockNs;
         /// f0/experiment_end_time_ns endWallClockNs,
-        /// f1/experiment_dropped_valid persistence pending,
-        /// f2/experiment_dropped_invalid persistenceFailed; b0 flushing,
+        /// f1/experiment_dropped_valid valid policy drops,
+        /// f2/experiment_dropped_invalid invalid policy drops; b0 flushing,
         /// b1 cancelled; text message. Full status (incl. output path) via
         /// `fetch_experiment_status`.
         ExperimentStatus = 8,
@@ -117,9 +116,9 @@ pub mod ffi {
 
     /// Pollable experiment lifecycle snapshot (schema v5, BE-4; shared
     /// backend since #372). `valid` is false when the backend is not
-    /// initialized. Legacy fields: `valid_saved` = persistence committed,
-    /// `invalid_saved` = 0, `dropped_valid` = persistence pending,
-    /// `dropped_invalid` = persistence failed.
+    /// initialized. Saved fields count successful writes by class; dropped
+    /// fields count buffer policy drops by class. Pending saves are admitted
+    /// minus committed, failed, and policy drops (clamped at zero).
     #[derive(Debug, Clone, Default)]
     pub struct BridgeExperimentStatus {
         pub valid: bool,
@@ -1183,6 +1182,9 @@ pub mod ffi {
         /// Where the science runs (ABI 21): `{"science": "host"|"pl", "host_processing": bool,
         /// "aravis": bool}`. On the PL the host pipeline's commands are refused.
         fn fetch_platform_info(self: Pin<&mut BackendBridge>) -> String;
+        /// Reconciled run accounting as JSON (ABI 31, #549): `source` is "review" (the file loaded
+        /// for review) or "last_run" (the run that finished last in this session).
+        fn fetch_run_accounting(self: Pin<&mut BackendBridge>, source: &str) -> String;
         /// PZ7035 camera mode (ABI 27, #501 P1): "align" | "run" with the Run window offset.
         fn set_instrument_mode(self: Pin<&mut BackendBridge>, mode: &str, x: i32, y: i32) -> BridgeCommandResult;
         /// Service / Commissioning mode latch; raw LED values are refused outside it.

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { deriveQualityGates, type GateStatus, type QualityInput } from "./quality";
+import type { ImageMetrics } from "./imageQuality";
 
 // A healthy aligned setup: streaming, focus live, background set, ROI valid,
 // calibrated.
@@ -88,5 +89,42 @@ describe("deriveQualityGates — accounting", () => {
 
   it("a fully healthy setup passes every gate", () => {
     expect(deriveQualityGates(GOOD).pass).toBe(4);
+  });
+});
+
+describe("PZ7035 Align image gates (#501)", () => {
+  const lit: ImageMetrics = { focus: 80, mean: 143, p99: 190, saturated: 0, pixels: 49152 };
+  const gate = (image: Parameters<typeof deriveQualityGates>[0]["image"], id: string) =>
+    deriveQualityGates({ ...GOOD, pz7035: true, image }).gates.find((g) => g.id === id)!;
+
+  it("adds focus and brightness only when the Align view supplies an image", () => {
+    expect(deriveQualityGates({ ...GOOD, pz7035: true }).gates.map((g) => g.id)).toEqual(["calibration"]);
+    expect(deriveQualityGates({ ...GOOD, pz7035: true, image: { metrics: lit, best: 80 } }).gates.map((g) => g.id))
+      .toEqual(["focus", "brightness", "calibration"]);
+  });
+
+  it("is unknown, not a warning, before the first full-sensor frame", () => {
+    const r = deriveQualityGates({ ...GOOD, pz7035: true, image: { metrics: null, best: null } });
+    expect(r.gates.find((g) => g.id === "focus")?.status).toBe("unknown");
+    expect(r.gates.find((g) => g.id === "brightness")?.status).toBe("unknown");
+    expect(r.warn + r.fail).toBe(0);
+  });
+
+  it("shows the focus number and how it compares with the best seen", () => {
+    expect(gate({ metrics: lit, best: 80 }, "focus")).toMatchObject({ status: "pass", value: "80.0" });
+    expect(gate({ metrics: lit, best: 80 }, "focus").detail).toContain("At the best seen");
+    const past = gate({ metrics: { ...lit, focus: 40 }, best: 80 }, "focus");
+    expect(past.value).toBe("40.0");
+    expect(past.detail).toContain("50 % of the best seen (80.0)");
+  });
+
+  it("warns on a dark or clipping window and passes a lit one", () => {
+    expect(gate({ metrics: lit, best: 80 }, "brightness").status).toBe("pass");
+    const dark = gate({ metrics: { ...lit, mean: 18 }, best: 80 }, "brightness");
+    expect(dark.status).toBe("warn");
+    expect(dark.detail).toContain("LED");
+    const clipped = gate({ metrics: { ...lit, mean: 200, saturated: 0.05 }, best: 80 }, "brightness");
+    expect(clipped.status).toBe("warn");
+    expect(clipped.detail).toContain("5.0 % of the window is saturated");
   });
 });

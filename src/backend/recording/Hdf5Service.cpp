@@ -35,6 +35,20 @@ namespace backend::services
             if (g_performanceTraceHook)
                 g_performanceTraceHook(name, operation, durationMs, jsonData);
         }
+
+        // H5Aread performs datatype conversion but does not validate the
+        // dataspace. Check the shape before reading into scalar storage.
+        bool isScalarAttribute(hid_t attribute)
+        {
+            if (attribute < 0) return false;
+            hid_t space = H5Aget_space(attribute);
+            if (space < 0) return false;
+            const hssize_t points = H5Sget_simple_extent_npoints(space);
+            const int rank = H5Sget_simple_extent_ndims(space);
+            H5Sclose(space);
+            return rank >= 0 && points == 1;
+        }
+
     }
 
     void setHdf5PerformanceTraceHook(PerformanceTraceFn fn)
@@ -2428,13 +2442,6 @@ namespace backend::services
         hid_t group = H5Gopen2(impl_->fileId_, groupPath, H5P_DEFAULT);
         if (group < 0) return false;
 
-        const auto isScalarAttribute = [](hid_t attribute) {
-            hid_t space = H5Aget_space(attribute);
-            if (space < 0) return false;
-            const hssize_t points = H5Sget_simple_extent_npoints(space);
-            H5Sclose(space);
-            return points == 1;
-        };
         const auto readUint32 = [&](const char* name, uint32_t& value) {
             hid_t attribute = H5Aopen(group, name, H5P_DEFAULT);
             if (attribute < 0) return false;
@@ -2564,6 +2571,69 @@ namespace backend::services {
         readInt("multi_image_count", config.multi_image_count);
 
         H5Gclose(group);
+        return true;
+    }
+
+    bool Hdf5Service::readRecordedProcessingContract(int& contract) const
+    {
+        if (!isFileOpen()) return false;
+
+        // Contract metadata was added after the first recording files. Those
+        // legacy files are deliberately interpreted as Contract 1. Any
+        // present metadata, however, must be a scalar integer in the supported
+        // range and every copy must agree; silently taking the first value
+        // would make a malformed or tampered file ambiguous.
+        std::optional<int> discovered;
+        const auto readContract = [](hid_t group, const char* name, int& value) {
+            if (H5Aexists(group, name) <= 0) return true; // absent is valid
+            hid_t attribute = H5Aopen(group, name, H5P_DEFAULT);
+            if (attribute < 0 || !isScalarAttribute(attribute)) {
+                if (attribute >= 0) H5Aclose(attribute);
+                return false;
+            }
+            hid_t type = H5Aget_type(attribute);
+            const bool integer = type >= 0 && H5Tget_class(type) == H5T_INTEGER &&
+                                 H5Tget_size(type) <= sizeof(uint64_t);
+            bool ok = false;
+            int64_t signedValue = 0;
+            uint64_t unsignedValue = 0;
+            if (integer) {
+                if (H5Tget_sign(type) == H5T_SGN_NONE)
+                    ok = H5Aread(attribute, H5T_NATIVE_UINT64, &unsignedValue) >= 0 &&
+                         unsignedValue >= 1 && unsignedValue <= 3;
+                else
+                    ok = H5Aread(attribute, H5T_NATIVE_INT64, &signedValue) >= 0 &&
+                         signedValue >= 1 && signedValue <= 3;
+            }
+            if (type >= 0) H5Tclose(type);
+            H5Aclose(attribute);
+            if (!ok) return false;
+            value = integer && signedValue > 0 ? static_cast<int>(signedValue)
+                                               : static_cast<int>(unsignedValue);
+            return true;
+        };
+
+        for (const char* path : {"/", "/experiment_info", "/recording_info", "/run_provenance"}) {
+            if (H5Lexists(impl_->fileId_, path, H5P_DEFAULT) <= 0) continue;
+            hid_t group = H5Gopen2(impl_->fileId_, path, H5P_DEFAULT);
+            if (group < 0) return false;
+            bool ok = true;
+            for (const char* name : {"processing_config_processing_contract_version",
+                                     "processing_contract_version"}) {
+                int value = 1;
+                if (!readContract(group, name, value)) {
+                    ok = false;
+                    break;
+                }
+                if (H5Aexists(group, name) > 0) {
+                    if (discovered && *discovered != value) ok = false;
+                    else discovered = value;
+                }
+            }
+            H5Gclose(group);
+            if (!ok) return false;
+        }
+        contract = discovered.value_or(1);
         return true;
     }
 
@@ -2828,6 +2898,31 @@ namespace backend::services {
         const htri_t exists = H5Lexists(impl_->fileId_, path.c_str(), H5P_DEFAULT);
         if (exists < 0) return std::nullopt;
         return exists > 0;
+    }
+
+    bool Hdf5Service::readMetadataFieldNames(bool valid, std::vector<std::string>& names) const
+    {
+        names.clear();
+        if (!isFileOpen()) return false;
+        const std::string path = valid ? "/valid_frames/metadata" : "/invalid_frames/metadata";
+        hid_t dataset = H5Dopen2(impl_->fileId_, path.c_str(), H5P_DEFAULT);
+        if (dataset < 0) return false;
+        hid_t type = H5Dget_type(dataset);
+        bool ok = type >= 0 && H5Tget_class(type) == H5T_COMPOUND;
+        if (ok) {
+            const int count = H5Tget_nmembers(type);
+            if (count < 0) ok = false;
+            for (int i = 0; i < count; ++i) {
+                char* name = H5Tget_member_name(type, static_cast<unsigned>(i));
+                if (name) {
+                    names.emplace_back(name);
+                    H5free_memory(name);
+                } else { ok = false; break; }
+            }
+        }
+        if (type >= 0) H5Tclose(type);
+        H5Dclose(dataset);
+        return ok;
     }
 
     bool Hdf5Service::readValidMetadata(std::vector<ProcessedFrame>& frames)

@@ -66,10 +66,10 @@ private:
 int main() {
 #ifdef _WIN32
     _putenv_s("MIB_CAMERA_MODE", "mock");
-    _putenv_s("MIB_DISABLED_SERVICES", "yolo,auto_update");
+    _putenv_s("MIB_DISABLED_SERVICES", "auto_update");
 #else
     setenv("MIB_CAMERA_MODE", "mock", 1);
-    setenv("MIB_DISABLED_SERVICES", "yolo,auto_update", 1);
+    setenv("MIB_DISABLED_SERVICES", "auto_update", 1);
 #endif
     mib::test::Watchdog watchdog(20);
     mib::test::TempDir dir("hardware_shutdown");

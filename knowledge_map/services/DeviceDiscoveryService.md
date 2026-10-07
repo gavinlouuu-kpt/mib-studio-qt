@@ -138,6 +138,12 @@ shared serial port closes.
 Fakes: `tests/support/fake_discovery_providers.h`,
 `tests/support/fake_modbus_bench.h`.
 
+The Qt fixture disables capture bootstrap explicitly, verifies that the
+`AppBackend` starts with no configured camera, and then registers scripted
+camera, nanopositioner, and pulse-generator providers. It therefore exercises
+startup selection and cancellation without relying on an SDK fallback or
+touching camera hardware.
+
 ## Gotchas
 
 - Never call `shutdownDiscovery()` from inside an observer/provider (it

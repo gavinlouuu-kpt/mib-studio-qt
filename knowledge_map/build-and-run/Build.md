@@ -101,6 +101,14 @@ specific deadlock or a complete billing total. A stale main-checkout view and
 queued/cancelled attempts can make hosted totals misleading; the first hosted
 run after this change should verify cache behavior and artifact sizes.
 
+## Native FCS export
+
+Build the Qt-free `hdf_export_cli` target for `scripts/export_hdf5.py --format
+fcs`. `recording.fcs_writer` and `recording.hdf_export_service` cover the writer
+and transaction; `recording.fcs_flowio` runs the optional independent Python
+reader and skips when FlowIO is unavailable. See [[../services/HdfExportService]]
+and [[../../docs/howto/hdf5-export-app]] for detection semantics and commands.
+
 ## Presets
 
 Every configure preset carries a `description` naming the `env/` sections
@@ -495,21 +503,6 @@ Some cloud images pin `/usr/bin/c++` to clang without an unversioned
 `libstdc++.so`; switch the alternative to g++. Details and the smoke test:
 [[../task/2026-04-20-cloud-toolchain-cxx-libstdcpp-fix]].
 
-## Linux cloud dependency fallback (ONNX Runtime optional)
-
-Linux cloud images may not have a discoverable CMake package for ONNX Runtime
-(`onnxruntimeConfig.cmake`), and Conan graph resolution can fail because of
-upstream version conflicts (`qt/opencv/onnxruntime` transitive deps).
-
-To keep non-hardware workflows buildable in cloud:
-
-- `find_package(onnxruntime CONFIG QUIET)` is optional.
-- `MIB_HAS_ONNXRUNTIME` is set from `TARGET onnxruntime::onnxruntime`.
-- When ONNX Runtime is unavailable:
-  - build uses `src/backend/services/YoloService.stub.cpp`
-  - compile definition `MIB_HAS_ONNXRUNTIME=0` is exported
-  - CMake emits a warning and continues.
-
 ## Related how-tos
 
 - `docs/howto/build-installer.md`
@@ -583,3 +576,12 @@ display startup deliberately to prevent a false pass before the app launches.
 The Windows candidate saves successfully provisioned Conan dependencies before
 application compilation, so subsequent source/test failures do not discard the
 completed dependency cache. It never caches a failed dependency install.
+
+Release documentation (#573): `scripts/release_notes.py --version X.Y.Z --check`
+gates stable Windows releases before the build. GitHub releases use the curated
+Markdown file; beta builds generate uncurated notes from recent fragments after
+the last reachable stable tag. `publish-update.py --release-notes-file` includes a
+16 KiB plain-text summary in latest.json and catalog entries. Qt deployment and
+both installers copy release notes and the manual with images under resources;
+Linux builds also copy these beside the executable (there were no app install rules). Tauri bundles the same
+sources via Vite raw/URL imports. Templates live in `docs/release-notes/README.md`.

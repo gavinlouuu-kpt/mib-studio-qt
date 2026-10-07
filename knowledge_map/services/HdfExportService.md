@@ -1,11 +1,13 @@
 # HdfExportService
 
 > Qt-free, bounded, cancellable export of one HDF5 experiment/recording
-> file to CSV + TIFF (issue #344). One job = one immutable request, one
+> file to CSV + TIFF or FCS 3.1 (issue #344/#520). One job = one immutable request, one
 > private read-only reader, streamed frames, transactional output.
 
 **Source:** `src/backend/recording/HdfExportService.cpp`,
 `include/backend/recording/HdfExportService.h`
+`src/backend/recording/FcsWriter.cpp`, `include/backend/recording/FcsWriter.h`;
+native CLI: `hdf_export_cli`
 **Tests:** `tests/recording/hdf_export_service_test.cpp`
 (`recording.hdf_export_service`; `recording.hdf_export_soak` = 50 rounds,
 `performance` label), TSan lane
@@ -34,18 +36,41 @@
   name with an `export-failure.json` manifest. A normal-looking export can
   never be partial.
 - Cancellation (`HdfExportCancelToken`, shared atomic) is polled before
-  every artifact, image, series frame and the commit.
+  every artifact, image, series frame, FCS event, and the commit.
 - Generated names: `nextAvailableName()` lists the parent once and picks
   `<base>` or `<base>_<max suffix + 1>` — cost does not grow with the number
   of previous exports. An explicit destination is honoured; an existing
   *file* destination (already confirmed by a save dialog) is replaced
-  atomically at commit, an existing folder is refused. A destination equivalent
+  atomically at commit for MetricsCsv; existing FCS files, their event-map
+  siblings, and existing folders are refused. A destination equivalent
   to the source recording (including symlinks/hardlinks) is always rejected.
 - Charts are not rendered here: the caller passes `supplementalImages`
   (name → BGR `cv::Mat`) captured on its own thread; the job writes them for
   `All` exports.
 - CSV format/columns are identical to the historical `HdfReviewTab` writer
   (`Frame Type … Bright Q4`, fixed 3/2-decimal formatting).
+- `HdfExportFormat::Fcs` writes a transactional `<base>.fcs` plus
+  `<base>_event_map.csv` folder. An explicit `.fcs` destination instead writes
+  that exact file and `<chosen stem>_event_map.csv` beside it (#574), returning
+  the file as `finalPath`. Both are staged privately and published without
+  replacing existing outputs, sidecar first and FCS last; ordinary publication
+  failure rolls back the newly published sidecar. The sibling pair cannot be
+  crash-atomic: interruption between publications can leave an orphan sidecar.
+  Publication renames within the destination folder (no hard links), so it
+  works on FAT/exFAT USB sticks and SMB shares; both names are re-checked free
+  just before publishing. Default folder exports retain
+  atomic pair publication. Selected
+  `validCount + invalidCount` is the event count. The reusable FCS writer emits one event per
+  detection, little-endian 32-bit float data, `BYTEORD=1,2,3,4`, `MODE=L`,
+  `TIMESTEP=1`, and a contract-aware registry based on actual HDF compound
+  members. The default is valid detections; invalid/both are explicit options.
+  Missing members are omitted, non-finite values fail closed, and object IDs
+  remain per-detection (no deduplication). Time is stable relative seconds.
+  Contract provenance is read from root, experiment, recording, and run
+  provenance groups only when it is a scalar supported integer; conflicting or
+  malformed copies fail the export. Files with no contract metadata retain the
+  legacy Contract-1 interpretation. The DATA pass is streamed after a range
+  pass, so event values are not buffered as a second full dataset.
 
 ## Threading
 
@@ -85,6 +110,11 @@ All uses the service's default full-series selection without UI charts.
 busy rejection, source hash immutability, output-parent faults, and retained
 terminal recovery under a watchdog. Rust review contract tests verify CSV
 round-trip and retained status. Run the backend stress/TSan lane before cutover.
+
+FCS currently represents detections. Cross-frame per-cell events are blocked by
+TODO(#520) until tracking identity is verified; repeated object IDs are kept
+exactly in the sidecar. FCS carries measurements and metadata, not canonical
+HDF5 images.
 
 
 Valid-only and invalid-only experiment recordings need not contain both metadata

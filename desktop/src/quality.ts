@@ -27,6 +27,15 @@ export interface QualityGate {
   detail: string;
 }
 
+import { DARK_MEAN_DN, SATURATED_WARN_FRACTION, type ImageMetrics } from "./imageQuality";
+
+/** The Align live view's measurement of the Run window (#501, PZ7035): `metrics` null = no frame
+ *  of the full sensor yet; `best` is the peak-held focus number since the window last moved. */
+export interface ImageQualityInput {
+  metrics: ImageMetrics | null;
+  best: number | null;
+}
+
 export interface QualityInput {
   cameraRunning: boolean;
   // Focus: autofocus ring-ratio metric and its freshness (schema v11).
@@ -49,6 +58,9 @@ export interface QualityInput {
    *  the result path. Only calibration applies there until the image focus
    *  metric lands (P0b); the host gates are left out rather than warned. */
   pz7035?: boolean;
+  /** PZ7035 Align (#501): the live image's focus and brightness in the Run window. Left out
+   *  (undefined) outside Align, where the focus and brightness gates do not apply. */
+  image?: ImageQualityInput;
 }
 
 export interface QualityReport {
@@ -145,10 +157,47 @@ function calibrationGate(i: QualityInput): QualityGate {
       };
 }
 
+// Image focus (PZ7035, #501): no nanopositioner ring ratio, so the operator focuses by hand against
+// the Laplacian variance of the live frame in the Run window. There is no absolute pass level (it
+// depends on the sample), so the gate reports the number and how far it is from the best seen.
+function imageFocusGate(i: ImageQualityInput): QualityGate {
+  const m = i.metrics;
+  if (!m) {
+    return { id: "focus", label: "Focus", status: "unknown", value: "—", detail: "Waiting for a full-sensor Align frame." };
+  }
+  const best = i.best ?? m.focus;
+  const ratio = best > 0 ? m.focus / best : 1;
+  return {
+    id: "focus",
+    label: "Focus",
+    status: "pass",
+    value: m.focus.toFixed(1),
+    detail: ratio >= 0.95
+      ? `At the best seen (${best.toFixed(1)}). Turn the focus knob a little each way to confirm it is a peak.`
+      : `${Math.round(ratio * 100)} % of the best seen (${best.toFixed(1)}): keep turning until it rises again.`,
+  };
+}
+
+function imageBrightnessGate(i: ImageQualityInput): QualityGate {
+  const m = i.metrics;
+  if (!m) return { id: "brightness", label: "Brightness", status: "unknown", value: "—", detail: "Waiting for a full-sensor Align frame." };
+  const value = `${m.mean.toFixed(0)} DN · p99 ${m.p99}`;
+  if (m.mean < DARK_MEAN_DN) {
+    return { id: "brightness", label: "Brightness", status: "warn", value, detail: "Dark: is the LED lit? Check the strobe in Preflight." };
+  }
+  if (m.saturated > SATURATED_WARN_FRACTION) {
+    return {
+      id: "brightness", label: "Brightness", status: "warn", value,
+      detail: `${(m.saturated * 100).toFixed(1)} % of the window is saturated: lower the LED width (Service mode).`,
+    };
+  }
+  return { id: "brightness", label: "Brightness", status: "pass", value, detail: "Lit and not clipping." };
+}
+
 /** Derive the Camera & Alignment quality gates from bridged signals. */
 export function deriveQualityGates(input: QualityInput): QualityReport {
   const gates: QualityGate[] = input.pz7035
-    ? [calibrationGate(input)]
+    ? [...(input.image ? [imageFocusGate(input.image), imageBrightnessGate(input.image)] : []), calibrationGate(input)]
     : [focusGate(input), backgroundGate(input), roiGate(input), calibrationGate(input)];
 
   let pass = 0;

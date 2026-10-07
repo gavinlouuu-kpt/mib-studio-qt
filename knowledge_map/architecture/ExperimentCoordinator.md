@@ -63,10 +63,16 @@
 - `shutdown()` (from `AppBackend::shutdown()` and the destructor) finalizes
   an active run and joins the worker; idempotent; after it `start()` returns
   `Busy`.
+- `AppBackend::initialize()` supplies default application identity for every shell
+  (#545): CMake `PROJECT_VERSION_FULL` (fallback `PROJECT_VERSION`), configure-time
+  `MIB_BUILD_ID` environment value (fallback `dev`), and platform plus architecture.
+  `setApplicationIdentity()` still overrides these defaults for subsequent runs;
+  an active run's frozen snapshot remains unchanged. Qt retains its explicit identity.
 - `finish()` no longer changes state: it returns the active (or most recently
   finalized) run snapshot for callers that log the identity.
 - `status()` / `setStatusCallback(cb)`: `ExperimentStatus` (state,
   generations, output path, start/end wall-clock, live buffered counts,
+  successful valid/invalid saved counts, valid/invalid policy drops,
   persistence admitted/committed/failed, `flushing`, `cancelled`,
   `terminal`, `finalizationOk`, `completion` + reason, fault code/message,
   message). The callback fires on every transition **outside the mutex** and
@@ -102,7 +108,7 @@ append only, never renumber.
    `appendFrames` left a clean run labelled IntentionallyPartial; bench,
    2026-09-08).
 5. `Hdf5Service::flush()`; `writeExperimentInfo(...)` (start/end wall-clock,
-   remainder counts, processing config, ROI, background, core identity);
+   run-wide successful valid/invalid writes, processing config, ROI, background, core identity);
    `writeRunAccounting(experimentAccountingSnapshot())`;
    `writeAcquisitionProvenance(...)`; `writeConfigJson(getLastConfigJson())`;
    then, best effort, `writeKdeLiveJson(...)` with the last provisional KDE
@@ -117,6 +123,17 @@ append only, never renumber.
    2/4/5/6 failed, in which case the unresolved fault
    `experiment.flushFailed` / `experiment.provenanceFailed` /
    `experiment.saveFailed` is latched and the state is `Failed`.
+
+   The reconciled accounting of the last finalized run is kept (`lastRunAccounting`, with its start
+   generation) for `fetch_run_accounting("last_run")` (ABI 31).
+
+   The accounting line logged at the end of finalization is a WARN when
+   `recording::needsOperatorAttention(completion)` (undeclared loss, failure or unknown) or when
+   malformed frames exceed `kMalformedWarnFraction` (0.1 %) of the admitted frames, INFO
+   otherwise (#549). Classification: `storeOverwritten`, `storeNotCommitted`, `processingFailed`
+   and `sequenceGaps` are undeclared (`IncompleteLoss`); a booked `storeMalformed` frame is a
+   declared loss (`IntentionallyPartial`). `finalizationOk` only says the file was written: a run can finalize cleanly
+   and still be `IncompleteLoss`, which the UI shows from `completion` and `completion_reason`.
 
 The worker also runs the periodic flush while Active: every 250 ms it
 submits `flushBufferedFrames(hdf5)` when
@@ -230,6 +247,10 @@ Readiness also blocks while bounded background calibration is running, preventin
 a later publication from replacing a background after experiment configuration
 is frozen. Cancellation/completion restores this gate.
 
+Background set/clear and calibration apply share `withIdleConfiguration` with ROI
+settings. Asynchronous calibration publication uses the nonblocking overload to
+avoid waiting on a configuration transaction that might join its worker (#542).
+
 ### Raw recording admission (#451)
 
 `AppBackend::startFrameRecording` uses `withIdleConfiguration` through writer
@@ -237,3 +258,11 @@ acquisition, so experiment Start and raw recording cannot both pass preflight.
 Starting/Active/Stopping (and Failed until reset) refuse recording; an already
 open HDF5 file is preserved. Raw recording remains busy until Stop joins its
 worker, including save-failure cleanup. See [[AppBackend]].
+
+### Nested idle configuration (#582)
+
+An idle transaction can invoke guarded service setters on the same thread without
+relocking the coordinator mutex. A scoped thread-local owner reuses only that
+enclosing idle authorization and restores it even on exceptions. Other threads
+still serialize against Start. This supports both facade transactions and Qt
+watched-document applies without bypassing the backend ROI/background gates.

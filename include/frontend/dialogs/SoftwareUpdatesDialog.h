@@ -9,6 +9,7 @@
 class QComboBox;
 class QListWidget;
 class QLabel;
+class QTextBrowser;
 class QPushButton;
 
 namespace frontend {
@@ -33,11 +34,13 @@ private slots:
     void updateButtons();
 
 private:
+    friend struct SoftwareUpdatesDialogTestAccess; // test seam (offline_help_test)
     int selectedEntryIndex() const;
 
     QPointer<AutoUpdater> updater_;
     QComboBox* channelBox_{nullptr};
     QListWidget* list_{nullptr};
+    QTextBrowser* notes_{nullptr};
     QLabel* status_{nullptr};
     QPushButton* installBtn_{nullptr};
     QPushButton* notesBtn_{nullptr};

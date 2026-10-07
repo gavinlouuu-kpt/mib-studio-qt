@@ -111,8 +111,7 @@ void ProcessingService::CoreOperationLease::release() noexcept {
 }
 
 ProcessingService::~ProcessingService() {
-    cancelBackgroundCalibration();
-    if (bgCalPreviewThread_.joinable()) bgCalPreviewThread_.join();
+    stopBackgroundCalibration();
     // A joinable realtimeThread_ at destruction would std::terminate; do not
     // rely on the GUI teardown path having called stopRealtime() first.
     stopRealtime();
@@ -440,12 +439,21 @@ ProcessingService::RealtimeBatchSettings ProcessingService::getRealtimeBatchSett
 }
 
 void ProcessingService::setRealtimeRoi(const Roi& roi) {
-    {
-        std::scoped_lock lk(rtMutex_);
-        rtRoi_ = roi;
+    const auto apply = [&] {
+        {
+            std::scoped_lock lk(rtMutex_);
+            rtRoi_ = roi;
+        }
+        configVersion_.fetch_add(1, std::memory_order_release);
+        refreshRealtimeBatchPipelineConfig();
+    };
+    if (backgroundPublicationTransaction_) {
+        if (!backgroundPublicationTransaction_(apply))
+            SPDLOG_WARN("ProcessingService: setRealtimeRoi refused while experiment configuration "
+                        "is busy or not idle");
+    } else if (!experimentActive_.load(std::memory_order_acquire)) {
+        apply();
     }
-    configVersion_.fetch_add(1, std::memory_order_release);
-    refreshRealtimeBatchPipelineConfig();
 }
 
 ProcessingService::Roi ProcessingService::getRealtimeRoi() const {
@@ -454,50 +462,59 @@ ProcessingService::Roi ProcessingService::getRealtimeRoi() const {
 }
 
 void ProcessingService::setRealtimeBackgroundGray(const cv::Mat& bg) {
-    std::shared_ptr<const cv::Mat> stored;
-    {
-        std::scoped_lock lk(rtMutex_);
-        if (!bg.empty() && bg.type() == CV_8UC1) {
-            rtBgGray_ = std::make_shared<cv::Mat>(bg.clone());
-        } else if (!bg.empty()) {
-            cv::Mat tmp;
-            bg.convertTo(tmp, CV_8UC1);
-            rtBgGray_ = std::make_shared<cv::Mat>(std::move(tmp));
-        } else {
-            rtBgGray_.reset();
-        }
-        stored = rtBgGray_;
-    }
-    // Detect the channel band so objects whose centroid sits outside it (debris
-    // stuck on a wall) are rejected, while the ROI stays as drawn and cells
-    // near the walls are not clipped by the border check. Off unless opted in;
-    // a cleared background or a disabled setting clears the band. Published
-    // before the background generation bump so the realtime loop never pairs
-    // the new background with the previous band.
-    const Roi band =
-        (stored && !stored->empty()) ? computeAutoRoiFromBackground(*stored) : Roi{};
-    const bool haveBand = band.w > 0 && band.h > 0;
-    {
-        std::scoped_lock lk(channelBandMutex_);
-        channelBand_ = haveBand ? band : Roi{};
-    }
-
-    // Every publication (or clear) is a new background identity (issue #369).
-    backgroundGeneration_.fetch_add(1, std::memory_order_acq_rel);
-    configVersion_.fetch_add(
-        1, std::memory_order_release); // wake cached-config refresh in realtime loop
-    refreshRealtimeBatchPipelineConfig();
-
-    if (haveBand) {
-        SuggestedRoiCallback cb;
+    const auto apply = [&] {
+        std::shared_ptr<const cv::Mat> stored;
         {
-            std::scoped_lock lk(suggestedRoiCallbackMutex_);
-            cb = suggestedRoiCallback_;
+            std::scoped_lock lk(rtMutex_);
+            if (!bg.empty() && bg.type() == CV_8UC1) {
+                rtBgGray_ = std::make_shared<cv::Mat>(bg.clone());
+            } else if (!bg.empty()) {
+                cv::Mat tmp;
+                bg.convertTo(tmp, CV_8UC1);
+                rtBgGray_ = std::make_shared<cv::Mat>(std::move(tmp));
+            } else {
+                rtBgGray_.reset();
+            }
+            stored = rtBgGray_;
         }
-        if (cb) {
-            cb(band, lastAutoBackgroundFrame_.load(std::memory_order_relaxed));
+        // Detect the channel band so objects whose centroid sits outside it (debris
+        // stuck on a wall) are rejected, while the ROI stays as drawn and cells
+        // near the walls are not clipped by the border check. Off unless opted in;
+        // a cleared background or a disabled setting clears the band. Published
+        // before the background generation bump so the realtime loop never pairs
+        // the new background with the previous band.
+        const Roi band =
+            (stored && !stored->empty()) ? computeAutoRoiFromBackground(*stored) : Roi{};
+        const bool haveBand = band.w > 0 && band.h > 0;
+        {
+            std::scoped_lock lk(channelBandMutex_);
+            channelBand_ = haveBand ? band : Roi{};
         }
-        SPDLOG_INFO("Channel band from background: y={} h={}", band.y, band.h);
+
+        // Every publication (or clear) is a new background identity (issue #369).
+        backgroundGeneration_.fetch_add(1, std::memory_order_acq_rel);
+        configVersion_.fetch_add(
+            1, std::memory_order_release); // wake cached-config refresh in realtime loop
+        refreshRealtimeBatchPipelineConfig();
+
+        if (haveBand) {
+            SuggestedRoiCallback cb;
+            {
+                std::scoped_lock lk(suggestedRoiCallbackMutex_);
+                cb = suggestedRoiCallback_;
+            }
+            if (cb) {
+                cb(band, lastAutoBackgroundFrame_.load(std::memory_order_relaxed));
+            }
+            SPDLOG_INFO("Channel band from background: y={} h={}", band.y, band.h);
+        }
+    };
+    if (backgroundPublicationTransaction_) {
+        if (!backgroundPublicationTransaction_(apply))
+            SPDLOG_WARN("ProcessingService: setRealtimeBackgroundGray refused while experiment "
+                        "configuration is busy or not idle");
+    } else if (!experimentActive_.load(std::memory_order_acquire)) {
+        apply();
     }
 }
 
@@ -764,15 +781,44 @@ void ProcessingService::setMonitoringActive(bool active) {
 }
 
 void ProcessingService::setProcessingConfig(const ProcessingConfig& config) {
+    bool changesBackground;
     {
         std::scoped_lock lk(configMutex_);
-        processingConfig_ = config;
+        const auto& current = processingConfig_;
+        changesBackground =
+            current.auto_background_enabled != config.auto_background_enabled ||
+            current.auto_background_empty_frames != config.auto_background_empty_frames ||
+            current.auto_background_cooldown_frames != config.auto_background_cooldown_frames ||
+            current.auto_roi_from_background != config.auto_roi_from_background ||
+            current.auto_roi_wall_gradient_ratio != config.auto_roi_wall_gradient_ratio ||
+            current.auto_roi_wall_margin != config.auto_roi_wall_margin;
+        // Compare and store together: concurrent tuning must not restore an
+        // older background configuration after another setter or Start.
+        if (!changesBackground) processingConfig_ = config;
     }
-    activeContract_.store(config.processing_contract_version, std::memory_order_relaxed);
-    configVersion_.fetch_add(1, std::memory_order_release);
-    refreshRealtimeBatchPipelineConfig();
-    if (const std::string mismatch = processingContractMismatch(); !mismatch.empty()) {
-        SPDLOG_WARN("Processing will be refused: {}", mismatch);
+    const auto refresh = [&] {
+        activeContract_.store(config.processing_contract_version, std::memory_order_relaxed);
+        configVersion_.fetch_add(1, std::memory_order_release);
+        refreshRealtimeBatchPipelineConfig();
+        if (const std::string mismatch = processingContractMismatch(); !mismatch.empty()) {
+            SPDLOG_WARN("Processing will be refused: {}", mismatch);
+        }
+    };
+    const auto apply = [&] {
+        {
+            std::scoped_lock lk(configMutex_);
+            processingConfig_ = config;
+        }
+        refresh();
+    };
+    if (!changesBackground) {
+        refresh();
+    } else if (backgroundPublicationTransaction_) {
+        if (!backgroundPublicationTransaction_(apply))
+            SPDLOG_WARN(
+                "ProcessingService: background configuration refused while experiment is not idle");
+    } else if (!experimentActive_.load(std::memory_order_acquire)) {
+        apply();
     }
 }
 
@@ -1077,50 +1123,101 @@ std::string ProcessingService::backgroundSha256() const {
 
 bool ProcessingService::startBackgroundCalibration(const BackgroundCalibrationRequest& request,
                                                    std::string* error) {
-    if (!rtRunning_.load(std::memory_order_acquire)) {
-        if (error) *error = "realtime processing is not running";
-        return false;
+    const auto start = [&]() -> bool {
+        if (!rtRunning_.load(std::memory_order_acquire)) {
+            if (error) *error = "realtime processing is not running";
+            return false;
+        }
+        if (request.requiredAccepted == 0 || request.maxAttempts < request.requiredAccepted) {
+            if (error)
+                *error = "invalid calibration request (requiredAccepted must be >= 1 and <= "
+                         "maxAttempts)";
+            return false;
+        }
+        std::scoped_lock lk(bgCalMutex_);
+        if (bgCalStatus_.state == BackgroundCalibrationState::Running) {
+            if (error) *error = "a background calibration is already running";
+            return false;
+        }
+        bgCalRequest_ = request;
+        bgCalStatus_ = BackgroundCalibrationStatus{};
+        bgCalStatus_.state = BackgroundCalibrationState::Running;
+        bgCalStatus_.operationGeneration = ++bgCalOperationCounter_;
+        bgCalStatus_.frozenConfigVersion = configVersion_.load(std::memory_order_acquire);
+        bgCalAccumulator_.release();
+        bgCalDeadline_ =
+            std::chrono::steady_clock::now() + std::chrono::milliseconds(request.timeoutMs);
+        bgCalActive_.store(true, std::memory_order_release);
+        SPDLOG_INFO("Background calibration started: required={} maxAttempts={} timeoutMs={} "
+                    "configVersion={}",
+                    request.requiredAccepted, request.maxAttempts, request.timeoutMs,
+                    bgCalStatus_.frozenConfigVersion);
+        return true;
+    };
+    bool started = false;
+    const auto apply = [&] { started = start(); };
+    if (backgroundPublicationTransaction_) {
+        if (!backgroundPublicationTransaction_(apply)) {
+            if (error) *error = "experiment configuration is busy or not idle";
+            return false;
+        }
+    } else if (!experimentActive_.load(std::memory_order_acquire)) {
+        apply();
+    } else if (error) {
+        *error = "experiment is active";
     }
-    if (request.requiredAccepted == 0 || request.maxAttempts < request.requiredAccepted) {
-        if (error) *error = "invalid calibration request (requiredAccepted must be >= 1 and <= maxAttempts)";
-        return false;
-    }
-    std::scoped_lock lk(bgCalMutex_);
-    if (bgCalStatus_.state == BackgroundCalibrationState::Running) {
-        if (error) *error = "a background calibration is already running";
-        return false;
-    }
-    bgCalRequest_ = request;
-    bgCalStatus_ = BackgroundCalibrationStatus{};
-    bgCalStatus_.state = BackgroundCalibrationState::Running;
-    bgCalStatus_.operationGeneration = ++bgCalOperationCounter_;
-    bgCalStatus_.frozenConfigVersion = configVersion_.load(std::memory_order_acquire);
-    bgCalAccumulator_.release();
-    bgCalDeadline_ = std::chrono::steady_clock::now() + std::chrono::milliseconds(request.timeoutMs);
-    bgCalActive_.store(true, std::memory_order_release);
-    SPDLOG_INFO("Background calibration started: required={} maxAttempts={} timeoutMs={} configVersion={}",
-                request.requiredAccepted, request.maxAttempts, request.timeoutMs,
-                bgCalStatus_.frozenConfigVersion);
-    return true;
+    return started;
 }
 
-void ProcessingService::publishCalibratedBackgroundLocked(cv::Mat background) {
-    // Atomic publication: the previous background stays active until the
-    // candidate is installed here.
-    const Roi band = computeAutoRoiFromBackground(background);
-    {
-        std::scoped_lock rtLk(rtMutex_);
-        rtBgGray_ = std::make_shared<cv::Mat>(std::move(background));
-    }
-    {
-        std::scoped_lock lk(channelBandMutex_);
-        channelBand_ = band.w > 0 && band.h > 0 ? band : Roi{};
-    }
-    backgroundGeneration_.fetch_add(1, std::memory_order_acq_rel);
-    configVersion_.fetch_add(1, std::memory_order_release);
-    refreshRealtimeBatchPipelineConfig();
-    bgCalStatus_.publishedBackgroundGeneration = backgroundGeneration_.load(std::memory_order_acquire);
-    bgCalStatus_.publishedSha256 = backgroundSha256();
+void ProcessingService::setBackgroundPublicationTransaction(
+    std::function<bool(const std::function<void()>&)> transaction) {
+    backgroundPublicationTransaction_ = std::move(transaction);
+}
+
+bool ProcessingService::publishCalibratedBackgroundLocked(cv::Mat background,
+                                                          std::unique_lock<std::mutex>& lock) {
+    const auto generation = bgCalStatus_.operationGeneration;
+    bool published = false;
+    // Coordinator -> calibration is the lock order used by experiment readiness.
+    lock.unlock();
+    const auto publish = [&] {
+        lock.lock();
+        if (bgCalStatus_.state != BackgroundCalibrationState::Running ||
+            bgCalStatus_.operationGeneration != generation)
+            return;
+        if (configVersion_.load(std::memory_order_acquire) != bgCalStatus_.frozenConfigVersion) {
+            bgCalFinishLocked(BackgroundCalibrationState::FailedProcessing,
+                              "Processing configuration changed before background publication");
+            return;
+        }
+
+        // Atomic publication: the previous background stays active until the
+        // candidate is installed here.
+        const Roi band = computeAutoRoiFromBackground(background);
+        {
+            std::scoped_lock rtLk(rtMutex_);
+            rtBgGray_ = std::make_shared<cv::Mat>(std::move(background));
+        }
+        {
+            std::scoped_lock lk(channelBandMutex_);
+            channelBand_ = band.w > 0 && band.h > 0 ? band : Roi{};
+        }
+        backgroundGeneration_.fetch_add(1, std::memory_order_acq_rel);
+        configVersion_.fetch_add(1, std::memory_order_release);
+        refreshRealtimeBatchPipelineConfig();
+        bgCalStatus_.publishedBackgroundGeneration =
+            backgroundGeneration_.load(std::memory_order_acquire);
+        bgCalStatus_.publishedSha256 = backgroundSha256();
+        published = true;
+    };
+    const bool idle = backgroundPublicationTransaction_ ? backgroundPublicationTransaction_(publish)
+                                                        : (publish(), true);
+    if (!lock.owns_lock()) lock.lock();
+    if (!idle && bgCalStatus_.state == BackgroundCalibrationState::Running &&
+        bgCalStatus_.operationGeneration == generation)
+        bgCalFinishLocked(BackgroundCalibrationState::Cancelled,
+                          "Background calibration apply refused: experiment configuration is busy or not idle");
+    return published;
 }
 
 bool ProcessingService::startPreviewBackgroundCalibration(std::shared_ptr<backend::playback::FrameStore> store,
@@ -1204,17 +1301,22 @@ void ProcessingService::runPreviewBackgroundCalibration(std::shared_ptr<backend:
             median.at<uint8_t>(y, x) = values[values.size() / 2];
         }
     }
-    std::scoped_lock lk(bgCalMutex_);
+    std::unique_lock lk(bgCalMutex_);
     if (bgCalStatus_.state != BackgroundCalibrationState::Running || bgCalStatus_.operationGeneration != generation) {
         return; // cancelled meanwhile
     }
-    publishCalibratedBackgroundLocked(std::move(median));
+    if (!publishCalibratedBackgroundLocked(std::move(median), lk)) return;
     const Roi band = getChannelBand();
     bgCalFinishLocked(BackgroundCalibrationState::Succeeded,
                       "published the median of " + std::to_string(frames.size()) + " preview frames" +
                           (band.h > 0 ? "; channel band rows " + std::to_string(band.y) + "-" +
                                             std::to_string(band.y + band.h - 1)
                                       : std::string()));
+}
+
+void ProcessingService::stopBackgroundCalibration() {
+    cancelBackgroundCalibration();
+    if (bgCalPreviewThread_.joinable()) bgCalPreviewThread_.join();
 }
 
 void ProcessingService::cancelBackgroundCalibration() {
@@ -1252,7 +1354,7 @@ void ProcessingService::bgCalFinishLocked(BackgroundCalibrationState state, cons
 void ProcessingService::bgCalObserve(backend::recording::FrameOutcome outcome,
                                      const backend::playback::Frame* frame) {
     using backend::recording::FrameOutcome;
-    std::scoped_lock lk(bgCalMutex_);
+    std::unique_lock lk(bgCalMutex_);
     if (bgCalStatus_.state != BackgroundCalibrationState::Running) return;
     if (std::chrono::steady_clock::now() >= bgCalDeadline_) {
         bgCalFinishLocked(BackgroundCalibrationState::FailedTimeout,
@@ -1288,7 +1390,7 @@ void ProcessingService::bgCalObserve(backend::recording::FrameOutcome outcome,
     if (bgCalStatus_.accepted >= bgCalRequest_.requiredAccepted) {
         cv::Mat mean;
         bgCalAccumulator_.convertTo(mean, CV_8UC1, 1.0 / static_cast<double>(bgCalStatus_.accepted));
-        publishCalibratedBackgroundLocked(std::move(mean));
+        if (!publishCalibratedBackgroundLocked(std::move(mean), lk)) return;
         bgCalFinishLocked(BackgroundCalibrationState::Succeeded,
                           "published background from " + std::to_string(bgCalStatus_.accepted) + " empty frames");
         return;
@@ -2894,6 +2996,12 @@ void ProcessingService::realtimeLoop() {
 // overlay readers) are read-only. Shallow refcount assigns are therefore safe.
 // If in-place buffer reuse is ever added here this invariant must be revisited.
 void ProcessingService::realtimeInlineLoop() {
+    const auto installAutoBackground = [this](const cv::Mat& image) {
+        const auto apply = [&] { setRealtimeBackgroundGray(image); };
+        if (backgroundPublicationTransaction_) return backgroundPublicationTransaction_(apply);
+        apply();
+        return true;
+    };
     rtLastProcessed_.store(0);
     using clock = std::chrono::steady_clock;
     // Per-frame latency instrumentation sink (no-op unless enabled; see
@@ -3163,8 +3271,7 @@ void ProcessingService::realtimeInlineLoop() {
 
                             // Capture full frame as background (not just ROI)
                             cv::Mat fullGray = makeGrayCopy(f);
-                            if (!fullGray.empty()) {
-                                setRealtimeBackgroundGray(fullGray);
+                            if (!fullGray.empty() && installAutoBackground(fullGray)) {
                                 lastAutoBackgroundFrame_.store(idx, std::memory_order_relaxed);
                                 consecutiveEmptyFrames_.store(0, std::memory_order_relaxed);
 
@@ -3632,8 +3739,7 @@ void ProcessingService::realtimeInlineLoop() {
 
                             // Capture full frame as background (not just ROI)
                             cv::Mat fullGray = makeGrayCopy(f);
-                            if (!fullGray.empty()) {
-                                setRealtimeBackgroundGray(fullGray);
+                            if (!fullGray.empty() && installAutoBackground(fullGray)) {
                                 lastAutoBackgroundFrame_.store(idx, std::memory_order_relaxed);
                                 consecutiveEmptyFrames_.store(0, std::memory_order_relaxed);
 
@@ -4059,8 +4165,7 @@ void ProcessingService::realtimeInlineLoop() {
 
                             // Capture full frame as background (not just ROI)
                             cv::Mat fullGray = makeGrayCopy(f);
-                            if (!fullGray.empty()) {
-                                setRealtimeBackgroundGray(fullGray);
+                            if (!fullGray.empty() && installAutoBackground(fullGray)) {
                                 lastAutoBackgroundFrame_.store(idx, std::memory_order_relaxed);
                                 consecutiveEmptyFrames_.store(0, std::memory_order_relaxed);
 

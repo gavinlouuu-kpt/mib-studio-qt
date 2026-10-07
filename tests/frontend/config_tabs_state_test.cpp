@@ -1,4 +1,11 @@
 #include <QPlainTextEdit>
+#include <QInputDialog>
+#include <QMessageBox>
+#include <QTimer>
+#include "frontend/system/AppConfigWatcher.h"
+#include "frontend/utils/ConfigPathManager.h"
+#include "frontend/tabs/ExperimentMonitoringTab.h"
+#include "backend/processing/ProcessingService.h"
 // config_tabs_state_test (issue #361)
 //
 // ConfigTabs with explicit editor state and a bounded header (offscreen,
@@ -26,6 +33,7 @@
 #include "support/watchdog.h"
 
 #include <QAction>
+#include <QGroupBox>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QPushButton>
@@ -47,6 +55,17 @@
 #include <QElapsedTimer>
 #include <QThread>
 
+namespace frontend {
+struct ConfigTabsProfileTestAccess {
+    static QString base(ConfigTabs& tabs) { return tabs.profilesBaseDir(); }
+    static void refresh(ConfigTabs& tabs) { tabs.refreshProfilesList(false); }
+    static void catalog(ConfigTabs& tabs, const ProfileManager::Catalog& catalog) {
+        tabs.remoteCatalog_ = catalog;
+    }
+    static QComboBox* combo(ConfigTabs& tabs) { return tabs.profileSelect_; }
+};
+} // namespace frontend
+
 namespace {
 void settle(int rounds = 6)
 {
@@ -65,6 +84,19 @@ void settleMs(int ms)
         QCoreApplication::sendPostedEvents(nullptr, 0);
         QThread::msleep(5);
     }
+}
+
+// Pump events until pred() holds or timeoutMs elapses.
+template <typename Pred>
+bool settleUntil(Pred pred, int timeoutMs)
+{
+    QElapsedTimer t;
+    t.start();
+    while (!pred()) {
+        if (t.elapsed() >= timeoutMs) return false;
+        settleMs(20);
+    }
+    return true;
 }
 QByteArray fileBytes(const QString& path)
 {
@@ -93,7 +125,7 @@ int main(int argc, char* argv[])
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, QString::fromStdString((td.path() / "settings").string()));
     QString err;
-    MIB_REQUIRE(frontend::applicationsettings::initialize(&err), "settings init");
+    MIB_REQUIRE(frontend::applicationsettings::initialize(&err), "settings init: " + err.toStdString());
 
     const QString cfgPath = QString::fromStdString((td.path() / "cfg" / "config.json").string());
     QDir().mkpath(QFileInfo(cfgPath).absolutePath());
@@ -382,6 +414,128 @@ int main(int argc, char* argv[])
         MIB_EXPECT(frontend::ConfigTabs::upgradedMindVisionDefault("not json", bundled).isEmpty(),
                    "unparseable profile is never overwritten");
     }
+    wd.mark("profile lifecycle #583");
+    {
+        using Access = frontend::ConfigTabsProfileTestAccess;
+        frontend::AppConfigWatcher watcher(backend, nullptr);
+        frontend::ExperimentMonitoringTab monitoring(backend);
+        QObject::connect(&tabs, &frontend::ConfigTabs::appConfigPathChanged, &watcher,
+                         &frontend::AppConfigWatcher::setWatchedPath);
+        QObject::connect(
+            &watcher, &frontend::AppConfigWatcher::configFileChanged,
+            [&](const QString&) { monitoring.loadCurrentConfig(watcher.documentFingerprint()); });
+        QObject::connect(&monitoring, &frontend::ExperimentMonitoringTab::applyRequested, &watcher,
+                         &frontend::AppConfigWatcher::onApplyProcessingDraft);
+        QObject::connect(&watcher, &frontend::AppConfigWatcher::processingDraftApplied, &monitoring,
+                         &frontend::ExperimentMonitoringTab::onApplyResult);
+        const QString initialDefaultPath = frontend::ConfigPathManager::getConfigPath();
+        const QByteArray defaultBytes = fileBytes(initialDefaultPath);
+        const bool defaultExisted = QFile::exists(initialDefaultPath);
+        watcher.start();
+        monitoring.loadCurrentConfig(watcher.documentFingerprint());
+        const QString suffix = QFileInfo(QString::fromStdString(td.path().string())).fileName();
+        const QString profileName = "regression-" + suffix;
+        const QString renamedName = "renamed-" + suffix;
+        const QString profileDir = QDir(Access::base(tabs)).filePath(profileName);
+        QDir().mkpath(profileDir);
+        writeFile(
+            profileDir + "/config.json",
+            QByteArrayLiteral(
+                "{\"image_processing\":{\"bg_subtract_threshold\":8,\"area_threshold_max\":500}}"));
+        Access::refresh(tabs);
+        auto* combo = Access::combo(tabs);
+        combo->setCurrentIndex(combo->findData(profileName));
+        auto* area =
+            qobject_cast<QGroupBox*>(monitoring.tuneFieldWidget(frontend::TuneField::AreaEnabled));
+        MIB_REQUIRE(area, "Monitoring filter control");
+        area->setChecked(!area->isChecked());
+        monitoring.tuneApplyButton()->click();
+        settle();
+        MIB_EXPECT(!monitoring.tuneDraft().dirty() && !monitoring.tuneDraft().conflict(),
+                   "Monitoring Apply succeeds after switching profile");
+
+        const QByteArray remoteBytes =
+            QByteArrayLiteral("{\"image_processing\":{\"bg_subtract_threshold\":9}}");
+        const QString remotePath = QString::fromStdString((td.path() / "remote.json").string());
+        writeFile(remotePath, remoteBytes);
+        frontend::ProfileManager::Catalog catalog;
+        frontend::ProfileManager::CatalogEntry entry;
+        entry.profileId = profileName;
+        entry.revision = "2";
+        entry.configUrl = QUrl::fromLocalFile(remotePath);
+        entry.configSha256 = QString::fromLatin1(
+            QCryptographicHash::hash(remoteBytes, QCryptographicHash::Sha256).toHex());
+        catalog.profiles.push_back(entry);
+        Access::catalog(tabs, catalog);
+        Access::refresh(tabs);
+        MIB_EXPECT(tabs.noticesText().contains("newer version"), "update banner before install");
+        QTimer::singleShot(0, [] {
+            auto* dialog = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+            if (dialog) dialog->button(QMessageBox::Yes)->click();
+        });
+        QMetaObject::invokeMethod(&tabs, "onUpdateSelectedProfile", Qt::DirectConnection);
+        MIB_EXPECT(!tabs.noticesText().contains("newer version") &&
+                       !tabs.profileStateText().contains("update available") &&
+                       !combo->currentText().contains("update available"),
+                   "install refreshes status and banner immediately");
+        // Return to a local profile to check local identity rewriting on rename.
+        auto localMeta =
+            QJsonDocument::fromJson(fileBytes(profileDir + "/profile.meta.json")).object();
+        localMeta["source"] = QJsonObject{{"type", "local-generated"}};
+        writeFile(profileDir + "/profile.meta.json", QJsonDocument(localMeta).toJson());
+        Access::refresh(tabs);
+
+        QTimer::singleShot(0, [renamedName] {
+            auto* dialog = qobject_cast<QInputDialog*>(QApplication::activeModalWidget());
+            if (dialog) {
+                dialog->setTextValue(renamedName);
+                dialog->accept();
+            }
+        });
+        QMetaObject::invokeMethod(&tabs, "onRenameProfile", Qt::DirectConnection);
+        const QString renamedDir = QDir(Access::base(tabs)).filePath(renamedName);
+        const auto meta =
+            QJsonDocument::fromJson(fileBytes(renamedDir + "/profile.meta.json")).object();
+        MIB_EXPECT(meta["profile_id"].toString() == renamedName &&
+                       meta["display_name"].toString() == renamedName,
+                   "rename rewrites metadata identity and name");
+        MIB_EXPECT(combo->currentText().startsWith("renamed"), "combo shows renamed metadata");
+        // A freshly seeded Windows default can retain checkout CRLF bytes.
+        // Use every bundled key so the watcher does not rewrite it during merging.
+        QFile bundledDefault(":/defaults/config.json");
+        MIB_REQUIRE(bundledDefault.open(QIODevice::ReadOnly), "read bundled app default");
+        QByteArray freshDefault = bundledDefault.readAll();
+        freshDefault.replace("\r\n", "\n");
+        freshDefault.replace("\n", "\r\n");
+        writeFile(initialDefaultPath, freshDefault);
+        QTimer::singleShot(0, [] {
+            auto* dialog = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+            if (dialog) dialog->button(QMessageBox::Yes)->click();
+        });
+        QMetaObject::invokeMethod(&tabs, "onDeleteProfile", Qt::DirectConnection);
+        const QString defaultPath = tabs.appConfigDocument().path;
+        MIB_EXPECT(watcher.watchedPath() == defaultPath && !defaultPath.startsWith(renamedDir),
+                   "delete active profile repoints watcher to default");
+        MIB_EXPECT(!tabs.appConfigDocument().dirty && !tabs.appConfigDocument().conflict,
+                   "fresh default loads clean despite CRLF normalization");
+        MIB_EXPECT(tabs.appConfigDocument().diskFingerprint ==
+                       QCryptographicHash::hash(fileBytes(defaultPath), QCryptographicHash::Sha256),
+                   "default baseline matches exact bytes after watcher preparation");
+        tabs.setAppConfigEditorText(
+            QStringLiteral("{\"image_processing\":{\"bg_subtract_threshold\":20}}"));
+        QMetaObject::invokeMethod(&tabs, "onSaveJson", Qt::DirectConnection);
+        // Applied asynchronously from the watcher's file-change event, which is
+        // slower on Windows: wait on the condition, not a fixed delay.
+        MIB_EXPECT(settleUntil([&] {
+                       return backend.processing().getProcessingConfig().bg_subtract_threshold == 20;
+                   }, 5000),
+                   "save after deletion applies default config to live processing");
+        if (defaultExisted)
+            writeFile(initialDefaultPath, defaultBytes);
+        else
+            QFile::remove(initialDefaultPath);
+    }
+
     backend.shutdown();
     return mib::test::exitCode();
 }

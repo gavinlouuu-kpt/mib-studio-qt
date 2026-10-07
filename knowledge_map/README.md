@@ -32,7 +32,7 @@ following `[[WikiLinks]]`. If you are a new agent, start here:
   [[services/TriggerService]], [[services/SerialBus]],
   [[services/SyringePumpService]], [[services/PulseGeneratorService]],
   [[services/StageService]] (Z stage, driver [[services/ZC300Stage]])
-- Optional: [[services/YoloService]], [[services/RecorderService]],
+- Optional: [[services/RecorderService]],
   [[services/BatchMaskSources]]
 
 ### Frontend (`src/frontend/`)
@@ -44,7 +44,7 @@ following `[[WikiLinks]]`. If you are a new agent, start here:
   [[frontend/ConfigTabs]], [[frontend/ExperimentMonitoringTab]],
   [[frontend/HdfReviewTab]], [[frontend/NanopositionerTab]],
   [[frontend/SyringePumpTab]]
-- Support: [[frontend/Dialogs]], [[frontend/System-Utilities]],
+- Support: [[frontend/HelpDialog]], [[frontend/Dialogs]], [[frontend/System-Utilities]],
   [[frontend/Screenshot-Tour]]
 
 ### Camera (`src/camera/`)

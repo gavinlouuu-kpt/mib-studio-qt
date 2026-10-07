@@ -6,6 +6,7 @@
 #include <nlohmann/json.hpp>
 #include <opencv2/imgcodecs.hpp>
 
+#include <atomic>
 #include <cstdlib>
 #include <fstream>
 #include <chrono>
@@ -124,7 +125,22 @@ int main()
         // coordinator's worker publishes Stopping/terminal), so guard it.
         std::vector<bridge::BackendEvent> events;
         std::mutex eventsMutex;
-        facade.setEventSink([&events, &eventsMutex](const bridge::BackendEvent &event) {
+        std::atomic<int> lockedPhases{0};
+        std::atomic<bool> mutationAccepted{false};
+        facade.setEventSink([&](const bridge::BackendEvent &event) {
+            if (const auto* status = std::get_if<bridge::ExperimentStatusEvent>(&event)) {
+                if (status->status.state == backend::app::ExperimentRunState::Starting ||
+                    status->status.state == backend::app::ExperimentRunState::Stopping) {
+                    const std::uint8_t pixel = 17;
+                    bridge::ProcessingSettingsCommand roi;
+                    roi.roi = backend::services::ProcessingService::Roi{0, 0, 0, 0};
+                    for (const auto& result : {facade.setBackgroundImage(1, 1, &pixel, 1),
+                                               facade.clearBackgroundImage(), facade.dispatch(roi),
+                                               facade.backgroundCalibrationCommandJson(R"({"action":"start","required_accepted":1,"max_attempts":10,"timeout_ms":5000})")})
+                        if (result.ok || result.message.empty()) mutationAccepted.store(true);
+                    lockedPhases.fetch_add(1);
+                }
+            }
             std::lock_guard<std::mutex> lock(eventsMutex);
             events.push_back(event);
         });
@@ -333,6 +349,19 @@ int main()
         }
         if (facade.runStartupDiscoveryJson("start").find("\"accepted\":false") == std::string::npos) return 73;
         if (facade.backgroundCalibrationCommandJson(R"({"action":"start","required_accepted":10,"max_attempts":200,"timeout_ms":5000})").ok) return 78;
+        const std::uint8_t backgroundPixel = 17;
+        const auto frozenVersion = backend.processing().getConfigVersion();
+        bridge::ProcessingSettingsCommand roiMutation;
+        roiMutation.roi = backend::services::ProcessingService::Roi{0, 0, 0, 0};
+        for (const auto& refused : {facade.setBackgroundImage(1, 1, &backgroundPixel, 1),
+                                   facade.clearBackgroundImage(), facade.dispatch(roiMutation)}) {
+            if (refused.ok || refused.message.empty()) {
+                std::cerr << "active experiment must refuse background and ROI mutations\n";
+                facade.shutdown();
+                return 95;
+            }
+        }
+        if (backend.processing().getConfigVersion() != frozenVersion) { facade.shutdown(); return 96; }
         // Config transactions must not change the frozen run authority.
         const auto configPath = (dataDir / "checked-config.json").string();
         std::ofstream(configPath) << "{}";
@@ -386,6 +415,15 @@ int main()
                       << " persisted=" << status.persistenceCommitted << "/" << status.persistenceAdmitted << ")\n";
             facade.shutdown();
             return 26;
+        }
+        if (lockedPhases.load() != 2 || mutationAccepted.load()) { facade.shutdown(); return 98; }
+        if (!facade.setBackgroundImage(1, 1, &backgroundPixel, 1).ok ||
+            !facade.clearBackgroundImage().ok || !facade.dispatch(roiMutation).ok) { facade.shutdown(); return 97; }
+        if (!facade.backgroundCalibrationCommandJson(
+                R"({"action":"start","required_accepted":1,"max_attempts":10,"timeout_ms":5000})").ok ||
+            !facade.backgroundCalibrationCommandJson(R"({"action":"cancel"})").ok) {
+            facade.shutdown();
+            return 99;
         }
         const auto stoppedAgain = facade.dispatch(stop);
         if (stoppedAgain.ok || !stoppedAgain.experimentStopOutcome ||

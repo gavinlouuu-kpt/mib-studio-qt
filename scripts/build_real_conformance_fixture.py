@@ -120,7 +120,7 @@ def main() -> int:
             "recording": relative,
             "frame_indices": picks,
             "background": f"{cell_line}/{stem}/contract2_background.png "
-                          "(mean of up to 128 YOLO-negative frames)",
+                          "(mean of up to 128 detector-negative frames)",
         })
         print(f"{cell_line}: frames {picks}")
 

@@ -30,6 +30,7 @@ set(MIB_STANDALONE_BACKEND_TESTS
     processing_core_authenticode_test   # Windows signing workflow invokes this executable directly
     mib_backend_smoke_test              # tools/gen_bridge_link_manifest.py uses its .vcxproj as reference project
     hdf_export_service_test             # exporter-soak.yml builds and runs it directly
+    fcs_writer_test                     # standalone FCS binary/layout checks
     crash_reporter_segv_test            # re-executes argv[0] --crash-child
     crash_reporter_terminate_test       # re-executes argv[0]
     hdf5_exit_teardown_test             # std::exit with a file open IS the test
@@ -766,6 +767,19 @@ set_tests_properties(recording.hdf_export_soak PROPERTIES
     ENVIRONMENT "MIB_EXPORT_SOAK_CYCLES=50"
     TIMEOUT 900)
 
+mib_add_backend_test_executable(fcs_writer_test recording/fcs_writer_test.cpp)
+add_test(NAME recording.fcs_writer COMMAND $<TARGET_FILE:fcs_writer_test>)
+set_tests_properties(recording.fcs_writer PROPERTIES LABELS "recording;backend;fcs;safety" TIMEOUT 30)
+
+if(Python3_Interpreter_FOUND)
+    add_test(NAME recording.fcs_flowio
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test_fcs_flowio.py
+            --fixture-generator $<TARGET_FILE:fcs_writer_test>
+            --native-cli $<TARGET_FILE:hdf_export_cli>)
+    set_tests_properties(recording.fcs_flowio PROPERTIES
+        LABELS "recording;backend;fcs;round-trip" SKIP_RETURN_CODE 77 TIMEOUT 180)
+endif()
+
 mib_add_backend_test_executable(kin6_batch_pipeline_evidence integration/kin6_batch_pipeline_evidence.cpp)
 
 mib_add_backend_test_executable(kin10_hf_dataset_pipeline_test integration/kin10_hf_dataset_pipeline_test.cpp)
@@ -1323,6 +1337,15 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/release/test_desktop_release_version.py
     )
     set_tests_properties(scripts.desktop_release_version PROPERTIES
+        LABELS "scripts;release"
+        TIMEOUT 30
+    )
+
+    add_test(
+        NAME scripts.release_notes
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/tools/test_release_notes.py
+    )
+    set_tests_properties(scripts.release_notes PROPERTIES
         LABELS "scripts;release"
         TIMEOUT 30
     )

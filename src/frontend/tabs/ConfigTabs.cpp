@@ -29,6 +29,7 @@
 #include <QToolButton>
 #include <QTimer>
 #include <QSettings>
+#include <QSaveFile>
 #include <QJsonDocument>
 #include <QJsonParseError>
 #include <QHeaderView>
@@ -866,24 +867,28 @@ void ConfigTabs::clearJsonSyncIndicators()
 
 bool ConfigTabs::loadFileToEditor(const QString& path, QPlainTextEdit* editor, QString* err) {
     QFile f(path);
-    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+    if (!f.open(QIODevice::ReadOnly)) {
         if (err) *err = f.errorString();
         return false;
     }
-    QTextStream in(&f);
+    const QByteArray bytes = f.readAll();
+    QTextStream in(bytes);
     const QString content = in.readAll();
     const bool blocked = editor->blockSignals(true);
     editor->setPlainText(content);
     editor->blockSignals(blocked);
     if (editor == jsonEdit_) {
-        jsonDoc_.markLoaded(path, content);
+        jsonDoc_.markLoaded(path, editor->toPlainText());
+        jsonDoc_.diskFingerprint = ConfigDocumentStore::fingerprintOf(bytes);
         clearJsonSyncIndicators();
     } else if (editor == jsEdit_) {
-        jsDoc_.markLoaded(path, content);
+        jsDoc_.markLoaded(path, editor->toPlainText());
+        jsDoc_.diskFingerprint = ConfigDocumentStore::fingerprintOf(bytes);
         if (jsUnsavedLabel_) jsUnsavedLabel_->setVisible(false);
         emit documentStateChanged();
     } else if (editor == mvEdit_) {
-        mvDoc_.markLoaded(path, content);
+        mvDoc_.markLoaded(path, editor->toPlainText());
+        mvDoc_.diskFingerprint = ConfigDocumentStore::fingerprintOf(bytes);
         if (mvUnsavedLabel_) mvUnsavedLabel_->setVisible(false);
         emit documentStateChanged();
     }
@@ -897,7 +902,7 @@ bool ConfigTabs::saveEditorToFile(QPlainTextEdit* editor, const QString& path, Q
     // disk since it was loaded is a conflict: ask before overwriting (never
     // in non-interactive/test mode).
     std::optional<QByteArray> expected;
-    if (doc && doc->path == path) expected = doc->loadedFingerprint;
+    if (doc && doc->path == path) expected = doc->diskFingerprint;
     ConfigWriteResult r = ConfigDocumentStore::writeText(path, text, expected, /*force=*/false);
     if (r.conflict) {
         bool overwrite = false;
@@ -2335,6 +2340,7 @@ void ConfigTabs::onProfileSelectionChanged(int index) {
         s.remove("Config/ExternalAppConfigPath");
         s.remove("Config/ExternalCameraScriptPath");
         SPDLOG_INFO("Profiles: cleared active profile; reverting to default include paths");
+        emit appConfigPathChanged(currentJsonPath());
         onReloadJson();
         onReloadJs();
         refreshProfileStatusLabel();
@@ -2446,6 +2452,7 @@ void ConfigTabs::onDeleteProfile() {
         s.remove("Config/ExternalCameraScriptPath");
         s.remove("Profiles/LastProfileName");
         SPDLOG_INFO("Profiles: deleting active profile, reverting to defaults");
+        emit appConfigPathChanged(currentJsonPath());
         onReloadJson();
         onReloadJs();
     }
@@ -2485,6 +2492,41 @@ void ConfigTabs::onRenameProfile() {
     if (!base.rename(oldName, newName)) {
         if (!nonInteractive_) QMessageBox::warning(this, tr("Rename Profile"), tr("Failed to rename profile directory."));
         return;
+    }
+    const QString metaPath = QDir(newDir).filePath(QStringLiteral("profile.meta.json"));
+    QString metaText;
+    QString err;
+    if (QFile::exists(metaPath)) {
+        QJsonParseError parseError;
+        if (!readTextFile(metaPath, &metaText, &err)) {
+            base.rename(newName, oldName);
+            if (!nonInteractive_) QMessageBox::warning(this, tr("Rename Profile"), err);
+            return;
+        }
+        const auto doc = QJsonDocument::fromJson(metaText.toUtf8(), &parseError);
+        auto metadata = doc.object();
+        metadata[QStringLiteral("display_name")] = newName;
+        // Catalog identity remains stable for remote-managed profiles.
+        if (metadata.value(QStringLiteral("source"))
+                .toObject()
+                .value(QStringLiteral("type"))
+                .toString() != QStringLiteral("r2-public-catalog")) {
+            metadata[QStringLiteral("profile_id")] = newName;
+        }
+        QSaveFile metaFile(metaPath);
+        const QByteArray bytes = QJsonDocument(metadata).toJson(QJsonDocument::Indented);
+        if (parseError.error != QJsonParseError::NoError || !doc.isObject() ||
+            !metaFile.open(QIODevice::WriteOnly) || metaFile.write(bytes) != bytes.size() ||
+            !metaFile.commit()) {
+            err = parseError.error != QJsonParseError::NoError ? parseError.errorString()
+                                                               : metaFile.errorString();
+            metaFile.cancelWriting();
+            base.rename(newName, oldName);
+            if (!nonInteractive_)
+                QMessageBox::warning(this, tr("Rename Profile"),
+                                     tr("Failed to update profile metadata: %1").arg(err));
+            return;
+        }
     }
     // If active, update settings
     const QString activeJson = currentJsonPath();

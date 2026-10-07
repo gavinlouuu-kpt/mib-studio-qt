@@ -287,8 +287,11 @@ the C++ enums, in `contract.rs` for Rust and by the generated
 `bridgeContract.ts`). `BridgeEvent` gains exact companions
 (`experiment_start_generation`, `experiment_persistence_{admitted,committed,failed}`,
 `experiment_completion`, `experiment_terminal`, `experiment_finalization_ok`);
-legacy slots: `u3` = persistence committed, `u4` = 0, `experiment_dropped_valid`
-= persistence pending, `experiment_dropped_invalid` = persistence failed.
+legacy slots: `u3` = valid saved, `u4` = invalid saved;
+`experiment_dropped_valid` / `experiment_dropped_invalid` count policy drops by class.
+Pull status uses the same mapping. The desktop derives pending saves as admitted
+minus committed, failed, and policy drops (clamped at zero), and labels writer
+failures separately. These corrected values require no bridge ABI change (#546).
 `fetch_experiment_status` carries the full status (generations, completion
 reason, fault code/message); `fetch_experiment_readiness(output_path)` the
 gate list. `bridge_abi_version()` returns `13`. The reliability serial bus
@@ -480,6 +483,22 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
   `stage_motion_is_control_only_but_stop_is_not` in the server;
   `backend.stage_bridge_facade`.
 
+## ABI 31: run accounting for the Review tab (#549)
+
+`fetch_run_accounting(source)` (read-only, not a control command) returns the reconciled accounting
+as JSON. `source` is `review` (the file loaded for review: `available` false with a reason when none
+is open; `recorded` false for a raw recording or a legacy file without accounting; adds `file_path`)
+or `last_run` (the run that finished last in this session; adds `start_generation`; `available` false
+before any run). Fields: `completion` and `completion_name`, `completion_reason`, `reconciled`,
+`admitted` (the frames the run claimed, the true denominator), `empty`, `processed`,
+`scientifically_rejected`, `processing_failed`, `store_overwritten`, `store_not_committed`,
+`store_malformed` (a declared loss: booked ingress-error frames), `cancelled_by_policy`,
+`pending_at_stop`, `sequence_gaps`, `objects_detected`, the `persistence_*` counters, `fatal_error`,
+`fatal_message` and `malformed_warn_fraction` (0.001). `BackendFacade::fetchRunAccountingJson` builds
+it from `Hdf5Service::readRunAccounting` (review) or `ExperimentCoordinator::lastRunAccounting`.
+Test: `contract.rs` (`experiment_lifecycle_end_to_end` checks both sources agree after a real run;
+`run_accounting_is_unavailable_without_a_file_or_a_run`).
+
 ## ABI 30: no homing for the Z stage (#464, ADR 0013 Amendment 1)
 
 28 belongs to #482 and 29 to #493 (allocated by the coordinator); the ZC300
@@ -529,6 +548,16 @@ run_y, service}` and `storage{path, writable, ram, free_bytes, filesystem,
 warning}`: the recording target of the data directory, from
 `app::recordingTarget`. Test: `contract.rs`
 `instrument_mode_commands_off_the_instrument`.
+
+**Live result statistics (#501, additive, no new command or ABI number).** `fetch_instrument_status`
+also returns `results{available, running, frames, results, empty_frames, invalid_frames,
+truncated_frames, incomplete_frames, decode_errors, sequence_gaps, overruns, last_error}`, the
+execution provider's cumulative counters. They count while an experiment runs and restart with
+each run. EMPTY, INVALID and truncated come from the FRAME flags (`ProviderStatus.emptyFrames`
+etc.; a frame with both EMPTY and truncated counts in both). The UI turns successive polls into
+frames/s, results/s and the three fractions (`resultsRates.ts`), and shows ring overruns, decode
+errors and frame gaps when they are non-zero. Tests: `processing.pz_execution_provider`
+(`testFrameFlagCounters`), `contract.rs` (the block on the desktop), `resultsRates.test.ts`.
 
 Final numbering from merge coordination: P0 (#502) takes 24, #398 takes 25,
 the ZC300 stage bridge (#513) takes 26, and this takes 27 (it was offline

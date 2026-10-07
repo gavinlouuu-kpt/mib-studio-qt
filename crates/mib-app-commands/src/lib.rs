@@ -1401,6 +1401,12 @@ pub fn fetch_run_preview(state: &AppState) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+/// Reconciled run accounting of the review file or the last finished run (ABI 31, #549).
+pub fn fetch_run_accounting(state: &AppState, source: &str) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().fetch_run_accounting(source)).map_err(|e| e.to_string())
+}
+
 /// Where the science runs and what this build has (ABI 21).
 pub fn fetch_platform_info(state: &AppState) -> Result<serde_json::Value, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;

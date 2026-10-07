@@ -45,14 +45,42 @@ overlay and metrics exports, but raw TIFF export still works.
 
 - **Export Metrics** — writes `<file>_metrics.csv` next to your chosen
   location (auto-suffixed `_2`, `_3`, … rather than overwriting).
+- **Export FCS…** — saves a FlowJo-compatible FCS 3.1 file and a companion
+  `<chosen stem>_event_map.csv`, with one event per accepted detection. The
+  export uses the calibration saved in the run. Raw recordings have no object
+  metrics and cannot be exported as FCS.
 - **Export All** — writes a folder named after the file containing
   `metrics.csv`, frame TIFFs, and chart images. For multi-image series you
   are asked whether to export all series frames, a range (e.g. `9-15`), or
   skip them.
+- **Batch Export FCS…** (under **More…**) — select several experiment files
+  and a directory to write one FCS/event-map pair per file. Duplicate names
+  receive `_2`, `_3`, … suffixes; failures are included in the batch summary.
 - **Batch Metrics / Batch Export All** — select several files at once; the
   batch continues past individual failures and reports a summary.
 
-The last successful output directory is remembered between sessions.
+The last successful output directory is remembered between sessions; FCS and
+metrics CSV share this setting. Existing FCS or event-map files are refused;
+choose a new name to preserve both outputs.
+
+Open the `.fcs` file in FlowJo to gate and plot the image measurements. Channels
+follow the processing contract and the members actually stored in the run:
+
+| Channel | Unit | Availability |
+|---|---|---|
+| `Area_um2`, `Area_px2` | µm², pixels² | Contracts 1–3 |
+| `Deformability`, `AreaRatio` | unitless | Contracts 1–3 |
+| `RingRatio` | unitless | Contract 1 |
+| `LaplacianVar` | gray² | Contracts 2–3 |
+| `BrightQ1`–`BrightQ4` | gray | Contracts 1–2 |
+| `BrightMean`, `BrightVar` | gray, gray² | Contract 3 |
+| `Pixels`, `Blemishes` | count | Contract 3 |
+| `Time` | seconds from the first exported event | Contracts 1–3 |
+
+Missing stored members are omitted. These are image measurements, rather than
+fluorescence or FSC/SSC channels. Images remain in the HDF5 file. The event-map
+CSV links each FCS event to its source frame, object ID and exact nanosecond
+timestamp; repeated physical cells can appear in multiple events.
 
 ## Regenerate masks (reanalyse in-app)
 

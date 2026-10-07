@@ -349,8 +349,10 @@ HdfReviewTab::HdfReviewTab(backend::AppBackend& backend, QWidget* parent)
     connect(ui->selectFileBtn, &QPushButton::clicked, this, &HdfReviewTab::onSelectFile);
     connect(ui->closeFileBtn, &QPushButton::clicked, this, &HdfReviewTab::onCloseFile);
     connect(ui->exportMetricsBtn, &QPushButton::clicked, this, &HdfReviewTab::onExportMetrics);
+    connect(ui->exportFcsBtn, &QPushButton::clicked, this, &HdfReviewTab::onExportFcs);
     connect(ui->exportAllBtn, &QPushButton::clicked, this, &HdfReviewTab::onExportAll);
     connect(ui->batchExportMetricsBtn, &QPushButton::clicked, this, &HdfReviewTab::onBatchExportMetrics);
+    connect(ui->batchExportFcsBtn, &QPushButton::clicked, this, &HdfReviewTab::onBatchExportFcs);
     connect(ui->batchExportAllBtn, &QPushButton::clicked, this, &HdfReviewTab::onBatchExportAll);
     connect(ui->exportChartsBtn, &QPushButton::clicked, this, &HdfReviewTab::onExportCharts);
     connect(ui->regenerateMasksBtn, &QPushButton::clicked, this, &HdfReviewTab::onRegenerateMasks);
@@ -693,6 +695,7 @@ void HdfReviewTab::loadHdfFile(const QString& filePath) {
     // are meaningless — disable them.
     bool hasData = !validFrames_.empty() || !invalidFrames_.empty();
     ui->exportMetricsBtn->setEnabled(hasData && !isRecordingMode_);
+    ui->exportFcsBtn->setEnabled(hasData && !isRecordingMode_);
     ui->exportAllBtn->setEnabled(hasData);
     ui->exportChartsBtn->setEnabled(hasData && !isRecordingMode_);
     ui->closeFileBtn->setEnabled(hasData);
@@ -720,8 +723,9 @@ void HdfReviewTab::loadHdfFile(const QString& filePath) {
         const size_t shownInvalid = !invalidFrames_.empty() ? invalidFrames_.size()
                                    : (invalidImagesCount > 0 ? invalidImagesCount : totalInvalid);
         ui->statusLabel->setText(QString("Valid: %1, Invalid: %2")
-                              .arg(static_cast<qulonglong>(shownValid))
-                              .arg(static_cast<qulonglong>(shownInvalid)));
+                                     .arg(static_cast<qulonglong>(shownValid))
+                                     .arg(static_cast<qulonglong>(shownInvalid)) +
+                                 accountingSummary());
     }
 
     SPDLOG_INFO("Loaded HDF file: {} valid frames, {} invalid frames", 
@@ -775,6 +779,7 @@ void HdfReviewTab::clearDisplay() {
 
     // Disable export buttons and ROI overlay when no data
     ui->exportMetricsBtn->setEnabled(false);
+    ui->exportFcsBtn->setEnabled(false);
     ui->exportAllBtn->setEnabled(false);
     ui->exportChartsBtn->setEnabled(false);
     ui->regenerateMasksBtn->setEnabled(false);
@@ -1305,6 +1310,55 @@ void HdfReviewTab::onExportMetrics() {
     });
 }
 
+void HdfReviewTab::onExportFcs() {
+    if (exportInProgress()) {
+        QMessageBox::information(this, tr("Export"), tr("An export is already running. Wait for it to finish or cancel it."));
+        return;
+    }
+    if (loadedHdfFilePath_.isEmpty() || (validFrames_.empty() && invalidFrames_.empty()) || isRecordingMode_) {
+        QMessageBox::information(this, tr("Export FCS"), tr("No metrics data available to export."));
+        return;
+    }
+
+    QString filePath = QFileDialog::getSaveFileName(
+        this, tr("Export FCS 3.1"), frontend::hdfreviewexport::fcsPath(loadedHdfFilePath_, metricsExportDir()),
+        tr("FCS 3.1 Files (*.fcs);;All Files (*)"), nullptr, QFileDialog::DontConfirmOverwrite);
+    if (filePath.isEmpty()) return;
+    if (!filePath.endsWith(QStringLiteral(".fcs"), Qt::CaseInsensitive)) filePath += QStringLiteral(".fcs");
+    startFcsExport(filePath);
+}
+
+void HdfReviewTab::startFcsExportForTests(const QString& destination) { startFcsExport(destination, true); }
+
+void HdfReviewTab::startFcsExport(const QString& destination, bool suppressDialog) {
+    if (destination.isEmpty() || loadedHdfFilePath_.isEmpty() || isRecordingMode_ ||
+        (validFrames_.empty() && invalidFrames_.empty())) return;
+    backend::recording::HdfExportRequest request;
+    request.sourcePath = loadedHdfFilePath_.toStdString();
+    request.outputRoot = QFileInfo(destination).absolutePath().toStdString();
+    request.format = backend::recording::HdfExportFormat::Fcs;
+    request.conversionFactor = filePixelToMicron();
+    request.explicitDestination = destination.toStdString();
+    beginExportJob(std::move(request), tr("Export FCS"), [this, destination, suppressDialog](const backend::recording::HdfExportResult& r) {
+        finishExportUi();
+        if (r.completed()) {
+            rememberMetricsExportDir(QFileInfo(destination).absolutePath());
+            if (!suppressDialog) {
+                QMessageBox::information(this, tr("Export Complete"),
+                                         tr("Exported %1 FCS 3.1 events (%2 valid, %3 invalid) to:\n%4\nEvent map: %5")
+                                             .arg(static_cast<qulonglong>(r.validCount + r.invalidCount))
+                                             .arg(static_cast<qulonglong>(r.validCount))
+                                             .arg(static_cast<qulonglong>(r.invalidCount))
+                                             .arg(QString::fromStdString(r.finalPath))
+                                             .arg(QFileInfo(destination).absolutePath() + QLatin1Char('/') +
+                                                  QFileInfo(destination).completeBaseName() + QStringLiteral("_event_map.csv")));
+            }
+        } else {
+            reportExportNotCompleted(tr("Export FCS"), r);
+        }
+    });
+}
+
 void HdfReviewTab::onBatchExportMetrics() {
     if (exportInProgress()) {
         QMessageBox::information(this, tr("Export"), tr("An export is already running. Wait for it to finish or cancel it."));
@@ -1333,7 +1387,30 @@ void HdfReviewTab::onBatchExportMetrics() {
     batch->sources = filePaths;
     batch->destinations = frontend::hdfreviewexport::batchMetricsCsvPaths(filePaths, dirPath);
     batch->root = dirPath;
-    batch->metricsOnly = true;
+    batch->kind = BatchExportState::Kind::Metrics;
+    batch_ = std::move(batch);
+    continueBatchExport();
+}
+
+void HdfReviewTab::onBatchExportFcs() {
+    if (exportInProgress()) {
+        QMessageBox::information(this, tr("Export"), tr("An export is already running. Wait for it to finish or cancel it."));
+        return;
+    }
+    const QStringList filePaths = QFileDialog::getOpenFileNames(
+        this, tr("Select HDF Files for Batch FCS Export"),
+        loadedHdfFilePath_.isEmpty() ? QString() : QFileInfo(loadedHdfFilePath_).absolutePath(),
+        tr("HDF5 Files (*.h5 *.hdf5);;All Files (*)"));
+    if (filePaths.isEmpty()) return;
+    const QString dirPath = QFileDialog::getExistingDirectory(
+        this, tr("Select Directory for FCS Files"), metricsExportDir(),
+        QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
+    if (dirPath.isEmpty()) return;
+    auto batch = std::make_unique<BatchExportState>();
+    batch->sources = filePaths;
+    batch->destinations = frontend::hdfreviewexport::batchFcsPaths(filePaths, dirPath);
+    batch->root = dirPath;
+    batch->kind = BatchExportState::Kind::Fcs;
     batch_ = std::move(batch);
     continueBatchExport();
 }
@@ -1818,7 +1895,7 @@ void HdfReviewTab::onBatchExportAll() {
     batch->sources = filePaths;
     batch->destinations = frontend::hdfreviewexport::batchExportAllDirectoryPaths(filePaths, rootPath);
     batch->root = rootPath;
-    batch->metricsOnly = false;
+    batch->kind = BatchExportState::Kind::All;
     batch_ = std::move(batch);
     // Batch snapshots draw other files on this scatter; bring the live
     // file's view back when the batch ends.
@@ -1910,11 +1987,15 @@ void HdfReviewTab::finishExportUi() {
 }
 
 void HdfReviewTab::setExportControlsEnabled(bool enabled) {
-    ui->exportMetricsBtn->setEnabled(enabled);
-    ui->exportAllBtn->setEnabled(enabled);
+    const bool hasData = !validFrames_.empty() || !invalidFrames_.empty();
+    const bool hasMetrics = enabled && hasData && !isRecordingMode_;
+    ui->exportMetricsBtn->setEnabled(hasMetrics);
+    ui->exportFcsBtn->setEnabled(hasMetrics);
+    ui->exportAllBtn->setEnabled(enabled && hasData);
     ui->batchExportMetricsBtn->setEnabled(enabled);
+    ui->batchExportFcsBtn->setEnabled(enabled);
     ui->batchExportAllBtn->setEnabled(enabled);
-    ui->exportChartsBtn->setEnabled(enabled);
+    ui->exportChartsBtn->setEnabled(enabled && hasData && !isRecordingMode_);
     ui->regenerateMasksBtn->setEnabled(enabled && !loadedHdfFilePath_.isEmpty());
     updateSecondaryActionState();
 }
@@ -1932,6 +2013,8 @@ void HdfReviewTab::setupBoundedFileRow() {
     auto* menu = new QMenu(moreActionsBtn_);
     batchMetricsAct_ = menu->addAction(ui->batchExportMetricsBtn->text(), this, &HdfReviewTab::onBatchExportMetrics);
     batchMetricsAct_->setToolTip(ui->batchExportMetricsBtn->toolTip());
+    batchFcsAct_ = menu->addAction(ui->batchExportFcsBtn->text(), this, &HdfReviewTab::onBatchExportFcs);
+    batchFcsAct_->setToolTip(ui->batchExportFcsBtn->toolTip());
     batchAllAct_ = menu->addAction(ui->batchExportAllBtn->text(), this, &HdfReviewTab::onBatchExportAll);
     batchAllAct_->setToolTip(ui->batchExportAllBtn->toolTip());
     exportChartsAct_ = menu->addAction(ui->exportChartsBtn->text(), this, &HdfReviewTab::onExportCharts);
@@ -1939,7 +2022,8 @@ void HdfReviewTab::setupBoundedFileRow() {
     regenerateMasksAct_ = menu->addAction(ui->regenerateMasksBtn->text(), this, &HdfReviewTab::onRegenerateMasks);
     regenerateMasksAct_->setToolTip(ui->regenerateMasksBtn->toolTip());
     moreActionsBtn_->setMenu(menu);
-    for (QPushButton* hidden : {ui->batchExportMetricsBtn, ui->batchExportAllBtn, ui->exportChartsBtn, ui->regenerateMasksBtn}) {
+    for (QPushButton* hidden : {ui->batchExportMetricsBtn, ui->batchExportFcsBtn, ui->batchExportAllBtn,
+                                ui->exportChartsBtn, ui->regenerateMasksBtn}) {
         hidden->hide();
     }
     const int insertAt = ui->fileRowLayout->indexOf(ui->exportAllBtn) + 1;
@@ -1959,6 +2043,7 @@ void HdfReviewTab::setupBoundedFileRow() {
 void HdfReviewTab::updateSecondaryActionState() {
     if (!moreActionsBtn_) return;
     batchMetricsAct_->setEnabled(ui->batchExportMetricsBtn->isEnabled());
+    batchFcsAct_->setEnabled(ui->batchExportFcsBtn->isEnabled());
     batchAllAct_->setEnabled(ui->batchExportAllBtn->isEnabled());
     exportChartsAct_->setEnabled(ui->exportChartsBtn->isEnabled());
     regenerateMasksAct_->setEnabled(ui->regenerateMasksBtn->isEnabled());
@@ -2045,12 +2130,15 @@ void HdfReviewTab::continueBatchExport() {
                                                                            : backend_.processing().getPixelToMicronFactor();
         }
         request.explicitDestination = batch_->destinations[i].toStdString();
-        if (batch_->metricsOnly) {
-            request.format = backend::recording::HdfExportFormat::MetricsCsv;
-            // Recording files carry no metrics; reject up front like before.
+        if (batch_->kind != BatchExportState::Kind::All) {
+            request.format = batch_->kind == BatchExportState::Kind::Fcs
+                                 ? backend::recording::HdfExportFormat::Fcs
+                                 : backend::recording::HdfExportFormat::MetricsCsv;
+            // Recording files carry no object metrics; reject up front.
             backend::services::Hdf5Service probe;
             if (probe.loadFile(request.sourcePath) && probe.isRecordingFile()) {
-                batch_->failures << tr("%1: recording files do not contain metrics").arg(QFileInfo(filePath).fileName());
+                batch_->failures << tr("%1: recording files do not contain metrics")
+                                      .arg(QFileInfo(filePath).fileName());
                 continue;
             }
         } else {
@@ -2083,7 +2171,11 @@ void HdfReviewTab::continueBatchExport() {
                 request.supplementalImages = renderChartSnapshots(data.validFrames);
             }
         }
-        const QString title = batch_->metricsOnly ? tr("Batch Metrics Export (%1/%2)") : tr("Batch Export All (%1/%2)");
+        const QString title = batch_->kind == BatchExportState::Kind::Metrics
+                                  ? tr("Batch Metrics Export (%1/%2)")
+                                  : batch_->kind == BatchExportState::Kind::Fcs
+                                        ? tr("Batch FCS Export (%1/%2)")
+                                        : tr("Batch Export All (%1/%2)");
         if (!beginExportJob(std::move(request), title.arg(i + 1).arg(batch_->sources.size()),
                             [this, filePath](const backend::recording::HdfExportResult& r) {
                                 if (!batch_) return;
@@ -2109,20 +2201,28 @@ void HdfReviewTab::continueBatchExport() {
     auto batch = std::move(batch_);
     batch_.reset();
     finishExportUi();
-    if (!batch->metricsOnly && hdfReader_ && (!validFrames_.empty() || !invalidFrames_.empty())) {
+    if (batch->kind == BatchExportState::Kind::All && hdfReader_ &&
+        (!validFrames_.empty() || !invalidFrames_.empty())) {
         updateCharts(); // restore the live file's charts after batch snapshots
         if (batchScatterRestore_) restoreScatterView(*batchScatterRestore_);
     }
     batchScatterRestore_.reset();
     if (batch->exported > 0) {
-        if (batch->metricsOnly) rememberMetricsExportDir(batch->root);
+        if (batch->kind != BatchExportState::Kind::All) rememberMetricsExportDir(batch->root);
         else rememberExportAllRootDir(batch->root);
     }
-    const QString title = batch->metricsOnly ? tr("Batch Metrics Export Complete") : tr("Batch Export All Complete");
+    const QString title = batch->kind == BatchExportState::Kind::Metrics
+                              ? tr("Batch Metrics Export Complete")
+                              : batch->kind == BatchExportState::Kind::Fcs
+                                    ? tr("Batch FCS Export Complete")
+                                    : tr("Batch Export All Complete");
     if (batch->failures.isEmpty()) {
         QMessageBox::information(this, title,
-                                 (batch->metricsOnly ? tr("Exported metrics for %1 files to:\n%2")
-                                                     : tr("Exported %1 files to source-specific folders under:\n%2"))
+                                 (batch->kind == BatchExportState::Kind::Metrics
+                                      ? tr("Exported metrics for %1 files to:\n%2")
+                                      : batch->kind == BatchExportState::Kind::Fcs
+                                            ? tr("Exported FCS pairs for %1 files to:\n%2")
+                                            : tr("Exported %1 files to source-specific folders under:\n%2"))
                                      .arg(batch->exported)
                                      .arg(batch->root));
     } else {

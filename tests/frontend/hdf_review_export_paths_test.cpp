@@ -46,6 +46,14 @@ int main()
     MIB_EXPECT(QFileInfo(thirdMetrics).fileName() == "sample_metrics_3.csv",
                "metrics suffix advances past multiple collisions");
 
+    const QString firstFcs = paths::fcsPath(root.filePath("sample.h5"), root.path());
+    MIB_EXPECT(QFileInfo(firstFcs).fileName() == "sample.fcs", "single FCS suggestion uses source basename");
+    touch(root.filePath("sample_event_map.csv"));
+    const QString secondFcs = paths::fcsPath(root.filePath("sample.h5"), root.path());
+    MIB_EXPECT(QFileInfo(secondFcs).fileName() == "sample_2.fcs", "FCS suggestion reserves its event map");
+    touch(root.filePath("sample_2.fcs"));
+    touch(root.filePath("sample_2_event_map.csv"));
+
     const QString allDir = paths::exportAllDirectoryPath(root.filePath("sample.h5"), root.path());
     MIB_EXPECT(QFileInfo(allDir).fileName() == "sample",
                "export-all suggestion uses source-specific folder");
@@ -67,6 +75,15 @@ int main()
                "batch metrics reserves earlier suggestions within the run");
     MIB_EXPECT(QFileInfo(metricBatch[2]).fileName() == "cell run.v1_metrics.csv",
                "batch metrics preserves dotted spaced basename");
+
+    const QStringList fcsBatch = paths::batchFcsPaths(duplicateBatch, root.path());
+    MIB_REQUIRE(fcsBatch.size() == 3, "batch FCS produced three paths");
+    MIB_EXPECT(QFileInfo(fcsBatch[0]).fileName() == "sample_3.fcs",
+               "batch FCS respects the paired collision");
+    MIB_EXPECT(QFileInfo(fcsBatch[1]).fileName() == "sample_4.fcs",
+               "batch FCS reserves earlier pair suggestions");
+    MIB_EXPECT(QFileInfo(fcsBatch[2]).fileName() == "cell run.v1.fcs",
+               "batch FCS preserves dotted spaced basename");
 
     const QStringList allBatch = paths::batchExportAllDirectoryPaths(duplicateBatch, root.path());
     MIB_REQUIRE(allBatch.size() == 3, "batch export-all produced three paths");

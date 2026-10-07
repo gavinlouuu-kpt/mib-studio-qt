@@ -319,9 +319,23 @@ int main()
         // Join the consumer before editing the live recipe so pipeline progress
         // cannot end the run between the active snapshot and duplicate Start.
         proc.stopRealtime();
-        // Later edits do not mutate the frozen run.
+        const auto backgroundBefore = proc.backgroundGeneration();
+        // Later edits must be refused while the run owns the pipeline.
         proc.setRealtimeRoi(ProcessingService::Roi{0, 0, 32, 32});
         proc.setRealtimeBackgroundGray(cv::Mat(96, 96, CV_8UC1, cv::Scalar(9)));
+        MIB_EXPECT(proc.getRealtimeRoi().w == 64, "active run refuses direct ROI changes");
+        MIB_EXPECT(proc.backgroundGeneration() == backgroundBefore,
+                   "active run refuses direct background changes");
+        auto backgroundConfig = proc.getProcessingConfig();
+        backgroundConfig.auto_background_enabled = !backgroundConfig.auto_background_enabled;
+        const auto configBefore = proc.getConfigVersion();
+        proc.setProcessingConfig(backgroundConfig);
+        MIB_EXPECT(proc.getConfigVersion() == configBefore,
+                   "active run refuses background configuration");
+        std::string calibrationError;
+        MIB_EXPECT(!proc.startBackgroundCalibration({}, &calibrationError) &&
+                       calibrationError.find("not idle") != std::string::npos,
+                   "active run refuses calibration before touching its state");
         const auto after = coord.activeRun();
         MIB_REQUIRE(after.has_value(), "still active");
         MIB_EXPECT(after->roiW == 64 && after->backgroundSha256 == frozen.backgroundSha256 &&
@@ -406,6 +420,16 @@ int main()
     // ---- 6c. Backend-owned finalization -----------------------------------------
     {
         wd.mark("finalize complete");
+        proc.stopRealtime();
+        auto input = std::make_shared<backend::playback::FrameStore>();
+        auto cfg = proc.getProcessingConfig();
+        cfg.require_single_inner_contour = true;
+        proc.setProcessingConfig(cfg);
+        proc.setRealtimeRoi(ProcessingService::Roi{0, 0, 96, 96});
+        proc.setRealtimeBackgroundGray(cv::Mat());
+        proc.setInvalidFrameSamplingRate(1);
+        pushMat(*input, cv::Mat(96, 96, CV_8UC1, cv::Scalar(0)), 999);
+        proc.startRealtime(input);
         auto& coordinator = backend.experiment();
         std::optional<backend::app::ExperimentStatus> terminal;
         std::vector<backend::app::ExperimentRunState> seen;
@@ -424,14 +448,27 @@ int main()
         req.readinessGeneration = r.generation;
         const auto started = coordinator.start(req);
         MIB_REQUIRE(started.started(), "start: " + started.message);
-        // Stop once a remainder exists, independent of processing speed.
-        MIB_REQUIRE(waitFor(
-                        [&] {
-                            const auto s = coordinator.status();
-                            return s.validBuffered + s.invalidBuffered > 0;
-                        },
-                        std::chrono::seconds(5)),
-                    "status reports buffered frames while active");
+        // A ring passes the inner-contour rule; a solid disk fails it.
+        for (uint64_t i = 0; i < 10; ++i) {
+            cv::Mat frame = mib::test::ringFrame(96, 96, 0);
+            if (i >= 4) cv::circle(frame, cv::Point(32, 48), 19, cv::Scalar(220), -1);
+            pushMat(*input, frame, 1000 + i);
+            MIB_REQUIRE(waitFor(
+                            [&] {
+                                const auto a = proc.experimentAccountingSnapshot();
+                                return a.processed + a.scientificallyRejected == i + 1;
+                            },
+                            std::chrono::seconds(5)),
+                        "known frame classified before the next input");
+        }
+        // Flush before Stop so the remainder is empty but the run totals are not.
+        proc.flushBufferedFrames(backend.hdf5());
+        MIB_REQUIRE(proc.finishFlush(), "known mixed batch committed before Stop");
+        const auto saved = coordinator.status();
+        MIB_EXPECT(saved.validSaved == 4 && saved.invalidSaved == 6,
+                   "status separates committed frame classes");
+        MIB_EXPECT(saved.droppedValid == 0 && saved.droppedInvalid == 0,
+                   "pending frames are not policy drops");
         MIB_EXPECT(coordinator.requestStop(false) == backend::app::ExperimentStopOutcome::Accepted,
                    "stop accepted");
         {
@@ -473,8 +510,20 @@ int main()
         uint64_t t0 = 0, t1 = 0; size_t v = 0, iv = 0;
         MIB_EXPECT(reader.readExperimentInfo(t0, t1, v, iv) && t0 == terminal->startWallClockNs,
                    "experiment info persisted by the coordinator");
+        std::vector<backend::services::ProcessedFrame> validFrames, invalidFrames;
+        MIB_REQUIRE(reader.readValidFrames(validFrames), "read saved valid frames");
+        MIB_REQUIRE(reader.readInvalidFrames(invalidFrames), "read saved invalid frames");
+        MIB_EXPECT(v == validFrames.size() && iv == invalidFrames.size(),
+                   "experiment totals equal all saved datasets, not the stop remainder");
+        MIB_EXPECT(v + iv == back.persistenceCommitted,
+                   "header totals reconcile with committed accounting");
+        MIB_EXPECT(v == 4 && iv == 6, "known mixed run stores four valid and six invalid totals");
+        MIB_EXPECT(terminal->validSaved == v && terminal->invalidSaved == iv,
+                   "terminal saved counters match file totals");
         reader.closeFile();
         coordinator.setStatusCallback({});
+        proc.stopRealtime();
+        proc.startRealtime(backend.getFrameStore());
     }
     {
         wd.mark("fatal save error");
@@ -623,6 +672,37 @@ int main()
         pushEmpty();
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
         MIB_EXPECT(proc.backgroundGeneration() == genBefore + 1, "finished operation ignores later frames");
+    }
+    {
+        wd.mark("bg publication idle gate");
+        proc.stopRealtime();
+        std::atomic<bool> allowStart{true};
+        proc.setBackgroundPublicationTransaction([&](const std::function<void()>& apply) {
+            if (!allowStart.exchange(false)) return false;
+            apply();
+            return true;
+        });
+        store = std::make_shared<backend::playback::FrameStore>();
+        pushMat(*store, emptyFrame, ++ts);
+        proc.startRealtime(store);
+        ProcessingService::BackgroundCalibrationRequest req;
+        req.requiredAccepted = 1;
+        req.maxAttempts = 10;
+        req.timeoutMs = 5000;
+        const auto generation = proc.backgroundGeneration();
+        MIB_REQUIRE(proc.startBackgroundCalibration(req), "start calibration before idle gate closes");
+        pushEmpty();
+        MIB_REQUIRE(waitFinished(), "publication refusal finishes calibration");
+        MIB_EXPECT(proc.backgroundCalibrationStatus().state == BgState::Cancelled,
+                   "closed idle transaction refuses calibration apply");
+        MIB_EXPECT(proc.backgroundGeneration() == generation, "refused apply preserves background");
+        proc.stopRealtime();
+        proc.setBackgroundPublicationTransaction([&](const std::function<void()>& apply) {
+            return backend.experiment().withIdleConfiguration(apply, false);
+        });
+        store = std::make_shared<backend::playback::FrameStore>();
+        pushMat(*store, emptyFrame, ++ts);
+        proc.startRealtime(store);
     }
     const std::string goodSha = proc.backgroundSha256();
     const uint64_t goodGen = proc.backgroundGeneration();

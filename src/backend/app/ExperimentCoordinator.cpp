@@ -958,6 +958,10 @@ ExperimentStatus ExperimentCoordinator::snapshotLocked() const
     const auto counts = proc.getBufferedFrameCounts();
     s.validBuffered = counts.valid;
     s.invalidBuffered = counts.invalid;
+    s.validSaved = proc.getTotalValidFlushed();
+    s.invalidSaved = proc.getTotalInvalidFlushed();
+    s.droppedValid = proc.getDroppedValidFrames();
+    s.droppedInvalid = proc.getDroppedInvalidFrames();
     const auto acc = proc.experimentAccountingSnapshot();
     s.persistenceAdmitted = acc.persistenceAdmitted;
     s.persistenceCommitted = acc.persistenceCommitted;
@@ -1168,8 +1172,9 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
         cv::Mat bg = proc.getRealtimeBackgroundGray();
         const auto core = proc.activeProcessingCoreIdentity();
         const auto t0 = clock::now();
-        metadataOk = hdf5.writeExperimentInfo(run.startWallClockNs, endNs, remainder.valid, remainder.invalid,
-                                              cfg, roi, bg.empty() ? nullptr : &bg, &core);
+        metadataOk = hdf5.writeExperimentInfo(
+            run.startWallClockNs, endNs, proc.getTotalValidFlushed(), proc.getTotalInvalidFlushed(),
+            cfg, roi, bg.empty() ? nullptr : &bg, &core);
         if (!metadataOk) {
             SPDLOG_ERROR("ExperimentCoordinator: metadata/provenance write failed");
             ok = false;
@@ -1199,9 +1204,16 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
         hdf5.closeFile();
         SPDLOG_INFO("ExperimentCoordinator: closeFile took {:.3f} ms", sinceMs(tClose));
     }
-    SPDLOG_INFO("ExperimentCoordinator: run {} accounting: completion={} ({}); persisted={}/{} failed={}",
-                run.startGeneration, recording::toString(accounting.completion), accounting.completionReason,
-                accounting.persistenceCommitted, accounting.persistenceAdmitted, accounting.persistenceFailed);
+    // An undeclared loss, a failure, an unknown outcome, or declared malformed frames above the
+    // warning fraction is something the operator must see (#549): WARN, not INFO. Complete and
+    // declared-partial runs stay at INFO.
+    const bool warnRun = recording::needsOperatorAttention(accounting.completion) ||
+                         recording::malformedAboveWarnFraction(accounting.storeMalformed, accounting.admitted);
+    const auto accountingLevel = warnRun ? spdlog::level::warn : spdlog::level::info;
+    SPDLOG_LOGGER_CALL(spdlog::default_logger_raw(), accountingLevel,
+                       "ExperimentCoordinator: run {} accounting: completion={} ({}); persisted={}/{} failed={}",
+                       run.startGeneration, recording::toString(accounting.completion), accounting.completionReason,
+                       accounting.persistenceCommitted, accounting.persistenceAdmitted, accounting.persistenceFailed);
     // 7. Restore the realtime mode a multi-image run switched.
     if (restoreMode) {
         proc.setRealtimeProcessingMode(services::ProcessingService::RealtimeProcessingMode::AsyncBatch);
@@ -1210,6 +1222,9 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
 
     // 8. Terminal status.
     lk.lock();
+    lastAccounting_ = accounting;
+    lastAccountingGeneration_ = run.startGeneration;
+    haveLastAccounting_ = true;
     activeRun_.reset();
     status_.endWallClockNs = endNs;
     status_.terminal = true;
@@ -1249,6 +1264,15 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
     publishLocked(lk, status_.finalizationOk ? "finalized" : "finalized with errors");
 }
 
+bool ExperimentCoordinator::lastRunAccounting(recording::RecordingAccountingSnapshot& out, uint64_t& startGeneration) const
+{
+    std::lock_guard<std::mutex> lk(mutex_);
+    if (!haveLastAccounting_) return false;
+    out = lastAccounting_;
+    startGeneration = lastAccountingGeneration_;
+    return true;
+}
+
 void ExperimentCoordinator::shutdown()
 {
     std::thread toJoin;
@@ -1271,8 +1295,27 @@ void ExperimentCoordinator::setStageBusyProbe(std::function<bool()> probe) {
 }
 
 bool ExperimentCoordinator::withIdleConfiguration(const std::function<void()>& transaction) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    return withIdleConfiguration(transaction, true);
+}
+
+bool ExperimentCoordinator::withIdleConfiguration(const std::function<void()>& transaction, bool wait) {
+    // Service setters can be called from a facade's idle transaction. Reuse
+    // that authorization on this thread without locking the mutex twice.
+    static thread_local ExperimentCoordinator* idleOwner = nullptr;
+    if (idleOwner == this) {
+        transaction();
+        return true;
+    }
+    std::unique_lock<std::mutex> lock(mutex_, std::defer_lock);
+    if (wait) lock.lock();
+    else if (!lock.try_lock()) return false;
     if (state_ != ExperimentRunState::Idle) return false;
+    struct IdleScope {
+        ExperimentCoordinator*& owner;
+        ExperimentCoordinator* previous;
+        ~IdleScope() { owner = previous; }
+    } scope{idleOwner, idleOwner};
+    idleOwner = this;
     transaction();
     return true;
 }

@@ -22,15 +22,17 @@ int main()
 {
     // Valid index: two versions, returned newest-first with fields carried.
     {
-        const auto r = parse(R"({"schema_version":1,"channel":"beta","versions":[
+        const auto r = parse(R"json({"schema_version":1,"channel":"beta","versions":[
             {"version":"1.0.3","installer_url":"https://updates.yofo.bio/beta/a.exe","installer_sha256":"AA","installer_size_bytes":10,"release_notes_url":"https://x/3","published_utc":"2026-06-01T00:00:00Z"},
-            {"version":"1.0.4-beta.1","installer_url":"https://updates.yofo.bio/beta/b.exe","installer_sha256":"bb","installer_size_bytes":20,"release_notes_url":"https://x/4b1","published_utc":"2026-06-24T00:00:00Z"}
-        ]})");
+            {"version":"1.0.4-beta.1","installer_url":"https://updates.yofo.bio/beta/b.exe","installer_sha256":"bb","installer_size_bytes":20,"release_notes":"## Highlights\nOffline Help (#573)","release_notes_url":"https://x/4b1","published_utc":"2026-06-24T00:00:00Z"}
+        ]})json");
         MIB_REQUIRE(r.ok, "valid index parses");
         MIB_REQUIRE(r.versions.size() == 2, "two entries");
         MIB_EXPECT(r.versions[0].version == "1.0.4-beta.1", "beta of 1.0.4 sorts above 1.0.3");
         MIB_EXPECT(r.versions[0].installerSizeBytes == 20, "size carried");
         MIB_EXPECT(r.versions[0].installerSha256Hex == "bb", "sha carried");
+        MIB_EXPECT(r.versions[0].releaseNotes == "## Highlights\nOffline Help (#573)",
+                   "inline notes carried");
         MIB_EXPECT(r.versions[0].releaseNotesUrl == "https://x/4b1", "notes url carried");
         MIB_EXPECT(r.versions[1].version == "1.0.3", "older last");
         MIB_EXPECT(r.versions[1].installerSha256Hex == "aa", "sha lowercased");

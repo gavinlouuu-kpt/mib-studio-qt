@@ -4,29 +4,6 @@
   "root": "build/vendor/assets",
   "assets": [
     {
-      "id": "yolo11n-seg",
-      "kind": "model",
-      "repo": "gavinlouuu/mib-yolo11n-seg",
-      "repo_type": "model",
-      "revision": "2149cebc45ea3a3e06677528c997ed0dbfb05cd7",
-      "visibility": "public",
-      "token_required": false,
-      "required": true,
-      "files": [
-        {
-          "path": "yolo11n-seg.onnx",
-          "sha256": "5555f71a4f65f3b8166d7b9c74b72c80a5e61ff2d6c04a09b219a2b50553f0c7"
-        }
-      ],
-      "consumers": [
-        "cmake/MIBDependencies.cmake (configure-time presence check when ONNX Runtime is found)",
-        "cmake/MIBWindowsDeployment.cmake (post-build copy next to the exe)",
-        "src/backend/app/AppBackend.cpp (runtime path <exe>/resources/models/yolo11n-seg.onnx)",
-        "src/backend/services/YoloService.cpp"
-      ],
-      "notes": "The Hub repo also holds the source .pt checkpoint and the export script; only the .onnx is provisioned. Required only when ONNX Runtime is available (Windows Conan builds)."
-    },
-    {
       "id": "512x96stream-kin10",
       "kind": "dataset",
       "repo": "gavinlouuu/512x96stream",

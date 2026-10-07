@@ -1,0 +1,3 @@
+## 2026-10-07 — offline_help_test links on MSVC (friend test seams)
+
+`tests/frontend/offline_help_test.cpp` (#573) reached private `AutoUpdater` and `SoftwareUpdatesDialog` members with `#define private public`. GCC links that, but MSVC encodes member access in mangled names, so develop's Windows build failed with LNK2019 on `parseManifest`, `confirmUpdate` and `onIndexReady` (731c2001). The classes now declare `friend struct AutoUpdaterTestAccess` / `SoftwareUpdatesDialogTestAccess`, and the test defines those accessors. Never use the `#define private public` trick in Qt tests; add a friend seam instead.
