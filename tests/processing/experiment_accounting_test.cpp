@@ -13,6 +13,8 @@
 
 #include "support/assert.h"
 #include "support/fault_kernel.h"
+#include "support/faultinject.h"
+#include "support/opencv_tsan.h"
 #include "support/frames.h"
 #include "support/tempdir.h"
 #include "support/watchdog.h"
@@ -46,6 +48,7 @@ void pushMat(backend::playback::FrameStore& s, const cv::Mat& m, uint64_t ts)
 
 int main()
 {
+    mib::test::serializeOpenCvUnderTsan();
     mib::test::Watchdog wd(120); // experiment 4 waits out a 5 s stalled batch; sanitizer lanes are slow
     mib::test::TempDir td("experiment_accounting");
 
@@ -306,6 +309,68 @@ int main()
         svc.setRealtimeProcessingMode(ProcessingService::RealtimeProcessingMode::Inline);
         svc.setRealtimeBatchSettings(previous);
         svc.clearAccumulatedFrames();
+    }
+
+    // ---- Experiment 5: HDF5 failure survives queue destruction/remainder ----
+    wd.mark("experiment 5 save failure");
+    {
+        backend::services::Hdf5Service h;
+        const auto path = (td.path() / "failed_flush.h5").string();
+        MIB_REQUIRE(h.openFile(path), "open failure test file");
+        std::atomic<bool> writeFailed{false};
+        svc.setFlushErrorCallback([&](const std::string&) { writeFailed.store(true); });
+        svc.setExperimentAccountingContext(300, false);
+        svc.startExperiment();
+        uint64_t pushed = 0;
+        auto append = [&] {
+            pushMat(*store, mib::test::ringFrame(96, 96, 0), 30'000'000 + ++pushed);
+            MIB_REQUIRE(waitFor(
+                            [&] {
+                                return svc.experimentAccountingSnapshot().persistenceAdmitted >=
+                                       pushed;
+                            },
+                            std::chrono::seconds(20)),
+                        "frame admitted to persistence");
+        };
+        append();
+        MIB_REQUIRE(svc.flushBufferedFrames(h) > 0 && svc.finishFlush(), "first batch saved");
+        MIB_REQUIRE(h.flush() && mib::test::blockHdf5ImageAppends(path),
+                    "inject mid-run HDF5 failure");
+        append();
+        MIB_REQUIRE(svc.flushBufferedFrames(h) > 0, "failing batch submitted");
+        MIB_REQUIRE(waitFor([&] { return writeFailed.load(); }, std::chrono::seconds(20)),
+                    "write failed");
+        MIB_EXPECT(!svc.finishFlush(), "failed flush reported");
+        const auto failed = svc.experimentAccountingSnapshot();
+        MIB_EXPECT(failed.persistenceFailed == 1 && failed.persistenceCommitted == 1 &&
+                       failed.reconciled && failed.completion == rec::RunCompletionState::Failed,
+                   "failed batch remains Failed after queue destruction");
+        MIB_REQUIRE(mib::test::restoreHdf5ImageAppends(path), "restore HDF5 writes");
+        MIB_EXPECT(svc.finishFlush(), "repeated finish has no outstanding queue");
+        append();
+        MIB_REQUIRE(svc.flushBufferedFrames(h) > 0 && svc.finishFlush(), "later remainder saved");
+        svc.endExperiment();
+        const auto remainder = svc.experimentAccountingSnapshot();
+        MIB_EXPECT(remainder.persistenceFailed == 1 && remainder.persistenceCommitted == 2 &&
+                       remainder.reconciled &&
+                       remainder.completion == rec::RunCompletionState::Failed,
+                   "successful remainder cannot erase earlier failure");
+        h.closeFile();
+        svc.setExperimentAccountingContext(301, false);
+        svc.startExperiment();
+        MIB_REQUIRE(h.openFile((td.path() / "after_failed_flush.h5").string()),
+                    "open next run file");
+        pushed = 0;
+        append();
+        MIB_REQUIRE(svc.flushBufferedFrames(h) > 0 && svc.finishFlush(),
+                    "next run writes successfully");
+        svc.endExperiment();
+        const auto clean = svc.experimentAccountingSnapshot();
+        MIB_EXPECT(clean.persistenceFailed == 0 && clean.persistenceCommitted == 1 &&
+                       clean.completion == rec::RunCompletionState::Complete,
+                   "new run resets the persistence failure latch and completes");
+        h.closeFile();
+        svc.setFlushErrorCallback({});
     }
 
     svc.stopRealtime();

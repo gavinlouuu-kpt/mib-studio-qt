@@ -336,6 +336,13 @@ if(BUILD_TESTING)
     set_tests_properties(frontend.dot_grid_overview PROPERTIES LABELS "frontend;processing;concurrency" TIMEOUT 180)
     mib_test_runner_finalize(mib_frontend_tests ${PROJECT_SOURCE_DIR}/resources/defaults.qrc)
     # Standalone: this test runs the application's event loop through quit.
+    add_executable(experiment_fault_recovery_test ${PROJECT_SOURCE_DIR}/tests/frontend/experiment_fault_recovery_test.cpp ${PROJECT_SOURCE_DIR}/resources/defaults.qrc)
+    target_include_directories(experiment_fault_recovery_test PRIVATE ${PROJECT_SOURCE_DIR}/tests)
+    target_link_libraries(experiment_fault_recovery_test PRIVATE mib_frontend_common)
+    set_target_properties(experiment_fault_recovery_test PROPERTIES AUTOUIC OFF RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/$<CONFIG>")
+    add_test(NAME frontend.experiment_fault_recovery COMMAND experiment_fault_recovery_test)
+    set_tests_properties(frontend.experiment_fault_recovery PROPERTIES LABELS "frontend;lifecycle;safety" TIMEOUT 120)
+
     add_executable(mainwindow_shutdown_test ${PROJECT_SOURCE_DIR}/tests/frontend/mainwindow_shutdown_test.cpp ${PROJECT_SOURCE_DIR}/resources/defaults.qrc)
     target_include_directories(mainwindow_shutdown_test PRIVATE ${PROJECT_SOURCE_DIR}/tests)
     target_link_libraries(mainwindow_shutdown_test PRIVATE mib_frontend_common)

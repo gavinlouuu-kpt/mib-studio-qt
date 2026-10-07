@@ -273,3 +273,12 @@ write and avoiding repeated whole-chunk read-modify-write. Dataset dimensions
 and reader APIs are unchanged; existing files keep their original layouts.
 `recording.multi_image_series_roundtrip` inspects chunk properties and verifies
 three append batches, including non-contiguous series inputs.
+
+## Recording queue boundaries (#403)
+
+`HdfWriteQueue` rejects submits after Stop, serializes concurrent joins, and
+contains exceptions from error observers while retaining the original error.
+`backend.hdf_write_queue_fault` exercises throwing observers and simultaneous
+stops; `e2e.recording_403_*` verifies byte-pressure flushing and partial-series
+Stop, no-more-frames, and restart with HDF5 readback. Fatal run accounting is
+persisted as failed before closure (aligned with #589).

@@ -282,8 +282,8 @@ namespace
             for (auto* action : {setBg, calibrateBg, clearRoi}) {
                 action->setEnabled(idle);
                 if (!idle)
-                    action->setToolTip(
-                        "Stop or reset the experiment before changing ROI or background.");
+                    action->setToolTip("Stop the experiment or acknowledge its fault before "
+                                       "changing ROI or background.");
             }
             menu.setToolTipsVisible(true);
             QAction *chosen = menu.exec(event->globalPos());
@@ -542,7 +542,8 @@ bool PlaybackPanel::configurationIdle() const {
 
 void PlaybackPanel::updateConfigurationUI() {
     const bool idle = configurationIdle();
-    const QString reason = tr("Stop or reset the experiment before changing ROI or background.");
+    const QString reason =
+        tr("Stop the experiment or acknowledge its fault before changing ROI or background.");
     clearRoiBtn_->setEnabled(idle && roiActive_);
     autoBgCheck_->setEnabled(idle);
     setBgBtn_->setEnabled(idle && (scrubbing_ || !followLive_ || !backend_.capture().isRunning()));

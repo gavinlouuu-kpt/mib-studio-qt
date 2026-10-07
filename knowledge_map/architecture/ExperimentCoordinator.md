@@ -255,7 +255,7 @@ avoid waiting on a configuration transaction that might join its worker (#542).
 
 `AppBackend::startFrameRecording` uses `withIdleConfiguration` through writer
 acquisition, so experiment Start and raw recording cannot both pass preflight.
-Starting/Active/Stopping (and Failed until reset) refuse recording; an already
+Starting/Active/Stopping (and Failed until fault acknowledgement) refuse recording; an already
 open HDF5 file is preserved. Raw recording remains busy until Stop joins its
 worker, including save-failure cleanup. See [[AppBackend]].
 
@@ -266,3 +266,31 @@ relocking the coordinator mutex. A scoped thread-local owner reuses only that
 enclosing idle authorization and restores it even on exceptions. Other threads
 still serialize against Start. This supports both facade transactions and Qt
 watched-document applies without bypassing the backend ROI/background gates.
+
+## Recording safety re-port (#403)
+
+`requestFlush()` wakes the worker on buffer pressure using the existing #407
+`needsFlush()` policy and two-second backstop. Stop waits for the inline loop
+to hand off its incomplete multi-image series before settlement and remainder
+flush. A handoff timeout makes finalization fail. Status observers are best
+effort: exceptions are contained while callback retirement and the lifecycle
+lock are restored. Fatal accounting is reconciled before writing the file,
+aligned with #589's failed-outcome persistence.
+
+Readiness includes `storage.roundtrip`: a small HDF5 write/close/reopen and
+pixel comparison cached by readiness generation for 30 seconds. It verifies
+access and format, not sustained throughput. `storage.buffer` rejects a host
+image/mask series larger than the byte budget and warns when byte pressure
+will precede the count threshold. Geometry/format, budget and flush interval
+changes invalidate preflight. Metadata-only provider recordings do not use
+the host image payload gate.
+
+### Save failure accounting and recovery (#589)
+
+Finalization marks fatal save errors and unsuccessful flushes as fatal accounting
+before persisting `/experiment_info` and caching the last run. The persisted
+completion is Failed, with the save error reason and failed persistence counts,
+even when metadata can still be written. `acknowledgeFault()` returns the
+coordinator to Idle only after finalization and for the matching run/fault
+revision; it preserves the failed saved-run outcome. Qt readiness and banner
+actions both use this contract.
