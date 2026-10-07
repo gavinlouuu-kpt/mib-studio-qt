@@ -10,7 +10,7 @@
 // `python scripts/provision-assets.py --asset 512x96stream-mock-frames
 // --count 1000`, or point MIB_KDE_E2E_FRAMES at a folder) with a per-pixel
 // median background; when the asset is absent the test writes a synthetic set
-// (dark ellipses of varying size and eccentricity on a noisy grey background).
+// (bright ellipses of varying size and eccentricity on a noisy grey background).
 // The shipped data/mock_frames sample yields no valid cells. Acceptance
 // criteria are relaxed so every detected object is a valid, plotted cell.
 //
@@ -130,9 +130,10 @@ void writeSyntheticFrames(const std::filesystem::path& dir, cv::Mat& backgroundO
         for (int k = 0; k < n; ++k) {
             const double a = radius(rng);
             const double b = a * (1.0 - eccentricity(rng));
+            // Contract 1 uses saturating current-background subtraction.
             cv::ellipse(frame, cv::Point(cx(rng), cy(rng)),
                         cv::Size(static_cast<int>(a), static_cast<int>(b)), angle(rng), 0.0, 360.0,
-                        cv::Scalar(70), -1, cv::LINE_AA);
+                        cv::Scalar(210), -1, cv::LINE_AA);
         }
         char name[64];
         std::snprintf(name, sizeof(name), "frame_%05d.png", i);
@@ -257,7 +258,7 @@ int main(int argc, char* argv[]) {
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                        QString::fromStdString((td / "settings").string()));
     QString err;
-    MIB_REQUIRE(frontend::applicationsettings::initialize(&err), "settings init");
+    MIB_REQUIRE(frontend::applicationsettings::initialize(&err), qPrintable(err));
     backend::AppBackend backend;
     MIB_REQUIRE(backend.initialize((td / "data").string()), "backend init");
     stage("backend initialized");

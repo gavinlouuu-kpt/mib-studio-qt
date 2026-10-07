@@ -91,7 +91,24 @@ the visibility-gated monitoring ring.
   Hugging Face frames) — capture/processing/lag ratios, estimates land,
   interval + budget kept, lowest priority, stored record.
 
+The Qt end-to-end fixture uses the pinned `512x96stream-mock-frames` asset
+when available (`MIB_KDE_E2E_FRAMES` can point at another folder). Without the
+asset it writes deterministic noisy-grey frames with bright Contract 1
+ellipses that survive Contract 1's saturating current-background subtraction,
+so the synthetic path still exercises detected cells. The test is registered on
+Windows with `integration;e2e;frontend;monitoring;performance`: the
+`build-windows` performance-filtered lane and the fast Windows presets exclude
+it, the integration presets select it, and the release CTest invocation is
+unfiltered so it includes the test.
+
 ## Gotchas
+
+- Historical polarity check (`v1.1.2`, `54211084`, `7c274c26`): the default
+  live mask uses Contract 1 saturating subtraction at all three revisions.
+  The original intensity-70 synthetic cells on a 140 background are therefore
+  incompatible with that default; a historical real-asset pass does not prove
+  a synthetic-fallback pass. The exact later test also references `lastWallMs`,
+  absent at `54211084`, so it cannot validate that endpoint unchanged.
 
 - The input is the **processing monitoring ring**, not a shell's display
   buffer; tests inject with `ProcessingService::appendMonitoringFrameForTests`.
