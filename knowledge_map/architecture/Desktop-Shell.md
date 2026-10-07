@@ -705,6 +705,21 @@ Review tab shows it above the export options: a raw recording or a legacy file w
 quiet "no run accounting saved" note, and a file whose counters do not reconcile reads as a failure.
 Tests: `runOutcome.test.ts`, `RunOutcomeNotice.test.tsx`.
 
+## PL mode, branding and reload (#550 m11–m15)
+
+- **Capability gating.** In PL mode (`hostProcessing` false) the legend, Clear ROI, manual ROI
+  fields, the host core line and the host rates in the status bar are hidden; Clear Background and
+  Auto background follow `caps.host_background`; the EGrabber script checkbox in the profiles panel
+  follows `caps.egrabber_script` (the `egrabberScript` prop of `ProfilesPanel`).
+- **Name.** `brand.ts` `productName({pz7035, remote})` is YOFO Studio on the instrument and in the
+  remote browser UI, MIB Studio on the desktop. The remote title is set in `main.tsx` before the
+  first render; `App` also sets `document.title` and the About heading.
+- **Reload.** `persistedState.ts` mirrors the event log and the two stage confirmations to
+  sessionStorage (per tab, guarded against missing storage). The workflow still compares a restored
+  confirmation with the current signature.
+- **Narrow windows.** Below 1100 px the tab labels and camera buttons do not wrap, the camera buttons
+  move below the tabs, and the status line wraps.
+
 ## Pump model per slot (2026-10-04)
 
 The Pumps panel (`HardwareControls.tsx`) has a **Pump model** select per slot:

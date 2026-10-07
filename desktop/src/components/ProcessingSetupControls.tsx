@@ -1,8 +1,8 @@
 import {bridge} from '../bridge';
 
-export function ProcessingSetupControls({ready, running, experimentActive, hostProcessing, backgroundSet,
+export function ProcessingSetupControls({ready, running, experimentActive, hostProcessing, hostBackground = true, backgroundSet,
   autoBackgroundEnabled, append, refresh, onConfigure}: {
-  ready: boolean; running: boolean; experimentActive: boolean; hostProcessing: boolean;
+  ready: boolean; running: boolean; experimentActive: boolean; hostProcessing: boolean; hostBackground?: boolean;
   backgroundSet: boolean; autoBackgroundEnabled: boolean; append: (message: string) => void;
   refresh: () => Promise<void>; onConfigure: () => void;
 }) {
@@ -23,11 +23,11 @@ export function ProcessingSetupControls({ready, running, experimentActive, hostP
     {hostProcessing && <button disabled={!running || experimentActive}
       title={reason ?? (running ? 'Capture the current frame as the processing background' : 'Camera is not running')}
       onClick={() => void mutate('set')}>Set Background</button>}
-    <button disabled={!backgroundSet || experimentActive} title={reason ?? (backgroundSet ? undefined : 'No background is set')}
-      onClick={() => void mutate('clear')}>Clear Background</button>
-    <button onClick={onConfigure} title="Edit image_processing.auto_background_* in the configuration below">
+    {hostBackground && <button disabled={!backgroundSet || experimentActive} title={reason ?? (backgroundSet ? undefined : 'No background is set')}
+      onClick={() => void mutate('clear')}>Clear Background</button>}
+    {hostBackground && <button onClick={onConfigure} title="Edit image_processing.auto_background_* in the configuration below">
       Auto background: {autoBackgroundEnabled ? 'on' : 'off'} · configure
-    </button>
-    <button disabled={!ready || experimentActive} title={reason} onClick={() => void mutate('roi')}>Clear ROI</button>
+    </button>}
+    {hostProcessing && <button disabled={!ready || experimentActive} title={reason} onClick={() => void mutate('roi')}>Clear ROI</button>}
   </>;
 }
