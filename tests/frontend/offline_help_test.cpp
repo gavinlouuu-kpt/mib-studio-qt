@@ -8,14 +8,28 @@
 #include <QUrl>
 #include <optional>
 #include "frontend/utils/UpdateCatalog.h"
-#define private public
 #include "frontend/system/AutoUpdater.h"
 #include "frontend/dialogs/SoftwareUpdatesDialog.h"
-#undef private
 #include "frontend/dialogs/HelpDialog.h"
 #include "support/assert.h"
 #include <QListWidget>
 #include <QTimer>
+
+namespace frontend {
+// Friends of the classes under test; see the comment in AutoUpdater.h.
+struct AutoUpdaterTestAccess {
+    using Manifest = AutoUpdater::Manifest;
+    static std::optional<Manifest> parseManifest(const AutoUpdater& u, const QByteArray& json, QString* error) {
+        return u.parseManifest(json, error);
+    }
+    static bool confirmUpdate(AutoUpdater& u, const Manifest& m) { return u.confirmUpdate(m); }
+};
+struct SoftwareUpdatesDialogTestAccess {
+    static void onIndexReady(SoftwareUpdatesDialog& d, const QVector<updatecatalog::VersionEntry>& v) {
+        d.onIndexReady(v);
+    }
+};
+} // namespace frontend
 
 int main(int argc, char** argv) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
@@ -59,7 +73,7 @@ int main(int argc, char** argv) {
     MIB_EXPECT(!frontend::shouldShowWhatsNew("9.8.7", "9.8.6"), "downgrade stays quiet");
     frontend::AutoUpdater updater(nullptr);
     QString error;
-    const auto manifest = updater.parseManifest(
+    const auto manifest = frontend::AutoUpdaterTestAccess::parseManifest(updater,
         R"json({"version":"9.8.7","installer_url":"https://example.invalid/update.exe","installer_sha256":"aa","release_notes":"## Highlights\nOffline Help (#573)"})json",
         &error);
     MIB_REQUIRE(manifest.has_value(), "latest.json parses with inline notes");
@@ -72,13 +86,13 @@ int main(int argc, char** argv) {
                    "prompt shows latest notes");
         dialog->reject();
     });
-    MIB_EXPECT(!updater.confirmUpdate(*manifest), "closing prompt does not install");
+    MIB_EXPECT(!frontend::AutoUpdaterTestAccess::confirmUpdate(updater, *manifest), "closing prompt does not install");
     // No updater passed: this view test performs no network requests.
     frontend::SoftwareUpdatesDialog updates(nullptr);
     frontend::updatecatalog::VersionEntry entry;
     entry.version = "9.8.8";
     entry.releaseNotes = manifest->releaseNotes;
-    updates.onIndexReady({entry});
+    frontend::SoftwareUpdatesDialogTestAccess::onIndexReady(updates, {entry});
     updates.findChild<QListWidget*>()->setCurrentRow(0);
     MIB_EXPECT(updates.findChild<QTextBrowser*>()->toPlainText().contains("Offline Help"),
                "selected update notes render");
