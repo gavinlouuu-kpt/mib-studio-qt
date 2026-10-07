@@ -811,3 +811,11 @@ background generation and processing version. Standalone services also refuse
 these changes while their experiment flag is active. Ordinary monitoring tuning
 that does not change background settings retains its existing behavior.
 Regression: `backend.experiment_readiness` checks direct setters during a run.
+
+## Contract-1 mask goldens (#394)
+
+`processing.science_golden` calls `makeBundledProcessingKernel()` directly and
+checks every mask pixel for bright/dark foreground, threshold equality, missing
+background, ROI clipping and morphology, along with empty classification and
+unchanged borrowed inputs. These Contract-1 expectations are independent of
+Contract-2 algorithms and must not be re-baselined for them.

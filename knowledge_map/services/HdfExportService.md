@@ -165,3 +165,10 @@ The unchanged isoelastic reference is generated into separate bounded 4096-byte 
 
 Both Linux and Windows desktop lanes compile the embedding byte-roundtrip fixture
 before the full application build, including MSVC on the Windows runner.
+
+## Young's modulus CSV column (#230)
+
+Metrics CSV (Qt and YOFO Review, byte-identical for tools/review_parity) appends `Young's modulus (kPa)` after Bright Q4, preserving every
+existing column position. Values come from persisted `validation.youngsModulus`
+and use three decimal places; NaN is an empty field. The exporter regression
+covers finite and NaN values, 24-column rows and repeated export soak timing.

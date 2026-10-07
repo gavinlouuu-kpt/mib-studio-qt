@@ -264,3 +264,12 @@ they also equal the first dimension of each class's `images` dataset. Metadata
 also covers imageless PL runs. These counts recover saved frames, not sampled-out
 invalid frames, buffer policy drops, or failed writes; persisted `accounting_*`
 attributes retain those distinctions when present. No migration is performed.
+
+## Image chunk layout (#226)
+
+New image datasets use one frame per chunk (mono and color). Series datasets
+use `{1, 1, H, W}`: one record and one series member per chunk, matching each
+write and avoiding repeated whole-chunk read-modify-write. Dataset dimensions
+and reader APIs are unchanged; existing files keep their original layouts.
+`recording.multi_image_series_roundtrip` inspects chunk properties and verifies
+three append batches, including non-contiguous series inputs.

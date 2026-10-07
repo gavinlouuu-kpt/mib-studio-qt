@@ -13,7 +13,7 @@
 
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
-#include <algorithm>
+#include <mutex>
 #ifdef _WIN32
 #define NOMINMAX // Prevent Windows.h from defining min/max macros
 #include <windows.h>
@@ -28,6 +28,13 @@
 using json = nlohmann::json;
 
 namespace frontend {
+
+// Queue admission and destruction share this gate. Qt discards admitted
+// events when the receiver is destroyed; retained callbacks own only the gate.
+struct NanopositionerTab::StatusDelivery {
+    std::mutex mutex;
+    NanopositionerTab* target = nullptr;
+};
 
 namespace {
 // Get user-writable config directory, falling back to ../include/ for development
@@ -147,25 +154,32 @@ NanopositionerTab::NanopositionerTab(backend::AppBackend& backend, QWidget* pare
             &NanopositionerTab::onUpdateAutofocusStatus);
     statusUpdateTimer_->start();
 
-    // Set status callback for autofocus service
-    backend_.autofocus().setStatusCallback([this](const std::string& message) {
-        QMetaObject::invokeMethod(
-            this,
-            [this, message]() {
-                if (ui->statusLabel) {
-                    ui->statusLabel->setText(QString::fromStdString(message));
-                }
-            },
-            Qt::QueuedConnection);
-    });
+    statusDelivery_ = std::make_shared<StatusDelivery>();
+    statusDelivery_->target = this;
+    backend_.autofocus().setStatusCallback(
+        [delivery = statusDelivery_](const std::string& message) {
+            std::scoped_lock lock(delivery->mutex);
+            if (auto* target = delivery->target) {
+                QMetaObject::invokeMethod(
+                    target,
+                    [target, text = QString::fromStdString(message)] {
+                        target->setNanopositionerStatus(text);
+                    },
+                    Qt::QueuedConnection);
+            }
+        });
 
     // Auto-connect is managed by DeviceInitManager (runs probe in worker, connect on main thread).
 
-    // Persist the latest observed voltage for diagnostics; reconnect remains observe-only.
+    // Persist settings without replacing the configured initial voltage with an observation.
     connect(qApp, &QApplication::aboutToQuit, this, [this]() { saveConfig(); });
 }
 
 NanopositionerTab::~NanopositionerTab() {
+    {
+        std::scoped_lock lock(statusDelivery_->mutex);
+        statusDelivery_->target = nullptr;
+    }
     backend_.autofocus().setStatusCallback({});
     delete ui;
 }
@@ -520,13 +534,7 @@ void NanopositionerTab::saveConfig() {
         config["autofocus_device_address"] = ui->deviceAddressSpinBox->value();
         config["autofocus_focus_setpoint"] = ui->targetRingWidthSpinBox->value();
 
-        // Persist current voltage as initial for next session when connected
-        if (backend_.autofocus().isConnected()) {
-            auto cfg = backend_.autofocus().getConfig();
-            double v = backend_.autofocus().getCurrentVoltage();
-            v = std::clamp(v, cfg.minVoltage, cfg.maxVoltage);
-            config["autofocus_initial_voltage"] = v;
-        }
+        // The live voltage is an observation, not an edit to the initial setting.
 
         file.resize(0);
         QTextStream out(&file);

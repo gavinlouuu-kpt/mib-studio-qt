@@ -5,6 +5,7 @@
 // IProcessingKernel so the migration can prove golden behavior is preserved
 // bit-for-bit. Any intentional science change must re-baseline these values.
 #include "backend/processing/ProcessingService.h"
+#include "backend/processing/IProcessingKernel.h"
 #include "support/assert.h"
 
 #include <opencv2/imgproc.hpp>
@@ -71,9 +72,79 @@ backend::services::ProcessingConfig goldenConfig() {
     return config;
 }
 
+// Independent pixel expectations, not a second implementation of subtraction,
+// thresholding or morphology. Keep these Contract-1 defaults frozen when the
+// Contract-2 core is added. All pixels, including outside the ROI, are checked.
+void maskGoldens() {
+    auto kernel = backend::processing::makeBundledProcessingKernel();
+    MIB_REQUIRE(kernel->identity().contractVersion == 1, "Contract-1 fixture requires Contract 1");
+    backend::processing::KernelConfig config;
+    config.gaussianBlurSize = 1;
+    config.backgroundSubtractThreshold = 20;
+    config.morphologyKernelSize = 1;
+    config.morphologyIterations = 1;
+    config.emptyFramePixelThreshold = 1;
+    config.absoluteBackgroundDifference = false;
+    const backend::processing::KernelRoi full{0, 0, 19, 17};
+    const cv::Mat background(17, 19, CV_8UC1, cv::Scalar(100));
+    const cv::Mat zero(17, 19, CV_8UC1, cv::Scalar(0));
+    cv::Mat rectangle = zero.clone();
+    rectangle(cv::Rect(6, 5, 5, 5)).setTo(255);
+
+    const auto check = [&](const char* name, const cv::Mat& input, const cv::Mat& bg,
+                           const backend::processing::KernelRoi& roi, const cv::Mat& expected,
+                           bool expectedEmpty) {
+        const cv::Mat inputBefore = input.clone();
+        const cv::Mat bgBefore = bg.clone();
+        cv::Mat mask;
+        bool empty = !expectedEmpty;
+        std::string error;
+        MIB_REQUIRE(kernel->processMask(input, bg, config, roi, mask, &error),
+                    std::string(name) + ": " + error);
+        MIB_REQUIRE(mask.type() == CV_8UC1 && mask.size() == expected.size(), name);
+        MIB_EXPECT(cv::countNonZero(mask != expected) == 0,
+                   std::string(name) + ": complete mask bytes");
+        MIB_REQUIRE(kernel->isEmpty(input, bg, config, roi, empty, &error), error);
+        MIB_EXPECT(empty == expectedEmpty, std::string(name) + ": empty decision");
+        MIB_EXPECT(cv::countNonZero(input != inputBefore) == 0,
+                   std::string(name) + ": borrowed input unchanged");
+        if (!bg.empty()) {
+            MIB_EXPECT(cv::countNonZero(bg != bgBefore) == 0,
+                       std::string(name) + ": borrowed background unchanged");
+        }
+    };
+
+    check("empty", background, background, full, zero, true);
+    cv::Mat bright = background.clone();
+    bright(cv::Rect(6, 5, 5, 5)).setTo(200);
+    check("bright foreground", bright, background, full, rectangle, false);
+    cv::Mat dark = background.clone();
+    dark(cv::Rect(6, 5, 5, 5)).setTo(0);
+    check("dark foreground is suppressed by legacy subtraction", dark, background, full, zero,
+          true);
+    cv::Mat atThreshold = background.clone();
+    atThreshold(cv::Rect(6, 5, 5, 5)).setTo(120);
+    check("difference equal to threshold is excluded", atThreshold, background, full, zero, true);
+    check("no background", rectangle, {}, full, rectangle, false);
+
+    cv::Mat cropped = zero.clone();
+    cropped(cv::Rect(8, 5, 3, 5)).setTo(255);
+    check("ROI clips foreground and zeros exterior", bright, background, {8, 4, 6, 8}, cropped,
+          false);
+
+    // Empty classification deliberately precedes morphology. A rejected speck
+    // is a non-empty candidate with an empty final mask; this is distinct from
+    // the difference-policy inconsistency assigned to phase 1 of issue #394.
+    cv::Mat speck = background.clone();
+    speck.at<unsigned char>(8, 9) = 200;
+    config.morphologyKernelSize = 3;
+    check("morphology removes isolated candidate", speck, background, full, zero, false);
+}
+
 } // namespace
 
 int main() {
+    maskGoldens();
     backend::services::ProcessingService service;
     // Pin the spatial calibration so the micron-space gates are exact.
     service.setPixelToMicronFactor(0.5);

@@ -308,6 +308,12 @@ if(BUILD_TESTING)
     # seeds <exe>/../include from :/defaults on a fresh build tree — without
     # the resource the constructor blocked headless tests in a modal warning).
     include(MIBTestRunner)
+    mib_test_runner_add(mib_frontend_tests nanopositioner_callback_test ${PROJECT_SOURCE_DIR}/tests/frontend/nanopositioner_callback_test.cpp)
+    add_test(NAME frontend.nanopositioner_callback COMMAND $<TARGET_FILE:mib_frontend_tests> nanopositioner_callback_test)
+    set_tests_properties(frontend.nanopositioner_callback PROPERTIES LABELS "frontend;concurrency;safety" TIMEOUT 60 ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_IM_MODULE=compose")
+    mib_test_runner_add(mib_frontend_tests hdf_metrics_model_test ${PROJECT_SOURCE_DIR}/tests/frontend/hdf_metrics_model_test.cpp)
+    add_test(NAME frontend.hdf_metrics_model COMMAND $<TARGET_FILE:mib_frontend_tests> hdf_metrics_model_test)
+    set_tests_properties(frontend.hdf_metrics_model PROPERTIES LABELS "frontend;review" TIMEOUT 30)
     # Issue #419: Qt adapter over the backend device-discovery service
     # (fake providers, offscreen widgets, responsiveness, coalescing, stop).
     mib_test_runner_add(mib_frontend_tests device_discovery_ui_test ${PROJECT_SOURCE_DIR}/tests/frontend/device_discovery_ui_test.cpp)

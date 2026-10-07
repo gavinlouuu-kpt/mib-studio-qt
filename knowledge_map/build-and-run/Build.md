@@ -537,3 +537,11 @@ the last reachable stable tag. `publish-update.py --release-notes-file` includes
 both installers copy release notes and the manual with images under resources;
 Linux builds also copy these beside the executable (there were no app install rules). Tauri bundles the same
 sources via Vite raw/URL imports. Templates live in `docs/release-notes/README.md`.
+
+## Windows x64 runtime fallback
+
+The full Inno installer checks native System32 (`{sys}` in 64-bit install mode)
+for `msvcp140.dll`, `vcruntime140.dll` and `vcruntime140_1.dll`. SysWOW64 contains
+x86 DLLs and cannot satisfy this fallback. The updater packages no runtime and
+has no corresponding check. `installers.vc_runtime_check` guards the script;
+actual installation still requires Windows validation.

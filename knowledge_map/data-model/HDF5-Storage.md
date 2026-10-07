@@ -215,3 +215,9 @@
   `knowledge_map/task/review_2gb_scalability.md`.
 - 3D `(N,H,W)` and 4D `(N,H,W,C)` datasets both supported by
   `readImageByIndex` — channels auto-detected.
+
+## Image chunk granularity (#226)
+
+New `images` datasets chunk one frame at a time; `series_images` chunks are
+`{1, 1, H, W}`. Logical shapes and metadata are unchanged, and readers accept
+both old multi-frame chunks and this layout. See [[services/Hdf5Service]].
