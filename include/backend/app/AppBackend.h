@@ -305,7 +305,7 @@ namespace backend
 
         // Frame recording mode: record non-empty frames directly to HDF5 (images + metadata only, no contour processing)
         // Returns false if recording cannot start (e.g., capture not running, file error)
-        bool startFrameRecording(const std::string& hdf5FilePath);
+        bool startFrameRecording(const std::string& hdf5FilePath, std::string* error = nullptr);
         void stopFrameRecording();
         bool isFrameRecording() const;
         uint64_t frameRecordingCount() const;     // Frames written so far
@@ -347,6 +347,7 @@ namespace backend
                                 std::string* errorOut = nullptr);
 
     private:
+        bool startFrameRecordingLocked(const std::string& hdf5FilePath, std::string* error);
         void reportFatalSaveError(const std::string& msg);
         // Best-effort auto-dump used at capture stop/shutdown; logs on failure.
         void dumpPipelineTimingIfEnabled();
@@ -466,6 +467,9 @@ namespace backend
 
         // Frame recording state
         std::unique_ptr<std::thread> frameRecordingThread_;
+        std::mutex frameRecordingLifecycleMutex_;
+        std::atomic<bool> frameRecordingOwned_{
+            false}; // retained through Stop/join, including worker failure
         std::atomic<bool> frameRecordingRunning_{false};
         std::atomic<uint64_t> frameRecordingWritten_{0};
         std::atomic<uint64_t> frameRecordingFiltered_{0};
