@@ -132,3 +132,9 @@ processing stopped before replacing their FrameStore references. No additional
 worker is introduced. Camera factories load an atomic mode flag once and pass an
 immutable effective configuration to startup. Capability publication uses a
 mutex-protected snapshot; the display reads that snapshot without SDK calls.
+
+At experiment Stop, the inline realtime thread acknowledges a partial-series
+handoff request even when the camera supplies no more frames (#403). The
+coordinator waits boundedly before sealing accounting and flushing the
+remainder. Queue Stop serializes joins; error and status observer exceptions
+are contained at their callback boundaries.

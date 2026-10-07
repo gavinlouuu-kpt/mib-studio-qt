@@ -21,6 +21,7 @@
 #include "backend/services/CaptureService.h"
 
 #include <functional>
+#include "support/frames.h"
 
 #include <opencv2/core.hpp>
 #include <opencv2/imgcodecs.hpp>
@@ -143,7 +144,13 @@ int main()
     const auto dataDir = makeTempDir();
     const auto mockDir = dataDir / "mock_frames";
     std::filesystem::create_directories(mockDir);
-    const cv::Mat frame(96, 512, CV_8UC1, cv::Scalar(180));
+    const bool repro = std::getenv("MIB_REPRO_BUFFER_CAP") != nullptr;
+    auto reproInt = [](const char* key, int fallback) {
+        const char* v = std::getenv(key);
+        return v ? std::atoi(v) : fallback;
+    };
+    const cv::Mat frame =
+        repro ? mib::test::ringFrame(512, 96, 0) : cv::Mat(96, 512, CV_8UC1, cv::Scalar(180));
     if (!cv::imwrite((mockDir / "frame_000.tiff").string(), frame))
     {
         std::cerr << "failed to write mock frame fixture\n";
@@ -208,11 +215,32 @@ int main()
             return 3;
         }
 
+        if (repro) {
+            auto& proc = backendApp.processing();
+            auto cfg = proc.getProcessingConfig();
+            cfg.empty_frame_pixel_threshold = 1;
+            cfg.bg_subtract_threshold = 100;
+            cfg.enable_border_check = false;
+            cfg.enable_area_range_check = false;
+            cfg.enable_deformability_range_check = false;
+            cfg.enable_ring_ratio_check = false;
+            cfg.enable_area_ratio_check = false;
+            cfg.require_single_inner_contour = false;
+            cfg.auto_background_enabled = false;
+            cfg.multi_image_count = reproInt("MIB_REPRO_SERIES", 1);
+            cfg.multi_image_enabled = cfg.multi_image_count > 1;
+            proc.setProcessingConfig(cfg);
+            proc.setRealtimeRoi({0, 0, 512, 96});
+            proc.setInvalidFrameSamplingRate(1);
+            proc.setFlushInterval(reproInt("MIB_REPRO_FLUSH", 100));
+            proc.setMaxBufferedBytes(
+                std::strtoull(std::getenv("MIB_REPRO_BUFFER_CAP"), nullptr, 10));
+        }
         // Configure + start the mock camera.
         bridge::CameraCommand configure;
         configure.action = bridge::CameraCommandAction::ConfigureMockCamera;
         configure.mockFrameDirectory = mockDir.string();
-        configure.mockFrameIntervalMs = 1;
+        configure.mockFrameIntervalMs = repro ? reproInt("MIB_REPRO_INTERVAL_MS", 1) : 1;
         configure.mockLoopFiles = true;
         if (!facade.dispatch(configure).ok)
         {
@@ -247,12 +275,68 @@ int main()
         // A KDE core record offered while no run is active is ignored.
         backendApp.experiment().setLiveKdeCoreRecord("{\"idle\":true}");
 
+        if (repro) {
+            backendApp.processing().setRealtimeProcessingMode(
+                backend::services::ProcessingService::RealtimeProcessingMode::Inline);
+            backendApp.processing().startRealtime(backendApp.getFrameStore());
+        }
+
         // Start the experiment.
         result = startViaFacade(facade, exp1);
         if (!result.ok || result.operationId == 0)
         {
             std::cerr << "experiment start failed: " << result.message << "\n";
             return 6;
+        }
+        if (repro) {
+            auto& proc = backendApp.processing();
+            const bool series = reproInt("MIB_REPRO_SERIES", 1) > 1;
+            // Validation precedes series assembly; stop capture to freeze the
+            // fixture, then Stop must hand off the owned, incomplete series.
+            if (!waitFor(
+                    [&] {
+                        const auto a = proc.experimentAccountingSnapshot();
+                        return series ? a.processed > 0 : a.persistenceCommitted > 0;
+                    },
+                    10000))
+                return 80;
+            if (std::getenv("MIB_REPRO_NO_MORE_FRAMES")) backendApp.capture().stop();
+            auto stopAndCheck = [&](const std::string& path) {
+                if (backendApp.experiment().requestStop(false) !=
+                        app::ExperimentStopOutcome::Accepted ||
+                    !waitFor([&] { return backendApp.experiment().status().terminal; }, 15000))
+                    return false;
+                const auto live = proc.experimentAccountingSnapshot();
+                backend::services::Hdf5Service saved;
+                backend::recording::RecordingAccountingSnapshot disk;
+                std::vector<backend::services::ProcessedFrame> rows;
+                const bool read = saved.loadFile(path) && saved.readRunAccounting(disk) &&
+                                  saved.readValidFrames(rows);
+                size_t records = 0, images = 0;
+                int height = 0, width = 0;
+                const bool partial =
+                    !series ||
+                    (saved.getSeriesImageInfo(records, images, height, width) && records > 0 &&
+                     images > 0 && images < static_cast<size_t>(reproInt("MIB_REPRO_SERIES", 1)));
+                saved.closeFile();
+                return read && partial && live.persistenceCommitted > 0 &&
+                       live.persistenceCancelledByPolicy == 0 &&
+                       live.persistencePendingAtStop == 0 &&
+                       proc.getBufferedFrameCounts().total() == 0 &&
+                       disk.persistenceAdmitted == live.persistenceAdmitted &&
+                       disk.persistenceCommitted == live.persistenceCommitted;
+            };
+            if (!stopAndCheck(exp1)) return 84;
+            if (std::getenv("MIB_REPRO_RESTART")) {
+                const auto next = (dataDir / "restart.h5").string();
+                if (!startViaFacade(facade, next).ok ||
+                    !waitFor([&] { return proc.experimentAccountingSnapshot().processed > 0; },
+                             10000) ||
+                    !stopAndCheck(next))
+                    return 87;
+            }
+            facade.shutdown();
+            return 0;
         }
         const auto defaultRun = backendApp.experiment().activeRun();
         if (!defaultRun || defaultRun->applicationVersion != MIB_APPLICATION_VERSION ||

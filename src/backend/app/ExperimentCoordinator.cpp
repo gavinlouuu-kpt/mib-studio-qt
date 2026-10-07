@@ -17,6 +17,7 @@
 #include "backend/services/CaptureService.h"
 #include "backend/services/TriggerService.h"
 
+#include <limits>
 #include <spdlog/spdlog.h>
 
 #include <chrono>
@@ -156,6 +157,56 @@ bool outputWritable(const std::string& path, std::string& reason)
     return true;
 }
 
+// Small format/access probe, NOT a sustained-throughput certification. Cached
+// by readiness generation so a UI timer does not continuously write files.
+bool probeHdf5Destination(const std::string& output, std::string& reason) {
+    auto dir = std::filesystem::path(output).parent_path();
+    if (dir.empty()) dir = std::filesystem::current_path();
+    std::error_code ec;
+    while (!dir.empty() && !std::filesystem::exists(dir, ec))
+        dir = dir.parent_path();
+    const auto path = dir / (".mib_hdf5_probe_" + std::to_string(Tools::getTimestamp()) + ".h5");
+    struct Cleanup {
+        std::filesystem::path path;
+        ~Cleanup() {
+            std::error_code e;
+            std::filesystem::remove(path, e);
+            std::filesystem::remove(path.string() + ".recovery.h5", e);
+        }
+    } cleanup{path};
+    try {
+        services::Hdf5Service hdf;
+        std::vector<services::ProcessedFrame> frames(2);
+        for (size_t i = 0; i < frames.size(); ++i) {
+            auto& f = frames[i];
+            f.originalImage = cv::Mat(32, 32, CV_8UC1);
+            for (int y = 0; y < 32; ++y)
+                for (int x = 0; x < 32; ++x)
+                    f.originalImage.at<uint8_t>(y, x) = static_cast<uint8_t>(x + 7 * y + i);
+            f.processedImage = f.originalImage.clone();
+        }
+        bool ok = hdf.openFile(path.string()) && hdf.appendFrames(frames, {}) && hdf.flush();
+        hdf.closeFile();
+        std::vector<services::ProcessedFrame> readback;
+        ok = ok && hdf.loadFile(path.string()) && hdf.readValidFrames(readback) &&
+             readback.size() == frames.size();
+        if (ok)
+            for (size_t i = 0; i < frames.size(); ++i)
+                ok = ok &&
+                     cv::norm(frames[i].originalImage, readback[i].originalImage, cv::NORM_INF) ==
+                         0 &&
+                     cv::norm(frames[i].processedImage, readback[i].processedImage, cv::NORM_INF) ==
+                         0;
+        hdf.closeFile();
+        reason = ok ? "HDF5 write/close/reopen verified; sustained throughput unverified"
+                    : "destination HDF5 write/read verification failed";
+        return ok;
+    } catch (const std::exception& e) {
+        reason = std::string("destination HDF5 probe failed: ") + e.what();
+        return false;
+    }
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -256,7 +307,9 @@ bool ExperimentCoordinator::InvalidationKey::operator==(const InvalidationKey& o
            backgroundGeneration == o.backgroundGeneration && roiX == o.roiX && roiY == o.roiY &&
            roiW == o.roiW && roiH == o.roiH && pixelToMicron == o.pixelToMicron &&
            outputPath == o.outputPath && profileId == o.profileId && method == o.method &&
-           faulted == o.faulted;
+           faulted == o.faulted && frameWidth == o.frameWidth && frameHeight == o.frameHeight &&
+           pixelFormat == o.pixelFormat && frameGeometryKnown == o.frameGeometryKnown &&
+           bufferBytes == o.bufferBytes && flushInterval == o.flushInterval;
 }
 
 ExperimentCoordinator::ExperimentCoordinator(AppBackend& backend) : backend_(backend) {}
@@ -445,6 +498,12 @@ ExperimentCoordinator::currentKeyLocked(const std::string& outputPath, const std
     k.profileId = profileId;
     k.method = methodInvalidationKey(c.method);
     k.faulted = faultActive_;
+    k.frameWidth = c.frameWidth;
+    k.frameHeight = c.frameHeight;
+    k.pixelFormat = c.pixelFormat;
+    k.frameGeometryKnown = c.frameGeometryKnown;
+    k.bufferBytes = backend_.processing().getMaxBufferedBytes();
+    k.flushInterval = backend_.processing().getFlushInterval();
     return k;
 }
 
@@ -646,6 +705,16 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
         std::string why;
         if (outputWritable(outputPath, why)) {
             r.gates.push_back(gate("storage.output", GateStatus::Pass, {}, {}, outputPath));
+            const auto generation = readinessGeneration_.load();
+            const auto now = Tools::getTimestamp();
+            if (storageProbeGeneration_ != generation || now - storageProbeTimeUs_ > 30'000'000) {
+                storageProbeOk_ = probeHdf5Destination(outputPath, storageProbeReason_);
+                storageProbeGeneration_ = generation;
+                storageProbeTimeUs_ = now;
+            }
+            r.gates.push_back(
+                gate("storage.roundtrip", storageProbeOk_ ? GateStatus::Pass : GateStatus::Fail,
+                     storageProbeReason_, storageProbeOk_ ? "" : "choose another destination"));
         } else {
             r.gates.push_back(gate("storage.output", GateStatus::Fail, why,
                                    "choose a writable destination with free space", outputPath));
@@ -662,6 +731,31 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
             }
         }
     }
+    if (app::hostProcessingAvailable() && c.frameGeometryKnown) {
+        const auto cfg = backend_.processing().getProcessingConfig();
+        const uint64_t images = cfg.multi_image_enabled
+                                    ? static_cast<uint64_t>(std::max(1, cfg.multi_image_count)) + 1
+                                    : 2;
+        const uint64_t cap = backend_.processing().getMaxBufferedBytes();
+        const uint64_t limit = std::numeric_limits<uint64_t>::max();
+        const bool overflow = c.frameHeight == 0 || c.frameWidth == 0 ||
+                              c.frameWidth > limit / c.frameHeight ||
+                              c.frameWidth * c.frameHeight > limit / images;
+        const uint64_t payload = overflow ? limit : c.frameWidth * c.frameHeight * images;
+        if (overflow || (cap && payload > cap))
+            r.gates.push_back(
+                gate("storage.buffer", GateStatus::Fail,
+                     "one full-frame image/mask series cannot fit the recording byte budget",
+                     "reduce frame size/series length or increase the recording budget"));
+        else if (cap && cap / payload < backend_.processing().getFlushInterval())
+            r.gates.push_back(gate(
+                "storage.buffer", GateStatus::Warn,
+                "byte-pressure flushing will run before the configured frame threshold",
+                "leave capacity headroom; runtime overflow will fail the experiment explicitly"));
+        else
+            r.gates.push_back(gate("storage.buffer", GateStatus::Pass));
+    }
+
     if (backend_.hdf5().isFileOpen()) {
         r.gates.push_back(gate("storage.hdf5", GateStatus::Fail, "an HDF5 file is already open",
                                "finish or close the current file first"));
@@ -1002,7 +1096,13 @@ void ExperimentCoordinator::publishLocked(std::unique_lock<std::mutex>& lk, cons
             }
         } inFlight{*this};
         tlInStatusCallback = true;
-        cb(s);
+        try {
+            cb(s);
+        } catch (const std::exception& e) {
+            SPDLOG_ERROR("ExperimentCoordinator: status observer failed: {}", e.what());
+        } catch (...) {
+            SPDLOG_ERROR("ExperimentCoordinator: status observer threw an unknown exception");
+        }
     }
     lk.lock();
 }
@@ -1038,6 +1138,13 @@ void ExperimentCoordinator::setLiveKdeCoreRecord(std::string json)
     liveKdeCoreJson_ = std::move(json);
 }
 
+void ExperimentCoordinator::requestFlush() {
+    std::lock_guard<std::mutex> lk(mutex_);
+    if (state_ != ExperimentRunState::Active || workerExit_) return;
+    flushRequested_ = true;
+    workerCv_.notify_all();
+}
+
 void ExperimentCoordinator::onFatalSaveError(const std::string& message)
 {
     std::lock_guard<std::mutex> lk(mutex_);
@@ -1062,7 +1169,8 @@ void ExperimentCoordinator::worker()
     std::unique_lock<std::mutex> lk(mutex_);
     while (true) {
         workerCv_.wait_for(lk, std::chrono::milliseconds(250),
-                           [&] { return stopRequested_ || workerExit_; });
+                           [&] { return stopRequested_ || workerExit_ || flushRequested_; });
+        flushRequested_ = false;
         if (stopRequested_ && activeRun_) {
             const bool failed = fatalRequested_;
             const std::string msg = fatalMessage_;
@@ -1146,7 +1254,7 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
                     submitted, flushOk, sinceMs(t0));
     }
     // 3. Stop accumulating.
-    proc.endExperiment();
+    if (!proc.endExperiment()) flushOk = false;
     proc.resetRealtimeMetrics();
     // 4. Remainder that arrived between 2 and 3 goes through the same flush
     // path so the accounting credits it as committed (bench, 2026-09-08).

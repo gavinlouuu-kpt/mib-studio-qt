@@ -181,11 +181,31 @@ int main()
         MIB_EXPECT(statusOf(r, "processing.core") == GateStatus::Pass, "core pass (no pin)");
         MIB_EXPECT(statusOf(r, "processing.background") == GateStatus::Warn, "no background -> warn only");
         MIB_EXPECT(statusOf(r, "storage.output") == GateStatus::Pass, "writable output");
+        MIB_EXPECT(statusOf(r, "storage.roundtrip") == GateStatus::Pass,
+                   "destination HDF5 roundtrip verified");
         MIB_EXPECT(r.candidate.camera.simulated && !r.candidate.camera.fallback, "candidate records explicit mock");
         MIB_EXPECT(r.candidate.frameWidth == 96 && r.candidate.frameHeight == 96, "candidate geometry from frames");
         MIB_EXPECT(r.candidate.captureGeneration == backend.capture().lifecycleSnapshot().generation,
                    "candidate carries capture generation");
-        genReady = r.generation;
+        const auto originalBudget = proc.getMaxBufferedBytes();
+        proc.setMaxBufferedBytes(1);
+        const auto impossible = coord.evaluateReadiness(out1);
+        MIB_EXPECT(!impossible.ready && statusOf(impossible, "storage.buffer") == GateStatus::Fail,
+                   "oversized payload blocks readiness");
+        MIB_EXPECT(impossible.generation != r.generation, "buffer budget invalidates readiness");
+        const auto beforeSeries = proc.getProcessingConfig();
+        auto series = beforeSeries;
+        series.multi_image_enabled = true;
+        series.multi_image_count = 10;
+        proc.setProcessingConfig(series);
+        proc.setMaxBufferedBytes(4 * 96 * 96);
+        const auto oversizedSeries = coord.evaluateReadiness(out1);
+        MIB_EXPECT(!oversizedSeries.ready &&
+                       statusOf(oversizedSeries, "storage.buffer") == GateStatus::Fail,
+                   "oversized series blocks readiness");
+        proc.setProcessingConfig(beforeSeries);
+        proc.setMaxBufferedBytes(originalBudget);
+        genReady = coord.evaluateReadiness(out1).generation;
         MIB_EXPECT(coord.evaluateReadiness(out1).generation == genReady, "generation stable while nothing changes");
 
         // ROI edit after preflight -> stale.
@@ -244,6 +264,23 @@ int main()
         stopCapture(backend);
         const auto stopped = coord.evaluateReadiness(out1);
         MIB_EXPECT(!stopped.ready && stopped.generation != before.generation, "stop invalidates");
+        // Geometry can change independently of the capture lifecycle (SDK ROI /
+        // format renegotiation). Its payload gate must invalidate prior preflight.
+        const auto budget = proc.getMaxBufferedBytes();
+        proc.setMaxBufferedBytes(2 * 96 * 96);
+        auto store = backend.getFrameStore();
+        pushMat(*store, cv::Mat(96, 96, CV_8UC1, cv::Scalar(0)), 9000);
+        const auto small = coord.evaluateReadiness(out1);
+        pushMat(*store, cv::Mat(192, 96, CV_8UC1, cv::Scalar(0)), 9001);
+        const auto large = coord.evaluateReadiness(out1);
+        MIB_EXPECT(statusOf(small, "storage.buffer") != GateStatus::Fail &&
+                       statusOf(large, "storage.buffer") == GateStatus::Fail,
+                   "changed geometry changes payload feasibility");
+        MIB_EXPECT(large.generation != small.generation,
+                   "frame geometry invalidates readiness without a lifecycle change");
+        MIB_EXPECT(coord.evaluateReadiness(out1).generation == large.generation,
+                   "unchanged frame geometry keeps readiness stable");
+        proc.setMaxBufferedBytes(budget);
         MIB_REQUIRE(startCapture(backend), "restart capture");
         const auto restarted = coord.evaluateReadiness(out1);
         MIB_EXPECT(restarted.ready && restarted.generation != before.generation && restarted.generation != stopped.generation,
@@ -403,6 +440,7 @@ int main()
         coordinator.setStatusCallback([&](const backend::app::ExperimentStatus& s) {
             std::lock_guard<std::mutex> lk(seenMutex);
             seen.push_back(s.state);
+            throw std::runtime_error("injected observer failure");
         });
 
         const auto out = (td.path() / "status_run.h5").string();
