@@ -500,6 +500,14 @@ int main(int argc, char* argv[])
                        meta["display_name"].toString() == renamedName,
                    "rename rewrites metadata identity and name");
         MIB_EXPECT(combo->currentText().startsWith("renamed"), "combo shows renamed metadata");
+        // A freshly seeded Windows default can retain checkout CRLF bytes.
+        // Use every bundled key so the watcher does not rewrite it during merging.
+        QFile bundledDefault(":/defaults/config.json");
+        MIB_REQUIRE(bundledDefault.open(QIODevice::ReadOnly), "read bundled app default");
+        QByteArray freshDefault = bundledDefault.readAll();
+        freshDefault.replace("\r\n", "\n");
+        freshDefault.replace("\n", "\r\n");
+        writeFile(initialDefaultPath, freshDefault);
         QTimer::singleShot(0, [] {
             auto* dialog = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
             if (dialog) dialog->button(QMessageBox::Yes)->click();
@@ -508,6 +516,11 @@ int main(int argc, char* argv[])
         const QString defaultPath = tabs.appConfigDocument().path;
         MIB_EXPECT(watcher.watchedPath() == defaultPath && !defaultPath.startsWith(renamedDir),
                    "delete active profile repoints watcher to default");
+        MIB_EXPECT(!tabs.appConfigDocument().dirty && !tabs.appConfigDocument().conflict,
+                   "fresh default loads clean despite CRLF normalization");
+        MIB_EXPECT(tabs.appConfigDocument().diskFingerprint ==
+                       QCryptographicHash::hash(fileBytes(defaultPath), QCryptographicHash::Sha256),
+                   "default baseline matches exact bytes after watcher preparation");
         tabs.setAppConfigEditorText(
             QStringLiteral("{\"image_processing\":{\"bg_subtract_threshold\":20}}"));
         QMetaObject::invokeMethod(&tabs, "onSaveJson", Qt::DirectConnection);

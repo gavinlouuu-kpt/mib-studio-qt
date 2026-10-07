@@ -15,7 +15,8 @@
 - **State is a value, not a label.** Each editable document (app
   `config.json`, camera script, MindVision JSON) has a
   `ConfigDocumentState` (`frontend/models/ConfigDocumentState.h`): active
-  path, loaded/current SHA-256 fingerprints, `dirty` (content comparison —
+  path, loaded/current editor SHA-256 fingerprints plus an exact disk-byte
+  fingerprint for checked saves, `dirty` (content comparison —
   editing back to the baseline is clean), `conflict` (file changed elsewhere
   while dirty), last save outcome. `onExternalConfigFileChanged()` consults
   `jsonDoc_.markExternalChange()` — never a label's `isVisible()` — so a hidden
@@ -270,3 +271,10 @@ delete/default-save application, and immediate update banner refresh offline.
 The profile lifecycle regression uses unique profile names and clicks the Qt
 confirmation buttons; closing a QMessageBox with `done(Yes)` does not select its
 Yes button. This avoids skipped actions and stale directories between runs.
+
+Fresh Windows defaults may contain CRLF from the bundled resource. The editor
+normalizes line endings, so its clean/dirty baseline is separate from the raw
+file fingerprint used for Save conflicts. Deleting an active profile reloads
+both baselines after synchronous watcher default creation/merging.
+`frontend.config_tabs_state` replaces the default with complete bundled CRLF
+content before deletion and restores the original file after the save check.
