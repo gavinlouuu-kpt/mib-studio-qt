@@ -22,6 +22,7 @@ jobs:
     # without this every build compiled one file at a time on a 4-CPU runner.
     env:
       CMAKE_BUILD_PARALLEL_LEVEL: "4"
+      SCCACHE_GHA_ENABLED: "true"
 
     steps:
       - name: Checkout
@@ -35,17 +36,25 @@ jobs:
       # is Qt-free (epic #246 Phase 1 exit gate). The list is env/apt-packages.txt.
       - name: Set up Linux build environment
         uses: ./.github/actions/setup-linux-env
+        timeout-minutes: 10
         with:
           sections: base,backend
           conan: "true"
           mindvision: "true"
           assets: required
 
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.11
+        timeout-minutes: 3
+        with:
+          version: "v0.16.0"
+
       - name: Probe Conan dependency availability
+        timeout-minutes: 4
         shell: bash
         run: |
           set +e
-          conan install . \
+          timeout --signal=TERM --kill-after=30s 180s conan install . \
             --profile:host=conan/profiles/linux-gcc13 \
             --profile:build=default \
             --output-folder=build/linux-backend-conan \
@@ -59,23 +68,24 @@ jobs:
           fi
 
       - name: Configure backend-only preset
+        timeout-minutes: 5
         shell: bash
         run: |
           set -o pipefail
-          cmake --preset linux-backend-only 2>&1 | tee artifacts/backend-ci/configure.log
+          timeout --signal=TERM --kill-after=30s 4m \
+            cmake --preset linux-backend-only 2>&1 | tee artifacts/backend-ci/configure.log
 
       - name: Build backend-only preset
+        timeout-minutes: 21
         shell: bash
         run: |
           set -o pipefail
-          cmake --build --preset linux-backend-only-build 2>&1 | tee artifacts/backend-ci/build.log
-
-      - name: Build mib_processing explicitly
-        shell: bash
-        run: |
-          set -o pipefail
-          cmake --build --preset linux-backend-only-build --target mib_processing 2>&1 | \
-            tee artifacts/backend-ci/build-mib-processing.log
+          timeout --signal=TERM --kill-after=30s 20m \
+            bash -e -o pipefail -c '
+              cmake --build --preset linux-backend-only-build 2>&1 | tee artifacts/backend-ci/build.log
+              cmake --build --preset linux-backend-only-build --target mib_processing 2>&1 | \
+                tee artifacts/backend-ci/build-mib-processing.log
+            '
 
       - name: Verify mib_processing has no Qt dependency
         shell: bash
@@ -96,6 +106,7 @@ jobs:
           echo "OK: libmib_processing.a has no Qt symbol references."
 
       - name: Test backend-only preset
+        timeout-minutes: 13
         shell: bash
         env:
           # Avoid the network LUT-manifest fetch at AppBackend startup (offline
@@ -103,9 +114,12 @@ jobs:
           MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL: "file:///nonexistent/mib-lut-manifest.json"
         run: |
           set -o pipefail
-          ctest --preset linux-backend-only-test --output-on-failure 2>&1 | tee artifacts/backend-ci/test.log
+          timeout --signal=TERM --kill-after=30s 12m \
+            ctest --preset linux-backend-only-test --output-on-failure \
+            2>&1 | tee artifacts/backend-ci/test.log
 
       - name: PL replay lane (ADR 0011)
+        timeout-minutes: 5
         shell: bash
         # The hardware-free PZ7035 tests carry the `pl` ctest label: record
         # decoder and provider replay, profile compiler, platform monitor, the
@@ -118,18 +132,35 @@ jobs:
           MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL: "file:///nonexistent/mib-lut-manifest.json"
         run: |
           set -o pipefail
-          total=$(ctest --preset linux-backend-only-test -N -L pl | sed -n 's/^Total Tests: //p')
-          echo "PL lane: ${total} tests"
-          # Lower bound: raise it when a PL test is added.
-          if [ "${total:-0}" -lt 15 ]; then
-            echo "::error::PL replay lane shrank to ${total:-0} tests (expected >= 15): a pl label or test was dropped."
-            exit 1
+          timeout --signal=TERM --kill-after=30s 4m \
+            bash -e -o pipefail -c '
+              total=$(ctest --preset linux-backend-only-test -N -L pl | sed -n "s/^Total Tests: //p")
+              echo "PL lane: ${total} tests"
+              # Lower bound: raise it when a PL test is added.
+              if [ "${total:-0}" -lt 15 ]; then
+                echo "::error::PL replay lane shrank to ${total:-0} tests (expected >= 15): a pl label or test was dropped."
+                exit 1
+              fi
+              ctest --preset linux-backend-only-test -L pl --no-tests=error --output-on-failure
+            ' 2>&1 | tee artifacts/backend-ci/pl-lane.log
+
+      - name: sccache statistics
+        if: always()
+        shell: bash
+        timeout-minutes: 1
+        run: |
+          mkdir -p artifacts/backend-ci
+          if command -v sccache >/dev/null 2>&1; then
+            sccache --show-stats 2>&1 | tee artifacts/backend-ci/sccache-stats.log
+          else
+            echo "sccache was not available; cache statistics are unavailable" \
+              | tee artifacts/backend-ci/sccache-stats.log
           fi
-          ctest --preset linux-backend-only-test -L pl --no-tests=error --output-on-failure 2>&1 | tee artifacts/backend-ci/pl-lane.log
 
       - name: Upload backend CI logs
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v7
+        timeout-minutes: 3
         with:
           name: backend-ci-logs-${{ github.run_id }}
           path: |
@@ -137,3 +168,4 @@ jobs:
             build/linux-backend/Testing/Temporary/LastTest.log
             build/linux-backend/Testing/Temporary/LastTestsFailed.log
           if-no-files-found: ignore
+          retention-days: 7

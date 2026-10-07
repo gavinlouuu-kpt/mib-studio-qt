@@ -147,6 +147,9 @@ jobs:
     name: Build + test wheel (${{ matrix.label }})
     needs: validate-source-version
     runs-on: ubuntu-24.04
+    # ARM64 cibuildwheel runs under QEMU and the measured all-Python build
+    # takes about 70 minutes; keep x86_64 fail-fast while bounding ARM spend.
+    timeout-minutes: ${{ matrix.arch == 'aarch64' && 120 || 20 }}
     strategy:
       fail-fast: false
       matrix:
