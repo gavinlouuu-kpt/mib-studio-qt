@@ -33,7 +33,7 @@ export function BackgroundCalibrationControls({ready, experimentActive, onPublis
     <label>Accepted frames<input value={required} disabled={running || busy} onChange={e => setRequired(e.target.value)} /></label>
     <label>Maximum attempts<input value={attempts} disabled={running || busy} onChange={e => setAttempts(e.target.value)} /></label>
     <label>Timeout (ms)<input value={timeout} disabled={running || busy} onChange={e => setTimeoutValue(e.target.value)} /></label>
-    <button disabled={!ready || !status || busy || running || experimentActive} onClick={() => void run()}>Calibrate background</button>
+    <button disabled={!ready || !status || busy || running || experimentActive} title={experimentActive ? "Stop the experiment before calibrating background" : undefined} onClick={() => void run()}>Calibrate background</button>
     <button disabled={!ready || busy || !running} onClick={() => void run(true)}>Cancel calibration</button>
     {error && <p role="alert">{error}</p>}
     <p>{status ? `${status.state}: ${status.accepted} accepted / ${status.attempted} examined · ${status.rejected_non_empty} non-empty · ${status.rejected_processing_failed} processing failures · ${status.message}` : 'Calibration status unavailable'}</p>

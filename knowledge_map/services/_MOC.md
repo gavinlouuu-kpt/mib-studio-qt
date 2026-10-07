@@ -41,7 +41,6 @@
   API, observe-only connect, motion opcodes never re-sent); ADR 0013, #464
 
 ## Optional / specialised
-- [[YoloService]] — ONNX Runtime session (segmentation; placeholder-ish)
 - [[RecorderService]] — raw frame container writer (recording mode)
 - [[BatchMaskSources]] — adapters for offline mask regeneration
   (`processBatch` inputs/outputs)

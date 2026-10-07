@@ -1,3 +1,4 @@
+import { metricNumber } from "../../metricFormat";
 // Deformability-vs-area scatter for the review Charts view (plan
 // 2026-10-01-standalone-review-app, PR 3) — the Qt HdfReviewTab scatter on
 // a canvas: one marker per valid cell (optionally coloured by the backend's
@@ -210,7 +211,7 @@ export function ReviewScatter(props: ReviewScatterProps) {
       />
       {hovered && (
         <div className="scatter-tip mono" style={{ left: hovered.x + 14, top: hovered.y + 12 }}>
-          Frame {data?.frame_index[hovered.i]} · {points.xs[hovered.i].toFixed(1)} µm² · deformability {points.ys[hovered.i].toFixed(4)}
+          Frame {data?.frame_index[hovered.i]} · {metricNumber(points.xs[hovered.i], 1)} µm² · deformability {metricNumber(points.ys[hovered.i], 4)}
         </div>
       )}
       {ctxMenu && (

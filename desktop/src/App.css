@@ -817,11 +817,11 @@ button.btn:disabled,
   border: 1px solid var(--border);
   background: #fff;
   padding: 8px;
-  flex: 1;
-  min-height: 0;
+  flex: 1 0 auto;
+  min-height: auto;
   display: flex;
   flex-direction: column;
-  overflow: auto;
+  overflow: visible;
 }
 
 /* ---- Canvas / live view ---- */
@@ -937,6 +937,13 @@ button.btn:disabled,
   padding: 8px;
   min-width: 240px;
   flex: 1;
+}
+
+/* Stacked in a sub-tab body (a content-height flex column since #543), a
+   config group keeps its own height: with flex: 1 it shared the extra
+   height with the Review split and pushed the frames below the fold. */
+.subtab-body > .config-group {
+  flex: 0 0 auto;
 }
 
 .config-group h5 {
@@ -1192,6 +1199,15 @@ button.btn:disabled,
 
 /* Non-blocking readiness warnings at run start (#501: recording to RAM) */
 .start-notice { margin: 4px 0; color: var(--warn); }
+
+/* Outcome of the last finished run (#549, components/RunOutcomeNotice.tsx) */
+.run-outcome { margin: 4px 0; padding: 4px 8px; border-left: 3px solid var(--border); }
+.run-outcome.ok { border-left-color: var(--ok); }
+.run-outcome.partial { border-left-color: var(--border); }
+.run-outcome.legacy { color: var(--muted); }
+.run-outcome.attention { border-left-color: var(--warn); color: var(--warn); }
+.run-outcome.loss, .run-outcome.unknown { border-left-color: var(--warn); color: var(--warn); }
+.run-outcome.failed { border-left-color: var(--err); color: var(--err); }
 
 /* ---- #550 m15: narrow windows (about 1024 px, the remote browser UI) ----
    Tab labels and the camera buttons stay on one line; when the row is too narrow the camera

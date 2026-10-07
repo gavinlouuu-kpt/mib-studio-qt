@@ -53,6 +53,9 @@ The repo root `src/` is the C++ tree, so the whole Tauri app lives under
   with `desktop/src/workflow.test.ts` vitest coverage.
 - `desktop/src/preflight.ts` — pure hardware-preflight checklist derivation
   (UX-3), with `desktop/src/preflight.test.ts` vitest coverage.
+- `desktop/src/experimentCounters.ts` — operator saved counts by class, pending
+  saves derived with exact u64 arithmetic, policy drops and writer failures
+  from the existing experiment status fields (#546); Vitest covers labels.
 - `desktop/src/quality.ts` — pure Camera & Alignment quality-gate derivation
   (UX-4), with `desktop/src/quality.test.ts` vitest coverage.
 - `desktop/src/contextBar.ts` — pure persistent active-context bar derivation
@@ -88,6 +91,15 @@ while the Preflight tab is shown (off the capture loop) and renders the checklis
 in the Connect tab. Storage writability/free-space stays informational until a
 backend status contract exists. Details:
 `knowledge_map/task/2026-07-21-ux3-hardware-preflight.md`.
+
+**Required checks gate the workflow (#548).** `WorkflowFacts.requiredFailures` carries the
+checklist's `required` checks that are not `passed` ("Label: detail"). When present it is the
+authority for the Preflight stage and replaces the host core pin test, because the checklist
+already holds the host core check on the desktop and the PL core check on the PZ7035. Each such
+check is a blocking reason, so the stage is "needs attention", the recommended action navigates
+instead of offering the confirmation, and a stage confirmed earlier goes back to "needs
+attention" if one starts failing. A required check in `warning` blocks as well (the checklist's
+`criticalPassed` rule). Tests: `workflow.test.ts` (#548).
 
 **Quality gates (UX-4 slice, issue #308):** `desktop/src/quality.ts` —
 `deriveQualityGates(input)` turns the Camera & Alignment stage's
@@ -672,6 +684,27 @@ three places:
 
 None of them blocks a run. Desktop builds are unchanged.
 
+## How a run ended (#549)
+
+`desktop/src/runOutcome.ts` (pure) turns the finished run's experiment status
+(`completion`, `completion_reason`, `persistence_admitted`) into an operator message: the
+completion, the non-zero loss counts parsed from the backend's reason
+(`storeOverwritten`, `storeNotCommitted`, `storeMalformed`, `processingFailed`, `sequenceGaps`),
+and the lost fraction of the admitted frames. A booked malformed frame (an ingress error) is a
+declared loss: the run is "partial (declared)" and the notice is informational unless malformed
+frames exceed 0.1 % of the admitted frames (`MALFORMED_WARN_FRACTION`). `components/RunOutcomeNotice`
+shows it on the Experiment tab (an alert for undeclared loss, failure, an unknown outcome or that
+attention case, a status otherwise), with the backend's own text as the tooltip. The shell logs one line per finished run and adds a "Last run"
+row to the sidebar. Cancelled runs and a status that is not yet terminal show nothing.
+
+The reconciled accounting (`fetch_run_accounting`, ABI 31) supplies the denominator: the frames
+the run admitted, not the rows it saved (a run with many EMPTY frames saves far fewer rows than it
+admits). `describeRunOutcome(status, accounting)` uses it when the accounting belongs to the same run
+(`start_generation`); `describeReviewOutcome(accounting)` describes the file loaded for review. The
+Review tab shows it above the export options: a raw recording or a legacy file without accounting is a
+quiet "no run accounting saved" note, and a file whose counters do not reconcile reads as a failure.
+Tests: `runOutcome.test.ts`, `RunOutcomeNotice.test.tsx`.
+
 ## PL mode, branding and reload (#550 m11–m15)
 
 - **Capability gating.** In PL mode (`hostProcessing` false) the legend, Clear ROI, manual ROI
@@ -723,7 +756,7 @@ current Qt live scatter's use of the current factor is not authoritative for mix
 
 `.github/workflows/desktop-windows-candidate.yml` builds a Windows x64 SDK-free Tauri candidate on `dev/react-tauri` pushes or manual dispatch. This is separate from the existing Qt Windows release workflow and never creates tags, releases, update feeds or signed installers. It uses the repository VS2022/MSVC194 Conan profile, VS CMake backend-only build and existing bridge link-manifest generator, then release-mode Rust tests/build.
 
-`desktop/scripts/package-windows-candidate.ps1` creates a fresh portable directory and ZIP: recursive non-system native DLL dependencies (unresolved/conflicting names fail), app-local VC runtime, defaults, isoelastic LUT resources and the pinned YOLO model. The staged application is smoke-launched with development DLL search paths removed. WebView2 Evergreen remains an explicit prerequisite. The candidate disables EGrabber, MindVision and CoreMOR SDKs; SDK-enabled camera delivery and Windows hardware acceptance remain separate gates. Windows hosted execution is required before declaring this candidate validated.
+`desktop/scripts/package-windows-candidate.ps1` creates a fresh portable directory and ZIP: recursive non-system native DLL dependencies (unresolved/conflicting names fail), app-local VC runtime, defaults, isoelastic LUT resources. The staged application is smoke-launched with development DLL search paths removed. WebView2 Evergreen remains an explicit prerequisite. The candidate disables EGrabber, MindVision and CoreMOR SDKs; SDK-enabled camera delivery and Windows hardware acceptance remain separate gates. Windows hosted execution is required before declaring this candidate validated.
 
 Local minimum path: VS2022 x64 developer PowerShell, Node22, stable Rust/MSVC, Python/Conan/CMake; install dependencies with `conan install . -of build --build=missing -s build_type=Release -pr conan/profiles/windows-msvc194`, provision required assets, configure `windows-default` with the workflow's SDK-free/backend-only flags, build backend libraries and `mib_backend_smoke_test`, run `tools/gen_bridge_link_manifest.py`, then `npm --prefix desktop ci`, frontend test/build and release Cargo desktop build with `custom-protocol`. Run the packaging script last. Never use Qt's release workflow to build this candidate.
 
@@ -836,6 +869,18 @@ disarms; #521).
 
 Tests: `stageControlModel.test.ts` (rules) and `StageControls.test.tsx`
 (panel behaviour with a mocked bridge).
+
+Background capture/clear and ROI editing are disabled during Starting, Active and
+Stopping. Setup command refusals refresh backend ROI/background state (#542).
+### Metric rendering and panel recovery (#540, #543)
+
+`metricFormat.ts` renders absent/non-finite metrics as an em dash. Both Studio
+result tables share `ResultMetricCells`; review columns, frame viewers and chart
+labels use the same formatter. `PanelErrorBoundary` surrounds the main panel
+content in Studio and YOFO Review; Reload view remounts the failed children while
+shell controls and logs stay available. Studio subtab bodies do not shrink below
+content height: the outer `.tab-body` scrolls the Preflight and App-config content.
+JSDOM has no flex layout engine; physical layout needs browser verification.
 
 Safety confirmations go through `desktop/src/transport/dialogs.ts` and must be
 awaited. Tauri uses the public dialog API (`dialog:allow-message`); browser

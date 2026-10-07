@@ -9,7 +9,7 @@ downloaded, so ``--check`` can answer "is this tree complete?" without network.
 
     python3 scripts/provision-assets.py --required-only     # what the build needs
     python3 scripts/provision-assets.py --public-only        # everything that needs no token
-    python3 scripts/provision-assets.py --asset yolo11n-seg --asset 512x96stream-mock-frames --count 200
+    python3 scripts/provision-assets.py --asset 512x96stream-mock-frames --count 200
     python3 scripts/provision-assets.py --check --required-only   # no network; exit 1 if incomplete
     python3 scripts/provision-assets.py --list
 

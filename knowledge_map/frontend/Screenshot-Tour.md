@@ -13,7 +13,7 @@ target defined in `src/frontend/qt/CMakeLists.txt`
 
 - Boot `AppBackend` + `MainWindow` exactly like `main.cpp`, but with
   `MIB_CAMERA_MODE=mock` forced, network/hardware services disabled by
-  default (`MIB_DISABLED_SERVICES=auto_update,autofocus,trigger,yolo`), and
+  default (`MIB_DISABLED_SERVICES=auto_update,autofocus,trigger`), and
   backend data + `QSettings` isolated into a `QTemporaryDir` so every run is
   clean and deterministic. The stable application/settings identity is
   initialized only after that temporary settings path is installed, so the

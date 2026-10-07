@@ -110,7 +110,7 @@ All services are `std::unique_ptr`; [[../data-model/FrameStore]] is
 sqliteService_, hdf5Service_,
 captureService_, processingService_, playbackService_,
 cameraControlService_, autofocusService_,
-triggerService_, dotGridService_, yoloService_, syringePumpService_,
+triggerService_, dotGridService_, syringePumpService_,
 pulseGeneratorService_,
 deviceDiscovery_, startupDiscovery_   // #419: declared last, destroyed first
 frameStore_  // shared_ptr<FrameStore>(5000)
@@ -133,15 +133,14 @@ See `src/backend/AppBackend.cpp` around lines 79–200.
 2. Instantiates all services + `FrameStore(5000)`.
 3. `sqliteService_->initialize(dataDir/app.sqlite3)`,
    `hdf5Service_->initialize(dataDir)`.
-4. Loads optional YOLO model from `resources/models/yolo11n-seg.onnx`.
-5. Resolves the Young's modulus LUT through the managed R2/cache helper,
+4. Resolves the Young's modulus LUT through the managed R2/cache helper,
    preferring the user-writable copy under the app-local data tree and
    falling back to the bundled `resources/isoelastic_curve/...` file on
    first run, offline launches, or update failures.
-6. Starts the processing worker pool (`processingService_->start()`).
+5. Starts the processing worker pool (`processingService_->start()`).
    Realtime loop is **not** started here — it starts when the Experiment tab
    becomes active.
-7. Wires callbacks:
+6. Wires callbacks:
    - `ProcessingService::RingRatioCallback` → `AutofocusService::onRingRatio`
    - `ProcessingService::TargetGroupCallback` → `TriggerService::onTargetGroupResult`
    - `CaptureService::CameraReadyCallback(camera, generation)` →
@@ -151,7 +150,7 @@ See `src/backend/AppBackend.cpp` around lines 79–200.
      and hands it the live `ICamera*`
    - `ProcessingService::BackgroundCaptureCallback` → emits Qt signal via
      [[../frontend/System-Utilities]] `BackgroundCaptureNotifier`
-8. Seeds the [[../diagnostics/CrashStateMirror]] with initial app context
+7. Seeds the [[../diagnostics/CrashStateMirror]] with initial app context
    (camera label, data dir, mock vs hardware vs MindVision, FrameStore
   capacity) and sets the Sentry tags (`camera_mode`, `data_dir`) on
   [[../services/CrashReporter]].
@@ -190,7 +189,6 @@ Supported backend tokens:
 - `sqlite`
 - `hdf5`
 - `processing`
-- `yolo`
 - `autofocus` (disables ring-ratio callback wiring from processing)
 - `trigger` (disables processing/camera trigger wiring)
 - `dot_grid` (alias: `dotgrid`; leaves [[../services/DotGridService]] constructed but not started)

@@ -146,7 +146,6 @@
   [[../services/AutofocusService]] through a clean-room ASCII serial backend.
   Linux uses the standard `ch341` USB-serial driver; see
   `docs/integration/oeabt-nanopositioner.md`.
-- **ONNX Runtime** — ML runtime for [[../services/YoloService]].
 
 ## Code idioms
 

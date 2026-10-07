@@ -76,7 +76,7 @@ Service implementations live in `src/backend/services/` with public headers in
 - frame processing, realtime snapshots, experiment accumulation, and batch mask
   sources
 - HDF5 persistence, SQLite state, playback, and frame recording
-- autofocus, trigger output, syringe pump control, YOLO segmentation, logging,
+- autofocus, trigger output, syringe pump control, logging,
   and crash reporting
 
 Add a new service here when it owns hardware, persistence, processing,

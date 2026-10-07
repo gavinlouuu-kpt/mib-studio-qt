@@ -128,6 +128,12 @@ band. The write is mandatory, like core provenance. `readRecordedProcessingConfi
 reads every `processing_config_*` attribute back into a `ProcessingConfig`;
 attributes an older file lacks keep the caller's values.
 
+`readRecordedProcessingContract` is the narrow export-reader path. It checks
+the root, `/experiment_info`, `/recording_info`, and `/run_provenance` groups,
+accepts only scalar integer values 1–3, and requires all present copies to
+agree. Arrays, non-integers, unsupported values, and conflicts return false;
+when no contract metadata exists it returns Contract 1 for legacy files.
+
 ## Run accounting (issue #367)
 
 `writeRunAccounting(RecordingAccountingSnapshot)` / `readRunAccounting(...)`
@@ -246,3 +252,15 @@ metadata from HDF5 query errors. It returns nullopt on unavailable/error, false
 for an absent group/dataset, true for a present link (which must still decode).
 The shared exporter skips absent groups, but does not suppress malformed metadata
 read failures. A valid-only facade fixture caught this regression before the fix.
+
+## Experiment totals (#544)
+
+The shared coordinator writes run-wide successful valid/invalid writes to
+`experiment_info` totals after draining both flushes. Qt and React use this same
+finalization. Older files may contain only stop-time remainder counts. Recompute
+the saved totals from the first dimension of `/valid_frames/metadata` and
+`/invalid_frames/metadata` (missing dataset means zero); for image-bearing runs
+they also equal the first dimension of each class's `images` dataset. Metadata
+also covers imageless PL runs. These counts recover saved frames, not sampled-out
+invalid frames, buffer policy drops, or failed writes; persisted `accounting_*`
+attributes retain those distinctions when present. No migration is performed.

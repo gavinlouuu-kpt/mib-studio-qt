@@ -62,7 +62,7 @@ bool contains(const std::vector<std::string>& v, const std::string& s)
 int main()
 {
     setEnv("MIB_CAMERA_MODE", "mock");
-    setEnv("MIB_DISABLED_SERVICES", "yolo,auto_update");
+    setEnv("MIB_DISABLED_SERVICES", "auto_update");
     mib::test::Watchdog watchdog(60);
 
     // ---- wiring ----------------------------------------------------------------------
