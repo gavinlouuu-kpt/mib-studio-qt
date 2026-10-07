@@ -1058,32 +1058,6 @@ export default function App() {
   // backend must supply a retained exact terminal outcome before showing Complete.
   const experimentCompleted = false;
 
-  const workflowFacts: WorkflowFacts = {
-    backendReady: ready,
-    cameraConfigured,
-    cameraRunning: running,
-    preflightSignature,
-    preflightConfirmedFor,
-    alignmentSignature,
-    alignmentConfirmedFor,
-    coreValid: coreStatus?.valid ?? false,
-    corePinSatisfied: coreStatus?.pin_satisfied ?? false,
-    requiredCoreVersion: coreStatus?.required_version ?? "",
-    experimentState: expState,
-    experimentCompleted,
-    reviewFileOpen: reviewMeta?.file_open ?? false,
-    reviewValid: reviewMeta?.valid ?? false,
-  };
-  const workflow = deriveWorkflow(workflowFacts);
-  const stageByTab = Object.fromEntries(workflow.stages.map((s) => [s.tab, s])) as Record<
-    StageTab,
-    (typeof workflow.stages)[number]
-  >;
-  const currentStage = workflow.stages.find((s) => s.id === workflow.currentStageId)!;
-  // A confirmation cannot be applied while a run is active (setup is locked).
-  const recNeedsConfirm = !!workflow.recommended && workflow.recommended.kind !== "navigate";
-  const recDisabled = recNeedsConfirm && expActive;
-
   // ---- UX-3 profile-aware hardware preflight (issue #307) ----
   const preflightInput: PreflightInput = {
     backendReady: ready,
@@ -1121,6 +1095,38 @@ export default function App() {
     instrument,
   };
   const preflight = derivePreflight(preflightInput);
+
+  const workflowFacts: WorkflowFacts = {
+    backendReady: ready,
+    cameraConfigured,
+    cameraRunning: running,
+    preflightSignature,
+    preflightConfirmedFor,
+    alignmentSignature,
+    alignmentConfirmedFor,
+    coreValid: coreStatus?.valid ?? false,
+    corePinSatisfied: coreStatus?.pin_satisfied ?? false,
+    requiredCoreVersion: coreStatus?.required_version ?? "",
+    // The checklist's own rule ("Required checks must pass before Preflight can be confirmed"),
+    // so a failing required check (PL core, sensor link, LED strobe) cannot be confirmed (#548).
+    requiredFailures: preflight.checks
+      .filter((c) => c.requirement === "required" && c.status !== "passed")
+      .map((c) => `${c.label}: ${c.detail}`),
+    experimentState: expState,
+    experimentCompleted,
+    reviewFileOpen: reviewMeta?.file_open ?? false,
+    reviewValid: reviewMeta?.valid ?? false,
+  };
+  const workflow = deriveWorkflow(workflowFacts);
+  const stageByTab = Object.fromEntries(workflow.stages.map((s) => [s.tab, s])) as Record<
+    StageTab,
+    (typeof workflow.stages)[number]
+  >;
+  const currentStage = workflow.stages.find((s) => s.id === workflow.currentStageId)!;
+  // A confirmation cannot be applied while a run is active (setup is locked).
+  const recNeedsConfirm = !!workflow.recommended && workflow.recommended.kind !== "navigate";
+  const recDisabled = recNeedsConfirm && expActive;
+
 
   // ---- UX-4 Camera & Alignment quality gates (issue #308) ----
   // Focus staleness threshold: the autofocus config's ring_ratio_stale_ms is
@@ -1203,7 +1209,7 @@ export default function App() {
   const doRecommended = () => {
     const rec = workflow.recommended;
     if (!rec) return;
-    if (rec.kind === "confirm-preflight" && !expActive) {
+    if (rec.kind === "confirm-preflight" && !expActive && preflight.criticalPassed) {
       setPreflightConfirmedFor(preflightSignature);
       setTab("connect");
     } else if (rec.kind === "confirm-alignment" && !expActive) {
