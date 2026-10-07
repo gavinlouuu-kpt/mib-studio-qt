@@ -137,6 +137,9 @@
 - **`PlaybackPanel`** — the scrub+preview widget used by [[PreviewPage]]
   and [[MainWindow]]. Owns a `QImage` display, ROI overlay, scrub slider,
   display-FPS throttle, and overlay mode (Off/Mask/Contours/Both).
+  - Raw Record is disabled while an experiment or another HDF5 owner is busy.
+    After the file picker returns, backend admission revalidates atomically
+    and the dialog shows its conflict reason (#451).
   - The Space-bar shortcut / key press does **not** start or stop capture
     itself: `onToggleCapture()` emits `captureToggleRequested()`, which
     [[MainWindow]] routes through its `CameraController` so the experiment
