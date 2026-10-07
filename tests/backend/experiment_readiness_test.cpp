@@ -319,9 +319,23 @@ int main()
         // Join the consumer before editing the live recipe so pipeline progress
         // cannot end the run between the active snapshot and duplicate Start.
         proc.stopRealtime();
-        // Later edits do not mutate the frozen run.
+        const auto backgroundBefore = proc.backgroundGeneration();
+        // Later edits must be refused while the run owns the pipeline.
         proc.setRealtimeRoi(ProcessingService::Roi{0, 0, 32, 32});
         proc.setRealtimeBackgroundGray(cv::Mat(96, 96, CV_8UC1, cv::Scalar(9)));
+        MIB_EXPECT(proc.getRealtimeRoi().w == 64, "active run refuses direct ROI changes");
+        MIB_EXPECT(proc.backgroundGeneration() == backgroundBefore,
+                   "active run refuses direct background changes");
+        auto backgroundConfig = proc.getProcessingConfig();
+        backgroundConfig.auto_background_enabled = !backgroundConfig.auto_background_enabled;
+        const auto configBefore = proc.getConfigVersion();
+        proc.setProcessingConfig(backgroundConfig);
+        MIB_EXPECT(proc.getConfigVersion() == configBefore,
+                   "active run refuses background configuration");
+        std::string calibrationError;
+        MIB_EXPECT(!proc.startBackgroundCalibration({}, &calibrationError) &&
+                       calibrationError.find("not idle") != std::string::npos,
+                   "active run refuses calibration before touching its state");
         const auto after = coord.activeRun();
         MIB_REQUIRE(after.has_value(), "still active");
         MIB_EXPECT(after->roiW == 64 && after->backgroundSha256 == frozen.backgroundSha256 &&
@@ -662,7 +676,12 @@ int main()
     {
         wd.mark("bg publication idle gate");
         proc.stopRealtime();
-        proc.setBackgroundPublicationTransaction([](const std::function<void()>&) { return false; });
+        std::atomic<bool> allowStart{true};
+        proc.setBackgroundPublicationTransaction([&](const std::function<void()>& apply) {
+            if (!allowStart.exchange(false)) return false;
+            apply();
+            return true;
+        });
         store = std::make_shared<backend::playback::FrameStore>();
         pushMat(*store, emptyFrame, ++ts);
         proc.startRealtime(store);

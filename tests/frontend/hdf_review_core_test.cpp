@@ -86,6 +86,13 @@ void writeExperiment(const std::string& path, const std::string& liveJson,
     if (!liveJson.empty()) MIB_REQUIRE(hdf5.writeKdeLiveJson(liveJson), "fixture live record");
     if (!analysisJson.empty())
         MIB_REQUIRE(hdf5.writeKdeAnalysisJson(analysisJson), "fixture analysis record");
+    backend::recording::RecordingAccountingSnapshot accounting;
+    accounting.admitted = 4;
+    accounting.processed = 3;
+    accounting.persistenceAdmitted = 3;
+    accounting.persistenceCommitted = 3;
+    accounting.storeOverwritten = 1;
+    MIB_REQUIRE(hdf5.writeRunAccounting(accounting), "fixture incomplete run accounting");
     hdf5.closeFile();
 }
 
@@ -193,6 +200,9 @@ int main(int argc, char* argv[]) {
 
     tab.loadHdfFileForTests(QString::fromStdString(both));
     settle(4);
+    MIB_EXPECT(tab.statusTextForTests().contains(QStringLiteral("Valid: 3, Invalid: 0")) &&
+                   tab.statusTextForTests().contains(QStringLiteral("run incompleteLoss")),
+               "experiment Review preserves counts and run outcome");
     MIB_EXPECT(tab.hasStoredKdeAnalysis() && tab.hasStoredKdeLive(), "both stored records read");
     const auto& series = tab.storedKdeContourSeriesForTests();
     MIB_EXPECT(series.size() == 3, "one series per stored loop (2 full-run + 1 live)");

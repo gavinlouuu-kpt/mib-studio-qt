@@ -173,6 +173,7 @@ public:
     Roi getRealtimeRoi() const;
     void setRealtimeBackgroundGray(const cv::Mat& bg);
     // Configure before workers start; publication uses the coordinator's idle transaction.
+    // Serializes ROI/background setters and calibration with experiment Start.
     void setBackgroundPublicationTransaction(std::function<bool(const std::function<void()>&)> transaction);
 
     cv::Mat getRealtimeBackgroundGray() const;

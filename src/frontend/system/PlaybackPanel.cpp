@@ -92,6 +92,7 @@ namespace
               contours_(contours),
               fitMode_(fitMode) {}
 
+        std::function<bool()> configurationIdle;
         std::function<void(const QRect &)> onRoiSelected;
         std::function<void()> onRequestBackground;
         std::function<void()> onRequestBackgroundCalibration;
@@ -189,6 +190,10 @@ namespace
 
         void mousePressEvent(QMouseEvent *e) override
         {
+            if (configurationIdle && !configurationIdle()) {
+                dragging_ = false;
+                return;
+            }
             if (!image_ || image_->isNull())
                 return;
             if (e->button() == Qt::LeftButton)
@@ -210,6 +215,10 @@ namespace
 
         void mouseReleaseEvent(QMouseEvent *e) override
         {
+            if (configurationIdle && !configurationIdle()) {
+                dragging_ = false;
+                return;
+            }
             if (!image_ || image_->isNull())
                 return;
             if (e->button() == Qt::LeftButton && dragging_)
@@ -255,8 +264,6 @@ namespace
                 QPoint imgP0 = toImage(widgetRect.topLeft());
                 QPoint imgP1 = toImage(widgetRect.bottomRight());
                 QRect imgRect = QRect(imgP0, imgP1).normalized();
-                if (imageRoi_)
-                    *imageRoi_ = imgRect;
                 if (onRoiSelected)
                     onRoiSelected(imgRect);
                 update();
@@ -271,6 +278,14 @@ namespace
             QAction *calibrateBg = menu.addAction(calibrating ? "Cancel Background Calibration"
                                                               : "Calibrate Background (bounded)");
             QAction *clearRoi = menu.addAction("Clear ROI");
+            const bool idle = !configurationIdle || configurationIdle();
+            for (auto* action : {setBg, calibrateBg, clearRoi}) {
+                action->setEnabled(idle);
+                if (!idle)
+                    action->setToolTip(
+                        "Stop or reset the experiment before changing ROI or background.");
+            }
+            menu.setToolTipsVisible(true);
             QAction *chosen = menu.exec(event->globalPos());
             if (!chosen)
                 return;
@@ -286,8 +301,6 @@ namespace
             }
             else if (chosen == clearRoi)
             {
-                if (imageRoi_)
-                    *imageRoi_ = QRect();
                 if (onRoiSelected)
                     onRoiSelected(QRect());
                 update();
@@ -397,44 +410,8 @@ PlaybackPanel::PlaybackPanel(backend::AppBackend &backend, QWidget *parent)
 
     // Canvas callbacks
     auto *canvas = static_cast<ImageCanvas *>(canvas_);
-    canvas->onRoiSelected = [this](const QRect &r)
-    {
-        imageRoi_ = r;
-        roiActive_ = r.isValid() && !r.isNull();
-        SPDLOG_INFO("PlaybackPanel: ROI {}",
-                    roiActive_ ? fmt::format("x={}, y={}, w={}, h={}", r.x(), r.y(), r.width(), r.height())
-                               : std::string("cleared"));
-        // Sync ROI to backend realtime processor (full image when cleared)
-        backend::services::ProcessingService::Roi roi{};
-        if (roiActive_)
-        {
-            roi.x = r.x();
-            roi.y = r.y();
-            roi.w = r.width();
-            roi.h = r.height();
-        }
-        else
-        {
-            roi.x = 0;
-            roi.y = 0;
-            roi.w = frameImage_.width();
-            roi.h = frameImage_.height();
-        }
-        backend_.processing().setRealtimeRoi(roi);
-        if (overlayMode_ != OverlayMode::Off)
-        {
-            computeProcessedOverlay();
-        }
-        canvas_->update();
-        
-        // Update Clear ROI button state
-        if (clearRoiBtn_) {
-            clearRoiBtn_->setEnabled(roiActive_);
-        }
-        
-        // Save ROI to config.json
-        saveRoiToConfig(r);
-    };
+    canvas->configurationIdle = [this] { return configurationIdle(); };
+    canvas->onRoiSelected = [this](const QRect& r) { setRoi(r); };
     canvas->onRequestBackground = [this]()
     {
         onSetBackground();
@@ -506,44 +483,44 @@ PlaybackPanel::~PlaybackPanel() = default;
 
 void PlaybackPanel::setRoi(const QRect &roi, bool saveToConfig)
 {
-    imageRoi_ = roi;
-    roiActive_ = roi.isValid() && !roi.isNull();
-    SPDLOG_INFO("PlaybackPanel: ROI {}",
-                roiActive_ ? fmt::format("x={}, y={}, w={}, h={}", roi.x(), roi.y(), roi.width(), roi.height())
-                           : std::string("cleared"));
-    // Sync ROI to backend realtime processor (full image when cleared)
-    backend::services::ProcessingService::Roi backendRoi{};
-    if (roiActive_)
-    {
-        backendRoi.x = roi.x();
-        backendRoi.y = roi.y();
-        backendRoi.w = roi.width();
-        backendRoi.h = roi.height();
-    }
-    else
-    {
-        backendRoi.x = 0;
-        backendRoi.y = 0;
-        backendRoi.w = frameImage_.width();
-        backendRoi.h = frameImage_.height();
-    }
-    backend_.processing().setRealtimeRoi(backendRoi);
-    if (overlayMode_ != OverlayMode::Off)
-    {
-        computeProcessedOverlay();
-    }
-    if (canvas_)
-        canvas_->update();
-    
-    // Update Clear ROI button state
-    if (clearRoiBtn_) {
-        clearRoiBtn_->setEnabled(roiActive_);
-    }
-    
-    // Save ROI to config.json only if requested (default true for user actions)
-    if (saveToConfig)
-    {
-        saveRoiToConfig(roi);
+    if (!backend_.experiment().withIdleConfiguration([&] {
+            imageRoi_ = roi;
+            roiActive_ = roi.isValid() && !roi.isNull();
+            SPDLOG_INFO("PlaybackPanel: ROI {}",
+                        roiActive_ ? fmt::format("x={}, y={}, w={}, h={}", roi.x(), roi.y(),
+                                                 roi.width(), roi.height())
+                                   : std::string("cleared"));
+            // Sync ROI to backend realtime processor (full image when cleared)
+            backend::services::ProcessingService::Roi backendRoi{};
+            if (roiActive_) {
+                backendRoi.x = roi.x();
+                backendRoi.y = roi.y();
+                backendRoi.w = roi.width();
+                backendRoi.h = roi.height();
+            } else {
+                backendRoi.x = 0;
+                backendRoi.y = 0;
+                backendRoi.w = frameImage_.width();
+                backendRoi.h = frameImage_.height();
+            }
+            backend_.processing().setRealtimeRoi(backendRoi);
+            if (overlayMode_ != OverlayMode::Off) {
+                computeProcessedOverlay();
+            }
+            if (canvas_) canvas_->update();
+
+            // Update Clear ROI button state
+            if (clearRoiBtn_) {
+                clearRoiBtn_->setEnabled(roiActive_ && configurationIdle());
+            }
+
+            // Save ROI to config.json only if requested (default true for user actions)
+            if (saveToConfig) {
+                saveRoiToConfig(roi);
+            }
+        })) {
+        SPDLOG_WARN(
+            "PlaybackPanel: stop or reset the experiment before changing ROI or background");
     }
 }
 
@@ -557,6 +534,26 @@ QSize PlaybackPanel::getImageDimensions() const
     if (frameImage_.isNull())
         return QSize(0, 0);
     return frameImage_.size();
+}
+
+bool PlaybackPanel::configurationIdle() const {
+    return backend_.experiment().withIdleConfiguration([] {});
+}
+
+void PlaybackPanel::updateConfigurationUI() {
+    const bool idle = configurationIdle();
+    const QString reason = tr("Stop or reset the experiment before changing ROI or background.");
+    clearRoiBtn_->setEnabled(idle && roiActive_);
+    autoBgCheck_->setEnabled(idle);
+    setBgBtn_->setEnabled(idle && (scrubbing_ || !followLive_ || !backend_.capture().isRunning()));
+    clearRoiBtn_->setToolTip(idle ? tr("Clear ROI") : reason);
+    autoBgCheck_->setToolTip(idle ? tr("Automatically capture background when no movement detected")
+                                  : reason);
+    canvas_->setToolTip(idle ? QString() : reason);
+    if (idle)
+        updateBackgroundIndicator();
+    else
+        setBgBtn_->setToolTip(reason);
 }
 
 void PlaybackPanel::onTick()
@@ -673,22 +670,14 @@ void PlaybackPanel::onTick()
         }
     }
 
-    // Enable/disable background button: allowed when scrubbing or not following live
-    if (setBgBtn_)
-    {
-        const bool captureRunning = backend_.capture().isRunning();
-        const bool pausedMode = scrubbing_ || !followLive_ || !captureRunning;
-        if (setBgBtn_->isEnabled() != pausedMode)
-            setBgBtn_->setEnabled(pausedMode);
-    }
+    updateConfigurationUI();
 }
 
 void PlaybackPanel::onSliderPressed()
 {
     scrubbing_ = true;
     SPDLOG_INFO("PlaybackPanel: scrubbing started");
-    if (setBgBtn_)
-        setBgBtn_->setEnabled(true);
+    if (setBgBtn_) updateConfigurationUI();
     if (slider_)
         slider_->setFocus();
 }
@@ -699,8 +688,7 @@ void PlaybackPanel::onSliderReleased()
     // Stay at user's chosen frame until capture (re)starts
     followLive_ = false;
     SPDLOG_INFO("PlaybackPanel: scrubbing ended, pinned index={}", pinnedIndex_);
-    if (setBgBtn_)
-        setBgBtn_->setEnabled(true);
+    if (setBgBtn_) updateConfigurationUI();
 }
 
 void PlaybackPanel::onSliderValueChanged(int value)
@@ -766,42 +754,44 @@ void PlaybackPanel::onToggleOverlay()
 
 void PlaybackPanel::onSetBackground()
 {
-    const bool pausedMode = scrubbing_ || !followLive_ || !backend_.capture().isRunning();
-    if (!pausedMode)
-    {
-        SPDLOG_INFO("PlaybackPanel: Set Background ignored (not paused)");
-        return;
+    if (!backend_.experiment().withIdleConfiguration([&] {
+            const bool pausedMode = scrubbing_ || !followLive_ || !backend_.capture().isRunning();
+            if (!pausedMode) {
+                SPDLOG_INFO("PlaybackPanel: Set Background ignored (not paused)");
+                return;
+            }
+            if (frameImage_.isNull()) return;
+            // Ensure grayscale
+            if (frameImage_.format() == QImage::Format_Grayscale8)
+                backgroundGray_ = frameImage_.copy();
+            else
+                backgroundGray_ = frameImage_.convertToFormat(QImage::Format_Grayscale8);
+            hasBackground_ = !backgroundGray_.isNull();
+            SPDLOG_INFO("PlaybackPanel: background captured ({}x{})", backgroundGray_.width(),
+                        backgroundGray_.height());
+            if (overlayMode_ != OverlayMode::Off) {
+                computeProcessedOverlay();
+                if (canvas_) canvas_->update();
+            }
+            // Also push background to backend realtime processor
+            if (!backgroundGray_.isNull()) {
+                QImage gray = backgroundGray_.format() == QImage::Format_Grayscale8
+                                  ? backgroundGray_
+                                  : backgroundGray_.convertToFormat(QImage::Format_Grayscale8);
+                cv::Mat bg(gray.height(), gray.width(), CV_8UC1, const_cast<uchar*>(gray.bits()),
+                           gray.bytesPerLine());
+                backend_.processing().setRealtimeBackgroundGray(bg.clone());
+            }
+
+            // Update background indicator on button
+            updateBackgroundIndicator();
+
+            // Emit signal for background image change
+            emit backgroundImageSet(backgroundGray_);
+        })) {
+        SPDLOG_WARN(
+            "PlaybackPanel: stop or reset the experiment before changing ROI or background");
     }
-    if (frameImage_.isNull())
-        return;
-    // Ensure grayscale
-    if (frameImage_.format() == QImage::Format_Grayscale8)
-        backgroundGray_ = frameImage_.copy();
-    else
-        backgroundGray_ = frameImage_.convertToFormat(QImage::Format_Grayscale8);
-    hasBackground_ = !backgroundGray_.isNull();
-    SPDLOG_INFO("PlaybackPanel: background captured ({}x{})",
-                backgroundGray_.width(), backgroundGray_.height());
-    if (overlayMode_ != OverlayMode::Off)
-    {
-        computeProcessedOverlay();
-        if (canvas_)
-            canvas_->update();
-    }
-    // Also push background to backend realtime processor
-    if (!backgroundGray_.isNull())
-    {
-        QImage gray = backgroundGray_.format() == QImage::Format_Grayscale8 ? backgroundGray_
-                                                                            : backgroundGray_.convertToFormat(QImage::Format_Grayscale8);
-        cv::Mat bg(gray.height(), gray.width(), CV_8UC1, const_cast<uchar *>(gray.bits()), gray.bytesPerLine());
-        backend_.processing().setRealtimeBackgroundGray(bg.clone());
-    }
-    
-    // Update background indicator on button
-    updateBackgroundIndicator();
-    
-    // Emit signal for background image change
-    emit backgroundImageSet(backgroundGray_);
 }
 
 QImage PlaybackPanel::getBackgroundImage() const
@@ -811,6 +801,11 @@ QImage PlaybackPanel::getBackgroundImage() const
 
 void PlaybackPanel::onCalibrateBackground()
 {
+    if (!configurationIdle()) {
+        SPDLOG_WARN(
+            "PlaybackPanel: stop or reset the experiment before changing ROI or background");
+        return;
+    }
     using Proc = backend::services::ProcessingService;
     auto& proc = backend_.processing();
     if (proc.backgroundCalibrationStatus().state == Proc::BackgroundCalibrationState::Running)
@@ -891,8 +886,8 @@ void PlaybackPanel::onPollBackgroundCalibration()
 }
 
 void PlaybackPanel::onBackgroundAutoCaptured(const QImage& background, uint64_t frameIndex) {
-    if (background.isNull()) return;
-    
+    if (background.isNull() || !configurationIdle()) return;
+
     // Ensure grayscale format
     if (background.format() == QImage::Format_Grayscale8) {
         backgroundGray_ = background.copy();
@@ -922,10 +917,16 @@ void PlaybackPanel::onBackgroundAutoCaptured(const QImage& background, uint64_t 
 }
 
 void PlaybackPanel::onAutoBackgroundToggled(bool enabled) {
-    backend::services::ProcessingConfig cfg = backend_.processing().getProcessingConfig();
-    cfg.auto_background_enabled = enabled;
-    backend_.processing().setProcessingConfig(cfg);
-    SPDLOG_INFO("PlaybackPanel: auto-background capture {}", enabled ? "enabled" : "disabled");
+    if (!backend_.experiment().withIdleConfiguration([&] {
+            backend::services::ProcessingConfig cfg = backend_.processing().getProcessingConfig();
+            cfg.auto_background_enabled = enabled;
+            backend_.processing().setProcessingConfig(cfg);
+            SPDLOG_INFO("PlaybackPanel: auto-background capture {}",
+                        enabled ? "enabled" : "disabled");
+        })) {
+        SPDLOG_WARN(
+            "PlaybackPanel: stop or reset the experiment before changing ROI or background");
+    }
 }
 
 void PlaybackPanel::onClearRoi()
@@ -1283,8 +1284,7 @@ bool PlaybackPanel::eventFilter(QObject *watched, QEvent *event)
         if (handled)
         {
             followLive_ = false;
-            if (setBgBtn_)
-                setBgBtn_->setEnabled(true);
+            if (setBgBtn_) updateConfigurationUI();
             if (newVal != slider_->value())
             {
                 scrubbing_ = true;

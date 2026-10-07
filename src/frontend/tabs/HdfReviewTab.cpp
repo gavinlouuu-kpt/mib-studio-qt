@@ -723,8 +723,9 @@ void HdfReviewTab::loadHdfFile(const QString& filePath) {
         const size_t shownInvalid = !invalidFrames_.empty() ? invalidFrames_.size()
                                    : (invalidImagesCount > 0 ? invalidImagesCount : totalInvalid);
         ui->statusLabel->setText(QString("Valid: %1, Invalid: %2")
-                              .arg(static_cast<qulonglong>(shownValid))
-                              .arg(static_cast<qulonglong>(shownInvalid)));
+                                     .arg(static_cast<qulonglong>(shownValid))
+                                     .arg(static_cast<qulonglong>(shownInvalid)) +
+                                 accountingSummary());
     }
 
     SPDLOG_INFO("Loaded HDF file: {} valid frames, {} invalid frames", 

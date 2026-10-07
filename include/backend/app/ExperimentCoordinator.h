@@ -115,13 +115,15 @@ public:
     bool acknowledgeFault(uint64_t expectedRun, uint64_t expectedFaultRevision,
                           const std::string& expectedCode, const std::string& expectedMessage,
                           std::string& error);
-    // Runs a non-reentrant config transaction while Start is excluded.
+    // Runs a config transaction while Start is excluded. Nested service setters
+    // reuse the authorization of the enclosing idle transaction on this thread.
     // Workers use wait=false to avoid waiting on transactions that may join them.
     bool withIdleConfiguration(const std::function<void()>& transaction);
     bool withIdleConfiguration(const std::function<void()>& transaction, bool wait);
     bool hasUnresolvedFault() const;
 
 private:
+    friend struct ExperimentConfigurationTestAccess;
     // Everything readiness depends on, in one comparable value.
     struct InvalidationKey {
         uint64_t captureGeneration{0};

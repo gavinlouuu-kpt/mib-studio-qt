@@ -73,12 +73,14 @@ private:
 	void ensureDefaultConfigExists(const QString& path) const;
 	void mergeNewDefaultsIntoConfig(const QString& path) const;
 	void loadAndApplyFromPath(const QString& path);
+	void applyFromPathWhenIdle(const QString& path);
 	static int toOddKernelSize(int v);
 
 	backend::AppBackend& backend_;
 	PlaybackPanel* playbackPanel_{nullptr};
 	QFileSystemWatcher watcher_;
 	QString watchedPath_;
+	QString deferredConfigPath_;
 	QByteArray documentFingerprint_;
 	QRect pendingRoi_;  // ROI to restore when image dimensions become available
 	bool hasPendingRoi_ = false;  // Whether there's a pending ROI to restore
