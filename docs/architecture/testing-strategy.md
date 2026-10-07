@@ -66,6 +66,13 @@ part of the change.
 - **No naked `join()`/`wait()` that can hang CI:** thread/pipeline tests install a
   watchdog that prints the stuck location and `_Exit(99)`s. Use `_Exit`, not
   `abort()` (the linked crash handler intercepts `abort()` and can itself hang).
+- **Wait on conditions with generous deadlines**, never fixed sleeps or
+  "N things in T ms" assertions.
+- **No `#define private public`:** use friend test-access structs instead; the
+  macro changes Qt declarations and can break MSVC linking.
+- **Python text file I/O always specifies `encoding="utf-8"`**, including
+  `open()`, `read_text()` and `write_text()`, so Windows code pages cannot
+  change test fixtures.
 - **Timing tests gate on steady-state or ratios, not absolute milliseconds**, so
   they are machine-independent. Mark probabilistic tests; give them generous,
   stable thresholds.
@@ -74,6 +81,17 @@ part of the change.
 
 ## CI Lanes
 
+- **`qt-ci`** (PRs, path-filtered): **Linux Qt build and test** uses
+  `linux-system-release` with system Qt and offscreen CTest; **Windows MSVC
+  build and test** uses `windows-ninja-ci`, the release Conan cache, both
+  consolidated test runners and independent test executables, plus
+  `tools/test_*.py`. Both exclude `network|hardware|soak|performance`, disable
+  SDKs/Sentry/packaging, use sccache, and report elapsed seconds in the Actions
+  summary. Keep both checks optional for the first week, then make them
+  required after reviewing successful runs and runtimes. For rollout evidence,
+  record a no-op PR run and a Windows failure from a temporary private-access
+  hack or cp1252 fixture write, revert that commit, and link both runs and
+  their durations in the PR description.
 - **`backend-ci`** (Linux, PRs): configure/build/test the backend-only preset.
 - **Sanitizer lane** (Linux, PRs): backend-only built with `-fsanitize=thread`,
   plus an `-fsanitize=address,undefined` variant, running unit / invariant /
