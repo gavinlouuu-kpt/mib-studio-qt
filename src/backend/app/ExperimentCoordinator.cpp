@@ -1199,9 +1199,16 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
         hdf5.closeFile();
         SPDLOG_INFO("ExperimentCoordinator: closeFile took {:.3f} ms", sinceMs(tClose));
     }
-    SPDLOG_INFO("ExperimentCoordinator: run {} accounting: completion={} ({}); persisted={}/{} failed={}",
-                run.startGeneration, recording::toString(accounting.completion), accounting.completionReason,
-                accounting.persistenceCommitted, accounting.persistenceAdmitted, accounting.persistenceFailed);
+    // An undeclared loss, a failure, an unknown outcome, or declared malformed frames above the
+    // warning fraction is something the operator must see (#549): WARN, not INFO. Complete and
+    // declared-partial runs stay at INFO.
+    const bool warnRun = recording::needsOperatorAttention(accounting.completion) ||
+                         recording::malformedAboveWarnFraction(accounting.storeMalformed, accounting.admitted);
+    const auto accountingLevel = warnRun ? spdlog::level::warn : spdlog::level::info;
+    SPDLOG_LOGGER_CALL(spdlog::default_logger_raw(), accountingLevel,
+                       "ExperimentCoordinator: run {} accounting: completion={} ({}); persisted={}/{} failed={}",
+                       run.startGeneration, recording::toString(accounting.completion), accounting.completionReason,
+                       accounting.persistenceCommitted, accounting.persistenceAdmitted, accounting.persistenceFailed);
     // 7. Restore the realtime mode a multi-image run switched.
     if (restoreMode) {
         proc.setRealtimeProcessingMode(services::ProcessingService::RealtimeProcessingMode::AsyncBatch);
