@@ -20,8 +20,8 @@
   scatter point to view the cell in the docked frame pane (see "Scatter
   interaction and frame pane").
 - **Bounded file row** (issue #358): the `.ui` file row is now two rows
-  (`fileRowLayout`: Select/Close/Export Metrics/Export All + a native
-  **More…** `QToolButton` menu holding Batch Metrics, Batch Export All,
+  (`fileRowLayout`: Select/Close/Export Metrics/Export FCS/Export All + a native
+  **More…** `QToolButton` menu holding Batch Metrics, Batch Export FCS, Batch Export All,
   Export Charts and Regenerate masks — the original buttons stay as hidden
   enable-state owners mirrored by `updateSecondaryActionState()`;
   `fileInfoRowLayout`: overlay combo, legend, ROI check, elided path
@@ -83,7 +83,7 @@ layout:
 - Dataset reads go through `imagesPath(bool)` / `masksPath(bool)` helpers
   that route to `/recorded_frames/images` (and return `""` for masks,
   since recording files have none).
-- Disabled in recording mode: overlay combo, ROI overlay, Export Metrics
+- Disabled in recording mode: overlay combo, ROI overlay, Export Metrics and Export FCS
   (no per-frame metrics), Export Charts (no metrics to chart). Export All
   still writes the raw TIFF images. Regenerate Masks remains enabled and
   feeds `/recorded_frames/images` into `BatchMaskDialog`, then reloads the
@@ -340,3 +340,13 @@ interactive Qt/Tauri full-workflow acceptance, ROI stroke styling, or platform
 packaging. Native export/reanalysis lifecycle tests cover those workers separately.
 
 Tauri source open/close is serialized across native dialogs and backend reconciliation. Failed opens that leave no native file clear stale path/canvas/metrics. Single-file exports capture an explicit source before opening the destination dialog, so later source changes cannot retarget the export.
+
+## FCS export (#574)
+
+**Export FCS…** and **More… → Batch Export FCS…** use the same asynchronous
+export/cancel/progress path as metrics CSV, with `HdfExportFormat::Fcs` and
+each source file's recorded calibration. FCS and CSV share the remembered
+metrics export directory. A chosen `.fcs` path produces that file plus
+`<chosen stem>_event_map.csv`; the completion dialog reports both and the
+accepted detection count. Raw recordings disable the single-file action;
+batch failures report the service error and continue.

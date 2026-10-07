@@ -96,6 +96,8 @@ namespace frontend
         // nullopt: ask with a dialog (default); true/false: answer for tests.
         void setOverwriteAnswerForTests(std::optional<bool> answer) { overwriteAnswerForTests_ = answer; }
         QString statusTextForTests() const;
+        void startFcsExportForTests(const QString& destination);
+        bool exportInProgressForTests() const { return exportInProgress(); }
         // The px→µm the tab uses for the open file (recorded, else live).
         double pixelToMicronForTests() const { return filePixelToMicron(); }
         QAction *computeCoreAction() const { return computeCoreAction_; }
@@ -121,8 +123,10 @@ namespace frontend
         void onSelectFile();
         void onCloseFile();
         void onExportMetrics();
+        void onExportFcs();
         void onExportAll();
         void onBatchExportMetrics();
+        void onBatchExportFcs();
         void onBatchExportAll();
         void onExportCharts();
         void onOverlayModeChanged(int index);
@@ -189,10 +193,11 @@ namespace frontend
         // cancellation, transactional output). Batch jobs are chained on the
         // GUI thread without swapping the live reader/model state.
         struct BatchExportState {
+            enum class Kind { Metrics, Fcs, All };
             QStringList sources;
             QStringList destinations;
             QString root;
-            bool metricsOnly{false};
+            Kind kind{Kind::All};
             int index{0};
             int exported{0};
             QStringList failures;
@@ -205,6 +210,7 @@ namespace frontend
         void setFilePathText(const QString& text);
         bool beginExportJob(backend::recording::HdfExportRequest request, const QString& title,
                             std::function<void(const backend::recording::HdfExportResult&)> onDone);
+        void startFcsExport(const QString& destination, bool suppressDialog = false);
         void onExportProgress(const backend::recording::HdfExportProgress& progress);
         void onExportJobFinished();
         void finishExportUi();
@@ -321,6 +327,7 @@ namespace frontend
         std::unique_ptr<BatchExportState> batch_;
         QToolButton* moreActionsBtn_ = nullptr;
         QAction* batchMetricsAct_ = nullptr;
+        QAction* batchFcsAct_ = nullptr;
         QAction* batchAllAct_ = nullptr;
         QAction* exportChartsAct_ = nullptr;
         QAction* regenerateMasksAct_ = nullptr;
