@@ -19,6 +19,8 @@ namespace backend::services {
 
 #include "backend/processing/ProcessingService.h"
 #include "backend/recording/RecordingAccounting.h"
+#include "backend/recording/RfGeneratorProvenance.h"
+#include "backend/recording/TriggerEventRecord.h"
 #include "backend/services/TelemetrySample.h"
 
 namespace backend::services {
@@ -145,6 +147,28 @@ public:
 
     // Read a single series record at index (returns seriesCount images)
     bool readSeriesImagesByIndex(size_t index, std::vector<cv::Mat>& outImages) const;
+
+    // Per-member identity of one series record (/valid_frames/series_meta,
+    // parallel to series_images) and its contiguity flag
+    // (/valid_frames/series_contiguous). Members the series never collected
+    // (partial series) read back with frameIndex == kAbsentSeriesFrame.
+    // Returns false when the file predates these datasets.
+    static constexpr uint64_t kAbsentSeriesFrame = ~0ULL;
+    bool readSeriesMeta(size_t index, std::vector<SeriesImageInfo>& outInfo,
+                        bool* outContiguous = nullptr) const;
+
+    // --- Sort trigger events (/trigger_events) ---
+    // Append the canonical pulse records drained from TriggerService. Rows
+    // are appended in the order given; the dataset is created on first use.
+    bool appendTriggerEvents(const std::vector<backend::recording::TriggerEventRecord>& events);
+    // Read every row back (false when the file has none).
+    bool readTriggerEvents(std::vector<backend::recording::TriggerEventRecord>& out) const;
+
+    // --- RF sort generator provenance (rf_generator_* attributes on the
+    // run-info group, schema version RfGeneratorProvenance::kSchemaVersion) ---
+    bool writeRfGeneratorProvenance(const backend::recording::RfGeneratorProvenance& p);
+    // False (and `out` reset) when the file predates the attributes.
+    bool readRfGeneratorProvenance(backend::recording::RfGeneratorProvenance& out) const;
 
     // --- Frame recording mode (images + basic metadata, no contour processing) ---
 

@@ -111,7 +111,7 @@ sqliteService_, hdf5Service_,
 captureService_, processingService_, playbackService_,
 cameraControlService_, autofocusService_,
 triggerService_, dotGridService_, syringePumpService_,
-pulseGeneratorService_,
+pulseGeneratorService_, rfGeneratorService_,
 deviceDiscovery_, startupDiscovery_   // #419: declared last, destroyed first
 frameStore_  // shared_ptr<FrameStore>(5000)
 ```
@@ -298,6 +298,9 @@ StoreOverwritten, HDF5 reopen round-trip, legacy file → Unknown).
   live capture camera via `CaptureService::softTriggerActiveCamera` (requires
   capture running with `trigger_mode: 1`); exposed to the facade as
   `CameraCommandAction::SoftTriggerCamera`
+- `rfGenerator()` — accessor for [[../services/RfGeneratorService]] (SSG3021X
+  sort generator SCPI link). `setLastConfigJson` applies its optional
+  `rf_generator` config block; `shutdown()` disconnects it.
 - `pulseGenerator()` — accessor for [[../services/PulseGeneratorService]]
   (external-trigger pulse source, created alongside the syringe-pump service).
   Both serial services are constructed against the backend-owned

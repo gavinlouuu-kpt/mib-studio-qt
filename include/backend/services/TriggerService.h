@@ -1,5 +1,8 @@
 #pragma once
 
+#include "backend/camera/common/ICamera.h"
+#include "backend/recording/TriggerEventRecord.h"
+
 #include <atomic>
 #include <condition_variable>
 #include <cstddef>
@@ -8,10 +11,7 @@
 #include <functional>
 #include <mutex>
 #include <thread>
-
-namespace camera::common {
-class ICamera;
-}
+#include <vector>
 
 namespace backend::services {
 
@@ -88,6 +88,26 @@ public:
     uint64_t getDroppedRequestCount() const {
         return droppedRequests_.load(std::memory_order_relaxed);
     }
+    // --- Trigger event log (canonical pulse↔frame record) -----------------
+    // Every request produces exactly one TriggerEventRecord (fired or the
+    // reason it was not), always on, stamped in host monotonic µs. Records
+    // accumulate in a bounded buffer until drained (the experiment flush
+    // persists them as /trigger_events); overflow drops the OLDEST and is
+    // counted. A hardware-stamped loopback edge (ICamera::LineEvent) is
+    // paired FIFO with the fired pulses still in the buffer.
+    std::vector<backend::recording::TriggerEventRecord> drainEvents();
+    size_t bufferedEventCount() const;
+    uint64_t getDroppedEventCount() const { return droppedEvents_.load(std::memory_order_relaxed); }
+    // Rising edges that arrived with no unpaired fired pulse to attach to
+    // (drained before the edge arrived, or an edge that was not ours).
+    uint64_t getUnpairedLineEdgeCount() const {
+        return unpairedLineEdges_.load(std::memory_order_relaxed);
+    }
+    // Entry point for the bound camera's line-event subscription (public so
+    // tests and alternative wiring can feed edges directly).
+    void onLineEvent(const ::camera::common::LineEvent& event);
+    static constexpr size_t kMaxBufferedEvents = 4096;
+
     // Pulses that a dequeued request could not drive because no camera was
     // bound at fire time. A non-zero value means a target was identified for
     // sorting but the actuation hardware was absent — a silent sort loss until
@@ -121,6 +141,8 @@ public:
         droppedPulsesNoCamera_.store(0, std::memory_order_relaxed);
         droppedPulsesSetFailed_.store(0, std::memory_order_relaxed);
         droppedStaleRequests_.store(0, std::memory_order_relaxed);
+        droppedEvents_.store(0, std::memory_order_relaxed);
+        unpairedLineEdges_.store(0, std::memory_order_relaxed);
     }
 
     // Bound on the pending-request queue. Sized to absorb a realistic burst
@@ -169,8 +191,32 @@ private:
         uint64_t hostTimestampUs{0};
         uint64_t requestUs{0};
         uint64_t generation{0}; // camera session the request was made under
+        int objectId{-1};
+        int trackId{-1};
     };
     std::deque<PendingRequest> pendingRequests_;
+
+    // Event log. eventMutex_ is leaf-level: taken briefly by the trigger
+    // thread after a pulse, by onLineEvent (camera thread — for MockCamera
+    // that is the trigger thread itself, inside the pulse, so this must never
+    // wait on pulseMutex_/triggerMutex_), and by drainEvents (flush thread).
+    void recordEvent(backend::recording::TriggerEventRecord record);
+    backend::recording::TriggerEventRecord makeEvent(const PendingRequest& req,
+                                                     backend::recording::TriggerOutcome outcome,
+                                                     uint64_t wakeUs, uint64_t fireUs,
+                                                     uint64_t pulseDoneUs);
+    mutable std::mutex eventMutex_;
+    std::deque<backend::recording::TriggerEventRecord> events_;
+    // Sequence numbers of fired pulses not yet matched to a loopback edge,
+    // oldest first. Bounded so a rig without loopback never grows it.
+    std::deque<uint64_t> unpairedFired_;
+    static constexpr size_t kMaxUnpairedFired = 64;
+    // Edges that arrived before their fired record (synchronous loopback).
+    std::deque<::camera::common::LineEvent> pendingEdges_;
+    static constexpr size_t kMaxPendingEdges = 8;
+    uint64_t nextSequence_{1};
+    std::atomic<uint64_t> droppedEvents_{0};
+    std::atomic<uint64_t> unpairedLineEdges_{0};
 
     // Camera reference (non-owning) + the session generation it belongs to.
     std::atomic<::camera::common::ICamera*> camera_{nullptr};

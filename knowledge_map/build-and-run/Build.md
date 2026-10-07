@@ -53,6 +53,19 @@ match nothing. `network-tests.yml` (nightly + manual) runs
 `ctest --preset linux-network-test`; every default test preset excludes the
 `network` label.
 
+## Qt PR checks (#594)
+
+`.github/workflows/qt-ci.yml` adds path-filtered **Linux Qt build and test**
+(`linux-system-release`, apt Qt, offscreen) and **Windows MSVC build and test**
+(`windows-ninja-ci`, VS2022, existing Conan cache/profile). Both build all
+targets so independent CTest binaries accompany the consolidated runners;
+CTest excludes `network|hardware|soak|performance`. Windows also runs every
+`tools/test_*.py` and activates Conan runtime DLL paths. SDKs, Sentry and
+packaging are disabled. Both reuse sccache and report elapsed seconds in
+the Actions summary. Checks remain optional during the first week; rollout
+evidence and portability rules are in
+[[../../docs/architecture/testing-strategy]].
+
 ## Native FCS export
 
 Build the Qt-free `hdf_export_cli` target for `scripts/export_hdf5.py --format

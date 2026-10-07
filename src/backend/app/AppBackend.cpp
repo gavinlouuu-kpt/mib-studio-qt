@@ -35,6 +35,7 @@
 #include "backend/services/SyringePumpService.h"
 #include "backend/services/PulseGeneratorService.h"
 #include "backend/services/StageService.h"
+#include "backend/services/RfGeneratorService.h"
 #include "backend/services/MonitoringDensityService.h"
 #include "backend/discovery/DeviceDiscoveryService.h"
 #include "backend/discovery/StartupDiscoveryCoordinator.h"
@@ -395,6 +396,7 @@ namespace backend
             SPDLOG_INFO("AppBackend: shutdown stopping the Z stage");
             stageService_->shutdown();
         }
+        if (rfGeneratorService_) rfGeneratorService_->disconnect();
         // All pipeline threads are stopped now, so the dump is an exact
         // snapshot of the recorded latency data.
         dumpPipelineTimingIfEnabled();
@@ -511,6 +513,7 @@ namespace backend
             [this] { return stageService_ && stageService_->motionPossible(); });
         stageService_->setMotionGate(
             [this] { return !experimentCoordinator_ || experimentCoordinator_->withIdleConfiguration([] {}); });
+        rfGeneratorService_ = std::make_unique<services::RfGeneratorService>();
         frameStore_ = std::make_shared<playback::FrameStore>(5000);
         dotGridService_ = std::make_unique<services::DotGridService>();
         dotGridService_->setFrameStore(frameStore_);
@@ -848,10 +851,17 @@ namespace backend
                     triggerService_->onTargetGroupResult(signal);
                 }
             });
+            // Pulse records ride the experiment flush into /trigger_events so
+            // every sort decision is stored against its source frame.
+            processingService_->setTriggerEventSource([this]() {
+                return triggerService_ ? triggerService_->drainEvents()
+                                       : std::vector<recording::TriggerEventRecord>{};
+            });
         }
         else
         {
             processingService_->setTargetGroupCallback({});
+            processingService_->setTriggerEventSource({});
             if (!bootTrigger)
             {
                 SPDLOG_WARN("AppBackend: trigger callback wiring disabled by MIB_DISABLED_SERVICES");
@@ -1455,6 +1465,7 @@ namespace backend
     services::SyringePumpService &AppBackend::syringePump() { return *syringePumpService_; }
     services::PulseGeneratorService &AppBackend::pulseGenerator() { return *pulseGeneratorService_; }
     services::StageService &AppBackend::stage() { return *stageService_; }
+    services::RfGeneratorService &AppBackend::rfGenerator() { return *rfGeneratorService_; }
     discovery::DeviceDiscoveryService &AppBackend::deviceDiscovery() { return *deviceDiscovery_; }
     discovery::StartupDiscoveryCoordinator &AppBackend::startupDiscovery() { return *startupDiscovery_; }
     profiles::ProfileRegistryWorker &AppBackend::profileRegistry() { return *profileRegistry_; }
@@ -2756,8 +2767,29 @@ namespace backend
     }
 
     void AppBackend::setLastConfigJson(const std::string& json) {
-        std::lock_guard<std::mutex> lk(configJsonMutex_);
-        lastConfigJson_ = json;
+        {
+            std::lock_guard<std::mutex> lk(configJsonMutex_);
+            lastConfigJson_ = json;
+        }
+        // Optional `rf_generator` block: {"enabled":true,"transport":"usb"|"lan",
+        // "resource":"auto"|"/dev/usbtmc0"|"USB0::...::INSTR"|"host[:port]",
+        // "timeout_ms":1000}. Absent or malformed = link disabled (logged).
+        if (!rfGeneratorService_) return;
+        services::RfGeneratorService::Config cfg;
+        try {
+            const auto parsed = nlohmann::json::parse(json, nullptr, /*allow_exceptions=*/false);
+            if (parsed.is_object() && parsed.contains("rf_generator") && parsed["rf_generator"].is_object()) {
+                const auto& rf = parsed["rf_generator"];
+                cfg.enabled = rf.value("enabled", false);
+                cfg.transport = rf.value("transport", std::string("usb"));
+                cfg.resource = rf.value("resource", std::string("auto"));
+                cfg.timeoutMs = rf.value("timeout_ms", 1000);
+            }
+        } catch (const std::exception& ex) {
+            SPDLOG_WARN("AppBackend: rf_generator config ignored: {}", ex.what());
+            cfg = {};
+        }
+        rfGeneratorService_->setConfig(cfg);
     }
 
     std::string AppBackend::getLastConfigJson() const {

@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 
 namespace camera::common
@@ -106,6 +107,22 @@ namespace camera::common
         bool empty() const { return code.empty(); }
     };
 
+    /**
+     * A level change the camera (or grabber) observed on one of its digital
+     * input lines, stamped by the hardware in the same clock as
+     * Frame::timestamp. Looping the sort-output pulse back into such an input
+     * is what lets a pulse be placed against the frame sequence without a
+     * scope: the edge stamp and the frame stamps share one clock.
+     */
+    struct LineEvent
+    {
+        std::string line;          // backend line name (e.g. "TTLIO11")
+        bool rising{true};
+        uint64_t timestamp{0};     // Frame::timestamp domain (timestampDescriptor())
+        uint64_t hostTimestampUs{0}; // Tools::getTimestamp at delivery (0 if unknown)
+    };
+    using LineEventCallback = std::function<void(const LineEvent&)>;
+
     class ICamera
     {
     public:
@@ -168,6 +185,18 @@ namespace camera::common
          * Set trigger output line to High or Low. Returns false if not supported.
          */
         virtual bool setTriggerOutput(bool high) { (void)high; return false; }
+
+        /**
+         * Subscribe to hardware-stamped digital input edges (see LineEvent).
+         * Returns false when the backend cannot timestamp its inputs; the
+         * callback is then never invoked. An empty callback unsubscribes.
+         * Invoked from a backend-owned thread; the callee must not block.
+         */
+        virtual bool setLineEventCallback(LineEventCallback callback)
+        {
+            (void)callback;
+            return false;
+        }
 
         /**
          * Fire one software acquisition trigger (starts an exposure when the

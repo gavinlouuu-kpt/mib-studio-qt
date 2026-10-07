@@ -110,7 +110,23 @@ def image_view(image: np.ndarray) -> tuple[ImageView, np.ndarray]:
     return view, image  # keep the array alive with the view
 
 
+def _add_windows_dll_dirs(core: Path) -> None:
+    """Since Python 3.8, Windows resolves a ctypes DLL's dependencies without
+    PATH. Register the core's own directory and PATH entries (e.g. from Conan's
+    conanrun.bat) so dependent runtime DLLs such as OpenCV are found."""
+    import os
+    if os.name != "nt" or not hasattr(os, "add_dll_directory"):
+        return
+    for entry in [str(core.resolve().parent), *os.environ.get("PATH", "").split(os.pathsep)]:
+        if entry and os.path.isdir(entry):
+            try:
+                os.add_dll_directory(entry)
+            except OSError:
+                pass
+
+
 def load_api(path: Path) -> tuple[C.CDLL, ApiV2]:
+    _add_windows_dll_dirs(path)
     library = C.CDLL(str(path))
     get_api = library.mib_processing_get_api_v2
     get_api.restype = C.c_int

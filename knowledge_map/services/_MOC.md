@@ -39,6 +39,8 @@
   once-per-power-up zero (ADR 0013 + Amendment 1, #464)
 - [[ZC300Stage]] — Zolix ZC300 motorized Z stage driver (`IMotionStage`, µm
   API, observe-only connect, motion opcodes never re-sent); ADR 0013, #464
+- [[RfGeneratorService]] — SIGLENT SSG3021X RF sort generator over SCPI
+  (USBTMC / LAN): readback, preflight gate, provenance — never timing
 
 ## Optional / specialised
 - [[RecorderService]] — raw frame container writer (recording mode)

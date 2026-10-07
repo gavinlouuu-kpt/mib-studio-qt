@@ -134,6 +134,11 @@ void TriggerService::setCamera(camera::common::ICamera* camera, uint64_t generat
     // Wait for any in-flight pulse: after this returns the trigger thread
     // holds no reference to the previous camera (issue #365).
     std::lock_guard<std::mutex> pulseLock(pulseMutex_);
+    // The previous camera is still alive here (contract: unbind before
+    // destroy), so its loopback subscription can be released.
+    if (auto* previous = camera_.load(std::memory_order_acquire); previous && previous != camera) {
+        previous->setLineEventCallback({});
+    }
     const uint64_t newGeneration =
         camera ? (generation != 0 ? generation
                                   : autoGeneration_.fetch_add(1, std::memory_order_relaxed) + 1)
@@ -155,6 +160,21 @@ void TriggerService::setCamera(camera::common::ICamera* camera, uint64_t generat
     }
     if (camera) {
         camera->configureTriggerOutput("TTLIO12");
+        // Loopback edges (when the backend stamps its inputs) pair with fired
+        // pulses in the event log; a backend without that capability returns
+        // false and lineEdge* stay 0 in every record.
+        const bool stamped = camera->setLineEventCallback(
+            [this](const ::camera::common::LineEvent& ev) { onLineEvent(ev); });
+        SPDLOG_INFO("TriggerService: line-event loopback {}",
+                    stamped ? "subscribed" : "unavailable on this camera");
+    }
+    {
+        // A new session starts with no unpaired pulses; edges from the old
+        // session must not attach to new pulses.
+        std::lock_guard<std::mutex> ek(eventMutex_);
+        unpairedFired_.clear();
+        unpairedLineEdges_.fetch_add(pendingEdges_.size(), std::memory_order_relaxed);
+        pendingEdges_.clear();
     }
 }
 
@@ -168,9 +188,9 @@ void TriggerService::onTargetGroupResult(const TargetGroupSignal& signal) {
 
     lastTriggerObjectId_.store(signal.objectId, std::memory_order_release);
     lastTriggerTrackId_.store(signal.trackId, std::memory_order_release);
-    const bool recordTiming = backend::diagnostics::PipelineTimingRecorder::instance().isEnabled();
-    const uint64_t requestUs =
-        recordTiming ? backend::diagnostics::PipelineTimingRecorder::nowUs() : 0;
+    // Always stamped (one clock read): the event log needs request time even
+    // without the diagnostics recorder.
+    const uint64_t requestUs = backend::diagnostics::PipelineTimingRecorder::nowUs();
     // Enqueue while holding the same mutex the trigger thread uses for its
     // wait() predicate. Mutating the queue lock-free races with the consumer's
     // predicate check: if the entry lands after the consumer evaluates the
@@ -181,9 +201,13 @@ void TriggerService::onTargetGroupResult(const TargetGroupSignal& signal) {
     // requests arriving while the trigger thread was mid-pulse. Overflow
     // drops the OLDEST entry (a backlog of stale pulses is worse than a
     // counted drop) and is surfaced via getDroppedRequestCount().
+    bool evicted = false;
+    PendingRequest evictedRequest;
     {
         std::lock_guard<std::mutex> lk(triggerMutex_);
         if (pendingRequests_.size() >= kMaxPendingRequests) {
+            evictedRequest = pendingRequests_.front();
+            evicted = true;
             pendingRequests_.pop_front();
             const uint64_t dropped = droppedRequests_.fetch_add(1, std::memory_order_relaxed) + 1;
             if (dropped == 1 || (dropped % 100) == 0) {
@@ -192,11 +216,117 @@ void TriggerService::onTargetGroupResult(const TargetGroupSignal& signal) {
                             kMaxPendingRequests, dropped);
             }
         }
-        pendingRequests_.push_back(
-            PendingRequest{signal.frameIndex, signal.hostTimestampUs, requestUs,
-                           boundGeneration_.load(std::memory_order_acquire)});
+        pendingRequests_.push_back(PendingRequest{signal.frameIndex, signal.hostTimestampUs,
+                                                  requestUs,
+                                                  boundGeneration_.load(std::memory_order_acquire),
+                                                  signal.objectId, signal.trackId});
     }
     triggerCV_.notify_one();
+    if (evicted) {
+        // The evicted target never reaches the loop: log it here so the
+        // record set stays one-per-request.
+        recordEvent(makeEvent(evictedRequest, backend::recording::TriggerOutcome::DroppedQueueFull,
+                              0, 0, 0));
+    }
+}
+
+backend::recording::TriggerEventRecord
+TriggerService::makeEvent(const PendingRequest& req, backend::recording::TriggerOutcome outcome,
+                          uint64_t wakeUs, uint64_t fireUs, uint64_t pulseDoneUs) {
+    backend::recording::TriggerEventRecord r;
+    r.frameIndex = req.frameIndex;
+    r.grabUs = req.hostTimestampUs;
+    r.objectId = req.objectId;
+    r.trackId = req.trackId;
+    r.generation = req.generation;
+    r.requestUs = req.requestUs;
+    r.wakeUs = wakeUs;
+    r.fireUs = fireUs;
+    r.pulseDoneUs = pulseDoneUs;
+    r.outcome = static_cast<uint8_t>(outcome);
+    return r;
+}
+
+void TriggerService::recordEvent(backend::recording::TriggerEventRecord record) {
+    std::lock_guard<std::mutex> lk(eventMutex_);
+    record.sequence = nextSequence_++;
+    if (events_.size() >= kMaxBufferedEvents) {
+        events_.pop_front();
+        const uint64_t dropped = droppedEvents_.fetch_add(1, std::memory_order_relaxed) + 1;
+        if (dropped == 1 || (dropped % 1000) == 0) {
+            SPDLOG_WARN("TriggerService: event log full ({}), dropped oldest record "
+                        "(total dropped: {}) — is the experiment flush draining it?",
+                        kMaxBufferedEvents, dropped);
+        }
+    }
+    if (record.outcome == static_cast<uint8_t>(backend::recording::TriggerOutcome::Fired)) {
+        // A held edge belongs to this pulse only if it was delivered after
+        // the pulse woke (same host clock as wakeUs); an older one is a
+        // leftover from a pulse whose record was drained first — count it
+        // rather than attach it to the wrong pulse. An edge without a host
+        // stamp cannot be dated and is attached (synchronous-loopback
+        // assumption).
+        while (!pendingEdges_.empty() && pendingEdges_.front().hostTimestampUs != 0 &&
+               pendingEdges_.front().hostTimestampUs < record.wakeUs) {
+            pendingEdges_.pop_front();
+            unpairedLineEdges_.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (!pendingEdges_.empty()) {
+            // Edge delivered before the record existed (synchronous loopback).
+            record.lineEdgeTimestamp = pendingEdges_.front().timestamp;
+            record.lineEdgeHostUs = pendingEdges_.front().hostTimestampUs;
+            pendingEdges_.pop_front();
+        } else {
+            if (unpairedFired_.size() >= kMaxUnpairedFired) unpairedFired_.pop_front();
+            unpairedFired_.push_back(record.sequence);
+        }
+    }
+    events_.push_back(record);
+}
+
+void TriggerService::onLineEvent(const ::camera::common::LineEvent& event) {
+    if (!event.rising) return;
+    std::lock_guard<std::mutex> lk(eventMutex_);
+    // FIFO pairing: the pulses were driven in order and the edges arrive in
+    // order, so the oldest unpaired pulse owns the next edge. Time-based
+    // matching would need the edge clock to be host-comparable, which it is
+    // not on every backend.
+    while (!unpairedFired_.empty()) {
+        const uint64_t seq = unpairedFired_.front();
+        unpairedFired_.pop_front();
+        // Sequence numbers are contiguous, so the record (if still buffered)
+        // sits at a computable offset from the front.
+        if (events_.empty() || seq < events_.front().sequence) continue; // drained already
+        const size_t offset = static_cast<size_t>(seq - events_.front().sequence);
+        if (offset >= events_.size()) continue;
+        auto& rec = events_[offset];
+        if (rec.sequence != seq) continue;
+        rec.lineEdgeTimestamp = event.timestamp;
+        rec.lineEdgeHostUs = event.hostTimestampUs;
+        return;
+    }
+    // No fired record yet: either the camera reported the edge from inside
+    // setTriggerOutput (record follows immediately) or the log was drained
+    // between the pulse and the edge. Hold it briefly for the former; a
+    // stale hold is bounded and evicted, and counted as unpaired.
+    if (pendingEdges_.size() >= kMaxPendingEdges) {
+        pendingEdges_.pop_front();
+        unpairedLineEdges_.fetch_add(1, std::memory_order_relaxed);
+    }
+    pendingEdges_.push_back(event);
+}
+
+std::vector<backend::recording::TriggerEventRecord> TriggerService::drainEvents() {
+    std::vector<backend::recording::TriggerEventRecord> out;
+    std::lock_guard<std::mutex> lk(eventMutex_);
+    out.assign(events_.begin(), events_.end());
+    events_.clear();
+    return out;
+}
+
+size_t TriggerService::bufferedEventCount() const {
+    std::lock_guard<std::mutex> lk(eventMutex_);
+    return events_.size();
 }
 
 void TriggerService::triggerLoop() {
@@ -215,6 +345,7 @@ void TriggerService::triggerLoop() {
         // Own the camera for the whole pulse: setCamera() blocks on this
         // mutex, so the pointer loaded below stays valid until we release it.
         std::lock_guard<std::mutex> pulseLock(pulseMutex_);
+        const uint64_t wakeUs = backend::diagnostics::PipelineTimingRecorder::nowUs();
         auto* cam = camera_.load(std::memory_order_acquire);
         if (cam && pending.generation != boundGeneration_.load(std::memory_order_acquire)) {
             // Request from an earlier camera session: never execute it
@@ -226,6 +357,8 @@ void TriggerService::triggerLoop() {
                             "(bound session {}, total stale drops: {})",
                             pending.generation, boundGeneration_.load(), stale);
             }
+            recordEvent(makeEvent(pending, backend::recording::TriggerOutcome::DroppedStale,
+                                  wakeUs, 0, 0));
             continue;
         }
         if (!cam) {
@@ -239,12 +372,12 @@ void TriggerService::triggerLoop() {
                             "(total no-camera drops: {})",
                             pending.frameIndex, lost);
             }
+            recordEvent(makeEvent(pending, backend::recording::TriggerOutcome::DroppedNoCamera,
+                                  wakeUs, 0, 0));
             continue;
         }
 
         const bool recordTiming = timingRecorder.isEnabled();
-        const uint64_t wakeUs =
-            recordTiming ? backend::diagnostics::PipelineTimingRecorder::nowUs() : 0;
 
         // Fire trigger pulse: High -> busy-wait ~1us -> Low
         // Mirrors processTrigger() in MIB-Studio/src/mib_grabber/mib_grabber.cpp
@@ -260,11 +393,12 @@ void TriggerService::triggerLoop() {
                             "(total set-failed drops: {})",
                             pending.frameIndex, lost);
             }
+            recordEvent(makeEvent(pending, backend::recording::TriggerOutcome::DroppedSetFailed,
+                                  wakeUs, 0, 0));
             continue;
         }
         auto onset = std::chrono::high_resolution_clock::now();
-        const uint64_t fireUs =
-            recordTiming ? backend::diagnostics::PipelineTimingRecorder::nowUs() : 0;
+        const uint64_t fireUs = backend::diagnostics::PipelineTimingRecorder::nowUs();
 
         // Busy-wait for the configured pulse duration
         auto pulseUs = std::chrono::microseconds(pulseDurationUs_.load(std::memory_order_relaxed));
@@ -273,6 +407,14 @@ void TriggerService::triggerLoop() {
         }
 
         cam->setTriggerOutput(false);
+        const uint64_t pulseDoneUs = backend::diagnostics::PipelineTimingRecorder::nowUs();
+
+        // Canonical pulse record (always on). A loopback edge that arrived
+        // before this record existed (MockCamera delivers it synchronously
+        // from setTriggerOutput) is waiting in pendingEdges_ and is attached
+        // by recordEvent; one that arrives later pairs via onLineEvent.
+        recordEvent(makeEvent(pending, backend::recording::TriggerOutcome::Fired, wakeUs, fireUs,
+                              pulseDoneUs));
 
         // Record metrics
         auto onsetUs = std::chrono::duration<double, std::micro>(onset - start).count();
@@ -310,7 +452,7 @@ void TriggerService::triggerLoop() {
             record.requestUs = pending.requestUs;
             record.wakeUs = wakeUs;
             record.fireUs = fireUs;
-            record.pulseDoneUs = backend::diagnostics::PipelineTimingRecorder::nowUs();
+            record.pulseDoneUs = pulseDoneUs;
             // With the per-request queue nothing coalesces; overflow shows up
             // in getDroppedRequestCount() instead.
             record.coalesced = 0;
