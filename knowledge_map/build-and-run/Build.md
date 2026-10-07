@@ -53,6 +53,54 @@ match nothing. `network-tests.yml` (nightly + manual) runs
 `ctest --preset linux-network-test`; every default test preset excludes the
 `network` label.
 
+### CI runtime bounds and compiler cache (2026-10-07)
+
+The Linux lanes use `mozilla-actions/sccache-action@v0.0.11` with the
+explicit `v0.16.0` sccache binary and `SCCACHE_GHA_ENABLED=true`. The existing
+CMake auto-detection in `cmake/MIBCompilerSettings.cmake` remains the compiler
+launcher; the workflows do not duplicate launcher arguments. Cache statistics
+are written to the lane log artifact on every attempted run. Hosted cache hit
+rates are not proven until a hosted run completes.
+
+Each long-running command has both a GNU `timeout` and a slightly larger
+GitHub step budget. `timeout --signal=TERM --kill-after=30s` gives child
+processes a grace period before force-killing a stalled process. CTest's
+existing per-test timeout and test selection are preserved, and a timeout or
+test failure remains non-zero. Logs and CTest failure files upload on success
+or failure with a seven-day retention period; path-gated sanitizer jobs do not
+upload artifacts for docs-only pull requests.
+
+| Lane / check | Job budget | Command budget / step budget |
+|---|---:|---:|
+| Sanitizers (each matrix entry) | 60 min | setup 10; configure 4/5; build 35/36; suite 12/13 |
+| Backend CI | 45 min | setup 10; Conan probe 180 s advisory; configure 4/5; combined build 20/21; suite 12/13; PL replay 4/5 |
+| Nightly soak | 60 min | repeat validation before setup; setup 10; configure 4/5; build 20/21; suite 30/31 |
+| Python wheel (x86_64 / ARM64 QEMU) | 20 / 120 min | job-level cap around the unchanged cibuildwheel and test coverage |
+
+The soak input is validated as an integer from 1 through 100 before package
+setup; the default remains 40. Its full existing test selection, including
+heavy memory-budget and HDF export tests, remains intact. Workflow concurrency
+cancels stale runs on the same ref so queued retry churn cannot accumulate.
+
+Observed timing evidence used for these bounds:
+
+- [Backend run 37583515274](https://github.com/gavinlouuu-kpt/mib-studio-qt/actions/runs/37583515274): configure 17 s, build 5 m 48 s, suite 3 m 49 s,
+  PL replay 3 s, and the advisory Conan probe 17 s.
+- [Sanitizer run 37582104010](https://github.com/gavinlouuu-kpt/mib-studio-qt/actions/runs/37582104010): ASan build about 21 m with a 4 m 13 s test
+  portion; TSan build about 5 m 35 s with a 3 m 49 s test portion.
+- [Sanitizer run 37562107549](https://github.com/gavinlouuu-kpt/mib-studio-qt/actions/runs/37562107549): 60 m overall wall time, with ASan runtime about
+  26 m and TSan runtime about 14 m. Matrix jobs overlap or stagger, so these
+  runtimes are not additive queue or billing totals.
+- [Soak run 37456065522](https://github.com/gavinlouuu-kpt/mib-studio-qt/actions/runs/37456065522): compile 12 m 48 s and test 12 m 30 s.
+- [ARM64 wheel run 37568147020](https://github.com/gavinlouuu-kpt/mib-studio-qt/actions/runs/37568147020): all four Python wheels under QEMU took about
+  69.5 m, while x86_64 entries took about 3.0–3.8 m; the larger ARM cap is
+  therefore intentional until a native ARM runner is available.
+
+These observations prove a need for bounds and retry/churn control, not a
+specific deadlock or a complete billing total. A stale main-checkout view and
+queued/cancelled attempts can make hosted totals misleading; the first hosted
+run after this change should verify cache behavior and artifact sizes.
+
 ## Qt PR checks (#594)
 
 `.github/workflows/qt-ci.yml` adds path-filtered **Linux Qt build and test**
