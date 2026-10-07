@@ -303,3 +303,8 @@ Qt opens What's New once on an upgrade. AutoUpdater and SoftwareUpdatesDialog
 accept optional `release_notes` alongside the existing URL and display Markdown
 inline. Publishing caps the UTF-8 plain-text summary at 16 KiB. Missing inline
 notes retain the URL button fallback. See [[frontend/MainWindow]].
+
+Profile path changes broadcast `AppConfigWatcher::configFileChanged` after the
+immediate load, keeping Monitoring’s document fingerprint synchronized (#583).
+Catalog-managed profile update checks compare installed and catalog revisions
+when present; legacy metadata falls back to checksums.

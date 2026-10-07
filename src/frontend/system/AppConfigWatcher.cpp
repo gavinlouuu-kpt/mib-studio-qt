@@ -168,6 +168,7 @@ namespace frontend
 			watchedPath_ = path;
 			// Immediately apply on (re)watch
 			loadAndApplyFromPath(path);
+			emit configFileChanged(path);
 		}
 	}
 

@@ -137,6 +137,7 @@ private slots:
     void onIncludeJsToggled(bool checked);
 
 private:
+    friend struct ConfigTabsProfileTestAccess;
     QString appDirIncludePath(const QString& fileName) const;
     QString defaultJsonPath() const { return appDirIncludePath("config.json"); }
     QString defaultJsPath() const { return appDirIncludePath("egrabberConfig.js"); }
