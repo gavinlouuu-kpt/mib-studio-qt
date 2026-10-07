@@ -96,7 +96,29 @@ fn abi_version_is_stable() {
     // operation kind StageReference removed; stage_set_zero(mid_travel) added;
     // fetch_stage_status: referenced -> zero_set, + mid_travel_declared and
     // session_only_zero, soft_min_um/soft_max_um -> envelope_min_um/envelope_max_um.
-    assert_eq!(ffi::bridge_abi_version(), 30);
+    // v31 fetch_run_accounting (#549): the reconciled accounting of the review file or of the
+    // last finished run, for the Review tab and the run outcome notice.
+    assert_eq!(ffi::bridge_abi_version(), 31);
+}
+
+// ABI 31 (#549): with nothing loaded and no run finished, the accounting says so and why.
+#[test]
+#[serial]
+fn run_accounting_is_unavailable_without_a_file_or_a_run() {
+    let data = std::env::temp_dir().join(format!("mib_bridge_accounting_{}", std::process::id()));
+    let mut bridge = ffi::new_backend_bridge();
+    let early: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_run_accounting("review")).unwrap();
+    assert_eq!(early["available"], serde_json::json!(false), "{early}");
+    assert!(bridge.pin_mut().initialize(&data.to_string_lossy()));
+    for source in ["review", "last_run"] {
+        let a: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_run_accounting(source)).unwrap();
+        assert_eq!(a["available"], serde_json::json!(false), "{source}: {a}");
+        assert!(a["error"].as_str().is_some_and(|e| !e.is_empty()), "{source}: {a}");
+    }
+    let unknown: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_run_accounting("elsewhere")).unwrap();
+    assert_eq!(unknown["available"], serde_json::json!(false), "{unknown}");
+    bridge.pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(&data);
 }
 
 // ABI 27 (#501 P1): off the PZ7035 the camera-mode commands are refused cleanly, the raw LED
@@ -1074,11 +1096,33 @@ fn experiment_lifecycle_end_to_end() {
     // Double stop fails safely.
     assert!(!bridge.pin_mut().experiment_stop().ok);
 
+    // ABI 31 (#549): the finished run's reconciled accounting, with the true admitted-frame count.
+    let last: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_run_accounting("last_run")).unwrap();
+    assert_eq!(last["available"], serde_json::json!(true), "{last}");
+    assert_eq!(last["reconciled"], serde_json::json!(true), "{last}");
+    assert_eq!(last["completion"], serde_json::json!(0), "{last}");
+    assert_eq!(last["start_generation"], serde_json::json!(1), "{last}");
+    let admitted = last["admitted"].as_u64().expect("admitted frames");
+    assert!(admitted > 0, "{last}");
+    assert!(last["persistence_committed"].as_u64().unwrap() <= admitted, "{last}");
+    assert_eq!(last["store_malformed"], serde_json::json!(0), "{last}");
+    assert_eq!(last["malformed_warn_fraction"], serde_json::json!(0.001), "{last}");
+    // Nothing is loaded for review yet.
+    let before: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_run_accounting("review")).unwrap();
+    assert_eq!(before["available"], serde_json::json!(false), "{before}");
+
     // The finalized file reopens through the review path.
     assert!(bridge.pin_mut().stop_capture().ok);
     let status = bridge.pin_mut().fetch_experiment_status();
     let load = bridge.pin_mut().load_recording(&status.output_path);
     assert!(load.ok, "finalized experiment file failed to load: {}", load.message);
+    // ... and the accounting saved in that file is the same as the run's.
+    let review: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_run_accounting("review")).unwrap();
+    assert_eq!(review["available"], serde_json::json!(true), "{review}");
+    assert_eq!(review["recorded"], serde_json::json!(true), "{review}");
+    assert_eq!(review["admitted"], last["admitted"], "{review}");
+    assert_eq!(review["completion"], last["completion"], "{review}");
+    assert_eq!(review["file_path"], serde_json::json!(status.output_path), "{review}");
 
     bridge.pin_mut().shutdown();
     let _ = std::fs::remove_dir_all(&frame_dir);

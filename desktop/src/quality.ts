@@ -1,3 +1,4 @@
+import { metricNumber } from "./metricFormat";
 // Camera & Alignment image-quality gates (UX-4, issue #308 / epic #304).
 //
 // The Camera & Alignment stage (UX-1 #305) lets the operator confirm the image
@@ -93,11 +94,11 @@ function focusGate(i: QualityInput): QualityGate {
     detail = "No focus metric has been reported yet.";
   } else if (i.focusAgeMs > i.focusStaleMs) {
     status = "warn";
-    value = i.focusMetric.toFixed(3);
+    value = metricNumber(i.focusMetric, 3);
     detail = `Focus metric is stale (${Math.round(i.focusAgeMs)} ms old).`;
   } else {
     status = "pass";
-    value = i.focusMetric.toFixed(3);
+    value = metricNumber(i.focusMetric, 3);
     detail = "Live focus metric.";
   }
 

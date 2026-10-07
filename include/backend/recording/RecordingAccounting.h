@@ -68,6 +68,25 @@ inline const char* toString(RunCompletionState s)
     return "unknown";
 }
 
+// True when the operator must see how the run ended (#549): frames lost without being declared, a
+// failure, or an outcome the backend cannot classify. Such a run is logged at WARN, not INFO.
+// Complete and declared-partial runs are expected outcomes.
+inline bool needsOperatorAttention(RunCompletionState s)
+{
+    return s == RunCompletionState::IncompleteLoss || s == RunCompletionState::Failed ||
+           s == RunCompletionState::Unknown;
+}
+
+// Malformed frames (ingress errors, booked and counted) above this fraction of the admitted frames
+// are worth a warning even though they are a declared loss (#549): the sensor link baseline is
+// ~0.1 ingress errors/s, i.e. ~0.002 % of frames at 5 kHz.
+inline constexpr double kMalformedWarnFraction = 0.001;
+
+inline bool malformedAboveWarnFraction(uint64_t malformed, uint64_t admitted)
+{
+    return admitted > 0 && static_cast<double>(malformed) / static_cast<double>(admitted) > kMalformedWarnFraction;
+}
+
 inline RunCompletionState runCompletionStateFromString(const std::string& s)
 {
     if (s == "complete") return RunCompletionState::Complete;
@@ -149,18 +168,22 @@ inline RecordingAccountingSnapshot reconcile(RecordingAccountingSnapshot s)
     } else if (s.fatalError || s.persistenceFailed > 0) {
         s.completion = RunCompletionState::Failed;
         reason = s.fatalError ? s.fatalMessage : "persistence failures";
-    } else if (s.storeOverwritten > 0 || s.storeNotCommitted > 0 || s.storeMalformed > 0 ||
+    } else if (s.storeOverwritten > 0 || s.storeNotCommitted > 0 ||
                s.processingFailed > 0 || s.sequenceGaps > 0) {
+        // Undeclared = frames nobody booked: overwritten or never committed in the store, failed in
+        // processing, or holes in the frame sequence. A frame that was detected, counted and booked
+        // as malformed (an ingress error, FRAME.INVALID) is a declared loss, see below (#549).
         s.completion = RunCompletionState::IncompleteLoss;
         reason = "undeclared loss: storeOverwritten=" + std::to_string(s.storeOverwritten) +
                  " storeNotCommitted=" + std::to_string(s.storeNotCommitted) +
                  " storeMalformed=" + std::to_string(s.storeMalformed) +
                  " processingFailed=" + std::to_string(s.processingFailed) +
                  " sequenceGaps=" + std::to_string(s.sequenceGaps);
-    } else if (s.cancelledByPolicy > 0 || s.pendingAtStop > 0 || s.persistencePendingAtStop > 0 ||
-               s.persistenceCancelledByPolicy > 0 || s.policyAllowsDrops) {
+    } else if (s.storeMalformed > 0 || s.cancelledByPolicy > 0 || s.pendingAtStop > 0 ||
+               s.persistencePendingAtStop > 0 || s.persistenceCancelledByPolicy > 0 || s.policyAllowsDrops) {
         s.completion = RunCompletionState::IntentionallyPartial;
-        reason = "declared policy: cancelledByPolicy=" + std::to_string(s.cancelledByPolicy) +
+        reason = "declared policy: storeMalformed=" + std::to_string(s.storeMalformed) +
+                 " cancelledByPolicy=" + std::to_string(s.cancelledByPolicy) +
                  " pendingAtStop=" + std::to_string(s.pendingAtStop) +
                  " persistencePendingAtStop=" + std::to_string(s.persistencePendingAtStop) +
                  " persistenceCancelledByPolicy=" + std::to_string(s.persistenceCancelledByPolicy) +

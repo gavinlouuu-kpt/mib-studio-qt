@@ -251,7 +251,6 @@ MainWindow::MainWindow(backend::AppBackend &backend, QWidget *parent)
             {"sqlite", "SQLite service"},
             {"hdf5", "HDF5 service"},
             {"processing", "Processing service"},
-            {"yolo", "YOLO service"},
             {"autofocus", "Autofocus wiring"},
             {"trigger", "Trigger wiring"},
             {"capture", "Capture service"},

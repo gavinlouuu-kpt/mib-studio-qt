@@ -53,6 +53,14 @@ match nothing. `network-tests.yml` (nightly + manual) runs
 `ctest --preset linux-network-test`; every default test preset excludes the
 `network` label.
 
+## Native FCS export
+
+Build the Qt-free `hdf_export_cli` target for `scripts/export_hdf5.py --format
+fcs`. `recording.fcs_writer` and `recording.hdf_export_service` cover the writer
+and transaction; `recording.fcs_flowio` runs the optional independent Python
+reader and skips when FlowIO is unavailable. See [[../services/HdfExportService]]
+and [[../../docs/howto/hdf5-export-app]] for detection semantics and commands.
+
 ## Presets
 
 Every configure preset carries a `description` naming the `env/` sections
@@ -446,21 +454,6 @@ different Conan package IDs after reinstalls).
 Some cloud images pin `/usr/bin/c++` to clang without an unversioned
 `libstdc++.so`; switch the alternative to g++. Details and the smoke test:
 [[../task/2026-04-20-cloud-toolchain-cxx-libstdcpp-fix]].
-
-## Linux cloud dependency fallback (ONNX Runtime optional)
-
-Linux cloud images may not have a discoverable CMake package for ONNX Runtime
-(`onnxruntimeConfig.cmake`), and Conan graph resolution can fail because of
-upstream version conflicts (`qt/opencv/onnxruntime` transitive deps).
-
-To keep non-hardware workflows buildable in cloud:
-
-- `find_package(onnxruntime CONFIG QUIET)` is optional.
-- `MIB_HAS_ONNXRUNTIME` is set from `TARGET onnxruntime::onnxruntime`.
-- When ONNX Runtime is unavailable:
-  - build uses `src/backend/services/YoloService.stub.cpp`
-  - compile definition `MIB_HAS_ONNXRUNTIME=0` is exported
-  - CMake emits a warning and continues.
 
 ## Related how-tos
 

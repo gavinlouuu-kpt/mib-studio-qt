@@ -100,7 +100,7 @@ Run from command line:
    - Choose where you want the exported files to be saved
 
 3. **Configure Export Options:**
-   - **Format:** Choose "CSV (metrics only)", "Images only", or "All (CSV + Images)"
+   - **Format:** Choose "CSV (metrics only)", "Images only", or "All (CSV + Images)". FCS is available through the native CLI.
    - **Frame Type:** Choose "Both", "Valid only", or "Invalid only"
    - **Pixel to Micron:** Enter the conversion factor (default: 0.4886)
 
@@ -171,6 +171,76 @@ Images are exported into a source-specific folder (`<input-basename>/`, suffixed
 - `invalid_frame_XXXXXX.tiff` for invalid frames
 
 Where `XXXXXX` is the zero-padded frame index.
+
+### FCS 3.1 export
+
+FCS export is a native, Qt-free path because the Python tool delegates to the
+same C++ writer used by the service. Build `hdf_export_cli`, then run:
+
+```bash
+cmake --preset linux-backend-only && cmake --build --preset linux-backend-only-build --target hdf_export_cli
+python scripts/export_hdf5.py -i experiment.h5 -o ./export \
+  --format fcs --fcs-event-mode detection --frame-type valid \
+  --native-cli build/linux-backend/src/backend/hdf_export_cli
+```
+
+On a multi-configuration generator, use the corresponding
+`build/linux-backend/src/backend/Release/hdf_export_cli` binary.
+
+The default is one event per accepted detection. `--frame-type invalid` or
+`both` explicitly includes rejected detections. The transaction publishes a
+folder containing `<base>.fcs` and `<base>_event_map.csv`; the sidecar columns
+are `fcs_event_index`, `source_frame_index`, `object_id`, `timestamp_ns`, and
+`event_mode`. The event index is the order in the FCS DATA segment; timestamps
+are exact uint64 nanoseconds in the sidecar and relative seconds in the FCS
+`Time` channel, relative to the first exported event. Repeated physical cells
+can therefore occur in multiple events with the same object ID; the ID is not
+a cross-frame tracking guarantee.
+
+The registry is contract-aware and follows the actual stored HDF5 compound
+members. These are the canonical channels (all values are written as 32-bit
+little-endian floats):
+
+| Contract | Channel | Stored member | Unit |
+|---|---|---|---|
+| 1–3 | `Area_um2` | `area` × calibration² | `um^2` |
+| 1–3 | `Area_px2` | `area` | `px^2` |
+| 1–3 | `Deformability` | `deformability` | unitless |
+| 1–3 | `AreaRatio` | `areaRatio` | unitless |
+| 1 | `RingRatio` | `ringRatio` | unitless |
+| 2–3 | `LaplacianVar` | `laplacianVariance` | `gray^2` |
+| 1–2 | `BrightQ1`…`BrightQ4` | `brightness_q1`…`brightness_q4` | `gray` |
+| 3 | `BrightMean` | `brightness_mean` | `gray` |
+| 3 | `BrightVar` | `brightness_variance` | `gray^2` |
+| 3 | `Pixels` / `Blemishes` | `pixelCount` / `blemishCount` | `count` |
+| 1–3 | `Time` | `timestampNs` | seconds from first event |
+
+Parameter names describe image measurements; they are not FSC/SSC or
+fluorescence channels. `$TIMESTEP=1` documents seconds for the `Time` parameter.
+Missing HDF5 members are omitted, so a missing count cannot create a phantom
+channel. The TEXT metadata records `$FIL` (source filename), contract, source,
+UTC export time, MIB version, and the caller-supplied pixel-to-micron
+calibration. HDF5 files remain the canonical source; images are not embedded
+in FCS and FlowJo image-view behavior is outside this exporter.
+
+Per-cell export is unavailable until cross-frame tracking identity is verified.
+`object_id` is assigned or reused within each frame and is never deduplicated;
+the canonical HDF5 images remain the source for image review.
+
+The writer uses FCS 3.1 little-endian 32-bit floating-point data. Non-finite
+stored metrics fail the export and the transaction is removed. Float32
+rounding is expected in FCS DATA; use the exact event-map integers for audit
+and compare channel values with a float32 tolerance. FlowIO coverage can be
+run when the optional dependency is installed:
+
+```bash
+python scripts/test_fcs_flowio.py \
+  --fixture-generator build/linux-backend/Release/fcs_writer_test \
+  --native-cli build/linux-backend/src/backend/hdf_export_cli
+```
+
+This is an offline reference-reader check. FlowJo import and image-view
+behavior still require a separate manual check.
 
 ## Troubleshooting
 

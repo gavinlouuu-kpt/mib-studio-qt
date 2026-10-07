@@ -55,8 +55,9 @@ Jump to the notes that match your task:
 
 7. Scan [[conventions/Code-Conventions]] — spdlog over `std::cout`, reuse
    `Tools.cpp`, headers mirror src, etc.
-8. Check [[current-state/Recent-Work]] and [[current-state/Task-Log-Index]] to
-   see what's actively in flight and what pitfalls other agents have hit.
+8. Check the newest entries in `knowledge_map/current-state/recent/` (run
+   `python3 scripts/recent_work.py`), the [[current-state/Recent-Work]] archive and
+   [[current-state/Task-Log-Index]] to see what's actively in flight and what pitfalls other agents have hit.
 
 ## Step 5 — Domain lookup
 
@@ -89,8 +90,9 @@ In short:
   `knowledge_map/frontend/`.
 - **Added or removed anything?** Create/delete the atomic note AND update
   the cluster's `_MOC.md` AND the vault `README.md` AND this file.
-- **Shipped a feature or non-trivial fix?** Add a line to
-  `knowledge_map/current-state/Recent-Work.md`.
+- **Shipped a feature or non-trivial fix?** Add one new file
+  `knowledge_map/current-state/recent/YYYY-MM-DD-<slug>.md` (see its README); the
+  old `Recent-Work.md` is a closed archive.
 - **Found a stale note while working?** Fix it — don't leave it for next
   time.
 

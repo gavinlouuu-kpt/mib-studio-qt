@@ -24,7 +24,6 @@ class ConanRecipeTest(unittest.TestCase):
         disabled = self.requirements('Windows', 'False')
         self.assertIn('qt/6.7.3', default)
         self.assertEqual(set(default) - set(disabled), {'qt/6.7.3'})
-        self.assertIn('onnxruntime/1.18.1', disabled)
         self.assertEqual(self.requirements('Windows', 'True'), default)
 
     def test_linux_headless_omits_only_qt_and_qt_platform_overrides(self):
@@ -33,7 +32,13 @@ class ConanRecipeTest(unittest.TestCase):
         self.assertEqual(set(default) - set(disabled), {'qt/6.7.3', 'xkbcommon/1.6.0', 'wayland/1.24.0'})
         self.assertTrue(default['xkbcommon/1.6.0'])
         self.assertTrue(default['wayland/1.24.0'])
-        self.assertNotIn('onnxruntime/1.18.1', disabled)
+
+    def test_no_host_inference_runtime_on_any_os(self):
+        for os_name in ('Windows', 'Linux', 'Macos'):
+            for with_qt in (True, False):
+                with self.subTest(os=os_name, with_qt=with_qt):
+                    self.assertFalse(any(ref.startswith('onnx' + 'runtime/')
+                                         for ref in self.requirements(os_name, with_qt)))
 
 
 if __name__ == '__main__':
