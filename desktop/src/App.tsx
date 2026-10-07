@@ -1018,7 +1018,7 @@ export default function App() {
         ? "Experiment is already running"
         : experimentRequestBusy ? "Experiment start request pending" : undefined;
   const checkedConfig = useConfigDocument({ready, active:expActive, append, refresh:refreshConfig});
-  const profiles = useProfiles({ready:ready && cores.initialized, resume:resumedNative, active:expActive, append, onOpen:(path)=>checkedConfig.run("open",path), onApplied:refreshConfig});
+  const profiles = useProfiles({currentConfig:checkedConfig.doc?.document_json??null, ready:ready && cores.initialized, resume:resumedNative, active:expActive, append, onOpen:(path)=>checkedConfig.run("open",path), onApplied:refreshConfig});
   useEffect(()=>{const fps=profiles.activeProfile?.display_fps;if(typeof fps==="number"&&Number.isFinite(fps))setPreviewFpsLimit(Math.min(240,Math.max(1,fps)));},[profiles.activeProfile]);
 
 
