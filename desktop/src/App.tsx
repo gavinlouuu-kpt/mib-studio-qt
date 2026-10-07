@@ -11,7 +11,9 @@ import { ProcessedPreview } from "./components/ProcessedPreview";
 import { RunOutcomeNotice } from "./components/RunOutcomeNotice";
 import { describeReviewOutcome, describeRunOutcome, runKey } from "./runOutcome";
 import { BackgroundCalibrationControls } from "./components/BackgroundCalibrationControls";
-import {invoke} from "./transport";
+import {invoke, isRemote} from "./transport";
+import { productName } from "./brand";
+import { isString, isStringArray, usePersistedState } from "./persistedState";
 import { PreviewBufferControls, usePreviewBuffer } from "./previewBuffer";
 import { decimalU64 } from "./framePacket";
 import { FramePullScheduler } from "./framePullScheduler";
@@ -150,7 +152,8 @@ export default function App() {
   const [ready, setReady] = useState(false);
   const [running, setRunning] = useState(false);
   const [camStatus, setCamStatus] = useState("unconfigured");
-  const [log, setLog] = useState<string[]>([]);
+  // The log and the stage confirmations survive a reload in this tab (#550 m14).
+  const [log, setLog] = usePersistedState<string[]>("yofo.log", [], isStringArray);
   const [showLog, setShowLog] = useState(false);
   const [lastMeta, setLastMeta] = useState<FrameMeta | null>(null);
 
@@ -160,8 +163,8 @@ export default function App() {
   // device/core signature they were confirmed against so they auto-invalidate
   // when the hardware changes. Kept in memory (not persisted) so every session
   // re-confirms readiness. `didInitStage` guards the one-time startup landing.
-  const [preflightConfirmedFor, setPreflightConfirmedFor] = useState("");
-  const [alignmentConfirmedFor, setAlignmentConfirmedFor] = useState("");
+  const [preflightConfirmedFor, setPreflightConfirmedFor] = usePersistedState("yofo.preflightConfirmedFor", "", isString);
+  const [alignmentConfirmedFor, setAlignmentConfirmedFor] = usePersistedState("yofo.alignmentConfirmedFor", "", isString);
   const didInitStage = useRef(false);
   const [connectTab, setConnectTab] = useState<"cameras" | "mindvision" | "framegrabbers">("cameras");
   const [expTab, setExpTab] = useState<"preview" | "monitoring">("preview");
@@ -267,6 +270,9 @@ export default function App() {
   const [alignImage, setAlignImage] = useState<ImageQualityInput | null>(null);
   const alignBestRef = useRef<{ best: number | null; box: Rect | null }>({ best: null, box: null });
   const alignImageMs = useRef(-Infinity);
+  // YOFO Studio on the PZ7035 and in the remote browser UI, MIB Studio on the desktop (#550 m13).
+  const brand = productName({ pz7035, remote: isRemote });
+  useEffect(() => { document.title = brand; }, [brand]);
   const [instrument, setInstrument] = useState<InstrumentStatus | null>(null);
   // A mode switch (or leaving Align) starts a fresh peak and clears the numbers.
   const instrumentModeName = instrument?.mode?.name;
@@ -1414,11 +1420,12 @@ export default function App() {
             <SideRow k="Display rate:" v={`${metricNumber(displayFps, 1)} fps`} />
             <SideRow k="Data rate:" v={`${metricNumber(dataRate, 1)} MB/s`} />
           </div>
-          {pz7035 && <div className="side-section" title="PZ7035 PL core and health (#501)">
+          {pz7035 && <div className="side-section" title={instrument && !instrument.available && instrument.error ? instrument.error : "PZ7035 PL core and health (#501)"}>
             <h4>PL core</h4>
-            <SideRow k="Build:" v={instrument?.core ? instrument.core.build_id.slice(0, 8) || "—" : "—"}
+            {/* No PL device (a replay, or the bridge not loaded) reads "no PL device", not "—" (#550 m12). */}
+            <SideRow k="Build:" v={instrument?.core ? instrument.core.build_id.slice(0, 8) || "—" : instrument && !instrument.available ? "no PL device" : "—"}
               cls={instrument?.core?.build_match === "match" ? "ok" : "dim"} />
-            <SideRow k="Weights:" v={instrument?.core ? instrument.core.profile_id.slice(0, 8) || "—" : "—"}
+            <SideRow k="Weights:" v={instrument?.core ? instrument.core.profile_id.slice(0, 8) || "—" : instrument && !instrument.available ? "no PL device" : "—"}
               cls={instrument?.core?.profile_match === "match" ? "ok" : "dim"} />
             <SideRow k="LED:" v={instrument?.led ? (instrument.led.guard_fault ? "GUARD TRIPPED" : instrument.led.on ? `${instrument.led.preset} ${instrument.led.delay_us}/${instrument.led.width_us} µs` : "off") : "—"}
               cls={instrument?.led && !instrument.led.guard_fault ? "" : "dim"} />
@@ -1750,7 +1757,7 @@ export default function App() {
                         Save camera ROI
                       </button>
                     </>
-                  ) : (
+                  ) : hostProcessing ? (
                     <>
                     <label>
                       X: <input type="number" value={roiFields.x} disabled={expActive} title={expActive ? "Stop the experiment before changing ROI" : undefined} onChange={(e) => setRoiFields((r) => ({ ...r, x: e.target.value }))} />
@@ -1768,7 +1775,7 @@ export default function App() {
                       Apply ROI
                     </button>
                     </>
-                  )}
+                  ) : null}
                 </div>
                 {cameraGeometry?.supported && (
                   <div className="camera-alignment-status" aria-label="Camera mode">
@@ -1895,13 +1902,13 @@ export default function App() {
                     )}
                     <div className="toolbar" style={{ marginTop: 6 }}>
 
-                      <span className="legend">
+                      {hostProcessing && <span className="legend">
                         <span className="chip"><span className="swatch" style={{ background: "#2b6cb0" }} /> Target</span>
                         <span className="chip"><span className="swatch" style={{ background: "#1a7f37" }} /> Valid</span>
                         <span className="chip"><span className="swatch" style={{ background: "#b42318" }} /> Invalid</span>
-                      </span>
+                      </span>}
                       <ProcessingSetupControls ready={ready} running={running} experimentActive={expActive}
-                        hostProcessing={hostProcessing} backgroundSet={backgroundSet}
+                        hostProcessing={hostProcessing} hostBackground={!!caps.host_background} backgroundSet={backgroundSet}
                         autoBackgroundEnabled={autoBackgroundEnabled} append={append} refresh={refreshConfig}
                         onConfigure={() => setConfigTab("app")} />
 
@@ -1917,7 +1924,7 @@ export default function App() {
                         <BackgroundCalibrationControls ready={ready} experimentActive={expActive} onPublished={() => void refreshConfig()} />
                       </>
                     ) : (
-                      <p className="mono" role="status">Processing runs on the PL for every frame. Its results reach this screen once the record path is connected; previews and recording work now.</p>
+                      <p className="mono" role="status">Processing runs on the PL for every frame. While an experiment runs its results are counted and recorded (see the sidebar and the Monitoring tab); this view shows the camera's previews.</p>
                     )}
 
                     <div className="subtabs" style={{ marginTop: 8 }} role="tablist" aria-label="Configuration">
@@ -1938,15 +1945,15 @@ export default function App() {
                             <button className="btn" onClick={onApplyConfigJson} disabled={!ready || !configDirty || liveDraft.runtimeChanged} title={configDirty ? "Merge-apply the edited document" : "No edits to apply"}>
                               Apply
                             </button>
-                            <span className="mono right" title="Active processing core identity (backend-owned trust)">
+                            {hostProcessing && <span className="mono right" title="Active processing core identity (backend-owned trust)">
                               core {coreStatus?.valid ? `v${coreStatus.active_version} (${coreStatus.source})` : "—"}
                               {coreStatus?.valid && !coreStatus.pin_satisfied
                                 ? ` · PIN NOT SATISFIED (requires ${coreStatus.required_version})`
                                 : ""}
-                            </span>
+                            </span>}
                           </div>
                           {caps.core_updates && <CoreManagementPanel model={cores} updatesBlocked={running || recording || expActive || scriptDocument.busy || mindvisionDocument.busy || reviewSourceBusy || experimentRequestBusy || cameraScript.busy || checkedConfig.busy || profiles.busy || profiles.remote.busy || reviewExport.busy || reanalysis.busy || previewBuffer.busy || scriptDocument.dirty || mindvisionDocument.dirty || configDirty || quickDraft.dirty || checkedConfig.dirty || profiles.dirty} />}
-                          <ProfilesPanel model={profiles} />
+                          <ProfilesPanel model={profiles} egrabberScript={caps.egrabber_script} />
                           <ConfigDocumentEditor model={checkedConfig} />
                           <div className="config-grid">
                             <div className="config-group" style={{ flex: 2 }}>
@@ -2409,8 +2416,9 @@ export default function App() {
           Log {showLog ? "▾" : "▸"} ({log.length})
         </button>
         <span className="metrics">
-          Display={metricNumber(displayFps, 1)} fps | Algo={metricNumber(algoFps)}/s | Valid={metricNumber(validFps)}/s | Invalid=
-          {metricNumber(invalidFps)}/s | Camera={running ? "running" : camStatus}, {metricNumber(dataRate, 1)} MB/s | Experiment:{" "}
+          Display={metricNumber(displayFps, 1)} fps | {hostProcessing
+            ? <>Algo={metricNumber(algoFps)}/s | Valid={metricNumber(validFps)}/s | Invalid={metricNumber(invalidFps)}/s</>
+            : <>Science=PL</>} | Camera={running ? "running" : camStatus}, {metricNumber(dataRate, 1)} MB/s | Experiment:{" "}
           {(EXPERIMENT_STATE_NAMES[expState] ?? "Inactive").toLowerCase()}
           {expActive ? ` (buffered ${String(BigInt(expStatus?.valid_buffered ?? "0") + BigInt(expStatus?.invalid_buffered ?? "0"))})` : ""}
         </span>
@@ -2477,7 +2485,7 @@ export default function App() {
       {showAbout && (
         <div className="modal-backdrop" onClick={() => setShowAbout(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="About">
-            <h3>MIB Studio (React + Tauri)</h3>
+            <h3>{brand} (React + Tauri)</h3>
             <p>
               Desktop shell for the Qt-free MIB backend (epic #246).
               <br />

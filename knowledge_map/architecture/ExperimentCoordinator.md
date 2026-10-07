@@ -63,6 +63,11 @@
 - `shutdown()` (from `AppBackend::shutdown()` and the destructor) finalizes
   an active run and joins the worker; idempotent; after it `start()` returns
   `Busy`.
+- `AppBackend::initialize()` supplies default application identity for every shell
+  (#545): CMake `PROJECT_VERSION_FULL` (fallback `PROJECT_VERSION`), configure-time
+  `MIB_BUILD_ID` environment value (fallback `dev`), and platform plus architecture.
+  `setApplicationIdentity()` still overrides these defaults for subsequent runs;
+  an active run's frozen snapshot remains unchanged. Qt retains its explicit identity.
 - `finish()` no longer changes state: it returns the active (or most recently
   finalized) run snapshot for callers that log the identity.
 - `status()` / `setStatusCallback(cb)`: `ExperimentStatus` (state,
