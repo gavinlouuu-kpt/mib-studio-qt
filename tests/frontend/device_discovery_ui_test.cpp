@@ -127,9 +127,9 @@ private:
 int main(int argc, char** argv)
 {
     qputenv("QT_QPA_PLATFORM", "offscreen");
-    // No MIB_CAMERA_MODE: the implicit fallback leaves the camera unconfigured
-    // so the startup camera step actually runs (#413).
-    qputenv("MIB_DISABLED_SERVICES", "auto_update,trigger,syringe_pump,pulse_generator");
+    // Disable capture explicitly so startup discovery begins unconfigured and
+    // the fake camera provider controls the selection (#419).
+    qputenv("MIB_DISABLED_SERVICES", "auto_update,trigger,syringe_pump,pulse_generator,capture");
     mib::test::Watchdog watchdog(60);
     QApplication app(argc, argv);
     mib::test::TempDir dir("device_discovery_ui");
@@ -139,10 +139,11 @@ int main(int argc, char** argv)
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                        QString::fromStdString(dir.path().string()));
     QString err;
-    MIB_REQUIRE(frontend::applicationsettings::initialize(&err), "settings init");
+    MIB_REQUIRE(frontend::applicationsettings::initialize(&err), qPrintable(err));
 
     backend::AppBackend backend;
     MIB_REQUIRE(backend.initialize((dir / "data").string()), "backend initializes");
+    MIB_REQUIRE(!backend.isCameraConfigured(), "capture-disabled bootstrap leaves camera unconfigured");
     auto& service = backend.deviceDiscovery();
     for (const auto& id : service.providerIds()) {
         MIB_REQUIRE(service.unregisterProvider(id), "production provider replaced by a fake");
