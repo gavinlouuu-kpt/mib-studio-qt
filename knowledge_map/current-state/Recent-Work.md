@@ -1,15 +1,15 @@
 # Recent Work
 
-## 2026-10-07 — Experiment file and operator frame totals (#544, #546)
+## 2026-10-07 — Autofocus teardown no longer loses the stats-thread wake-up (#294)
 
-The shared coordinator writes run-wide valid/invalid committed counts instead of
-the stop-time remainder into HDF5 headers. Bridge events and pull status retain
-the saved split and report actual policy drops; the desktop separately labels
-pending saves and writer failures using existing ABI fields. A deterministic
-mixed-run regression checks header totals against datasets and accounting;
-desktop tests cover labels and exact pending arithmetic. Older-file recovery is
-documented in [[../services/Hdf5Service]]. See [[../architecture/ExperimentCoordinator]]
-and [[../architecture/Rust-Bridge]].
+`AutofocusService` changed `statsRunning_` outside `pendingSamplesMutex_` during
+destruction. An idle `statsLoop()` could check its wait predicate, miss the stop
+notification, and leave the destructor blocked in `join()`. The destructor now
+changes the predicate under the pending-samples mutex, releases it, then
+notifies and joins. `backend.camera_script_apply` repeats idle `AutofocusService`
+destruction 10,000 times and watches full backend teardown with a ten-second
+watchdog; the unfixed stress run exited 99 on an idle stats-thread join. See
+[[../services/AutofocusService]].
 
 ## 2026-10-07 — How a run ended is shown to the operator, and a booked malformed frame is a declared loss (#549)
 
