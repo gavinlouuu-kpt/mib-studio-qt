@@ -66,6 +66,8 @@ the Experiment Preview page has no toggle.
 - Test: `frontend.dot_grid_overview` (tab switches pause/resume, overlay,
   toggle, no toggle on the Preview page).
 
+Operator workflow, registry coverage and failure messages: [Acquire & record — Wafer Grid](../../docs/manual/acquire-and-record.md#wafer-grid--locate-the-chip).
+
 ## Gotchas
 
 - `scratchFrame_` persists between ticks; do not move from it.
