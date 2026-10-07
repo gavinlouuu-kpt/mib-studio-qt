@@ -326,6 +326,56 @@ int main()
         std::getline(map, line);
         MIB_EXPECT(line.find("0,0,7,1000,detection") != std::string::npos, "FCS exact event map row");
 
+        // Explicit FCS destinations publish one sibling event map alongside
+        // the requested file.  Both names are a no-replace pair.
+        auto explicitFcs = request(HdfExportFormat::Fcs);
+        explicitFcs.outputRoot = fcsOut.string();
+        explicitFcs.explicitDestination = (fcsOut / "chosen.fcs").string();
+        const auto explicitResult = service.run(explicitFcs, HdfExportCancelToken{});
+        const fs::path explicitMap = fcsOut / "chosen_event_map.csv";
+        MIB_EXPECT(explicitResult.completed() && explicitResult.finalPath == explicitFcs.explicitDestination,
+                   "explicit FCS destination completes at the requested file");
+        MIB_EXPECT(fs::is_regular_file(explicitFcs.explicitDestination) && fs::is_regular_file(explicitMap),
+                   "explicit FCS publishes the paired event map");
+        auto pairTaken = explicitFcs;
+        MIB_EXPECT(service.run(pairTaken, HdfExportCancelToken{}).status == HdfExportStatus::Failed,
+                   "existing explicit FCS pair is refused");
+        fs::remove(explicitMap);
+        MIB_EXPECT(service.run(pairTaken, HdfExportCancelToken{}).status == HdfExportStatus::Failed,
+                   "existing explicit FCS file is refused when map is absent");
+        fs::remove(explicitFcs.explicitDestination);
+        auto mapTaken = explicitFcs;
+        { std::ofstream occupied(explicitMap); occupied << "occupied\n"; }
+        MIB_EXPECT(service.run(mapTaken, HdfExportCancelToken{}).status == HdfExportStatus::Failed,
+                   "existing explicit event map is refused when FCS is absent");
+        fs::remove(explicitMap);
+
+        auto cancelledCommit = explicitFcs;
+        cancelledCommit.explicitDestination = (fcsOut / "cancelled-commit.fcs").string();
+        HdfExportCancelToken commitCancel;
+        const auto cancelledCommitResult = service.run(
+            cancelledCommit, commitCancel, [&](const HdfExportProgress& p) {
+                if (p.phase == HdfExportPhase::Committing) commitCancel.cancel();
+            });
+        MIB_EXPECT(cancelledCommitResult.status == HdfExportStatus::Cancelled &&
+                       !fs::exists(fcsOut / "cancelled-commit.fcs") &&
+                       !fs::exists(fcsOut / "cancelled-commit_event_map.csv"),
+                   "cancellation after committing callback publishes no FCS pair");
+
+        auto commitFault = explicitFcs;
+        commitFault.explicitDestination = (fcsOut / "commit-fault.fcs").string();
+        const auto commitFaultResult = service.run(
+            commitFault, HdfExportCancelToken{}, [&](const HdfExportProgress& p) {
+                if (p.phase == HdfExportPhase::Committing) {
+                    std::ofstream occupied(commitFault.explicitDestination);
+                    occupied << "competing output\n";
+                }
+            });
+        MIB_EXPECT(commitFaultResult.status == HdfExportStatus::Failed &&
+                       fs::is_regular_file(commitFault.explicitDestination) &&
+                       !fs::exists(fcsOut / "commit-fault_event_map.csv"),
+                   "FCS publication rolls back the sidecar when the file target is taken");
+
         auto both = request(HdfExportFormat::Fcs);
         both.outputRoot = fcsOut.string();
         both.fcsFrames = HdfExportFrames::Both;

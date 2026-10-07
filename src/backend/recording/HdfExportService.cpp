@@ -9,6 +9,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <chrono>
 #include <cstdio>
@@ -208,6 +209,15 @@ HdfExportResult HdfExportService::run(const HdfExportRequest& request, const Hdf
         const std::string base = sourceBaseName(request.sourcePath);
         const bool folderJob = request.format != HdfExportFormat::MetricsCsv;
         const bool imageJob = request.format == HdfExportFormat::Images || request.format == HdfExportFormat::All;
+        const bool explicitFcsFile = request.format == HdfExportFormat::Fcs &&
+                                     !request.explicitDestination.empty() &&
+                                     [&] {
+                                         const std::string ext = fs::path(request.explicitDestination).extension().string();
+                                         return ext.size() == 4 && std::tolower(static_cast<unsigned char>(ext[1])) == 'f' &&
+                                                std::tolower(static_cast<unsigned char>(ext[2])) == 'c' &&
+                                                std::tolower(static_cast<unsigned char>(ext[3])) == 's';
+                                     }();
+        fs::path eventMapFinalPath;
         if (!request.explicitDestination.empty()) {
             finalPath = request.explicitDestination;
         } else if (folderJob) {
@@ -218,12 +228,17 @@ HdfExportResult HdfExportService::run(const HdfExportRequest& request, const Hdf
         if (fs::equivalent(request.sourcePath, finalPath, ec))
             throw Failed{"export destination must not replace the source recording"};
         ec.clear();
-        // An explicit *file* destination (chosen through a save dialog that
-        // already confirmed overwrite) is replaced atomically at commit; an
-        // existing folder is never merged into.
+        if (explicitFcsFile) {
+            eventMapFinalPath = finalPath.parent_path() / (finalPath.stem().string() + "_event_map.csv");
+            if (fs::exists(finalPath, ec) || fs::exists(eventMapFinalPath, ec))
+                throw Failed{"destination or event map already exists: " + finalPath.string()};
+        }
+        // An explicit metrics file destination is replaced atomically at
+        // commit; an existing folder or FCS pair is never merged into.
         const bool overwriteFile = !request.explicitDestination.empty() && !folderJob &&
                                    fs::is_regular_file(finalPath, ec);
-        if (fs::exists(finalPath, ec) && !overwriteFile) throw Failed{"destination already exists: " + finalPath.string()};
+        if (fs::exists(finalPath, ec) && !overwriteFile && !explicitFcsFile)
+            throw Failed{"destination already exists: " + finalPath.string()};
         partial = finalPath.parent_path() / ("." + finalPath.filename().string() + ".partial-" + result.jobId);
         if (folderJob) {
             fs::create_directories(partial, ec);
@@ -328,8 +343,9 @@ HdfExportResult HdfExportService::run(const HdfExportRequest& request, const Hdf
 #endif
             std::vector<services::ProcessedFrame> selected = valid;
             selected.insert(selected.end(), invalid.begin(), invalid.end());
-            const fs::path fcsPath = partial / (base + ".fcs");
-            const fs::path eventMapPath = partial / (base + "_event_map.csv");
+            const fs::path fcsPath = explicitFcsFile ? partial / finalPath.filename() : partial / (base + ".fcs");
+            const fs::path eventMapPath = explicitFcsFile ? partial / eventMapFinalPath.filename()
+                                                          : partial / (base + "_event_map.csv");
             totalUnits = 1;
             progress(HdfExportPhase::Metrics, fcsPath.string());
             const auto fcs = writeFcs(fcsPath.string(), eventMapPath.string(), selected, fcsMembers, options);
@@ -443,13 +459,42 @@ HdfExportResult HdfExportService::run(const HdfExportRequest& request, const Hdf
         // Publish.
         checkCancel();
         progress(HdfExportPhase::Committing, finalPath.string());
-        fs::rename(partial, finalPath, ec);
-        if (ec) {
-            // Name taken meanwhile: pick the next one once.
-            if (folderJob) finalPath = nextAvailableName(request.outputRoot, base, base + "_", "");
-            else finalPath = nextAvailableName(request.outputRoot, base + "_metrics.csv", base + "_metrics_", ".csv");
+        // A progress callback may cancel the job.  Check again after the
+        // callback and before the first publication syscall.
+        checkCancel();
+        if (explicitFcsFile) {
+            const fs::path stagedFcs = partial / finalPath.filename();
+            const fs::path stagedMap = partial / eventMapFinalPath.filename();
+            // Rename (same directory as the staging folder, so the same
+            // volume) instead of hard links: FAT/exFAT USB sticks and many SMB
+            // shares, where operators export, have no hard links. Both names
+            // were checked free above; publish the map first and roll it back
+            // if the FCS rename fails, so a lone event map is never left.
+            if (fs::exists(finalPath, ec) || fs::exists(eventMapFinalPath, ec))
+                throw Failed{"destination or event map appeared during export: " + finalPath.string()};
+            fs::rename(stagedMap, eventMapFinalPath, ec);
+            if (ec) throw Failed{"could not publish event map as " + eventMapFinalPath.string() + ": " + ec.message()};
+            fs::rename(stagedFcs, finalPath, ec);
+            if (ec) {
+                const std::string publishError = ec.message();
+                std::error_code rollbackEc;
+                fs::remove(eventMapFinalPath, rollbackEc);
+                if (rollbackEc)
+                    throw Failed{"could not publish FCS as " + finalPath.string() + ": " + publishError +
+                                  "; failed to roll back event map " + eventMapFinalPath.string() + ": " +
+                                  rollbackEc.message()};
+                throw Failed{"could not publish FCS as " + finalPath.string() + ": " + publishError};
+            }
+            fs::remove_all(partial, ec);
+            if (ec) result.warnings.push_back("published FCS pair but failed to remove staging directory: " + ec.message());
+        } else {
             fs::rename(partial, finalPath, ec);
-            if (ec) throw Failed{"could not publish export as " + finalPath.string() + ": " + ec.message()};
+            if (ec) {
+                if (folderJob) finalPath = nextAvailableName(request.outputRoot, base, base + "_", "");
+                else finalPath = nextAvailableName(request.outputRoot, base + "_metrics.csv", base + "_metrics_", ".csv");
+                fs::rename(partial, finalPath, ec);
+                if (ec) throw Failed{"could not publish export as " + finalPath.string() + ": " + ec.message()};
+            }
         }
         result.status = HdfExportStatus::Completed;
         result.finalPath = finalPath.string();

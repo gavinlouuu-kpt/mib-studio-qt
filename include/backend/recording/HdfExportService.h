@@ -63,8 +63,9 @@ struct HdfExportRequest {
     // deleting it when the job does not complete.
     bool keepPartialOnFailure{false};
     // Optional explicit final destination (metrics CSV file for MetricsCsv,
-    // folder for Images/All/Fcs). Empty -> derived from the source base name with
-    // a bounded "_N" suffix lookup.
+    // folder for Images/All, folder or .fcs file for Fcs). An explicit .fcs
+    // destination publishes its sibling *_event_map.csv as one no-replace pair.
+    // Empty -> derived from the source base name with a bounded "_N" suffix lookup.
     std::string explicitDestination;
 };
 

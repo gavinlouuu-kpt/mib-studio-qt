@@ -12,6 +12,7 @@
 #include "backend/app/AppBackend.h"
 #include "backend/processing/ProcessingService.h"
 #include "backend/recording/Hdf5Service.h"
+#include "backend/recording/HdfExportService.h"
 #include "frontend/tabs/HdfReviewTab.h"
 #include "backend/processing/KdeCoreRecord.h"
 #include "frontend/utils/ApplicationSettings.h"
@@ -28,6 +29,7 @@
 #include <QEventLoop>
 #include <QLineSeries>
 #include <QPen>
+#include <QPushButton>
 #include <QValueAxis>
 #include <QSettings>
 
@@ -111,6 +113,19 @@ void writePopulation(const std::string& path, const std::string& liveJson,
     hdf5.closeFile();
 }
 
+void writeRecording(const std::string& path) {
+    Hdf5Service hdf5;
+    MIB_REQUIRE(hdf5.openFile(path), "recording fixture create");
+    MIB_REQUIRE(hdf5.initializeRecordingDatasets(), "recording datasets");
+    std::vector<cv::Mat> images{cv::Mat(8, 10, CV_8UC1, cv::Scalar(42)),
+                                cv::Mat(8, 10, CV_8UC1, cv::Scalar(43))};
+    std::vector<backend::services::Hdf5Service::RecordingFrameMeta> metadata{
+        {0, 1000, 10, 8}, {1, 2000, 10, 8}};
+    MIB_REQUIRE(hdf5.appendRecordingFrames(images, metadata), "recording frames");
+    MIB_REQUIRE(hdf5.writeRecordingInfo(1000, 2000, images.size(), 0), "recording info");
+    hdf5.closeFile();
+}
+
 bool waitFor(const std::function<bool()>& pred, int timeoutMs) {
     QElapsedTimer clock;
     clock.start();
@@ -151,7 +166,7 @@ int main(int argc, char* argv[]) {
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                        QString::fromStdString((td.path() / "settings").string()));
     QString err;
-    MIB_REQUIRE(frontend::applicationsettings::initialize(&err), "settings init");
+    MIB_REQUIRE(frontend::applicationsettings::initialize(&err), "settings init: " + err.toStdString());
     backend::AppBackend backend;
     MIB_REQUIRE(backend.initialize((td.path() / "data").string()), "backend init");
 
@@ -283,6 +298,56 @@ int main(int argc, char* argv[]) {
         MIB_EXPECT(readAnalysis(ro).empty(), "nothing was written to the read-only file");
     else
         std::printf("NOTE: write bits not enforced for this user (root?); read-only refusal not checked\n");
+
+    // ---- FCS single-file production path + recording guard --------------------
+    wd.mark("fcs-ui");
+    tab.loadHdfFileForTests(QString::fromStdString(pop));
+    settle(4);
+    const QString fcsFile = QString::fromStdString((td.path() / "ui-export.fcs").string());
+    backend::recording::HdfExportRequest directRequest;
+    directRequest.sourcePath = pop;
+    directRequest.outputRoot = td.path().string();
+    directRequest.format = backend::recording::HdfExportFormat::Fcs;
+    directRequest.explicitDestination = (td.path() / "direct-export.fcs").string();
+    backend::recording::HdfExportService directService;
+    const auto directResult = directService.run(directRequest, backend::recording::HdfExportCancelToken{});
+    MIB_REQUIRE(directResult.completed(), "direct FCS export for parity");
+    tab.startFcsExportForTests(fcsFile);
+    MIB_REQUIRE(waitFor([&] { return !tab.exportInProgressForTests(); }, 30000), "FCS UI export finishes");
+    settle(3);
+    const std::string fcsBytes = [&] {
+        std::ifstream in((td.path() / "ui-export.fcs").string(), std::ios::binary);
+        return std::string((std::istreambuf_iterator<char>(in)), {});
+    }();
+    MIB_EXPECT(fcsBytes.rfind("FCS3.1", 0) == 0, "UI FCS export writes an FCS 3.1 file");
+    MIB_EXPECT(std::filesystem::is_regular_file(td.path() / "ui-export_event_map.csv"),
+               "UI FCS export writes its event map sibling");
+    const auto readTot = [](const std::string& bytes) -> std::uint64_t {
+        const std::size_t key = bytes.find("$TOT");
+        if (key == std::string::npos) return 0;
+        const std::size_t begin = bytes.find('|', key + 4);
+        if (begin == std::string::npos) return 0;
+        const std::size_t end = bytes.find('|', begin + 1);
+        if (end == std::string::npos) return 0;
+        try { return std::stoull(bytes.substr(begin + 1, end - begin - 1)); } catch (...) { return 0; }
+    };
+    MIB_EXPECT(readTot(fcsBytes) == directResult.validCount + directResult.invalidCount,
+               "UI FCS $TOT matches the backend export result");
+    auto* fcsButton = tab.findChild<QPushButton*>(QStringLiteral("exportFcsBtn"));
+    auto* metricsButton = tab.findChild<QPushButton*>(QStringLiteral("exportMetricsBtn"));
+    MIB_REQUIRE(fcsButton && metricsButton, "FCS and metrics buttons exist");
+    MIB_EXPECT(fcsButton->isEnabled() && metricsButton->isEnabled(), "experiment enables metrics and FCS exports");
+
+    const std::string recording = (td.path() / "recording.h5").string();
+    writeRecording(recording);
+    tab.loadHdfFileForTests(QString::fromStdString(recording));
+    settle(4);
+    MIB_EXPECT(!fcsButton->isEnabled() && !metricsButton->isEnabled(),
+               "recording disables metrics and FCS exports");
+    tab.loadHdfFileForTests(QString::fromStdString(pop));
+    settle(4);
+    MIB_EXPECT(fcsButton->isEnabled() && metricsButton->isEnabled(),
+               "experiment restores metrics and FCS export state");
 
     // ---- TD-17: recorded factor ------------------------------------------------
     wd.mark("td17");

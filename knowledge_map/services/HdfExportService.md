@@ -41,7 +41,8 @@ native CLI: `hdf_export_cli`
   `<base>` or `<base>_<max suffix + 1>` — cost does not grow with the number
   of previous exports. An explicit destination is honoured; an existing
   *file* destination (already confirmed by a save dialog) is replaced
-  atomically at commit, an existing folder is refused. A destination equivalent
+  atomically at commit for MetricsCsv; existing FCS files, their event-map
+  siblings, and existing folders are refused. A destination equivalent
   to the source recording (including symlinks/hardlinks) is always rejected.
 - Charts are not rendered here: the caller passes `supplementalImages`
   (name → BGR `cv::Mat`) captured on its own thread; the job writes them for
@@ -49,7 +50,17 @@ native CLI: `hdf_export_cli`
 - CSV format/columns are identical to the historical `HdfReviewTab` writer
   (`Frame Type … Bright Q4`, fixed 3/2-decimal formatting).
 - `HdfExportFormat::Fcs` writes a transactional `<base>.fcs` plus
-  `<base>_event_map.csv` folder. The reusable FCS writer emits one event per
+  `<base>_event_map.csv` folder. An explicit `.fcs` destination instead writes
+  that exact file and `<chosen stem>_event_map.csv` beside it (#574), returning
+  the file as `finalPath`. Both are staged privately and published without
+  replacing existing outputs, sidecar first and FCS last; ordinary publication
+  failure rolls back the newly published sidecar. The sibling pair cannot be
+  crash-atomic: interruption between publications can leave an orphan sidecar.
+  Publication renames within the destination folder (no hard links), so it
+  works on FAT/exFAT USB sticks and SMB shares; both names are re-checked free
+  just before publishing. Default folder exports retain
+  atomic pair publication. Selected
+  `validCount + invalidCount` is the event count. The reusable FCS writer emits one event per
   detection, little-endian 32-bit float data, `BYTEORD=1,2,3,4`, `MODE=L`,
   `TIMESTEP=1`, and a contract-aware registry based on actual HDF compound
   members. The default is valid detections; invalid/both are explicit options.
