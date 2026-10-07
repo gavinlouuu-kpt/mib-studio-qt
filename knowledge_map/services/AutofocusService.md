@@ -161,6 +161,10 @@ are rejected rather than silently clamped at the transport boundary.
   **not** in `connect` / `disconnect`. This is intentional: the UI still
   expects statistics even when the nanopositioner is not connected, and
   the realtime pipeline pushes samples regardless.
+- Destruction changes `statsRunning_` while holding `pendingSamplesMutex_`,
+  then notifies and joins after releasing the mutex. The lock orders the stop
+  predicate with `statsLoop()`'s condition-variable wait, so teardown cannot
+  lose the wake-up and hang while joining an idle stats thread (#294).
 - `ringRatioSequence_` and `lastRingRatioUpdateUs_` are updated in
   `onRingRatio` (inline) so the control loop's freshness gate sees data
   arrival immediately even if `statsLoop` is a few milliseconds behind

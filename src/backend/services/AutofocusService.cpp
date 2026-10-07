@@ -45,7 +45,15 @@ AutofocusService::AutofocusService(BackendFactory backendFactory)
 AutofocusService::~AutofocusService() {
     disconnect();
     // Stop stats thread
-    if (statsRunning_.exchange(false)) {
+    bool wasRunning = false;
+    {
+        // Change the wait predicate while holding the same mutex used by
+        // statsLoop. This prevents a stop notification from landing between
+        // the predicate check and wait registration.
+        std::scoped_lock lock(pendingSamplesMutex_);
+        wasRunning = statsRunning_.exchange(false);
+    }
+    if (wasRunning) {
         pendingSamplesCV_.notify_all();
         if (statsThread_.joinable()) statsThread_.join();
     }
