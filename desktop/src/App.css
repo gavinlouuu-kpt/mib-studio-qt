@@ -817,11 +817,11 @@ button.btn:disabled,
   border: 1px solid var(--border);
   background: #fff;
   padding: 8px;
-  flex: 1;
-  min-height: 0;
+  flex: 1 0 auto;
+  min-height: auto;
   display: flex;
   flex-direction: column;
-  overflow: auto;
+  overflow: visible;
 }
 
 /* ---- Canvas / live view ---- */
@@ -937,6 +937,13 @@ button.btn:disabled,
   padding: 8px;
   min-width: 240px;
   flex: 1;
+}
+
+/* Stacked in a sub-tab body (a content-height flex column since #543), a
+   config group keeps its own height: with flex: 1 it shared the extra
+   height with the Review split and pushed the frames below the fold. */
+.subtab-body > .config-group {
+  flex: 0 0 auto;
 }
 
 .config-group h5 {
