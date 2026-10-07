@@ -12,4 +12,4 @@ fcs` delegates to `hdf_export_cli`, resolves relative native paths, forwards
 Ctrl-C, and reports a clear missing-binary error. The optional FlowIO round-trip
 script is available when FlowIO is installed; FlowJo import remains manually
 unverified. See
-[[services/HdfExportService]] and [[../docs/howto/hdf5-export-app]].
+[[services/HdfExportService]] and [[../../../docs/howto/hdf5-export-app]].
