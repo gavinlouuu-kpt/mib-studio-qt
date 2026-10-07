@@ -158,3 +158,47 @@ describe("deriveWorkflow — invariants", () => {
     expect(ids).toEqual(["preflight", "alignment", "experiment", "review"]);
   });
 });
+
+describe("deriveWorkflow — required checklist failures (#548)", () => {
+  const CONFIRMED: WorkflowFacts = { ...ALIGNED, cameraRunning: false };
+  const FAILURES = [
+    "PL core (build + weights): PL core unavailable: PL not configured.",
+    "Sensor link: Live registers are unavailable.",
+    "LED strobe: Live registers are unavailable.",
+  ];
+  const view = (f: WorkflowFacts) => deriveWorkflow(f).stages.find((s) => s.id === "preflight")!;
+
+  it("blocks confirmation while a required check is not passed, and says which", () => {
+    const v = view({ ...CONFIRMED, preflightConfirmedFor: "", requiredFailures: FAILURES });
+    expect(v.status).toBe("needs-attention");
+    expect(v.blocking).toEqual(FAILURES);
+    expect(v.summary).toBe(FAILURES[0]);
+    const w = deriveWorkflow({ ...CONFIRMED, preflightConfirmedFor: "", requiredFailures: FAILURES });
+    expect(w.recommended?.kind).not.toBe("confirm-preflight");
+  });
+
+  it("offers the confirmation when every required check passes", () => {
+    const w = deriveWorkflow({ ...CONFIRMED, preflightConfirmedFor: "", requiredFailures: [] });
+    expect(view({ ...CONFIRMED, preflightConfirmedFor: "", requiredFailures: [] }).status).toBe("ready");
+    expect(w.recommended?.kind).toBe("confirm-preflight");
+  });
+
+  it("un-completes a stage that was confirmed before a required check started failing", () => {
+    expect(view({ ...CONFIRMED, requiredFailures: [] }).status).toBe("complete");
+    expect(view({ ...CONFIRMED, requiredFailures: [FAILURES[2]] }).status).toBe("needs-attention");
+  });
+
+  it("tells the operator how to clear an unverified PL build, which blocks like any required check", () => {
+    const unverified = "PL core (build + weights): The PL build is not verified: /etc/yofo/expected-core.json is missing. On the instrument run scripts/pz_install_core.sh <build dir> (it writes that file from the build's core.json), then press Retry check.";
+    const v = view({ ...CONFIRMED, preflightConfirmedFor: "", requiredFailures: [unverified] });
+    expect(v.status).toBe("needs-attention");
+    expect(v.summary).toContain("pz_install_core.sh");
+  });
+
+  it("replaces the host core pin test with the checklist, so the PL core decides on the instrument", () => {
+    // The PZ7035 has no host core; the PL core check in the checklist stands in for it.
+    const noHostCore = { ...CONFIRMED, coreValid: false, corePinSatisfied: false };
+    expect(view({ ...noHostCore, requiredFailures: [] }).status).toBe("complete");
+    expect(view({ ...noHostCore, requiredFailures: undefined }).status).toBe("needs-attention");
+  });
+});
