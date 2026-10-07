@@ -817,11 +817,11 @@ button.btn:disabled,
   border: 1px solid var(--border);
   background: #fff;
   padding: 8px;
-  flex: 1;
-  min-height: 0;
+  flex: 1 0 auto;
+  min-height: auto;
   display: flex;
   flex-direction: column;
-  overflow: auto;
+  overflow: visible;
 }
 
 /* ---- Canvas / live view ---- */
