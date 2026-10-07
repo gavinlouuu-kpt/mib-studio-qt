@@ -171,6 +171,12 @@ private:
     ExperimentStatus status_;
     mutable std::mutex callbackMutex_;
     StatusCallback statusCallback_;
+    // publishLocked() invokes a copy of the callback outside every lock, so
+    // replacing or clearing it must wait for invocations already in flight:
+    // otherwise an owner that unregisters and is destroyed (BackendFacade at
+    // shutdown) can still be called on the worker thread.
+    std::condition_variable callbackIdle_;
+    int callbacksInFlight_{0};
     // Worker thread (periodic flush + finalization). Guarded by mutex_.
     std::thread worker_;
     std::condition_variable workerCv_;
