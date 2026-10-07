@@ -206,13 +206,12 @@ public:
         if (thread_.joinable()) thread_.join();
     }
     int port() const { return port_; }
+    // Unblock the server thread's recv() on the current client; that thread
+    // owns the descriptor and closes it under m_. Closing it here raced with
+    // the blocked recv() (TSan) and could hand a reused fd to recv().
     void dropClient() {
         std::lock_guard<std::mutex> lk(m_);
-        if (client_ >= 0) {
-            ::shutdown(client_, SHUT_RDWR);
-            ::close(client_);
-            client_ = -1;
-        }
+        if (client_ >= 0) ::shutdown(client_, SHUT_RDWR);
     }
     std::atomic<int> connections{0};
 
