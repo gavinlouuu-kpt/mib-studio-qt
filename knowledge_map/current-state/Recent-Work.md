@@ -11,6 +11,18 @@ desktop tests cover labels and exact pending arithmetic. Older-file recovery is
 documented in [[../services/Hdf5Service]]. See [[../architecture/ExperimentCoordinator]]
 and [[../architecture/Rust-Bridge]].
 
+## 2026-10-07 — Raw recording preserves the experiment writer (#451)
+
+Manual recording uses the coordinator idle transaction for atomic admission
+against experiment Start and refuses any open HDF5 file without closing it.
+Recording ownership lasts through worker finalization and Stop; facade and Qt
+callers receive the backend conflict reason. Mock regression covers active
+experiment conflicts during Starting/Active/Stopping, same-path protection,
+continued frame persistence/pixel readback, failed-open cleanup, and competing
+starts. The active-writer guard fails on the unfixed backend; the fixed test
+passes 20 repeats (200 competing starts), plus seven related lifecycle tests. See
+[[architecture/AppBackend]] and [[architecture/ExperimentCoordinator]].
+
 ## 2026-10-07 — Deterministic experiment readiness checks (#506)
 
 `backend.experiment_readiness` joins the realtime consumer before editing the live
