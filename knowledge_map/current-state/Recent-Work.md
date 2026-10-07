@@ -11,7 +11,9 @@ confirming marked the stage Complete with PL core, sensor link and LED strobe fa
 - on the PZ7035 the PL core check stands in for the host core pin, which does not exist there.
 
 A required check in "warning" blocks too (the checklist's existing rule), so an unverified PL build
-(no `/etc/yofo/expected-core.json`) blocks until it is installed. See [[../architecture/Desktop-Shell]].
+(no `/etc/yofo/expected-core.json`) blocks until it is installed. That fails closed on purpose, for a
+science-core identity check, and the reason tells the operator the fix (run `scripts/pz_install_core.sh`,
+then Retry check). A service override, if ever needed, comes with #310's audited override. See [[../architecture/Desktop-Shell]].
 
 ## 2026-10-07 — Deterministic experiment readiness checks (#506)
 

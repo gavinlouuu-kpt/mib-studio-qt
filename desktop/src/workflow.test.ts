@@ -188,6 +188,13 @@ describe("deriveWorkflow — required checklist failures (#548)", () => {
     expect(view({ ...CONFIRMED, requiredFailures: [FAILURES[2]] }).status).toBe("needs-attention");
   });
 
+  it("tells the operator how to clear an unverified PL build, which blocks like any required check", () => {
+    const unverified = "PL core (build + weights): The PL build is not verified: /etc/yofo/expected-core.json is missing. On the instrument run scripts/pz_install_core.sh <build dir> (it writes that file from the build's core.json), then press Retry check.";
+    const v = view({ ...CONFIRMED, preflightConfirmedFor: "", requiredFailures: [unverified] });
+    expect(v.status).toBe("needs-attention");
+    expect(v.summary).toContain("pz_install_core.sh");
+  });
+
   it("replaces the host core pin test with the checklist, so the PL core decides on the instrument", () => {
     // The PZ7035 has no host core; the PL core check in the checklist stands in for it.
     const noHostCore = { ...CONFIRMED, coreValid: false, corePinSatisfied: false };
