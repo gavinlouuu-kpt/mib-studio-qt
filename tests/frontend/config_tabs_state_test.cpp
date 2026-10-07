@@ -85,6 +85,19 @@ void settleMs(int ms)
         QThread::msleep(5);
     }
 }
+
+// Pump events until pred() holds or timeoutMs elapses.
+template <typename Pred>
+bool settleUntil(Pred pred, int timeoutMs)
+{
+    QElapsedTimer t;
+    t.start();
+    while (!pred()) {
+        if (t.elapsed() >= timeoutMs) return false;
+        settleMs(20);
+    }
+    return true;
+}
 QByteArray fileBytes(const QString& path)
 {
     QFile f(path);
@@ -498,8 +511,11 @@ int main(int argc, char* argv[])
         tabs.setAppConfigEditorText(
             QStringLiteral("{\"image_processing\":{\"bg_subtract_threshold\":20}}"));
         QMetaObject::invokeMethod(&tabs, "onSaveJson", Qt::DirectConnection);
-        settleMs(200);
-        MIB_EXPECT(backend.processing().getProcessingConfig().bg_subtract_threshold == 20,
+        // Applied asynchronously from the watcher's file-change event, which is
+        // slower on Windows: wait on the condition, not a fixed delay.
+        MIB_EXPECT(settleUntil([&] {
+                       return backend.processing().getProcessingConfig().bg_subtract_threshold == 20;
+                   }, 5000),
                    "save after deletion applies default config to live processing");
         if (defaultExisted)
             writeFile(initialDefaultPath, defaultBytes);
