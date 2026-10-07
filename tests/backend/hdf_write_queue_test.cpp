@@ -7,6 +7,7 @@
 #include "backend/recording/HdfWriteQueue.h"
 
 #include "support/assert.h"
+#include "support/watchdog.h"
 
 #include <atomic>
 #include <chrono>
@@ -19,6 +20,7 @@ using backend::recording::HdfWriteQueue;
 
 int main()
 {
+    mib::test::Watchdog watchdog(20);
     // 1) FIFO drain: every submitted batch is written, in order. Slots are
     //    sized above the submit count so this path never overflows (overflow is
     //    fatal by design, so a producer must not retry a rejected submit).
@@ -82,6 +84,42 @@ int main()
         q.flushAndStop();
     }
 
+    {
+        int written = 0;
+        HdfWriteQueue<int> q(
+            3,
+            [&](const int&) {
+                ++written;
+                return true;
+            },
+            [](const std::string&) {});
+        MIB_REQUIRE(q.submit(1), "first submission");
+        MIB_REQUIRE(q.flushAndStop(), "clean stop");
+        MIB_EXPECT(!q.submit(2), "stopped queue rejects new work");
+        MIB_EXPECT(q.flushAndStop() && written == 1, "repeat stop preserves accounting");
+    }
+    // Race the producer against Stop: accepted work must be drained exactly once.
+    for (int round = 0; round < 10; ++round) {
+        std::atomic<int> accepted{0}, written{0};
+        HdfWriteQueue<int> q(
+            4096,
+            [&](const int&) {
+                ++written;
+                return true;
+            },
+            [](const std::string&) {});
+        std::thread producer([&] {
+            for (int i = 0; i < 2000; ++i)
+                if (q.submit(int(i))) ++accepted;
+        });
+        while (accepted.load() == 0)
+            std::this_thread::yield();
+        const bool ok = q.flushAndStop();
+        producer.join();
+        MIB_EXPECT(ok && written.load() == accepted.load(),
+                   "concurrent stop conserves accepted work");
+        MIB_EXPECT(!q.submit(2001), "raced stop remains closed");
+    }
     if (mib::test::exitCode() == 0) {
         std::printf("HdfWriteQueue FIFO/overflow/failure verified\n");
     }

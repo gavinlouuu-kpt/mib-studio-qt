@@ -811,3 +811,13 @@ background generation and processing version. Standalone services also refuse
 these changes while their experiment flag is active. Ordinary monitoring tuning
 that does not change background settings retains its existing behavior.
 Regression: `backend.experiment_readiness` checks direct setters during a run.
+
+## Stop-series handoff and persistent write failures (#403)
+
+`endExperiment()` returns whether the inline loop acknowledged the bounded
+partial-series handoff. The loop checks requests even with no new frames;
+settlement rejects late appends. `setFlushRequestCallback()` is installed at
+composition time and wakes the coordinator using the existing `needsFlush()`
+policy. Buffer eviction is reported through the fatal save callback.
+The run retains failed-write state across `finishFlush()` queue destruction
+(#589), so unwritten admissions remain persistence failures in accounting.

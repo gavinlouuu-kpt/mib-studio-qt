@@ -537,3 +537,7 @@ the last reachable stable tag. `publish-update.py --release-notes-file` includes
 both installers copy release notes and the manual with images under resources;
 Linux builds also copy these beside the executable (there were no app install rules). Tauri bundles the same
 sources via Vite raw/URL imports. Templates live in `docs/release-notes/README.md`.
+
+Recording-safety regressions (#403) are registered as `e2e.recording_403_*`
+in the shared backend runner, with condition-driven mock-camera fixtures.
+`backend.hdf_write_queue_fault` covers throwing callbacks and concurrent Stop.
