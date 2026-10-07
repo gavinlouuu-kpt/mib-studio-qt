@@ -11,6 +11,16 @@ desktop tests cover labels and exact pending arithmetic. Older-file recovery is
 documented in [[../services/Hdf5Service]]. See [[../architecture/ExperimentCoordinator]]
 and [[../architecture/Rust-Bridge]].
 
+## 2026-10-07 — Local profile drafts copy the open app config (#547)
+
+React local profiles now seed new drafts from the complete config.json document
+loaded in the App config editor. Without one, users must open or import a config;
+choosing a profiles folder preserves the draft. Empty or invalid JSON drafts cannot be saved:
+the disabled save button explains why, and the save handler repeats validation.
+Existing profile reads retain their complete document and optional script. Vitest
+covers document seeding, missing documents, folder selection, invalid/empty drafts
+and populated saves. See [[architecture/Desktop-Shell]].
+
 ## 2026-10-07 — Await desktop safety confirmations (#541)
 
 All destructive/draft-discard and Service mode prompts await the shared transport
