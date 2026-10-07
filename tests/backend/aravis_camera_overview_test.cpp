@@ -54,7 +54,7 @@ int main()
     setEnv("MIB_CAMERA_MODE", "aravis");
     setEnv("MIB_ARAVIS_FAKE", "1");
     setEnv("MIB_ARAVIS_REGION", nullptr);
-    setEnv("MIB_DISABLED_SERVICES", "sqlite,hdf5,yolo,autofocus,trigger,playback");
+    setEnv("MIB_DISABLED_SERVICES", "sqlite,hdf5,autofocus,trigger,playback");
 
     backend::AppBackend app;
     MIB_REQUIRE(app.initialize(temp.path().string()), "AppBackend initializes with the Aravis Fake camera");

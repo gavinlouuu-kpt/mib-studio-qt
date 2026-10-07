@@ -33,6 +33,13 @@ describe("run outcome notice (#549)", () => {
     expect(host.querySelector("p")!.className).toContain("attention");
   });
 
+  it("keeps a legacy file's missing accounting quiet", async () => {
+    await act(async () => root.render(<RunOutcomeNotice outcome={outcome({ severity: "legacy", headline: "No run accounting is saved in this file (a raw recording or an older file)." })} />));
+    const p = host.querySelector("p")!;
+    expect(p.getAttribute("role")).toBe("status");
+    expect(p.className).toContain("legacy");
+  });
+
   it("is a quiet status for a clean run and nothing without an outcome", async () => {
     await act(async () => root.render(<RunOutcomeNotice outcome={outcome({})} />));
     expect(host.querySelector("p")!.getAttribute("role")).toBe("status");

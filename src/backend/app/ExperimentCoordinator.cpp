@@ -1217,6 +1217,9 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
 
     // 8. Terminal status.
     lk.lock();
+    lastAccounting_ = accounting;
+    lastAccountingGeneration_ = run.startGeneration;
+    haveLastAccounting_ = true;
     activeRun_.reset();
     status_.endWallClockNs = endNs;
     status_.terminal = true;
@@ -1254,6 +1257,15 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
     SPDLOG_INFO("ExperimentCoordinator: run {} finalized in {:.3f} ms (state={}, ok={})",
                 run.startGeneration, sinceMs(tBegin), toString(state_), status_.finalizationOk);
     publishLocked(lk, status_.finalizationOk ? "finalized" : "finalized with errors");
+}
+
+bool ExperimentCoordinator::lastRunAccounting(recording::RecordingAccountingSnapshot& out, uint64_t& startGeneration) const
+{
+    std::lock_guard<std::mutex> lk(mutex_);
+    if (!haveLastAccounting_) return false;
+    out = lastAccounting_;
+    startGeneration = lastAccountingGeneration_;
+    return true;
 }
 
 void ExperimentCoordinator::shutdown()

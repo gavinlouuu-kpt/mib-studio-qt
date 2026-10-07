@@ -8,7 +8,7 @@ import {recoverNativeRuntime} from "./runtimeRecovery";
 import { useCloseGuard } from "./closeGuard";
 import { ProcessedPreview } from "./components/ProcessedPreview";
 import { RunOutcomeNotice } from "./components/RunOutcomeNotice";
-import { describeRunOutcome, runKey } from "./runOutcome";
+import { describeReviewOutcome, describeRunOutcome, runKey } from "./runOutcome";
 import { BackgroundCalibrationControls } from "./components/BackgroundCalibrationControls";
 import {invoke} from "./transport";
 import { PreviewBufferControls, usePreviewBuffer } from "./previewBuffer";
@@ -24,6 +24,7 @@ import {
   type BridgeEvent,
   type CameraGeometry,
   type PlatformInfo,
+  type RunAccounting,
   type InstrumentStatus,
   type CameraDiscovery,
   type CameraSelection,
@@ -891,15 +892,36 @@ export default function App() {
 
   const expState = expStatus?.valid ? expStatus.state : EXPERIMENT_STATES.Idle;
   // How the last finished run ended (#549): completion and loss counts, not only "finalized".
-  const runOutcome = describeRunOutcome(expStatus);
+  // The run's reconciled accounting (ABI 31) gives the true admitted-frame denominator; the status
+  // alone only knows the rows it saved.
+  const [runAccounting, setRunAccounting] = useState<RunAccounting | null>(null);
+  const runOutcome = describeRunOutcome(expStatus, runAccounting);
   const finishedRun = runKey(expStatus);
   const loggedRun = useRef("");
   useEffect(() => {
-    if (!finishedRun || finishedRun === loggedRun.current || !runOutcome) return;
+    if (!finishedRun || finishedRun === loggedRun.current) return;
     loggedRun.current = finishedRun;
-    append(runOutcome.headline);
+    let live = true;
+    const status = expStatus;
+    void bridge.fetchRunAccounting("last_run").catch(() => null).then((acc) => {
+      if (!live) return;
+      setRunAccounting(acc);
+      const outcome = describeRunOutcome(status, acc);
+      if (outcome) append(outcome.headline);
+    });
+    return () => { live = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [finishedRun]);
+  // The accounting saved in the file loaded for review.
+  const [reviewAccounting, setReviewAccounting] = useState<RunAccounting | null>(null);
+  const reviewFilePath = reviewMeta?.file_open ? reviewMeta.file_path : "";
+  useEffect(() => {
+    if (!reviewFilePath) { setReviewAccounting(null); return; }
+    let live = true;
+    void bridge.fetchRunAccounting("review").catch(() => null).then((acc) => { if (live) setReviewAccounting(acc); });
+    return () => { live = false; };
+  }, [reviewFilePath]);
+  const reviewOutcome = describeReviewOutcome(reviewAccounting);
   const elapsedWallSeconds = expStatus?.valid && BigInt(expStatus.start_time_ns) > 0n
     ? Number(((BigInt(expStatus.end_time_ns) || BigInt(Date.now()) * 1000000n) - BigInt(expStatus.start_time_ns)) / 1000000000n) : null;
   const expActive = expState === EXPERIMENT_STATES.Starting || expState === EXPERIMENT_STATES.Active || expState === EXPERIMENT_STATES.Stopping;
@@ -1373,7 +1395,7 @@ export default function App() {
             {runOutcome && !expActive && (
               <SideRow
                 k="Last run:"
-                v={{ ok: "Complete", partial: "Partial (declared)", loss: "Undeclared loss", failed: "Failed", unknown: "Unknown" }[runOutcome.severity]}
+                v={{ ok: "Complete", partial: "Partial (declared)", loss: "Undeclared loss", failed: "Failed", unknown: "Unknown", legacy: "No accounting" }[runOutcome.severity]}
                 cls={runOutcome.severity === "ok" ? "ok" : ""}
               />
             )}
@@ -2166,6 +2188,7 @@ export default function App() {
                   <button className={reviewTab === "charts" ? "active" : ""} disabled={!reviewMeta?.file_open || reviewMeta.recording_file} onClick={() => setReviewTab("charts")}>Charts</button>
                 </div>
                 <div className="subtab-body">
+                  <RunOutcomeNotice outcome={reviewOutcome} />
                   <ReviewExportOptions model={reviewExport}/>
                   {caps.reanalysis && <ReanalysisControls model={reanalysis} metadata={reviewMeta} blocked={reviewExport.busy || reviewSourceBusy || !ready}/>}
                   {reviewTab === "charts" && <ReviewCharts sourcePath={reviewMeta?.file_path ?? ""}/>}

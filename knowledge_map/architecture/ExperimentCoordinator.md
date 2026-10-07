@@ -118,6 +118,9 @@ append only, never renumber.
    `experiment.flushFailed` / `experiment.provenanceFailed` /
    `experiment.saveFailed` is latched and the state is `Failed`.
 
+   The reconciled accounting of the last finalized run is kept (`lastRunAccounting`, with its start
+   generation) for `fetch_run_accounting("last_run")` (ABI 31).
+
    The accounting line logged at the end of finalization is a WARN when
    `recording::needsOperatorAttention(completion)` (undeclared loss, failure or unknown) or when
    malformed frames exceed `kMalformedWarnFraction` (0.1 %) of the admitted frames, INFO

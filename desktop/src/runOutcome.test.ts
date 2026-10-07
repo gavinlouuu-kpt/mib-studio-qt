@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { RUN_COMPLETION_STATES } from "./bridgeContract";
 import type { ExperimentStatus } from "./eventAdapter";
-import { describeRunOutcome, parseLossCounts, runKey } from "./runOutcome";
+import type { RunAccounting } from "./bridge";
+import { describeReviewOutcome, describeRunOutcome, parseLossCounts, runKey } from "./runOutcome";
 
 const BASE = {
   valid: true, state: 0, start_time_ns: "1", end_time_ns: "9", valid_buffered: "0", invalid_buffered: "0",
@@ -103,5 +104,55 @@ describe("run outcome (#549)", () => {
     expect(runKey(BASE)).toBe("3:9");
     expect(runKey({ ...BASE, terminal: false })).toBe("");
     expect(runKey(null)).toBe("");
+  });
+});
+
+// What fetch_run_accounting returns (ABI 31): the true admitted-frame count, not the saved rows.
+const ACC = (o: Partial<RunAccounting>): RunAccounting => ({
+  available: true, source: "last_run", recorded: true, start_generation: 3, completion: RUN_COMPLETION_STATES.IntentionallyPartial,
+  completion_reason: DECLARED, reconciled: true, admitted: 50407, store_malformed: 1, ...o,
+});
+
+describe("run accounting denominators and the Review tab (#549, ABI 31)", () => {
+  const partial = { ...BASE, completion: RUN_COMPLETION_STATES.IntentionallyPartial, completion_reason: DECLARED };
+
+  it("divides by the frames the run admitted when the accounting is there, not by the saved rows", () => {
+    // 27162 rows were saved but 50407 frames were admitted (the rest were empty).
+    const withAcc = describeRunOutcome(partial, ACC({}))!;
+    expect(withAcc.admitted).toBe(50407);
+    expect(withAcc.headline).toContain("0.002 % of 50407 admitted");
+    const without = describeRunOutcome(partial)!;
+    expect(without.admitted).toBe(27162);
+    expect(without.headline).toContain("0.004 % of 27162 admitted");
+  });
+
+  it("ignores accounting that belongs to another run or is not recorded", () => {
+    expect(describeRunOutcome(partial, ACC({ start_generation: 2 }))!.admitted).toBe(27162);
+    expect(describeRunOutcome(partial, ACC({ available: false }))!.admitted).toBe(27162);
+    expect(describeRunOutcome(partial, ACC({ recorded: false }))!.admitted).toBe(27162);
+    expect(describeRunOutcome(partial, null)!.admitted).toBe(27162);
+  });
+
+  it("describes the accounting saved in the review file", () => {
+    const o = describeReviewOutcome(ACC({ source: "review", start_generation: undefined, file_path: "/tmp/run.h5" }))!;
+    expect(o.severity).toBe("partial");
+    expect(o.admitted).toBe(50407);
+    expect(o.headline).toContain("1 frame was malformed");
+    const loss = describeReviewOutcome(ACC({ source: "review", completion: RUN_COMPLETION_STATES.IncompleteLoss, completion_reason: LOSS }))!;
+    expect(loss.severity).toBe("loss");
+    expect(loss.headline).toContain("2 frames were missing from the frame sequence");
+  });
+
+  it("is quiet for a raw recording or a legacy file, and says nothing without a file", () => {
+    expect(describeReviewOutcome(ACC({ source: "review", recorded: false, completion: undefined }))!.severity).toBe("legacy");
+    expect(describeReviewOutcome({ available: true, source: "review", recorded: false })!.headline).toContain("No run accounting");
+    expect(describeReviewOutcome({ available: false, source: "review", error: "no file is open for review" })).toBeNull();
+    expect(describeReviewOutcome(null)).toBeNull();
+  });
+
+  it("calls a file whose counters do not reconcile a failure", () => {
+    const o = describeReviewOutcome(ACC({ source: "review", reconciled: false, completion: RUN_COMPLETION_STATES.Complete, completion_reason: "all admitted frames reconciled" }))!;
+    expect(o.severity).toBe("failed");
+    expect(o.headline).toContain("does not reconcile");
   });
 });

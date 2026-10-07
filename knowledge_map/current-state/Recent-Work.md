@@ -9,6 +9,17 @@ Facade, calibration and React regressions cover refusal and idle operation.
 See [[../architecture/ExperimentCoordinator]], [[../architecture/Desktop-Shell]]
 and [[../services/ProcessingService]].
 
+## 2026-10-07 — Autofocus teardown no longer loses the stats-thread wake-up (#294)
+
+`AutofocusService` changed `statsRunning_` outside `pendingSamplesMutex_` during
+destruction. An idle `statsLoop()` could check its wait predicate, miss the stop
+notification, and leave the destructor blocked in `join()`. The destructor now
+changes the predicate under the pending-samples mutex, releases it, then
+notifies and joins. `backend.camera_script_apply` repeats idle `AutofocusService`
+destruction 10,000 times and watches full backend teardown with a ten-second
+watchdog; the unfixed stress run exited 99 on an idle stats-thread join. See
+[[../services/AutofocusService]].
+
 ## 2026-10-07 — How a run ended is shown to the operator, and a booked malformed frame is a declared loss (#549)
 
 A run that ended in `incompleteLoss` used to look like a clean finish: the status said "finalized",

@@ -74,7 +74,7 @@ int main()
     setEnv("MIB_ARAVIS_FAKE", "1");
     // Keep unrelated persistence and hardware workers out of this software
     // pipeline test, while deliberately leaving capture and processing on.
-    setEnv("MIB_DISABLED_SERVICES", "sqlite,hdf5,yolo,autofocus,trigger,playback");
+    setEnv("MIB_DISABLED_SERVICES", "sqlite,hdf5,autofocus,trigger,playback");
 
     backend::AppBackend app;
     MIB_REQUIRE(app.initialize((temp.path() / "data").string()),
