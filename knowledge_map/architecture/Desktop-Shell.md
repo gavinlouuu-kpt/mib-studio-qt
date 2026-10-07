@@ -826,3 +826,7 @@ content in Studio and YOFO Review; Reload view remounts the failed children whil
 shell controls and logs stay available. Studio subtab bodies do not shrink below
 content height: the outer `.tab-body` scrolls the Preflight and App-config content.
 JSDOM has no flex layout engine; physical layout needs browser verification.
+
+Safety confirmations go through `desktop/src/transport/dialogs.ts` and must be
+awaited. Tauri uses the public dialog API (`dialog:allow-message`); browser
+confirmation and native dialog errors fail closed unless the result is true.

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {invoke} from "./transport";
-import {open} from "./transport/dialogs";
+import {open, confirm} from "./transport/dialogs";
 import { decimalU64 } from "./framePacket";
 export interface PreviewRange { available: boolean; first: string; last: string; count: string; capture_running: boolean; capacity?:string; generation?:string; timestamps_available?:boolean; timestamp_first?:string; timestamp_last?:string }
 export interface PreviewSave { ok: boolean; output_path: string; error: string }
@@ -62,7 +62,7 @@ export function usePreviewBuffer(ready: boolean, active: boolean, seek: (index: 
       const request:Record<string,unknown>={action,generation:range?.available?range.generation:undefined};
       if(action==="resize") {
         request.capacity=decimalU64(capacity);
-        if(BigInt(capacity)<BigInt(current.count)&&!window.confirm("This resize clears all retained frames. Continue?"))return;
+        if(BigInt(capacity)<BigInt(current.count)&&!await confirm("This resize clears all retained frames. Continue?"))return;
         request.confirm_clear=BigInt(capacity)<BigInt(current.count);
       } else {if(index===null)throw new Error("Pause and select a retained frame first");request.index=decimalU64(index);}
       const result=await invoke<PreviewSave>("save_preview_buffer",{request:JSON.stringify(request)});
