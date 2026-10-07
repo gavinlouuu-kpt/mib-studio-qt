@@ -100,6 +100,11 @@ lanes: [`docs/architecture/testing-strategy.md`](docs/architecture/testing-strat
 | Real-time (processing, trigger, display, `FrameStore`) | Latency budget **+** Invariant |
 | Any code touching threads / shared state | Passes the **TSan lane** and has/extends a stress test |
 
+Testing portability rules: wait on conditions with generous deadlines, never
+fixed sleeps or "N things in T ms" assertions. Do not use `#define private public`;
+use friend test-access structs. Always specify `encoding="utf-8"` for Python
+text file I/O (`open`, `read_text`, `write_text`).
+
 ## Hard Conventions
 
 - **Know your layer (table above) before changing backend code.** The portable
