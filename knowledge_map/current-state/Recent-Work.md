@@ -3640,3 +3640,9 @@ Closed Qt's fault acknowledgment parity gap with compare-and-acknowledge backend
   manifests/digests rechecked before explicit native installer launch. Active native work,
   pending UI operations and dirty drafts block installation. No installer was launched,
   release published, or signing keys changed during implementation/tests.
+
+---
+
+**This archive is closed after 2026-10-07.** New entries go one per file in
+`knowledge_map/current-state/recent/` (see [[current-state/recent/README|its README]]), so
+concurrent PRs no longer conflict here. `python3 scripts/recent_work.py` prints the newest.
