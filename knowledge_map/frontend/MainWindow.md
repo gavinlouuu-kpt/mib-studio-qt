@@ -46,9 +46,9 @@ capture generation for an illuminated profile, using a fake camera factory.
   transaction (issue #369, [[../architecture/ExperimentCoordinator]]):
   a destination-less preflight (`evaluateReadiness()`) first; any blocking
   gate other than `storage.output` is explained by `explainReadiness()`
-  (status, reason, remediation per gate; when the only blocker is
-  `lifecycle.fault` the dialog offers "Acknowledge fault and re-check",
-  which calls `clearUnresolvedFault()`). Then the LatestFrame
+  (status, reason, remediation per gate; `lifecycle.fault` alone or together
+  with a Failed `lifecycle.experiment` offers "Acknowledge fault and re-check",
+  which calls `acknowledgeFault()` with the displayed fault identity). Then the LatestFrame
   acknowledgement, the file dialog, a final `evaluateReadiness(path)` and
   `start()` with **that** generation. Outcomes are typed: `Started` (status
   bar says "(simulated camera)" for a mock run), `StaleReadiness` ("the
@@ -286,3 +286,9 @@ Help also includes **What's New** and **User Manual**, provided by `HelpDialog`
 (see [[frontend/System-Utilities]]). Both work offline; the manual includes an
 index and an online-documentation button. QSettings records the last-seen version
 so Qt shows release notes once after upgrading, without prompting on fresh install.
+
+Save failure recovery (#589): the banner Acknowledge uses the same guarded backend
+acknowledgement. Finalization must finish first; a changed fault requires reviewing
+it again. Successful acknowledgement restores Idle and ROI/background editing,
+while preserving the saved Failed outcome. Re-publishing that terminal status
+does not replay completion dialogs.

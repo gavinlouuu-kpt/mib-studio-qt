@@ -93,10 +93,12 @@ public:
     void saveWindowGeometry();
 
 private:
+    friend struct MainWindowFaultTestAccess;
     void updateExperimentButtonStates();
     // Issue #369: explain blocking readiness gates (with remediation) and
     // return false; true when the snapshot is ready.
     bool explainReadiness(const backend::app::ExperimentReadinessSnapshot& readiness);
+    bool acknowledgeFault(const backend::app::ExperimentStatus& status);
     // Shared-backend lifecycle (issue #372): the coordinator owns flush,
     // stop and finalization; this slot renders each status transition
     // (queued to the GUI thread from the coordinator's callback).
@@ -152,6 +154,8 @@ private:
     bool stopInProgress_{false};
     std::chrono::steady_clock::time_point stopRequestedAt_{};
     uint64_t runOperationId_{0};
+    uint64_t lastTerminalStartGeneration_{0};
+    backend::app::ExperimentStatus presentedFault_;
     QString compactStatus_;
     QLabel* roiLabel_ = nullptr;
     QPushButton* startCameraBtn_ = nullptr;

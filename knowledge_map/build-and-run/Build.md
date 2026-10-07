@@ -541,3 +541,8 @@ sources via Vite raw/URL imports. Templates live in `docs/release-notes/README.m
 Recording-safety regressions (#403) are registered as `e2e.recording_403_*`
 in the shared backend runner, with condition-driven mock-camera fixtures.
 `backend.hdf_write_queue_fault` covers throwing callbacks and concurrent Stop.
+
+The offscreen `experiment_fault_recovery_test` target /
+`frontend.experiment_fault_recovery` CTest checks Qt readiness and banner
+acknowledgement after failed backend runs, including ROI/background unlocking
+(#589). It uses a mock camera, isolated settings and no hardware discovery.
