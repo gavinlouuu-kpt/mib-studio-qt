@@ -1,4 +1,5 @@
 #include "backend/camera/mock/MockCamera.h"
+#include "backend/app/Tools.h"
 
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
@@ -195,6 +196,10 @@ namespace camera::mock
 
     void MockCamera::configureTriggerOutput(const std::string &lineSelector)
     {
+        {
+            std::lock_guard<std::mutex> lk(lineEventMutex_);
+            triggerLineName_ = lineSelector;
+        }
         SPDLOG_INFO("MockCamera: simulated trigger output configured on line '{}'", lineSelector);
     }
 
@@ -205,6 +210,37 @@ namespace camera::mock
         {
             triggerPulseCount_.fetch_add(1, std::memory_order_relaxed);
         }
+        if (high != wasHigh)
+        {
+            // Loopback emulation: the edge is "seen" by the input the moment it
+            // is driven, stamped in the same clock grabFrame() uses for
+            // Frame::timestamp (steady_clock ns) plus the host receipt stamp.
+            camera::common::LineEventCallback cb;
+            std::string line;
+            {
+                std::lock_guard<std::mutex> lk(lineEventMutex_);
+                cb = lineEventCallback_;
+                line = triggerLineName_;
+            }
+            if (cb)
+            {
+                camera::common::LineEvent ev;
+                ev.line = std::move(line);
+                ev.rising = high;
+                ev.timestamp = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                                          std::chrono::steady_clock::now().time_since_epoch())
+                                                          .count());
+                ev.hostTimestampUs = backend::Tools::getTimestamp();
+                cb(ev);
+            }
+        }
+        return true;
+    }
+
+    bool MockCamera::setLineEventCallback(camera::common::LineEventCallback callback)
+    {
+        std::lock_guard<std::mutex> lk(lineEventMutex_);
+        lineEventCallback_ = std::move(callback);
         return true;
     }
 

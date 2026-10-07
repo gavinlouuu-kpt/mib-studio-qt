@@ -495,6 +495,8 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/services/StageConfig.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/StageService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/discovery/providers/Zc300Provider.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/services/RfGeneratorService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/services/ScpiTransportTcp.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/TriggerService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/DotGridService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/MonitoringDensityService.cpp
@@ -552,6 +554,23 @@ if(WIN32)
 else()
     target_sources(oeabt_serial PRIVATE
         ${PROJECT_SOURCE_DIR}/src/backend/services/SerialPortPosix.cpp
+    )
+endif()
+
+# USBTMC SCPI transport for the RF sort generator (SSG3021X): NI-VISA loaded
+# at runtime on Windows, the kernel usbtmc class driver on Linux, a stub that
+# fails open() elsewhere. The LAN transport is portable.
+if(WIN32)
+    target_sources(mib_backend PRIVATE
+        ${PROJECT_SOURCE_DIR}/src/backend/services/ScpiTransportVisaWin32.cpp
+    )
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_sources(mib_backend PRIVATE
+        ${PROJECT_SOURCE_DIR}/src/backend/services/ScpiTransportUsbtmcPosix.cpp
+    )
+else()
+    target_sources(mib_backend PRIVATE
+        ${PROJECT_SOURCE_DIR}/src/backend/services/ScpiTransportUsbtmcStub.cpp
     )
 endif()
 

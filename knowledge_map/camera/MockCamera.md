@@ -56,7 +56,12 @@ not claim `timestampsHostComparable`.
 
 - Mock camera **simulates** trigger output: `setTriggerOutput` flips an
   atomic line level and counts rising edges (`triggerPulseCount()`), always
-  returning true, so [[../services/TriggerService]] fires real pulses (and
+  returning true, and **emulates a loopback**: every level change is
+  reported synchronously through `setLineEventCallback` as a `LineEvent`
+  stamped in the mock's frame clock (steady_clock ns, the same clock
+  `grabFrame` uses) plus `Tools::getTimestamp`, as if the output were wired
+  into a timestamped input — so the pulse↔frame alignment path in
+  [[../services/TriggerService]] runs headless, so [[../services/TriggerService]] fires real pulses (and
   [[../diagnostics/PipelineTimingRecorder]] records them) in headless
   pipeline dry-runs — see `tests/tools/mock_pipeline_timing_run.cpp` and
   `docs/howto/pipeline-latency-diagnosis.md`. No electrical output exists,

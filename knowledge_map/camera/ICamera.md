@@ -46,6 +46,7 @@ virtual bool pollStats(CameraStats& out) const = 0;
 virtual bool checkDeviceHealth() const { return true; }
 virtual void configureTriggerOutput(const std::string& lineSelector) {}
 virtual bool setTriggerOutput(bool high) { return false; }   // SORT pulse out
+virtual bool setLineEventCallback(LineEventCallback cb) { return false; } // stamped input edges
 virtual bool softTrigger() { return false; }  // software ACQUISITION trigger
 virtual CameraFailure lastFailure() const { return {}; } // structured start/stream fault
 virtual TimestampDescriptor timestampDescriptor() const { return {}; } // Frame::timestamp semantics (issue #368)
@@ -62,6 +63,14 @@ virtual bool pollAcquisitionQueueStats(AcquisitionQueueStats& out) const;
 - [[MindVisionCamera]] — MindVision SDK implementation (only backend
   overriding `softTrigger`)
 - [[MockCamera]] — folder-backed implementation
+- `LineEvent{line, rising, timestamp, hostTimestampUs}` reports a digital
+  input edge stamped by the hardware in the `Frame::timestamp` clock. A
+  backend that can do this (Coaxlink I/O toolbox events — follow-up, see
+  `docs/exec-plans/active/2026-09-30-trigger-frame-alignment.md`) returns
+  true from `setLineEventCallback`; the default returns false and never
+  calls back. The callback runs on a backend thread and must not block.
+  [[../services/TriggerService]] subscribes on bind to pair a looped-back
+  sort pulse with its fired record.
 - [[../services/TriggerService]] calls `setTriggerOutput` via the live
   camera pointer (sort pulse); [[../services/CaptureService]] exposes
   `softTriggerActiveCamera()` for the acquisition trigger — the two are

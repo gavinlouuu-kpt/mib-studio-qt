@@ -100,5 +100,11 @@
             "origin_x_um": 0.0,
             "origin_y_um": 0.0
         }
+    },
+    "rf_generator": {
+        "enabled": false,
+        "transport": "lan",
+        "resource": "",
+        "timeout_ms": 1000
     }
 }

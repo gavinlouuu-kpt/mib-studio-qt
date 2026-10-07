@@ -32,6 +32,7 @@ following `[[WikiLinks]]`. If you are a new agent, start here:
   [[services/TriggerService]], [[services/SerialBus]],
   [[services/SyringePumpService]], [[services/PulseGeneratorService]],
   [[services/StageService]] (Z stage, driver [[services/ZC300Stage]])
+- RF sort-generator readback and provenance: [[services/RfGeneratorService]]
 - Optional: [[services/RecorderService]],
   [[services/BatchMaskSources]]
 

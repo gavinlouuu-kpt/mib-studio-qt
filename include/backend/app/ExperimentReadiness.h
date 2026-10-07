@@ -124,6 +124,18 @@ struct RunConfigurationSnapshot {
     bool triggerBound{false};
     uint64_t triggerGeneration{0};
 
+    // RF sort generator (SSG3021X) as read back over SCPI at evaluation time.
+    // Configured = an rf_generator block enables the link; connected = the
+    // instrument identified and answered the readback.
+    bool rfGeneratorConfigured{false};
+    bool rfGeneratorConnected{false};
+    std::string rfGeneratorIdentity;
+    std::string rfGeneratorTriggerMode;
+    double rfGeneratorTriggerDelayS{0.0};
+    double rfGeneratorPulseWidthS{0.0};
+    std::string rfGeneratorError;               // last link error when not connected
+    std::vector<std::string> rfGeneratorIssues; // blocking preflight findings ("gate: message")
+
     std::string outputPath;
     std::string realtimeMode;
     // Where the science ran ("host" | "pl") and, for the PL, the execution

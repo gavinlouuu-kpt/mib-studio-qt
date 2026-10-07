@@ -41,6 +41,9 @@ public:
         std::string stopFailureMessage;
         std::string failureCode;
         std::string failureMessage;
+        // setTriggerOutput(true) return value: false models a grabber that
+        // refuses the rising edge (TriggerService counts a set-failed drop).
+        bool triggerOutputSucceeds = true;
     };
 
     // Shared observation record that outlives the camera object (CaptureService
@@ -188,6 +191,7 @@ public:
         if (obs_->unbound.load(std::memory_order_acquire)) {
             obs_->triggerCallsAfterUnbind.fetch_add(1);
         }
+        if (!script_.triggerOutputSucceeds) return false;
         if (high) obs_->pulses.fetch_add(1);
         return true;
     }

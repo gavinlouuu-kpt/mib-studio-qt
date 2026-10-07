@@ -161,6 +161,7 @@ thresholds, so a slow trickle of large frames never sits unwritten.
 | `calibration.pixelToMicron` | factor not positive | — |
 | `processing.background` | — | no background image |
 | `trigger.output` | sorting enabled but TriggerService not bound to the running session (`NotRequired` when sorting is off) | — |
+| `rf.generator` | sorting enabled and the configured [[../services/RfGeneratorService]] link is down, or the SSG3021X is mis-armed (RF off, pulse mod off, trigger mode not external, source not internal, zero width — reason lists them); `NotRequired` when sorting is off or `rf_generator.enabled` is false or absent (bundled defaults included) | — |
 | `storage.output` | no path (`Unavailable`), unwritable parent, path is a directory, < 64 MiB free | — |
 | `storage.hdf5` / `lifecycle.recording` / `lifecycle.experiment` | file already open / raw recording active / coordinator not Idle | — |
 | `lifecycle.fault` | unresolved fault reported | — |
@@ -183,6 +184,18 @@ recording a validation, a revocation reaching the cache, or a core/camera
 change bumps the readiness generation and a stale preflight is refused.
 Policy (operator decisions): unvalidated → Warn (Start allowed); validated
 here → Pass; revoked → Fail (existing runs stay reviewable).
+
+Trigger records: start discards whatever [[../services/TriggerService]] had
+buffered before the run (test pulses, a previous run's tail); each periodic
+flush carries the drained records inside the batch (see
+[[../services/ProcessingService]] `setTriggerEventSource`); stop drains once
+more after `finishFlush()` and appends the tail single-threaded before the
+metadata writes, so `/trigger_events` is complete for the run. The RF
+generator readback the readiness evaluation verified (candidate
+`rfGenerator*` fields, also in the stored run snapshot JSON under
+`rf_generator`) is written at finalize as `rf_generator_*` attributes
+(`Hdf5Service::writeRfGeneratorProvenance`); the instrument is not
+re-queried at stop.
 
 ## RunConfigurationSnapshot (schema v2)
 
