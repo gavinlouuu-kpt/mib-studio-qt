@@ -144,7 +144,7 @@
 MindVision exposure and Save remain visible; trigger/strobe/JSON and manual
 generator controls are collapsed under Advanced — Hardware Setup.
 Use XGC + R5D preset for Live View persists the selected serial identity/channel
-and tested 5 kHz/100 µs exposure/100 µs strobe settings in the active camera
+and 1000 Hz / 2% duty, 100 µs exposure / 100 µs strobe settings in the active camera
 JSON. Save/reload stages the file through AppBackend without opening hardware.
 Apply on a coordinated profile also stages only; capture owns SDK application.
 Generator controls cannot change an active owned session. Settings edits require
@@ -157,11 +157,11 @@ Requested FPS is visible beside Exposure for a saved illuminated rig. Stop captu
 change FPS, Save, and Play to apply it through the coordinated generator startup.
 It edits `live_view.frequency_hz`, not the camera's free-running speed selector.
 The generator supports 400–40000 Hz; this is not a camera throughput guarantee.
-The bench-tested point is 5000 FPS at 512×96. Observe actual acquisition rate and
+The current bundled default is 1000 FPS at 512×96. Observe actual acquisition rate and
 use Rigol for physical timing acceptance when commissioning another rate.
 
 Changing FPS preserves the trigger's active duration by scaling saved duty with
-frequency: the preset's 5000 Hz / 10% becomes 2500 Hz / 5%, retaining a requested
+frequency: the preset's 1000 Hz / 2% becomes 2500 Hz / 5%, retaining a requested
 20 µs trigger pulse. Exposure and strobe width/delay are not silently changed.
 Existing backend validation rejects exposure or strobe timing that exceeds the
 new period, and invalid generator duty. Legacy/manual profiles leave FPS disabled.
@@ -254,3 +254,5 @@ from the sorter pulse: it delegates the existing shared camera software-trigger
 command, appears only usable with armed Service mode, running MindVision capture
 and idle experiment, and is never invoked during mount/edit/save. Native command
 checks camera mode/running and experiment state under the bridge mutex.
+
+Operator instructions: [Acquire & record — Illuminated Live View](../../docs/manual/acquire-and-record.md#illuminated-live-view--mindvision-camera-and-led-strobe). The preset button writes 100 µs exposure; the bundled default uses 2 µs. Both save a 100 µs strobe. The manual distinguishes those values and the 400 Hz Overview override.
