@@ -46,7 +46,7 @@ import { BRIDGE_ABI_VERSION, EXPERIMENT_STATES, PUMP_IDS, READINESS_GATE_STATUSE
 import { deriveWorkflow, type StageTab, type WorkflowFacts } from "./workflow";
 import { CHECK_STATUS_LABEL, derivePreflight, type PreflightInput } from "./preflight";
 import { capabilitiesOf, isPz7035 } from "./platformCapabilities";
-import { deriveQualityGates, GATE_STATUS_LABEL, type QualityInput } from "./quality";
+import { deriveQualityGates, GATE_STATUS_LABEL, type ImageQualityInput, type QualityInput } from "./quality";
 import { deriveContextBar, SEG_STATUS_LABEL, type ContextBarFacts } from "./contextBar";
 import {
   canActuate,
@@ -64,7 +64,9 @@ import { useLiveConfigDraft } from "./liveConfigDraft";
 import { previewIntervalMs } from "./previewPacing";
 import {CameraDocumentEditor,useCameraDocument} from "./cameraDocument";
 import { CoreManagementPanel, useCoreManagement } from "./coreManagement";
-import { initialWindow, rateSummary, snapRunWindow, snapWindow, type Rect } from "./cameraAlignment";
+import { initialWindow, rateSummary, RUN_WINDOW, snapRunWindow, snapWindow, type Rect } from "./cameraAlignment";
+import { holdBest, measureImage, sameBox } from "./imageQuality";
+import { formatResultsRates, resultsRates, type ResultsRates, type ResultsSample } from "./resultsRates";
 import { runPreviewRgba, type RunPreview } from "./runPreview";
 import { InstrumentLedControls } from "./components/InstrumentLedControls";
 import { ProfilesPanel, useProfiles } from "./profiles";
@@ -260,10 +262,26 @@ export default function App() {
   const pz7035 = isPz7035(caps);
   // Backend-owned camera modes (#501 P1): Camera & Alignment = Align, Experiment = Run.
   const instrumentModes = caps.align_mode && caps.run_mode;
+  const instrumentModesRef = useRef(false);
+  instrumentModesRef.current = instrumentModes;
+  // PZ7035 Align (#501): the live frame's focus and brightness in the Run window, with the best
+  // focus seen since the window last moved. draw() measures every displayed frame (about 50 k
+  // pixels) and publishes at most every 200 ms.
+  const [alignImage, setAlignImage] = useState<ImageQualityInput | null>(null);
+  const alignBestRef = useRef<{ best: number | null; box: Rect | null }>({ best: null, box: null });
+  const alignImageMs = useRef(-Infinity);
   // YOFO Studio on the PZ7035 and in the remote browser UI, MIB Studio on the desktop (#550 m13).
   const brand = productName({ pz7035, remote: isRemote });
   useEffect(() => { document.title = brand; }, [brand]);
   const [instrument, setInstrument] = useState<InstrumentStatus | null>(null);
+  // A mode switch (or leaving Align) starts a fresh peak and clears the numbers.
+  const instrumentModeName = instrument?.mode?.name;
+  useEffect(() => {
+    alignBestRef.current = { best: null, box: null };
+    setAlignImage(null);
+  }, [instrumentModeName]);
+  const [resultsNow, setResultsNow] = useState<ResultsRates | null>(null);
+  const lastResultsSample = useRef<ResultsSample | null>(null);
   const instrumentRef = useRef<InstrumentStatus | null>(null);
   instrumentRef.current = instrument;
   const runMode = instrument?.mode?.name === "run";
@@ -353,6 +371,21 @@ export default function App() {
         ctx.strokeStyle = "#ffd400";
         ctx.lineWidth = 2;
         ctx.strokeRect(experimentWindow.x + 1, experimentWindow.y + 1, experimentWindow.width - 2, experimentWindow.height - 2);
+      }
+      // PZ7035 Align: focus number and brightness of the whole frame's Run window.
+      if (instrumentModesRef.current && canvas === liveCanvasRef.current && cameraWindowRef.current &&
+          meta.width === RUN_WINDOW.sensorWidth && meta.height === RUN_WINDOW.sensorHeight) {
+        const box = cameraWindowRef.current;
+        const metrics = measureImage(bytes, meta.width, meta.height, meta.stride_bytes, box);
+        if (metrics) {
+          const held = alignBestRef.current;
+          if (!sameBox(held.box, box)) { held.best = null; held.box = { ...box }; }
+          held.best = holdBest(held.best, metrics.focus);
+          if (performance.now() - alignImageMs.current >= 200) {
+            alignImageMs.current = performance.now();
+            setAlignImage({ metrics, best: held.best });
+          }
+        }
       }
       const { data: _pixels, ...metadata } = meta;
       if (canvas !== reviewCanvasRef.current && performance.now() - lastMetadataRenderMs.current >= 200) {
@@ -942,8 +975,23 @@ export default function App() {
   useEffect(() => {
     if (!ready || !caps.pl_identity) { setInstrument(null); return; }
     let live = true;
-    const poll = () => void bridge.fetchInstrumentStatus().then((s) => { if (live) setInstrument(s); })
-      .catch((e) => { if (live) setInstrument({ available: false, error: String(e) }); });
+    const poll = () => void bridge.fetchInstrumentStatus().then((s) => {
+      if (!live) return;
+      // Result-stream rates from successive polls (#501); only while the provider runs.
+      const r = s.results;
+      if (r?.available && r.running) {
+        const cur: ResultsSample = {
+          atMs: performance.now(), frames: r.frames ?? 0, results: r.results ?? 0, empty_frames: r.empty_frames ?? 0,
+          invalid_frames: r.invalid_frames ?? 0, truncated_frames: r.truncated_frames ?? 0,
+        };
+        setResultsNow(resultsRates(lastResultsSample.current, cur));
+        lastResultsSample.current = cur;
+      } else {
+        lastResultsSample.current = null;
+        setResultsNow(null);
+      }
+      setInstrument(s);
+    }).catch((e) => { if (live) setInstrument({ available: false, error: String(e) }); });
     poll();
     const id = window.setInterval(poll, 1000);
     return () => { live = false; window.clearInterval(id); };
@@ -1183,6 +1231,10 @@ export default function App() {
     frameH: lastMeta?.height ?? 0,
     pixelToMicron: stats?.pixel_to_micron ?? NaN,
     pz7035,
+    // Only while Align shows the full sensor; Run has no live camera frame to measure.
+    image: pz7035 && instrumentModes
+      ? (instrument?.mode?.name === "align" && alignImage ? alignImage : { metrics: null, best: null })
+      : undefined,
   };
   const quality = deriveQualityGates(qualityInput);
 
@@ -1756,6 +1808,12 @@ export default function App() {
                       {quality.pass} pass · {quality.warn} warn · {quality.fail} fail
                       {quality.unknown ? ` · ${quality.unknown} unknown` : ""}
                     </span>
+                    {qualityInput.image && (
+                      <button className="btn small" title="Forget the best focus seen and start again (after changing the sample)"
+                        onClick={() => { alignBestRef.current = { best: null, box: null }; setAlignImage(null); }}>
+                        Restart focus peak
+                      </button>
+                    )}
                   </div>
                   <div className="quality-gates">
                     {quality.gates.map((g) => (
@@ -1831,6 +1889,10 @@ export default function App() {
                         Run 512×96 at ({instrument?.mode?.run_x}, {instrument?.mode?.run_y}) · frame {runPreviewInfo?.frameId ?? "—"}
                         {" · "}listed {runPreviewInfo?.listed ?? "—"} · cells {runPreviewInfo?.cells ?? "—"} · blemishes {runPreviewInfo?.blemishes ?? "—"}
                         {" · "}latency max {instrument?.latency ? `${metricNumber(instrument.latency.max_us, 0)} µs` : "—"}
+                        {instrument?.results?.running && <><br />{formatResultsRates(resultsNow)}
+                          {(instrument.results.overruns ?? 0) > 0 && ` · ring overruns ${instrument.results.overruns}`}
+                          {(instrument.results.decode_errors ?? 0) > 0 && ` · decode errors ${instrument.results.decode_errors}`}
+                          {(instrument.results.sequence_gaps ?? 0) > 0 && ` · frame gaps ${instrument.results.sequence_gaps}`}</>}
                         {" · "}<label><input type="checkbox" checked={showRunMask} onChange={(e) => setShowRunMask(e.target.checked)} /> U-Net mask</label>
                       </p>
                     )}

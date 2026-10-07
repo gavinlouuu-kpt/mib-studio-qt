@@ -549,6 +549,16 @@ warning}`: the recording target of the data directory, from
 `app::recordingTarget`. Test: `contract.rs`
 `instrument_mode_commands_off_the_instrument`.
 
+**Live result statistics (#501, additive, no new command or ABI number).** `fetch_instrument_status`
+also returns `results{available, running, frames, results, empty_frames, invalid_frames,
+truncated_frames, incomplete_frames, decode_errors, sequence_gaps, overruns, last_error}`, the
+execution provider's cumulative counters. They count while an experiment runs and restart with
+each run. EMPTY, INVALID and truncated come from the FRAME flags (`ProviderStatus.emptyFrames`
+etc.; a frame with both EMPTY and truncated counts in both). The UI turns successive polls into
+frames/s, results/s and the three fractions (`resultsRates.ts`), and shows ring overruns, decode
+errors and frame gaps when they are non-zero. Tests: `processing.pz_execution_provider`
+(`testFrameFlagCounters`), `contract.rs` (the block on the desktop), `resultsRates.test.ts`.
+
 Final numbering from merge coordination: P0 (#502) takes 24, #398 takes 25,
 the ZC300 stage bridge (#513) takes 26, and this takes 27 (it was offline
 while #513 landed first).

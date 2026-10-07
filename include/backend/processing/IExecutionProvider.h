@@ -49,6 +49,11 @@ struct ProviderStatus {
     bool running{false};
     uint64_t frames{0};
     uint64_t results{0};
+    // FRAME.flags outcomes (#501 live statistics): no cell passed the size gate, a stage fault
+    // (no RESULT follows), and a cut result list (more than 16 cells, or the stage deadline).
+    uint64_t emptyFrames{0};
+    uint64_t invalidFrames{0};
+    uint64_t truncatedFrames{0};
     uint64_t incompleteFrames{0};
     uint64_t decodeErrors{0};   // records rejected (CRC, length, magic, ...)
     uint64_t sequenceGaps{0};
