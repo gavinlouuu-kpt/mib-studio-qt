@@ -1,5 +1,23 @@
 # Recent Work
 
+## 2026-10-07 — Undeclared loss is shown to the operator (#549)
+
+A run that ends with frames lost without being declared (`incompleteLoss`) used to look like a
+clean finish: the status said "finalized", `finalization_ok` was true, the backend logged the
+outcome at INFO and the UI never showed `completion_reason`. Now:
+- the backend logs the accounting line at WARN for undeclared loss, failure and unknown outcomes
+  (`needsOperatorAttention`), and at INFO for complete and declared-partial runs;
+- after a run the Experiment tab shows a notice with the outcome, the loss counts and the loss
+  fraction, for example "Run finished with undeclared loss of 27162 admitted (0.004 %): 1 frame
+  was malformed ...". The backend's reason text is in its tooltip, one line goes to the event log
+  per run, and the sidebar has a "Last run" row;
+- 1–2 malformed frames per run are not a replay-loop artefact: a 10 s run on the PZ7035 (results8,
+  2026-10-06) also ended with `storeMalformed=1` in 27,162 frames, matching the sensor link's
+  ~0.1 ingress errors/s. An ingress-error frame (FRAME.INVALID) is booked `storeMalformed` by design.
+
+Not yet: the Review tab, which would need the saved accounting in the review metadata (a bridge
+change). See [[../architecture/Desktop-Shell]], [[../architecture/ExperimentCoordinator]].
+
 ## 2026-10-07 — Deterministic experiment readiness checks (#506)
 
 `backend.experiment_readiness` joins the realtime consumer before editing the live

@@ -667,6 +667,18 @@ three places:
 
 None of them blocks a run. Desktop builds are unchanged.
 
+## How a run ended (#549)
+
+`desktop/src/runOutcome.ts` (pure) turns the finished run's experiment status
+(`completion`, `completion_reason`, `persistence_admitted`) into an operator message: the
+completion, the non-zero loss counts parsed from the backend's reason
+(`storeOverwritten`, `storeNotCommitted`, `storeMalformed`, `processingFailed`, `sequenceGaps`),
+and the lost fraction of the admitted frames. `components/RunOutcomeNotice` shows it on the
+Experiment tab (an alert for loss, failure or an unknown outcome, a status otherwise), with the
+backend's own text as the tooltip. The shell logs one line per finished run and adds a "Last run"
+row to the sidebar. Cancelled runs and a status that is not yet terminal show nothing. The Review
+tab does not show it yet. Tests: `runOutcome.test.ts`, `RunOutcomeNotice.test.tsx`.
+
 ## Pump model per slot (2026-10-04)
 
 The Pumps panel (`HardwareControls.tsx`) has a **Pump model** select per slot:

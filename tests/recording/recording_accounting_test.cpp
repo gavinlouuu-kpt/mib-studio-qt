@@ -105,6 +105,14 @@ int main(int argc, char** argv)
         auto pend = s; pend.persistenceCommitted = 4; pend.persistencePendingAtStop = 2;
         r = rec::reconcile(pend);
         MIB_EXPECT(r.completion == rec::RunCompletionState::IntentionallyPartial, "pending at stop -> IntentionallyPartial");
+        // #549: which outcomes are logged at WARN and shown to the operator.
+        MIB_EXPECT(!rec::needsOperatorAttention(rec::RunCompletionState::Complete) &&
+                       !rec::needsOperatorAttention(rec::RunCompletionState::IntentionallyPartial),
+                   "complete and declared-partial runs are expected outcomes");
+        MIB_EXPECT(rec::needsOperatorAttention(rec::RunCompletionState::IncompleteLoss) &&
+                       rec::needsOperatorAttention(rec::RunCompletionState::Failed) &&
+                       rec::needsOperatorAttention(rec::RunCompletionState::Unknown),
+                   "undeclared loss, failure and unknown need the operator");
 
         auto policy = s; policy.policyAllowsDrops = true;
         r = rec::reconcile(policy);

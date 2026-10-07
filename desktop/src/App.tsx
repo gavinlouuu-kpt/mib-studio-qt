@@ -3,6 +3,8 @@ import {ExperimentRecovery} from "./components/ExperimentRecovery";
 import {recoverNativeRuntime} from "./runtimeRecovery";
 import { useCloseGuard } from "./closeGuard";
 import { ProcessedPreview } from "./components/ProcessedPreview";
+import { RunOutcomeNotice } from "./components/RunOutcomeNotice";
+import { describeRunOutcome, runKey } from "./runOutcome";
 import { BackgroundCalibrationControls } from "./components/BackgroundCalibrationControls";
 import {invoke} from "./transport";
 import { PreviewBufferControls, usePreviewBuffer } from "./previewBuffer";
@@ -880,6 +882,16 @@ export default function App() {
   const invalidFps = stats?.valid ? stats.invalid_fps1s : null;
 
   const expState = expStatus?.valid ? expStatus.state : EXPERIMENT_STATES.Idle;
+  // How the last finished run ended (#549): completion and loss counts, not only "finalized".
+  const runOutcome = describeRunOutcome(expStatus);
+  const finishedRun = runKey(expStatus);
+  const loggedRun = useRef("");
+  useEffect(() => {
+    if (!finishedRun || finishedRun === loggedRun.current || !runOutcome) return;
+    loggedRun.current = finishedRun;
+    append(runOutcome.headline);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [finishedRun]);
   const elapsedWallSeconds = expStatus?.valid && BigInt(expStatus.start_time_ns) > 0n
     ? Number(((BigInt(expStatus.end_time_ns) || BigInt(Date.now()) * 1000000n) - BigInt(expStatus.start_time_ns)) / 1000000000n) : null;
   const expActive = expState === EXPERIMENT_STATES.Starting || expState === EXPERIMENT_STATES.Active || expState === EXPERIMENT_STATES.Stopping;
@@ -1344,6 +1356,13 @@ export default function App() {
               v={EXPERIMENT_STATE_NAMES[expState] ?? "Inactive"}
               cls={expActive ? "ok" : expState === EXPERIMENT_STATES.Failed ? "" : "dim"}
             />
+            {runOutcome && !expActive && (
+              <SideRow
+                k="Last run:"
+                v={{ ok: "Complete", partial: "Partial (declared)", loss: "Undeclared loss", failed: "Failed", unknown: "Unknown" }[runOutcome.severity]}
+                cls={runOutcome.severity === "ok" ? "ok" : ""}
+              />
+            )}
             <SideRow k="Valid Buffered:" v={expStatus?.valid ? expStatus.valid_buffered : "Unavailable"} />
             <SideRow k="Invalid Buffered:" v={expStatus?.valid ? expStatus.invalid_buffered : "Unavailable"} />
             <SideRow k="Flush Status:" v={expStatus?.flushing ? "Flushing" : "Idle"} />
@@ -1751,6 +1770,7 @@ export default function App() {
                 </div>
 
                 {readinessMessage && <p role="alert">Experiment readiness: {readinessMessage}</p>}
+                {!expActive && <RunOutcomeNotice outcome={runOutcome} />}
                 {startNotice && <p role="status" className="start-notice">{startNotice}</p>}
 
                 {expTab === "preview" && (

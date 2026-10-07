@@ -118,6 +118,11 @@ append only, never renumber.
    `experiment.flushFailed` / `experiment.provenanceFailed` /
    `experiment.saveFailed` is latched and the state is `Failed`.
 
+   The accounting line logged at the end of finalization is a WARN when
+   `recording::needsOperatorAttention(completion)` (undeclared loss, failure or unknown), INFO
+   otherwise (#549). `finalizationOk` only says the file was written: a run can finalize cleanly
+   and still be `IncompleteLoss`, which the UI shows from `completion` and `completion_reason`.
+
 The worker also runs the periodic flush while Active: every 250 ms it
 submits `flushBufferedFrames(hdf5)` when
 `ProcessingService::needsFlush()` returns true (`status().flushing` is

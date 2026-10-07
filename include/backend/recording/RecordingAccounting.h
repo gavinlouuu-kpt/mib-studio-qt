@@ -68,6 +68,15 @@ inline const char* toString(RunCompletionState s)
     return "unknown";
 }
 
+// True when the operator must see how the run ended (#549): frames lost without being declared, a
+// failure, or an outcome the backend cannot classify. Such a run is logged at WARN, not INFO.
+// Complete and declared-partial runs are expected outcomes.
+inline bool needsOperatorAttention(RunCompletionState s)
+{
+    return s == RunCompletionState::IncompleteLoss || s == RunCompletionState::Failed ||
+           s == RunCompletionState::Unknown;
+}
+
 inline RunCompletionState runCompletionStateFromString(const std::string& s)
 {
     if (s == "complete") return RunCompletionState::Complete;
