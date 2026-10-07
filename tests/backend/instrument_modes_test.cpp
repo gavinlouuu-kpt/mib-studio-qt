@@ -195,7 +195,7 @@ void testModeSequence(const mib::test::TempDir& td) {
     setEnv("MIB_PL_SCIENCE", "1");
     setEnv("MIB_CAMERA_MODE", "mock");
     setEnv("MIB_MOCK_CAMERA_DIR", frames.string().c_str());
-    setEnv("MIB_DISABLED_SERVICES", "sqlite,hdf5,yolo,autofocus,trigger,playback");
+    setEnv("MIB_DISABLED_SERVICES", "sqlite,hdf5,autofocus,trigger,playback");
     setEnv("MIB_EXECUTION_PROVIDER", "none");
     MIB_REQUIRE(!backend::app::hostProcessingAvailable(), "science on the PL");
 

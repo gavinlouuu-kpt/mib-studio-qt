@@ -26,7 +26,7 @@ execution plan
 | Local worktree | `C:\Users\ERBG07\Developer\mib-studio-qt\.claude\worktrees\feat-monitoring-kde-density` (bench PC) |
 
 Untracked local state that must **not** be committed: `build-ninja/`,
-`build/vendor/` (YOLO asset copy, SDKs), `build-ninja-setup.bat` (bench build
+`build/vendor/` (SDKs), `build-ninja-setup.bat` (bench build
 wrapper). Running the Python-backed tests rewrites the tracked
 `scripts/__pycache__/export_hdf5.cpython-313.pyc`; restore it with
 `git checkout -- scripts/__pycache__/export_hdf5.cpython-313.pyc` before
@@ -160,7 +160,6 @@ replaced by a backend service rather than hardened in Qt:
 ```text
 conan install . -of build-ninja --build=missing -r conancenter -s build_type=Release -c tools.cmake.cmaketoolchain:generator=Ninja
 # VS 2022 x64 dev shell; MIB_MINDVISION_SDK_ROOT=<main clone>\build\vendor\mindvision-sdk\extracted\Demo\VC++
-# a fresh worktree also needs build\vendor\assets\models\yolo11n-seg\yolo11n-seg.onnx (copy from resources\models)
 cmake --preset windows-ninja && cmake --build --preset windows-ninja-build
 ctest --preset windows-ninja-test
 ctest --test-dir build-ninja -L monitoring --output-on-failure

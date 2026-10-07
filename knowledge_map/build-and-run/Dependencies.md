@@ -11,8 +11,8 @@ directly and simulates driver calls without connecting hardware.
 > **YOFO Review graph** (`-o "&:review_core=True"`, macOS / Windows review
 > lanes): spdlog, HDF5, OpenCV and nlohmann_json only, OpenCV / HDF5 static,
 > OpenCV limited to core / imgproc / imgcodecs / videoio (no FFmpeg — AVI
-> sources use OpenCV's MJPEG reader / AVFoundation / Media Foundation), no Qt,
-> SQLite or ONNX Runtime. The "Shared?" column below is the default graph.
+> sources use OpenCV's MJPEG reader / AVFoundation / Media Foundation), no Qt
+> or SQLite. The "Shared?" column below is the default graph.
 
 | Package | Version | Shared? | Notes |
 |---|---|---|---|
@@ -21,7 +21,6 @@ directly and simulates driver calls without connecting hardware.
 | sqlite3 | 3.51.0 | | [[../services/SqliteService]] |
 | hdf5 | 1.14.6 | ✓ | C++ API enabled — [[../services/Hdf5Service]] |
 | opencv | 4.12.0 | ✓ | dnn=False, openexr=False. Linked modules: `core`, `imgproc`, `imgcodecs`, `videoio` (AVI read/write by [[../data-model/FrameStore]] and [[../services/BatchMaskSources]]) — [[../services/ProcessingService]] |
-| onnxruntime | 1.18.1 | | Optional in Linux cloud builds; when unavailable the build uses `YoloService.stub.cpp` and disables YOLO runtime features while keeping the rest of the app buildable — [[../services/YoloService]] |
 | nlohmann_json | 3.11.3 | | Config parsing / serialization |
 | openssl (libcrypto) | system | ✓ | Linux desktop builds only (`find_package(OpenSSL REQUIRED)` under `UNIX AND NOT APPLE`): Ed25519 detached-signature verification for native processing cores. Optional for the Qt-less wheel configure, whose verifier then fails closed. |
 | aravis | 0.9.3 (`aravis-0.10`) | ✓ | Optional Qt-free camera consumer; enabled only with `MIB_ENABLE_ARAVIS=ON`, source/build pin in `env/aravis.toml` |

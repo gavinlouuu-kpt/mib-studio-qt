@@ -161,7 +161,7 @@ int main(int argc, char* argv[]) {
     qputenv("MIB_CAMERA_MODE", QByteArrayLiteral("mock"));
     qputenv("MIB_MOCK_CAMERA_DIR", QByteArray::fromStdString(frames.string()));
     qputenv("MIB_MOCK_CAMERA_INTERVAL_MS", QByteArray::number(kMockIntervalMs));
-    qputenv("MIB_DISABLED_SERVICES", QByteArrayLiteral("auto_update,autofocus,trigger,yolo"));
+    qputenv("MIB_DISABLED_SERVICES", QByteArrayLiteral("auto_update,autofocus,trigger"));
     qputenv("MIB_STUDIO_PROCESSING_CORE_BASE_URL", QByteArrayLiteral("http://invalid-registry.example"));
     qputenv("MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL", QByteArrayLiteral("file:///nonexistent/mib-lut-manifest.json"));
     mib::test::Watchdog wd(120);

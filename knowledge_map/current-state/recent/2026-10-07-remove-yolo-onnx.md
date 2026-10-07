@@ -1,0 +1,3 @@
+## 2026-10-07 — Remove YoloService and ONNX Runtime (#565)
+
+Detection and segmentation run in the PZ7035 PL fabric (classical object stage and the C4 U-Net) and arrive as PZ_RESULTS records. The host-side `YoloService`, which only loaded `yolo11n-seg.onnx` and had no callers, is gone. So are the Windows `onnxruntime/1.18.1` Conan requirement, the `cpuinfo` pin that existed only for it, the `yolo11n-seg` asset, and its deploy and packaging copies. `MIB_DISABLED_SERVICES=yolo` is still accepted as a silent no-op so existing environments keep booting. The U-Net/C4 assets and the bridge ABI are unchanged. See [[architecture/AppBackend]], [[build-and-run/Dependencies]] and [[build-and-run/Assets]].
