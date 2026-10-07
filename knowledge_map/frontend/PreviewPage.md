@@ -81,3 +81,8 @@ is reported with its counts and leaves the previous background untouched),
 - Overlay cell color is per-frame only while following live; in paused/replay
   it is recomputed from the displayed buffered frame (see [[System-Utilities]]
   `PlaybackPanel`).
+
+After a failed experiment, ROI/background controls remain disabled until the
+operator acknowledges the experiment fault (#589). Their tooltip names that
+action; either the MainWindow readiness dialog or alert banner restores Idle
+and unlocks editing after finalization.

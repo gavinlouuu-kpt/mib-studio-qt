@@ -1,0 +1,189 @@
+name: Qt CI
+
+on:
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      linux: ${{ steps.filter.outputs.linux }}
+      windows: ${{ steps.filter.outputs.windows }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            linux:
+              - 'src/**'
+              - 'include/**'
+              - 'tests/**'
+              - 'resources/**'
+              - 'CMakeLists.txt'
+              - 'cmake/**'
+              - 'CMakePresets.json'
+              - 'env/**'
+              - '.github/actions/setup-linux-env/**'
+              - '.github/workflows/qt-ci.yml'
+            windows:
+              - 'src/frontend/**'
+              - 'include/frontend/**'
+              - 'tests/frontend/**'
+              - 'tests/tools/**'
+              - 'scripts/**'
+              - 'tools/**'
+              - 'resources/installers/**'
+              - 'CMakeLists.txt'
+              - 'cmake/**'
+              - 'CMakePresets.json'
+              - 'conanfile.*'
+              - 'conan/profiles/windows-msvc194-ninja'
+              - 'env/requirements-build.txt'
+              - '.github/workflows/qt-ci.yml'
+
+  linux:
+    name: Linux Qt build and test
+    needs: changes
+    if: needs.changes.outputs.linux == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CMAKE_BUILD_PARALLEL_LEVEL: '4'
+      SCCACHE_GHA_ENABLED: 'true'
+      QT_QPA_PLATFORM: offscreen
+      MIB_CAMERA_MODE: mock
+      MIB_DISABLED_SERVICES: auto_update
+      MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL: file:///nonexistent/mib-lut-manifest.json
+    steps:
+      - name: Start timer
+        run: echo "QT_CI_STARTED=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v6
+      - name: Set up Linux build environment
+        uses: ./.github/actions/setup-linux-env
+        with:
+          sections: base,backend,frontend,test-extras
+          conan: 'false'
+          mindvision: 'false'
+          assets: none
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+      - name: Configure Qt app and tests
+        run: cmake --preset linux-system-release -DBUILD_TESTING=ON -DMIB_ENABLE_MINDVISION=OFF -DMIB_USE_SENTRY=OFF
+      - name: Build all targets
+        run: cmake --build --preset linux-system-release-build
+      - name: Test
+        run: ctest --test-dir build/linux-system --output-on-failure --no-tests=error -LE "network|hardware|soak|performance"
+      - name: sccache statistics
+        if: always()
+        run: sccache --show-stats
+      - name: Report runtime
+        if: always()
+        run: echo "Linux Qt build and test elapsed $(( $(date +%s) - QT_CI_STARTED )) seconds (setup, build and tests)." >> "$GITHUB_STEP_SUMMARY"
+
+  windows:
+    name: Windows MSVC build and test
+    needs: changes
+    # Same-repo PRs only: prebuilt Qt comes from the team Conan remote, whose
+    # read credentials are not exposed to fork PRs (a cold Qt source build
+    # would exceed the job timeout).
+    if: needs.changes.outputs.windows == 'true' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: windows-2022
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CMAKE_BUILD_PARALLEL_LEVEL: '4'
+      SCCACHE_GHA_ENABLED: 'true'
+      QT_QPA_PLATFORM: offscreen
+      MIB_CAMERA_MODE: mock
+      MIB_DISABLED_SERVICES: auto_update
+      MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL: file:///nonexistent/mib-lut-manifest.json
+    steps:
+      - name: Start timer
+        run: '"QT_CI_STARTED=$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())" >> $env:GITHUB_ENV'
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Install build tools
+        run: |
+          python -m pip install -r env/requirements-build.txt
+          if ($LASTEXITCODE) { throw 'Build tools installation failed' }
+          conan profile detect --force
+          if ($LASTEXITCODE) { throw 'Conan detection failed' }
+          # Same team remote as build-windows.yml, for prebuilt Qt binaries.
+          if ($env:CONAN_REMOTE_URL) {
+            conan remote add team-conan $env:CONAN_REMOTE_URL --index 0
+            conan remote login team-conan $env:CONAN_REMOTE_USER -p $env:CONAN_REMOTE_PASSWORD
+            if ($LASTEXITCODE) { throw 'Team Conan remote login failed' }
+          } else {
+            Write-Host "CONAN_REMOTE_URL not set, using ConanCenter only" -ForegroundColor Yellow
+          }
+        env:
+          CONAN_REMOTE_URL: ${{ secrets.CONAN_REMOTE_URL }}
+          CONAN_REMOTE_USER: ${{ secrets.CONAN_REMOTE_USER }}
+          CONAN_REMOTE_PASSWORD: ${{ secrets.CONAN_REMOTE_PASSWORD }}
+      - name: Restore Conan cache
+        id: conan-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.conan2/p
+            ~/.conan2/dl
+          key: conan-${{ runner.os }}-msvc194-${{ hashFiles('conanfile.py', 'conan/profiles/**') }}
+          restore-keys: conan-${{ runner.os }}-msvc194-
+      - name: Install pinned-profile dependencies
+        run: |
+          conan install . -of build --build=missing -s build_type=Release -pr conan/profiles/windows-msvc194-ninja
+          if ($LASTEXITCODE) { throw 'Conan dependency resolution failed' }
+      - name: Save Conan cache
+        if: steps.conan-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.conan2/p
+            ~/.conan2/dl
+          key: ${{ steps.conan-cache.outputs.cache-primary-key }}
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+      - name: Configure Qt app and tests
+        run: cmake --preset windows-ninja-ci -DBUILD_TESTING=ON -DMIB_ENABLE_HARDWARE_SDKS=OFF -DMIB_ENABLE_COREMOR=OFF -DMIB_ENABLE_MINDVISION=OFF -DMIB_ENABLE_WINDOWS_PACKAGING=OFF -DMIB_USE_SENTRY=OFF
+      - name: Build all targets
+        # Includes mib_frontend_tests and mib_backend_tests, plus independent
+        # test executables required by the full CTest selection.
+        run: cmake --build --preset windows-ninja-ci-build
+      - name: Test with Conan runtime DLL paths
+        shell: cmd
+        run: |
+          call build\conanrun.bat
+          if errorlevel 1 exit /b 1
+          ctest --test-dir build --build-config Release --output-on-failure --no-tests=error -LE "network|hardware|soak|performance"
+      - name: Python tool tests
+        run: |
+          foreach ($test in Get-ChildItem tools/test_*.py) {
+            python $test.FullName
+            if ($LASTEXITCODE) { throw "Tool regression failed: $($test.Name)" }
+          }
+      - name: sccache statistics
+        if: always()
+        run: sccache --show-stats
+      - name: Report runtime
+        if: always()
+        run: |
+          $elapsed = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$env:QT_CI_STARTED
+          "Windows MSVC build and test elapsed $elapsed seconds (setup, build and tests)." >> $env:GITHUB_STEP_SUMMARY

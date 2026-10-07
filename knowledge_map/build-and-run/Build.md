@@ -101,6 +101,19 @@ specific deadlock or a complete billing total. A stale main-checkout view and
 queued/cancelled attempts can make hosted totals misleading; the first hosted
 run after this change should verify cache behavior and artifact sizes.
 
+## Qt PR checks (#594)
+
+`.github/workflows/qt-ci.yml` adds path-filtered **Linux Qt build and test**
+(`linux-system-release`, apt Qt, offscreen) and **Windows MSVC build and test**
+(`windows-ninja-ci`, VS2022, existing Conan cache/profile). Both build all
+targets so independent CTest binaries accompany the consolidated runners;
+CTest excludes `network|hardware|soak|performance`. Windows also runs every
+`tools/test_*.py` and activates Conan runtime DLL paths. SDKs, Sentry and
+packaging are disabled. Both reuse sccache and report elapsed seconds in
+the Actions summary. Checks remain optional during the first week; rollout
+evidence and portability rules are in
+[[../../docs/architecture/testing-strategy]].
+
 ## Native FCS export
 
 Build the Qt-free `hdf_export_cli` target for `scripts/export_hdf5.py --format
@@ -585,3 +598,12 @@ the last reachable stable tag. `publish-update.py --release-notes-file` includes
 both installers copy release notes and the manual with images under resources;
 Linux builds also copy these beside the executable (there were no app install rules). Tauri bundles the same
 sources via Vite raw/URL imports. Templates live in `docs/release-notes/README.md`.
+
+Recording-safety regressions (#403) are registered as `e2e.recording_403_*`
+in the shared backend runner, with condition-driven mock-camera fixtures.
+`backend.hdf_write_queue_fault` covers throwing callbacks and concurrent Stop.
+
+The offscreen `experiment_fault_recovery_test` target /
+`frontend.experiment_fault_recovery` CTest checks Qt readiness and banner
+acknowledgement after failed backend runs, including ROI/background unlocking
+(#589). It uses a mock camera, isolated settings and no hardware discovery.
