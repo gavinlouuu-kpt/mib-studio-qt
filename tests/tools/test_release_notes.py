@@ -22,14 +22,14 @@ class ReleaseNotesTest(unittest.TestCase):
             self.assertEqual(notes.main(["--version", "9.8.7", "--check"]), 1)
             path = Path(tmp) / "docs/release-notes/v9.8.7.md"
             path.parent.mkdir(parents=True)
-            path.write_text(fixture())
+            path.write_text(fixture(), encoding="utf-8")
             self.assertEqual(notes.main(["--version", "9.8.7", "--check"]), 0)
-            path.write_text(fixture().replace("## Added\n\nOperators can read Help offline (#573).", "## Added\n\nNone."))
+            path.write_text(fixture().replace("## Added\n\nOperators can read Help offline (#573).", "## Added\n\nNone."), encoding="utf-8")
             self.assertEqual(notes.main(["--version", "9.8.7", "--check"]), 0)
             for text in (fixture().replace("## Added\n\nOperators can read Help offline (#573).", "## Added\n\n"),
                          fixture().replace("Operators can read Help offline (#573).", "TODO"),
                          fixture().replace("Operators can read Help offline (#573).", "")):
-                path.write_text(text)
+                path.write_text(text, encoding="utf-8")
                 self.assertEqual(notes.main(["--version", "9.8.7", "--check"]), 1)
 
     def test_summary(self):
@@ -41,8 +41,8 @@ class ReleaseNotesTest(unittest.TestCase):
             root = Path(tmp)
             folder = root / "knowledge_map/current-state/recent"
             folder.mkdir(parents=True)
-            (folder / "2026-10-06-old.md").write_text("old")
-            (folder / "2026-10-07-new.md").write_text("new")
+            (folder / "2026-10-06-old.md").write_text("old", encoding="utf-8")
+            (folder / "2026-10-07-new.md").write_text("new", encoding="utf-8")
             with patch.object(notes.subprocess, "check_output", return_value="2026-10-06\n"):
                 text = notes.generate_beta(root, "v9.8.6", "9.8.7-beta.1")
             self.assertIn("Changes since v9.8.6 (beta, uncurated)", text)

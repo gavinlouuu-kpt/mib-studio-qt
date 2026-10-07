@@ -1299,10 +1299,23 @@ bool ExperimentCoordinator::withIdleConfiguration(const std::function<void()>& t
 }
 
 bool ExperimentCoordinator::withIdleConfiguration(const std::function<void()>& transaction, bool wait) {
+    // Service setters can be called from a facade's idle transaction. Reuse
+    // that authorization on this thread without locking the mutex twice.
+    static thread_local ExperimentCoordinator* idleOwner = nullptr;
+    if (idleOwner == this) {
+        transaction();
+        return true;
+    }
     std::unique_lock<std::mutex> lock(mutex_, std::defer_lock);
     if (wait) lock.lock();
     else if (!lock.try_lock()) return false;
     if (state_ != ExperimentRunState::Idle) return false;
+    struct IdleScope {
+        ExperimentCoordinator*& owner;
+        ExperimentCoordinator* previous;
+        ~IdleScope() { owner = previous; }
+    } scope{idleOwner, idleOwner};
+    idleOwner = this;
     transaction();
     return true;
 }

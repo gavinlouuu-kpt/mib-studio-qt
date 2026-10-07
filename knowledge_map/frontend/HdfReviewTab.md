@@ -350,3 +350,11 @@ metrics export directory. A chosen `.fcs` path produces that file plus
 `<chosen stem>_event_map.csv`; the completion dialog reports both and the
 accepted detection count. Raw recordings disable the single-file action;
 batch failures report the service error and continue.
+
+## Experiment outcome status (#584)
+
+The final experiment-file status keeps its actual Valid/Invalid counts and appends
+the same run accounting summary used for raw recordings. `incompleteLoss` and
+`failed` remain visible after chart/data loading; legacy files explicitly report
+that accounting was not recorded. Offscreen regression: `frontend.hdf_review_core`
+loads an experiment with reconciled counters and one overwritten frame.

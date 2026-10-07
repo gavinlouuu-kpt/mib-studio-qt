@@ -21,6 +21,7 @@
 #endif
 
 #include "backend/app/AppBackend.h"
+#include "backend/app/ExperimentCoordinator.h"
 #include "backend/processing/ProcessingContract.h"
 #include "backend/camera/common/ICamera.h"
 #include "backend/processing/ProcessingService.h"
@@ -144,6 +145,7 @@ namespace frontend
 
 	void AppConfigWatcher::setWatchedPath(const QString &path)
 	{
+		deferredConfigPath_.clear();
 		// Remove any previous path
 		if (!watchedPath_.isEmpty())
 		{
@@ -319,6 +321,23 @@ namespace frontend
 	}
 
 	void AppConfigWatcher::loadAndApplyFromPath(const QString &path)
+	{
+		if (!backend_.experiment().withIdleConfiguration([&] {
+				deferredConfigPath_.clear();
+				applyFromPathWhenIdle(path);
+			}))
+		{
+			deferredConfigPath_ = path;
+			pendingRoiTimer_->start();
+			SPDLOG_WARN("AppConfigWatcher: deferring configuration until experiment is idle: {}", path.toStdString());
+		}
+		else
+		{
+			deferredConfigPath_.clear();
+		}
+	}
+
+	void AppConfigWatcher::applyFromPathWhenIdle(const QString &path)
 	{
 		QFile f(path);
 		if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
@@ -692,6 +711,15 @@ namespace frontend
 	
 	void AppConfigWatcher::tryRestorePendingRoi()
 	{
+		if (!backend_.experiment().withIdleConfiguration([] {})) return;
+		if (!deferredConfigPath_.isEmpty())
+		{
+			const QString path = deferredConfigPath_;
+			deferredConfigPath_.clear();
+			loadAndApplyFromPath(path);
+			if (!deferredConfigPath_.isEmpty()) return;
+			emit configFileChanged(path);
+		}
 		if (!hasPendingRoi_ || !playbackPanel_)
 		{
 			// Stop timer if no pending ROI

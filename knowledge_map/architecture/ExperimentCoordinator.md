@@ -258,3 +258,11 @@ acquisition, so experiment Start and raw recording cannot both pass preflight.
 Starting/Active/Stopping (and Failed until reset) refuse recording; an already
 open HDF5 file is preserved. Raw recording remains busy until Stop joins its
 worker, including save-failure cleanup. See [[AppBackend]].
+
+### Nested idle configuration (#582)
+
+An idle transaction can invoke guarded service setters on the same thread without
+relocking the coordinator mutex. A scoped thread-local owner reuses only that
+enclosing idle authorization and restores it even on exceptions. Other threads
+still serialize against Start. This supports both facade transactions and Qt
+watched-document applies without bypassing the backend ROI/background gates.

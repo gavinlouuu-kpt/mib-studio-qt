@@ -801,3 +801,13 @@ preserves the previous background. The calibration mutex is released before ente
 the coordinator transaction to preserve coordinator → calibration lock order.
 Publication uses a nonblocking idle transaction so a worker never waits for a
 configuration transaction that may join it; contention also cancels publication.
+
+## Direct configuration admission (#582)
+
+ROI and realtime background setters, background-related processing configuration
+changes, and calibration start use the installed idle publication transaction.
+They refuse while the experiment owns the pipeline, preserving the ROI,
+background generation and processing version. Standalone services also refuse
+these changes while their experiment flag is active. Ordinary monitoring tuning
+that does not change background settings retains its existing behavior.
+Regression: `backend.experiment_readiness` checks direct setters during a run.

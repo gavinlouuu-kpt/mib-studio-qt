@@ -125,7 +125,7 @@ def test_release_notes_file_dry_run():
         manifest = folder / "latest.json"
         assert pub.main(["--installer", str(installer), "--release-notes-file", str(notes),
                          "--manifest-out", str(manifest), "--dry-run"]) == 0
-        text = json.loads(manifest.read_text())["release_notes"]
+        text = json.loads(manifest.read_text(encoding="utf-8"))["release_notes"]
         assert text.startswith("Highlights")
         assert len(text.encode("utf-8")) <= 16384
 
