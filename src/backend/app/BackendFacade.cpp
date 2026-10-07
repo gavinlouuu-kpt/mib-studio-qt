@@ -190,8 +190,10 @@ namespace backend::bridge
         // The coordinator outlives the facade and its worker may still publish
         // (e.g. AppBackend::shutdown() finalizing a run when shutdown() was
         // never called). Detach the status callback that captures `this`;
-        // setStatusCallback waits out any in-flight invocation.
-        backend_.experiment().setStatusCallback({});
+        // setStatusCallback waits out any in-flight invocation. Only an
+        // initialized facade installed it (the coordinator exists only after
+        // AppBackend::initialize); shutdown() already cleared it.
+        if (initialized_) backend_.experiment().setStatusCallback({});
     }
 
     bool BackendFacade::initialize(const std::string &dataDir, const std::string &resourceRoot)
