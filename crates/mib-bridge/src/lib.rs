@@ -1183,6 +1183,9 @@ pub mod ffi {
         /// Where the science runs (ABI 21): `{"science": "host"|"pl", "host_processing": bool,
         /// "aravis": bool}`. On the PL the host pipeline's commands are refused.
         fn fetch_platform_info(self: Pin<&mut BackendBridge>) -> String;
+        /// Reconciled run accounting as JSON (ABI 31, #549): `source` is "review" (the file loaded
+        /// for review) or "last_run" (the run that finished last in this session).
+        fn fetch_run_accounting(self: Pin<&mut BackendBridge>, source: &str) -> String;
         /// PZ7035 camera mode (ABI 27, #501 P1): "align" | "run" with the Run window offset.
         fn set_instrument_mode(self: Pin<&mut BackendBridge>, mode: &str, x: i32, y: i32) -> BridgeCommandResult;
         /// Service / Commissioning mode latch; raw LED values are refused outside it.

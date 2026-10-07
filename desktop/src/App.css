@@ -1197,6 +1197,7 @@ button.btn:disabled,
 .run-outcome { margin: 4px 0; padding: 4px 8px; border-left: 3px solid var(--border); }
 .run-outcome.ok { border-left-color: var(--ok); }
 .run-outcome.partial { border-left-color: var(--border); }
+.run-outcome.legacy { color: var(--muted); }
 .run-outcome.attention { border-left-color: var(--warn); color: var(--warn); }
 .run-outcome.loss, .run-outcome.unknown { border-left-color: var(--warn); color: var(--warn); }
 .run-outcome.failed { border-left-color: var(--err); color: var(--err); }
