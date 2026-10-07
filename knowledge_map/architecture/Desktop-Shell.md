@@ -673,9 +673,11 @@ None of them blocks a run. Desktop builds are unchanged.
 (`completion`, `completion_reason`, `persistence_admitted`) into an operator message: the
 completion, the non-zero loss counts parsed from the backend's reason
 (`storeOverwritten`, `storeNotCommitted`, `storeMalformed`, `processingFailed`, `sequenceGaps`),
-and the lost fraction of the admitted frames. `components/RunOutcomeNotice` shows it on the
-Experiment tab (an alert for loss, failure or an unknown outcome, a status otherwise), with the
-backend's own text as the tooltip. The shell logs one line per finished run and adds a "Last run"
+and the lost fraction of the admitted frames. A booked malformed frame (an ingress error) is a
+declared loss: the run is "partial (declared)" and the notice is informational unless malformed
+frames exceed 0.1 % of the admitted frames (`MALFORMED_WARN_FRACTION`). `components/RunOutcomeNotice`
+shows it on the Experiment tab (an alert for undeclared loss, failure, an unknown outcome or that
+attention case, a status otherwise), with the backend's own text as the tooltip. The shell logs one line per finished run and adds a "Last run"
 row to the sidebar. Cancelled runs and a status that is not yet terminal show nothing. The Review
 tab does not show it yet. Tests: `runOutcome.test.ts`, `RunOutcomeNotice.test.tsx`.
 

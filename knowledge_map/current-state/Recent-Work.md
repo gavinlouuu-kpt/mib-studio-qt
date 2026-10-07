@@ -1,22 +1,28 @@
 # Recent Work
 
-## 2026-10-07 — Undeclared loss is shown to the operator (#549)
+## 2026-10-07 — How a run ended is shown to the operator, and a booked malformed frame is a declared loss (#549)
 
-A run that ends with frames lost without being declared (`incompleteLoss`) used to look like a
-clean finish: the status said "finalized", `finalization_ok` was true, the backend logged the
-outcome at INFO and the UI never showed `completion_reason`. Now:
-- the backend logs the accounting line at WARN for undeclared loss, failure and unknown outcomes
-  (`needsOperatorAttention`), and at INFO for complete and declared-partial runs;
-- after a run the Experiment tab shows a notice with the outcome, the loss counts and the loss
-  fraction, for example "Run finished with undeclared loss of 27162 admitted (0.004 %): 1 frame
-  was malformed ...". The backend's reason text is in its tooltip, one line goes to the event log
-  per run, and the sidebar has a "Last run" row;
-- 1–2 malformed frames per run are not a replay-loop artefact: a 10 s run on the PZ7035 (results8,
-  2026-10-06) also ended with `storeMalformed=1` in 27,162 frames, matching the sensor link's
-  ~0.1 ingress errors/s. An ingress-error frame (FRAME.INVALID) is booked `storeMalformed` by design.
+A run that ended in `incompleteLoss` used to look like a clean finish: the status said "finalized",
+`finalization_ok` was true, the backend logged the outcome at INFO and the UI never showed
+`completion_reason`. Now:
+- **Classification (decided by merge coordination).** A frame that was detected, counted and booked
+  as malformed (an ingress error, `FRAME.INVALID` → `storeMalformed`) is a **declared** loss, so a
+  run with only those ends `IntentionallyPartial` with the count in the reason. **Undeclared** is
+  reserved for unaccounted gaps: frames overwritten or never committed in the store, failures in
+  processing, sequence holes. Counters that do not reconcile are `Failed`. An undeclared gap
+  dominates, and its reason still lists the malformed count.
+- **Logging.** The accounting line is a WARN for undeclared loss, failure, an unknown outcome, or
+  malformed frames above 0.1 % of the admitted frames (`kMalformedWarnFraction`); INFO otherwise.
+- **The notice.** After a run the Experiment tab shows the outcome, the counts and the lost fraction.
+  A declared malformed count at the sensor-link baseline is informational; above 0.1 % it is an
+  alert ("check the sensor link"); undeclared loss and failure are alerts. One line goes to the
+  event log per run, and the sidebar has a "Last run" row.
+- **Not an artefact.** A 10 s run on the PZ7035 (results8, 2026-10-06) ended with `storeMalformed=1`
+  in 27,162 frames, matching the link's ~0.1 ingress errors/s, so a clean hardware run is "partial
+  (declared)" with that count. The baseline rate itself belongs with the PL owner.
 
-Not yet: the Review tab, which would need the saved accounting in the review metadata (a bridge
-change). See [[../architecture/Desktop-Shell]], [[../architecture/ExperimentCoordinator]].
+Not yet: the Review tab, which needs the saved accounting in the review metadata (a bridge change).
+See [[../architecture/Desktop-Shell]], [[../architecture/ExperimentCoordinator]].
 
 ## 2026-10-07 — Deterministic experiment readiness checks (#506)
 

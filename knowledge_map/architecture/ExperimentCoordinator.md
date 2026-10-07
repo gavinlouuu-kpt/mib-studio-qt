@@ -119,8 +119,11 @@ append only, never renumber.
    `experiment.saveFailed` is latched and the state is `Failed`.
 
    The accounting line logged at the end of finalization is a WARN when
-   `recording::needsOperatorAttention(completion)` (undeclared loss, failure or unknown), INFO
-   otherwise (#549). `finalizationOk` only says the file was written: a run can finalize cleanly
+   `recording::needsOperatorAttention(completion)` (undeclared loss, failure or unknown) or when
+   malformed frames exceed `kMalformedWarnFraction` (0.1 %) of the admitted frames, INFO
+   otherwise (#549). Classification: `storeOverwritten`, `storeNotCommitted`, `processingFailed`
+   and `sequenceGaps` are undeclared (`IncompleteLoss`); a booked `storeMalformed` frame is a
+   declared loss (`IntentionallyPartial`). `finalizationOk` only says the file was written: a run can finalize cleanly
    and still be `IncompleteLoss`, which the UI shows from `completion` and `completion_reason`.
 
 The worker also runs the periodic flush while Active: every 250 ms it

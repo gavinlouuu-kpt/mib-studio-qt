@@ -1164,10 +1164,12 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
         hdf5.closeFile();
         SPDLOG_INFO("ExperimentCoordinator: closeFile took {:.3f} ms", sinceMs(tClose));
     }
-    // An undeclared loss, a failure or an unknown outcome is something the operator must see (#549):
-    // WARN, not INFO. Complete and declared-partial runs stay at INFO.
-    const auto accountingLevel = recording::needsOperatorAttention(accounting.completion) ? spdlog::level::warn
-                                                                                          : spdlog::level::info;
+    // An undeclared loss, a failure, an unknown outcome, or declared malformed frames above the
+    // warning fraction is something the operator must see (#549): WARN, not INFO. Complete and
+    // declared-partial runs stay at INFO.
+    const bool warnRun = recording::needsOperatorAttention(accounting.completion) ||
+                         recording::malformedAboveWarnFraction(accounting.storeMalformed, accounting.admitted);
+    const auto accountingLevel = warnRun ? spdlog::level::warn : spdlog::level::info;
     SPDLOG_LOGGER_CALL(spdlog::default_logger_raw(), accountingLevel,
                        "ExperimentCoordinator: run {} accounting: completion={} ({}); persisted={}/{} failed={}",
                        run.startGeneration, recording::toString(accounting.completion), accounting.completionReason,

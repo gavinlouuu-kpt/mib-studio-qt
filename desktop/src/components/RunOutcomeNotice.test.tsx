@@ -7,7 +7,7 @@ import type { RunOutcome } from "../runOutcome";
 
 let host: HTMLDivElement, root: Root;
 const outcome = (o: Partial<RunOutcome>): RunOutcome =>
-  ({ severity: "ok", headline: "Run complete: all 10 admitted frames reconciled.", losses: [], admitted: 10, lossFraction: null, reason: "", ...o });
+  ({ severity: "ok", headline: "Run complete: all 10 admitted frames reconciled.", losses: [], admitted: 10, lossFraction: null, reason: "", attention: false, ...o });
 
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -23,6 +23,14 @@ describe("run outcome notice (#549)", () => {
     expect(p.className).toContain("loss");
     expect(p.textContent).toContain("undeclared loss");
     expect(p.getAttribute("title")).toContain("storeMalformed=1");
+  });
+
+  it("keeps a declared partial result quiet, but alerts when malformed frames are above the warning fraction", async () => {
+    await act(async () => root.render(<RunOutcomeNotice outcome={outcome({ severity: "partial", headline: "Run finished with a declared partial result: 1 frame was malformed." })} />));
+    expect(host.querySelector("p")!.getAttribute("role")).toBe("status");
+    await act(async () => root.render(<RunOutcomeNotice outcome={outcome({ severity: "partial", attention: true, headline: "Run finished with a declared partial result: 40 frames were malformed." })} />));
+    expect(host.querySelector("p")!.getAttribute("role")).toBe("alert");
+    expect(host.querySelector("p")!.className).toContain("attention");
   });
 
   it("is a quiet status for a clean run and nothing without an outcome", async () => {

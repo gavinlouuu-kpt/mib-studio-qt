@@ -105,6 +105,32 @@ int main(int argc, char** argv)
         auto pend = s; pend.persistenceCommitted = 4; pend.persistencePendingAtStop = 2;
         r = rec::reconcile(pend);
         MIB_EXPECT(r.completion == rec::RunCompletionState::IntentionallyPartial, "pending at stop -> IntentionallyPartial");
+        // #549: a frame booked as malformed (an ingress error) is a DECLARED loss; undeclared is
+        // reserved for unaccounted gaps and counters that do not reconcile.
+        auto mal = s; mal.empty = 3; mal.storeMalformed = 1; // 10 admitted: 3+6+1
+        r = rec::reconcile(mal);
+        MIB_EXPECT(r.reconciled && r.completion == rec::RunCompletionState::IntentionallyPartial,
+                   "declared malformed frame -> IntentionallyPartial, still reconciled");
+        MIB_EXPECT(r.completionReason.find("declared policy: storeMalformed=1") == 0,
+                   "the reason leads with the malformed count: " + r.completionReason);
+        auto gap = s; gap.sequenceGaps = 2;
+        r = rec::reconcile(gap);
+        MIB_EXPECT(r.completion == rec::RunCompletionState::IncompleteLoss &&
+                       r.completionReason.find("undeclared loss:") == 0 &&
+                       r.completionReason.find("sequenceGaps=2") != std::string::npos,
+                   "a sequence hole is an undeclared loss: " + r.completionReason);
+        auto both = mal; both.sequenceGaps = 1;
+        r = rec::reconcile(both);
+        MIB_EXPECT(r.completion == rec::RunCompletionState::IncompleteLoss &&
+                       r.completionReason.find("storeMalformed=1") != std::string::npos,
+                   "an undeclared gap dominates declared malformed frames and the reason keeps both counts");
+        auto unreconciled = mal; unreconciled.admitted = 11;
+        r = rec::reconcile(unreconciled);
+        MIB_EXPECT(!r.reconciled && r.completion == rec::RunCompletionState::Failed,
+                   "counters that do not reconcile are never a declared loss");
+        MIB_EXPECT(!rec::malformedAboveWarnFraction(1, 27162) && !rec::malformedAboveWarnFraction(27, 27162) &&
+                       rec::malformedAboveWarnFraction(28, 27162) && !rec::malformedAboveWarnFraction(5, 0),
+                   "the warning fraction is 0.1 % of admitted frames");
         // #549: which outcomes are logged at WARN and shown to the operator.
         MIB_EXPECT(!rec::needsOperatorAttention(rec::RunCompletionState::Complete) &&
                        !rec::needsOperatorAttention(rec::RunCompletionState::IntentionallyPartial),

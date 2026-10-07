@@ -29,7 +29,14 @@ export interface RunOutcome {
   lossFraction: number | null;
   /** The backend's own reason text, kept for the log and the tooltip. */
   reason: string;
+  /** A declared outcome the operator should still look at: malformed frames above the warning
+   *  fraction. Always false for loss, failure and unknown, which are alerts by severity. */
+  attention: boolean;
 }
+
+/** Malformed frames above this share of the admitted frames are worth a warning even though they
+ *  are a declared loss (mirrors kMalformedWarnFraction in RecordingAccounting.h). */
+export const MALFORMED_WARN_FRACTION = 0.001;
 
 // Backend keys (RecordingAccounting::finalize) and what they mean to an operator.
 const LOSS_LABELS: Record<string, string> = {
@@ -38,6 +45,11 @@ const LOSS_LABELS: Record<string, string> = {
   storeMalformed: "malformed (an ingress error from the sensor link, or an unusable frame)",
   processingFailed: "failed in processing",
   sequenceGaps: "missing from the frame sequence",
+  // Declared by policy (IntentionallyPartial), not losses.
+  cancelledByPolicy: "cancelled by the delivery policy",
+  pendingAtStop: "still pending when the run stopped",
+  persistencePendingAtStop: "still waiting to be written when the run stopped",
+  persistenceCancelledByPolicy: "left unwritten by policy",
 };
 
 /** Non-zero `key=value` counts from "undeclared loss: a=0 b=1 ...". */
@@ -60,12 +72,27 @@ export function describeRunOutcome(s: ExperimentStatus | null): RunOutcome | nul
   if (!s || !s.valid || !s.terminal || s.cancelled) return null;
   const admitted = Number(s.persistence_admitted) || 0;
   const reason = s.completion_reason;
-  const base = { admitted, reason, losses: [] as OutcomeCount[], lossFraction: null as number | null };
+  const base = { admitted, reason, losses: [] as OutcomeCount[], lossFraction: null as number | null, attention: false };
   switch (s.completion) {
     case RUN_COMPLETION_STATES.Complete:
       return { ...base, severity: "ok", headline: `Run complete: all ${admitted} admitted frames reconciled.` };
-    case RUN_COMPLETION_STATES.IntentionallyPartial:
-      return { ...base, severity: "partial", headline: "Run finished with a declared partial result (by policy)." };
+    case RUN_COMPLETION_STATES.IntentionallyPartial: {
+      // Frames that were detected, counted and booked (a malformed frame from a sensor-link ingress
+      // error, a cancellation by policy) are declared, so this is informational. Malformed frames
+      // above the warning fraction still get the operator's attention.
+      const losses = parseLossCounts(reason);
+      const malformed = losses.find((l) => l.key === "storeMalformed")?.count ?? 0;
+      const total = losses.reduce((a, l) => a + l.count, 0);
+      const lossFraction = admitted > 0 ? total / admitted : null;
+      const attention = admitted > 0 && malformed / admitted > MALFORMED_WARN_FRACTION;
+      const what = losses.map((l) => `${noun(l.count, "frame was", "frames were")} ${l.label}`).join("; ");
+      const of = losses.length && admitted > 0 ? ` (${(100 * (lossFraction ?? 0)).toFixed(3)} % of ${admitted} admitted)` : "";
+      const warn = attention ? ` Malformed frames are above ${(MALFORMED_WARN_FRACTION * 100).toFixed(1)} % of the run: check the sensor link.` : "";
+      return {
+        severity: "partial", admitted, reason, losses, lossFraction, attention,
+        headline: `Run finished with a declared partial result${losses.length ? `: ${what}${of}` : " (by policy)"}.${warn}`,
+      };
+    }
     case RUN_COMPLETION_STATES.IncompleteLoss: {
       const losses = parseLossCounts(reason);
       const total = losses.reduce((a, l) => a + l.count, 0);
@@ -74,7 +101,7 @@ export function describeRunOutcome(s: ExperimentStatus | null): RunOutcome | nul
         ? losses.map((l) => `${noun(l.count, "frame was", "frames were")} ${l.label}`).join("; ")
         : reason;
       const of = admitted > 0 ? ` of ${admitted} admitted (${(100 * (lossFraction ?? 0)).toFixed(3)} %)` : "";
-      return { severity: "loss", headline: `Run finished with undeclared loss${of}: ${what}.`, admitted, reason, losses, lossFraction };
+      return { severity: "loss", headline: `Run finished with undeclared loss${of}: ${what}.`, admitted, reason, losses, lossFraction, attention: false };
     }
     case RUN_COMPLETION_STATES.Failed:
       return { ...base, severity: "failed", headline: `Run failed: ${reason || "no reason reported"}.` };
