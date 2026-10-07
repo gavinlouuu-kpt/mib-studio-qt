@@ -1498,6 +1498,9 @@ mib_add_backend_test_executable(config_document_apply_test backend/config_docume
 add_test(NAME backend.config_document_apply COMMAND $<TARGET_FILE:mib_backend_tests> config_document_apply_test)
 set_tests_properties(backend.config_document_apply PROPERTIES LABELS "backend;profiles;fault-injection;roundtrip" TIMEOUT 60)
 
+mib_add_backend_test_executable(multi_image_series_roundtrip_test recording/multi_image_series_roundtrip_test.cpp)
+add_test(NAME recording.multi_image_series_roundtrip COMMAND $<TARGET_FILE:mib_backend_tests> multi_image_series_roundtrip_test)
+set_tests_properties(recording.multi_image_series_roundtrip PROPERTIES LABELS "recording;hdf5;roundtrip;invariant" TIMEOUT 30)
 mib_add_backend_test_executable(hdf_write_queue_fault_test backend/hdf_write_queue_fault_test.cpp)
 mib_backend_test_link(hdf_write_queue_fault_test PRIVATE Threads::Threads)
 add_test(NAME backend.hdf_write_queue_fault COMMAND $<TARGET_FILE:mib_backend_tests> hdf_write_queue_fault_test)
@@ -1509,6 +1512,17 @@ target_link_libraries(mib_backend_tests PRIVATE mib_backend)
 # (processing.pz_platform_monitor).
 target_include_directories(mib_backend_tests PRIVATE ${PROJECT_SOURCE_DIR}/third_party/pz7035-abi)
 
+if(NOT MIB_ENABLE_HARDWARE_SDKS)
+    add_executable(autofocus_callback_test backend/autofocus_callback_test.cpp)
+    target_include_directories(autofocus_callback_test PRIVATE ${PROJECT_SOURCE_DIR}/tests)
+    target_link_libraries(autofocus_callback_test PRIVATE mib_backend Threads::Threads)
+    add_test(NAME backend.autofocus_callback COMMAND autofocus_callback_test)
+    set_tests_properties(backend.autofocus_callback PROPERTIES LABELS "backend;concurrency;safety" TIMEOUT 30)
+endif()
+if(Python3_Interpreter_FOUND)
+    add_test(NAME installers.vc_runtime_check COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/installers/vc_runtime_check_test.py)
+    set_tests_properties(installers.vc_runtime_check PROPERTIES LABELS "installer;regression" TIMEOUT 10)
+endif()
 # Issue 403: persistent regressions backed by the mock-camera lifecycle harness.
 foreach(scenario IN ITEMS byte_pressure partial_series partial_series_no_frames partial_series_restart)
     add_test(NAME e2e.recording_403_${scenario}

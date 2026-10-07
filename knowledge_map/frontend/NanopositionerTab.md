@@ -52,3 +52,16 @@ Connection and serial/vendor controls are disabled while scanning. A legacy
 COM-only setting retains its port preference but defaults to automatic vendor
 selection; an explicit saved vendor is preserved. Discovery and connection are
 observe-only, with no voltage or mode writes.
+
+## Callback lifetime and voltage persistence (#405, TD-21)
+
+Autofocus callbacks capture a shared `StatusDelivery` gate. Queue admission and
+tab destruction share its mutex; destruction clears the target before deleting
+widgets, and Qt discards already queued deliveries. Unregistering the callback
+alone cannot invalidate a snapshot already taken by the service.
+
+`saveConfig()` preserves `autofocus_initial_voltage`: connecting, observing the
+live voltage (including 0 V), unrelated edits and quitting do not edit that
+setting. The configured initial voltage remains separate from manual nudges.
+`frontend.nanopositioner_callback` uses a fake driver and retained callback
+snapshots to cover both persistence and concurrent destruction.

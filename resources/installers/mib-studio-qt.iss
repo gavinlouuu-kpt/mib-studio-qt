@@ -193,8 +193,10 @@ begin
     end;
   end;
 
-  // Additional fallback: Check for presence of key runtime DLLs in System32
-  if FileExists(ExpandConstant('{syswow64}\msvcp140.dll')) and FileExists(ExpandConstant('{syswow64}\vcruntime140.dll')) then
+  // Check all required x64 DLLs in native System32 ({sys} in 64-bit install mode).
+  if FileExists(ExpandConstant('{sys}\msvcp140.dll')) and
+     FileExists(ExpandConstant('{sys}\vcruntime140.dll')) and
+     FileExists(ExpandConstant('{sys}\vcruntime140_1.dll')) then
   begin
     Result := False; // Runtime DLLs found
     Exit;

@@ -5,6 +5,7 @@
 
 #include <QWidget>
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -62,6 +63,8 @@ private:
     void populateComPortList();
     backend::nanopositioner::Endpoint selectedEndpoint() const;
 
+    struct StatusDelivery;
+    std::shared_ptr<StatusDelivery> statusDelivery_;
     Ui::NanopositionerTab* ui;
     backend::AppBackend& backend_;
     QTimer* statusUpdateTimer_ = nullptr;

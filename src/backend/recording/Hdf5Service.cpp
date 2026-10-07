@@ -538,19 +538,20 @@ namespace backend::services
             return false;
         }
 
-        // Create chunked dataset property for extensibility
+        // One frame per chunk matches each append write and avoids
+        // whole-chunk read-modify-write.
         hid_t propId = H5Pcreate(H5P_DATASET_CREATE);
         hsize_t chunkDims[4];
         if (channels == 1)
         {
-            chunkDims[0] = std::min(static_cast<hsize_t>(100), dims[0]); // Chunk size of 100 frames or less
+            chunkDims[0] = 1;
             chunkDims[1] = dims[1];
             chunkDims[2] = dims[2];
             H5Pset_chunk(propId, 3, chunkDims);
         }
         else
         {
-            chunkDims[0] = std::min(static_cast<hsize_t>(100), dims[0]);
+            chunkDims[0] = 1;
             chunkDims[1] = dims[1];
             chunkDims[2] = dims[2];
             chunkDims[3] = dims[3];
@@ -966,8 +967,8 @@ namespace backend::services
         }
 
         hid_t propId = H5Pcreate(H5P_DATASET_CREATE);
-        hsize_t chunkDims[4] = {std::min(static_cast<hsize_t>(10), dims[0]),
-                                seriesCount,
+        // Each write covers one series member, so each member owns a chunk.
+        hsize_t chunkDims[4] = {1, 1,
                                 static_cast<hsize_t>(height),
                                 static_cast<hsize_t>(width)};
         H5Pset_chunk(propId, 4, chunkDims);

@@ -35,6 +35,7 @@
 #include <fstream>
 #include <functional>
 #include <map>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -68,6 +69,7 @@ ProcessedFrame makeFrame(uint64_t idx, bool valid, int h, int w, int series)
     f.validation.objectCount = 1;
     f.validation.area = 100.0 + idx;
     f.validation.deformability = 0.25;
+    f.validation.youngsModulus = valid ? 12.345 : std::numeric_limits<double>::quiet_NaN();
     f.validation.brightness.q1 = 1.5;
     for (int s = 0; valid && s < series; ++s) f.seriesImages.push_back(pattern(idx, h, w, 100 + s * 17));
     return f;
@@ -203,6 +205,15 @@ int main()
         std::getline(csv, row);
         MIB_EXPECT(header.rfind("Frame Type,Index,Timestamp,Object Id,Object Count,Track Id", 0) == 0, "csv header");
         MIB_EXPECT(row.rfind("Valid,0,1000,7,1,-1,0,0,0,0.250,100.00,", 0) == 0, "csv row format: " + row);
+        MIB_EXPECT(header.substr(header.rfind(',') + 1) == "Young's modulus (kPa)", "modulus header appended");
+        MIB_EXPECT(std::count(header.begin(), header.end(), ',') == 23, "CSV has 24 columns");
+        MIB_EXPECT(row.substr(row.rfind(',') + 1) == "12.345", "finite modulus exported");
+        while (std::getline(csv, row)) {
+            MIB_EXPECT(std::count(row.begin(), row.end(), ',') == 23, "row column count stable");
+            if (row.rfind("Invalid,", 0) == 0)
+                MIB_EXPECT(row.back() == ',', "NaN modulus is an empty final field");
+        }
+
         MIB_EXPECT(std::count(phases.begin(), phases.end(), HdfExportPhase::Committing) == 1, "commit phase reported");
         MIB_EXPECT(noPartials(out), "no partial residue");
         MIB_EXPECT(fnv1a(source) == sourceHash, "source untouched");

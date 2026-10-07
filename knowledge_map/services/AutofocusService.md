@@ -195,3 +195,12 @@ Connection and serial/vendor controls are disabled while scanning. A legacy
 COM-only setting retains its port preference but defaults to automatic vendor
 selection; an explicit saved vendor is preserved. Discovery and connection are
 observe-only, with no voltage or mode writes.
+
+## Status callback snapshots (#405)
+
+`notifyStatus()` copies the callback under `callbackMutex_`, then invokes it
+without holding that mutex. Replacement/unregistration is safe and callbacks
+may unregister themselves, but an existing snapshot may still run. Receivers
+must guard their lifetime; [[frontend/NanopositionerTab]] uses a shared queue
+admission gate. `backend.autofocus_callback` stresses concurrent replacement
+and reentrant unregistration without a physical backend.

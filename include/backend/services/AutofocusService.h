@@ -114,6 +114,7 @@ public:
     void setStatusCallback(StatusCallback callback);
 
 private:
+    friend struct AutofocusCallbackTestAccess;
     void controlLoop();
     // One focus-score control evaluation (control thread). Returns after a
     // write failure so the loop can back off.

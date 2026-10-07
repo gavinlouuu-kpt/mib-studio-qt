@@ -358,3 +358,11 @@ the same run accounting summary used for raw recordings. `incompleteLoss` and
 `failed` remain visible after chart/data loading; legacy files explicitly report
 that accounting was not recorded. Offscreen regression: `frontend.hdf_review_core`
 loads an experiment with reconciled counters and one overwritten frame.
+
+## Young's modulus metrics column (#230)
+
+`HdfMetricsModel` appends `Young's modulus (kPa)` after Target Group (column 24).
+Stored values display with three decimal places and NaN displays blank. Existing
+column positions stay stable. The backend metrics CSV appends the same quantity
+after its existing final Bright Q4 column; see [[services/HdfExportService]].
+`frontend.hdf_metrics_model` checks the order, finite formatting and NaN.

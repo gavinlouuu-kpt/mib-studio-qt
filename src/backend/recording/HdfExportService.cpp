@@ -83,7 +83,7 @@ bool writeMetricsCsv(const fs::path& path, const std::vector<services::Processed
     out << "Frame Type,Index,Timestamp,Object Id,Object Count,Track Id,Track First,Track Last,Track Observations,"
         << "Deformability,Area,Area (um\xC2\xB2),Area Ratio,Ring Ratio,"
         << "Valid,Touches Border,Single Inner,In Range,Inner Count,"
-        << "Bright Q1,Bright Q2,Bright Q3,Bright Q4\n";
+        << "Bright Q1,Bright Q2,Bright Q3,Bright Q4,Young's modulus (kPa)\n";
     auto writeFrame = [&](const char* type, const services::ProcessedFrame& f) {
         const auto& v = f.validation;
         out << type << "," << f.index << "," << f.timestampNs << "," << v.objectId << "," << v.objectCount << ","
@@ -93,7 +93,8 @@ bool writeMetricsCsv(const fs::path& path, const std::vector<services::Processed
             << (v.isValid ? "Yes" : "No") << "," << (v.touchesBorder ? "Yes" : "No") << ","
             << (v.hasSingleInnerContour ? "Yes" : "No") << "," << (v.inRange ? "Yes" : "No") << ","
             << v.innerContourCount << "," << fixed(v.brightness.q1, 2) << "," << fixed(v.brightness.q2, 2) << ","
-            << fixed(v.brightness.q3, 2) << "," << fixed(v.brightness.q4, 2) << "\n";
+            << fixed(v.brightness.q3, 2) << "," << fixed(v.brightness.q4, 2) << ","
+            << (std::isnan(v.youngsModulus) ? std::string() : fixed(v.youngsModulus, 3)) << "\n";
     };
     for (const auto& f : valid) writeFrame("Valid", f);
     for (const auto& f : invalid) writeFrame("Invalid", f);
