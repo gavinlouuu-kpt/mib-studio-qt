@@ -74,11 +74,14 @@ int main()
     std::vector<std::thread> consumers;
     for (int i = 0; i < 3; ++i) consumers.emplace_back(consumer);
 
-    // Resize repeatedly while IO is live.
+    // Resize repeatedly while IO is live. Run to a resize count, not a fixed
+    // time: on a loaded runner (Windows CI) resize() can wait out the producer
+    // and consumers long enough that a time window yields only a handful.
     const size_t caps[] = {64, 128, 256, 96, 512};
+    constexpr int kTargetResizes = 25;
     int resizes = 0;
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
-    for (int i = 0; std::chrono::steady_clock::now() < deadline; ++i) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(12);
+    for (int i = 0; resizes < kTargetResizes && std::chrono::steady_clock::now() < deadline; ++i) {
         wd.mark("resize");
         MIB_EXPECT(store.resize(caps[i % 5]), "resize succeeds under load");
         ++resizes;
@@ -91,7 +94,7 @@ int main()
     for (auto& t : consumers) t.join();
 
     MIB_EXPECT(!failed.load(), "no torn frame observed during resize under load");
-    MIB_EXPECT(resizes > 10, "performed multiple resizes under load");
+    MIB_EXPECT(resizes == kTargetResizes, "performed every resize under load");
 
     // Final sanity: store still works after the churn.
     std::vector<uint8_t> buf(kBytes, 7);
