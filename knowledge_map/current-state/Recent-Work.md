@@ -1,5 +1,13 @@
 # Recent Work
 
+## 2026-10-07 — Await desktop safety confirmations (#541)
+
+All destructive/draft-discard and Service mode prompts await the shared transport
+dialog helper. The Tauri shell uses the plugin public confirmation API with explicit
+`dialog:allow-message`; browsers use awaited native confirmation. Rejected dialogs
+fail closed. Tests cover cancellation, async shims, and forbid direct confirmation
+calls outside the helper. See [[architecture/Desktop-Shell]].
+
 ## 2026-10-07 — Deterministic experiment readiness checks (#506)
 
 `backend.experiment_readiness` joins the realtime consumer before editing the live

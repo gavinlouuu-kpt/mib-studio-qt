@@ -816,3 +816,7 @@ disarms; #521).
 
 Tests: `stageControlModel.test.ts` (rules) and `StageControls.test.tsx`
 (panel behaviour with a mocked bridge).
+
+Safety confirmations go through `desktop/src/transport/dialogs.ts` and must be
+awaited. Tauri uses the public dialog API (`dialog:allow-message`); browser
+confirmation and native dialog errors fail closed unless the result is true.

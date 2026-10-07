@@ -1,5 +1,5 @@
 import {invoke} from "./transport";
-import {open} from "./transport/dialogs";
+import {open, confirm} from "./transport/dialogs";
 import { useEffect, useRef, useState } from "react";
 import { ProfileCatalogPanel, useProfileCatalog } from "./profileCatalog";
 import { configDocument } from "./configDocument";
@@ -15,9 +15,9 @@ export function useProfiles({ready,active,resume=false,append,onOpen,onApplied}:
   const [activeProfile,setActiveProfile]=useState<Profile|null>(null);
   const run=async(operation:string, target?:Profile)=>{
     if(!ready||active||pending.current)return;
-    if(["choose","read","import","duplicate"].includes(operation)&&dirty&&!window.confirm("Discard unsaved profile draft?"))return;
+    if(["choose","read","import","duplicate"].includes(operation)&&dirty&&!await confirm("Discard unsaved profile draft?"))return;
     if(dirty&&["rename","archive","apply","open"].includes(operation)){setMessage("Save or discard the draft before using saved profile operations.");return;}
-    if(operation==="archive"&&!window.confirm("Archive this profile? Files remain recoverable in the profile directory."))return;
+    if(operation==="archive"&&!await confirm("Archive this profile? Files remain recoverable in the profile directory."))return;
     pending.current=true;setBusy(true);setMessage("");
     try {
       let directory=base;
