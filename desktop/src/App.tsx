@@ -1,3 +1,6 @@
+import { metricNumber } from "./metricFormat";
+import { ResultMetricCells } from "./components/ResultMetricCells";
+import { PanelErrorBoundary } from "./components/PanelErrorBoundary";
 import {CaptureRecovery} from "./components/CaptureRecovery";
 import {ExperimentRecovery} from "./components/ExperimentRecovery";
 import {recoverNativeRuntime} from "./runtimeRecovery";
@@ -6,7 +9,6 @@ import { ProcessedPreview } from "./components/ProcessedPreview";
 import { BackgroundCalibrationControls } from "./components/BackgroundCalibrationControls";
 import {invoke} from "./transport";
 import { PreviewBufferControls, usePreviewBuffer } from "./previewBuffer";
-import { formatMetric } from "./eventAdapter";
 import { decimalU64 } from "./framePacket";
 import { FramePullScheduler } from "./framePullScheduler";
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
@@ -1303,21 +1305,21 @@ export default function App() {
           </div>}
           <div className="side-section">
             <h4>Display</h4>
-            <SideRow k="FPS:" v={displayFps.toFixed(1)} />
+            <SideRow k="FPS:" v={metricNumber(displayFps, 1)} />
           </div>
           <div className="side-section">
             <h4>Processing</h4>
             {!hostProcessing && <SideRow k="Runs on:" v="PL (every frame)" />}
-            {hostProcessing && <SideRow k="Algo FPS:" v={stats?.valid ? formatMetric(algoFps) : "—"} cls={stats?.valid ? "" : "dim"} />}
-            {hostProcessing && <SideRow k="Valid FPS:" v={stats?.valid ? formatMetric(validFps) : "—"} cls={stats?.valid ? "" : "dim"} />}
-            {hostProcessing && <SideRow k="Invalid FPS:" v={stats?.valid ? formatMetric(invalidFps) : "—"} cls={stats?.valid ? "" : "dim"} />}
+            {hostProcessing && <SideRow k="Algo FPS:" v={stats?.valid ? metricNumber(algoFps) : "—"} cls={stats?.valid ? "" : "dim"} />}
+            {hostProcessing && <SideRow k="Valid FPS:" v={stats?.valid ? metricNumber(validFps) : "—"} cls={stats?.valid ? "" : "dim"} />}
+            {hostProcessing && <SideRow k="Invalid FPS:" v={stats?.valid ? metricNumber(invalidFps) : "—"} cls={stats?.valid ? "" : "dim"} />}
             <SideRow k="px→µm:" v={stats?.valid ? String(stats.pixel_to_micron) : "—"} cls={stats?.valid ? "" : "dim"} />
           </div>
           <div className="side-section">
             <h4>Camera</h4>
             <SideRow k="Status:" v={running ? "Running" : camStatus} cls={running ? "ok" : ""} />
-            <SideRow k="Display rate:" v={`${displayFps.toFixed(1)} fps`} />
-            <SideRow k="Data rate:" v={`${dataRate.toFixed(1)} MB/s`} />
+            <SideRow k="Display rate:" v={`${metricNumber(displayFps, 1)} fps`} />
+            <SideRow k="Data rate:" v={`${metricNumber(dataRate, 1)} MB/s`} />
           </div>
           {pz7035 && <div className="side-section" title="PZ7035 PL core and health (#501)">
             <h4>PL core</h4>
@@ -1327,14 +1329,14 @@ export default function App() {
               cls={instrument?.core?.profile_match === "match" ? "ok" : "dim"} />
             <SideRow k="LED:" v={instrument?.led ? (instrument.led.guard_fault ? "GUARD TRIPPED" : instrument.led.on ? `${instrument.led.preset} ${instrument.led.delay_us}/${instrument.led.width_us} µs` : "off") : "—"}
               cls={instrument?.led && !instrument.led.guard_fault ? "" : "dim"} />
-            <SideRow k="Latency max:" v={instrument?.latency && instrument.latency.frames > 0 ? `${instrument.latency.max_us.toFixed(1)} µs` : "—"}
+            <SideRow k="Latency max:" v={instrument?.latency && instrument.latency.frames > 0 ? `${metricNumber(instrument.latency.max_us, 1)} µs` : "—"}
               cls={instrument?.latency && instrument.latency.frames > 0 ? "" : "dim"} />
           </div>}
           {caps.autofocus && <div className="side-section">
             <h4>Autofocus</h4>
             <SideRow
               k="Ring width:"
-              v={afStatus?.valid && afStatus.last_ring_ratio_update_us > 0 ? afStatus.median_ring_ratio.toFixed(3) : "—"}
+              v={afStatus?.valid && afStatus.last_ring_ratio_update_us > 0 ? metricNumber(afStatus.median_ring_ratio, 3) : "—"}
               cls={afStatus?.valid && afStatus.last_ring_ratio_update_us > 0 ? "" : "dim"}
             />
             <SideRow
@@ -1368,14 +1370,14 @@ export default function App() {
             />
             <SideRow
               k="Voltage:"
-              v={afStatus?.connected ? `${afStatus.current_voltage.toFixed(1)} V` : "—"}
+              v={afStatus?.connected ? `${metricNumber(afStatus.current_voltage, 1)} V` : "—"}
               cls={afStatus?.connected ? "" : "dim"}
             />
             <SideRow
               k="Metric age:"
               v={
                 afStatus?.valid && afStatus.last_ring_ratio_update_us > 0
-                  ? `${(afStatus.ring_ratio_age_us / 1000).toFixed(0)} ms`
+                  ? `${metricNumber(afStatus.ring_ratio_age_us / 1000, 0)} ms`
                   : "—"
               }
               cls={afStatus?.valid && afStatus.last_ring_ratio_update_us > 0 ? "" : "dim"}
@@ -1470,6 +1472,7 @@ export default function App() {
           {caps.reanalysis && <ReanalysisStatus model={reanalysis}/>}
           <ExportStatus model={reviewExport} />
           <div className="tab-body">
+            <PanelErrorBoundary>{() => <>
             <div hidden={tab !== "connect"}>
               <HardwareControls ready={ready} experimentActive={expActive} append={append} capabilities={caps}
                 mode={operatingMode} armed={triggerArmed} onDisarm={() => setTriggerArmed(false)} onSelectionChanged={refreshCameraState} />
@@ -1771,7 +1774,7 @@ export default function App() {
                       <p className="mono" role="status">
                         Run 512×96 at ({instrument?.mode?.run_x}, {instrument?.mode?.run_y}) · frame {runPreviewInfo?.frameId ?? "—"}
                         {" · "}listed {runPreviewInfo?.listed ?? "—"} · cells {runPreviewInfo?.cells ?? "—"} · blemishes {runPreviewInfo?.blemishes ?? "—"}
-                        {" · "}latency max {instrument?.latency ? `${instrument.latency.max_us.toFixed(0)} µs` : "—"}
+                        {" · "}latency max {instrument?.latency ? `${metricNumber(instrument.latency.max_us, 0)} µs` : "—"}
                         {" · "}<label><input type="checkbox" checked={showRunMask} onChange={(e) => setShowRunMask(e.target.checked)} /> U-Net mask</label>
                       </p>
                     )}
@@ -1908,8 +1911,8 @@ export default function App() {
                               {quickDraft.runtimeChanged && <p role="status">Runtime processing controls changed; your edits are preserved. Use Reload above, then reconcile your changes.</p>}
                               {stats?.valid && (
                                 <p className="mono">
-                                  algo {formatMetric(stats.algo_fps1s)} · valid {formatMetric(stats.valid_fps1s)} · invalid{" "}
-                                  {formatMetric(stats.invalid_fps1s)} fps · px→µm {stats.pixel_to_micron}
+                                  algo {metricNumber(stats.algo_fps1s)} · valid {metricNumber(stats.valid_fps1s)} · invalid{" "}
+                                  {metricNumber(stats.invalid_fps1s)} fps · px→µm {metricNumber(stats.pixel_to_micron, 5, true)}
                                 </p>
                               )}
                               <p className="mono">background: {backgroundSet ? "set" : "not set"}</p>
@@ -2079,10 +2082,7 @@ export default function App() {
                               <td>{r.track_id}</td>
                               <td>{r.valid ? "yes" : "no"}</td>
                               <td>{r.target_group ? "yes" : "no"}</td>
-                              <td>{r.area.toFixed(1)}</td>
-                              <td>{r.deformability.toFixed(3)}</td>
-                              <td>{r.ring_ratio.toFixed(3)}</td>
-                              <td>{Number.isFinite(r.youngs_modulus)&&r.youngs_modulus>0?r.youngs_modulus.toFixed(2):"unavailable"}</td>
+                              <ResultMetricCells row={r} />
                             </tr>
                           ))}
                           {(monSnapshot?.rows?.length ?? 0) === 0 && (
@@ -2249,10 +2249,7 @@ export default function App() {
                               <td>{r.frame_index}</td>
                               <td>{r.object_id}</td>
                               <td>{r.track_id}</td>
-                              <td>{r.area.toFixed(1)}</td>
-                              <td>{r.deformability.toFixed(3)}</td>
-                              <td>{r.ring_ratio.toFixed(3)}</td>
-                              <td>{Number.isFinite(r.youngs_modulus)&&r.youngs_modulus>0?r.youngs_modulus.toFixed(2):"unavailable"}</td>
+                              <ResultMetricCells row={r} />
                             </tr>
                           ))}
                           {(metricsPage?.rows?.length ?? 0) === 0 && (
@@ -2290,6 +2287,7 @@ export default function App() {
                 </div>
               </>
             )}
+            </>}</PanelErrorBoundary>
           </div>
         </main>
       </div>
@@ -2330,8 +2328,8 @@ export default function App() {
           Log {showLog ? "▾" : "▸"} ({log.length})
         </button>
         <span className="metrics">
-          Display={displayFps.toFixed(1)} fps | Algo={formatMetric(algoFps)}/s | Valid={formatMetric(validFps)}/s | Invalid=
-          {formatMetric(invalidFps)}/s | Camera={running ? "running" : camStatus}, {dataRate.toFixed(1)} MB/s | Experiment:{" "}
+          Display={metricNumber(displayFps, 1)} fps | Algo={metricNumber(algoFps)}/s | Valid={metricNumber(validFps)}/s | Invalid=
+          {metricNumber(invalidFps)}/s | Camera={running ? "running" : camStatus}, {metricNumber(dataRate, 1)} MB/s | Experiment:{" "}
           {(EXPERIMENT_STATE_NAMES[expState] ?? "Inactive").toLowerCase()}
           {expActive ? ` (buffered ${String(BigInt(expStatus?.valid_buffered ?? "0") + BigInt(expStatus?.invalid_buffered ?? "0"))})` : ""}
         </span>

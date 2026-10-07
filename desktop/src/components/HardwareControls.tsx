@@ -1,3 +1,4 @@
+import { metricNumber } from "../metricFormat";
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { bridge, type AutofocusConfig, type AutofocusStatus, type PumpStatus, type CmdResult, type PlatformCapabilities } from '../bridge';
 import { DESKTOP_CAPABILITIES } from '../platformCapabilities';
@@ -174,7 +175,7 @@ export function HardwareControls({ready, experimentActive, append, mode = DEFAUL
     })}
     {autofocus && <fieldset><legend>Autofocus / nanopositioner</legend>
       <p>{focus ? `${focus.connected ? 'Connected' : 'Disconnected'} · ${focus.enabled ? 'Enabled' : 'Disabled'} · ${focus.current_voltage} V · ${focus.backend_name ?? ""} ${focus.endpoint_id ?? ""}` : 'Status unknown'}</p>
-      {focus && <p>Ring ratio: {focus.average_ring_ratio} average / {focus.median_ring_ratio} median · {focus.last_ring_ratio_update_us === 0 ? 'No focus sample received' : `Sample age ${(focus.ring_ratio_age_us / 1000).toFixed(0)} ms${config && focus.ring_ratio_age_us > config.ring_ratio_stale_ms * 1000 ? ' (stale)' : ''}`}</p>}
+      {focus && <p>Ring ratio: {metricNumber(focus.average_ring_ratio, 3)} average / {metricNumber(focus.median_ring_ratio, 3)} median · {focus.last_ring_ratio_update_us === 0 ? 'No focus sample received' : `Sample age ${metricNumber(focus.ring_ratio_age_us / 1000, 0)} ms${config && focus.ring_ratio_age_us > config.ring_ratio_stale_ms * 1000 ? ' (stale)' : ''}`}</p>}
       <EndpointDiscovery disabled={configureDisabled || !!focus?.connected} request={() => ({kinds: [2], origin: 'tauri-nanopositioner-picker'})} onSelect={device => {
         const oeabt = device.claimed_by.some(vendor => /oeabt/i.test(vendor));
         setFocusBackend(oeabt ? 'oeabt' : 'coremor'); setFocusEndpoint(device.persistent_id || device.system_path);

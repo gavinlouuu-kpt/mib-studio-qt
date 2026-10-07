@@ -1,3 +1,4 @@
+import { metricNumber } from "../metricFormat";
 // Frame viewer overlay (plan 2026-10-01-standalone-review-app, PR 2): the
 // Qt FrameViewerDialog — one frame at full resolution with the backend
 // overlay / ROI, frame prev/next, multi-image series prev/next, zoom
@@ -132,8 +133,8 @@ export function FrameViewer(props: FrameViewerProps) {
         </div>
         {row && (
           <div className="viewer-metrics mono">
-            area {row.area.toFixed(1)} px² ({row.area_um2.toFixed(2)} µm²) · deformability {row.deformability.toFixed(4)} · ring
-            ratio {row.ring_ratio.toFixed(3)} · E {row.youngs_modulus.toFixed(2)} kPa · object {row.object_id} · track {row.track_id}
+            area {metricNumber(row.area, 1)} px² ({metricNumber(row.area_um2, 2)} µm²) · deformability {metricNumber(row.deformability, 4)} · ring
+            ratio {metricNumber(row.ring_ratio, 3)} · E {metricNumber(row.youngs_modulus, 2)} kPa · object {row.object_id} · track {row.track_id}
             {row.target_group ? " · target" : ""}
           </div>
         )}
