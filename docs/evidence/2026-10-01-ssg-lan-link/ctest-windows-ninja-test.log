@@ -1,0 +1,414 @@
+﻿Test project C:/Users/ERBG07/Developer/mib-studio-qt/.claude/worktrees/feat-trigger-frame-alignment/build-ninja
+        Start   1: backend.serial_port_win32_timeout
+  1/141 Test   #1: backend.serial_port_win32_timeout .............   Passed    0.30 sec
+        Start   2: backend.smoke
+  2/141 Test   #2: backend.smoke .................................   Passed    0.05 sec
+        Start   3: backend.emodulus_lut_catalog
+  3/141 Test   #3: backend.emodulus_lut_catalog ..................   Passed    0.03 sec
+        Start   4: backend.emodulus_lut_degenerate
+  4/141 Test   #4: backend.emodulus_lut_degenerate ...............   Passed    0.03 sec
+        Start   5: backend.hardware_shutdown
+  5/141 Test   #5: backend.hardware_shutdown .....................   Passed    1.07 sec
+        Start   6: backend.lifecycle_smoke
+  6/141 Test   #6: backend.lifecycle_smoke .......................   Passed    0.12 sec
+        Start   7: backend.frame_store_concurrency
+  7/141 Test   #7: backend.frame_store_concurrency ...............   Passed    0.10 sec
+        Start   8: backend.frame_store_bounds
+  8/141 Test   #8: backend.frame_store_bounds ....................   Passed    0.01 sec
+        Start   9: backend.modbus_rtu
+  9/141 Test   #9: backend.modbus_rtu ............................   Passed    0.01 sec
+        Start  10: backend.syringe_pump_fake_serial
+ 10/141 Test  #10: backend.syringe_pump_fake_serial ..............   Passed    2.45 sec
+        Start  11: backend.pump_bridge_facade
+ 11/141 Test  #11: backend.pump_bridge_facade ....................   Passed    0.82 sec
+        Start  12: backend.serial_port_posix_loopback
+ 12/141 Test  #12: backend.serial_port_posix_loopback ............   Passed    0.02 sec
+        Start  13: backend.serial_port_enumeration
+ 13/141 Test  #13: backend.serial_port_enumeration ...............   Passed    0.02 sec
+        Start  14: backend.nanopositioner_discovery
+ 14/141 Test  #14: backend.nanopositioner_discovery ..............   Passed    0.29 sec
+        Start  15: backend.autofocus_math
+ 15/141 Test  #15: backend.autofocus_math ........................   Passed    0.02 sec
+        Start  16: backend.device_discovery_service
+ 16/141 Test  #16: backend.device_discovery_service ..............   Passed    0.28 sec
+        Start  17: backend.device_discovery_fault
+ 17/141 Test  #17: backend.device_discovery_fault ................   Passed    0.29 sec
+        Start  18: backend.startup_discovery_policy
+ 18/141 Test  #18: backend.startup_discovery_policy ..............   Passed    1.06 sec
+        Start  19: backend.device_discovery_providers
+ 19/141 Test  #19: backend.device_discovery_providers ............   Passed    0.55 sec
+        Start  20: backend.device_discovery_stress
+ 20/141 Test  #20: backend.device_discovery_stress ...............   Passed    1.60 sec
+        Start  21: backend.discovery_facade
+ 21/141 Test  #21: backend.discovery_facade ......................   Passed    0.28 sec
+        Start  22: backend.oeabt_protocol
+ 22/141 Test  #22: backend.oeabt_protocol ........................   Passed    0.02 sec
+        Start  23: backend.autofocus_backend_safety
+ 23/141 Test  #23: backend.autofocus_backend_safety ..............   Passed    0.27 sec
+        Start  24: backend.autofocus_focus_score
+ 24/141 Test  #24: backend.autofocus_focus_score .................   Passed    0.02 sec
+        Start  25: backend.hdf_write_queue
+ 25/141 Test  #25: backend.hdf_write_queue .......................   Passed    0.11 sec
+        Start  26: backend.frame_store_reserve
+ 26/141 Test  #26: backend.frame_store_reserve ...................   Passed    0.02 sec
+        Start  27: backend.recording_isframeempty_roi
+ 27/141 Test  #27: backend.recording_isframeempty_roi ............   Passed    0.02 sec
+        Start  28: frontend.monitoring_roi_crop
+ 28/141 Test  #28: frontend.monitoring_roi_crop ..................   Passed    0.01 sec
+        Start  29: processing.monitoring_density
+ 29/141 Test  #29: processing.monitoring_density .................   Passed    0.17 sec
+        Start  30: backend.monitoring_density_service
+ 30/141 Test  #30: backend.monitoring_density_service ............   Passed    1.87 sec
+        Start  31: performance.monitoring_density_contention
+ 31/141 Test  #31: performance.monitoring_density_contention .....   Passed   17.57 sec
+        Start  32: backend.pr4_monitoring_snapshot
+ 32/141 Test  #32: backend.pr4_monitoring_snapshot ...............   Passed    0.80 sec
+        Start  33: backend.roi_crop
+ 33/141 Test  #33: backend.roi_crop ..............................   Passed    0.02 sec
+        Start  34: backend.pulse_generator_frame
+ 34/141 Test  #34: backend.pulse_generator_frame .................   Passed    0.02 sec
+        Start  35: backend.serial_bus_pty
+ 35/141 Test  #35: backend.serial_bus_pty ........................   Passed    0.01 sec
+        Start  36: backend.mindvision_overview_mode
+ 36/141 Test  #36: backend.mindvision_overview_mode ..............   Passed    0.54 sec
+        Start  37: backend.mindvision_config
+ 37/141 Test  #37: backend.mindvision_config .....................   Passed    0.02 sec
+        Start  38: backend.illuminated_live
+ 38/141 Test  #38: backend.illuminated_live ......................   Passed    5.55 sec
+        Start  39: backend.mindvision_conversion_fault
+ 39/141 Test  #39: backend.mindvision_conversion_fault ...........   Passed    0.27 sec
+        Start  40: backend.capture_lifecycle
+ 40/141 Test  #40: backend.capture_lifecycle .....................   Passed    3.96 sec
+        Start  41: backend.trigger_session
+ 41/141 Test  #41: backend.trigger_session .......................   Passed    0.27 sec
+        Start  42: backend.trigger_event_log
+ 42/141 Test  #42: backend.trigger_event_log .....................   Passed    0.28 sec
+        Start  43: backend.rf_generator_service
+ 43/141 Test  #43: backend.rf_generator_service ..................   Passed    0.28 sec
+        Start  44: backend.timestamp_telemetry
+ 44/141 Test  #44: backend.timestamp_telemetry ...................   Passed    2.37 sec
+        Start  45: backend.experiment_readiness
+ 45/141 Test  #45: backend.experiment_readiness ..................   Passed    3.96 sec
+        Start  46: backend.camera_script_apply
+ 46/141 Test  #46: backend.camera_script_apply ...................   Passed    0.12 sec
+        Start  47: backend.frame_store_resize_under_load
+ 47/141 Test  #47: backend.frame_store_resize_under_load .........   Passed    1.58 sec
+        Start  48: performance.pipeline_timing
+ 48/141 Test  #48: performance.pipeline_timing ...................   Passed    4.09 sec
+        Start  49: processing.memory_budget
+ 49/141 Test  #49: processing.memory_budget ......................   Passed    1.33 sec
+        Start  50: performance.memory_budget
+ 50/141 Test  #50: performance.memory_budget .....................   Passed    2.38 sec
+        Start  51: backend.facade_boundary
+ 51/141 Test  #51: backend.facade_boundary .......................   Passed    0.51 sec
+        Start  52: e2e.experiment_coordinator
+ 52/141 Test  #52: e2e.experiment_coordinator ....................   Passed    0.45 sec
+        Start  53: backend.mindvision_selection_state
+ 53/141 Test  #53: backend.mindvision_selection_state ............   Passed    0.21 sec
+        Start  54: camera.mock_smoke
+ 54/141 Test  #54: camera.mock_smoke .............................   Passed    0.02 sec
+        Start  55: camera.delivery_mode_overload
+ 55/141 Test  #55: camera.delivery_mode_overload .................   Passed    4.20 sec
+        Start  56: camera.delivery_mode_contract
+ 56/141 Test  #56: camera.delivery_mode_contract .................   Passed    1.33 sec
+        Start  57: processing.science_seam
+ 57/141 Test  #57: processing.science_seam .......................   Passed    0.02 sec
+        Start  58: processing.contract_v2_migration
+ 58/141 Test  #58: processing.contract_v2_migration ..............   Passed    0.02 sec
+        Start  59: processing.contract2_conformance
+ 59/141 Test  #59: processing.contract2_conformance ..............   Passed    0.02 sec
+        Start  60: processing.image_filter_pipeline
+ 60/141 Test  #60: processing.image_filter_pipeline ..............   Passed    0.02 sec
+        Start  61: processing.laplacian_variance
+ 61/141 Test  #61: processing.laplacian_variance .................   Passed    0.02 sec
+        Start  62: processing.science_golden
+ 62/141 Test  #62: processing.science_golden .....................   Passed    0.02 sec
+        Start  63: processing.identification_metrics
+ 63/141 Test  #63: processing.identification_metrics .............   Passed    0.02 sec
+        Start  64: processing.pipeline_smoke
+ 64/141 Test  #64: processing.pipeline_smoke .....................   Passed    0.02 sec
+        Start  65: processing.channel_roi_detect
+ 65/141 Test  #65: processing.channel_roi_detect .................   Passed    0.02 sec
+        Start  66: processing.core_abi_c
+ 66/141 Test  #66: processing.core_abi_c .........................   Passed    0.03 sec
+        Start  67: processing.core_abi_v2_c
+ 67/141 Test  #67: processing.core_abi_v2_c ......................   Passed    0.03 sec
+        Start  68: processing.core_capabilities
+ 68/141 Test  #68: processing.core_capabilities ..................   Passed    0.02 sec
+        Start  69: processing.core_loader
+ 69/141 Test  #69: processing.core_loader ........................   Passed    0.04 sec
+        Start  70: processing.core_v2_plugin
+ 70/141 Test  #70: processing.core_v2_plugin .....................   Passed    0.03 sec
+        Start  71: processing.core_contract2_equivalence
+ 71/141 Test  #71: processing.core_contract2_equivalence .........   Passed    0.05 sec
+        Start  72: processing.core_fixture_matrix
+ 72/141 Test  #72: processing.core_fixture_matrix ................   Passed    0.04 sec
+        Start  73: processing.core_cache
+ 73/141 Test  #73: processing.core_cache .........................   Passed    0.30 sec
+        Start  74: processing.core_activation
+ 74/141 Test  #74: processing.core_activation ....................   Passed    0.28 sec
+        Start  75: processing.core_activation_stress
+ 75/141 Test  #75: processing.core_activation_stress .............   Passed    2.92 sec
+        Start  76: backend.processing_batch_pipeline
+ 76/141 Test  #76: backend.processing_batch_pipeline .............   Passed    0.05 sec
+        Start  77: backend.frame_store_commit
+ 77/141 Test  #77: backend.frame_store_commit ....................   Passed    0.28 sec
+        Start  78: processing.experiment_accounting
+ 78/141 Test  #78: processing.experiment_accounting ..............   Passed   19.70 sec
+        Start  79: processing.flush_byte_watermark
+ 79/141 Test  #79: processing.flush_byte_watermark ...............   Passed    0.54 sec
+        Start  80: recording.accounting
+ 80/141 Test  #80: recording.accounting ..........................   Passed    3.18 sec
+        Start  81: processing.fault_injection
+ 81/141 Test  #81: processing.fault_injection ....................   Passed    0.15 sec
+        Start  82: recording.lifecycle
+ 82/141 Test  #82: recording.lifecycle ...........................   Passed    0.02 sec
+        Start  83: recording.hdf5_resilience
+ 83/141 Test  #83: recording.hdf5_resilience .....................   Passed    0.03 sec
+        Start  84: recording.hdf5_exit_teardown
+ 84/141 Test  #84: recording.hdf5_exit_teardown ..................   Passed    0.04 sec
+        Start  85: recording.hdf5_save_performance
+ 85/141 Test  #85: recording.hdf5_save_performance ...............   Passed    0.02 sec
+        Start  86: recording.experiment_roundtrip
+ 86/141 Test  #86: recording.experiment_roundtrip ................   Passed    0.03 sec
+        Start  87: recording.trigger_alignment_roundtrip
+ 87/141 Test  #87: recording.trigger_alignment_roundtrip .........   Passed    0.03 sec
+        Start  88: recording.kde_core_roundtrip
+ 88/141 Test  #88: recording.kde_core_roundtrip ..................   Passed    0.02 sec
+        Start  89: recording.kde_core_fault
+ 89/141 Test  #89: recording.kde_core_fault ......................   Passed    0.02 sec
+        Start  90: recording.kde_full_run_core
+ 90/141 Test  #90: recording.kde_full_run_core ...................   Passed    0.16 sec
+        Start  91: recording.hdf_export_service
+ 91/141 Test  #91: recording.hdf_export_service ..................   Passed    1.59 sec
+        Start  97: backend.frame_store_wait
+ 92/141 Test  #97: backend.frame_store_wait ......................   Passed    4.23 sec
+        Start  98: backend.pipeline_timing_recorder
+ 93/141 Test  #98: backend.pipeline_timing_recorder ..............   Passed    0.28 sec
+        Start  99: backend.crash_reporter_pending_upload
+ 94/141 Test  #99: backend.crash_reporter_pending_upload .........   Passed    2.33 sec
+        Start 100: backend.crash_reporter_terminate
+ 95/141 Test #100: backend.crash_reporter_terminate ..............   Passed    0.09 sec
+        Start 101: backend.crash_reporter_segv
+ 96/141 Test #101: backend.crash_reporter_segv ...................   Passed    0.10 sec
+        Start 109: processing.realtime_drop_frames_default
+ 97/141 Test #109: processing.realtime_drop_frames_default .......   Passed    0.01 sec
+        Start 110: backend.processing_multi_object
+ 98/141 Test #110: backend.processing_multi_object ...............   Passed    0.02 sec
+        Start 111: backend.processing_object_tracking
+ 99/141 Test #111: backend.processing_object_tracking ............   Passed    0.02 sec
+        Start 117: frontend.json_flatten_roundtrip
+100/141 Test #117: frontend.json_flatten_roundtrip ...............   Passed    0.03 sec
+        Start 118: frontend.json_config_merge
+101/141 Test #118: frontend.json_config_merge ....................   Passed    0.03 sec
+        Start 119: frontend.processing_core_catalog
+102/141 Test #119: frontend.processing_core_catalog ..............   Passed    0.03 sec
+        Start 120: frontend.application_settings
+103/141 Test #120: frontend.application_settings .................   Passed    0.11 sec
+        Start 121: frontend.processing_core_settings
+104/141 Test #121: frontend.processing_core_settings .............   Passed    0.05 sec
+        Start 122: frontend.hdf_review_export_paths
+105/141 Test #122: frontend.hdf_review_export_paths ..............   Passed    0.03 sec
+        Start 123: frontend.window_geometry_policy
+106/141 Test #123: frontend.window_geometry_policy ...............   Passed    0.01 sec
+        Start 124: frontend.config_document_state
+107/141 Test #124: frontend.config_document_state ................   Passed    0.06 sec
+        Start 125: frontend.config_draft
+108/141 Test #125: frontend.config_draft .........................   Passed    0.03 sec
+        Start 126: frontend.run_status_model
+109/141 Test #126: frontend.run_status_model .....................   Passed    0.03 sec
+        Start 127: frontend.update_catalog
+110/141 Test #127: frontend.update_catalog .......................   Passed    0.03 sec
+        Start 128: scripts.mindvision_release_gate
+111/141 Test #128: scripts.mindvision_release_gate ...............   Passed    0.07 sec
+        Start 129: scripts.export_hdf5_paths
+112/141 Test #129: scripts.export_hdf5_paths .....................   Passed    0.65 sec
+        Start 130: scripts.export_hdf5_streaming
+113/141 Test #130: scripts.export_hdf5_streaming .................   Passed    1.07 sec
+        Start 131: scripts.hdf5_export_app_lifecycle
+114/141 Test #131: scripts.hdf5_export_app_lifecycle .............   Passed    2.35 sec
+        Start 133: scripts.convert_legacy_csv_to_json
+115/141 Test #133: scripts.convert_legacy_csv_to_json ............   Passed    0.10 sec
+        Start 134: scripts.gold_standard_schema_contract
+116/141 Test #134: scripts.gold_standard_schema_contract .........   Passed    0.07 sec
+        Start 135: scripts.contract2_export_review
+117/141 Test #135: scripts.contract2_export_review ...............   Passed    0.24 sec
+        Start 136: scripts.publish_processing_core
+118/141 Test #136: scripts.publish_processing_core ...............   Passed    0.26 sec
+        Start 137: scripts.publish_profiles
+119/141 Test #137: scripts.publish_profiles ......................   Passed    0.10 sec
+        Start 138: scripts.contract_version_consistency
+120/141 Test #138: scripts.contract_version_consistency ..........   Passed    0.07 sec
+        Start 139: scripts.bump_mib_processing_version
+121/141 Test #139: scripts.bump_mib_processing_version ...........   Passed    0.62 sec
+        Start 140: scripts.verify_processing_core_manifest
+122/141 Test #140: scripts.verify_processing_core_manifest .......   Passed    0.18 sec
+        Start 141: scripts.processing_core_signer_release_gate
+123/141 Test #141: scripts.processing_core_signer_release_gate ...   Passed    0.23 sec
+        Start 142: scripts.desktop_release_version
+124/141 Test #142: scripts.desktop_release_version ...............   Passed    0.50 sec
+        Start 143: scripts.publish_update_index
+125/141 Test #143: scripts.publish_update_index ..................   Passed    0.07 sec
+        Start 144: scripts.compare_metrics
+126/141 Test #144: scripts.compare_metrics .......................   Passed    0.09 sec
+        Start 145: scripts.run_processing_conformance_input
+127/141 Test #145: scripts.run_processing_conformance_input ......   Passed    0.22 sec
+        Start 148: frontend.processing_core_dialog
+128/141 Test #148: frontend.processing_core_dialog ...............   Passed    0.05 sec
+        Start 149: frontend.camera_action_state
+129/141 Test #149: frontend.camera_action_state ..................   Passed    0.29 sec
+        Start 150: frontend.ui_layout
+130/141 Test #150: frontend.ui_layout ............................   Passed    3.03 sec
+        Start 151: frontend.config_tabs_state
+131/141 Test #151: frontend.config_tabs_state ....................   Passed    1.34 sec
+        Start 152: frontend.preview_layout
+132/141 Test #152: frontend.preview_layout .......................   Passed    1.28 sec
+        Start 153: frontend.run_status_ui
+133/141 Test #153: frontend.run_status_ui ........................   Passed    2.02 sec
+        Start 154: frontend.monitoring_tune
+134/141 Test #154: frontend.monitoring_tune ......................   Passed    0.29 sec
+        Start 155: frontend.monitoring_kde_density
+135/141 Test #155: frontend.monitoring_kde_density ...............   Passed    3.45 sec
+        Start 156: frontend.hdf_review_core
+136/141 Test #156: frontend.hdf_review_core ......................   Passed    0.54 sec
+        Start 158: frontend.config_apply
+137/141 Test #158: frontend.config_apply .........................   Passed    3.45 sec
+        Start 159: frontend.device_discovery
+138/141 Test #159: frontend.device_discovery .....................   Passed    0.29 sec
+        Start 160: frontend.mindvision_overview
+139/141 Test #160: frontend.mindvision_overview ..................   Passed    1.83 sec
+        Start 161: frontend.mainwindow_shutdown
+140/141 Test #161: frontend.mainwindow_shutdown ..................***Failed    2.04 sec
+[2026-10-01 17:07:06.060] [app] [info] [Logger.cpp:46] Logger initialized: C:\Users\ERBG07\AppData\Local\Temp\mainwindow_shutdown_14182199718867214985\data\logs\app.log
+[2026-10-01 17:07:06.063] [app] [info] [AutofocusService.cpp:370] AutofocusService: Stats loop started
+[2026-10-01 17:07:06.064] [app] [info] [DeviceDiscoveryService.cpp:239] DeviceDiscoveryService: registered provider 'mindvision' (camera)
+[2026-10-01 17:07:06.064] [app] [info] [DeviceDiscoveryService.cpp:239] DeviceDiscoveryService: registered provider 'egrabber' (camera)
+[2026-10-01 17:07:06.064] [app] [info] [DeviceDiscoveryService.cpp:239] DeviceDiscoveryService: registered provider 'egrabber-framegrabber' (framegrabber)
+[2026-10-01 17:07:06.064] [app] [info] [DeviceDiscoveryService.cpp:239] DeviceDiscoveryService: registered provider 'nanopositioner' (nanopositioner)
+[2026-10-01 17:07:06.064] [app] [info] [DeviceDiscoveryService.cpp:239] DeviceDiscoveryService: registered provider 'pulse-generator' (pulse-generator)
+[2026-10-01 17:07:06.064] [app] [warning] [AppBackend.cpp:519] Unknown token 'syringe_pump' in MIB_DISABLED_SERVICES
+[2026-10-01 17:07:06.064] [app] [warning] [AppBackend.cpp:519] Unknown token 'pulse_generator' in MIB_DISABLED_SERVICES
+[2026-10-01 17:07:06.064] [app] [info] [AppBackend.cpp:530] AppBackend boot toggles: sqlite=true, hdf5=true, processing=true, yolo=false, autofocus=false, trigger=false, capture=true, playback=true
+[2026-10-01 17:07:06.064] [app] [info] [SqliteService.cpp:9] SqliteService initialized at C:\Users\ERBG07\AppData\Local\Temp\mainwindow_shutdown_14182199718867214985\data\app.sqlite3
+[2026-10-01 17:07:06.064] [app] [info] [Hdf5Service.cpp:256] Hdf5Service initialized at C:\Users\ERBG07\AppData\Local\Temp\mainwindow_shutdown_14182199718867214985\data
+[2026-10-01 17:07:06.064] [app] [warning] [AppBackend.cpp:564] AppBackend: yolo bootstrap disabled by MIB_DISABLED_SERVICES
+[2026-10-01 17:07:06.065] [app] [info] [EModulusLutCatalog.cpp:496] EModulusLutCatalog: skipping remote LUT fetch because no HTTP fetcher is set
+[2026-10-01 17:07:06.065] [app] [warning] [EModulusLutCatalog.cpp:549] EModulusLutCatalog: manifest fetch failed and no local cache exists
+[2026-10-01 17:07:06.065] [app] [warning] [AppBackend.cpp:586] AppBackend: LUT catalog resolution failed, falling back to bundled path C:\Users\ERBG07\AppData\Local\Temp\mainwindow_shutdown_14182199718867214985\resources\isoelastic_curve\scaled_isoelastic_data_LUT_6.16-4.24.txt: Bundled LUT not found: C:\Users\ERBG07\AppData\Local\Temp\mainwindow_shutdown_14182199718867214985\resources\isoelastic_curve\scaled_isoelastic_data_LUT_6.16-4.24.txt
+[2026-10-01 17:07:06.065] [app] [warning] [EModulusLut.cpp:149] EModulusLut: Failed to load LUT from C:\Users\ERBG07\AppData\Local\Temp\mainwindow_shutdown_14182199718867214985\resources\isoelastic_curve\scaled_isoelastic_data_LUT_6.16-4.24.txt
+[2026-10-01 17:07:06.065] [app] [warning] [AppBackend.cpp:611] Young's modulus LUT not loaded - emodulus gating will not be available
+[2026-10-01 17:07:06.065] [app] [info] [AppBackend.cpp:621] AppBackend: Young's modulus LUT source=bundled-fallback, revision=bundled, path=C:\Users\ERBG07\AppData\Local\Temp\mainwindow_shutdown_14182199718867214985\resources\isoelastic_curve\scaled_isoelastic_data_LUT_6.16-4.24.txt, checksum_status=unknown, remote_updated=false, bundled_fallback=false, manifest=
+[2026-10-01 17:07:06.066] [app] [info] [ProcessingService.cpp:113] ProcessingService started with 32 workers
+[2026-10-01 17:07:06.066] [app] [warning] [AppBackend.cpp:644] AppBackend: autofocus ring-ratio callback disabled by MIB_DISABLED_SERVICES
+[2026-10-01 17:07:06.066] [app] [warning] [AppBackend.cpp:675] AppBackend: trigger callback wiring disabled by MIB_DISABLED_SERVICES
+[2026-10-01 17:07:06.066] [app] [info] [AppBackend.cpp:788] AppBackend: configuring MockCamera (folder=C:\Users\ERBG07\AppData\Local\Temp\mainwindow_shutdown_14182199718867214985\data\mock_frames, interval=33000 us, ~30.3 fps, loop=true)
+[2026-10-01 17:07:06.066] [app] [info] [AppBackend.cpp:948] Backend initialized.
+[2026-10-01 17:07:06.093] [app] [info] [MainWindow.cpp:317] MainWindow: auto update disabled by MIB_DISABLED_SERVICES
+[2026-10-01 17:07:06.094] [app] [info] [ProcessingService.cpp:1986] Invalid frame sampling rate set to: every 200th frame
+[2026-10-01 17:07:06.094] [app] [info] [ProcessingService.cpp:1972] Flush interval set to: 200 frames (max buffered backlog: 1000)
+[2026-10-01 17:07:06.112] [app] [info] [DeviceDiscoveryService.cpp:416] DeviceDiscoveryService: job 1 queued (origin='connect-tab', kinds=2)
+[2026-10-01 17:07:06.112] [app] [info] [ConnectTab.cpp:114] ConnectTab: refresh started discovery job 1
+[2026-10-01 17:07:06.114] [app] [info] [OverviewTab.cpp:142] Overview tab: display_fps=50 (~20 ms)
+[2026-10-01 17:07:06.127] [app] [info] [PlaybackPanel.cpp:491] Playback preview: display_fps=60 (~17 ms)
+[2026-10-01 17:07:06.132] [app] [info] [GenTLHolder.cpp:35] GenTLHolder: opened the process-wide Euresys GenTL producer handle
+[2026-10-01 17:07:06.139] [app] [warning] [CameraControlService.cpp:450] CameraControlService: CameraEnumerateDevice returned -16 (count=0)
+[2026-10-01 17:07:06.141] [app] [info] [AppConfigWatcher.cpp:106] AppConfigWatcher: watching C:/Users/ERBG07/Developer/mib-studio-qt/.claude/worktrees/feat-trigger-frame-alignment/build-ninja/include/config.json
+[2026-10-01 17:07:06.141] [app] [info] [AppConfigWatcher.cpp:401] AppConfigWatcher: applied ProcessingConfig (blur=3, thresh=8, morph=3x1, area=[60,290 um2], deform=[0.00,0.50] enabled=true, areaRatio_max=1.50 enabled=false, ring=[15.0,25.0] enabled=true, empty_px=100)
+[2026-10-01 17:07:06.141] [app] [info] [AppConfigWatcher.cpp:405] AppConfigWatcher: target_group enabled=false, area=[72,191 um2], deform=[0.00,0.30], emod_enabled=false, emod=[0.0,10.0]
+[2026-10-01 17:07:06.141] [app] [info] [ProcessingService.cpp:1972] Flush interval set to: 1000 frames (max buffered backlog: 4000)
+[2026-10-01 17:07:06.141] [app] [info] [ProcessingService.cpp:393] ProcessingService: realtime batch settings batch_size=16, max_queue=4096, workers=1, max_delay_ms=10
+[2026-10-01 17:07:06.141] [app] [info] [AppConfigWatcher.cpp:451] AppConfigWatcher: realtime_processing mode=inline, batch_size=16, max_queue=4096, workers=1, max_delay_ms=10
+[2026-10-01 17:07:06.141] [app] [info] [AppConfigWatcher.cpp:470] AppConfigWatcher: applied camera frame_delivery_mode=everyFrame
+[2026-10-01 17:07:06.141] [app] [info] [AppConfigWatcher.cpp:481] AppConfigWatcher: applied pixel_to_micron_factor=0.4886
+[2026-10-01 17:07:06.141] [app] [info] [PlaybackPanel.cpp:1200] Playback preview: display_fps=60 (~17 ms) [updated]
+[2026-10-01 17:07:06.147] [app] [info] [ExperimentMonitoringTab.cpp:2006] Loaded 11 isoelastic curves from C:/Users/ERBG07/Developer/mib-studio-qt/.claude/worktrees/feat-trigger-frame-alignment/build-ninja/Release/../../resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt
+[2026-10-01 17:07:06.153] [app] [info] [HdfReviewTab.cpp:337] HdfReviewTab: thumbnail cache size set to 2048
+[2026-10-01 17:07:06.155] [app] [info] [HdfReviewTab.cpp:2751] Loaded 11 isoelastic curves from C:/Users/ERBG07/Developer/mib-studio-qt/.claude/worktrees/feat-trigger-frame-alignment/build-ninja/Release/../../resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt
+[2026-10-01 17:07:06.156] [app] [info] [StartupDiscoveryCoordinator.cpp:431] StartupDiscovery: camera step skipped (camera already configured or capturing)
+[2026-10-01 17:07:06.157] [app] [info] [DeviceDiscoveryService.cpp:416] DeviceDiscoveryService: job 2 queued (origin='startup-nanopositioner', kinds=1)
+[2026-10-01 17:07:06.157] [app] [info] [StartupDiscoveryCoordinator.cpp:218] StartupDiscovery: nanopositioner step started (job 2)
+[2026-10-01 17:07:06.157] [app] [info] [MainWindow.cpp:901] MainWindow: geometry default 800x800@0,0 (screen 0)
+[2026-10-01 17:07:06.169] [app] [info] [MainWindow.cpp:926] MainWindow: window 808x804@0,0 exceeds the available desktop 800x800@0,0; fitting to 800x800@0,0
+[2026-10-01 17:07:06.169] [app] [info] [DeviceInitManager.cpp:51] DeviceInitManager: stopping startup discovery
+[2026-10-01 17:07:06.169] [app] [info] [DeviceDiscoveryService.cpp:430] DeviceDiscoveryService: job 2 cancellation requested
+[2026-10-01 17:07:06.169] [app] [info] [StartupDiscoveryCoordinator.cpp:496] StartupDiscovery: stopped (camera job 0, nanopositioner job 2)
+[2026-10-01 17:07:06.169] [app] [info] [DeviceDiscoveryService.cpp:813] DeviceDiscoveryService: job 2 Cancelled (0 candidate(s), 1 error(s), complete=false)
+[2026-10-01 17:07:06.197] [app] [info] [AppBackend.cpp:260] AppBackend: shutdown begin
+[2026-10-01 17:07:06.197] [app] [info] [AppBackend.cpp:270] AppBackend: shutdown draining device discovery
+[2026-10-01 17:07:06.197] [app] [info] [DeviceDiscoveryService.cpp:529] DeviceDiscoveryService: shutdown draining 2 worker(s)
+[2026-10-01 17:07:07.545] [app] [warning] [CameraControlService.cpp:201] CameraControlService: probe open failed for camera PC3603 - Coaxlink Quad CXP-12 (1-camera) - KQQ09438/Device0: operation not allowed
+[2026-10-01 17:07:07.545] [app] [info] [CameraControlService.cpp:227] Discovery found 1 camera(s)
+[2026-10-01 17:07:07.546] [app] [info] [DeviceDiscoveryService.cpp:813] DeviceDiscoveryService: job 1 Cancelled (1 candidate(s), 1 error(s), complete=false)
+[2026-10-01 17:07:07.546] [app] [info] [AppBackend.cpp:305] AppBackend: shutdown stopping capture and releasing camera
+[2026-10-01 17:07:07.546] [app] [info] [AppBackend.cpp:317] AppBackend: shutdown stopping processing
+[2026-10-01 17:07:07.547] [app] [info] [ProcessingService.cpp:143] ProcessingService stopped
+[2026-10-01 17:07:07.547] [app] [info] [AppBackend.cpp:326] AppBackend: shutdown disconnecting nanopositioner
+[2026-10-01 17:07:07.547] [app] [info] [AppBackend.cpp:330] AppBackend: shutdown disconnecting syringe pumps
+[2026-10-01 17:07:07.547] [app] [info] [AppBackend.cpp:335] AppBackend: shutdown disconnecting pulse generator
+[2026-10-01 17:07:07.548] [app] [info] [AppBackend.cpp:342] AppBackend: shutdown complete
+[2026-10-01 17:07:07.558] [app] [info] [AppBackend.cpp:260] AppBackend: shutdown begin
+[2026-10-01 17:07:07.558] [app] [info] [AppBackend.cpp:270] AppBackend: shutdown draining device discovery
+[2026-10-01 17:07:07.558] [app] [info] [AppBackend.cpp:305] AppBackend: shutdown stopping capture and releasing camera
+[2026-10-01 17:07:07.558] [app] [info] [AppBackend.cpp:317] AppBackend: shutdown stopping processing
+[2026-10-01 17:07:07.558] [app] [info] [AppBackend.cpp:326] AppBackend: shutdown disconnecting nanopositioner
+[2026-10-01 17:07:07.558] [app] [info] [AppBackend.cpp:330] AppBackend: shutdown disconnecting syringe pumps
+[2026-10-01 17:07:07.558] [app] [info] [AppBackend.cpp:335] AppBackend: shutdown disconnecting pulse generator
+[2026-10-01 17:07:07.558] [app] [info] [AppBackend.cpp:342] AppBackend: shutdown complete
+[2026-10-01 17:07:07.558] [app] [info] [ConnectTab.cpp:250] ConnectTab: discovery job 1 listed 0 framegrabber(s), 1 eGrabber camera(s), 0 MindVision camera(s) (complete=false)
+EXPECT FAILED: !timedOut (C:\Users\ERBG07\Developer\mib-studio-qt\.claude\worktrees\feat-trigger-frame-alignment\tests\frontend\mainwindow_shutdown_test.cpp:37) closing main window exits even with another top-level widget
+[2026-10-01 17:07:07.563] [app] [info] [AppBackend.cpp:260] AppBackend: shutdown begin
+[2026-10-01 17:07:07.563] [app] [info] [AppBackend.cpp:270] AppBackend: shutdown draining device discovery
+[2026-10-01 17:07:07.563] [app] [info] [AppBackend.cpp:305] AppBackend: shutdown stopping capture and releasing camera
+[2026-10-01 17:07:07.563] [app] [info] [AppBackend.cpp:317] AppBackend: shutdown stopping processing
+[2026-10-01 17:07:07.563] [app] [info] [AppBackend.cpp:326] AppBackend: shutdown disconnecting nanopositioner
+[2026-10-01 17:07:07.563] [app] [info] [AppBackend.cpp:330] AppBackend: shutdown disconnecting syringe pumps
+[2026-10-01 17:07:07.563] [app] [info] [AppBackend.cpp:335] AppBackend: shutdown disconnecting pulse generator
+[2026-10-01 17:07:07.563] [app] [info] [AppBackend.cpp:342] AppBackend: shutdown complete
+[2026-10-01 17:07:07.563] [app] [info] [AutofocusService.cpp:413] AutofocusService: Stats loop stopped
+
+        Start 162: frontend.desktop_instance
+141/141 Test #162: frontend.desktop_instance .....................   Passed    0.55 sec
+
+99% tests passed, 1 tests failed out of 141
+
+Label Time Summary:
+backend            =  94.23 sec*proc (95 tests)
+bridge             =   2.06 sec*proc (4 tests)
+camera             =  21.36 sec*proc (16 tests)
+concurrency        =  16.28 sec*proc (11 tests)
+contract           =   1.78 sec*proc (8 tests)
+diagnostics        =   0.28 sec*proc (1 test)
+discovery          =   4.34 sec*proc (7 tests)
+e2e                =   0.45 sec*proc (1 test)
+fault-injection    =   0.58 sec*proc (2 tests)
+frontend           =  20.91 sec*proc (26 tests)
+hdf5               =  15.92 sec*proc (15 tests)
+invariant          =   0.54 sec*proc (1 test)
+layout             =   7.97 sec*proc (6 tests)
+lifecycle          =   2.59 sec*proc (2 tests)
+memory             =   3.71 sec*proc (2 tests)
+monitoring         =  24.61 sec*proc (9 tests)
+nanopositioner     =   0.84 sec*proc (3 tests)
+observability      =   2.52 sec*proc (3 tests)
+performance        =  24.24 sec*proc (5 tests)
+processing         =  31.08 sec*proc (36 tests)
+recording          =  32.29 sec*proc (17 tests)
+release            =   0.87 sec*proc (4 tests)
+safety             =  58.80 sec*proc (30 tests)
+scripts            =   6.89 sec*proc (17 tests)
+serial             =   0.85 sec*proc (2 tests)
+stress             =  10.66 sec*proc (7 tests)
+trigger            =   0.58 sec*proc (3 tests)
+utility            =   0.44 sec*proc (11 tests)
+
+Total Test time (real) = 128.81 sec
+
+The following tests FAILED:
+	161 - frontend.mainwindow_shutdown (Failed)
+ctest.exe : Errors while running CTest
+At line:1 char:561
++ ... TEXITCODE"; & "C:\Program Files\CMake\bin\ctest.exe" --preset windows ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Errors while running CTest:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 

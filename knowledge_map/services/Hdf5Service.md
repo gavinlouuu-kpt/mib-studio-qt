@@ -72,6 +72,24 @@ a macro). Unit-tested by `tests/backend/hdf_write_queue_test.cpp`.
   without batch dim).
 - **Multi-image series** (`multi_image_enabled` in ProcessingConfig):
   `getSeriesImageInfo`, `readSeriesImagesByIndex` — 4D `(N, seriesCount, H, W)`.
+  `readSeriesMeta(index, info, &contiguous)` returns the per-member identity
+  row (`/valid_frames/series_meta`, written in lock-step with
+  `series_images` so row i is the same series in both; members a partial
+  series never collected read back as `kAbsentSeriesFrame`) and the
+  `series_contiguous` flag; false on files that predate the datasets. The
+  append path takes the row width from the on-disk extent, never from the
+  batch — a batch whose first series is partial must not shrink the dataset
+  (`H5Dset_extent` would truncate every earlier row).
+- **Sort trigger events**: `appendTriggerEvents(records)` creates or extends
+  `/trigger_events` (compound, one row per `TriggerEventRecord`; the extent
+  is read from disk so a reopened file appends correctly);
+  `readTriggerEvents(out)` reads every row (false when absent).
+  `writeRfGeneratorProvenance` / `readRfGeneratorProvenance` — the sort
+  generator's readback as `rf_generator_*` attributes on the run-info group
+  (needs `writeExperimentInfo` first; rewrites replace). Guards:
+  `recording.trigger_alignment_roundtrip` (round-trip + fault injection:
+  closed/read-only writes fail, pre-feature files read false with cleared
+  outputs, out-of-range rows rejected).
 - **Frame recording mode** (raw frames, no contours):
   `initializeRecordingDatasets`, `appendRecordingFrames`, `writeRecordingInfo`
   with `RecordingFrameMeta` (index, timestampNs, width, height).

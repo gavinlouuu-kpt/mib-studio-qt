@@ -15,6 +15,7 @@
 #include "backend/profiles/ProfileRegistryWorker.h"
 #include "backend/recording/Hdf5Service.h"
 #include "backend/services/CaptureService.h"
+#include "backend/services/RfGeneratorService.h"
 #include "backend/services/TriggerService.h"
 
 #include <limits>
@@ -265,6 +266,11 @@ std::string runSnapshotToJson(const RunConfigurationSnapshot& s)
       << ",\"generation\":" << s.backgroundGeneration << ",\"sha256\":" << q(s.backgroundSha256) << "}"
       << ",\"trigger\":{\"required\":" << (s.triggerRequired ? "true" : "false")
       << ",\"bound\":" << (s.triggerBound ? "true" : "false") << ",\"generation\":" << s.triggerGeneration << "}"
+      << ",\"rf_generator\":{\"configured\":" << (s.rfGeneratorConfigured ? "true" : "false")
+      << ",\"connected\":" << (s.rfGeneratorConnected ? "true" : "false")
+      << ",\"identity\":" << q(s.rfGeneratorIdentity) << ",\"trigger_mode\":" << q(s.rfGeneratorTriggerMode)
+      << ",\"trigger_delay_s\":" << s.rfGeneratorTriggerDelayS << ",\"pulse_width_s\":" << s.rfGeneratorPulseWidthS
+      << ",\"error\":" << q(s.rfGeneratorError) << ",\"issues\":" << s.rfGeneratorIssues.size() << "}"
       << ",\"output_path\":" << q(s.outputPath)
       << ",\"realtime_mode\":" << q(s.realtimeMode)
       << ",\"science_placement\":" << q(s.sciencePlacement)
@@ -464,6 +470,30 @@ RunConfigurationSnapshot ExperimentCoordinator::candidateLocked(const std::strin
     s.triggerRequired = proc.getProcessingConfig().enable_target_group;
     s.triggerGeneration = backend_.trigger().boundGeneration();
     s.triggerBound = s.triggerGeneration != 0 && s.triggerGeneration == lifecycle.generation;
+
+    // RF sort generator: readback-first. Only consulted when sorting is on
+    // and a link is configured; connect attempts back off so a missing
+    // instrument does not stall every readiness poll.
+    {
+        auto& rf = backend_.rfGenerator();
+        s.rfGeneratorConfigured = rf.config().enabled;
+        if (s.triggerRequired && s.rfGeneratorConfigured) {
+            services::RfGeneratorService::State state;
+            if (rf.ensureConnected() && rf.readState(state)) {
+                s.rfGeneratorConnected = true;
+                s.rfGeneratorIdentity = state.identity;
+                s.rfGeneratorTriggerMode = state.triggerMode;
+                s.rfGeneratorTriggerDelayS = state.triggerDelayS;
+                s.rfGeneratorPulseWidthS = state.pulseWidthS;
+                for (const auto& issue : services::RfGeneratorService::preflightForSorting(state)) {
+                    if (issue.blocking) s.rfGeneratorIssues.push_back(issue.gate + ": " + issue.message);
+                }
+            } else {
+                s.rfGeneratorConnected = false;
+                s.rfGeneratorError = rf.lastErrorMessage();
+            }
+        }
+    }
 
     s.outputPath = outputPath;
     s.realtimeMode = proc.getRealtimeProcessingMode() ==
@@ -695,6 +725,33 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
         r.gates.push_back(gate("trigger.output", GateStatus::Fail,
                                "sorting is enabled but the trigger service is not bound to the running camera",
                                "restart the camera; check the trigger wiring"));
+    }
+    // The RF generator behind the trigger line: what it is set to decides
+    // whether a pulse becomes a sort burst at all, so a configured link that
+    // is down or mis-armed blocks a sorting run.
+    if (!c.triggerRequired) {
+        r.gates.push_back(gate("rf.generator", GateStatus::NotRequired, "target-group sorting disabled"));
+    } else if (!c.rfGeneratorConfigured) {
+        r.gates.push_back(gate("rf.generator", GateStatus::NotRequired, "RF generator link disabled or not configured"));
+    } else if (!c.rfGeneratorConnected) {
+        r.gates.push_back(gate("rf.generator", GateStatus::Fail,
+                               "RF generator link is down: " + c.rfGeneratorError,
+                               "check the USB/LAN connection and that the instrument is an SSG3000X"));
+    } else if (!c.rfGeneratorIssues.empty()) {
+        std::string why;
+        for (const auto& i : c.rfGeneratorIssues) {
+            if (!why.empty()) why += "; ";
+            why += i;
+        }
+        r.gates.push_back(gate("rf.generator", GateStatus::Fail, why,
+                               "arm the generator: MOD > PULSE (Pulse State, Pulse Trigger = Ext Trig, Source = Int) and RF ON",
+                               c.rfGeneratorIdentity));
+    } else {
+        std::ostringstream d;
+        d.precision(6);
+        d << c.rfGeneratorIdentity << " trigger " << c.rfGeneratorTriggerMode << " delay "
+          << c.rfGeneratorTriggerDelayS * 1e6 << " us width " << c.rfGeneratorPulseWidthS * 1e6 << " us";
+        r.gates.push_back(gate("rf.generator", GateStatus::Pass, {}, {}, d.str()));
     }
 
     // --- output / storage --------------------------------------------------
@@ -968,6 +1025,9 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
 
     // 6-7. Acquire processing ownership and enter Active.
     proc.setExperimentAccountingContext(run.captureGeneration, run.deliveryModeActive == "latestFrame");
+    // Pulse records from before the run (manual/periodic test pulses, a
+    // previous run's tail) are not this experiment's: discard them.
+    (void)backend_.trigger().drainEvents();
     proc.startExperiment();
     // The shared lifecycle must own a live consumer. Qt previously started it
     // from a visible tab; a headless/Tauri Start otherwise finalized zero work.
@@ -1268,6 +1328,14 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
                     submitted, remainder.valid, remainder.invalid, remOk, sinceMs(t0));
     }
     if (!flushOk) ok = false;
+    // Pulses fired after the last batch drain (writer is stopped now, so this
+    // append is single-threaded like the metadata writes below).
+    if (fileOpen) {
+        auto tail = backend_.trigger().drainEvents();
+        if (!tail.empty() && !hdf5.appendTriggerEvents(tail)) {
+            SPDLOG_WARN("ExperimentCoordinator: {} trailing trigger event(s) not persisted", tail.size());
+        }
+    }
     const uint64_t endNs = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count());
     auto accounting = proc.experimentAccountingSnapshot();
@@ -1305,6 +1373,14 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
             if (!hdf5.writeAcquisitionProvenance(backend_.capture().timestampDescriptor(),
                                                  backend_.capture().telemetrySnapshot())) {
                 SPDLOG_ERROR("ExperimentCoordinator: acquisition provenance could not be persisted");
+            }
+            // Sorter settings as read back at readiness time (the generator is
+            // not re-queried here: the run used what was verified at start).
+            if (run.rfGeneratorConnected) {
+                const auto rfState = backend_.rfGenerator().lastState();
+                if (!rfState.identity.empty() && !hdf5.writeRfGeneratorProvenance(rfState)) {
+                    SPDLOG_ERROR("ExperimentCoordinator: RF generator provenance could not be persisted");
+                }
             }
             const std::string cfgJson = backend_.getLastConfigJson();
             if (!cfgJson.empty()) hdf5.writeConfigJson(cfgJson);

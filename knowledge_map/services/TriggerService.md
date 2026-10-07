@@ -28,6 +28,42 @@
   `hostTimestampUs` — the host monotonic acquisition stamp) and is used
   for metadata at trigger fire time.
 - Expose metrics: `getTriggerCount`, `getLastOnsetUs`, `resetMetrics`.
+- **Canonical pulse record (always on).** Every request produces exactly one
+  `backend::recording::TriggerEventRecord`
+  (`include/backend/recording/TriggerEventRecord.h`): source frame
+  (`frameIndex`, `grabUs`), `objectId`/`trackId`, session `generation`,
+  host-monotonic `requestUs`/`wakeUs`/`fireUs`/`pulseDoneUs`, and the
+  `outcome` that actually happened (`Fired`, `DroppedNoCamera`,
+  `DroppedSetFailed`, `DroppedStale`, `DroppedQueueFull` — the last is
+  recorded at eviction time, the others when the request is dequeued;
+  requests cleared by `setCamera` never dequeued and get no record). Records
+  sit in a bounded buffer (`kMaxBufferedEvents` = 4096, overflow drops the
+  oldest, `getDroppedEventCount`) until `drainEvents()` hands them out once,
+  in `sequence` order. [[../architecture/AppBackend]] wires `drainEvents` as
+  [[ProcessingService]]'s `TriggerEventSource`, so each experiment flush
+  batch carries the records to `/trigger_events`
+  ([[../data-model/HDF5-Storage]]); [[../architecture/ExperimentCoordinator]]
+  discards pre-run records at start and appends the trailing ones at stop.
+  This is what places a sort pulse against the frame sequence after the
+  fact — before it, only the `MIB_PIPELINE_TIMING` diagnostics CSV knew when
+  a pulse fired and nothing in the data file did.
+- **Loopback edge pairing.** `setCamera` subscribes to
+  [[../camera/ICamera]]`::setLineEventCallback` (unsubscribing the previous
+  camera first). A camera that stamps its inputs in the frame clock reports
+  the looped-back pulse as a `LineEvent`; `onLineEvent` attaches a rising
+  edge FIFO to the oldest fired record that has none (`lineEdgeTimestamp`,
+  frame-clock domain; `lineEdgeHostUs`). Time-based matching is deliberately
+  not used because the edge clock is not host-comparable on every backend.
+  An edge that arrives before its record exists (MockCamera delivers it
+  synchronously from inside `setTriggerOutput`) is held in a bounded slot
+  (`kMaxPendingEdges` = 8) and attached by the next fired record — but only
+  if its host stamp is not older than that record's `wakeUs` (same clock);
+  an older held edge is a leftover from a pulse whose record was drained
+  first and is counted, not attached to the wrong pulse. What overflows the
+  slot, or is still held at a session boundary, is likewise counted in
+  `getUnpairedLineEdgeCount()`. A camera without the capability returns false from the subscription
+  and the `lineEdge*` columns stay 0. Guards: `tests/backend/trigger_event_log_test.cpp`
+  (`backend.trigger_event_log`), `tests/integration/e2e_series_alignment_test.cpp`.
 - Count **lost pulses** that were previously dropped silently: after a
   request is dequeued the loop may still fail to drive the TTL edge because
   no camera is bound (`getDroppedPulsesNoCameraCount`) or
@@ -54,7 +90,13 @@
 ## Threading
 
 Dedicated thread waiting on `triggerCV_`. Pulse duration is configurable in
-microseconds (default 1 µs). On entry the loop elevates its own scheduling
+microseconds (default 1 µs). The event log has its own leaf mutex
+(`eventMutex_`): the trigger thread takes it once per pulse after the falling
+edge, `onLineEvent` takes it from the camera's thread (for MockCamera that is
+the trigger thread itself, inside the pulse), `drainEvents` from the flush
+thread; it never waits on `pulseMutex_` or `triggerMutex_`. Request/wake/
+fire/done stamps are now taken unconditionally (one clock read each); the
+`PipelineTimingRecorder` gate only guards its own CSV record. On entry the loop elevates its own scheduling
 priority (`THREAD_PRIORITY_TIME_CRITICAL` on Windows; best-effort `SCHED_FIFO`
 elsewhere, silently unavailable without privileges) so background load — e.g.
 the HDF5 writer draining an experiment flush — cannot preempt a pending pulse

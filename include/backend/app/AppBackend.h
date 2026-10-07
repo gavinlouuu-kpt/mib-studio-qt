@@ -36,6 +36,7 @@ namespace backend::services
     class SyringePumpService;
     class PulseGeneratorService;
     class StageService;
+    class RfGeneratorService;
     class MonitoringDensityService;
     namespace serialbus
     {
@@ -148,6 +149,10 @@ namespace backend
         services::PulseGeneratorService &pulseGenerator();
         // Motorized Z stage (ADR 0013): observe-only until an operator homes it.
         services::StageService &stage();
+        // SIGLENT SSG3021X sort generator: SCPI readback/provenance link
+        // (never timing). Configured by the `rf_generator` block of the
+        // application config JSON; consulted by the experiment readiness gate.
+        services::RfGeneratorService &rfGenerator();
         // Device discovery job service (issue #419, ADR 0005): every camera /
         // nanopositioner / pulse-generator scan runs through it. Frontends
         // start jobs and poll snapshots; they never enumerate hardware.
@@ -380,6 +385,7 @@ namespace backend
         std::unique_ptr<services::PulseGeneratorService> pulseGeneratorService_;
         // After serialBusManager_: destroyed first, so its port closes on a live bus.
         std::unique_ptr<services::StageService> stageService_;
+        std::unique_ptr<services::RfGeneratorService> rfGeneratorService_;
         // Declared after every service the providers/hooks reference so the
         // discovery workers and the coordinator are destroyed first.
         std::unique_ptr<discovery::DeviceDiscoveryService> deviceDiscovery_;

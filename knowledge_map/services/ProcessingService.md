@@ -182,6 +182,27 @@ All gates in one struct. Notable fields:
   `EModulusLut`, which is now fed from the managed LUT cache prepared by
   `AppBackend` at startup)
 - Multi-image mode: `multi_image_enabled`, `multi_image_count`
+  - **Series identity (realtime).** Every series member is appended through
+    `appendSeriesMember` (all five realtime sites: ROI-path start/collect,
+    non-ROI start/collect, empty-frame collect), which records
+    `SeriesImageInfo{frameIndex, timestampNs, hostTimestampUs}` in
+    `ProcessedFrame::seriesInfo` (parallel to `seriesImages`) and clears
+    `seriesContiguous` when a member's index is not its predecessor's +1 —
+    i.e. the realtime consumer fell behind the ring and skipped frames
+    mid-series (a saved series is then not N consecutive exposures; it is
+    kept, flagged, and warned once). Persisted as
+    `/valid_frames/series_meta` + `series_contiguous`
+    ([[../data-model/HDF5-Storage]]). Before this, series members were
+    anonymous `cv::Mat`s: nothing said which camera frame they were.
+    Saved experiment frames (series trigger frame and plain frames) also
+    carry `hostTimestampUs` now. Known gap (pre-existing): a series pending
+    at `endExperiment()` is only closed out when the loop sees the next
+    frame; if capture stops in the same instant the partial series is lost.
+  - `setTriggerEventSource(fn)`: `flushBufferedFrames` calls `fn` on the
+    flushing thread and puts the records in `ExperimentBatch::triggerEvents`;
+    the writer thread appends them with `Hdf5Service::appendTriggerEvents`
+    after the frames (non-fatal on failure — a diagnostics loss, not a data
+    loss). Invariant guard: `integration.e2e_series_alignment`.
 
 ## Processing Contract versioning (v2)
 
@@ -495,7 +516,8 @@ TIFFs — use:
 
   When `multi_image_enabled` and `multi_image_count > 1`, each newly retained
   valid track also carries the trigger image plus the available following
-  source frames in `seriesImages`. The Python binding exposes these with
+  source frames in `seriesImages`, with a parallel `seriesInfo` (position in
+  the input list; no acquisition stamps exist offline). The Python binding exposes these with
   `include_series_images=True`; issue #225's conformance harness hashes the
   ordered payloads so an empty or reordered series fails CI.
 
