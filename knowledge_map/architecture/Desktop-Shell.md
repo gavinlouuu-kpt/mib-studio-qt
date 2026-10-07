@@ -695,8 +695,15 @@ declared loss: the run is "partial (declared)" and the notice is informational u
 frames exceed 0.1 % of the admitted frames (`MALFORMED_WARN_FRACTION`). `components/RunOutcomeNotice`
 shows it on the Experiment tab (an alert for undeclared loss, failure, an unknown outcome or that
 attention case, a status otherwise), with the backend's own text as the tooltip. The shell logs one line per finished run and adds a "Last run"
-row to the sidebar. Cancelled runs and a status that is not yet terminal show nothing. The Review
-tab does not show it yet. Tests: `runOutcome.test.ts`, `RunOutcomeNotice.test.tsx`.
+row to the sidebar. Cancelled runs and a status that is not yet terminal show nothing.
+
+The reconciled accounting (`fetch_run_accounting`, ABI 31) supplies the denominator: the frames
+the run admitted, not the rows it saved (a run with many EMPTY frames saves far fewer rows than it
+admits). `describeRunOutcome(status, accounting)` uses it when the accounting belongs to the same run
+(`start_generation`); `describeReviewOutcome(accounting)` describes the file loaded for review. The
+Review tab shows it above the export options: a raw recording or a legacy file without accounting is a
+quiet "no run accounting saved" note, and a file whose counters do not reconcile reads as a failure.
+Tests: `runOutcome.test.ts`, `RunOutcomeNotice.test.tsx`.
 
 ## Pump model per slot (2026-10-04)
 
@@ -734,7 +741,7 @@ current Qt live scatter's use of the current factor is not authoritative for mix
 
 `.github/workflows/desktop-windows-candidate.yml` builds a Windows x64 SDK-free Tauri candidate on `dev/react-tauri` pushes or manual dispatch. This is separate from the existing Qt Windows release workflow and never creates tags, releases, update feeds or signed installers. It uses the repository VS2022/MSVC194 Conan profile, VS CMake backend-only build and existing bridge link-manifest generator, then release-mode Rust tests/build.
 
-`desktop/scripts/package-windows-candidate.ps1` creates a fresh portable directory and ZIP: recursive non-system native DLL dependencies (unresolved/conflicting names fail), app-local VC runtime, defaults, isoelastic LUT resources and the pinned YOLO model. The staged application is smoke-launched with development DLL search paths removed. WebView2 Evergreen remains an explicit prerequisite. The candidate disables EGrabber, MindVision and CoreMOR SDKs; SDK-enabled camera delivery and Windows hardware acceptance remain separate gates. Windows hosted execution is required before declaring this candidate validated.
+`desktop/scripts/package-windows-candidate.ps1` creates a fresh portable directory and ZIP: recursive non-system native DLL dependencies (unresolved/conflicting names fail), app-local VC runtime, defaults, isoelastic LUT resources. The staged application is smoke-launched with development DLL search paths removed. WebView2 Evergreen remains an explicit prerequisite. The candidate disables EGrabber, MindVision and CoreMOR SDKs; SDK-enabled camera delivery and Windows hardware acceptance remain separate gates. Windows hosted execution is required before declaring this candidate validated.
 
 Local minimum path: VS2022 x64 developer PowerShell, Node22, stable Rust/MSVC, Python/Conan/CMake; install dependencies with `conan install . -of build --build=missing -s build_type=Release -pr conan/profiles/windows-msvc194`, provision required assets, configure `windows-default` with the workflow's SDK-free/backend-only flags, build backend libraries and `mib_backend_smoke_test`, run `tools/gen_bridge_link_manifest.py`, then `npm --prefix desktop ci`, frontend test/build and release Cargo desktop build with `custom-protocol`. Run the packaging script last. Never use Qt's release workflow to build this candidate.
 
@@ -848,6 +855,8 @@ disarms; #521).
 Tests: `stageControlModel.test.ts` (rules) and `StageControls.test.tsx`
 (panel behaviour with a mocked bridge).
 
+Background capture/clear and ROI editing are disabled during Starting, Active and
+Stopping. Setup command refusals refresh backend ROI/background state (#542).
 ### Metric rendering and panel recovery (#540, #543)
 
 `metricFormat.ts` renders absent/non-finite metrics as an em dash. Both Studio

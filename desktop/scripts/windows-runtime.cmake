@@ -19,10 +19,10 @@ if(NOT crt_dirs)
   message(FATAL_ERROR "MSVC redistributable CRT directory unavailable; use a VS developer shell")
 endif()
 list(APPEND search_dirs ${crt_dirs})
-# OpenCV/ONNX may load these by name rather than a PE import table.
+# OpenCV may load these by name rather than a PE import table.
 set(runtime_plugins)
 foreach(directory IN LISTS search_dirs)
-  file(GLOB plugins "${directory}/opencv_videoio*.dll" "${directory}/onnxruntime_providers_shared.dll")
+  file(GLOB plugins "${directory}/opencv_videoio*.dll")
   list(APPEND runtime_plugins ${plugins})
 endforeach()
 file(GET_RUNTIME_DEPENDENCIES

@@ -1041,6 +1041,10 @@ namespace backend::bridge
         // host_processing, aravis}. The UI hides the host pipeline's controls on the PL.
         // `capabilities` (#501) says which surfaces exist on this instrument.
         std::string fetchPlatformInfoJson() const;
+        // Reconciled run accounting as JSON (ABI 31, #549): `source` is "review" (the file loaded
+        // for review) or "last_run" (the run that finished last in this session). `available`
+        // false with a reason when there is none; `recorded` false for a legacy file.
+        std::string fetchRunAccountingJson(const std::string &source) const;
         // PZ7035 camera modes (ABI 27, #501 P1): "align" | "run" (window at x, y; snapped to
         // x % 8, y % 4). Refused during an experiment/recording and with the PL unconfigured.
         BackendCommandResult setInstrumentMode(const std::string &mode, int x, int y);

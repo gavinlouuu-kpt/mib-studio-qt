@@ -15,6 +15,7 @@
 #pragma once
 
 #include "backend/app/ExperimentReadiness.h"
+#include "backend/recording/RecordingAccounting.h"
 
 #include <atomic>
 #include <condition_variable>
@@ -70,6 +71,11 @@ public:
     // and the queueing atomic against each other.
     void setStageBusyProbe(std::function<bool()> probe);
 
+    // The reconciled accounting of the last finalized run (#549), with that run's start
+    // generation, or false before any run has finished. The UI uses it for the true admitted-frame
+    // count and the individual loss counts, which the status's reason text only summarises.
+    bool lastRunAccounting(recording::RecordingAccountingSnapshot& out, uint64_t& startGeneration) const;
+
     // Latest provisional KDE core contour record (JSON, frontend codec) that
     // the Monitoring view is showing. Accepted only while a run is Active;
     // cleared at Start; written to the run's file during finalization
@@ -110,7 +116,9 @@ public:
                           const std::string& expectedCode, const std::string& expectedMessage,
                           std::string& error);
     // Runs a non-reentrant config transaction while Start is excluded.
+    // Workers use wait=false to avoid waiting on transactions that may join them.
     bool withIdleConfiguration(const std::function<void()>& transaction);
+    bool withIdleConfiguration(const std::function<void()>& transaction, bool wait);
     bool hasUnresolvedFault() const;
 
 private:
@@ -169,6 +177,9 @@ private:
     std::string faultMessage_;
     // Terminal/lifecycle fields that outlive activeRun_ (reset on start).
     ExperimentStatus status_;
+    recording::RecordingAccountingSnapshot lastAccounting_{};
+    uint64_t lastAccountingGeneration_{0};
+    bool haveLastAccounting_{false};
     mutable std::mutex callbackMutex_;
     StatusCallback statusCallback_;
     // publishLocked() invokes a copy of the callback outside every lock, so

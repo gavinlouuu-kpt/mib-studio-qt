@@ -659,6 +659,32 @@ int main()
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
         MIB_EXPECT(proc.backgroundGeneration() == genBefore + 1, "finished operation ignores later frames");
     }
+    {
+        wd.mark("bg publication idle gate");
+        proc.stopRealtime();
+        proc.setBackgroundPublicationTransaction([](const std::function<void()>&) { return false; });
+        store = std::make_shared<backend::playback::FrameStore>();
+        pushMat(*store, emptyFrame, ++ts);
+        proc.startRealtime(store);
+        ProcessingService::BackgroundCalibrationRequest req;
+        req.requiredAccepted = 1;
+        req.maxAttempts = 10;
+        req.timeoutMs = 5000;
+        const auto generation = proc.backgroundGeneration();
+        MIB_REQUIRE(proc.startBackgroundCalibration(req), "start calibration before idle gate closes");
+        pushEmpty();
+        MIB_REQUIRE(waitFinished(), "publication refusal finishes calibration");
+        MIB_EXPECT(proc.backgroundCalibrationStatus().state == BgState::Cancelled,
+                   "closed idle transaction refuses calibration apply");
+        MIB_EXPECT(proc.backgroundGeneration() == generation, "refused apply preserves background");
+        proc.stopRealtime();
+        proc.setBackgroundPublicationTransaction([&](const std::function<void()>& apply) {
+            return backend.experiment().withIdleConfiguration(apply, false);
+        });
+        store = std::make_shared<backend::playback::FrameStore>();
+        pushMat(*store, emptyFrame, ++ts);
+        proc.startRealtime(store);
+    }
     const std::string goodSha = proc.backgroundSha256();
     const uint64_t goodGen = proc.backgroundGeneration();
     {

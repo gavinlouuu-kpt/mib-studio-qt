@@ -669,7 +669,6 @@ current/max queue depth, batch size, worker count, and running state. See
   long runs where HDF5 is slow or failing; the policy lives in
   `ExperimentFrameBuffer` and every drop is reported (never silent).
 - `pixelToMicronFactor_` default is `0.4886` — UI lets users change this.
-- YOLO is a separate service ([[YoloService]]); this pipeline does not use it.
 - **Callback ordering invariant**: `TargetGroupCallback` and
   `RingRatioCallback` are invoked **before** `monitoringFramesMutex_` is
   taken (and with no other locks held) so the UI thread's periodic
@@ -795,3 +794,10 @@ the PZ7035 PL runs, for desktop reprocessing with Contract 3.
 - **Weights:** the private Hub asset `unet-c4-multiline-v1`
   (`gavinlouuu/yofo-unet-c4`, see [[../build-and-run/Assets]]).
 - **Not yet:** no shipped core serves Contract 3 (A6).
+
+Background calibration publication runs through an AppBackend-installed idle
+configuration transaction; a run that owns configuration cancels publication and
+preserves the previous background. The calibration mutex is released before entering
+the coordinator transaction to preserve coordinator → calibration lock order.
+Publication uses a nonblocking idle transaction so a worker never waits for a
+configuration transaction that may join it; contention also cancels publication.

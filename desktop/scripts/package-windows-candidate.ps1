@@ -9,18 +9,8 @@ try {
     if (Test-Path $Destination) { throw "Use an absent destination to avoid stale DLLs: $Destination" }
     cmake "-DEXE=$exe" "-DMANIFEST=$manifest" "-DDEST=$Destination" -P desktop/scripts/windows-runtime.cmake
     if ($LASTEXITCODE -ne 0) { throw 'Native dependency closure failed' }
-    New-Item -ItemType Directory -Force "$Destination/resources/models" | Out-Null
+    New-Item -ItemType Directory -Force "$Destination/resources" | Out-Null
     Copy-Item resources/defaults,resources/isoelastic_curve "$Destination/resources" -Recurse
-    $assets = Get-Content env/assets.json -Raw | ConvertFrom-Json
-    $model = $assets.assets | Where-Object id -eq 'yolo11n-seg'
-    if (!$model) { throw 'Declared yolo11n-seg model asset missing' }
-    $assetRoot = if ($env:MIB_ASSETS_DIR) { $env:MIB_ASSETS_DIR } else { $assets.root }
-    $modelPath = Join-Path (Join-Path $assetRoot "$($model.kind)s/$($model.id)") $model.files[0].path
-    if (!(Test-Path $modelPath)) { throw "Provisioned model missing: $modelPath" }
-    if ((Get-FileHash $modelPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $model.files[0].sha256) {
-        throw "Provisioned model digest mismatch: $modelPath"
-    }
-    Copy-Item $modelPath "$Destination/resources/models/yolo11n-seg.onnx"
     @'
 UNSIGNED SDK-free Windows x64 Tauri candidate. Not a Qt replacement release.
 Extract the entire directory. Requires Microsoft Edge WebView2 Evergreen Runtime.

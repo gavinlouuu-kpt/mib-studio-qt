@@ -136,7 +136,7 @@ std::string readAnalysis(const std::string& path) {
 int main(int argc, char* argv[]) {
     qputenv("QT_QPA_PLATFORM", QByteArrayLiteral("offscreen"));
     qputenv("MIB_DISABLED_SERVICES",
-            QByteArrayLiteral("auto_update,autofocus,trigger,yolo,syringe_pump"));
+            QByteArrayLiteral("auto_update,autofocus,trigger,syringe_pump"));
     qputenv("MIB_CAMERA_MODE", QByteArrayLiteral("mock"));
     qputenv("MIB_STUDIO_PROCESSING_CORE_BASE_URL",
             QByteArrayLiteral("http://invalid-registry.example"));

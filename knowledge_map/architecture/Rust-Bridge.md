@@ -483,6 +483,22 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
   `stage_motion_is_control_only_but_stop_is_not` in the server;
   `backend.stage_bridge_facade`.
 
+## ABI 31: run accounting for the Review tab (#549)
+
+`fetch_run_accounting(source)` (read-only, not a control command) returns the reconciled accounting
+as JSON. `source` is `review` (the file loaded for review: `available` false with a reason when none
+is open; `recorded` false for a raw recording or a legacy file without accounting; adds `file_path`)
+or `last_run` (the run that finished last in this session; adds `start_generation`; `available` false
+before any run). Fields: `completion` and `completion_name`, `completion_reason`, `reconciled`,
+`admitted` (the frames the run claimed, the true denominator), `empty`, `processed`,
+`scientifically_rejected`, `processing_failed`, `store_overwritten`, `store_not_committed`,
+`store_malformed` (a declared loss: booked ingress-error frames), `cancelled_by_policy`,
+`pending_at_stop`, `sequence_gaps`, `objects_detected`, the `persistence_*` counters, `fatal_error`,
+`fatal_message` and `malformed_warn_fraction` (0.001). `BackendFacade::fetchRunAccountingJson` builds
+it from `Hdf5Service::readRunAccounting` (review) or `ExperimentCoordinator::lastRunAccounting`.
+Test: `contract.rs` (`experiment_lifecycle_end_to_end` checks both sources agree after a real run;
+`run_accounting_is_unavailable_without_a_file_or_a_run`).
+
 ## ABI 30: no homing for the Z stage (#464, ADR 0013 Amendment 1)
 
 28 belongs to #482 and 29 to #493 (allocated by the coordinator); the ZC300

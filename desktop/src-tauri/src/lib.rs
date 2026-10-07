@@ -562,6 +562,11 @@ fn fetch_platform_info(state: State<AppState>) -> Result<serde_json::Value, Stri
 }
 
 #[tauri::command]
+fn fetch_run_accounting(state: State<AppState>, source: String) -> Result<serde_json::Value, String> {
+    cmds::fetch_run_accounting(&state, &source)
+}
+
+#[tauri::command]
 fn fetch_instrument_status(state: State<AppState>) -> Result<serde_json::Value, String> {
     cmds::fetch_instrument_status(&state)
 }
@@ -855,6 +860,7 @@ pub fn run() {
             set_instrument_led,
             fetch_run_preview,
             fetch_platform_info,
+            fetch_run_accounting,
             fetch_instrument_status,
             monitoring_set_active,
             monitoring_clear,

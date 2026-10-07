@@ -10,9 +10,3 @@ compiler.version=194
 compiler.cppstd=17
 compiler.runtime=dynamic
 build_type=Release
-
-[replace_requires]
-# ConanCenter resolves cpuinfo/[>=cci.20231129] to a newer revision that
-# conflicts with onnxruntime/1.18.1's pin on a cold cache (Build.md,
-# 2026-09-15). Pin it here so every host resolves the same graph.
-cpuinfo/*: cpuinfo/cci.20231129

@@ -1,4 +1,5 @@
 import { experimentCounterRows } from "./experimentCounters";
+import { ProcessingSetupControls } from "./components/ProcessingSetupControls";
 import { metricNumber } from "./metricFormat";
 import { ResultMetricCells } from "./components/ResultMetricCells";
 import { PanelErrorBoundary } from "./components/PanelErrorBoundary";
@@ -8,7 +9,7 @@ import {recoverNativeRuntime} from "./runtimeRecovery";
 import { useCloseGuard } from "./closeGuard";
 import { ProcessedPreview } from "./components/ProcessedPreview";
 import { RunOutcomeNotice } from "./components/RunOutcomeNotice";
-import { describeRunOutcome, runKey } from "./runOutcome";
+import { describeReviewOutcome, describeRunOutcome, runKey } from "./runOutcome";
 import { BackgroundCalibrationControls } from "./components/BackgroundCalibrationControls";
 import {invoke} from "./transport";
 import { PreviewBufferControls, usePreviewBuffer } from "./previewBuffer";
@@ -24,6 +25,7 @@ import {
   type BridgeEvent,
   type CameraGeometry,
   type PlatformInfo,
+  type RunAccounting,
   type InstrumentStatus,
   type CameraDiscovery,
   type CameraSelection,
@@ -541,11 +543,16 @@ export default function App() {
         Number(roiFields.w) || 0,
         Number(roiFields.h) || 0,
       );
-      if (!res.ok) return append(`ROI apply failed: ${res.message}`);
+      if (!res.ok) {
+        append(`ROI apply failed: ${res.message}`);
+        await refreshConfig();
+        return;
+      }
       append(`ROI set to ${roiFields.w}×${roiFields.h} @ (${roiFields.x}, ${roiFields.y})`);
       await refreshConfig();
     } catch (e) {
       append(`ROI error: ${e}`);
+      await refreshConfig();
     }
   }, [roiFields, append, refreshConfig]);
 
@@ -886,15 +893,36 @@ export default function App() {
 
   const expState = expStatus?.valid ? expStatus.state : EXPERIMENT_STATES.Idle;
   // How the last finished run ended (#549): completion and loss counts, not only "finalized".
-  const runOutcome = describeRunOutcome(expStatus);
+  // The run's reconciled accounting (ABI 31) gives the true admitted-frame denominator; the status
+  // alone only knows the rows it saved.
+  const [runAccounting, setRunAccounting] = useState<RunAccounting | null>(null);
+  const runOutcome = describeRunOutcome(expStatus, runAccounting);
   const finishedRun = runKey(expStatus);
   const loggedRun = useRef("");
   useEffect(() => {
-    if (!finishedRun || finishedRun === loggedRun.current || !runOutcome) return;
+    if (!finishedRun || finishedRun === loggedRun.current) return;
     loggedRun.current = finishedRun;
-    append(runOutcome.headline);
+    let live = true;
+    const status = expStatus;
+    void bridge.fetchRunAccounting("last_run").catch(() => null).then((acc) => {
+      if (!live) return;
+      setRunAccounting(acc);
+      const outcome = describeRunOutcome(status, acc);
+      if (outcome) append(outcome.headline);
+    });
+    return () => { live = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [finishedRun]);
+  // The accounting saved in the file loaded for review.
+  const [reviewAccounting, setReviewAccounting] = useState<RunAccounting | null>(null);
+  const reviewFilePath = reviewMeta?.file_open ? reviewMeta.file_path : "";
+  useEffect(() => {
+    if (!reviewFilePath) { setReviewAccounting(null); return; }
+    let live = true;
+    void bridge.fetchRunAccounting("review").catch(() => null).then((acc) => { if (live) setReviewAccounting(acc); });
+    return () => { live = false; };
+  }, [reviewFilePath]);
+  const reviewOutcome = describeReviewOutcome(reviewAccounting);
   const elapsedWallSeconds = expStatus?.valid && BigInt(expStatus.start_time_ns) > 0n
     ? Number(((BigInt(expStatus.end_time_ns) || BigInt(Date.now()) * 1000000n) - BigInt(expStatus.start_time_ns)) / 1000000000n) : null;
   const expActive = expState === EXPERIMENT_STATES.Starting || expState === EXPERIMENT_STATES.Active || expState === EXPERIMENT_STATES.Stopping;
@@ -1368,7 +1396,7 @@ export default function App() {
             {runOutcome && !expActive && (
               <SideRow
                 k="Last run:"
-                v={{ ok: "Complete", partial: "Partial (declared)", loss: "Undeclared loss", failed: "Failed", unknown: "Unknown" }[runOutcome.severity]}
+                v={{ ok: "Complete", partial: "Partial (declared)", loss: "Undeclared loss", failed: "Failed", unknown: "Unknown", legacy: "No accounting" }[runOutcome.severity]}
                 cls={runOutcome.severity === "ok" ? "ok" : ""}
               />
             )}
@@ -1673,18 +1701,18 @@ export default function App() {
                   ) : (
                     <>
                     <label>
-                      X: <input type="number" value={roiFields.x} onChange={(e) => setRoiFields((r) => ({ ...r, x: e.target.value }))} />
+                      X: <input type="number" value={roiFields.x} disabled={expActive} title={expActive ? "Stop the experiment before changing ROI" : undefined} onChange={(e) => setRoiFields((r) => ({ ...r, x: e.target.value }))} />
                     </label>
                     <label>
-                      Y: <input type="number" value={roiFields.y} onChange={(e) => setRoiFields((r) => ({ ...r, y: e.target.value }))} />
+                      Y: <input type="number" value={roiFields.y} disabled={expActive} title={expActive ? "Stop the experiment before changing ROI" : undefined} onChange={(e) => setRoiFields((r) => ({ ...r, y: e.target.value }))} />
                     </label>
                     <label>
-                      W: <input type="number" value={roiFields.w} onChange={(e) => setRoiFields((r) => ({ ...r, w: e.target.value }))} /> px
+                      W: <input type="number" value={roiFields.w} disabled={expActive} title={expActive ? "Stop the experiment before changing ROI" : undefined} onChange={(e) => setRoiFields((r) => ({ ...r, w: e.target.value }))} /> px
                     </label>
                     <label>
-                      H: <input type="number" value={roiFields.h} onChange={(e) => setRoiFields((r) => ({ ...r, h: e.target.value }))} /> px
+                      H: <input type="number" value={roiFields.h} disabled={expActive} title={expActive ? "Stop the experiment before changing ROI" : undefined} onChange={(e) => setRoiFields((r) => ({ ...r, h: e.target.value }))} /> px
                     </label>
-                    <button className="btn" onClick={onApplyRoi} disabled={!ready}>
+                    <button className="btn" onClick={onApplyRoi} disabled={!ready || expActive} title={expActive ? "Stop the experiment before changing ROI" : undefined}>
                       Apply ROI
                     </button>
                     </>
@@ -1810,41 +1838,10 @@ export default function App() {
                         <span className="chip"><span className="swatch" style={{ background: "#1a7f37" }} /> Valid</span>
                         <span className="chip"><span className="swatch" style={{ background: "#b42318" }} /> Invalid</span>
                       </span>
-                      {hostProcessing && <button
-                        onClick={async () => {
-                          const res = await bridge.setBackgroundFromCurrentFrame();
-                          append(res.ok ? "background captured from current frame" : `set background failed: ${res.message}`);
-                          await refreshConfig();
-                        }}
-                        disabled={!running}
-                        title={running ? "Capture the current frame as the processing background" : "Camera is not running"}
-                      >
-                        Set Background
-                      </button>}
-                      <button
-                        onClick={async () => {
-                          await bridge.clearBackgroundImage();
-                          append("background cleared");
-                          await refreshConfig();
-                        }}
-                        disabled={!backgroundSet}
-                        title={backgroundSet ? undefined : "No background is set"}
-                      >
-                        Clear Background
-                      </button>
-                      <button onClick={()=>{setConfigTab("app");}} title="Edit image_processing.auto_background_* in the configuration below">
-                        Auto background: {autoBackgroundEnabled ? "on" : "off"} · configure
-                      </button>
-                      <button
-                        onClick={async () => {
-                          setRoiFields({ x: "0", y: "0", w: "0", h: "0" });
-                          await bridge.setProcessingRoi(0, 0, 0, 0);
-                          await refreshConfig();
-                        }}
-                        disabled={!ready}
-                      >
-                        Clear ROI
-                      </button>
+                      <ProcessingSetupControls ready={ready} running={running} experimentActive={expActive}
+                        hostProcessing={hostProcessing} backgroundSet={backgroundSet}
+                        autoBackgroundEnabled={autoBackgroundEnabled} append={append} refresh={refreshConfig}
+                        onConfigure={() => setConfigTab("app")} />
 
                       <button onClick={onToggleRecord} disabled={!running} title={running ? "Record raw frames to an HDF5 file" : "Camera is not running"}>
                         {recording ? "Stop Recording" : "Record"}
@@ -2192,6 +2189,7 @@ export default function App() {
                   <button className={reviewTab === "charts" ? "active" : ""} disabled={!reviewMeta?.file_open || reviewMeta.recording_file} onClick={() => setReviewTab("charts")}>Charts</button>
                 </div>
                 <div className="subtab-body">
+                  <RunOutcomeNotice outcome={reviewOutcome} />
                   <ReviewExportOptions model={reviewExport}/>
                   {caps.reanalysis && <ReanalysisControls model={reanalysis} metadata={reviewMeta} blocked={reviewExport.busy || reviewSourceBusy || !ready}/>}
                   {reviewTab === "charts" && <ReviewCharts sourcePath={reviewMeta?.file_path ?? ""}/>}

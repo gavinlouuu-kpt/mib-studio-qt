@@ -119,6 +119,9 @@ append only, never renumber.
    `experiment.flushFailed` / `experiment.provenanceFailed` /
    `experiment.saveFailed` is latched and the state is `Failed`.
 
+   The reconciled accounting of the last finalized run is kept (`lastRunAccounting`, with its start
+   generation) for `fetch_run_accounting("last_run")` (ABI 31).
+
    The accounting line logged at the end of finalization is a WARN when
    `recording::needsOperatorAttention(completion)` (undeclared loss, failure or unknown) or when
    malformed frames exceed `kMalformedWarnFraction` (0.1 %) of the admitted frames, INFO
@@ -238,6 +241,10 @@ nonzero persisted accounting.
 Readiness also blocks while bounded background calibration is running, preventing
 a later publication from replacing a background after experiment configuration
 is frozen. Cancellation/completion restores this gate.
+
+Background set/clear and calibration apply share `withIdleConfiguration` with ROI
+settings. Asynchronous calibration publication uses the nonblocking overload to
+avoid waiting on a configuration transaction that might join its worker (#542).
 
 ### Raw recording admission (#451)
 
