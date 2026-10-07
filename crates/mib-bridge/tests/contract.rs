@@ -79,12 +79,24 @@ fn abi_version_is_stable() {
     // provisional 15 and renumbered once; 24 = #501 P0; 15 and 19-24 are
     // never reused.
     // v26 = ZC300 stage bridge (#464, ADR 0013): stage_* commands,
-    // fetch_stage_status, operation kinds StageMove/StageReference, discovery
+    // fetch_stage_status, operation kind StageMove, discovery
     // kind MotionStage, stage_move_states. It landed before #501 P1, so it
     // took 26 under the landing-order rule; 27 reserved for #501 P1.
     // v27 #501 P1: set_instrument_mode, set_service_mode, set_instrument_led,
     // fetch_run_preview (PZ7035 Align/Run camera modes).
-    assert_eq!(ffi::bridge_abi_version(), 27);
+    // v28 central method authoring (#398 M3b): registry_new_draft_from_revision,
+    // registry_new_method_draft, registry_set_draft_notes,
+    // registry_draft_from_head, registry_submit_draft, registry_delete_draft,
+    // registry_transition, registry_fetch_history -> BridgeRegistryCommand,
+    // and the snapshot's drafts, methods, history and submit_conflict.
+    // v29 central-method Apply in the React shell (#398 M2c):
+    // registry_plan_apply and registry_apply_method over the backend
+    // config.json applier.
+    // v30 = ZC300 stage without homing (#464, ADR 0013 Amendment 1): stage_home and
+    // operation kind StageReference removed; stage_set_zero(mid_travel) added;
+    // fetch_stage_status: referenced -> zero_set, + mid_travel_declared and
+    // session_only_zero, soft_min_um/soft_max_um -> envelope_min_um/envelope_max_um.
+    assert_eq!(ffi::bridge_abi_version(), 30);
 }
 
 // ABI 27 (#501 P1): off the PZ7035 the camera-mode commands are refused cleanly, the raw LED
@@ -289,9 +301,9 @@ fn pump_commands_fail_safely_without_hardware() {
     let _ = std::fs::remove_dir_all(&data_dir);
 }
 
-// Z stage (#464, ADR 0013): with no controller the commands fail cleanly
-// and never hang; Stop is always accepted; the snapshot reports a stage that
-// is neither connected, homed nor limit-verified.
+// Z stage (#464, ADR 0013 Amendment 1): with no controller the commands fail
+// cleanly and never hang; Stop is always accepted; the snapshot reports a stage
+// that is neither connected, zeroed nor limit-verified.
 #[test]
 #[serial]
 fn stage_commands_fail_safely_without_hardware() {
@@ -300,13 +312,17 @@ fn stage_commands_fail_safely_without_hardware() {
     assert!(bridge.pin_mut().initialize(&data_dir.to_string_lossy()));
 
     let status = bridge.pin_mut().fetch_stage_status();
-    assert!(status.valid && !status.connected && !status.referenced && !status.limits_verified && !status.busy);
+    assert!(status.valid && !status.connected && !status.zero_set && !status.limits_verified && !status.busy);
+    assert!(!status.mid_travel_declared && status.envelope_min_um == 0.0 && status.envelope_max_um == 0.0);
+    assert!(!status.session_only_zero, "power-cycle detection is on by default");
 
     assert!(bridge.pin_mut().stage_stop().ok, "Stop is always accepted");
     assert!(!bridge.pin_mut().stage_move_to(0.0).ok);
     assert!(!bridge.pin_mut().stage_move_by(10.0).ok);
-    let home = bridge.pin_mut().stage_home();
-    assert!(!home.ok && home.operation_id == 0);
+    for mid_travel in [false, true] {
+        let zero = bridge.pin_mut().stage_set_zero(mid_travel);
+        assert!(!zero.ok && zero.operation_id == 0, "no stage to zero");
+    }
     assert!(!bridge.pin_mut().stage_apply_profile().ok);
     assert!(!bridge.pin_mut().stage_connect("", "", 0).ok, "no endpoint configured");
     assert!(!bridge.pin_mut().stage_connect("ttyMIB-NO-SUCH-PORT", "", 300).ok, "address out of range");
@@ -1409,6 +1425,33 @@ fn registry_commands_through_shell_transport() {
         let refused = bridge.pin_mut().registry_record_validation("r1", "/nonexistent/run.h5", true);
         assert_eq!(refused.job_id, 0, "validation without a cached revision is refused");
         assert!(!refused.error.is_empty(), "refusal carries a reason");
+
+        // #398 M3b authoring surface: values and refusals cross the bridge.
+        let s = bridge.pin_mut().fetch_registry_snapshot();
+        assert!(s.drafts.is_empty() && s.methods.is_empty() && !s.submit_conflict.present);
+        let no_config = bridge.pin_mut().registry_new_draft_from_revision("r1", true);
+        assert_eq!(no_config.job_id, 0, "no applied config.json: refused");
+        assert!(no_config.error.contains("config.json"), "reason: {}", no_config.error);
+        let blank = bridge.pin_mut().registry_transition("r1", 1, "   ");
+        assert_eq!(blank.job_id, 0, "blank reason refused");
+        assert!(!blank.error.is_empty());
+        assert_eq!(bridge.pin_mut().registry_transition("r1", 99, "x").job_id, 0, "unknown state refused");
+        let missing = bridge.pin_mut().registry_set_draft_notes("nope", "notes");
+        assert_eq!(missing.job_id, 0);
+        assert!(missing.error.contains("not found"));
+        let copy = bridge.pin_mut().registry_new_draft_from_revision("r1", false);
+        assert_ne!(copy.job_id, 0, "copy draft queued");
+        let job = wait_registry_job(&mut bridge, copy.job_id);
+        assert_eq!((job.kind, job.state), (6, 4), "SaveDraft fails without a cache: {}", job.message);
+        let submit = bridge.pin_mut().registry_submit_draft("d1", false);
+        let job = wait_registry_job(&mut bridge, submit.job_id);
+        assert_eq!((job.kind, job.state), (8, 4), "SubmitDraft needs a session");
+
+        // #398 M2c Apply: refusals cross the bridge as values.
+        let plan = bridge.pin_mut().registry_plan_apply("r1");
+        assert!(!plan.ok && plan.error.contains("cache"), "uncached revision: {}", plan.error);
+        let applied = bridge.pin_mut().registry_apply_method("r1");
+        assert!(!applied.ok && !applied.error.is_empty() && applied.applied.is_empty());
         bridge.pin_mut().shutdown();
     }
 

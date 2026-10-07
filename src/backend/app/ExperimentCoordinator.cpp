@@ -746,6 +746,25 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
         result.message = "experiment coordinator is shut down";
         return result;
     }
+    // A stage operation queued before this Start is still running: refuse, never start
+    // under a moving stage (#533). Operations queued after are refused by the idle gate.
+    if (stageBusyProbe_ && stageBusyProbe_()) {
+        result.outcome = ExperimentStartOutcome::Busy;
+        result.message = "a Z stage operation is active; stop it or wait for it to finish before starting an experiment";
+        SPDLOG_WARN("ExperimentCoordinator: start refused — {}", result.message);
+        return result;
+    }
+
+    // Writer conflicts must be refused before even changing processing mode.
+    // Raw recording acquires its writer under this same coordinator mutex.
+    if (backend_.isFrameRecording() || backend_.hdf5().isFileOpen()) {
+        result.outcome = ExperimentStartOutcome::NotReady;
+        result.message =
+            "stop raw recording and close the existing HDF5 file before starting an experiment";
+        result.readiness = evaluateLocked(request.outputPath, request.profileId);
+        SPDLOG_WARN("ExperimentCoordinator: start refused — {}", result.message);
+        return result;
+    }
 
     // Multi-image series capture requires inline realtime processing. Switch
     // before the evaluation so the frozen snapshot records the mode the run
@@ -909,10 +928,19 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
     return result;
 }
 
+namespace {
+// True on a thread that is currently running a status callback. A callback
+// that re-registers must not wait for itself.
+thread_local bool tlInStatusCallback = false;
+}
+
 void ExperimentCoordinator::setStatusCallback(StatusCallback cb)
 {
-    std::lock_guard<std::mutex> lk(callbackMutex_);
+    std::unique_lock<std::mutex> lk(callbackMutex_);
     statusCallback_ = std::move(cb);
+    // After this returns, the previous callback is never running or invoked
+    // again (except on the calling thread itself, from inside a callback).
+    if (!tlInStatusCallback) callbackIdle_.wait(lk, [this] { return callbacksInFlight_ == 0; });
 }
 
 ExperimentStatus ExperimentCoordinator::snapshotLocked() const
@@ -954,9 +982,24 @@ void ExperimentCoordinator::publishLocked(std::unique_lock<std::mutex>& lk, cons
     {
         std::lock_guard<std::mutex> clk(callbackMutex_);
         cb = statusCallback_;
+        if (cb) ++callbacksInFlight_;
     }
     lk.unlock();
-    if (cb) cb(s);
+    if (cb) {
+        struct InFlight {
+            ExperimentCoordinator& self;
+            ~InFlight() {
+                tlInStatusCallback = false;
+                {
+                    std::lock_guard<std::mutex> clk(self.callbackMutex_);
+                    --self.callbacksInFlight_;
+                }
+                self.callbackIdle_.notify_all();
+            }
+        } inFlight{*this};
+        tlInStatusCallback = true;
+        cb(s);
+    }
     lk.lock();
 }
 
@@ -1222,6 +1265,11 @@ void ExperimentCoordinator::shutdown()
 } // namespace backend::app
 
 namespace backend::app {
+void ExperimentCoordinator::setStageBusyProbe(std::function<bool()> probe) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    stageBusyProbe_ = std::move(probe);
+}
+
 bool ExperimentCoordinator::withIdleConfiguration(const std::function<void()>& transaction) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (state_ != ExperimentRunState::Idle) return false;

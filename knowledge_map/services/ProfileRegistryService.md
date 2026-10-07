@@ -14,9 +14,10 @@ see [[../architecture/Rust-Bridge]]) sign in, refresh and list cached
 revisions. M2a (backend): the worker materializes a cached revision's files and
 records operator-confirmed local validations; [[../architecture/ExperimentCoordinator]]
 matches the applied config.json to a cached revision, gates Start on it
-(`method.revision`) and freezes it into `/run_provenance`. M2b: the Apply plan
-(`planMethodApply`; the React applier is a follow-up) and "Mark
-validated" (`AppBackend::requestMethodValidation` accepts only a
+(`method.revision`) and freezes it into `/run_provenance`. M2b/M2c: Apply
+(`planMethodApply`, then `app::applyCentralMethod` /
+`applyConfigDocument` in `include/backend/app/ConfigDocumentApply.h`) and
+"Mark validated" (`AppBackend::requestMethodValidation` accepts only a
 test run whose `/run_provenance` names the revision on this instrument under
 the current context — `checkValidationEvidence`). See
 `include/backend/app/MethodApply.h`.
@@ -61,13 +62,20 @@ the current context — `checkValidationEvidence`). See
 - `canonicalConfigSha256(configJson)` / `revisionConfigSha256(envelope)` (M2):
   key-order/whitespace/integral-double independent config hash; every
   `CachedRevisionSummary` carries `configSha256`.
-- Authoring (M3a, backend only so far):
+- Authoring (M3a backend; M3b UI in the React Central Methods panel, see
+  [[../architecture/Desktop-Shell]]):
   `requestSaveDraft(MethodDraft, copyFromRevisionId)` stores a local draft in
   the per-user cache (`registry_drafts`; works offline; IDs for draft, method
   and revision pre-generated with `generateUuidV4()` so a retried submit is
   idempotent); with a source revision the config, camera script, core,
-  compatibility, method and base are copied from it. The draft must
-  canonicalize. `requestDeleteDraft`. `requestSubmitDraft(id, asBranch)`
+  compatibility, method and base are copied from it — only the content fields
+  the caller left empty, so `AppBackend::currentConfigDraft()` can put the
+  applied config.json on top of a revision. The draft must
+  canonicalize. `requestDeleteDraft`. `requestSetDraftNotes(id, notes)` (a
+  SaveDraft job) changes only the notes of the worker's current, unsubmitted
+  draft, so a delete queued before it wins (the facade's
+  `registrySetDraftNotes` uses it; a full save of a snapshot copy would
+  recreate the discarded draft). `requestSubmitDraft(id, asBranch)`
   (signed in): creates the method for a new-method draft, otherwise reads the
   method head (`listMethods`) and, when it is not the draft's base, stops with
   `snapshot().submitConflict` (base, head, upstream and draft-vs-head key

@@ -44,20 +44,25 @@ export interface AutofocusConfig {
   focus_direction: boolean;
 }
 
-/** Z stage snapshot (#464, ADR 0013). `move_state` is a contract
- *  STAGE_MOVE_STATES value; positions are micrometres in the homed frame
- *  (zero at mid-travel) once `referenced`. */
+/** Z stage snapshot (#464, ADR 0013 Amendment 1; ABI 30 = no homing).
+ *  `move_state` is a contract STAGE_MOVE_STATES value; positions are
+ *  micrometres in the operator's frame once `zero_set`, otherwise the raw
+ *  controller counter, which means nothing. */
 export interface StageStatus {
   valid: boolean;
   enabled: boolean;
   connected: boolean;
   /** Controller matches the stage profile; otherwise motion is refused. */
   configured: boolean;
-  /** Homed since the controller powered up; moves need it. */
-  referenced: boolean;
-  /** Supervised limit-switch check passed for this controller; Home needs it. */
+  /** The operator set zero since the controller powered up; moves need it. */
+  zero_set: boolean;
+  /** ... and declared the stage was at mid-travel (widens the envelope). */
+  mid_travel_declared: boolean;
+  /** Power-up token off (hardware-acceptance mode): a power cycle is NOT detected. Show a warning. */
+  session_only_zero: boolean;
+  /** Supervised limit-switch check passed for this controller. A badge only. */
   limits_verified: boolean;
-  /** A move or Home is queued or running. */
+  /** A move is queued or running. */
   busy: boolean;
   model: string;
   serial: string;
@@ -71,8 +76,9 @@ export interface StageStatus {
   emergency_stop: boolean;
   driver_alarm: boolean;
   span_um: number;
-  soft_min_um: number;
-  soft_max_um: number;
+  /** Allowed travel around the zero (0/0 until zero is set). */
+  envelope_min_um: number;
+  envelope_max_um: number;
   last_error: string;
 }
 
@@ -237,6 +243,73 @@ export interface RegistryRevision {
   local_validation: number;
   validated_by: string;
   validated_at_utc: string;
+  /** #398 M3b: lineage, author's notes, newer published revision ("" = none). */
+  parent_revision_id: string;
+  release_notes: string;
+  newer_revision_id: string;
+}
+
+/** #398 M3b authoring mirrors. Drafts are local until submitted. */
+export interface RegistryDraft {
+  draft_id: string;
+  project_id: string;
+  method_id: string;
+  new_method: boolean;
+  method_display_name: string;
+  base_revision_id: string;
+  release_notes: string;
+  submitted_revision_id: string;
+  updated_at_utc: string;
+}
+
+export interface RegistryMethod {
+  method_id: string;
+  project_id: string;
+  display_name: string;
+  head_revision_id: string;
+}
+
+export interface RegistryHistoryEntry {
+  who: string;
+  what: string;
+  reason: string;
+  created_at: string;
+  review: boolean;
+}
+
+export interface RegistryConflict {
+  present: boolean;
+  draft_id: string;
+  base_revision_id: string;
+  head_revision_id: string;
+  compared: boolean;
+  upstream_changes: string[];
+  draft_vs_head: string[];
+}
+
+/** #398 M2c Apply preview (ok false: why not) and outcome. */
+export interface MethodApplyPlan {
+  ok: boolean;
+  error: string;
+  revision_id: string;
+  display_name: string;
+  revision_number: string;
+  central_state: string;
+  changed_keys: string[];
+  camera_script_path: string;
+}
+
+export interface MethodApplyResult {
+  ok: boolean;
+  error: string;
+  applied: string[];
+  not_applied: string[];
+}
+
+/** Authoring command outcome: job_id "0" = refused, `error` why. */
+export interface RegistryCommand {
+  job_id: string;
+  error: string;
 }
 
 /** "Mark validated" outcome (#398 M2b): job_id "0" = refused, `error` why. */
@@ -269,6 +342,11 @@ export interface RegistrySnapshot {
   busy: boolean;
   instrument_id: string;
   instrument_name: string;
+  drafts: RegistryDraft[];
+  methods: RegistryMethod[];
+  history_revision_id: string;
+  history: RegistryHistoryEntry[];
+  submit_conflict: RegistryConflict;
 }
 
 /** Device-discovery request (schema v14, #419). Kinds are
@@ -661,14 +739,15 @@ export const bridge = {
     invokeCommand("pump_set_syringe_volume", { pump, volume, unit }),
   pumpPollStatus: (pump: number) => invokeCommand("pump_poll_status", { pump }),
   fetchPumpStatus: (pump: number) => invoke<PumpStatus>("fetch_pump_status", { pump }),
-  // Z stage (#464). The backend refuses moves before Home and outside the
-  // soft limits; only stageHome homes; stageStop is always accepted.
+  // Z stage (#464, ADR 0013 Amendment 1). The stage is never homed. The backend
+  // refuses moves before stageSetZero and outside the travel envelope around it;
+  // stageStop is always accepted.
   stageConnect: (portName = "", usbSerial = "", modbusAddress = 0) =>
     invokeCommand("stage_connect", { portName, usbSerial, modbusAddress }),
   stageDisconnect: () => invokeCommand("stage_disconnect"),
   stageMoveTo: (targetUm: number) => invokeCommand("stage_move_to", { targetUm }),
   stageMoveBy: (deltaUm: number) => invokeCommand("stage_move_by", { deltaUm }),
-  stageHome: () => invokeCommand("stage_home"),
+  stageSetZero: (midTravel = false) => invokeCommand("stage_set_zero", { midTravel }),
   stageStop: () => invokeCommand("stage_stop"),
   stageApplyProfile: () => invokeCommand("stage_apply_profile"),
   fetchStageStatus: () => invoke<StageStatus>("fetch_stage_status"),
@@ -751,6 +830,23 @@ export const bridge = {
   registryMaterialize: (revisionId: string) => invoke<string>("registry_materialize", { revisionId }),
   registryRecordValidation: (revisionId: string, evidenceFile: string, passed: boolean) =>
     invoke<RegistryValidationRequest>("registry_record_validation", { revisionId, evidenceFile, passed }),
+  // #398 M3b authoring.
+  registryNewDraftFromRevision: (revisionId: string, useCurrentConfig: boolean) =>
+    invoke<RegistryCommand>("registry_new_draft_from_revision", { revisionId, useCurrentConfig }),
+  registryNewMethodDraft: (projectId: string, name: string, releaseNotes: string) =>
+    invoke<RegistryCommand>("registry_new_method_draft", { projectId, name, releaseNotes }),
+  registrySetDraftNotes: (draftId: string, notes: string) =>
+    invoke<RegistryCommand>("registry_set_draft_notes", { draftId, notes }),
+  registryDraftFromHead: (draftId: string, keepDraftConfig: boolean) =>
+    invoke<RegistryCommand>("registry_draft_from_head", { draftId, keepDraftConfig }),
+  registrySubmitDraft: (draftId: string, asBranch: boolean) =>
+    invoke<RegistryCommand>("registry_submit_draft", { draftId, asBranch }),
+  registryDeleteDraft: (draftId: string) => invoke<RegistryCommand>("registry_delete_draft", { draftId }),
+  registryTransition: (revisionId: string, target: number, reason: string) =>
+    invoke<RegistryCommand>("registry_transition", { revisionId, target, reason }),
+  registryFetchHistory: (revisionId: string) => invoke<RegistryCommand>("registry_fetch_history", { revisionId }),
+  registryPlanApply: (revisionId: string) => invoke<MethodApplyPlan>("registry_plan_apply", { revisionId }),
+  registryApplyMethod: (revisionId: string) => invoke<MethodApplyResult>("registry_apply_method", { revisionId }),
   fetchRegistrySnapshot: () => invoke<RegistrySnapshot>("fetch_registry_snapshot"),
   fetchRegistryJob: (jobId: string) =>
     invoke<RegistryJob>("fetch_registry_job", { jobId: decimalU64(jobId) }),

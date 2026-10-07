@@ -16,6 +16,152 @@ window, with the best value held and a "Restart focus peak" button. A brightness
 the window is dark (LED not lit) or clipping. Frontend only; no bridge change. See
 [[../architecture/Desktop-Shell]].
 
+
+## 2026-10-07 — Local profile drafts copy the open app config (#547)
+
+React local profiles now seed new drafts from the complete config.json document
+loaded in the App config editor. Without one, users must open or import a config;
+choosing a profiles folder preserves the draft. Empty or invalid JSON drafts cannot be saved:
+the disabled save button explains why, and the save handler repeats validation.
+Existing profile reads retain their complete document and optional script. Vitest
+covers document seeding, missing documents, folder selection, invalid/empty drafts
+and populated saves. See [[architecture/Desktop-Shell]].
+
+## 2026-10-07 — Await desktop safety confirmations (#541)
+
+All destructive/draft-discard and Service mode prompts await the shared transport
+dialog helper. The Tauri shell uses the plugin public confirmation API with explicit
+`dialog:allow-message`; browsers use awaited native confirmation. Rejected dialogs
+fail closed. Tests cover cancellation, async shims, and forbid direct confirmation
+calls outside the helper. See [[architecture/Desktop-Shell]].
+
+## 2026-10-07 — Raw recording preserves the experiment writer (#451)
+
+Manual recording uses the coordinator idle transaction for atomic admission
+against experiment Start and refuses any open HDF5 file without closing it.
+Recording ownership lasts through worker finalization and Stop; facade and Qt
+callers receive the backend conflict reason. Mock regression covers active
+experiment conflicts during Starting/Active/Stopping, same-path protection,
+continued frame persistence/pixel readback, failed-open cleanup, and competing
+starts. The active-writer guard fails on the unfixed backend; the fixed test
+passes 20 repeats (200 competing starts), plus seven related lifecycle tests. See
+[[architecture/AppBackend]] and [[architecture/ExperimentCoordinator]].
+
+## 2026-10-07 — Deterministic experiment readiness checks (#506)
+
+`backend.experiment_readiness` joins the realtime consumer before editing the live
+recipe and checking the frozen active run and `AlreadyActive`; the coordinator
+stays active until the test requests Stop. Calibration inputs now wait for each
+frame's processed outcome (snapshot or empty-frame counter), using an isolated
+input store after capture stops, so slow consumers cannot skip the finite input set. Buffered-frame and calibration
+timeout checks wait for their explicit states instead of fixed sleeps. No backend
+or bridge change. See [[architecture/ExperimentCoordinator]].
+
+## 2026-10-07 — An experiment and a moving Z stage exclude each other (#533)
+
+`ExperimentCoordinator::start` neither checked nor cancelled a stage operation queued before it, and
+the stage worker never re-checked the experiment before later opcodes (the approach legs of a
+move). Start is now refused while a stage operation is active, and the worker asks the
+coordinator's idle gate right before every opcode, every leg. Tests: a facade test (slow move,
+Start refused, move carries on, Start works after Stop) and a service test (the gate flips between
+the two legs of an overshoot move: one opcode only, zero kept); both fail with their half of the fix
+removed. Review (Codex): the Start probe fails closed, so a cleanup Stop that fails while the
+axis keeps moving, or a status that says Moving, also refuses Start until a status confirms the
+axis is not moving (`StageService::motionPossible`). Fake controller only. See
+[[services/StageService]].
+
+## 2026-10-06 — Draft notes no longer recreate a discarded draft (#398 M3b follow-up)
+
+`BackendFacade::registrySetDraftNotes` queued a full SaveDraft of the snapshot's
+copy of the draft, so a Discard queued just before it ran first and the save then
+recreated the draft. It now queues `ProfileRegistryWorker::requestSetDraftNotes`,
+which reads the draft on the worker thread and fails if it is gone or submitted.
+Same job kind (SaveDraft), no bridge change. Guard: `profiles.registry_authoring`
+(delete then notes, both queued: the draft stays gone). Found by an independent
+review of #482. See [[../services/ProfileRegistryService]].
+
+## 2026-10-06 — ZC300 stage: no homing, "Set zero here" instead (#464, ABI 30)
+
+Gavin decided the ZC300 is not homed (ADR 0013 Amendment 1, #528). The code now
+follows it. Fake controller only; nothing moved or was written on the real
+stage.
+
+- **Bench read (read-only):** register 30015 was `0x0124` on ten reads. The home
+  bit floats (1 on all three axes) and the limit bits read 0 even on the
+  unconnected axes, so the limit wiring is unproven.
+- **Removed:** `stage_home`, the `StageReference` operation, Home in the panel,
+  `reference.on_startup` and the Home gate. Old config keys are ignored.
+- **Added:** `stage_set_zero(mid_travel)`: one write of the position counter, no
+  motion. Moves are refused until it was done this power-up, and outside a
+  travel envelope of ±1000 µm around the zero (±2900 µm after a "zero is at
+  mid-travel" declaration). They are refused, not clamped, and so is an approach
+  overshoot that would leave it.
+- **Re-zeroing cannot walk the envelope:** without a declaration a later zero
+  must stay inside the window of the first zero of that power-up.
+- **Cleared by** an e-stop, a driver alarm, an applied profile or a failure that
+  can desync the counter; an operator Stop keeps it.
+- **Limit bits** only stop a move heading toward an active switch; they gate
+  nothing. `limits_verified` is a "wiring unverified" badge and never widens
+  the envelope.
+- **ABI 30** (28 and 29 belong to #482 and #493): `referenced` → `zero_set`,
+  `mid_travel_declared`, `soft_*` → `envelope_*_um`.
+- **Review hardening (Codex, #531):** the power-up token is rechecked on every
+  idle poll and before every opcode, so a power cycle while connected drops the
+  zero; dropping the zero keeps the first window until a new power-up; Set zero
+  writes a fresh token before the counter, so no stale record can restore
+  against a rewritten counter even if deleting it fails; and fresh status is
+  checked before every opcode, not just at admission.
+- **Second review round (Codex, #531):** Stop now beats a queued move at the
+  driver (`stopGeneration`, `Stopped`); an invalidation is made durable and, if
+  the store refuses, the controller token is rotated; tokens never repeat; an
+  interim record accepting the old or the new token keeps the window across a
+  crash; an unreadable token at reconnect is unknown, not a mismatch; and
+  `power_up_token_register: 0` needs `allow_session_only_zero` and shows an
+  alert.
+- **Third review round (Codex, #531):** the Stop generation is checked right
+  before every motion opcode on every path, and Stop no longer sits behind a
+  silent controller's retries; and the lifetime of the zero fails closed: the
+  first zero stores its interim record too, a failed final save trusts nothing,
+  a replacement record after a token rotation is retried until stored, an
+  unacknowledged token write keeps the interim record, a fault seen while the
+  token is unknown still drops the zero, and the record file is flushed, fsynced
+  and closed before the rename. The #532 stop-storm test now measures the
+  driver's grant order.
+- **Final review round (Codex, #531):** the power-up token is read as new power-up
+  (0), same lifetime (matches the record's old or new token) or uncertain (changed,
+  matches nothing: not a power cycle, window uncertain); the first zero's interim
+  record is recognised; Set zero publishes the status it reads; a Stop is yielded
+  to before every driver transaction, not just retries; no file I/O under the
+  service lock; the grant-log test hook is bounded. The experiment-lock gap
+  (#533) is a separate issue.
+- **Known limitation:** the counter is open-loop; a hand move or stall is
+  invisible to the software.
+- **Next:** the first real Set zero (one register write plus a read-back) needs
+  Gavin present.
+
+## 2026-10-06 — PL replay lane in CI and the Contract 3 matrix row (ADR 0011)
+
+ADR 0011's CI and compatibility-matrix consequences:
+
+- **PL replay lane:** the 15 hardware-free PZ7035 tests carry the ctest label
+  `pl`: record decoder, provider replay and ingest, profile compiler,
+  platform monitor, the Align/Run mode writer and the bridge preview, Contract 3 vectors, host-versus-PL equality and the ABI
+  vendor check. `backend-ci` runs them as a named step ("PL replay lane") with
+  `--no-tests=error` and a lower bound of 15, so a dropped label or test
+  fails CI. `processing.unet_c4` and `processing.pz_board_run_host` report
+  SKIP there: they need the private weights or a board run.
+- **Matrix:** `docs/architecture/processing-contract-compatibility.md` gains
+  the Contract 3 row, a "Reference per contract" table (Contract 3's
+  reference is the pz7035 PL specification), the `unet-cells` line name and
+  the `pl_core` provenance. See [[../services/ProcessingService]].
+## 2026-10-06 — ARMv7 compile smoke in CI (ADR 0011)
+
+A new `armv7-smoke` workflow cross-compiles `mib_processing` and `mib_backend`
+with `MIB_PL_SCIENCE=ON` for the Cortex-A9 on every PR that touches the
+backend, so a 32-bit or ARM break in the PZ7035 code no longer waits for a
+board build. It uses the distro armhf toolchain, not the Yocto SDK, and leaves
+Aravis out; the SDK artifact job remains a follow-up. See
+[[../build-and-run/Build]].
 ## 2026-10-05 — PZ7035 Align/Run camera modes and the PL run preview (#501 P1)
 
 Opening Camera & Alignment puts the instrument in Align: full sensor at
@@ -35,6 +181,51 @@ needed in either direction.
 
 Bridge ABI 27. See [[../data-model/PZ7035-Records]],
 [[../architecture/Desktop-Shell]].
+
+## 2026-10-06 — Z stage: Disconnect and ApplyProfile can no longer hold Stop (#464)
+
+[[../services/StageService]] `disconnect()` and `applyProfile()` used to queue
+behind a running move or Home. The bridge runs one command at a time and
+`stage_stop` needs the same lock, so Stop could have waited out the whole
+operation.
+- **Reproduced:** `applyProfile()` during a 3 s move blocked 2.9 s, then
+  applied and saved the profile.
+- **Now:** `applyProfile()` and `connect()` are refused at once (`Busy`)
+  while an operation is active. `disconnect()` stops the axis and cancels
+  the operation, then disconnects within ~50 ms.
+- **Tests:** `backend.stage_service` and `backend.stage_bridge_facade`
+  cover it at both layers, and the mutations fail them.
+
+## 2026-10-06 — ZC300 driver lock is now fair (#464)
+
+PR #516's plain Linux lane saw `backend.zc300_stage` refuse a status poll
+after 15 s while every command was fine (slowest 40 ms).
+- **Cause:** #511's priority scheme still acquired the driver with a
+  `try_lock` plus sleep loop, which is unfair among pollers.
+- **Fix:** [[../services/ZC300Stage]] now queues waiters and hands the
+  driver straight to the next one, commands first. Polls and commands are
+  both FIFO and bounded.
+- **Stop jumps the queue (review finding):** `stop()` had shared the command
+  FIFO, so queued moves and teardown went first and a Stop could time out
+  into `Busy` without sending. It now has its own queue, served first, with
+  at most four in a row while a Disconnect waits.
+- **Test:** a new fairness block with six tight pollers fails on the old lock
+  every run (fewest 1 of mean 25; waits of 5–8 s) and passes on the new one
+  (25 of 25; worst ~60 ms).
+
+## 2026-10-06 — Z stage panel in the Tauri app (#464, slice 5)
+
+The Connect tab gains a Z stage panel (`StageControls`) under the pump and
+autofocus panel. It uses only the existing `stage_*` bridge commands
+(ABI 26), and is hidden on the PZ7035.
+- **Position:** unknown until Home.
+- **Home:** disabled until the limit switches are verified, then needs a
+  confirmation, Service mode and arming.
+- **Moves:** whole micrometres, pre-checked against the soft limits.
+- **Stop:** always available, and never waits for another panel command.
+- **Everything else:** locked during an experiment.
+
+See [[../architecture/Desktop-Shell]] (Z stage panel).
 
 ## 2026-10-06 — Z stage on the bridge, with a limits-verified Home gate (#464, slice 4)
 
@@ -351,6 +542,36 @@ most significant word in ID3. Register map, header and fixtures are
 unchanged. `vendor_pz7035_abi.py --tag` records the tag in `PROVENANCE.json`
 and refuses a tag that does not resolve to the checkout's commit. See
 [[../data-model/PZ7035-Records]].
+
+## 2026-10-05 — Apply central methods in the React/Tauri shell (#398 M2c)
+
+A Qt-free backend config.json applier (`app::applyConfigDocument`, with
+`applyCentralMethod` for registry revisions) gives the React shell an exact
+Apply: same section semantics as the Qt `AppConfigWatcher` (v2
+`difference_threshold`, Laplacian keys, contract version, buffers, realtime,
+delivery mode, pixel factor, autofocus, ROI), staged and fail-closed, exact
+text recorded as applied; `dot_grid` / `display_fps` reported as Qt-only.
+Refused while a run is in flight, and (like the local-profile apply) while
+raw recording, live capture, realtime processing or autofocus runs: the capture
+worker reads its config unsynchronised, and raw recording runs with the
+experiment idle (both found in review of #493). Bridge `registry_plan_apply` /
+`registry_apply_method` (bridge ABI 29); React previews the changed keys
+before applying. Guards: `backend.config_document_apply`, `e2e.method_gate`
+(applier path, mid-run and live-capture refusals), bridge cargo,
+`registry.test.ts`; `backend.config_document_apply` also refuses under live
+mock capture and raw recording with nothing changed.
+
+## 2026-10-04 — Central method authoring and review UI (#398 M3b)
+
+The React **Central Methods…** panel can now author and govern central
+methods: a **Drafts** view (new method from the current config.json, release
+notes, submit, and the explicit conflict choices with the compared changes)
+and, on Methods, **New draft**, role-gated **Approve / Reject / Publish /
+Archive / Revoke** with a required reason, **History**, a details block and
+"rN available", through new facade/bridge authoring commands (bridge ABI 28;
+27 is #501 P1) and pure `registry.ts` rules. Guards:
+`profiles.registry_facade`, bridge cargo tests, `registry.test.ts`. A Qt
+version was built and dropped (ADR 0011).
 
 ## 2026-10-04 — Central method authoring backend (#398 M3a)
 

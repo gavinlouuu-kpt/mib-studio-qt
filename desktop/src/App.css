@@ -1140,6 +1140,49 @@ button.btn:disabled,
   font-weight: 600;
 }
 
+.registry-tabs .btn.active {
+  background: var(--accent);
+  color: #fff;
+}
+.registry-reason {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 4px 0;
+}
+.registry-details,
+.registry-conflict {
+  white-space: pre-wrap;
+  font-size: 12px;
+  margin: 4px 0;
+  max-height: 140px;
+  overflow: auto;
+}
+.registry-conflict {
+  color: var(--warn);
+}
+.registry-table tr.conflict td {
+  color: var(--warn);
+}
+.registry-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.registry-confirm {
+  border: 1px solid var(--accent);
+  padding: 6px 8px;
+  margin: 4px 0;
+}
+.registry-confirm pre {
+  white-space: pre-wrap;
+  font-size: 12px;
+  margin: 0 0 4px;
+  max-height: 180px;
+  overflow: auto;
+}
+
 /* Camera & Alignment: mode and rate line under the toolbar */
 .camera-alignment-status {
   padding: 4px 8px;

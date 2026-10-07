@@ -8,6 +8,8 @@
 #include "backend/app/ProcessingCoreManagement.h"
 #include "backend/discovery/DeviceDiscoveryService.h"
 #include "backend/discovery/StartupDiscoveryCoordinator.h"
+#include "backend/app/ConfigDocumentApply.h"
+#include "backend/app/ExperimentCoordinator.h"
 #include "backend/app/MethodApply.h"
 #include "backend/profiles/ProfileRegistryWorker.h"
 
@@ -748,6 +750,7 @@ namespace backend::bridge
 
     BackendCommandResult BackendFacade::handleRecordingCommand(const RecordingCommand &command)
     {
+        std::string error;
         switch (command.action)
         {
         case RecordingCommandAction::StartFrameRecording:
@@ -760,8 +763,7 @@ namespace backend::bridge
                 0,
                 0,
             });
-            if (!backend_.startFrameRecording(command.filePath))
-            {
+            if (!backend_.startFrameRecording(command.filePath, &error)) {
                 emitEvent(RecordingStatusEvent{
                     RecordingState::Error,
                     command.filePath,
@@ -772,9 +774,8 @@ namespace backend::bridge
                     0,
                 });
                 emitEvent(BackendErrorEvent{BackendErrorSource::Recording,
-                                            BackendCommandType::Recording,
-                                            "Frame recording start failed"});
-                return {false, BackendCommandType::Recording, "Frame recording start failed"};
+                                            BackendCommandType::Recording, error});
+                return {false, BackendCommandType::Recording, error};
             }
             emitEvent(RecordingStatusEvent{
                 RecordingState::Recording,
@@ -2127,7 +2128,7 @@ namespace backend::bridge
             const auto snap = stage.snapshot();
             std::string message = "Stage connected: " + snap.identity.model + " s/n " + snap.identity.serial;
             if (!snap.configured) message += " (controller does not match the stage profile; motion refused)";
-            else if (!snap.referenced) message += " (press Home before moving)";
+            else if (!snap.zeroSet) message += " (set zero before moving)";
             return {true, BackendCommandType::Stage, message};
         }
 
@@ -2155,24 +2156,21 @@ namespace backend::bridge
                           trackStageOperation(BackendOperationKind::StageMove, r.id, "stage " + what)};
                 return;
             }
-            case StageCommandAction::Home:
+            case StageCommandAction::SetZero:
             {
-                const auto r = stage.reference();
-                if (!r.accepted())
-                {
-                    result.message = "Home refused: " + refused(r);
-                    return;
-                }
-                result = {true, BackendCommandType::Stage, "Stage Home started",
-                          trackStageOperation(BackendOperationKind::StageReference, r.id,
-                                              "stage Home (both limits, zero at mid-travel)")};
+                // One register write, no motion; runs on the stage worker.
+                std::string detail;
+                const auto err = stage.setZero(command.midTravel, &detail);
+                result.ok = err == stage::StageError::None;
+                result.message = result.ok ? "Stage " + detail
+                                           : "Set zero refused: " + (detail.empty() ? std::string(stage::toString(err)) : detail);
                 return;
             }
             case StageCommandAction::ApplyProfile:
             {
                 const auto err = stage.applyProfile();
                 result.ok = err == stage::StageError::None;
-                result.message = result.ok ? "Stage profile applied and saved; press Home before moving"
+                result.message = result.ok ? "Stage profile applied and saved; set zero before moving"
                                            : std::string("Apply profile failed: ") + stage::toString(err);
                 return;
             }
@@ -2193,7 +2191,9 @@ namespace backend::bridge
         out.enabled = stage.config().enabled;
         out.connected = snap.connected;
         out.configured = snap.configured;
-        out.referenced = snap.referenced;
+        out.zeroSet = snap.zeroSet;
+        out.midTravelDeclared = snap.midTravelDeclared;
+        out.sessionOnlyZero = snap.sessionOnlyZero;
         out.limitsVerified = snap.limitsVerified;
         out.busy = snap.activeOperation != 0;
         out.model = snap.identity.model;
@@ -2208,8 +2208,8 @@ namespace backend::bridge
         out.emergencyStop = snap.status.emergencyStop;
         out.driverAlarm = snap.status.driverAlarm;
         out.spanUm = snap.spanUm;
-        out.softMinUm = snap.softMinUm;
-        out.softMaxUm = snap.softMaxUm;
+        out.envelopeMinUm = snap.envelopeMinUm;
+        out.envelopeMaxUm = snap.envelopeMaxUm;
         out.lastError = snap.lastError;
         return true;
     }
@@ -2555,7 +2555,8 @@ namespace backend::bridge
                                      r.contentHash, r.revisionNumber, r.metadataVersion,
                                      static_cast<int>(r.state), r.materializedDir,
                                      static_cast<int>(local.state), local.validatorId,
-                                     local.validatedAtUtc});
+                                     local.validatedAtUtc, r.parentRevisionId, r.releaseNotes,
+                                     app::newerPublishedRevision(s, r)});
         }
         out.corruptRevisionIds = s.corruptRevisionIds;
         out.cacheError = s.cacheError;
@@ -2572,7 +2573,169 @@ namespace backend::bridge
         out.busy = s.busy;
         out.instrumentId = backend_.instrumentIdentity().id;
         out.instrumentName = backend_.instrumentIdentity().name;
+        for (const auto &d : s.drafts)
+            out.drafts.push_back({d.draftId, d.projectId, d.methodId, d.newMethod, d.methodDisplayName,
+                                  d.baseRevisionId, d.releaseNotes, d.submittedRevisionId, d.updatedAtUtc});
+        for (const auto &m : s.methods)
+            out.methods.push_back({m.methodId, m.projectId, m.displayName, m.headRevisionId});
+        if (s.history)
+        {
+            out.historyRevisionId = s.history->revisionId;
+            for (const auto &v : s.history->reviews)
+                out.history.push_back({v.reviewerId, v.decision, v.reason, v.createdAt, true});
+            for (const auto &e : s.history->events)
+                out.history.push_back({e.actorId, e.action, e.reason, e.createdAt, false});
+        }
+        if (s.submitConflict)
+        {
+            const auto &c = *s.submitConflict;
+            out.submitConflict = {true, c.draftId, c.baseRevisionId, c.headRevisionId, c.compared,
+                                  c.upstreamChanges, c.draftVsHead};
+        }
         return true;
+    }
+
+    namespace
+    {
+        BackendRegistryCommand queued(std::uint64_t jobId, const char *refused)
+        {
+            return jobId ? BackendRegistryCommand{jobId, {}} : BackendRegistryCommand{0, refused};
+        }
+        const profiles::MethodDraft *findDraft(const profiles::RegistryWorkerSnapshot &s, const std::string &id)
+        {
+            for (const auto &d : s.drafts)
+                if (d.draftId == id) return &d;
+            return nullptr;
+        }
+    } // namespace
+
+    BackendRegistryCommand BackendFacade::registryNewDraftFromRevision(const std::string &revisionId,
+                                                                       bool useCurrentConfig)
+    {
+        if (!initialized_) return {0, "Backend not initialized"};
+        profiles::MethodDraft draft;
+        if (useCurrentConfig)
+        {
+            std::string error;
+            draft = backend_.currentConfigDraft(&error);
+            if (!error.empty()) return {0, error};
+        }
+        return queued(backend_.profileRegistry().requestSaveDraft(std::move(draft), revisionId),
+                      "The registry worker refused the draft");
+    }
+
+    BackendRegistryCommand BackendFacade::registryNewMethodDraft(const std::string &projectId,
+                                                                 const std::string &name,
+                                                                 const std::string &releaseNotes)
+    {
+        if (!initialized_) return {0, "Backend not initialized"};
+        if (projectId.empty() || name.find_first_not_of(" \t") == std::string::npos)
+            return {0, "A project and a method name are required"};
+        std::string error;
+        auto draft = backend_.currentConfigDraft(&error);
+        if (!error.empty()) return {0, error};
+        draft.projectId = projectId;
+        draft.newMethod = true;
+        draft.methodDisplayName = name;
+        draft.releaseNotes = releaseNotes;
+        if (draft.hardwareCompatibilityJson.empty()) draft.hardwareCompatibilityJson = "{}";
+        return queued(backend_.profileRegistry().requestSaveDraft(std::move(draft)),
+                      "The registry worker refused the draft");
+    }
+
+    BackendRegistryCommand BackendFacade::registrySetDraftNotes(const std::string &draftId, const std::string &notes)
+    {
+        if (!initialized_) return {0, "Backend not initialized"};
+        const auto s = backend_.profileRegistry().snapshot();
+        const auto *d = findDraft(s, draftId);
+        if (!d) return {0, "Draft not found"};
+        if (!d->submittedRevisionId.empty()) return {0, "A submitted draft cannot be changed"};
+        // Notes only, applied to the worker's current draft: a full save of
+        // this snapshot copy would recreate a draft whose delete is queued.
+        return queued(backend_.profileRegistry().requestSetDraftNotes(draftId, notes),
+                      "The registry worker refused the draft");
+    }
+
+    BackendRegistryCommand BackendFacade::registryDraftFromHead(const std::string &draftId, bool keepDraftConfig)
+    {
+        if (!initialized_) return {0, "Backend not initialized"};
+        const auto s = backend_.profileRegistry().snapshot();
+        const auto *d = findDraft(s, draftId);
+        if (!d) return {0, "Draft not found"};
+        if (!s.submitConflict || s.submitConflict->draftId != draftId || s.submitConflict->headRevisionId.empty())
+            return {0, "This draft has no conflict with a published head"};
+        profiles::MethodDraft next;
+        next.methodDisplayName = d->methodDisplayName;
+        next.releaseNotes = d->releaseNotes;
+        if (keepDraftConfig) next.configJson = d->configJson;
+        return queued(backend_.profileRegistry().requestSaveDraft(std::move(next), s.submitConflict->headRevisionId),
+                      "The registry worker refused the draft");
+    }
+
+    BackendRegistryCommand BackendFacade::registrySubmitDraft(const std::string &draftId, bool asBranch)
+    {
+        if (!initialized_) return {0, "Backend not initialized"};
+        return queued(backend_.profileRegistry().requestSubmitDraft(draftId, asBranch), "Invalid draft");
+    }
+
+    BackendRegistryCommand BackendFacade::registryDeleteDraft(const std::string &draftId)
+    {
+        if (!initialized_) return {0, "Backend not initialized"};
+        return queued(backend_.profileRegistry().requestDeleteDraft(draftId), "Invalid draft");
+    }
+
+    BackendRegistryCommand BackendFacade::registryTransition(const std::string &revisionId, int state,
+                                                             const std::string &reason)
+    {
+        if (!initialized_) return {0, "Backend not initialized"};
+        if (state < 0 || state > static_cast<int>(profiles::CentralState::Revoked))
+            return {0, "Unknown central state"};
+        return queued(backend_.profileRegistry().requestTransition(
+                          revisionId, static_cast<profiles::CentralState>(state), reason),
+                      "Refused: a reason is required and only review, publish, archive or revoke are allowed");
+    }
+
+    BackendMethodApplyPlan BackendFacade::registryPlanApply(const std::string &revisionId) const
+    {
+        BackendMethodApplyPlan out;
+        if (!initialized_)
+        {
+            out.error = "Backend not initialized";
+            return out;
+        }
+        const auto plan = app::planMethodApply(backend_.profileRegistry().snapshot(), revisionId,
+                                               backend_.getLastConfigJson());
+        out.ok = plan.ok;
+        out.error = plan.error;
+        out.revisionId = plan.revisionId;
+        out.displayName = plan.displayName;
+        out.revisionNumber = plan.revisionNumber;
+        out.centralState = plan.centralState;
+        out.changedKeys = plan.changedKeys;
+        out.cameraScriptPath = plan.cameraScriptPath;
+        return out;
+    }
+
+    BackendMethodApplyResult BackendFacade::registryApplyMethod(const std::string &revisionId)
+    {
+        BackendMethodApplyResult out;
+        if (!initialized_)
+        {
+            out.error = "Backend not initialized";
+            return out;
+        }
+        const auto report = app::applyCentralMethod(backend_, revisionId);
+        out.ok = report.ok;
+        out.error = report.error;
+        out.applied = report.applied;
+        out.notApplied = report.notApplied;
+        return out;
+    }
+
+    BackendRegistryCommand BackendFacade::registryFetchHistory(const std::string &revisionId)
+    {
+        if (!initialized_) return {0, "Backend not initialized"};
+        return queued(backend_.profileRegistry().requestHistory(revisionId), "Invalid revision");
     }
 
     std::uint64_t BackendFacade::registryMaterialize(const std::string &revisionId)

@@ -374,10 +374,28 @@ commands for that reason.
 label. **Materialize** (`registry_materialize`) and **Mark validated… /
 Record failed run…** (`@tauri-apps/plugin-dialog` picker →
 `registry_record_validation`; the backend refusal is shown) work.
-**Apply…** is rendered disabled with `APPLY_UNAVAILABLE`: the React shell has
-no config.json applier (it edits the processing-config document instead), so
-it cannot load a method exactly — a follow-up.
+**Apply…** (#398 M2c, bridge ABI 29; materialized published/superseded rows) calls
+`registry_plan_apply` and shows the changed config.json keys and the camera
+script path (`applyConfirmText`); **Apply** then calls `registry_apply_method`,
+which runs the backend config.json applier (`app::applyCentralMethod` →
+`applyConfigDocument`, refused while a run is in flight or while raw
+recording, capture, realtime processing or autofocus runs) and reports applied
+and not-applicable sections (`applyResultText`). The React shell has no
+config.json file: the applied method lives in the backend for the session.
 
+#398 M3b: **Methods / Drafts** views. Methods adds **New draft** (optionally
+"from current config.json"), **Approve / Reject / Publish / Archive / Revoke**
+by project role with a required reason box, **History**, a details block and
+"rN available"; Drafts lists local drafts with base and status, edits release
+notes, submits, and on a conflict shows the compared changes with **Submit as
+branch**, **New draft from head** ("keep my config.json") and **Discard**;
+**New method from current config** takes a project and a name. Rules live in
+`registry.ts` (`reviewActionsFor`, `draftActionsFor`, `draftRows`,
+`conflictText`, `detailLines`); commands go through
+`registry_new_draft_from_revision`, `registry_new_method_draft`,
+`registry_set_draft_notes`, `registry_draft_from_head`,
+`registry_submit_draft`, `registry_delete_draft`, `registry_transition`,
+`registry_fetch_history` (each `{job_id, error}`).
 
 ## September 23 catch-up: camera setup
 
@@ -454,6 +472,11 @@ The Experiment configuration page now hosts an App-owned local profile draft/lib
 document, preserve/edit optional `egrabberConfig.js`, save as new, duplicate, rename,
 or recoverably archive. Unknown config bytes survive copies. Mutations use a baseline
 hash over config, optional script and metadata. Existing names are never overwritten.
+New Draft from Current Config copies the complete document loaded in the App config
+editor; without a loaded document, open config.json there or import a config to draft.
+Choosing a folder preserves the draft without a discard prompt. Empty or invalid drafts are refused by both the
+save button (with a reason tooltip) and the save handler. Reading saved profiles
+continues to preserve their complete JSON and optional script.
 Navigation retains drafts and pending commands; experiment-active operations are refused.
 
 `BackendFacade::profileCommand` owns the portable `app/ProfileStore` path. Apply validates
@@ -760,3 +783,63 @@ The root Conan recipe defaults `with_qt=True` to preserve Qt builds. The Windows
 ### Portable camera-document Save As
 
 Camera editors stage bounded validated content in a randomized `tempfile::NamedTempFile` in the destination directory, sync file data, then use `persist_noclobber` for Save As. The maintained tempfile implementation uses non-replacing `MoveFileExW` on Windows (including filesystems without hard links) and native no-replace rename where supported on Unix; unavailable safe publication remains an error rather than an overwrite fallback. Existing Save retains its revision recheck and file permissions before replacement. RAII removes staging files on failure. Tests cover exact Unicode/revision roundtrip, existing file/directory conflicts, concurrent creators, bounded input and legacy staging-name collisions. Removable-media hardware/mount testing is not claimed.
+
+## Z stage panel (#464, slice 5)
+
+`StageControls` (`desktop/src/components/StageControls.tsx`, pure rules in
+`stageControlModel.ts`) sits under the pump and autofocus panel on the
+Connect tab. It uses only the `stage_*` commands and `fetch_stage_status` from
+[[Rust-Bridge]] (ABI 30). It is hidden on the
+PZ7035 until that board has a serial path for the stage. The service rules are
+in [[../services/StageService]].
+
+**The panel mirrors the backend rules; it does not replace them.** A disabled
+button is a courtesy, not a safety gate, and the reason for every disabled
+control is shown.
+- **There is no Home** (ADR 0013 Amendment 1, ABI 30). The stage is never
+  homed; the panel offers "Set zero here" instead.
+- **Position is shown as unknown until zero is set**, together with the
+  controller counter. The counter is only a position once the operator has
+  set zero, and even then a hand move or stall is invisible.
+- **Moves need the zero to be set this power-up.**
+  - Targets are whole micrometres.
+  - They are pre-checked against the travel envelope the backend reports
+    (±1000 µm around the zero, ±2900 µm after a mid-travel declaration); the
+    backend enforces it, refusing instead of clamping.
+- **Set zero here…** asks for confirmation. The warning says it moves nothing
+  and that nothing checks where the stage physically is; an optional
+  "the stage is at mid-travel" checkbox widens the travel and does not carry
+  over to the next zero. It needs Service mode and arming like the pumps.
+- **Session-only zero warning:** when the backend reports `session_only_zero`
+  (hardware-acceptance mode, power-cycle detection off) the panel shows an
+  alert; it is silent otherwise.
+- **The limit switches are a badge, not a gate:** the indicators carry
+  "wiring unverified" until a supervised `zc300ctl verify-limits` passed, and
+  that never enables or widens anything. The home bit is not shown (it floats).
+- **Arming is one-shot**, consumed only when a move or Set zero is actually
+  sent. A rejected input (a mistyped target, a target outside the envelope)
+  keeps the arming.
+- **Stop is always enabled and fires while the backend is ready.**
+  - It does not use the panel's command lock, so a pending command cannot
+    hold it.
+  - It works with unreadable status, in operator mode and during an
+    experiment.
+- **Everything else is locked while an experiment is active.**
+  Disconnect is allowed while a move runs: the backend stops the axis first.
+  Apply stage settings is not, and is refused at once with `Busy`.
+- **Status refresh** is 1 s, or 250 ms while something moves.
+- **Endpoint discovery** needs an explicit serial port and looks for kind
+  `MotionStage` with an address scope. Selecting a result fills the fields
+  and never connects.
+
+**Open follow-up:** relax the one-shot arming for small jogs only after the
+first supervised session. The candidate is a jog-only arm window (about 30 s,
+small whole-micrometre steps inside the envelope, any other action or Stop
+disarms; #521).
+
+Tests: `stageControlModel.test.ts` (rules) and `StageControls.test.tsx`
+(panel behaviour with a mocked bridge).
+
+Safety confirmations go through `desktop/src/transport/dialogs.ts` and must be
+awaited. Tauri uses the public dialog API (`dialog:allow-message`); browser
+confirmation and native dialog errors fail closed unless the result is true.

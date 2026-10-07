@@ -19,6 +19,7 @@
 #include <cstdlib>
 #include <random>
 #include <thread>
+#include <vector>
 
 using namespace backend::services;
 using backend::stage::StageError;
@@ -36,8 +37,10 @@ int main()
         mib::test::StageRig rig;
         auto svc = rig.service();
         MIB_REQUIRE(svc->startup() == StageError::None, "start-up");
-        const auto home = svc->reference();
-        MIB_REQUIRE(home.accepted() && svc->waitForOperation(home.id, std::chrono::seconds(10)), "Home");
+        // Away from the switches, with the whole envelope declared, so random
+        // targets are accepted and a limit never ends an operation.
+        rig.device.setLimits(-20000, 20000);
+        MIB_REQUIRE(svc->setZero(true) == StageError::None, "Set zero");
 
         std::atomic<bool> done{false};
         std::thread stopper([&, seed = rng()] {
@@ -55,8 +58,8 @@ int main()
         std::thread reader([&] {
             while (!done.load()) {
                 const auto s = svc->snapshot();
-                if (s.referenced && (s.softMaxUm <= 0 || s.softMinUm >= 0)) {
-                    std::printf("inconsistent soft limits\n");
+                if (s.zeroSet && (s.envelopeMinUm > 0 || s.envelopeMaxUm < 0 || s.envelopeMinUm >= s.envelopeMaxUm)) {
+                    std::printf("inconsistent envelope\n");
                     std::_Exit(98);
                 }
             }
@@ -67,17 +70,14 @@ int main()
             const double value = absolute ? static_cast<double>(static_cast<int>(rng() % 5001) - 2500)
                                           : static_cast<double>(static_cast<int>(rng() % 401) - 200);
             const auto r = absolute ? svc->moveTo(value) : svc->moveBy(value);
-            if (!r.accepted()) continue; // refused (busy, unreferenced after a failure, limits): fine
+            if (!r.accepted()) continue; // refused (busy, zero dropped after a failure, envelope): fine
             ++accepted;
             MIB_EXPECT(svc->waitForOperation(r.id, std::chrono::seconds(10)), "operation terminates");
             const auto op = svc->operation(r.id);
             MIB_REQUIRE(op.has_value(), "operation retained");
             MIB_EXPECT(op->state != OpState::Queued && op->state != OpState::Running, "terminal state");
             ++terminalStates[static_cast<int>(op->state)];
-            if (!svc->snapshot().referenced) {
-                const auto again = svc->reference();
-                if (again.accepted()) svc->waitForOperation(again.id, std::chrono::seconds(10));
-            }
+            if (!svc->snapshot().zeroSet) svc->setZero(true); // an operator's explicit re-zero
         }
 
         // Shut down with an operation possibly in flight.
@@ -87,6 +87,38 @@ int main()
         reader.join();
         svc->shutdown();
         MIB_EXPECT(!rig.device.moving(), "axis stopped after shutdown");
+    }
+
+    // Concurrent Disconnects must not leak the pending count: if it stayed above
+    // zero, every later Connect, ApplyProfile and move would be refused for good.
+    // Review finding on #519: the pending-disconnect state was a bool, so the
+    // first of two overlapping disconnect() calls reopened admission early.
+    {
+        watchdog.mark("disconnect storm");
+        mib::test::StageRig rig;
+        auto svc = rig.service();
+        MIB_REQUIRE(svc->startup() == StageError::None, "start-up");
+        std::vector<std::thread> threads;
+        std::atomic<int> connected{0};
+        for (int t = 0; t < 4; ++t) {
+            threads.emplace_back([&, t] {
+                for (int i = 0; i < 15; ++i) {
+                    if (t % 2 == 0) svc->disconnect();
+                    else if (svc->connect() == StageError::None) connected.fetch_add(1);
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1 + (i + t) % 3));
+                }
+            });
+        }
+        for (auto& th : threads) th.join();
+        svc->disconnect();
+        MIB_EXPECT(!svc->snapshot().connected, "a final Disconnect leaves the stage disconnected");
+        std::string detail;
+        MIB_EXPECT(svc->connect(&detail) == StageError::None,
+                   "Connect is admitted again once every Disconnect has run (the pending count drained): " + detail);
+        MIB_EXPECT(svc->snapshot().connected, "and it connected");
+        MIB_EXPECT(connected.load() > 0, "connects raced the disconnects");
+        svc->shutdown();
+        MIB_EXPECT(!rig.device.moving(), "axis stopped");
     }
 
     std::printf("stage stress: %d accepted; completed %d, failed %d, cancelled %d, timed out %d\n", accepted,

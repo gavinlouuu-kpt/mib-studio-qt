@@ -75,7 +75,6 @@ static_assert(static_cast<std::uint32_t>(bb::BackendCommandType::PulseGenerator)
 // Z stage (#464, ADR 0013).
 static_assert(static_cast<std::uint32_t>(bb::BackendCommandType::Stage) == 13);
 static_assert(static_cast<std::uint32_t>(bb::BackendOperationKind::StageMove) == 7);
-static_assert(static_cast<std::uint32_t>(bb::BackendOperationKind::StageReference) == 8);
 static_assert(static_cast<std::uint32_t>(backend::stage::MoveState::Idle) == 0);
 static_assert(static_cast<std::uint32_t>(backend::stage::MoveState::Moving) == 1);
 static_assert(static_cast<std::uint32_t>(backend::stage::MoveState::Homing) == 2);
@@ -1167,8 +1166,10 @@ BridgeCommandResult BackendBridge::stage_move_by(double delta_um) {
     return dispatchStage(impl_->facade, cmd, "stage_move_by");
 }
 
-BridgeCommandResult BackendBridge::stage_home() {
-    return dispatchStage(impl_->facade, makeStageCommand(backend::bridge::StageCommandAction::Home), "stage_home");
+BridgeCommandResult BackendBridge::stage_set_zero(bool mid_travel) {
+    auto cmd = makeStageCommand(backend::bridge::StageCommandAction::SetZero);
+    cmd.midTravel = mid_travel;
+    return dispatchStage(impl_->facade, cmd, "stage_set_zero");
 }
 
 BridgeCommandResult BackendBridge::stage_stop() {
@@ -1191,7 +1192,9 @@ BridgeStageStatus BackendBridge::fetch_stage_status() {
     out.enabled = status.enabled;
     out.connected = status.connected;
     out.configured = status.configured;
-    out.referenced = status.referenced;
+    out.zero_set = status.zeroSet;
+    out.mid_travel_declared = status.midTravelDeclared;
+    out.session_only_zero = status.sessionOnlyZero;
     out.limits_verified = status.limitsVerified;
     out.busy = status.busy;
     out.model = status.model;
@@ -1206,8 +1209,8 @@ BridgeStageStatus BackendBridge::fetch_stage_status() {
     out.emergency_stop = status.emergencyStop;
     out.driver_alarm = status.driverAlarm;
     out.span_um = status.spanUm;
-    out.soft_min_um = status.softMinUm;
-    out.soft_max_um = status.softMaxUm;
+    out.envelope_min_um = status.envelopeMinUm;
+    out.envelope_max_um = status.envelopeMaxUm;
     out.last_error = status.lastError;
     return out;
 }
@@ -1731,6 +1734,9 @@ BridgeRegistrySnapshot BackendBridge::fetch_registry_snapshot() {
             br.local_validation = static_cast<std::uint32_t>(r.localValidation);
             br.validated_by = rust::String(r.validatedBy);
             br.validated_at_utc = rust::String(r.validatedAtUtc);
+            br.parent_revision_id = rust::String(r.parentRevisionId);
+            br.release_notes = rust::String(r.releaseNotes);
+            br.newer_revision_id = rust::String(r.newerRevisionId);
             out.revisions.push_back(std::move(br));
         }
         for (const auto& id : s.corruptRevisionIds) out.corrupt_revision_ids.push_back(rust::String(id));
@@ -1742,9 +1748,131 @@ BridgeRegistrySnapshot BackendBridge::fetch_registry_snapshot() {
         out.busy = s.busy;
         out.instrument_id = rust::String(s.instrumentId);
         out.instrument_name = rust::String(s.instrumentName);
+        for (const auto& d : s.drafts) {
+            BridgeRegistryDraft bd{};
+            bd.draft_id = rust::String(d.draftId);
+            bd.project_id = rust::String(d.projectId);
+            bd.method_id = rust::String(d.methodId);
+            bd.new_method = d.newMethod;
+            bd.method_display_name = rust::String(d.methodDisplayName);
+            bd.base_revision_id = rust::String(d.baseRevisionId);
+            bd.release_notes = rust::String(d.releaseNotes);
+            bd.submitted_revision_id = rust::String(d.submittedRevisionId);
+            bd.updated_at_utc = rust::String(d.updatedAtUtc);
+            out.drafts.push_back(std::move(bd));
+        }
+        for (const auto& m : s.methods) {
+            BridgeRegistryMethod bm{};
+            bm.method_id = rust::String(m.methodId);
+            bm.project_id = rust::String(m.projectId);
+            bm.display_name = rust::String(m.displayName);
+            bm.head_revision_id = rust::String(m.headRevisionId);
+            out.methods.push_back(std::move(bm));
+        }
+        out.history_revision_id = rust::String(s.historyRevisionId);
+        for (const auto& h : s.history) {
+            BridgeRegistryHistoryEntry bh{};
+            bh.who = rust::String(h.who);
+            bh.what = rust::String(h.what);
+            bh.reason = rust::String(h.reason);
+            bh.created_at = rust::String(h.createdAt);
+            bh.review = h.review;
+            out.history.push_back(std::move(bh));
+        }
+        out.submit_conflict.present = s.submitConflict.present;
+        out.submit_conflict.draft_id = rust::String(s.submitConflict.draftId);
+        out.submit_conflict.base_revision_id = rust::String(s.submitConflict.baseRevisionId);
+        out.submit_conflict.head_revision_id = rust::String(s.submitConflict.headRevisionId);
+        out.submit_conflict.compared = s.submitConflict.compared;
+        for (const auto& k : s.submitConflict.upstreamChanges)
+            out.submit_conflict.upstream_changes.push_back(rust::String(k));
+        for (const auto& k : s.submitConflict.draftVsHead)
+            out.submit_conflict.draft_vs_head.push_back(rust::String(k));
     } catch (...) {
         // Never let a conversion failure (e.g. non-UTF-8 text) cross the FFI.
         return BridgeRegistrySnapshot{};
+    }
+    return out;
+}
+
+namespace {
+template <class F> BridgeRegistryCommand registryCommand(F&& call) {
+    BridgeRegistryCommand out{};
+    try {
+        const backend::bridge::BackendRegistryCommand r = call();
+        out.job_id = r.jobId;
+        out.error = rust::String(r.error);
+    } catch (...) {
+        out.job_id = 0;
+        out.error = rust::String("registry command failed");
+    }
+    return out;
+}
+} // namespace
+
+BridgeRegistryCommand BackendBridge::registry_new_draft_from_revision(rust::Str revision_id,
+                                                                      bool use_current_config) {
+    return registryCommand(
+        [&] { return impl_->facade.registryNewDraftFromRevision(toStd(revision_id), use_current_config); });
+}
+BridgeRegistryCommand BackendBridge::registry_new_method_draft(rust::Str project_id, rust::Str name,
+                                                               rust::Str release_notes) {
+    return registryCommand([&] {
+        return impl_->facade.registryNewMethodDraft(toStd(project_id), toStd(name), toStd(release_notes));
+    });
+}
+BridgeRegistryCommand BackendBridge::registry_set_draft_notes(rust::Str draft_id, rust::Str notes) {
+    return registryCommand([&] { return impl_->facade.registrySetDraftNotes(toStd(draft_id), toStd(notes)); });
+}
+BridgeRegistryCommand BackendBridge::registry_draft_from_head(rust::Str draft_id, bool keep_draft_config) {
+    return registryCommand([&] { return impl_->facade.registryDraftFromHead(toStd(draft_id), keep_draft_config); });
+}
+BridgeRegistryCommand BackendBridge::registry_submit_draft(rust::Str draft_id, bool as_branch) {
+    return registryCommand([&] { return impl_->facade.registrySubmitDraft(toStd(draft_id), as_branch); });
+}
+BridgeRegistryCommand BackendBridge::registry_delete_draft(rust::Str draft_id) {
+    return registryCommand([&] { return impl_->facade.registryDeleteDraft(toStd(draft_id)); });
+}
+BridgeRegistryCommand BackendBridge::registry_transition(rust::Str revision_id, std::uint32_t state,
+                                                         rust::Str reason) {
+    return registryCommand([&] {
+        return impl_->facade.registryTransition(toStd(revision_id), static_cast<int>(state), toStd(reason));
+    });
+}
+BridgeRegistryCommand BackendBridge::registry_fetch_history(rust::Str revision_id) {
+    return registryCommand([&] { return impl_->facade.registryFetchHistory(toStd(revision_id)); });
+}
+
+BridgeMethodApplyPlan BackendBridge::registry_plan_apply(rust::Str revision_id) {
+    BridgeMethodApplyPlan out{};
+    try {
+        const auto p = impl_->facade.registryPlanApply(toStd(revision_id));
+        out.ok = p.ok;
+        out.error = rust::String(p.error);
+        out.revision_id = rust::String(p.revisionId);
+        out.display_name = rust::String(p.displayName);
+        out.revision_number = p.revisionNumber;
+        out.central_state = rust::String(p.centralState);
+        for (const auto& k : p.changedKeys) out.changed_keys.push_back(rust::String(k));
+        out.camera_script_path = rust::String(p.cameraScriptPath);
+    } catch (...) {
+        out = BridgeMethodApplyPlan{};
+        out.error = rust::String("registry_plan_apply failed");
+    }
+    return out;
+}
+
+BridgeMethodApplyResult BackendBridge::registry_apply_method(rust::Str revision_id) {
+    BridgeMethodApplyResult out{};
+    try {
+        const auto r = impl_->facade.registryApplyMethod(toStd(revision_id));
+        out.ok = r.ok;
+        out.error = rust::String(r.error);
+        for (const auto& s : r.applied) out.applied.push_back(rust::String(s));
+        for (const auto& s : r.notApplied) out.not_applied.push_back(rust::String(s));
+    } catch (...) {
+        out = BridgeMethodApplyResult{};
+        out.error = rust::String("registry_apply_method failed");
     }
     return out;
 }
@@ -2237,13 +2365,22 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // and the authoring job kinds 6-10 were added; built as a provisional 15,
 // renumbered once to 25: 23 = the instrument line, 24 = #501 P0; 15 and 19-24
 // are never reused); v26 added the ZC300 Z stage bridge (stage_* commands,
-// fetch_stage_status, StageMove/StageReference, MotionStage,
-// stage_move_states — #464; 27 is reserved for #501 P1). All additive over v1 (ADR
-// 0003/0004). Must match
+// fetch_stage_status, StageMove, MotionStage,
+// stage_move_states — #464); v27 added the PZ7035 Align/Run camera modes
+// (set_instrument_mode, set_service_mode, set_instrument_led,
+// fetch_run_preview — #501 P1); v28 added central method authoring
+// (registry_new_draft_from_revision/new_method_draft/set_draft_notes/
+// draft_from_head/submit_draft/delete_draft/transition/fetch_history,
+// BridgeRegistryCommand and the snapshot's drafts, methods, history and
+// submit_conflict — #398 M3b); v29 added the React central-method Apply
+// (registry_plan_apply, registry_apply_method — #398 M2c); v30 is the ZC300 stage
+// without homing (#464, ADR 0013 Amendment 1: stage_home and StageReference
+// removed, stage_set_zero added, referenced -> zero_set, soft_* -> envelope_*,
+// session_only_zero). All additive over v1 except that removal (ADR 0003/0004). Must match
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 27; }
+std::uint32_t bridge_abi_version() { return 30; }
 
 } // namespace mib_bridge
 

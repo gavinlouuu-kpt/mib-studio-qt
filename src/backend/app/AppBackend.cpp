@@ -477,15 +477,22 @@ namespace backend
         syringePumpService_ = std::make_unique<services::SyringePumpService>(*serialBusManager_);
         pulseGeneratorService_ = std::make_unique<services::PulseGeneratorService>(*serialBusManager_);
         // Nothing connects or moves here: the shell applies the stage block
-        // and calls startup(), which is read-only by default (ADR 0013 §5).
-        // Home needs a supervised limit-switch record for the controller,
-        // written only by `zc300ctl verify-limits --supervised` (#464).
+        // and calls startup(), which only connects (ADR 0013 §5). The stage is
+        // never homed (Amendment 1). The limit-switch record, written only by
+        // `zc300ctl verify-limits --supervised`, just clears the panel's
+        // "wiring unverified" badge (#464).
         stageService_ = std::make_unique<services::StageService>(
             *serialBusManager_,
             std::make_unique<services::FileStageReferenceStore>(
                 (std::filesystem::path(dataDir) / "stage_reference.json").string()),
             std::make_shared<stage::LimitsVerificationStore>(
                 (std::filesystem::path(dataDir) / "stage_limits_verified.json").string()));
+        // An experiment and a moving stage exclude each other (#533): Start is refused while a
+        // stage operation is active, and the stage worker re-checks right before every opcode.
+        experimentCoordinator_->setStageBusyProbe(
+            [this] { return stageService_ && stageService_->motionPossible(); });
+        stageService_->setMotionGate(
+            [this] { return !experimentCoordinator_ || experimentCoordinator_->withIdleConfiguration([] {}); });
         frameStore_ = std::make_shared<playback::FrameStore>(5000);
         dotGridService_ = std::make_unique<services::DotGridService>();
         dotGridService_->setFrameStore(frameStore_);
@@ -1508,6 +1515,26 @@ namespace backend
         return result;
     }
 
+    profiles::MethodDraft AppBackend::currentConfigDraft(std::string *error) const
+    {
+        profiles::MethodDraft draft;
+        const auto config = getLastConfigJson();
+        if (config.empty())
+        {
+            if (error) *error = "No config.json is applied";
+            return draft;
+        }
+        draft.configJson = config;
+        if (processingService_)
+        {
+            const auto core = processingService_->activeProcessingCoreIdentity();
+            draft.processingCoreId = core.version;
+            draft.processingContractVersion = static_cast<int>(core.contractVersion);
+        }
+        draft.hardwareCompatibilityJson.clear();
+        return draft;
+    }
+
     void AppBackend::configureMockCamera(const ::camera::mock::MockCameraOptions &options)
     {
         if (!captureService_)
@@ -2290,16 +2317,51 @@ namespace backend
             || aravisCameraConfigured_;
     }
 
-    bool AppBackend::startFrameRecording(const std::string& hdf5FilePath) {
-        if (frameRecordingRunning_.load()) {
+    bool AppBackend::startFrameRecording(const std::string& hdf5FilePath, std::string* error) {
+        std::lock_guard<std::mutex> lock(frameRecordingLifecycleMutex_);
+        if (error)
+            *error = "Frame recording start failed: check capture and processing-core readiness";
+        bool started = false;
+        // Use the same transaction mutex as experiment Start, through opening
+        // the file and acquiring recording ownership (not just a state check).
+        if (!experimentCoordinator_ || !experimentCoordinator_->withIdleConfiguration([&] {
+                started = startFrameRecordingLocked(hdf5FilePath, error);
+            })) {
+            if (error) *error = "Stop or reset the experiment before starting raw recording";
+            const auto status =
+                experimentCoordinator_ ? experimentCoordinator_->status() : app::ExperimentStatus{};
+            SPDLOG_WARN("Frame recording refused: experiment state={}, run={}",
+                        app::toString(status.state), status.startGeneration);
+            backend::services::CrashReporter::breadcrumb(
+                "recording", "start refused: experiment is not idle",
+                nlohmann::json{{"operation", "startFrameRecording"},
+                               {"owner", "experiment"},
+                               {"state", app::toString(status.state)},
+                               {"run", status.startGeneration}}
+                    .dump());
+            return false;
+        }
+        if (started && error) error->clear();
+        backend::services::CrashReporter::breadcrumb(
+            "recording", started ? "start admitted: raw writer acquired"
+                                 : "start refused: writer or readiness conflict");
+        return started;
+    }
+
+    bool AppBackend::startFrameRecordingLocked(const std::string& hdf5FilePath,
+                                               std::string* error) {
+        if (frameRecordingOwned_.load()) {
+            if (error) *error = "Stop the existing raw recording before starting another";
             SPDLOG_WARN("Frame recording already in progress");
             return false;
         }
         if (!captureService_ || !captureService_->isRunning()) {
+            if (error) *error = "Start capture before starting raw recording";
             SPDLOG_ERROR("Cannot start frame recording: camera not running");
             return false;
         }
         if (!processingService_ || !processingService_->isProcessingCorePinSatisfied()) {
+            if (error) *error = "Select an available processing core before starting raw recording";
             SPDLOG_ERROR("Cannot start frame recording: selected processing core is unavailable");
             return false;
         }
@@ -2307,8 +2369,11 @@ namespace backend
         // Open HDF5 file for recording
         auto& hdf5 = *hdf5Service_;
         if (hdf5.isFileOpen()) {
-            SPDLOG_WARN("HDF5 file already open, closing before recording");
-            hdf5.closeFile();
+            if (error)
+                *error = "Close the existing HDF5 file before starting raw recording; its writer "
+                         "will not be replaced";
+            SPDLOG_WARN("Frame recording refused: shared HDF5 file already open");
+            return false;
         }
 
         std::string path = hdf5FilePath;
@@ -2318,10 +2383,13 @@ namespace backend
         }
 
         if (!hdf5.openFile(path)) {
+            if (error)
+                *error = "Cannot open the raw recording output; choose a writable destination";
             SPDLOG_ERROR("Failed to open HDF5 file for recording: {}", path);
             return false;
         }
         if (!hdf5.initializeRecordingDatasets()) {
+            if (error) *error = "Cannot initialize raw recording datasets";
             hdf5.closeFile();
             return false;
         }
@@ -2338,6 +2406,7 @@ namespace backend
                 captureService_->activeDeliveryMode() == ::camera::common::FrameDeliveryMode::LatestFrame);
             lastRecordingAccounting_ = backend::recording::RecordingAccountingSnapshot{};
         }
+        frameRecordingOwned_.store(true);
         frameRecordingRunning_.store(true);
         {
             auto& m = backend::diagnostics::CrashStateMirror::instance().recorder;
@@ -2345,8 +2414,7 @@ namespace backend
             m.framesWritten.store(0);
             m.framesFiltered.store(0);
         }
-        backend::services::CrashReporter::breadcrumb("recording",
-            "frame recording started", path);
+        backend::services::CrashReporter::breadcrumb("recording", "frame recording started");
 
         // Launch recording thread
         frameRecordingThread_ = std::make_unique<std::thread>(
@@ -2596,6 +2664,7 @@ namespace backend
     }
 
     void AppBackend::stopFrameRecording() {
+        std::lock_guard<std::mutex> lock(frameRecordingLifecycleMutex_);
         if (!frameRecordingRunning_.load() &&
             (!frameRecordingThread_ || !frameRecordingThread_->joinable())) return;
 
@@ -2604,6 +2673,7 @@ namespace backend
             frameRecordingThread_->join();
         }
         frameRecordingThread_.reset();
+        frameRecordingOwned_.store(false);
         {
             auto& m = backend::diagnostics::CrashStateMirror::instance().recorder;
             m.recording.store(false);
@@ -2615,7 +2685,7 @@ namespace backend
     }
 
     bool AppBackend::isFrameRecording() const {
-        return frameRecordingRunning_.load();
+        return frameRecordingOwned_.load();
     }
 
     uint64_t AppBackend::frameRecordingCount() const {

@@ -673,7 +673,9 @@ pub struct StageStatus {
     enabled: bool,
     connected: bool,
     configured: bool,
-    referenced: bool,
+    zero_set: bool,
+    mid_travel_declared: bool,
+    session_only_zero: bool,
     limits_verified: bool,
     busy: bool,
     model: String,
@@ -688,12 +690,12 @@ pub struct StageStatus {
     emergency_stop: bool,
     driver_alarm: bool,
     span_um: f64,
-    soft_min_um: f64,
-    soft_max_um: f64,
+    envelope_min_um: f64,
+    envelope_max_um: f64,
     last_error: String,
 }
 
-/// Observe-only: identity, profile check and power-up token reads. Never homes or moves.
+/// Observe-only: identity, profile check and power-up token reads. Never moves or writes the position.
 pub fn stage_connect(state: &AppState, port_name: String, usb_serial: String, modbus_address: i32) -> Result<CmdResult, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     Ok(guard.pin_mut().stage_connect(&port_name, &usb_serial, modbus_address).into())
@@ -704,7 +706,7 @@ pub fn stage_disconnect(state: &AppState) -> Result<CmdResult, String> {
     Ok(guard.pin_mut().stage_disconnect().into())
 }
 
-/// Refused until homed this power-up and outside the soft limits (backend-enforced).
+/// Refused until the operator set zero this power-up and outside the travel envelope (backend-enforced).
 pub fn stage_move_to(state: &AppState, target_um: f64) -> Result<CmdResult, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     Ok(guard.pin_mut().stage_move_to(target_um).into())
@@ -715,10 +717,11 @@ pub fn stage_move_by(state: &AppState, delta_um: f64) -> Result<CmdResult, Strin
     Ok(guard.pin_mut().stage_move_by(delta_um).into())
 }
 
-/// The only command that homes: probes both limits, zero at mid-travel.
-pub fn stage_home(state: &AppState) -> Result<CmdResult, String> {
+/// "Set zero here": writes the position counter, no motion. `mid_travel` is the operator's
+/// statement that the stage is at mid-travel, which widens the travel envelope.
+pub fn stage_set_zero(state: &AppState, mid_travel: bool) -> Result<CmdResult, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().stage_home().into())
+    Ok(guard.pin_mut().stage_set_zero(mid_travel).into())
 }
 
 /// Always accepted, also during an experiment.
@@ -740,7 +743,9 @@ pub fn fetch_stage_status(state: &AppState) -> Result<StageStatus, String> {
         enabled: s.enabled,
         connected: s.connected,
         configured: s.configured,
-        referenced: s.referenced,
+        zero_set: s.zero_set,
+        mid_travel_declared: s.mid_travel_declared,
+        session_only_zero: s.session_only_zero,
         limits_verified: s.limits_verified,
         busy: s.busy,
         model: s.model,
@@ -755,8 +760,8 @@ pub fn fetch_stage_status(state: &AppState) -> Result<StageStatus, String> {
         emergency_stop: s.emergency_stop,
         driver_alarm: s.driver_alarm,
         span_um: s.span_um,
-        soft_min_um: s.soft_min_um,
-        soft_max_um: s.soft_max_um,
+        envelope_min_um: s.envelope_min_um,
+        envelope_max_um: s.envelope_max_um,
         last_error: s.last_error,
     })
 }

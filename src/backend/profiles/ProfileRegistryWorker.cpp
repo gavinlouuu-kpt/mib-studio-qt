@@ -142,6 +142,15 @@ const char* toString(RegistryWorkerSnapshot::Session session) {
     return "unknown";
 }
 
+bool hasProjectRole(const RegistryWorkerSnapshot& snapshot, const std::string& projectId,
+                    const std::string& role) {
+    for (const auto& p : snapshot.projects)
+        if (p.projectId == projectId)
+            return std::find(p.roles.begin(), p.roles.end(), role) != p.roles.end() ||
+                   std::find(p.roles.begin(), p.roles.end(), "admin") != p.roles.end();
+    return false;
+}
+
 struct ProfileRegistryWorker::Active {
     std::unique_ptr<ProfileCache> cache;
     std::unique_ptr<SupabaseProfileRegistry> registry;
@@ -277,6 +286,15 @@ std::uint64_t ProfileRegistryWorker::requestDeleteDraft(std::string draftId) {
     Command command;
     command.kind = RegistryJobKind::DeleteDraft;
     command.argument = std::move(draftId);
+    return enqueue(std::move(command));
+}
+
+std::uint64_t ProfileRegistryWorker::requestSetDraftNotes(std::string draftId, std::string notes) {
+    if (draftId.empty() || draftId.size() > kMaxRevisionIdBytes) return 0;
+    Command command;
+    command.kind = RegistryJobKind::SaveDraft;
+    command.argument = std::move(draftId);
+    command.notes = std::move(notes);
     return enqueue(std::move(command));
 }
 
@@ -444,6 +462,7 @@ RegistryJobStatus ProfileRegistryWorker::execute(Command& command) {
         if (command.validation) return doRecordValidation(*command.validation);
         break;
     case RegistryJobKind::SaveDraft:
+        if (command.notes) return doSetDraftNotes(command.argument, *command.notes);
         if (command.draft) return doSaveDraft(std::move(*command.draft), command.argument);
         break;
     case RegistryJobKind::DeleteDraft:
@@ -898,12 +917,18 @@ RegistryJobStatus ProfileRegistryWorker::doSaveDraft(MethodDraft draft, const st
             return fail(std::string("Source revision not available: ") + e.what());
         }
         try {
+            // Fill only what the caller left empty: a pure copy, or the
+            // instrument's current config.json on top of the source revision.
             const auto envelope = Json::parse(source.canonicalContent);
-            draft.configJson = envelope.at("config").dump(4) + "\n";
-            draft.cameraScript = envelope.at("camera_script").get<std::string>();
-            draft.processingCoreId = envelope.at("processing_core_id").get<std::string>();
-            draft.processingContractVersion = envelope.at("processing_contract_version").get<int>();
-            draft.hardwareCompatibilityJson = envelope.at("declared_hardware_compatibility").dump();
+            if (draft.configJson.empty()) draft.configJson = envelope.at("config").dump(4) + "\n";
+            if (draft.cameraScript.empty())
+                draft.cameraScript = envelope.at("camera_script").get<std::string>();
+            if (draft.processingCoreId.empty()) {
+                draft.processingCoreId = envelope.at("processing_core_id").get<std::string>();
+                draft.processingContractVersion = envelope.at("processing_contract_version").get<int>();
+            }
+            if (draft.hardwareCompatibilityJson.empty() || draft.hardwareCompatibilityJson == "{}")
+                draft.hardwareCompatibilityJson = envelope.at("declared_hardware_compatibility").dump();
         } catch (const Json::exception&) {
             return fail("Source revision content unreadable");
         }
@@ -946,6 +971,23 @@ RegistryJobStatus ProfileRegistryWorker::doDeleteDraft(const std::string& draftI
     }
     if (submitConflict_ && submitConflict_->draftId == draftId) submitConflict_.reset();
     return {0, RegistryJobKind::DeleteDraft, RegistryJobState::Succeeded, "Draft discarded"};
+}
+
+RegistryJobStatus ProfileRegistryWorker::doSetDraftNotes(const std::string& draftId, const std::string& notes) {
+    const auto fail = [](const std::string& message) {
+        return RegistryJobStatus{0, RegistryJobKind::SaveDraft, RegistryJobState::Failed, message};
+    };
+    if (!active_) return fail("No cached methods are open; sign in first");
+    try {
+        // Read here, not from a snapshot: a discarded draft stays discarded.
+        auto draft = active_->cache->readDraft(draftId);
+        if (!draft.submittedRevisionId.empty()) return fail("A submitted draft cannot be changed");
+        draft.releaseNotes = notes;
+        active_->cache->saveDraft(draft);
+    } catch (const RegistryError& e) {
+        return fail(std::string("Draft not saved: ") + e.what());
+    }
+    return {0, RegistryJobKind::SaveDraft, RegistryJobState::Succeeded, "Draft saved: " + draftId};
 }
 
 RegistryJobStatus ProfileRegistryWorker::doSubmitDraft(const std::string& draftId, bool asBranch) {

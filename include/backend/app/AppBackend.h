@@ -15,6 +15,7 @@
 #include "backend/app/ExperimentReadiness.h"
 #include "backend/diagnostics/MemoryBudget.h"
 #include "backend/profiles/InstrumentIdentity.h"
+#include "backend/profiles/ProfileCache.h" // MethodDraft
 #include "backend/profiles/SupabaseProfileRegistry.h" // RegistryHttpTransport seam (ADR 0002)
 #include "backend/recording/RecordingAccounting.h"
 
@@ -182,6 +183,12 @@ namespace backend
         MethodValidationRequestResult requestMethodValidation(const std::string &revisionId,
                                                               const std::string &evidenceFile,
                                                               bool passed);
+        // Draft content from the instrument (#398 M3b): the applied
+        // config.json and the active processing core (version as core id,
+        // its contract version). Camera script / compatibility are left empty
+        // for SaveDraft to take from a base revision. `error` set (and the
+        // draft empty) when no config.json is applied.
+        profiles::MethodDraft currentConfigDraft(std::string *error = nullptr) const;
         
         // Get frame store for service lifecycle management
         std::shared_ptr<playback::FrameStore> getFrameStore() const { return frameStore_; }
@@ -298,7 +305,7 @@ namespace backend
 
         // Frame recording mode: record non-empty frames directly to HDF5 (images + metadata only, no contour processing)
         // Returns false if recording cannot start (e.g., capture not running, file error)
-        bool startFrameRecording(const std::string& hdf5FilePath);
+        bool startFrameRecording(const std::string& hdf5FilePath, std::string* error = nullptr);
         void stopFrameRecording();
         bool isFrameRecording() const;
         uint64_t frameRecordingCount() const;     // Frames written so far
@@ -340,6 +347,7 @@ namespace backend
                                 std::string* errorOut = nullptr);
 
     private:
+        bool startFrameRecordingLocked(const std::string& hdf5FilePath, std::string* error);
         void reportFatalSaveError(const std::string& msg);
         // Best-effort auto-dump used at capture stop/shutdown; logs on failure.
         void dumpPipelineTimingIfEnabled();
@@ -459,6 +467,9 @@ namespace backend
 
         // Frame recording state
         std::unique_ptr<std::thread> frameRecordingThread_;
+        std::mutex frameRecordingLifecycleMutex_;
+        std::atomic<bool> frameRecordingOwned_{
+            false}; // retained through Stop/join, including worker failure
         std::atomic<bool> frameRecordingRunning_{false};
         std::atomic<uint64_t> frameRecordingWritten_{0};
         std::atomic<uint64_t> frameRecordingFiltered_{0};

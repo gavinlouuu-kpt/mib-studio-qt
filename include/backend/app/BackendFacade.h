@@ -141,8 +141,7 @@ namespace backend::bridge
         MaskRegeneration,
         Reanalysis,
         PumpScan,
-        StageMove,      // Z stage move (#464, ABI 26)
-        StageReference, // Z stage Home: probe both limits, zero at mid-travel
+        StageMove, // Z stage move (#464, ABI 26)
     };
 
     enum class BackendOperationState
@@ -305,11 +304,13 @@ namespace backend::bridge
 
     // Z stage commands (#464, ADR 0013) over StageService. The backend
     // enforces the safety rules, whatever the shell does:
-    //  - MoveTo/MoveBy are refused until the stage was homed this controller
-    //    power-up, and outside the soft limits (StageService);
-    //  - Home is only ever this explicit action: Connect, Disconnect,
-    //    ApplyProfile and discovery never home or move (Connect is
-    //    observe-only; there is deliberately no start-up action here);
+    //  - MoveTo/MoveBy are refused until the operator set zero this controller
+    //    power-up, and outside the travel envelope around it (StageService;
+    //    ADR 0013 Amendment 1). There is no Home: the stage is never homed;
+    //  - SetZero writes the position counter (no motion) and is only ever this
+    //    explicit action: Connect, Disconnect, ApplyProfile and discovery never
+    //    move or write the position (Connect is observe-only; there is
+    //    deliberately no start-up action here);
     //  - Stop is always accepted, also during an experiment;
     //  - every other action needs an idle experiment.
     enum class StageCommandAction
@@ -318,7 +319,7 @@ namespace backend::bridge
         Disconnect,
         MoveTo,
         MoveBy,
-        Home,
+        SetZero,
         Stop,
         ApplyProfile,
     };
@@ -331,6 +332,7 @@ namespace backend::bridge
         std::string usbSerial;
         int modbusAddress{0}; // 0 = keep the configured address
         double targetUm{0.0}; // MoveTo: absolute, MoveBy: relative (whole micrometres)
+        bool midTravel{false}; // SetZero: the operator declares the stage is at mid-travel
     };
 
     using BackendCommand = std::variant<CameraCommand,
@@ -719,6 +721,53 @@ namespace backend::bridge
         int localValidation{0};
         std::string validatedBy;
         std::string validatedAtUtc;
+        // #398 M3b: lineage, author's notes, and a newer published revision
+        // of the same method ("" = none; "update available").
+        std::string parentRevisionId;
+        std::string releaseNotes;
+        std::string newerRevisionId;
+    };
+
+    // #398 M3b authoring mirrors (no config content: the shells only list).
+    struct BackendRegistryDraft
+    {
+        std::string draftId;
+        std::string projectId;
+        std::string methodId;
+        bool newMethod{false};
+        std::string methodDisplayName;
+        std::string baseRevisionId;
+        std::string releaseNotes;
+        std::string submittedRevisionId;
+        std::string updatedAtUtc;
+    };
+
+    struct BackendRegistryMethod
+    {
+        std::string methodId;
+        std::string projectId;
+        std::string displayName;
+        std::string headRevisionId;
+    };
+
+    struct BackendRegistryHistoryEntry
+    {
+        std::string who;      // reviewer or actor id
+        std::string what;     // decision or action
+        std::string reason;
+        std::string createdAt;
+        bool review{false};   // true: a review decision; false: an audit event
+    };
+
+    struct BackendRegistryConflict
+    {
+        bool present{false};
+        std::string draftId;
+        std::string baseRevisionId;
+        std::string headRevisionId;
+        bool compared{false};
+        std::vector<std::string> upstreamChanges;
+        std::vector<std::string> draftVsHead;
     };
 
     struct BackendRegistryJob
@@ -754,6 +803,40 @@ namespace backend::bridge
         bool busy{false};
         std::string instrumentId;   // #398 M2b: AppBackend::instrumentIdentity()
         std::string instrumentName;
+        // #398 M3b
+        std::vector<BackendRegistryDraft> drafts;
+        std::vector<BackendRegistryMethod> methods;
+        std::string historyRevisionId; // "" = no history fetched
+        std::vector<BackendRegistryHistoryEntry> history;
+        BackendRegistryConflict submitConflict;
+    };
+
+    // #398 M2c Apply (React/Tauri): what applying a revision would change, and
+    // the outcome of applying it through the backend config.json applier.
+    struct BackendMethodApplyPlan
+    {
+        bool ok{false};
+        std::string error;
+        std::string revisionId;
+        std::string displayName;
+        std::uint64_t revisionNumber{0};
+        std::string centralState;
+        std::vector<std::string> changedKeys;
+        std::string cameraScriptPath; // not applied automatically
+    };
+    struct BackendMethodApplyResult
+    {
+        bool ok{false};
+        std::string error;
+        std::vector<std::string> applied;
+        std::vector<std::string> notApplied;
+    };
+
+    // Outcome of an authoring command: jobId 0 = refused, `error` says why.
+    struct BackendRegistryCommand
+    {
+        std::uint64_t jobId{0};
+        std::string error;
     };
 
     // "Mark validated" outcome: jobId 0 = refused, `error` says why.
@@ -864,17 +947,20 @@ namespace backend::bridge
         double speedRpm{0.0}; // peristaltic head speed setpoint
     };
 
-    // Z stage snapshot (#464, ABI 26): connection, identity, reference state,
-    // live status and soft limits. Positions are micrometres in the homed
-    // frame (zero at mid-travel) once referenced.
+    // Z stage snapshot (#464; ABI 30 = no homing): connection, identity, zero
+    // state, live status and the travel envelope. Positions are micrometres in
+    // the operator's frame once zero is set; before that the position is the
+    // controller's raw counter and means nothing.
     struct BackendStageStatus
     {
         bool enabled{false};
         bool connected{false};
         bool configured{false}; // controller matches the stage profile
-        bool referenced{false}; // homed since the controller powered up
-        bool limitsVerified{false}; // supervised limit check passed; Home needs it
-        bool busy{false};       // a move or Home is queued or running
+        bool zeroSet{false};    // the operator set zero since the controller powered up
+        bool midTravelDeclared{false}; // ... and declared the stage at mid-travel
+        bool sessionOnlyZero{false};   // power-up token off (acceptance mode): a power cycle is NOT detected
+        bool limitsVerified{false}; // supervised limit check passed; clears "wiring unverified"
+        bool busy{false};       // a move is queued or running
         std::string model;
         std::string serial;
         std::string firmware;
@@ -887,8 +973,8 @@ namespace backend::bridge
         bool emergencyStop{false};
         bool driverAlarm{false};
         double spanUm{0.0};
-        double softMinUm{0.0};
-        double softMaxUm{0.0};
+        double envelopeMinUm{0.0}; // allowed travel around the zero (0/0 until zero is set)
+        double envelopeMaxUm{0.0};
         std::string lastError;
     };
 
@@ -1009,6 +1095,29 @@ namespace backend::bridge
         BackendRegistryValidationRequest registryRecordValidation(const std::string &revisionId,
                                                                   const std::string &evidenceFile,
                                                                   bool passed);
+        // #398 M3b authoring (drafts stay local until submitted).
+        // A draft from a cached revision: its config, or (useCurrentConfig)
+        // the applied config.json on top of it.
+        BackendRegistryCommand registryNewDraftFromRevision(const std::string &revisionId, bool useCurrentConfig);
+        // A new central method from the applied config.json.
+        BackendRegistryCommand registryNewMethodDraft(const std::string &projectId, const std::string &name,
+                                                      const std::string &releaseNotes);
+        BackendRegistryCommand registrySetDraftNotes(const std::string &draftId, const std::string &notes);
+        // Conflict choice: a new draft based on the current head, keeping the
+        // stale draft's config.json or taking the head's.
+        BackendRegistryCommand registryDraftFromHead(const std::string &draftId, bool keepDraftConfig);
+        BackendRegistryCommand registrySubmitDraft(const std::string &draftId, bool asBranch);
+        BackendRegistryCommand registryDeleteDraft(const std::string &draftId);
+        // `state` = registry_central_states (Approved, Rejected, Published,
+        // Archived, Revoked); reason required.
+        BackendRegistryCommand registryTransition(const std::string &revisionId, int state, const std::string &reason);
+        BackendRegistryCommand registryFetchHistory(const std::string &revisionId);
+        // #398 M2c: preview, then apply a materialized published/superseded
+        // revision exactly (backend config.json applier; refused while an
+        // experiment is starting, active or stopping). Synchronous and local:
+        // no network.
+        BackendMethodApplyPlan registryPlanApply(const std::string &revisionId) const;
+        BackendMethodApplyResult registryApplyMethod(const std::string &revisionId);
         bool fetchRegistrySnapshot(BackendRegistrySnapshot &out) const;
         bool fetchRegistryJob(std::uint64_t jobId, BackendRegistryJob &out) const;
         bool fetchCameraSelection(BackendCameraSelection &out) const;

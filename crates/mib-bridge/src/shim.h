@@ -24,6 +24,9 @@ struct BridgeHttpResponse;
 struct BridgeRegistrySnapshot;
 struct BridgeRegistryJob;
 struct BridgeRegistryValidationRequest;
+struct BridgeRegistryCommand;
+struct BridgeMethodApplyPlan;
+struct BridgeMethodApplyResult;
 struct BridgeCameraSelection;
 struct BridgeCommandResult;
 struct BridgeConfigDocument;
@@ -117,7 +120,7 @@ public:
     BridgeCommandResult stage_disconnect();
     BridgeCommandResult stage_move_to(double target_um);
     BridgeCommandResult stage_move_by(double delta_um);
-    BridgeCommandResult stage_home();
+    BridgeCommandResult stage_set_zero(bool mid_travel);
     BridgeCommandResult stage_stop();
     BridgeCommandResult stage_apply_profile();
     BridgeStageStatus fetch_stage_status();
@@ -173,6 +176,16 @@ public:
     std::uint64_t registry_materialize(rust::Str revision_id);
     BridgeRegistryValidationRequest registry_record_validation(rust::Str revision_id,
                                                                rust::Str evidence_file, bool passed);
+    BridgeRegistryCommand registry_new_draft_from_revision(rust::Str revision_id, bool use_current_config);
+    BridgeRegistryCommand registry_new_method_draft(rust::Str project_id, rust::Str name, rust::Str release_notes);
+    BridgeRegistryCommand registry_set_draft_notes(rust::Str draft_id, rust::Str notes);
+    BridgeRegistryCommand registry_draft_from_head(rust::Str draft_id, bool keep_draft_config);
+    BridgeRegistryCommand registry_submit_draft(rust::Str draft_id, bool as_branch);
+    BridgeRegistryCommand registry_delete_draft(rust::Str draft_id);
+    BridgeRegistryCommand registry_transition(rust::Str revision_id, std::uint32_t state, rust::Str reason);
+    BridgeRegistryCommand registry_fetch_history(rust::Str revision_id);
+    BridgeMethodApplyPlan registry_plan_apply(rust::Str revision_id);
+    BridgeMethodApplyResult registry_apply_method(rust::Str revision_id);
     BridgeRegistrySnapshot fetch_registry_snapshot();
     BridgeRegistryJob fetch_registry_job(std::uint64_t job_id);
     BridgeCommandResult select_hardware_camera(std::int32_t interface_index,

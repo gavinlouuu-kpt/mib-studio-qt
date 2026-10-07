@@ -97,7 +97,7 @@ pub const COMMANDS: &[&str] = &[
     "stage_disconnect",
     "stage_move_to",
     "stage_move_by",
-    "stage_home",
+    "stage_set_zero",
     "stage_stop",
     "stage_apply_profile",
     "fetch_stage_status",
@@ -515,7 +515,14 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
             let a: A = args(value)?;
             crate::stage_move_by(state, a.delta_um).and_then(json)
         }
-        "stage_home" => crate::stage_home(state).and_then(json),
+        "stage_set_zero" => {
+            #[derive(Deserialize)]
+            struct A {
+                #[serde(rename = "midTravel", default)] mid_travel: bool,
+            }
+            let a: A = args(value)?;
+            crate::stage_set_zero(state, a.mid_travel).and_then(json)
+        }
         "stage_stop" => crate::stage_stop(state).and_then(json),
         "stage_apply_profile" => crate::stage_apply_profile(state).and_then(json),
         "fetch_stage_status" => crate::fetch_stage_status(state).and_then(json),

@@ -2,6 +2,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <thread>
@@ -45,39 +46,79 @@ std::int64_t steadyNowNs()
 
 } // namespace
 
-// RAII access to the driver. Command: counts as a priority waiter while it
-// acquires, bounded by kLockTimeout. Poll: first lets pending commands go,
-// then acquires, with the same bound. Lifecycle (disconnect): a priority
-// waiter that keeps trying, because teardown must not be skipped.
+// RAII access to the driver; see the Waiter / queue notes in the header.
+// Stop: its own queue, served first. Command: the command queue, bounded by
+// kLockTimeout. Poll: behind every waiting command, bounded the same way.
+// Lifecycle (disconnect): the command queue, but it waits however long it
+// takes, because teardown must not be skipped.
 class Zc300Stage::Access {
 public:
-    enum class Kind { Command, Poll, Lifecycle };
+    enum class Kind { Stop, Command, Poll, Lifecycle };
 
     Access(const Zc300Stage& stage, Kind kind) : stage_(stage)
     {
-        using Clock = std::chrono::steady_clock;
-        const auto deadline = Clock::now() + kLockTimeout;
-        if (kind == Kind::Poll) {
-            while (stage_.priorityWaiters_.load() > 0 && Clock::now() < deadline) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            }
-        } else {
-            stage_.priorityWaiters_.fetch_add(1);
+        std::unique_lock<std::mutex> lock(stage_.gate_);
+        const char code = kind == Kind::Stop ? 'S' : kind == Kind::Poll ? 'P' : kind == Kind::Lifecycle ? 'L' : 'C';
+        if (!stage_.held_) { // free: a release with waiters hands off without ever clearing held_
+            stage_.held_ = true;
+            owned_ = true;
+            stage_.holderIsStop_ = kind == Kind::Stop;
+            stage_.transactionsInCall_ = 0;
+            stage_.recordGrantLocked(code);
+            return;
         }
-        for (;;) {
-            if (stage_.mutex_.try_lock()) {
-                owned_ = true;
-                break;
-            }
-            if (kind != Kind::Lifecycle && Clock::now() >= deadline) break;
-            std::this_thread::sleep_for(std::chrono::microseconds(200));
+        Waiter waiter;
+        waiter.kind = code;
+        auto& queue = kind == Kind::Stop ? stage_.stopQueue_ : kind == Kind::Poll ? stage_.pollQueue_ : stage_.commandQueue_;
+        queue.push_back(&waiter);
+        if (kind == Kind::Lifecycle) {
+            stage_.gateCv_.wait(lock, [&] { return waiter.granted; });
+            owned_ = true;
+            stage_.holderIsStop_ = false;
+            stage_.transactionsInCall_ = 0;
+            return;
         }
-        if (kind != Kind::Poll) stage_.priorityWaiters_.fetch_sub(1);
-        if (!owned_) SPDLOG_WARN("Zc300Stage: driver busy for {} s; call refused", kLockTimeout.count());
+        if (stage_.gateCv_.wait_for(lock, kLockTimeout, [&] { return waiter.granted; })) {
+            owned_ = true;
+            stage_.holderIsStop_ = kind == Kind::Stop;
+            stage_.transactionsInCall_ = 0;
+            return;
+        }
+        queue.erase(std::find(queue.begin(), queue.end(), &waiter)); // timed out; still queued, under gate_
+        SPDLOG_WARN("Zc300Stage: driver busy for {} s; call refused", kLockTimeout.count());
     }
     ~Access()
     {
-        if (owned_) stage_.mutex_.unlock();
+        if (!owned_) return;
+        std::lock_guard<std::mutex> lock(stage_.gate_);
+        stage_.holderIsStop_ = false;
+        Waiter* next = nullptr;
+        const auto take = [&next](std::deque<Waiter*>& queue) {
+            next = queue.front();
+            queue.pop_front();
+        };
+        // Stop first, but never more than kMaxConsecutiveStops in a row while
+        // a command, teardown or poll waits: a Stop storm must not starve them.
+        const bool othersWaiting = !stage_.commandQueue_.empty() || !stage_.pollQueue_.empty();
+        if (!stage_.stopQueue_.empty() && (stage_.consecutiveStops_ < kMaxConsecutiveStops || !othersWaiting)) {
+            take(stage_.stopQueue_);
+            ++stage_.consecutiveStops_;
+        } else if (!stage_.commandQueue_.empty()) {
+            take(stage_.commandQueue_);
+            stage_.consecutiveStops_ = 0;
+        } else if (!stage_.pollQueue_.empty()) {
+            take(stage_.pollQueue_);
+            stage_.consecutiveStops_ = 0;
+        } else {
+            stage_.consecutiveStops_ = 0;
+        }
+        if (next) { // direct hand-off: held_ stays true
+            stage_.recordGrantLocked(next->kind);
+            next->granted = true;
+            stage_.gateCv_.notify_all();
+        } else {
+            stage_.held_ = false;
+        }
     }
     Access(const Access&) = delete;
     Access& operator=(const Access&) = delete;
@@ -203,6 +244,31 @@ AxisCalibration Zc300Stage::calibration() const
     return calibrationFor(config_);
 }
 
+std::size_t Zc300Stage::waitingCalls() const
+{
+    std::lock_guard<std::mutex> lock(gate_);
+    return stopQueue_.size() + commandQueue_.size() + pollQueue_.size();
+}
+
+void Zc300Stage::recordGrantLocked(char kind) const
+{
+    // Test hook only; bounded so that enabling it can never grow without limit.
+    if (grantLogEnabled_ && grantLog_.size() < kGrantLogLimit) grantLog_.push_back(kind);
+}
+
+void Zc300Stage::enableGrantLog()
+{
+    std::lock_guard<std::mutex> lock(gate_);
+    grantLogEnabled_ = true;
+    grantLog_.clear();
+}
+
+std::string Zc300Stage::grantLog() const
+{
+    std::lock_guard<std::mutex> lock(gate_);
+    return grantLog_;
+}
+
 ControllerConfig Zc300Stage::controllerConfig() const
 {
     Access access(*this, Access::Kind::Command);
@@ -215,6 +281,12 @@ StageError Zc300Stage::readLocked(int reg, std::uint16_t count, Frame& data)
     if (!bus_) return StageError::NotConnected;
     const Frame request = buildRead(address_, reg, count);
     for (int attempt = 0; attempt <= timing_.silenceRetries; ++attempt) {
+        // A Stop waiting for the driver must not sit behind further transactions of the
+        // call in flight, retries or not (up to 4 x transactionMs each): give way before
+        // every one. This also covers a lost-ack reconciliation read and each write of a
+        // profile apply, Save included: it is not started while a Stop waits.
+        if (stopWaiting()) return StageError::Stopped;
+        ++transactionsInCall_;
         const auto t = bus_->transact(request, timing_.transactionMs);
         if (t.error == serialbus::BusError::Timeout) continue;
         if (t.error != serialbus::BusError::None) return fromBus(t);
@@ -228,6 +300,8 @@ StageError Zc300Stage::writeLocked(const Frame& request, int timeoutMs)
 {
     if (!bus_) return StageError::NotConnected;
     for (int attempt = 0; attempt <= timing_.silenceRetries; ++attempt) {
+        if (stopWaiting()) return StageError::Stopped; // see readLocked
+        ++transactionsInCall_;
         const auto t = bus_->transact(request, timeoutMs);
         if (t.error == serialbus::BusError::Timeout) continue;
         return fromBus(t);
@@ -235,10 +309,15 @@ StageError Zc300Stage::writeLocked(const Frame& request, int timeoutMs)
     return StageError::Timeout;
 }
 
-StageError Zc300Stage::motionLocked(Opcode op, std::uint16_t direction)
+StageError Zc300Stage::motionLocked(Opcode op, std::uint16_t direction, std::uint64_t expectedStopGeneration)
 {
+    // The last thing before every motion opcode, on every path (move, relative,
+    // jog): a Stop that arrived since the caller decided to move, even one still
+    // queued behind this call, means no opcode goes out (review of #531).
+    if (stopGeneration_.load() != expectedStopGeneration) return StageError::Stopped;
     // Sent exactly once: a re-sent move could run twice. When the reply is
     // lost, status decides whether the controller accepted the command.
+    ++transactionsInCall_; // the reconciliation read below is a further transaction: it yields to a Stop
     const auto t = bus_->transact(buildOpcode(address_, op, 2, axisCode(axis_), direction),
                                   timing_.transactionMs);
     if (t.error != serialbus::BusError::Timeout) return fromBus(t);
@@ -265,7 +344,7 @@ StageError Zc300Stage::readStatusLocked(StageStatus& status)
     status.home = sw.home;
     status.emergencyStop = sw.emergencyStop;
     status.driverAlarm = sw.driverAlarm;
-    status.referenced = false;
+    status.zeroSet = false;
     status.state = sw.driverAlarm ? MoveState::Faulted : moving ? MoveState::Moving : MoveState::Idle;
     status.sampledAtNs = steadyNowNs();
     return StageError::None;
@@ -301,7 +380,7 @@ StageError Zc300Stage::readStatus(StageStatus& status)
     return readStatusLocked(status);
 }
 
-StageError Zc300Stage::moveLocked(Opcode op, double um)
+StageError Zc300Stage::moveLocked(Opcode op, double um, std::uint64_t expectedStopGeneration)
 {
     if (const StageError err = requireMotionLocked(); err != StageError::None) return err;
     const auto mm = encodeMicronsAsMm(um);
@@ -309,37 +388,48 @@ StageError Zc300Stage::moveLocked(Opcode op, double um)
     const StageError err =
         writeLocked(buildWriteFloat(address_, reg32(kRegStepDistance, axis_), *mm), timing_.transactionMs);
     if (err != StageError::None) return err;
-    return motionLocked(op, um < 0 ? kDirNegative : kDirPositive);
+    return motionLocked(op, um < 0 ? kDirNegative : kDirPositive, expectedStopGeneration);
 }
 
-StageError Zc300Stage::moveAbsolute(double targetUm)
+StageError Zc300Stage::moveAbsolute(double targetUm, std::uint64_t expectedStopGeneration)
 {
+    // Without a caller-supplied generation, a Stop that arrives after this call
+    // started is still honoured: the generation is read before waiting for the
+    // driver. It is checked again right before the opcode (motionLocked), after
+    // the target write, which a Stop may have overtaken.
+    const std::uint64_t expected =
+        expectedStopGeneration != kAnyStopGeneration ? expectedStopGeneration : stopGeneration_.load();
     Access access(*this, Access::Kind::Command);
     if (!access.owned()) return StageError::Busy;
-    return moveLocked(Opcode::MoveAbsolute, targetUm);
+    return moveLocked(Opcode::MoveAbsolute, targetUm, expected);
 }
 
 StageError Zc300Stage::moveRelative(double deltaUm)
 {
+    const std::uint64_t expected = stopGeneration_.load(); // see moveAbsolute
     Access access(*this, Access::Kind::Command);
     if (!access.owned()) return StageError::Busy;
     if (const StageError err = requireMotionLocked(); err != StageError::None) return err;
     if (!encodeMicronsAsMm(deltaUm)) return StageError::OffGrid;
     if (std::round(deltaUm) == 0.0) return StageError::None;
-    return moveLocked(Opcode::MoveRelative, deltaUm);
+    return moveLocked(Opcode::MoveRelative, deltaUm, expected);
 }
 
 StageError Zc300Stage::jog(Direction direction)
 {
+    const std::uint64_t expected = stopGeneration_.load(); // see moveAbsolute
     Access access(*this, Access::Kind::Command);
     if (!access.owned()) return StageError::Busy;
     if (const StageError err = requireMotionLocked(); err != StageError::None) return err;
-    return motionLocked(Opcode::Jog, direction == Direction::Positive ? kDirPositive : kDirNegative);
+    return motionLocked(Opcode::Jog, direction == Direction::Positive ? kDirPositive : kDirNegative, expected);
 }
 
 StageError Zc300Stage::stop()
 {
-    Access access(*this, Access::Kind::Command);
+    stopGeneration_.fetch_add(1); // before waiting for the driver: a queued move must see it
+    stopsWaiting_.fetch_add(1);   // retries of the call in flight give way to this Stop
+    struct Done { std::atomic<int>& n; ~Done() { n.fetch_sub(1); } } done{stopsWaiting_};
+    Access access(*this, Access::Kind::Stop);
     if (!access.owned()) return StageError::Busy;
     if (!connected_) return StageError::NotConnected;
     // Idempotent, so it is retried after silence; allowed even when the

@@ -8,6 +8,8 @@
 
 #include "support/assert.h"
 
+#include <algorithm>
+#include <cstdint>
 #include <map>
 #include <string>
 #include <vector>

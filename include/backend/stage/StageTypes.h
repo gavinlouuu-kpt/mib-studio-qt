@@ -26,15 +26,15 @@ enum class StageError {
     EmergencyStop,
     DriverAlarm,
     NotEnabled,
-    NotReferenced,   // StageService only
+    ZeroNotSet,      // StageService only: the operator has not set zero this power-up
+    Stopped,         // a Stop was issued after the caller read the stop generation: the command was not sent
     OffGrid,         // target is not a whole multiple of the command quantum
     InvalidArgument,
     Timeout,
     LostAck,         // a motion command got no reply and status cannot prove it started
     Protocol,
     Transport,
-    ReferenceFailed, // Home: measured span outside tolerance, or a limit not reached
-    LimitsUnverified, // Home refused: no supervised limit-switch check for this controller
+    LimitCheckFailed, // verify-limits: wiring, polarity or span did not check out
 };
 
 const char* toString(StageError error);
@@ -57,7 +57,7 @@ struct StageIdentity {
 struct StageStatus {
     MoveState state{MoveState::Idle};
     double positionUm{0.0};
-    bool referenced{false}; // filled by StageService; drivers always report false
+    bool zeroSet{false}; // the operator set zero this power-up; StageService fills it, drivers report false
     bool limitPositive{false};
     bool limitNegative{false};
     bool home{false};

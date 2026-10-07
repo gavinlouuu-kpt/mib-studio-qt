@@ -21,8 +21,8 @@ public:
     explicit SharedStageReferenceStore(std::shared_ptr<backend::services::MemoryStageReferenceStore> inner)
         : inner_(std::move(inner)) {}
     std::optional<backend::services::StageReferenceRecord> load() override { return inner_->load(); }
-    void save(const backend::services::StageReferenceRecord& r) override { inner_->save(r); }
-    void clear() override { inner_->clear(); }
+    bool save(const backend::services::StageReferenceRecord& r) override { return inner_->save(r); }
+    bool clear() override { return inner_->clear(); }
 
 private:
     std::shared_ptr<backend::services::MemoryStageReferenceStore> inner_;
@@ -72,6 +72,18 @@ struct StageRig {
         return s;
     }
     std::unique_ptr<backend::services::StageService> service() { return service(config()); }
+    // A service over a caller-supplied zero store (fault-injecting or recording).
+    std::unique_ptr<backend::services::StageService> serviceWithStore(
+        const backend::services::StageConfig& c, std::unique_ptr<backend::services::IStageReferenceStore> zeroStore)
+    {
+        backend::stage::zc300::Zc300Stage::Timing timing;
+        timing.transactionMs = 150;
+        auto s = std::make_unique<backend::services::StageService>(
+            [this, timing] { return std::make_unique<backend::stage::zc300::Zc300Stage>(bus, timing); },
+            std::move(zeroStore), limits);
+        s->setConfig(c);
+        return s;
+    }
 };
 
 } // namespace mib::test

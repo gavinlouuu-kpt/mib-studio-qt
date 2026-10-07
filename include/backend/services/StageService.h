@@ -1,6 +1,7 @@
-// Motorized Z stage service (ADR 0013, #464): connection, status polling,
-// operator-initiated Home (mid-travel referencing), soft limits, one-sided
-// approach and the once-per-power-up reference. Qt-free.
+// Motorized Z stage service (ADR 0013 + Amendment 1, #464): connection, status
+// polling, the operator's "Set zero here", the travel envelope around that zero,
+// one-sided approach and the once-per-power-up zero. The stage is never homed.
+// Qt-free.
 //
 // Threading: one worker thread owns the driver and runs connect/disconnect,
 // operations and idle status polling, so the driver sees a single caller.
@@ -19,6 +20,7 @@
 #include <deque>
 #include <functional>
 #include <future>
+#include <initializer_list>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -32,20 +34,38 @@ namespace serialbus {
 class SerialBusManager;
 }
 
-// What survives an application restart: the reference holds only while the
-// controller still carries the same power-up token (ADR 0013 §6).
+// What survives an application restart: the operator's zero holds only while
+// the controller still carries the same power-up token (ADR 0013 A2). The
+// window is the outer bound set by the first zero of this power-up, in the
+// current zero's coordinates (ADR 0013 A3): re-zeroing shifts it, so repeated
+// Set zero cannot walk the envelope along the stage.
 struct StageReferenceRecord {
     std::string controllerSerial;
     std::uint16_t token{0};
-    double spanUm{0.0};
+    // Set while a Set zero is writing a new token: the controller holds either
+    // `token` or `nextToken`, and both mean "same power-up", so a crash between the
+    // interim record and the token write cannot lose the window.
+    std::uint16_t nextToken{0};
+    bool midTravelDeclared{false};
+    double windowMinUm{0.0};
+    double windowMaxUm{0.0};
+    // The zero was dropped (e-stop, alarm, applied profile, failed move...) but
+    // the controller was not power-cycled: the window still bounds the next
+    // undeclared zero, so a fault cannot be used to start a fresh window.
+    bool zeroValid{true};
+    // A Set zero was interrupted or failed: the counter may be in the old or
+    // the new frame, so the window cannot be trusted until the operator
+    // declares mid-travel (or the controller is power-cycled).
+    bool frameUncertain{false};
 };
 
 class IStageReferenceStore {
 public:
     virtual ~IStageReferenceStore() = default;
     virtual std::optional<StageReferenceRecord> load() = 0;
-    virtual void save(const StageReferenceRecord& record) = 0;
-    virtual void clear() = 0;
+    // Both report success; a failed write or deletion is never silent.
+    virtual bool save(const StageReferenceRecord& record) = 0;
+    virtual bool clear() = 0;
 };
 
 // JSON file under the data directory (written via a temporary + rename).
@@ -53,8 +73,8 @@ class FileStageReferenceStore final : public IStageReferenceStore {
 public:
     explicit FileStageReferenceStore(std::string path);
     std::optional<StageReferenceRecord> load() override;
-    void save(const StageReferenceRecord& record) override;
-    void clear() override;
+    bool save(const StageReferenceRecord& record) override;
+    bool clear() override;
 
 private:
     std::string path_;
@@ -68,15 +88,17 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         return record_;
     }
-    void save(const StageReferenceRecord& record) override
+    bool save(const StageReferenceRecord& record) override
     {
         std::lock_guard<std::mutex> lock(mutex_);
         record_ = record;
+        return true;
     }
-    void clear() override
+    bool clear() override
     {
         std::lock_guard<std::mutex> lock(mutex_);
         record_.reset();
+        return true;
     }
 
 private:
@@ -89,7 +111,7 @@ public:
     using DriverFactory = std::function<std::unique_ptr<stage::IMotionStage>()>;
     using OperationId = std::uint64_t;
 
-    enum class OperationKind { Move, Reference };
+    enum class OperationKind { Move };
     enum class OperationState { Queued, Running, Completed, Failed, Cancelled, TimedOut };
 
     struct OperationInfo {
@@ -110,22 +132,33 @@ public:
     struct Snapshot {
         bool connected{false};
         bool configured{false};
-        bool referenced{false};
+        // The operator set zero during this controller power-up. Moves are
+        // refused until then.
+        bool zeroSet{false};
+        // The operator declared the zero is at mid-travel, which widens the
+        // envelope to the cap.
+        bool midTravelDeclared{false};
+        // The controller's power-up token is not used (power_up_token_register: 0,
+        // hardware acceptance only): a power cycle is NOT detected and the zero is
+        // not persisted. The shell must show this.
+        bool sessionOnlyZero{false};
         // A supervised limit-switch check (zc300ctl verify-limits) passed for
-        // this controller; Home is refused without it.
+        // this controller. It clears the "wiring unverified" badge and gates
+        // nothing else.
         bool limitsVerified{false};
         stage::StageIdentity identity;
         std::string systemPort; // resolved port while connected (conflict checks)
         stage::StageStatus status;
-        double spanUm{0.0};
-        double softMinUm{0.0};
-        double softMaxUm{0.0};
+        double spanUm{0.0};        // the stage's travel (profile)
+        double envelopeMinUm{0.0}; // allowed travel around the zero; 0/0 until zero is set
+        double envelopeMaxUm{0.0};
         OperationId activeOperation{0};
         std::string lastError;
     };
 
     // `limits` holds the supervised limit-switch records; without one for the
-    // connected controller, Home is refused (null: nothing is verified).
+    // connected controller the panel shows "wiring unverified" (null: nothing is
+    // verified). It never gates motion.
     StageService(serialbus::SerialBusManager& busManager, std::unique_ptr<IStageReferenceStore> store,
                  std::shared_ptr<stage::LimitsVerificationStore> limits = nullptr);
     // Test seam: inject the driver (e.g. a ZC300 driver over a fake port).
@@ -141,26 +174,47 @@ public:
     StageConfig config() const;
 
     // Observe-only: identifies the controller, checks the profile and the
-    // power-up token. Writes nothing.
+    // power-up token. Writes nothing and never moves.
     stage::StageError connect(std::string* detail = nullptr);
-    // Stops a moving axis, then releases the port.
+    // Stops a running move (it ends Cancelled), then releases the port.
+    // Returns promptly: it never waits for the operation to run to its end.
     void disconnect();
-    // Start-up policy: connects when enabled; references only when the rig
-    // opted in with reference.on_startup (default false: zero motion, zero
-    // writes). Returns the connect result.
+    // Start-up policy: connects when enabled. Zero motion, zero writes.
+    // Returns the connect result.
     stage::StageError startup(std::string* detail = nullptr);
 
     Snapshot snapshot() const;
 
+    // True while the axis may be moving: an operation is active, the last published status says
+    // Moving, or a cleanup Stop failed and no status has confirmed the axis idle since (#533,
+    // fail closed). The experiment Start probe uses this, not just activeOperation.
+    bool motionPossible() const;
+
     // Operations run one at a time on the worker. Validation (connection,
-    // configuration, reference, soft limits, whole micrometres) happens
-    // before anything is queued, and again when the operation starts.
+    // configuration, zero set, travel envelope, whole micrometres) happens
+    // before anything is queued, and again when the operation starts. A target
+    // outside the envelope is refused, never clamped.
     StartResult moveTo(double targetUm);
     StartResult moveBy(double deltaUm);
-    // Home: probe both limits, zero at mid-travel. Refused with
-    // LimitsUnverified unless a supervised limit check passed for the
-    // connected controller (re-read on every request).
-    StartResult reference();
+    // "Set zero here": declares the current position as 0 um by writing the
+    // controller's position counter. One register write, no motion. Refused
+    // (Busy) while an operation is active or the axis moves, and with an
+    // e-stop or driver alarm. Without `midTravel`, a stage whose zero is
+    // already set must still be inside the window set by this power-up's first
+    // zero (OutOfSoftLimits otherwise). `midTravel` is the operator's
+    // statement that the stage is at mid-travel; it widens the envelope to the
+    // cap. Either way the new zero replaces the old one.
+    stage::StageError setZero(bool midTravel, std::string* detail = nullptr);
+
+    // The experiment gate (#533): called on the worker, outside every service lock, right before
+    // each motion opcode. False means an experiment is active: the operation ends (Busy) without
+    // sending it. It may take other locks (the coordinator's), so it must never be called with
+    // mutex_ held.
+    void setMotionGate(std::function<bool()> allowed);
+
+    // Test seam: the source of power-up tokens (default: random). The service
+    // never writes a token equal to the one it replaces or to 0.
+    void setTokenSourceForTest(std::function<std::uint16_t()> source);
 
     // Cancels the active operation and stops the axis. Always allowed.
     stage::StageError stop();
@@ -170,7 +224,7 @@ public:
     bool waitForOperation(OperationId id, std::chrono::milliseconds timeout) const;
 
     // The only controller-configuration write: applies and saves the stage
-    // profile. Refused while an operation is active.
+    // profile. Refused at once (Busy) while an operation is active.
     stage::StageError applyProfile();
 
     // Cancels any operation, stops the axis, joins the worker, disconnects.
@@ -179,15 +233,21 @@ public:
 
 private:
     struct Job {
-        enum class Type { Connect, Disconnect, ApplyProfile, Operation } type{Type::Connect};
+        enum class Type { Connect, Disconnect, ApplyProfile, SetZero, Operation } type{Type::Connect};
         OperationId operation{0};
         OperationKind kind{OperationKind::Move};
         double targetUm{0.0};
         bool absolute{true};
+        bool midTravel{false}; // SetZero
         std::shared_ptr<std::promise<std::pair<stage::StageError, std::string>>> reply;
     };
 
     std::pair<stage::StageError, std::string> runSync(Job::Type type);
+    // Connect / ApplyProfile / SetZero: refused with Busy while an operation is
+    // active or another exclusive job is queued, instead of queuing behind a move.
+    // The bridge runs one command at a time and Stop needs the same lock, so a
+    // call that waits for a running move would hold Stop for its duration.
+    std::pair<stage::StageError, std::string> runExclusive(Job::Type type, bool midTravel = false);
     StartResult enqueueOperation(OperationKind kind, double targetUm, bool absolute);
     stage::StageError validateMoveLocked(double targetUm, bool absolute, std::string& detail) const;
 
@@ -197,23 +257,40 @@ private:
     void doDisconnect();
     void runOperation(const Job& job);
     stage::StageError runMove(OperationId id, double targetUm, bool absolute, std::string& detail);
-    stage::StageError runReference(OperationId id, std::string& detail);
+    std::pair<stage::StageError, std::string> doSetZero(bool midTravel);
     stage::StageError moveAndWait(OperationId id, double targetUm, double speedUmS, std::string& detail);
     stage::StageError approachAndWait(OperationId id, double targetUm, double minUm, double maxUm,
                                       std::string& detail);
-    // Controller-bounded search: a relative move of at most expected_span +
-    // search_margin toward the switch (never an open-ended jog).
-    stage::StageError searchLimit(OperationId id, stage::Direction direction, double& positionUm,
-                                  std::string& detail);
+    // `abortIf` returns an error to stop the axis and end the wait with it (the
+    // limit-bit backstop), or None to carry on.
     stage::StageError waitIdle(OperationId id, std::chrono::steady_clock::time_point deadline,
                                stage::StageStatus& status, std::string& detail,
-                               const std::function<bool(const stage::StageStatus&)>& abortIf = {});
+                               const std::function<stage::StageError(const stage::StageStatus&)>& abortIf = {});
     stage::StageError applySpeed(double umPerS);
     bool cancelled(OperationId id) const;
     void pollStatus();
     void publishStatus(const stage::StageStatus& status);
     void finishOperation(OperationId id, OperationState state, stage::StageError error, std::string detail);
-    void invalidateReference(const char* why);
+    void invalidateZero(const char* why);
+    void invalidateZeroLocked(const char* why); // mutex_ held
+    // Sets the snapshot's zero state and envelope from `record` (mutex_ held).
+    void adoptZeroLocked(const StageReferenceRecord& record);
+    // The controller was power-cycled (or is another one): the zero, its window and
+    // the stored record are all gone (mutex_ held).
+    void resetPowerUpLocked(const char* why);
+    // Writes the "zero is not valid" state of an invalidation to the store (worker
+    // thread, outside every lock). If that fails, the controller's token is
+    // rotated instead, so a stale valid record can never match again.
+    void persistInvalidation();
+    void flushStoreClear(); // worker only, outside every lock
+    // Saves a record; a successful save supersedes a deletion still pending (worker only).
+    bool saveRecord(const StageReferenceRecord& record);
+    std::uint16_t distinctToken(std::initializer_list<std::uint16_t> avoid);
+    // Compares the controller's power-up token with the one this zero was set
+    // under, dropping everything on a mismatch (ZeroNotSet). A read error is
+    // returned as it is. Nothing to compare (no record, no token) is None.
+    // Worker thread only.
+    stage::StageError checkPowerUp(const std::shared_ptr<stage::IMotionStage>& d);
     std::shared_ptr<stage::IMotionStage> driver() const;
 
     bool limitsVerifiedFor(const std::string& serial) const;
@@ -227,6 +304,21 @@ private:
     StageConfig config_;
     std::shared_ptr<stage::IMotionStage> driver_; // replaced only by the worker
     Snapshot snapshot_;
+    // The zero of this controller power-up and its window. It outlives the zero
+    // itself (an e-stop, alarm or failed move only marks it zeroValid = false), so
+    // dropping the zero never hands out a fresh window; only a new power-up does.
+    StageReferenceRecord zeroRecord_;
+    bool haveZeroRecord_{false};
+    // An invalidation (zeroValid = false) is not durable yet.
+    bool persistPending_{false};
+    bool motionUnverified_{false}; // a cleanup Stop failed; cleared by a status that is not Moving
+    bool storeClearPending_{false}; // delete the stored record, outside mutex_ (flushStoreClear)
+    bool rotatedForPending_{false}; // the token was already rotated for this pending invalidation
+    // After a reconnect the token could not be read: the record is kept, motion is
+    // refused, and the next poll decides (same power-up or not).
+    bool tokenUnverified_{false};
+    std::function<std::uint16_t()> tokenSource_;
+    std::function<bool()> motionGate_; // under mutex_; copied out before it is called
     std::deque<Job> jobs_;
     std::map<OperationId, OperationInfo> operations_;
     OperationId nextOperation_{1};
@@ -239,6 +331,12 @@ private:
     double appliedSpeedUmS_{0.0}; // worker only
     bool stopping_{false};
     bool shutDown_{false};
+    int exclusivePending_{0};   // queued or running Connect / ApplyProfile jobs
+    // Disconnects queued or running. While any is pending, operations end and
+    // no new operation, Connect or ApplyProfile is admitted. A counter, not a
+    // flag: with two concurrent disconnect() calls the first to finish must not
+    // reopen admission while the second is still queued.
+    int pendingDisconnects_{0};
     std::thread worker_;
 };
 

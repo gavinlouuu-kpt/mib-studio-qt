@@ -55,7 +55,7 @@ it("rejects malformed ranges before calling native save",async()=>{
   expect(vi.mocked(invoke).mock.calls.some(([name])=>name==="save_preview_buffer")).toBe(false);
 });
 it("declining destructive resize leaves the buffer untouched",async()=>{
-  vi.spyOn(window,"confirm").mockReturnValue(false);
+  vi.spyOn(window,"confirm").mockImplementation(() => Promise.resolve(false) as unknown as boolean);
   await act(async()=>model.setCapacity("1"));
   await act(async()=>model.command("resize"));
   expect(vi.mocked(invoke).mock.calls.some(([name])=>name==="save_preview_buffer")).toBe(false);

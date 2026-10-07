@@ -292,13 +292,21 @@ int main()
             fs::remove_all(res.finalPath);
         }
         MIB_EXPECT(objectsStable, "HDF5 open-object count returns to baseline after every job");
-        if (cycles >= 6) {
+        // Compare the median of the last three rounds, not the single last round:
+        // one descheduled round on a shared runner (TSan, Windows: 135 ms against a
+        // 35 ms median, #517) is noise, while a per-round slowdown from leaked
+        // state still lifts all three late rounds above the bound.
+        if (cycles >= 8) {
             std::vector<double> early(durations.begin() + 1, durations.begin() + 5);
             std::sort(early.begin(), early.end());
             const double median = (early[1] + early[2]) / 2.0;
-            std::fprintf(stderr, "soak: cycles=%d first=%.1fms median(2-5)=%.1fms last=%.1fms\n", cycles, durations[0],
-                         median, durations.back());
-            MIB_EXPECT(durations.back() <= std::max(1.25 * median, median + 20.0), "last round <= 1.25x median of rounds 2-5");
+            std::vector<double> late(durations.end() - 3, durations.end());
+            std::sort(late.begin(), late.end());
+            const double lateMedian = late[1];
+            std::fprintf(stderr, "soak: cycles=%d first=%.1fms median(2-5)=%.1fms median(last 3)=%.1fms last=%.1fms\n",
+                         cycles, durations[0], median, lateMedian, durations.back());
+            MIB_EXPECT(lateMedian <= std::max(1.25 * median, median + 20.0),
+                       "median of the last 3 rounds <= 1.25x median of rounds 2-5");
         }
         MIB_EXPECT(fnv1a(source) == sourceHash, "source untouched after soak");
     }
