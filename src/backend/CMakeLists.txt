@@ -72,6 +72,7 @@ add_library(mib_processing STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/processing/pz/PzProfileCompiler.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/Hdf5Service.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/HdfExportService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/recording/FcsWriter.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/ReviewChartData.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/ProcessingOverlay.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/diagnostics/CrashStateMirror.cpp
@@ -142,6 +143,7 @@ target_link_libraries(mib_processing PUBLIC
 target_compile_definitions(mib_processing PUBLIC
     MIB_DOTGRID_CORE_VERSION="${MIB_DOTGRID_CORE_VERSION}"
     MIB_PROCESSING_CORE_VERSION="${MIB_PROCESSING_CORE_VERSION}"
+    MIB_STUDIO_QT_VERSION="${PROJECT_VERSION}"
 )
 
 # Contract of the bundled kernel (ADR 0007); 0 = research (any contract).
@@ -543,6 +545,12 @@ target_compile_definitions(mib_backend PUBLIC
     MIB_PROCESSING_CORE_SIGNER_SPKI_SHA256="${MIB_PROCESSING_CORE_SIGNER_SPKI_SHA256}"
     MIB_PROCESSING_CORE_ED25519_SPKI_SHA256="${MIB_PROCESSING_CORE_ED25519_SPKI_SHA256}"
 )
+
+# Qt-free command line adapter for formats that are also exposed through the
+# service. It intentionally has no frontend or bridge dependency.
+add_executable(hdf_export_cli ${PROJECT_SOURCE_DIR}/src/backend/recording/hdf_export_cli.cpp)
+target_link_libraries(hdf_export_cli PRIVATE mib_backend)
+set_target_properties(hdf_export_cli PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
 
 if(MIB_HAS_EGRABBER)
     target_compile_definitions(mib_backend PUBLIC MIB_HAS_EGRABBER=1)
