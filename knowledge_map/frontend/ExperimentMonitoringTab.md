@@ -247,3 +247,7 @@ exposed subset of `ProcessingConfig`, owned by the pure
   to preserve the final view).
 - See tasks `knowledge_map/task/ui-status-stats.md` and
   `fps_mbs_zero.md` for common metric-display issues.
+
+Profile switches refresh the tune baseline fingerprint through the watcher’s
+post-load `configFileChanged` notification, so Apply uses the selected document
+rather than the previous profile’s fingerprint (#583).

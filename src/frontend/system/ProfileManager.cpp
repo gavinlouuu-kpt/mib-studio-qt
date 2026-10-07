@@ -676,11 +676,19 @@ QVector<ProfileManager::LocalProfile> ProfileManager::scanLocalProfiles(
                 profile.remoteEntry->description = remote->description;
                 profile.remoteEntry->profileId = remote->profileId;
                 profile.remoteEntry->revision = remote->revision;
-                profile.updateAvailable = !profile.metadata.configSha256.trimmed().isEmpty() &&
-                                          !remote->configSha256.trimmed().isEmpty() &&
-                                          profile.metadata.configSha256.compare(remote->configSha256, Qt::CaseInsensitive) != 0;
+                // Installed config bytes are normalized; their hash differs from the download.
+                if (profile.metadata.sourceType == QStringLiteral("r2-public-catalog") &&
+                    !profile.metadata.revision.isEmpty() && !remote->revision.isEmpty()) {
+                    profile.updateAvailable = profile.metadata.revision != remote->revision;
+                } else {
+                    profile.updateAvailable = !profile.metadata.configSha256.trimmed().isEmpty() &&
+                                              !remote->configSha256.trimmed().isEmpty() &&
+                                              profile.metadata.configSha256.compare(
+                                                  remote->configSha256, Qt::CaseInsensitive) != 0;
+                }
                 profile.localOnly = false;
-                const QVersionNumber currentVersion = QVersionNumber::fromString(QCoreApplication::applicationVersion());
+                const QVersionNumber currentVersion =
+                    QVersionNumber::fromString(QCoreApplication::applicationVersion());
                 const QVersionNumber minVersion = QVersionNumber::fromString(remote->appMinVersion);
                 const QVersionNumber maxVersion = QVersionNumber::fromString(remote->appMaxVersion);
                 bool compatible = true;

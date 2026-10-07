@@ -256,3 +256,17 @@ and idle experiment, and is never invoked during mount/edit/save. Native command
 checks camera mode/running and experiment state under the bridge mutex.
 
 Operator instructions: [Acquire & record — Illuminated Live View](../../docs/manual/acquire-and-record.md#illuminated-live-view--mindvision-camera-and-led-strobe). The preset button writes 100 µs exposure; the bundled default uses 2 µs. Both save a 100 µs strobe. The manual distinguishes those values and the 400 Hz Overview override.
+
+## Qt profile lifecycle (#583)
+
+Clearing or deleting an active profile emits the default config path before
+reloading editors, so the watcher applies subsequent saves. Rename atomically
+rewrites the metadata display name and local profile ID; remote catalog identity
+is retained. Installed catalog revisions determine update status because
+normalized installed JSON has different bytes from the downloaded config.
+`frontend.config_tabs_state` covers switch/Monitoring Apply, rename metadata,
+delete/default-save application, and immediate update banner refresh offline.
+
+The profile lifecycle regression uses unique profile names and clicks the Qt
+confirmation buttons; closing a QMessageBox with `done(Yes)` does not select its
+Yes button. This avoids skipped actions and stale directories between runs.
