@@ -1498,8 +1498,33 @@ mib_add_backend_test_executable(config_document_apply_test backend/config_docume
 add_test(NAME backend.config_document_apply COMMAND $<TARGET_FILE:mib_backend_tests> config_document_apply_test)
 set_tests_properties(backend.config_document_apply PROPERTIES LABELS "backend;profiles;fault-injection;roundtrip" TIMEOUT 60)
 
+mib_add_backend_test_executable(hdf_write_queue_fault_test backend/hdf_write_queue_fault_test.cpp)
+mib_backend_test_link(hdf_write_queue_fault_test PRIVATE Threads::Threads)
+add_test(NAME backend.hdf_write_queue_fault COMMAND $<TARGET_FILE:mib_backend_tests> hdf_write_queue_fault_test)
+set_tests_properties(backend.hdf_write_queue_fault PROPERTIES LABELS "backend;recording;stress;fault-injection" TIMEOUT 30)
+
 mib_test_runner_finalize(mib_backend_tests)
 target_link_libraries(mib_backend_tests PRIVATE mib_backend)
 # The vendored PZ7035 ABI header, for tests that fake bridge registers
 # (processing.pz_platform_monitor).
 target_include_directories(mib_backend_tests PRIVATE ${PROJECT_SOURCE_DIR}/third_party/pz7035-abi)
+
+# Issue 403: persistent regressions backed by the mock-camera lifecycle harness.
+foreach(scenario IN ITEMS byte_pressure partial_series partial_series_no_frames partial_series_restart)
+    add_test(NAME e2e.recording_403_${scenario}
+        COMMAND $<TARGET_FILE:mib_backend_tests> experiment_coordinator_test)
+    set_tests_properties(e2e.recording_403_${scenario} PROPERTIES
+        LABELS "backend;e2e;recording;regression" TIMEOUT 40
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;MIB_REPRO_ASSERT_SAFE=1;MIB_REPRO_INTERVAL_MS=100")
+endforeach()
+set_property(TEST e2e.recording_403_byte_pressure APPEND PROPERTY ENVIRONMENT
+    "MIB_REPRO_BUFFER_CAP=393216;MIB_REPRO_FLUSH=100")
+foreach(scenario IN ITEMS partial_series partial_series_no_frames partial_series_restart)
+    set_property(TEST e2e.recording_403_${scenario} APPEND PROPERTY ENVIRONMENT
+        "MIB_REPRO_BUFFER_CAP=10485760;MIB_REPRO_SERIES=100")
+endforeach()
+set_property(TEST e2e.recording_403_partial_series_no_frames APPEND PROPERTY ENVIRONMENT
+    "MIB_REPRO_NO_MORE_FRAMES=1")
+
+set_property(TEST e2e.recording_403_partial_series_restart APPEND PROPERTY ENVIRONMENT
+    "MIB_REPRO_RESTART=1")

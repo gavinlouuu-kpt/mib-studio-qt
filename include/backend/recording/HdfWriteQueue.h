@@ -20,6 +20,8 @@ template <class Batch>
 class HdfWriteQueue {
 public:
     using WriteFn = std::function<bool(const Batch&)>;
+    // Runs on the failing submitter/writer. Must not destroy or stop this queue.
+    // Exceptions are contained; the original fatal error remains queryable.
     using ErrorFn = std::function<void(const std::string&)>;
 
     // slotCount: max batches in flight (not named `slots` — Qt defines that as a
@@ -36,13 +38,13 @@ public:
     HdfWriteQueue(const HdfWriteQueue&) = delete;
     HdfWriteQueue& operator=(const HdfWriteQueue&) = delete;
 
-    // Non-blocking. Returns false if already errored or the queue is full; a
+    // Non-blocking. Returns false if stopped, errored or the queue is full; a
     // full queue latches a fatal overflow error and fires onError once.
     bool submit(Batch&& b) {
         std::string fireMsg;
         {
             std::unique_lock<std::mutex> lk(mu_);
-            if (error_) return false;
+            if (error_ || stopRequested_) return false;
             if (queue_.size() >= slots_) {
                 fireMsg = latchErrorLocked("write queue overflow (disk too slow)");
             } else {
@@ -67,6 +69,9 @@ public:
 
     // Drain queued batches, join the writer. Returns true iff no error occurred.
     bool flushAndStop() {
+        // std::thread::join/joinable are not safe on the same thread object
+        // concurrently. Keep one joining owner without holding the queue mutex.
+        std::lock_guard<std::mutex> stopLock(stopMu_);
         {
             std::unique_lock<std::mutex> lk(mu_);
             stopRequested_ = true;
@@ -131,10 +136,17 @@ private:
         return std::string();
     }
 
-    void fireError(const std::string& msg) {
-        if (onError_) onError_(msg);
+    void fireError(const std::string& msg) noexcept {
+        try {
+            if (onError_) onError_(msg);
+        } catch (...) {
+            // Notification is best effort: it must not terminate the writer
+            // thread or escape submit(). The original failure is already
+            // latched, so hasError/error/flushAndStop still report failure.
+        }
     }
 
+    std::mutex stopMu_;
     mutable std::mutex mu_;
     std::condition_variable cv_;
     std::deque<Batch> queue_;

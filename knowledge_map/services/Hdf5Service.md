@@ -282,3 +282,12 @@ they also equal the first dimension of each class's `images` dataset. Metadata
 also covers imageless PL runs. These counts recover saved frames, not sampled-out
 invalid frames, buffer policy drops, or failed writes; persisted `accounting_*`
 attributes retain those distinctions when present. No migration is performed.
+
+## Recording queue boundaries (#403)
+
+`HdfWriteQueue` rejects submits after Stop, serializes concurrent joins, and
+contains exceptions from error observers while retaining the original error.
+`backend.hdf_write_queue_fault` exercises throwing observers and simultaneous
+stops; `e2e.recording_403_*` verifies byte-pressure flushing and partial-series
+Stop, no-more-frames, and restart with HDF5 readback. Fatal run accounting is
+persisted as failed before closure (aligned with #589).

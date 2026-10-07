@@ -495,3 +495,8 @@ the capture worker. `saveMindVisionRoi` validates bounds and atomically replaces
 only width/height/offset fields of the selected JSON profile. ROI edits affect
 the next experiment start; immutable camera session configs avoid live-file
 races. Processing uses crop-local ROI coordinates (0,0,width,height).
+
+Recording pressure notifications are wired from
+`ProcessingService::setFlushRequestCallback()` to
+`ExperimentCoordinator::requestFlush()` (#403). The existing fatal save
+callback also receives experiment-buffer eviction failures.
