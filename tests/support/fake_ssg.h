@@ -197,13 +197,16 @@ public:
     }
     void stop() {
         running_.store(false);
+        // shutdown() unblocks accept()/recv() on the server thread; close the
+        // listening fd only after joining it (closing it while accept() is
+        // blocked on it is a TSan data race and could reuse the fd).
+        if (listenFd_ >= 0) ::shutdown(listenFd_, SHUT_RDWR);
+        dropClient();
+        if (thread_.joinable()) thread_.join();
         if (listenFd_ >= 0) {
-            ::shutdown(listenFd_, SHUT_RDWR);
             ::close(listenFd_);
             listenFd_ = -1;
         }
-        dropClient();
-        if (thread_.joinable()) thread_.join();
     }
     int port() const { return port_; }
     // Unblock the server thread's recv() on the current client; that thread
