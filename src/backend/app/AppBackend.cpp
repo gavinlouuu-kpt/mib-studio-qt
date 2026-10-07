@@ -3,6 +3,7 @@
 #define NOMINMAX
 #endif
 #include "backend/app/AppBackend.h"
+#include "backend/app/ApplicationIdentity.h"
 #include <thread>
 #include "backend/app/ExperimentCoordinator.h"
 #include "backend/app/MethodApply.h"
@@ -461,6 +462,8 @@ namespace backend
         captureService_ = std::make_unique<services::CaptureService>();
         processingService_ = std::make_unique<services::ProcessingService>();
         experimentCoordinator_ = std::make_unique<app::ExperimentCoordinator>(*this);
+        experimentCoordinator_->setApplicationIdentity(
+            MIB_APPLICATION_VERSION, MIB_APPLICATION_BUILD_ID, MIB_APPLICATION_OS);
         processingService_->setBackgroundPublicationTransaction([this](const std::function<void()>& apply) {
             // A worker must not block on a transaction that may join that worker,
             // so it only try-locks. Status polls hold the coordinator mutex
