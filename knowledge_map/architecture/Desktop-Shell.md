@@ -472,6 +472,11 @@ The Experiment configuration page now hosts an App-owned local profile draft/lib
 document, preserve/edit optional `egrabberConfig.js`, save as new, duplicate, rename,
 or recoverably archive. Unknown config bytes survive copies. Mutations use a baseline
 hash over config, optional script and metadata. Existing names are never overwritten.
+New Draft from Current Config copies the complete document loaded in the App config
+editor; without a loaded document, open config.json there or import a config to draft.
+Choosing a folder preserves the draft without a discard prompt. Empty or invalid drafts are refused by both the
+save button (with a reason tooltip) and the save handler. Reading saved profiles
+continues to preserve their complete JSON and optional script.
 Navigation retains drafts and pending commands; experiment-active operations are refused.
 
 `BackendFacade::profileCommand` owns the portable `app/ProfileStore` path. Apply validates
@@ -830,3 +835,7 @@ disarms; #521).
 
 Tests: `stageControlModel.test.ts` (rules) and `StageControls.test.tsx`
 (panel behaviour with a mocked bridge).
+
+Safety confirmations go through `desktop/src/transport/dialogs.ts` and must be
+awaited. Tauri uses the public dialog API (`dialog:allow-message`); browser
+confirmation and native dialog errors fail closed unless the result is true.

@@ -67,7 +67,7 @@ describe("checked configuration operator transactions", () => {
     expect(model.doc?.revision).toBe("baseline-1"); expect(mutations()).toHaveLength(0);
   });
   it("honors cancelled reload and clears dirty only after confirmed application", async () => {
-    await edit(); vi.mocked(window.confirm).mockReturnValue(false); const reads = vi.mocked(invoke).mock.calls.length;
+    await edit(); vi.mocked(window.confirm).mockImplementation(() => Promise.resolve(false) as unknown as boolean); const reads = vi.mocked(invoke).mock.calls.length;
     await click("Reload / Revert"); expect(vi.mocked(invoke).mock.calls).toHaveLength(reads); expect(model.dirty).toBe(true);
     await click("Save and Apply"); expect(model.dirty).toBe(false); expect(model.doc?.revision).toBe("saved-2"); expect(ctx.refresh).toHaveBeenCalledOnce();
     expect(mutations()[0][1]).toEqual({path: loaded.path, baseline: "baseline-1", patch: '{"image_processing":{"area_threshold_min":80}}'});

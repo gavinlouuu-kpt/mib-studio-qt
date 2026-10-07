@@ -24,6 +24,36 @@ A run that ended in `incompleteLoss` used to look like a clean finish: the statu
 Not yet: the Review tab, which needs the saved accounting in the review metadata (a bridge change).
 See [[../architecture/Desktop-Shell]], [[../architecture/ExperimentCoordinator]].
 
+## 2026-10-07 — Local profile drafts copy the open app config (#547)
+
+React local profiles now seed new drafts from the complete config.json document
+loaded in the App config editor. Without one, users must open or import a config;
+choosing a profiles folder preserves the draft. Empty or invalid JSON drafts cannot be saved:
+the disabled save button explains why, and the save handler repeats validation.
+Existing profile reads retain their complete document and optional script. Vitest
+covers document seeding, missing documents, folder selection, invalid/empty drafts
+and populated saves. See [[architecture/Desktop-Shell]].
+
+## 2026-10-07 — Await desktop safety confirmations (#541)
+
+All destructive/draft-discard and Service mode prompts await the shared transport
+dialog helper. The Tauri shell uses the plugin public confirmation API with explicit
+`dialog:allow-message`; browsers use awaited native confirmation. Rejected dialogs
+fail closed. Tests cover cancellation, async shims, and forbid direct confirmation
+calls outside the helper. See [[architecture/Desktop-Shell]].
+
+## 2026-10-07 — Raw recording preserves the experiment writer (#451)
+
+Manual recording uses the coordinator idle transaction for atomic admission
+against experiment Start and refuses any open HDF5 file without closing it.
+Recording ownership lasts through worker finalization and Stop; facade and Qt
+callers receive the backend conflict reason. Mock regression covers active
+experiment conflicts during Starting/Active/Stopping, same-path protection,
+continued frame persistence/pixel readback, failed-open cleanup, and competing
+starts. The active-writer guard fails on the unfixed backend; the fixed test
+passes 20 repeats (200 competing starts), plus seven related lifecycle tests. See
+[[architecture/AppBackend]] and [[architecture/ExperimentCoordinator]].
+
 ## 2026-10-07 — Deterministic experiment readiness checks (#506)
 
 `backend.experiment_readiness` joins the realtime consumer before editing the live

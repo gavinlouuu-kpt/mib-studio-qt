@@ -345,6 +345,12 @@ from the mock. `experiment()` exposes the coordinator (created in
 Separate from experiments: record non-empty raw frames directly to HDF5 with
 no contour processing.
 
+- Recording admission runs inside the coordinator idle transaction, excluding
+  experiment Start through writer acquisition. An experiment in Starting, Active
+  or Stopping, or any already-open HDF5 file (including the requested path),
+  refuses admission without closing or opening a file. Recording retains busy
+  ownership until Stop has joined its worker; failures must be stopped before
+  another writer can start. Callers can request a diagnostic error string.
 - `startFrameRecording(hdf5Path)`, `stopFrameRecording()`, `isFrameRecording()`
 - Counters: `frameRecordingCount()`, `frameRecordingFiltered()`
 - Uses a dedicated `frameRecordingThread_`. Empty frames are dropped via

@@ -1,3 +1,4 @@
+import {confirm} from "./transport/dialogs";
 import {invoke} from "./transport";
 import {useEffect,useRef,useState} from "react";
 import {profileCommand, type Profile} from "./profiles";
@@ -44,7 +45,7 @@ export function useProfileCatalog({base,selected,blocked,dirty,onInstalled,appen
     setCandidate({entry,config,script,localName:selected?.name,baseline:selected?.revision,localScript:selected?.script});setName(selected?.name??entry.profile_id);return;
    }
    if(!candidate||!name||!base)throw new Error("Preview a catalog profile and choose a local name first");
-   if(!window.confirm(`Install ${candidate.entry.profile_id} revision ${candidate.entry.revision} as '${name}'? Existing contents are backed up; runtime settings will not change.`))return;
+   if(!await confirm(`Install ${candidate.entry.profile_id} revision ${candidate.entry.revision} as '${name}'? Existing contents are backed up; runtime settings will not change.`))return;
    const r=await profileCommand(base,{operation:"install_remote",name,baseline:name===candidate.localName?candidate.baseline:"",entry:candidate.entry,document_json:candidate.config,script:candidate.script,catalog_url:url,channel:catalog?.channel??"stable"});
    if(!r.ok)throw new Error(r.error);if(r.profile)await onInstalled(r.profile);setCandidate(null);setMessage("Verified remote profile installed. Runtime settings were not changed; apply the saved profile explicitly.");append("Verified remote profile installed; no automatic application.");
   }catch(e){setMessage(String(e));}finally{pending.current=false;setBusy(false);}

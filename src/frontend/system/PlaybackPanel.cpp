@@ -1,4 +1,6 @@
 #include "frontend/system/PlaybackPanel.h"
+#include "backend/app/ExperimentCoordinator.h"
+#include "backend/recording/Hdf5Service.h"
 
 #include <QPainter>
 #include <QTimer>
@@ -573,9 +575,7 @@ void PlaybackPanel::onTick()
     prevCaptureRunning_ = running;
 
     // Update recording status display periodically
-    if (backend_.isFrameRecording()) {
-        updateRecordingUI();
-    }
+    updateRecordingUI();
 
     // Update slider range from available indices
     uint64_t earliest = 0, latest = 0;
@@ -951,6 +951,14 @@ void PlaybackPanel::onToggleRecording()
         return;
     }
 
+    if (backend_.experiment().state() != backend::app::ExperimentRunState::Idle ||
+        backend_.hdf5().isFileOpen()) {
+        QMessageBox::warning(
+            this, tr("Recording Error"),
+            tr("Stop or reset the experiment and close the existing HDF5 file before recording."));
+        return;
+    }
+
     // Prompt user for HDF5 file path
     QString defaultDir;
     const QString documentsPath = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
@@ -973,9 +981,9 @@ void PlaybackPanel::onToggleRecording()
     if (filePath.isEmpty()) return;
 
     const std::string path = filePath.toStdString();
-    if (!backend_.startFrameRecording(path)) {
-        QMessageBox::warning(this, tr("Recording Error"),
-                             tr("Failed to start frame recording. Check that the camera is running."));
+    std::string error;
+    if (!backend_.startFrameRecording(path, &error)) {
+        QMessageBox::warning(this, tr("Recording Error"), QString::fromStdString(error));
         return;
     }
     updateRecordingUI();
@@ -984,6 +992,10 @@ void PlaybackPanel::onToggleRecording()
 void PlaybackPanel::updateRecordingUI()
 {
     const bool recording = backend_.isFrameRecording();
+    const bool conflict =
+        !recording && (backend_.experiment().state() != backend::app::ExperimentRunState::Idle ||
+                       backend_.hdf5().isFileOpen());
+    recordBtn_->setEnabled(!conflict);
     if (recording) {
         recordBtn_->setText("Stop Rec");
         recordBtn_->setStyleSheet("color: red; font-weight: bold;");
@@ -995,7 +1007,10 @@ void PlaybackPanel::updateRecordingUI()
     } else {
         recordBtn_->setText("Record");
         recordBtn_->setStyleSheet("");
-        recordBtn_->setToolTip("Record non-empty frames to HDF5 (images + metadata only, no contour processing)");
+        recordBtn_->setToolTip(conflict ? tr("Stop or reset the experiment and close the existing "
+                                             "HDF5 file before recording")
+                                        : tr("Record non-empty frames to HDF5 (images + metadata "
+                                             "only, no contour processing)"));
         recordStatusLabel_->setText("");
     }
 }

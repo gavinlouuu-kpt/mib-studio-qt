@@ -1,5 +1,5 @@
 import {invoke} from "./transport";
-import {open} from "./transport/dialogs";
+import {open, confirm} from "./transport/dialogs";
 import { useRef, useState } from "react";
 
 export interface ConfigDocument { ok: boolean; path: string; revision: string; document_json: string; error: string }
@@ -36,7 +36,7 @@ export function useConfigDocument({ ready, active, append, refresh }: { ready: b
   const blocked = !ready || active || busy;
   const run = async (action: "open" | "reload" | "apply", selectedPath?:string) => {
     if (!ready || active || pending.current) return;
-    if (action !== "apply" && dirty && !window.confirm("Discard unsaved config edits and reload?")) return;
+    if (action !== "apply" && dirty && !await confirm("Discard unsaved config edits and reload?")) return;
     pending.current = true; setBusy(true); setError("");
     try {
       if (action === "apply" && doc) {
