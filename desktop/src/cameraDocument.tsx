@@ -1,6 +1,6 @@
 import {useRef,useState} from "react";
 import {invoke} from "./transport";
-import {open,save} from "./transport/dialogs";
+import {open,save,confirm} from "./transport/dialogs";
 import {bridge} from "./bridge";
 import {CAMERA_SELECTION_MODES} from "./bridgeContract";
 import type {CameraScriptContext} from "./cameraScript";
@@ -10,7 +10,7 @@ export function useCameraDocument(context:CameraScriptContext,kind:"js"|"json",s
  const pending=useRef(false),current=useRef(context);current.current=context;
  const run=async(action:"browse"|"reload"|"save"|"apply"|"clear"|"saveAs"|"default"|"trigger")=>{
   if(pending.current)return;
-  if(["browse","reload","clear","default"].includes(action)&&dirty&&!window.confirm("Discard unsaved camera document edits?"))return;
+  if(["browse","reload","clear","default"].includes(action)&&dirty&&!await confirm("Discard unsaved camera document edits?"))return;
   pending.current=true;setBusy(true);setMessage("");
   try {
    if(action==="trigger") {
@@ -22,7 +22,7 @@ export function useCameraDocument(context:CameraScriptContext,kind:"js"|"json",s
     const path=await save({defaultPath:`camera.${kind}`,filters:[{name:"Camera document",extensions:[kind]}]});if(!path)return;
     let existing:Document|null=null;
     try {existing=await invoke<Document>("camera_document",{action:"read",path,kind,baseline:"",text:""});}catch{/* Native create rejects collisions or unreadable existing paths. */}
-    if(existing&&!window.confirm("Replace this camera file with the current draft?"))return;
+    if(existing&&!await confirm("Replace this camera file with the current draft?"))return;
     const loaded=await invoke<Document>("camera_document",{action:existing?"save":"create",path,kind,baseline:existing?.revision??"",text});setDoc(loaded);setText(loaded.text);setDirty(false);setMessage("Saved copy; not applied to camera.");return;
    }
    if(action==="clear"){setDoc(null);setText("");setDirty(false);return;}

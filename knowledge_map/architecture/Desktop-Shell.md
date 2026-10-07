@@ -819,3 +819,7 @@ Tests: `stageControlModel.test.ts` (rules) and `StageControls.test.tsx`
 
 Background capture/clear and ROI editing are disabled during Starting, Active and
 Stopping. Setup command refusals refresh backend ROI/background state (#542).
+
+Safety confirmations go through `desktop/src/transport/dialogs.ts` and must be
+awaited. Tauri uses the public dialog API (`dialog:allow-message`); browser
+confirmation and native dialog errors fail closed unless the result is true.
