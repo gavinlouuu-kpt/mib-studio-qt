@@ -54,11 +54,13 @@ private:
         QByteArray installerSha256Hex; // hex bytes, lowercased
         qint64 installerSizeBytes{-1};
         QUrl releaseNotesUrl;
+        QString releaseNotes;
     };
 
     QUrl manifestUrlFromEnvOrDefault() const;
     void startManifestRequest(const QUrl& url, bool interactive);
     std::optional<Manifest> parseManifest(const QByteArray& jsonBytes, QString* errorOut) const;
+    bool confirmUpdate(const Manifest& manifest);
     void startInstallerDownload(const Manifest& manifest, bool interactive);
 
     bool verifyDownloadedInstaller(const QString& path, const Manifest& manifest, QString* errorOut) const;

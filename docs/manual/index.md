@@ -9,6 +9,15 @@ This site is the operator guide. Skim the tour below to see the shape of
 the app, then follow the workflow pages in order — or use the search box
 whenever you are in doubt about a button, a setting, or an error.
 
+## Contents
+
+- [Getting started](getting-started.md)
+- [Connect a camera](connect.md)
+- [Acquire & record](acquire-and-record.md)
+- [Review & post-process](review-and-postprocess.md)
+- [Troubleshooting](troubleshooting.md)
+- [YOFO Review](yofo-review.md)
+
 ## The workflow at a glance
 
 ### 1. Connect a camera

@@ -1,4 +1,8 @@
 function(mib_configure_windows_deployment app_target)
+    add_custom_command(TARGET ${app_target} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${PROJECT_SOURCE_DIR}/docs/release-notes" "$<TARGET_FILE_DIR:${app_target}>/resources/release-notes"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${PROJECT_SOURCE_DIR}/docs/manual" "$<TARGET_FILE_DIR:${app_target}>/resources/manual"
+        VERBATIM)
     if(NOT WIN32 OR NOT MIB_ENABLE_WINDOWS_PACKAGING)
         return()
     endif()

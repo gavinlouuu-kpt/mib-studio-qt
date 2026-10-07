@@ -69,6 +69,8 @@
     <property name="title">
      <string>Help</string>
     </property>
+    <addaction name="whatsNewAct"/>
+    <addaction name="manualAct"/>
     <addaction name="aboutAct"/>
     <addaction name="checkUpdatesAct"/>
     <addaction name="separator"/>
@@ -105,6 +107,8 @@
     <string>Syringe Pump Settings...</string>
    </property>
   </action>
+  <action name="whatsNewAct"><property name="text"><string>What's New</string></property></action>
+  <action name="manualAct"><property name="text"><string>User Manual</string></property></action>
   <action name="aboutAct">
    <property name="text">
     <string>About</string>

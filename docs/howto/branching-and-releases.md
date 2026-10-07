@@ -98,3 +98,17 @@ merges queue rather than race on the R2 publish.
   they will merge without releasing.
 - If a stray beta does get published, delete the GitHub prerelease + tag and
   advance/repoint the R2 beta channel with the next good beta.
+
+### User-facing release checklist
+
+Before the release PR to main is approved:
+
+- Curate `docs/release-notes/vX.Y.Z.md` using the release-notes README template.
+  Review operator-facing notes in the PR, including hardware compatibility and
+  upgrade instructions. Run `python scripts/release_notes.py --version X.Y.Z --check`.
+- Update the manual for user-visible changes. Help ▸ User Manual bundles
+  `docs/manual/` and images offline; Help ▸ What's New bundles versioned notes.
+- Verify notes in Help and the Software Updates list. Stable Windows builds
+  gate on curated notes before building and use them for the GitHub Release
+  body and update manifest. Betas use recent vault fragments since the last
+  reachable stable tag, explicitly labelled uncurated.

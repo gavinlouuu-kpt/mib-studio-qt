@@ -35,6 +35,8 @@ set(FRONTEND_COMMON_SOURCES
     ${PROJECT_SOURCE_DIR}/include/frontend/tabs/PreviewPage.h
     ${PROJECT_SOURCE_DIR}/resources/ui/PreviewPage.ui
     # Dialogs
+    ${PROJECT_SOURCE_DIR}/src/frontend/dialogs/HelpDialog.cpp
+    ${PROJECT_SOURCE_DIR}/include/frontend/dialogs/HelpDialog.h
     ${PROJECT_SOURCE_DIR}/src/frontend/dialogs/BatchMaskDialog.cpp
     ${PROJECT_SOURCE_DIR}/include/frontend/dialogs/BatchMaskDialog.h
     ${PROJECT_SOURCE_DIR}/src/frontend/dialogs/BufferSaveDialog.cpp
@@ -174,6 +176,7 @@ target_link_libraries(mib_frontend_common PUBLIC
 # _FULL retains any pre-release suffix (e.g. 1.0.4-beta.1) so the app knows its
 # channel; the plain one stays numeric for anything needing strict X.Y.Z.
 target_compile_definitions(mib_frontend_common PUBLIC
+    MIB_HELP_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
     MIB_STUDIO_QT_VERSION="${PROJECT_VERSION}"
     MIB_STUDIO_QT_VERSION_FULL="${PROJECT_VERSION_FULL}"
     MIB_PROCESSING_CORE_SIGNER_SPKI_SHA256="${MIB_PROCESSING_CORE_SIGNER_SPKI_SHA256}"
@@ -183,6 +186,9 @@ target_compile_definitions(mib_frontend_common PUBLIC
 mib_link_opencv(mib_frontend_common PUBLIC)
 
 if(BUILD_TESTING)
+    mib_test_runner_add(mib_frontend_tests offline_help_test ${PROJECT_SOURCE_DIR}/tests/frontend/offline_help_test.cpp)
+    add_test(NAME frontend.offline_help COMMAND $<TARGET_FILE:mib_frontend_tests> offline_help_test)
+    set_tests_properties(frontend.offline_help PROPERTIES LABELS "frontend;utility" TIMEOUT 30)
     mib_test_runner_add(mib_frontend_tests processing_core_dialog_test ${PROJECT_SOURCE_DIR}/tests/frontend/processing_core_dialog_test.cpp)
     add_test(NAME frontend.processing_core_dialog
         COMMAND $<TARGET_FILE:mib_frontend_tests> processing_core_dialog_test)

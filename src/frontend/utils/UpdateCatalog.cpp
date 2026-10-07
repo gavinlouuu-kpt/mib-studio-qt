@@ -65,6 +65,7 @@ ParseResult parseIndex(const QByteArray& bytes)
             continue; // skip malformed entry rather than fail the whole list
         }
         e.releaseNotesUrl = o.value(QStringLiteral("release_notes_url")).toString().trimmed();
+        e.releaseNotes = o.value(QStringLiteral("release_notes")).toString().left(16384);
         e.publishedUtc = o.value(QStringLiteral("published_utc")).toString().trimmed();
         e.installerSizeBytes =
             static_cast<qint64>(o.value(QStringLiteral("installer_size_bytes")).toDouble(-1));

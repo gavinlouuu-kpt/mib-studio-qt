@@ -23,6 +23,7 @@
   product; `desktop/src/review/` is also MIB Studio's Tauri Review tab
 
 ## Support
+- [[HelpDialog]] — offline release notes and linked user manual in Qt and Tauri
 - [[Dialogs]] — settings dialogs (Mock, Processing, Monitoring, Buffer save,
   Conversion factor, Frame viewer, Syringe pump)
 - [[ProcessingCoreDialog]] — version history, verified cache preparation, and

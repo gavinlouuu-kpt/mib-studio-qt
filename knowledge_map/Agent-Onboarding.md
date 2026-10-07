@@ -49,6 +49,7 @@ Jump to the notes that match your task:
 | Pipeline / trigger latency diagnosis | [[diagnostics/PipelineTimingRecorder]] + `docs/howto/pipeline-latency-diagnosis.md` |
 | Build / deploy | [[build-and-run/Build]], [[build-and-run/Run-Modes]] |
 | Datasets, model weights, anything fetched from Hugging Face | [[build-and-run/Assets]] (`env/assets.json`, `scripts/provision-assets.py`) |
+| Offline Help / release notes | [[frontend/HelpDialog]] + [[frontend/System-Utilities]] |
 | User manual / generated screenshots | [[frontend/Screenshot-Tour]] + `docs/manual/README.md` |
 
 ## Step 4 — Before you write code

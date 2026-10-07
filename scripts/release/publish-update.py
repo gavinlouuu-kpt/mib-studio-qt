@@ -79,6 +79,7 @@ def _index_entry_from_manifest(manifest: dict) -> dict:
         "installer_sha256": manifest.get("installer_sha256", ""),
         "installer_size_bytes": manifest.get("installer_size_bytes", -1),
         "release_notes_url": manifest.get("release_notes_url", ""),
+        **({"release_notes": manifest["release_notes"]} if "release_notes" in manifest else {}),
         "published_utc": manifest.get("published_utc") or manifest.get("published_at", ""),
     }
 
@@ -211,6 +212,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--profile", default=os.getenv("MIB_STUDIO_R2_PROFILE"))
     parser.add_argument("--acl", default="")
     parser.add_argument("--release-notes-url", default="")
+    parser.add_argument("--release-notes-file", type=Path)
     parser.add_argument("--manifest-out", default=None, help="Write generated manifest to this path")
     parser.add_argument("--dry-run", action="store_true", help="Generate metadata but do not upload")
     parser.add_argument(
@@ -314,6 +316,22 @@ def main(argv: list[str] | None = None) -> int:
     }
     if args.release_notes_url:
         manifest["release_notes_url"] = args.release_notes_url
+
+    if args.release_notes_file:
+        try:
+            # Load scripts/release_notes.py by path: this script runs as
+            # `python scripts/release/publish-update.py`, so the repo root is
+            # not on sys.path and `import scripts.release_notes` would fail.
+            import importlib.util
+            spec = importlib.util.spec_from_file_location(
+                "mib_release_notes", Path(__file__).resolve().parents[1] / "release_notes.py")
+            release_notes = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(release_notes)
+            manifest["release_notes"] = release_notes.plain(
+                args.release_notes_file.read_text(encoding="utf-8"))
+        except OSError as exc:
+            print(f"ERROR: release notes: {exc}", file=sys.stderr)
+            return 1
 
     manifest_path = write_manifest_file(manifest, args.manifest_out)
     print(f"   Manifest created: {manifest_path}")

@@ -128,6 +128,20 @@ jobs:
           "artifact_version=$artifactVersion" >> $env:GITHUB_OUTPUT
           "current_version=$current" >> $env:GITHUB_OUTPUT
 
+      - name: Prepare release notes
+        shell: pwsh
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          if ('${{ steps.version.outputs.channel }}' -eq 'stable') {
+            python scripts/release_notes.py --version $version --check
+          } else {
+            $stableTags = @(git tag --merged HEAD --list 'v*' | Where-Object { $_ -match '^v[0-9]+\.[0-9]+\.[0-9]+$' } | Sort-Object { [version]$_.Substring(1) })
+            if ($LASTEXITCODE -ne 0 -or $stableTags.Count -eq 0) { throw 'No reachable stable tag for beta notes' }
+            $since = $stableTags[-1]
+            python scripts/release_notes.py --version $version --beta --since $since
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'Release notes preparation failed' }
+
       # ── Build environment ──────────────────────────────────────
 
       - name: Install Conan
@@ -613,10 +627,10 @@ jobs:
 
           if ($channel -eq "beta") {
             # Beta: pre-release; gh creates the tag server-side on this commit
-            & gh release create $tag @installers --title "v$version" --generate-notes --prerelease --target ${{ github.sha }}
+            & gh release create $tag @installers --title "v$version" --notes-file "docs/release-notes/v$version.md" --prerelease --target ${{ github.sha }}
           } else {
             # Release: full release (verified tag at the trigger SHA was pushed above)
-            & gh release create $tag @installers --title "v$version" --generate-notes
+            & gh release create $tag @installers --title "v$version" --notes-file "docs/release-notes/v$version.md"
           }
           if ($LASTEXITCODE -ne 0) { throw 'GitHub Release creation failed' }
         shell: pwsh
@@ -646,6 +660,7 @@ jobs:
             --version $version `
             --channel $channel `
             --upload-method s3 `
+            --release-notes-file "docs/release-notes/v$version.md" `
             --release-notes-url "https://github.com/${{ github.repository }}/releases/tag/${{ steps.version.outputs.tag }}"
           if ($LASTEXITCODE -ne 0) { throw 'Cloudflare R2 update publish failed' }
         shell: pwsh

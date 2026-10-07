@@ -1,4 +1,5 @@
 #include "frontend/core/MainWindow.h"
+#include "frontend/dialogs/HelpDialog.h"
 #include "ui_MainWindow.h"
 
 #include <QAction>
@@ -336,6 +337,20 @@ MainWindow::MainWindow(backend::AppBackend &backend, QWidget *parent)
 #endif
         openFolder(QDir(base).absoluteFilePath(QStringLiteral("MIB_Studio_Qt/logs")));
     });
+    connect(ui->whatsNewAct, &QAction::triggered, this, [this]() {
+        frontend::HelpDialog(false, this).exec();
+        QSettings().setValue("Help/LastSeenVersion", QCoreApplication::applicationVersion());
+    });
+    connect(ui->manualAct, &QAction::triggered, this,
+            [this]() { frontend::HelpDialog(true, this).exec(); });
+    const QString helpVersion = QCoreApplication::applicationVersion();
+    const QString previousHelpVersion = QSettings().value("Help/LastSeenVersion").toString();
+    QSettings().setValue("Help/LastSeenVersion", helpVersion);
+    // Never auto-open a modal on headless runs (tests, screenshot tour).
+    if (QGuiApplication::platformName() != QLatin1String("offscreen") &&
+        frontend::shouldShowWhatsNew(previousHelpVersion, helpVersion)) {
+        QTimer::singleShot(0, this, [this]() { ui->whatsNewAct->trigger(); });
+    }
     connect(ui->documentationAct, &QAction::triggered, this, []() {
         QDesktopServices::openUrl(QUrl(QStringLiteral("https://github.com/KPT1020/mib-studio-qt")));
     });

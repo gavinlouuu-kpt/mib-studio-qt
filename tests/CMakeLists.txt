@@ -1342,6 +1342,15 @@ if(Python3_Interpreter_FOUND)
     )
 
     add_test(
+        NAME scripts.release_notes
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/tools/test_release_notes.py
+    )
+    set_tests_properties(scripts.release_notes PROPERTIES
+        LABELS "scripts;release"
+        TIMEOUT 30
+    )
+
+    add_test(
         NAME scripts.publish_update_index
         COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/tools/test_publish_index_merge.py
     )
