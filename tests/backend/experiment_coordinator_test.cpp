@@ -9,6 +9,7 @@
 // active experiment (the HDF5 file must stay readable).
 
 #include "backend/app/AppBackend.h"
+#include "backend/app/ApplicationIdentity.h"
 #include "backend/app/BackendFacade.h"
 #include "backend/app/ExperimentCoordinator.h"
 #include "backend/app/ExperimentReadiness.h"
@@ -239,6 +240,23 @@ int main()
             std::cerr << "experiment start failed: " << result.message << "\n";
             return 6;
         }
+        const auto defaultRun = backendApp.experiment().activeRun();
+        if (!defaultRun || defaultRun->applicationVersion != MIB_APPLICATION_VERSION ||
+            defaultRun->applicationVersion.empty() || defaultRun->applicationVersion == "unknown" ||
+            defaultRun->buildId.empty() || defaultRun->buildId != MIB_APPLICATION_BUILD_ID ||
+            defaultRun->operatingSystem.empty() ||
+            defaultRun->operatingSystem != MIB_APPLICATION_OS) {
+            std::cerr << "backend initialization did not supply application provenance\n";
+            return 47;
+        }
+        backendApp.experiment().setApplicationIdentity("shell-version", "shell-build", "shell-os");
+        const auto frozenRun = backendApp.experiment().activeRun();
+        if (!frozenRun || frozenRun->applicationVersion != defaultRun->applicationVersion ||
+            frozenRun->buildId != defaultRun->buildId ||
+            frozenRun->operatingSystem != defaultRun->operatingSystem) {
+            std::cerr << "identity override changed an already frozen run\n";
+            return 48;
+        }
         // The Monitoring view pushes its latest provisional KDE core record;
         // the last one before Stop is what the file must carry.
         backendApp.experiment().setLiveKdeCoreRecord("{\"schema_version\":1,\"n\":1}");
@@ -318,6 +336,13 @@ int main()
         {
             std::cerr << "second experiment start failed\n";
             return 14;
+        }
+        const auto overriddenRun = backendApp.experiment().activeRun();
+        if (!overriddenRun || overriddenRun->applicationVersion != "shell-version" ||
+            overriddenRun->buildId != "shell-build" ||
+            overriddenRun->operatingSystem != "shell-os") {
+            std::cerr << "explicit application identity did not override backend defaults\n";
+            return 49;
         }
         bridge::ExperimentCommand cancel;
         cancel.action = bridge::ExperimentCommandAction::Stop;

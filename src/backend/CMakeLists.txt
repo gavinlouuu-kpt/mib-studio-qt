@@ -431,6 +431,29 @@ elseif(UNIX AND NOT APPLE)
         CONTENT "{\n  \"schema_version\": 1,\n  \"version\": \"${MIB_PROCESSING_CORE_VERSION}\",\n  \"filename\": \"$<TARGET_FILE_NAME:mib_processing_core_absdiff_laplacian>\",\n  \"os\": \"linux\",\n  \"arch\": \"${_mib_processing_native_arch}\",\n  \"algorithm\": \"absdiff-laplacian\",\n  \"engine_abi_version\": 2,\n  \"contract_version\": 2,\n  \"entrypoint\": \"mib_processing_get_api_v2\",\n  \"runtime_fingerprint\": \"${_mib_processing_runtime_fingerprint}\",\n  \"app_min_version\": \"${MIB_PROCESSING_CORE_APP_MIN_VERSION}\",\n  \"app_max_version\": \"${MIB_PROCESSING_CORE_APP_MAX_VERSION}\",\n  \"signing\": {\"required\": true, \"scheme\": \"ed25519\"}\n}\n")
 endif()
 
+# Shared shell-independent run provenance, captured at configure time.
+set(MIB_APPLICATION_VERSION "${PROJECT_VERSION_FULL}")
+if(NOT MIB_APPLICATION_VERSION)
+    set(MIB_APPLICATION_VERSION "${PROJECT_VERSION}")
+endif()
+set(MIB_APPLICATION_BUILD_ID "$ENV{MIB_BUILD_ID}")
+if(NOT MIB_APPLICATION_BUILD_ID)
+    set(MIB_APPLICATION_BUILD_ID "dev")
+endif()
+string(TOLOWER "${CMAKE_SYSTEM_NAME}" MIB_APPLICATION_OS)
+if(APPLE)
+    set(MIB_APPLICATION_OS "macos")
+endif()
+set(MIB_APPLICATION_OS "${MIB_APPLICATION_OS} ${CMAKE_SYSTEM_PROCESSOR}")
+# Escape values for C++ string literals (CI identifiers may contain quotes).
+foreach(_identity VERSION BUILD_ID OS)
+    string(REPLACE "\\" "\\\\" MIB_APPLICATION_${_identity} "${MIB_APPLICATION_${_identity}}")
+    string(REPLACE "\"" "\\\"" MIB_APPLICATION_${_identity} "${MIB_APPLICATION_${_identity}}")
+    string(REPLACE "\n" "\\n" MIB_APPLICATION_${_identity} "${MIB_APPLICATION_${_identity}}")
+    string(REPLACE "\r" "\\r" MIB_APPLICATION_${_identity} "${MIB_APPLICATION_${_identity}}")
+endforeach()
+configure_file(ApplicationIdentity.h.in generated/backend/app/ApplicationIdentity.h @ONLY)
+
 add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/profiles/ProfileRegistryService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/profiles/ProfileRegistry.cpp
@@ -583,6 +606,7 @@ else()
 endif()
 
 target_include_directories(mib_backend PUBLIC
+    ${CMAKE_CURRENT_BINARY_DIR}/generated
     ${PROJECT_SOURCE_DIR}/include
 )
 if(MIB_HAS_EGRABBER)
