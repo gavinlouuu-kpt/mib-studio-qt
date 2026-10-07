@@ -2305,7 +2305,11 @@ namespace backend::bridge
         }
         cv::Mat bg(static_cast<int>(height), static_cast<int>(width), CV_8UC1);
         std::memcpy(bg.data, data, byteLen);
-        backend_.processing().setRealtimeBackgroundGray(bg);
+        if (!backend_.experiment().withIdleConfiguration([&] {
+                backend_.processing().setRealtimeBackgroundGray(bg);
+            }))
+            return {false, BackendCommandType::ProcessingSettings,
+                    "Stop the experiment before changing its background"};
         return {true, BackendCommandType::ProcessingSettings, "Background image set"};
     }
 
@@ -2316,7 +2320,11 @@ namespace backend::bridge
             return lifecycleError(BackendCommandType::ProcessingSettings,
                                   "Backend facade is not initialized");
         }
-        backend_.processing().setRealtimeBackgroundGray(cv::Mat());
+        if (!backend_.experiment().withIdleConfiguration([&] {
+                backend_.processing().setRealtimeBackgroundGray(cv::Mat());
+            }))
+            return {false, BackendCommandType::ProcessingSettings,
+                    "Stop the experiment before changing its background"};
         return {true, BackendCommandType::ProcessingSettings, "Background image cleared"};
     }
 
