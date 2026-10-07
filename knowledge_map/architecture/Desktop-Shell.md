@@ -53,6 +53,9 @@ The repo root `src/` is the C++ tree, so the whole Tauri app lives under
   with `desktop/src/workflow.test.ts` vitest coverage.
 - `desktop/src/preflight.ts` — pure hardware-preflight checklist derivation
   (UX-3), with `desktop/src/preflight.test.ts` vitest coverage.
+- `desktop/src/experimentCounters.ts` — operator saved counts by class, pending
+  saves derived with exact u64 arithmetic, policy drops and writer failures
+  from the existing experiment status fields (#546); Vitest covers labels.
 - `desktop/src/quality.ts` — pure Camera & Alignment quality-gate derivation
   (UX-4), with `desktop/src/quality.test.ts` vitest coverage.
 - `desktop/src/contextBar.ts` — pure persistent active-context bar derivation

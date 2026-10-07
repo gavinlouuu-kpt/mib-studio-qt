@@ -287,8 +287,11 @@ the C++ enums, in `contract.rs` for Rust and by the generated
 `bridgeContract.ts`). `BridgeEvent` gains exact companions
 (`experiment_start_generation`, `experiment_persistence_{admitted,committed,failed}`,
 `experiment_completion`, `experiment_terminal`, `experiment_finalization_ok`);
-legacy slots: `u3` = persistence committed, `u4` = 0, `experiment_dropped_valid`
-= persistence pending, `experiment_dropped_invalid` = persistence failed.
+legacy slots: `u3` = valid saved, `u4` = invalid saved;
+`experiment_dropped_valid` / `experiment_dropped_invalid` count policy drops by class.
+Pull status uses the same mapping. The desktop derives pending saves as admitted
+minus committed, failed, and policy drops (clamped at zero), and labels writer
+failures separately. These corrected values require no bridge ABI change (#546).
 `fetch_experiment_status` carries the full status (generations, completion
 reason, fault code/message); `fetch_experiment_readiness(output_path)` the
 gate list. `bridge_abi_version()` returns `13`. The reliability serial bus

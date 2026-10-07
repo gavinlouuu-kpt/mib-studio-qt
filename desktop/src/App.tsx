@@ -1,3 +1,4 @@
+import { experimentCounterRows } from "./experimentCounters";
 import { ProcessingSetupControls } from "./components/ProcessingSetupControls";
 import { metricNumber } from "./metricFormat";
 import { ResultMetricCells } from "./components/ResultMetricCells";
@@ -1402,7 +1403,7 @@ export default function App() {
             <SideRow k="Valid Buffered:" v={expStatus?.valid ? expStatus.valid_buffered : "Unavailable"} />
             <SideRow k="Invalid Buffered:" v={expStatus?.valid ? expStatus.invalid_buffered : "Unavailable"} />
             <SideRow k="Flush Status:" v={expStatus?.flushing ? "Flushing" : "Idle"} />
-            <SideRow k="Valid Images Saved:" v={expStatus?.valid ? expStatus.valid_saved : "Unavailable"} />
+            {experimentCounterRows(expStatus).map(([label, value]) => <SideRow key={label} k={label} v={value} />)}
             <SideRow
               k="Elapsed (wall):"
               v={elapsedWallSeconds === null || elapsedWallSeconds < 0 ? "—" : `${elapsedWallSeconds}s`}

@@ -67,6 +67,7 @@
   finalized) run snapshot for callers that log the identity.
 - `status()` / `setStatusCallback(cb)`: `ExperimentStatus` (state,
   generations, output path, start/end wall-clock, live buffered counts,
+  successful valid/invalid saved counts, valid/invalid policy drops,
   persistence admitted/committed/failed, `flushing`, `cancelled`,
   `terminal`, `finalizationOk`, `completion` + reason, fault code/message,
   message). The callback fires on every transition **outside the mutex** and
@@ -102,7 +103,7 @@ append only, never renumber.
    `appendFrames` left a clean run labelled IntentionallyPartial; bench,
    2026-09-08).
 5. `Hdf5Service::flush()`; `writeExperimentInfo(...)` (start/end wall-clock,
-   remainder counts, processing config, ROI, background, core identity);
+   run-wide successful valid/invalid writes, processing config, ROI, background, core identity);
    `writeRunAccounting(experimentAccountingSnapshot())`;
    `writeAcquisitionProvenance(...)`; `writeConfigJson(getLastConfigJson())`;
    then, best effort, `writeKdeLiveJson(...)` with the last provisional KDE

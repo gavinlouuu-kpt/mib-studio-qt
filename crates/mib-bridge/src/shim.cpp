@@ -375,32 +375,22 @@ BridgeEvent toBridgeEvent(const backend::bridge::BackendEvent& ev) {
                 out.u4 = e.total;
                 out.text = rust::String(e.message);
             } else if constexpr (std::is_same_v<T, ExperimentStatusEvent>) {
-                // Shared-backend ExperimentStatus (issue #372) on the legacy
-                // slots: u0 state, u1 validBuffered, u2 invalidBuffered,
-                // u3 persistenceCommitted ("validSaved"), u4 0 (the saved
-                // split is no longer tracked), u5 startWallClockNs;
-                // f0/experiment_end_time_ns endWallClockNs,
-                // f1/experiment_dropped_valid persistence pending
-                // (admitted - committed - failed), f2/experiment_dropped_invalid
-                // persistenceFailed; b0 flushing, b1 cancelled; text message.
-                // The full status (generations, terminal, completion, fault)
-                // is pullable via fetch_experiment_status.
+                // Legacy slots retain their valid/invalid saved and policy-drop split.
+                // Pending is derived from the typed persistence counters by the UI.
                 const auto& s = e.status;
-                const std::uint64_t settled = s.persistenceCommitted + s.persistenceFailed;
-                const std::uint64_t pending = s.persistenceAdmitted > settled ? s.persistenceAdmitted - settled : 0;
                 out.kind = BridgeEventKind::ExperimentStatus;
                 out.u0 = static_cast<std::uint64_t>(s.state);
                 out.u1 = s.validBuffered;
                 out.u2 = s.invalidBuffered;
-                out.u3 = s.persistenceCommitted;
-                out.u4 = 0;
+                out.u3 = s.validSaved;
+                out.u4 = s.invalidSaved;
                 out.u5 = s.startWallClockNs;
                 out.f0 = static_cast<double>(s.endWallClockNs);
-                out.f1 = static_cast<double>(pending);
-                out.f2 = static_cast<double>(s.persistenceFailed);
+                out.f1 = static_cast<double>(s.droppedValid);
+                out.f2 = static_cast<double>(s.droppedInvalid);
                 out.experiment_end_time_ns = s.endWallClockNs;
-                out.experiment_dropped_valid = pending;
-                out.experiment_dropped_invalid = s.persistenceFailed;
+                out.experiment_dropped_valid = s.droppedValid;
+                out.experiment_dropped_invalid = s.droppedInvalid;
                 out.b0 = s.flushing;
                 out.b1 = s.cancelled;
                 out.text = rust::String(s.message);
@@ -456,6 +446,12 @@ rust::Vec<BridgeEvent> contract_fixture_events() {
     experiment.status.persistenceAdmitted = maximum;
     experiment.status.persistenceCommitted = large;
     experiment.status.persistenceFailed = 7;
+    // Wire slots carry the saved/dropped split by class (#544, #546); the
+    // values keep contract/fixtures/events-v1.json byte-identical.
+    experiment.status.validSaved = large;
+    experiment.status.invalidSaved = 0;
+    experiment.status.droppedValid = maximum - large - 7;
+    experiment.status.droppedInvalid = 7;
     experiment.status.startGeneration = large;
     experiment.status.startWallClockNs = maximum - 1;
     experiment.status.endWallClockNs = maximum;
@@ -2257,18 +2253,16 @@ BridgeExperimentStatus BackendBridge::fetch_experiment_status() {
         out.valid = false;
         return out;
     }
-    const std::uint64_t settled = status.persistenceCommitted + status.persistenceFailed;
-    const std::uint64_t pending = status.persistenceAdmitted > settled ? status.persistenceAdmitted - settled : 0;
     out.valid = true;
     out.state = static_cast<std::uint32_t>(status.state);
     out.start_time_ns = status.startWallClockNs;
     out.end_time_ns = status.endWallClockNs;
     out.valid_buffered = status.validBuffered;
     out.invalid_buffered = status.invalidBuffered;
-    out.valid_saved = status.persistenceCommitted;
-    out.invalid_saved = 0;
-    out.dropped_valid = pending;
-    out.dropped_invalid = status.persistenceFailed;
+    out.valid_saved = status.validSaved;
+    out.invalid_saved = status.invalidSaved;
+    out.dropped_valid = status.droppedValid;
+    out.dropped_invalid = status.droppedInvalid;
     out.flushing = status.flushing;
     out.cancelled = status.cancelled;
     out.output_path = rust::String(status.outputPath);

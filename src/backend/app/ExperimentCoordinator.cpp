@@ -958,6 +958,10 @@ ExperimentStatus ExperimentCoordinator::snapshotLocked() const
     const auto counts = proc.getBufferedFrameCounts();
     s.validBuffered = counts.valid;
     s.invalidBuffered = counts.invalid;
+    s.validSaved = proc.getTotalValidFlushed();
+    s.invalidSaved = proc.getTotalInvalidFlushed();
+    s.droppedValid = proc.getDroppedValidFrames();
+    s.droppedInvalid = proc.getDroppedInvalidFrames();
     const auto acc = proc.experimentAccountingSnapshot();
     s.persistenceAdmitted = acc.persistenceAdmitted;
     s.persistenceCommitted = acc.persistenceCommitted;
@@ -1168,8 +1172,9 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
         cv::Mat bg = proc.getRealtimeBackgroundGray();
         const auto core = proc.activeProcessingCoreIdentity();
         const auto t0 = clock::now();
-        metadataOk = hdf5.writeExperimentInfo(run.startWallClockNs, endNs, remainder.valid, remainder.invalid,
-                                              cfg, roi, bg.empty() ? nullptr : &bg, &core);
+        metadataOk = hdf5.writeExperimentInfo(
+            run.startWallClockNs, endNs, proc.getTotalValidFlushed(), proc.getTotalInvalidFlushed(),
+            cfg, roi, bg.empty() ? nullptr : &bg, &core);
         if (!metadataOk) {
             SPDLOG_ERROR("ExperimentCoordinator: metadata/provenance write failed");
             ok = false;

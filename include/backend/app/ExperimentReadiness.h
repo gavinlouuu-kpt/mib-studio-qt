@@ -239,6 +239,10 @@ struct ExperimentStatus {
     uint64_t endWallClockNs{0};
     uint64_t validBuffered{0};        // live, from ProcessingService
     uint64_t invalidBuffered{0};
+    uint64_t validSaved{0};
+    uint64_t invalidSaved{0};
+    uint64_t droppedValid{0};
+    uint64_t droppedInvalid{0};
     uint64_t persistenceAdmitted{0};
     uint64_t persistenceCommitted{0};
     uint64_t persistenceFailed{0};
