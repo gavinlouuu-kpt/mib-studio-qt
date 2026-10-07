@@ -218,7 +218,9 @@ tested by `tests/frontend/update_catalog_test.cpp`), `OverlayRenderer`,
   `commit()`, returning `ConfigWriteResult{ok, conflict, error, fingerprint,
   bytesWritten}`. Atomic replacement, not a cross-process compare-and-swap.
   Pure companion `ConfigDocumentState` (`frontend/models/`) holds
-  path/fingerprints/dirty/conflict/last-save. Guard:
+  path/fingerprints/dirty/conflict/last-save. Its disk fingerprint hashes exact
+  file bytes; loaded/current editor fingerprints track normalized text so CRLF
+  defaults do not produce false Save conflicts. Guard:
   `frontend.config_document_state`.
 - **`ElidingLabel`** — `QLabel` whose painted text is elided (`ElideMiddle`
   by default) while `fullText()`/tooltip/accessible description keep the

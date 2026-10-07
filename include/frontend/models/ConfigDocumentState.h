@@ -21,6 +21,7 @@ struct ConfigDocumentState {
 
     QString path;
     QByteArray loadedFingerprint;   // sha256 of the loaded/saved content
+    QByteArray diskFingerprint;     // sha256 of the exact loaded/saved file bytes
     QByteArray currentFingerprint;  // sha256 of the editor content
     bool dirty{false};              // editor content != loaded content
     bool conflict{false};           // file changed elsewhere while dirty
@@ -37,6 +38,7 @@ struct ConfigDocumentState {
     {
         path = documentPath;
         loadedFingerprint = fingerprint(content);
+        diskFingerprint = loadedFingerprint;
         currentFingerprint = loadedFingerprint;
         dirty = false;
         conflict = false;
@@ -71,6 +73,7 @@ struct ConfigDocumentState {
     void markSaved(const QString& content)
     {
         loadedFingerprint = fingerprint(content);
+        diskFingerprint = loadedFingerprint;
         currentFingerprint = loadedFingerprint;
         dirty = false;
         conflict = false;

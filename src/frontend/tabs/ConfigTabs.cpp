@@ -867,24 +867,28 @@ void ConfigTabs::clearJsonSyncIndicators()
 
 bool ConfigTabs::loadFileToEditor(const QString& path, QPlainTextEdit* editor, QString* err) {
     QFile f(path);
-    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+    if (!f.open(QIODevice::ReadOnly)) {
         if (err) *err = f.errorString();
         return false;
     }
-    QTextStream in(&f);
+    const QByteArray bytes = f.readAll();
+    QTextStream in(bytes);
     const QString content = in.readAll();
     const bool blocked = editor->blockSignals(true);
     editor->setPlainText(content);
     editor->blockSignals(blocked);
     if (editor == jsonEdit_) {
-        jsonDoc_.markLoaded(path, content);
+        jsonDoc_.markLoaded(path, editor->toPlainText());
+        jsonDoc_.diskFingerprint = ConfigDocumentStore::fingerprintOf(bytes);
         clearJsonSyncIndicators();
     } else if (editor == jsEdit_) {
-        jsDoc_.markLoaded(path, content);
+        jsDoc_.markLoaded(path, editor->toPlainText());
+        jsDoc_.diskFingerprint = ConfigDocumentStore::fingerprintOf(bytes);
         if (jsUnsavedLabel_) jsUnsavedLabel_->setVisible(false);
         emit documentStateChanged();
     } else if (editor == mvEdit_) {
-        mvDoc_.markLoaded(path, content);
+        mvDoc_.markLoaded(path, editor->toPlainText());
+        mvDoc_.diskFingerprint = ConfigDocumentStore::fingerprintOf(bytes);
         if (mvUnsavedLabel_) mvUnsavedLabel_->setVisible(false);
         emit documentStateChanged();
     }
@@ -898,7 +902,7 @@ bool ConfigTabs::saveEditorToFile(QPlainTextEdit* editor, const QString& path, Q
     // disk since it was loaded is a conflict: ask before overwriting (never
     // in non-interactive/test mode).
     std::optional<QByteArray> expected;
-    if (doc && doc->path == path) expected = doc->loadedFingerprint;
+    if (doc && doc->path == path) expected = doc->diskFingerprint;
     ConfigWriteResult r = ConfigDocumentStore::writeText(path, text, expected, /*force=*/false);
     if (r.conflict) {
         bool overwrite = false;
