@@ -45,6 +45,11 @@ signals:
     void versionIndexFailed(const QString& error);
 
 private:
+    // Test seam (tests/frontend/offline_help_test.cpp). Not `#define private
+    // public`: MSVC encodes member access in mangled names, so that hack fails
+    // to link on Windows.
+    friend struct AutoUpdaterTestAccess;
+
     static QString sanitizeChannel(const QString& channel);
     QUrl indexUrlForChannel(const QString& channel) const;
 

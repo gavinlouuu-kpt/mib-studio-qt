@@ -34,6 +34,7 @@ private slots:
     void updateButtons();
 
 private:
+    friend struct SoftwareUpdatesDialogTestAccess; // test seam (offline_help_test)
     int selectedEntryIndex() const;
 
     QPointer<AutoUpdater> updater_;
