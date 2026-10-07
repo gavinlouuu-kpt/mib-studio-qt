@@ -10,6 +10,29 @@ mixed-run regression checks header totals against datasets and accounting;
 desktop tests cover labels and exact pending arithmetic. Older-file recovery is
 documented in [[../services/Hdf5Service]]. See [[../architecture/ExperimentCoordinator]]
 and [[../architecture/Rust-Bridge]].
+## 2026-10-07 — React metric rendering and subtab layout (#540, #543)
+
+Result tables, monitoring labels and review/frame metrics use a shared finite-number
+formatter: missing or non-finite values display an em dash. Panel error boundaries
+allow reloading a failed view while shell controls and logs remain mounted. Subtab
+bodies retain content height; the outer tab body owns scrolling so Preflight and
+App-config controls remain reachable. Regression tests cover missing metrics and
+boundary recovery. See [[architecture/Desktop-Shell]] and [[frontend/YofoReview]].
+
+## 2026-10-07 — Preflight cannot be confirmed with required checks failing (#548)
+
+The workflow's Hardware Preflight stage now blocks on the checklist's own REQUIRED checks. Before,
+it only looked at the host core pin, so on the PZ7035 the bar said "Checks pass — confirm" and
+confirming marked the stage Complete with PL core, sensor link and LED strobe failing. Now:
+- every required check that is not passed is listed as a blocking reason ("Label: detail"), and the
+  recommended action navigates instead of offering the confirmation;
+- a stage confirmed earlier goes back to "needs attention" if a required check starts failing;
+- on the PZ7035 the PL core check stands in for the host core pin, which does not exist there.
+
+A required check in "warning" blocks too (the checklist's existing rule), so an unverified PL build
+(no `/etc/yofo/expected-core.json`) blocks until it is installed. That fails closed on purpose, for a
+science-core identity check, and the reason tells the operator the fix (run `scripts/pz_install_core.sh`,
+then Retry check). A service override, if ever needed, comes with #310's audited override. See [[../architecture/Desktop-Shell]].
 
 ## 2026-10-07 — Local profile drafts copy the open app config (#547)
 
