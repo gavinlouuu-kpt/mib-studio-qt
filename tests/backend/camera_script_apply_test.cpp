@@ -7,13 +7,17 @@
 // actual on-device script run is covered by hardware.egrabber_script.
 
 #include "backend/app/AppBackend.h"
+#include "backend/services/AutofocusService.h"
 
 #include "support/assert.h"
 #include "support/tempdir.h"
+#include "support/watchdog.h"
 
 #include <cstdlib>
 #include <fstream>
+#include <memory>
 #include <string>
+#include <thread>
 
 int main(int argc, char* argv[])
 {
@@ -27,8 +31,18 @@ int main(int argc, char* argv[])
     (void)argc;
     (void)argv;
 
+    mib::test::Watchdog watchdog(10);
+    // Probabilistic regression: race lifetime-worker startup against shutdown
+    // without connecting a device, exercising the stats wait/notify boundary.
+    for (int i = 0; i < 10000; ++i) {
+        watchdog.mark("idle autofocus destruction");
+        backend::services::AutofocusService service;
+        if (i % 2 == 0) std::this_thread::yield();
+    }
+
     mib::test::TempDir td("mib_camera_script");
-    backend::AppBackend backend;
+    auto owner = std::make_unique<backend::AppBackend>();
+    auto& backend = *owner;
     MIB_REQUIRE(backend.initialize((td / "data").string()), "AppBackend initialize");
 
     // No camera selected -> clean refusal, no device access.
@@ -52,6 +66,9 @@ int main(int argc, char* argv[])
                    "missing-script error names the problem");
     }
 #endif
+
+    watchdog.mark("AppBackend destruction");
+    owner.reset();
 
     if (mib::test::exitCode() == 0) {
         std::printf("camera-script (LED) apply guards verified\n");

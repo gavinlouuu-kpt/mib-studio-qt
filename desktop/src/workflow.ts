@@ -56,6 +56,11 @@ export interface WorkflowFacts {
   coreValid: boolean;
   corePinSatisfied: boolean;
   requiredCoreVersion: string;
+  /** The hardware checklist's REQUIRED checks that are not passed, as "Label: detail" (#548).
+   *  When given (even empty) it is the authority and replaces the host core pin test above: the
+   *  checklist carries the host core check on the desktop and the PL core check on the PZ7035.
+   *  Left out, the host core facts decide, as before. */
+  requiredFailures?: string[];
   /** A contract EXPERIMENT_STATES value. */
   experimentState: number;
   /** True once a run finished this session with saved output (not cancelled). */
@@ -122,7 +127,11 @@ function derivePreflight(f: WorkflowFacts): StageView {
     status = "not-started";
     blocking.push("No camera configured — select a device in the Connect tab");
   } else {
-    if (!f.coreValid) {
+    if (f.requiredFailures) {
+      // Required checks that are not passed block confirmation, and un-complete a stage that was
+      // confirmed before one of them started failing (blocking beats a stored confirmation).
+      blocking.push(...f.requiredFailures);
+    } else if (!f.coreValid) {
       blocking.push("Processing core identity is unavailable");
     } else if (!f.corePinSatisfied) {
       blocking.push(

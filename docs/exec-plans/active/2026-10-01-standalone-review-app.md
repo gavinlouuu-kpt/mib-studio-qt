@@ -91,7 +91,7 @@ What is missing or wrong today (evidence in the agent survey of
   `/usr/lib/x86_64-linux-gnu/hdf5/serial`, links `mib_backend` +
   `oeabt_*` + sentry + curl + sqlite. Windows links through a generated
   ~190-entry manifest from the Conan tree. `BackendBridge` always
-  constructs a full `AppBackend` (cameras, serial, discovery, YOLO stub).
+  constructs a full `AppBackend` (cameras, serial, discovery).
 - **No packaging or updates.** Bundling is off, there is no `.icns`, the
   `updater.rs` verifier is not wired to any command, its manifest format
   (`url`, `sha256`) differs from the Qt one (`installer_url`,

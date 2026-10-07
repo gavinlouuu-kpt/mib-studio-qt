@@ -123,7 +123,7 @@ py::dict computeProcessedFrame(const py::array& grayInput, const py::object& bac
 
 // Per-object results for one frame/ROI: the same science expansion processBatch
 // performs (science::filterProcessedObjects), without tracking. This is the
-// YOLO-guided pattern (one ROI per detection) and the Contract-2 "full
+// detector-guided pattern (one ROI per detection) and the Contract-2 "full
 // per-object results" surface of the wheel. Returns a list with one dict per
 // detected object; a frame with no detection returns a single empty record
 // (object_id -1). `mask` (when requested) is the full-frame mask, shared by

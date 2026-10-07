@@ -281,6 +281,16 @@ int main()
                      10000))
             return 60;
         const auto bufferedBeforeRefusal = backendApp.processing().getBufferedFrameCounts().total();
+        // Frames that entered the experiment buffer so far: handed to the
+        // writer plus still buffered. The buffered count alone is not
+        // monotonic: the blank mock frames are all invalid, only every 100th
+        // is buffered and the background flush drains it, so on a slow
+        // (TSan) runner it sits at 0..1 and never exceeds its earlier value.
+        auto enteredBuffer = [&] {
+            return backendApp.processing().experimentAccountingSnapshot().persistenceAdmitted +
+                   backendApp.processing().getBufferedFrameCounts().total();
+        };
+        const auto enteredBeforeRefusal = enteredBuffer();
 
         // Conflicting requests must preserve the experiment writer, including
         // a same-path request that would otherwise truncate its output.
@@ -300,10 +310,7 @@ int main()
         const auto refused = facade.dispatch(conflictingRecording);
         if (refused.ok || refused.message.find("experiment") == std::string::npos) return 54;
         if (!waitFor(
-                [&] {
-                    return backendApp.processing().getBufferedFrameCounts().total() >
-                           bufferedBeforeRefusal;
-                },
+                [&] { return enteredBuffer() > enteredBeforeRefusal; },
                 10000))
             return 55;
 
@@ -588,6 +595,45 @@ int main()
                 return 22;
             }
             reader.closeFile();
+        }
+    }
+
+    // Facade destroyed while a run is live and shutdown() was never called:
+    // AppBackend's own shutdown later finalizes the run and publishes a status.
+    // The facade must have detached its status callback (which captures it)
+    // so that publish never reaches freed memory (sanitizer builds catch it).
+    {
+        backend::AppBackend backendApp;
+        std::atomic<int> eventsSeen{0};
+        {
+            bridge::BackendFacade facade(backendApp);
+            facade.setEventSink([&](const bridge::BackendEvent&) { eventsSeen.fetch_add(1); });
+            if (!facade.initialize(dataDir.string())) return 70;
+            bridge::CameraCommand configure;
+            configure.action = bridge::CameraCommandAction::ConfigureMockCamera;
+            configure.mockFrameDirectory = mockDir.string();
+            configure.mockFrameIntervalMs = 1;
+            configure.mockLoopFiles = true;
+            bridge::CameraCommand startCapture;
+            startCapture.action = bridge::CameraCommandAction::StartCapture;
+            if (!facade.dispatch(configure).ok || !facade.dispatch(startCapture).ok) return 71;
+            const std::string expTeardown = (dataDir / "exp-facade-teardown.h5").string();
+            if (!waitFor([&] {
+                    app::ExperimentReadinessSnapshot readiness;
+                    return facade.fetchExperimentReadiness(readiness, expTeardown) && readiness.ready;
+                }, 10000))
+                return 72;
+            if (!startViaFacade(facade, expTeardown).ok) return 73;
+            if (!waitFor([&] { return backendApp.experiment().status().state ==
+                                      app::ExperimentRunState::Active; }, 10000))
+                return 74;
+        } // ~BackendFacade without shutdown()
+        const int seenAtDetach = eventsSeen.load();
+        backendApp.shutdown(); // finalizes the run; must not call the dead facade
+        if (eventsSeen.load() != seenAtDetach)
+        {
+            std::cerr << "status published to a destroyed facade\n";
+            return 75;
         }
     }
 

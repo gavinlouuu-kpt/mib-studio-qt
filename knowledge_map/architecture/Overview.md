@@ -20,7 +20,7 @@
 ┌────────────────────────────▼────────────────────────────────────────┐
 │                       Services (src/backend/services/)              │
 │  Capture · Processing · Hdf5 · Playback · Autofocus · CameraControl │
-│  Trigger · SyringePump · Yolo · Recorder · Sqlite                   │
+│  Trigger · SyringePump · Recorder · Sqlite                          │
 ├───────────────────────────────────────────────────────────────────────┤
 │  mib_processing (Qt-free static lib, linked by mib_backend):        │
 │    Processing · selected kernel/ABI loader · Hdf5 · FrameStore      │

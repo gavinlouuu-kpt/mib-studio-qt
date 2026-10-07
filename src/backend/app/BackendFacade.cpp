@@ -1,4 +1,5 @@
 #include "backend/app/BackendFacade.h"
+#include "backend/recording/RecordingAccounting.h"
 #include "backend/app/RecordingTarget.h"
 #include "backend/pz/PzInstrumentControl.h"
 #include "backend/app/SciencePlacement.h"
@@ -187,6 +188,13 @@ namespace backend::bridge
     BackendFacade::~BackendFacade()
     {
         backend_.setBackgroundCaptureCallback({});
+        // The coordinator outlives the facade and its worker may still publish
+        // (e.g. AppBackend::shutdown() finalizing a run when shutdown() was
+        // never called). Detach the status callback that captures `this`;
+        // setStatusCallback waits out any in-flight invocation. Only an
+        // initialized facade installed it (the coordinator exists only after
+        // AppBackend::initialize); shutdown() already cleared it.
+        if (initialized_) backend_.experiment().setStatusCallback({});
     }
 
     bool BackendFacade::initialize(const std::string &dataDir, const std::string &resourceRoot)
@@ -3131,6 +3139,75 @@ std::string BackendFacade::fetchInstrumentStatusJson() {
         {"mode", mode},
         {"storage", storage},
     }.dump();
+}
+
+namespace {
+nlohmann::json accountingToJson(const recording::RecordingAccountingSnapshot& a) {
+    return {
+        {"completion", static_cast<int>(a.completion)},
+        {"completion_name", recording::toString(a.completion)},
+        {"completion_reason", a.completionReason},
+        {"reconciled", a.reconciled},
+        {"admitted", a.admitted},
+        {"empty", a.empty},
+        {"processed", a.processed},
+        {"scientifically_rejected", a.scientificallyRejected},
+        {"processing_failed", a.processingFailed},
+        {"store_overwritten", a.storeOverwritten},
+        {"store_not_committed", a.storeNotCommitted},
+        {"store_malformed", a.storeMalformed},
+        {"cancelled_by_policy", a.cancelledByPolicy},
+        {"pending_at_stop", a.pendingAtStop},
+        {"sequence_gaps", a.sequenceGaps},
+        {"objects_detected", a.objectsDetected},
+        {"persistence_admitted", a.persistenceAdmitted},
+        {"persistence_committed", a.persistenceCommitted},
+        {"persistence_failed", a.persistenceFailed},
+        {"persistence_pending_at_stop", a.persistencePendingAtStop},
+        {"fatal_error", a.fatalError},
+        {"fatal_message", a.fatalMessage},
+        {"malformed_warn_fraction", recording::kMalformedWarnFraction},
+    };
+}
+} // namespace
+
+std::string BackendFacade::fetchRunAccountingJson(const std::string& source) const {
+    auto none = [&](const std::string& why) {
+        return nlohmann::json{{"available", false}, {"source", source}, {"error", why}}.dump();
+    };
+    if (!initialized_) return none("backend is not initialized");
+    if (source == "last_run") {
+        recording::RecordingAccountingSnapshot a;
+        uint64_t generation = 0;
+        if (!backend_.experiment().lastRunAccounting(a, generation)) return none("no run has finished yet");
+        nlohmann::json j = accountingToJson(a);
+        j["available"] = true;
+        j["recorded"] = true;
+        j["source"] = source;
+        j["start_generation"] = generation;
+        return j.dump();
+    }
+    if (source == "review") {
+        auto& hdf5 = backend_.hdf5();
+        std::string path;
+        {
+            std::scoped_lock lock(reviewMutex_);
+            path = loadedRecordingPath_;
+        }
+        // Only a file loaded for review counts: the shared handle may belong to a live writer, so with
+        // no review file do not touch it at all (the experiment worker writes its state at finalize).
+        if (path.empty() || !hdf5.isFileOpen()) return none("no file is open for review");
+        recording::RecordingAccountingSnapshot a;
+        nlohmann::json j;
+        const bool recorded = !hdf5.isRecordingFile() && hdf5.readRunAccounting(a);
+        j = recorded ? accountingToJson(a) : nlohmann::json::object();
+        j["available"] = true;
+        j["recorded"] = recorded;  // false: a raw recording or a legacy file without accounting
+        j["source"] = source;
+        j["file_path"] = path;
+        return j.dump();
+    }
+    return none("unknown accounting source (review | last_run)");
 }
 
 std::string BackendFacade::fetchCameraGeometryJson() const {

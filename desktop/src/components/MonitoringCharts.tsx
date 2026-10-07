@@ -1,3 +1,4 @@
+import { metricNumber } from "../metricFormat";
 import {useEffect,useId,useState} from "react";
 import {invoke} from "../transport";
 import type { MonitoringRow, MonitoringSnapshot } from "../bridge";
@@ -5,7 +6,7 @@ import type { MonitoringRow, MonitoringSnapshot } from "../bridge";
 const LIMIT = 200;
 export function monitoringPlotData(rows: MonitoringRow[]) {
   const bounded = rows.slice(-LIMIT);
-  const scatter = bounded.filter(r=>r.valid&&Number.isFinite(r.pixel_to_micron)&&(r.pixel_to_micron??0)>0)
+  const scatter = bounded.filter(r=>r.valid&&Number.isFinite(r.area)&&Number.isFinite(r.deformability)&&Number.isFinite(r.pixel_to_micron)&&(r.pixel_to_micron??0)>0)
     .map(r=>({...r,area:r.area*r.pixel_to_micron!*r.pixel_to_micron!}))
     .filter(r=>Number.isFinite(r.area)&&Number.isFinite(r.deformability));
   const uncalibrated=bounded.filter(r=>r.valid&&(!Number.isFinite(r.pixel_to_micron)||(r.pixel_to_micron??0)<=0)).length;
@@ -23,7 +24,7 @@ export function monitoringPlotData(rows: MonitoringRow[]) {
   for(const value of moduli)modulusBins[Math.min(9,Math.max(0,Math.floor((value-modulusRange[0])/(modulusRange[1]-modulusRange[0])*10)))]++;
   return {scatter,uncalibrated,x,y,range,bins,ratioCount:ratios.length,modulusRange,modulusBins,modulusCount:moduli.length,omitted:rows.length-bounded.length,invalid:bounded.length-scatter.length};
 }
-const compact = (value:number)=>Number(value.toPrecision(4)).toString();
+const compact = (value:number)=>metricNumber(value, 4, true);
 export function MonitoringCharts({snapshot}:{snapshot:MonitoringSnapshot|null}) {
   const data=monitoringPlotData(snapshot?.valid ? snapshot.rows : []);
   const clip=useId();

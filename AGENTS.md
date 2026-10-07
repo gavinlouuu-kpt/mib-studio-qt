@@ -1,7 +1,7 @@
 # Agent Guide — MIB Studio Qt
 
 C++17 / Qt 6.7.3 microscopy app: OpenCV imaging, Euresys EGrabber and
-MindVision cameras, HDF5 storage, optional ONNX YOLO. This file is a map, not
+MindVision cameras, HDF5 storage. This file is a map, not
 a manual: start with [`knowledge_map/Agent-Onboarding.md`](knowledge_map/Agent-Onboarding.md),
 then [`docs/golden-principles.md`](docs/golden-principles.md) (mechanical rules).
 
@@ -12,7 +12,7 @@ then [`docs/golden-principles.md`](docs/golden-principles.md) (mechanical rules)
 | Desktop shells | `src/frontend/` (Qt Widgets: MainWindow, tabs, controllers) · `desktop/` (React + Tauri) | Reach the backend only through `AppBackend` / `BackendFacade`, never service internals |
 | Rust bridge | `crates/mib-bridge/` (cxx) + `contract/bridge-contract.json` | Frontend-neutral facade for the Tauri shell; additive, versioned ABI (ADR 0003/0004) |
 | Composition root | `src/backend/app/AppBackend.cpp` | Owns every service and the shared `FrameStore` ring buffer; `shutdown()` orders teardown |
-| Services | `src/backend/services/` (Capture, Processing, Hdf5, Recorder, Playback, Trigger, Autofocus, CameraControl, SyringePump, Yolo, Sqlite) · `src/backend/discovery/` | One concern per service; vault note per service under `knowledge_map/services/` |
+| Services | `src/backend/services/` (Capture, Processing, Hdf5, Recorder, Playback, Trigger, Autofocus, CameraControl, SyringePump, Sqlite) · `src/backend/discovery/` | One concern per service; vault note per service under `knowledge_map/services/` |
 | Portable core | `mib_processing` static lib: `src/backend/processing/`, `FrameStore`, `Hdf5Service`, `Tools` | **Qt-free** (OpenCV + HDF5 + spdlog); ABI-stable signed plugin `mib_processing_core`; pybind11 wheel in `bindings/python/` |
 | Cameras | `src/camera/` behind `ICamera` | EGrabber (Windows), MindVision (all desktops), Mock (folder playback) |
 
@@ -29,7 +29,7 @@ Details: [`Overview`](knowledge_map/architecture/Overview.md), [`Threading-Model
 | Build, run modes, dependencies, assets | [`knowledge_map/build-and-run/Build.md`](knowledge_map/build-and-run/Build.md) |
 | Code and logging conventions | [`knowledge_map/conventions/Code-Conventions.md`](knowledge_map/conventions/Code-Conventions.md) |
 | How-tos, ADRs, execution plans, known debt | [`docs/README.md`](docs/README.md), [`docs/decisions/README.md`](docs/decisions/README.md), [`docs/exec-plans/README.md`](docs/exec-plans/README.md), [`tech-debt-tracker`](docs/exec-plans/tech-debt-tracker.md) |
-| What shipped recently | [`knowledge_map/current-state/Recent-Work.md`](knowledge_map/current-state/Recent-Work.md) |
+| What shipped recently | [`knowledge_map/current-state/recent/`](knowledge_map/current-state/recent/README.md) (one file per change; `scripts/recent_work.py`), archive [`Recent-Work.md`](knowledge_map/current-state/Recent-Work.md) |
 
 **Vault maintenance is required:** every code change lands with matching vault
 updates in the same PR ([`knowledge_map/Vault-Maintenance.md`](knowledge_map/Vault-Maintenance.md)).
@@ -61,7 +61,7 @@ Guide: [`knowledge_map/build-and-run/Assets.md`](knowledge_map/build-and-run/Ass
 
 ```bash
 python3 scripts/provision-assets.py --list                                   # what exists, public/private
-python3 scripts/provision-assets.py --required-only                          # yolo11n-seg.onnx (ONNX builds)
+python3 scripts/provision-assets.py --required-only                          # required assets
 python3 scripts/provision-assets.py --asset 512x96stream-mock-frames --count 1000   # 512x96 TIFF stream -> MIB_MOCK_CAMERA_DIR
 HF_TOKEN=<read token> python3 scripts/provision-assets.py --asset z-adjustment-50v  # private 1.5 GB HDF5 conformance corpus
 python3 scripts/provision-assets.py --check --required-only                  # offline: exit 1 + fix command if incomplete

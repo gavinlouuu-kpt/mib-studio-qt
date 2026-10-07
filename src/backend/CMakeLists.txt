@@ -528,16 +528,6 @@ if(MIB_HAS_EGRABBER)
     )
 endif()
 
-if(MIB_HAS_ONNXRUNTIME)
-    target_sources(mib_backend PRIVATE
-        ${PROJECT_SOURCE_DIR}/src/backend/services/YoloService.cpp
-    )
-else()
-    target_sources(mib_backend PRIVATE
-        ${PROJECT_SOURCE_DIR}/src/backend/services/YoloService.stub.cpp
-    )
-endif()
-
 if(MIB_HAS_ARAVIS)
     target_compile_definitions(mib_backend PUBLIC MIB_HAS_ARAVIS=1)
     target_link_libraries(mib_backend PUBLIC PkgConfig::MIB_ARAVIS)
@@ -597,12 +587,6 @@ if(MIB_HAS_MINDVISION)
     )
 else()
     target_compile_definitions(mib_backend PUBLIC MIB_HAS_MINDVISION=0)
-endif()
-
-if(MIB_HAS_ONNXRUNTIME)
-    target_compile_definitions(mib_backend PUBLIC MIB_HAS_ONNXRUNTIME=1)
-else()
-    target_compile_definitions(mib_backend PUBLIC MIB_HAS_ONNXRUNTIME=0)
 endif()
 
 target_include_directories(mib_backend PUBLIC
@@ -673,10 +657,3 @@ endif()
 mib_link_opencv(mib_backend PUBLIC)
 mib_link_sqlite(mib_backend PUBLIC)
 mib_link_hdf5(mib_backend PUBLIC)
-
-# ONNX Runtime linking.
-if(TARGET onnxruntime::onnxruntime)
-    target_link_libraries(mib_backend PUBLIC onnxruntime::onnxruntime)
-else()
-    message(WARNING "onnxruntime::onnxruntime target not found - building with YoloService stub")
-endif()

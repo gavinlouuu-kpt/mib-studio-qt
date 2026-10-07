@@ -158,6 +158,7 @@ pub const COMMANDS: &[&str] = &[
     "save_camera_roi",
     "fetch_camera_geometry",
     "fetch_platform_info",
+    "fetch_run_accounting",
     "set_instrument_mode",
     "set_service_mode",
     "set_instrument_led",
@@ -848,6 +849,14 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
         }
         "fetch_camera_geometry" => crate::fetch_camera_geometry(state).and_then(json),
         "fetch_platform_info" => crate::fetch_platform_info(state).and_then(json),
+        "fetch_run_accounting" => {
+            #[derive(Deserialize)]
+            struct A {
+                source: String,
+            }
+            let a: A = args(value)?;
+            crate::fetch_run_accounting(state, &a.source).and_then(json)
+        }
         "fetch_instrument_status" => crate::fetch_instrument_status(state).and_then(json),
         _ => Err(format!("UNKNOWN_COMMAND: {name}")),
     }

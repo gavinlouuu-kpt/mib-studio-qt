@@ -32,7 +32,7 @@ following `[[WikiLinks]]`. If you are a new agent, start here:
   [[services/TriggerService]], [[services/SerialBus]],
   [[services/SyringePumpService]], [[services/PulseGeneratorService]],
   [[services/StageService]] (Z stage, driver [[services/ZC300Stage]])
-- Optional: [[services/YoloService]], [[services/RecorderService]],
+- Optional: [[services/RecorderService]],
   [[services/BatchMaskSources]]
 
 ### Frontend (`src/frontend/`)
@@ -78,7 +78,8 @@ following `[[WikiLinks]]`. If you are a new agent, start here:
 - [[conventions/Logging]]
 
 ### Current state
-- [[current-state/Recent-Work]]
+- [[current-state/recent/README|Recent work (one file per change)]]
+- [[current-state/Recent-Work]] (archive to 2026-10-07)
 - [[current-state/Task-Log-Index]]
 
 ## Maintenance

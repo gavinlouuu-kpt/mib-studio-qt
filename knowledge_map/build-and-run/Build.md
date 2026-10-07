@@ -447,21 +447,6 @@ Some cloud images pin `/usr/bin/c++` to clang without an unversioned
 `libstdc++.so`; switch the alternative to g++. Details and the smoke test:
 [[../task/2026-04-20-cloud-toolchain-cxx-libstdcpp-fix]].
 
-## Linux cloud dependency fallback (ONNX Runtime optional)
-
-Linux cloud images may not have a discoverable CMake package for ONNX Runtime
-(`onnxruntimeConfig.cmake`), and Conan graph resolution can fail because of
-upstream version conflicts (`qt/opencv/onnxruntime` transitive deps).
-
-To keep non-hardware workflows buildable in cloud:
-
-- `find_package(onnxruntime CONFIG QUIET)` is optional.
-- `MIB_HAS_ONNXRUNTIME` is set from `TARGET onnxruntime::onnxruntime`.
-- When ONNX Runtime is unavailable:
-  - build uses `src/backend/services/YoloService.stub.cpp`
-  - compile definition `MIB_HAS_ONNXRUNTIME=0` is exported
-  - CMake emits a warning and continues.
-
 ## Related how-tos
 
 - `docs/howto/build-installer.md`

@@ -33,7 +33,6 @@ namespace backend::services
     class AutofocusService;
     class TriggerService;
     class DotGridService;
-    class YoloService;
     class SyringePumpService;
     class PulseGeneratorService;
     class StageService;
@@ -145,7 +144,6 @@ namespace backend
         services::AutofocusService &autofocus();
         services::TriggerService &trigger();
         services::DotGridService &dotGrid();
-        services::YoloService &yolo();
         services::SyringePumpService &syringePump();
         services::PulseGeneratorService &pulseGenerator();
         // Motorized Z stage (ADR 0013): observe-only until an operator homes it.
@@ -375,7 +373,6 @@ namespace backend
         std::unique_ptr<services::AutofocusService> autofocusService_;
         std::unique_ptr<services::TriggerService> triggerService_;
         std::unique_ptr<services::DotGridService> dotGridService_;
-        std::unique_ptr<services::YoloService> yoloService_;
         // Shared RS485/Modbus bus registry — declared before the serial
         // services so it outlives their sessions.
         std::unique_ptr<services::serialbus::SerialBusManager> serialBusManager_;
