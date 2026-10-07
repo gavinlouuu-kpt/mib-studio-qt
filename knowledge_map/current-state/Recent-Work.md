@@ -1,5 +1,18 @@
 # Recent Work
 
+## 2026-10-07 — Preflight cannot be confirmed with required checks failing (#548)
+
+The workflow's Hardware Preflight stage now blocks on the checklist's own REQUIRED checks. Before,
+it only looked at the host core pin, so on the PZ7035 the bar said "Checks pass — confirm" and
+confirming marked the stage Complete with PL core, sensor link and LED strobe failing. Now:
+- every required check that is not passed is listed as a blocking reason ("Label: detail"), and the
+  recommended action navigates instead of offering the confirmation;
+- a stage confirmed earlier goes back to "needs attention" if a required check starts failing;
+- on the PZ7035 the PL core check stands in for the host core pin, which does not exist there.
+
+A required check in "warning" blocks too (the checklist's existing rule), so an unverified PL build
+(no `/etc/yofo/expected-core.json`) blocks until it is installed. See [[../architecture/Desktop-Shell]].
+
 ## 2026-10-07 — Deterministic experiment readiness checks (#506)
 
 `backend.experiment_readiness` joins the realtime consumer before editing the live
