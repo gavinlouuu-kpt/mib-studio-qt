@@ -35,7 +35,7 @@ Backend code owns capabilities that should work without a visible widget:
 - processing, realtime snapshots, experiment frame accumulation, and batch
   pipeline logic
 - HDF5 persistence, SQLite state, frame recording, and playback storage
-- autofocus, trigger, syringe pump, YOLO, logging, and crash reporting services
+- autofocus, trigger, syringe pump, logging, and crash reporting services
 - shared data models such as `FrameStore`, `ProcessedFrame`, processing
   configuration, and camera frame types
 - background threads, service callbacks, and worker lifecycle management
@@ -123,7 +123,7 @@ The main public backend entry point is `backend::AppBackend`:
 
 - `initialize(dataDir)` constructs services and wires callbacks.
 - service getters expose `sqlite()`, `hdf5()`, `capture()`, `processing()`,
-  `playback()`, `cameraControl()`, `autofocus()`, `trigger()`, `yolo()`, and
+  `playback()`, `cameraControl()`, `autofocus()`, `trigger()`, and
   `syringePump()`.
 - camera setup APIs configure mock or hardware selection and apply/reset
   hardware camera scripts.

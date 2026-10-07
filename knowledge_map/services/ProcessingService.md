@@ -669,7 +669,6 @@ current/max queue depth, batch size, worker count, and running state. See
   long runs where HDF5 is slow or failing; the policy lives in
   `ExperimentFrameBuffer` and every drop is reported (never silent).
 - `pixelToMicronFactor_` default is `0.4886` — UI lets users change this.
-- YOLO is a separate service ([[YoloService]]); this pipeline does not use it.
 - **Callback ordering invariant**: `TargetGroupCallback` and
   `RingRatioCallback` are invoked **before** `monitoringFramesMutex_` is
   taken (and with no other locks held) so the UI thread's periodic

@@ -31,7 +31,7 @@ jobs:
         shell: pwsh
     env:
       MIB_CAMERA_MODE: mock
-      MIB_DISABLED_SERVICES: yolo,auto_update
+      MIB_DISABLED_SERVICES: auto_update
       MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL: file:///nonexistent/mib-lut-manifest.json
     steps:
       - uses: actions/checkout@v4

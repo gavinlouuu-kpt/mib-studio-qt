@@ -129,7 +129,7 @@ int main(int argc, char** argv)
     qputenv("QT_QPA_PLATFORM", "offscreen");
     // No MIB_CAMERA_MODE: the implicit fallback leaves the camera unconfigured
     // so the startup camera step actually runs (#413).
-    qputenv("MIB_DISABLED_SERVICES", "auto_update,trigger,yolo,syringe_pump,pulse_generator");
+    qputenv("MIB_DISABLED_SERVICES", "auto_update,trigger,syringe_pump,pulse_generator");
     mib::test::Watchdog watchdog(60);
     QApplication app(argc, argv);
     mib::test::TempDir dir("device_discovery_ui");

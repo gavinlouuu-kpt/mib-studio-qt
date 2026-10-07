@@ -124,7 +124,7 @@ bool accountingConserved(const DiscoverySnapshot& s)
 int main()
 {
     setEnv("MIB_CAMERA_MODE", "mock");
-    setEnv("MIB_DISABLED_SERVICES", "yolo,auto_update,trigger");
+    setEnv("MIB_DISABLED_SERVICES", "auto_update,trigger");
     mib::test::Watchdog watchdog(60);
     mib::test::TempDir dir("e2e_device_discovery");
 

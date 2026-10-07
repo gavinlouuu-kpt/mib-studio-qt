@@ -12,7 +12,7 @@ int main(int argc, char** argv) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
     qputenv("MIB_CAMERA_MODE", "mock");
     qputenv("MIB_DISABLED_SERVICES",
-            "auto_update,autofocus,trigger,yolo,syringe_pump,pulse_generator");
+            "auto_update,autofocus,trigger,syringe_pump,pulse_generator");
     mib::test::Watchdog watchdog(45);
     QApplication app(argc, argv);
     mib::test::TempDir dir("mainwindow_shutdown");
