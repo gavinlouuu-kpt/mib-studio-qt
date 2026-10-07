@@ -4,7 +4,9 @@ import {recoverNativeRuntime} from "./runtimeRecovery";
 import { useCloseGuard } from "./closeGuard";
 import { ProcessedPreview } from "./components/ProcessedPreview";
 import { BackgroundCalibrationControls } from "./components/BackgroundCalibrationControls";
-import {invoke} from "./transport";
+import {invoke, isRemote} from "./transport";
+import { productName } from "./brand";
+import { isString, isStringArray, usePersistedState } from "./persistedState";
 import { PreviewBufferControls, usePreviewBuffer } from "./previewBuffer";
 import { formatMetric } from "./eventAdapter";
 import { decimalU64 } from "./framePacket";
@@ -141,7 +143,8 @@ export default function App() {
   const [ready, setReady] = useState(false);
   const [running, setRunning] = useState(false);
   const [camStatus, setCamStatus] = useState("unconfigured");
-  const [log, setLog] = useState<string[]>([]);
+  // The log and the stage confirmations survive a reload in this tab (#550 m14).
+  const [log, setLog] = usePersistedState<string[]>("yofo.log", [], isStringArray);
   const [showLog, setShowLog] = useState(false);
   const [lastMeta, setLastMeta] = useState<FrameMeta | null>(null);
 
@@ -151,8 +154,8 @@ export default function App() {
   // device/core signature they were confirmed against so they auto-invalidate
   // when the hardware changes. Kept in memory (not persisted) so every session
   // re-confirms readiness. `didInitStage` guards the one-time startup landing.
-  const [preflightConfirmedFor, setPreflightConfirmedFor] = useState("");
-  const [alignmentConfirmedFor, setAlignmentConfirmedFor] = useState("");
+  const [preflightConfirmedFor, setPreflightConfirmedFor] = usePersistedState("yofo.preflightConfirmedFor", "", isString);
+  const [alignmentConfirmedFor, setAlignmentConfirmedFor] = usePersistedState("yofo.alignmentConfirmedFor", "", isString);
   const didInitStage = useRef(false);
   const [connectTab, setConnectTab] = useState<"cameras" | "mindvision" | "framegrabbers">("cameras");
   const [expTab, setExpTab] = useState<"preview" | "monitoring">("preview");
@@ -250,6 +253,9 @@ export default function App() {
   const pz7035 = isPz7035(caps);
   // Backend-owned camera modes (#501 P1): Camera & Alignment = Align, Experiment = Run.
   const instrumentModes = caps.align_mode && caps.run_mode;
+  // YOFO Studio on the PZ7035 and in the remote browser UI, MIB Studio on the desktop (#550 m13).
+  const brand = productName({ pz7035, remote: isRemote });
+  useEffect(() => { document.title = brand; }, [brand]);
   const [instrument, setInstrument] = useState<InstrumentStatus | null>(null);
   const instrumentRef = useRef<InstrumentStatus | null>(null);
   instrumentRef.current = instrument;
@@ -1313,11 +1319,12 @@ export default function App() {
             <SideRow k="Display rate:" v={`${displayFps.toFixed(1)} fps`} />
             <SideRow k="Data rate:" v={`${dataRate.toFixed(1)} MB/s`} />
           </div>
-          {pz7035 && <div className="side-section" title="PZ7035 PL core and health (#501)">
+          {pz7035 && <div className="side-section" title={instrument && !instrument.available && instrument.error ? instrument.error : "PZ7035 PL core and health (#501)"}>
             <h4>PL core</h4>
-            <SideRow k="Build:" v={instrument?.core ? instrument.core.build_id.slice(0, 8) || "—" : "—"}
+            {/* No PL device (a replay, or the bridge not loaded) reads "no PL device", not "—" (#550 m12). */}
+            <SideRow k="Build:" v={instrument?.core ? instrument.core.build_id.slice(0, 8) || "—" : instrument && !instrument.available ? "no PL device" : "—"}
               cls={instrument?.core?.build_match === "match" ? "ok" : "dim"} />
-            <SideRow k="Weights:" v={instrument?.core ? instrument.core.profile_id.slice(0, 8) || "—" : "—"}
+            <SideRow k="Weights:" v={instrument?.core ? instrument.core.profile_id.slice(0, 8) || "—" : instrument && !instrument.available ? "no PL device" : "—"}
               cls={instrument?.core?.profile_match === "match" ? "ok" : "dim"} />
             <SideRow k="LED:" v={instrument?.led ? (instrument.led.guard_fault ? "GUARD TRIPPED" : instrument.led.on ? `${instrument.led.preset} ${instrument.led.delay_us}/${instrument.led.width_us} µs` : "off") : "—"}
               cls={instrument?.led && !instrument.led.guard_fault ? "" : "dim"} />
@@ -1641,7 +1648,7 @@ export default function App() {
                         Save camera ROI
                       </button>
                     </>
-                  ) : (
+                  ) : hostProcessing ? (
                     <>
                     <label>
                       X: <input type="number" value={roiFields.x} onChange={(e) => setRoiFields((r) => ({ ...r, x: e.target.value }))} />
@@ -1659,7 +1666,7 @@ export default function App() {
                       Apply ROI
                     </button>
                     </>
-                  )}
+                  ) : null}
                 </div>
                 {cameraGeometry?.supported && (
                   <div className="camera-alignment-status" aria-label="Camera mode">
@@ -1775,11 +1782,11 @@ export default function App() {
                     )}
                     <div className="toolbar" style={{ marginTop: 6 }}>
 
-                      <span className="legend">
+                      {hostProcessing && <span className="legend">
                         <span className="chip"><span className="swatch" style={{ background: "#2b6cb0" }} /> Target</span>
                         <span className="chip"><span className="swatch" style={{ background: "#1a7f37" }} /> Valid</span>
                         <span className="chip"><span className="swatch" style={{ background: "#b42318" }} /> Invalid</span>
-                      </span>
+                      </span>}
                       {hostProcessing && <button
                         onClick={async () => {
                           const res = await bridge.setBackgroundFromCurrentFrame();
@@ -1791,7 +1798,7 @@ export default function App() {
                       >
                         Set Background
                       </button>}
-                      <button
+                      {caps.host_background && <button
                         onClick={async () => {
                           await bridge.clearBackgroundImage();
                           append("background cleared");
@@ -1801,11 +1808,11 @@ export default function App() {
                         title={backgroundSet ? undefined : "No background is set"}
                       >
                         Clear Background
-                      </button>
-                      <button onClick={()=>{setConfigTab("app");}} title="Edit image_processing.auto_background_* in the configuration below">
+                      </button>}
+                      {caps.host_background && <button onClick={()=>{setConfigTab("app");}} title="Edit image_processing.auto_background_* in the configuration below">
                         Auto background: {autoBackgroundEnabled ? "on" : "off"} · configure
-                      </button>
-                      <button
+                      </button>}
+                      {hostProcessing && <button
                         onClick={async () => {
                           setRoiFields({ x: "0", y: "0", w: "0", h: "0" });
                           await bridge.setProcessingRoi(0, 0, 0, 0);
@@ -1814,7 +1821,7 @@ export default function App() {
                         disabled={!ready}
                       >
                         Clear ROI
-                      </button>
+                      </button>}
 
                       <button onClick={onToggleRecord} disabled={!running} title={running ? "Record raw frames to an HDF5 file" : "Camera is not running"}>
                         {recording ? "Stop Recording" : "Record"}
@@ -1828,7 +1835,7 @@ export default function App() {
                         <BackgroundCalibrationControls ready={ready} experimentActive={expActive} onPublished={() => void refreshConfig()} />
                       </>
                     ) : (
-                      <p className="mono" role="status">Processing runs on the PL for every frame. Its results reach this screen once the record path is connected; previews and recording work now.</p>
+                      <p className="mono" role="status">Processing runs on the PL for every frame. While an experiment runs its results are counted and recorded (see the sidebar and the Monitoring tab); this view shows the camera's previews.</p>
                     )}
 
                     <div className="subtabs" style={{ marginTop: 8 }} role="tablist" aria-label="Configuration">
@@ -1849,15 +1856,15 @@ export default function App() {
                             <button className="btn" onClick={onApplyConfigJson} disabled={!ready || !configDirty || liveDraft.runtimeChanged} title={configDirty ? "Merge-apply the edited document" : "No edits to apply"}>
                               Apply
                             </button>
-                            <span className="mono right" title="Active processing core identity (backend-owned trust)">
+                            {hostProcessing && <span className="mono right" title="Active processing core identity (backend-owned trust)">
                               core {coreStatus?.valid ? `v${coreStatus.active_version} (${coreStatus.source})` : "—"}
                               {coreStatus?.valid && !coreStatus.pin_satisfied
                                 ? ` · PIN NOT SATISFIED (requires ${coreStatus.required_version})`
                                 : ""}
-                            </span>
+                            </span>}
                           </div>
                           {caps.core_updates && <CoreManagementPanel model={cores} updatesBlocked={running || recording || expActive || scriptDocument.busy || mindvisionDocument.busy || reviewSourceBusy || experimentRequestBusy || cameraScript.busy || checkedConfig.busy || profiles.busy || profiles.remote.busy || reviewExport.busy || reanalysis.busy || previewBuffer.busy || scriptDocument.dirty || mindvisionDocument.dirty || configDirty || quickDraft.dirty || checkedConfig.dirty || profiles.dirty} />}
-                          <ProfilesPanel model={profiles} />
+                          <ProfilesPanel model={profiles} egrabberScript={caps.egrabber_script} />
                           <ConfigDocumentEditor model={checkedConfig} />
                           <div className="config-grid">
                             <div className="config-group" style={{ flex: 2 }}>
@@ -2324,8 +2331,9 @@ export default function App() {
           Log {showLog ? "▾" : "▸"} ({log.length})
         </button>
         <span className="metrics">
-          Display={displayFps.toFixed(1)} fps | Algo={formatMetric(algoFps)}/s | Valid={formatMetric(validFps)}/s | Invalid=
-          {formatMetric(invalidFps)}/s | Camera={running ? "running" : camStatus}, {dataRate.toFixed(1)} MB/s | Experiment:{" "}
+          Display={displayFps.toFixed(1)} fps | {hostProcessing
+            ? <>Algo={formatMetric(algoFps)}/s | Valid={formatMetric(validFps)}/s | Invalid={formatMetric(invalidFps)}/s</>
+            : <>Science=PL</>} | Camera={running ? "running" : camStatus}, {dataRate.toFixed(1)} MB/s | Experiment:{" "}
           {(EXPERIMENT_STATE_NAMES[expState] ?? "Inactive").toLowerCase()}
           {expActive ? ` (buffered ${String(BigInt(expStatus?.valid_buffered ?? "0") + BigInt(expStatus?.invalid_buffered ?? "0"))})` : ""}
         </span>
@@ -2392,7 +2400,7 @@ export default function App() {
       {showAbout && (
         <div className="modal-backdrop" onClick={() => setShowAbout(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="About">
-            <h3>MIB Studio (React + Tauri)</h3>
+            <h3>{brand} (React + Tauri)</h3>
             <p>
               Desktop shell for the Qt-free MIB backend (epic #246).
               <br />

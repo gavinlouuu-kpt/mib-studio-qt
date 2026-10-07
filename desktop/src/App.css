@@ -1192,3 +1192,18 @@ button.btn:disabled,
 
 /* Non-blocking readiness warnings at run start (#501: recording to RAM) */
 .start-notice { margin: 4px 0; color: var(--warn); }
+
+/* ---- #550 m15: narrow windows (about 1024 px, the remote browser UI) ----
+   Tab labels and the camera buttons stay on one line; when the row is too narrow the camera
+   buttons wrap below the tabs instead of squeezing the text. The status line wraps instead of
+   being cut off with an ellipsis. */
+.stage-tab-name,
+.stage-tab-status,
+.camera-actions button { white-space: nowrap; }
+.tabs-header { flex-wrap: wrap; }
+@media (max-width: 1100px) {
+  .tabbar button { padding: 5px 8px; }
+  .stage-tab-name { font-size: 13px; }
+  .statusbar { flex-wrap: wrap; row-gap: 2px; }
+  .statusbar .metrics { white-space: normal; overflow: visible; text-overflow: clip; text-align: right; }
+}
