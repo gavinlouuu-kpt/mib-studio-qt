@@ -23,10 +23,16 @@ export const save = (async (options?: dialog.SaveDialogOptions) => {
   return promptPath(options?.title ?? "Save to (path on the instrument)", options?.defaultPath);
 }) as typeof dialog.save;
 
-export const confirm = (async (message: string, options?: string | dialog.ConfirmDialogOptions) => {
-  if (!isRemote) return dialog.confirm(message, options);
-  return window.confirm(message);
-}) as typeof dialog.confirm;
+// The plugin replaces window.confirm with an async shim in Tauri. Use its
+// public API (the permitted message command), and fail closed on dialog errors.
+export const confirm = async (message: string, options?: string | dialog.ConfirmDialogOptions): Promise<boolean> => {
+  try {
+    const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+    return (await (inTauri ? dialog.confirm(message, options) : window.confirm(message))) === true;
+  } catch {
+    return false;
+  }
+};
 
 export const openUrl = (async (url: string | URL, openWith?: string) => {
   if (!isRemote) return opener.openUrl(url, openWith);

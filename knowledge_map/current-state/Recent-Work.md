@@ -1,5 +1,13 @@
 # Recent Work
 
+## 2026-10-07 — Await desktop safety confirmations (#541)
+
+All destructive/draft-discard and Service mode prompts await the shared transport
+dialog helper. The Tauri shell uses the plugin public confirmation API with explicit
+`dialog:allow-message`; browsers use awaited native confirmation. Rejected dialogs
+fail closed. Tests cover cancellation, async shims, and forbid direct confirmation
+calls outside the helper. See [[architecture/Desktop-Shell]].
+
 ## 2026-10-07 — Raw recording preserves the experiment writer (#451)
 
 Manual recording uses the coordinator idle transaction for atomic admission
