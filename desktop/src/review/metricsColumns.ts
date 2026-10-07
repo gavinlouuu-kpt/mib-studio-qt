@@ -1,3 +1,4 @@
+import { metricNumber } from "../metricFormat";
 // Metrics table columns (plan 2026-10-01-standalone-review-app, PR 2): every
 // FilterResult column the Qt HdfMetricsModel shows, with a default visible
 // set and formatting. Pure; unit-tested in metricsColumns.test.ts.
@@ -14,7 +15,7 @@ export interface MetricColumn {
 }
 
 const num = (digits: number) => (v: number | null | undefined) =>
-  v === null || v === undefined || !Number.isFinite(v) ? "—" : v.toFixed(digits);
+  metricNumber(v, digits);
 const yes = (b: boolean) => (b ? "yes" : "no");
 
 export const METRIC_COLUMNS: MetricColumn[] = [

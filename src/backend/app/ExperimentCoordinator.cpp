@@ -1199,9 +1199,16 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
         hdf5.closeFile();
         SPDLOG_INFO("ExperimentCoordinator: closeFile took {:.3f} ms", sinceMs(tClose));
     }
-    SPDLOG_INFO("ExperimentCoordinator: run {} accounting: completion={} ({}); persisted={}/{} failed={}",
-                run.startGeneration, recording::toString(accounting.completion), accounting.completionReason,
-                accounting.persistenceCommitted, accounting.persistenceAdmitted, accounting.persistenceFailed);
+    // An undeclared loss, a failure, an unknown outcome, or declared malformed frames above the
+    // warning fraction is something the operator must see (#549): WARN, not INFO. Complete and
+    // declared-partial runs stay at INFO.
+    const bool warnRun = recording::needsOperatorAttention(accounting.completion) ||
+                         recording::malformedAboveWarnFraction(accounting.storeMalformed, accounting.admitted);
+    const auto accountingLevel = warnRun ? spdlog::level::warn : spdlog::level::info;
+    SPDLOG_LOGGER_CALL(spdlog::default_logger_raw(), accountingLevel,
+                       "ExperimentCoordinator: run {} accounting: completion={} ({}); persisted={}/{} failed={}",
+                       run.startGeneration, recording::toString(accounting.completion), accounting.completionReason,
+                       accounting.persistenceCommitted, accounting.persistenceAdmitted, accounting.persistenceFailed);
     // 7. Restore the realtime mode a multi-image run switched.
     if (restoreMode) {
         proc.setRealtimeProcessingMode(services::ProcessingService::RealtimeProcessingMode::AsyncBatch);
@@ -1210,6 +1217,9 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
 
     // 8. Terminal status.
     lk.lock();
+    lastAccounting_ = accounting;
+    lastAccountingGeneration_ = run.startGeneration;
+    haveLastAccounting_ = true;
     activeRun_.reset();
     status_.endWallClockNs = endNs;
     status_.terminal = true;
@@ -1247,6 +1257,15 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
     SPDLOG_INFO("ExperimentCoordinator: run {} finalized in {:.3f} ms (state={}, ok={})",
                 run.startGeneration, sinceMs(tBegin), toString(state_), status_.finalizationOk);
     publishLocked(lk, status_.finalizationOk ? "finalized" : "finalized with errors");
+}
+
+bool ExperimentCoordinator::lastRunAccounting(recording::RecordingAccountingSnapshot& out, uint64_t& startGeneration) const
+{
+    std::lock_guard<std::mutex> lk(mutex_);
+    if (!haveLastAccounting_) return false;
+    out = lastAccounting_;
+    startGeneration = lastAccountingGeneration_;
+    return true;
 }
 
 void ExperimentCoordinator::shutdown()

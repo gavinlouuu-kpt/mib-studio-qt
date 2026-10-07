@@ -1,3 +1,5 @@
+import { PanelErrorBoundary } from "../components/PanelErrorBoundary";
+import { metricNumber } from "../metricFormat";
 // YOFO Review — the standalone review product (plan
 // 2026-10-01-standalone-review-app, ADR 0014). Mounted by `review.html` /
 // `main.tsx`; MIB Studio mounts the same `ReviewPanel` in its Review tab.
@@ -218,7 +220,7 @@ export default function ReviewApp() {
   }, [filePath]);
 
   const summary = info?.file_open
-    ? `${info.recording_file ? "recording" : "experiment"} · valid ${info.total_valid} · invalid ${info.total_invalid} · px→µm ${info.pixel_to_micron.toFixed(4)}${info.pixel_to_micron_from_file ? "" : " (fallback)"}`
+    ? `${info.recording_file ? "recording" : "experiment"} · valid ${info.total_valid} · invalid ${info.total_invalid} · px→µm ${metricNumber(info.pixel_to_micron, 4)}${info.pixel_to_micron_from_file ? "" : " (fallback)"}`
     : "no file";
 
   return (
@@ -245,6 +247,7 @@ export default function ReviewApp() {
       </nav>
 
       <main className="review-main">
+        <PanelErrorBoundary>
         <ReviewPanel
           ref={panel}
           ready={ready}
@@ -255,6 +258,7 @@ export default function ReviewApp() {
           onInfo={setInfo}
           fallbackPixelToMicron={pxToUm}
         />
+        </PanelErrorBoundary>
       </main>
 
       <div className="statusbar">

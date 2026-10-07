@@ -118,6 +118,17 @@ append only, never renumber.
    `experiment.flushFailed` / `experiment.provenanceFailed` /
    `experiment.saveFailed` is latched and the state is `Failed`.
 
+   The reconciled accounting of the last finalized run is kept (`lastRunAccounting`, with its start
+   generation) for `fetch_run_accounting("last_run")` (ABI 31).
+
+   The accounting line logged at the end of finalization is a WARN when
+   `recording::needsOperatorAttention(completion)` (undeclared loss, failure or unknown) or when
+   malformed frames exceed `kMalformedWarnFraction` (0.1 %) of the admitted frames, INFO
+   otherwise (#549). Classification: `storeOverwritten`, `storeNotCommitted`, `processingFailed`
+   and `sequenceGaps` are undeclared (`IncompleteLoss`); a booked `storeMalformed` frame is a
+   declared loss (`IntentionallyPartial`). `finalizationOk` only says the file was written: a run can finalize cleanly
+   and still be `IncompleteLoss`, which the UI shows from `completion` and `completion_reason`.
+
 The worker also runs the periodic flush while Active: every 250 ms it
 submits `flushBufferedFrames(hdf5)` when
 `ProcessingService::needsFlush()` returns true (`status().flushing` is

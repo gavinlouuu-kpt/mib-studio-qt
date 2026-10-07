@@ -2054,6 +2054,14 @@ rust::String BackendBridge::fetch_platform_info() {
     }
 }
 
+rust::String BackendBridge::fetch_run_accounting(rust::Str source) {
+    try {
+        return rust::String(impl_->facade.fetchRunAccountingJson(toStd(source)));
+    } catch (...) {
+        return rust::String("{\"available\":false,\"error\":\"accounting is unavailable\"}");
+    }
+}
+
 rust::String BackendBridge::fetch_instrument_status() {
     try {
         return rust::String(impl_->facade.fetchInstrumentStatusJson());
@@ -2380,7 +2388,7 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 30; }
+std::uint32_t bridge_abi_version() { return 31; }
 
 } // namespace mib_bridge
 

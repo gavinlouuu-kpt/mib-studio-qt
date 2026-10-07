@@ -97,6 +97,8 @@ describe("PZ7035 preflight (#501)", () => {
     const unknown = check({ ...IDLE, instrument: { ...HEALTHY, core: { ...core, expected: null, build_match: "unknown" } } }, "plCore")!;
     expect(unknown.status).toBe("warning");
     expect(unknown.detail).toContain("expected-core.json");
+    expect(unknown.detail).toContain("scripts/pz_install_core.sh");
+    expect(unknown.detail).toContain("Retry check");
   });
 
   it("an unloaded PL or unread status fails preflight", () => {

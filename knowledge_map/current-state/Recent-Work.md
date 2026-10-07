@@ -16,6 +16,65 @@ script is available when FlowIO is installed; FlowJo import remains manually
 unverified. See
 [[../services/HdfExportService]] and [[../../docs/howto/hdf5-export-app]].
 
+## 2026-10-07 — Autofocus teardown no longer loses the stats-thread wake-up (#294)
+
+`AutofocusService` changed `statsRunning_` outside `pendingSamplesMutex_` during
+destruction. An idle `statsLoop()` could check its wait predicate, miss the stop
+notification, and leave the destructor blocked in `join()`. The destructor now
+changes the predicate under the pending-samples mutex, releases it, then
+notifies and joins. `backend.camera_script_apply` repeats idle `AutofocusService`
+destruction 10,000 times and watches full backend teardown with a ten-second
+watchdog; the unfixed stress run exited 99 on an idle stats-thread join. See
+[[../services/AutofocusService]].
+
+## 2026-10-07 — How a run ended is shown to the operator, and a booked malformed frame is a declared loss (#549)
+
+A run that ended in `incompleteLoss` used to look like a clean finish: the status said "finalized",
+`finalization_ok` was true, the backend logged the outcome at INFO and the UI never showed
+`completion_reason`. Now:
+- **Classification (decided by merge coordination).** A frame that was detected, counted and booked
+  as malformed (an ingress error, `FRAME.INVALID` → `storeMalformed`) is a **declared** loss, so a
+  run with only those ends `IntentionallyPartial` with the count in the reason. **Undeclared** is
+  reserved for unaccounted gaps: frames overwritten or never committed in the store, failures in
+  processing, sequence holes. Counters that do not reconcile are `Failed`. An undeclared gap
+  dominates, and its reason still lists the malformed count.
+- **Logging.** The accounting line is a WARN for undeclared loss, failure, an unknown outcome, or
+  malformed frames above 0.1 % of the admitted frames (`kMalformedWarnFraction`); INFO otherwise.
+- **The notice.** After a run the Experiment tab shows the outcome, the counts and the lost fraction.
+  A declared malformed count at the sensor-link baseline is informational; above 0.1 % it is an
+  alert ("check the sensor link"); undeclared loss and failure are alerts. One line goes to the
+  event log per run, and the sidebar has a "Last run" row.
+- **Not an artefact.** A 10 s run on the PZ7035 (results8, 2026-10-06) ended with `storeMalformed=1`
+  in 27,162 frames, matching the link's ~0.1 ingress errors/s, so a clean hardware run is "partial
+  (declared)" with that count. The baseline rate itself belongs with the PL owner.
+
+Not yet: the Review tab, which needs the saved accounting in the review metadata (a bridge change).
+See [[../architecture/Desktop-Shell]], [[../architecture/ExperimentCoordinator]].
+
+## 2026-10-07 — React metric rendering and subtab layout (#540, #543)
+
+Result tables, monitoring labels and review/frame metrics use a shared finite-number
+formatter: missing or non-finite values display an em dash. Panel error boundaries
+allow reloading a failed view while shell controls and logs remain mounted. Subtab
+bodies retain content height; the outer tab body owns scrolling so Preflight and
+App-config controls remain reachable. Regression tests cover missing metrics and
+boundary recovery. See [[architecture/Desktop-Shell]] and [[frontend/YofoReview]].
+
+## 2026-10-07 — Preflight cannot be confirmed with required checks failing (#548)
+
+The workflow's Hardware Preflight stage now blocks on the checklist's own REQUIRED checks. Before,
+it only looked at the host core pin, so on the PZ7035 the bar said "Checks pass — confirm" and
+confirming marked the stage Complete with PL core, sensor link and LED strobe failing. Now:
+- every required check that is not passed is listed as a blocking reason ("Label: detail"), and the
+  recommended action navigates instead of offering the confirmation;
+- a stage confirmed earlier goes back to "needs attention" if a required check starts failing;
+- on the PZ7035 the PL core check stands in for the host core pin, which does not exist there.
+
+A required check in "warning" blocks too (the checklist's existing rule), so an unverified PL build
+(no `/etc/yofo/expected-core.json`) blocks until it is installed. That fails closed on purpose, for a
+science-core identity check, and the reason tells the operator the fix (run `scripts/pz_install_core.sh`,
+then Retry check). A service override, if ever needed, comes with #310's audited override. See [[../architecture/Desktop-Shell]].
+
 ## 2026-10-07 — Local profile drafts copy the open app config (#547)
 
 React local profiles now seed new drafts from the complete config.json document
@@ -3632,3 +3691,9 @@ Closed Qt's fault acknowledgment parity gap with compare-and-acknowledge backend
   manifests/digests rechecked before explicit native installer launch. Active native work,
   pending UI operations and dirty drafts block installation. No installer was launched,
   release published, or signing keys changed during implementation/tests.
+
+---
+
+**This archive is closed after 2026-10-07.** New entries go one per file in
+`knowledge_map/current-state/recent/` (see [[current-state/recent/README|its README]]), so
+concurrent PRs no longer conflict here. `python3 scripts/recent_work.py` prints the newest.

@@ -219,7 +219,10 @@ function plCoreCheck(i: PreflightInput): PreflightCheck {
     detail = "No pinned weights in this build: the PL weights are not checked.";
   } else if (c.build_match === "unknown") {
     status = "warning";
-    detail = "No /etc/yofo/expected-core.json: the PL build is not checked (install it with pz_install_core.sh).";
+    // This blocks Preflight (a required check that is not passed fails closed), so the text is the
+    // fix: the file is what lets the shell verify the PL build that is loaded (#548).
+    detail = "The PL build is not verified: /etc/yofo/expected-core.json is missing. On the instrument run " +
+      "scripts/pz_install_core.sh <build dir> (it writes that file from the build's core.json), then press Retry check.";
     recovery = [RETRY];
   }
   return { ...base, status, expected, detected, detail, recovery };

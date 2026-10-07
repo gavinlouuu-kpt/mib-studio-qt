@@ -1,3 +1,4 @@
+import { metricNumber } from "../../metricFormat";
 // Scatter drawing, shared by the on-screen chart (ReviewScatter.tsx) and the
 // exported snapshots (chartExport.ts, 1200 × 1200 like the Qt tab), so an
 // export shows exactly what the view shows. Pure canvas 2D; no React.
@@ -79,7 +80,7 @@ export function drawScatter(g: CanvasRenderingContext2D, w: number, h: number, m
     g.moveTo(Math.round(px) + 0.5, vp.top);
     g.lineTo(Math.round(px) + 0.5, vp.top + vp.height);
     g.stroke();
-    g.fillText(t.toFixed(xd), px, vp.top + vp.height + 4);
+    g.fillText(metricNumber(t, xd), px, vp.top + vp.height + 4);
   }
   g.textAlign = "right";
   g.textBaseline = "middle";
@@ -89,7 +90,7 @@ export function drawScatter(g: CanvasRenderingContext2D, w: number, h: number, m
     g.moveTo(vp.left, Math.round(py) + 0.5);
     g.lineTo(vp.left + vp.width, Math.round(py) + 0.5);
     g.stroke();
-    g.fillText(t.toFixed(yd), vp.left - 6, py);
+    g.fillText(metricNumber(t, yd), vp.left - 6, py);
   }
   g.strokeStyle = "#999";
   g.strokeRect(vp.left + 0.5, vp.top + 0.5, vp.width, vp.height);
@@ -169,7 +170,7 @@ export function drawScatter(g: CanvasRenderingContext2D, w: number, h: number, m
   // Legend (right).
   const entries: { name: string; color: string; dashed?: boolean; line: boolean }[] = [{ name: "Valid Frames", color: POINT_COLOUR, line: false }];
   for (const c of m.contours) entries.push({ name: c.name, color: c.color, dashed: c.dashed, line: true });
-  m.curves.forEach((c, k) => entries.push({ name: `${c.emodulus_kpa.toFixed(2)} kPa`, color: CURVE_COLOURS[k % CURVE_COLOURS.length], line: true }));
+  m.curves.forEach((c, k) => entries.push({ name: `${metricNumber(c.emodulus_kpa, 2)} kPa`, color: CURVE_COLOURS[k % CURVE_COLOURS.length], line: true }));
   const lx = vp.left + vp.width + 14;
   let ly = vp.top + 6;
   g.font = "11px system-ui, sans-serif";

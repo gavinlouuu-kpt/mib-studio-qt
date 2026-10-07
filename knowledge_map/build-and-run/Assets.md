@@ -5,10 +5,8 @@
 
 **Source:** `env/assets.json` (manifest), `scripts/assets_manifest.py`
 (stdlib reader), `scripts/provision-assets.py` (stdlib downloader),
-`cmake/MIBOptions.cmake` (`MIB_ASSETS_DIR`), `cmake/MIBDependencies.cmake`
-(`MIB_YOLO_MODEL_PATH` + configure-time check),
-`cmake/MIBWindowsDeployment.cmake` (post-build copy).
-**Related:** [[Dependencies]], [[Run-Modes]], [[../services/YoloService]],
+`cmake/MIBOptions.cmake` (`MIB_ASSETS_DIR`).
+**Related:** [[Dependencies]], [[Run-Modes]],
 [[../camera/MockCamera]], [[../services/ProcessingService]]
 
 ## The manifest
@@ -21,7 +19,6 @@ consumer). `consumers` lists what depends on it; `notes` says why.
 
 | Asset id | Kind | Hub repo | Who uses it |
 |---|---|---|---|
-| `yolo11n-seg` | model, **required** | `gavinlouuu/mib-yolo11n-seg` (public) | `YoloService`; CMake fails configure if ONNX Runtime is found and the file is absent |
 | `512x96stream-kin10` | dataset (viewer rows) | `gavinlouuu/512x96stream` (public) | `backend.kin10_hf_dataset_pipeline` (label `network`), `tools/kin10_*`, `tools/kin6_generate_hf_evidence.sh` |
 | `512x96stream-mock-frames` | dataset (indexed TIFFs) | same | MockCamera folder, `mock_pipeline_timing_run`, `synthetic_condition_validation.py` |
 | `z-adjustment-50v` | dataset, **private**, token | `gavinlouuu/z_adjustment-data` | real-corpus conformance (`run_processing_conformance.py --hdf5`) |
@@ -44,7 +41,7 @@ Multi-file assets download with 8 parallel workers (`--jobs N`); the
 
 Files land in `<root>/<kind>s/<id>/…` with a `provisioned.json` beside them.
 `root` is `build/vendor/assets` (gitignored) or `MIB_ASSETS_DIR`, honoured
-identically by CMake and Python. Downloads use `resolve/<revision>` URLs,
+by the provisioner and consumers. Downloads use `resolve/<revision>` URLs,
 verify SHA-256 when the manifest declares one, and refuse to continue on a
 mismatch (do not "fix" the pin without understanding why the Hub file
 changed). Exit codes: 1 missing/mismatch, 2 needs `HF_TOKEN`, 3 network.
@@ -66,18 +63,13 @@ when a `gavinlouuu/<repo>` id appears under `scripts/`, `tests/`, `tools/`,
 1. Upload the new files to the Hub repo (`hf upload <repo> <dir> .`).
 2. Put the new commit SHA (and file SHA-256 for single-file assets) in
    `env/assets.json`.
-3. Re-run the consumers (for the model: a Windows build + YOLO tests; for
+3. Re-run the consumers (for models: the processing tests; for
    datasets: the `network` lane or the script), and land the manifest change
    with this note updated.
 
 ## Gotchas
 
-- The runtime model path is unchanged: `<exe>/resources/models/yolo11n-seg.onnx`.
-  Only the *source* moved (from a tracked file to the provisioned tree).
-- `resources/models/` keeps the export script and a README; the weights are
-  gone from git history going forward (old commits still contain them).
-- Linux presets do not find ONNX Runtime, so the model check never fires
-  there; `linux-network-test` is the only default-excluded lane.
+- `linux-network-test` is the default-excluded network lane.
 - The Hub dataset `gavinlouuu/512x96stream` carries a stray
   `.claude/settings.local.json` (no credentials); remove it on the next
   dataset revision bump.

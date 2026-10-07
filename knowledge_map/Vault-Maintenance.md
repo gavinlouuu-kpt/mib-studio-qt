@@ -36,9 +36,11 @@ below is the policy it cannot check for you.
 
 ## Shipping the change
 
-1. On every non-trivial feature/fix, also append a short dated entry to
-   [[current-state/Recent-Work]] (and — if the work was multi-step — create
-   `knowledge_map/task/YYYY-MM-DD-<slug>.md`).
+1. On every non-trivial feature/fix, also add **one new file**
+   `knowledge_map/current-state/recent/YYYY-MM-DD-<slug>.md` with a short dated
+   entry (see [[current-state/recent/README|the recent-work README]]); do not append
+   to the [[current-state/Recent-Work]] archive. If the work was multi-step, also
+   create `knowledge_map/task/YYYY-MM-DD-<slug>.md`.
 2. Before committing, run `python3 scripts/check_docs.py` — it fails on broken
    wikilinks and broken doc links.
 3. If you find any note that disagrees with current code, fix it while you're

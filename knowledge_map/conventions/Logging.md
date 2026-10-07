@@ -12,7 +12,7 @@
 #include <spdlog/spdlog.h>
 
 SPDLOG_INFO("capture started: buffers={}", config.numBuffers);
-SPDLOG_WARN("YOLO model not loaded - segmentation features will not be available");
+SPDLOG_WARN("Modulus LUT not loaded - modulus gating will not be available");
 SPDLOG_ERROR("failed to open {}: {}", path, err);
 ```
 
