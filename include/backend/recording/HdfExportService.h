@@ -25,7 +25,7 @@
 
 namespace backend::recording {
 
-enum class HdfExportFormat { MetricsCsv, Images, All, Charts };
+enum class HdfExportFormat { MetricsCsv, Images, All, Charts, Fcs };
 enum class HdfExportFrames { Valid, Invalid, Both };
 enum class HdfExportPhase {
     Validating, Metadata, Metrics, ValidImages, SeriesImages, InvalidImages, Charts, Committing, Cleanup
@@ -47,6 +47,9 @@ struct HdfExportRequest {
     std::string outputRoot;   // parent directory for the generated name
     HdfExportFormat format{HdfExportFormat::All};
     HdfExportFrames frames{HdfExportFrames::Both};
+    // FCS defaults to accepted detections. Invalid/both rows are opt-in via
+    // this selector; the regular CSV/All frame selection remains unchanged.
+    HdfExportFrames fcsFrames{HdfExportFrames::Valid};
     double conversionFactor{0.4886}; // pixel -> micron
     HdfExportSeriesRange series;
     // Chart TIFFs rendered by the caller on its own thread (name -> BGR image),
@@ -60,7 +63,7 @@ struct HdfExportRequest {
     // deleting it when the job does not complete.
     bool keepPartialOnFailure{false};
     // Optional explicit final destination (metrics CSV file for MetricsCsv,
-    // folder for Images/All). Empty -> derived from the source base name with
+    // folder for Images/All/Fcs). Empty -> derived from the source base name with
     // a bounded "_N" suffix lookup.
     std::string explicitDestination;
 };
@@ -100,6 +103,7 @@ public:
     explicit HdfExportCancelToken(std::shared_ptr<std::atomic<bool>> flag) : flag_(std::move(flag)) {}
     void cancel() { flag_->store(true, std::memory_order_release); }
     bool cancelled() const { return flag_->load(std::memory_order_acquire); }
+    const std::atomic<bool>* nativeFlag() const { return flag_.get(); }
 private:
     std::shared_ptr<std::atomic<bool>> flag_;
 };

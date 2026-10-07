@@ -31,6 +31,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import shutil
+import signal
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -166,12 +170,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--format", "-f",
         type=str,
-        choices=["csv", "json", "images", "all"],
+        choices=["csv", "json", "images", "all", "fcs"],
         default="csv",
         help=(
             "Export format: csv (metrics only), json (gold-standard metrics "
             "JSON per docs/gold_standard_metrics.schema.json), images "
-            "(images only), or all (csv + images). Default: csv"
+            "(images only), all (csv + images), or fcs (native hdf_export_cli). Default: csv"
         )
     )
     parser.add_argument(
@@ -184,8 +188,16 @@ def parse_args() -> argparse.Namespace:
         "--frame-type", "-t",
         type=str,
         choices=["valid", "invalid", "both"],
-        default="both",
+        default=None,
         help="Export valid, invalid, or both frame types. Default: both"
+    )
+    parser.add_argument(
+        "--fcs-event-mode", choices=["detection"], default="detection",
+        help="FCS event semantics; the native writer currently exports one event per detection."
+    )
+    parser.add_argument(
+        "--native-cli", default=None,
+        help="Path to hdf_export_cli (or use MIB_HDF_EXPORT_CLI). Required for --format fcs."
     )
     return parser.parse_args()
 
@@ -686,13 +698,60 @@ def export_hdf5(
 def main() -> int:
     """Main entry point for command-line interface."""
     args = parse_args()
-    
+
+    if args.format == "fcs":
+        candidates = []
+        if args.native_cli:
+            explicit = Path(args.native_cli).expanduser().resolve()
+            if not (explicit.is_file() and os.access(explicit, os.X_OK)):
+                print(f"ERROR: --native-cli is not an executable file: {explicit}", file=sys.stderr)
+                return 2
+            candidates.append(explicit)
+        env_cli = os.environ.get("MIB_HDF_EXPORT_CLI")
+        if env_cli:
+            candidates.append(Path(env_cli).expanduser().resolve())
+        found = shutil.which("hdf_export_cli")
+        if found:
+            candidates.append(Path(found))
+        candidates.extend([
+            Path(__file__).resolve().parent / "hdf_export_cli",
+            Path(__file__).resolve().parent / "hdf_export_cli.exe",
+            Path(__file__).resolve().parents[1] / "build" / "linux-backend" / "hdf_export_cli",
+            Path(__file__).resolve().parents[1] / "build" / "linux-backend" / "hdf_export_cli.exe",
+            Path(__file__).resolve().parents[1] / "build" / "linux-backend" / "Release" / "hdf_export_cli",
+            Path(__file__).resolve().parents[1] / "build" / "linux-backend" / "Release" / "hdf_export_cli.exe",
+            Path(__file__).resolve().parents[1] / "build" / "linux-backend" / "src" / "backend" / "hdf_export_cli",
+            Path(__file__).resolve().parents[1] / "build" / "linux-backend" / "src" / "backend" / "hdf_export_cli.exe",
+        ])
+        cli = next((p.resolve() for p in candidates if p.is_file() and os.access(p, os.X_OK)), None)
+        if cli is None:
+            print("ERROR: --format fcs requires the native hdf_export_cli; "
+                  "build it or pass --native-cli PATH (or MIB_HDF_EXPORT_CLI).", file=sys.stderr)
+            return 2
+        command = [str(cli), "--input", str(Path(args.input).expanduser().resolve()),
+                   "--output", str(Path(args.output).expanduser().resolve()),
+                   "--format", "fcs", "--fcs-event-mode", args.fcs_event_mode,
+                   "--frame-type", args.frame_type or "valid", "--pixel-to-micron", str(args.pixel_to_micron)]
+        try:
+            child = subprocess.Popen(command)
+            try:
+                return child.wait()
+            except KeyboardInterrupt:
+                # Forward Ctrl-C to the native job and wait for its cleanup;
+                # HdfExportService removes its same-parent partial output.
+                child.send_signal(signal.SIGINT)
+                child.wait()
+                return 130
+        except OSError as exc:
+            print(f"ERROR: failed to start native hdf_export_cli: {exc}", file=sys.stderr)
+            return 2
+
     # Call the main export function
     return export_hdf5(
         Path(args.input),
         Path(args.output),
         args.format,
-        args.frame_type,
+        args.frame_type or "both",
         args.pixel_to_micron
     )
 

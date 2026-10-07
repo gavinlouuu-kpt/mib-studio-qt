@@ -87,6 +87,15 @@ public:
     // legacy files read as the Contract-1 config they ran. Returns false when
     // the group is missing.
     bool readRecordedProcessingConfig(ProcessingConfig& config) const;
+    // Reads persisted processing contract markers
+    // across the file. Missing markers are legacy Contract 1; malformed or
+    // conflicting markers return false.
+    bool readRecordedProcessingContract(int& contract) const;
+
+    // Names of members present in the persisted compound metadata type. This
+    // lets field-aware exporters distinguish an absent metric from an older
+    // writer's default value.
+    bool readMetadataFieldNames(bool valid, std::vector<std::string>& names) const;
 
     // Save raw config JSON as a string attribute on /experiment_info.
     // Precondition: writeExperimentInfo() must have been called first.
