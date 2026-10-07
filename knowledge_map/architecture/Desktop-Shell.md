@@ -89,6 +89,15 @@ in the Connect tab. Storage writability/free-space stays informational until a
 backend status contract exists. Details:
 `knowledge_map/task/2026-07-21-ux3-hardware-preflight.md`.
 
+**Required checks gate the workflow (#548).** `WorkflowFacts.requiredFailures` carries the
+checklist's `required` checks that are not `passed` ("Label: detail"). When present it is the
+authority for the Preflight stage and replaces the host core pin test, because the checklist
+already holds the host core check on the desktop and the PL core check on the PZ7035. Each such
+check is a blocking reason, so the stage is "needs attention", the recommended action navigates
+instead of offering the confirmation, and a stage confirmed earlier goes back to "needs
+attention" if one starts failing. A required check in `warning` blocks as well (the checklist's
+`criticalPassed` rule). Tests: `workflow.test.ts` (#548).
+
 **Quality gates (UX-4 slice, issue #308):** `desktop/src/quality.ts` —
 `deriveQualityGates(input)` turns the Camera & Alignment stage's
 "is the image good?" into concrete gates (focus / background / ROI /
@@ -472,6 +481,11 @@ The Experiment configuration page now hosts an App-owned local profile draft/lib
 document, preserve/edit optional `egrabberConfig.js`, save as new, duplicate, rename,
 or recoverably archive. Unknown config bytes survive copies. Mutations use a baseline
 hash over config, optional script and metadata. Existing names are never overwritten.
+New Draft from Current Config copies the complete document loaded in the App config
+editor; without a loaded document, open config.json there or import a config to draft.
+Choosing a folder preserves the draft without a discard prompt. Empty or invalid drafts are refused by both the
+save button (with a reason tooltip) and the save handler. Reading saved profiles
+continues to preserve their complete JSON and optional script.
 Navigation retains drafts and pending commands; experiment-active operations are refused.
 
 `BackendFacade::profileCommand` owns the portable `app/ProfileStore` path. Apply validates
@@ -837,3 +851,17 @@ disarms; #521).
 
 Tests: `stageControlModel.test.ts` (rules) and `StageControls.test.tsx`
 (panel behaviour with a mocked bridge).
+
+### Metric rendering and panel recovery (#540, #543)
+
+`metricFormat.ts` renders absent/non-finite metrics as an em dash. Both Studio
+result tables share `ResultMetricCells`; review columns, frame viewers and chart
+labels use the same formatter. `PanelErrorBoundary` surrounds the main panel
+content in Studio and YOFO Review; Reload view remounts the failed children while
+shell controls and logs stay available. Studio subtab bodies do not shrink below
+content height: the outer `.tab-body` scrolls the Preflight and App-config content.
+JSDOM has no flex layout engine; physical layout needs browser verification.
+
+Safety confirmations go through `desktop/src/transport/dialogs.ts` and must be
+awaited. Tauri uses the public dialog API (`dialog:allow-message`); browser
+confirmation and native dialog errors fail closed unless the result is true.

@@ -1,3 +1,4 @@
+import { metricNumber } from "../metricFormat";
 // The HDF5 review module (UI-4, #269; plan 2026-10-01-standalone-review-app).
 //
 // One React tree serves two products: MIB Studio mounts this panel in its
@@ -463,7 +464,7 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
         </span>
         <span className="path-label right" title={info?.file_path}>
           {reviewing && info
-            ? `${info.file_path} · ${info.recording_file ? "recording" : "experiment"} · valid ${info.total_valid}, invalid ${info.total_invalid}${info.has_core_identity ? ` · core v${info.core_version}` : ""} · px→µm ${info.pixel_to_micron.toFixed(4)}${info.pixel_to_micron_from_file ? "" : " (fallback)"}${info.accounting_summary}`
+            ? `${info.file_path} · ${info.recording_file ? "recording" : "experiment"} · valid ${info.total_valid}, invalid ${info.total_invalid}${info.has_core_identity ? ` · core v${info.core_version}` : ""} · px→µm ${metricNumber(info.pixel_to_micron, 4)}${info.pixel_to_micron_from_file ? "" : " (fallback)"}${info.accounting_summary}`
             : "No file selected"}
         </span>
       </div>

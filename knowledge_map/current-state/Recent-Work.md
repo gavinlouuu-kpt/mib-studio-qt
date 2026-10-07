@@ -1,23 +1,5 @@
 # Recent Work
 
-## 2026-10-07 — The Review tab shows how a run ended; loss fractions use the admitted frames (#549, bridge ABI 31)
-
-YOFO Studio's Review tab now shows the outcome saved in the opened file, the same notice as after a
-run: declared partial result with the malformed count, undeclared loss, a failure, or a quiet note for
-a raw recording or an older file without accounting. A file whose counters do not reconcile reads as a
-failure.
-
-New read-only command `fetch_run_accounting(source)` (`review` = the file loaded for review,
-`last_run` = the run that finished last in this session) returns the reconciled accounting: the
-completion and its reason, `admitted` (the frames the run claimed) and every loss counter. With it the
-loss fractions use the admitted frames: the status alone only knew the rows it saved, so a run with
-many empty frames overstated its loss (0.004 % of 27,162 rows instead of 0.002 % of 50,407 frames, for
-the 10 s PZ7035 run). `ExperimentCoordinator` keeps the last run's accounting for this.
-
-The standalone YOFO Review app has its own contract (`review-contract.json`) and still shows only
-the text summary; it is not changed here. See [[../architecture/Rust-Bridge]],
-[[../architecture/Desktop-Shell]].
-
 ## 2026-10-07 — How a run ended is shown to the operator, and a booked malformed frame is a declared loss (#549)
 
 A run that ended in `incompleteLoss` used to look like a clean finish: the status said "finalized",
@@ -39,8 +21,50 @@ A run that ended in `incompleteLoss` used to look like a clean finish: the statu
   in 27,162 frames, matching the link's ~0.1 ingress errors/s, so a clean hardware run is "partial
   (declared)" with that count. The baseline rate itself belongs with the PL owner.
 
-The Review tab and the true denominator are the next entry (bridge ABI 31).
+Not yet: the Review tab, which needs the saved accounting in the review metadata (a bridge change).
 See [[../architecture/Desktop-Shell]], [[../architecture/ExperimentCoordinator]].
+
+## 2026-10-07 — React metric rendering and subtab layout (#540, #543)
+
+Result tables, monitoring labels and review/frame metrics use a shared finite-number
+formatter: missing or non-finite values display an em dash. Panel error boundaries
+allow reloading a failed view while shell controls and logs remain mounted. Subtab
+bodies retain content height; the outer tab body owns scrolling so Preflight and
+App-config controls remain reachable. Regression tests cover missing metrics and
+boundary recovery. See [[architecture/Desktop-Shell]] and [[frontend/YofoReview]].
+
+## 2026-10-07 — Preflight cannot be confirmed with required checks failing (#548)
+
+The workflow's Hardware Preflight stage now blocks on the checklist's own REQUIRED checks. Before,
+it only looked at the host core pin, so on the PZ7035 the bar said "Checks pass — confirm" and
+confirming marked the stage Complete with PL core, sensor link and LED strobe failing. Now:
+- every required check that is not passed is listed as a blocking reason ("Label: detail"), and the
+  recommended action navigates instead of offering the confirmation;
+- a stage confirmed earlier goes back to "needs attention" if a required check starts failing;
+- on the PZ7035 the PL core check stands in for the host core pin, which does not exist there.
+
+A required check in "warning" blocks too (the checklist's existing rule), so an unverified PL build
+(no `/etc/yofo/expected-core.json`) blocks until it is installed. That fails closed on purpose, for a
+science-core identity check, and the reason tells the operator the fix (run `scripts/pz_install_core.sh`,
+then Retry check). A service override, if ever needed, comes with #310's audited override. See [[../architecture/Desktop-Shell]].
+
+## 2026-10-07 — Local profile drafts copy the open app config (#547)
+
+React local profiles now seed new drafts from the complete config.json document
+loaded in the App config editor. Without one, users must open or import a config;
+choosing a profiles folder preserves the draft. Empty or invalid JSON drafts cannot be saved:
+the disabled save button explains why, and the save handler repeats validation.
+Existing profile reads retain their complete document and optional script. Vitest
+covers document seeding, missing documents, folder selection, invalid/empty drafts
+and populated saves. See [[architecture/Desktop-Shell]].
+
+## 2026-10-07 — Await desktop safety confirmations (#541)
+
+All destructive/draft-discard and Service mode prompts await the shared transport
+dialog helper. The Tauri shell uses the plugin public confirmation API with explicit
+`dialog:allow-message`; browsers use awaited native confirmation. Rejected dialogs
+fail closed. Tests cover cancellation, async shims, and forbid direct confirmation
+calls outside the helper. See [[architecture/Desktop-Shell]].
 
 ## 2026-10-07 — Raw recording preserves the experiment writer (#451)
 
@@ -3640,3 +3664,9 @@ Closed Qt's fault acknowledgment parity gap with compare-and-acknowledge backend
   manifests/digests rechecked before explicit native installer launch. Active native work,
   pending UI operations and dirty drafts block installation. No installer was launched,
   release published, or signing keys changed during implementation/tests.
+
+---
+
+**This archive is closed after 2026-10-07.** New entries go one per file in
+`knowledge_map/current-state/recent/` (see [[current-state/recent/README|its README]]), so
+concurrent PRs no longer conflict here. `python3 scripts/recent_work.py` prints the newest.

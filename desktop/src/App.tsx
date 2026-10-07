@@ -1,3 +1,6 @@
+import { metricNumber } from "./metricFormat";
+import { ResultMetricCells } from "./components/ResultMetricCells";
+import { PanelErrorBoundary } from "./components/PanelErrorBoundary";
 import {CaptureRecovery} from "./components/CaptureRecovery";
 import {ExperimentRecovery} from "./components/ExperimentRecovery";
 import {recoverNativeRuntime} from "./runtimeRecovery";
@@ -8,11 +11,10 @@ import { describeReviewOutcome, describeRunOutcome, runKey } from "./runOutcome"
 import { BackgroundCalibrationControls } from "./components/BackgroundCalibrationControls";
 import {invoke} from "./transport";
 import { PreviewBufferControls, usePreviewBuffer } from "./previewBuffer";
-import { formatMetric } from "./eventAdapter";
 import { decimalU64 } from "./framePacket";
 import { FramePullScheduler } from "./framePullScheduler";
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import {open, save} from "./transport/dialogs";
+import {open, save, confirm} from "./transport/dialogs";
 import {openUrl, revealItemInDir} from "./transport/dialogs";
 import {
   bridge,
@@ -1050,7 +1052,7 @@ export default function App() {
         ? "Experiment is already running"
         : experimentRequestBusy ? "Experiment start request pending" : undefined;
   const checkedConfig = useConfigDocument({ready, active:expActive, append, refresh:refreshConfig});
-  const profiles = useProfiles({ready:ready && cores.initialized, resume:resumedNative, active:expActive, append, onOpen:(path)=>checkedConfig.run("open",path), onApplied:refreshConfig});
+  const profiles = useProfiles({currentConfig:checkedConfig.doc?.document_json??null, ready:ready && cores.initialized, resume:resumedNative, active:expActive, append, onOpen:(path)=>checkedConfig.run("open",path), onApplied:refreshConfig});
   useEffect(()=>{const fps=profiles.activeProfile?.display_fps;if(typeof fps==="number"&&Number.isFinite(fps))setPreviewFpsLimit(Math.min(240,Math.max(1,fps)));},[profiles.activeProfile]);
 
 
@@ -1079,32 +1081,6 @@ export default function App() {
   // Saved rows plus Idle do not prove successful finalization. The accepted
   // backend must supply a retained exact terminal outcome before showing Complete.
   const experimentCompleted = false;
-
-  const workflowFacts: WorkflowFacts = {
-    backendReady: ready,
-    cameraConfigured,
-    cameraRunning: running,
-    preflightSignature,
-    preflightConfirmedFor,
-    alignmentSignature,
-    alignmentConfirmedFor,
-    coreValid: coreStatus?.valid ?? false,
-    corePinSatisfied: coreStatus?.pin_satisfied ?? false,
-    requiredCoreVersion: coreStatus?.required_version ?? "",
-    experimentState: expState,
-    experimentCompleted,
-    reviewFileOpen: reviewMeta?.file_open ?? false,
-    reviewValid: reviewMeta?.valid ?? false,
-  };
-  const workflow = deriveWorkflow(workflowFacts);
-  const stageByTab = Object.fromEntries(workflow.stages.map((s) => [s.tab, s])) as Record<
-    StageTab,
-    (typeof workflow.stages)[number]
-  >;
-  const currentStage = workflow.stages.find((s) => s.id === workflow.currentStageId)!;
-  // A confirmation cannot be applied while a run is active (setup is locked).
-  const recNeedsConfirm = !!workflow.recommended && workflow.recommended.kind !== "navigate";
-  const recDisabled = recNeedsConfirm && expActive;
 
   // ---- UX-3 profile-aware hardware preflight (issue #307) ----
   const preflightInput: PreflightInput = {
@@ -1143,6 +1119,38 @@ export default function App() {
     instrument,
   };
   const preflight = derivePreflight(preflightInput);
+
+  const workflowFacts: WorkflowFacts = {
+    backendReady: ready,
+    cameraConfigured,
+    cameraRunning: running,
+    preflightSignature,
+    preflightConfirmedFor,
+    alignmentSignature,
+    alignmentConfirmedFor,
+    coreValid: coreStatus?.valid ?? false,
+    corePinSatisfied: coreStatus?.pin_satisfied ?? false,
+    requiredCoreVersion: coreStatus?.required_version ?? "",
+    // The checklist's own rule ("Required checks must pass before Preflight can be confirmed"),
+    // so a failing required check (PL core, sensor link, LED strobe) cannot be confirmed (#548).
+    requiredFailures: preflight.checks
+      .filter((c) => c.requirement === "required" && c.status !== "passed")
+      .map((c) => `${c.label}: ${c.detail}`),
+    experimentState: expState,
+    experimentCompleted,
+    reviewFileOpen: reviewMeta?.file_open ?? false,
+    reviewValid: reviewMeta?.valid ?? false,
+  };
+  const workflow = deriveWorkflow(workflowFacts);
+  const stageByTab = Object.fromEntries(workflow.stages.map((s) => [s.tab, s])) as Record<
+    StageTab,
+    (typeof workflow.stages)[number]
+  >;
+  const currentStage = workflow.stages.find((s) => s.id === workflow.currentStageId)!;
+  // A confirmation cannot be applied while a run is active (setup is locked).
+  const recNeedsConfirm = !!workflow.recommended && workflow.recommended.kind !== "navigate";
+  const recDisabled = recNeedsConfirm && expActive;
+
 
   // ---- UX-4 Camera & Alignment quality gates (issue #308) ----
   // Focus staleness threshold: the autofocus config's ring_ratio_stale_ms is
@@ -1192,9 +1200,9 @@ export default function App() {
     if (operatingMode !== "service" || expActive) setTriggerArmed(false);
   }, [operatingMode, expActive]);
 
-  const enterMode = (next: OperatingMode) => {
+  const enterMode = async (next: OperatingMode) => {
     if (next === "service") {
-      const ok = window.confirm(
+      const ok = await confirm(
         "Enter Service / Commissioning mode?\n\nThis exposes hardware-actuating controls (trigger tests). Use only for bring-up and diagnostics.",
       );
       if (!ok) return;
@@ -1225,7 +1233,7 @@ export default function App() {
   const doRecommended = () => {
     const rec = workflow.recommended;
     if (!rec) return;
-    if (rec.kind === "confirm-preflight" && !expActive) {
+    if (rec.kind === "confirm-preflight" && !expActive && preflight.criticalPassed) {
       setPreflightConfirmedFor(preflightSignature);
       setTab("connect");
     } else if (rec.kind === "confirm-alignment" && !expActive) {
@@ -1331,21 +1339,21 @@ export default function App() {
           </div>}
           <div className="side-section">
             <h4>Display</h4>
-            <SideRow k="FPS:" v={displayFps.toFixed(1)} />
+            <SideRow k="FPS:" v={metricNumber(displayFps, 1)} />
           </div>
           <div className="side-section">
             <h4>Processing</h4>
             {!hostProcessing && <SideRow k="Runs on:" v="PL (every frame)" />}
-            {hostProcessing && <SideRow k="Algo FPS:" v={stats?.valid ? formatMetric(algoFps) : "—"} cls={stats?.valid ? "" : "dim"} />}
-            {hostProcessing && <SideRow k="Valid FPS:" v={stats?.valid ? formatMetric(validFps) : "—"} cls={stats?.valid ? "" : "dim"} />}
-            {hostProcessing && <SideRow k="Invalid FPS:" v={stats?.valid ? formatMetric(invalidFps) : "—"} cls={stats?.valid ? "" : "dim"} />}
+            {hostProcessing && <SideRow k="Algo FPS:" v={stats?.valid ? metricNumber(algoFps) : "—"} cls={stats?.valid ? "" : "dim"} />}
+            {hostProcessing && <SideRow k="Valid FPS:" v={stats?.valid ? metricNumber(validFps) : "—"} cls={stats?.valid ? "" : "dim"} />}
+            {hostProcessing && <SideRow k="Invalid FPS:" v={stats?.valid ? metricNumber(invalidFps) : "—"} cls={stats?.valid ? "" : "dim"} />}
             <SideRow k="px→µm:" v={stats?.valid ? String(stats.pixel_to_micron) : "—"} cls={stats?.valid ? "" : "dim"} />
           </div>
           <div className="side-section">
             <h4>Camera</h4>
             <SideRow k="Status:" v={running ? "Running" : camStatus} cls={running ? "ok" : ""} />
-            <SideRow k="Display rate:" v={`${displayFps.toFixed(1)} fps`} />
-            <SideRow k="Data rate:" v={`${dataRate.toFixed(1)} MB/s`} />
+            <SideRow k="Display rate:" v={`${metricNumber(displayFps, 1)} fps`} />
+            <SideRow k="Data rate:" v={`${metricNumber(dataRate, 1)} MB/s`} />
           </div>
           {pz7035 && <div className="side-section" title="PZ7035 PL core and health (#501)">
             <h4>PL core</h4>
@@ -1355,14 +1363,14 @@ export default function App() {
               cls={instrument?.core?.profile_match === "match" ? "ok" : "dim"} />
             <SideRow k="LED:" v={instrument?.led ? (instrument.led.guard_fault ? "GUARD TRIPPED" : instrument.led.on ? `${instrument.led.preset} ${instrument.led.delay_us}/${instrument.led.width_us} µs` : "off") : "—"}
               cls={instrument?.led && !instrument.led.guard_fault ? "" : "dim"} />
-            <SideRow k="Latency max:" v={instrument?.latency && instrument.latency.frames > 0 ? `${instrument.latency.max_us.toFixed(1)} µs` : "—"}
+            <SideRow k="Latency max:" v={instrument?.latency && instrument.latency.frames > 0 ? `${metricNumber(instrument.latency.max_us, 1)} µs` : "—"}
               cls={instrument?.latency && instrument.latency.frames > 0 ? "" : "dim"} />
           </div>}
           {caps.autofocus && <div className="side-section">
             <h4>Autofocus</h4>
             <SideRow
               k="Ring width:"
-              v={afStatus?.valid && afStatus.last_ring_ratio_update_us > 0 ? afStatus.median_ring_ratio.toFixed(3) : "—"}
+              v={afStatus?.valid && afStatus.last_ring_ratio_update_us > 0 ? metricNumber(afStatus.median_ring_ratio, 3) : "—"}
               cls={afStatus?.valid && afStatus.last_ring_ratio_update_us > 0 ? "" : "dim"}
             />
             <SideRow
@@ -1403,14 +1411,14 @@ export default function App() {
             />
             <SideRow
               k="Voltage:"
-              v={afStatus?.connected ? `${afStatus.current_voltage.toFixed(1)} V` : "—"}
+              v={afStatus?.connected ? `${metricNumber(afStatus.current_voltage, 1)} V` : "—"}
               cls={afStatus?.connected ? "" : "dim"}
             />
             <SideRow
               k="Metric age:"
               v={
                 afStatus?.valid && afStatus.last_ring_ratio_update_us > 0
-                  ? `${(afStatus.ring_ratio_age_us / 1000).toFixed(0)} ms`
+                  ? `${metricNumber(afStatus.ring_ratio_age_us / 1000, 0)} ms`
                   : "—"
               }
               cls={afStatus?.valid && afStatus.last_ring_ratio_update_us > 0 ? "" : "dim"}
@@ -1505,6 +1513,7 @@ export default function App() {
           {caps.reanalysis && <ReanalysisStatus model={reanalysis}/>}
           <ExportStatus model={reviewExport} />
           <div className="tab-body">
+            <PanelErrorBoundary>{() => <>
             <div hidden={tab !== "connect"}>
               <HardwareControls ready={ready} experimentActive={expActive} append={append} capabilities={caps}
                 mode={operatingMode} armed={triggerArmed} onDisarm={() => setTriggerArmed(false)} onSelectionChanged={refreshCameraState} />
@@ -1807,7 +1816,7 @@ export default function App() {
                       <p className="mono" role="status">
                         Run 512×96 at ({instrument?.mode?.run_x}, {instrument?.mode?.run_y}) · frame {runPreviewInfo?.frameId ?? "—"}
                         {" · "}listed {runPreviewInfo?.listed ?? "—"} · cells {runPreviewInfo?.cells ?? "—"} · blemishes {runPreviewInfo?.blemishes ?? "—"}
-                        {" · "}latency max {instrument?.latency ? `${instrument.latency.max_us.toFixed(0)} µs` : "—"}
+                        {" · "}latency max {instrument?.latency ? `${metricNumber(instrument.latency.max_us, 0)} µs` : "—"}
                         {" · "}<label><input type="checkbox" checked={showRunMask} onChange={(e) => setShowRunMask(e.target.checked)} /> U-Net mask</label>
                       </p>
                     )}
@@ -1885,7 +1894,7 @@ export default function App() {
                       {configTab === "app" && (
                         <>
                           <div className="toolbar">
-                            <button onClick={()=>{if((!configDirty&&!quickDraft.dirty)||window.confirm("Discard unsaved live configuration edits and reload?"))void refreshConfig(true);}} disabled={!ready} title="Reload the live config from the backend">
+                            <button onClick={async()=>{if((!configDirty&&!quickDraft.dirty)||await confirm("Discard unsaved live configuration edits and reload?"))void refreshConfig(true);}} disabled={!ready} title="Reload the live config from the backend">
                               Reload
                             </button>
                             <button className="btn" onClick={onApplyConfigJson} disabled={!ready || !configDirty || liveDraft.runtimeChanged} title={configDirty ? "Merge-apply the edited document" : "No edits to apply"}>
@@ -1944,8 +1953,8 @@ export default function App() {
                               {quickDraft.runtimeChanged && <p role="status">Runtime processing controls changed; your edits are preserved. Use Reload above, then reconcile your changes.</p>}
                               {stats?.valid && (
                                 <p className="mono">
-                                  algo {formatMetric(stats.algo_fps1s)} · valid {formatMetric(stats.valid_fps1s)} · invalid{" "}
-                                  {formatMetric(stats.invalid_fps1s)} fps · px→µm {stats.pixel_to_micron}
+                                  algo {metricNumber(stats.algo_fps1s)} · valid {metricNumber(stats.valid_fps1s)} · invalid{" "}
+                                  {metricNumber(stats.invalid_fps1s)} fps · px→µm {metricNumber(stats.pixel_to_micron, 5, true)}
                                 </p>
                               )}
                               <p className="mono">background: {backgroundSet ? "set" : "not set"}</p>
@@ -2115,10 +2124,7 @@ export default function App() {
                               <td>{r.track_id}</td>
                               <td>{r.valid ? "yes" : "no"}</td>
                               <td>{r.target_group ? "yes" : "no"}</td>
-                              <td>{r.area.toFixed(1)}</td>
-                              <td>{r.deformability.toFixed(3)}</td>
-                              <td>{r.ring_ratio.toFixed(3)}</td>
-                              <td>{Number.isFinite(r.youngs_modulus)&&r.youngs_modulus>0?r.youngs_modulus.toFixed(2):"unavailable"}</td>
+                              <ResultMetricCells row={r} />
                             </tr>
                           ))}
                           {(monSnapshot?.rows?.length ?? 0) === 0 && (
@@ -2286,10 +2292,7 @@ export default function App() {
                               <td>{r.frame_index}</td>
                               <td>{r.object_id}</td>
                               <td>{r.track_id}</td>
-                              <td>{r.area.toFixed(1)}</td>
-                              <td>{r.deformability.toFixed(3)}</td>
-                              <td>{r.ring_ratio.toFixed(3)}</td>
-                              <td>{Number.isFinite(r.youngs_modulus)&&r.youngs_modulus>0?r.youngs_modulus.toFixed(2):"unavailable"}</td>
+                              <ResultMetricCells row={r} />
                             </tr>
                           ))}
                           {(metricsPage?.rows?.length ?? 0) === 0 && (
@@ -2327,6 +2330,7 @@ export default function App() {
                 </div>
               </>
             )}
+            </>}</PanelErrorBoundary>
           </div>
         </main>
       </div>
@@ -2367,8 +2371,8 @@ export default function App() {
           Log {showLog ? "▾" : "▸"} ({log.length})
         </button>
         <span className="metrics">
-          Display={displayFps.toFixed(1)} fps | Algo={formatMetric(algoFps)}/s | Valid={formatMetric(validFps)}/s | Invalid=
-          {formatMetric(invalidFps)}/s | Camera={running ? "running" : camStatus}, {dataRate.toFixed(1)} MB/s | Experiment:{" "}
+          Display={metricNumber(displayFps, 1)} fps | Algo={metricNumber(algoFps)}/s | Valid={metricNumber(validFps)}/s | Invalid=
+          {metricNumber(invalidFps)}/s | Camera={running ? "running" : camStatus}, {metricNumber(dataRate, 1)} MB/s | Experiment:{" "}
           {(EXPERIMENT_STATE_NAMES[expState] ?? "Inactive").toLowerCase()}
           {expActive ? ` (buffered ${String(BigInt(expStatus?.valid_buffered ?? "0") + BigInt(expStatus?.invalid_buffered ?? "0"))})` : ""}
         </span>

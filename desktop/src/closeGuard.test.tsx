@@ -15,7 +15,7 @@ Object.assign(globalThis,{IS_REACT_ACT_ENVIRONMENT:true});
 let root:Root,host:HTMLDivElement,close:()=>Promise<void>,dirty=false,busy=false,ready=true;
 const report=vi.fn();
 function Harness(){close=useCloseGuard({ready,dirty,busy,report});return null;}
-beforeEach(async()=>{
+beforeEach(async()=>{Object.assign(window,{__TAURI_INTERNALS__:{}});
  vi.resetAllMocks();dirty=false;busy=false;ready=true;native.onCloseRequested.mockResolvedValue(()=>{});
  vi.mocked(bridge.fetchExperimentStatus).mockResolvedValue({valid:true,state:0} as never);
  vi.mocked(invoke).mockResolvedValue({capture_running:false,recording:false});
@@ -24,7 +24,7 @@ beforeEach(async()=>{
  vi.mocked(bridge.backgroundCalibrationStatus).mockResolvedValue({state:'idle'} as never);
  host=document.createElement('div');root=createRoot(host);await act(async()=>root.render(<Harness/>));
 });
-afterEach(async()=>{await act(async()=>root.unmount());});
+afterEach(async()=>{Reflect.deleteProperty(window,"__TAURI_INTERNALS__");await act(async()=>root.unmount());});
 it('OS close is prevented while experiment finalizes, without issuing stop or closing',async()=>{
  vi.mocked(bridge.fetchExperimentStatus).mockResolvedValue({valid:true,state:3} as never);
  const event={preventDefault:vi.fn()};await act(async()=>native.onCloseRequested.mock.calls[0][0](event));
