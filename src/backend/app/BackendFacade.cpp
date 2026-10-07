@@ -749,6 +749,7 @@ namespace backend::bridge
 
     BackendCommandResult BackendFacade::handleRecordingCommand(const RecordingCommand &command)
     {
+        std::string error;
         switch (command.action)
         {
         case RecordingCommandAction::StartFrameRecording:
@@ -761,8 +762,7 @@ namespace backend::bridge
                 0,
                 0,
             });
-            if (!backend_.startFrameRecording(command.filePath))
-            {
+            if (!backend_.startFrameRecording(command.filePath, &error)) {
                 emitEvent(RecordingStatusEvent{
                     RecordingState::Error,
                     command.filePath,
@@ -773,9 +773,8 @@ namespace backend::bridge
                     0,
                 });
                 emitEvent(BackendErrorEvent{BackendErrorSource::Recording,
-                                            BackendCommandType::Recording,
-                                            "Frame recording start failed"});
-                return {false, BackendCommandType::Recording, "Frame recording start failed"};
+                                            BackendCommandType::Recording, error});
+                return {false, BackendCommandType::Recording, error};
             }
             emitEvent(RecordingStatusEvent{
                 RecordingState::Recording,
