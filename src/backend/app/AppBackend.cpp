@@ -368,6 +368,7 @@ namespace backend
         stopFrameRecording();
         if (processingService_) {
             SPDLOG_INFO("AppBackend: shutdown stopping processing");
+            processingService_->stopBackgroundCalibration();
             processingService_->stopRealtime();
             processingService_->stopBatchPipeline();
             processingService_->stop();
@@ -461,6 +462,19 @@ namespace backend
         captureService_ = std::make_unique<services::CaptureService>();
         processingService_ = std::make_unique<services::ProcessingService>();
         experimentCoordinator_ = std::make_unique<app::ExperimentCoordinator>(*this);
+        processingService_->setBackgroundPublicationTransaction([this](const std::function<void()>& apply) {
+            // A worker must not block on a transaction that may join that worker,
+            // so it only try-locks. Status polls hold the coordinator mutex
+            // briefly, so retry for a bounded time before giving up. Otherwise a
+            // calibration would be cancelled by mere contention. A joiner that
+            // holds the mutex is only delayed by this bound.
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
+            do {
+                if (experimentCoordinator_->withIdleConfiguration(apply, false)) return true;
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            } while (std::chrono::steady_clock::now() < deadline);
+            return false;
+        });
         // Funnel experiment flush-write failures to the coordinator (which
         // finalizes the run as Failed) and to the fatal-save-error sink the UI
         // surfaces.

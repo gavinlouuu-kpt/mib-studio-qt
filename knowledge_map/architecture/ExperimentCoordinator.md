@@ -229,3 +229,7 @@ nonzero persisted accounting.
 Readiness also blocks while bounded background calibration is running, preventing
 a later publication from replacing a background after experiment configuration
 is frozen. Cancellation/completion restores this gate.
+
+Background set/clear and calibration apply share `withIdleConfiguration` with ROI
+settings. Asynchronous calibration publication uses the nonblocking overload to
+avoid waiting on a configuration transaction that might join its worker (#542).

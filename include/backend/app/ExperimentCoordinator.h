@@ -110,7 +110,9 @@ public:
                           const std::string& expectedCode, const std::string& expectedMessage,
                           std::string& error);
     // Runs a non-reentrant config transaction while Start is excluded.
+    // Workers use wait=false to avoid waiting on transactions that may join them.
     bool withIdleConfiguration(const std::function<void()>& transaction);
+    bool withIdleConfiguration(const std::function<void()>& transaction, bool wait);
     bool hasUnresolvedFault() const;
 
 private:
