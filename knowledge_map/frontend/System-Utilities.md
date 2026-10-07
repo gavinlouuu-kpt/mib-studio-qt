@@ -303,3 +303,15 @@ Qt opens What's New once on an upgrade. AutoUpdater and SoftwareUpdatesDialog
 accept optional `release_notes` alongside the existing URL and display Markdown
 inline. Publishing caps the UTF-8 plain-text summary at 16 KiB. Missing inline
 notes retain the URL button fallback. See [[frontend/MainWindow]].
+
+## Experiment configuration ownership (#582)
+
+`PlaybackPanel` disables Clear ROI, ROI dragging, Set Background, Auto Background,
+and the background/calibration context actions while the coordinator is not idle;
+tooltips explain that the experiment must be stopped or reset. ROI persistence
+and manual background changes execute inside the idle transaction.
+`AppConfigWatcher` defers whole-document reloads during a run, warns once per
+file event, and retries the latest path on its existing 500 ms timer until idle.
+The loaded fingerprint and runtime recipe remain unchanged until application.
+Offscreen coverage: `frontend.config_apply` (Starting/Active/Stopping, drag,
+context menu, paused controls, deferred reload and idle restoration).
