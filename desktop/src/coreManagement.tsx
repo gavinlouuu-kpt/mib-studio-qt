@@ -1,6 +1,6 @@
 import {ApplicationUpdateControls} from "./applicationUpdate";
 import {invoke} from "./transport";
-import {open} from "./transport/dialogs";
+import {open, confirm} from "./transport/dialogs";
 import {openUrl} from "./transport/dialogs";
 import {useEffect,useRef,useState} from "react";
 import {fetchProfileText} from "./profileCatalog";
@@ -39,9 +39,9 @@ export function useCoreManagement({ready,active,resume=false,append,onChanged}:{
     if(!entry.manifest_url.startsWith("https://"))throw new Error("Immutable manifest requires HTTPS");
     const manifest=await fetchProfileText(entry.manifest_url);
     const source=await open({multiple:false,filters:[{name:"Downloaded native processing core",extensions:["so","dll","dylib"]}]});if(typeof source!=="string")return;
-    if(!window.confirm(`Verify and activate processing core ${entry.version}? Capture and processing must be stopped. The previous core remains active if verification or persistence fails.`))return;
+    if(!await confirm(`Verify and activate processing core ${entry.version}? Capture and processing must be stopped. The previous core remains active if verification or persistence fails.`))return;
     request={operation:"activate_local",entry,manifest_json:manifest,channel:index!.channel,source_path:source};
-   }else if(action==="bundled"&&!window.confirm("Switch to the bundled processing core? Administrator version pins still apply."))return;
+   }else if(action==="bundled"&&!await confirm("Switch to the bundled processing core? Administrator version pins still apply."))return;
    const r=await coreCommand(request);if(!r.ok)throw new Error(r.error);await refresh();await onChanged();setMessage(r.active_version?`Processing core ${r.active_version} active`:"Core startup selection checked");
   }catch(e){setMessage(String(e));append(`Core/update: ${String(e)}`);try{await refresh();}catch{/* Retain primary error. */}}
   finally{pending.current=false;setBusy(false);if(action==="restore")setInitialized(true);}
