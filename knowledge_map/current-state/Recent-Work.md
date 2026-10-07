@@ -16,6 +16,16 @@ script is available when FlowIO is installed; FlowJo import remains manually
 unverified. See
 [[../services/HdfExportService]] and [[../../docs/howto/hdf5-export-app]].
 
+## 2026-10-07 — Deterministic experiment readiness checks (#506)
+
+`backend.experiment_readiness` joins the realtime consumer before editing the live
+recipe and checking the frozen active run and `AlreadyActive`; the coordinator
+stays active until the test requests Stop. Calibration inputs now wait for each
+frame's processed outcome (snapshot or empty-frame counter), using an isolated
+input store after capture stops, so slow consumers cannot skip the finite input set. Buffered-frame and calibration
+timeout checks wait for their explicit states instead of fixed sleeps. No backend
+or bridge change. See [[architecture/ExperimentCoordinator]].
+
 ## 2026-10-07 — An experiment and a moving Z stage exclude each other (#533)
 
 `ExperimentCoordinator::start` neither checked nor cancelled a stage operation queued before it, and

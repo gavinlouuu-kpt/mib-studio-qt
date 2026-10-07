@@ -20,6 +20,7 @@
 #include "backend/app/AppBackend.h"
 #include "backend/app/ExperimentCoordinator.h"
 #include "backend/playback/FrameStore.h"
+#include "backend/diagnostics/PipelineTimingRecorder.h"
 #include "backend/processing/ProcessingService.h"
 #include "backend/recording/Hdf5Service.h"
 #include "backend/services/CaptureService.h"
@@ -35,6 +36,7 @@
 #include <cstdio>
 #include <fstream>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <thread>
@@ -311,8 +313,12 @@ int main()
         MIB_EXPECT(frozen.readinessGeneration == r.generation && frozen.startGeneration == 1, "snapshot generations");
         MIB_EXPECT(frozen.roiW == 64 && frozen.roiH == 64, "snapshot froze the ROI in force at start");
         MIB_EXPECT(frozen.applicationVersion == "test-version", "application identity recorded");
-        MIB_EXPECT(frozen.camera.effective == "mock" && frozen.camera.simulated, "camera source frozen");
+        MIB_EXPECT(frozen.camera.effective == "mock" && frozen.camera.simulated,
+                   "camera source frozen");
 
+        // Join the consumer before editing the live recipe so pipeline progress
+        // cannot end the run between the active snapshot and duplicate Start.
+        proc.stopRealtime();
         // Later edits do not mutate the frozen run.
         proc.setRealtimeRoi(ProcessingService::Roi{0, 0, 32, 32});
         proc.setRealtimeBackgroundGray(cv::Mat(96, 96, CV_8UC1, cv::Scalar(9)));
@@ -418,11 +424,16 @@ int main()
         req.readinessGeneration = r.generation;
         const auto started = coordinator.start(req);
         MIB_REQUIRE(started.started(), "start: " + started.message);
-        // Let frames accumulate so a remainder exists at stop.
-        std::this_thread::sleep_for(std::chrono::milliseconds(400));
-        MIB_EXPECT(coordinator.status().validBuffered + coordinator.status().invalidBuffered > 0,
-                   "status reports buffered frames while active");
-        MIB_EXPECT(coordinator.requestStop(false) == backend::app::ExperimentStopOutcome::Accepted, "stop accepted");
+        // Stop once a remainder exists, independent of processing speed.
+        MIB_REQUIRE(waitFor(
+                        [&] {
+                            const auto s = coordinator.status();
+                            return s.validBuffered + s.invalidBuffered > 0;
+                        },
+                        std::chrono::seconds(5)),
+                    "status reports buffered frames while active");
+        MIB_EXPECT(coordinator.requestStop(false) == backend::app::ExperimentStopOutcome::Accepted,
+                   "stop accepted");
         {
             const auto second = coordinator.requestStop(false);
             MIB_EXPECT(second == backend::app::ExperimentStopOutcome::Busy ||
@@ -550,16 +561,37 @@ int main()
 
     // ---- 7. Bounded background calibration ------------------------------------
     stopCapture(backend);
-    std::this_thread::sleep_for(std::chrono::milliseconds(200)); // realtime loop drains the store
-    auto store = backend.getFrameStore();
+    proc.stopRealtime(); // join any captured frame still in flight
+    auto store = std::make_shared<backend::playback::FrameStore>();
     proc.setRealtimeRoi(ProcessingService::Roi{0, 0, 96, 96});
     const cv::Mat emptyFrame(96, 96, CV_8UC1, cv::Scalar(7));
     uint64_t ts = 10'000;
-    auto pushEmpty = [&] { pushMat(*store, emptyFrame, ++ts); std::this_thread::sleep_for(std::chrono::milliseconds(3)); };
-    auto pushRing = [&](int i) { pushMat(*store, mib::test::ringFrame(96, 96, i), ++ts); std::this_thread::sleep_for(std::chrono::milliseconds(3)); };
+    // The realtime cursor starts at index zero; seed it before calibration.
+    pushMat(*store, emptyFrame, ++ts);
+    auto& timing = backend::diagnostics::PipelineTimingRecorder::instance();
+    const bool timingWasEnabled = timing.isEnabled();
+    timing.setEnabled(true);
+    proc.startRealtime(store);
+    auto pushAndWait = [&](const cv::Mat& frame) {
+        const auto index = store->committedCount();
+        const auto emptyBefore =
+            timing.skippedCount(backend::diagnostics::PipelineSkipReason::EmptyFrame);
+        pushMat(*store, frame, ++ts);
+        const auto processed = [&] {
+            ProcessingService::RealtimeSnapshot snapshot;
+            return (proc.getLatestSnapshot(snapshot) && snapshot.index >= index) ||
+                   timing.skippedCount(backend::diagnostics::PipelineSkipReason::EmptyFrame) >
+                       emptyBefore;
+        };
+        MIB_REQUIRE(waitFor(processed, std::chrono::seconds(5)),
+                    "calibration frame processed before the next input");
+    };
+    auto pushEmpty = [&] { pushAndWait(emptyFrame); };
+    auto pushRing = [&](int i) { pushAndWait(mib::test::ringFrame(96, 96, i)); };
     using BgState = ProcessingService::BackgroundCalibrationState;
     auto waitFinished = [&] {
-        return waitFor([&] { return proc.backgroundCalibrationStatus().finished(); }, std::chrono::seconds(10));
+        return waitFor([&] { return proc.backgroundCalibrationStatus().finished(); },
+                       std::chrono::seconds(10));
     };
 
     {
@@ -620,7 +652,7 @@ int main()
         req.maxAttempts = 50;
         req.timeoutMs = 100;
         MIB_REQUIRE(proc.startBackgroundCalibration(req), "start timeout calibration");
-        std::this_thread::sleep_for(std::chrono::milliseconds(150));
+        MIB_REQUIRE(waitFinished(), "timeout calibration finishes without frames");
         const auto st = proc.backgroundCalibrationStatus();
         MIB_EXPECT(st.state == BgState::FailedTimeout, "no frames -> timeout is reported, never Running forever");
         MIB_EXPECT(proc.backgroundGeneration() == goodGen, "background preserved on timeout");
@@ -666,6 +698,7 @@ int main()
     {
         wd.mark("bg not running");
         proc.stopRealtime();
+        timing.setEnabled(timingWasEnabled);
         std::string err;
         MIB_EXPECT(!proc.startBackgroundCalibration(ProcessingService::BackgroundCalibrationRequest{}, &err) && !err.empty(),
                    "calibration refused when realtime is not running");
