@@ -105,6 +105,31 @@ def test_explicit_version_must_match_numeric_installer_version():
         raise AssertionError("mismatched release/installer identity was accepted")
 
 
+def test_inline_release_notes_preserved_in_catalog():
+    manifest = entry("9.8.7")
+    manifest["release_notes"] = "Highlights\nOffline Help (#573)"
+    mapped = pub._index_entry_from_manifest(manifest)
+    assert mapped["release_notes"] == manifest["release_notes"]
+    assert "release_notes" not in pub._index_entry_from_manifest(entry("9.8.6"))
+
+
+def test_release_notes_file_dry_run():
+    import json
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        folder = pathlib.Path(tmp)
+        installer = folder / "MIB_Studio_Qt_Update_v9.8.7.exe"
+        installer.write_bytes(b"fixture")
+        notes = folder / "notes.md"
+        notes.write_text("# Highlights\n\n" + "é" * 20000, encoding="utf-8")
+        manifest = folder / "latest.json"
+        assert pub.main(["--installer", str(installer), "--release-notes-file", str(notes),
+                         "--manifest-out", str(manifest), "--dry-run"]) == 0
+        text = json.loads(manifest.read_text())["release_notes"]
+        assert text.startswith("Highlights")
+        assert len(text.encode("utf-8")) <= 16384
+
+
 if __name__ == "__main__":
     test_insert_into_empty()
     test_dedupe_and_order()
@@ -116,4 +141,6 @@ if __name__ == "__main__":
     test_resolve_index_update_skips_on_read_failure()
     test_beta_artifact_keys_keep_full_release_identity()
     test_explicit_version_must_match_numeric_installer_version()
+    test_inline_release_notes_preserved_in_catalog()
+    test_release_notes_file_dry_run()
     print("ok")

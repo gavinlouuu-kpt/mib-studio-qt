@@ -289,3 +289,17 @@ tested by `tests/frontend/update_catalog_test.cpp`), `OverlayRenderer`,
   — tiny `QObject` that bridges non-Qt thread callbacks (e.g.
   background auto-capture from [[../services/ProcessingService]]) to Qt
   signals on the main thread. Owned by [[../architecture/AppBackend]].
+
+### Offline Help and inline update notes (#573)
+
+The viewer and local-navigation contract are documented in [[HelpDialog]].
+
+`HelpDialog` renders bundled Markdown with `QTextBrowser`: release notes from
+`<exe>/resources/release-notes/` (running version first, earlier versions newest
+first), and the manual from `resources/manual/`, including local page links and
+images. Development falls back to `docs/` in the compiled source root.
+`Help/LastSeenVersion` in QSettings suppresses fresh-install and repeated prompts;
+Qt opens What's New once on an upgrade. AutoUpdater and SoftwareUpdatesDialog
+accept optional `release_notes` alongside the existing URL and display Markdown
+inline. Publishing caps the UTF-8 plain-text summary at 16 KiB. Missing inline
+notes retain the URL button fallback. See [[frontend/MainWindow]].

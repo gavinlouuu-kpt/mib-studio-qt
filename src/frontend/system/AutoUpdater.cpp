@@ -11,6 +11,11 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMessageBox>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QLabel>
+#include <QTextBrowser>
+#include <QVBoxLayout>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
@@ -136,6 +141,7 @@ void AutoUpdater::installVersion(const updatecatalog::VersionEntry& e) {
     m.installerSha256Hex = e.installerSha256Hex.toUtf8();
     m.installerSizeBytes = e.installerSizeBytes;
     m.releaseNotesUrl = QUrl(e.releaseNotesUrl);
+    m.releaseNotes = e.releaseNotes;
     startInstallerDownload(m, /*interactive=*/true);
 }
 
@@ -260,43 +266,46 @@ void AutoUpdater::startManifestRequest(const QUrl& url, bool interactive) {
             return;
         }
 
-        // Prompt user to install
-        const QString title = QStringLiteral("Update Available");
-        QString text =
-            QStringLiteral("A new version is available.\n\nInstalled: %1\nAvailable: %2\n\nInstaller size: %3\n\nInstall now?")
-                .arg(QCoreApplication::applicationVersion(),
-                     manifest.versionString,
-                     humanBytes(manifest.installerSizeBytes));
-
-        QMessageBox box(uiParent_);
-        box.setIcon(QMessageBox::Information);
-        box.setWindowTitle(title);
-        box.setText(text);
-
-        QPushButton* installBtn = box.addButton(QStringLiteral("Install"), QMessageBox::AcceptRole);
-        QPushButton* cancelBtn = box.addButton(QMessageBox::Cancel);
-        QPushButton* notesBtn = nullptr;
-        if (manifest.releaseNotesUrl.isValid()) {
-            notesBtn = box.addButton(QStringLiteral("Release Notes"), QMessageBox::ActionRole);
-        }
-
-        box.setDefaultButton(installBtn);
-
-        while (true) {
-            box.exec();
-            if (box.clickedButton() == notesBtn) {
-                QDesktopServices::openUrl(manifest.releaseNotesUrl);
-                continue; // keep the dialog open for install decision
-            }
-            if (box.clickedButton() == cancelBtn) {
-                busy_ = false;
-                return;
-            }
-            break;
+        if (!confirmUpdate(manifest)) {
+            busy_ = false;
+            return;
         }
 
         startInstallerDownload(manifest, true /* interactive */);
     });
+}
+
+bool AutoUpdater::confirmUpdate(const Manifest& manifest) {
+    QDialog dialog(uiParent_);
+    dialog.setWindowTitle(tr("Update Available"));
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* summary =
+        new QLabel(tr("A new version is available.\n\nInstalled: %1\nAvailable: %2\n\nInstaller "
+                      "size: %3\n\nInstall now?")
+                       .arg(QCoreApplication::applicationVersion(), manifest.versionString,
+                            humanBytes(manifest.installerSizeBytes)),
+                   &dialog);
+    summary->setTextFormat(Qt::PlainText);
+    layout->addWidget(summary);
+    if (!manifest.releaseNotes.isEmpty()) {
+        auto* notes = new QTextBrowser(&dialog);
+        notes->setMarkdown(manifest.releaseNotes);
+        notes->setOpenExternalLinks(true);
+        notes->setMinimumSize(560, 260);
+        layout->addWidget(notes);
+    }
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, &dialog);
+    auto* install = buttons->addButton(tr("Install"), QDialogButtonBox::AcceptRole);
+    install->setDefault(true);
+    if (manifest.releaseNotesUrl.isValid()) {
+        auto* notes = buttons->addButton(tr("Release Notes"), QDialogButtonBox::ActionRole);
+        connect(notes, &QPushButton::clicked, &dialog,
+                [manifest]() { QDesktopServices::openUrl(manifest.releaseNotesUrl); });
+    }
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+    return dialog.exec() == QDialog::Accepted;
 }
 
 std::optional<AutoUpdater::Manifest> AutoUpdater::parseManifest(const QByteArray& jsonBytes, QString* errorOut) const {
@@ -337,6 +346,7 @@ std::optional<AutoUpdater::Manifest> AutoUpdater::parseManifest(const QByteArray
     }
 
     Manifest m;
+    m.releaseNotes = obj.value(QStringLiteral("release_notes")).toString().left(16384);
     m.versionString = version.trimmed();
     m.installerUrl = installerUrl;
     m.installerSha256Hex = normalizedHexLower(sha256Str);

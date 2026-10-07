@@ -1,3 +1,6 @@
+import { getVersion } from "@tauri-apps/api/app";
+import { OfflineHelp, offlineHelpMenu } from "./OfflineHelp";
+import desktopPackage from "../package.json";
 import { experimentCounterRows } from "./experimentCounters";
 import { ProcessingSetupControls } from "./components/ProcessingSetupControls";
 import { metricNumber } from "./metricFormat";
@@ -173,6 +176,12 @@ export default function App() {
     () => localStorage.getItem(SIDEBAR_KEY) === "1",
   );
   const [fitWindow, setFitWindow] = useState(true);
+  const [offlineHelp, setOfflineHelp] = useState<"notes" | "manual" | null>(null);
+  const [helpVersion, setHelpVersion] = useState(desktopPackage.version);
+  const openOfflineHelp = (kind: "notes" | "manual") => {
+    void getVersion().then(setHelpVersion).catch(() => {});
+    setOfflineHelp(kind);
+  };
   const [showAbout, setShowAbout] = useState(false);
   const [showCentralMethods, setShowCentralMethods] = useState(false);
 
@@ -1357,6 +1366,7 @@ export default function App() {
         <Menu
           label="Help"
           items={[
+            ...offlineHelpMenu(openOfflineHelp),
             { label: "About", onClick: () => setShowAbout(true) },
             {
               label: "Documentation",
@@ -2481,6 +2491,7 @@ export default function App() {
         <CentralMethodsPanel onClose={() => setShowCentralMethods(false)} onError={append} />
       )}
 
+      {offlineHelp && <OfflineHelp kind={offlineHelp} version={helpVersion} close={() => setOfflineHelp(null)} />}
       {/* ---- About modal ---- */}
       {showAbout && (
         <div className="modal-backdrop" onClick={() => setShowAbout(false)}>
