@@ -7,6 +7,15 @@ at configure time, otherwise `dev`), and platform/architecture to every shell.
 Explicit shell identities still override subsequent runs. The facade mock-run
 regression checks defaults, frozen identity, and overrides. No bridge ABI change.
 See [[architecture/ExperimentCoordinator]].
+
+## 2026-10-07 — Await desktop safety confirmations (#541)
+
+All destructive/draft-discard and Service mode prompts await the shared transport
+dialog helper. The Tauri shell uses the plugin public confirmation API with explicit
+`dialog:allow-message`; browsers use awaited native confirmation. Rejected dialogs
+fail closed. Tests cover cancellation, async shims, and forbid direct confirmation
+calls outside the helper. See [[architecture/Desktop-Shell]].
+
 ## 2026-10-07 — Raw recording preserves the experiment writer (#451)
 
 Manual recording uses the coordinator idle transaction for atomic admission
