@@ -307,3 +307,7 @@ signing or notarisation. How-tos: `docs/howto/macos-build.md`,
   `mainBinaryName` applies when the Tauri CLI bundles.
 - Keep product identity in the config overlay and the feature flag only;
   no `#ifdef`-style branching in React sources (ADR 0014).
+
+Metric labels and frame-viewer summaries use the shared `metricFormat.ts` finite
+number formatter (em dash for absent/non-finite values). The shell wraps its main
+review panel in `PanelErrorBoundary` with a Reload view action (#540).

@@ -24,6 +24,15 @@ A run that ended in `incompleteLoss` used to look like a clean finish: the statu
 Not yet: the Review tab, which needs the saved accounting in the review metadata (a bridge change).
 See [[../architecture/Desktop-Shell]], [[../architecture/ExperimentCoordinator]].
 
+## 2026-10-07 — React metric rendering and subtab layout (#540, #543)
+
+Result tables, monitoring labels and review/frame metrics use a shared finite-number
+formatter: missing or non-finite values display an em dash. Panel error boundaries
+allow reloading a failed view while shell controls and logs remain mounted. Subtab
+bodies retain content height; the outer tab body owns scrolling so Preflight and
+App-config controls remain reachable. Regression tests cover missing metrics and
+boundary recovery. See [[architecture/Desktop-Shell]] and [[frontend/YofoReview]].
+
 ## 2026-10-07 — Preflight cannot be confirmed with required checks failing (#548)
 
 The workflow's Hardware Preflight stage now blocks on the checklist's own REQUIRED checks. Before,

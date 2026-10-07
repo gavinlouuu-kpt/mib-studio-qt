@@ -845,6 +845,16 @@ disarms; #521).
 Tests: `stageControlModel.test.ts` (rules) and `StageControls.test.tsx`
 (panel behaviour with a mocked bridge).
 
+### Metric rendering and panel recovery (#540, #543)
+
+`metricFormat.ts` renders absent/non-finite metrics as an em dash. Both Studio
+result tables share `ResultMetricCells`; review columns, frame viewers and chart
+labels use the same formatter. `PanelErrorBoundary` surrounds the main panel
+content in Studio and YOFO Review; Reload view remounts the failed children while
+shell controls and logs stay available. Studio subtab bodies do not shrink below
+content height: the outer `.tab-body` scrolls the Preflight and App-config content.
+JSDOM has no flex layout engine; physical layout needs browser verification.
+
 Safety confirmations go through `desktop/src/transport/dialogs.ts` and must be
 awaited. Tauri uses the public dialog API (`dialog:allow-message`); browser
 confirmation and native dialog errors fail closed unless the result is true.
