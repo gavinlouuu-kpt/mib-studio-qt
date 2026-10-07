@@ -939,6 +939,13 @@ button.btn:disabled,
   flex: 1;
 }
 
+/* Stacked in a sub-tab body (a content-height flex column since #543), a
+   config group keeps its own height: with flex: 1 it shared the extra
+   height with the Review split and pushed the frames below the fold. */
+.subtab-body > .config-group {
+  flex: 0 0 auto;
+}
+
 .config-group h5 {
   margin: 0 0 6px;
   font-size: 12px;
