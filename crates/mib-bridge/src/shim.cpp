@@ -446,6 +446,12 @@ rust::Vec<BridgeEvent> contract_fixture_events() {
     experiment.status.persistenceAdmitted = maximum;
     experiment.status.persistenceCommitted = large;
     experiment.status.persistenceFailed = 7;
+    // Wire slots carry the saved/dropped split by class (#544, #546); the
+    // values keep contract/fixtures/events-v1.json byte-identical.
+    experiment.status.validSaved = large;
+    experiment.status.invalidSaved = 0;
+    experiment.status.droppedValid = maximum - large - 7;
+    experiment.status.droppedInvalid = 7;
     experiment.status.startGeneration = large;
     experiment.status.startWallClockNs = maximum - 1;
     experiment.status.endWallClockNs = maximum;
