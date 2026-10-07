@@ -1163,6 +1163,17 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
     const uint64_t endNs = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count());
     auto accounting = proc.experimentAccountingSnapshot();
+    // The queue is gone after finishFlush(), so preserve a fatal flush result
+    // in the run snapshot before persisting and caching accounting.
+    if (failed || !flushOk) {
+        const std::string message =
+            !failMessage.empty() ? failMessage
+                                 : "a save error occurred while flushing experiment data to disk";
+        accounting.fatalError = true;
+        accounting.fatalMessage = message;
+        accounting = recording::reconcile(std::move(accounting));
+        ok = false;
+    }
     // 5-6. Metadata, accounting, provenance, config JSON; close.
     bool metadataOk = true;
     if (fileOpen) {

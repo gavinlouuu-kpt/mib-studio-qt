@@ -733,6 +733,9 @@ private:
     backend::diagnostics::ByteAccountant flushQueueBytes_;
     std::function<void(const std::string&)> flushErrorCb_;
     std::atomic<bool> experimentActive_{false};
+    // The queue is destroyed after every flush; retain fatal write state for
+    // the lifetime of the run so accounting survives that destruction.
+    std::atomic<bool> experimentPersistenceFailed_{false};
     // Issue #367: per-experiment frame accounting + lifetime processing
     // failure counter. Written by the realtime thread, the flush writer, and
     // appendExperimentFrame; read by experimentAccountingSnapshot().
