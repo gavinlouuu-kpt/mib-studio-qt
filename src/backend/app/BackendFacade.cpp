@@ -3187,8 +3187,9 @@ std::string BackendFacade::fetchRunAccountingJson(const std::string& source) con
             std::scoped_lock lock(reviewMutex_);
             path = loadedRecordingPath_;
         }
-        // Only a file loaded for review counts: the shared handle may belong to a live writer.
-        if (!hdf5.isFileOpen() || path.empty()) return none("no file is open for review");
+        // Only a file loaded for review counts: the shared handle may belong to a live writer, so with
+        // no review file do not touch it at all (the experiment worker writes its state at finalize).
+        if (path.empty() || !hdf5.isFileOpen()) return none("no file is open for review");
         recording::RecordingAccountingSnapshot a;
         nlohmann::json j;
         const bool recorded = !hdf5.isRecordingFile() && hdf5.readRunAccounting(a);
