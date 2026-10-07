@@ -229,3 +229,11 @@ nonzero persisted accounting.
 Readiness also blocks while bounded background calibration is running, preventing
 a later publication from replacing a background after experiment configuration
 is frozen. Cancellation/completion restores this gate.
+
+### Raw recording admission (#451)
+
+`AppBackend::startFrameRecording` uses `withIdleConfiguration` through writer
+acquisition, so experiment Start and raw recording cannot both pass preflight.
+Starting/Active/Stopping (and Failed until reset) refuse recording; an already
+open HDF5 file is preserved. Raw recording remains busy until Stop joins its
+worker, including save-failure cleanup. See [[AppBackend]].
