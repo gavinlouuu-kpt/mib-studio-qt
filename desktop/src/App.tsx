@@ -10,7 +10,7 @@ import { formatMetric } from "./eventAdapter";
 import { decimalU64 } from "./framePacket";
 import { FramePullScheduler } from "./framePullScheduler";
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import {open, save} from "./transport/dialogs";
+import {open, save, confirm} from "./transport/dialogs";
 import {openUrl, revealItemInDir} from "./transport/dialogs";
 import {
   bridge,
@@ -1158,9 +1158,9 @@ export default function App() {
     if (operatingMode !== "service" || expActive) setTriggerArmed(false);
   }, [operatingMode, expActive]);
 
-  const enterMode = (next: OperatingMode) => {
+  const enterMode = async (next: OperatingMode) => {
     if (next === "service") {
-      const ok = window.confirm(
+      const ok = await confirm(
         "Enter Service / Commissioning mode?\n\nThis exposes hardware-actuating controls (trigger tests). Use only for bring-up and diagnostics.",
       );
       if (!ok) return;
@@ -1843,7 +1843,7 @@ export default function App() {
                       {configTab === "app" && (
                         <>
                           <div className="toolbar">
-                            <button onClick={()=>{if((!configDirty&&!quickDraft.dirty)||window.confirm("Discard unsaved live configuration edits and reload?"))void refreshConfig(true);}} disabled={!ready} title="Reload the live config from the backend">
+                            <button onClick={async()=>{if((!configDirty&&!quickDraft.dirty)||await confirm("Discard unsaved live configuration edits and reload?"))void refreshConfig(true);}} disabled={!ready} title="Reload the live config from the backend">
                               Reload
                             </button>
                             <button className="btn" onClick={onApplyConfigJson} disabled={!ready || !configDirty || liveDraft.runtimeChanged} title={configDirty ? "Merge-apply the edited document" : "No edits to apply"}>
