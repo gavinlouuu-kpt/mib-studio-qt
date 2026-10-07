@@ -11,7 +11,9 @@ Files larger than 2 GB are fine — frames load lazily as you browse.
   thumbnail (or a metrics-table row) to open the frame viewer, then use
   **←/→** to step frames.
 - **Metrics table** — every saved per-frame metric, with optional scatter
-  and histogram charts over the whole dataset.
+  and histogram charts over the whole dataset. The last column,
+  **Young's modulus (kPa)**, is blank where no modulus is available; the
+  metrics CSV has the same column.
 - **Charts: find a cell from the scatter** — on the **Charts** tab, click a
   point on the deformability-vs-area scatter to show that cell in the panel
   to the right of the plot (it never covers the scatter). The point is

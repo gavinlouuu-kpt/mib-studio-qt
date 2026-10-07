@@ -39,6 +39,10 @@ Running), `camera.source` (the hardware camera you selected is unavailable
 and the app would have used the simulated camera — select the mock camera
 explicitly or connect the hardware), `processing.core` (activate the pinned
 core), `storage.output` (choose a writable destination with free space),
+`storage.roundtrip` (a test write to the destination failed — check
+permissions and antivirus), `storage.buffer` (one full image series does not fit
+the recording memory budget — reduce the frame size or series length, or raise
+the budget),
 `lifecycle.fault` (the previous run's data could not be saved completely —
 acknowledge it in the dialog). *"The configuration changed while the
 experiment was being prepared"* means something (ROI, background,
@@ -49,8 +53,14 @@ run state reads **Failed – recovery required** and a red alert banner
 shows the reason and remedy (it stays until you click **Acknowledge**;
 the next Start remains blocked until the fault is acknowledged in the
 readiness dialog). Typical causes: disk full, missing permissions on the
-target folder, or antivirus blocking writes. The already-written part of
-the HDF5 file remains readable in the Review tab.
+target folder, antivirus blocking writes, or a folder with NTFS compression
+turned on (see below). The already-written part of the HDF5 file remains
+readable in the Review tab, and the file records the run as failed.
+
+**Frames lost at high frame rates, or the save queue fills.** Don't record
+into an NTFS-compressed folder: at 1000 fps the save queue fills in about
+13 s. In Windows Explorer open the folder's **Properties ▸ Advanced** and clear
+**Compress contents to save disk space**, or choose another folder.
 
 **An alert keeps coming back after Acknowledge.** Acknowledge only hides
 the banner; the same problem happening again re-shows it with an updated
