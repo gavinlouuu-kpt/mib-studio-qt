@@ -25,3 +25,10 @@ it("can suppress reference overlays without dropping the full-data density",asyn
   await act(async()=>host.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
   expect(host.querySelectorAll("polyline")).toHaveLength(0);expect(host.textContent).toContain("All 50000");
 });
+it("renders missing and non-finite aggregate metric labels as em dashes",async()=>{
+  vi.mocked(bridge.fetchReviewCharts).mockResolvedValue({...snapshot,area_range:[null,undefined],deform_range:[NaN,Infinity],ring_range:[null,NaN]} as never);
+  await act(async()=>root.render(<ReviewCharts sourcePath="a.h5"/>));
+  expect(host.textContent).toContain("—");
+  expect(host.textContent).not.toContain("NaN");
+  expect(host.textContent).not.toContain("Infinity");
+});
