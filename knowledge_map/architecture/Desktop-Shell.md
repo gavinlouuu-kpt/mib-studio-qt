@@ -89,6 +89,15 @@ in the Connect tab. Storage writability/free-space stays informational until a
 backend status contract exists. Details:
 `knowledge_map/task/2026-07-21-ux3-hardware-preflight.md`.
 
+**Required checks gate the workflow (#548).** `WorkflowFacts.requiredFailures` carries the
+checklist's `required` checks that are not `passed` ("Label: detail"). When present it is the
+authority for the Preflight stage and replaces the host core pin test, because the checklist
+already holds the host core check on the desktop and the PL core check on the PZ7035. Each such
+check is a blocking reason, so the stage is "needs attention", the recommended action navigates
+instead of offering the confirmation, and a stage confirmed earlier goes back to "needs
+attention" if one starts failing. A required check in `warning` blocks as well (the checklist's
+`criticalPassed` rule). Tests: `workflow.test.ts` (#548).
+
 **Quality gates (UX-4 slice, issue #308):** `desktop/src/quality.ts` —
 `deriveQualityGates(input)` turns the Camera & Alignment stage's
 "is the image good?" into concrete gates (focus / background / ROI /

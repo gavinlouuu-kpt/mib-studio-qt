@@ -603,7 +603,10 @@ int main()
                        "... but the token check before the opcode fails it");
         }
         MIB_EXPECT(rig.device.motionLog().size() == motions, "no motion opcode reached the controller");
-        MIB_EXPECT(!svc->snapshot().zeroSet && !rig.store->load(), "the zero and its record are dropped");
+        MIB_EXPECT(!svc->snapshot().zeroSet, "the zero is dropped");
+        // The record is deleted by the worker right after the poll or job that noticed (never under the
+        // service lock), so wait for that state instead of reading the store at once.
+        MIB_EXPECT(waitFor([&] { return !rig.store->load(); }), "and its record");
     }
     {
         StageRig rig;
@@ -1067,8 +1070,8 @@ int main()
         MIB_REQUIRE(waitFor([&] { return !svc->snapshot().status.driverAlarm; }), "alarm cleared");
         sleepMs(700); // the token reads recover
         MIB_EXPECT(!svc->snapshot().zeroSet, "the zero is not restored once the token matches again");
-        const auto k = rig.store->load();
-        MIB_EXPECT(k.has_value() && !k->zeroValid, "its record says so, keeping the window");
+        MIB_EXPECT(waitFor([&] { const auto k = rig.store->load(); return k && !k->zeroValid; }),
+                   "its record says so, keeping the window");
     }
 
     // Final review: a token rotation whose replacement record never reached the disk must
@@ -1183,8 +1186,7 @@ int main()
         rig.device.setDriverAlarm(false);
         sleepMs(900); // polls verify the token; the alarm is long gone
         MIB_EXPECT(!svc->snapshot().zeroSet, "the zero is not restored after a fault seen at connect");
-        const auto k = rig.store->load();
-        MIB_EXPECT(k.has_value() && !k->zeroValid, "and its record says so");
+        MIB_EXPECT(waitFor([&] { const auto k = rig.store->load(); return k && !k->zeroValid; }), "and its record says so");
     }
 
     // 7. A record file that fails at flush or close time is not renamed into place.
