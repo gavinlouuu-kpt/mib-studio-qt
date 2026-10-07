@@ -903,3 +903,9 @@ JSDOM has no flex layout engine; physical layout needs browser verification.
 Safety confirmations go through `desktop/src/transport/dialogs.ts` and must be
 awaited. Tauri uses the public dialog API (`dialog:allow-message`); browser
 confirmation and native dialog errors fail closed unless the result is true.
+
+Help ▸ What's New and User Manual use `OfflineHelp.tsx`. Vite eager raw imports
+bundle `docs/release-notes/v*.md` and `docs/manual/*.md`; URL imports bundle manual
+images. Local manual links navigate within the dialog, with an Index button and
+an explicit online-documentation button. Version discovery uses Tauri's app API,
+with the package version for development. This adds no bridge ABI surface.

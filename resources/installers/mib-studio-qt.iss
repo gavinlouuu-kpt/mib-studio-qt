@@ -73,6 +73,9 @@ Name: "installmindvision"; Description: "Install MindVision Camera SDK (required
 Type: files; Name: "{app}\mib_processing_core*.dll"
 
 [Files]
+Source: "{#SourceDir}docs\release-notes\*.md"; DestDir: "{app}\resources\release-notes"; Flags: ignoreversion
+Source: "{#SourceDir}docs\manual\*"; DestDir: "{app}\resources\manual"; Flags: ignoreversion recursesubdirs createallsubdirs
+
 ; Main executables
 Source: "{#SourceDir}{#BuildDir}\{#AppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 
