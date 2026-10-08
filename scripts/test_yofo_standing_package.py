@@ -78,6 +78,8 @@ def make_bundle_fixture(tmp: Path) -> tuple[Path, dict]:
 
 
 def check_bundle(check) -> None:
+    if sys.platform == "win32":  # the bundle is assembled on the Linux build host (bash, git, md5sum)
+        return
     script = ROOT / "scripts" / "yofo" / "bundle_assemble.sh"
     with tempfile.TemporaryDirectory() as tmp:
         pkg, env = make_bundle_fixture(Path(tmp))
