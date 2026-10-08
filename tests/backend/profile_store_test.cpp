@@ -9,6 +9,8 @@
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <thread>
+#include <utility>
+#include <vector>
 int main() {
     mib::test::Watchdog watchdog;
     mib::test::TempDir temp;
@@ -80,7 +82,7 @@ int main() {
     // Validate entire candidate before mutating runtime state, not processing-only.
     create["name"] = "runtime";
     create["document_json"] =
-        R"({"image_processing":{"area_threshold_min":42},"pixel_to_micron_factor":0.7,"buffer_threshold":55,"autofocus_focus_setpoint":31,"realtime_processing":{"mode":"inline","batch_size":4,"max_queued_frames":40},"camera":{"frame_delivery_mode":"latestFrame"}})";
+        R"({"image_processing":{"area_threshold_min":42,"difference_threshold":13},"pixel_to_micron_factor":0.7,"buffer_threshold":55,"autofocus_focus_setpoint":31,"realtime_processing":{"mode":"inline","batch_size":4,"max_queued_frames":40},"camera":{"frame_delivery_mode":"latestFrame"}})";
     const auto runtime = call(create);
     MIB_REQUIRE(runtime["ok"], runtime.dump());
     std::ofstream(std::filesystem::path(base) / "runtime" / "profile.meta.json")
@@ -94,6 +96,8 @@ int main() {
                    backend.processing().getFlushInterval() == 55 &&
                    backend.autofocus().getConfig().focusSetpoint == 31,
                "nonprocessing settings applied");
+    MIB_EXPECT(backend.processing().getProcessingConfig().bg_subtract_threshold == 13,
+               "shared applier: the v2 difference_threshold key applies to local profiles too");
     create["name"] = "invalid-runtime";
     create["document_json"] =
         R"({"image_processing":{"area_threshold_min":99},"pixel_to_micron_factor":-1})";
@@ -105,6 +109,35 @@ int main() {
     MIB_EXPECT(!rejected["ok"] &&
                    backend.processing().getProcessingConfig().area_threshold_min == 42,
                "later invalid calibration cannot partially apply processing");
+    // The same shared validator as central methods (config_document_apply_test).
+    // An out-of-bounds value is refused with nothing changed...
+    create["name"] = "bounds";
+    create["document_json"] = R"({"buffer_threshold":0})";
+    const auto bounds = call(create);
+    MIB_REQUIRE(bounds["ok"], bounds.dump());
+    const auto refusedBounds =
+        call({{"operation", "apply"}, {"name", "bounds"}, {"baseline", bounds["profile"]["revision"]}});
+    MIB_EXPECT(!refusedBounds["ok"] &&
+                   refusedBounds["error"].get<std::string>().find("buffer_threshold must be between") !=
+                       std::string::npos &&
+                   backend.processing().getFlushInterval() == 55,
+               "profile path refuses an out-of-bounds value, naming the bound, with nothing changed");
+    // ...and an ROI with no frame and no known camera geometry is pending: the
+    // rest of the profile applies and the ROI waits for the first frame.
+    create["name"] = "pending-roi";
+    create["document_json"] = R"({"pixel_to_micron_factor":0.6,"roi":{"x":0,"y":0,"w":5000,"h":10}})";
+    const auto pendingRoi = call(create);
+    MIB_REQUIRE(pendingRoi["ok"], pendingRoi.dump());
+    const auto appliedPending =
+        call({{"operation", "apply"}, {"name", "pending-roi"}, {"baseline", pendingRoi["profile"]["revision"]}});
+    MIB_EXPECT(appliedPending["ok"] && appliedPending["roi_pending"] == true &&
+                   backend.processing().getPixelToMicronFactor() == 0.6 && backend.processing().realtimeRoiPending(),
+               "profile path: the rest applies and the ROI is pending");
+    // Back to the runtime profile for the selection checks below.
+    const auto reapplied = call({{"operation", "apply"},
+                                 {"name", "runtime"},
+                                 {"baseline", withMetadata["profile"]["revision"]}});
+    MIB_REQUIRE(reapplied["ok"], reapplied.dump());
     auto selected = call({{"operation", "selection"}});
     MIB_EXPECT(selected["selection"]["name"] == "runtime" &&
                    selected["active_profile"]["name"] == "runtime",
@@ -121,7 +154,7 @@ int main() {
     MIB_EXPECT(!staleRestore["ok"] && backend.processing().getPixelToMicronFactor() == 0.7,
                "startup refuses changed profile revision");
     const auto listed = call({{"operation", "list"}});
-    MIB_EXPECT(listed["profiles"].size() == 4, "archives and malformed entries excluded");
+    MIB_EXPECT(listed["profiles"].size() == 6, "archives and malformed entries excluded");
     const auto sha = [](const std::string& text) {
         return backend::processing::processingCoreBytesSha256(
             reinterpret_cast<const uint8_t*>(text.data()), text.size());

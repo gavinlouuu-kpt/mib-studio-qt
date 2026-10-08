@@ -443,6 +443,9 @@ void ProcessingService::setRealtimeRoi(const Roi& roi) {
         {
             std::scoped_lock lk(rtMutex_);
             rtRoi_ = roi;
+            pendingRoi_.reset();
+            pendingRoiNotice_.clear();
+            roiPending_.store(false, std::memory_order_release);
         }
         configVersion_.fetch_add(1, std::memory_order_release);
         refreshRealtimeBatchPipelineConfig();
@@ -454,6 +457,60 @@ void ProcessingService::setRealtimeRoi(const Roi& roi) {
     } else if (!experimentActive_.load(std::memory_order_acquire)) {
         apply();
     }
+}
+
+void ProcessingService::setPendingRealtimeRoi(const Roi& roi) {
+    const auto apply = [&] {
+        std::scoped_lock lk(rtMutex_);
+        pendingRoi_ = roi;
+        pendingRoiNotice_.clear();
+        roiPending_.store(true, std::memory_order_release);
+    };
+    if (backgroundPublicationTransaction_) {
+        if (!backgroundPublicationTransaction_(apply))
+            SPDLOG_WARN("ProcessingService: setPendingRealtimeRoi refused while experiment "
+                        "configuration is busy or not idle");
+    } else if (!experimentActive_.load(std::memory_order_acquire)) {
+        apply();
+    }
+}
+
+std::string ProcessingService::pendingRoiNotice() const {
+    std::scoped_lock lk(rtMutex_);
+    return pendingRoiNotice_;
+}
+
+bool ProcessingService::resolvePendingRoi(uint64_t frameWidth, uint64_t frameHeight) {
+    // Never during a run: readiness blocks Start while an ROI is pending.
+    if (!roiPending_.load(std::memory_order_acquire) || experimentActive_.load(std::memory_order_acquire) ||
+        frameWidth == 0 || frameHeight == 0)
+        return false;
+    bool changed = false;
+    {
+        std::scoped_lock lk(rtMutex_);
+        if (!pendingRoi_) return false;
+        const auto r = *pendingRoi_;
+        if (r.x >= 0 && r.y >= 0 && r.w > 0 && r.h > 0 &&
+            static_cast<uint64_t>(r.x) + static_cast<uint64_t>(r.w) <= frameWidth &&
+            static_cast<uint64_t>(r.y) + static_cast<uint64_t>(r.h) <= frameHeight) {
+            rtRoi_ = r;
+            changed = true;
+        } else {
+            pendingRoiNotice_ = "The ROI " + std::to_string(r.w) + "x" + std::to_string(r.h) + "@" +
+                                std::to_string(r.x) + "," + std::to_string(r.y) + " does not fit the " +
+                                std::to_string(frameWidth) + "x" + std::to_string(frameHeight) +
+                                " frame; the previous ROI is kept";
+            SPDLOG_WARN("ProcessingService: {}", pendingRoiNotice_);
+        }
+        pendingRoi_.reset();
+        roiPending_.store(false, std::memory_order_release);
+    }
+    if (changed) {
+        configVersion_.fetch_add(1, std::memory_order_release);
+        refreshRealtimeBatchPipelineConfig();
+        SPDLOG_INFO("ProcessingService: pending ROI applied on the first frame");
+    }
+    return true;
 }
 
 ProcessingService::Roi ProcessingService::getRealtimeRoi() const {
@@ -2888,6 +2945,10 @@ void ProcessingService::realtimeBatchLoop() {
             rtStore_->waitForFrame(0, std::chrono::milliseconds(5));
             continue;
         }
+        if (roiPending_.load(std::memory_order_relaxed)) {
+            backend::playback::Frame first;
+            if (rtStore_->getLatest(first)) resolvePendingRoi(first.width, first.height);
+        }
 
         const uint64_t earliest = rtStore_->earliestAvailableIndex();
         const uint64_t latest = rtStore_->latestAvailableIndex();
@@ -3135,6 +3196,10 @@ void ProcessingService::realtimeInlineLoop() {
         if (total == 0) {
             rtStore_->waitForFrame(0, std::chrono::milliseconds(5));
             continue;
+        }
+        if (roiPending_.load(std::memory_order_relaxed)) {
+            backend::playback::Frame first;
+            if (rtStore_->getLatest(first)) resolvePendingRoi(first.width, first.height);
         }
         const uint64_t earliest = rtStore_->earliestAvailableIndex();
         const uint64_t latest = rtStore_->latestAvailableIndex();

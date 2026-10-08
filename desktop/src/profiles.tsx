@@ -74,6 +74,6 @@ export function ProfilesPanel({model:m,egrabberScript=true}:{model:ReturnType<ty
     {egrabberScript&&m.script!==null&&<textarea className="script-editor" aria-label="Profile camera script" disabled={m.blocked} value={m.script} onChange={e=>m.editScript(e.target.value)}/>}
     <p role="status">{m.busy?"Profile operation in progress…":m.message|| (m.dirty?"Unsaved profile draft":"")}</p>
     <ProfileCatalogPanel model={m.remote}/>
-    <p>Apply requires stopped capture/realtime and disabled autofocus. It applies processing, buffer, realtime, calibration, delivery mode, autofocus settings and validated ROI. It does not connect hardware or execute the optional camera script. Last successfully applied profile settings are restored on startup only if its saved revision is unchanged. Catalog updates are checksum/compatibility checked and preserve a backup; installation never applies settings automatically.</p>
+    <p>Apply requires stopped capture/realtime and disabled autofocus. It applies processing, buffer, realtime, calibration, delivery mode, autofocus settings and the ROI (validated now, or on the first captured frame if none was captured yet; Start waits for it). It does not connect hardware or execute the optional camera script. Last successfully applied profile settings are restored on startup only if its saved revision is unchanged. Catalog updates are checksum/compatibility checked and preserve a backup; installation never applies settings automatically.</p>
   </section>;
 }
