@@ -685,8 +685,26 @@ backend's camera modes instead of `set_camera_overview`:
   0/125 µs). Status `mode.align_source` tells which. Experiment means Run at the
   window placed there: 512×96, x on 8 and y on 4 (`snapRunWindow`), LED
   7/60 µs, the U-Net on.
-- **Placing the window.** Dragging only moves it. The switch to Run applies
-  and saves it.
+- **Placing the window.** Dragging only moves it; releasing (or Save camera
+  ROI) places it, and the switch to Run applies it. State and handlers live in
+  `cameraWindow.ts` (`useCameraWindow`). A window shown only as the default
+  (the sensor centre) is not placed. After a page reload the UI takes the
+  window the backend applied from `fetch_instrument_status.mode`
+  (`run_set` true once a Run switch succeeded in the process, then `run_x`,
+  `run_y`; `restoredRunWindow`), unless the operator already placed one. The
+  backend keeps it in memory only, so a server restart still starts unplaced.
+- **When the camera cannot go to Run.** `components/RunWindowNotice` shows an
+  alert in the tab, like a failed preflight check: with no placed window the
+  Experiment tab says "Place the 512×96 run window in Camera & Alignment" and
+  offers a button to go there (the tab switch does nothing until it is placed);
+  a refused Align/Run switch shows the backend's reason with a Retry button
+  (`modeError`). Start Experiment is disabled with the same reason
+  (`runModeBlockReason`). On the PZ7035 Start no longer asks for a running
+  camera stream, since Run stops the producer; the backend's `instrument.mode`
+  gate is the check.
+- **Other cameras.** Without `align_mode`/`run_mode` the window is the camera
+  ROI: released drags are snapped and saved with `save_camera_roi`
+  (`cameraWindow.test.tsx`).
 - **Run preview.** In Run the live camera is stopped. The Experiment preview
   polls `fetch_run_preview` every 100 ms (`runPreview.ts`) and draws the PL
   gray frame with the U-Net mask tinted (toggle) and the listed cells' boxes
@@ -931,3 +949,8 @@ bundle `docs/release-notes/v*.md` and `docs/manual/*.md`; URL imports bundle man
 images. Local manual links navigate within the dialog, with an Index button and
 an explicit online-documentation button. Version discovery uses Tauri's app API,
 with the package version for development. This adds no bridge ABI surface.
+
+Issue #570: Review keeps unreadable run accounting as Unknown, displaying the
+existing `completion_reason` field rather than promoting `reconciled=false` to
+Failed when the outcome is Unknown. Known outcomes with unreconciled counters
+still show Failed. No bridge ABI or JSON field changes.

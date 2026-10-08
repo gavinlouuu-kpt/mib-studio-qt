@@ -378,13 +378,14 @@ zero-fill it (NULL, core rebuilds the mask) and cores built before it ignore it.
   **or** `bytes >= maxBytes / 2` (50 % watermark), so the periodic flush fires even
   when the byte budget saturates before the count threshold is reached.
   `flushBufferedFrames(Hdf5Service&)`
-  moves frames out with `takeAll()` (O(1) per Mat, refcount transfer),
-  tracks the bytes in flight (`flushQueueBytes_`) and submits to a 3-slot [[Hdf5Service]] `HdfWriteQueue`
+  checks queue capacity before `takeAll()`; a full queue retains frames for
+  a later larger batch. When capacity is available, it moves frames out
+  (O(1) per Mat, refcount transfer), tracks the bytes in flight (`flushQueueBytes_`) and submits to a 3-slot [[Hdf5Service]] `HdfWriteQueue`
   whose writer thread does the slow append, so capture/processing never blocks
   on disk. The write queue is created lazily on first flush and torn down by
   `finishFlush()` at experiment stop (drains + joins before any direct HDF5
   write, so the file is never written by two threads at once). A write failure
-  or queue overflow (disk too slow) is fatal: it fires `setFlushErrorCallback`
+  is fatal: it fires `setFlushErrorCallback`
   (→ [[../architecture/AppBackend]] → UI stop + dialog) instead of the old
   silent trim-and-drop. `totalValidFlushed_` advances only on a confirmed write.
 - **Frozen-Mats invariant**: every `cv::Mat` published from `realtimeInlineLoop`
@@ -857,3 +858,25 @@ queue and after a later remainder flush succeeds. Uncommitted submitted frames
 are `persistenceFailed`, not declared `persistencePendingAtStop`; the latch resets
 only when a new experiment starts. `experiment_accounting_test` injects an HDF5
 append failure and checks queue destruction, remainder writes and the next run.
+
+The #595 accounting harness drains inline cursor replay after switching from async batch before starting its exact-batch HDF5 failure case. Its append wait requires new admission/buffer progress and a nonempty buffer; cumulative admission alone does not prove a batch is available. Exact failed/committed totals, reconciliation, sticky failure and next-run reset remain asserted.
+
+## Experiment writer backpressure (#597)
+
+`flushBufferedFrames()` serializes the queue capacity check and submission under
+`flushQueueMutex_`. When all three waiting slots are occupied, it returns zero
+without taking the experiment buffer or draining trigger events. Later flushes
+coalesce the retained frames into larger batches. The writer never blocks capture;
+only exhaustion of the existing frame/byte buffer bounds reports
+`Experiment buffer capacity exceeded: recording data was dropped`. HDF5 write
+failures remain fatal and latched. Queue overflow remains a defensive invariant
+for other queue consumers.
+
+`processing.experiment_flush_backpressure` drives actual experiment admissions,
+flush callbacks and HDF5 writes with small 64x16 image/mask pairs (the defect is
+about queued batch count, not bytes): 10,000 frames at 5,000 fps, 5 ms writer
+delays and one 150 ms stall. It checks persistence
+accounting, Stop remainder drain and image round-trip; an indefinitely blocked
+writer must reach buffer capacity instead of queue overflow. Its optional
+`MIB_TEST_PRE597_POLLING=1` mode models the old 250 ms flush cadence (no callbacks):
+that cadence also loses frames with the 1,000-frame count cap at 5,000 fps.

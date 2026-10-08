@@ -219,7 +219,11 @@ void testModeSequence(const mib::test::TempDir& td) {
 
     std::string err;
     // Align: the camera streams, cell path off, LED 0/125.
+    MIB_EXPECT(!backend.instrumentRunWindowSet() &&
+                   facade.fetchInstrumentStatusJson().find("\"run_set\":false") != std::string::npos,
+               "no run window is set before the first Run switch");
     MIB_REQUIRE(backend.setInstrumentMode(pz::InstrumentMode::Align, 0, 0, &err), "Align: " + err);
+    MIB_EXPECT(!backend.instrumentRunWindowSet(), "Align alone does not set the run window");
     MIB_EXPECT(backend.instrumentMode() == pz::InstrumentMode::Align, "mode Align");
     MIB_EXPECT(backend.capture().lifecycleSnapshot().cameraReady, "the camera streams in Align");
     MIB_EXPECT(s.live[S0 + 46] == 0 && (s.live[8] & 0x10u) == 0, "cell path off in Align");
@@ -237,6 +241,14 @@ void testModeSequence(const mib::test::TempDir& td) {
     MIB_REQUIRE(backend.setInstrumentMode(pz::InstrumentMode::Run, 157, 203, &err), "Run: " + err);
     MIB_EXPECT(backend.instrumentMode() == pz::InstrumentMode::Run, "mode Run");
     MIB_EXPECT(backend.instrumentRunOffset() == std::make_pair(152, 200), "window snapped to (152, 200)");
+    {
+        // The UI restores its window from the status after a page reload (#501).
+        const auto status = facade.fetchInstrumentStatusJson();
+        MIB_EXPECT(backend.instrumentRunWindowSet() && status.find("\"run_set\":true") != std::string::npos &&
+                       status.find("\"run_x\":152") != std::string::npos &&
+                       status.find("\"run_y\":200") != std::string::npos,
+                   "the status reports the window the Run switch applied: " + status);
+    }
     MIB_EXPECT(!backend.capture().lifecycleSnapshot().isActive(), "the producer stream is stopped in Run");
     MIB_EXPECT(s.live[S0 + 46] == 1 && (s.live[8] & 0x10u) != 0, "cell path on in Run");
     MIB_EXPECT(s.live[S0 + 0] == 1 && s.live[S0 + 1] == 700 && s.live[S0 + 2] == 6000, "LED Run 7/60");

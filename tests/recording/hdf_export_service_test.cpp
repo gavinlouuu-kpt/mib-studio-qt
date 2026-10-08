@@ -484,7 +484,10 @@ int main()
         // Compare the median of the last three rounds, not the single last round:
         // one descheduled round on a shared runner (TSan, Windows: 135 ms against a
         // 35 ms median, #517) is noise, while a per-round slowdown from leaked
-        // state still lifts all three late rounds above the bound.
+        // state still lifts all three late rounds above the bound. Windows
+        // filesystem/Defender activity can lift a whole group from 54 to 130 ms
+        // (#595); allow 100 ms of absolute noise there (20 ms elsewhere) while retaining the trend gate
+        // and the exact per-job open-object and manifest checks above.
         if (cycles >= 8) {
             std::vector<double> early(durations.begin() + 1, durations.begin() + 5);
             std::sort(early.begin(), early.end());
@@ -494,8 +497,13 @@ int main()
             const double lateMedian = late[1];
             std::fprintf(stderr, "soak: cycles=%d first=%.1fms median(2-5)=%.1fms median(last 3)=%.1fms last=%.1fms\n",
                          cycles, durations[0], median, lateMedian, durations.back());
-            MIB_EXPECT(lateMedian <= std::max(1.25 * median, median + 20.0),
-                       "median of the last 3 rounds <= 1.25x median of rounds 2-5");
+#ifdef _WIN32
+            constexpr double kNoiseMs = 100.0;
+#else
+            constexpr double kNoiseMs = 20.0; // rounds are ~5 ms; keep the gate tight
+#endif
+            MIB_EXPECT(lateMedian <= std::max(1.25 * median, median + kNoiseMs),
+                       "late median <= max(1.25x early median, early median + noise allowance)");
         }
         MIB_EXPECT(fnv1a(source) == sourceHash, "source untouched after soak");
     }

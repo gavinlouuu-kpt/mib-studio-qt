@@ -366,3 +366,7 @@ Stored values display with three decimal places and NaN displays blank. Existing
 column positions stay stable. The backend metrics CSV appends the same quantity
 after its existing final Bright Q4 column; see [[services/HdfExportService]].
 `frontend.hdf_metrics_model` checks the order, finite formatting and NaN.
+
+Issue #570: present but unreadable accounting shows `run unknown` with the
+missing/unreadable attribute reason, without displaying partial counters.
+Legacy accounting absence keeps its existing message.

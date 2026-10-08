@@ -131,7 +131,7 @@ export function describeReviewOutcome(a: RunAccounting | null): RunOutcome | nul
     };
   }
   const o = describeCompletion(a.completion, a.completion_reason ?? "", Number(a.admitted) || 0);
-  if (a.reconciled === false && o.severity !== "failed") {
+  if (a.reconciled === false && o.severity !== "failed" && o.severity !== "unknown") {
     return { ...o, severity: "failed", headline: `This file's run accounting does not reconcile. ${o.headline}` };
   }
   return o;

@@ -190,3 +190,5 @@ OS scheduling in a 500 fps mock run).
   *width* is dominated by that write latency too (the 1 µs busy-wait is
   shorter than a PCIe control transaction), so hardware-exact width would
   need the Coaxlink I/O toolbox to shape the pulse.
+
+The #595 trigger timing harness retains zero missed pulses (500 ms per-request deadline), and fails if p99 exceeds 50 ms or more than two of 500 pulses exceed 50 ms. This permits isolated scheduler preemption while rejecting recurring variable-delay stalls; commit 2ba62ccc documents the original predicate/notify lost-wakeup race.

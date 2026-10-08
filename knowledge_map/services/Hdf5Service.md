@@ -300,3 +300,11 @@ contains exceptions from error observers while retaining the original error.
 stops; `e2e.recording_403_*` verifies byte-pressure flushing and partial-series
 Stop, no-more-frames, and restart with HDF5 readback. Fatal run accounting is
 persisted as failed before closure (aligned with #589).
+
+Issue #570: schema-bearing files require every schema-1 accounting attribute to
+read successfully (scalar counters/flags and variable-length strings). The bool
+return distinguishes presence from legacy absence; present but unreadable data
+returns true with `RecordingAccountingSnapshot::readError`, Unknown completion,
+cleared counters and `completionReason` naming the first failed attribute.
+Unsupported schema versions are unreadable. The facade uses the existing
+`completion_name`, `completion_reason` and `reconciled` JSON fields; no ABI change.
