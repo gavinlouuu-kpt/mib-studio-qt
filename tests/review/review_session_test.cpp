@@ -339,12 +339,17 @@ int main()
         const auto meta = s.metadata();
         MIB_EXPECT(!meta.pixelToMicronFromFile && std::fabs(meta.pixelToMicron - 0.5) < 1e-12, "legacy factor fallback");
         MIB_EXPECT(!meta.hasAccounting, "legacy accounting");
-        Hdf5Service reader;
-        MIB_REQUIRE(reader.loadFile(legacy.string()), "load legacy accounting fixture");
-        backend::recording::RecordingAccountingSnapshot a;
-        MIB_EXPECT(!reader.readRunAccounting(a) && a.readError.empty() &&
-                       a.completion == backend::recording::RunCompletionState::Unknown,
-                   "legacy read remains absent, Unknown, without corruption reason");
+        {
+            // Closed before the save below: an open reader holds the file and
+            // HDF5 file locking (on by default on CI) refuses the writer.
+            Hdf5Service reader;
+            MIB_REQUIRE(reader.loadFile(legacy.string()), "load legacy accounting fixture");
+            backend::recording::RecordingAccountingSnapshot a;
+            MIB_EXPECT(!reader.readRunAccounting(a) && a.readError.empty() &&
+                           a.completion == backend::recording::RunCompletionState::Unknown,
+                       "legacy read remains absent, Unknown, without corruption reason");
+            reader.closeFile();
+        }
         MIB_EXPECT(s.accountingSummary().find("legacy") != std::string::npos, "legacy accounting text");
         s.setFallbackPixelToMicron(2.0);
         MIB_EXPECT(std::fabs(s.scatter().areaUm2[0] - 100.0 * 4.0) < 1e-9, "fallback change applies");
