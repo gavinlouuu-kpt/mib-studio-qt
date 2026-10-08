@@ -83,8 +83,11 @@ freeze exact revision identity/content into historical runs.
   waiting; realtime enabled/drop_frames, stage block, plus the
   watcher's difference_threshold / root contract / multi-image clamp); central methods
   keep exact-text recording and apply inside the coordinator's idle transaction.
-- [ ] M2c: persist the applied method across Tauri restarts (today it lives in
-  the backend for the session; the Qt shell persists through config.json).
+- [x] M2c: the applied method survives a Tauri restart: one startup pointer
+  (`<dataDir>/startup_configuration.json`, last applied profile or central revision +
+  config sha256), re-applied by `restore_startup_configuration` (bridge ABI 32); a
+  failed restore applies nothing and shows a notice; an ROI is pending until the first
+  frame.
 - [ ] M2: compatibility validator against declared hardware compatibility and
   calibration context; camera script compared as well as config.json; explicit
   update selection when a newer revision is published.

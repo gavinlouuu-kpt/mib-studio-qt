@@ -41,4 +41,28 @@ describe("PZ7035 LED in Service mode (#501 P1)", () => {
     await act(async () => root.render(<InstrumentLedControls mode="align" alignBands limits={undefined} current={undefined} disabled={false} apply={apply} append={() => {}} />));
     expect(host.textContent).toContain("preset 0 / 125 µs");
   });
+
+  it("nudges the delay in 0.5 µs steps within the limits too", async () => {
+    const apply = vi.fn().mockResolvedValue(ok);
+    await act(async () => root.render(<InstrumentLedControls mode="run" limits={{ ...limits, delay_max_us: 7.5 }} current={undefined} disabled={false} apply={apply} append={() => {}} />));
+    await act(async () => button("Delay + 0.5 µs").click());
+    expect(apply).toHaveBeenLastCalledWith(7.5, 60);
+    await act(async () => button("Delay + 0.5 µs").click()); // 7.5 is the limit
+    expect(apply).toHaveBeenLastCalledWith(7.5, 60);
+    await act(async () => button("Delay − 0.5 µs").click());
+    expect(apply).toHaveBeenLastCalledWith(7, 60);
+  });
+
+  it("reads out the strobe state, the guard and its trips, and alerts on a fault", async () => {
+    const render = (current: Parameters<typeof InstrumentLedControls>[0]["current"]) =>
+      act(async () => root.render(<InstrumentLedControls mode="run" limits={limits} current={current} disabled={false} apply={vi.fn()} append={() => {}} />));
+    await render({ on: true, delay_us: 7, width_us: 60, guard_fault: false, guard_trips: 0 });
+    expect(host.querySelector('[aria-label="LED readout"]')!.textContent).toBe("Strobe (S[0]): on (1) · guard: ok · trips: 0");
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    await render({ on: false, delay_us: 0, width_us: 0, guard_fault: true, guard_trips: 3 });
+    expect(host.querySelector('[aria-label="LED readout"]')!.textContent).toBe("Strobe (S[0]): off (0) · guard: FAULT · trips: 3");
+    expect(host.querySelector('[role="alert"]')!.textContent).toContain("guard tripped");
+    await render(undefined);
+    expect(host.querySelector('[aria-label="LED readout"]')!.textContent).toBe("Strobe (S[0]): — · guard: — · trips: —");
+  });
 });

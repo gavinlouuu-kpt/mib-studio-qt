@@ -1,5 +1,6 @@
 #include "backend/app/ProfileStore.h"
 #include "backend/app/ConfigDocumentApply.h"
+#include "backend/app/StartupConfiguration.h"
 #include "backend/app/AppBackend.h"
 #include "backend/processing/ProcessingService.h"
 #include "backend/processing/ProcessingConfigJson.h"
@@ -293,6 +294,7 @@ std::string profileStoreCommand(AppBackend& backend, const std::string& baseStri
                 selectionWrite(
                     base, {{"name", name}, {"revision", s.at("revision")}, {"path", s.at("path")}});
                 result["selection_saved"] = true;
+                recordStartupProfile(backend, base.string(), name, s.at("revision").get<std::string>());
             } else if (op == "create" || op == "duplicate" || op == "install_remote") {
                 fs::create_directories(base);
                 std::string document, script;

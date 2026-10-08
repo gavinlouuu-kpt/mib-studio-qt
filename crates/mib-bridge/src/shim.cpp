@@ -1400,6 +1400,10 @@ rust::String BackendBridge::profile_command(rust::Str base, rust::Str request) {
     return rust::String(impl_->facade.profileCommand(toStd(base), toStd(request)));
 }
 
+rust::String BackendBridge::restore_startup_configuration(rust::Str profile_base) {
+    return rust::String(impl_->facade.restoreStartupConfigurationJson(toStd(profile_base)));
+}
+
 BridgeCheckedConfigDocument BackendBridge::fetch_config_document(rust::Str path) {
     BridgeCheckedConfigDocument out{};
     try {
@@ -2378,11 +2382,14 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // (registry_plan_apply, registry_apply_method — #398 M2c); v30 is the ZC300 stage
 // without homing (#464, ADR 0013 Amendment 1: stage_home and StageReference
 // removed, stage_set_zero added, referenced -> zero_set, soft_* -> envelope_*,
-// session_only_zero). All additive over v1 except that removal (ADR 0003/0004). Must match
+// session_only_zero); v31 added fetch_run_accounting (#549); v32 added
+// restore_startup_configuration (#398 M2c: the last applied profile or central
+// method, re-applied at startup). All additive over v1 except that removal (ADR
+// 0003/0004). Must match
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 31; }
+std::uint32_t bridge_abi_version() { return 32; }
 
 } // namespace mib_bridge
 

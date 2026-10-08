@@ -19,7 +19,8 @@ matches the applied config.json to a cached revision, gates Start on it
 `applyConfigDocument` in `include/backend/app/ConfigDocumentApply.h`, the one
 validated applier shared with local profiles: bounded values, the ROI rule
 (captured frame, else camera window, else pending until the first frame),
-realtime enabled/drop_frames, stage block; the exact text is recorded) and
+realtime enabled/drop_frames, stage block; the exact text is recorded; the applied revision is the startup configuration,
+re-applied after a restart by `app::restoreStartupConfiguration`, bridge ABI 32) and
 "Mark validated" (`AppBackend::requestMethodValidation` accepts only a
 test run whose `/run_provenance` names the revision on this instrument under
 the current context — `checkValidationEvidence`). See

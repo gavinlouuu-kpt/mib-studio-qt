@@ -1196,6 +1196,15 @@ if(Python3_Interpreter_FOUND)
     )
 
     add_test(
+        NAME scripts.yofo_standing_package
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test_yofo_standing_package.py
+    )
+    set_tests_properties(scripts.yofo_standing_package PROPERTIES
+        LABELS "scripts;pl"
+        TIMEOUT 30
+    )
+
+    add_test(
         NAME scripts.export_hdf5_paths
         COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test_export_hdf5_paths.py
     )
@@ -1493,6 +1502,11 @@ mib_add_backend_test_executable(method_gate_e2e_test profiles/method_gate_e2e_te
 mib_backend_test_link(method_gate_e2e_test PRIVATE Threads::Threads)
 add_test(NAME e2e.method_gate COMMAND $<TARGET_FILE:mib_backend_tests> method_gate_e2e_test)
 set_tests_properties(e2e.method_gate PROPERTIES LABELS "e2e;profiles;hdf5;roundtrip" TIMEOUT 120)
+
+mib_add_backend_test_executable(startup_configuration_test profiles/startup_configuration_test.cpp)
+mib_backend_test_link(startup_configuration_test PRIVATE Threads::Threads)
+add_test(NAME profiles.startup_configuration COMMAND $<TARGET_FILE:mib_backend_tests> startup_configuration_test)
+set_tests_properties(profiles.startup_configuration PROPERTIES LABELS "backend;profiles;e2e;roundtrip" TIMEOUT 90)
 
 mib_add_backend_test_executable(registry_authoring_test profiles/registry_authoring_test.cpp)
 mib_backend_test_link(registry_authoring_test PRIVATE Threads::Threads)

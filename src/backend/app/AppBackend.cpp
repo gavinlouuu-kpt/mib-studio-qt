@@ -59,6 +59,7 @@
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <limits>
+#include <optional>
 #include <string>
 #include <utility>
 #include <spdlog/spdlog.h>
@@ -89,6 +90,27 @@ namespace backend
 {
     namespace
     {
+    // Reads a variable from the OS environment, not the C runtime's startup
+    // copy: on Windows the MSVC CRT snapshots the environment at process start,
+    // so a variable the host sets later (the Tauri shell or a Rust test via
+    // std::env::set_var -> SetEnvironmentVariable) is invisible to std::getenv
+    // (#571; the bridge shim's queueCapacityFromEnv does the same).
+    std::optional<std::string> processEnvironmentValue(const char* name)
+    {
+#ifdef _WIN32
+        const DWORD size = GetEnvironmentVariableA(name, nullptr, 0);
+        if (size == 0) return std::nullopt;
+        std::string value(size, '\0');
+        const DWORD n = GetEnvironmentVariableA(name, value.data(), size);
+        if (n == 0 || n >= size) return std::nullopt;
+        value.resize(n);
+        return value;
+#else
+        if (const char* value = std::getenv(name)) return std::string(value);
+        return std::nullopt;
+#endif
+    }
+
     // OpenCV's MSVC build parallelises through the Concurrency Runtime: one worker
     // per logical CPU whose idle workers spin. A per-frame parallel call in the
     // realtime loop kept ~31 of 32 workers busy on the rig PC and starved the
@@ -355,6 +377,13 @@ namespace backend
             SPDLOG_INFO("AppBackend: shutdown stopping capture and releasing camera");
             captureService_->stop();
         }
+        // The strobe keeps pulsing after the process exits: an Align or Run session must not leave
+        // the LED lit. A blank PL (no PCFG_DONE) or another image is refused and writes nothing.
+        // Once: shutdown() runs again from the destructor, when a test's injected registers may be gone.
+        if (pzControl_ && !instrumentStopped_.exchange(true)) {
+            std::string ledError;
+            if (!pzControl_->ledOff(&ledError)) SPDLOG_INFO("AppBackend: LED left as it is at shutdown: {}", ledError);
+        }
         if (triggerService_) {
             triggerService_->setCamera(nullptr);
             triggerService_->stop();
@@ -445,9 +474,9 @@ namespace backend
 
         {
             profiles::RegistryWorkerConfig registryConfig;
-            if (const char *url = std::getenv("MIB_PROFILE_REGISTRY_URL")) registryConfig.origin = url;
-            if (const char *key = std::getenv("MIB_PROFILE_REGISTRY_PUBLISHABLE_KEY"))
-                registryConfig.publishableKey = key;
+            if (auto url = processEnvironmentValue("MIB_PROFILE_REGISTRY_URL")) registryConfig.origin = *url;
+            if (auto key = processEnvironmentValue("MIB_PROFILE_REGISTRY_PUBLISHABLE_KEY"))
+                registryConfig.publishableKey = *key;
             registryConfig.cacheDir = std::filesystem::path(dataDir) / "profile_registry";
             registryConfig.methodsDir = std::filesystem::path(dataDir) / "methods";
             if (registryConfig.configured() && !profileRegistryTransport_)
@@ -1216,6 +1245,7 @@ namespace backend
                 "AppBackend initialized");
         }
 
+        loadInstrumentRunWindow();
         SPDLOG_INFO("Backend initialized.");
         return true;
     }
@@ -1264,6 +1294,68 @@ namespace backend
     }
 
     bool AppBackend::instrumentRunWindowSet() const { return instrumentRunSet_.load(); }
+
+    namespace
+    {
+        std::filesystem::path runWindowFile(const std::string &dataDir)
+        {
+            return std::filesystem::path(dataDir) / "instrument_run_window.json";
+        }
+
+        void saveRunWindow(const std::string &dataDir, int x, int y)
+        {
+            if (dataDir.empty()) return;
+            try
+            {
+                const auto path = runWindowFile(dataDir);
+                const auto tmp = std::filesystem::path(path).concat(".tmp");
+                {
+                    std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+                    out << nlohmann::json{{"x", x}, {"y", y}, {"set", true}}.dump();
+                    if (!out) throw std::runtime_error("write failed");
+                }
+                std::filesystem::rename(tmp, path);
+            }
+            catch (const std::exception &ex)
+            {
+                SPDLOG_WARN("AppBackend: the Run window was not saved: {}", ex.what());
+            }
+        }
+    } // namespace
+
+    void AppBackend::loadInstrumentRunWindow()
+    {
+        if (dataDir_.empty()) return;
+        std::error_code ec;
+        const auto path = runWindowFile(dataDir_);
+        if (!std::filesystem::exists(path, ec)) return;
+        try
+        {
+            std::ifstream in(path, std::ios::binary);
+            const auto j = nlohmann::json::parse(in, nullptr, /*allow_exceptions=*/false);
+            // Only a window the Run switch could have applied: on the grid and on the sensor.
+            if (!j.is_object() || !j.value("set", false) || !j.contains("x") || !j.contains("y") ||
+                !j["x"].is_number_integer() || !j["y"].is_number_integer())
+            {
+                SPDLOG_WARN("AppBackend: {} is not a Run window; ignored", path.string());
+                return;
+            }
+            const int x = j["x"].get<int>(), y = j["y"].get<int>();
+            if (x < 0 || y < 0 || x > kRunXMax || y > kRunYMax || x % kRunXStep != 0 || y % kRunYStep != 0)
+            {
+                SPDLOG_WARN("AppBackend: the saved Run window ({}, {}) is off the grid or sensor; ignored", x, y);
+                return;
+            }
+            instrumentRunX_.store(x);
+            instrumentRunY_.store(y);
+            instrumentRunSet_.store(true);
+            SPDLOG_INFO("AppBackend: Run window restored at ({}, {})", x, y);
+        }
+        catch (const std::exception &ex)
+        {
+            SPDLOG_WARN("AppBackend: the saved Run window could not be read: {}", ex.what());
+        }
+    }
 
     void AppBackend::setServiceMode(bool on) { serviceMode_.store(on); }
 
@@ -1428,6 +1520,7 @@ namespace backend
             instrumentRunX_.store(x);
             instrumentRunY_.store(y);
             instrumentRunSet_.store(true);
+            saveRunWindow(dataDir_, x, y);
         }
         instrumentMode_.store(static_cast<int>(mode));
         SPDLOG_INFO("AppBackend: instrument mode {}{}", pz::instrumentModeName(mode),

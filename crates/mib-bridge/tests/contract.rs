@@ -98,7 +98,9 @@ fn abi_version_is_stable() {
     // session_only_zero, soft_min_um/soft_max_um -> envelope_min_um/envelope_max_um.
     // v31 fetch_run_accounting (#549): the reconciled accounting of the review file or of the
     // last finished run, for the Review tab and the run outcome notice.
-    assert_eq!(ffi::bridge_abi_version(), 31);
+    // v32 restore_startup_configuration (#398 M2c): re-apply the last applied
+    // local profile or central method (one startup pointer) at startup.
+    assert_eq!(ffi::bridge_abi_version(), 32);
 }
 
 // ABI 31 (#549): with nothing loaded and no run finished, the accounting says so and why.
@@ -1552,6 +1554,18 @@ fn local_profiles_roundtrip_and_conflict() {
     let stale: serde_json::Value = serde_json::from_str(&bridge.pin_mut().profile_command(&base,r#"{"operation":"archive","name":"test","baseline":"stale"}"#)).unwrap();
     assert_eq!(stale["ok"],false);
     assert!(data_dir.as_path().join("profiles/test/config.json").exists());
+    // ABI 32 (#398 M2c): nothing applied yet, so nothing to restore.
+    let nothing: serde_json::Value =
+        serde_json::from_str(&bridge.pin_mut().restore_startup_configuration("")).unwrap();
+    assert_eq!((nothing["ok"].clone(), nothing["restored"].clone()), (serde_json::json!(true), serde_json::json!(false)));
+    // Applying the profile records it as the startup configuration; restore re-applies it.
+    let rev = read["profile"]["revision"].as_str().unwrap().to_string();
+    let apply = format!(r#"{{"operation":"apply","name":"test","baseline":"{rev}"}}"#);
+    let applied: serde_json::Value = serde_json::from_str(&bridge.pin_mut().profile_command(&base, &apply)).unwrap();
+    assert_eq!(applied["ok"], true, "{applied}");
+    let restored: serde_json::Value =
+        serde_json::from_str(&bridge.pin_mut().restore_startup_configuration("")).unwrap();
+    assert_eq!((restored["kind"].clone(), restored["restored"].clone()), (serde_json::json!("profile"), serde_json::json!(true)), "{restored}");
     bridge.pin_mut().shutdown();
     let _ = std::fs::remove_dir_all(data_dir);
 }

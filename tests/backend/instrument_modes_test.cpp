@@ -23,6 +23,7 @@
 
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <cstring>
 #include <functional>
 #include <map>
@@ -217,6 +218,21 @@ void testModeSequence(const mib::test::TempDir& td) {
     MIB_REQUIRE(backend.instrumentControlAvailable(), "control injected");
     MIB_EXPECT(backend.instrumentMode() == pz::InstrumentMode::Unknown && s.writes.empty(),
                "nothing is written until a mode is chosen");
+    {
+        // Everything the UI polls at load, with no operator action: reads only (the standing
+        // YOFO Studio unit on the board must not touch the PL or the pump bus before an operator
+        // does; serial ports are opened only by the pump/stage/discovery commands, which the UI
+        // sends from buttons).
+        (void)facade.fetchPlatformInfoJson();
+        (void)facade.fetchInstrumentStatusJson();
+        (void)facade.fetchCameraGeometryJson();
+        backend::bridge::BackendPumpStatus pump;
+        (void)facade.fetchPumpStatus(0, pump);
+        (void)facade.fetchPumpStatus(1, pump);
+        backend::bridge::BackendStageStatus stage;
+        (void)facade.fetchStageStatus(stage);
+        MIB_EXPECT(s.writes.empty(), "the status polls the UI makes at load write no PL register");
+    }
 
     {
         // PL science never probes or opens the nanopositioner, pulse-generator or ZC300 ports (the
@@ -338,7 +354,45 @@ void testModeSequence(const mib::test::TempDir& td) {
     MIB_EXPECT(!backend.setInstrumentMode(pz::InstrumentMode::Run, 0, 0, &err) && err.find("PCFG_DONE") != std::string::npos,
                "mode switch refused with the PL blank");
     MIB_EXPECT(s.writes.size() == writes, "no register written");
+    // Shutdown ends the session with the LED off (found on the PZ7035 on 2026-10-08: Studio left
+    // the strobe pulsing, S[0] = 1, after the process exited).
+    s.configured = true;
+    MIB_EXPECT(s.live[S0 + 0] == 1, "the Align LED is on before shutdown");
     facade.shutdown();
+    backend.shutdown(); // the server's bridge.shutdown() destroys the backend, which runs this
+    MIB_EXPECT(s.live[S0 + 0] == 0, "shutdown switches the LED off");
+}
+
+// The Run window survives a restart (#501): a Run switch writes <data>/instrument_run_window.json,
+// the next initialize() reads it; a file that is not a window the switch could have applied is
+// ignored. testModeSequence left (152, 200) there.
+void testRunWindowPersists(const mib::test::TempDir& td) {
+    const auto data = td.path() / "data";
+    const auto file = data / "instrument_run_window.json";
+    MIB_REQUIRE(std::filesystem::exists(file), "the Run switch saved the window");
+    const auto restart = [&]() {
+        backend::AppBackend backend;
+        backend::bridge::BackendFacade facade(backend);
+        MIB_REQUIRE(facade.initialize(data.string()), "facade initializes");
+        const auto set = backend.instrumentRunWindowSet();
+        const auto offset = backend.instrumentRunOffset();
+        facade.shutdown();
+        return std::make_pair(set, offset);
+    };
+    auto r = restart();
+    MIB_EXPECT(r.first && r.second == std::make_pair(152, 200), "a restart restores the Run window");
+
+    const auto write = [&](const std::string& text) { std::ofstream(file, std::ios::trunc) << text; };
+    write("{\"x\":157,\"y\":200,\"set\":true}");
+    MIB_EXPECT(!restart().first, "an off-grid x is ignored");
+    write("{\"x\":152,\"y\":600,\"set\":true}");
+    MIB_EXPECT(!restart().first, "a window off the sensor is ignored");
+    write("not json");
+    MIB_EXPECT(!restart().first, "garbage is ignored");
+    write("{\"x\":152,\"y\":200,\"set\":false}");
+    MIB_EXPECT(!restart().first, "a file that says 'not set' is ignored");
+    std::filesystem::remove(file);
+    MIB_EXPECT(!restart().first, "no file: no window");
 }
 
 // Both states of the persistence warning (#501): a RAM-backed destination (tmpfs, like the JTAG
@@ -379,6 +433,7 @@ int main() {
     testControl();
     testLedLimits();
     testModeSequence(td);
+    testRunWindowPersists(td);
     testRecordingTarget(td);
     return mib::test::exitCode();
 }

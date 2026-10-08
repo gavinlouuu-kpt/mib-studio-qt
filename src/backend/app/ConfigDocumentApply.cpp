@@ -4,6 +4,8 @@
 #include "backend/app/ExperimentCoordinator.h"
 #include "backend/app/MethodApply.h"
 #include "backend/app/ProcessingConfigTransaction.h"
+#include "backend/app/StartupConfiguration.h"
+#include "backend/processing/ProcessingCoreLoader.h"
 #include "backend/camera/common/ICamera.h"
 #include "backend/playback/FrameStore.h"
 #include "backend/processing/ProcessingContract.h"
@@ -295,6 +297,11 @@ ConfigApplyReport applyCentralMethod(AppBackend& backend, const std::string& rev
             return;
         }
         report = applyConfigDocument(backend, plan.configText);
+        if (report.ok)
+            recordStartupCentralMethod(backend, revisionId,
+                                       processing::processingCoreBytesSha256(
+                                           reinterpret_cast<const uint8_t*>(plan.configText.data()),
+                                           plan.configText.size()));
     });
     if (!idle) {
         report = {};

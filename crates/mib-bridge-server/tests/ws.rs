@@ -100,6 +100,13 @@ async fn auth_probe_reports_the_token_without_a_socket() {
     let (status, body) = http_get(addr, &format!("/auth?token={TOKEN}")).await;
     assert_eq!(status, 200, "{body}");
     assert!(body.contains("\"authorized\":true"), "{body}");
+    // The boot id names this server process: the same on every answer (also the 401), so a
+    // browser that lost the link can tell a restarted backend from a network blip.
+    let boot = |body: &str| body.split("\"boot_id\":\"").nth(1).and_then(|r| r.split('"').next()).map(str::to_owned);
+    let first = boot(&body).expect("200 carries a boot id");
+    assert_eq!(first.len(), 16, "{first}");
+    let (_, refused) = http_get(addr, "/auth?token=wrong").await;
+    assert_eq!(boot(&refused).as_deref(), Some(first.as_str()), "{refused}");
     let _ = std::fs::remove_dir_all(&data);
 }
 

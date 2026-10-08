@@ -202,6 +202,20 @@ links the Aravis libraries recorded in that tree's `CMakeCache.txt`. The script 
 `SPDLOG_FMT_EXTERNAL` (with `SPDLOG_COMPILED_LIB`, `SPDLOG_SHARED_LIB`, `FMT_SHARED`) for the
 bridge shims, because the SDK's spdlog uses the external fmt and `review_shim.cpp` includes it.
 
+**Standing package for the PZ7035 (#501).** `YOFO_SDK=<sdk> scripts/yofo/package_studio.sh [PKG_DIR]`
+builds the armv7 server and the UI and stages, on the HDD (default
+`/mnt/hdd/developer-data/IMX426/yofo-studio-pkg/<commit>`): `yofo-studio-server` (stripped),
+`dist.tar`, `yofo-studio.service`, `pl-ready.sh`, `install.sh`, `MD5SUMS` and `BUILD_INFO` (commit,
+SDK, expected producer md5). The board owner runs `install.sh [--restart]` on the board after each
+Linux boot (the RAM root resets); it verifies `MD5SUMS` first, installs the server, the UI, the
+guard and the unit under `/etc/systemd/system`. The unit listens on `127.0.0.1:8427` with
+`--no-token` (the server refuses `--no-token` on any other address; the host reaches it through an
+SSH tunnel; the UI skips the token prompt when `/auth` says `token_required=false`) and its
+`ExecStartPre` (`deploy/yofo-studio/pl-ready.sh`) waits, read-only, for DEVCFG INT_STS bit 2
+(PCFG_DONE) because the producer's start-up reads PL registers. `scripts/test_yofo_standing_package.py`
+(ctest `scripts.yofo_standing_package`) checks the guard against a fake `devmem2`, the unit and
+install.sh.
+
 `cmake/toolchains/yocto-armv7.cmake` keeps every package search in the sysroot.
 HDF5 needs care: the SDK's HDF5 package config is unusable (absolute install
 dir, imported targets at `/usr/lib`) and FindHDF5 would otherwise ask the
