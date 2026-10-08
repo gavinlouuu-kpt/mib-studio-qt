@@ -86,6 +86,17 @@ with sync_playwright() as p:
     page.goto(base + "/")
     page.wait_for_function("() => /backend: ready/.test(document.body.innerText)", timeout=40000)
     time.sleep(2)
+    # The Run window must be placed (the backend restores a saved one after a restart; a fresh data
+    # dir has none): place it as the acceptance script does.
+    tab(page, "Camera & Alignment")
+    time.sleep(3)
+    try:
+        page.get_by_label("Camera window x").fill("232")
+        page.get_by_label("Camera window y").fill("336")
+        page.get_by_role("button", name="Save camera ROI").click()
+    except Exception as e:  # noqa: BLE001
+        print(f"(could not place the Run window: {e})")
+    time.sleep(2)
     for n in range(1, flips + 1):
         tab(page, "Experiment")
         run_ok = False
