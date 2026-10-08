@@ -140,6 +140,7 @@ private:
         bool corePinSatisfied{false};
         uint64_t backgroundGeneration{0};
         int roiX{0}, roiY{0}, roiW{0}, roiH{0};
+        bool roiPending{false};
         double pixelToMicron{0.0};
         std::string outputPath;
         std::string profileId;

@@ -18,6 +18,7 @@
 //    idle), with nothing changed.
 #include "backend/app/AppBackend.h"
 #include "backend/app/ConfigDocumentApply.h"
+#include "backend/app/ExperimentCoordinator.h"
 #include "backend/processing/ProcessingService.h"
 #include "backend/services/AutofocusService.h"
 #include "backend/services/CaptureService.h"
@@ -94,26 +95,64 @@ int main() {
     auto& proc = backend.processing();
     using backend::services::CaptureLifecycleState;
 
-    watchdog.mark("ROI needs a captured preview");
+    watchdog.mark("the ROI rule");
     {
-        auto r = backend::app::applyConfigDocument(backend, kMethod);
-        MIB_EXPECT(!r.ok && r.error.find("ROI cannot be validated") != std::string::npos,
-                   "no frame captured yet: the ROI cannot be validated, nothing applied");
-        MIB_EXPECT(backend.getLastConfigJson() != kMethod, "nothing recorded");
-        // Capture a preview (64x64), then stop capture: the applier needs both.
+        using backend::app::checkRoi;
+        using backend::app::RoiCheck;
+        const ProcessingService::Roi r{4, 6, 40, 20};
+        MIB_EXPECT(checkRoi(r, {}, {}) == RoiCheck::Pending, "no frame, unknown camera geometry: pending");
+        MIB_EXPECT(checkRoi(r, {}, {64, 64}) == RoiCheck::Fits, "no frame, known camera window: validated");
+        MIB_EXPECT(checkRoi(r, {}, {32, 32}) == RoiCheck::OutOfBounds,
+                   "no frame, known camera window: out of bounds");
+        MIB_EXPECT(checkRoi(r, {64, 64}, {32, 32}) == RoiCheck::Fits, "a captured frame wins over the camera window");
+        MIB_EXPECT(checkRoi(r, {32, 32}, {}) == RoiCheck::OutOfBounds, "out of the captured frame");
+    }
+
+    watchdog.mark("ROI before any preview: the rest applies, the ROI is pending");
+    {
+        const auto roiBefore = proc.getRealtimeRoi();
+        const auto r = backend::app::applyConfigDocument(backend, kMethod);
+        MIB_REQUIRE(r.ok, r.error);
+        MIB_EXPECT(has(r.notApplied, "roi (pending: applied on the first captured frame)") && !has(r.applied, "roi"),
+                   "the ROI is reported pending, not applied");
+        MIB_EXPECT(proc.realtimeRoiPending(), "pending in the processing service");
+        const auto roiNow = proc.getRealtimeRoi();
+        MIB_EXPECT(roiNow.x == roiBefore.x && roiNow.w == roiBefore.w, "the active ROI is unchanged until a frame");
+        MIB_EXPECT(proc.getFlushInterval() == 250 && backend.getLastConfigJson() == kMethod,
+                   "the rest of the method applied");
+        {
+            const auto ready = backend.experiment().evaluateReadiness((dir / "run.h5").string());
+            const auto* gate = ready.gate("processing.roi");
+            MIB_EXPECT(gate != nullptr && gate->status == backend::app::GateStatus::Fail && !ready.ready,
+                       "Start waits while the ROI is pending (processing.roi fails)");
+        }
+
+        // The first frame the realtime loop sees validates and applies it.
         MIB_REQUIRE(backend.capture().start(), "mock capture accepted");
         MIB_REQUIRE(backend.capture().waitForState({CaptureLifecycleState::Running, CaptureLifecycleState::Faulted},
                                                    std::chrono::seconds(10)) == CaptureLifecycleState::Running,
                     "mock capture running");
-        backend::playback::Frame latest;
-        for (int i = 0; i < 500 && !backend.getFrameStore()->getLatest(latest); ++i)
+        proc.startRealtime(backend.getFrameStore());
+        for (int i = 0; i < 500 && proc.realtimeRoiPending(); ++i)
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        MIB_REQUIRE(latest.width == 64 && latest.height == 64, "a 64x64 preview frame");
+        const auto applied = proc.getRealtimeRoi();
+        MIB_EXPECT(!proc.realtimeRoiPending() && applied.x == 4 && applied.y == 6 && applied.w == 40 && applied.h == 20 &&
+                       proc.pendingRoiNotice().empty(),
+                   "the pending ROI is applied on the first 64x64 frame");
+        proc.stopRealtime();
         backend.capture().stop();
-        MIB_REQUIRE(!backend.capture().isRunning(), "capture stopped");
-        r = backend::app::applyConfigDocument(backend, R"({"roi": {"x": 40, "y": 0, "w": 40, "h": 10}})");
-        MIB_EXPECT(!r.ok && r.error.find("ROI cannot be validated") != std::string::npos,
-                   "an ROI outside the frame is refused");
+        MIB_REQUIRE(!backend.capture().isRunning() && !proc.isRealtimeRunning(), "capture and realtime stopped");
+
+        // A pending ROI that does not fit the first frame is dropped, with a notice.
+        proc.setPendingRealtimeRoi(ProcessingService::Roi{50, 0, 40, 10});
+        MIB_EXPECT(proc.resolvePendingRoi(64, 64) && !proc.realtimeRoiPending(), "resolved");
+        MIB_EXPECT(proc.getRealtimeRoi().x == 4 && proc.pendingRoiNotice().find("does not fit") != std::string::npos,
+                   "an ROI that does not fit is dropped; the previous ROI stays and the notice says why");
+
+        // With a captured preview, an ROI outside the frame is refused outright.
+        const auto refused = backend::app::applyConfigDocument(backend, R"({"roi": {"x": 40, "y": 0, "w": 40, "h": 10}})");
+        MIB_EXPECT(!refused.ok && refused.error.find("does not fit the 64x64 captured frame") != std::string::npos,
+                   "an ROI outside the captured frame is refused");
     }
 
     watchdog.mark("full document");
@@ -190,6 +229,9 @@ int main() {
                                 R"({"config_schema_version": 2})", R"({"display_fps": 0})"}) {
             r = backend::app::applyConfigDocument(backend, bad);
             MIB_EXPECT(!r.ok, std::string("out of bounds refused: ") + bad);
+            if (std::string(bad).find("buffer_threshold") != std::string::npos)
+                MIB_EXPECT(r.error.find("buffer_threshold must be between 1 and") != std::string::npos,
+                           "the error names the field and its bounds: " + r.error);
             unchanged(bad);
         }
         MIB_EXPECT(!backend::app::applyConfigDocument(backend, "{not json").ok, "invalid JSON refused");

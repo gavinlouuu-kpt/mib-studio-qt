@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <optional>
 #include <chrono>
 #include <cstdint>
 #include <functional>
@@ -174,8 +175,20 @@ public:
     RealtimeProcessingMode getRealtimeProcessingMode() const;
     void setRealtimeBatchSettings(const RealtimeBatchSettings& settings);
     RealtimeBatchSettings getRealtimeBatchSettings() const;
+    // An explicit ROI; it also cancels a pending one.
     void setRealtimeRoi(const Roi& roi);
     Roi getRealtimeRoi() const;
+    // An ROI that could not be validated when it was applied (no frame yet and
+    // no known camera geometry; #398 M2c). The realtime loop applies it to the
+    // first frame it sees if it fits, otherwise drops it, keeps the previous
+    // ROI and says why in pendingRoiNotice(). Start is blocked while pending
+    // (readiness gate processing.roi).
+    void setPendingRealtimeRoi(const Roi& roi);
+    bool realtimeRoiPending() const { return roiPending_.load(std::memory_order_acquire); }
+    std::string pendingRoiNotice() const;
+    // Applies or drops the pending ROI against a frame of this size (the
+    // realtime loop's hook; public for tests). True when the ROI changed.
+    bool resolvePendingRoi(uint64_t frameWidth, uint64_t frameHeight);
     void setRealtimeBackgroundGray(const cv::Mat& bg);
     // Configure before workers start; publication uses the coordinator's idle transaction.
     // Serializes ROI/background setters and calibration with experiment Start.
@@ -728,6 +741,9 @@ private:
     std::shared_ptr<backend::playback::FrameStore> rtStore_;
     mutable std::mutex rtMutex_;
     Roi rtRoi_{};
+    std::optional<Roi> pendingRoi_;  // under rtMutex_
+    std::string pendingRoiNotice_;   // under rtMutex_
+    std::atomic<bool> roiPending_{false};
     std::shared_ptr<cv::Mat> rtBgGray_; // shared_ptr to avoid cloning on access
     std::atomic<uint64_t> rtLastProcessed_{0};
 

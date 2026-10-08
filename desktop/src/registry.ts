@@ -184,9 +184,17 @@ export function applyConfirmText(plan: MethodApplyPlan): string {
 
 /** Outcome line of an Apply (#398 M2c). */
 export function applyResultText(result: MethodApplyResult): string {
+  // The backend's reason names the field and its bound (e.g. "buffer_threshold
+  // must be between 1 and 10000000 (got 0)"); show it as is.
   if (!result.ok) return `Apply failed: ${result.error}`;
-  const skipped = result.not_applied.length > 0 ? ` Not applicable in this app: ${result.not_applied.join(", ")}.` : "";
-  return `Applied (${result.applied.join(", ")}).${skipped}`;
+  const pending = result.not_applied.filter((s) => s.includes("(pending"));
+  const skipped = result.not_applied.filter((s) => !s.includes("(pending"));
+  const waits =
+    pending.length > 0
+      ? ` The ROI is applied on the first captured frame (start live view); Start waits for it.`
+      : "";
+  const notHere = skipped.length > 0 ? ` Not applicable in this app: ${skipped.join(", ")}.` : "";
+  return `Applied (${result.applied.join(", ")}).${waits}${notHere}`;
 }
 
 export function jobText(job: RegistryJob): string {

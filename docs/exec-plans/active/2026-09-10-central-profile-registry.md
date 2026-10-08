@@ -78,8 +78,9 @@ freeze exact revision identity/content into historical runs.
   or autofocus runs — the local-profile apply's precondition, adopted after the
   #493 review).
 - [x] M2c: one validated applier. `app/ProfileStore.cpp` and `applyCentralMethod`
-  share `stageConfigDocument` / `commitStagedConfig` (the local-profile bounds, ROI
-  against a captured preview, realtime enabled/drop_frames, stage block, plus the
+  share `stageConfigDocument` / `commitStagedConfig` (the local-profile bounds, the ROI
+  rule: captured frame, else camera window, else pending until the first frame with Start
+  waiting; realtime enabled/drop_frames, stage block, plus the
   watcher's difference_threshold / root contract / multi-image clamp); central methods
   keep exact-text recording and apply inside the coordinator's idle transaction.
 - [ ] M2c: persist the applied method across Tauri restarts (today it lives in

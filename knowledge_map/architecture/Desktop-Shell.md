@@ -392,9 +392,10 @@ script path (`applyConfirmText`); **Apply** then calls `registry_apply_method`,
 which runs the backend config.json applier (`app::applyCentralMethod` →
 `applyConfigDocument`, the same validated core as local profiles below; inside
 the coordinator's idle transaction, refused unless the experiment is Idle and
-while raw recording, capture, realtime processing or autofocus runs; an ROI
-needs a captured preview) and reports applied and not-applicable sections
-(`applyResultText`). The React shell has no
+while raw recording, capture, realtime processing or autofocus runs; an ROI with no
+preview and no known camera window is pending until the first frame) and reports
+applied, pending and not-applicable sections (`applyResultText`; a refusal shows the
+backend's reason, which names the field and its bound). The React shell has no
 config.json file: the applied method lives in the backend for the session.
 
 #398 M3b: **Methods / Drafts** views. Methods adds **New draft** (optionally
@@ -499,7 +500,8 @@ the one validated applier it shares with central methods (`app::stageConfigDocum
 document, a central method its exact text). It validates all supported settings before
 changing stopped runtime services (refused during raw recording too): processing, buffers,
 realtime batches/mode, frame delivery, calibration, autofocus configuration, and ROI
-bounded to an available preview frame. No camera script is executed, device connected,
+(bounded to the latest preview frame, else the camera window, else pending until the first
+frame, with Start waiting). No camera script is executed, device connected,
 or voltage actuated. Processing-contract metadata incompatibility fails closed; declared app-version bounds are checked against the compiled application version. The saved processing editor remains
 a separate checked persistence workflow and can open the selected profile's config.
 

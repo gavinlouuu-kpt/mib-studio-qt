@@ -283,6 +283,25 @@ describe("registry view model", () => {
     expect(applyResultText({ ok: false, error: "An experiment is in progress", applied: [], not_applied: [] })).toBe(
       "Apply failed: An experiment is in progress",
     );
+    // The backend names the field and its bound; the panel shows it, not a generic failure.
+    expect(
+      applyResultText({
+        ok: false,
+        error: "buffer_threshold must be between 1 and 10000000 (got 0)",
+        applied: [],
+        not_applied: [],
+      }),
+    ).toBe("Apply failed: buffer_threshold must be between 1 and 10000000 (got 0)");
+    // A pending ROI is not "not applicable": it is applied on the first frame.
+    const pending = applyResultText({
+      ok: true,
+      error: "",
+      applied: ["image_processing"],
+      not_applied: ["roi (pending: applied on the first captured frame)", "dot_grid (Qt shell only)"],
+    });
+    expect(pending).toContain("The ROI is applied on the first captured frame");
+    expect(pending).toContain("Not applicable in this app: dot_grid (Qt shell only).");
+    expect(pending).not.toContain("Not applicable in this app: roi");
   });
 
   it("M2b: a local validation change re-renders without a generation bump", () => {

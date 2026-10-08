@@ -104,6 +104,8 @@ struct RunConfigurationSnapshot {
     std::string timestampDescriptor;  // camera::common::describe()
 
     int roiX{0}, roiY{0}, roiW{0}, roiH{0};
+    bool roiPending{false}; // an applied ROI awaits the first frame (#398 M2c)
+    std::string roiNotice;  // why a pending ROI was dropped, if it was
     uint64_t frameWidth{0}, frameHeight{0}, pixelFormat{0};
     bool frameGeometryKnown{false};
 
