@@ -207,6 +207,19 @@ bool PzInstrumentControl::ingressStatus(IngressStatus& out, std::string* error) 
     return true;
 }
 
+bool PzInstrumentControl::rxHealStatus(RxHealStatus& out, std::string* error) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!readyLocked(error)) return false;
+    out = RxHealStatus{};
+    if (registers_->live(kRxHealWindow) != kRxHealId) return true;
+    out.present = true;
+    out.control = registers_->live(kRxHealWindow + 1);
+    out.status = registers_->live(kRxHealWindow + 2);
+    out.autoResets = registers_->live(kRxHealWindow + 3);
+    out.lastPulse = registers_->live(kRxHealWindow + 4);
+    return true;
+}
+
 bool PzInstrumentControl::resetReceiver(std::chrono::microseconds hold, std::string* error) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!readyLocked(error)) return false;

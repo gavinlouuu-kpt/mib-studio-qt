@@ -1,5 +1,7 @@
 #include "backend/pz/PzPlatformMonitor.h"
 
+#include "backend/pz/AlignLock.h"
+
 #include "pz_mib_abi.h" // vendored bundle (register offsets)
 
 #include <nlohmann/json.hpp>
@@ -293,12 +295,26 @@ PzPlatformStatus PzPlatformMonitor::sample(uint64_t nowUs) {
     };
     const uint32_t bridgeState = r.bridge(PZ_MIB_REG_STATE);
     s.bridgeActive = bridgeState == PZ_MIB_STATE_ARMED || bridgeState == PZ_MIB_STATE_RUNNING;
+    s.rxHealPresent = r.live(kRxHealWindow) == kRxHealId;
+    if (s.rxHealPresent) {
+        const uint32_t heal = r.live(kRxHealWindow + 2);
+        s.rxHealTries = heal & 0xFFu;
+        s.rxHealGaveUp = (heal & 0x100u) != 0;
+        s.rxHealAutoResets = r.live(kRxHealWindow + 3);
+    }
     s.badFramesWarn = sustained(s.badFramesPerS > s.badFramesWarnPerS, badSinceUs_);
     s.droppedWarn = sustained(s.bridgeActive && s.droppedPerS > s.droppedWarnPerS, droppedSinceUs_);
     havePrevious_ = true;
     previousUs_ = nowUs;
     previous_ = now;
     return s;
+}
+
+std::optional<uint32_t> PzPlatformMonitor::rxHealAutoResets() {
+    std::scoped_lock lk(mutex_);
+    if (!registers_ || !registers_->plConfigured(nullptr)) return std::nullopt;
+    if (registers_->live(kRxHealWindow) != kRxHealId) return std::nullopt;
+    return registers_->live(kRxHealWindow + 3);
 }
 
 void PzPlatformMonitor::settle(uint64_t nowUs) {

@@ -225,6 +225,19 @@ namespace backend::bridge
         // (AppBackend already funnels them into the coordinator).
         backend_.experiment().setStatusCallback([this](const app::ExperimentStatus &status) {
             emitEvent(ExperimentStatusEvent{status});
+            // A PL receiver auto-reset during a run loses frames: count them over the run.
+            if (!status.terminal && (status.state == app::ExperimentRunState::Starting ||
+                                     status.state == app::ExperimentRunState::Active))
+            {
+                if (runHealStart_.load() < 0)
+                    if (const auto count = backend_.plReceiverAutoResets()) runHealStart_.store(*count);
+            }
+            else if (status.terminal)
+            {
+                const auto start = runHealStart_.exchange(-1);
+                const auto count = backend_.plReceiverAutoResets();
+                lastRunHealResets_.store(start >= 0 && count ? (*count >= start ? *count - start : *count) : -1);
+            }
             if (status.terminal)
             {
                 if (const std::uint64_t opId = experimentOperationId_.exchange(0))
@@ -3178,6 +3191,11 @@ std::string BackendFacade::fetchInstrumentStatusJson() {
           {"bad_frames_warn", s.badFramesWarn},
           {"dropped_warn", s.droppedWarn},
           {"bridge_active", s.bridgeActive},
+          {"rx_heal",
+           {{"present", s.rxHealPresent},
+            {"gave_up", s.rxHealGaveUp},
+            {"tries", s.rxHealTries},
+            {"auto_resets", s.rxHealAutoResets}}},
           {"bad_frames_warn_per_s", s.badFramesWarnPerS},
           {"dropped_warn_per_s", s.droppedWarnPerS},
           {"ingress_errors_warn_per_s", pz::kIngressErrorWarnPerS},
@@ -3242,6 +3260,10 @@ std::string BackendFacade::fetchRunAccountingJson(const std::string& source) con
         j["recorded"] = true;
         j["source"] = source;
         j["start_generation"] = generation;
+        // Receiver auto-resets by the PL self-heal during the run (each loses frames); null on an
+        // image without the block.
+        const auto heal = lastRunHealResets_.load();
+        j["receiver_auto_resets"] = heal >= 0 ? nlohmann::json(heal) : nlohmann::json(nullptr);
         return j.dump();
     }
     if (source == "review") {

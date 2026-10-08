@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -140,6 +141,8 @@ namespace backend
         // switches that never locked.
         struct AlignLockCounters { uint64_t receiverClears{0}, failures{0}; uint32_t lastStuckP13{0}; };
         AlignLockCounters alignLockCounters() const;
+        // The PL receiver auto-reset count (results9 RXH1); nullopt without the block.
+        std::optional<uint32_t> plReceiverAutoResets();
         // Service / Commissioning mode, latched by the shell: raw LED values are refused
         // outside it, on the backend side (not only in the UI).
         void setServiceMode(bool on);

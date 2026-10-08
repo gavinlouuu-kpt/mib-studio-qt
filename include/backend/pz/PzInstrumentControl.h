@@ -112,6 +112,8 @@ public:
     bool cellPathOn(std::string* error);
     // P[13] ingress status, P[12] errors, P[14] resyncs (reads).
     bool ingressStatus(IngressStatus& out, std::string* error);
+    // The PL receiver self-heal block (results9): present = false on an image without it.
+    bool rxHealStatus(RxHealStatus& out, std::string* error);
     // One receiver reset: P[8] bit 6 held for `hold` with bit 4 (the U-Net enable level) kept,
     // then released. Clears the sticky lane overflow flags (#629).
     bool resetReceiver(std::chrono::microseconds hold, std::string* error);

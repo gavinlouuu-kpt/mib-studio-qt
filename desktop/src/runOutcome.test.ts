@@ -164,3 +164,22 @@ describe("run accounting denominators and the Review tab (#549, ABI 31)", () => 
     expect(o.headline).toContain("does not reconcile");
   });
 });
+
+describe("receiver auto-resets (results9 self-heal)", () => {
+  const acc = (extra: Partial<RunAccounting>) => ({
+    available: true, source: "last_run", recorded: true, start_generation: 3, completion: RUN_COMPLETION_STATES.Complete,
+    admitted: 27162, ...extra,
+  }) as RunAccounting;
+
+  it("names the PL receiver auto-resets that happened during the run and asks for attention", () => {
+    const o = describeRunOutcome(BASE, acc({ receiver_auto_resets: 2 }))!;
+    expect(o.headline).toContain("Receiver auto-resets during the run: 2");
+    expect(o.attention).toBe(true);
+  });
+
+  it("says nothing when there were none, or the image has no self-heal", () => {
+    expect(describeRunOutcome(BASE, acc({ receiver_auto_resets: 0 }))!.headline).not.toContain("auto-resets");
+    expect(describeRunOutcome(BASE, acc({ receiver_auto_resets: null }))!.headline).not.toContain("auto-resets");
+    expect(describeRunOutcome(BASE, null)!.attention).toBe(false);
+  });
+});

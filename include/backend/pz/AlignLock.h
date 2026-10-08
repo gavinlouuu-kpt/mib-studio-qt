@@ -19,6 +19,22 @@ struct IngressStatus {
     uint32_t laneOverflow() const { return (status >> 8) & 0xFFu; }
 };
 
+// The PL receiver self-heal (results9, pz7035 docs/YOFO_HOST_INTERFACE.md): diagnostics window at
+// 0x40100400 (P[256..]), ID 'RXH1' at index 0; reads 0 on an image without the block.
+inline constexpr uint32_t kRxHealId = 0x52584831u;
+inline constexpr unsigned kRxHealWindow = 256; // P[256] = 0x40100400
+struct RxHealStatus {
+    bool present{false};
+    uint32_t control{0};    // [0] enable, [15:8] max tries, [23:16] persist ms, [31:24] clear ms
+    uint32_t status{0};     // [7:0] tries this episode, [8] gave up, [9] flags set now, [10] settled, [23:16] lane flags
+    uint32_t autoResets{0}; // auto-reset count since the PL reset
+    uint32_t lastPulse{0};  // [7:0] flags at the pulse, [15:8] its try number
+    unsigned tries() const { return status & 0xFFu; }
+    bool gaveUp() const { return (status & 0x100u) != 0; }
+    bool flagsSet() const { return (status & 0x200u) != 0; }
+    uint32_t laneFlags() const { return (status >> 16) & 0xFFu; }
+};
+
 struct AlignLockHooks {
     // True once a new preview has been published, waiting at most the given time.
     std::function<bool(std::chrono::milliseconds)> waitPreview;
@@ -29,6 +45,9 @@ struct AlignLockHooks {
     // buffer clear (bit 5) and a timing rewrite + reset are not cures. It is this one function so
     // the sequence can change.
     std::function<bool(std::chrono::milliseconds hold)> clearFlags;
+    // Optional: the PL self-heal status (present = false on an image without it). When the block is
+    // there the PL does the resets: the host waits for it and does not pulse the receiver itself.
+    std::function<bool(RxHealStatus&)> readHeal;
     // Called for every attempt (count and log it).
     std::function<void(int attempt, const IngressStatus&)> onAttempt;
     std::function<void(std::chrono::milliseconds)> pause;
@@ -40,12 +59,15 @@ struct AlignLockPolicy {
     std::chrono::milliseconds settleAfterClear{400}; // the receiver settles ~35 ms after the reset
     std::chrono::milliseconds previewWaitAfterClear{1500}; // only once the flags read clear
     std::chrono::milliseconds slowStartWait{11000}; // no overflow flags: the old 12 s wait in total
+    std::chrono::milliseconds healWait{6000}; // the PL block makes up to 8 tries of ~0.1 s each
+    std::chrono::milliseconds healPoll{250};
     int attempts{8}; // ~40-45 % per reset: eight leave about a 1-2 % miss (tunable)
 };
 
 struct AlignLockResult {
     bool locked{false};
     bool recovered{false}; // needed at least one reset
+    bool healedByPl{false}; // the PL self-heal cleared the flags (no host reset)
     int clears{0};
     std::string error; // operator text when not locked
 };
