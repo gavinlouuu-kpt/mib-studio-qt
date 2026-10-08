@@ -99,6 +99,7 @@ with sync_playwright() as p:
         print(f"(could not place the Run window: {e})")
     time.sleep(2)
     for n in range(1, flips + 1):
+        t_run = time.time()  # the Run click (the Run entry); t_epoch below is the Align click
         tab(page, "Experiment")
         run_ok = False
         for _ in range(25):
@@ -151,7 +152,7 @@ with sync_playwright() as p:
                # #643: a PL gave-up is counted and timed; the host recovery then runs (resets > 0).
                "pl_gave_ups": lock.get("pl_gave_ups", 0) - gaveups0,
                "last_pl_gave_up_ms": lock.get("last_pl_gave_up_ms") if lock.get("pl_gave_ups", 0) > gaveups0 else None,
-               "t_epoch": round(t0, 1), "notice": note}
+               "t_run_epoch": round(t_run, 1), "t_epoch": round(t0, 1), "notice": note}
         if ok:
             time.sleep(5)  # the lost counter must stay flat while the previews continue (read on the board)
             row["still_previewing"] = preview_mean(page) > 20
