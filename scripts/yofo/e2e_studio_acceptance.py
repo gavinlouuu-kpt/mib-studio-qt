@@ -10,7 +10,7 @@ experiment (the LED at the app's presets); it never touches the pumps: that item
 Gavin" until he is present. Writes OUTDIR/acceptance.json and screenshots, and exits non-zero if an
 item failed.
 
-Items, in order: token/Connect, Preflight with 0 warnings, Align, Run at 5 kHz, Run<->Align with no
+Items, in order: token/Connect, Preflight (only the accepted RAM-storage warning), PL identity, Align, Run at 5 kHz, Run<->Align with no
 shell commands, no MIB-only surfaces, pumps (pending). `--desktop` checks the host (MIB desktop)
 capabilities instead: connect, and no PZ7035-only surfaces.
 """
@@ -32,9 +32,11 @@ results = []
 
 # What the PZ7035 must not show (the host-only surfaces from the 2026-10-07 E2E pass, #550).
 MIB_ONLY = ["Nanopositioner", "Autofocus", "Auto background", "Clear Background", "Set Background", "Clear ROI",
-            "Startup hardware selection", "EGrabber", "Calibrate Background", "Sort Trigger", "Periodic Test"]
+            "Startup hardware selection", "EGrabber", "Calibrate Background", "Sort Trigger", "Periodic Test", "Trigger tests"]
 # What only the PZ7035 shows (must be absent on the desktop).
 PZ_ONLY = ["PL core", "Science=PL"]
+# Preflight warnings that are policy, not faults: recordings go to the RAM root (#510).
+ACCEPTED_WARNINGS = ["Storage destination"]
 
 
 def record(name, ok, detail=""):
@@ -94,7 +96,9 @@ with sync_playwright() as p:
         leaked = [s for s in PZ_ONLY if s in text]
         record("MIB desktop unchanged (no PZ7035-only surfaces)", not leaked, f"leaked: {leaked}" if leaked else "none of " + ", ".join(PZ_ONLY))
     else:
-        # 2. Preflight with 0 warnings.
+        # 2. Preflight: no failure, and no warning except the accepted RAM-storage one (policy since
+        #    #510: recordings go to the RAM root until a persistent target exists); the PL identity
+        #    must match the core.json installed on the board (the bundle's own, #637).
         tab(page, "Hardware Preflight")
         time.sleep(4)
         text = body(page)
@@ -103,13 +107,19 @@ with sync_playwright() as p:
         if m:
             passed, warn, failed = map(int, m.groups())
             detail = f"{passed} passed · {warn} warning · {failed} failed"
+            names = []
             if warn:
                 rows = [l for l in text.split("\n")]
-                names = [rows[i - 2] for i, l in enumerate(rows) if l.strip() == "Warning" and i >= 2]
-                detail += f" (warning on: {', '.join(n.strip() for n in names)})"
-            record("Preflight with 0 warnings", warn == 0 and failed == 0, detail)
+                names = [rows[i - 2].strip() for i, l in enumerate(rows) if l.strip() == "Warning" and i >= 2]
+                detail += f" (warning on: {', '.join(names)})"
+            unexpected = [n for n in names if n not in ACCEPTED_WARNINGS]
+            record("Preflight (only the accepted warning)", failed == 0 and not unexpected,
+                   detail + (f"; unexpected: {', '.join(unexpected)}" if unexpected else ""))
         else:
-            record("Preflight with 0 warnings", False, "summary line not found")
+            record("Preflight (only the accepted warning)", False, "summary line not found")
+        identity = "PL build and weights match" in text
+        record("PL identity matches the installed core.json", identity,
+               "PL build and weights match" if identity else "no 'PL build and weights match' on the Preflight page")
 
         # 7 (checked here, on the first tabs): no MIB-only surfaces.
         text_all = text
