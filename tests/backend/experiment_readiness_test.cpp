@@ -464,6 +464,27 @@ int main()
         req.profileId = "profile-A";
         req.readinessGeneration = coord.evaluateReadiness(out1, "profile-A").generation;
         MIB_EXPECT(coord.start(req).outcome == ExperimentStartOutcome::AlreadyActive, "AlreadyActive while running");
+        // ... however busy the coordinator mutex is (#595): the active state is answered before the
+        // try-lock that reports Busy. Another thread polls status() (it takes the mutex) while the
+        // run is active and a stale generation is offered; every start must still be AlreadyActive.
+        {
+            std::atomic<bool> poll{true};
+            std::thread poller([&] {
+                while (poll.load()) {
+                    (void)coord.status();
+                    (void)coord.state();
+                }
+            });
+            ExperimentStartRequest stale = req;
+            stale.readinessGeneration = 0;
+            int notActive = 0;
+            for (int i = 0; i < 3000; ++i) {
+                if (coord.start(stale).outcome != ExperimentStartOutcome::AlreadyActive) ++notActive;
+            }
+            poll.store(false);
+            poller.join();
+            MIB_EXPECT(notActive == 0, "AlreadyActive while running, under mutex contention and a stale generation");
+        }
 
         // Finalize through the coordinator (backend-owned stop path).
         MIB_EXPECT(coord.requestStop(false) == backend::app::ExperimentStopOutcome::Accepted, "stop accepted");

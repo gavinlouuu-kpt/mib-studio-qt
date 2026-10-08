@@ -179,7 +179,8 @@ private:
     bool storageProbeOk_{false};
     std::string storageProbeReason_;
 
-    ExperimentRunState state_{ExperimentRunState::Idle};
+    // Written under mutex_; atomic so start() can answer AlreadyActive without the lock (#595).
+    std::atomic<ExperimentRunState> state_{ExperimentRunState::Idle};
     uint64_t startCounter_{0};
     std::optional<RunConfigurationSnapshot> activeRun_;
     std::string appVersion_{"unknown"};
