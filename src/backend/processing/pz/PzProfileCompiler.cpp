@@ -90,6 +90,33 @@ private:
 
 } // namespace
 
+std::vector<std::string> plIgnoredSettingsChanged(const services::ProcessingConfig& c) {
+    // What the PL's unet_cells_v2 does not implement: the host mask pipeline (blur, background subtraction,
+    // morphology), the host object filters (border, ring ratio, single inner contour) and automatic
+    // background/ROI. (Multi-image is a profile store flag, store_multi_image_frames, so it is not listed.) A setting still at its default says nothing; one the
+    // operator changed would otherwise be accepted silently.
+    const services::ProcessingConfig d;
+    std::vector<std::string> names;
+    const auto changed = [&](bool differs, const char* name) { if (differs) names.emplace_back(name); };
+    changed(c.gaussian_blur_size != d.gaussian_blur_size, "gaussian_blur_size");
+    changed(c.bg_subtract_threshold != d.bg_subtract_threshold, "bg_subtract_threshold");
+    changed(c.morph_kernel_size != d.morph_kernel_size, "morph_kernel_size");
+    changed(c.morph_iterations != d.morph_iterations, "morph_iterations");
+    changed(c.enable_border_check != d.enable_border_check, "enable_border_check");
+    changed(c.enable_ring_ratio_check != d.enable_ring_ratio_check, "enable_ring_ratio_check");
+    changed(c.ring_ratio_min != d.ring_ratio_min, "ring_ratio_min");
+    changed(c.ring_ratio_max != d.ring_ratio_max, "ring_ratio_max");
+    changed(c.require_single_inner_contour != d.require_single_inner_contour, "require_single_inner_contour");
+    changed(c.empty_frame_pixel_threshold != d.empty_frame_pixel_threshold, "empty_frame_pixel_threshold");
+    changed(c.auto_background_enabled != d.auto_background_enabled, "auto_background_enabled");
+    changed(c.auto_background_empty_frames != d.auto_background_empty_frames, "auto_background_empty_frames");
+    changed(c.auto_background_cooldown_frames != d.auto_background_cooldown_frames, "auto_background_cooldown_frames");
+    changed(c.auto_roi_from_background != d.auto_roi_from_background, "auto_roi_from_background");
+    changed(c.auto_roi_wall_gradient_ratio != d.auto_roi_wall_gradient_ratio, "auto_roi_wall_gradient_ratio");
+    changed(c.auto_roi_wall_margin != d.auto_roi_wall_margin, "auto_roi_wall_margin");
+    return names;
+}
+
 CompiledProfile compileUnetCellsV2(const UnetCellsProfileInputs& in) {
     CompiledProfile out;
     PageWriter w(out);
@@ -165,6 +192,7 @@ CompiledProfile compileUnetCellsV2(const UnetCellsProfileInputs& in) {
     } else if (c.enable_target_group && c.enable_target_group_emodulus) {
         out.errors.push_back("the target group gates on E-modulus but no E-modulus LUT is loaded");
     }
+    out.warnings = plIgnoredSettingsChanged(c);
     return out;
 }
 

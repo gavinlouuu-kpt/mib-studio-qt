@@ -10,6 +10,7 @@
 
 #include "support/assert.h"
 
+#include <algorithm>
 #include <nlohmann/json.hpp>
 
 #include <array>
@@ -153,6 +154,35 @@ void testOutOfRangeIsAnError() {
     MIB_EXPECT(p.page[1] == (70u << 16 | 12u), "channel band word");
     MIB_EXPECT(p.page[18] == (100u | 5u << 16), "store word: invalid every 100, 5 multi-image frames");
     MIB_EXPECT(p.page[19] == 0 && p.page[20] == 0 && p.page[21] == 0, "no LUT axes without a LUT");
+    MIB_EXPECT(p.warnings.empty(), "multi-image is a store flag the PL implements: no warning");
+}
+
+// #651 G7: settings the PL does not implement are reported when the operator changed them.
+void testIgnoredSettingsWarn() {
+    const auto lut = boardLut();
+    auto base = hostDefaults(&lut);
+    const auto untouched = compileUnetCellsV2(base);
+    MIB_EXPECT(untouched.ok() && untouched.warnings.empty(), "defaults: nothing ignored, no warning");
+
+    auto in = hostDefaults(&lut);
+    in.config.gaussian_blur_size = 7;
+    in.config.enable_border_check = false;
+    in.config.ring_ratio_min = 10.0;
+    in.config.auto_roi_from_background = true;
+    const auto p = compileUnetCellsV2(in);
+    MIB_EXPECT(p.ok(), "ignored settings do not stop the profile compiling");
+    const auto has = [&](const char* name) {
+        return std::find(p.warnings.begin(), p.warnings.end(), std::string(name)) != p.warnings.end();
+    };
+    MIB_EXPECT(p.warnings.size() == 4 && has("gaussian_blur_size") && has("enable_border_check") && has("ring_ratio_min") &&
+                   has("auto_roi_from_background"),
+               "exactly the four changed, PL-ignored settings are named");
+    MIB_EXPECT(p.page == untouched.page, "and they leave the PL page unchanged");
+
+    auto gates = hostDefaults(&lut);
+    gates.config.deformability_threshold_max = 0.5;
+    gates.config.enable_area_ratio_check = true;
+    MIB_EXPECT(compileUnetCellsV2(gates).warnings.empty(), "settings the PL implements are not warned about");
 }
 
 } // namespace
@@ -162,5 +192,6 @@ int main(int argc, char** argv) {
     testFieldTableMatchesProfile(argv[1]);
     testHostDefaultsCompileToTheBoardPage();
     testOutOfRangeIsAnError();
+    testIgnoredSettingsWarn();
     return mib::test::exitCode();
 }
