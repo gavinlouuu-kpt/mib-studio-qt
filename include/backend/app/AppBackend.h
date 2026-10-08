@@ -133,6 +133,9 @@ namespace backend
         // Service / Commissioning mode, latched by the shell: raw LED values are refused
         // outside it, on the backend side (not only in the UI).
         void setServiceMode(bool on);
+        // The Run window survives a restart: written by every successful Run switch to
+        // <dataDir>/instrument_run_window.json, read at initialize(). Never cleared, only replaced.
+        void loadInstrumentRunWindow();
         bool serviceMode() const;
         // How Align shows the sensor: "bridge" (whole frames from the results bridge) or "bands"
         // (the producer's banded grabber, images before results8); "" outside Align.

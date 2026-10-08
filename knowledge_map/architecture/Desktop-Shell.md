@@ -670,7 +670,10 @@ backend's camera modes instead of `set_camera_overview`:
   window the backend applied from `fetch_instrument_status.mode`
   (`run_set` true once a Run switch succeeded in the process, then `run_x`,
   `run_y`; `restoredRunWindow`), unless the operator already placed one. The
-  backend keeps it in memory only, so a server restart still starts unplaced.
+  backend also writes it to `<data dir>/instrument_run_window.json` at every
+  successful Run switch and reads it at start-up (`AppBackend::loadInstrumentRunWindow`),
+  so an instrument restart keeps the window; a file that is not on the Run grid
+  or the sensor is ignored, and the window is only ever replaced, not cleared.
 - **When the camera cannot go to Run.** `components/RunWindowNotice` shows an
   alert in the tab, like a failed preflight check: with no placed window the
   Experiment tab says "Place the 512×96 run window in Camera & Alignment" and
