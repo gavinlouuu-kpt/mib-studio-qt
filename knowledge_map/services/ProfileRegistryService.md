@@ -16,7 +16,10 @@ records operator-confirmed local validations; [[../architecture/ExperimentCoordi
 matches the applied config.json to a cached revision, gates Start on it
 (`method.revision`) and freezes it into `/run_provenance`. M2b/M2c: Apply
 (`planMethodApply`, then `app::applyCentralMethod` /
-`applyConfigDocument` in `include/backend/app/ConfigDocumentApply.h`) and
+`applyConfigDocument` in `include/backend/app/ConfigDocumentApply.h`, the one
+validated applier shared with local profiles: bounded values, ROI checked
+against a captured preview, realtime enabled/drop_frames, stage block; the
+exact text is recorded) and
 "Mark validated" (`AppBackend::requestMethodValidation` accepts only a
 test run whose `/run_provenance` names the revision on this instrument under
 the current context — `checkValidationEvidence`). See

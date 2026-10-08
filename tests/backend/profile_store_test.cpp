@@ -80,7 +80,7 @@ int main() {
     // Validate entire candidate before mutating runtime state, not processing-only.
     create["name"] = "runtime";
     create["document_json"] =
-        R"({"image_processing":{"area_threshold_min":42},"pixel_to_micron_factor":0.7,"buffer_threshold":55,"autofocus_focus_setpoint":31,"realtime_processing":{"mode":"inline","batch_size":4,"max_queued_frames":40},"camera":{"frame_delivery_mode":"latestFrame"}})";
+        R"({"image_processing":{"area_threshold_min":42,"difference_threshold":13},"pixel_to_micron_factor":0.7,"buffer_threshold":55,"autofocus_focus_setpoint":31,"realtime_processing":{"mode":"inline","batch_size":4,"max_queued_frames":40},"camera":{"frame_delivery_mode":"latestFrame"}})";
     const auto runtime = call(create);
     MIB_REQUIRE(runtime["ok"], runtime.dump());
     std::ofstream(std::filesystem::path(base) / "runtime" / "profile.meta.json")
@@ -94,6 +94,8 @@ int main() {
                    backend.processing().getFlushInterval() == 55 &&
                    backend.autofocus().getConfig().focusSetpoint == 31,
                "nonprocessing settings applied");
+    MIB_EXPECT(backend.processing().getProcessingConfig().bg_subtract_threshold == 13,
+               "shared applier: the v2 difference_threshold key applies to local profiles too");
     create["name"] = "invalid-runtime";
     create["document_json"] =
         R"({"image_processing":{"area_threshold_min":99},"pixel_to_micron_factor":-1})";

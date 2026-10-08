@@ -3,212 +3,235 @@
 #include "backend/app/AppBackend.h"
 #include "backend/app/ExperimentCoordinator.h"
 #include "backend/app/MethodApply.h"
-#include "backend/profiles/ProfileRegistryWorker.h"
+#include "backend/app/ProcessingConfigTransaction.h"
 #include "backend/camera/common/ICamera.h"
-#include "backend/processing/ProcessingConfigJson.h"
+#include "backend/playback/FrameStore.h"
 #include "backend/processing/ProcessingContract.h"
-#include "backend/processing/ProcessingService.h"
-#include "backend/services/AutofocusService.h"
-#include "backend/services/CaptureService.h"
+#include "backend/profiles/ProfileRegistryWorker.h"
+#include "backend/services/StageService.h"
 
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 
-#include <algorithm>
-#include <optional>
+#include <cmath>
 #include <stdexcept>
 
 namespace backend::app {
 namespace {
 using Json = nlohmann::json;
 
-struct Invalid : std::runtime_error {
-    using std::runtime_error::runtime_error;
-};
+double number(const Json& root, const char* key, double fallback, double low, double high) {
+    if (!root.contains(key)) return fallback;
+    if (!root.at(key).is_number()) throw std::runtime_error(std::string("Expected number: ") + key);
+    const double value = root.at(key).get<double>();
+    if (!std::isfinite(value) || value < low || value > high)
+        throw std::runtime_error(std::string("Invalid range: ") + key);
+    return value;
+}
 
-template <class T> std::optional<T> get(const Json& object, const char* key, const std::string& where) {
-    const auto it = object.find(key);
-    if (it == object.end() || it->is_null()) return std::nullopt;
-    try {
-        if constexpr (std::is_same_v<T, bool>) {
-            if (!it->is_boolean()) throw Invalid("");
-        } else if constexpr (std::is_same_v<T, std::string>) {
-            if (!it->is_string()) throw Invalid("");
-        } else {
-            if (!it->is_number()) throw Invalid("");
-        }
-        return it->get<T>();
-    } catch (const std::exception&) {
-        throw Invalid(where + key + " has the wrong type");
+int integer(const Json& root, const char* key, int fallback, int low, int high) {
+    if (root.contains(key) && !root.at(key).is_number_integer())
+        throw std::runtime_error(std::string("Expected integer: ") + key);
+    return static_cast<int>(number(root, key, fallback, low, high));
+}
+
+bool boolean(const Json& root, const char* key, bool fallback) {
+    if (!root.contains(key)) return fallback;
+    if (!root.at(key).is_boolean()) throw std::runtime_error(std::string("Expected boolean: ") + key);
+    return root.at(key).get<bool>();
+}
+
+// The Qt AppConfigWatcher's compatibility rules, applied to a copy of the
+// image_processing section before the shared parser sees it.
+Json watcherCompatible(Json section) {
+    if (!section.is_object()) throw std::runtime_error("image_processing must be an object");
+    if (section.contains("difference_threshold")) {
+        if (!section.at("difference_threshold").is_number_integer())
+            throw std::runtime_error("Expected integer: image_processing.difference_threshold");
+        section["bg_subtract_threshold"] = section.at("difference_threshold");
     }
-}
-
-const Json* object(const Json& parent, const char* key, const std::string& where) {
-    const auto it = parent.find(key);
-    if (it == parent.end() || it->is_null()) return nullptr;
-    if (!it->is_object()) throw Invalid(where + key + " must be an object");
-    return &*it;
-}
-
-// Same precondition as the local-profile apply (app/ProfileStore.cpp):
-// nothing that reads these settings may be running. Raw recording runs with
-// the experiment idle, and the capture worker reads its Config unsynchronised,
-// so a live change would race it (#493 review). Empty = free to apply.
-std::string busyReason(AppBackend& backend) {
-    if (backend.isFrameRecording()) return "Stop raw recording before applying a method";
-    if (backend.capture().isRunning() || backend.autofocus().isEnabled() ||
-        backend.processing().isRealtimeRunning())
-        return "Stop capture/realtime processing and disable autofocus before applying a method";
-    return {};
+    if (const auto multi = section.find("multi_image"); multi != section.end() && multi->is_object()) {
+        if (const auto count = multi->find("count");
+            count != multi->end() && count->is_number_integer() && count->get<long long>() < 1)
+            (*multi)["count"] = 1;
+    }
+    return section;
 }
 
 } // namespace
 
+std::string configApplyBlocker(AppBackend& backend) {
+    if (backend.isFrameRecording()) return "Stop raw recording before applying a configuration";
+    if (backend.capture().isRunning() || backend.autofocus().isEnabled() ||
+        backend.processing().isRealtimeRunning())
+        return "Stop capture/realtime processing and disable autofocus before applying a configuration";
+    return {};
+}
+
+StagedConfig stageConfigDocument(AppBackend& backend, const std::string& bytes) {
+    auto root = Json::parse(bytes);
+    if (!root.is_object()) throw std::runtime_error("config.json root must be an object");
+    integer(root, "config_schema_version", 1, 1, 1);
+    auto& processing = backend.processing();
+    StagedConfig s;
+
+    if (root.contains("image_processing")) root["image_processing"] = watcherCompatible(root.at("image_processing"));
+    try {
+        s.processing = validatedProcessingConfig(root.dump(), processing.getProcessingConfig());
+    } catch (const std::exception& e) {
+        throw std::runtime_error(std::string("image_processing: ") + e.what());
+    }
+    if (root.contains("processing_contract_version") && !root.at("processing_contract_version").is_null()) {
+        const int contract = integer(root, "processing_contract_version", 1, 1, 1000000);
+        if (!processing::contract::isSupportedProcessingContract(contract))
+            throw std::runtime_error("processing_contract_version " + std::to_string(contract) +
+                                     " is not supported");
+        s.processing.processing_contract_version = contract;
+    }
+
+    s.flushInterval =
+        integer(root, "buffer_threshold", static_cast<int>(processing.getFlushInterval()), 1, 10000000);
+    s.experimentBufferMb = number(root, "experiment_buffer_max_mb",
+                                  processing.getMaxBufferedBytes() / (1024.0 * 1024.0), 0, 1048576);
+    s.pixelToMicron = number(root, "pixel_to_micron_factor", processing.getPixelToMicronFactor(), 1e-12, 1e12);
+
+    s.realtimeEnabled = processing.isRealtimeEnabled();
+    s.dropFrames = processing.getRealtimeDropFrames();
+    s.batch = processing.getRealtimeBatchSettings();
+    s.mode = processing.getRealtimeProcessingMode();
+    if (root.contains("realtime_processing")) {
+        const auto& rp = root.at("realtime_processing");
+        if (!rp.is_object()) throw std::runtime_error("realtime_processing must be an object");
+        s.realtimeEnabled = boolean(rp, "enabled", s.realtimeEnabled);
+        s.dropFrames = boolean(rp, "drop_frames", s.dropFrames);
+        s.batch.batchSize = integer(rp, "batch_size", static_cast<int>(s.batch.batchSize), 1, 1000000);
+        s.batch.maxQueuedFrames =
+            integer(rp, "max_queued_frames", static_cast<int>(s.batch.maxQueuedFrames), 1, 10000000);
+        s.batch.workerCount = integer(rp, "worker_count", static_cast<int>(s.batch.workerCount), 1, 256);
+        s.batch.maxBatchDelayMs = integer(rp, "max_batch_delay_ms", s.batch.maxBatchDelayMs, 1, 60000);
+        if (rp.contains("mode")) {
+            if (!rp.at("mode").is_string()) throw std::runtime_error("Expected string: realtime_processing.mode");
+            const auto text = rp.at("mode").get<std::string>();
+            if (text == "inline")
+                s.mode = services::ProcessingService::RealtimeProcessingMode::Inline;
+            else if (text == "async_batch" || text == "batch" || text == "kin6")
+                s.mode = services::ProcessingService::RealtimeProcessingMode::AsyncBatch;
+            else
+                throw std::runtime_error("Unknown realtime processing mode");
+        }
+    }
+    if (s.batch.maxQueuedFrames < s.batch.batchSize)
+        throw std::runtime_error("Realtime queue must hold at least one batch");
+
+    if (root.contains("camera")) {
+        const auto& camera = root.at("camera");
+        if (!camera.is_object()) throw std::runtime_error("camera must be an object");
+        const auto it = camera.find("frame_delivery_mode");
+        const std::string text = it == camera.end() || it->is_null()
+                                     ? std::string("everyFrame")
+                                     : (it->is_string() ? it->get<std::string>() : std::string("?"));
+        if (text != "everyFrame" && text != "latestFrame")
+            throw std::runtime_error("Unknown frame delivery mode");
+        s.capture.deliveryMode = ::camera::common::frameDeliveryModeFromString(text);
+    }
+
+    auto& af = s.autofocus;
+    af = backend.autofocus().getConfig();
+    af.focusSetpoint = number(root, "autofocus_focus_setpoint", af.focusSetpoint, 0, 1e9);
+    af.focusRange = number(root, "autofocus_focus_range", af.focusRange, 0, 1e9);
+    af.voltageStep = number(root, "autofocus_voltage_step", af.voltageStep, 0, 1e6);
+    af.fineVoltageStep = number(root, "autofocus_fine_voltage_step", af.fineVoltageStep, 0, 1e6);
+    af.minVoltage = number(root, "autofocus_min_voltage", af.minVoltage, -1e6, 1e6);
+    af.maxVoltage = number(root, "autofocus_max_voltage", af.maxVoltage, -1e6, 1e6);
+    af.initialVoltage = number(root, "autofocus_initial_voltage", af.initialVoltage, af.minVoltage, af.maxVoltage);
+    af.manualVoltageStep = number(root, "autofocus_manual_voltage_step", af.manualVoltageStep, 0, 1e6);
+    af.safeShutdownVoltage =
+        number(root, "safe_shutdown_voltage", af.safeShutdownVoltage, af.minVoltage, af.maxVoltage);
+    af.ringRatioStaleMs = integer(root, "ring_ratio_stale_ms", af.ringRatioStaleMs, 1, 3600000);
+    af.minSamplesPerStep = integer(root, "autofocus_min_samples_per_step", af.minSamplesPerStep, 1, 10000000);
+    af.requireNewSamplePerStep = boolean(root, "require_new_sample_per_step", af.requireNewSamplePerStep);
+    af.focusDirection = boolean(root, "focus_direction", af.focusDirection);
+    if (af.minVoltage > af.maxVoltage || af.initialVoltage < af.minVoltage || af.initialVoltage > af.maxVoltage ||
+        af.safeShutdownVoltage < af.minVoltage || af.safeShutdownVoltage > af.maxVoltage)
+        throw std::runtime_error("Invalid autofocus voltage bounds");
+
+    // Z stage block (#464): configuration only; nothing connects or moves.
+    if (root.contains("stage")) {
+        s.stage = services::parseStageConfig(root.at("stage"));
+        if (backend.stage().snapshot().connected)
+            throw std::runtime_error("Disconnect the Z stage before applying a configuration with a stage block");
+    }
+
+    s.roi = processing.getRealtimeRoi();
+    if (root.contains("roi")) {
+        const auto& r = root.at("roi");
+        if (!r.is_object()) throw std::runtime_error("roi must be an object");
+        s.roi.x = integer(r, "x", 0, 0, 1000000);
+        s.roi.y = integer(r, "y", 0, 0, 1000000);
+        s.roi.w = integer(r, "w", 0, 0, 1000000);
+        s.roi.h = integer(r, "h", 0, 0, 1000000);
+        if (s.roi.w || s.roi.h) {
+            playback::Frame frame;
+            if (!backend.getFrameStore()->getLatest(frame) || !s.roi.w || !s.roi.h ||
+                static_cast<uint64_t>(s.roi.x + s.roi.w) > frame.width ||
+                static_cast<uint64_t>(s.roi.y + s.roi.h) > frame.height)
+                throw std::runtime_error("ROI cannot be validated: capture a matching preview then "
+                                         "stop capture before applying");
+        }
+    }
+    s.displayFps = integer(root, "display_fps", 60, 1, 240);
+    return s;
+}
+
+void commitStagedConfig(AppBackend& backend, const StagedConfig& s) {
+    // Everything was validated first and nothing that reads these settings is
+    // running (configApplyBlocker), so the setters neither fail half-way nor
+    // restart worker threads. No hardware actuation is issued.
+    auto& processing = backend.processing();
+    processing.setProcessingConfig(s.processing);
+    processing.setFlushInterval(static_cast<size_t>(s.flushInterval));
+    processing.setMaxBufferedBytes(static_cast<uint64_t>(s.experimentBufferMb * 1024.0 * 1024.0));
+    processing.setRealtimeDropFrames(s.dropFrames);
+    processing.setRealtimeBatchSettings(s.batch);
+    processing.setRealtimeProcessingMode(s.mode);
+    processing.setRealtimeEnabled(s.realtimeEnabled);
+    processing.setPixelToMicronFactor(s.pixelToMicron);
+    processing.setRealtimeRoi(s.roi);
+    backend.capture().setConfig(s.capture);
+    backend.autofocus().setConfig(s.autofocus);
+    if (s.stage) backend.stage().setConfig(*s.stage); // disconnected: checked when staged
+}
+
 ConfigApplyReport applyConfigDocument(AppBackend& backend, const std::string& text) {
     ConfigApplyReport report;
-    report.error = busyReason(backend);
+    report.error = configApplyBlocker(backend);
     if (!report.error.empty()) return report;
+    StagedConfig staged;
     Json root;
     try {
+        staged = stageConfigDocument(backend, text);
         root = Json::parse(text);
-    } catch (const Json::exception&) {
-        report.error = "config.json is not valid JSON";
-        return report;
-    }
-    if (!root.is_object()) {
-        report.error = "config.json root must be an object";
-        return report;
-    }
-
-    auto& processing = backend.processing();
-    // ---- stage (nothing changes until every section validated) ----------
-    auto pcfg = processing.getProcessingConfig();
-    std::optional<size_t> flushEvery;
-    std::optional<uint64_t> maxBufferedBytes;
-    std::optional<services::ProcessingService::RealtimeBatchSettings> batch;
-    std::optional<services::ProcessingService::RealtimeProcessingMode> mode;
-    services::CaptureService::Config capture{};
-    std::optional<double> pixelToMicron;
-    auto autofocus = backend.autofocus().getConfig();
-    bool autofocusTouched = false;
-    std::optional<services::ProcessingService::Roi> roi;
-    try {
-        const int contract = get<int>(root, "processing_contract_version", "").value_or(1);
-        if (!processing::contract::isSupportedProcessingContract(contract))
-            throw Invalid("processing_contract_version " + std::to_string(contract) + " is not supported");
-        pcfg.processing_contract_version = contract;
-
-        if (const auto* ip = object(root, "image_processing", "")) {
-            std::string error;
-            if (!processing::config_json::fromJson(*ip, pcfg, &error)) throw Invalid("image_processing: " + error);
-            // Keys the shared parser predates (same rules as AppConfigWatcher).
-            if (const auto v = get<int>(*ip, "difference_threshold", "image_processing.")) pcfg.bg_subtract_threshold = *v;
-            if (const auto v = get<double>(*ip, "laplacian_variance_min", "image_processing."))
-                pcfg.laplacian_variance_min = *v;
-            if (const auto v = get<double>(*ip, "laplacian_variance_max", "image_processing."))
-                pcfg.laplacian_variance_max = *v;
-            if (const auto* filters = object(*ip, "filters", "image_processing."))
-                if (const auto v = get<bool>(*filters, "enable_laplacian_variance_check", "image_processing.filters."))
-                    pcfg.enable_laplacian_variance_check = *v;
-            pcfg.multi_image_count = std::max(1, pcfg.multi_image_count);
-            report.applied.push_back("image_processing");
-        }
-        if (const auto v = get<int>(root, "buffer_threshold", "")) flushEvery = static_cast<size_t>(std::max(1, *v));
-        if (const auto v = get<double>(root, "experiment_buffer_max_mb", ""))
-            maxBufferedBytes = static_cast<uint64_t>(std::max(0.0, *v) * 1024.0 * 1024.0);
-        if (const auto* rp = object(root, "realtime_processing", "")) {
-            auto b = processing.getRealtimeBatchSettings();
-            if (const auto v = get<int>(*rp, "batch_size", "realtime_processing.")) b.batchSize = static_cast<size_t>(std::max(1, *v));
-            if (const auto v = get<int>(*rp, "max_queued_frames", "realtime_processing."))
-                b.maxQueuedFrames = static_cast<size_t>(std::max(1, *v));
-            if (const auto v = get<int>(*rp, "worker_count", "realtime_processing.")) b.workerCount = static_cast<size_t>(std::max(1, *v));
-            if (const auto v = get<int>(*rp, "max_batch_delay_ms", "realtime_processing.")) b.maxBatchDelayMs = std::max(1, *v);
-            batch = b;
-            if (const auto v = get<std::string>(*rp, "mode", "realtime_processing.")) {
-                std::string m = *v;
-                std::transform(m.begin(), m.end(), m.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-                mode = (m == "async_batch" || m == "batch" || m == "kin6")
-                           ? services::ProcessingService::RealtimeProcessingMode::AsyncBatch
-                           : services::ProcessingService::RealtimeProcessingMode::Inline;
-            }
-            report.applied.push_back("realtime_processing");
-        }
-        {
-            // Missing / unknown maps to EveryFrame, applied unconditionally
-            // (deterministic migration, as the watcher does).
-            std::string deliveryMode;
-            if (const auto* camera = object(root, "camera", ""))
-                deliveryMode = get<std::string>(*camera, "frame_delivery_mode", "camera.").value_or("");
-            capture.deliveryMode = ::camera::common::frameDeliveryModeFromString(deliveryMode);
-            report.applied.push_back("camera.frame_delivery_mode");
-        }
-        if (const auto v = get<double>(root, "pixel_to_micron_factor", "")) {
-            if (*v <= 0.0) throw Invalid("pixel_to_micron_factor must be positive");
-            pixelToMicron = *v;
-        }
-        const auto af = [&](const char* key, auto& field) {
-            using T = std::decay_t<decltype(field)>;
-            if (const auto v = get<T>(root, key, "")) {
-                field = *v;
-                autofocusTouched = true;
-            }
-        };
-        af("autofocus_focus_setpoint", autofocus.focusSetpoint);
-        af("autofocus_focus_range", autofocus.focusRange);
-        af("autofocus_voltage_step", autofocus.voltageStep);
-        af("autofocus_fine_voltage_step", autofocus.fineVoltageStep);
-        af("autofocus_max_voltage", autofocus.maxVoltage);
-        af("autofocus_min_voltage", autofocus.minVoltage);
-        af("autofocus_initial_voltage", autofocus.initialVoltage);
-        af("autofocus_manual_voltage_step", autofocus.manualVoltageStep);
-        af("ring_ratio_stale_ms", autofocus.ringRatioStaleMs);
-        af("require_new_sample_per_step", autofocus.requireNewSamplePerStep);
-        af("autofocus_min_samples_per_step", autofocus.minSamplesPerStep);
-        af("safe_shutdown_voltage", autofocus.safeShutdownVoltage);
-        af("focus_direction", autofocus.focusDirection);
-        if (const auto* r = object(root, "roi", "")) {
-            const auto x = get<int>(*r, "x", "roi."), y = get<int>(*r, "y", "roi."), w = get<int>(*r, "w", "roi."),
-                       h = get<int>(*r, "h", "roi.");
-            if (x && y && w && h && *x >= 0 && *y >= 0 && *w > 0 && *h > 0)
-                roi = services::ProcessingService::Roi{*x, *y, *w, *h};
-            else
-                report.notApplied.push_back("roi (incomplete or invalid)");
-        }
-    } catch (const Invalid& e) {
-        report.applied.clear();
-        report.notApplied.clear();
+    } catch (const std::exception& e) {
         report.error = e.what();
         return report;
     }
-    if (root.contains("dot_grid")) report.notApplied.push_back("dot_grid (Qt shell only)");
-    if (root.contains("display_fps")) report.notApplied.push_back("display_fps (Qt display setting)");
-
-    // ---- commit ---------------------------------------------------------
-    processing.setProcessingConfig(pcfg);
-    if (flushEvery) {
-        processing.setFlushInterval(*flushEvery);
-        report.applied.push_back("buffer_threshold");
-    }
-    if (maxBufferedBytes) {
-        processing.setMaxBufferedBytes(*maxBufferedBytes);
-        report.applied.push_back("experiment_buffer_max_mb");
-    }
-    if (batch) processing.setRealtimeBatchSettings(*batch);
-    if (mode) processing.setRealtimeProcessingMode(*mode);
-    backend.capture().setConfig(capture);
-    if (pixelToMicron) {
-        processing.setPixelToMicronFactor(*pixelToMicron);
-        report.applied.push_back("pixel_to_micron_factor");
-    }
-    if (autofocusTouched) {
-        backend.autofocus().setConfig(autofocus);
-        report.applied.push_back("autofocus");
-    }
-    if (roi) {
-        processing.setRealtimeRoi(*roi);
-        report.applied.push_back("roi");
-    }
+    commitStagedConfig(backend, staged);
     backend.setLastConfigJson(text);
+
+    for (const auto* key : {"image_processing", "buffer_threshold", "experiment_buffer_max_mb", "realtime_processing",
+                            "pixel_to_micron_factor", "stage", "roi"})
+        if (root.contains(key)) report.applied.emplace_back(key);
+    report.applied.emplace_back("camera.frame_delivery_mode"); // missing = everyFrame, always applied
+    for (const auto& item : root.items()) {
+        const auto& key = item.key();
+        if (key.rfind("autofocus_", 0) == 0 || key == "ring_ratio_stale_ms" || key == "require_new_sample_per_step" ||
+            key == "safe_shutdown_voltage" || key == "focus_direction") {
+            report.applied.emplace_back("autofocus");
+            break;
+        }
+    }
+    if (root.contains("dot_grid")) report.notApplied.emplace_back("dot_grid (Qt shell only)");
+    if (root.contains("display_fps")) report.notApplied.emplace_back("display_fps (Qt display setting)");
     report.ok = true;
     SPDLOG_INFO("ConfigDocumentApply: applied config.json ({} section(s); not applicable here: {})",
                 report.applied.size(), report.notApplied.size());
@@ -217,20 +240,24 @@ ConfigApplyReport applyConfigDocument(AppBackend& backend, const std::string& te
 
 ConfigApplyReport applyCentralMethod(AppBackend& backend, const std::string& revisionId) {
     ConfigApplyReport report;
-    const auto runState = backend.experiment().state();
-    if (runState == ExperimentRunState::Starting || runState == ExperimentRunState::Active ||
-        runState == ExperimentRunState::Stopping) {
-        report.error = "An experiment is in progress; apply the method after it ends";
-        return report;
+    // Under the coordinator's idle transaction, as local profiles are: Start
+    // cannot slip in between these checks and the commit.
+    const bool idle = backend.experiment().withIdleConfiguration([&] {
+        report.error = configApplyBlocker(backend);
+        if (!report.error.empty()) return;
+        const auto plan =
+            planMethodApply(backend.profileRegistry().snapshot(), revisionId, backend.getLastConfigJson());
+        if (!plan.ok) {
+            report.error = plan.error;
+            return;
+        }
+        report = applyConfigDocument(backend, plan.configText);
+    });
+    if (!idle) {
+        report = {};
+        report.error = "An experiment is in progress (or failed and not yet cleared); apply the method after it ends";
     }
-    report.error = busyReason(backend);
-    if (!report.error.empty()) return report;
-    const auto plan = planMethodApply(backend.profileRegistry().snapshot(), revisionId, backend.getLastConfigJson());
-    if (!plan.ok) {
-        report.error = plan.error;
-        return report;
-    }
-    return applyConfigDocument(backend, plan.configText);
+    return report;
 }
 
 } // namespace backend::app

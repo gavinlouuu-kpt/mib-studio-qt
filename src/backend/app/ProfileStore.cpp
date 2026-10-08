@@ -1,13 +1,8 @@
 #include "backend/app/ProfileStore.h"
+#include "backend/app/ConfigDocumentApply.h"
 #include "backend/app/AppBackend.h"
-#include "backend/app/ProcessingConfigTransaction.h"
 #include "backend/processing/ProcessingService.h"
 #include "backend/processing/ProcessingConfigJson.h"
-#include "backend/services/CaptureService.h"
-#include "backend/services/AutofocusService.h"
-#include "backend/services/StageService.h"
-#include <optional>
-#include "backend/playback/FrameStore.h"
 #include <cmath>
 #include <limits>
 #include "backend/processing/ProcessingCoreLoader.h"
@@ -128,131 +123,38 @@ void compatibility(AppBackend& backend, const J& meta) {
         }
 }
 J apply(AppBackend& backend, const J& snapshot) {
-    if (backend.capture().isRunning() || backend.autofocus().isEnabled() ||
-        backend.processing().isRealtimeRunning())
-        throw std::runtime_error(
-            "Stop capture/realtime processing and disable autofocus before applying a profile");
+    // The one validated applier (ConfigDocumentApply.h) stages and commits;
+    // a profile records a provenance document instead of its exact text.
+    if (const auto blocker = configApplyBlocker(backend); !blocker.empty())
+        throw std::runtime_error(blocker);
     if (snapshot.contains("metadata")) compatibility(backend, snapshot.at("metadata"));
     const std::string bytes = snapshot.at("document_json");
     const auto root = J::parse(bytes);
-    const auto schema = integer(root, "config_schema_version", 1, 1, 1);
-    (void)schema;
-    auto& processing = backend.processing();
-    const auto config = validatedProcessingConfig(bytes, processing.getProcessingConfig());
-    const auto flush = integer(root, "buffer_threshold",
-                               static_cast<int>(processing.getFlushInterval()), 1, 10000000);
-    const double mb = number(root, "experiment_buffer_max_mb",
-                             processing.getMaxBufferedBytes() / (1024.0 * 1024.0), 0, 1048576);
-    const double factor =
-        number(root, "pixel_to_micron_factor", processing.getPixelToMicronFactor(), 1e-12, 1e12);
-    bool realtimeEnabled = processing.isRealtimeEnabled(),
-         dropFrames = processing.getRealtimeDropFrames();
-    auto batch = processing.getRealtimeBatchSettings();
-    auto mode = processing.getRealtimeProcessingMode();
-    if (root.contains("realtime_processing")) {
-        const auto& rp = root.at("realtime_processing");
-        if (!rp.is_object()) throw std::runtime_error("realtime_processing must be an object");
-        if (rp.contains("enabled")) realtimeEnabled = rp.at("enabled").get<bool>();
-        if (rp.contains("drop_frames")) dropFrames = rp.at("drop_frames").get<bool>();
-        batch.batchSize = integer(rp, "batch_size", batch.batchSize, 1, 1000000);
-        batch.maxQueuedFrames =
-            integer(rp, "max_queued_frames", batch.maxQueuedFrames, 1, 10000000);
-        batch.workerCount = integer(rp, "worker_count", batch.workerCount, 1, 256);
-        batch.maxBatchDelayMs = integer(rp, "max_batch_delay_ms", batch.maxBatchDelayMs, 1, 60000);
-        if (rp.contains("mode")) {
-            const auto text = rp.at("mode").get<std::string>();
-            if (text == "inline")
-                mode = services::ProcessingService::RealtimeProcessingMode::Inline;
-            else if (text == "async_batch" || text == "batch" || text == "kin6")
-                mode = services::ProcessingService::RealtimeProcessingMode::AsyncBatch;
-            else
-                throw std::runtime_error("Unknown realtime processing mode");
-        }
-    }
-    if (batch.maxQueuedFrames < batch.batchSize)
-        throw std::runtime_error("Realtime queue must hold at least one batch");
-    services::CaptureService::Config capture{};
-    if (root.contains("camera")) {
-        if (!root.at("camera").is_object()) throw std::runtime_error("camera must be an object");
-        const auto text = root.at("camera").value("frame_delivery_mode", std::string("everyFrame"));
-        if (text != "everyFrame" && text != "latestFrame")
-            throw std::runtime_error("Unknown frame delivery mode");
-        capture.deliveryMode = camera::common::frameDeliveryModeFromString(text);
-    }
-    auto af = backend.autofocus().getConfig();
-    af.focusSetpoint = number(root, "autofocus_focus_setpoint", af.focusSetpoint, 0, 1e9);
-    af.focusRange = number(root, "autofocus_focus_range", af.focusRange, 0, 1e9);
-    af.voltageStep = number(root, "autofocus_voltage_step", af.voltageStep, 0, 1e6);
-    af.fineVoltageStep = number(root, "autofocus_fine_voltage_step", af.fineVoltageStep, 0, 1e6);
-    af.minVoltage = number(root, "autofocus_min_voltage", af.minVoltage, -1e6, 1e6);
-    af.maxVoltage = number(root, "autofocus_max_voltage", af.maxVoltage, -1e6, 1e6);
-    af.initialVoltage =
-        number(root, "autofocus_initial_voltage", af.initialVoltage, af.minVoltage, af.maxVoltage);
-    af.manualVoltageStep =
-        number(root, "autofocus_manual_voltage_step", af.manualVoltageStep, 0, 1e6);
-    af.safeShutdownVoltage =
-        number(root, "safe_shutdown_voltage", af.safeShutdownVoltage, af.minVoltage, af.maxVoltage);
-    af.ringRatioStaleMs = integer(root, "ring_ratio_stale_ms", af.ringRatioStaleMs, 1, 3600000);
-    af.minSamplesPerStep =
-        integer(root, "autofocus_min_samples_per_step", af.minSamplesPerStep, 1, 10000000);
-    if (root.contains("require_new_sample_per_step"))
-        af.requireNewSamplePerStep = root.at("require_new_sample_per_step").get<bool>();
-    if (root.contains("focus_direction"))
-        af.focusDirection = root.at("focus_direction").get<bool>();
-    if (af.minVoltage > af.maxVoltage || af.initialVoltage < af.minVoltage ||
-        af.initialVoltage > af.maxVoltage || af.safeShutdownVoltage < af.minVoltage ||
-        af.safeShutdownVoltage > af.maxVoltage)
-        throw std::runtime_error("Invalid autofocus voltage bounds");
-    // Z stage block (#464): validated here, applied with the other setters.
-    // Only the configuration changes; nothing connects, homes or moves.
-    std::optional<services::StageConfig> stageConfig;
-    if (root.contains("stage")) {
-        stageConfig = services::parseStageConfig(root.at("stage"));
-        if (backend.stage().snapshot().connected)
-            throw std::runtime_error("Disconnect the Z stage before applying a profile with a stage block");
-    }
-    auto roi = processing.getRealtimeRoi();
-    if (root.contains("roi")) {
-        const auto& r = root.at("roi");
-        if (!r.is_object()) throw std::runtime_error("roi must be an object");
-        roi.x = integer(r, "x", 0, 0, 1000000);
-        roi.y = integer(r, "y", 0, 0, 1000000);
-        roi.w = integer(r, "w", 0, 0, 1000000);
-        roi.h = integer(r, "h", 0, 0, 1000000);
-        if (roi.w || roi.h) {
-            playback::Frame frame;
-            if (!backend.getFrameStore()->getLatest(frame) || !roi.w || !roi.h ||
-                static_cast<uint64_t>(roi.x + roi.w) > frame.width ||
-                static_cast<uint64_t>(roi.y + roi.h) > frame.height)
-                throw std::runtime_error("ROI cannot be validated: capture a matching preview then "
-                                         "stop capture before applying the profile");
-        }
-    }
-    const int fps = integer(root, "display_fps", 60, 1, 240);
+    const auto staged = stageConfigDocument(backend, bytes);
     // Construct provenance before mutations; malformed old provenance cannot cause
     // a post-apply failure. Only effective known fields claim runtime application.
     auto provenance =
         J::parse(backend.getLastConfigJson().empty() ? "{}" : backend.getLastConfigJson());
     if (!provenance.is_object())
         throw std::runtime_error("Current configuration provenance is not an object");
-    provenance["image_processing"] = processing::config_json::toJson(config);
-    provenance["buffer_threshold"] = flush;
-    provenance["experiment_buffer_max_mb"] = mb;
-    provenance["pixel_to_micron_factor"] = factor;
+    provenance["image_processing"] = processing::config_json::toJson(staged.processing);
+    provenance["buffer_threshold"] = staged.flushInterval;
+    provenance["experiment_buffer_max_mb"] = staged.experimentBufferMb;
+    provenance["pixel_to_micron_factor"] = staged.pixelToMicron;
     provenance["realtime_processing"] = {
-        {"enabled", realtimeEnabled},
-        {"drop_frames", dropFrames},
-        {"mode", mode == services::ProcessingService::RealtimeProcessingMode::Inline
+        {"enabled", staged.realtimeEnabled},
+        {"drop_frames", staged.dropFrames},
+        {"mode", staged.mode == services::ProcessingService::RealtimeProcessingMode::Inline
                      ? "inline"
                      : "async_batch"},
-        {"batch_size", batch.batchSize},
-        {"max_queued_frames", batch.maxQueuedFrames},
-        {"worker_count", batch.workerCount},
-        {"max_batch_delay_ms", batch.maxBatchDelayMs}};
-    provenance["roi"] = {{"x", roi.x}, {"y", roi.y}, {"w", roi.w}, {"h", roi.h}};
+        {"batch_size", staged.batch.batchSize},
+        {"max_queued_frames", staged.batch.maxQueuedFrames},
+        {"worker_count", staged.batch.workerCount},
+        {"max_batch_delay_ms", staged.batch.maxBatchDelayMs}};
+    provenance["roi"] = {{"x", staged.roi.x}, {"y", staged.roi.y}, {"w", staged.roi.w}, {"h", staged.roi.h}};
     if (!provenance.contains("camera") || !provenance.at("camera").is_object())
         provenance["camera"] = J::object();
-    provenance["camera"]["frame_delivery_mode"] = camera::common::toString(capture.deliveryMode);
+    provenance["camera"]["frame_delivery_mode"] = camera::common::toString(staged.capture.deliveryMode);
     for (const auto* key :
          {"autofocus_focus_setpoint", "autofocus_focus_range", "autofocus_voltage_step",
           "autofocus_fine_voltage_step", "autofocus_min_voltage", "autofocus_max_voltage",
@@ -267,30 +169,17 @@ J apply(AppBackend& backend, const J& snapshot) {
                                        {"path", snapshot.at("path")},
                                        {"revision", snapshot.at("revision")},
                                        {"profile_id", snapshot.at("profile_id")},
-                                       {"display_fps", fps}};
+                                       {"display_fps", staged.displayFps}};
     const auto provenanceBytes = provenance.dump();
-    // Every field is parsed/validated before mutation. Running realtime is refused,
-    // so setters cannot restart worker threads. No hardware actuation is issued.
-    processing.setProcessingConfig(config);
-    processing.setFlushInterval(flush);
-    processing.setMaxBufferedBytes(static_cast<uint64_t>(mb * 1024.0 * 1024.0));
-    processing.setRealtimeDropFrames(dropFrames);
-    processing.setRealtimeBatchSettings(batch);
-    processing.setRealtimeProcessingMode(mode);
-    processing.setRealtimeEnabled(realtimeEnabled);
-    processing.setPixelToMicronFactor(factor);
-    processing.setRealtimeRoi(roi);
-    backend.capture().setConfig(capture);
-    backend.autofocus().setConfig(af);
-    if (stageConfig) backend.stage().setConfig(*stageConfig); // disconnected: checked above
+    commitStagedConfig(backend, staged);
     backend.setLastConfigJson(provenanceBytes);
     return {
         {"applied", true},
-        {"display_fps", fps},
+        {"display_fps", staged.displayFps},
         {"profile_id", snapshot.at("profile_id")},
         {"message",
          std::string("Applied processing, buffer, realtime, delivery, calibration, autofocus ") +
-             (stageConfig ? "and Z stage " : "") +
+             (staged.stage ? "and Z stage " : "") +
              "configuration and validated ROI. No camera script or device connection was executed."}};
 }
 void write(const fs::path& p, const std::string& bytes) {

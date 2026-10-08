@@ -77,10 +77,11 @@ freeze exact revision identity/content into historical runs.
   refused while a run is in flight, and while raw recording, capture, realtime
   or autofocus runs — the local-profile apply's precondition, adopted after the
   #493 review).
-- [ ] M2c: reconcile `app::applyConfigDocument` with develop's local-profile
-  apply (`app/ProfileStore.cpp`, arrived with #450): it also bounds every value, validates the ROI against a
-  captured frame and applies `realtime_processing.enabled` / `drop_frames`;
-  share one validated applier, keeping exact-text recording for central methods.
+- [x] M2c: one validated applier. `app/ProfileStore.cpp` and `applyCentralMethod`
+  share `stageConfigDocument` / `commitStagedConfig` (the local-profile bounds, ROI
+  against a captured preview, realtime enabled/drop_frames, stage block, plus the
+  watcher's difference_threshold / root contract / multi-image clamp); central methods
+  keep exact-text recording and apply inside the coordinator's idle transaction.
 - [ ] M2c: persist the applied method across Tauri restarts (today it lives in
   the backend for the session; the Qt shell persists through config.json).
 - [ ] M2: compatibility validator against declared hardware compatibility and

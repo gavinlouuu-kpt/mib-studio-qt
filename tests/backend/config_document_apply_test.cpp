@@ -1,14 +1,18 @@
-// config_document_apply_test (#398 M2c): the backend config.json applier the
-// React/Tauri shell uses to Apply a central method exactly.
+// config_document_apply_test (#398 M2c): the one validated config.json
+// applier, as the central-method path (applyConfigDocument /
+// applyCentralMethod) uses it. Local profiles share the same core
+// (profile_store_test).
 //  - every supported section reaches its service (processing incl. the v2
 //    difference_threshold and Laplacian keys, contract version, flush
-//    interval, buffer bytes, realtime batch + mode, pixel-to-micron,
-//    autofocus, ROI) and the exact text becomes the applied config.json;
+//    interval, buffer bytes, realtime enabled / drop_frames / batch / mode,
+//    pixel-to-micron, autofocus, ROI) and the exact text becomes the applied
+//    config.json;
+//  - an ROI is validated against a captured preview frame;
 //  - dot_grid / display_fps are reported as not applicable, never dropped
 //    silently;
-//  - fail closed: a wrong type anywhere, an unsupported contract, a
-//    non-positive pixel factor, invalid JSON or a non-object root change
-//    nothing (services and applied text untouched);
+//  - fail closed: a wrong type anywhere, an unsupported contract, an
+//    out-of-range value (the local-profile bounds), invalid JSON or a
+//    non-object root change nothing (services and applied text untouched);
 //  - refused while live capture or a raw recording runs (the capture worker
 //    reads its config unsynchronised; recording runs with the experiment
 //    idle), with nothing changed.
@@ -17,6 +21,7 @@
 #include "backend/processing/ProcessingService.h"
 #include "backend/services/AutofocusService.h"
 #include "backend/services/CaptureService.h"
+#include "backend/playback/FrameStore.h"
 
 #include "support/assert.h"
 #include "support/frames.h"
@@ -27,6 +32,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <string>
+#include <thread>
 
 using backend::services::ProcessingService;
 
@@ -51,8 +57,8 @@ const char* kMethod = R"({
   "experiment_buffer_max_mb": 2,
   "pixel_to_micron_factor": 0.75,
   "camera": {"frame_delivery_mode": "everyFrame"},
-  "realtime_processing": {"mode": "async_batch", "batch_size": 7, "max_queued_frames": 33, "worker_count": 2,
-                          "max_batch_delay_ms": 9},
+  "realtime_processing": {"enabled": true, "drop_frames": true, "mode": "async_batch", "batch_size": 7,
+                          "max_queued_frames": 33, "worker_count": 2, "max_batch_delay_ms": 9},
   "image_processing": {
     "gaussian_blur_size": 7,
     "difference_threshold": 21,
@@ -78,7 +84,7 @@ int main() {
     mib::test::Watchdog watchdog(60);
     mib::test::TempDir dir("mib_config_document_apply");
     const auto frames = dir / "frames";
-    MIB_REQUIRE(mib::test::writeFrames(frames, 4, 32, 32), "mock frames");
+    MIB_REQUIRE(mib::test::writeFrames(frames, 4, 64, 64), "mock frames");
     setEnv("MIB_CAMERA_MODE", "mock");
     setEnv("MIB_MOCK_CAMERA_DIR", frames.string().c_str());
     setEnv("MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL", "file:///nonexistent/mib-lut-manifest.json");
@@ -86,6 +92,29 @@ int main() {
     backend::AppBackend backend;
     MIB_REQUIRE(backend.initialize((dir / "data").string()), "backend init");
     auto& proc = backend.processing();
+    using backend::services::CaptureLifecycleState;
+
+    watchdog.mark("ROI needs a captured preview");
+    {
+        auto r = backend::app::applyConfigDocument(backend, kMethod);
+        MIB_EXPECT(!r.ok && r.error.find("ROI cannot be validated") != std::string::npos,
+                   "no frame captured yet: the ROI cannot be validated, nothing applied");
+        MIB_EXPECT(backend.getLastConfigJson() != kMethod, "nothing recorded");
+        // Capture a preview (64x64), then stop capture: the applier needs both.
+        MIB_REQUIRE(backend.capture().start(), "mock capture accepted");
+        MIB_REQUIRE(backend.capture().waitForState({CaptureLifecycleState::Running, CaptureLifecycleState::Faulted},
+                                                   std::chrono::seconds(10)) == CaptureLifecycleState::Running,
+                    "mock capture running");
+        backend::playback::Frame latest;
+        for (int i = 0; i < 500 && !backend.getFrameStore()->getLatest(latest); ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        MIB_REQUIRE(latest.width == 64 && latest.height == 64, "a 64x64 preview frame");
+        backend.capture().stop();
+        MIB_REQUIRE(!backend.capture().isRunning(), "capture stopped");
+        r = backend::app::applyConfigDocument(backend, R"({"roi": {"x": 40, "y": 0, "w": 40, "h": 10}})");
+        MIB_EXPECT(!r.ok && r.error.find("ROI cannot be validated") != std::string::npos,
+                   "an ROI outside the frame is refused");
+    }
 
     watchdog.mark("full document");
     {
@@ -109,6 +138,7 @@ int main() {
                    "batch settings");
         MIB_EXPECT(proc.getRealtimeProcessingMode() == ProcessingService::RealtimeProcessingMode::AsyncBatch,
                    "realtime mode");
+        MIB_EXPECT(proc.isRealtimeEnabled() && proc.getRealtimeDropFrames(), "realtime enabled and drop_frames");
         MIB_EXPECT(proc.getPixelToMicronFactor() == 0.75, "pixel to micron");
         const auto af = backend.autofocus().getConfig();
         MIB_EXPECT(af.focusSetpoint == 18.5 && !af.focusDirection, "autofocus");
@@ -152,6 +182,16 @@ int main() {
         r = backend::app::applyConfigDocument(backend, R"({"image_processing": [1, 2]})");
         MIB_EXPECT(!r.ok, "non-object section refused");
         unchanged("non-object section");
+        // The shared validator's bounds (the local-profile rules).
+        for (const char* bad : {R"({"buffer_threshold": 0})", R"({"camera": {"frame_delivery_mode": "sometimes"}})",
+                                R"({"realtime_processing": {"mode": "warp"}})",
+                                R"({"realtime_processing": {"batch_size": 50, "max_queued_frames": 10}})",
+                                R"({"autofocus_min_voltage": 5, "autofocus_max_voltage": 1})",
+                                R"({"config_schema_version": 2})", R"({"display_fps": 0})"}) {
+            r = backend::app::applyConfigDocument(backend, bad);
+            MIB_EXPECT(!r.ok, std::string("out of bounds refused: ") + bad);
+            unchanged(bad);
+        }
         MIB_EXPECT(!backend::app::applyConfigDocument(backend, "{not json").ok, "invalid JSON refused");
         MIB_EXPECT(!backend::app::applyConfigDocument(backend, "[1]").ok, "non-object root refused");
         unchanged("invalid documents");
@@ -174,7 +214,6 @@ int main() {
 
     watchdog.mark("refused while capturing or recording");
     {
-        using backend::services::CaptureLifecycleState;
         const auto applied = backend.getLastConfigJson();
         const auto before = proc.getProcessingConfig();
         const auto unchanged = [&](const char* what) {

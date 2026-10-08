@@ -390,9 +390,11 @@ Record failed run…** (`@tauri-apps/plugin-dialog` picker →
 `registry_plan_apply` and shows the changed config.json keys and the camera
 script path (`applyConfirmText`); **Apply** then calls `registry_apply_method`,
 which runs the backend config.json applier (`app::applyCentralMethod` →
-`applyConfigDocument`, refused while a run is in flight or while raw
-recording, capture, realtime processing or autofocus runs) and reports applied
-and not-applicable sections (`applyResultText`). The React shell has no
+`applyConfigDocument`, the same validated core as local profiles below; inside
+the coordinator's idle transaction, refused unless the experiment is Idle and
+while raw recording, capture, realtime processing or autofocus runs; an ROI
+needs a captured preview) and reports applied and not-applicable sections
+(`applyResultText`). The React shell has no
 config.json file: the applied method lives in the backend for the session.
 
 #398 M3b: **Methods / Drafts** views. Methods adds **New draft** (optionally
@@ -491,8 +493,11 @@ save button (with a reason tooltip) and the save handler. Reading saved profiles
 continues to preserve their complete JSON and optional script.
 Navigation retains drafts and pending commands; experiment-active operations are refused.
 
-`BackendFacade::profileCommand` owns the portable `app/ProfileStore` path. Apply validates
-all supported settings before changing stopped runtime services: processing, buffers,
+`BackendFacade::profileCommand` owns the portable `app/ProfileStore` path. Apply goes through
+the one validated applier it shares with central methods (`app::stageConfigDocument` /
+`commitStagedConfig` in `ConfigDocumentApply.h`; the profile records a provenance
+document, a central method its exact text). It validates all supported settings before
+changing stopped runtime services (refused during raw recording too): processing, buffers,
 realtime batches/mode, frame delivery, calibration, autofocus configuration, and ROI
 bounded to an available preview frame. No camera script is executed, device connected,
 or voltage actuated. Processing-contract metadata incompatibility fails closed; declared app-version bounds are checked against the compiled application version. The saved processing editor remains
