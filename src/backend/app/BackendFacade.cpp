@@ -5,6 +5,7 @@
 #include "backend/pz/PzInstrumentControl.h"
 #include "backend/app/SciencePlacement.h"
 #include "backend/app/ProfileStore.h"
+#include "backend/app/StartupConfiguration.h"
 #include "backend/app/ProfileCatalog.h"
 #include "backend/app/ProcessingCoreManagement.h"
 #include "backend/discovery/DeviceDiscoveryService.h"
@@ -3450,6 +3451,10 @@ std::string BackendFacade::fetchPulseGeneratorStatusJson() const {
 }
 
 std::string BackendFacade::fetchProfileCatalogUrl(const std::string& url) { return app::fetchProfileUrl(url); }
+std::string BackendFacade::restoreStartupConfigurationJson(const std::string& profileBase) {
+    if (!isInitialized()) return R"({"ok":false,"restored":false,"error":"Backend is not initialized"})";
+    return app::restoreStartupConfiguration(backend_, profileBase);
+}
 std::string BackendFacade::profileCommand(const std::string& base, const std::string& request) {
     if (!isInitialized()) return R"({"ok":false,"error":"Backend is not initialized"})";
     try {const auto q=nlohmann::json::parse(request);const auto op=q.value("operation","");if(op=="selection"||op=="list"||op=="read")return app::profileStoreCommand(backend_,base,request);}catch(const std::exception&e){return nlohmann::json{{"ok",false},{"error",e.what()}}.dump();}
