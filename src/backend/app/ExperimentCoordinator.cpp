@@ -214,16 +214,10 @@ bool probeHdf5Destination(const std::string& output, std::string& reason) {
 // JSON serializers
 // ---------------------------------------------------------------------------
 
-// PL science (YOFO S2): the profile the PL runs, from the current settings.
+// PL science (YOFO S2): the profile the PL runs, from the current settings (AppBackend::compilePlProfile).
 static backend::processing::pz::CompiledProfile compilePlProfile(AppBackend& backend)
 {
-    auto& proc = backend.processing();
-    backend::processing::pz::UnetCellsProfileInputs in;
-    in.config = proc.getEffectiveProcessingConfig(); // includes the detected channel band
-    in.pixelToMicron = proc.getPixelToMicronFactor();
-    in.storeInvalidEveryN = static_cast<uint32_t>(std::min<size_t>(proc.getInvalidFrameSamplingRate(), 0xFFFF));
-    in.lut = proc.eModulusLut().isLoaded() ? &proc.eModulusLut() : nullptr;
-    return backend::processing::pz::compileUnetCellsV2(in);
+    return backend.compilePlProfile();
 }
 
 std::string runSnapshotToJson(const RunConfigurationSnapshot& s)
@@ -1057,6 +1051,7 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
                                                          std::chrono::system_clock::now().time_since_epoch())
                                                          .count());
         std::string providerError;
+        backend_.stopLiveResults(); // the live session (Run without a file) hands the provider to the run (G5)
         const auto profile = compilePlProfile(backend_);
         bool providerOk = profile.ok() && provider->configure(profile, &providerError);
         if (!profile.ok()) providerError = "the settings do not compile into the PL profile";
@@ -1073,6 +1068,7 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
             result.message = "execution provider '" + provider->name() + "' did not start: " + providerError;
             SPDLOG_ERROR("ExperimentCoordinator: {}", result.message);
             restoreModeOnFailure();
+            backend_.resumeLiveResults(); // the refused start leaves live monitoring as it was (G5)
             publishLocked(lk, "start failed");
             return result;
         }
@@ -1473,6 +1469,7 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
     SPDLOG_INFO("ExperimentCoordinator: run {} finalized in {:.3f} ms (state={}, ok={})",
                 run.startGeneration, sinceMs(tBegin), toString(state_), status_.finalizationOk);
     publishLocked(lk, status_.finalizationOk ? "finalized" : "finalized with errors");
+    backend_.resumeLiveResults(); // live monitoring continues in Run once the run's accounting has settled (G5)
 }
 
 bool ExperimentCoordinator::lastRunAccounting(recording::RecordingAccountingSnapshot& out, uint64_t& startGeneration) const
