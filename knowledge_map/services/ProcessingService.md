@@ -859,6 +859,8 @@ are `persistenceFailed`, not declared `persistencePendingAtStop`; the latch rese
 only when a new experiment starts. `experiment_accounting_test` injects an HDF5
 append failure and checks queue destruction, remainder writes and the next run.
 
+The #595 accounting harness drains inline cursor replay after switching from async batch before starting its exact-batch HDF5 failure case. Its append wait requires new admission/buffer progress and a nonempty buffer; cumulative admission alone does not prove a batch is available. Exact failed/committed totals, reconciliation, sticky failure and next-run reset remain asserted.
+
 ## Experiment writer backpressure (#597)
 
 `flushBufferedFrames()` serializes the queue capacity check and submission under
@@ -871,8 +873,9 @@ failures remain fatal and latched. Queue overflow remains a defensive invariant
 for other queue consumers.
 
 `processing.experiment_flush_backpressure` drives actual experiment admissions,
-flush callbacks and HDF5 writes with 512x96 image/mask pairs: 10,000 frames at
-5,000 fps, 25 ms writer delays and one 150 ms stall. It checks persistence
+flush callbacks and HDF5 writes with small 64x16 image/mask pairs (the defect is
+about queued batch count, not bytes): 10,000 frames at 5,000 fps, 5 ms writer
+delays and one 150 ms stall. It checks persistence
 accounting, Stop remainder drain and image round-trip; an indefinitely blocked
 writer must reach buffer capacity instead of queue overflow. Its optional
 `MIB_TEST_PRE597_POLLING=1` mode models the old 250 ms flush cadence (no callbacks):

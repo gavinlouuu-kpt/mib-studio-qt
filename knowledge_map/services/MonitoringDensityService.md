@@ -118,3 +118,5 @@ unfiltered so it includes the test.
 - Settings persistence still lives in the shell (Qt `QSettings`
   `Monitoring/Kde*`); a React shell needs its own until the bridge exposes
   the service (follow-up).
+
+The #595 KDE e2e harness waits for captured/monitoring frame work and two KDE generations rather than fixed phase durations. Its 120 s progress deadlines and 900 s CTest timeout accommodate parallel CI load. Work per captured frame, overlay lag, GUI responsiveness, compute-budget cadence, real contours, persisted live records and disabled-KDE recovery remain gated; wall-time FPS is diagnostic.
