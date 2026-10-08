@@ -10,7 +10,7 @@
 ## File layout (conceptual)
 
 - `/experiment_info` — root attributes:
-  `startTimeNs`, `endTimeNs`, `totalValidFrames`, `totalInvalidFrames`,
+  `start_time_ns`, `end_time_ns`, `total_valid_frames`, `total_invalid_frames`,
   serialized `ProcessingConfig` (`processing_config_*`, including the declared
   contract, difference threshold, all object gates and the channel band;
   read back by `readRecordedProcessingConfig`), ROI, optional `background` image,
