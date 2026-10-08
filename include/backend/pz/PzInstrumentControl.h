@@ -114,6 +114,14 @@ public:
     bool ingressStatus(IngressStatus& out, std::string* error);
     // The PL receiver self-heal block (results9): present = false on an image without it.
     bool rxHealStatus(RxHealStatus& out, std::string* error);
+    // The standing CTRL value for the v1 receiver self-heal (RXH1 present, no v2 word): written once at
+    // service start, read back. Left alone on a v2 build or an image without the block; nothing is
+    // written when CTRL already has the value. before/after are CTRL word 1.
+    struct RxHealCtrlResult {
+        enum class Kind { Absent, V2, AlreadySet, Written, Mismatch } kind{Kind::Absent};
+        uint32_t before{0}, after{0};
+    };
+    bool applyRxHealCtrl(uint32_t ctrl, RxHealCtrlResult& out, std::string* error);
     // One receiver reset: P[8] bit 6 held for `hold` with bit 4 (the U-Net enable level) kept,
     // then released. Clears the sticky lane overflow flags (#629).
     bool resetReceiver(std::chrono::microseconds hold, std::string* error);
