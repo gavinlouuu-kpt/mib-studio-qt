@@ -19,6 +19,7 @@
 // Qt-free.
 
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -86,7 +87,9 @@ enum class IdMatch { Match, Mismatch, Unknown };
 const char* idMatchName(IdMatch m);
 
 // Rates below these are the known baselines (docs/YOFO_HOST_INTERFACE.md):
-// ingress errors 0.2/s dark, ~2/s with the LED at 7/60; resyncs ~0.1/s.
+// ingress errors 0.2/s dark, ~1-2/s with the LED at 7/60 in bursts of 8-13 (Run at 5 kHz, measured
+// 2026-10-08: 1.12/s); resyncs ~0.02-0.1/s. Ingress errors are judged as a kSustainedUs average
+// (one burst must not warn, a link that really degrades stays above the threshold).
 inline constexpr double kIngressErrorWarnPerS = 10.0;
 inline constexpr double kResyncWarnPerS = 1.0;
 // Bad and dropped frames are judged against the sensor's frame rate, and only when the rate stays
@@ -123,6 +126,10 @@ struct PzPlatformStatus {
     // Sensor link (P[12] errors, P[14] resyncs, P[7] bad frames, P[6] dropped).
     bool ratesValid{false}; // false until two samples
     double ingressErrorsPerS{0.0};
+    // Ingress errors averaged over the last kSustainedUs, and the warning from it: valid only once
+    // a full window has been seen since the last mode-switch settle.
+    double ingressErrorsAvgPerS{0.0};
+    bool ingressErrorsWarn{false};
     double resyncsPerS{0.0};
     double badFramesPerS{0.0};
     double droppedPerS{0.0};
@@ -178,6 +185,7 @@ private:
     bool havePrevious_{false};
     uint64_t settleUntilUs_{0};
     uint64_t badSinceUs_{0}, droppedSinceUs_{0}; // 0 = not above its threshold
+    std::deque<std::pair<uint64_t, uint32_t>> errorHistory_; // (host time, P[12]) over the window
     uint64_t previousUs_{0};
     Counters previous_{};
 };

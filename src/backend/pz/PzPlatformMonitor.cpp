@@ -293,6 +293,20 @@ PzPlatformStatus PzPlatformMonitor::sample(uint64_t nowUs) {
     };
     const uint32_t bridgeState = r.bridge(PZ_MIB_REG_STATE);
     s.bridgeActive = bridgeState == PZ_MIB_STATE_ARMED || bridgeState == PZ_MIB_STATE_RUNNING;
+    // Ingress errors: the average over the last kSustainedUs, from the oldest retained sample at
+    // least that old. History restarts with the rates (mode switch, PL reload).
+    if (!s.ratesValid && !havePrevious_) errorHistory_.clear();
+    if (nowUs >= settleUntilUs_) {
+        errorHistory_.emplace_back(nowUs, now.ingressErrors);
+        while (errorHistory_.size() >= 2 && errorHistory_[1].first + kSustainedUs <= nowUs) errorHistory_.pop_front();
+        const auto& oldest = errorHistory_.front();
+        if (oldest.first + kSustainedUs <= nowUs) {
+            s.ingressErrorsAvgPerS = rate(now.ingressErrors, oldest.second, static_cast<double>(nowUs - oldest.first) / 1e6);
+            s.ingressErrorsWarn = s.ingressErrorsAvgPerS > kIngressErrorWarnPerS;
+        }
+    } else {
+        errorHistory_.clear();
+    }
     s.badFramesWarn = sustained(s.badFramesPerS > s.badFramesWarnPerS, badSinceUs_);
     s.droppedWarn = sustained(s.bridgeActive && s.droppedPerS > s.droppedWarnPerS, droppedSinceUs_);
     havePrevious_ = true;
