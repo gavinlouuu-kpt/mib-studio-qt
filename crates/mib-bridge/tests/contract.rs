@@ -98,7 +98,9 @@ fn abi_version_is_stable() {
     // session_only_zero, soft_min_um/soft_max_um -> envelope_min_um/envelope_max_um.
     // v31 fetch_run_accounting (#549): the reconciled accounting of the review file or of the
     // last finished run, for the Review tab and the run outcome notice.
-    assert_eq!(ffi::bridge_abi_version(), 31);
+    // v32 restore_startup_configuration (#398 M2c): re-apply the last applied
+    // local profile or central method (one startup pointer) at startup.
+    assert_eq!(ffi::bridge_abi_version(), 32);
 }
 
 // ABI 31 (#549): with nothing loaded and no run finished, the accounting says so and why.

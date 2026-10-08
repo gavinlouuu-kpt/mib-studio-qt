@@ -483,6 +483,16 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
   `stage_motion_is_control_only_but_stop_is_not` in the server;
   `backend.stage_bridge_facade`.
 
+## ABI 32: startup configuration restore (#398 M2c)
+
+`restore_startup_configuration(profile_base)` re-applies the last applied local profile or
+central method (one pointer in the data dir, last applied wins) and returns JSON
+`{ok, restored, kind ("profile"|"central"|null), error?, notice?, roi_pending?, revision_id?}`.
+A failure applies nothing and carries a `notice`. `profile_base` only serves a legacy
+`.selection.json` when no pointer exists. It is a control command in the YOFO Studio server.
+`BackendFacade::restoreStartupConfigurationJson` → `app::restoreStartupConfiguration`.
+Tests: `contract.rs` `local_profiles_roundtrip_and_conflict`; `profiles.startup_configuration`.
+
 ## ABI 31: run accounting for the Review tab (#549)
 
 `fetch_run_accounting(source)` (read-only, not a control command) returns the reconciled accounting

@@ -565,6 +565,21 @@ or hardware actuation are performed by restore. `selection` separately returns t
 startup choice and actual runtime `profile_selection` provenance; a saved choice alone
 is never evidence of application. External edits fail closed for explicit review/reapply.
 
+**One startup pointer (#398 M2c, bridge ABI 32).** Since central methods can be applied
+too, the startup choice is the last thing applied, whichever kind: `app/StartupConfiguration`
+keeps `<dataDir>/startup_configuration.json` (`{"kind":"profile","base","name","revision"}`
+or `{"kind":"central","revision_id","config_sha256"}`). The profile store's `apply` and
+`app::applyCentralMethod` both record it. At startup the profiles hook calls
+`restore_startup_configuration(profileBase)` once, even with no profiles folder chosen:
+- a profile goes through the profile store's `restore` in its recorded folder;
+- a central revision is re-planned from the registry cache (reopened offline) and must
+  still match the recorded sha256;
+- with no pointer, a legacy `.selection.json` in the chosen folder is still restored.
+A failed restore applies nothing and returns a `notice` (the instrument runs on its default
+settings until a method or profile is applied), which the panel shows. The pointer stays,
+so the notice repeats at the next start until then. An ROI with no frame yet is pending,
+never a failure. `.selection.json` is still written for the folder's own selection.
+
 Catalog transport is bounded to 4 MiB/HTTP(S), has finite timeouts, no redirects or URL
 credentials, and runs outside the backend bridge mutex in Tauri's blocking pool.
 `profileCatalog.tsx` provides passive catalog checks, full config-field and camera-script
