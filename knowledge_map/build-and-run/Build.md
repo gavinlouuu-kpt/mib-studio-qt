@@ -207,7 +207,9 @@ bridge shims, because the SDK's spdlog uses the external fmt and `review_shim.cp
 **Standing package for the PZ7035 (#501).** `YOFO_SDK=<sdk> scripts/yofo/package_studio.sh [PKG_DIR]`
 builds the armv7 server and the UI and stages, on the HDD (default
 `/mnt/hdd/developer-data/IMX426/yofo-studio-pkg/<commit>`): `yofo-studio-server` (stripped),
-`dist.tar`, `yofo-studio.service`, `pl-ready.sh`, `install.sh`, `MD5SUMS` and `BUILD_INFO` (commit,
+`dist.tar`, `yofo-studio.service`, `pl-ready.sh`, `install.sh`, `resources/isoelastic_curve/` (the E-modulus
+LUT; `install.sh` puts it under `/usr/share/yofo-studio/resources/` and the unit passes
+`--resource-dir /usr/share/yofo-studio`), `MD5SUMS` and `BUILD_INFO` (commit,
 SDK, expected producer md5). The board owner runs `install.sh [--restart]` on the board after each
 Linux boot (the RAM root resets); it verifies `MD5SUMS` first, installs the server, the UI, the
 guard and the unit under `/etc/systemd/system`. The unit listens on `127.0.0.1:8427` with
