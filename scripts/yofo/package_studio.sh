@@ -36,6 +36,9 @@ cp crates/mib-bridge-server/target/armv7-unknown-linux-gnueabihf/release/yofo-st
 (unset PKG_CONFIG_PATH LD_LIBRARY_PATH; . "$sdk"/environment-setup-*; $STRIP "$pkg/yofo-studio-server")
 tar -C desktop -cf "$pkg/dist.tar" dist
 cp deploy/yofo-studio/yofo-studio.service deploy/yofo-studio/install.sh "$pkg/"
+# The E-modulus LUT (G6): the server reads resources/isoelastic_curve/ under its --resource-dir.
+rm -rf "$pkg/resources"; install -d "$pkg/resources/isoelastic_curve"
+cp resources/isoelastic_curve/scaled_isoelastic_data_LUT_6.16-4.24.txt resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt "$pkg/resources/isoelastic_curve/"
 cp deploy/yofo-studio/pl-ready.sh "$pkg/pl-ready.sh"
 {
     echo "yofo-studio standing package, commit $commit"
@@ -46,7 +49,7 @@ cp deploy/yofo-studio/pl-ready.sh "$pkg/pl-ready.sh"
     echo "expects: /usr/lib/genicam/libpz7035_gentl.cti (pz7035-imx426 main 0f67861d, md5 bc89cd389dbc0ccfa2400e1e5dc0512f) and /etc/yofo/expected-core.json"
     [ -z "${YOFO_PKG_NOTES:-}" ] || printf '%s\n' "$YOFO_PKG_NOTES"   # e.g. the open PRs not included
 } > "$pkg/BUILD_INFO"
-(cd "$pkg" && md5sum yofo-studio-server dist.tar yofo-studio.service install.sh pl-ready.sh BUILD_INFO > MD5SUMS)
+(cd "$pkg" && md5sum yofo-studio-server dist.tar yofo-studio.service install.sh pl-ready.sh BUILD_INFO resources/isoelastic_curve/* > MD5SUMS)
 chmod +x "$pkg/install.sh" "$pkg/pl-ready.sh"
 [ "$bundle" = 0 ] || scripts/yofo/bundle_assemble.sh "$pkg"
 echo "package $pkg"; cat "$pkg/MD5SUMS"
