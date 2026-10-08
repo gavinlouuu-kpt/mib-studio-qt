@@ -110,6 +110,7 @@ with sync_playwright() as p:
         st0 = status(page)
         before = ((st0.get("mode") or {}).get("align_lock") or {}).get("receiver_clears", 0)
         heal0 = ((st0.get("link") or {}).get("rx_heal") or {}).get("auto_resets")
+        gaveups0 = ((st0.get("mode") or {}).get("align_lock") or {}).get("pl_gave_ups", 0)
         t0 = time.time()
         tab(page, "Camera & Alignment")
         ok, note = False, ""
@@ -132,6 +133,9 @@ with sync_playwright() as p:
                # results9: the PL self-heal makes the resets (host resets stay 0); its count shows here.
                "pl_heal_present": bool(heal1.get("present")), "pl_auto_resets": (heal1.get("auto_resets", 0) - heal0) if heal0 is not None else None,
                "pl_gave_up": bool(heal1.get("gave_up")),
+               # #643: a PL gave-up is counted and timed; the host recovery then runs (resets > 0).
+               "pl_gave_ups": lock.get("pl_gave_ups", 0) - gaveups0,
+               "last_pl_gave_up_ms": lock.get("last_pl_gave_up_ms") if lock.get("pl_gave_ups", 0) > gaveups0 else None,
                "t_epoch": round(t0, 1), "notice": note}
         if ok:
             time.sleep(5)  # the lost counter must stay flat while the previews continue (read on the board)
