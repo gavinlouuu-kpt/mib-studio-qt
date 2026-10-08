@@ -217,6 +217,21 @@ void testModeSequence(const mib::test::TempDir& td) {
     MIB_REQUIRE(backend.instrumentControlAvailable(), "control injected");
     MIB_EXPECT(backend.instrumentMode() == pz::InstrumentMode::Unknown && s.writes.empty(),
                "nothing is written until a mode is chosen");
+    {
+        // Everything the UI polls at load, with no operator action: reads only (the standing
+        // YOFO Studio unit on the board must not touch the PL or the pump bus before an operator
+        // does; serial ports are opened only by the pump/stage/discovery commands, which the UI
+        // sends from buttons).
+        (void)facade.fetchPlatformInfoJson();
+        (void)facade.fetchInstrumentStatusJson();
+        (void)facade.fetchCameraGeometryJson();
+        backend::bridge::BackendPumpStatus pump;
+        (void)facade.fetchPumpStatus(0, pump);
+        (void)facade.fetchPumpStatus(1, pump);
+        backend::bridge::BackendStageStatus stage;
+        (void)facade.fetchStageStatus(stage);
+        MIB_EXPECT(s.writes.empty(), "the status polls the UI makes at load write no PL register");
+    }
 
     std::string err;
     // Align: the camera streams, cell path off, LED 0/125.
