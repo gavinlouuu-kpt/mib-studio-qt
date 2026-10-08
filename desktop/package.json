@@ -1,7 +1,7 @@
 {
   "name": "mib-studio-desktop",
   "private": true,
-  "version": "1.1.2",
+  "version": "1.2.0",
   "type": "module",
   "description": "MIB Studio and YOFO Review desktop shells (React + Tauri v2) — epic #246",
   "engines": {

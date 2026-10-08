@@ -1223,3 +1223,7 @@ button.btn:disabled,
   .statusbar { flex-wrap: wrap; row-gap: 2px; }
   .statusbar .metrics { white-space: normal; overflow: visible; text-overflow: clip; text-align: right; }
 }
+
+/* PZ7035 camera-mode problems the operator must act on: no run window, or a refused switch (#501) */
+.mode-notice { display: flex; gap: 12px; align-items: center; margin: 6px 0; padding: 6px 10px; border-left: 3px solid var(--warn); color: var(--warn); }
+.mode-notice span { flex: 1 1 auto; }

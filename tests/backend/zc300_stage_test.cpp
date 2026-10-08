@@ -21,8 +21,10 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdio>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -40,6 +42,48 @@ void useFake(SerialBusManager& manager, FakeZc300& device)
 {
     manager.setSerialPortFactory([&device] { return std::make_unique<FakeZc300Port>(device); });
 }
+
+// Hold one fake transaction until every contender has entered the driver queue.
+// A delayed reply alone can finish before all threads run on a loaded host.
+struct ReplyGate {
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool armed{false};
+    bool entered{false};
+    bool released{false};
+};
+
+class GatedZc300Port : public backend::services::ISerialPort {
+public:
+    GatedZc300Port(FakeZc300& device, ReplyGate& gate) : port_(device), gate_(gate) {}
+    bool open(int number, int baud) override { return port_.open(number, baud); }
+    bool openNamed(const std::string& name,
+                   const backend::services::SerialSettings& settings) override {
+        return port_.openNamed(name, settings);
+    }
+    void close() override { port_.close(); }
+    bool isOpen() const override { return port_.isOpen(); }
+    int write(const std::vector<uint8_t>& data) override { return port_.write(data); }
+    bool waitForBytesWritten(int ms) override { return port_.waitForBytesWritten(ms); }
+    std::vector<uint8_t> readAll() override { return port_.readAll(); }
+    std::string lastError() const override { return port_.lastError(); }
+    int lastSystemError() const override { return port_.lastSystemError(); }
+    bool waitForReadyRead(int ms) override {
+        {
+            std::unique_lock lock(gate_.mutex);
+            if (gate_.armed && !gate_.entered) {
+                gate_.entered = true;
+                gate_.cv.notify_all();
+                gate_.cv.wait(lock, [&] { return gate_.released; });
+            }
+        }
+        return port_.waitForReadyRead(ms);
+    }
+
+private:
+    FakeZc300Port port_;
+    ReplyGate& gate_;
+};
 
 StageEndpoint endpointFor(const FakeZc300& device)
 {
@@ -631,21 +675,38 @@ int main()
         FakeZc300 device;
         device.setPulsesPerSecond(2000);
         SerialBusManager manager;
-        useFake(manager, device);
+        ReplyGate gate;
+        manager.setSerialPortFactory(
+            [&] { return std::make_unique<GatedZc300Port>(device, gate); });
         zc300::Zc300Stage stage(manager);
         StageIdentity id;
         MIB_REQUIRE(connectTo(stage, device, id) == StageError::None, "connect");
         stage.enableGrantLog();
-        device.setReplyDelayMs(120);
+        {
+            std::lock_guard lock(gate.mutex);
+            gate.armed = true;
+        }
         std::thread inFlight([&] { stage.moveRelative(100); });
-        while (device.opcodeCount(0x65) == 0 && stage.waitingCalls() == 0) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        {
+            std::unique_lock lock(gate.mutex);
+            MIB_REQUIRE(
+                gate.cv.wait_for(lock, std::chrono::seconds(5), [&] { return gate.entered; }),
+                "in-flight transaction entered the fake port");
+        }
         std::thread disconnecting([&] { stage.disconnect(); });
         const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-        while (stage.waitingCalls() < 1 && std::chrono::steady_clock::now() < until) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        while (stage.waitingCalls() < 1 && std::chrono::steady_clock::now() < until)
+            std::this_thread::yield();
         std::vector<std::thread> storm;
         for (int i = 0; i < 6; ++i) storm.emplace_back([&] { stage.stop(); });
-        while (stage.waitingCalls() < 7 && std::chrono::steady_clock::now() < until) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        while (stage.waitingCalls() < 7 && std::chrono::steady_clock::now() < until)
+            std::this_thread::yield();
         MIB_REQUIRE(stage.waitingCalls() >= 7, "a Disconnect and six Stops are queued behind the in-flight call");
+        {
+            std::lock_guard lock(gate.mutex);
+            gate.released = true;
+        }
+        gate.cv.notify_all();
         inFlight.join();
         disconnecting.join();
         for (auto& t : storm) t.join();
