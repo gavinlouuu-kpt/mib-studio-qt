@@ -725,8 +725,9 @@ backend's camera modes instead of `set_camera_overview`:
   (valid green, invalid red). A status line shows the frame, listed cells,
   cells, blemishes and the latency max.
 - **Service mode.** It also sets the backend latch (`set_service_mode`). In
-  it, `InstrumentLedControls` adjusts delay/width (±0.5 µs width steps,
-  clamped to the limits) or restores the preset. The next mode switch
+  it, `InstrumentLedControls` adjusts delay and width (±0.5 µs steps,
+  clamped to the limits) or restores the preset, and shows a read-only readout of the strobe
+  control S[0], the guard and its trip count (an alert on a fault). The next mode switch
   restores the preset anyway.
 
 **Recording to RAM (#501).** `fetch_instrument_status.storage.warning` feeds
