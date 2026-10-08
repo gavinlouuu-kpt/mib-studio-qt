@@ -6,9 +6,9 @@ spent 24 minutes in setup. apt never abandons a slow but live transfer, so the 1
 step timed out before any code ran.
 
 `scripts/ci/apt-install.sh` now installs the packages for `.github/actions/setup-linux-env`. It
-bounds update + install to 240 s, which is about twice the slowest healthy lane (40–124 s
+bounds update + install to 210 s, close to twice the slowest healthy lane (40–124 s
 measured across all Linux workflows). On failure it rewrites the Azure host to
 archive.ubuntu.com in `/etc/apt/apt-mirrors.txt` and `ubuntu.sources`, then retries for up to
-300 s, reusing any .debs already downloaded. Both attempts fit inside the 10-minute step timeout.
+270 s. The retry first repairs any half-configured dpkg state inside its own deadline, then reuses any .debs already downloaded. Both attempts, plus their 10 s kill grace, total at most 500 s. That leaves time for Conan, the SDK and assets within the 10-minute step.
 The fallback path was tested in an ubuntu:24.04 container with a forced 1 s first attempt.
 [[build-and-run/Build]]

@@ -43,7 +43,7 @@ Hugging Face and Conan caches across rebuilds; `HF_TOKEN` passes through from
 the host when set. The image is built per job/container, not published
 (decision in the plan). `.github/actions/setup-linux-env` is the one place
 Linux workflows get packages (`sections`, `extra-packages`; installed by
-`scripts/ci/apt-install.sh`, which bounds the first attempt to 240 s and
+`scripts/ci/apt-install.sh`, which bounds the first attempt to 210 s and
 retries from archive.ubuntu.com when the runner's Azure mirror crawls), Conan
 (`conan: "true"`), the MindVision SDK and assets; `backend-ci`, `bridge-ci`,
 `desktop-ci`, `review-ci` (YOFO Review, [[../frontend/YofoReview]]; builds
