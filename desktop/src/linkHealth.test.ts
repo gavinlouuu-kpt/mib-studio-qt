@@ -20,7 +20,7 @@ describe("sensor link, sensor and latency readouts (#501)", () => {
 
   it("shows the four link rates and warns only above the backend's thresholds", () => {
     expect(linkReadout(status())).toEqual({ text: "0.2 err/s · 0.1 resync/s · 0.0 bad/s · 0.0 drop/s", cls: "" });
-    const hot = status({ link: { ...status().link!, ingress_errors_per_s: 25, resyncs_per_s: 0.5 } });
+    const hot = status({ link: { ...status().link!, ingress_errors_per_s: 25, ingress_errors_avg_per_s: 12, ingress_errors_warn: true, resyncs_per_s: 0.5 } });
     expect(linkReadout(hot)).toEqual({ text: "25 err/s · 0.5 resync/s · 0.0 bad/s · 0.0 drop/s", cls: "warn" });
     expect(linkReadout(status({ link: { ...status().link!, resyncs_per_s: 2 } })).cls).toBe("warn");
     // bad and dropped frames are shown, and warn only when the backend reports them sustained above

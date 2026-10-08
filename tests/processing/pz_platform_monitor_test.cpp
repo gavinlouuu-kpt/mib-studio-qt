@@ -187,6 +187,48 @@ int main() {
         MIB_EXPECT(run.geometryWidth == 512 && run.geometryHeight == 96, "default geometry 512x96");
     }
 
+    // Ingress errors are judged as a 5 s average: a burst of 13 inside the window does not warn,
+    // 12/s sustained does, and the window restarts after a mode-switch settle.
+    {
+        r->strobeWindow[9] = 250000;
+        r->livePage[12] = 1000;
+        monitor.settle(18'000'000);
+        (void)monitor.sample(18'000'000);
+        (void)monitor.sample(19'600'000); // past the settle window: history starts
+        auto at = [&](uint64_t us, uint32_t errors) {
+            r->livePage[12] = errors;
+            return monitor.sample(us);
+        };
+        MIB_EXPECT(!at(20'000'000, 1000).ingressErrorsWarn, "no full window yet");
+        const auto burst = at(23'000'000, 1013); // a burst of 13 in 3 s
+        MIB_EXPECT(!burst.ingressErrorsWarn && burst.ingressErrorsAvgPerS == 0.0, "window still filling");
+        const auto after = at(25'000'000, 1013); // 5.4 s after the first sample: the average is 13 / 5.4 ≈ 2.4/s
+        MIB_EXPECT(!after.ingressErrorsWarn && after.ingressErrorsAvgPerS > 2.0 && after.ingressErrorsAvgPerS < 3.0,
+                   "a burst of 13 averages to about 2.4/s: no warning");
+        MIB_EXPECT(after.ingressErrorsPerS == 0.0 || after.ingressErrorsPerS < 10.0, "instantaneous rate for the readout only");
+        // 12/s sustained: 12 more every second for 6 s.
+        uint32_t errors = 1013;
+        uint64_t t = 25'000'000;
+        pz::PzPlatformStatus last;
+        for (int i = 0; i < 6; ++i) {
+            t += 1'000'000;
+            errors += 12;
+            last = at(t, errors);
+        }
+        MIB_EXPECT(last.ingressErrorsAvgPerS > 11.5 && last.ingressErrorsWarn, "12/s sustained for 5 s warns");
+        // The link recovers: the warning clears once the window no longer holds the errors.
+        for (int i = 0; i < 6; ++i) {
+            t += 1'000'000;
+            last = at(t, errors);
+        }
+        MIB_EXPECT(!last.ingressErrorsWarn && last.ingressErrorsAvgPerS == 0.0, "clean for 5 s: no warning");
+        // A mode switch restarts the window.
+        errors += 600;
+        monitor.settle(t + 100'000);
+        const auto switched = at(t + 1'000'000, errors);
+        MIB_EXPECT(!switched.ingressErrorsWarn && !switched.ratesValid, "inside the settle window: no warning");
+    }
+
     // Bad and dropped frames are judged against the frame rate (400 fps here: bad above 4/s, dropped
     // above 0.4/s) and warn only once sustained for 5 s; a blip does not, a closed sensor never does.
     {

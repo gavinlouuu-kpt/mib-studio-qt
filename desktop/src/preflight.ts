@@ -243,7 +243,7 @@ function sensorLinkCheck(i: PreflightInput): PreflightCheck {
   const detected = linkReadout(s).text;
   const sensor = sensorReadout(s);
   const issues: string[] = [];
-  if (l.ingress_errors_per_s > l.ingress_errors_warn_per_s) issues.push(`ingress errors above ${l.ingress_errors_warn_per_s}/s`);
+  if (l.ingress_errors_warn) issues.push(`ingress errors above ${l.ingress_errors_warn_per_s}/s (5 s average)`);
   if (l.resyncs_per_s > l.resyncs_warn_per_s) issues.push(`resyncs above ${l.resyncs_warn_per_s}/s`);
   if (l.bad_frames_warn) issues.push("bad frames above 1% of the frame rate for 5 s");
   if (l.dropped_warn) issues.push("dropped frames above 0.1% of the frame rate for 5 s (data loss in Run)");

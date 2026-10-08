@@ -117,7 +117,8 @@ describe("PZ7035 preflight (#501)", () => {
   it("link rates above the thresholds warn; the LED baseline passes", () => {
     const link = HEALTHY.link!;
     expect(check({ ...IDLE, instrument: { ...HEALTHY, link: { ...link, ingress_errors_per_s: 2 } } }, "sensorLink")!.status).toBe("passed");
-    expect(check({ ...IDLE, instrument: { ...HEALTHY, link: { ...link, ingress_errors_per_s: 25 } } }, "sensorLink")!.status).toBe("warning");
+    expect(check({ ...IDLE, instrument: { ...HEALTHY, link: { ...link, ingress_errors_per_s: 25 } } }, "sensorLink")!.status).toBe("passed"); // one second of burst is not a warning
+    expect(check({ ...IDLE, instrument: { ...HEALTHY, link: { ...link, ingress_errors_avg_per_s: 12, ingress_errors_warn: true } } }, "sensorLink")!.status).toBe("warning");
     expect(check({ ...IDLE, instrument: { ...HEALTHY, link: { ...link, resyncs_per_s: 3 } } }, "sensorLink")!.status).toBe("warning");
     expect(check({ ...IDLE, instrument: { ...HEALTHY, link: { ...link, rates_valid: false } } }, "sensorLink")!.status).toBe("warning");
   });

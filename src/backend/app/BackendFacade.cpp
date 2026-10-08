@@ -3172,6 +3172,8 @@ std::string BackendFacade::fetchInstrumentStatusJson() {
         {"link",
          {{"rates_valid", s.ratesValid},
           {"ingress_errors_per_s", s.ingressErrorsPerS},
+          {"ingress_errors_avg_per_s", s.ingressErrorsAvgPerS},
+          {"ingress_errors_warn", s.ingressErrorsWarn},
           {"resyncs_per_s", s.resyncsPerS},
           {"bad_frames_per_s", s.badFramesPerS},
           {"dropped_per_s", s.droppedPerS},
