@@ -155,6 +155,15 @@ spec S5). Protocol on `/ws`, token on the upgrade (`?token=` or
 `Authorization: Bearer`, from `/etc/yofo-studio/token`; `--no-token` only on
 loopback):
 
+**Who controls the instrument (#501).** In a browser one client at a time controls the instrument; the
+others only watch and their commands fail with `VIEWER_ONLY`. The server sends each client
+`{"session": {"client_id", "controller_id"}}` on connect and `{"session": {"controller_id"}}` when control
+changes; `wsTransport` keeps it (`transport.session`, reset on a lost link) and `useControlRole` exposes it.
+`ControlBanner` (in `AuthGate`) tells a viewer "Another client controls this instrument: you can watch,
+not operate." with a **Take control** button (`take_control`), which disappears for the new controller and
+appears for the old one. Without it a second browser, or an older tab that reconnected first after a
+restart, showed buttons that failed with only a log line (seen on the board on 2026-10-08).
+
 **Reconnecting (#501).** `AuthGate` keeps probing `/auth` every 2 s after the app mounted. The
 server reports a `boot_id` (one value per server process; `mib-bridge-server` `Server::new`) on every
 `/auth` answer. Two missed probes show "Connection to the instrument lost. Reconnecting…"; when the

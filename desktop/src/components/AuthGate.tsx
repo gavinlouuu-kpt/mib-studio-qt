@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { isRemote } from "../transport";
 import { authUrl, probeAuthDetail, storeToken, type AuthOutcome } from "../transport/auth";
+import { ControlBanner } from "./ControlBanner";
 import "./AuthGate.css";
 
 // #501: in a browser against the instrument, the app mounts only after the server accepts the
@@ -88,6 +89,7 @@ export function AuthGate({ children, monitorMs = MONITOR_MS }: { children: React
   if (outcome === "authorized") {
     return (
       <>
+        <ControlBanner />
         {lost && <p className="connection-banner" role="status">Connection to the instrument lost. Reconnecting…</p>}
         {restarted && (
           <p className="connection-banner" role="status">

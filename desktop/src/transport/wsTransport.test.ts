@@ -103,4 +103,26 @@ describe("wsTransport", () => {
     expect(wsUrlFromLocation(at("https://board/"))).toBe("wss://board/ws");
     expect(wsUrlFromLocation(at("http://localhost:1420/?server=ws://board:8427/ws&token=t"))).toBe("ws://board:8427/ws?token=t");
   });
+
+  it("tracks who controls the instrument from the server's session messages, and forgets on a lost link", async () => {
+    const {transport, sockets} = setup();
+    const seen: Array<{clientId?: number; controllerId?: number | null}> = [];
+    const stop = transport.session!.subscribe((state) => seen.push({...state}));
+    const call = transport.invoke("fetch_platform_info");
+    await tick();
+    sockets[0].open();
+    await tick();
+    sockets[0].reply({session: {client_id: 7, controller_id: 3}}); // on connect: our id and the controller's
+    expect(transport.session!.get()).toEqual({clientId: 7, controllerId: 3});
+    sockets[0].reply({session: {controller_id: 7}}); // control passed to us: the id is kept
+    expect(transport.session!.get()).toEqual({clientId: 7, controllerId: 7});
+    sockets[0].reply({session: {controller_id: null}});
+    expect(transport.session!.get()).toEqual({clientId: 7, controllerId: null});
+    stop();
+    sockets[0].reply({session: {controller_id: 9}});
+    expect(seen.length).toBe(3); // the listener was removed
+    sockets[0].close();
+    await call.catch(() => undefined);
+    expect(transport.session!.get()).toEqual({});
+  });
 });
