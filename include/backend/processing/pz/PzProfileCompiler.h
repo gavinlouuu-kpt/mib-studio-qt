@@ -55,7 +55,7 @@ const std::vector<PageField>& unetCellsV2PageFields();
 
 // The names of the settings the PL does not implement that differ from their defaults (the content of
 // CompiledProfile::warnings).
-std::vector<std::string> plIgnoredSettingsChanged(const ProcessingConfig& config);
+std::vector<std::string> plIgnoredSettingsChanged(const services::ProcessingConfig& config);
 
 CompiledProfile compileUnetCellsV2(const UnetCellsProfileInputs& in);
 

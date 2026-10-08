@@ -90,12 +90,12 @@ private:
 
 } // namespace
 
-std::vector<std::string> plIgnoredSettingsChanged(const ProcessingConfig& c) {
+std::vector<std::string> plIgnoredSettingsChanged(const services::ProcessingConfig& c) {
     // What the PL's unet_cells_v2 does not implement: the host mask pipeline (blur, background subtraction,
     // morphology), the host object filters (border, ring ratio, single inner contour) and automatic
     // background/ROI. (Multi-image is a profile store flag, store_multi_image_frames, so it is not listed.) A setting still at its default says nothing; one the
     // operator changed would otherwise be accepted silently.
-    const ProcessingConfig d;
+    const services::ProcessingConfig d;
     std::vector<std::string> names;
     const auto changed = [&](bool differs, const char* name) { if (differs) names.emplace_back(name); };
     changed(c.gaussian_blur_size != d.gaussian_blur_size, "gaussian_blur_size");
