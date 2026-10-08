@@ -1319,7 +1319,8 @@ export default function App() {
           label="File"
           items={[
             { label: "Open Recording…", onClick: openReviewFromMenu },
-            {
+            // The browser cannot open a folder on the instrument: the item would only throw (#651 G10).
+            ...(isRemote ? [] : [{
               label: "Open Data Folder",
               onClick: () => {
                 void bridge
@@ -1327,7 +1328,7 @@ export default function App() {
                   .then((paths) => revealItemInDir(paths.app_data))
                   .catch((e) => append(`open data folder failed: ${e}`));
               },
-            },
+            }]),
             { label: "Exit", onClick: () => void requestClose() },
           ]}
         />
@@ -1337,8 +1338,12 @@ export default function App() {
             { label: "Processing Settings…", onClick: () => {setTab("experiment");setExpTab("preview");setConfigTab("app");} },
             { label: "Pixel to Micron…", onClick: () => {setTab("experiment");setExpTab("preview");setConfigTab("app");} },
             { label: "Monitoring Settings…", onClick: () => {setTab("experiment");setExpTab("monitoring");} },
-            { label: "Central Methods…", onClick: () => setShowCentralMethods(true) },
-            { label: "Updates…", onClick: () => {setTab("experiment");setExpTab("preview");setConfigTab("app");} },
+            // The central registry import and the application updater are desktop-shell features: in the
+            // browser they would only dead-end (G10). Pixel to Micron stays (its control is on the PL too).
+            ...(isRemote ? [] : [
+              { label: "Central Methods…", onClick: () => setShowCentralMethods(true) },
+              { label: "Updates…", onClick: () => {setTab("experiment");setExpTab("preview");setConfigTab("app");} },
+            ]),
           ]}
         />
         <Menu
@@ -1965,9 +1970,11 @@ export default function App() {
                                 aria-label="Processing configuration JSON"
                               />
                             </div>
-                            {hostProcessing && <div className="config-group">
-                              <h5>realtime_processing</h5>
-                              <div className="row">
+                            {/* px→µm is the calibration of every run (Review multiplies area by it), so it stays on the
+                                PL instrument; the host's realtime switch, stats and background are host-only (#651 G10). */}
+                            <div className="config-group">
+                              <h5>{hostProcessing ? "realtime_processing" : "pixel size"}</h5>
+                              {hostProcessing && <div className="row">
                                 <label>
                                   <input
                                     type="checkbox"
@@ -1976,7 +1983,7 @@ export default function App() {
                                   />{" "}
                                   realtime processing
                                 </label>
-                              </div>
+                              </div>}
                               <div className="row">
                                 <label>
                                   px→µm{" "}
@@ -1992,14 +1999,14 @@ export default function App() {
                                 </button>
                               </div>
                               {quickDraft.runtimeChanged && <p role="status">Runtime processing controls changed; your edits are preserved. Use Reload above, then reconcile your changes.</p>}
-                              {stats?.valid && (
+                              {hostProcessing && stats?.valid && (
                                 <p className="mono">
                                   algo {metricNumber(stats.algo_fps1s)} · valid {metricNumber(stats.valid_fps1s)} · invalid{" "}
                                   {metricNumber(stats.invalid_fps1s)} fps · px→µm {metricNumber(stats.pixel_to_micron, 5, true)}
                                 </p>
                               )}
-                              <p className="mono">background: {backgroundSet ? "set" : "not set"}</p>
-                            </div>}
+                              {hostProcessing && <p className="mono">background: {backgroundSet ? "set" : "not set"}</p>}
+                            </div>
                           </div>
                         </>
                       )}

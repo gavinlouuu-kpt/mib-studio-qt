@@ -132,6 +132,22 @@ with sync_playwright() as p:
         leaked = sorted({s for s in MIB_ONLY if s in scrubbed})
         record("no MIB-only surfaces", not leaked, f"found: {leaked}" if leaked else "none of " + ", ".join(MIB_ONLY))
 
+        # Menus: no item that dead-ends in the browser (#651 G10), and Pixel to Micron still leads to its control.
+        items = []
+        for menu in ["File", "Settings"]:
+            page.locator(".menubar-item > button", has_text=re.compile(f"^{menu}$")).click()
+            time.sleep(0.4)
+            items += [t.strip() for t in page.locator("[role=menuitem]").all_inner_texts()]
+        dead = sorted({i for i in items if i in ("Open Data Folder", "Central Methods…", "Updates…")})
+        px = page.locator("[role=menuitem]", has_text="Pixel to Micron")
+        px_ok = px.count() > 0
+        if px_ok:
+            px.first.click()
+            time.sleep(1.5)
+            px_ok = page.get_by_text("px→µm").count() > 0
+        record("menus: no dead ends, Pixel to Micron reachable", not dead and px_ok,
+               f"dead-end items: {dead}; Pixel to Micron control {'shown' if px_ok else 'MISSING'}")
+
         # 3. Align: whole frames, LED at the Align preset, sensor at 400 fps.
         tab(page, "Camera & Alignment")
         got = None
