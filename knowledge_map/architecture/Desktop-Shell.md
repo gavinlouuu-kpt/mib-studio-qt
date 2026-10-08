@@ -155,6 +155,17 @@ spec S5). Protocol on `/ws`, token on the upgrade (`?token=` or
 `Authorization: Bearer`, from `/etc/yofo-studio/token`; `--no-token` only on
 loopback):
 
+**Reconnecting (#501).** `AuthGate` keeps probing `/auth` every 2 s after the app mounted. The
+server reports a `boot_id` (one value per server process; `mib-bridge-server` `Server::new`) on every
+`/auth` answer. Two missed probes show "Connection to the instrument lost. Reconnecting…"; when the
+server answers again with the same boot id the page just carries on (the WebSocket reopens by
+itself on the next call); with a different boot id (backend restarted, board rebooted) the app is
+re-mounted, so it loads the new backend's state, and a dismissible notice says so, all without a
+page reload. A 401 (a new token after a restart) puts the token prompt back over the running app,
+using the stored token first. An older server without a boot id never triggers a re-mount. Tests:
+`components/AuthGate.test.tsx`, `mib-bridge-server` `auth_probe_reports_the_token_without_a_socket`,
+and a Chromium run that stops and restarts a real server under an open page.
+
 - request `{"request_id", "cmd", "args"}` with the `invoke` name and camelCase
   arguments; reply `{"request_id", "ok"}` / `{"request_id", "error"}`;
 - binary replies: 8-byte little-endian request id, then the unchanged bytes
@@ -565,6 +576,21 @@ or hardware actuation are performed by restore. `selection` separately returns t
 startup choice and actual runtime `profile_selection` provenance; a saved choice alone
 is never evidence of application. External edits fail closed for explicit review/reapply.
 
+**One startup pointer (#398 M2c, bridge ABI 32).** Since central methods can be applied
+too, the startup choice is the last thing applied, whichever kind: `app/StartupConfiguration`
+keeps `<dataDir>/startup_configuration.json` (`{"kind":"profile","base","name","revision"}`
+or `{"kind":"central","revision_id","config_sha256"}`). The profile store's `apply` and
+`app::applyCentralMethod` both record it. At startup the profiles hook calls
+`restore_startup_configuration(profileBase)` once, even with no profiles folder chosen:
+- a profile goes through the profile store's `restore` in its recorded folder;
+- a central revision is re-planned from the registry cache (reopened offline) and must
+  still match the recorded sha256;
+- with no pointer, a legacy `.selection.json` in the chosen folder is still restored.
+A failed restore applies nothing and returns a `notice` (the instrument runs on its default
+settings until a method or profile is applied), which the panel shows. The pointer stays,
+so the notice repeats at the next start until then. An ROI with no frame yet is pending,
+never a failure. `.selection.json` is still written for the folder's own selection.
+
 Catalog transport is bounded to 4 MiB/HTTP(S), has finite timeouts, no redirects or URL
 credentials, and runs outside the backend bridge mutex in Tauri's blocking pool.
 `profileCatalog.tsx` provides passive catalog checks, full config-field and camera-script
@@ -677,7 +703,10 @@ backend's camera modes instead of `set_camera_overview`:
   window the backend applied from `fetch_instrument_status.mode`
   (`run_set` true once a Run switch succeeded in the process, then `run_x`,
   `run_y`; `restoredRunWindow`), unless the operator already placed one. The
-  backend keeps it in memory only, so a server restart still starts unplaced.
+  backend also writes it to `<data dir>/instrument_run_window.json` at every
+  successful Run switch and reads it at start-up (`AppBackend::loadInstrumentRunWindow`),
+  so an instrument restart keeps the window; a file that is not on the Run grid
+  or the sensor is ignored, and the window is only ever replaced, not cleared.
 - **When the camera cannot go to Run.** `components/RunWindowNotice` shows an
   alert in the tab, like a failed preflight check: with no placed window the
   Experiment tab says "Place the 512×96 run window in Camera & Alignment" and
@@ -696,9 +725,17 @@ backend's camera modes instead of `set_camera_overview`:
   (valid green, invalid red). A status line shows the frame, listed cells,
   cells, blemishes and the latency max.
 - **Service mode.** It also sets the backend latch (`set_service_mode`). In
-  it, `InstrumentLedControls` adjusts delay/width (±0.5 µs width steps,
-  clamped to the limits) or restores the preset. The next mode switch
+  it, `InstrumentLedControls` adjusts delay and width (±0.5 µs steps,
+  clamped to the limits) or restores the preset, and shows a read-only readout of the strobe
+  control S[0], the guard and its trip count (an alert on a fault). The next mode switch
   restores the preset anyway.
+
+**Pump rate in rpm (#501).** For a Tushui peristaltic pump the Rate unit select also offers "rpm
+(head)" (`pumpRate.ts`, pseudo unit 200): the UI sends flow = rpm x the calibration the pump was
+connected with (µL/rev), in µL/min, since the backend takes a flow; it refuses an rpm without a usable
+calibration. The panel shows the configured flow as "≈ x rpm" and labels the direction "Infuse (CCW)" /
+"Withdraw (CW)" (the Tushui heads). Starting, purging and changing settings still need Service mode
+and one-shot arming, and nothing is sent at load; stop is always available.
 
 **Link health, sensor and latency (#501).** The PL core sidebar section shows three more rows from
 `fetch_instrument_status`: **Sensor** (the ingress geometry from S[29] at the actual frame rate from

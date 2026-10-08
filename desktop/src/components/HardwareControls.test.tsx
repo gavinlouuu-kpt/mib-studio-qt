@@ -92,6 +92,27 @@ describe('hardware operator interactions', () => {
     expect(button('Apply volume')).toBeUndefined();
     expect(labelled('Pump model')[0].disabled).toBe(true);
   });
+  it('takes a peristaltic rate in head rpm and sends the equivalent flow in µL/min', async () => {
+    vi.mocked(bridge.fetchPumpStatus).mockResolvedValue({...pump, model: 1, speed_rpm: 0.4, microliters_per_rev: 25, configured_flow_rate: 10, flow_rate_unit: 100});
+    vi.mocked(bridge.pumpSetFlowRate).mockResolvedValue({ok: true, command: 10, message: 'Rate set', operation_id: '0'});
+    await render();
+    expect(host.textContent).toContain('configured ≈ 0.40 rpm');
+    const unit = labelled('Rate unit')[0] as HTMLSelectElement;
+    expect(Array.from(unit.options).map(o => o.textContent)).toContain('rpm (head)');
+    await act(async () => choose(unit, '200'));
+    const rate = labelled('Flow rate')[0] as HTMLInputElement;
+    await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(rate, '0.8'); rate.dispatchEvent(new Event('input', {bubbles: true})); });
+    await act(async () => button('Apply rate').click());
+    expect(bridge.pumpSetFlowRate).toHaveBeenCalledWith(0, 20, 100); // 0.8 rpm x 25 µL/rev
+    expect(host.textContent).toContain('Infuse (CCW)');
+    expect(host.textContent).toContain('Withdraw (CW)');
+  });
+  it('offers no rpm unit for a syringe pump', async () => {
+    await render();
+    const unit = labelled('Rate unit')[0] as HTMLSelectElement;
+    expect(Array.from(unit.options).map(o => o.textContent)).not.toContain('rpm (head)');
+    expect(host.textContent).not.toContain('(CCW)');
+  });
 });
 describe('PZ7035 pumps (#501)', () => {
   it('defaults both slots to the peristaltic pumps on ttyPS1 (Sample 3, Sheath 4) and hides the nanopositioner', async () => {

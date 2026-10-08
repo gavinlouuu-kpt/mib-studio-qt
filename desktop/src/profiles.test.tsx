@@ -14,7 +14,7 @@ let host:HTMLDivElement,root:Root,model:ReturnType<typeof useProfiles>,visible=t
 const profile={name:"original",path:"/profiles/original/config.json",revision:"rev1",document_json:'{"unknown":17}',script:"// original"};
 const ctx={currentConfig:null as string|null,ready:true,active:false,resume:false,append:vi.fn(),onOpen:vi.fn().mockResolvedValue(undefined)};
 function App(){model=useProfiles(ctx);return visible?<ProfilesPanel model={model}/>:null;}
-beforeEach(async()=>{vi.clearAllMocks();visible=true;ctx.currentConfig=null;ctx.active=false;ctx.resume=false;window.localStorage.setItem("mib.profiles.directory","/profiles");vi.spyOn(window,"confirm").mockReturnValue(true);vi.mocked(invoke).mockImplementation(async(_c,args)=>JSON.parse((args as {request:string}).request).operation==="list"?{ok:true,profiles:[profile]}:{ok:true,profile});host=document.createElement("div");document.body.append(host);root=createRoot(host);await act(async()=>root.render(<App/>));await act(async()=>model.run("read",profile));});
+beforeEach(async()=>{vi.clearAllMocks();visible=true;ctx.currentConfig=null;ctx.active=false;ctx.resume=false;window.localStorage.setItem("mib.profiles.directory","/profiles");vi.spyOn(window,"confirm").mockReturnValue(true);vi.mocked(invoke).mockImplementation(async(c,args)=>c==="restore_startup_configuration"?{ok:true,restored:false,kind:null}:JSON.parse((args as {request:string}).request).operation==="list"?{ok:true,profiles:[profile]}:{ok:true,profile});host=document.createElement("div");document.body.append(host);root=createRoot(host);await act(async()=>root.render(<App/>));await act(async()=>model.run("read",profile));});
 afterEach(async()=>{await act(async()=>root.unmount());host.remove();vi.restoreAllMocks();});
 it("keeps complete config and optional script drafts across navigation",async()=>{await act(async()=>model.edit('{"unknown":18}'));visible=false;await act(async()=>root.render(<App/>));visible=true;await act(async()=>root.render(<App/>));expect(model.document).toContain("18");expect(model.script).toBe("// original");expect(model.dirty).toBe(true);});
 it("uses authoritative baseline for rename and preserves state on conflict",async()=>{vi.mocked(invoke).mockResolvedValue({ok:false,error:"Profile changed; reload"});await act(async()=>model.setName("renamed"));await act(async()=>model.run("rename"));expect(model.selected?.revision).toBe("rev1");expect(model.message).toContain("reload");expect(JSON.parse((vi.mocked(invoke).mock.lastCall![1] as {request:string}).request)).toMatchObject({name:"original",destination:"renamed",baseline:"rev1"});});
@@ -58,7 +58,7 @@ it("choosing a folder preserves the draft without a discard prompt or config fet
  await act(async()=>{model.edit('{"keep":true}');model.setName("draft-name");});
  vi.mocked(window.confirm).mockClear();
  vi.mocked(open).mockResolvedValueOnce("/other-profiles");
- vi.mocked(invoke).mockResolvedValue({ok:true,profiles:[]});
+ vi.mocked(invoke).mockClear();vi.mocked(invoke).mockResolvedValue({ok:true,profiles:[]});
  await act(async()=>model.run("choose"));
  expect(window.confirm).not.toHaveBeenCalled();
  expect(model.base).toBe("/other-profiles");
@@ -94,4 +94,26 @@ it.each(["[]", "null", "42", '\"text\"', "{invalid"])("disables and refuses inva
  await act(async()=>model.run("create"));
  expect(invoke).not.toHaveBeenCalled();
  expect(model.message).toMatch(/object|valid JSON/);
+});
+
+it("startup re-applies the startup configuration once, even without a profiles folder (#398 M2c)",async()=>{
+ await act(async()=>root.unmount());storage.delete("mib.profiles.directory");vi.mocked(invoke).mockClear();
+ vi.mocked(invoke).mockImplementation(async(c)=>c==="restore_startup_configuration"?{ok:true,restored:true,kind:"central",revision_id:"r7",roi_pending:true,notice:"The ROI is applied on the first captured frame; Start waits for it."}:{ok:true});
+ root=createRoot(host);
+ await act(async()=>root.render(<App/>));
+ const restores=vi.mocked(invoke).mock.calls.filter(([c])=>c==="restore_startup_configuration");
+ expect(restores).toHaveLength(1);
+ expect(restores[0][1]).toEqual({profileBase:""});
+ expect(vi.mocked(invoke).mock.calls.some(([c])=>c==="profile_command")).toBe(false);
+ expect(model.message).toBe("Startup method r7 re-applied. The ROI is applied on the first captured frame; Start waits for it.");
+});
+
+it("a failed startup restore shows its notice instead of failing silently",async()=>{
+ await act(async()=>root.unmount());vi.mocked(invoke).mockClear();
+ const notice="Startup configuration not restored: Startup method r9 cannot be re-applied: not cached. The instrument runs on its default settings until a method or profile is applied.";
+ vi.mocked(invoke).mockImplementation(async(c,args)=>c==="restore_startup_configuration"?{ok:false,restored:false,kind:"central",error:"not cached",notice}:JSON.parse((args as {request:string}).request).operation==="list"?{ok:true,profiles:[profile]}:{ok:true,profile});
+ root=createRoot(host);
+ await act(async()=>root.render(<App/>));
+ expect(model.message).toBe(notice);
+ expect(ctx.append).toHaveBeenCalledWith(notice);
 });

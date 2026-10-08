@@ -4,6 +4,7 @@
 
 `initialize()` builds a `profiles::ProfileRegistryWorker` before any service,
 configured from `MIB_PROFILE_REGISTRY_URL` + `MIB_PROFILE_REGISTRY_PUBLISHABLE_KEY`
+(read from the OS environment, so on Windows values the host sets after start-up are seen; #571)
 with its cache under `<dataDir>/profile_registry/`. The shell injects the HTTPS
 POST via `setProfileRegistryTransport()` before `initialize()` (ADR 0002 seam;
 Qt: `makeQtRegistryHttpTransport()`); without env or transport the worker is

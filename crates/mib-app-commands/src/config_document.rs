@@ -22,6 +22,13 @@ pub fn apply_config_document(state: &AppState, path: String, baseline: String, p
     Ok(ConfigTransactionResult { saved: r.saved, applied: r.applied, verified: r.verified, conflict: r.conflict, revision: r.revision, error: r.error })
 }
 
+/// #398 M2c: re-apply the last applied local profile or central method.
+pub fn restore_startup_configuration(state: &AppState, profile_base: String) -> Result<serde_json::Value, String> {
+    if profile_base.len() > 4096 { return Err("Profile folder path too long".into()); }
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().restore_startup_configuration(&profile_base)).map_err(|e| e.to_string())
+}
+
 pub fn profile_command(state: &AppState, base: String, request: String) -> Result<serde_json::Value, String> {
     if request.len() > 8 * 1024 * 1024 + 4096 { return Err("Profile request too large".into()); }
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
