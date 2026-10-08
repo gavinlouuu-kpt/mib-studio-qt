@@ -139,7 +139,7 @@ namespace backend
         bool instrumentRunWindowSet() const;
         // How often Align's ingress recovery fired in this process (#629): receiver resets issued and
         // switches that never locked.
-        struct AlignLockCounters { uint64_t receiverClears{0}, failures{0}; uint32_t lastStuckP13{0}; };
+        struct AlignLockCounters { uint64_t receiverClears{0}, failures{0}; uint32_t lastStuckP13{0}; uint64_t plGaveUps{0}; int64_t lastPlGaveUpMs{0}; };
         AlignLockCounters alignLockCounters() const;
         // The PL receiver auto-reset count (results9 RXH1); nullopt without the block.
         std::optional<uint32_t> plReceiverAutoResets();
@@ -395,6 +395,8 @@ namespace backend
         std::atomic<bool> instrumentRunSet_{false};
         std::atomic<bool> instrumentIdle_{false};
         std::atomic<uint64_t> alignReceiverClears_{0}, alignLockFailures_{0};
+        std::atomic<uint64_t> alignPlGaveUps_{0};     // times the PL self-heal gave up (host recovery took over)
+        std::atomic<int64_t> alignLastPlGaveUpMs_{0}; // ms from stream start to the latest gave-up
         std::atomic<uint32_t> alignLastStuckP13_{0}; // P[13] read before the latest recovery attempt
         std::atomic<bool> serviceMode_{false};
         // Align live view: "bridge" (whole frames, results8 on) or "bands" (producer grabber).

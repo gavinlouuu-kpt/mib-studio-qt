@@ -48,6 +48,9 @@ struct AlignLockHooks {
     // Optional: the PL self-heal status (present = false on an image without it). When the block is
     // there the PL does the resets: the host waits for it and does not pulse the receiver itself.
     std::function<bool(RxHealStatus&)> readHeal;
+    // Called once when the PL block gave up or did not finish (count and log it): its state, whether it
+    // reported gave-up, and the milliseconds from the start of the wait.
+    std::function<void(const RxHealStatus&, bool gaveUp, long long afterMs)> onPlGaveUp;
     // Called for every attempt (count and log it).
     std::function<void(int attempt, const IngressStatus&)> onAttempt;
     std::function<void(std::chrono::milliseconds)> pause;
@@ -68,6 +71,8 @@ struct AlignLockResult {
     bool locked{false};
     bool recovered{false}; // needed at least one reset
     bool healedByPl{false}; // the PL self-heal cleared the flags (no host reset)
+    bool plGaveUp{false};   // the PL block gave up (or did not finish); the host recovery ran as the backstop
+    long long plGaveUpAfterMs{0}; // from the start of the wait to that point
     int clears{0};
     std::string error; // operator text when not locked
 };

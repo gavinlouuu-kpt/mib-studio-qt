@@ -3107,7 +3107,9 @@ std::string BackendFacade::fetchInstrumentStatusJson() {
                               {"align_lock",
                                {{"receiver_clears", alignLock.receiverClears},
                                 {"failures", alignLock.failures},
-                                {"last_stuck_p13", alignLock.lastStuckP13}}}};
+                                {"last_stuck_p13", alignLock.lastStuckP13},
+                                {"pl_gave_ups", alignLock.plGaveUps},
+                                {"last_pl_gave_up_ms", alignLock.lastPlGaveUpMs}}}};
     // Where recordings land (#501): RAM on today's JTAG RAM root, lost at power-off.
     const auto target = app::recordingTarget(backend_.dataDir());
     const nlohmann::json storage{{"path", target.path},

@@ -1,5 +1,6 @@
 #include "backend/pz/AlignLock.h"
 
+#include <chrono>
 #include <cstdio>
 
 namespace backend::pz {
@@ -17,6 +18,7 @@ std::string describe(const IngressStatus& st) {
 
 AlignLockResult awaitAlignLock(const AlignLockHooks& hooks, const AlignLockPolicy& policy) {
     AlignLockResult out;
+    const auto started = std::chrono::steady_clock::now();
     if (hooks.waitPreview(policy.firstPreviewWait)) {
         out.locked = true;
         return out;
@@ -34,10 +36,12 @@ AlignLockResult awaitAlignLock(const AlignLockHooks& hooks, const AlignLockPolic
     }
     RxHealStatus heal;
     if (hooks.readHeal && hooks.readHeal(heal) && heal.present) {
-        // The PL self-heal is there: wait for it. The operator error only when it reports gave-up
-        // (or never ends); the host does not pulse the receiver on top of it.
+        // The PL self-heal is there: give it the first go and do not pulse the receiver on top of
+        // it. When it reports gave-up (or never finishes) the host recovery below is the backstop;
+        // the PL's failure stays visible in the result (plGaveUp), the counters and the log.
         std::chrono::milliseconds waited{0};
-        while (waited < policy.healWait) {
+        bool plDone = false;
+        while (waited < policy.healWait && !plDone) {
             if (hooks.waitPreview(policy.healPoll)) {
                 out.locked = true;
                 out.recovered = true;
@@ -46,19 +50,19 @@ AlignLockResult awaitAlignLock(const AlignLockHooks& hooks, const AlignLockPolic
             }
             waited += policy.healPoll;
             if (!hooks.readHeal(heal) || !heal.present) break;
-            if (heal.gaveUp()) {
-                char text[200];
-                std::snprintf(text, sizeof text,
-                              "Align preview not locking: the receiver self-heal gave up after %u tries (lane flags 0x%02X, %s)",
-                              heal.tries(), heal.laneFlags(), describe(st).c_str());
-                out.error = text;
-                return out;
-            }
+            plDone = heal.gaveUp();
         }
         if (heal.present) {
-            out.error = "Align preview not locking: the receiver self-heal did not finish in " +
-                        std::to_string(policy.healWait.count()) + " ms (" + describe(st) + ")";
-            return out;
+            out.plGaveUp = true;
+            out.plGaveUpAfterMs =
+                std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
+            if (hooks.onPlGaveUp) hooks.onPlGaveUp(heal, plDone, out.plGaveUpAfterMs);
+            hooks.readStatus(st);
+            if (st.laneOverflow() == 0 && hooks.waitPreview(policy.previewWaitAfterClear)) {
+                out.locked = true; // cleared between the last poll and now
+                out.recovered = true;
+                return out;
+            }
         }
     }
     for (int attempt = 0; attempt < policy.attempts; ++attempt) {
@@ -78,7 +82,14 @@ AlignLockResult awaitAlignLock(const AlignLockHooks& hooks, const AlignLockPolic
             return out;
         }
     }
-    out.error = "Align preview not locking: " + describe(st) + " after " + std::to_string(out.clears) +
+    std::string pl;
+    if (out.plGaveUp) {
+        char text[120];
+        std::snprintf(text, sizeof text, "the PL self-heal %s after %u tries (%lld ms after the stream started), and ",
+                      heal.gaveUp() ? "gave up" : "did not finish", heal.tries(), out.plGaveUpAfterMs);
+        pl = text;
+    }
+    out.error = "Align preview not locking: " + pl + describe(st) + " after " + std::to_string(out.clears) +
                 " receiver resets (" + std::to_string(policy.receiverResetHold.count()) + " ms each)";
     return out;
 }
