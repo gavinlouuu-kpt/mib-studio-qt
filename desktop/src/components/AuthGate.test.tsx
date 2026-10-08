@@ -4,7 +4,7 @@ import { act, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../transport", () => ({ isRemote: true }));
+vi.mock("../transport", () => ({ isRemote: true, transport: { kind: "ws", invoke: vi.fn() } }));
 import { AuthGate } from "./AuthGate";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });

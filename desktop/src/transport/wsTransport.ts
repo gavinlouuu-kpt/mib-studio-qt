@@ -1,4 +1,4 @@
-import type {Transport} from "./Transport";
+import type {SessionSource, SessionState, Transport} from "./Transport";
 import {tokenFromLocation} from "./auth";
 
 // A browser talking to yofo-studio-server (crates/mib-bridge-server):
@@ -40,6 +40,19 @@ export function createWsTransport(url: string | (() => string), options: WsTrans
   let queued: unknown[] = [];
   let transportVersion = 1;
   let closed = false;
+  let session: SessionState = {};
+  const sessionListeners = new Set<(state: SessionState) => void>();
+  const sessionSource: SessionSource = {
+    get: () => session,
+    subscribe(listener) {
+      sessionListeners.add(listener);
+      return () => { sessionListeners.delete(listener); };
+    },
+  };
+  function setSession(next: SessionState) {
+    session = next;
+    for (const listener of sessionListeners) listener(session);
+  }
   let lastFailure = 0;
 
   function fail(error: string) {
@@ -62,6 +75,7 @@ export function createWsTransport(url: string | (() => string), options: WsTrans
           socket = undefined;
           opening = undefined;
           lastFailure = Date.now();
+          setSession({});
           fail("TRANSPORT_LOST");
           if (!wasOpen) reject("TRANSPORT_UNAVAILABLE");
         };
@@ -79,8 +93,16 @@ export function createWsTransport(url: string | (() => string), options: WsTrans
       if (p) { pending.delete(id); p.resolve(data.slice(8)); }
       return;
     }
-    let value: {request_id?: number; ok?: unknown; error?: unknown; event?: Envelope};
+    let value: {request_id?: number; ok?: unknown; error?: unknown; event?: Envelope; session?: {client_id?: number; controller_id?: number | null}};
     try { value = JSON.parse(String(data)); } catch { return; }
+    if (value.session) {
+      // On connect: our id and the controller's; afterwards the controller's alone.
+      setSession({
+        clientId: value.session.client_id ?? session.clientId,
+        controllerId: value.session.controller_id === undefined ? session.controllerId : value.session.controller_id,
+      });
+      return;
+    }
     if (value.event) {
       transportVersion = value.event.transport_version;
       queued = queued.concat(value.event.events ?? []);
@@ -113,6 +135,7 @@ export function createWsTransport(url: string | (() => string), options: WsTrans
   return {
     kind: "ws",
     invoke,
+    session: sessionSource,
     close() { closed = true; socket?.close(); fail("TRANSPORT_CLOSED"); },
   };
 }

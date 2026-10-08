@@ -83,6 +83,12 @@ with sync_playwright() as p:
         record("token/Connect", False, f"backend did not become ready: {e}")
     page.screenshot(path=str(outdir / "1_connect.png"))
 
+    if "Another client controls this instrument" in body(page):
+        record("control", False, "this browser is viewer-only: another client holds the controller role (take control or close it); items needing control are blocked")
+        (outdir / "acceptance.json").write_text(json.dumps(results, indent=2))
+        browser.close()
+        sys.exit(2)
+
     if desktop:
         text = body(page)
         leaked = [s for s in PZ_ONLY if s in text]
@@ -97,6 +103,10 @@ with sync_playwright() as p:
         if m:
             passed, warn, failed = map(int, m.groups())
             detail = f"{passed} passed · {warn} warning · {failed} failed"
+            if warn:
+                rows = [l for l in text.split("\n")]
+                names = [rows[i - 2] for i, l in enumerate(rows) if l.strip() == "Warning" and i >= 2]
+                detail += f" (warning on: {', '.join(n.strip() for n in names)})"
             record("Preflight with 0 warnings", warn == 0 and failed == 0, detail)
         else:
             record("Preflight with 0 warnings", False, "summary line not found")
@@ -107,7 +117,9 @@ with sync_playwright() as p:
             tab(page, name)
             time.sleep(1.5)
             text_all += "\n" + body(page)
-        leaked = sorted({s for s in MIB_ONLY if s in text_all})
+        # The preflight lists "Autofocus / nanopositioner: Not on this instrument.": a label, not a surface.
+        scrubbed = text_all.replace("Autofocus / nanopositioner", "")
+        leaked = sorted({s for s in MIB_ONLY if s in scrubbed})
         record("no MIB-only surfaces", not leaked, f"found: {leaked}" if leaked else "none of " + ", ".join(MIB_ONLY))
 
         # 3. Align: whole frames, LED at the Align preset, sensor at 400 fps.
@@ -121,9 +133,13 @@ with sync_playwright() as p:
                 break
         led, sensor = side(page, "LED:"), side(page, "Sensor:")
         page.screenshot(path=str(outdir / "3_align.png"))
-        ok = bool(got) and "align" in led and "400" in sensor
+        # The Sensor row exists once the backend reports `sensor` (#622): from then on it is required
+        # to read ~400 fps, so this check tightens by itself; without the row only frame and LED count.
+        has_sensor_row = page.locator(".side-row", has=page.locator(".k", has_text="Sensor:")).count() > 0
+        sensor_ok = ("400" in sensor) if has_sensor_row else True
+        ok = bool(got) and "align" in led and sensor_ok
         record("Align", ok, f"frame mean {got['mean']:.0f} DN" if got else "no frame", ) if ok else \
-            record("Align", False, f"frame={got} led='{led}' sensor='{sensor}' notices={[t for t in page.locator('.mode-notice').all_inner_texts()]}")
+            record("Align", False, f"frame={got} led='{led}' sensor='{sensor}' (row {'present' if has_sensor_row else 'absent: package predates #622'}) notices={[t for t in page.locator('.mode-notice').all_inner_texts()]}")
 
         # 4. Run at 5 kHz: place the window, switch, preview, a short experiment.
         window_ok = False
