@@ -3,6 +3,7 @@
 only DEVCFG INT_STS, the unit is loopback-only without a token, and install.sh verifies MD5SUMS
 before touching the system."""
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -34,7 +35,79 @@ def run_guard(value: str) -> tuple[int, list[str]]:
         return result.returncode, calls
 
 
+def make_bundle_fixture(tmp: Path) -> tuple[Path, dict]:
+    """A fake pz7035 repo (tag pl-test), its PL build, firmware, boot set, producer, tools; and a staged package."""
+    git = lambda *a, cwd=tmp: subprocess.run(["git", *a], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
+    repo = tmp / "pz7035"
+    repo.mkdir()
+    git("init", "-q", cwd=repo)
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "--allow-empty", "-qm", "init", cwd=repo)
+    git("tag", "pl-test", cwd=repo)
+    build = repo / "build" / "pz_live_test"
+    ps7 = build / "pz_live.gen" / "sources_1" / "bd" / "ps7" / "ip" / "ps7_ps_0"
+    ps7.mkdir(parents=True)
+    (build / "pz_live.bit").write_bytes(b"BIT")
+    (ps7 / "ps7_init.tcl").write_text("# ps7\n")
+    (build / "core.json").write_text(
+        '{"build_id": "0123456789abcdef0123456789abcdef", "image": "pz_live_test", "abi": {"major": 1, "minor": 3}}')
+    files = {
+        "PZ_FIRMWARE": tmp / "live_server.elf", "PZ_CTI": tmp / "libpz7035_gentl.cti", "PZ_DTB": tmp / "x.dtb",
+        "PZ_ROOTFS": tmp / "root.cpio.gz.u-boot", "PZ_PZPUMP": tmp / "pzpump",
+    }
+    for path in files.values():
+        path.write_bytes(path.name.encode())
+    tools = tmp / "tools"
+    for tool in ("pzcell", "pzres"):
+        (tools / tool).mkdir(parents=True)
+        (tools / tool / tool).write_bytes(tool.encode())
+    slot = tmp / "slot"
+    slot.mkdir()
+    (slot / "page.bin").write_bytes(b"p")
+    (slot / "lut.bin").write_bytes(b"l")
+    import hashlib
+    env = {k: str(v) for k, v in files.items()}
+    env.update(PZ7035_REPO=str(repo), PZ7035_REF="pl-test", PZ_LINUX_REPO=str(repo), PZ_TOOLS_DIR=str(tools),
+               PZ_SLOT_DATA=str(slot), PZ_CTI_MD5=hashlib.md5(files["PZ_CTI"].read_bytes()).hexdigest())
+    pkg = tmp / "pkg"
+    pkg.mkdir()
+    (pkg / "BUILD_INFO").write_text("yofo-studio standing package, commit abc12345\nbuilt: now\nexpects: nothing\n")
+    for name in ("yofo-studio-server", "dist.tar", "yofo-studio.service", "pl-ready.sh"):
+        (pkg / name).write_text(name)
+    shutil.copy(DEPLOY / "install.sh", pkg / "install.sh")
+    return pkg, env
+
+
+def check_bundle(check) -> None:
+    script = ROOT / "scripts" / "yofo" / "bundle_assemble.sh"
+    with tempfile.TemporaryDirectory() as tmp:
+        pkg, env = make_bundle_fixture(Path(tmp))
+        run = subprocess.run(["bash", str(script), str(pkg)], env=dict(os.environ, **env), capture_output=True, text=True)
+        check(run.returncode == 0, f"bundle assembles: {run.stderr}")
+        listed = {line.split(None, 1)[1] for line in (pkg / "MD5SUMS").read_text().splitlines()}
+        wanted = {"host/pl/pz_live.bit", "host/pl/ps7_init.tcl", "host/firmware/live_server.elf", "host/linux/x.dtb",
+                  "host/linux/root.cpio.gz.u-boot", "host/linux/bootargs", "core.json", "producer/libpz7035_gentl.cti",
+                  "tools/pzcell", "tools/pzres", "tools/pzpump", "tools/page.bin", "tools/lut.bin", "yofo-studio-server",
+                  "install.sh", "BUILD_INFO"}
+        check(wanted <= listed, f"MD5SUMS lists every file of the bundle (missing {sorted(wanted - listed)})")
+        check(subprocess.run(["md5sum", "-c", "--quiet", "MD5SUMS"], cwd=pkg).returncode == 0, "MD5SUMS verifies")
+        first = (pkg / "BUILD_INFO").read_text().splitlines()[0]
+        check("mib-studio-qt abc12345" in first and "pz7035-imx426" in first and "0123456789"[:8] in first and "ABI 1.3" in first,
+              f"one BUILD_INFO line names both commits, the PL BUILD_ID and the ABI: {first}")
+        # The board gets the board side only: install.sh checks everything outside host/.
+        shutil.rmtree(pkg / "host")
+        board = subprocess.run("grep -v '  host/' MD5SUMS | md5sum -c --quiet", shell=True, cwd=pkg)
+        check(board.returncode == 0, "the board-side check passes without the host/ part")
+        # A core.json of another image is refused.
+        (Path(env["PZ7035_REPO"]) / "build" / "pz_live_test" / "core.json").write_text(
+            '{"build_id": "ff", "image": "pz_live_other", "abi": {"major": 1, "minor": 3}}')
+        wrong = subprocess.run(["bash", str(script), str(pkg)], env=dict(os.environ, **env), capture_output=True, text=True)
+        check(wrong.returncode != 0 and "pz_live_other" in wrong.stderr, "a core.json for another image is refused")
+
+
 def main() -> int:
+    if sys.platform == "win32":  # board deployment scripts (sh, devmem2, bash, md5sum): the Linux build host checks them
+        print("yofo standing package: skipped on Windows")
+        return 0
     failures = []
 
     def check(condition: bool, message: str) -> None:
@@ -58,9 +131,11 @@ def main() -> int:
           "unit selects the Aravis/GenTL producer")
 
     install = (DEPLOY / "install.sh").read_text()
-    check(install.index("md5sum -c MD5SUMS") < install.index("install -m 0755 yofo-studio-server"),
+    check(install.index("md5sum -c") < install.index("install -m 0755 yofo-studio-server"),
           "install.sh verifies MD5SUMS before installing anything")
     check("/etc/yofo-studio/token" not in install.replace("# ", ""), "install.sh does not require a token")
+
+    check_bundle(check)
 
     for failure in failures:
         print("FAIL:", failure, file=sys.stderr)

@@ -1,0 +1,61 @@
+# YOFO Studio release = instrument bundle
+
+Status: active
+
+## Goal
+
+On the PZ7035 the instrument is the PL (FPGA science, firmware) and the PS (Linux, producer,
+Studio) together, and they only work as a matched pair: Studio expects a PL BUILD_ID, an ABI and
+a producer. A YOFO Studio release is therefore **one bundle**, not a server binary plus whatever
+PL happens to be loaded. The bundle is built from a mib-studio-qt commit and a pz7035-imx426 ref
+(a tag such as `pl-results9`), lists every file in one `MD5SUMS`, and names both commits, the PL
+BUILD_ID and the ABI on the first line of `BUILD_INFO`. Restoring the board takes the bundle path
+and nothing else.
+
+## Definition
+
+Contents (see `scripts/yofo/bundle_assemble.sh`):
+
+| Part | Files | Goes to |
+|---|---|---|
+| Studio | `yofo-studio-server`, `dist.tar`, `yofo-studio.service`, `pl-ready.sh`, `install.sh` | board (`install.sh`) |
+| Identity | `core.json` (the PL build's own) | board `/etc/yofo/expected-core.json` (`install.sh`) |
+| Producer | `producer/libpz7035_gentl.cti` (md5 pinned) | board `/usr/lib/genicam` (`install.sh`) |
+| Slot tools | `tools/pzcell pzres pzpump page.bin lut.bin` | board `/tmp` (restore script) |
+| PL | `host/pl/pz_live.bit`, `host/pl/ps7_init.tcl` | JTAG from the PC (restore script) |
+| Firmware | `host/firmware/live_server.elf` | JTAG from the PC |
+| Linux | `host/linux/` dtb, RAM root, `bootargs` | JTAG boot from the PC |
+
+`host/` is 70 MB and never copied to the board; `install.sh` checks only the board side of
+`MD5SUMS`. The PL side never needs dcp, xpr or reports.
+
+**Boot check.** Studio's preflight already compares the loaded PL's identity with
+`/etc/yofo/expected-core.json`. The bundle installs the core.json of *its own* PL there, so a
+mismatch means the wrong image is loaded, not that two files disagree.
+
+**Release.** A YOFO Studio release (update list, in-app Help, release notes) is a bundle:
+version = `mib-studio-qt <commit> + pz7035-imx426 <commit>`.
+
+## Acceptance criteria
+
+- [x] `package_studio.sh --bundle` (PZ7035_REF, default `pl-results9`) assembles the bundle.
+- [x] One `BUILD_INFO` line names both commits, the PL BUILD_ID and the ABI; each part lists its
+      source commit.
+- [x] `install.sh` installs the producer and `expected-core.json` from the bundle, verifies the board side.
+- [x] `scripts.yofo_standing_package` covers assembly against a fixture repo (wrong-image core.json refused).
+- [ ] The board owner's restore script takes only the bundle path and loads PL, firmware and Linux from `host/`.
+- [ ] One restore of a bundle on the board, preflight green, identity matches (needs a slot and Gavin's yes).
+
+## Decision log
+
+- 2026-10-08: the unit of release is the bundle (Gavin: Studio is the PL and the PS together; the
+  coordinator's definition). Flash/SD boot instead of JTAG is a later step and not part of this.
+- 2026-10-08: sources are this host's build outputs located from the pz7035 ref (`pl-<name>` ->
+  `build/pz_live_<name>` in any worktree of the repo, `core.json` image checked against the ref);
+  firmware is checked to be an ancestor of the ref and reported with its commit.
+
+## Progress
+
+- [x] bundle assembly and install.sh changes
+- [ ] restore script change (board owner)
+- [ ] first bundle restore on the board

@@ -2,19 +2,22 @@
 # Build and stage the standing YOFO Studio package for the PZ7035 PS (armv7): the stripped server,
 # the UI as dist.tar, the unit, the PL-ready guard, install.sh, MD5SUMS and BUILD_INFO.
 #
-#   YOFO_SDK=<sdk> [YOFO_PKG_NOTES='...'] scripts/yofo/package_studio.sh [PKG_DIR] [--no-build]
+#   YOFO_SDK=<sdk> [YOFO_PKG_NOTES='...'] scripts/yofo/package_studio.sh [PKG_DIR] [--no-build] [--bundle]
 #
 # PKG_DIR defaults to /mnt/hdd/developer-data/IMX426/yofo-studio-pkg/<short commit>. Run
 # install.sh from that directory on the board after each Linux boot (the RAM root resets).
 # --no-build packages the existing armv7 build (cmake --preset linux-armv7-yocto, cargo-armv7.sh
-# build --release, npm run build in desktop/).
+# build --release, npm run build in desktop/). --bundle then adds the PL image, firmware, Linux boot set,
+# producer and slot tools of a pz7035-imx426 ref (PZ7035_REF, default pl-results9): the instrument
+# bundle, see scripts/yofo/bundle_assemble.sh and docs/exec-plans/active/2026-10-08-yofo-studio-bundle.md.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 commit=$(git rev-parse --short=8 HEAD)
-pkg=""; build=1
+pkg=""; build=1; bundle=0
 for arg in "$@"; do
     case "$arg" in
         --no-build) build=0 ;;
+        --bundle) bundle=1 ;;
         *) pkg=$arg ;;
     esac
 done
@@ -45,4 +48,5 @@ cp deploy/yofo-studio/pl-ready.sh "$pkg/pl-ready.sh"
 } > "$pkg/BUILD_INFO"
 (cd "$pkg" && md5sum yofo-studio-server dist.tar yofo-studio.service install.sh pl-ready.sh BUILD_INFO > MD5SUMS)
 chmod +x "$pkg/install.sh" "$pkg/pl-ready.sh"
+[ "$bundle" = 0 ] || scripts/yofo/bundle_assemble.sh "$pkg"
 echo "package $pkg"; cat "$pkg/MD5SUMS"
