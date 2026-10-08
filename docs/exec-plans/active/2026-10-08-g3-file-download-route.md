@@ -68,6 +68,6 @@ dir, download a finished experiment over the tunnel and open it in YOFO Review o
 ## Progress
 
 - [x] design (this note)
-- [ ] server route + tests
+- [x] server route + tests (`files.rs`, `tests/files.rs`; the decisions: Sec-Fetch-Site only, one root = the data dir, in-progress files reported and not downloadable)
 - [ ] UI files view and the post-run Download link
 - [ ] board check

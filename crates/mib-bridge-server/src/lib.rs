@@ -4,6 +4,11 @@
 //! commands the Tauri shell has over one WebSocket per client, so the React UI can run in a
 //! browser against the instrument's PS.
 //!
+//! Files: `GET /files?path=` lists and `GET /files/download?path=` downloads (Range supported), read-only, under
+//! the data dir only (`files.rs`: canonicalised paths, no symlinks out of the root, no dot-names, files an
+//! experiment is still writing are `in_progress` and not downloadable, at most 2 downloads at once, the
+//! token rule of `/ws`, cross-site requests refused).
+//!
 //! Protocol on `/ws` (token on the upgrade: `?token=` or `Authorization: Bearer`):
 //! - client -> server text: `{"request_id": n, "cmd": "start_capture", "args": {...}}`, the
 //!   name and camelCase arguments exactly as the webview passes them to Tauri's `invoke`;
@@ -55,6 +60,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::sync::{broadcast, mpsc};
 
+mod files;
 mod platform;
 
 /// Experiment states that a client loss must finalise (`bridgeContract.ts` EXPERIMENT_STATES).
@@ -123,6 +129,8 @@ pub struct Server {
     /// Identifies this server process: `/auth` reports it, so a browser that lost the link can
     /// tell a restarted (or rebooted) backend from a network blip and reload its state.
     boot_id: String,
+    /// Downloads in progress (`/files/download`), capped at `files::MAX_DOWNLOADS`.
+    downloads: Arc<tokio::sync::Semaphore>,
     /// Connected client ids in connection order; the first is the default controller.
     sessions: std::sync::Mutex<SessionTable>,
 }
@@ -170,6 +178,7 @@ impl Server {
             connects: AtomicU64::new(0),
             stop_and_saves: AtomicU64::new(0),
             boot_id: new_boot_id(),
+            downloads: Arc::new(tokio::sync::Semaphore::new(files::MAX_DOWNLOADS)),
             sessions: std::sync::Mutex::new(SessionTable::default()),
         })
     }
@@ -236,6 +245,8 @@ impl Server {
             .route("/ws", get(upgrade))
             .route("/healthz", get(health))
             .route("/auth", get(auth))
+            .route("/files", get(files::list))
+            .route("/files/download", get(files::download))
             .with_state(self.clone());
         if let Some(dist) = &self.config().dist_dir {
             router = router.fallback_service(tower_http::services::ServeDir::new(dist));
