@@ -28,3 +28,9 @@ export function capabilitiesOf(platform: PlatformInfo | null): PlatformCapabilit
 }
 
 export const isPz7035 = (c: PlatformCapabilities) => c.instrument === "pz7035";
+
+/** The processing settings the PL's unet_cells_v2 does not implement (#651 G7). Mirrors
+ *  plIgnoredSettingsChanged in PzProfileCompiler.cpp, which names the ones the operator changed. */
+export const PL_IGNORED_SETTINGS_TEXT =
+  "gaussian blur, background-subtract threshold, morphology, the border check, the ring-ratio gate, " +
+  "the single-inner-contour requirement, automatic background or ROI, and the empty-frame threshold";

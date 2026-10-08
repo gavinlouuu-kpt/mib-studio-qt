@@ -48,7 +48,7 @@ import {
 import { BRIDGE_ABI_VERSION, EXPERIMENT_STATES, PUMP_IDS, READINESS_GATE_STATUSES } from "./bridgeContract";
 import { deriveWorkflow, type StageTab, type WorkflowFacts } from "./workflow";
 import { CHECK_STATUS_LABEL, derivePreflight, type PreflightInput } from "./preflight";
-import { capabilitiesOf, isPz7035 } from "./platformCapabilities";
+import { capabilitiesOf, isPz7035, PL_IGNORED_SETTINGS_TEXT } from "./platformCapabilities";
 import { deriveQualityGates, GATE_STATUS_LABEL, type ImageQualityInput, type QualityInput } from "./quality";
 import { deriveContextBar, SEG_STATUS_LABEL, type ContextBarFacts } from "./contextBar";
 import {
@@ -1955,6 +1955,10 @@ export default function App() {
                             <div className="config-group" style={{ flex: 2 }}>
                               <h5>Live config document (merge-applied on Apply)</h5>
                               {liveDraft.runtimeChanged&&configDirty&&<p role="status">Runtime configuration changed; your draft is preserved. Reload and reconcile before applying a stale snapshot.</p>}
+                              {!hostProcessing && <p className="pending-note" data-testid="pl-ignored-settings">
+                                The PL runs the science on this instrument. It does not implement {PL_IGNORED_SETTINGS_TEXT}:
+                                changing them has no effect (Experiment readiness lists any you changed).
+                              </p>}
                               <textarea
                                 className="script-editor"
                                 style={{ minHeight: 160 }}
