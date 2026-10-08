@@ -543,7 +543,7 @@ export interface InstrumentModeState {
   /** True after the unattended safe state (no client for the grace time): LED off, cell path off, camera released. Cleared by the next mode switch. */
   idle?: boolean;
   /** How often Align's ingress recovery fired in this process (#629). */
-  align_lock?: {receiver_clears: number; failures: number; last_stuck_p13?: number};
+  align_lock?: {receiver_clears: number; failures: number; last_stuck_p13?: number; pl_gave_ups?: number; last_pl_gave_up_ms?: number};
   /** Align live view: whole frames from the PL bridge (results8 on) or the producer's bands. */
   align_source?: "bridge" | "bands" | "";
 }

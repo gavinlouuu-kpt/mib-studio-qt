@@ -1668,7 +1668,7 @@ export default function App() {
                   </div>
                   <ul className="preflight-list">
                     {preflight.checks.map((c) => (
-                      <li key={c.id} className={`preflight-check ${c.status}`}>
+                      <li key={c.id} data-check-id={c.id} className={`preflight-check ${c.status}`}>
                         <span className={`check-dot ${c.status}`} aria-hidden="true" />
                         <span className="check-main">
                           <span className="check-label">

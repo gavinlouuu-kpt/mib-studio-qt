@@ -406,7 +406,8 @@ export function derivePreflight(
     cameraCheck(input),
     ...(pz ? [plCoreCheck(input), sensorLinkCheck(input), ledCheck(input)] : [coreCheck(input)]),
     captureCheck(input),
-    deviceCheck("autofocus", "Autofocus / nanopositioner", req.autofocus, input.autofocus, notHere),
+    // No nanopositioner on the PZ7035: the row would only say "Not on this instrument."
+    ...(pz ? [] : [deviceCheck("autofocus", "Autofocus / nanopositioner", req.autofocus, input.autofocus, notHere)]),
     deviceCheck("samplePump", "Sample pump", req.samplePump, input.samplePump),
     deviceCheck("sheathPump", "Sheath pump", req.sheathPump, input.sheathPump),
     triggerCheck(input, req.trigger, pz ? "The PL times the sort output." : notHere),

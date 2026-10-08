@@ -86,7 +86,8 @@ describe("PZ7035 preflight (#501)", () => {
   });
 
   it("MIB-only gear reads as not on this instrument", () => {
-    expect(check(IDLE, "autofocus")).toMatchObject({ requirement: "not-applicable", status: "not-required", detail: "Not on this instrument." });
+    expect(check(IDLE, "autofocus")).toBeUndefined(); // no nanopositioner row on the PZ7035
+    expect(check({ ...IDLE, capabilities: DESKTOP_CAPABILITIES }, "autofocus")).toBeDefined(); // the desktop keeps it
     expect(check(IDLE, "trigger")).toMatchObject({ requirement: "not-applicable", status: "not-required" });
   });
 

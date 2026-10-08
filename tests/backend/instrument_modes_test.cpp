@@ -297,7 +297,7 @@ void testAlignIngressRecovery() {
 }
 
 // results9's PL receiver self-heal (RXH1 at P[256]): with the block present the PL does the resets;
-// the host waits and shows the operator error only when the block reports gave-up.
+// the host waits for it first, and runs its own recovery as the backstop when the block gives up.
 void testRxSelfHeal() {
     {
         FakeState s;
@@ -323,24 +323,33 @@ void testRxSelfHeal() {
     }
     struct Run {
         bool present{true};
-        int previewAfterPolls{-1}; // the preview arrives after this many heal polls (-1 never)
+        int previewAfterPolls{-1}; // the PL heal locks the preview after this many heal polls (-1 never)
         int gaveUpAfterPolls{-1};
-        int polls{0}, clears{0};
+        int lockAfterClears{-1};   // the host's resets: the preview arrives after this many (-1 never)
+        int polls{0}, clears{0}, plGaveUps{0};
     };
     const auto run = [](Run& r) {
         pz::AlignLockHooks h;
+        const auto hostLocked = [&] { return r.lockAfterClears > 0 && r.clears >= r.lockAfterClears; };
         h.waitPreview = [&](std::chrono::milliseconds wait) {
+            if (hostLocked()) return true;
             if (wait.count() >= 1000) return false; // the first 1 s wait: nothing yet
             ++r.polls;
             return r.previewAfterPolls >= 0 && r.polls > r.previewAfterPolls;
         };
-        h.readStatus = [](pz::IngressStatus& st) { st.status = 0x0001FF20u; st.errors = 11; st.resyncs = 15; return true; };
+        h.readStatus = [&](pz::IngressStatus& st) {
+            st.status = hostLocked() ? 0x00000020u : 0x0001FF20u;
+            st.errors = 11;
+            st.resyncs = 15;
+            return true;
+        };
         h.readHeal = [&](pz::RxHealStatus& heal) {
             heal = pz::RxHealStatus{};
             heal.present = r.present;
             heal.status = (0xFFu << 16) | 0x200u | 4u | (r.gaveUpAfterPolls >= 0 && r.polls >= r.gaveUpAfterPolls ? 0x100u : 0u);
             return true;
         };
+        h.onPlGaveUp = [&](const pz::RxHealStatus&, bool, long long) { ++r.plGaveUps; };
         h.clearFlags = [&](std::chrono::milliseconds) { ++r.clears; return true; };
         h.pause = [](std::chrono::milliseconds) {};
         return pz::awaitAlignLock(h);
@@ -349,27 +358,37 @@ void testRxSelfHeal() {
         Run r;
         r.previewAfterPolls = 3;
         const auto out = run(r);
-        MIB_EXPECT(out.locked && out.healedByPl && r.clears == 0, "the PL heal locks the preview: the host sends no reset");
+        MIB_EXPECT(out.locked && out.healedByPl && !out.plGaveUp && r.clears == 0 && r.plGaveUps == 0,
+                   "the PL heal locks the preview: the host sends no reset");
     }
     {
-        Run r;
+        Run r; // the PL gives up (4 of 10 flips on results10): the host recovery takes over and locks
+        r.gaveUpAfterPolls = 2;
+        r.lockAfterClears = 3;
+        const auto out = run(r);
+        MIB_EXPECT(out.locked && out.plGaveUp && !out.healedByPl && r.clears == 3 && r.plGaveUps == 1,
+                   "after the PL gave up, the host resets lock the preview and the gave-up is still reported");
+    }
+    {
+        Run r; // the PL gives up and the host cannot lock either: the operator error names both
         r.gaveUpAfterPolls = 2;
         const auto out = run(r);
-        MIB_EXPECT(!out.locked && r.clears == 0 && out.error.find("self-heal gave up after 4 tries") != std::string::npos &&
-                       out.error.find("lane flags 0xFF") != std::string::npos,
-                   "gave-up is the operator error, with no host reset: " + out.error);
+        MIB_EXPECT(!out.locked && out.plGaveUp && r.clears == 8 && out.error.find("the PL self-heal gave up after 4 tries") != std::string::npos &&
+                       out.error.find("8 receiver resets") != std::string::npos,
+                   "gave-up, then eight host resets, then the operator error: " + out.error);
     }
     {
-        Run r; // never heals, never gives up: bounded by healWait
+        Run r; // never heals, never gives up: bounded by healWait, then the host recovery
         const auto out = run(r);
-        MIB_EXPECT(!out.locked && r.clears == 0 && out.error.find("did not finish") != std::string::npos, "a stuck heal ends in an error");
+        MIB_EXPECT(!out.locked && out.plGaveUp && r.clears == 8 && out.error.find("did not finish") != std::string::npos,
+                   "a heal that never finishes ends with the host recovery and an error");
         MIB_EXPECT(r.polls <= 6000 / 250 + 1, "the wait is bounded");
     }
     {
         Run r; // no RXH1 block: the host recovery as before
         r.present = false;
         const auto out = run(r);
-        MIB_EXPECT(!out.locked && r.clears == 8, "results8: eight host resets");
+        MIB_EXPECT(!out.locked && !out.plGaveUp && r.clears == 8, "results8: eight host resets");
     }
 }
 

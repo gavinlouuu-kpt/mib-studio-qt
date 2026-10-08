@@ -1303,7 +1303,7 @@ namespace backend
 
     AppBackend::AlignLockCounters AppBackend::alignLockCounters() const
     {
-        return {alignReceiverClears_.load(), alignLockFailures_.load(), alignLastStuckP13_.load()};
+        return {alignReceiverClears_.load(), alignLockFailures_.load(), alignLastStuckP13_.load(), alignPlGaveUps_.load(), alignLastPlGaveUpMs_.load()};
     }
 
     namespace
@@ -1525,6 +1525,13 @@ namespace backend
             hooks.clearFlags = [&](std::chrono::milliseconds hold) {
                 return pzControl_->resetReceiver(std::chrono::duration_cast<std::chrono::microseconds>(hold), nullptr);
             };
+            hooks.onPlGaveUp = [&](const pz::RxHealStatus &heal, bool gaveUp, long long afterMs) {
+                ++alignPlGaveUps_;
+                alignLastPlGaveUpMs_.store(afterMs);
+                SPDLOG_WARN("AppBackend: Align: the PL receiver self-heal {} after {} tries, {} ms after the stream started "
+                            "(lane flags 0x{:02X}): host recovery takes over",
+                            gaveUp ? "gave up" : "did not finish", heal.tries(), afterMs, heal.laneFlags());
+            };
             hooks.onAttempt = [&](int attempt, const pz::IngressStatus &st) {
                 ++alignReceiverClears_;
                 alignLastStuckP13_.store(st.status);
@@ -1536,7 +1543,7 @@ namespace backend
             const auto lock = pz::awaitAlignLock(hooks);
             if (lock.recovered)
                 SPDLOG_WARN("AppBackend: Align preview {} after {} host receiver reset(s){}", lock.locked ? "recovered" : "did not lock",
-                            lock.clears, lock.healedByPl ? " (PL self-heal)" : "");
+                            lock.clears, lock.healedByPl ? " (PL self-heal)" : lock.plGaveUp && lock.locked ? " (pl_gave_up -> host recovered)" : "");
             if (!lock.locked) {
                 ++alignLockFailures_;
                 snap = captureService_->lifecycleSnapshot();

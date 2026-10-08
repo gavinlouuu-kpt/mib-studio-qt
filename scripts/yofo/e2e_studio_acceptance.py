@@ -107,19 +107,19 @@ with sync_playwright() as p:
         if m:
             passed, warn, failed = map(int, m.groups())
             detail = f"{passed} passed · {warn} warning · {failed} failed"
-            names = []
-            if warn:
-                rows = [l for l in text.split("\n")]
-                names = [rows[i - 2].strip() for i, l in enumerate(rows) if l.strip() == "Warning" and i >= 2]
+            names = page.evaluate("() => [...document.querySelectorAll('li.preflight-check.warning')].map(li => li.dataset.checkId || '?')")
+            if names:
                 detail += f" (warning on: {', '.join(names)})"
             unexpected = [n for n in names if n not in ACCEPTED_WARNINGS]
             record("Preflight (only the accepted warning)", failed == 0 and not unexpected,
                    detail + (f"; unexpected: {', '.join(unexpected)}" if unexpected else ""))
         else:
             record("Preflight (only the accepted warning)", False, "summary line not found")
-        identity = "PL build and weights match" in text
+        # The PL core check (id plCore) is green only when the loaded build and weights match the
+        # expected core.json.
+        identity = page.evaluate("() => !!document.querySelector('li.preflight-check.passed[data-check-id=\"plCore\"]')")
         record("PL identity matches the installed core.json", identity,
-               "PL build and weights match" if identity else "no 'PL build and weights match' on the Preflight page")
+               "the PL core check passed" if identity else "the PL core check (plCore) is not passed on the Preflight page")
 
         # 7 (checked here, on the first tabs): no MIB-only surfaces.
         text_all = text
