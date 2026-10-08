@@ -128,7 +128,7 @@ int main() {
         // A profile applied after the method replaces the pointer...
         const auto created = Json::parse(backend::app::profileStoreCommand(
             backend, profiles,
-            Json{{"operation", "create"}, {"name", "lab"}, {"document_json", R"({"pixel_to_micron_factor":0.42})"}}
+            Json{{"operation", "create"}, {"name", "lab"}, {"document_json", R"({"pixel_to_micron_factor":0.42,"roi":{"x":0,"y":0,"w":40,"h":20}})"}}
                 .dump()));
         MIB_REQUIRE(created["ok"] == true, created.dump());
         const auto applied = Json::parse(backend::app::profileStoreCommand(
@@ -141,6 +141,9 @@ int main() {
         MIB_EXPECT(r2["ok"] == true && r2["kind"] == "profile" && r2["restored"] == true &&
                        backend.processing().getPixelToMicronFactor() == 0.42,
                    "the profile is restored from its recorded folder");
+        MIB_EXPECT(r2["roi_pending"] == true && backend.processing().realtimeRoiPending() &&
+                       r2["notice"].get<std::string>().find("first captured frame") != std::string::npos,
+                   "no frame at startup: the rest is restored and the ROI is pending, never a failure");
         // ...and a central method applied after the profile replaces it again.
         const auto central = backend::app::applyCentralMethod(backend, "r2");
         MIB_REQUIRE(central.ok, central.error);
@@ -165,6 +168,17 @@ int main() {
         const auto revoked = restore(backend);
         MIB_EXPECT(revoked["ok"] == false && backend.getLastConfigJson() == "{}",
                    "a revoked startup method is not re-applied");
+        MIB_EXPECT(revoked["notice"].get<std::string>().find("default settings") != std::string::npos,
+                   "the fallback to defaults is announced, not silent");
+
+        wd.mark("missing startup method");
+        backend::app::recordStartupCentralMethod(backend, "r9", std::string(64, 'a'));
+        const auto missing = restore(backend);
+        MIB_EXPECT(missing["ok"] == false && missing["kind"] == "central" &&
+                       missing["notice"].get<std::string>().find("r9") != std::string::npos &&
+                       missing["notice"].get<std::string>().find("default settings") != std::string::npos &&
+                       backend.getLastConfigJson() == "{}",
+                   "a missing revision: defaults kept, with a visible notice naming it");
         backend.shutdown();
     }
 

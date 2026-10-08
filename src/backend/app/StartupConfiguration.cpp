@@ -6,6 +6,7 @@
 #include "backend/app/MethodApply.h"
 #include "backend/app/ProfileStore.h"
 #include "backend/processing/ProcessingCoreLoader.h"
+#include "backend/processing/ProcessingService.h"
 #include "backend/profiles/ProfileRegistryWorker.h"
 
 #include <nlohmann/json.hpp>
@@ -105,6 +106,7 @@ Json restoreCentral(AppBackend& backend, const Json& pointer) {
     result["restored"] = true;
     result["applied"] = report.applied;
     result["not_applied"] = report.notApplied;
+    result["roi_pending"] = backend.processing().realtimeRoiPending();
     return result;
 }
 
@@ -121,23 +123,39 @@ void recordStartupCentralMethod(AppBackend& backend, const std::string& revision
 }
 
 std::string restoreStartupConfiguration(AppBackend& backend, const std::string& profileBase) {
+    Json result;
     try {
         const auto pointer = readPointer(backend);
         if (pointer.is_null()) {
             if (profileBase.empty()) return Json{{"ok", true}, {"restored", false}, {"kind", nullptr}}.dump();
-            return restoreProfile(backend, profileBase).dump(); // legacy: selection only
+            result = restoreProfile(backend, profileBase); // legacy: selection only
+        } else {
+            const auto kind = pointer.at("kind").get<std::string>();
+            if (kind == "central") {
+                result = restoreCentral(backend, pointer);
+            } else if (kind == "profile") {
+                const auto base = pointer.value("base", std::string{});
+                if (base.empty()) throw std::runtime_error("Invalid startup profile record");
+                result = restoreProfile(backend, base);
+            } else {
+                throw std::runtime_error("Unknown startup configuration kind: " + kind);
+            }
         }
-        const auto kind = pointer.at("kind").get<std::string>();
-        if (kind == "central") return restoreCentral(backend, pointer).dump();
-        if (kind == "profile") {
-            const auto base = pointer.value("base", std::string{});
-            if (base.empty()) throw std::runtime_error("Invalid startup profile record");
-            return restoreProfile(backend, base).dump();
-        }
-        throw std::runtime_error("Unknown startup configuration kind: " + kind);
     } catch (const std::exception& e) {
-        return Json{{"ok", false}, {"restored", false}, {"error", e.what()}}.dump();
+        result = Json{{"ok", false}, {"restored", false}, {"error", e.what()}};
     }
+    if (!result.value("ok", false)) {
+        // Never silent: nothing was applied, so the instrument keeps its
+        // defaults until the operator applies a method or profile. The pointer
+        // stays, so the reason shows again at the next start until then.
+        result["restored"] = false;
+        result["notice"] = "Startup configuration not restored: " + result.value("error", std::string("unknown error")) +
+                           ". The instrument runs on its default settings until a method or profile is applied.";
+        SPDLOG_WARN("StartupConfiguration: {}", result["notice"].get<std::string>());
+    } else if (result.value("restored", false) && result.value("roi_pending", false)) {
+        result["notice"] = "The ROI is applied on the first captured frame; Start waits for it.";
+    }
+    return result.dump();
 }
 
 } // namespace backend::app

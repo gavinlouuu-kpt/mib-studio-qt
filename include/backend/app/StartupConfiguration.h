@@ -24,7 +24,11 @@ void recordStartupCentralMethod(AppBackend& backend, const std::string& revision
                                 const std::string& configSha256);
 
 // Re-applies what the pointer names, through the shared validator, and
-// returns JSON {ok, restored, kind ("profile"|"central"|null), error?, ...}.
+// returns JSON {ok, restored, kind ("profile"|"central"|null), error?,
+// notice?, roi_pending?, ...}. A restore that fails applies nothing (the
+// instrument keeps its defaults) and always carries a `notice` for the
+// operator; the pointer stays until something else is applied. An ROI with no
+// frame yet is pending (applied on the first frame), never a failure.
 //  - profile: the profile store's "restore" in the recorded folder (refused
 //    if the profile changed since it was applied);
 //  - central: the cached revision is re-planned (published/superseded,
