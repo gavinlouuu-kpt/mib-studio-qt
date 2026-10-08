@@ -6,7 +6,8 @@
 
 Each flip opens the Experiment tab (Run, LED 7/60), holds, opens Camera & Alignment (Align) and
 waits for a whole-frame preview. Reports per flip: ok/FAIL, seconds to the preview, the resets it needed and P[13] before the
-recovery, the mode notice if the switch failed (`mode.align_lock` in `fetch_instrument_status`),
+recovery, the mode notice if the switch failed (`mode.align_lock` in `fetch_instrument_status`), and on results9
+the PL self-heal's auto-resets per flip (`link.rx_heal`; the host then sends no reset itself),
 and t_epoch to line the flip up with the board's lost counter (counter 4 must stay flat for 5 s
 after the lock: read it with scripts such as /mnt/hdd/shared/exports/studio-run-align-readings.sh). Exits non-zero if any flip failed. It never
 touches the pumps and starts no experiment. `--take-control` claims the controller role over
@@ -73,7 +74,7 @@ def status(page):
     for _ in range(50):
         r = page.evaluate("(rid) => window.__replies[rid] || null", rid)
         if r:
-            return (r.get("ok") or {}).get("mode", {})
+            return r.get("ok") or {}
         time.sleep(0.1)
     return {}
 
@@ -106,7 +107,9 @@ with sync_playwright() as p:
                 run_ok = True
                 break
         time.sleep(hold)
-        before = (status(page).get("align_lock") or {}).get("receiver_clears", 0)
+        st0 = status(page)
+        before = ((st0.get("mode") or {}).get("align_lock") or {}).get("receiver_clears", 0)
+        heal0 = ((st0.get("link") or {}).get("rx_heal") or {}).get("auto_resets")
         t0 = time.time()
         tab(page, "Camera & Alignment")
         ok, note = False, ""
@@ -120,10 +123,15 @@ with sync_playwright() as p:
                 note = " / ".join(notices).replace("\n", " ")[:200]
                 break
         took = time.time() - t0
-        lock = status(page).get("align_lock") or {}
+        st1 = status(page)
+        lock = (st1.get("mode") or {}).get("align_lock") or {}
+        heal1 = (st1.get("link") or {}).get("rx_heal") or {}
         row = {"flip": n, "run": run_ok, "align": ok, "seconds": round(took, 1),
                "resets": lock.get("receiver_clears", 0) - before, "failures": lock.get("failures"),
                "p13_before_recovery": hex(lock.get("last_stuck_p13", 0)) if lock.get("receiver_clears", 0) > before else None,
+               # results9: the PL self-heal makes the resets (host resets stay 0); its count shows here.
+               "pl_heal_present": bool(heal1.get("present")), "pl_auto_resets": (heal1.get("auto_resets", 0) - heal0) if heal0 is not None else None,
+               "pl_gave_up": bool(heal1.get("gave_up")),
                "t_epoch": round(t0, 1), "notice": note}
         if ok:
             time.sleep(5)  # the lost counter must stay flat while the previews continue (read on the board)
