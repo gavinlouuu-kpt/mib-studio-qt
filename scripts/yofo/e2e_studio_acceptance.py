@@ -36,7 +36,8 @@ MIB_ONLY = ["Nanopositioner", "Autofocus", "Auto background", "Clear Background"
 # What only the PZ7035 shows (must be absent on the desktop).
 PZ_ONLY = ["PL core", "Science=PL"]
 # Preflight warnings that are policy, not faults: recordings go to the RAM root (#510).
-ACCEPTED_WARNINGS = ["Storage destination"]
+# (the page text names the check or shows its detail, depending on the row layout)
+ACCEPTED_WARNINGS = ("Storage destination", "Recording to RAM:")
 
 
 def record(name, ok, detail=""):
@@ -112,7 +113,7 @@ with sync_playwright() as p:
                 rows = [l for l in text.split("\n")]
                 names = [rows[i - 2].strip() for i, l in enumerate(rows) if l.strip() == "Warning" and i >= 2]
                 detail += f" (warning on: {', '.join(names)})"
-            unexpected = [n for n in names if n not in ACCEPTED_WARNINGS]
+            unexpected = [n for n in names if not n.startswith(ACCEPTED_WARNINGS)]
             record("Preflight (only the accepted warning)", failed == 0 and not unexpected,
                    detail + (f"; unexpected: {', '.join(unexpected)}" if unexpected else ""))
         else:
