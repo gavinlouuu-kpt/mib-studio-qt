@@ -155,6 +155,17 @@ spec S5). Protocol on `/ws`, token on the upgrade (`?token=` or
 `Authorization: Bearer`, from `/etc/yofo-studio/token`; `--no-token` only on
 loopback):
 
+**Reconnecting (#501).** `AuthGate` keeps probing `/auth` every 2 s after the app mounted. The
+server reports a `boot_id` (one value per server process; `mib-bridge-server` `Server::new`) on every
+`/auth` answer. Two missed probes show "Connection to the instrument lost. Reconnecting…"; when the
+server answers again with the same boot id the page just carries on (the WebSocket reopens by
+itself on the next call); with a different boot id (backend restarted, board rebooted) the app is
+re-mounted, so it loads the new backend's state, and a dismissible notice says so, all without a
+page reload. A 401 (a new token after a restart) puts the token prompt back over the running app,
+using the stored token first. An older server without a boot id never triggers a re-mount. Tests:
+`components/AuthGate.test.tsx`, `mib-bridge-server` `auth_probe_reports_the_token_without_a_socket`,
+and a Chromium run that stops and restarts a real server under an open page.
+
 - request `{"request_id", "cmd", "args"}` with the `invoke` name and camelCase
   arguments; reply `{"request_id", "ok"}` / `{"request_id", "error"}`;
 - binary replies: 8-byte little-endian request id, then the unchanged bytes

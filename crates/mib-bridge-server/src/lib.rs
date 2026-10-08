@@ -119,6 +119,9 @@ pub struct Server {
     connects: AtomicU64,
     /// Completed client-loss stop-and-save passes (observability and tests).
     stop_and_saves: AtomicU64,
+    /// Identifies this server process: `/auth` reports it, so a browser that lost the link can
+    /// tell a restarted (or rebooted) backend from a network blip and reload its state.
+    boot_id: String,
     /// Connected client ids in connection order; the first is the default controller.
     sessions: std::sync::Mutex<SessionTable>,
 }
@@ -164,6 +167,7 @@ impl Server {
             clients: AtomicUsize::new(0),
             connects: AtomicU64::new(0),
             stop_and_saves: AtomicU64::new(0),
+            boot_id: new_boot_id(),
             sessions: std::sync::Mutex::new(SessionTable::default()),
         })
     }
@@ -398,10 +402,20 @@ async fn health(State(server): State<Arc<Server>>) -> Json<Value> {
 async fn auth(State(server): State<Arc<Server>>, Query(query): Query<AuthQuery>, headers: HeaderMap) -> Response {
     let required = server.config().token.is_some();
     if server.authorized(&query, &headers) {
-        Json(json!({ "authorized": true, "token_required": required })).into_response()
+        Json(json!({ "authorized": true, "token_required": required, "boot_id": server.boot_id })).into_response()
     } else {
-        (StatusCode::UNAUTHORIZED, Json(json!({ "authorized": false, "token_required": required }))).into_response()
+        (StatusCode::UNAUTHORIZED, Json(json!({ "authorized": false, "token_required": required, "boot_id": server.boot_id })))
+            .into_response()
     }
+}
+
+/// A value that differs for every server process (wall clock nanoseconds mixed with the pid).
+fn new_boot_id() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    format!("{:016x}", nanos ^ (u64::from(std::process::id()) << 40))
 }
 
 async fn upgrade(

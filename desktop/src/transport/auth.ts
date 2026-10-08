@@ -42,13 +42,31 @@ export function authUrl(location: Location = window.location, token = tokenFromL
 
 export type AuthOutcome = "authorized" | "unauthorized" | "unreachable";
 
-export async function probeAuth(url: string, fetchImpl: typeof fetch = fetch): Promise<AuthOutcome> {
+export interface AuthProbe {
+  outcome: AuthOutcome;
+  /** Names the server process (`/auth` boot_id): it changes when the backend restarted or the
+   *  board rebooted. Absent on older servers. */
+  bootId?: string;
+}
+
+export async function probeAuthDetail(url: string, fetchImpl: typeof fetch = fetch): Promise<AuthProbe> {
   try {
     const response = await fetchImpl(url, { cache: "no-store" });
-    if (response.status === 401) return "unauthorized";
+    let bootId: string | undefined;
+    try {
+      const body = (await response.json?.()) as { boot_id?: unknown } | undefined;
+      if (typeof body?.boot_id === "string") bootId = body.boot_id;
+    } catch {
+      /* no JSON body: an older server */
+    }
+    if (response.status === 401) return { outcome: "unauthorized", bootId };
     // Older servers have no /auth: let the socket decide.
-    return "authorized";
+    return { outcome: "authorized", bootId };
   } catch {
-    return "unreachable";
+    return { outcome: "unreachable" };
   }
+}
+
+export async function probeAuth(url: string, fetchImpl: typeof fetch = fetch): Promise<AuthOutcome> {
+  return (await probeAuthDetail(url, fetchImpl)).outcome;
 }
