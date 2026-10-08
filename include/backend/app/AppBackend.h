@@ -368,6 +368,7 @@ namespace backend
         std::unique_ptr<pz::PzInstrumentControl> pzControl_;
         mutable std::mutex instrumentModeMutex_; // serialises mode switches
         std::atomic<int> instrumentMode_{0};      // pz::InstrumentMode
+        std::atomic<bool> instrumentStopped_{false}; // shutdown() switched the LED off already
         std::atomic<int> instrumentRunX_{0}, instrumentRunY_{0};
         std::atomic<bool> serviceMode_{false};
         // Align live view: "bridge" (whole frames, results8 on) or "bands" (producer grabber).

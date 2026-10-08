@@ -357,7 +357,8 @@ namespace backend
         }
         // The strobe keeps pulsing after the process exits: an Align or Run session must not leave
         // the LED lit. A blank PL (no PCFG_DONE) or another image is refused and writes nothing.
-        if (pzControl_) {
+        // Once: shutdown() runs again from the destructor, when a test's injected registers may be gone.
+        if (pzControl_ && !instrumentStopped_.exchange(true)) {
             std::string ledError;
             if (!pzControl_->ledOff(&ledError)) SPDLOG_INFO("AppBackend: LED left as it is at shutdown: {}", ledError);
         }
