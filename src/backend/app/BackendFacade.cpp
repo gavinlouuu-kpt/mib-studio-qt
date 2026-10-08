@@ -231,12 +231,17 @@ namespace backend::bridge
             {
                 if (runHealStart_.load() < 0)
                     if (const auto count = backend_.plReceiverAutoResets()) runHealStart_.store(*count);
+                if (!runNoFsTracking_.load() && backend_.plNoFsRunBegin()) runNoFsTracking_.store(true);
             }
             else if (status.terminal)
             {
                 const auto start = runHealStart_.exchange(-1);
                 const auto count = backend_.plReceiverAutoResets();
                 lastRunHealResets_.store(start >= 0 && count ? (*count >= start ? *count - start : *count) : -1);
+                // Accumulated across receiver resets (the counters are zeroed by a reset), not end - start.
+                const bool tracked = runNoFsTracking_.exchange(false);
+                const auto noFs = tracked ? backend_.plNoFsRunEnd() : std::nullopt;
+                lastRunNoFsFrames_.store(noFs ? static_cast<std::int64_t>(*noFs) : -1);
             }
             if (status.terminal)
             {
@@ -3200,6 +3205,10 @@ std::string BackendFacade::fetchInstrumentStatusJson() {
             {"gave_up", s.rxHealGaveUp},
             {"tries", s.rxHealTries},
             {"auto_resets", s.rxHealAutoResets},
+            {"fs_present", s.rxFsPresent},
+            {"fs_seen", s.rxFsSeen},
+            {"nofs_frames", s.rxNoFsFrames},
+            {"nofs_lines", s.rxNoFsLines},
             {"v2", s.rxHealV2},
             {"flag_clears", s.rxHealFlagClears},
             {"episodes", s.rxHealEpisodes},
@@ -3272,6 +3281,9 @@ std::string BackendFacade::fetchRunAccountingJson(const std::string& source) con
         // image without the block.
         const auto heal = lastRunHealResets_.load();
         j["receiver_auto_resets"] = heal >= 0 ? nlohmann::json(heal) : nlohmann::json(nullptr);
+        // Frames dropped because no FrameStart was seen during the run (results12): lost data; null without the counters.
+        const auto noFs = lastRunNoFsFrames_.load();
+        j["nofs_frames"] = noFs >= 0 ? nlohmann::json(noFs) : nlohmann::json(nullptr);
         return j.dump();
     }
     if (source == "review") {

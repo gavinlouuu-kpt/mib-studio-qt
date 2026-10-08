@@ -146,6 +146,11 @@ struct PzPlatformStatus {
     bool rxHealGaveUp{false};
     uint32_t rxHealTries{0};
     uint32_t rxHealAutoResets{0}; // since the PL reset (receiver resets)
+    // results12 (frames start only after a FrameStart line): FrameStarts seen, frames dropped because no
+    // FS was seen (a mid-frame join or a lost FS line: lost data in a run), and the lines dropped with them.
+    // fsPresent: the build counts them (fs_seen is non-zero once a frame has come); all 0 otherwise.
+    bool rxFsPresent{false};
+    uint32_t rxFsSeen{0}, rxNoFsFrames{0}, rxNoFsLines{0};
     bool rxHealV2{false};         // heal v2 (CTRL2 at word 24 non-zero): the counters below exist
     uint32_t rxHealFlagClears{0}, rxHealEpisodes{0}, rxHealFailedEpisodes{0};
     double badFramesWarnPerS{0.0};
@@ -181,6 +186,21 @@ public:
     void settle(uint64_t nowUs);
     // The PL's auto-reset count (RXH1 P[259]); nullopt on an image without the block or a blank PL.
     std::optional<uint32_t> rxHealAutoResets();
+    // Frames dropped because no FrameStart was seen (RXH1 word 33), tear-safe; nullopt on a build
+    // without the counters (fs_seen, word 32, still zero), without the block, or with a blank PL.
+    std::optional<uint32_t> rxNoFsFrames();
+    // The counters are zeroed by a receiver reset (a heal or P[8] bit 6) as well as by a clear, so
+    // "end minus start" under-counts when a reset lands mid-run. Over a run the monitor accumulates the
+    // deltas instead: every status sample and the end read add (value - last) or, when the value fell,
+    // the new value. begin returns false (and nothing is tracked) on a build without the counters;
+    // end returns the frames dropped for want of a FrameStart during the run.
+    // Assumption (coordinator, 2026-10-08): the accumulation only sees resets that have a status sample
+    // between them. That holds because a Run cannot continue without a connected client: the server's
+    // idle rule stops and saves 5 s after the last client leaves, so the UI's status polling is always
+    // present during a Run; heal resets during Run are also measured at 0. If the idle rule ever lets a
+    // Run go on unattended, the monitor needs its own periodic sampling here.
+    bool beginNoFsRun();
+    std::optional<uint64_t> endNoFsRun();
     static constexpr uint64_t kModeSettleUs = 1'500'000;
 
 private:
@@ -195,6 +215,18 @@ private:
     uint64_t settleUntilUs_{0};
     uint64_t badSinceUs_{0}, droppedSinceUs_{0}; // 0 = not above its threshold
     std::deque<std::pair<uint64_t, uint32_t>> errorHistory_; // (host time, P[12]) over the window
+    struct DeltaSum {
+        bool have{false};
+        uint32_t last{0};
+        uint64_t total{0};
+        void add(uint32_t value) {
+            if (have) total += value >= last ? value - last : value; // fell: a reset zeroed it
+            have = true;
+            last = value;
+        }
+    };
+    DeltaSum noFsRun_;
+    bool noFsRunActive_{false};
     uint64_t previousUs_{0};
     Counters previous_{};
 };

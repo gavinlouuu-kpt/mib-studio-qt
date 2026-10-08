@@ -120,8 +120,14 @@ export function describeRunOutcome(s: ExperimentStatus | null, accounting?: RunA
   const outcome = describeCompletion(s.completion, s.completion_reason, admitted);
   // A PL receiver auto-reset (results9 self-heal) loses frames: say how many happened in the run.
   const heals = mine ? Number(accounting!.receiver_auto_resets) || 0 : 0;
-  if (heals > 0) {
-    return { ...outcome, attention: true, headline: `${outcome.headline} Receiver auto-resets during the run: ${heals} (each loses frames).` };
+  // results12: frames the PL dropped for want of a FrameStart line are lost data too.
+  const noFs = mine ? Number(accounting!.nofs_frames) || 0 : 0;
+  if (heals > 0 || noFs > 0) {
+    const parts = [
+      ...(heals > 0 ? [`Receiver auto-resets during the run: ${heals} (each loses frames).`] : []),
+      ...(noFs > 0 ? [`Frames dropped by the PL for want of a FrameStart: ${noFs} (lost data).`] : []),
+    ];
+    return { ...outcome, attention: true, headline: `${outcome.headline} ${parts.join(" ")}` };
   }
   return outcome;
 }

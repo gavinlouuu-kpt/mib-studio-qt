@@ -245,6 +245,33 @@ int main() {
                        v2.rxHealAutoResets == 9,
                    "v2 counters beside the receiver-reset count");
         r->livePage[280] = 0;
+        // results12: frames start only after a FrameStart line. No counters (fs_seen 0): absent, no count.
+        MIB_EXPECT(!monitor.sample(17'957'000).rxFsPresent && !monitor.rxNoFsFrames().has_value(), "no FS counters: absent");
+        r->livePage[288] = 5000; // fs_seen
+        r->livePage[289] = 3;    // nofs_frames
+        r->livePage[290] = 21;   // nofs_lines
+        const auto fs = monitor.sample(17'958'000);
+        MIB_EXPECT(fs.rxFsPresent && fs.rxFsSeen == 5000 && fs.rxNoFsFrames == 3 && fs.rxNoFsLines == 21, "FS counter words 32-34");
+        r->tornReads = {0x00FF00FFu, 3u, 3u};
+        r->tornIndex = 289;
+        MIB_EXPECT(monitor.rxNoFsFrames().value_or(99) == 3, "a torn nofs_frames read is repeated until two reads match");
+        // Over a run the deltas accumulate across receiver resets, which zero the counters (#648 review).
+        r->livePage[289] = 3;
+        MIB_REQUIRE(monitor.beginNoFsRun(), "run tracking begins when the counters exist");
+        r->livePage[289] = 5;  // +2
+        (void)monitor.sample(17'959'000);
+        r->livePage[289] = 1;  // a reset zeroed it and one more frame was dropped: +1
+        (void)monitor.sample(17'960'000);
+        r->livePage[289] = 4;  // +3
+        MIB_EXPECT(monitor.endNoFsRun().value_or(999) == 6, "nofs_frames accumulate across a mid-run reset: 2 + 1 + 3");
+        MIB_EXPECT(!monitor.endNoFsRun().has_value(), "a finished run is not counted twice");
+        r->livePage[288] = 0;
+        MIB_EXPECT(!monitor.beginNoFsRun(), "no tracking on a build without the counters");
+        r->livePage[288] = 5000;
+        r->configured = false;
+        MIB_EXPECT(!monitor.rxNoFsFrames().has_value(), "no read while the PL is blank");
+        r->configured = true;
+        r->livePage[288] = r->livePage[289] = r->livePage[290] = 0;
         r->configured = false;
         MIB_EXPECT(!monitor.rxHealAutoResets().has_value(), "no read while the PL is blank");
         r->configured = true;
