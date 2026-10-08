@@ -135,6 +135,8 @@ struct RecordingAccountingSnapshot {
     RunCompletionState completion{RunCompletionState::Unknown};
     std::string completionReason;
     bool reconciled{false};
+    // Read-only diagnostic: accounting is present, but its required attributes are unreadable.
+    std::string readError;
 
     // Reconciliation equations. Every admitted frame must be in exactly one
     // frame term; every writer admission must be committed, failed, or

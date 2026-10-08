@@ -127,6 +127,9 @@ namespace backend
         pz::InstrumentMode instrumentMode() const;
         // The Run window (x, y) last applied or requested; snapped to the producer's steps.
         std::pair<int, int> instrumentRunOffset() const;
+        // True once a Run switch has succeeded in this process: instrumentRunOffset() is then the
+        // operator's window, not the (0, 0) default (the UI restores its window from it, #501).
+        bool instrumentRunWindowSet() const;
         // Service / Commissioning mode, latched by the shell: raw LED values are refused
         // outside it, on the backend side (not only in the UI).
         void setServiceMode(bool on);
@@ -370,6 +373,7 @@ namespace backend
         std::atomic<int> instrumentMode_{0};      // pz::InstrumentMode
         std::atomic<bool> instrumentStopped_{false}; // shutdown() switched the LED off already
         std::atomic<int> instrumentRunX_{0}, instrumentRunY_{0};
+        std::atomic<bool> instrumentRunSet_{false};
         std::atomic<bool> serviceMode_{false};
         // Align live view: "bridge" (whole frames, results8 on) or "bands" (producer grabber).
         std::atomic<int> alignSource_{0}; // 0 none, 1 bridge, 2 bands (read by the status poll)

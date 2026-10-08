@@ -133,3 +133,8 @@ Jobs (PR 1b) open their own readers on `filePath()` and never block a read.
   facade did; RGB only appears after an overlay / ROI draw.
 - A thumbnail page with `size == 0` or `> 1024` is refused; the bridge
   further caps `size ≤ 512`, `count ≤ 1000`.
+
+Issue #570: `hasAccounting` remains true for schema-bearing files whose required
+attributes cannot be read. Their snapshot has `readError`, Unknown completion
+and an explanatory `completionReason`; `accountingSummary()` shows that reason
+instead of partial counts. Legacy files still have `hasAccounting == false`.
