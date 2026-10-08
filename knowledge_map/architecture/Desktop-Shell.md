@@ -704,7 +704,7 @@ backend's camera modes instead of `set_camera_overview`:
   on, LED 100/135 µs) or as the producer's bands on older images (LED
   0/125 µs). Status `mode.align_source` tells which. Align checks that a preview arrives: if
   the ingress is stuck (P[13] bits 15:8, the sticky lane overflow flags, every
-  frame lost; #629) it makes up to four 100 ms receiver resets (`AlignLock`,
+  frame lost; #629) it makes up to eight 100 ms receiver resets (`AlignLock`,
   counted in `mode.align_lock`) before the operator error "Align preview not
   locking". With no client for the server's grace time the instrument goes
   idle (LED off, cell path off, camera released) and a reconnecting page

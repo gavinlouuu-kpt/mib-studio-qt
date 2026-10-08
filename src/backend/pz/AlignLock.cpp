@@ -41,11 +41,13 @@ AlignLockResult awaitAlignLock(const AlignLockHooks& hooks, const AlignLockPolic
             return out;
         }
         hooks.pause(policy.settleAfterClear);
-        if (hooks.waitPreview(policy.previewWaitAfterClear)) {
+        hooks.readStatus(st);
+        // Flags still set: the next reset is a fresh try. Flags clear (they then stay clear): the
+        // previews follow.
+        if (st.laneOverflow() == 0 && hooks.waitPreview(policy.previewWaitAfterClear)) {
             out.locked = true;
             return out;
         }
-        hooks.readStatus(st);
     }
     out.error = "Align preview not locking: " + describe(st) + " after " + std::to_string(out.clears) +
                 " receiver resets (" + std::to_string(policy.receiverResetHold.count()) + " ms each)";

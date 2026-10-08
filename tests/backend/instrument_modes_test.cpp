@@ -181,7 +181,7 @@ void testControl() {
 
 // The Align ingress recovery (#629): sticky lane overflow flags (P[13] bits 15:8) stop every
 // preview and clear only at a receiver reset; each reset (P[8] bit 6 held ~100 ms) is a fresh try
-// at the lane deskew, so up to four are made before the operator error.
+// at the lane deskew (about 40-45 % each), so up to eight are made before the operator error.
 void testAlignIngressRecovery() {
     {
         FakeState s;
@@ -224,7 +224,8 @@ void testAlignIngressRecovery() {
             return r.lockAfterClears >= 0 && r.clears >= r.lockAfterClears && r.clears > 0;
         };
         h.readStatus = [&](pz::IngressStatus& st) {
-            st.status = r.overflow ? 0x0001FF20u : 0x00000020u;
+            const bool cleared = r.lockAfterClears > 0 && r.clears >= r.lockAfterClears;
+            st.status = r.overflow && !cleared ? 0x0001FF20u : 0x00000020u;
             st.errors = 11;
             st.resyncs = 15;
             return true;
@@ -262,12 +263,18 @@ void testAlignIngressRecovery() {
         const auto out = run(r);
         MIB_EXPECT(out.locked && out.clears == 3 && r.attempts == (std::vector<int>{1, 2, 3}), "third reset locks");
     }
-    {   // It never locks: four attempts, then the operator error with the readings.
+    {   // The seventh reset locks (the board needed up to four): still inside the eight.
+        Run r;
+        r.lockAfterClears = 7;
+        const auto out = run(r);
+        MIB_EXPECT(out.locked && out.clears == 7, "seventh reset locks");
+    }
+    {   // It never locks: eight attempts, then the operator error with the readings.
         Run r;
         const auto out = run(r);
-        MIB_EXPECT(!out.locked && out.clears == 4 && r.attempts.size() == 4, "four attempts");
+        MIB_EXPECT(!out.locked && out.clears == 8 && r.attempts.size() == 8, "eight attempts");
         MIB_EXPECT(out.error.find("Align preview not locking") == 0 && out.error.find("lane overflow 0xFF") != std::string::npos &&
-                       out.error.find("errors 11") != std::string::npos && out.error.find("4 receiver resets") != std::string::npos,
+                       out.error.find("errors 11") != std::string::npos && out.error.find("8 receiver resets") != std::string::npos,
                    "operator error names the flags and the attempts: " + out.error);
     }
     {   // A refused reset ends the recovery with a plain reason.

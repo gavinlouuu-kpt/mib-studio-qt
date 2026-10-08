@@ -23,9 +23,11 @@ struct AlignLockHooks {
     // True once a new preview has been published, waiting at most the given time.
     std::function<bool(std::chrono::milliseconds)> waitPreview;
     std::function<bool(IngressStatus&)> readStatus;
-    // One clear step for the sticky flags: a receiver reset held for the given time (board
-    // measurements 2026-10-08: a ~100 ms hold cured a failing start; the 100 µs pulse and the rx
-    // buffer clear (bit 5) do not reliably). It is this one function so the sequence can change.
+    // One clear step for the sticky flags: a receiver reset (P[8] bit 6, bit 4 kept) held for the
+    // given time. Board measurements 2026-10-08: each reset is an independent ~40-45 % chance to
+    // clear the flags whatever its length (100 us to 100 ms); once clear they stay clear. The rx
+    // buffer clear (bit 5) and a timing rewrite + reset are not cures. It is this one function so
+    // the sequence can change.
     std::function<bool(std::chrono::milliseconds hold)> clearFlags;
     // Called for every attempt (count and log it).
     std::function<void(int attempt, const IngressStatus&)> onAttempt;
@@ -35,10 +37,10 @@ struct AlignLockHooks {
 struct AlignLockPolicy {
     std::chrono::milliseconds firstPreviewWait{1000};
     std::chrono::milliseconds receiverResetHold{100}; // P[8] bit 6 held this long (tunable)
-    std::chrono::milliseconds settleAfterClear{500};
-    std::chrono::milliseconds previewWaitAfterClear{1500};
+    std::chrono::milliseconds settleAfterClear{400}; // the receiver settles ~35 ms after the reset
+    std::chrono::milliseconds previewWaitAfterClear{1500}; // only once the flags read clear
     std::chrono::milliseconds slowStartWait{11000}; // no overflow flags: the old 12 s wait in total
-    int attempts{4}; // each reset is a fresh try at the lane deskew (tunable)
+    int attempts{8}; // ~40-45 % per reset: eight leave about a 1-2 % miss (tunable)
 };
 
 struct AlignLockResult {

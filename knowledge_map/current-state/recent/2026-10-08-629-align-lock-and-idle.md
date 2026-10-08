@@ -5,8 +5,8 @@ overflow flags, sticky, OR'd into every frame's bad flag) stayed set, so the bri
 frame as lost. Measured on the board (2026-10-08): only a receiver reset clears them, and a 100 ms
 hold of P[8] bit 6 does it where a 100 µs pulse and the rx buffer clear (bit 5) do not reliably.
 `pz::awaitAlignLock` (`AlignLock.h`, hooks, tested without a board) now waits 1 s for the first
-preview; with the flags set it holds the receiver reset 100 ms (bit 4 kept), waits 500 ms and
-re-checks, up to four times, logging and counting each attempt (`mode.align_lock`
+preview; with the flags set it holds the receiver reset 100 ms (bit 4 kept), waits 400 ms and
+re-checks P[13], up to eight times (each reset is an independent ~40-45 % chance, measured), logging and counting each attempt (`mode.align_lock`
 `receiver_clears`, `failures`), then fails with "Align preview not locking: ..." and the readings.
 Hold time and attempt count are `AlignLockPolicy` constants. Without the flags a slow start keeps the old 12 s wait.
 
