@@ -23,7 +23,8 @@ describe("sensor link, sensor and latency readouts (#501)", () => {
     const hot = status({ link: { ...status().link!, ingress_errors_per_s: 25, resyncs_per_s: 0.5 } });
     expect(linkReadout(hot)).toEqual({ text: "25 err/s · 0.5 resync/s · 0.0 bad/s · 0.0 drop/s", cls: "warn" });
     expect(linkReadout(status({ link: { ...status().link!, resyncs_per_s: 2 } })).cls).toBe("warn");
-    expect(linkReadout(status({ link: { ...status().link!, bad_frames_per_s: 3 } })).cls).toBe("warn");
+    // bad and dropped frames are shown, but only errors and resyncs warn (the doc's thresholds)
+    expect(linkReadout(status({ link: { ...status().link!, bad_frames_per_s: 3, dropped_per_s: 2 } }))).toEqual({ text: "0.2 err/s · 0.1 resync/s · 3.0 bad/s · 2.0 drop/s", cls: "" });
     // inside the settle window after a mode switch the backend reports no valid rates: nothing warns
     expect(linkReadout(status({ link: { ...status().link!, rates_valid: false, ingress_errors_per_s: 500 } }))).toEqual({ text: "measuring…", cls: "dim" });
   });

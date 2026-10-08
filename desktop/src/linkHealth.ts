@@ -15,13 +15,15 @@ export function sensorReadout(s: InstrumentStatus | null | undefined): Readout {
   return { text: `${s.sensor.width}×${s.sensor.height} @ ${s.sensor.fps.toFixed(1)} fps`, cls: "" };
 }
 
-/** Errors, resyncs, bad and dropped frames per second; warns above the backend's thresholds. */
+/** Errors, resyncs, bad and dropped frames per second. Warns above the backend's thresholds for
+ *  errors and resyncs only: bad and dropped frames are shown but a baseline of a few per second
+ *  (about 0.1/s at rest) must not make preflight warn. */
 export function linkReadout(s: InstrumentStatus | null | undefined): Readout {
   if (!s?.available || !s.link) return { text: "—", cls: "dim" };
   const l = s.link;
   if (!l.rates_valid) return { text: "measuring…", cls: "dim" };
   const text = `${rate(l.ingress_errors_per_s)} err/s · ${rate(l.resyncs_per_s)} resync/s · ${rate(l.bad_frames_per_s)} bad/s · ${rate(l.dropped_per_s)} drop/s`;
-  const warn = l.ingress_errors_per_s > l.ingress_errors_warn_per_s || l.resyncs_per_s > l.resyncs_warn_per_s || l.bad_frames_per_s > 0;
+  const warn = l.ingress_errors_per_s > l.ingress_errors_warn_per_s || l.resyncs_per_s > l.resyncs_warn_per_s;
   return { text, cls: warn ? "warn" : "" };
 }
 
