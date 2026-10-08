@@ -1367,6 +1367,10 @@ namespace backend
             //     camera behind CaptureService, so the live view is unchanged. LED 100/135.
             captureService_->stop();
             processing::pz::BridgePreviewConfig preview; // 816x624, every 40th frame, 0x3F100000
+            // The results bridge sizes whole frames from the ingress geometry latched at the last
+            // receiver reset. Latch the full field now, before the bridge is armed: after a PL
+            // reload the ingress still sends the Run window and every frame is flagged lost (#607).
+            if (!pzControl_->latchIngressGeometry(preview.width, preview.height, &err)) return fail(err);
             auto *provider = executionProvider_.get();
             captureService_->setCameraFactory([provider, preview]() -> std::unique_ptr<::camera::common::ICamera> {
                 if (!provider) return nullptr;

@@ -175,6 +175,35 @@ void testControl() {
     MIB_EXPECT(s.writes.size() == writes, "nothing written on another image");
 }
 
+// #607: after a PL reload the ingress still sends the Run window, so Align latches the full-field
+// geometry before the bridge is armed: S[9] first, then one receiver reset (P[8] bit 6, a pulse
+// that keeps the U-Net enable), as tools/pzcell roi does.
+void testIngressGeometry() {
+    FakeState s;
+    seedCellImage(s);
+    s.live[8] = 0x11; // U-Net enable (bit 4) plus another bit: both must survive the pulse
+    pz::PzInstrumentControl control(std::make_unique<FakeControl>(s));
+    std::string err;
+
+    MIB_REQUIRE(control.latchIngressGeometry(816, 624, &err), "latch 816x624: " + err);
+    MIB_REQUIRE(s.writes.size() == 3, "geometry, reset, release: three writes");
+    MIB_EXPECT(s.writes[0].index == S0 + 9 && s.writes[0].value == 0x02702066u,
+               "S[9] = {624 lines, 32 OB lines, 102 slots} is written first");
+    MIB_EXPECT(s.writes[1].index == 8 && s.writes[1].value == (0x10u | 64u),
+               "then the receiver reset pulse (bit 6), U-Net enable kept");
+    MIB_EXPECT(s.writes[2].index == 8 && s.writes[2].value == 0x10u, "the pulse is released with bit 4 still set");
+
+    // A bad size or a blank PL writes nothing.
+    const auto writes = s.writes.size();
+    MIB_EXPECT(!control.latchIngressGeometry(812, 624, &err), "width must be a multiple of 8");
+    MIB_EXPECT(!control.latchIngressGeometry(824, 624, &err) && !control.latchIngressGeometry(816, 0, &err),
+               "outside 816x624 refused");
+    s.configured = false;
+    MIB_EXPECT(!control.latchIngressGeometry(816, 624, &err) && err.find("PCFG_DONE") != std::string::npos,
+               "refused while the PL is blank");
+    MIB_EXPECT(s.writes.size() == writes, "nothing written for a refused latch");
+}
+
 void testLedLimits() {
     using pz::InstrumentMode;
     MIB_EXPECT(pz::checkLed(InstrumentMode::Run, pz::kRunLed).empty(), "Run preset within Run limits");
@@ -339,6 +368,7 @@ int main() {
     mib::test::Watchdog wd(60);
     mib::test::TempDir td("instrument_modes");
     testControl();
+    testIngressGeometry();
     testLedLimits();
     testModeSequence(td);
     testRecordingTarget(td);

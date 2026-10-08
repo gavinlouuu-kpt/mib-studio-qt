@@ -105,7 +105,11 @@ image (`S[41]` = `'CEL2'`), and one mutex serialises them all:
 `AppBackend::setInstrumentMode` runs the agreed sequence. The GenTL producer
 applies ROI, timing, `S[9]` and the receiver reset at AcquisitionStart, and
 every capture start reopens it and rewrites rate and exposure, so its mode is
-always re-applied.
+always re-applied. Whole-frame Align then latches the full-field ingress geometry itself
+(`PzInstrumentControl::latchIngressGeometry`: `S[9]` = {624 lines, 32 OB lines, 102 slots}, one
+receiver-reset pulse on `P[8]` bit 6 with bit 4 kept, 500 ms settle, as `pzcell roi` does) after the
+producer stops and before the bridge is armed (#607): the bridge sizes whole frames from the geometry
+latched at the last receiver reset, so after a PL reload without it every frame is flagged lost.
 
 | Mode | Producer request | Result | After AcquisitionStart |
 |---|---|---|---|

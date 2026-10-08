@@ -22,6 +22,10 @@ constexpr unsigned kCommand = 8;              // P[8]
 constexpr uint32_t kUnetEnable = 0x10u;       // P[8] bit 4, a level
 constexpr unsigned kStrobeControl = 0, kStrobeDelay = 1, kStrobeWidth = 2, kStrobeEvery = 4, kStrobeGate = 5;
 constexpr unsigned kStrobeClockKhz = 10;
+constexpr unsigned kIngressGeometry = 9;      // S[9] {lines, skip, slots}, latched by the receiver reset
+constexpr uint32_t kReceiverReset = 64u;      // P[8] bit 6, a pulse
+constexpr uint32_t kIngressObLines = 32u;
+constexpr unsigned kReceiverSettleUs = 500000; // tools/pzcell roi: the receiver restarts ~35 ms after the reset
 constexpr unsigned kCaptureArm = 36, kCellImage = 41, kCaptureDone = 42, kCaptureTag = 43, kCaptureListing = 44,
                    kCaptureCounts = 45, kCellMode = 46, kLatencyClear = 47;
 constexpr uint32_t kCellImageMagic = 0x43454C32u; // 'CEL2'
@@ -187,6 +191,24 @@ bool PzInstrumentControl::setCellPath(bool on, std::string* error) {
     setS(kCellMode, on ? 1u : 0u);
     const uint32_t command = registers_->live(kCommand);
     registers_->setLive(kCommand, on ? (command | kUnetEnable) : (command & ~kUnetEnable));
+    return true;
+}
+
+bool PzInstrumentControl::latchIngressGeometry(unsigned width, unsigned height, std::string* error) {
+    if (!width || !height || width % 8 != 0 || width > 816u || height > 624u) {
+        if (error) *error = "ingress geometry: width a multiple of 8 inside 816x624";
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!readyLocked(error)) return false;
+    // The ingress latches S[9] only at the receiver reset, so the reset follows the write. The
+    // command pulse keeps P[8] bit 4 (the U-Net enable level) as it is, as the pzcell pulse does.
+    setS(kIngressGeometry, (height << 16) | (kIngressObLines << 8) | (width / 8u));
+    const uint32_t keep = registers_->live(kCommand) & kUnetEnable;
+    registers_->setLive(kCommand, keep | kReceiverReset);
+    registers_->sleepUs(100);
+    registers_->setLive(kCommand, keep);
+    registers_->sleepUs(kReceiverSettleUs);
     return true;
 }
 

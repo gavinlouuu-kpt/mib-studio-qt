@@ -108,6 +108,11 @@ public:
     // S[46] and P[8] bit 4 (the U-Net enable level), together.
     bool setCellPath(bool on, std::string* error);
     bool cellPathOn(std::string* error);
+    // S[9] = {height, 32 OB lines, width / 8}, then one receiver reset (P[8] bit 6, bit 4 kept) and
+    // the settle time, as tools/pzcell roi does. The ingress latches the geometry at the reset, and
+    // the results bridge sizes its frames from it: Align's whole-frame preview needs the full-field
+    // geometry latched before the bridge is armed (#607).
+    bool latchIngressGeometry(unsigned width, unsigned height, std::string* error);
     // Latency monitor clear (any write to S[47]) at the start of a run.
     bool clearLatency(std::string* error);
     // Arm S[36], wait for S[42] bit 0, read the frame from the window. Cell path must be on.
