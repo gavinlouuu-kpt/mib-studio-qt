@@ -36,8 +36,10 @@
   actually changes.
 - `start(ExperimentStartRequest{outputPath, readinessGeneration, profileId,
   acknowledgeLatestFrameDrops})` is the serialized Start transaction:
-  1. `try_lock` — a concurrent transaction gets `Busy`; a run in progress
-     gets `AlreadyActive`.
+  1. A run in progress gets `AlreadyActive` first, from the atomic `state_`,
+     before any lock (a status poll or the worker holding the mutex used to
+     turn it into `Busy`, #595). Then `try_lock` — a concurrent transaction
+     gets `Busy`.
   2. Re-evaluate now; `readinessGeneration` mismatch → `StaleReadiness`
      (reconnect, config/background/core/ROI/output change, new fault since
      the presented preflight). Not ready → `NotReady`. LatestFrame without

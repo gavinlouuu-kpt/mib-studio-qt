@@ -889,6 +889,13 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateReadiness(const std::
 ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest& request)
 {
     ExperimentStartResult result;
+    // A start during an active run is AlreadyActive however busy the mutex is: answer it before the
+    // try-lock, which reports Busy while another thread (status polls, the worker) holds the mutex (#595).
+    if (state_.load() == ExperimentRunState::Active) {
+        result.outcome = ExperimentStartOutcome::AlreadyActive;
+        result.message = std::string("experiment is ") + toString(ExperimentRunState::Active);
+        return result;
+    }
     std::unique_lock<std::mutex> lk(mutex_, std::try_to_lock);
     if (!lk.owns_lock()) {
         result.outcome = ExperimentStartOutcome::Busy;
