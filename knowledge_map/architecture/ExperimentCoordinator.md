@@ -63,10 +63,16 @@
 - `shutdown()` (from `AppBackend::shutdown()` and the destructor) finalizes
   an active run and joins the worker; idempotent; after it `start()` returns
   `Busy`.
+- `AppBackend::initialize()` supplies default application identity for every shell
+  (#545): CMake `PROJECT_VERSION_FULL` (fallback `PROJECT_VERSION`), configure-time
+  `MIB_BUILD_ID` environment value (fallback `dev`), and platform plus architecture.
+  `setApplicationIdentity()` still overrides these defaults for subsequent runs;
+  an active run's frozen snapshot remains unchanged. Qt retains its explicit identity.
 - `finish()` no longer changes state: it returns the active (or most recently
   finalized) run snapshot for callers that log the identity.
 - `status()` / `setStatusCallback(cb)`: `ExperimentStatus` (state,
   generations, output path, start/end wall-clock, live buffered counts,
+  successful valid/invalid saved counts, valid/invalid policy drops,
   persistence admitted/committed/failed, `flushing`, `cancelled`,
   `terminal`, `finalizationOk`, `completion` + reason, fault code/message,
   message). The callback fires on every transition **outside the mutex** and
@@ -102,9 +108,14 @@ append only, never renumber.
    `appendFrames` left a clean run labelled IntentionallyPartial; bench,
    2026-09-08).
 5. `Hdf5Service::flush()`; `writeExperimentInfo(...)` (start/end wall-clock,
-   remainder counts, processing config, ROI, background, core identity);
+   run-wide successful valid/invalid writes, processing config, ROI, background, core identity);
    `writeRunAccounting(experimentAccountingSnapshot())`;
-   `writeAcquisitionProvenance(...)`; `writeConfigJson(getLastConfigJson())`.
+   `writeAcquisitionProvenance(...)`; `writeConfigJson(getLastConfigJson())`;
+   then, best effort, `writeKdeLiveJson(...)` with the last provisional KDE
+   core record [[../services/MonitoringDensityService]] handed over through
+   `setLiveKdeCoreRecord` (from its backend worker, no shell involved)
+   (accepted only while `Active`, cleared at Start; a failed write logs a
+   warning and never changes the run outcome).
 6. `closeFile()`.
 7. Restore the realtime mode if Start switched it.
 8. Terminal status: `terminal=true`, `completion` from the reconciled
@@ -112,6 +123,17 @@ append only, never renumber.
    2/4/5/6 failed, in which case the unresolved fault
    `experiment.flushFailed` / `experiment.provenanceFailed` /
    `experiment.saveFailed` is latched and the state is `Failed`.
+
+   The reconciled accounting of the last finalized run is kept (`lastRunAccounting`, with its start
+   generation) for `fetch_run_accounting("last_run")` (ABI 31).
+
+   The accounting line logged at the end of finalization is a WARN when
+   `recording::needsOperatorAttention(completion)` (undeclared loss, failure or unknown) or when
+   malformed frames exceed `kMalformedWarnFraction` (0.1 %) of the admitted frames, INFO
+   otherwise (#549). Classification: `storeOverwritten`, `storeNotCommitted`, `processingFailed`
+   and `sequenceGaps` are undeclared (`IncompleteLoss`); a booked `storeMalformed` frame is a
+   declared loss (`IntentionallyPartial`). `finalizationOk` only says the file was written: a run can finalize cleanly
+   and still be `IncompleteLoss`, which the UI shows from `completion` and `completion_reason`.
 
 The worker also runs the periodic flush while Active: every 250 ms it
 submits `flushBufferedFrames(hdf5)` when
@@ -135,15 +157,47 @@ thresholds, so a slow trickle of large frames never sits unwritten.
 | `camera.geometry` | no frame received yet | — |
 | `processing.roi` | — | no ROI (full frame) |
 | `processing.core` | pinned core not active | — |
+| `method.revision` (#398 M2) | applied config.json is a cached central revision that is revoked or not published/superseded (`NotRequired` for a local method or no config) | central revision not validated on this instrument/context, a failed local validation, or unknown instrument |
 | `calibration.pixelToMicron` | factor not positive | — |
 | `processing.background` | — | no background image |
 | `trigger.output` | sorting enabled but TriggerService not bound to the running session (`NotRequired` when sorting is off) | — |
+| `rf.generator` | sorting enabled and the configured [[../services/RfGeneratorService]] link is down, or the SSG3021X is mis-armed (RF off, pulse mod off, trigger mode not external, source not internal, zero width — reason lists them); `NotRequired` when sorting is off or `rf_generator.enabled` is false or absent (bundled defaults included) | — |
 | `storage.output` | no path (`Unavailable`), unwritable parent, path is a directory, < 64 MiB free | — |
 | `storage.hdf5` / `lifecycle.recording` / `lifecycle.experiment` | file already open / raw recording active / coordinator not Idle | — |
 | `lifecycle.fault` | unresolved fault reported | — |
 | `telemetry.transportLoss` | no active session | backend cannot / has not reported transport loss |
 
-## RunConfigurationSnapshot (schema v1)
+## Method provenance (#398 M2)
+
+`candidateLocked` resolves `RunConfigurationSnapshot::method` with the pure
+`resolveMethodProvenance()` (`include/backend/app/MethodProvenance.h`):
+`canonicalConfigSha256(getLastConfigJson())` is matched against the
+`configSha256` of every revision in the registry worker's **value snapshot**
+(no network, no SQLite on the caller's thread), then the newest matching local
+validation for this instrument UUID + `methodContextHash(backend.methodContext())`
++ exact content hash. Several revisions sharing a config: usable state first,
+then validated here, then published over superseded, then newest
+(`matching_revisions` records the count). The result is memoized on (raw
+config sha, registry generation, context hash, instrument name) because
+readiness is polled. `methodInvalidationKey()` is an invalidation input, so
+recording a validation, a revocation reaching the cache, or a core/camera
+change bumps the readiness generation and a stale preflight is refused.
+Policy (operator decisions): unvalidated → Warn (Start allowed); validated
+here → Pass; revoked → Fail (existing runs stay reviewable).
+
+Trigger records: start discards whatever [[../services/TriggerService]] had
+buffered before the run (test pulses, a previous run's tail); each periodic
+flush carries the drained records inside the batch (see
+[[../services/ProcessingService]] `setTriggerEventSource`); stop drains once
+more after `finishFlush()` and appends the tail single-threaded before the
+metadata writes, so `/trigger_events` is complete for the run. The RF
+generator readback the readiness evaluation verified (candidate
+`rfGenerator*` fields, also in the stored run snapshot JSON under
+`rf_generator`) is written at finalize as `rf_generator_*` attributes
+(`Hdf5Service::writeRfGeneratorProvenance`); the instrument is not
+re-queried at stop.
+
+## RunConfigurationSnapshot (schema v2)
 
 Frozen at Start and never mutated: readiness/start/capture generations,
 start times, `CameraSourceInfo` (requested vs effective, simulated,
@@ -151,7 +205,12 @@ fallback + reason), delivery modes, `TimestampDescriptor` text, ROI, frame
 geometry, processing-core identity + pin state, processing config version +
 canonical sha, raw `config.json` sha, profile id, pixel-to-micron factor,
 background presence/generation/sha, trigger requirement/binding, output
-path, realtime mode, application version/build/OS. `runSnapshotToJson()` /
+path, realtime mode, application version/build/OS, and (v2, #398 M2) the
+`method` block: source central/local/none, revision/method/project IDs,
+display name, author, exact content hash, revision number, metadata version,
+central state, matching revisions, instrument UUID + name, context hash,
+validation (passed/failed/none/notApplicable), validator, time, evidence
+test-run SHA-256, registry origin + session. `runSnapshotToJson()` /
 `readinessToJson()` produce the stable-key JSON stored on `/run_provenance`
 (see [[../data-model/HDF5-Storage]]).
 
@@ -180,3 +239,81 @@ across the HDF5 open + provenance write, which is why a second caller gets
 - A `requestStop()` right after `start()` returned is accepted; the worker
   wakes immediately (condition variable), so the run may finalize with zero
   admitted frames and still be `Complete`.
+
+## MindVision overview gate
+
+Readiness includes a failing `camera.mode` gate while MindVision Overview is
+selected. Experiments require the Experiment acquisition mode, preventing a
+full-sensor preview session from being recorded as an experimental ROI session.
+
+### Shell-independent processing ownership (2026-09-23)
+
+Start enables and starts the shared realtime consumer after persistence setup.
+It no longer relies on a Qt tab activation side effect: otherwise a Tauri run
+could finalize an empty file as complete. The facade's settings commands own
+explicit realtime enable/start and disable/stop and serialize with the idle
+configuration gate. The headless lifecycle regression asserts an enabled,
+running consumer immediately after Start; native webview acceptance also checks
+nonzero persisted accounting.
+
+Readiness also blocks while bounded background calibration is running, preventing
+a later publication from replacing a background after experiment configuration
+is frozen. Cancellation/completion restores this gate.
+
+Background set/clear and calibration apply share `withIdleConfiguration` with ROI
+settings. Asynchronous calibration publication uses the nonblocking overload to
+avoid waiting on a configuration transaction that might join its worker (#542).
+
+### Raw recording admission (#451)
+
+`AppBackend::startFrameRecording` uses `withIdleConfiguration` through writer
+acquisition, so experiment Start and raw recording cannot both pass preflight.
+Starting/Active/Stopping (and Failed until fault acknowledgement) refuse recording; an already
+open HDF5 file is preserved. Raw recording remains busy until Stop joins its
+worker, including save-failure cleanup. See [[AppBackend]].
+
+### Nested idle configuration (#582)
+
+An idle transaction can invoke guarded service setters on the same thread without
+relocking the coordinator mutex. A scoped thread-local owner reuses only that
+enclosing idle authorization and restores it even on exceptions. Other threads
+still serialize against Start. This supports both facade transactions and Qt
+watched-document applies without bypassing the backend ROI/background gates.
+
+## Recording safety re-port (#403)
+
+`requestFlush()` wakes the worker on buffer pressure using the existing #407
+`needsFlush()` policy and two-second backstop. Stop waits for the inline loop
+to hand off its incomplete multi-image series before settlement and remainder
+flush. A handoff timeout makes finalization fail. Status observers are best
+effort: exceptions are contained while callback retirement and the lifecycle
+lock are restored. Fatal accounting is reconciled before writing the file,
+aligned with #589's failed-outcome persistence.
+
+Readiness includes `storage.roundtrip`: a small HDF5 write/close/reopen and
+pixel comparison cached by readiness generation for 30 seconds. It verifies
+access and format, not sustained throughput. `storage.buffer` rejects a host
+image/mask series larger than the byte budget and warns when byte pressure
+will precede the count threshold. Geometry/format, budget and flush interval
+changes invalidate preflight. Metadata-only provider recordings do not use
+the host image payload gate.
+
+### Save failure accounting and recovery (#589)
+
+Finalization marks fatal save errors and unsuccessful flushes as fatal accounting
+before persisting `/experiment_info` and caching the last run. The persisted
+completion is Failed, with the save error reason and failed persistence counts,
+even when metadata can still be written. `acknowledgeFault()` returns the
+coordinator to Idle only after finalization and for the matching run/fault
+revision; it preserves the failed saved-run outcome. Qt readiness and banner
+actions both use this contract.
+
+## Flush backpressure (#597)
+
+A flush request is a wake-up, not a promise that a batch will be submitted.
+ProcessingService retains frames in its bounded experiment buffer when the
+three-slot writer queue is full, allowing subsequent requests to coalesce them.
+The existing count/byte gates and periodic backstop remain active. Stop first
+drains the queue; after `endExperiment()`, its existing remainder flush writes
+any deferred frames and partial series through a fresh queue. No coordinator
+or bridge contract change is needed.

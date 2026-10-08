@@ -84,6 +84,10 @@ protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
+    friend struct PlaybackPanelFaultTestAccess;
+    friend struct PlaybackPanelTestAccess;
+    bool configurationIdle() const;
+    void updateConfigurationUI();
     void computeProcessedOverlay();
     void updateOverlayButtonUi();
     void resetMetrics();

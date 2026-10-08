@@ -1,0 +1,9 @@
+/* Z stage panel (#464). Layout classes shared with the other hardware panels live in HardwareControls.css. */
+.stage-controls .stage-position { font-size: 1.5rem; font-variant-numeric: tabular-nums; margin: .3rem 0; }
+.stage-controls .stage-indicators { display: flex; flex-wrap: wrap; gap: .5rem; margin: .5rem 0; padding: 0; list-style: none; }
+.stage-controls .stage-indicators li { border: 1px solid #64748b; border-radius: .3rem; padding: .1rem .5rem; }
+.stage-controls .stage-indicators li[data-active="true"] { background: #334155; font-weight: 600; }
+.stage-controls .stage-indicators li[data-severity="alarm"][data-active="true"] { background: #7f1d1d; border-color: #fca5a5; }
+.stage-controls .stage-stop { background: #b91c1c; border-color: #fca5a5; color: #fff; font-weight: 700; padding: .5rem 1.4rem; }
+.stage-controls .stage-stop:disabled { opacity: .5; }
+.stage-controls .stage-zero-confirm { border: 1px solid #fca5a5; border-radius: .4rem; padding: .7rem; }

@@ -12,17 +12,22 @@ endif()
 find_package(spdlog CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG QUIET)
 find_package(OpenCV CONFIG REQUIRED)
-if(NOT MIB_BUILD_PROCESSING_ONLY)
-    find_package(onnxruntime CONFIG QUIET)
-endif()
 
 # EGrabber/Coremor remain Windows-only. MindVision publishes separate Windows,
 # Linux, and macOS SDKs, so that integration is enabled on every desktop OS.
+# CoreMOR availability is independent of EGrabber.
 set(MIB_HAS_EGRABBER OFF)
 if(WIN32 AND MIB_ENABLE_HARDWARE_SDKS)
     set(MIB_HAS_EGRABBER ON)
 endif()
-message(STATUS "Hardware SDK integrations: ${MIB_HAS_EGRABBER}")
+set(MIB_HAS_COREMOR OFF)
+if(WIN32 AND MIB_ENABLE_COREMOR AND NOT MIB_BUILD_PROCESSING_ONLY AND
+   EXISTS "${PROJECT_SOURCE_DIR}/include/Coremor/XMT_DLL_SER.h" AND
+   EXISTS "${PROJECT_SOURCE_DIR}/include/Coremor/XMT_DLL_SER.lib")
+    set(MIB_HAS_COREMOR ON)
+endif()
+message(STATUS "EGrabber SDK integration: ${MIB_HAS_EGRABBER}")
+message(STATUS "Coremor nanopositioner SDK integration: ${MIB_HAS_COREMOR}")
 
 set(MIB_HAS_MINDVISION OFF)
 if(MIB_ENABLE_MINDVISION AND NOT MIB_BUILD_PROCESSING_ONLY)
@@ -30,9 +35,18 @@ if(MIB_ENABLE_MINDVISION AND NOT MIB_BUILD_PROCESSING_ONLY)
 endif()
 message(STATUS "MindVision SDK integration: ${MIB_HAS_MINDVISION}")
 
-set(MIB_HAS_ONNXRUNTIME OFF)
-if(TARGET onnxruntime::onnxruntime)
-    set(MIB_HAS_ONNXRUNTIME ON)
+# Aravis is intentionally optional and is not part of processing-only builds.
+# The adapter is compiled only when the caller explicitly enables it; a
+# missing package is therefore an actionable configuration error rather than a
+# silent runtime fallback to MockCamera.
+set(MIB_HAS_ARAVIS OFF)
+if(MIB_ENABLE_ARAVIS AND NOT MIB_BUILD_PROCESSING_ONLY)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(MIB_ARAVIS REQUIRED IMPORTED_TARGET aravis-0.10>=0.9.3)
+    set(MIB_HAS_ARAVIS ON)
+    message(STATUS "Aravis integration: ${MIB_ARAVIS_VERSION}")
+elseif(MIB_ENABLE_ARAVIS)
+    message(STATUS "Aravis integration disabled for processing-only build")
 endif()
 
 set(MIB_MINDVISION_SDK_ROOT "$ENV{MIB_MINDVISION_SDK_ROOT}" CACHE PATH

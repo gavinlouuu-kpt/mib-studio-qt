@@ -1,6 +1,18 @@
 # Dependencies
 
-> Third-party stack. Managed by Conan (`conanfile.txt`).
+Desktop ownership uses existing Qt Core `QLockFile`; no new dependency is
+needed. The Windows serial timeout regression links `setupapi` and `advapi32`
+directly and simulates driver calls without connecting hardware.
+
+> Third-party stack. Managed by Conan (`conanfile.py`; host profiles in
+> `conan/profiles/`). System-package equivalents for Linux/macOS builds are
+> listed once in `env/apt-packages.txt` / `env/brew-packages.txt`.
+>
+> **YOFO Review graph** (`-o "&:review_core=True"`, macOS / Windows review
+> lanes): spdlog, HDF5, OpenCV and nlohmann_json only, OpenCV / HDF5 static,
+> OpenCV limited to core / imgproc / imgcodecs / videoio (no FFmpeg — AVI
+> sources use OpenCV's MJPEG reader / AVFoundation / Media Foundation), no Qt
+> or SQLite. The "Shared?" column below is the default graph.
 
 | Package | Version | Shared? | Notes |
 |---|---|---|---|
@@ -9,9 +21,9 @@
 | sqlite3 | 3.51.0 | | [[../services/SqliteService]] |
 | hdf5 | 1.14.6 | ✓ | C++ API enabled — [[../services/Hdf5Service]] |
 | opencv | 4.12.0 | ✓ | dnn=False, openexr=False. Linked modules: `core`, `imgproc`, `imgcodecs`, `videoio` (AVI read/write by [[../data-model/FrameStore]] and [[../services/BatchMaskSources]]) — [[../services/ProcessingService]] |
-| onnxruntime | 1.18.1 | | Optional in Linux cloud builds; when unavailable the build uses `YoloService.stub.cpp` and disables YOLO runtime features while keeping the rest of the app buildable — [[../services/YoloService]] |
 | nlohmann_json | 3.11.3 | | Config parsing / serialization |
 | openssl (libcrypto) | system | ✓ | Linux desktop builds only (`find_package(OpenSSL REQUIRED)` under `UNIX AND NOT APPLE`): Ed25519 detached-signature verification for native processing cores. Optional for the Qt-less wheel configure, whose verifier then fails closed. |
+| aravis | 0.9.3 (`aravis-0.10`) | ✓ | Optional Qt-free camera consumer; enabled only with `MIB_ENABLE_ARAVIS=ON`, source/build pin in `env/aravis.toml` |
 
 ## Vendored / checked-in
 
@@ -25,8 +37,13 @@
   `scripts/provision-mindvision-sdk.sh`. The scripts fetch SHA-256-pinned team
   R2 artifacts and extract only the headers plus the current platform/CPU's
   shared library.
+- **External assets (model weights, datasets)** — not in git. Pinned by Hub
+  revision and SHA-256 in `env/assets.json`, fetched into `build/vendor/assets/`
+  by `scripts/provision-assets.py`. See [[Assets]].
 - **Coremor XMT DLL** — `include/Coremor/` (`.h`, `.lib`, `.dll`). Used by
-  [[../services/AutofocusService]].
+  the optional Windows backend of [[../services/AutofocusService]]. OEABT uses
+  the existing ISerialPort adapter and the operating system's standard serial driver instead of a
+  vendored library.
 
 ## How they're wired
 
@@ -50,10 +67,10 @@
   target.
 - OpenCV and HDF5 DLLs are also copied next to the exe (see
   `docs/howto/windows-deploy.md`).
-- Windows-only hardware SDK linkage is gated by `MIB_HAS_EGRABBER`
-  (`WIN32` => `ON`, otherwise `OFF`):
+- Windows EGrabber linkage is gated by `MIB_HAS_EGRABBER`:
   - EGrabber headers/system path are only added when `MIB_HAS_EGRABBER=1`.
-  - Coremor include/lib wiring is only added when `MIB_HAS_EGRABBER=1`.
+- CoreMOR is gated independently by `MIB_HAS_COREMOR`; OEABT targets build on
+  Linux and Windows from standard C++17 plus Qt SerialPort.
 - MindVision SDK linkage is gated separately by `MIB_ENABLE_MINDVISION` /
   `MIB_HAS_MINDVISION`:
   - CMake locates the dynamic-loader header/DLL on Windows and the direct API
@@ -61,7 +78,10 @@
   - Desktop and backend-only presets set `MIB_ENABLE_MINDVISION=ON`; Linux CI
     provisions the pinned SDK before configure.
   - Processing-only builds remain SDK-free so portable processing artifacts
-    do not acquire camera dependencies.
+  do not acquire camera dependencies.
+- Aravis linkage is gated separately by `MIB_ENABLE_ARAVIS`; missing
+  `aravis-0.10 >= 0.9.3` fails an explicitly enabled non-processing build,
+  while default and processing-only builds do not search for it.
 - `QtNetwork` is linked by the backend library so `AppBackend` can manage the
   Young's modulus LUT manifest/cache directly during startup.
 
@@ -118,3 +138,18 @@ container WebKitGTK workarounds (`WEBKIT_DISABLE_DMABUF_RENDERER=1`,
 
 - [[Build]] for presets and commands.
 - `docs/howto/runtime-deploy.md` for runtime deployment details.
+
+## Profile registry (#398)
+
+No new C++ dependency: registry sources reuse nlohmann JSON, SQLite and the
+shared SHA-256 already in `mib_backend`. The PostgreSQL policy tests need Node
+(`.nvmrc`) and the pinned PGlite dev dependency in `supabase/package-lock.json`;
+commands are in [[Build]].
+
+### Independent nanopositioner support (2026-09-15)
+
+Windows defaults `MIB_ENABLE_COREMOR=ON` and builds the bundled XMT driver
+even when `MIB_ENABLE_HARDWARE_SDKS=OFF` disables EGrabber. Set
+`MIB_ENABLE_COREMOR=OFF` for a build without the Coremor driver. Linux and
+processing-only builds remain SDK-free for Coremor. See
+[[../services/AutofocusService]] for the vendor support inventory.

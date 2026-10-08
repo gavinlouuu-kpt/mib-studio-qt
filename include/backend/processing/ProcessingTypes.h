@@ -5,7 +5,9 @@
 // implementation (ProcessingScience). Qt-free by design.
 
 #include <cstdint>
+#include <limits>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include <opencv2/core.hpp>
@@ -36,11 +38,35 @@ struct ProcessingConfig {
     double ring_ratio_min{15.0};
     double ring_ratio_max{25.0};
     bool enable_ring_ratio_check{true};
+    // Contract v2 object focus metric: per-object Laplacian variance. The gate
+    // is disabled by default and its thresholds are placeholders until V2-7
+    // calibration; enabling it never affects Contract-1 execution.
+    double laplacian_variance_min{0.0};
+    double laplacian_variance_max{0.0};
+    bool enable_laplacian_variance_check{false};
     bool require_single_inner_contour{true};
     int empty_frame_pixel_threshold{100};
     bool auto_background_enabled{false};
     int auto_background_empty_frames{30};
     int auto_background_cooldown_frames{1000};
+    // Auto channel band: when enabled, detect the microfluidic channel walls in
+    // each captured background and reject objects whose centroid lies outside
+    // the channel band (debris stuck on a wall). The ROI itself is not cropped,
+    // so cells near the walls are not clipped by the border check. Off by
+    // default.
+    bool auto_roi_from_background{false};
+    // Row mean-gradient multiple over the channel baseline that marks a wall row.
+    double auto_roi_wall_gradient_ratio{2.5};
+    // Extra rows trimmed inward from each detected wall edge, for margin.
+    int auto_roi_wall_margin{1};
+    // Channel band gate, in the row coordinates of the mask handed to the
+    // object filter. An object is in the channel when its centroid row lies in
+    // [channel_band_y, channel_band_y + channel_band_h). channel_band_h <= 0
+    // disables the gate. Runtime input, not persisted: ProcessingService fills
+    // it from the detected band when auto_roi_from_background is on; wheel
+    // callers may set it directly.
+    int channel_band_y{0};
+    int channel_band_h{0};
     // Target group sort trigger (second gate within valid frames)
     bool enable_target_group{false};
     int target_group_area_min{72};   // μm²
@@ -51,6 +77,17 @@ struct ProcessingConfig {
     bool enable_target_group_emodulus{false};
     double target_group_emodulus_min{0.0};
     double target_group_emodulus_max{10.0};
+    // Processing contract executed by this config (ADR 0006). 1 = saturating
+    // subtraction + ring width (frozen, byte-for-byte reproducible). 2 =
+    // cv::absdiff background comparison, ring width abolished (NaN, gate
+    // ignored), per-object Laplacian variance as the focus metric.
+    // `bg_subtract_threshold` holds the v2 canonical `difference_threshold`.
+    int processing_contract_version{1};
+    // Contract 3 (U-Net cells) only. A top-level mask component is a cell when
+    // it has at least this many pixels; smaller ones are blemishes (counted per
+    // frame, never objects). Aperture of the per-cell Laplacian (1 or 3).
+    int min_cell_area_px{250};
+    int laplacian_kernel_size{3};
     // Multi-image recording: capture a series of N consecutive frames per valid detection
     // Metrics are computed only from the first (trigger) frame
     bool multi_image_enabled{false};
@@ -62,6 +99,9 @@ struct FilterResult {
     bool touchesBorder{false};
     bool hasSingleInnerContour{false};
     bool inRange{false};
+    // False when a channel band is active and the object's centroid lies
+    // outside it (e.g. debris stuck on a channel wall). True when no band.
+    bool inChannel{true};
     int innerContourCount{0};
     int objectId{-1};
     int objectCount{0};
@@ -79,8 +119,23 @@ struct FilterResult {
     double area{0.0};
     double areaRatio{0.0};
     double ringRatio{0.0};
+    // Contract v2 per-object focus metric (variance of the Laplacian over the
+    // detected object). NaN when unusable or not computed. Replaces ring width
+    // as the v2 focus signal; ringRatio remains for Contract-1 compatibility.
+    double laplacianVariance{std::numeric_limits<double>::quiet_NaN()};
     double youngsModulus{0.0}; // Young's modulus (kPa) from LUT lookup
     BrightnessQuantiles brightness;
+    // Contract 3 (U-Net cells) per-object values; NaN / 0 under Contracts 1-2.
+    // Brightness mean and population variance of the raw gray over the filled
+    // outer contour (replaces the quartiles).
+    double brightnessMean{std::numeric_limits<double>::quiet_NaN()};
+    double brightnessVariance{std::numeric_limits<double>::quiet_NaN()};
+    double contourArea{0.0}; // area enclosed by the outer contour (cv::contourArea)
+    int pixelCount{0};       // mask pixels of the cell's component
+    int blemishCount{0};     // per frame: components below min_cell_area_px
+    // The outer contour encloses no area (a point or a line): no metrics, reason
+    // NoContour unless the cell is cut off.
+    bool degenerateContour{false};
     bool isTargetGroup{false}; // True if valid AND matches target group criteria
     // Contours found during processing (for snapshot/display), in the same
     // coordinate space as the processedImage mask. Shared (not deep-copied) so
@@ -88,6 +143,16 @@ struct FilterResult {
     // experiment copies, all reference one allocation instead of duplicating
     // every contour point N times. Null when no contours were extracted.
     std::shared_ptr<const std::vector<std::vector<cv::Point>>> allContours;
+    // Host-only analysis provenance; not ProcessingCoreAbi or persisted HDF schema.
+    // Exact calibration passed to analyzeObjects for this result; 0 = unknown.
+    double analysisPixelToMicronFactor{0.0};
+};
+
+// Source identity of one multi-image series member (see ProcessedFrame).
+struct SeriesImageInfo {
+    uint64_t frameIndex{0};      // FrameStore write index of the member
+    uint64_t timestampNs{0};     // camera timestamp (Frame::timestamp, raw unit)
+    uint64_t hostTimestampUs{0}; // host monotonic receipt stamp (0 if unknown)
 };
 
 // One analysed frame (or one object of a frame — several ProcessedFrames can
@@ -95,6 +160,10 @@ struct FilterResult {
 // publication (frozen-Mats invariant): every consumer shares them by
 // refcount and never clones merely for lifetime (issue #370).
 struct ProcessedFrame {
+    // Host-only preview provenance, not ProcessingCoreAbi or persisted HDF schema.
+    uint64_t previewStoreGeneration{0}, previewCaptureSession{0};
+    std::string previewRecipeSha256;
+    cv::Rect previewRoi;
     uint64_t index{0};
     uint64_t timestampNs{0};
     // Host monotonic acquisition stamp carried from playback::Frame (0 if unknown).
@@ -106,6 +175,16 @@ struct ProcessedFrame {
     // seriesImages[0] is the trigger image (same as originalImage), followed by subsequent frames.
     // Empty when multi-image mode is disabled.
     std::vector<cv::Mat> seriesImages;
+    // Identity of each series image, parallel to seriesImages (same size).
+    // Without it a series member is an anonymous picture: nothing says which
+    // camera frame it was or when it was exposed, so the series cannot be
+    // aligned against a sort pulse. Persisted as /valid_frames/series_meta.
+    std::vector<SeriesImageInfo> seriesInfo;
+    // False when a series member is not the frame that immediately followed
+    // its predecessor (the realtime consumer fell behind the ring and skipped
+    // frames mid-series). A gapped series is still saved, but flagged: its
+    // members are not N consecutive exposures.
+    bool seriesContiguous{true};
 };
 
 struct BufferedFrameCounts {

@@ -1,11 +1,16 @@
 # Run Modes
 
-> Two executables, three camera sources, a handful of env vars.
+> Two executables, four camera sources, a handful of env vars.
 
-**Related:** [[../camera/MockCamera]], [[../camera/MindVisionCamera]],
+**Related:** [[../camera/MockCamera]], [[../camera/MindVisionCamera]], [[../camera/AravisCamera]],
 [[../frontend/ConnectTab]], [[../frontend/Screenshot-Tour]]
 
 ## Executables
+
+The Qt desktop reserves one per-user session before opening hardware; a second
+launch reports the owner PID and exits. The lock spans installation paths and
+channels, and recovers after a dead owner. Existing builds without this guard
+must be closed before using the new build. See [[../frontend/DesktopInstance]].
 
 - **`mib_studio_qt.exe`** — the app. Hardware camera via
   [[../camera/EGrabberCamera]] or MindVision; the mock camera is reachable
@@ -18,6 +23,10 @@
   needs the vendor device driver installed.
 - **`screenshot_tour.exe`** — headless mock-mode UI tour that regenerates
   the user-manual screenshots. See [[../frontend/Screenshot-Tour]].
+- **`yofo-review`** (React + Tauri) — the standalone review product built
+  from `desktop/` with `--features review-only` and
+  `tauri.review.conf.json`; no camera, hardware or experiment code. See
+  [[../frontend/YofoReview]].
 
 ## Mock camera env vars
 
@@ -27,19 +36,24 @@ Read at startup (see `main.cpp` and [[../architecture/AppBackend]]):
 |---|---|---|
 | `MIB_CAMERA_MODE=mock` | unset | Force mock (bypasses ConnectTab) |
 | `MIB_CAMERA_MODE=mindvision` | unset | Force MindVision selection (uses `MIB_MINDVISION_CAMERA_INDEX` / `MIB_MINDVISION_CONFIG` if present) |
+| `MIB_CAMERA_MODE=aravis` | unset | Select optional Aravis; fails visibly if built with `MIB_ENABLE_ARAVIS=OFF` |
+| `MIB_ARAVIS_DEVICE_ID=<id>` | auto | Explicit Aravis device identifier (for Fake, `Fake_1`) |
+| `MIB_ARAVIS_FAKE=true\|false` | false | Explicitly enable Aravis's Fake interface for development/tests |
 | `MIB_MOCK_CAMERA_DIR=<path>` | — | Folder with PNG/TIFF/JPEG frames |
 | `MIB_MOCK_CAMERA_INTERVAL_MS=<ms>` | 33 | Frame cadence |
 | `MIB_MOCK_CAMERA_LOOP=true\|false` | true | Loop or stop at end |
 | `MIB_MINDVISION_CAMERA_INDEX=<n>` | 0 | MindVision device index used by startup selection |
 | `MIB_MINDVISION_CONFIG=<path>` | — | JSON config applied before MindVision capture starts |
-| `MIB_DISABLED_SERVICES=<csv>` | unset | Disable startup paths (`sqlite,hdf5,processing,yolo,autofocus,trigger,capture/camera,playback,auto_update,all`) |
+| `MIB_PROFILE_REGISTRY_URL=https://<ref>.supabase.co` | unset | Central profile registry origin (#398); unset = registry disabled |
+| `MIB_PROFILE_REGISTRY_PUBLISHABLE_KEY=sb_publishable_...` | unset | Supabase publishable key (never a service-role key); required with the URL |
+| `MIB_DISABLED_SERVICES=<csv>` | unset | Disable startup paths (`sqlite,hdf5,processing,autofocus,trigger,dot_grid,capture/camera,playback,auto_update,all`) |
 
 Sample frames ship at `data/mock_frames/frame_00000.tiff`.
 
 The GUI Settings action **Boot Service Toggles...** stores a persisted
 `QSettings` value (`Startup/DisabledServices`) that `main.cpp` maps into
 `MIB_DISABLED_SERVICES` before backend startup (unless the env var is already set externally).
-- The startup camera mode picker now recognizes `mock`, `mindvision`, and the
+- The startup camera mode picker now recognizes `mock`, `mindvision`, `aravis`, and the
   hardware/eGrabber default path.
 
 ## MLflow (test metrics only)
@@ -69,3 +83,18 @@ the network.
 - `docs/howto/troubleshoot-crashes.md`
 - `docs/howto/safe-start-stop-egrabber.md`
 - `knowledge_map/task/qt_qpa_platform_plugin_missing_windows.md`
+
+
+### Independent nanopositioner support (2026-09-15)
+
+Windows defaults `MIB_ENABLE_COREMOR=ON` and builds the bundled XMT driver
+even when `MIB_ENABLE_HARDWARE_SDKS=OFF` disables EGrabber. Set
+`MIB_ENABLE_COREMOR=OFF` for a build without the Coremor driver. Linux and
+processing-only builds remain SDK-free for Coremor. See
+[[../services/AutofocusService]] for the vendor support inventory.
+
+## Mock frame source (2026-09-21)
+
+`data/mock_frames/` holds two placeholder frames. For a real stream use the
+Hub asset `512x96stream-mock-frames` via `scripts/provision-assets.py` and
+point `MIB_MOCK_CAMERA_DIR` at the provisioned folder. See [[Assets]].

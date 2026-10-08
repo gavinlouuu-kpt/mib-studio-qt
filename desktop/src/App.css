@@ -817,11 +817,11 @@ button.btn:disabled,
   border: 1px solid var(--border);
   background: #fff;
   padding: 8px;
-  flex: 1;
-  min-height: 0;
+  flex: 1 0 auto;
+  min-height: auto;
   display: flex;
   flex-direction: column;
-  overflow: auto;
+  overflow: visible;
 }
 
 /* ---- Canvas / live view ---- */
@@ -937,6 +937,13 @@ button.btn:disabled,
   padding: 8px;
   min-width: 240px;
   flex: 1;
+}
+
+/* Stacked in a sub-tab body (a content-height flex column since #543), a
+   config group keeps its own height: with flex: 1 it shared the extra
+   height with the Review split and pushed the frames below the fold. */
+.subtab-body > .config-group {
+  flex: 0 0 auto;
 }
 
 .config-group h5 {
@@ -1079,4 +1086,140 @@ button.btn:disabled,
   background: #fff;
   padding: 8px;
   color: var(--muted);
+}
+
+/* Central Methods panel (registry, #398) */
+.registry-modal {
+  max-width: 820px;
+  min-width: 620px;
+}
+
+.registry-status {
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+
+.registry-activity,
+.registry-note {
+  color: #555;
+  font-size: 12px;
+}
+
+.registry-warning {
+  color: #b00020;
+  margin: 6px 0;
+}
+
+.registry-table-wrap {
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  background: #fff;
+}
+
+.registry-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.registry-table th,
+.registry-table td {
+  text-align: left;
+  padding: 3px 6px;
+  border-bottom: 1px solid #eee;
+  white-space: nowrap;
+}
+
+.registry-table tr.revoked td {
+  color: #b00020;
+  font-weight: 700;
+}
+
+.registry-table tr.selected td {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.registry-table tr {
+  cursor: pointer;
+}
+.registry-table td.validation-failed {
+  color: var(--err);
+  font-weight: 600;
+}
+
+.registry-tabs .btn.active {
+  background: var(--accent);
+  color: #fff;
+}
+.registry-reason {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 4px 0;
+}
+.registry-details,
+.registry-conflict {
+  white-space: pre-wrap;
+  font-size: 12px;
+  margin: 4px 0;
+  max-height: 140px;
+  overflow: auto;
+}
+.registry-conflict {
+  color: var(--warn);
+}
+.registry-table tr.conflict td {
+  color: var(--warn);
+}
+.registry-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.registry-confirm {
+  border: 1px solid var(--accent);
+  padding: 6px 8px;
+  margin: 4px 0;
+}
+.registry-confirm pre {
+  white-space: pre-wrap;
+  font-size: 12px;
+  margin: 0 0 4px;
+  max-height: 180px;
+  overflow: auto;
+}
+
+/* Camera & Alignment: mode and rate line under the toolbar */
+.camera-alignment-status {
+  padding: 4px 8px;
+  font-size: 0.9em;
+  color: var(--muted, #555);
+}
+
+/* Non-blocking readiness warnings at run start (#501: recording to RAM) */
+.start-notice { margin: 4px 0; color: var(--warn); }
+
+/* Outcome of the last finished run (#549, components/RunOutcomeNotice.tsx) */
+.run-outcome { margin: 4px 0; padding: 4px 8px; border-left: 3px solid var(--border); }
+.run-outcome.ok { border-left-color: var(--ok); }
+.run-outcome.partial { border-left-color: var(--border); }
+.run-outcome.legacy { color: var(--muted); }
+.run-outcome.attention { border-left-color: var(--warn); color: var(--warn); }
+.run-outcome.loss, .run-outcome.unknown { border-left-color: var(--warn); color: var(--warn); }
+.run-outcome.failed { border-left-color: var(--err); color: var(--err); }
+
+/* ---- #550 m15: narrow windows (about 1024 px, the remote browser UI) ----
+   Tab labels and the camera buttons stay on one line; when the row is too narrow the camera
+   buttons wrap below the tabs instead of squeezing the text. The status line wraps instead of
+   being cut off with an ellipsis. */
+.stage-tab-name,
+.stage-tab-status,
+.camera-actions button { white-space: nowrap; }
+.tabs-header { flex-wrap: wrap; }
+@media (max-width: 1100px) {
+  .tabbar button { padding: 5px 8px; }
+  .stage-tab-name { font-size: 13px; }
+  .statusbar { flex-wrap: wrap; row-gap: 2px; }
+  .statusbar .metrics { white-space: normal; overflow: visible; text-overflow: clip; text-align: right; }
 }

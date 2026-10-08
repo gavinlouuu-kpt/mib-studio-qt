@@ -1,15 +1,24 @@
 #include "backend/app/ExperimentCoordinator.h"
+#include "backend/app/RecordingTarget.h"
+#include "backend/pz/PzInstrumentControl.h"
+#include "backend/processing/IExecutionProvider.h"
+#include "backend/processing/pz/PzProfileCompiler.h"
+#include "backend/app/SciencePlacement.h"
 
 #include "backend/app/AppBackend.h"
+#include "backend/app/MethodProvenance.h"
 #include "backend/app/Tools.h"
 #include "backend/camera/common/TimestampValue.h"
 #include "backend/playback/FrameStore.h"
 #include "backend/processing/ProcessingCoreLoader.h"
 #include "backend/processing/ProcessingService.h"
+#include "backend/profiles/ProfileRegistryWorker.h"
 #include "backend/recording/Hdf5Service.h"
 #include "backend/services/CaptureService.h"
+#include "backend/services/RfGeneratorService.h"
 #include "backend/services/TriggerService.h"
 
+#include <limits>
 #include <spdlog/spdlog.h>
 
 #include <chrono>
@@ -149,11 +158,73 @@ bool outputWritable(const std::string& path, std::string& reason)
     return true;
 }
 
+// Small format/access probe, NOT a sustained-throughput certification. Cached
+// by readiness generation so a UI timer does not continuously write files.
+bool probeHdf5Destination(const std::string& output, std::string& reason) {
+    auto dir = std::filesystem::path(output).parent_path();
+    if (dir.empty()) dir = std::filesystem::current_path();
+    std::error_code ec;
+    while (!dir.empty() && !std::filesystem::exists(dir, ec))
+        dir = dir.parent_path();
+    const auto path = dir / (".mib_hdf5_probe_" + std::to_string(Tools::getTimestamp()) + ".h5");
+    struct Cleanup {
+        std::filesystem::path path;
+        ~Cleanup() {
+            std::error_code e;
+            std::filesystem::remove(path, e);
+            std::filesystem::remove(path.string() + ".recovery.h5", e);
+        }
+    } cleanup{path};
+    try {
+        services::Hdf5Service hdf;
+        std::vector<services::ProcessedFrame> frames(2);
+        for (size_t i = 0; i < frames.size(); ++i) {
+            auto& f = frames[i];
+            f.originalImage = cv::Mat(32, 32, CV_8UC1);
+            for (int y = 0; y < 32; ++y)
+                for (int x = 0; x < 32; ++x)
+                    f.originalImage.at<uint8_t>(y, x) = static_cast<uint8_t>(x + 7 * y + i);
+            f.processedImage = f.originalImage.clone();
+        }
+        bool ok = hdf.openFile(path.string()) && hdf.appendFrames(frames, {}) && hdf.flush();
+        hdf.closeFile();
+        std::vector<services::ProcessedFrame> readback;
+        ok = ok && hdf.loadFile(path.string()) && hdf.readValidFrames(readback) &&
+             readback.size() == frames.size();
+        if (ok)
+            for (size_t i = 0; i < frames.size(); ++i)
+                ok = ok &&
+                     cv::norm(frames[i].originalImage, readback[i].originalImage, cv::NORM_INF) ==
+                         0 &&
+                     cv::norm(frames[i].processedImage, readback[i].processedImage, cv::NORM_INF) ==
+                         0;
+        hdf.closeFile();
+        reason = ok ? "HDF5 write/close/reopen verified; sustained throughput unverified"
+                    : "destination HDF5 write/read verification failed";
+        return ok;
+    } catch (const std::exception& e) {
+        reason = std::string("destination HDF5 probe failed: ") + e.what();
+        return false;
+    }
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
 // JSON serializers
 // ---------------------------------------------------------------------------
+
+// PL science (YOFO S2): the profile the PL runs, from the current settings.
+static backend::processing::pz::CompiledProfile compilePlProfile(AppBackend& backend)
+{
+    auto& proc = backend.processing();
+    backend::processing::pz::UnetCellsProfileInputs in;
+    in.config = proc.getEffectiveProcessingConfig(); // includes the detected channel band
+    in.pixelToMicron = proc.getPixelToMicronFactor();
+    in.storeInvalidEveryN = static_cast<uint32_t>(std::min<size_t>(proc.getInvalidFrameSamplingRate(), 0xFFFF));
+    in.lut = proc.eModulusLut().isLoaded() ? &proc.eModulusLut() : nullptr;
+    return backend::processing::pz::compileUnetCellsV2(in);
+}
 
 std::string runSnapshotToJson(const RunConfigurationSnapshot& s)
 {
@@ -189,13 +260,25 @@ std::string runSnapshotToJson(const RunConfigurationSnapshot& s)
       << ",\"processing_config_sha256\":" << q(s.processingConfigSha256)
       << ",\"config_json_sha256\":" << q(s.configJsonSha256)
       << ",\"profile_id\":" << q(s.profileId)
+      << ",\"method\":" << methodProvenanceToJson(s.method)
       << ",\"pixel_to_micron\":" << s.pixelToMicron
       << ",\"background\":{\"present\":" << (s.backgroundPresent ? "true" : "false")
       << ",\"generation\":" << s.backgroundGeneration << ",\"sha256\":" << q(s.backgroundSha256) << "}"
       << ",\"trigger\":{\"required\":" << (s.triggerRequired ? "true" : "false")
       << ",\"bound\":" << (s.triggerBound ? "true" : "false") << ",\"generation\":" << s.triggerGeneration << "}"
+      << ",\"rf_generator\":{\"configured\":" << (s.rfGeneratorConfigured ? "true" : "false")
+      << ",\"connected\":" << (s.rfGeneratorConnected ? "true" : "false")
+      << ",\"identity\":" << q(s.rfGeneratorIdentity) << ",\"trigger_mode\":" << q(s.rfGeneratorTriggerMode)
+      << ",\"trigger_delay_s\":" << s.rfGeneratorTriggerDelayS << ",\"pulse_width_s\":" << s.rfGeneratorPulseWidthS
+      << ",\"error\":" << q(s.rfGeneratorError) << ",\"issues\":" << s.rfGeneratorIssues.size() << "}"
       << ",\"output_path\":" << q(s.outputPath)
       << ",\"realtime_mode\":" << q(s.realtimeMode)
+      << ",\"science_placement\":" << q(s.sciencePlacement)
+      << ",\"execution_provider\":" << q(s.executionProvider)
+      << ",\"pl_core\":{\"valid\":" << (s.plCoreValid ? "true" : "false")
+      << ",\"abi_version\":" << s.plAbiVersion << ",\"science_profile\":" << s.plScienceProfile
+      << ",\"profile_version\":" << s.plProfileVersion << ",\"build_id\":" << q(s.plBuildId)
+      << ",\"weights_sha256_prefix\":" << q(s.plWeightsId) << "}"
       << ",\"application\":{\"version\":" << q(s.applicationVersion) << ",\"build_id\":" << q(s.buildId)
       << ",\"os\":" << q(s.operatingSystem) << "}"
       << "}";
@@ -229,7 +312,10 @@ bool ExperimentCoordinator::InvalidationKey::operator==(const InvalidationKey& o
            coreSha256 == o.coreSha256 && corePinSatisfied == o.corePinSatisfied &&
            backgroundGeneration == o.backgroundGeneration && roiX == o.roiX && roiY == o.roiY &&
            roiW == o.roiW && roiH == o.roiH && pixelToMicron == o.pixelToMicron &&
-           outputPath == o.outputPath && profileId == o.profileId && faulted == o.faulted;
+           outputPath == o.outputPath && profileId == o.profileId && method == o.method &&
+           faulted == o.faulted && frameWidth == o.frameWidth && frameHeight == o.frameHeight &&
+           pixelFormat == o.pixelFormat && frameGeometryKnown == o.frameGeometryKnown &&
+           bufferBytes == o.bufferBytes && flushInterval == o.flushInterval;
 }
 
 ExperimentCoordinator::ExperimentCoordinator(AppBackend& backend) : backend_(backend) {}
@@ -246,6 +332,7 @@ void ExperimentCoordinator::reportUnresolvedFault(const std::string& code, const
 {
     std::lock_guard<std::mutex> lk(mutex_);
     faultActive_ = true;
+    ++faultRevision_;
     faultCode_ = code;
     faultMessage_ = message;
 }
@@ -260,6 +347,30 @@ void ExperimentCoordinator::clearUnresolvedFault()
         state_ = ExperimentRunState::Idle;
         publishLocked(lk, "fault cleared");
     }
+}
+
+bool ExperimentCoordinator::acknowledgeFault(uint64_t expectedRun, uint64_t expectedFaultRevision,
+                                             const std::string& expectedCode,
+                                             const std::string& expectedMessage,
+                                             std::string& error) {
+    std::unique_lock<std::mutex> lk(mutex_);
+    if ((state_ != ExperimentRunState::Idle && state_ != ExperimentRunState::Failed) ||
+        status_.flushing || activeRun_) {
+        error = "Wait for experiment finalization before acknowledging a fault";
+        return false;
+    }
+    if (!faultActive_ || faultRevision_ != expectedFaultRevision ||
+        status_.startGeneration != expectedRun || faultCode_ != expectedCode ||
+        faultMessage_ != expectedMessage) {
+        error = "Fault changed; review the latest status before acknowledging";
+        return false;
+    }
+    faultActive_ = false;
+    faultCode_.clear();
+    faultMessage_.clear();
+    state_ = ExperimentRunState::Idle;
+    publishLocked(lk, "Operator acknowledged fault; saved-run outcome is unchanged");
+    return true;
 }
 
 bool ExperimentCoordinator::hasUnresolvedFault() const
@@ -299,6 +410,17 @@ RunConfigurationSnapshot ExperimentCoordinator::candidateLocked(const std::strin
 
     const auto roi = proc.getRealtimeRoi();
     s.roiX = roi.x; s.roiY = roi.y; s.roiW = roi.w; s.roiH = roi.h;
+    s.sciencePlacement = app::sciencePlacement();
+    if (auto* provider = backend_.executionProvider()) {
+        s.executionProvider = provider->name();
+        const auto core = provider->identity();
+        s.plCoreValid = core.valid;
+        s.plAbiVersion = core.abiVersion;
+        s.plScienceProfile = core.scienceProfile;
+        s.plProfileVersion = core.profileVersion;
+        s.plBuildId = core.buildId;
+        s.plWeightsId = core.profileId;
+    }
     if (auto store = backend_.getFrameStore()) {
         playback::Frame f;
         if (store->getLatest(f)) {
@@ -313,8 +435,31 @@ RunConfigurationSnapshot ExperimentCoordinator::candidateLocked(const std::strin
     s.processingCorePinSatisfied = proc.isProcessingCorePinSatisfied();
     s.processingConfigVersion = proc.getConfigVersion();
     s.processingConfigSha256 = sha256Of(canonicalProcessingConfig(proc.getProcessingConfig()));
-    s.configJsonSha256 = sha256Of(backend_.getLastConfigJson());
+    const auto configJson = backend_.getLastConfigJson();
+    s.configJsonSha256 = sha256Of(configJson);
     s.profileId = profileId;
+    {
+        const auto context = backend_.methodContext();
+        const auto contextHash = profiles::methodContextHash(context);
+        const auto& instrumentName = backend_.instrumentIdentity().name;
+        auto& registry = backend_.profileRegistry();
+        const auto generation = registry.generation();
+        auto& memo = methodMemo_;
+        if (!memo.valid || memo.rawConfigSha256 != s.configJsonSha256 ||
+            memo.registryGeneration != generation || memo.contextHash != contextHash ||
+            memo.instrumentName != instrumentName) {
+            const auto canonical =
+                configJson.empty() ? std::string{} : profiles::canonicalConfigSha256(configJson);
+            memo.method = resolveMethodProvenance(canonical, registry.snapshot(), context,
+                                                  instrumentName);
+            memo.rawConfigSha256 = s.configJsonSha256;
+            memo.registryGeneration = generation;
+            memo.contextHash = contextHash;
+            memo.instrumentName = instrumentName;
+            memo.valid = true;
+        }
+        s.method = memo.method;
+    }
     s.pixelToMicron = proc.getPixelToMicronFactor();
 
     const auto bg = proc.getRealtimeBackgroundGrayShared();
@@ -325,6 +470,30 @@ RunConfigurationSnapshot ExperimentCoordinator::candidateLocked(const std::strin
     s.triggerRequired = proc.getProcessingConfig().enable_target_group;
     s.triggerGeneration = backend_.trigger().boundGeneration();
     s.triggerBound = s.triggerGeneration != 0 && s.triggerGeneration == lifecycle.generation;
+
+    // RF sort generator: readback-first. Only consulted when sorting is on
+    // and a link is configured; connect attempts back off so a missing
+    // instrument does not stall every readiness poll.
+    {
+        auto& rf = backend_.rfGenerator();
+        s.rfGeneratorConfigured = rf.config().enabled;
+        if (s.triggerRequired && s.rfGeneratorConfigured) {
+            services::RfGeneratorService::State state;
+            if (rf.ensureConnected() && rf.readState(state)) {
+                s.rfGeneratorConnected = true;
+                s.rfGeneratorIdentity = state.identity;
+                s.rfGeneratorTriggerMode = state.triggerMode;
+                s.rfGeneratorTriggerDelayS = state.triggerDelayS;
+                s.rfGeneratorPulseWidthS = state.pulseWidthS;
+                for (const auto& issue : services::RfGeneratorService::preflightForSorting(state)) {
+                    if (issue.blocking) s.rfGeneratorIssues.push_back(issue.gate + ": " + issue.message);
+                }
+            } else {
+                s.rfGeneratorConnected = false;
+                s.rfGeneratorError = rf.lastErrorMessage();
+            }
+        }
+    }
 
     s.outputPath = outputPath;
     s.realtimeMode = proc.getRealtimeProcessingMode() ==
@@ -357,7 +526,14 @@ ExperimentCoordinator::currentKeyLocked(const std::string& outputPath, const std
     k.pixelToMicron = c.pixelToMicron;
     k.outputPath = outputPath;
     k.profileId = profileId;
+    k.method = methodInvalidationKey(c.method);
     k.faulted = faultActive_;
+    k.frameWidth = c.frameWidth;
+    k.frameHeight = c.frameHeight;
+    k.pixelFormat = c.pixelFormat;
+    k.frameGeometryKnown = c.frameGeometryKnown;
+    k.bufferBytes = backend_.processing().getMaxBufferedBytes();
+    k.flushInterval = backend_.processing().getFlushInterval();
     return k;
 }
 
@@ -377,9 +553,34 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
     r.generation = readinessGeneration_.load();
     r.candidate.readinessGeneration = r.generation;
 
+    // PZ7035 (#501 P1): a run needs Run mode, where the producer stream is deliberately stopped
+    // (the PL takes every frame; previews come from the cell capture). Its gates replace the
+    // live-camera ones (session, delivery mode, geometry, overview).
+    const bool instrumentModes = backend_.instrumentControlAvailable();
+    if (instrumentModes) {
+        const auto mode = backend_.instrumentMode();
+        if (mode == pz::InstrumentMode::Run) {
+            const auto [x, y] = backend_.instrumentRunOffset();
+            r.gates.push_back(gate("instrument.mode", GateStatus::Pass, {}, {},
+                                   "Run: 512x96 at (" + std::to_string(x) + ", " + std::to_string(y) +
+                                       "), 5 kHz, U-Net cell path on"));
+        } else {
+            r.gates.push_back(gate("instrument.mode", GateStatus::Fail,
+                                   std::string("the instrument is in ") +
+                                       (mode == pz::InstrumentMode::Align ? "Align" : "no camera mode"),
+                                   "Choose the window in Camera & Alignment and switch to Run"));
+        }
+    } else if (backend_.isCameraOverview()) {
+        r.gates.push_back(gate("camera.mode", GateStatus::Fail,
+                               "The camera is showing the full sensor overview",
+                               "Switch to Experiment to apply the selected camera ROI"));
+    }
+
     // --- camera session / hardware-vs-mock --------------------------------
     const auto lifecycle = backend_.capture().lifecycleSnapshot();
-    if (c.cameraReady) {
+    if (instrumentModes) {
+        // live-camera session gates do not apply in Run (see instrument.mode)
+    } else if (c.cameraReady) {
         r.gates.push_back(gate("camera.session", GateStatus::Pass, {}, {},
                                "generation " + std::to_string(c.captureGeneration)));
     } else {
@@ -398,9 +599,9 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
                                "select the mock camera explicitly, or install/connect the hardware",
                                "effective=" + c.camera.effective));
     } else if (c.camera.simulated) {
-        r.gates.push_back(gate("camera.source", GateStatus::Warn, "simulated (mock) camera selected",
+        r.gates.push_back(gate("camera.source", GateStatus::Warn, "simulated camera source selected",
                                "expected for development/tests; not a hardware run",
-                               "effective=mock label=" + c.camera.label));
+                               "effective=" + c.camera.effective + " label=" + c.camera.label));
     } else if (c.camera.effective == "unknown") {
         r.gates.push_back(gate("camera.source", GateStatus::Unavailable, "no camera source configured",
                                "connect a camera or configure the mock camera"));
@@ -408,7 +609,9 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
         r.gates.push_back(gate("camera.source", GateStatus::Pass, {}, {},
                                c.camera.effective + " " + c.camera.label));
     }
-    if (!c.cameraReady) {
+    if (instrumentModes) {
+        // no live-camera delivery in Run
+    } else if (!c.cameraReady) {
         r.gates.push_back(gate("camera.deliveryMode", GateStatus::Unavailable,
                                "delivery mode is confirmed only by a running camera"));
     } else if (!c.deliveryModeConfirmed) {
@@ -422,7 +625,9 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
     } else {
         r.gates.push_back(gate("camera.deliveryMode", GateStatus::Pass, {}, {}, c.deliveryModeActive));
     }
-    if (c.frameGeometryKnown) {
+    if (instrumentModes) {
+        // the PL frame is the fixed 512x96 U-Net window
+    } else if (c.frameGeometryKnown) {
         r.gates.push_back(gate("camera.geometry", GateStatus::Pass, {}, {},
                                std::to_string(c.frameWidth) + "x" + std::to_string(c.frameHeight) +
                                    " pf=0x" + [&] { char b[20]; std::snprintf(b, sizeof(b), "%llx", (unsigned long long)c.pixelFormat); return std::string(b); }()));
@@ -430,7 +635,30 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
         r.gates.push_back(gate("camera.geometry", GateStatus::Unavailable, "no frame has been received yet",
                                "wait for the first frame"));
     }
-    if (c.roiW > 0 && c.roiH > 0) {
+    if (!app::hostProcessingAvailable()) {
+        // The PL processes every frame; the host pipeline's gates do not apply. Its
+        // results reach the PS through an execution provider (YOFO S1).
+        if (auto* provider = backend_.executionProvider()) {
+            r.gates.push_back(gate("science.pl", GateStatus::Pass, {}, {},
+                                   "results from execution provider '" + provider->name() + "'"));
+            // The settings must compile into the PL profile page (S2).
+            const auto profile = compilePlProfile(backend_);
+            if (profile.ok()) {
+                r.gates.push_back(gate("processing.profileCompile", GateStatus::Pass, {}, {},
+                                       "unet_cells_v2" + std::string(profile.table0.empty() ? ", no E-modulus table"
+                                                                                           : ", E-modulus table")));
+            } else {
+                std::string why;
+                for (const auto& e : profile.errors) why += (why.empty() ? "" : "; ") + e;
+                r.gates.push_back(gate("processing.profileCompile", GateStatus::Fail, why,
+                                       "correct the processing settings"));
+            }
+        } else {
+            r.gates.push_back(gate("science.pl", GateStatus::Warn,
+                                   "processing runs on the PL; no execution provider brings its results to the PS",
+                                   "set MIB_EXECUTION_PROVIDER=pz on the instrument"));
+        }
+    } else if (c.roiW > 0 && c.roiH > 0) {
         r.gates.push_back(gate("processing.roi", GateStatus::Pass, {}, {},
                                std::to_string(c.roiW) + "x" + std::to_string(c.roiH) + "@" +
                                    std::to_string(c.roiX) + "," + std::to_string(c.roiY)));
@@ -439,7 +667,9 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
     }
 
     // --- processing core / config / calibration ---------------------------
-    if (c.processingCorePinSatisfied) {
+    if (!app::hostProcessingAvailable()) {
+        // none of the host pipeline's prerequisites apply
+    } else if (c.processingCorePinSatisfied) {
         r.gates.push_back(gate("processing.core", GateStatus::Pass, {}, {},
                                c.processingCore.version + " contract " +
                                    std::to_string(c.processingCore.contractVersion)));
@@ -449,9 +679,11 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
                                    backend_.processing().requiredProcessingCoreVersion() + " is not active",
                                "activate the pinned core in Settings > Processing Core"));
     }
-    r.gates.push_back(gate("processing.config", GateStatus::Pass, {}, {},
-                           "version " + std::to_string(c.processingConfigVersion) + " sha " +
-                               c.processingConfigSha256.substr(0, 12)));
+    if (app::hostProcessingAvailable())
+        r.gates.push_back(gate("processing.config", GateStatus::Pass, {}, {},
+                               "version " + std::to_string(c.processingConfigVersion) + " sha " +
+                                   c.processingConfigSha256.substr(0, 12)));
+    r.gates.push_back(methodRevisionGate(c.method));
     if (c.pixelToMicron > 0.0) {
         r.gates.push_back(gate("calibration.pixelToMicron", GateStatus::Pass, {}, {},
                                std::to_string(c.pixelToMicron)));
@@ -460,7 +692,9 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
                                "pixel-to-micron factor is not positive",
                                "set the conversion factor in Settings"));
     }
-    if (c.backgroundPresent) {
+    if (!app::hostProcessingAvailable()) {
+        // backgrounds live in the PL's table bank (B6 profile); checked there
+    } else if (c.backgroundPresent) {
         r.gates.push_back(gate("processing.background", GateStatus::Pass, {}, {},
                                "generation " + std::to_string(c.backgroundGeneration) + " sha " +
                                    c.backgroundSha256.substr(0, 12)));
@@ -468,6 +702,17 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
         r.gates.push_back(gate("processing.background", GateStatus::Warn,
                                "no background image set; detection uses frame thresholds only",
                                "capture a background (Set Background / calibration)"));
+    }
+
+    if (!app::hostProcessingAvailable()) {
+        // no host calibration
+    } else if (backend_.processing().backgroundCalibrationStatus().state ==
+        services::ProcessingService::BackgroundCalibrationState::Running) {
+        r.gates.push_back(gate("processing.backgroundCalibration", GateStatus::Fail,
+                               "background calibration is still running",
+                               "wait for completion or cancel calibration before starting"));
+    } else {
+        r.gates.push_back(gate("processing.backgroundCalibration", GateStatus::Pass));
     }
 
     // --- trigger / strobe --------------------------------------------------
@@ -481,6 +726,33 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
                                "sorting is enabled but the trigger service is not bound to the running camera",
                                "restart the camera; check the trigger wiring"));
     }
+    // The RF generator behind the trigger line: what it is set to decides
+    // whether a pulse becomes a sort burst at all, so a configured link that
+    // is down or mis-armed blocks a sorting run.
+    if (!c.triggerRequired) {
+        r.gates.push_back(gate("rf.generator", GateStatus::NotRequired, "target-group sorting disabled"));
+    } else if (!c.rfGeneratorConfigured) {
+        r.gates.push_back(gate("rf.generator", GateStatus::NotRequired, "RF generator link disabled or not configured"));
+    } else if (!c.rfGeneratorConnected) {
+        r.gates.push_back(gate("rf.generator", GateStatus::Fail,
+                               "RF generator link is down: " + c.rfGeneratorError,
+                               "check the USB/LAN connection and that the instrument is an SSG3000X"));
+    } else if (!c.rfGeneratorIssues.empty()) {
+        std::string why;
+        for (const auto& i : c.rfGeneratorIssues) {
+            if (!why.empty()) why += "; ";
+            why += i;
+        }
+        r.gates.push_back(gate("rf.generator", GateStatus::Fail, why,
+                               "arm the generator: MOD > PULSE (Pulse State, Pulse Trigger = Ext Trig, Source = Int) and RF ON",
+                               c.rfGeneratorIdentity));
+    } else {
+        std::ostringstream d;
+        d.precision(6);
+        d << c.rfGeneratorIdentity << " trigger " << c.rfGeneratorTriggerMode << " delay "
+          << c.rfGeneratorTriggerDelayS * 1e6 << " us width " << c.rfGeneratorPulseWidthS * 1e6 << " us";
+        r.gates.push_back(gate("rf.generator", GateStatus::Pass, {}, {}, d.str()));
+    }
 
     // --- output / storage --------------------------------------------------
     if (outputPath.empty()) {
@@ -490,11 +762,57 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
         std::string why;
         if (outputWritable(outputPath, why)) {
             r.gates.push_back(gate("storage.output", GateStatus::Pass, {}, {}, outputPath));
+            const auto generation = readinessGeneration_.load();
+            const auto now = Tools::getTimestamp();
+            if (storageProbeGeneration_ != generation || now - storageProbeTimeUs_ > 30'000'000) {
+                storageProbeOk_ = probeHdf5Destination(outputPath, storageProbeReason_);
+                storageProbeGeneration_ = generation;
+                storageProbeTimeUs_ = now;
+            }
+            r.gates.push_back(
+                gate("storage.roundtrip", storageProbeOk_ ? GateStatus::Pass : GateStatus::Fail,
+                     storageProbeReason_, storageProbeOk_ ? "" : "choose another destination"));
         } else {
             r.gates.push_back(gate("storage.output", GateStatus::Fail, why,
                                    "choose a writable destination with free space", outputPath));
         }
+        // PZ7035 (#501): a RAM-backed destination (today's JTAG RAM root) loses the run at
+        // power-off. Non-blocking: the operator sees it at start and copies the data off.
+        if (!app::hostProcessingAvailable()) {
+            const auto target = app::recordingTarget(outputPath);
+            if (target.ram) {
+                r.gates.push_back(gate("storage.persistent", GateStatus::Warn, app::recordingTargetWarning(target),
+                                       "record to the SATA disk once it is mounted", target.filesystem));
+            } else {
+                r.gates.push_back(gate("storage.persistent", GateStatus::Pass, {}, {}, target.filesystem));
+            }
+        }
     }
+    if (app::hostProcessingAvailable() && c.frameGeometryKnown) {
+        const auto cfg = backend_.processing().getProcessingConfig();
+        const uint64_t images = cfg.multi_image_enabled
+                                    ? static_cast<uint64_t>(std::max(1, cfg.multi_image_count)) + 1
+                                    : 2;
+        const uint64_t cap = backend_.processing().getMaxBufferedBytes();
+        const uint64_t limit = std::numeric_limits<uint64_t>::max();
+        const bool overflow = c.frameHeight == 0 || c.frameWidth == 0 ||
+                              c.frameWidth > limit / c.frameHeight ||
+                              c.frameWidth * c.frameHeight > limit / images;
+        const uint64_t payload = overflow ? limit : c.frameWidth * c.frameHeight * images;
+        if (overflow || (cap && payload > cap))
+            r.gates.push_back(
+                gate("storage.buffer", GateStatus::Fail,
+                     "one full-frame image/mask series cannot fit the recording byte budget",
+                     "reduce frame size/series length or increase the recording budget"));
+        else if (cap && cap / payload < backend_.processing().getFlushInterval())
+            r.gates.push_back(gate(
+                "storage.buffer", GateStatus::Warn,
+                "byte-pressure flushing will run before the configured frame threshold",
+                "leave capacity headroom; runtime overflow will fail the experiment explicitly"));
+        else
+            r.gates.push_back(gate("storage.buffer", GateStatus::Pass));
+    }
+
     if (backend_.hdf5().isFileOpen()) {
         r.gates.push_back(gate("storage.hdf5", GateStatus::Fail, "an HDF5 file is already open",
                                "finish or close the current file first"));
@@ -523,7 +841,11 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
     // --- telemetry capability relevant to a hard gate -----------------------
     {
         const auto t = backend_.capture().telemetrySnapshot();
-        if (!c.cameraReady) {
+        if (instrumentModes) {
+            // Run: the PL records every frame itself; FRAME sequence gaps and the link counters
+            // (instrument status) report loss, not the stopped producer stream.
+            r.gates.push_back(gate("telemetry.transportLoss", GateStatus::Pass, {}, {}, "PL frame records"));
+        } else if (!c.cameraReady) {
             r.gates.push_back(gate("telemetry.transportLoss", GateStatus::Unavailable,
                                    "no active session"));
         } else if (t.transportLostFrames.validity == services::MetricValidity::Unsupported) {
@@ -573,6 +895,25 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
     if (workerExit_) {
         result.outcome = ExperimentStartOutcome::Busy;
         result.message = "experiment coordinator is shut down";
+        return result;
+    }
+    // A stage operation queued before this Start is still running: refuse, never start
+    // under a moving stage (#533). Operations queued after are refused by the idle gate.
+    if (stageBusyProbe_ && stageBusyProbe_()) {
+        result.outcome = ExperimentStartOutcome::Busy;
+        result.message = "a Z stage operation is active; stop it or wait for it to finish before starting an experiment";
+        SPDLOG_WARN("ExperimentCoordinator: start refused — {}", result.message);
+        return result;
+    }
+
+    // Writer conflicts must be refused before even changing processing mode.
+    // Raw recording acquires its writer under this same coordinator mutex.
+    if (backend_.isFrameRecording() || backend_.hdf5().isFileOpen()) {
+        result.outcome = ExperimentStartOutcome::NotReady;
+        result.message =
+            "stop raw recording and close the existing HDF5 file before starting an experiment";
+        result.readiness = evaluateLocked(request.outputPath, request.profileId);
+        SPDLOG_WARN("ExperimentCoordinator: start refused — {}", result.message);
         return result;
     }
 
@@ -684,9 +1025,46 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
 
     // 6-7. Acquire processing ownership and enter Active.
     proc.setExperimentAccountingContext(run.captureGeneration, run.deliveryModeActive == "latestFrame");
+    // Pulse records from before the run (manual/periodic test pulses, a
+    // previous run's tail) are not this experiment's: discard them.
+    (void)backend_.trigger().drainEvents();
     proc.startExperiment();
+    // The shared lifecycle must own a live consumer. Qt previously started it
+    // from a visible tab; a headless/Tauri Start otherwise finalized zero work.
+    if (app::hostProcessingAvailable()) {
+        proc.setRealtimeEnabled(true);
+        proc.startRealtime(backend_.getFrameStore());
+    } else if (auto* provider = backend_.executionProvider()) {
+        // PL science: arm after the run's accounting started, so every frame the
+        // PL reports from here on is admitted once.
+        const uint64_t runId = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                         std::chrono::system_clock::now().time_since_epoch())
+                                                         .count());
+        std::string providerError;
+        const auto profile = compilePlProfile(backend_);
+        bool providerOk = profile.ok() && provider->configure(profile, &providerError);
+        if (!profile.ok()) providerError = "the settings do not compile into the PL profile";
+        providerOk = providerOk && provider->start(runId, &providerError);
+        if (!providerOk) {
+            // Roll back as for a provenance failure; the results source is a
+            // start prerequisite, so the outcome is NotReady with the reason.
+            proc.endExperiment();
+            hdf5.closeFile();
+            std::error_code ec;
+            std::filesystem::remove(path, ec);
+            state_ = ExperimentRunState::Idle;
+            result.outcome = ExperimentStartOutcome::NotReady;
+            result.message = "execution provider '" + provider->name() + "' did not start: " + providerError;
+            SPDLOG_ERROR("ExperimentCoordinator: {}", result.message);
+            restoreModeOnFailure();
+            publishLocked(lk, "start failed");
+            return result;
+        }
+        SPDLOG_INFO("ExperimentCoordinator: PL results from '{}' (run id {})", provider->name(), runId);
+    }
     activeRun_ = run;
     lastRun_ = run;
+    liveKdeCoreJson_.clear();
     stopRequested_ = cancelRequested_ = fatalRequested_ = false;
     fatalMessage_.clear();
     if (!worker_.joinable()) {
@@ -704,10 +1082,19 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
     return result;
 }
 
+namespace {
+// True on a thread that is currently running a status callback. A callback
+// that re-registers must not wait for itself.
+thread_local bool tlInStatusCallback = false;
+}
+
 void ExperimentCoordinator::setStatusCallback(StatusCallback cb)
 {
-    std::lock_guard<std::mutex> lk(callbackMutex_);
+    std::unique_lock<std::mutex> lk(callbackMutex_);
     statusCallback_ = std::move(cb);
+    // After this returns, the previous callback is never running or invoked
+    // again (except on the calling thread itself, from inside a callback).
+    if (!tlInStatusCallback) callbackIdle_.wait(lk, [this] { return callbacksInFlight_ == 0; });
 }
 
 ExperimentStatus ExperimentCoordinator::snapshotLocked() const
@@ -725,10 +1112,15 @@ ExperimentStatus ExperimentCoordinator::snapshotLocked() const
     const auto counts = proc.getBufferedFrameCounts();
     s.validBuffered = counts.valid;
     s.invalidBuffered = counts.invalid;
+    s.validSaved = proc.getTotalValidFlushed();
+    s.invalidSaved = proc.getTotalInvalidFlushed();
+    s.droppedValid = proc.getDroppedValidFrames();
+    s.droppedInvalid = proc.getDroppedInvalidFrames();
     const auto acc = proc.experimentAccountingSnapshot();
     s.persistenceAdmitted = acc.persistenceAdmitted;
     s.persistenceCommitted = acc.persistenceCommitted;
     s.persistenceFailed = acc.persistenceFailed;
+    s.faultRevision = faultRevision_;
     s.faultCode = faultActive_ ? faultCode_ : std::string{};
     s.faultMessage = faultActive_ ? faultMessage_ : std::string{};
     return s;
@@ -748,9 +1140,30 @@ void ExperimentCoordinator::publishLocked(std::unique_lock<std::mutex>& lk, cons
     {
         std::lock_guard<std::mutex> clk(callbackMutex_);
         cb = statusCallback_;
+        if (cb) ++callbacksInFlight_;
     }
     lk.unlock();
-    if (cb) cb(s);
+    if (cb) {
+        struct InFlight {
+            ExperimentCoordinator& self;
+            ~InFlight() {
+                tlInStatusCallback = false;
+                {
+                    std::lock_guard<std::mutex> clk(self.callbackMutex_);
+                    --self.callbacksInFlight_;
+                }
+                self.callbackIdle_.notify_all();
+            }
+        } inFlight{*this};
+        tlInStatusCallback = true;
+        try {
+            cb(s);
+        } catch (const std::exception& e) {
+            SPDLOG_ERROR("ExperimentCoordinator: status observer failed: {}", e.what());
+        } catch (...) {
+            SPDLOG_ERROR("ExperimentCoordinator: status observer threw an unknown exception");
+        }
+    }
     lk.lock();
 }
 
@@ -778,6 +1191,20 @@ ExperimentStopOutcome ExperimentCoordinator::requestStop(bool cancelled)
     return ExperimentStopOutcome::Accepted;
 }
 
+void ExperimentCoordinator::setLiveKdeCoreRecord(std::string json)
+{
+    std::scoped_lock lk(mutex_);
+    if (state_ != ExperimentRunState::Active) return; // no run, or already finalizing
+    liveKdeCoreJson_ = std::move(json);
+}
+
+void ExperimentCoordinator::requestFlush() {
+    std::lock_guard<std::mutex> lk(mutex_);
+    if (state_ != ExperimentRunState::Active || workerExit_) return;
+    flushRequested_ = true;
+    workerCv_.notify_all();
+}
+
 void ExperimentCoordinator::onFatalSaveError(const std::string& message)
 {
     std::lock_guard<std::mutex> lk(mutex_);
@@ -802,7 +1229,8 @@ void ExperimentCoordinator::worker()
     std::unique_lock<std::mutex> lk(mutex_);
     while (true) {
         workerCv_.wait_for(lk, std::chrono::milliseconds(250),
-                           [&] { return stopRequested_ || workerExit_; });
+                           [&] { return stopRequested_ || workerExit_ || flushRequested_; });
+        flushRequested_ = false;
         if (stopRequested_ && activeRun_) {
             const bool failed = fatalRequested_;
             const std::string msg = fatalMessage_;
@@ -857,7 +1285,22 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
     auto& hdf5 = backend_.hdf5();
     const bool restoreMode = restoreRealtimeMode_;
     restoreRealtimeMode_ = false;
+    const std::string liveKdeCoreJson = std::move(liveKdeCoreJson_);
+    liveKdeCoreJson_.clear();
     lk.unlock();
+
+    // PL science: stop the provider first. It delivers what the device wrote
+    // before STOP, so the run's last frames are ingested before the drain.
+    if (!app::hostProcessingAvailable()) {
+        if (auto* provider = backend_.executionProvider()) {
+            provider->stop();
+            const auto st = provider->status();
+            SPDLOG_INFO("ExperimentCoordinator: provider '{}' stopped: {} frames, {} results, {} incomplete, "
+                        "{} decode errors, {} sequence gaps, {} overruns",
+                        provider->name(), st.frames, st.results, st.incompleteFrames, st.decodeErrors,
+                        st.sequenceGaps, st.overruns);
+        }
+    }
 
     bool ok = true;
     bool flushOk = true;
@@ -871,7 +1314,7 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
                     submitted, flushOk, sinceMs(t0));
     }
     // 3. Stop accumulating.
-    proc.endExperiment();
+    if (!proc.endExperiment()) flushOk = false;
     proc.resetRealtimeMetrics();
     // 4. Remainder that arrived between 2 and 3 goes through the same flush
     // path so the accounting credits it as committed (bench, 2026-09-08).
@@ -885,20 +1328,40 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
                     submitted, remainder.valid, remainder.invalid, remOk, sinceMs(t0));
     }
     if (!flushOk) ok = false;
+    // Pulses fired after the last batch drain (writer is stopped now, so this
+    // append is single-threaded like the metadata writes below).
+    if (fileOpen) {
+        auto tail = backend_.trigger().drainEvents();
+        if (!tail.empty() && !hdf5.appendTriggerEvents(tail)) {
+            SPDLOG_WARN("ExperimentCoordinator: {} trailing trigger event(s) not persisted", tail.size());
+        }
+    }
     const uint64_t endNs = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count());
     auto accounting = proc.experimentAccountingSnapshot();
+    // The queue is gone after finishFlush(), so preserve a fatal flush result
+    // in the run snapshot before persisting and caching accounting.
+    if (failed || !flushOk) {
+        const std::string message =
+            !failMessage.empty() ? failMessage
+                                 : "a save error occurred while flushing experiment data to disk";
+        accounting.fatalError = true;
+        accounting.fatalMessage = message;
+        accounting = recording::reconcile(std::move(accounting));
+        ok = false;
+    }
     // 5-6. Metadata, accounting, provenance, config JSON; close.
     bool metadataOk = true;
     if (fileOpen) {
         if (!hdf5.flush()) SPDLOG_WARN("ExperimentCoordinator: H5Fflush before metadata failed");
-        const auto cfg = proc.getProcessingConfig();
+        const auto cfg = proc.getEffectiveProcessingConfig();
         const auto roi = proc.getRealtimeRoi();
         cv::Mat bg = proc.getRealtimeBackgroundGray();
         const auto core = proc.activeProcessingCoreIdentity();
         const auto t0 = clock::now();
-        metadataOk = hdf5.writeExperimentInfo(run.startWallClockNs, endNs, remainder.valid, remainder.invalid,
-                                              cfg, roi, bg.empty() ? nullptr : &bg, &core);
+        metadataOk = hdf5.writeExperimentInfo(
+            run.startWallClockNs, endNs, proc.getTotalValidFlushed(), proc.getTotalInvalidFlushed(),
+            cfg, roi, bg.empty() ? nullptr : &bg, &core);
         if (!metadataOk) {
             SPDLOG_ERROR("ExperimentCoordinator: metadata/provenance write failed");
             ok = false;
@@ -911,17 +1374,41 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
                                                  backend_.capture().telemetrySnapshot())) {
                 SPDLOG_ERROR("ExperimentCoordinator: acquisition provenance could not be persisted");
             }
+            // Sorter settings as read back at readiness time (the generator is
+            // not re-queried here: the run used what was verified at start).
+            if (run.rfGeneratorConnected) {
+                const auto rfState = backend_.rfGenerator().lastState();
+                if (!rfState.identity.empty() && !hdf5.writeRfGeneratorProvenance(rfState)) {
+                    SPDLOG_ERROR("ExperimentCoordinator: RF generator provenance could not be persisted");
+                }
+            }
             const std::string cfgJson = backend_.getLastConfigJson();
             if (!cfgJson.empty()) hdf5.writeConfigJson(cfgJson);
         }
         SPDLOG_INFO("ExperimentCoordinator: metadata+accounting+provenance took {:.3f} ms", sinceMs(t0));
+        // Provisional KDE core contour (copy of the live view); best effort,
+        // never affects the run outcome.
+        if (!liveKdeCoreJson.empty()) {
+            if (hdf5.writeKdeLiveJson(liveKdeCoreJson)) {
+                SPDLOG_INFO("ExperimentCoordinator: stored provisional KDE core record ({} bytes)", liveKdeCoreJson.size());
+            } else {
+                SPDLOG_WARN("ExperimentCoordinator: provisional KDE core record could not be stored");
+            }
+        }
         const auto tClose = clock::now();
         hdf5.closeFile();
         SPDLOG_INFO("ExperimentCoordinator: closeFile took {:.3f} ms", sinceMs(tClose));
     }
-    SPDLOG_INFO("ExperimentCoordinator: run {} accounting: completion={} ({}); persisted={}/{} failed={}",
-                run.startGeneration, recording::toString(accounting.completion), accounting.completionReason,
-                accounting.persistenceCommitted, accounting.persistenceAdmitted, accounting.persistenceFailed);
+    // An undeclared loss, a failure, an unknown outcome, or declared malformed frames above the
+    // warning fraction is something the operator must see (#549): WARN, not INFO. Complete and
+    // declared-partial runs stay at INFO.
+    const bool warnRun = recording::needsOperatorAttention(accounting.completion) ||
+                         recording::malformedAboveWarnFraction(accounting.storeMalformed, accounting.admitted);
+    const auto accountingLevel = warnRun ? spdlog::level::warn : spdlog::level::info;
+    SPDLOG_LOGGER_CALL(spdlog::default_logger_raw(), accountingLevel,
+                       "ExperimentCoordinator: run {} accounting: completion={} ({}); persisted={}/{} failed={}",
+                       run.startGeneration, recording::toString(accounting.completion), accounting.completionReason,
+                       accounting.persistenceCommitted, accounting.persistenceAdmitted, accounting.persistenceFailed);
     // 7. Restore the realtime mode a multi-image run switched.
     if (restoreMode) {
         proc.setRealtimeProcessingMode(services::ProcessingService::RealtimeProcessingMode::AsyncBatch);
@@ -930,6 +1417,9 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
 
     // 8. Terminal status.
     lk.lock();
+    lastAccounting_ = accounting;
+    lastAccountingGeneration_ = run.startGeneration;
+    haveLastAccounting_ = true;
     activeRun_.reset();
     status_.endWallClockNs = endNs;
     status_.terminal = true;
@@ -939,6 +1429,7 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
         status_.completion = recording::RunCompletionState::Failed;
         status_.completionReason = failMessage;
         faultActive_ = true;
+        ++faultRevision_;
         faultCode_ = "experiment.saveFailed";
         faultMessage_ = failMessage;
     } else {
@@ -946,10 +1437,12 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
         status_.completionReason = accounting.completionReason;
         if (!flushOk) {
             faultActive_ = true;
+            ++faultRevision_;
             faultCode_ = "experiment.flushFailed";
             faultMessage_ = "a save error occurred while flushing experiment data to disk";
         } else if (!metadataOk) {
             faultActive_ = true;
+            ++faultRevision_;
             faultCode_ = "experiment.provenanceFailed";
             faultMessage_ = "mandatory metadata/processing-core provenance could not be saved for the last run";
         }
@@ -966,6 +1459,15 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
     publishLocked(lk, status_.finalizationOk ? "finalized" : "finalized with errors");
 }
 
+bool ExperimentCoordinator::lastRunAccounting(recording::RecordingAccountingSnapshot& out, uint64_t& startGeneration) const
+{
+    std::lock_guard<std::mutex> lk(mutex_);
+    if (!haveLastAccounting_) return false;
+    out = lastAccounting_;
+    startGeneration = lastAccountingGeneration_;
+    return true;
+}
+
 void ExperimentCoordinator::shutdown()
 {
     std::thread toJoin;
@@ -980,3 +1482,36 @@ void ExperimentCoordinator::shutdown()
 }
 
 } // namespace backend::app
+
+namespace backend::app {
+void ExperimentCoordinator::setStageBusyProbe(std::function<bool()> probe) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    stageBusyProbe_ = std::move(probe);
+}
+
+bool ExperimentCoordinator::withIdleConfiguration(const std::function<void()>& transaction) {
+    return withIdleConfiguration(transaction, true);
+}
+
+bool ExperimentCoordinator::withIdleConfiguration(const std::function<void()>& transaction, bool wait) {
+    // Service setters can be called from a facade's idle transaction. Reuse
+    // that authorization on this thread without locking the mutex twice.
+    static thread_local ExperimentCoordinator* idleOwner = nullptr;
+    if (idleOwner == this) {
+        transaction();
+        return true;
+    }
+    std::unique_lock<std::mutex> lock(mutex_, std::defer_lock);
+    if (wait) lock.lock();
+    else if (!lock.try_lock()) return false;
+    if (state_ != ExperimentRunState::Idle) return false;
+    struct IdleScope {
+        ExperimentCoordinator*& owner;
+        ExperimentCoordinator* previous;
+        ~IdleScope() { owner = previous; }
+    } scope{idleOwner, idleOwner};
+    idleOwner = this;
+    transaction();
+    return true;
+}
+}

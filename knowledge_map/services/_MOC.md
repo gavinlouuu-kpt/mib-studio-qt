@@ -7,15 +7,26 @@
 - [[CaptureService]] — dedicated thread; `camera->grabFrame()` → FrameStore
 - [[ProcessingService]] — worker pool + realtime loop; OpenCV pipeline
 - [[PlaybackService]] — UI-facing wrapper over FrameStore
+- [[DotGridService]] — low-rate wafer localization from the dot-grid fiducial
+  pattern (absolute position, rotation, scale, mirror, design + chip id);
+  ADR 0008, design registry ADR 0009
+- [[MonitoringDensityService]] — live Monitoring scatter KDE + core contour on a
+  lowest-priority worker with load back-off and a compute budget
 
 ## Persistence
 - [[Hdf5Service]] — batched write/read of experiment frames + metadata
 - [[HdfExportService]] — Qt-free bounded/cancellable CSV+TIFF export job (issue #344)
+- [[ReviewSession]] — YOFO Review's review implementation, also the Qt tab's factor (ADR 0014; `mib_review_core`)
 - [[SqliteService]] — small metadata DB
 
 ## Hardware I/O
-- [[CameraControlService]] — GenICam script apply, device reset, discovery
-- [[AutofocusService]] — nanopositioner voltage via serial (Coremor XMT)
+- [[DeviceDiscoveryService]] — backend discovery **jobs** (bounded, cancellable,
+  provider-based) + startup selection/connection policy; every camera /
+  nanopositioner / pulse-generator scan runs through it (#419, ADR 0005)
+- [[CameraControlService]] — GenICam script apply, device reset, SDK enumeration
+  (wrapped by the discovery providers)
+- [[AutofocusService]] — backend-neutral nanopositioner control (OEABT serial
+  on Linux/Windows; CoreMOR XMT on Windows)
 - [[TriggerService]] — camera digital-output pulse on target-group detection
 - [[SerialBus]] — shared RS485/Modbus bus sessions (one `QSerialPort` owner
   per adapter, strict response correlation); transport for the two below
@@ -23,9 +34,15 @@
 - [[ISerialPort]] — Qt-free serial transport interface (POSIX/Win32) + factory
 - [[PulseGeneratorService]] — Zhongsheng pulse module (camera ext-trigger
   source) via Modbus RTU over serial; addressed device on a shared bus
+- [[StageService]] — motorized Z stage: read-only start-up, operator "Set zero
+  here" (no Home), travel envelope around the zero, one-sided approach,
+  once-per-power-up zero (ADR 0013 + Amendment 1, #464)
+- [[ZC300Stage]] — Zolix ZC300 motorized Z stage driver (`IMotionStage`, µm
+  API, observe-only connect, motion opcodes never re-sent); ADR 0013, #464
+- [[RfGeneratorService]] — SIGLENT SSG3021X RF sort generator over SCPI
+  (USBTMC / LAN): readback, preflight gate, provenance — never timing
 
 ## Optional / specialised
-- [[YoloService]] — ONNX Runtime session (segmentation; placeholder-ish)
 - [[RecorderService]] — raw frame container writer (recording mode)
 - [[BatchMaskSources]] — adapters for offline mask regeneration
   (`processBatch` inputs/outputs)
@@ -38,3 +55,5 @@
 **Up**: [[../README|Vault home]] · **See also**:
 [[../architecture/Data-Flow]], [[../architecture/Threading-Model]],
 [[../diagnostics/_MOC|Diagnostics MOC]]
+
+- [[ProfileRegistryService]] — central registry/cache foundation (#398).

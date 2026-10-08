@@ -1,6 +1,8 @@
 #pragma once
 
 #include "backend/camera/common/ICamera.h"
+#include "backend/services/IlluminationSession.h"
+#include "backend/camera/mindvision/MindVisionConfig.h"
 #include "backend/camera/mindvision/MindVisionFrameGeometry.h"
 #include "backend/camera/mindvision/MindVisionSdk.h"
 
@@ -10,6 +12,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 
 namespace camera::common
@@ -24,8 +27,12 @@ class MindVisionCamera : public ICamera
 public:
     using SdkOps = backend::camera::mindvision::SdkOps;
 
-    explicit MindVisionCamera(int cameraIndex, std::string configPath = {},
-                              std::shared_ptr<const SdkOps> sdk = nullptr);
+    explicit MindVisionCamera(
+        int cameraIndex, std::string configPath = {}, std::shared_ptr<const SdkOps> sdk = nullptr,
+        std::shared_ptr<backend::services::IlluminationSession> illumination = nullptr,
+        bool overview = false,
+        std::optional<backend::camera::mindvision::Config> sessionConfig = std::nullopt,
+        std::function<void(const backend::camera::mindvision::SdkCapability&)> capabilitySink = {});
     ~MindVisionCamera() override;
 
     void applyConfig(const CameraConfig &config) override;
@@ -75,6 +82,18 @@ public:
 
 private:
     bool applyJsonConfig(int hCamera);
+    const bool overview_;
+    const std::optional<backend::camera::mindvision::Config> sessionConfig_;
+    const std::function<void(const backend::camera::mindvision::SdkCapability&)> capabilitySink_;
+    // Gates the generator off and forces OUT1 low (must hold stateMutex_).
+    // Returns false when either OFF was not confirmed; the failure record is
+    // set and must survive any later handle-teardown record (see stop()).
+    bool stopIlluminationLocked();
+    std::shared_ptr<backend::services::IlluminationSession> illumination_;
+    backend::camera::mindvision::Config rigConfig_{};
+    std::atomic<bool> stopRequested_{false};
+    bool rigActive_{false};
+    std::chrono::steady_clock::time_point lastRigFrame_{};
     void recordFailure(const std::string &code, const std::string &message);
     // Tear down an open handle (must hold stateMutex_). Waits for in-flight
     // SDK operations first; if they do not drain within the bounded timeout

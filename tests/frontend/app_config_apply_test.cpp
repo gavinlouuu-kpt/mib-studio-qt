@@ -15,6 +15,14 @@
 //  - a genuine external edit still reloads and is broadcast.
 
 #include "backend/app/AppBackend.h"
+#include "backend/app/ExperimentCoordinator.h"
+#include "frontend/system/PlaybackPanel.h"
+#include <QToolButton>
+#include <QCheckBox>
+#include <QContextMenuEvent>
+#include <QMenu>
+#include <QMouseEvent>
+#include <QTimer>
 #include "backend/processing/ProcessingService.h"
 #include "frontend/system/AppConfigWatcher.h"
 #include "frontend/system/ConfigDocumentStore.h"
@@ -34,6 +42,55 @@
 #include <QJsonObject>
 #include <QSettings>
 #include <QThread>
+
+namespace backend::app {
+struct ExperimentConfigurationTestAccess {
+    static void setState(ExperimentCoordinator& coordinator, ExperimentRunState state) {
+        std::lock_guard<std::mutex> lock(coordinator.mutex_);
+        coordinator.state_ = state;
+    }
+};
+} // namespace backend::app
+struct PlaybackPanelTestAccess {
+    static void check(PlaybackPanel& panel, bool idle) {
+        panel.updateConfigurationUI();
+        MIB_EXPECT(panel.clearRoiBtn_->isEnabled() == idle, "Clear ROI follows run ownership");
+        MIB_EXPECT(panel.setBgBtn_->isEnabled() == idle,
+                   "paused Set Background follows run ownership");
+        MIB_EXPECT(panel.autoBgCheck_->isEnabled() == idle,
+                   "Auto Background follows run ownership");
+        MIB_EXPECT(idle || !panel.canvas_->toolTip().isEmpty(), "ROI drag explains run lock");
+        if (!idle) {
+            panel.frameImage_ = QImage(64, 64, QImage::Format_Grayscale8);
+            panel.canvas_->resize(64, 64);
+            const QRect before = panel.getRoi();
+            QMouseEvent press(QEvent::MouseButtonPress, QPointF(5, 5), QPointF(5, 5),
+                              Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+            QMouseEvent release(QEvent::MouseButtonRelease, QPointF(40, 40), QPointF(40, 40),
+                                Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+            QApplication::sendEvent(panel.canvas_, &press);
+            QApplication::sendEvent(panel.canvas_, &release);
+            MIB_EXPECT(panel.getRoi() == before, "ROI drag is refused during run");
+            bool checkedMenu = false;
+            QTimer::singleShot(0, [&] {
+                for (auto* widget : QApplication::topLevelWidgets()) {
+                    if (auto* menu = qobject_cast<QMenu*>(widget)) {
+                        for (auto* action : menu->actions()) {
+                            MIB_EXPECT(
+                                !action->isEnabled() && !action->toolTip().isEmpty(),
+                                "context background/calibration/ROI actions explain run lock");
+                        }
+                        checkedMenu = true;
+                        menu->close();
+                    }
+                }
+            });
+            QContextMenuEvent context(QContextMenuEvent::Mouse, QPoint(10, 10), QPoint(10, 10));
+            QApplication::sendEvent(panel.canvas_, &context);
+            MIB_EXPECT(checkedMenu, "preview context menu checked");
+        }
+    }
+};
 
 namespace {
 void settleMs(int ms)
@@ -84,7 +141,7 @@ const char* kConfig = R"({
 int main(int argc, char* argv[])
 {
     qputenv("QT_QPA_PLATFORM", QByteArrayLiteral("offscreen"));
-    qputenv("MIB_DISABLED_SERVICES", QByteArrayLiteral("auto_update,autofocus,trigger,yolo,syringe_pump"));
+    qputenv("MIB_DISABLED_SERVICES", QByteArrayLiteral("auto_update,autofocus,trigger,syringe_pump"));
     qputenv("MIB_CAMERA_MODE", QByteArrayLiteral("mock"));
     qputenv("MIB_STUDIO_PROCESSING_CORE_BASE_URL", QByteArrayLiteral("http://invalid-registry.example"));
     qputenv("MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL", QByteArrayLiteral("file:///nonexistent/mib-lut-manifest.json"));
@@ -106,6 +163,34 @@ int main(int argc, char* argv[])
     backend::AppBackend backend;
     MIB_REQUIRE(backend.initialize((td.path() / "data").string()), "backend init");
     auto& processing = backend.processing();
+
+    {
+        PlaybackPanel panel(backend);
+        panel.setRoi(QRect(1, 2, 20, 30), false);
+        PlaybackPanelTestAccess::check(panel, true);
+        using State = backend::app::ExperimentRunState;
+        for (const auto state : {State::Starting, State::Active, State::Stopping}) {
+            backend::app::ExperimentConfigurationTestAccess::setState(backend.experiment(), state);
+            PlaybackPanelTestAccess::check(panel, false);
+            panel.setRoi(QRect(3, 4, 10, 15), false);
+            MIB_EXPECT(panel.getRoi() == QRect(1, 2, 20, 30), "ROI remains unchanged during run");
+        }
+        backend::app::ExperimentConfigurationTestAccess::setState(backend.experiment(),
+                                                                  State::Idle);
+        PlaybackPanelTestAccess::check(panel, true);
+        frontend::AppConfigWatcher deferred(backend, nullptr);
+        const auto before = processing.getConfigVersion();
+        backend::app::ExperimentConfigurationTestAccess::setState(backend.experiment(),
+                                                                  State::Active);
+        deferred.setWatchedPath(cfgPath);
+        MIB_EXPECT(processing.getConfigVersion() == before,
+                   "watcher defers active-run configuration");
+        backend::app::ExperimentConfigurationTestAccess::setState(backend.experiment(),
+                                                                  State::Idle);
+        deferred.tryRestorePendingRoi();
+        MIB_EXPECT(processing.getConfigVersion() > before,
+                   "watcher applies deferred configuration when idle");
+    }
 
     frontend::AppConfigWatcher watcher(backend, nullptr);
     int fileChangedCount = 0;

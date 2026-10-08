@@ -6,6 +6,8 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <mutex>
+#include <string>
 #include <vector>
 
 namespace camera::mock {
@@ -62,6 +64,11 @@ public:
     uint64_t triggerPulseCount() const {
         return triggerPulseCount_.load(std::memory_order_relaxed);
     }
+    // Emulated loopback: every level change of the simulated trigger line is
+    // reported back as a LineEvent stamped in this camera's frame clock
+    // (steady_clock ns), as if the output were wired into a timestamped
+    // input. Lets the trigger→frame alignment path run headless.
+    bool setLineEventCallback(camera::common::LineEventCallback callback) override;
 
     void setFrameInterval(std::chrono::microseconds interval);
     void setLooping(bool loop);
@@ -85,6 +92,9 @@ private:
     // Simulated trigger line (written by the trigger thread).
     std::atomic<bool> triggerLineHigh_{false};
     std::atomic<uint64_t> triggerPulseCount_{0};
+    std::string triggerLineName_{"MockTTL"};
+    mutable std::mutex lineEventMutex_;
+    camera::common::LineEventCallback lineEventCallback_;
 };
 
 } // namespace camera::mock

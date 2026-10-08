@@ -1,31 +1,50 @@
 #pragma once
 
+#include "backend/nanopositioner/INanopositionerBackend.h"
+#include "backend/services/AutofocusFocusScore.h"
+
 #include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <condition_variable>
 #include <deque>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace backend::services {
 
 class AutofocusService {
 public:
+    using BackendFactory =
+        std::function<std::unique_ptr<backend::nanopositioner::INanopositionerBackend>(
+            backend::nanopositioner::BackendKind)>;
+
     AutofocusService();
+    explicit AutofocusService(BackendFactory backendFactory);
     ~AutofocusService();
 
+    // Test seam: swap the driver factory (e.g. a fake OEABT backend) on a
+    // service owned by AppBackend. Refused (returns false) while connected.
+    bool setBackendFactory(BackendFactory backendFactory);
+
     // Connection management
+    bool connect(const backend::nanopositioner::Endpoint& endpoint);
     bool connect(int comPort, int baudRate, unsigned char deviceAddress);
     void disconnect();
     bool isConnected() const { return connected_.load(); }
     int getComPort() const { return comPort_; }
+    backend::nanopositioner::BackendKind getBackendKind() const;
+    std::string getEndpointId() const;
 
-    // Probe: open port, send XMT read (voltage channel), check plausible response, close.
-    // Returns true only if port responds with a valid voltage (0–250 V). Must not be connected.
+    static std::vector<backend::nanopositioner::Endpoint> availableEndpoints();
+    static bool probeEndpoint(const backend::nanopositioner::Endpoint& endpoint);
+
+    // Legacy CoreMOR COM wrapper. New code should use probeEndpoint/connect(Endpoint).
     static bool probeComPort(int comPort, int baudRate, unsigned char deviceAddress);
 
     // Autofocus control
@@ -52,30 +71,62 @@ public:
         int minSamplesPerStep{100};
         double safeShutdownVoltage{0.0};
         bool focusDirection{true}; // true = increase voltage increases ring ratio
+        // Focus-score mode (Contracts 2/3): a median change at or below this
+        // counts as no change (the peak-seeker refines, then holds). The steps,
+        // limits, staleness and samples per step are shared with ring mode.
+        double focusScoreHoldTolerance{1e-6};
     };
+
+    // Which signal drives the control loop. Chosen by the feed that delivers
+    // samples: onRingRatio (Contract 1) selects RingRatio, onFocusSample
+    // (Contracts 2 and 3) selects LaplacianVariance. A switch resets the
+    // controller and the other metric's samples.
+    enum class FocusMetric { RingRatio, LaplacianVariance };
+    FocusMetric getFocusMetric() const {
+        return static_cast<FocusMetric>(focusMetric_.load(std::memory_order_relaxed));
+    }
 
     void setConfig(const Config& config);
     Config getConfig() const;
 
-    // Ring ratio feed (called by ProcessingService)
+    // Ring ratio feed (called by ProcessingService under Contract 1). Only
+    // finite values > 0 are samples.
     void onRingRatio(double ringRatio, int64_t timestampNs);
+    // Focus-score feed (Contracts 2 and 3): one valid object's Laplacian
+    // variance. Only finite values are samples; the control value is the
+    // median over de-duplicated (frame, object) samples since the last step.
+    void onFocusSample(const autofocus::FocusSample& sample);
+    // NaN until samples arrive (and after each control step).
+    double getMedianFocusScore() const { return medianFocusScore_.load(std::memory_order_relaxed); }
+    uint64_t getLastFocusUpdateUs() const { return lastFocusUpdateUs_.load(std::memory_order_relaxed); }
 
     // Expose running average of ring ratio for UI/status
     double getAverageRingRatio() const { return averageRingRatio_.load(std::memory_order_relaxed); }
     // Expose median ring ratio (same value used by autofocus control) for UI/status
     double getMedianRingRatio() const { return medianRingRatio_.load(std::memory_order_relaxed); }
     // Monotonic timestamp (microseconds) when ring ratio was last updated; 0 if never
-    uint64_t getLastRingRatioUpdateUs() const { return lastRingRatioUpdateUs_.load(std::memory_order_relaxed); }
+    uint64_t getLastRingRatioUpdateUs() const {
+        return lastRingRatioUpdateUs_.load(std::memory_order_relaxed);
+    }
 
     // Status callbacks for UI
     using StatusCallback = std::function<void(const std::string& message)>;
     void setStatusCallback(StatusCallback callback);
 
 private:
+    friend struct AutofocusCallbackTestAccess;
     void controlLoop();
+    // One focus-score control evaluation (control thread). Returns after a
+    // write failure so the loop can back off.
+    void stepFocusScore(const Config& cfg);
+    void clearFocusSamplesLocked();
+    void selectMetric(FocusMetric metric);
     void statsLoop();
     void updateStatistics();
     double calculateMedian(const std::vector<double>& sorted) const;
+    void notifyStatus(const std::string& message) const;
+    bool readDeviceVoltage(double& voltage, std::string& error);
+    bool writeDeviceVoltage(double voltage, std::string& error);
 
     std::thread controlThread_;
     std::atomic<bool> running_{false};
@@ -87,6 +138,11 @@ private:
     int comPort_{6};
     int baudRate_{115200};
     unsigned char deviceAddress_{1};
+    mutable std::mutex deviceMutex_;
+    std::unique_ptr<backend::nanopositioner::INanopositionerBackend> device_;
+    BackendFactory backendFactory_;
+    backend::nanopositioner::Endpoint endpoint_;
+    std::atomic<bool> activeControlSession_{false};
 
     // Configuration
     mutable std::mutex configMutex_;
@@ -104,6 +160,7 @@ private:
     mutable std::mutex pendingSamplesMutex_;
     std::condition_variable pendingSamplesCV_;
     std::vector<PendingSample> pendingSamples_;
+    std::vector<autofocus::FocusSample> pendingFocusSamples_; // guarded by pendingSamplesMutex_
     std::thread statsThread_;
     std::atomic<bool> statsRunning_{false};
 
@@ -115,7 +172,20 @@ private:
     static constexpr size_t MAX_BUFFER_SIZE = 1000;
     std::atomic<uint64_t> ringRatioSequence_{0};
     std::atomic<int64_t> lastRingRatioTimestampNs_{0};
-    std::atomic<uint64_t> lastRingRatioUpdateUs_{0}; // monotonic us when a ring ratio sample was last accepted
+    std::atomic<uint64_t> lastRingRatioUpdateUs_{
+        0}; // monotonic us when a ring ratio sample was last accepted
+
+    // Focus-score samples (owned by statsLoop, guarded by ringRatioMutex_).
+    std::deque<autofocus::FocusSample> focusBuffer_;
+    std::atomic<uint64_t> focusSequence_{0};
+    std::atomic<uint64_t> lastFocusUpdateUs_{0};
+    std::atomic<double> medianFocusScore_{std::numeric_limits<double>::quiet_NaN()};
+    std::atomic<int> focusMetric_{static_cast<int>(FocusMetric::RingRatio)};
+    // Control thread only.
+    autofocus::FocusScoreController focusController_;
+    int controllerMetric_{-1}; // metric the controllers were last reset for
+    bool controllerWasEnabled_{false};
+    uint64_t lastAppliedFocusSequence_{0};
 
     // Statistics
     std::atomic<double> medianRingRatio_{0.0};
@@ -137,4 +207,3 @@ private:
 };
 
 } // namespace backend::services
-

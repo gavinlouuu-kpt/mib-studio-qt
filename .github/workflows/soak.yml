@@ -16,45 +16,108 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   soak:
     name: Lifecycle / timing soak
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    env:
+      CMAKE_BUILD_PARALLEL_LEVEL: "4"
+      SCCACHE_GHA_ENABLED: "true"
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Install Linux system packages
+      - name: Validate repeat count
+        id: validate-repeats
         shell: bash
+        env:
+          REPEATS_INPUT: ${{ github.event.inputs.repeats || '40' }}
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential cmake curl git libgl1-mesa-dev libhdf5-dev libopencv-dev \
-            libspdlog-dev libsqlite3-dev libxkbcommon-dev nlohmann-json3-dev \
-            pkg-config python3-pip qt6-base-dev qt6-serialport-dev
+          if [[ ! "$REPEATS_INPUT" =~ ^([1-9][0-9]?|100)$ ]]; then
+            echo "repeats must be an integer from 1 to 100 (got: $REPEATS_INPUT)" >&2
+            exit 2
+          fi
+          printf 'repeats=%s\n' "$REPEATS_INPUT" >> "$GITHUB_OUTPUT"
 
-      - name: Provision pinned MindVision SDK
+      - name: Prepare soak log directory
         shell: bash
-        run: ./scripts/provision-mindvision-sdk.sh --github-env "$GITHUB_ENV"
+        run: mkdir -p artifacts/soak
+
+      - name: Set up Linux build environment
+        uses: ./.github/actions/setup-linux-env
+        timeout-minutes: 10
+        with:
+          sections: base,backend,frontend
+          conan: "false"
+          mindvision: "true"
+          assets: none
+
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.11
+        timeout-minutes: 3
+        with:
+          version: "v0.16.0"
 
       - name: Configure
+        timeout-minutes: 5
         shell: bash
-        run: cmake --preset linux-backend-only
+        run: |
+          set -o pipefail
+          timeout --signal=TERM --kill-after=30s 4m \
+            cmake --preset linux-backend-only 2>&1 | tee artifacts/soak/configure.log
 
       - name: Build
+        timeout-minutes: 21
         shell: bash
-        run: cmake --build --preset linux-backend-only-build
+        run: |
+          set -o pipefail
+          timeout --signal=TERM --kill-after=30s 20m \
+            cmake --build --preset linux-backend-only-build \
+            2>&1 | tee artifacts/soak/build.log
 
       - name: Soak lifecycle + timing tests
+        timeout-minutes: 31
         shell: bash
         env:
           MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL: "file:///nonexistent/mib-lut-manifest.json"
+          REPEATS: ${{ steps.validate-repeats.outputs.repeats }}
         run: |
           set -o pipefail
-          N="${{ github.event.inputs.repeats || '40' }}"
-          ctest --test-dir build/linux-backend --output-on-failure --timeout 240 \
-            --repeat until-fail:${N} \
-            -R "integration.e2e_pipeline_stress|integration.e2e_trigger_timing|integration.e2e_live_view_latency|integration.e2e_realtime_throughput|integration.e2e_batch_backpressure|backend.frame_store_resize_under_load|performance.memory_budget|recording.hdf_export_soak"
+          timeout --signal=TERM --kill-after=30s 30m \
+            ctest --test-dir build/linux-backend --output-on-failure --timeout 240 \
+              --repeat until-fail:"$REPEATS" \
+              -R "integration.e2e_pipeline_stress|integration.e2e_trigger_timing|integration.e2e_live_view_latency|integration.e2e_realtime_throughput|integration.e2e_batch_backpressure|backend.frame_store_resize_under_load|performance.memory_budget|recording.hdf_export_soak" \
+            2>&1 | tee artifacts/soak/test.log
+
+      - name: sccache statistics
+        if: always()
+        shell: bash
+        timeout-minutes: 1
+        run: |
+          mkdir -p artifacts/soak
+          if command -v sccache >/dev/null 2>&1; then
+            sccache --show-stats 2>&1 | tee artifacts/soak/sccache-stats.log
+          else
+            echo "sccache was not available; cache statistics are unavailable" \
+              | tee artifacts/soak/sccache-stats.log
+          fi
+
+      - name: Upload soak logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        timeout-minutes: 3
+        with:
+          name: soak-logs-${{ github.run_id }}
+          path: |
+            artifacts/soak/*.log
+            build/linux-backend/Testing/Temporary/LastTest.log
+            build/linux-backend/Testing/Temporary/LastTestsFailed.log
+          if-no-files-found: ignore
+          retention-days: 7

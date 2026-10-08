@@ -58,6 +58,16 @@
       </widget>
      </item>
      <item>
+      <widget class="QPushButton" name="exportFcsBtn">
+       <property name="text">
+        <string>Export FCS...</string>
+       </property>
+       <property name="enabled">
+        <bool>false</bool>
+       </property>
+      </widget>
+     </item>
+     <item>
       <widget class="QPushButton" name="exportAllBtn">
        <property name="text">
         <string>Export All...</string>
@@ -74,6 +84,16 @@
        </property>
        <property name="toolTip">
         <string>Export one collision-safe metrics CSV per selected HDF5 file.</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="batchExportFcsBtn">
+       <property name="text">
+        <string>Batch Export FCS...</string>
+       </property>
+       <property name="toolTip">
+        <string>Export one collision-safe FCS and event map pair per selected HDF5 file.</string>
        </property>
       </widget>
      </item>

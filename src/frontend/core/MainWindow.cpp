@@ -1,4 +1,5 @@
 #include "frontend/core/MainWindow.h"
+#include "frontend/dialogs/HelpDialog.h"
 #include "ui_MainWindow.h"
 
 #include <QAction>
@@ -10,6 +11,7 @@
 #include <QSplitter>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFile>
 #include <QMessageBox>
 #include <QDesktopServices>
 #include <QDir>
@@ -41,6 +43,7 @@
 #include <vector>
 
 #include "backend/app/AppBackend.h"
+#include "backend/camera/mindvision/MindVisionConfig.h"
 #include "backend/app/ExperimentCoordinator.h"
 #include "backend/camera/common/ICamera.h"
 #include "backend/services/CaptureService.h"
@@ -249,7 +252,6 @@ MainWindow::MainWindow(backend::AppBackend &backend, QWidget *parent)
             {"sqlite", "SQLite service"},
             {"hdf5", "HDF5 service"},
             {"processing", "Processing service"},
-            {"yolo", "YOLO service"},
             {"autofocus", "Autofocus wiring"},
             {"trigger", "Trigger wiring"},
             {"capture", "Capture service"},
@@ -335,6 +337,20 @@ MainWindow::MainWindow(backend::AppBackend &backend, QWidget *parent)
 #endif
         openFolder(QDir(base).absoluteFilePath(QStringLiteral("MIB_Studio_Qt/logs")));
     });
+    connect(ui->whatsNewAct, &QAction::triggered, this, [this]() {
+        frontend::HelpDialog(false, this).exec();
+        QSettings().setValue("Help/LastSeenVersion", QCoreApplication::applicationVersion());
+    });
+    connect(ui->manualAct, &QAction::triggered, this,
+            [this]() { frontend::HelpDialog(true, this).exec(); });
+    const QString helpVersion = QCoreApplication::applicationVersion();
+    const QString previousHelpVersion = QSettings().value("Help/LastSeenVersion").toString();
+    QSettings().setValue("Help/LastSeenVersion", helpVersion);
+    // Never auto-open a modal on headless runs (tests, screenshot tour).
+    if (QGuiApplication::platformName() != QLatin1String("offscreen") &&
+        frontend::shouldShowWhatsNew(previousHelpVersion, helpVersion)) {
+        QTimer::singleShot(0, this, [this]() { ui->whatsNewAct->trigger(); });
+    }
     connect(ui->documentationAct, &QAction::triggered, this, []() {
         QDesktopServices::openUrl(QUrl(QStringLiteral("https://github.com/KPT1020/mib-studio-qt")));
     });
@@ -372,11 +388,13 @@ MainWindow::MainWindow(backend::AppBackend &backend, QWidget *parent)
                     runStatusModel_->setPhase(frontend::RunPhase::Saving, runOperationId_);
                     updateExperimentButtonStates();
                 }
-            } else {
+            } else if (!backend_.experiment().hasUnresolvedFault()) {
                 // A raw-recording save failure still blocks the next
                 // experiment until acknowledged.
                 backend_.experiment().reportUnresolvedFault("save.fatal", q.toStdString());
             }
+            const auto fault = backend_.experiment().status();
+            if (fault.faultMessage == q.toStdString()) presentedFault_ = fault;
             statusBar()->showMessage(tr("Save error: %1").arg(q));
             QMessageBox::critical(this, tr("Save Error"),
                 tr("Data could not be saved and the operation was stopped:\n\n%1").arg(q));
@@ -530,9 +548,13 @@ MainWindow::MainWindow(backend::AppBackend &backend, QWidget *parent)
         // On connection, switch to Overview and enable ROI overlay by default.
         if (overviewTab_) {
             overviewTab_->setRoiOverlayVisible(true);
+            overviewTab_->refreshCameraMode();
         }
         if (ui->tabs) {
-            ui->tabs->setCurrentIndex(1); // Overview tab
+            if (ui->tabs->currentIndex() == 1)
+                onTabChanged(1);
+            else
+                ui->tabs->setCurrentIndex(1); // Overview tab
         } });
 
     // Config conflicts are actionable alerts (issue #363/#361).
@@ -613,12 +635,19 @@ MainWindow::MainWindow(backend::AppBackend &backend, QWidget *parent)
         if (roiLabel_)
             roiLabel_->setText(tr("ROI: %1 x %2 @ (%3, %4)").arg(width).arg(height).arg(offsetX).arg(offsetY));
         backend::services::ProcessingService::Roi roi{};
-        roi.x = offsetX;
-        roi.y = offsetY;
+        roi.x = backend_.isMindVisionCameraSelected() ? 0 : offsetX;
+        roi.y = backend_.isMindVisionCameraSelected() ? 0 : offsetY;
         roi.w = width;
         roi.h = height;
         backend_.processing().setRealtimeRoi(roi);
     });
+    if (auto* config = previewPage->getConfigTabs()) {
+        connect(overviewTab_, &frontend::OverviewTab::roiChanged, config,
+                [this, config](int x, int y, int w, int h) {
+                    if (backend_.isMindVisionCameraSelected())
+                        config->syncMindVisionRoi(x, y, w, h);
+                });
+    }
     // Initialize displays and processing ROI with current values
     {
         int ox = static_cast<int>(overviewTab_->roiPosition().x());
@@ -629,8 +658,8 @@ MainWindow::MainWindow(backend::AppBackend &backend, QWidget *parent)
         if (roiLabel_)
             roiLabel_->setText(tr("ROI: %1 x %2 @ (%3, %4)").arg(w).arg(h).arg(ox).arg(oy));
         backend::services::ProcessingService::Roi initialRoi{};
-        initialRoi.x = ox;
-        initialRoi.y = oy;
+        initialRoi.x = backend_.isMindVisionCameraSelected() ? 0 : ox;
+        initialRoi.y = backend_.isMindVisionCameraSelected() ? 0 : oy;
         initialRoi.w = w;
         initialRoi.h = h;
         backend_.processing().setRealtimeRoi(initialRoi);
@@ -643,6 +672,10 @@ MainWindow::MainWindow(backend::AppBackend &backend, QWidget *parent)
     initManager_->setConnectTab(connectTab_);
     initManager_->setNanopositionerTab(sidebarWidget_ ? sidebarWidget_->nanopositionerTab() : nullptr);
     connectTab_->setDeviceInitManager(initManager_);
+    connect(qApp, &QCoreApplication::aboutToQuit, this, [this] {
+        initManager_->stop();
+        backend_.shutdown();
+    });
 
     // Connect tab change signal for auto-applying camera scripts
     connect(ui->tabs, &QTabWidget::currentChanged, this, &MainWindow::onTabChanged);
@@ -669,6 +702,7 @@ MainWindow::MainWindow(backend::AppBackend &backend, QWidget *parent)
 }
 
 MainWindow::~MainWindow() {
+    if (initManager_) initManager_->stop();
     backend_.experiment().setStatusCallback({});
     backend_.setBackgroundCaptureCallback({});
     // Stop all timers that access backend_ via callbacks before the UI is
@@ -1147,6 +1181,8 @@ void MainWindow::setupStatusSurfaces()
     runStatusModel_ = new frontend::RunStatusModel(this);
     alertBanner_ = new frontend::AlertBanner(ui->centralwidget);
     alertBanner_->bind(alertModel_);
+    connect(alertBanner_->acknowledgeButton(), &QToolButton::clicked, this,
+            [this]() { acknowledgeFault(presentedFault_); });
     // Above the workspace splitter (inserted before setupSidebar adds it), so
     // it wraps across the full width and is never covered by a tab.
     ui->verticalLayout->insertWidget(0, alertBanner_);
@@ -1279,13 +1315,18 @@ bool MainWindow::explainReadiness(const backend::app::ExperimentReadinessSnapsho
 {
     if (readiness.ready)
         return true;
+    const auto fault = backend_.experiment().status();
     QStringList lines;
     bool onlyFault = true;
+    bool hasFault = false;
     for (const auto& g : readiness.gates)
     {
         if (!g.blocksStart())
             continue;
-        if (g.id != "lifecycle.fault")
+        if (g.id == "lifecycle.fault")
+            hasFault = true;
+        else if (g.id != "lifecycle.experiment" ||
+                 fault.state != backend::app::ExperimentRunState::Failed)
             onlyFault = false;
         QString line = QStringLiteral("%1 — %2: %3")
                            .arg(gateStatusLabel(g.status), QString::fromStdString(g.id),
@@ -1300,14 +1341,13 @@ bool MainWindow::explainReadiness(const backend::app::ExperimentReadinessSnapsho
     box.setText(tr("The experiment cannot start until every readiness check passes."));
     box.setInformativeText(lines.join(QStringLiteral("\n\n")));
     QPushButton* ackBtn = nullptr;
-    if (onlyFault)
+    if (onlyFault && hasFault)
         ackBtn = box.addButton(tr("Acknowledge fault and re-check"), QMessageBox::AcceptRole);
     box.addButton(QMessageBox::Close);
     box.exec();
     if (ackBtn && box.clickedButton() == ackBtn)
     {
-        backend_.experiment().clearUnresolvedFault();
-        SPDLOG_INFO("MainWindow: operator acknowledged the unresolved experiment fault");
+        acknowledgeFault(fault);
     }
     statusLabel_->setText(tr("Experiment not ready: %1")
                               .arg(QString::fromStdString([&] {
@@ -1317,6 +1357,24 @@ bool MainWindow::explainReadiness(const backend::app::ExperimentReadinessSnapsho
                                   return ids;
                               }())));
     return false;
+}
+
+bool MainWindow::acknowledgeFault(const backend::app::ExperimentStatus& status) {
+    if (status.faultCode.empty()) return false;
+    std::string error;
+    const bool ok = backend_.experiment().acknowledgeFault(
+        status.startGeneration, status.faultRevision, status.faultCode, status.faultMessage, error);
+    if (!ok) {
+        SPDLOG_WARN("MainWindow: fault acknowledgement refused: {}", error);
+        if (statusBar()) {
+            statusBar()->showMessage(
+                tr("Fault could not be acknowledged: %1").arg(QString::fromStdString(error)), 5000);
+        }
+        return false;
+    }
+    SPDLOG_INFO("MainWindow: operator acknowledged fault {}", status.faultCode);
+    presentedFault_ = {};
+    return true;
 }
 
 void MainWindow::onStartExperiment()
@@ -1549,6 +1607,14 @@ void MainWindow::onExperimentStatus(const backend::app::ExperimentStatus& status
         break;
     }
     if (!status.terminal) return;
+
+    // Acknowledging a fault republishes the already-terminal status. Do not
+    // replay completion dialogs while clearing the banner.
+    if (status.startGeneration != 0 && status.startGeneration == lastTerminalStartGeneration_)
+        return;
+    if (status.startGeneration != 0) lastTerminalStartGeneration_ = status.startGeneration;
+
+    if (!status.faultCode.empty()) presentedFault_ = status;
 
     // ---- Terminal: the file is closed; present the outcome ----------------
     QString deferredWarning;
@@ -1871,6 +1937,25 @@ void MainWindow::onTabChanged(int index)
         return;
     }
 
+    if (backend_.isMindVisionCameraSelected() && (index == 1 || index == 2)) {
+        const bool wasRunning = backend_.capture().isRunning();
+        std::string error;
+        if (!backend_.setMindVisionOverview(index == 1, &error)) {
+            statusLabel_->setText(
+                tr("Camera mode change failed: %1").arg(QString::fromStdString(error)));
+            return;
+        }
+        stopExperimentServices();
+        overviewTab_->refreshCameraMode();
+        backend_.processing().setRealtimeEnabled(index == 2);
+        startExperimentServices();
+        if (wasRunning && !backend_.capture().isRunning()) {
+            const auto result = cameraController_->requestStart();
+            if (!result.accepted()) statusLabel_->setText(result.message);
+        }
+        return;
+    }
+
     // Handle service lifecycle for Overview (index 1) + Experiment (index 2)
     // Both tabs rely on playback/processing to show live frames.
     const int OVERVIEW_TAB_INDEX = 1;
@@ -1888,12 +1973,23 @@ void MainWindow::onTabChanged(int index)
         stopExperimentServices();
     }
 
-    // Auto-start camera when navigating to Overview
-    if (index == OVERVIEW_TAB_INDEX)
-    {
-        auto &cap = backend_.capture();
-        if (!cap.isRunning() && backend_.isCameraConfigured())
-        {
+    // Illuminated capture requires an explicit Play action. A connection
+    // navigates here automatically, so navigation must never energize the rig.
+    bool autoStartOnOverview = true;
+    if (backend_.isMindVisionCameraSelected()) {
+        const auto selection = backend_.cameraSelection();
+        QFile savedProfile(QString::fromStdString(selection.mindVisionConfigPath));
+        autoStartOnOverview = false;
+        if (savedProfile.open(QIODevice::ReadOnly)) {
+            const auto parsed =
+                backend::camera::mindvision::parseConfig(savedProfile.readAll().toStdString());
+            autoStartOnOverview = parsed.ok && !parsed.config.illuminatedLive;
+        }
+    }
+    // Preserve legacy non-illuminated Overview auto-start.
+    if (index == OVERVIEW_TAB_INDEX && autoStartOnOverview) {
+        auto& cap = backend_.capture();
+        if (!cap.isRunning() && backend_.isCameraConfigured()) {
             SPDLOG_INFO("MainWindow: auto-starting camera on Overview navigation");
             if (cap.start())
             {
@@ -2016,6 +2112,8 @@ void MainWindow::closeEvent(QCloseEvent* event)
         }
     }
 
+    if (initManager_) initManager_->stop();
+
     // An active run or a finalization in flight completes before the window
     // goes away (bounded: the coordinator drains the write queue, writes the
     // metadata and closes the file). AppBackend::shutdown() repeats this
@@ -2040,5 +2138,9 @@ void MainWindow::closeEvent(QCloseEvent* event)
     // Issue #358: persist geometry only when the close is accepted.
     saveWindowGeometry();
     saveSidebarPreference();
+    backend_.shutdown();
     QMainWindow::closeEvent(event);
+    // A utility window must not keep the desktop and hardware alive after
+    // the user accepts closing the main window.
+    if (event->isAccepted()) QMetaObject::invokeMethod(qApp, "quit", Qt::QueuedConnection);
 }

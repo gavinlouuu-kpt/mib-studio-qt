@@ -29,7 +29,7 @@ registry metadata, not inside the `.so`:
   Ed25519, no pre-hash), so any post-sign mutation fails verification.
 - The fields appear in the native sidecar descriptor (appended by the signing
   step after the artifact bytes are final), are validated and normalized by
-  `publish-processing-core.py` (which re-derives `public_key_spki_sha256`
+  `scripts/release/publish-processing-core.py` (which re-derives `public_key_spki_sha256`
   from the actual key bytes and rejects a mismatch), and are copied into the
   immutable `versions/<version>.json` manifest and `index.json`.
 - The envelope is verifiable offline with stock tooling:

@@ -10,6 +10,7 @@
 #include <QListWidget>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QTextBrowser>
 #include <QUrl>
 #include <QVBoxLayout>
 
@@ -40,6 +41,9 @@ SoftwareUpdatesDialog::SoftwareUpdatesDialog(AutoUpdater* updater, QWidget* pare
     list_ = new QListWidget(this);
     root->addWidget(list_, 1);
 
+    notes_ = new QTextBrowser(this);
+    notes_->setOpenExternalLinks(true);
+    root->addWidget(notes_, 1);
     status_ = new QLabel(this);
     status_->setWordWrap(true);
     root->addWidget(status_);
@@ -137,6 +141,8 @@ void SoftwareUpdatesDialog::updateButtons()
     const int idx = selectedEntryIndex();
     const QString current = updater_ ? updater_->currentVersion() : QString();
     const bool haveSel = idx >= 0;
+    notes_->setMarkdown(haveSel ? entries_[idx].releaseNotes : QString());
+    notes_->setVisible(haveSel && !entries_[idx].releaseNotes.isEmpty());
     installBtn_->setEnabled(haveSel && entries_[idx].version != current);
     notesBtn_->setEnabled(haveSel && !entries_[idx].releaseNotesUrl.isEmpty());
 }

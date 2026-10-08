@@ -9,27 +9,34 @@ a consumer at, and `docs/gold_standard_metrics.md` ("Portable Processing
 Contract") is the shape the engine's output must match.
 
 All endpoints below are plain HTTPS `GET` on public JSON — no auth, no Qt,
-no app dependency. `verify-emodulus-lut-manifest.py` and
-`verify-processing-core-manifest.py` demonstrate this with nothing but
+no app dependency. `scripts/release/verify-emodulus-lut-manifest.py` and
+`scripts/release/verify-processing-core-manifest.py` demonstrate this with nothing but
 Python's stdlib `urllib`.
 
 ## One channel, versioned processing-core registry
 
 Everything is published per **channel** (`stable` by default) to
-`https://updates.yofo.bio/`, via `publish-profiles.py`,
-`publish-emodulus-lut.py`, and `publish-processing-core.py`
+`https://updates.yofo.bio/`, via `scripts/release/publish-profiles.py`,
+`scripts/release/publish-emodulus-lut.py`, and `scripts/release/publish-processing-core.py`
 (`scripts/s3_upload.py` does the actual R2 upload; all three scripts support
 `--dry-run` to generate the manifest locally without uploading).
 
 | Manifest | URL | Published by | Consumed for |
 |---|---|---|---|
-| Profile catalog | `{base}/profiles/{channel}/catalog.json` | `publish-profiles.py` | `ProcessingConfig` values (camera + processing profiles) |
-| Emodulus LUT | `{base}/{channel}/emodulus-lut/latest.json` | `publish-emodulus-lut.py` | Young's-modulus lookup table |
-| Processing core active pointer | `{base}/{channel}/processing-core/latest.json` | `publish-processing-core.py` | Full manifest for the channel-active version; legacy-compatible entry point |
-| Processing core immutable version | `{base}/{channel}/processing-core/versions/<version>.json` | `publish-processing-core.py` | Exact, long-cache wheel/native-core pin |
-| Processing core catalog | `{base}/{channel}/processing-core/index.json` | `publish-processing-core.py` | Enumerable version history and `active_version` for selectors |
-| `mib-processing` package page | `{base}/{channel}/processing-core/simple/mib-processing/index.html` | `publish-processing-core.py` | PEP 503 links with `#sha256=` fragments for baked dependency pins |
-| Pip project route | `{base}/{channel}/processing-core/simple/mib-processing/` | `publish-processing-core.py` | Same package HTML at the exact trailing-slash object key requested by pip |
+| Profile catalog | `{base}/profiles/{channel}/catalog.json` | `scripts/release/publish-profiles.py` | `ProcessingConfig` values (camera + processing profiles) |
+| Emodulus LUT | `{base}/{channel}/emodulus-lut/latest.json` | `scripts/release/publish-emodulus-lut.py` | Young's-modulus lookup table |
+| Processing core active pointer | `{base}/{channel}/processing-core/latest.json` | `scripts/release/publish-processing-core.py` | Full manifest for the channel-active version; legacy-compatible entry point |
+| Processing core immutable version | `{base}/{channel}/processing-core/versions/<version>.json` | `scripts/release/publish-processing-core.py` | Exact, long-cache wheel/native-core pin |
+| Processing core catalog | `{base}/{channel}/processing-core/index.json` | `scripts/release/publish-processing-core.py` | Enumerable version history and `active_version` for selectors |
+| `mib-processing` package page | `{base}/{channel}/processing-core/simple/mib-processing/index.html` | `scripts/release/publish-processing-core.py` | PEP 503 links with `#sha256=` fragments for baked dependency pins |
+| Pip project route | `{base}/{channel}/processing-core/simple/mib-processing/` | `scripts/release/publish-processing-core.py` | Same package HTML at the exact trailing-slash object key requested by pip |
+| Contract 2 active pointer | `{base}/{channel}/processing-core-absdiff-laplacian/latest.json` | `scripts/release/publish-processing-core.py --line absdiff-laplacian` | Full manifest for the channel-active `absdiff-laplacian` core |
+| Contract 2 immutable version | `{base}/{channel}/processing-core-absdiff-laplacian/versions/<version>.json` | `scripts/release/publish-processing-core.py --line absdiff-laplacian` | Exact, long-cache native-core pin |
+| Contract 2 catalog | `{base}/{channel}/processing-core-absdiff-laplacian/index.json` | `scripts/release/publish-processing-core.py --line absdiff-laplacian` | Version history and `active_version` of the `absdiff-laplacian` line |
+
+The `processing-core/` rows are the `subtract-ring` (Contract 1) line, and the
+`processing-core-absdiff-laplacian/` rows are the `absdiff-laplacian`
+(Contract 2) line. See [Core lines](#core-lines) below.
 
 For pip/uv configuration, the **index base URL** is the parent directory:
 `https://updates.yofo.bio/{channel}/processing-core/simple/` (not the package
@@ -200,7 +207,10 @@ filters `native_plugins[]` for the running OS/architecture and declared app
 range, then fetches the selected immutable version manifest. It refuses the
 candidate unless the mutable and immutable metadata agree. The raw immutable
 manifest SHA-256 is retained alongside the artifact SHA-256 in experiment
-provenance.
+provenance. The selector currently reads only the `subtract-ring` registry
+(`processing-core/`). Its manifest parser takes the release tag from `wheel`,
+so it must also accept the top-level `release_tag` of an `absdiff-laplacian`
+manifest before it can offer Contract 2 cores.
 
 Downloaded plugins live in a persistent content-addressed cache at
 `<cache>/<version>/<sha256>/<filename>`. Preparation uses a directory lock,
@@ -262,13 +272,100 @@ resolved on every processing run (e.g. as MLflow run params in Biowork's
 pinned combination that produced it -- not just "some build of the
 pipeline."
 
+### Core lines
+
+A shipped core implements exactly one contract
+([ADR 0007](decisions/0007-one-contract-per-shipped-core.md)), so each
+**core line** has its own registry, release tags and artifact names. The
+publisher selects one with `--line` (default `subtract-ring`):
+
+| Line | Contract | Registry prefix | Release tag | Native artifacts | Wheel / PEP 503 |
+|---|---|---|---|---|---|
+| `subtract-ring` | 1 | `{channel}/processing-core/` | `mib-processing-v<version>` | `mib_processing_core-<version>-<os>_<arch>.{dll,so}` + `.json` | yes |
+| `absdiff-laplacian` | 2 | `{channel}/processing-core-absdiff-laplacian/` | `mib-processing-absdiff-laplacian-v<version>` | `mib_processing_core-absdiff-laplacian-<version>-<os>_<arch>.{dll,so}` + `.json` | no |
+
+Both lines take the core version from `bindings/python/pyproject.toml`. The
+`subtract-ring` documents above are unchanged by the introduction of lines:
+they carry no `line` field, and an unlabelled document is a `subtract-ring`
+document. The published `mib-processing-v0.1.0` and `v0.2.0` releases remain
+valid `subtract-ring` releases.
+
+The `absdiff-laplacian` line ships native cores only. The wheel can run either
+contract per call, so it is a research build and is never a rig's processing
+path (ADR 0007 point 4). Its documents use the same schemas (manifest schema
+v2, index schema v1) with these differences:
+
+- `latest.json` / `versions/<version>.json` has top-level `"line"`,
+  `"release_tag"` and `"release_url"`, `"contract_version": 2`, and **no**
+  `wheel` object.
+- Each `native_plugins[]` entry adds `"algorithm": "absdiff-laplacian"` and has
+  `"contract_version": 2`, `"engine_abi_version": 2` and
+  `"entrypoint": "mib_processing_get_api_v2"`.
+- `index.json` has a top-level `"line"`. Each `versions[]` entry has `"line"`
+  and no `wheels` list.
+- There is no `simple/` PEP 503 page.
+
+```jsonc
+{
+  "processing_core_manifest_schema_version": 2,
+  "channel": "stable",
+  "line": "absdiff-laplacian",
+  "version": "0.1.0",
+  "published_at": "2026-10-04T00:00:00Z",
+  "contract_version": 2,
+  "release_tag": "mib-processing-absdiff-laplacian-v0.1.0",
+  "release_url": "https://github.com/KPT1020/mib-studio-qt/releases/tag/mib-processing-absdiff-laplacian-v0.1.0",
+  "native_plugins": [
+    {
+      "filename": "mib_processing_core-absdiff-laplacian-0.1.0-windows_x86_64.dll",
+      "os": "windows",
+      "arch": "x86_64",
+      "artifact_kind": "shared_library",
+      "version": "0.1.0",
+      "contract_version": 2,
+      "algorithm": "absdiff-laplacian",
+      "engine_abi_version": 2,
+      "runtime_fingerprint": "windows-x86_64-msvc1942-md-cxx17",
+      "app_min_version": "1.2.0",
+      "app_max_version": null,
+      "entrypoint": "mib_processing_get_api_v2",
+      "url": "https://github.com/KPT1020/mib-studio-qt/releases/download/mib-processing-absdiff-laplacian-v0.1.0/mib_processing_core-absdiff-laplacian-0.1.0-windows_x86_64.dll",
+      "sha256": "<64-hex>",
+      "size_bytes": 1234567,
+      "descriptor_url": "https://github.com/KPT1020/mib-studio-qt/releases/download/mib-processing-absdiff-laplacian-v0.1.0/mib_processing_core-absdiff-laplacian-0.1.0-windows_x86_64.json",
+      "signing": { "scheme": "authenticode", "required": true }
+    }
+  ],
+  "profile_catalog_url": "https://updates.yofo.bio/profiles/stable/catalog.json",
+  "emodulus_lut_manifest_url": "https://updates.yofo.bio/stable/emodulus-lut/latest.json"
+}
+```
+
+The publisher keeps the lines apart and fails closed:
+
+- A release directory may hold several lines' assets. Each line discovers only
+  descriptors named `<its artifact prefix><version>-...json`; a version starts
+  with a digit, so `mib_processing_core-<version>-` never matches an
+  `absdiff-laplacian` asset.
+- A descriptor must be named
+  `<artifact prefix><version>-<os>_<arch>.<ext>` and must declare the line's
+  contract, engine ABI and entry point. `absdiff-laplacian` descriptors must
+  also declare `contract_version` and `algorithm` explicitly. For
+  `subtract-ring` `algorithm` is optional (legacy descriptors lack it) but, if
+  present, must be `subtract-ring`.
+- A release tag of another line is rejected (for example
+  `--line absdiff-laplacian --from-release mib-processing-v0.1.0`).
+- Merging into an existing catalog of another line, or one whose entries
+  declare another line or contract, is rejected. So is promoting an immutable
+  manifest of another line.
+
 ## Publishing and promotion
 
 The `mib-processing-v<version>` workflow runs wheel/native conformance, attaches
 the assets to one GitHub Release, and invokes:
 
 ```bash
-python publish-processing-core.py \
+python scripts/release/publish-processing-core.py \
   --from-release "mib-processing-v0.1.0" \
   --channel stable \
   --upload-method s3
@@ -279,7 +376,7 @@ available for local previews. A fixture-backed dry run exercises the exact
 release classification without GitHub or R2:
 
 ```bash
-python publish-processing-core.py \
+python scripts/release/publish-processing-core.py \
   --from-release mib-processing-v0.1.0 \
   --release-assets-dir ./dist \
   --published-at 2026-07-13T00:00:00Z \
@@ -290,10 +387,27 @@ python publish-processing-core.py \
   --pep503-out ./out/simple/mib-processing/index.html
 ```
 
+The `absdiff-laplacian` line uses the same commands with `--line` and its own
+tag. It takes no `--wheel` or `--pep503-out`, ignores any `.whl` asset in the
+release, and requires at least one native core. `--version` is an alias of
+`--wheel-version`. `--contract-version` is only a cross-check and must equal
+the line's contract.
+
+```bash
+python scripts/release/publish-processing-core.py \
+  --line absdiff-laplacian \
+  --from-release mib-processing-absdiff-laplacian-v0.1.0 \
+  --release-assets-dir ./dist \
+  --published-at 2026-10-04T00:00:00Z \
+  --dry-run \
+  --manifest-out ./out/latest.json \
+  --index-out ./out/index.json
+```
+
 Publication reads the existing immutable manifest and catalog before writing.
 It rejects unreadable state and conflicting bytes, treats an identical version
 as idempotent, uploads the immutable document first, then the catalog/package
-page, and writes `latest.json` last. Consequently a partial failure never
+page (the catalog only, for `absdiff-laplacian`), and writes `latest.json` last. Consequently a partial failure never
 updates the legacy active pointer before the immutable/catalog/package writes
 have succeeded. A failed retry is safe because immutable equality and catalog
 deduplication are checked again. Versioned manifests use a
@@ -308,7 +422,7 @@ Wrangler/public reads remain suitable for non-mutating `--dry-run` previews.
 Promote or roll back without rebuilding the old manifest:
 
 ```bash
-python publish-processing-core.py \
+python scripts/release/publish-processing-core.py \
   --promote-version 0.1.0 \
   --channel stable \
   --published-at 2026-07-13T01:02:03Z \
@@ -317,7 +431,9 @@ python publish-processing-core.py \
 
 This command reads and validates the existing version and catalog, copies the
 immutable JSON bytes exactly, updates mutable catalog/package metadata, and
-writes those original bytes to `latest.json` last. `--published-at` is also
+writes those original bytes to `latest.json` last. Add
+`--line absdiff-laplacian` to promote within the Contract 2 registry. That
+promotion has no package page to update. `--published-at` is also
 required for non-release/manual real publication so a retry cannot invent
 different immutable bytes. Real `--from-release` publication uses the GitHub
 Release's stable `publishedAt` timestamp. Timestamps must include a timezone;
@@ -338,8 +454,8 @@ an uncommitted bump so the tag cannot point at the old version.
 ## Verifying a channel is reachable (no Qt, no app)
 
 ```bash
-python3 verify-emodulus-lut-manifest.py --manifest-url https://updates.yofo.bio/stable/emodulus-lut/latest.json
-python3 verify-processing-core-manifest.py --manifest-url https://updates.yofo.bio/stable/processing-core/latest.json
+python3 scripts/release/verify-emodulus-lut-manifest.py --manifest-url https://updates.yofo.bio/stable/emodulus-lut/latest.json
+python3 scripts/release/verify-processing-core-manifest.py --manifest-url https://updates.yofo.bio/stable/processing-core/latest.json
 ```
 
 Both use nothing but `urllib`/`json`/`hashlib` from the standard library --

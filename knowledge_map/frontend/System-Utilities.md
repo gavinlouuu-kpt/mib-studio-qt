@@ -7,6 +7,28 @@
 
 ## System (`src/frontend/system/`)
 
+- **`DesktopInstance`** — [[DesktopInstance]] reserves one desktop session
+  before hardware initialization and retains ownership through teardown.
+- **`DeviceInitManager`** (#419) — Qt **adapter** over the backend
+  `StartupDiscoveryCoordinator` ([[../services/DeviceDiscoveryService]]).
+  Same public surface as before (`start`, `stop`, `runCameraStep`,
+  `setConnectTab`, `setNanopositionerTab`, `cameraInitFinished`,
+  `nanopositionerInitFinished`) but it owns no worker: it installs a
+  UI-thread executor (queued `QMetaObject::invokeMethod`) so the policy's
+  selection/connection hooks and outcome listeners run on the UI thread,
+  forwards the saved nanopositioner preference from `NanopositionerTab`, and
+  maps outcomes onto the tabs (`showDiscoveryResults`, `apply*Selection`,
+  `reportNoCameras`, `reportMultipleCameras`, `reportDiscoveryProblem`,
+  `showDiscoveryCandidates`, `applyAutoConnectResult`, status text).
+  `stop()` is terminal: it stops the coordinator (cancels owned jobs, no
+  further hooks); draining the workers is `AppBackend::shutdown()`'s job.
+  The destructor detaches every callback before the QObject goes away.
+- **`DiscoverySubscription`** (`include/frontend/system/DiscoverySubscription.h`)
+  — RAII observer on `DeviceDiscoveryService` that re-posts snapshots to a
+  QObject with a queued invocation; destroying it removes the observer and
+  blocks until an in-flight callback returns, so a tab that owns one as a
+  member can be destroyed mid-scan. Used by `ConnectTab` and `ConfigTabs`.
+
 - **`QtLogBridge`** — `mib::frontend::installQtLogBridge()` installs a
   `qInstallMessageHandler` that routes Qt's process-wide log stream into spdlog
   (criticals/fatals also go to Sentry via
@@ -92,15 +114,32 @@
   `processing_contract_version` is round-tripped through catalog/local
   metadata and marks the profile incompatible when it differs from the active
   core; it never selects a core.
-  `camera.frame_delivery_mode` is classified medium-risk in profile diffs
-  (`isMediumRiskPath`), and `configSourceForPath` buckets `camera.*` paths as
-  Config (not "Camera script", which only matches the `camera_script*` keys).
+  - **Schema-aware loading:** `normalizeConfigForSchema` reads
+    `config_schema_version`, fails closed on a schema newer than this build
+    understands (`> config_schema_version 2`), and merges the shipped v1
+    defaults only into a schema-1 document so a schema-2 config is never
+    polluted with removed keys (e.g. ring thresholds). It no longer forces a
+    document back to schema 1.
+  - **Copy-upgrade:** `copyUpgradeConfigToV2` produces a Contract-2 document
+    from a v1 one by delegating to the Qt-free backend migrator
+    (`backend::processing::contract::migrateProfileConfigV1ToV2`, see
+    [[../services/ProcessingService]]); it never rewrites the source. See
+    `docs/architecture/processing-contract-compatibility.md`.
 - **`DeviceInitManager`** — runs [[../services/CameraControlService]]
   `discoverCameras()` off the UI thread. Emits a signal when discovery
   completes (including "no cameras found").
+  `camera.frame_delivery_mode` is classified medium-risk in profile diffs
+  (`isMediumRiskPath`), and `configSourceForPath` buckets `camera.*` paths as
+  Config (not "Camera script", which only matches the `camera_script*` keys).
+- **`DeviceInitManager`** — see the System section above (#419 adapter);
+  emits `cameraInitFinished` / `nanopositionerInitFinished` when the startup
+  policy reports an outcome (including "no cameras found").
 - **`PlaybackPanel`** — the scrub+preview widget used by [[PreviewPage]]
   and [[MainWindow]]. Owns a `QImage` display, ROI overlay, scrub slider,
   display-FPS throttle, and overlay mode (Off/Mask/Contours/Both).
+  - Raw Record is disabled while an experiment or another HDF5 owner is busy.
+    After the file picker returns, backend admission revalidates atomically
+    and the dialog shows its conflict reason (#451).
   - The Space-bar shortcut / key press does **not** start or stop capture
     itself: `onToggleCapture()` emits `captureToggleRequested()`, which
     [[MainWindow]] routes through its `CameraController` so the experiment
@@ -179,7 +218,9 @@ tested by `tests/frontend/update_catalog_test.cpp`), `OverlayRenderer`,
   `commit()`, returning `ConfigWriteResult{ok, conflict, error, fingerprint,
   bytesWritten}`. Atomic replacement, not a cross-process compare-and-swap.
   Pure companion `ConfigDocumentState` (`frontend/models/`) holds
-  path/fingerprints/dirty/conflict/last-save. Guard:
+  path/fingerprints/dirty/conflict/last-save. Its disk fingerprint hashes exact
+  file bytes; loaded/current editor fingerprints track normalized text so CRLF
+  defaults do not produce false Save conflicts. Guard:
   `frontend.config_document_state`.
 - **`ElidingLabel`** — `QLabel` whose painted text is elided (`ElideMiddle`
   by default) while `fullText()`/tooltip/accessible description keep the
@@ -206,8 +247,24 @@ tested by `tests/frontend/update_catalog_test.cpp`), `OverlayRenderer`,
 
 ## Widgets (`src/frontend/widgets/`)
 
-- **`ZoomableChartView`** — subclass of `QChartView` with scroll/zoom.
+- **`ZoomableChartView`** — subclass of `QChartView`: wheel zoom around the
+  cursor (Ctrl = X only, Shift = Y only, over an axis's labels = that axis
+  only), left- or middle-drag pan, double-click reset to `setDefaultRange`.
   Used by [[ExperimentMonitoringTab]] and [[HdfReviewTab]].
+  **Click vs drag (issue #466):** a press only becomes a pan once the
+  pointer travels `QApplication::startDragDistance()`; a release before that
+  emits `plotClicked(viewPos, button)` (inside `plotArea()` only) and never
+  moves the axes. `hoverMoved` fires when no press is pending.
+  `setResetOnDoubleClick(false)` hands double-click to the owner
+  (`plotDoubleClicked`); `resetZoomAction()` is a "Reset zoom" `QAction` for
+  context menus; `cancelGesture()` drops a pending press or pan; a leave with
+  no button held, or a move whose `buttons()` no longer include the pressed
+  one (release taken by a context menu or modal while the pointer stayed
+  over the view), does the same, so a lost release never leaves a "sticky"
+  pan. `markUserZoomed()` lets an owner that restored axis ranges itself
+  re-arm the user-zoomed state. Only a left double-click resets. Guard:
+  `frontend.zoomable_chart_view` (synthesized events via
+  `tests/support/qt_mouse.h`; the tree has no QtTest).
 - **`RunStatusWidget`** (issue #363) — glyph + `ElidingLabel` bound to a
   `RunStatusModel` (`bind`); text carries the state, color is only a
   secondary cue; accessible name "Run state: …"; bounded width (≤ 260 px).
@@ -234,3 +291,34 @@ tested by `tests/frontend/update_catalog_test.cpp`), `OverlayRenderer`,
   — tiny `QObject` that bridges non-Qt thread callbacks (e.g.
   background auto-capture from [[../services/ProcessingService]]) to Qt
   signals on the main thread. Owned by [[../architecture/AppBackend]].
+
+### Offline Help and inline update notes (#573)
+
+The viewer and local-navigation contract are documented in [[HelpDialog]].
+
+`HelpDialog` renders bundled Markdown with `QTextBrowser`: release notes from
+`<exe>/resources/release-notes/` (running version first, earlier versions newest
+first), and the manual from `resources/manual/`, including local page links and
+images. Development falls back to `docs/` in the compiled source root.
+`Help/LastSeenVersion` in QSettings suppresses fresh-install and repeated prompts;
+Qt opens What's New once on an upgrade. AutoUpdater and SoftwareUpdatesDialog
+accept optional `release_notes` alongside the existing URL and display Markdown
+inline. Publishing caps the UTF-8 plain-text summary at 16 KiB. Missing inline
+notes retain the URL button fallback. See [[frontend/MainWindow]].
+
+Profile path changes broadcast `AppConfigWatcher::configFileChanged` after the
+immediate load, keeping Monitoring’s document fingerprint synchronized (#583).
+Catalog-managed profile update checks compare installed and catalog revisions
+when present; legacy metadata falls back to checksums.
+
+## Experiment configuration ownership (#582)
+
+`PlaybackPanel` disables Clear ROI, ROI dragging, Set Background, Auto Background,
+and the background/calibration context actions while the coordinator is not idle;
+tooltips explain that the experiment must be stopped or reset. ROI persistence
+and manual background changes execute inside the idle transaction.
+`AppConfigWatcher` defers whole-document reloads during a run, warns once per
+file event, and retries the latest path on its existing 500 ms timer until idle.
+The loaded fingerprint and runtime recipe remain unchanged until application.
+Offscreen coverage: `frontend.config_apply` (Starting/Active/Stopping, drag,
+context menu, paused controls, deferred reload and idle restoration).

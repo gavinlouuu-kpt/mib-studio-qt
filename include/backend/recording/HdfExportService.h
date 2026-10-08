@@ -25,7 +25,7 @@
 
 namespace backend::recording {
 
-enum class HdfExportFormat { MetricsCsv, Images, All };
+enum class HdfExportFormat { MetricsCsv, Images, All, Charts, Fcs };
 enum class HdfExportFrames { Valid, Invalid, Both };
 enum class HdfExportPhase {
     Validating, Metadata, Metrics, ValidImages, SeriesImages, InvalidImages, Charts, Committing, Cleanup
@@ -47,17 +47,25 @@ struct HdfExportRequest {
     std::string outputRoot;   // parent directory for the generated name
     HdfExportFormat format{HdfExportFormat::All};
     HdfExportFrames frames{HdfExportFrames::Both};
+    // FCS defaults to accepted detections. Invalid/both rows are opt-in via
+    // this selector; the regular CSV/All frame selection remains unchanged.
+    HdfExportFrames fcsFrames{HdfExportFrames::Valid};
     double conversionFactor{0.4886}; // pixel -> micron
     HdfExportSeriesRange series;
     // Chart TIFFs rendered by the caller on its own thread (name -> BGR image),
     // written into the export folder for All jobs (e.g. "scatter_plot.tiff").
     std::map<std::string, cv::Mat> supplementalImages;
+    bool generateReviewCharts{false};
+    double chartRingMin{0.0};
+    double chartRingMax{10.0};
+    bool chartIsoelasticOverlays{true};
     // Retain ".partial-<job>" output (with a failure manifest) instead of
     // deleting it when the job does not complete.
     bool keepPartialOnFailure{false};
     // Optional explicit final destination (metrics CSV file for MetricsCsv,
-    // folder for Images/All). Empty -> derived from the source base name with
-    // a bounded "_N" suffix lookup.
+    // folder for Images/All, folder or .fcs file for Fcs). An explicit .fcs
+    // destination publishes its sibling *_event_map.csv as one no-replace pair.
+    // Empty -> derived from the source base name with a bounded "_N" suffix lookup.
     std::string explicitDestination;
 };
 
@@ -93,8 +101,10 @@ struct HdfExportResult {
 class HdfExportCancelToken {
 public:
     HdfExportCancelToken() : flag_(std::make_shared<std::atomic<bool>>(false)) {}
+    explicit HdfExportCancelToken(std::shared_ptr<std::atomic<bool>> flag) : flag_(std::move(flag)) {}
     void cancel() { flag_->store(true, std::memory_order_release); }
     bool cancelled() const { return flag_->load(std::memory_order_acquire); }
+    const std::atomic<bool>* nativeFlag() const { return flag_.get(); }
 private:
     std::shared_ptr<std::atomic<bool>> flag_;
 };

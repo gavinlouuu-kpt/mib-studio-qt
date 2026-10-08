@@ -1,0 +1,4 @@
+# Build-time Python packages: what CI and scripts/bootstrap.* install before
+# `conan install` / `cmake`. Runtime/analysis packages: requirements-scripts.txt.
+conan>=2.0,<3
+numpy>=1.24          # conformance-input CTest + scripts/run_processing_conformance.py

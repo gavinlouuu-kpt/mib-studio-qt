@@ -15,8 +15,12 @@ below is the policy it cannot check for you.
 | Threading, data flow, or layering | [[architecture/Threading-Model]], [[architecture/Data-Flow]], [[architecture/Overview]] |
 | `src/backend/playback/FrameStore.*` | [[data-model/FrameStore]] |
 | HDF5 schema / dataset paths (`Hdf5Service.cpp`) | [[data-model/HDF5-Storage]] + [[services/Hdf5Service]] |
+| Review core (`src/backend/review/`, `include/backend/review/`) | [[services/ReviewSession]] (+ [[frontend/HdfReviewTab]] when shared behaviour moves) |
+| Review bridge / YOFO Review (`crates/mib-bridge/src/review_*`, `desktop/src/review/`, `desktop/src-tauri/src/{review,review_update,isoelastic}.rs`, `scripts/release/publish-review-update.py`, `tauri.review.conf.json`) | [[frontend/YofoReview]] + [[architecture/Rust-Bridge]] |
 | Camera code under `src/backend/camera/` (ICamera, EGrabber, Mock) | The matching note under `knowledge_map/camera/` |
+| Rust command layer and transports (`crates/mib-app-commands/`, `desktop/src-tauri/`, `crates/mib-bridge-server/`) | [[architecture/Desktop-Shell]], [[architecture/Rust-Bridge]] |
 | `CMakeLists.txt`, `conanfile.py`, `CMakePresets.json` | [[build-and-run/Build]], [[build-and-run/Dependencies]], [[build-and-run/Run-Modes]] |
+| `env/assets.json`, `scripts/assets_manifest.py`, `scripts/provision-assets.py` | [[build-and-run/Assets]] |
 | Conventions / logging patterns | [[conventions/Code-Conventions]], [[conventions/Logging]] |
 | Domain vocabulary (new metric, new concept) | [[domain/Glossary]], [[domain/Microscopy-Pipeline]] |
 | **Added a new** service / tab / dialog / camera impl | Create the atomic note AND add it to the cluster's `_MOC.md` AND link it from [[README]] and [[Agent-Onboarding]] |
@@ -32,9 +36,11 @@ below is the policy it cannot check for you.
 
 ## Shipping the change
 
-1. On every non-trivial feature/fix, also append a short dated entry to
-   [[current-state/Recent-Work]] (and — if the work was multi-step — create
-   `knowledge_map/task/YYYY-MM-DD-<slug>.md`).
+1. On every non-trivial feature/fix, also add **one new file**
+   `knowledge_map/current-state/recent/YYYY-MM-DD-<slug>.md` with a short dated
+   entry (see [[current-state/recent/README|the recent-work README]]); do not append
+   to the [[current-state/Recent-Work]] archive. If the work was multi-step, also
+   create `knowledge_map/task/YYYY-MM-DD-<slug>.md`.
 2. Before committing, run `python3 scripts/check_docs.py` — it fails on broken
    wikilinks and broken doc links.
 3. If you find any note that disagrees with current code, fix it while you're

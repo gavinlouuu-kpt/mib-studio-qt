@@ -16,12 +16,14 @@
 
 #include "backend/recording/HdfExportService.h"
 #include "backend/recording/Hdf5Service.h"
+#include "backend/recording/FcsWriter.h"
 #include "backend/processing/ProcessingService.h"
 
 #include "support/assert.h"
 #include "support/tempdir.h"
 #include "support/watchdog.h"
 
+#include <hdf5.h>
 #include <opencv2/core.hpp>
 #include <opencv2/imgcodecs.hpp>
 
@@ -33,6 +35,7 @@
 #include <fstream>
 #include <functional>
 #include <map>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -60,10 +63,13 @@ ProcessedFrame makeFrame(uint64_t idx, bool valid, int h, int w, int series)
     f.originalImage = pattern(idx, h, w, valid ? 0 : 50);
     f.processedImage = cv::Mat(h, w, CV_8UC1, cv::Scalar(valid ? 255 : 0));
     f.validation.isValid = valid;
-    f.validation.objectId = static_cast<int>(idx);
+    // The same physical object may be observed repeatedly; FCS must retain
+    // every detection rather than deduplicating this frame-local ID.
+    f.validation.objectId = 7;
     f.validation.objectCount = 1;
     f.validation.area = 100.0 + idx;
     f.validation.deformability = 0.25;
+    f.validation.youngsModulus = valid ? 12.345 : std::numeric_limits<double>::quiet_NaN();
     f.validation.brightness.q1 = 1.5;
     for (int s = 0; valid && s < series; ++s) f.seriesImages.push_back(pattern(idx, h, w, 100 + s * 17));
     return f;
@@ -136,6 +142,44 @@ int main()
         return r;
     };
 
+    // Single-stream files remain valid CSV inputs, even with Both selected.
+    for (bool validOnly : {true, false}) {
+        auto r = request(HdfExportFormat::MetricsCsv);
+        r.sourcePath = writeFixture(td.path() / (validOnly ? "valid-only.h5" : "invalid-only.h5"),
+                                    validOnly ? 1 : 0, validOnly ? 0 : 1, 0, kH, kW);
+        const auto exported = service.run(r, HdfExportCancelToken{});
+        MIB_EXPECT(exported.completed(), "single-stream CSV completes: " + exported.error);
+    }
+    // An empty selected stream still owns its schema, independent of other streams.
+    {
+        const auto path = td.path() / "empty-selected.h5";
+        writeFixture(path, 1, 1, 0, kH, kW);
+        const hid_t file = H5Fopen(path.string().c_str(), H5F_ACC_RDWR, H5P_DEFAULT);
+        MIB_REQUIRE(file >= 0, "open empty selection fixture");
+        const hid_t valid = H5Dopen2(file, "/valid_frames/metadata", H5P_DEFAULT);
+        const hsize_t zero = 0;
+        MIB_REQUIRE(valid >= 0 && H5Dset_extent(valid, &zero) >= 0, "empty valid metadata");
+        H5Dclose(valid);
+        MIB_REQUIRE(H5Ldelete(file, "/invalid_frames/metadata", H5P_DEFAULT) >= 0, "replace invalid schema");
+        const hid_t type = H5Tcreate(H5T_COMPOUND, sizeof(uint64_t));
+        H5Tinsert(type, "timestampNs", 0, H5T_NATIVE_UINT64);
+        const hid_t space = H5Screate_simple(1, &zero, nullptr);
+        const hid_t invalid = H5Dcreate2(file, "/invalid_frames/metadata", type, space,
+                                       H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+        MIB_REQUIRE(invalid >= 0, "create distinct empty invalid schema");
+        H5Dclose(invalid);
+        H5Sclose(space);
+        H5Tclose(type);
+        H5Fclose(file);
+        auto r = request(HdfExportFormat::Fcs);
+        r.sourcePath = path.string();
+        const auto exported = service.run(r, HdfExportCancelToken{});
+        MIB_REQUIRE(exported.completed(), "empty selected FCS completes: " + exported.error);
+        std::ifstream fcs(fs::path(exported.finalPath) / "empty-selected.fcs", std::ios::binary);
+        const std::string bytes((std::istreambuf_iterator<char>(fcs)), {});
+        MIB_EXPECT(bytes.find("Area_px2") != std::string::npos, "empty valid FCS retains valid schema");
+    }
+
     // ---- 1. Round trip --------------------------------------------------------
     {
         wd.mark("roundtrip");
@@ -160,7 +204,16 @@ int main()
         std::getline(csv, header);
         std::getline(csv, row);
         MIB_EXPECT(header.rfind("Frame Type,Index,Timestamp,Object Id,Object Count,Track Id", 0) == 0, "csv header");
-        MIB_EXPECT(row.rfind("Valid,0,1000,0,1,-1,0,0,0,0.250,100.00,", 0) == 0, "csv row format: " + row);
+        MIB_EXPECT(row.rfind("Valid,0,1000,7,1,-1,0,0,0,0.250,100.00,", 0) == 0, "csv row format: " + row);
+        MIB_EXPECT(header.substr(header.rfind(',') + 1) == "Young's modulus (kPa)", "modulus header appended");
+        MIB_EXPECT(std::count(header.begin(), header.end(), ',') == 23, "CSV has 24 columns");
+        MIB_EXPECT(row.substr(row.rfind(',') + 1) == "12.345", "finite modulus exported");
+        while (std::getline(csv, row)) {
+            MIB_EXPECT(std::count(row.begin(), row.end(), ',') == 23, "row column count stable");
+            if (row.rfind("Invalid,", 0) == 0)
+                MIB_EXPECT(row.back() == ',', "NaN modulus is an empty final field");
+        }
+
         MIB_EXPECT(std::count(phases.begin(), phases.end(), HdfExportPhase::Committing) == 1, "commit phase reported");
         MIB_EXPECT(noPartials(out), "no partial residue");
         MIB_EXPECT(fnv1a(source) == sourceHash, "source untouched");
@@ -265,6 +318,142 @@ int main()
                        (many / "a_metrics.csv").string(), "first name when unused");
     }
 
+    // ---- FCS 3.1 detection export --------------------------------------------
+    {
+        const fs::path fcsOut = td.path() / "fcs-out";
+        auto fcs = request(HdfExportFormat::Fcs);
+        fcs.outputRoot = fcsOut.string();
+        const auto valid = service.run(fcs, HdfExportCancelToken{});
+        MIB_REQUIRE(valid.completed(), "FCS default export completes: " + valid.error);
+        MIB_EXPECT(valid.validCount == kValid && valid.invalidCount == 0, "FCS defaults to valid detections");
+        const fs::path folder(valid.finalPath);
+        const fs::path fcsPath = folder / "cell run.v1.fcs";
+        const fs::path mapPath = folder / "cell run.v1_event_map.csv";
+        MIB_EXPECT(fs::is_regular_file(fcsPath) && fs::is_regular_file(mapPath), "FCS transaction outputs");
+        std::ifstream map(mapPath);
+        std::string line;
+        std::getline(map, line);
+        MIB_EXPECT(line == "fcs_event_index,source_frame_index,object_id,timestamp_ns,event_mode", "FCS event map header");
+        std::getline(map, line);
+        MIB_EXPECT(line.find("0,0,7,1000,detection") != std::string::npos, "FCS exact event map row");
+
+        // Explicit FCS destinations publish one sibling event map alongside
+        // the requested file.  Both names are a no-replace pair.
+        auto explicitFcs = request(HdfExportFormat::Fcs);
+        explicitFcs.outputRoot = fcsOut.string();
+        explicitFcs.explicitDestination = (fcsOut / "chosen.fcs").string();
+        const auto explicitResult = service.run(explicitFcs, HdfExportCancelToken{});
+        const fs::path explicitMap = fcsOut / "chosen_event_map.csv";
+        MIB_EXPECT(explicitResult.completed() && explicitResult.finalPath == explicitFcs.explicitDestination,
+                   "explicit FCS destination completes at the requested file");
+        MIB_EXPECT(fs::is_regular_file(explicitFcs.explicitDestination) && fs::is_regular_file(explicitMap),
+                   "explicit FCS publishes the paired event map");
+        auto pairTaken = explicitFcs;
+        MIB_EXPECT(service.run(pairTaken, HdfExportCancelToken{}).status == HdfExportStatus::Failed,
+                   "existing explicit FCS pair is refused");
+        fs::remove(explicitMap);
+        MIB_EXPECT(service.run(pairTaken, HdfExportCancelToken{}).status == HdfExportStatus::Failed,
+                   "existing explicit FCS file is refused when map is absent");
+        fs::remove(explicitFcs.explicitDestination);
+        auto mapTaken = explicitFcs;
+        { std::ofstream occupied(explicitMap); occupied << "occupied\n"; }
+        MIB_EXPECT(service.run(mapTaken, HdfExportCancelToken{}).status == HdfExportStatus::Failed,
+                   "existing explicit event map is refused when FCS is absent");
+        fs::remove(explicitMap);
+
+        auto cancelledCommit = explicitFcs;
+        cancelledCommit.explicitDestination = (fcsOut / "cancelled-commit.fcs").string();
+        HdfExportCancelToken commitCancel;
+        const auto cancelledCommitResult = service.run(
+            cancelledCommit, commitCancel, [&](const HdfExportProgress& p) {
+                if (p.phase == HdfExportPhase::Committing) commitCancel.cancel();
+            });
+        MIB_EXPECT(cancelledCommitResult.status == HdfExportStatus::Cancelled &&
+                       !fs::exists(fcsOut / "cancelled-commit.fcs") &&
+                       !fs::exists(fcsOut / "cancelled-commit_event_map.csv"),
+                   "cancellation after committing callback publishes no FCS pair");
+
+        auto commitFault = explicitFcs;
+        commitFault.explicitDestination = (fcsOut / "commit-fault.fcs").string();
+        const auto commitFaultResult = service.run(
+            commitFault, HdfExportCancelToken{}, [&](const HdfExportProgress& p) {
+                if (p.phase == HdfExportPhase::Committing) {
+                    std::ofstream occupied(commitFault.explicitDestination);
+                    occupied << "competing output\n";
+                }
+            });
+        MIB_EXPECT(commitFaultResult.status == HdfExportStatus::Failed &&
+                       fs::is_regular_file(commitFault.explicitDestination) &&
+                       !fs::exists(fcsOut / "commit-fault_event_map.csv"),
+                   "FCS publication rolls back the sidecar when the file target is taken");
+
+        auto both = request(HdfExportFormat::Fcs);
+        both.outputRoot = fcsOut.string();
+        both.fcsFrames = HdfExportFrames::Both;
+        const auto bothResult = service.run(both, HdfExportCancelToken{});
+        MIB_EXPECT(bothResult.completed() && bothResult.validCount == kValid && bothResult.invalidCount == kInvalid,
+                   "FCS both selection");
+        auto invalid = request(HdfExportFormat::Fcs);
+        invalid.outputRoot = fcsOut.string();
+        invalid.fcsFrames = HdfExportFrames::Invalid;
+        invalid.conversionFactor = 0.5;
+        const auto invalidResult = service.run(invalid, HdfExportCancelToken{});
+        MIB_EXPECT(invalidResult.completed() && invalidResult.validCount == 0 && invalidResult.invalidCount == kInvalid,
+                   "FCS invalid selection and custom calibration");
+
+        auto cancelled = request(HdfExportFormat::Fcs);
+        cancelled.outputRoot = (td.path() / "fcs-cancelled").string();
+        HdfExportCancelToken cancelToken;
+        cancelToken.cancel();
+        const auto cancelledResult = service.run(cancelled, cancelToken);
+        MIB_EXPECT(cancelledResult.status == HdfExportStatus::Cancelled &&
+                       noPartials(cancelled.outputRoot),
+                   "FCS cancellation publishes no output");
+        auto badCalibration = request(HdfExportFormat::Fcs);
+        badCalibration.outputRoot = (td.path() / "fcs-bad-calibration").string();
+        badCalibration.conversionFactor = std::numeric_limits<double>::quiet_NaN();
+        const auto badCalibrationResult = service.run(badCalibration, HdfExportCancelToken{});
+        MIB_EXPECT(badCalibrationResult.status == HdfExportStatus::Failed &&
+                       badCalibrationResult.error.find("finite and positive") != std::string::npos,
+                   "FCS rejects non-finite calibration before output");
+
+        const auto makeMapFault = [&](bool retain) {
+            auto requestWithFault = request(HdfExportFormat::Fcs);
+            requestWithFault.outputRoot = (td.path() / (retain ? "fcs-map-retain" : "fcs-map-fault")).string();
+            requestWithFault.keepPartialOnFailure = retain;
+            return requestWithFault;
+        };
+        HdfExportProgressFn injectMapFault = [](const HdfExportProgress& progress) {
+            if (progress.phase == HdfExportPhase::Metrics && !progress.currentOutput.empty()) {
+                const fs::path fcsPath(progress.currentOutput);
+                std::error_code ec;
+                fs::create_directory(fcsPath.parent_path() /
+                                         (fcsPath.stem().string() + "_event_map.csv"), ec);
+            }
+        };
+        const auto mapFault = service.run(makeMapFault(false), HdfExportCancelToken{}, injectMapFault);
+        MIB_EXPECT(mapFault.status == HdfExportStatus::Failed && mapFault.finalPath.empty() &&
+                       noPartials(td.path() / "fcs-map-fault"),
+                   "FCS event-map open failure is transactional");
+        const auto retained = service.run(makeMapFault(true), HdfExportCancelToken{}, injectMapFault);
+        MIB_EXPECT(retained.status == HdfExportStatus::Failed && !retained.retainedPartialPath.empty() &&
+                       fs::exists(fs::path(retained.retainedPartialPath) / "export-failure.json") &&
+                       fs::exists(fs::path(retained.retainedPartialPath) / "cell run.v1.fcs"),
+                   "FCS map failure can retain a manifest and partial FCS");
+        fs::remove_all(retained.retainedPartialPath);
+
+        auto cancelDuringFcs = request(HdfExportFormat::Fcs);
+        cancelDuringFcs.outputRoot = (td.path() / "fcs-cancel-during-write").string();
+        HdfExportCancelToken fcsCancel;
+        const auto cancelledAfterPartial = service.run(
+            cancelDuringFcs, fcsCancel, [&](const HdfExportProgress& progress) {
+                if (progress.phase == HdfExportPhase::Metrics) fcsCancel.cancel();
+            });
+        MIB_EXPECT(cancelledAfterPartial.status == HdfExportStatus::Cancelled &&
+                       noPartials(cancelDuringFcs.outputRoot),
+                   "FCS cancellation after partial creation cleans up");
+    }
+
     // ---- 5. Repeated runs: object counts, manifests, timing ---------------------
     {
         wd.mark("soak");
@@ -292,13 +481,21 @@ int main()
             fs::remove_all(res.finalPath);
         }
         MIB_EXPECT(objectsStable, "HDF5 open-object count returns to baseline after every job");
-        if (cycles >= 6) {
+        // Compare the median of the last three rounds, not the single last round:
+        // one descheduled round on a shared runner (TSan, Windows: 135 ms against a
+        // 35 ms median, #517) is noise, while a per-round slowdown from leaked
+        // state still lifts all three late rounds above the bound.
+        if (cycles >= 8) {
             std::vector<double> early(durations.begin() + 1, durations.begin() + 5);
             std::sort(early.begin(), early.end());
             const double median = (early[1] + early[2]) / 2.0;
-            std::fprintf(stderr, "soak: cycles=%d first=%.1fms median(2-5)=%.1fms last=%.1fms\n", cycles, durations[0],
-                         median, durations.back());
-            MIB_EXPECT(durations.back() <= std::max(1.25 * median, median + 20.0), "last round <= 1.25x median of rounds 2-5");
+            std::vector<double> late(durations.end() - 3, durations.end());
+            std::sort(late.begin(), late.end());
+            const double lateMedian = late[1];
+            std::fprintf(stderr, "soak: cycles=%d first=%.1fms median(2-5)=%.1fms median(last 3)=%.1fms last=%.1fms\n",
+                         cycles, durations[0], median, lateMedian, durations.back());
+            MIB_EXPECT(lateMedian <= std::max(1.25 * median, median + 20.0),
+                       "median of the last 3 rounds <= 1.25x median of rounds 2-5");
         }
         MIB_EXPECT(fnv1a(source) == sourceHash, "source untouched after soak");
     }

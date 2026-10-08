@@ -4,6 +4,7 @@
 > controllers to [[../architecture/AppBackend]].
 
 ## Core
+- [[DesktopInstance]] — per-user desktop ownership before hardware initialization
 - [[MainWindow]] — QMainWindow; tabs, corner widgets, sidebar, statusbar
 - [[Controllers]] — CameraController, ExperimentController
 
@@ -17,13 +18,19 @@
 - [[NanopositionerTab]] — [[../services/AutofocusService]] UI
 - [[SyringePumpTab]] — [[../services/SyringePumpService]] UI
 
+## React + Tauri (shared with the standalone product)
+- [[YofoReview]] — YOFO Review: the Review tab as its own React + Tauri
+  product; `desktop/src/review/` is also MIB Studio's Tauri Review tab
+
 ## Support
+- [[HelpDialog]] — offline release notes and linked user manual in Qt and Tauri
 - [[Dialogs]] — settings dialogs (Mock, Processing, Monitoring, Buffer save,
   Conversion factor, Frame viewer, Syringe pump)
 - [[ProcessingCoreDialog]] — version history, verified cache preparation, and
   between-operation native-core activation
 - [[System-Utilities]] — `AppConfigWatcher`, `AutoUpdater`,
-  `DeviceInitManager`, `PlaybackPanel`, notifier bridges
+  `DeviceInitManager` (adapter over [[../services/DeviceDiscoveryService]]),
+  `DiscoverySubscription`, `PlaybackPanel`, notifier bridges
 - [[Screenshot-Tour]] — headless harness that regenerates the user-manual
   screenshots (`docs/manual/`)
 

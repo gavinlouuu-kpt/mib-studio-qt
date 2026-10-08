@@ -23,8 +23,10 @@
 #include "backend/processing/IProcessingKernel.h"
 #include "backend/processing/ProcessingTypes.h"
 #include "backend/recording/HdfWriteQueue.h"
+#include "backend/recording/TriggerEventRecord.h"
 
 namespace backend { namespace playback { class FrameStore; struct Frame; } }
+namespace backend::processing { struct ProviderFrame; }
 
 namespace backend::services {
 
@@ -51,9 +53,14 @@ struct TargetGroupEvent {
 struct ExperimentBatch {
     std::vector<ProcessedFrame> valid;
     std::vector<ProcessedFrame> invalid;
+    // Sort trigger records drained from TriggerService with this batch; the
+    // writer thread appends them to /trigger_events alongside the frames so
+    // every HDF5 write stays on the one writer thread.
+    std::vector<backend::recording::TriggerEventRecord> triggerEvents;
 };
 
 class ProcessingService {
+    friend struct ProcessingServiceFlushTestAccess;
 public:
     using Job = std::function<void()>;
 
@@ -62,6 +69,14 @@ public:
     };
 
     struct RealtimeSnapshot {
+        cv::Mat originalImage; // frozen source pixels; opt-in preview retention
+        std::shared_ptr<const backend::playback::Frame>
+            sourceFrame; // owns ROI fast-path pixels without another copy
+        uint64_t sourceTimestamp{0}, hostTimestampUs{0};
+        uint64_t processingSession{0}, storeGeneration{0}, captureSession{0};
+        std::string recipeSha256;
+        cv::Rect2d primaryBounds;
+        Roi roi;
         uint64_t index{0};
         std::vector<std::vector<cv::Point>> contours;
         cv::Mat mask;
@@ -132,6 +147,10 @@ public:
                                   ProcessingCoreActivationPreCommit preCommit = {});
     bool activateBundledProcessingKernel(std::string* error = nullptr);
     backend::processing::ProcessingCoreIdentity activeProcessingCoreIdentity() const;
+    // ADR 0007: empty when the active core implements the configured
+    // processing_contract_version; otherwise the reason processing is refused
+    // (both contract numbers), suitable for the UI.
+    std::string processingContractMismatch() const;
     std::string requiredProcessingCoreVersion() const { return requiredProcessingCoreVersion_; }
     bool isProcessingCorePinSatisfied() const;
     // Startup selection restoration failures fail closed until a verified
@@ -159,17 +178,22 @@ public:
     void setRealtimeRoi(const Roi& roi);
     Roi getRealtimeRoi() const;
     void setRealtimeBackgroundGray(const cv::Mat& bg);
+    // Configure before workers start; publication uses the coordinator's idle transaction.
+    // Serializes ROI/background setters and calibration with experiment Start.
+    void setBackgroundPublicationTransaction(std::function<bool(const std::function<void()>&)> transaction);
+
     cv::Mat getRealtimeBackgroundGray() const;
     // Zero-copy background accessor for hot paths; returns the shared_ptr directly.
     std::shared_ptr<const cv::Mat> getRealtimeBackgroundGrayShared() const;
     // Monotonic counter bumped by setProcessingConfig / setRealtimeRoi.
     uint64_t getConfigVersion() const;
     bool getLatestSnapshot(RealtimeSnapshot& out);
+    void setProcessedPreviewEnabled(bool enabled);
 
     // Experiment lifecycle
     void startExperiment();
-    void endExperiment();
-    
+    bool endExperiment(); // false if the realtime series handoff times out
+
     // Frame accumulation access
     std::vector<ProcessedFrame> getValidFrames() const;
     std::vector<ProcessedFrame> getInvalidFrames() const;
@@ -179,6 +203,18 @@ public:
     // Monitoring frames (accumulated only while active; gate with setMonitoringActive)
     std::vector<ProcessedFrame> getMonitoringValidFrames() const;
     std::vector<ProcessedFrame> getMonitoringInvalidFrames() const;
+    // Metrics-only copy of the valid ring (oldest -> newest): no image or
+    // contour references are taken, so the lock the processing thread also
+    // needs is held for a plain 1000-element copy (MonitoringDensityService).
+    struct MonitoringPoint {
+        uint64_t index{0};
+        double area{0.0}; // pixels
+        double deformability{0.0};
+    };
+    std::vector<MonitoringPoint> getMonitoringValidPoints() const;
+    // Test seam: append to the monitoring ring as the realtime path does,
+    // without the activity gate or images.
+    void appendMonitoringFrameForTests(const ProcessedFrame& frame);
     void clearMonitoringFrames();
     // Monitoring observability (BE-5): totals appended since start/clear so a
     // consumer can compute ring-buffer evictions (appended - currently held).
@@ -204,9 +240,17 @@ public:
     // before writing experiment info). Returns false if a write error occurred.
     bool finishFlush();
 
+    void setFlushRequestCallback(std::function<void()> cb);
+
     // Fatal flush-error sink: invoked (on the writer thread) when an experiment
     // flush write fails or the queue overflows. The experiment should stop.
     void setFlushErrorCallback(std::function<void(const std::string&)> cb);
+
+    // Source of sort trigger records to persist with each flushed batch
+    // (AppBackend wires TriggerService::drainEvents). Called on the flushing
+    // thread; unset = no /trigger_events dataset.
+    using TriggerEventSource = std::function<std::vector<backend::recording::TriggerEventRecord>()>;
+    void setTriggerEventSource(TriggerEventSource source);
 
     // Configuration for round-robin buffer
     void setFlushInterval(size_t frames); // Flush every N frames (default: 1000)
@@ -241,6 +285,11 @@ public:
     // Configuration
     void setProcessingConfig(const ProcessingConfig& config);
     ProcessingConfig getProcessingConfig() const;
+    // The config as processing applies it: getProcessingConfig() plus the
+    // channel band detected from the background (frame coordinates) when
+    // auto_roi_from_background is on. For provenance only; never feed it back
+    // into setProcessingConfig (the band is runtime state).
+    ProcessingConfig getEffectiveProcessingConfig() const;
     
     // Pixel to micron conversion factor (1 pixel = X micron)
     void setPixelToMicronFactor(double factor);
@@ -275,8 +324,8 @@ public:
         uint64_t unservedTargetGroupObjects{0}; // target-group objects beyond the frame's
                                                 // first — no pulse is dispatched for them
         // Invalid-reason histogram, indexed by science::InvalidReasonCode:
-        // {NoContour, Border, Area, Ring, Deform, AreaRatio}.
-        uint64_t reasonCounts[6]{};
+        // {NoContour, Border, Area, Ring, Deform, AreaRatio, Laplacian, Channel}.
+        uint64_t reasonCounts[8]{};
     };
     IdentificationCounters getIdentificationCounters() const;
     void resetIdentificationCounters();
@@ -382,7 +431,15 @@ public:
     // maxAttempts, timeout, or cancel. Returns false if realtime is not
     // running or another calibration is active.
     bool startBackgroundCalibration(const BackgroundCalibrationRequest& request, std::string* error = nullptr);
+    // PL science (ADR 0008): no host frame is classified, so the background is
+    // the per-pixel median of `requiredAccepted` distinct preview frames from
+    // the store (cells passing through are rejected by the median); same
+    // status, cancel and publication as startBackgroundCalibration. Detects
+    // the channel band from it when auto_roi_from_background is on.
+    bool startPreviewBackgroundCalibration(std::shared_ptr<backend::playback::FrameStore> store,
+                                           const BackgroundCalibrationRequest& request, std::string* error);
     void cancelBackgroundCalibration();
+    void stopBackgroundCalibration();
     BackgroundCalibrationStatus backgroundCalibrationStatus() const;
 
     // ---- Batch mask generation ----
@@ -428,6 +485,7 @@ public:
         backend::processing::ProcessingCoreIdentity* processingCore = nullptr);
 
     struct BatchPipelineConfig {
+        std::string previewRecipeSha256;
         size_t batchSize{64};
         size_t maxQueuedFrames{4096};
         size_t workerCount{1};
@@ -450,6 +508,7 @@ public:
         uint64_t maxQueueBytes{0};
         size_t batchSize{0};
         size_t workerCount{0};
+        size_t queueCapacity{0}; // configured maxQueuedFrames
         bool running{false};
     };
 
@@ -462,13 +521,28 @@ public:
     bool startBatchPipeline(BatchPipelineConfig config, BatchResultCallback callback);
     void stopBatchPipeline();
     bool enqueueBatchFrame(const cv::Mat& grayImage, uint64_t index, uint64_t timestampNs = 0,
-                           uint64_t hostTimestampUs = 0);
+                           uint64_t hostTimestampUs = 0, uint64_t storeGeneration = 0, uint64_t captureSession = 0);
     bool enqueueBatchFrame(const backend::playback::Frame& frame, uint64_t index);
     BatchPipelineStats getBatchPipelineStats() const;
 
-    // Ring ratio callback for autofocus (called when validated frames are processed)
+    // Autofocus feeds, chosen by the active contract: Contract 1 publishes the
+    // ring ratio of each valid object (finite and > 0); Contracts 2 and 3
+    // publish each valid object's finite Laplacian variance instead.
     using RingRatioCallback = std::function<void(double ringRatio, int64_t timestampNs)>;
     void setRingRatioCallback(RingRatioCallback callback);
+    using FocusSampleCallback = std::function<void(double laplacianVariance, int64_t timestampNs,
+                                                   uint64_t frameIndex, int objectId, int trackId)>;
+    void setFocusSampleCallback(FocusSampleCallback callback);
+
+    // PL science (ADR 0008, YOFO S1): one frame of results from an execution
+    // provider, called on the provider thread. Feeds what the inline loop
+    // feeds after metrics: run accounting (admitted; Empty, Processed /
+    // RejectedByScientificFilter, or StoreMalformed for an ingress-error
+    // FRAME.INVALID/PARTIAL), the identification funnel and reason histogram
+    // (from the PL's reasons), and monitoring rows (without images). It never
+    // calls the target-group callback: the PL owns the trigger, so a PL
+    // decision must not cause a second pulse from the PS.
+    void ingestProviderFrame(const backend::processing::ProviderFrame& frame);
 
     // Target group trigger callback (one deterministic event per source frame)
     using TargetGroupCallback = std::function<void(const TargetGroupEvent& event)>;
@@ -477,10 +551,30 @@ public:
 
     // Young's modulus LUT loading
     bool loadEModulusLut(const std::string& path);
+    // The loaded LUT (read-only; loaded at bootstrap), e.g. for the PZ7035
+    // profile compiler's E-modulus table.
+    const EModulusLut& eModulusLut() const { return eModulusLut_; }
 
     // Background capture callback for auto-capture (called when background is auto-captured)
     using BackgroundCaptureCallback = std::function<void(const cv::Mat& background, uint64_t frameIndex)>;
     void setBackgroundCaptureCallback(BackgroundCaptureCallback callback);
+
+    // Channel-band callback: fired when auto_roi_from_background detects the
+    // channel band (full width, wall rows excluded, frame coordinates) in a
+    // captured background. The band gates objects by centroid; the ROI is not
+    // changed. Lets the UI draw the detected band.
+    using SuggestedRoiCallback = std::function<void(const Roi& roi, uint64_t frameIndex)>;
+    void setSuggestedRoiCallback(SuggestedRoiCallback callback);
+
+    // Derive a wall-avoiding ROI from a background image using the current
+    // ProcessingConfig auto-ROI settings. Returns an empty/full-frame ROI when
+    // detection is disabled or the background is unusable. Pure w.r.t. service
+    // state (does not apply the result); exposed for reuse and testing.
+    Roi computeAutoRoiFromBackground(const cv::Mat& backgroundGray) const;
+
+    // Channel band detected from the latest background, in frame coordinates.
+    // Empty (h == 0) when auto_roi_from_background is off or no background.
+    Roi getChannelBand() const;
 
 private:
     struct DroppedFrameCounts {
@@ -489,6 +583,7 @@ private:
     };
 
     struct QueuedBatchFrame {
+        uint64_t storeGeneration{0}, captureSession{0};
         cv::Mat gray;
         uint64_t index{0};
         uint64_t timestampNs{0};
@@ -525,6 +620,8 @@ private:
     void accumulateIdentificationCounters(const std::vector<FilterResult>& validations,
                                           const ProcessingConfig& config,
                                           double pixelToMicronFactor);
+    void appendProviderMonitoringRow(uint64_t index, uint64_t timestampNs, const FilterResult& validation);
+    void accumulateProviderIdentification(const backend::processing::ProviderFrame& frame);
     void appendRealtimeMonitoringFrame(uint64_t index,
                                        uint64_t timestampNs,
                                        const FilterResult& validation,
@@ -532,16 +629,26 @@ private:
                                        const cv::Mat& processedImage);
     bool appendExperimentFrame(ProcessedFrame&& frame, bool isValid);
     void logDroppedExperimentFrames(const DroppedFrameCounts& dropped, size_t bufferedTotal, size_t maxBufferedFrames);
-    FilterResult filterProcessedImage(const cv::Mat& processedImage, const cv::Rect& roi, 
-                                      const ProcessingConfig& config, const cv::Mat& originalImage);
+    FilterResult filterProcessedImage(const cv::Mat& processedImage, const cv::Rect& roi,
+                                      const ProcessingConfig& config, const cv::Mat& originalImage,
+                                      const cv::Mat& background = cv::Mat());
+    // maskOrigin is the frame position of the mask's (0,0), so the frame-space
+    // channel band can be expressed in the mask's coordinates. `background`
+    // matches originalImage; an ABI v2 core needs it to run its own science.
     std::vector<FilterResult> filterProcessedObjects(const cv::Mat& processedImage, const cv::Rect& roi,
-                                                     const ProcessingConfig& config, const cv::Mat& originalImage);
+                                                     const ProcessingConfig& config, const cv::Mat& originalImage,
+                                                     cv::Point maskOrigin = {},
+                                                     const cv::Mat& background = cv::Mat());
     // Batch track matching routed through the selected kernel; -1 = new track.
     int matchTrackWithActiveKernel(const std::vector<BatchTrack>& tracks,
                                    const std::vector<bool>& matchedThisFrame,
                                    const FilterResult& detection,
                                    uint64_t frameIndex,
                                    int frameWidth) const;
+    // Fails closed (with *error) when the active kernel does not implement
+    // config.processing_contract_version. Caller holds processingKernelMutex_.
+    bool activeKernelServesContractLocked(const ProcessingConfig& config,
+                                          std::string* error) const;
     bool processMaskWithActiveKernel(const cv::Mat& gray,
                                      const cv::Mat& background,
                                      const ProcessingConfig& config,
@@ -605,6 +712,7 @@ private:
     // Realtime processing state
     std::thread realtimeThread_;
     std::atomic<bool> rtRunning_{false};
+    std::atomic<bool> experimentDrainRequested_{false};
     std::atomic<bool> rtEnabled_{true};
     // Default ON so live view processes only the newest frame and the processed
     // overlay (mask/contours/target-group) cannot accumulate a backlog behind
@@ -639,7 +747,13 @@ private:
     // Bytes of batches submitted to the writer and not yet written (issue #370).
     backend::diagnostics::ByteAccountant flushQueueBytes_;
     std::function<void(const std::string&)> flushErrorCb_;
+    mutable std::mutex triggerEventSourceMutex_;
+    TriggerEventSource triggerEventSource_;
+    std::function<void()> flushRequestCb_;
     std::atomic<bool> experimentActive_{false};
+    // The queue is destroyed after every flush; retain fatal write state for
+    // the lifetime of the run so accounting survives that destruction.
+    std::atomic<bool> experimentPersistenceFailed_{false};
     // Issue #367: per-experiment frame accounting + lifetime processing
     // failure counter. Written by the realtime thread, the flush writer, and
     // appendExperimentFrame; read by experimentAccountingSnapshot().
@@ -656,8 +770,16 @@ private:
     BackgroundCalibrationRequest bgCalRequest_;
     uint64_t bgCalOperationCounter_{0};
     cv::Mat bgCalAccumulator_; // CV_64FC1 running sum of accepted frames
+    std::thread bgCalPreviewThread_; // PL science: preview-median calibration
+    void runPreviewBackgroundCalibration(std::shared_ptr<backend::playback::FrameStore> store, uint64_t generation);
+    // Install a calibrated background under the idle transaction; temporarily
+    // releases the caller's bgCalMutex_ lock to preserve coordinator lock order.
+    bool publishCalibratedBackgroundLocked(cv::Mat background, std::unique_lock<std::mutex>& lock);
+    std::function<bool(const std::function<void()>&)> backgroundPublicationTransaction_;
     std::chrono::steady_clock::time_point bgCalDeadline_{};
     std::atomic<bool> bgCalActive_{false};
+    std::atomic<bool> processedPreviewEnabled_{false};
+    std::atomic<uint64_t> processingSession_{0};
     std::atomic<uint64_t> backgroundGeneration_{0};
     void bgCalObserve(backend::recording::FrameOutcome outcome, const backend::playback::Frame* frame);
     void bgCalFinishLocked(BackgroundCalibrationState state, const std::string& message);
@@ -700,6 +822,15 @@ private:
             head_ = (head_ + 1) % capacity_;
             if (size_ < capacity_) {
                 ++size_;
+            }
+        }
+
+        // Visit oldest -> newest without copying frames.
+        template <class F>
+        void forEach(F&& visit) const {
+            const size_t start = (head_ + capacity_ - size_) % capacity_;
+            for (size_t i = 0; i < size_; ++i) {
+                visit(data_[(start + i) % capacity_]);
             }
         }
 
@@ -747,6 +878,10 @@ private:
     // Ring ratio callback for autofocus
     mutable std::mutex ringRatioCallbackMutex_;
     RingRatioCallback ringRatioCallback_;
+    FocusSampleCallback focusSampleCallback_; // guarded by ringRatioCallbackMutex_
+    // processing_contract_version of processingConfig_, read lock-free by the
+    // realtime callback publisher to choose the autofocus feed.
+    std::atomic<int> activeContract_{1};
 
     mutable std::mutex targetGroupCallbackMutex_;
     TargetGroupCallback targetGroupCallback_;
@@ -754,6 +889,14 @@ private:
     // Background capture callback for auto-capture
     mutable std::mutex backgroundCaptureCallbackMutex_;
     BackgroundCaptureCallback backgroundCaptureCallback_;
+
+    // Channel-band callback (fired when auto_roi_from_background detects a band)
+    mutable std::mutex suggestedRoiCallbackMutex_;
+    SuggestedRoiCallback suggestedRoiCallback_;
+
+    // Channel band from the latest background (frame coordinates; h == 0: none)
+    mutable std::mutex channelBandMutex_;
+    Roi channelBand_{};
     
     // Auto-capture state tracking
     std::atomic<uint64_t> consecutiveEmptyFrames_{0};
@@ -784,7 +927,7 @@ private:
     std::atomic<uint64_t> idInvalidObjects_{0};
     std::atomic<uint64_t> idTargetGroupObjects_{0};
     std::atomic<uint64_t> idUnservedTargetGroupObjects_{0};
-    std::atomic<uint64_t> idReasonCounts_[6]{};
+    std::atomic<uint64_t> idReasonCounts_[8]{};
     
     // Pixel to micron conversion factor (default: 0.4886)
     std::atomic<double> pixelToMicronFactor_{0.4886};

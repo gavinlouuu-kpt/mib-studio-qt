@@ -1,0 +1,141 @@
+﻿Test project C:/Users/ERBG07/Developer/mib-studio-qt/.claude/worktrees/feat-trigger-frame-alignment/build-ninja
+      Start  93: backend.kin10_hf_dataset_pipeline
+ 1/13 Test  #93: backend.kin10_hf_dataset_pipeline ............   Passed    8.23 sec
+      Start  94: backend.kin6_mib_app_capture_proof
+ 2/13 Test  #94: backend.kin6_mib_app_capture_proof ...........   Passed    0.17 sec
+      Start  95: integration.e2e_storage_destinations
+ 3/13 Test  #95: integration.e2e_storage_destinations .........   Passed    0.04 sec
+      Start  96: integration.e2e_trigger_timing
+ 4/13 Test  #96: integration.e2e_trigger_timing ...............   Passed    2.06 sec
+      Start 102: integration.e2e_pipeline_timing
+ 5/13 Test #102: integration.e2e_pipeline_timing ..............   Passed    1.06 sec
+      Start 103: integration.e2e_series_alignment
+ 6/13 Test #103: integration.e2e_series_alignment .............   Passed    3.96 sec
+      Start 104: integration.e2e_pipeline_stress
+ 7/13 Test #104: integration.e2e_pipeline_stress ..............   Passed    1.14 sec
+      Start 105: integration.e2e_device_discovery_lifecycle
+ 8/13 Test #105: integration.e2e_device_discovery_lifecycle ...   Passed    1.34 sec
+      Start 106: integration.e2e_live_view_latency
+ 9/13 Test #106: integration.e2e_live_view_latency ............   Passed    6.17 sec
+      Start 107: integration.e2e_realtime_throughput
+10/13 Test #107: integration.e2e_realtime_throughput ..........   Passed    4.20 sec
+      Start 108: integration.e2e_batch_backpressure
+11/13 Test #108: integration.e2e_batch_backpressure ...........   Passed    0.29 sec
+      Start 146: scripts.kin10_hf_dataset_runner
+12/13 Test #146: scripts.kin10_hf_dataset_runner ..............   Passed    0.14 sec
+      Start 157: integration.monitoring_kde_e2e
+13/13 Test #157: integration.monitoring_kde_e2e ...............***Failed    6.35 sec
+stage: QApplication ready
+stage: frames ready
+[2026-10-01 17:07:37.672] [app] [info] [Logger.cpp:46] Logger initialized: C:\Users\ERBG07\AppData\Local\Temp\monitoring_kde_e2e_16055048447201228781\data\logs\app.log
+[2026-10-01 17:07:37.672] [app] [info] [AutofocusService.cpp:370] AutofocusService: Stats loop started
+[2026-10-01 17:07:37.673] [app] [info] [DeviceDiscoveryService.cpp:239] DeviceDiscoveryService: registered provider 'mindvision' (camera)
+[2026-10-01 17:07:37.673] [app] [info] [DeviceDiscoveryService.cpp:239] DeviceDiscoveryService: registered provider 'egrabber' (camera)
+[2026-10-01 17:07:37.673] [app] [info] [DeviceDiscoveryService.cpp:239] DeviceDiscoveryService: registered provider 'egrabber-framegrabber' (framegrabber)
+[2026-10-01 17:07:37.673] [app] [info] [DeviceDiscoveryService.cpp:239] DeviceDiscoveryService: registered provider 'nanopositioner' (nanopositioner)
+[2026-10-01 17:07:37.673] [app] [info] [DeviceDiscoveryService.cpp:239] DeviceDiscoveryService: registered provider 'pulse-generator' (pulse-generator)
+[2026-10-01 17:07:37.673] [app] [info] [AppBackend.cpp:530] AppBackend boot toggles: sqlite=true, hdf5=true, processing=true, yolo=false, autofocus=false, trigger=false, capture=true, playback=true
+[2026-10-01 17:07:37.673] [app] [info] [SqliteService.cpp:9] SqliteService initialized at C:\Users\ERBG07\AppData\Local\Temp\monitoring_kde_e2e_16055048447201228781\data\app.sqlite3
+[2026-10-01 17:07:37.673] [app] [info] [Hdf5Service.cpp:256] Hdf5Service initialized at C:\Users\ERBG07\AppData\Local\Temp\monitoring_kde_e2e_16055048447201228781\data
+[2026-10-01 17:07:37.673] [app] [warning] [AppBackend.cpp:564] AppBackend: yolo bootstrap disabled by MIB_DISABLED_SERVICES
+[2026-10-01 17:07:37.673] [app] [warning] [EModulusLutCatalog.cpp:549] EModulusLutCatalog: manifest fetch failed and no local cache exists
+[2026-10-01 17:07:37.673] [app] [warning] [AppBackend.cpp:586] AppBackend: LUT catalog resolution failed, falling back to bundled path C:\Users\ERBG07\AppData\Local\Temp\monitoring_kde_e2e_16055048447201228781\resources\isoelastic_curve\scaled_isoelastic_data_LUT_6.16-4.24.txt: Bundled LUT not found: C:\Users\ERBG07\AppData\Local\Temp\monitoring_kde_e2e_16055048447201228781\resources\isoelastic_curve\scaled_isoelastic_data_LUT_6.16-4.24.txt
+[2026-10-01 17:07:37.767] [app] [info] [EModulusLut.cpp:176] EModulusLut: Loaded 1241 data points from C:\Users\ERBG07\Developer\mib-studio-qt\.claude\worktrees\feat-trigger-frame-alignment\resources\isoelastic_curve\scaled_isoelastic_data_LUT_6.16-4.24.txt, grid 200x200, area=[65.6, 633.3] um², deform=[0.0005, 0.0883]
+[2026-10-01 17:07:37.767] [app] [info] [AppBackend.cpp:621] AppBackend: Young's modulus LUT source=bundled-fallback, revision=bundled, path=C:\Users\ERBG07\AppData\Local\Temp\monitoring_kde_e2e_16055048447201228781\resources\isoelastic_curve\scaled_isoelastic_data_LUT_6.16-4.24.txt, checksum_status=unknown, remote_updated=false, bundled_fallback=false, manifest=
+[2026-10-01 17:07:37.767] [app] [info] [ProcessingService.cpp:113] ProcessingService started with 32 workers
+[2026-10-01 17:07:37.767] [app] [warning] [AppBackend.cpp:644] AppBackend: autofocus ring-ratio callback disabled by MIB_DISABLED_SERVICES
+[2026-10-01 17:07:37.767] [app] [warning] [AppBackend.cpp:675] AppBackend: trigger callback wiring disabled by MIB_DISABLED_SERVICES
+[2026-10-01 17:07:37.768] [app] [info] [AppBackend.cpp:788] AppBackend: configuring MockCamera (folder=C:\Users\ERBG07\AppData\Local\Temp\monitoring_kde_e2e_16055048447201228781\frames, interval=5000 us, ~200.0 fps, loop=true)
+[2026-10-01 17:07:37.768] [app] [info] [AppBackend.cpp:948] Backend initialized.
+stage: backend initialized
+[2026-10-01 17:07:37.777] [app] [info] [MainWindow.cpp:317] MainWindow: auto update disabled by MIB_DISABLED_SERVICES
+[2026-10-01 17:07:37.777] [app] [info] [ProcessingService.cpp:1986] Invalid frame sampling rate set to: every 200th frame
+[2026-10-01 17:07:37.777] [app] [info] [ProcessingService.cpp:1972] Flush interval set to: 200 frames (max buffered backlog: 1000)
+[2026-10-01 17:07:37.798] [app] [info] [DeviceDiscoveryService.cpp:416] DeviceDiscoveryService: job 1 queued (origin='connect-tab', kinds=2)
+[2026-10-01 17:07:37.798] [app] [info] [ConnectTab.cpp:114] ConnectTab: refresh started discovery job 1
+[2026-10-01 17:07:37.798] [app] [info] [OverviewTab.cpp:142] Overview tab: display_fps=50 (~20 ms)
+[2026-10-01 17:07:37.800] [app] [info] [PlaybackPanel.cpp:491] Playback preview: display_fps=60 (~17 ms)
+[2026-10-01 17:07:37.804] [app] [info] [GenTLHolder.cpp:35] GenTLHolder: opened the process-wide Euresys GenTL producer handle
+[2026-10-01 17:07:37.810] [app] [warning] [CameraControlService.cpp:450] CameraControlService: CameraEnumerateDevice returned -16 (count=0)
+[2026-10-01 17:07:37.816] [app] [info] [AppConfigWatcher.cpp:106] AppConfigWatcher: watching C:/Users/ERBG07/Developer/mib-studio-qt/.claude/worktrees/feat-trigger-frame-alignment/build-ninja/include/config.json
+[2026-10-01 17:07:37.816] [app] [info] [AppConfigWatcher.cpp:401] AppConfigWatcher: applied ProcessingConfig (blur=3, thresh=8, morph=3x1, area=[60,290 um2], deform=[0.00,0.50] enabled=true, areaRatio_max=1.50 enabled=false, ring=[15.0,25.0] enabled=true, empty_px=100)
+[2026-10-01 17:07:37.816] [app] [info] [AppConfigWatcher.cpp:405] AppConfigWatcher: target_group enabled=false, area=[72,191 um2], deform=[0.00,0.30], emod_enabled=false, emod=[0.0,10.0]
+[2026-10-01 17:07:37.816] [app] [info] [ProcessingService.cpp:1972] Flush interval set to: 1000 frames (max buffered backlog: 4000)
+[2026-10-01 17:07:37.816] [app] [info] [ProcessingService.cpp:393] ProcessingService: realtime batch settings batch_size=16, max_queue=4096, workers=1, max_delay_ms=10
+[2026-10-01 17:07:37.816] [app] [info] [AppConfigWatcher.cpp:451] AppConfigWatcher: realtime_processing mode=inline, batch_size=16, max_queue=4096, workers=1, max_delay_ms=10
+[2026-10-01 17:07:37.816] [app] [info] [AppConfigWatcher.cpp:470] AppConfigWatcher: applied camera frame_delivery_mode=everyFrame
+[2026-10-01 17:07:37.816] [app] [info] [AppConfigWatcher.cpp:481] AppConfigWatcher: applied pixel_to_micron_factor=0.4886
+[2026-10-01 17:07:37.816] [app] [info] [PlaybackPanel.cpp:1200] Playback preview: display_fps=60 (~17 ms) [updated]
+[2026-10-01 17:07:37.821] [app] [info] [ExperimentMonitoringTab.cpp:2006] Loaded 11 isoelastic curves from C:/Users/ERBG07/Developer/mib-studio-qt/.claude/worktrees/feat-trigger-frame-alignment/build-ninja/Release/../../resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt
+[2026-10-01 17:07:37.827] [app] [info] [HdfReviewTab.cpp:337] HdfReviewTab: thumbnail cache size set to 2048
+[2026-10-01 17:07:37.829] [app] [info] [HdfReviewTab.cpp:2751] Loaded 11 isoelastic curves from C:/Users/ERBG07/Developer/mib-studio-qt/.claude/worktrees/feat-trigger-frame-alignment/build-ninja/Release/../../resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt
+[2026-10-01 17:07:37.831] [app] [info] [StartupDiscoveryCoordinator.cpp:431] StartupDiscovery: camera step skipped (camera already configured or capturing)
+[2026-10-01 17:07:37.831] [app] [info] [DeviceDiscoveryService.cpp:416] DeviceDiscoveryService: job 2 queued (origin='startup-nanopositioner', kinds=1)
+[2026-10-01 17:07:37.831] [app] [info] [StartupDiscoveryCoordinator.cpp:218] StartupDiscovery: nanopositioner step started (job 2)
+[2026-10-01 17:07:37.831] [app] [info] [MainWindow.cpp:901] MainWindow: geometry default 1280x800@320,116 (screen 0)
+[2026-10-01 17:07:38.056] [app] [info] [MainWindow.cpp:926] MainWindow: window 1280x831@320,116 exceeds the available desktop 1480x1000@0,0; fitting to 1280x831@200,116
+[2026-10-01 17:07:38.347] [app] [info] [DeviceDiscoveryService.cpp:813] DeviceDiscoveryService: job 2 Completed (2 candidate(s), 0 error(s), complete=true)
+[2026-10-01 17:07:38.389] [app] [info] [AutofocusService.cpp:124] AutofocusService: Connected to coremor nanopositioner on COM6 at 0.000 V (observe-only)
+[2026-10-01 17:07:38.389] [app] [info] [StartupDiscoveryCoordinator.cpp:343] StartupDiscovery: auto-connected nanopositioner on COM6
+[2026-10-01 17:07:38.390] [app] [info] [AutofocusService.cpp:417] AutofocusService: Control loop started
+[2026-10-01 17:07:38.390] [app] [info] [DeviceInitManager.cpp:160] DeviceInitManager: auto-connected to nanopositioner on COM6
+[2026-10-01 17:07:38.391] [app] [info] [AppConfigWatcher.cpp:115] AppConfigWatcher: file changed: C:/Users/ERBG07/Developer/mib-studio-qt/.claude/worktrees/feat-trigger-frame-alignment/build-ninja/include/config.json
+[2026-10-01 17:07:38.392] [app] [info] [AppConfigWatcher.cpp:401] AppConfigWatcher: applied ProcessingConfig (blur=3, thresh=8, morph=3x1, area=[60,290 um2], deform=[0.00,0.50] enabled=true, areaRatio_max=1.50 enabled=false, ring=[15.0,25.0] enabled=true, empty_px=100)
+[2026-10-01 17:07:38.392] [app] [info] [AppConfigWatcher.cpp:405] AppConfigWatcher: target_group enabled=false, area=[72,191 um2], deform=[0.00,0.30], emod_enabled=false, emod=[0.0,10.0]
+[2026-10-01 17:07:38.392] [app] [info] [ProcessingService.cpp:1972] Flush interval set to: 1000 frames (max buffered backlog: 4000)
+[2026-10-01 17:07:38.392] [app] [info] [ProcessingService.cpp:393] ProcessingService: realtime batch settings batch_size=16, max_queue=4096, workers=1, max_delay_ms=10
+[2026-10-01 17:07:38.392] [app] [info] [AppConfigWatcher.cpp:451] AppConfigWatcher: realtime_processing mode=inline, batch_size=16, max_queue=4096, workers=1, max_delay_ms=10
+[2026-10-01 17:07:38.392] [app] [info] [AppConfigWatcher.cpp:470] AppConfigWatcher: applied camera frame_delivery_mode=everyFrame
+[2026-10-01 17:07:38.392] [app] [info] [AppConfigWatcher.cpp:481] AppConfigWatcher: applied pixel_to_micron_factor=0.4886
+[2026-10-01 17:07:38.392] [app] [info] [PlaybackPanel.cpp:1200] Playback preview: display_fps=60 (~17 ms) [updated]
+[2026-10-01 17:07:38.543] [app] [info] [CameraController.cpp:232] CameraController: start -> accepted
+[2026-10-01 17:07:38.543] [app] [info] [CaptureService.cpp:387] CaptureService starting: gen=1, parts=1, buffers=20, mode=everyFrame
+[2026-10-01 17:07:38.549] [app] [info] [ProcessingService.cpp:203] ProcessingService: realtime processing started
+[2026-10-01 17:07:38.549] [app] [info] [PlaybackService.cpp:17] PlaybackService: play
+[2026-10-01 17:07:38.549] [app] [info] [MainWindow.cpp:1825] MainWindow: Experiment services started
+[2026-10-01 17:07:38.550] [app] [info] [MainWindow.cpp:2025] MainWindow::onTabChanged: Auto-applying camera script from C:/Users/ERBG07/Developer/mib-studio-qt/.claude/worktrees/feat-trigger-frame-alignment/build-ninja/include/egrabberConfig.js
+[2026-10-01 17:07:38.550] [app] [error] [MainWindow.cpp:2028] MainWindow::onTabChanged: Failed to apply script: No hardware camera selected
+[2026-10-01 17:07:38.582] [app] [info] [MockCamera.cpp:73] MockCamera started with 120 files from C:\Users\ERBG07\AppData\Local\Temp\monitoring_kde_e2e_16055048447201228781\frames (preloaded 120 frames)
+[2026-10-01 17:07:38.596] [app] [info] [FrameStore.cpp:70] FrameStore: reserved 49152 bytes per slot across 5000 slots (234.4 MB retained)
+[2026-10-01 17:07:38.790] [app] [info] [PlaybackPanel.cpp:1419] Playback metrics: display_fps=66.0, avg_latency_ms=4.17, drops=26 (window_drops=26), overlay_ms=0.88, roi_area=49152, img=512x96, overlay=512x96, overlay_mode=3
+[2026-10-01 17:07:39.267] [app] [warning] [CameraControlService.cpp:201] CameraControlService: probe open failed for camera PC3603 - Coaxlink Quad CXP-12 (1-camera) - KQQ09438/Device0: operation not allowed
+[2026-10-01 17:07:39.267] [app] [info] [CameraControlService.cpp:227] Discovery found 1 camera(s)
+[2026-10-01 17:07:39.267] [app] [info] [DeviceDiscoveryService.cpp:813] DeviceDiscoveryService: job 1 Completed (1 candidate(s), 1 error(s), complete=false)
+[2026-10-01 17:07:39.267] [app] [info] [ConnectTab.cpp:250] ConnectTab: discovery job 1 listed 0 framegrabber(s), 1 eGrabber camera(s), 0 MindVision camera(s) (complete=false)
+[2026-10-01 17:07:39.788] [app] [info] [PlaybackPanel.cpp:1419] Playback metrics: display_fps=59.8, avg_latency_ms=4.26, drops=167 (window_drops=139), overlay_ms=1.39, roi_area=49152, img=512x96, overlay=512x96, overlay_mode=3
+[2026-10-01 17:07:40.793] [app] [info] [PlaybackPanel.cpp:1419] Playback metrics: display_fps=59.7, avg_latency_ms=4.77, drops=308 (window_drops=138), overlay_ms=3.59, roi_area=49152, img=512x96, overlay=512x96, overlay_mode=3
+[2026-10-01 17:07:41.791] [app] [info] [PlaybackPanel.cpp:1419] Playback metrics: display_fps=59.8, avg_latency_ms=4.96, drops=447 (window_drops=139), overlay_ms=3.79, roi_area=49152, img=512x96, overlay=512x96, overlay_mode=3
+[2026-10-01 17:07:42.795] [app] [info] [PlaybackPanel.cpp:1419] Playback metrics: display_fps=59.9, avg_latency_ms=4.78, drops=589 (window_drops=139), overlay_ms=3.52, roi_area=49152, img=512x96, overlay=512x96, overlay_mode=3
+frames: synthetic frames; background 512x96
+warm-up: head=990 algoFps=0.0 validFps=0.0 invalidFps=0.0 monitoringValid=0 monitoringInvalid=0 roi=0,0,512,96 border=0 area=0 ring=0 inner=0 bg=512x96
+REQUIRE FAILED: processing.getMonitoringValidAppended() > 0 (C:\Users\ERBG07\Developer\mib-studio-qt\.claude\worktrees\feat-trigger-frame-alignment\tests\frontend\monitoring_kde_e2e_test.cpp:339) cells reach the monitoring ring
+
+
+92% tests passed, 1 tests failed out of 13
+
+Label Time Summary:
+backend        =   8.40 sec*proc (2 tests)
+diagnostics    =   1.06 sec*proc (1 test)
+discovery      =   1.34 sec*proc (1 test)
+e2e            =  26.60 sec*proc (10 tests)
+frontend       =   6.35 sec*proc (1 test)
+integration    =  35.15 sec*proc (13 tests)
+monitoring     =   6.35 sec*proc (1 test)
+network        =   8.23 sec*proc (1 test)
+performance    =  10.83 sec*proc (3 tests)
+processing     =  10.65 sec*proc (3 tests)
+recording      =   4.01 sec*proc (2 tests)
+scripts        =   0.14 sec*proc (1 test)
+trigger        =   7.08 sec*proc (3 tests)
+
+Total Test time (real) =  35.17 sec
+
+The following tests FAILED:
+	157 - integration.monitoring_kde_e2e (Failed)
+ctest.exe : Errors while running CTest
+At line:1 char:709
++ ... TEXITCODE"; & "C:\Program Files\CMake\bin\ctest.exe" --preset windows ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Errors while running CTest:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 

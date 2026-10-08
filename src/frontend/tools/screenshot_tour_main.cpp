@@ -269,7 +269,7 @@ int main(int argc, char* argv[])
     qputenv("MIB_CAMERA_MODE", QByteArrayLiteral("mock"));
     qputenv("MIB_MOCK_CAMERA_DIR", framesDir.toUtf8());
     if (qEnvironmentVariableIsEmpty("MIB_DISABLED_SERVICES")) {
-        qputenv("MIB_DISABLED_SERVICES", QByteArrayLiteral("auto_update,autofocus,trigger,yolo"));
+        qputenv("MIB_DISABLED_SERVICES", QByteArrayLiteral("auto_update,autofocus,trigger"));
     }
 
     // Isolate backend runtime data (logs, sqlite, HDF5) and QSettings so each

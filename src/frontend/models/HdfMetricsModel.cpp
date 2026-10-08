@@ -2,6 +2,8 @@
 
 #include "backend/processing/ProcessingService.h"
 
+#include <cmath>
+
 namespace frontend {
 
 HdfMetricsModel::HdfMetricsModel(QObject* parent)
@@ -26,7 +28,7 @@ int HdfMetricsModel::rowCount(const QModelIndex& parent) const {
 
 int HdfMetricsModel::columnCount(const QModelIndex& parent) const {
     if (parent.isValid()) return 0;
-    return 23;
+    return 24;
 }
 
 QVariant HdfMetricsModel::data(const QModelIndex& index, int role) const {
@@ -57,6 +59,7 @@ QVariant HdfMetricsModel::data(const QModelIndex& index, int role) const {
         case 20: return QString::number(val.brightness.q3, 'f', 2);
         case 21: return QString::number(val.brightness.q4, 'f', 2);
         case 22: return val.isTargetGroup ? "Yes" : "No";
+        case 23: return std::isnan(val.youngsModulus) ? QString() : QString::number(val.youngsModulus, 'f', 3);
         default: return {};
     }
 }
@@ -88,6 +91,7 @@ QVariant HdfMetricsModel::headerData(int section, Qt::Orientation orientation, i
             case 20: return "Bright Q3";
             case 21: return "Bright Q4";
             case 22: return "Target Group";
+            case 23: return "Young's modulus (kPa)";
             default: return {};
         }
     }

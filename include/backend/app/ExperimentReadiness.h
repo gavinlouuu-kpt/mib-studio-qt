@@ -56,10 +56,40 @@ struct CameraSourceInfo {
     std::string fallbackReason;
 };
 
+// The experiment method a run used (#398 M2); resolved and gated in
+// MethodProvenance.h. Plain values so the snapshot stays copyable.
+struct MethodProvenance {
+    std::string source{"none"};          // "central" | "local" | "none" (no config applied)
+    std::string match;                   // "config_json" when central
+    std::string configCanonicalSha256;   // canonical hash of the applied config.json
+    std::string registryOrigin;
+    std::string registrySession;         // worker session at evaluation ("signed_in", ...)
+    // Central revision (source == "central").
+    std::string revisionId;
+    std::string methodId;
+    std::string projectId;
+    std::string displayName;
+    std::string authorId;
+    std::string contentHash;
+    uint64_t revisionNumber{0};
+    uint64_t metadataVersion{0};
+    std::string centralState;            // "published", "revoked", ...
+    uint32_t matchingRevisions{0};       // cached revisions sharing this config
+    // Local validation on this instrument + context.
+    std::string instrumentId;
+    std::string instrumentName;
+    std::string contextHash;
+    std::string validation{"notApplicable"}; // "passed" | "failed" | "none" | "notApplicable"
+    std::string validatorId;
+    std::string validatedAtUtc;
+    std::string validationEvidenceSha256; // test-run file hash from the evidence
+};
+
 // Frozen identities/settings of one run. Owned by the coordinator; the UI
 // only reads it.
 struct RunConfigurationSnapshot {
-    static constexpr uint32_t kSchemaVersion = 1;
+    // v2 (#398 M2): adds the "method" block.
+    static constexpr uint32_t kSchemaVersion = 2;
     uint64_t readinessGeneration{0};
     uint64_t startGeneration{0};      // coordinator start counter
     uint64_t captureGeneration{0};    // CaptureService session generation
@@ -83,6 +113,7 @@ struct RunConfigurationSnapshot {
     std::string processingConfigSha256;  // canonical serialization of ProcessingConfig
     std::string configJsonSha256;        // raw config.json as last applied
     std::string profileId;               // frontend-supplied profile identity (may be empty)
+    MethodProvenance method;             // central revision / local method (#398 M2)
     double pixelToMicron{0.0};
 
     bool backgroundPresent{false};
@@ -93,8 +124,31 @@ struct RunConfigurationSnapshot {
     bool triggerBound{false};
     uint64_t triggerGeneration{0};
 
+    // RF sort generator (SSG3021X) as read back over SCPI at evaluation time.
+    // Configured = an rf_generator block enables the link; connected = the
+    // instrument identified and answered the readback.
+    bool rfGeneratorConfigured{false};
+    bool rfGeneratorConnected{false};
+    std::string rfGeneratorIdentity;
+    std::string rfGeneratorTriggerMode;
+    double rfGeneratorTriggerDelayS{0.0};
+    double rfGeneratorPulseWidthS{0.0};
+    std::string rfGeneratorError;               // last link error when not connected
+    std::vector<std::string> rfGeneratorIssues; // blocking preflight findings ("gate: message")
+
     std::string outputPath;
     std::string realtimeMode;
+    // Where the science ran ("host" | "pl") and, for the PL, the execution
+    // provider that brought its results to the PS (YOFO S3 provenance).
+    std::string sciencePlacement;
+    std::string executionProvider;
+    // The PL core (ADR 0011): build and weights ids from the device registers.
+    bool plCoreValid{false};
+    uint32_t plAbiVersion{0};
+    uint16_t plScienceProfile{0};
+    uint16_t plProfileVersion{0};
+    std::string plBuildId;
+    std::string plWeightsId;
 
     std::string applicationVersion;
     std::string buildId;
@@ -197,6 +251,10 @@ struct ExperimentStatus {
     uint64_t endWallClockNs{0};
     uint64_t validBuffered{0};        // live, from ProcessingService
     uint64_t invalidBuffered{0};
+    uint64_t validSaved{0};
+    uint64_t invalidSaved{0};
+    uint64_t droppedValid{0};
+    uint64_t droppedInvalid{0};
     uint64_t persistenceAdmitted{0};
     uint64_t persistenceCommitted{0};
     uint64_t persistenceFailed{0};
@@ -206,6 +264,7 @@ struct ExperimentStatus {
     bool finalizationOk{false};       // every finalize step succeeded
     backend::recording::RunCompletionState completion{backend::recording::RunCompletionState::Unknown};
     std::string completionReason;
+    uint64_t faultRevision{0}; // monotonic occurrence identity, including repeated identical faults
     std::string faultCode;            // unresolved fault, if any
     std::string faultMessage;
     std::string message;              // last human-readable transition note

@@ -74,3 +74,13 @@ the full text; right-click to copy) rather than widening the window.
 | Default data folder | `Documents\MIB_Studio_Qt` (File ▸ Open Data Folder) |
 | Application logs | `%LOCALAPPDATA%\MIB_Studio_Qt\logs` (File ▸ Open Logs Folder) |
 | Crash reports | `%LOCALAPPDATA%\MIB_Studio_Qt\crashes` |
+
+## Offline help and release notes
+
+Use **Help ▸ What's New** to read the running release's notes followed by earlier
+releases. **Help ▸ User Manual** opens this guide and its images offline; use
+**Index** to return to the contents or **Open online documentation** for the web
+edition. After an upgrade, Qt shows What's New once; a fresh installation stays
+quiet. **Help ▸ Software Updates…** displays the selected version's notes when
+included in the update catalog. The **Release Notes** button opens the release
+page when online access is available.

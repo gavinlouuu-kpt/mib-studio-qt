@@ -5,6 +5,16 @@ and frontend boundaries documented in this architecture set. For the
 developer-facing recipe book (how to actually write each kind of test, with
 templates and a PR checklist) see [`../howto/writing-tests.md`](../howto/writing-tests.md).
 
+## Network lane (2026-09-21)
+
+Tests that reach the Hugging Face Hub carry the CTest label `network` and
+`SKIP_RETURN_CODE 77` (transient 429/5xx or connection failure counts as a
+skip, schema/regression failures still fail). Every default test preset
+excludes the label; `linux-network-test` includes only it and
+`.github/workflows/network-tests.yml` runs it nightly and on demand with
+`HF_TOKEN` from repository secrets for private corpora. Dataset identity comes
+from `env/assets.json` (see `knowledge_map/build-and-run/Assets.md`).
+
 ## Test Layers
 
 | Layer | Current entry point | Use when |
@@ -56,6 +66,13 @@ part of the change.
 - **No naked `join()`/`wait()` that can hang CI:** thread/pipeline tests install a
   watchdog that prints the stuck location and `_Exit(99)`s. Use `_Exit`, not
   `abort()` (the linked crash handler intercepts `abort()` and can itself hang).
+- **Wait on conditions with generous deadlines**, never fixed sleeps or
+  "N things in T ms" assertions.
+- **No `#define private public`:** use friend test-access structs instead; the
+  macro changes Qt declarations and can break MSVC linking.
+- **Python text file I/O always specifies `encoding="utf-8"`**, including
+  `open()`, `read_text()` and `write_text()`, so Windows code pages cannot
+  change test fixtures.
 - **Timing tests gate on steady-state or ratios, not absolute milliseconds**, so
   they are machine-independent. Mark probabilistic tests; give them generous,
   stable thresholds.
@@ -64,6 +81,17 @@ part of the change.
 
 ## CI Lanes
 
+- **`qt-ci`** (PRs, path-filtered): **Linux Qt build and test** uses
+  `linux-system-release` with system Qt and offscreen CTest; **Windows MSVC
+  build and test** uses `windows-ninja-ci`, the release Conan cache, both
+  consolidated test runners and independent test executables, plus
+  `tools/test_*.py`. Both exclude `network|hardware|soak|performance`, disable
+  SDKs/Sentry/packaging, use sccache, and report elapsed seconds in the Actions
+  summary. Keep both checks optional for the first week, then make them
+  required after reviewing successful runs and runtimes. For rollout evidence,
+  record a no-op PR run and a Windows failure from a temporary private-access
+  hack or cp1252 fixture write, revert that commit, and link both runs and
+  their durations in the PR description.
 - **`backend-ci`** (Linux, PRs): configure/build/test the backend-only preset.
 - **Sanitizer lane** (Linux, PRs): backend-only built with `-fsanitize=thread`,
   plus an `-fsanitize=address,undefined` variant, running unit / invariant /
@@ -73,6 +101,52 @@ part of the change.
   counts; non-gating, uploads logs.
 - Windows lanes (`ci.yml`, `build-windows.yml`, `release.yml`) pinned to
   `windows-2022` to match the VS2022 / msvc-194 toolchain.
+
+### Runtime bounds and diagnostics (2026-10-07)
+
+The Linux backend, sanitizer, and soak workflows use the official
+`mozilla-actions/sccache-action@v0.0.11` with sccache `v0.16.0`,
+`SCCACHE_GHA_ENABLED=true`, and the existing CMake compiler-launcher
+auto-detection. Cache statistics are recorded as an always-run log; hosted
+cache hit behavior remains unverified until a hosted run completes.
+
+Long-running commands use GNU `timeout --signal=TERM --kill-after=30s` plus a
+slightly larger GitHub step budget. The signal grace period bounds a child
+process group while retaining a useful termination window. CTest's existing
+test labels, exclusions, per-test timeouts, and nonzero failure behavior are
+unchanged. Logs and CTest failure files upload on success or failure with
+bounded seven-day retention, and sanitizer uploads remain gated on the C++
+path filter. A hard job timeout can still prevent artifact upload, so the job
+cap remains the final backstop rather than evidence that a process exited
+cleanly.
+
+| Lane | Job cap | Main command / step cap |
+| --- | ---: | ---: |
+| Sanitizers (each matrix entry) | 60 min | build 35/36 min; suite 12/13 min |
+| Backend CI | 45 min | configure 4/5 min; combined build 20/21 min; suite 12/13 min; PL replay 4/5 min |
+| Nightly soak | 60 min | configure 4/5 min; build 20/21 min; suite 30/31 min |
+| Python wheels | x86_64 20 min; ARM64 QEMU 120 min | same build and test coverage; only the job cap is architecture-specific |
+
+The soak repeat input is validated before environment setup and accepts only
+1–100, defaulting to 40. Its full existing selection remains in place,
+including heavy memory-budget and HDF export tests. Workflow concurrency
+cancels stale runs on the same ref to limit queued retry churn.
+
+Timing evidence behind these limits includes [backend run 37583515274](https://github.com/gavinlouuu-kpt/mib-studio-qt/actions/runs/37583515274)
+(configure 17 s, build 5 m 48 s, tests 3 m 49 s, PL replay 3 s, Conan probe
+17 s), sanitizer run `37582104010` (ASan build about 21 m with a 4 m 13 s test
+portion; TSan build about 5 m 35 s with a 3 m 49 s test portion), [sanitizer
+run 37562107549](https://github.com/gavinlouuu-kpt/mib-studio-qt/actions/runs/37562107549) (60 m overall wall time, with ASan runtime about 26 m and
+TSan runtime about 14 m; matrix runtimes overlap or stagger and are not
+additive), and [soak run 37456065522](https://github.com/gavinlouuu-kpt/mib-studio-qt/actions/runs/37456065522) (compile 12 m 48 s, tests 12 m 30 s).
+The [ARM64 QEMU wheel run 37568147020](https://github.com/gavinlouuu-kpt/mib-studio-qt/actions/runs/37568147020) took about 69.5 m for all
+four Python versions, versus 3.0–3.8 m for x86_64, so a native ARM runner is a
+future optimization rather than a reason to weaken coverage now.
+
+The evidence supports bounds and churn control, but does not prove a deadlock
+or provide a complete billing total; queue delays and cancelled
+retries must be separated from executing job time. Follow-up review should compare bounded
+logs and cache statistics from a fresh hosted run.
 
 ## Shared Test-Support Library
 

@@ -1,18 +1,24 @@
+#include "backend/recording/ReviewChartData.h"
 #include "backend/recording/HdfExportService.h"
 
 #include "backend/recording/Hdf5Service.h"
+#include "backend/recording/FcsWriter.h"
 #include "backend/processing/ProcessingService.h"
 
 #include <opencv2/imgcodecs.hpp>
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cctype>
+#include <cmath>
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <random>
 #include <sstream>
+#include <ctime>
+#include <unordered_set>
 
 namespace fs = std::filesystem;
 
@@ -77,7 +83,7 @@ bool writeMetricsCsv(const fs::path& path, const std::vector<services::Processed
     out << "Frame Type,Index,Timestamp,Object Id,Object Count,Track Id,Track First,Track Last,Track Observations,"
         << "Deformability,Area,Area (um\xC2\xB2),Area Ratio,Ring Ratio,"
         << "Valid,Touches Border,Single Inner,In Range,Inner Count,"
-        << "Bright Q1,Bright Q2,Bright Q3,Bright Q4\n";
+        << "Bright Q1,Bright Q2,Bright Q3,Bright Q4,Young's modulus (kPa)\n";
     auto writeFrame = [&](const char* type, const services::ProcessedFrame& f) {
         const auto& v = f.validation;
         out << type << "," << f.index << "," << f.timestampNs << "," << v.objectId << "," << v.objectCount << ","
@@ -87,7 +93,8 @@ bool writeMetricsCsv(const fs::path& path, const std::vector<services::Processed
             << (v.isValid ? "Yes" : "No") << "," << (v.touchesBorder ? "Yes" : "No") << ","
             << (v.hasSingleInnerContour ? "Yes" : "No") << "," << (v.inRange ? "Yes" : "No") << ","
             << v.innerContourCount << "," << fixed(v.brightness.q1, 2) << "," << fixed(v.brightness.q2, 2) << ","
-            << fixed(v.brightness.q3, 2) << "," << fixed(v.brightness.q4, 2) << "\n";
+            << fixed(v.brightness.q3, 2) << "," << fixed(v.brightness.q4, 2) << ","
+            << (std::isnan(v.youngsModulus) ? std::string() : fixed(v.youngsModulus, 3)) << "\n";
     };
     for (const auto& f : valid) writeFrame("Valid", f);
     for (const auto& f : invalid) writeFrame("Invalid", f);
@@ -189,6 +196,9 @@ HdfExportResult HdfExportService::run(const HdfExportRequest& request, const Hdf
         std::error_code ec;
         if (!fs::is_regular_file(request.sourcePath, ec)) throw Failed{"source file does not exist: " + request.sourcePath};
         if (request.outputRoot.empty()) throw Failed{"no output directory selected"};
+        if (request.format == HdfExportFormat::Fcs &&
+            (!std::isfinite(request.conversionFactor) || request.conversionFactor <= 0.0))
+            throw Failed{"pixel-to-micron calibration must be finite and positive"};
         if (fs::exists(request.outputRoot, ec) && !fs::is_directory(request.outputRoot, ec))
             throw Failed{"output path exists and is not a directory: " + request.outputRoot};
         fs::create_directories(request.outputRoot, ec);
@@ -199,6 +209,16 @@ HdfExportResult HdfExportService::run(const HdfExportRequest& request, const Hdf
         // Destination + same-parent partial location.
         const std::string base = sourceBaseName(request.sourcePath);
         const bool folderJob = request.format != HdfExportFormat::MetricsCsv;
+        const bool imageJob = request.format == HdfExportFormat::Images || request.format == HdfExportFormat::All;
+        const bool explicitFcsFile = request.format == HdfExportFormat::Fcs &&
+                                     !request.explicitDestination.empty() &&
+                                     [&] {
+                                         const std::string ext = fs::path(request.explicitDestination).extension().string();
+                                         return ext.size() == 4 && std::tolower(static_cast<unsigned char>(ext[1])) == 'f' &&
+                                                std::tolower(static_cast<unsigned char>(ext[2])) == 'c' &&
+                                                std::tolower(static_cast<unsigned char>(ext[3])) == 's';
+                                     }();
+        fs::path eventMapFinalPath;
         if (!request.explicitDestination.empty()) {
             finalPath = request.explicitDestination;
         } else if (folderJob) {
@@ -206,12 +226,20 @@ HdfExportResult HdfExportService::run(const HdfExportRequest& request, const Hdf
         } else {
             finalPath = nextAvailableName(request.outputRoot, base + "_metrics.csv", base + "_metrics_", ".csv");
         }
-        // An explicit *file* destination (chosen through a save dialog that
-        // already confirmed overwrite) is replaced atomically at commit; an
-        // existing folder is never merged into.
+        if (fs::equivalent(request.sourcePath, finalPath, ec))
+            throw Failed{"export destination must not replace the source recording"};
+        ec.clear();
+        if (explicitFcsFile) {
+            eventMapFinalPath = finalPath.parent_path() / (finalPath.stem().string() + "_event_map.csv");
+            if (fs::exists(finalPath, ec) || fs::exists(eventMapFinalPath, ec))
+                throw Failed{"destination or event map already exists: " + finalPath.string()};
+        }
+        // An explicit metrics file destination is replaced atomically at
+        // commit; an existing folder or FCS pair is never merged into.
         const bool overwriteFile = !request.explicitDestination.empty() && !folderJob &&
                                    fs::is_regular_file(finalPath, ec);
-        if (fs::exists(finalPath, ec) && !overwriteFile) throw Failed{"destination already exists: " + finalPath.string()};
+        if (fs::exists(finalPath, ec) && !overwriteFile && !explicitFcsFile)
+            throw Failed{"destination already exists: " + finalPath.string()};
         partial = finalPath.parent_path() / ("." + finalPath.filename().string() + ".partial-" + result.jobId);
         if (folderJob) {
             fs::create_directories(partial, ec);
@@ -224,23 +252,116 @@ HdfExportResult HdfExportService::run(const HdfExportRequest& request, const Hdf
         if (!reader.loadFile(request.sourcePath)) throw Failed{"file could not be opened as HDF5: " + request.sourcePath};
         std::vector<services::ProcessedFrame> valid, invalid;
         result.recordingMode = reader.isRecordingFile();
+        const bool fcsJob = request.format == HdfExportFormat::Fcs;
+        const HdfExportFrames selectedFrames = fcsJob ? request.fcsFrames : request.frames;
         if (result.recordingMode) {
             if (!reader.readRecordingMetadata(valid)) throw Failed{"failed to read recording metadata"};
         } else {
-            if (request.frames != HdfExportFrames::Invalid && !reader.readValidMetadata(valid))
-                throw Failed{"failed to read valid-frame metadata"};
-            if (request.frames != HdfExportFrames::Valid && !reader.readInvalidMetadata(invalid))
-                throw Failed{"failed to read invalid-frame metadata"};
+            if (selectedFrames != HdfExportFrames::Invalid) {
+                const auto present = reader.metadataDatasetPresent(true);
+                if (!present || (*present && !reader.readValidMetadata(valid)))
+                    throw Failed{"failed to read valid-frame metadata"};
+            }
+            if (selectedFrames != HdfExportFrames::Valid) {
+                const auto present = reader.metadataDatasetPresent(false);
+                if (!present || (*present && !reader.readInvalidMetadata(invalid)))
+                    throw Failed{"failed to read invalid-frame metadata"};
+            }
         }
-        if (request.frames == HdfExportFrames::Invalid) valid.clear();
-        if (request.frames == HdfExportFrames::Valid) invalid.clear();
+        if (selectedFrames == HdfExportFrames::Invalid) valid.clear();
+        if (selectedFrames == HdfExportFrames::Valid) invalid.clear();
         checkCancel();
-        if (valid.empty() && invalid.empty()) throw Failed{"no exportable frame data found"};
+        if (valid.empty() && invalid.empty() && !fcsJob) throw Failed{"no exportable frame data found"};
+        if (fcsJob && result.recordingMode) throw Failed{"raw recordings have no object metrics for FCS export"};
+
+        std::vector<std::string> fcsMembers;
+        if (fcsJob) {
+            std::vector<std::string> validMembers, invalidMembers;
+            const auto readMembers = [&reader](bool valid, std::vector<std::string>& members) {
+                const auto present = reader.metadataDatasetPresent(valid);
+                if (!present || (*present && !reader.readMetadataFieldNames(valid, members)))
+                    throw Failed{"failed to read FCS metadata compound fields"};
+                return *present;
+            };
+            bool haveValid = selectedFrames != HdfExportFrames::Invalid && readMembers(true, validMembers);
+            bool haveInvalid = selectedFrames != HdfExportFrames::Valid && readMembers(false, invalidMembers);
+            // Lazy HDF datasets can leave the selected stream absent in an empty
+            // export. Only then use the other stream to describe the parameters.
+            if (!haveValid && !haveInvalid) {
+                haveValid = readMembers(true, validMembers);
+                haveInvalid = readMembers(false, invalidMembers);
+            }
+            if (haveValid && haveInvalid) {
+                const std::unordered_set<std::string> other(invalidMembers.begin(), invalidMembers.end());
+                for (const auto& member : validMembers) if (other.count(member)) fcsMembers.push_back(member);
+            } else if (haveValid) {
+                fcsMembers = std::move(validMembers);
+            } else if (haveInvalid) {
+                fcsMembers = std::move(invalidMembers);
+            } else {
+                throw Failed{"FCS metadata compound fields are unavailable"};
+            }
+        }
+
+        auto charts=request.supplementalImages;
+        if(request.format==HdfExportFormat::Charts && result.recordingMode)throw Failed{"Raw recordings have no chart metrics"};
+        if(request.generateReviewCharts && !result.recordingMode && (request.format==HdfExportFormat::All || request.format==HdfExportFormat::Charts)) {
+            checkCancel();
+            charts=renderReviewCharts(makeReviewChartData(valid,request.conversionFactor,request.chartRingMin,request.chartRingMax),request.chartIsoelasticOverlays);
+        }
+
+        if(request.format==HdfExportFormat::Charts && charts.empty())throw Failed{"No chart images provided or generated"};
+
+        if (fcsJob) {
+            services::ProcessingConfig config;
+            int recordedContract = 0;
+            if (!reader.readRecordedProcessingContract(recordedContract))
+                throw Failed{"invalid or conflicting processing contract provenance"};
+            config.processing_contract_version = recordedContract;
+            if (config.processing_contract_version < 1 || config.processing_contract_version > 3)
+                throw Failed{"unsupported processing contract for FCS export"};
+            FcsWriteOptions options;
+            options.contract = config.processing_contract_version;
+            options.pixelToMicron = request.conversionFactor;
+            options.cancel = cancel.nativeFlag();
+            options.metadata.source = request.sourcePath;
+            options.metadata.contract = options.contract;
+            options.metadata.pixelToMicron = request.conversionFactor;
+            const std::time_t now = std::time(nullptr);
+            std::tm utc{};
+#if defined(_WIN32)
+            gmtime_s(&utc, &now);
+#else
+            gmtime_r(&now, &utc);
+#endif
+            char timestamp[64]{};
+            std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", &utc);
+            options.metadata.exportTime = timestamp;
+#ifdef MIB_STUDIO_QT_VERSION
+            options.metadata.mibVersion = MIB_STUDIO_QT_VERSION;
+#else
+            options.metadata.mibVersion = "unknown";
+#endif
+            std::vector<services::ProcessedFrame> selected = valid;
+            selected.insert(selected.end(), invalid.begin(), invalid.end());
+            const fs::path fcsPath = explicitFcsFile ? partial / finalPath.filename() : partial / (base + ".fcs");
+            const fs::path eventMapPath = explicitFcsFile ? partial / eventMapFinalPath.filename()
+                                                          : partial / (base + "_event_map.csv");
+            totalUnits = 1;
+            progress(HdfExportPhase::Metrics, fcsPath.string());
+            const auto fcs = writeFcs(fcsPath.string(), eventMapPath.string(), selected, fcsMembers, options);
+            if (fcs.cancelled) throw Cancelled{};
+            if (!fcs.error.empty()) throw Failed{fcs.error};
+            result.metricsWritten = true;
+            result.validCount = valid.size();
+            result.invalidCount = invalid.size();
+            ++completedUnits;
+        }
 
         // Series geometry (experiment files only).
         size_t seriesRecords = 0, seriesCount = 0;
         int seriesH = 0, seriesW = 0;
-        const bool hasSeries = !result.recordingMode && folderJob && request.series.exportSeries &&
+        const bool hasSeries = !result.recordingMode && imageJob && request.series.exportSeries &&
                                reader.getSeriesImageInfo(seriesRecords, seriesCount, seriesH, seriesW) && seriesCount > 0;
         size_t seriesStart = 0, seriesEnd = 0;
         if (hasSeries) {
@@ -251,10 +372,11 @@ HdfExportResult HdfExportService::run(const HdfExportRequest& request, const Hdf
         }
         const int seriesDigits = std::max<int>(2, static_cast<int>(std::to_string(std::max<size_t>(seriesCount, 1)).size()));
 
-        const bool writeMetrics = !result.recordingMode && request.format != HdfExportFormat::Images;
-        totalUnits = (writeMetrics ? 1 : 0) + (folderJob ? valid.size() + invalid.size() : 0) +
+        const bool writeMetrics = request.format == HdfExportFormat::MetricsCsv ||
+                                  (!result.recordingMode && request.format == HdfExportFormat::All);
+        totalUnits = (writeMetrics ? 1 : 0) + (fcsJob ? 1 : 0) + (imageJob ? valid.size() + invalid.size() : 0) +
                      (hasSeries ? std::min(seriesRecords, valid.size()) * (seriesEnd - seriesStart + 1) : 0) +
-                     (folderJob && request.format == HdfExportFormat::All ? request.supplementalImages.size() : 0);
+                     (folderJob && (request.format == HdfExportFormat::All || request.format == HdfExportFormat::Charts) ? charts.size() : 0);
 
         // Metrics.
         if (writeMetrics) {
@@ -270,6 +392,7 @@ HdfExportResult HdfExportService::run(const HdfExportRequest& request, const Hdf
         }
 
         if (folderJob) {
+            if (imageJob) {
             const std::string validImages = result.recordingMode ? "/recorded_frames/images" : "/valid_frames/images";
             const std::string validPrefix = result.recordingMode ? "frame_" : "valid_frame_";
             progress(HdfExportPhase::ValidImages);
@@ -319,9 +442,10 @@ HdfExportResult HdfExportService::run(const HdfExportRequest& request, const Hdf
                 ++completedUnits;
                 if ((i + 1) % 25 == 0 || i + 1 == invalid.size()) progress(HdfExportPhase::InvalidImages, path.string());
             }
-            if (request.format == HdfExportFormat::All && !result.recordingMode) {
+            }
+            if ((request.format == HdfExportFormat::All || request.format == HdfExportFormat::Charts) && !result.recordingMode) {
                 progress(HdfExportPhase::Charts);
-                for (const auto& [name, image] : request.supplementalImages) {
+                for (const auto& [name, image] : charts) {
                     checkCancel();
                     if (image.empty()) { result.warnings.push_back("chart " + name + " is empty"); continue; }
                     const fs::path path = partial / name;
@@ -336,13 +460,42 @@ HdfExportResult HdfExportService::run(const HdfExportRequest& request, const Hdf
         // Publish.
         checkCancel();
         progress(HdfExportPhase::Committing, finalPath.string());
-        fs::rename(partial, finalPath, ec);
-        if (ec) {
-            // Name taken meanwhile: pick the next one once.
-            if (folderJob) finalPath = nextAvailableName(request.outputRoot, base, base + "_", "");
-            else finalPath = nextAvailableName(request.outputRoot, base + "_metrics.csv", base + "_metrics_", ".csv");
+        // A progress callback may cancel the job.  Check again after the
+        // callback and before the first publication syscall.
+        checkCancel();
+        if (explicitFcsFile) {
+            const fs::path stagedFcs = partial / finalPath.filename();
+            const fs::path stagedMap = partial / eventMapFinalPath.filename();
+            // Rename (same directory as the staging folder, so the same
+            // volume) instead of hard links: FAT/exFAT USB sticks and many SMB
+            // shares, where operators export, have no hard links. Both names
+            // were checked free above; publish the map first and roll it back
+            // if the FCS rename fails, so a lone event map is never left.
+            if (fs::exists(finalPath, ec) || fs::exists(eventMapFinalPath, ec))
+                throw Failed{"destination or event map appeared during export: " + finalPath.string()};
+            fs::rename(stagedMap, eventMapFinalPath, ec);
+            if (ec) throw Failed{"could not publish event map as " + eventMapFinalPath.string() + ": " + ec.message()};
+            fs::rename(stagedFcs, finalPath, ec);
+            if (ec) {
+                const std::string publishError = ec.message();
+                std::error_code rollbackEc;
+                fs::remove(eventMapFinalPath, rollbackEc);
+                if (rollbackEc)
+                    throw Failed{"could not publish FCS as " + finalPath.string() + ": " + publishError +
+                                  "; failed to roll back event map " + eventMapFinalPath.string() + ": " +
+                                  rollbackEc.message()};
+                throw Failed{"could not publish FCS as " + finalPath.string() + ": " + publishError};
+            }
+            fs::remove_all(partial, ec);
+            if (ec) result.warnings.push_back("published FCS pair but failed to remove staging directory: " + ec.message());
+        } else {
             fs::rename(partial, finalPath, ec);
-            if (ec) throw Failed{"could not publish export as " + finalPath.string() + ": " + ec.message()};
+            if (ec) {
+                if (folderJob) finalPath = nextAvailableName(request.outputRoot, base, base + "_", "");
+                else finalPath = nextAvailableName(request.outputRoot, base + "_metrics.csv", base + "_metrics_", ".csv");
+                fs::rename(partial, finalPath, ec);
+                if (ec) throw Failed{"could not publish export as " + finalPath.string() + ": " + ec.message()};
+            }
         }
         result.status = HdfExportStatus::Completed;
         result.finalPath = finalPath.string();

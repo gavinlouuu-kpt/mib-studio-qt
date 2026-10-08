@@ -1,3 +1,4 @@
+#include <cmath>
 #include "backend/recording/ReviewExport.h"
 
 #include <cstdio>
@@ -45,11 +46,12 @@ namespace backend::review
         const std::uint64_t total = validFrames.size() + invalidFrames.size();
         std::uint64_t done = 0;
 
-        // Column set/precision mirror the Qt HdfReviewTab export exactly.
+        // Column set/precision mirror the Qt export (HdfExportService::writeMetricsCsv) byte for byte;
+        // tools/review_parity compares the two files.
         out << "Frame Type,Index,Timestamp,Object Id,Object Count,Track Id,Track First,Track Last,Track Observations,"
             << "Deformability,Area,Area (um²),Area Ratio,Ring Ratio,"
             << "Valid,Touches Border,Single Inner,In Range,Inner Count,"
-            << "Bright Q1,Bright Q2,Bright Q3,Bright Q4\n";
+            << "Bright Q1,Bright Q2,Bright Q3,Bright Q4,Young's modulus (kPa)\n";
 
         auto writeFrame = [&](const char *frameType, const services::ProcessedFrame &frame) -> bool {
             const auto &val = frame.validation;
@@ -76,7 +78,8 @@ namespace backend::review
                 << fixed(val.brightness.q1, 2) << ','
                 << fixed(val.brightness.q2, 2) << ','
                 << fixed(val.brightness.q3, 2) << ','
-                << fixed(val.brightness.q4, 2) << '\n';
+                << fixed(val.brightness.q4, 2) << ','
+                << (std::isnan(val.youngsModulus) ? std::string() : fixed(val.youngsModulus, 3)) << '\n';
 
             ++done;
             if (progress && (done % 256 == 0 || done == total))

@@ -1,4 +1,8 @@
 function(mib_configure_windows_deployment app_target)
+    add_custom_command(TARGET ${app_target} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${PROJECT_SOURCE_DIR}/docs/release-notes" "$<TARGET_FILE_DIR:${app_target}>/resources/release-notes"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${PROJECT_SOURCE_DIR}/docs/manual" "$<TARGET_FILE_DIR:${app_target}>/resources/manual"
+        VERBATIM)
     if(NOT WIN32 OR NOT MIB_ENABLE_WINDOWS_PACKAGING)
         return()
     endif()
@@ -329,16 +333,6 @@ function(mib_configure_windows_deployment app_target)
                 $<TARGET_FILE_DIR:${app_target}>
         COMMAND_EXPAND_LISTS
         COMMENT "Copying Conan package DLLs for ${app_target}"
-    )
-
-    # Copy resources/models directory (YOLO model files).
-    add_custom_command(TARGET ${app_target} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory
-                "$<TARGET_FILE_DIR:${app_target}>/resources/models"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${PROJECT_SOURCE_DIR}/resources/models/yolo11n-seg.onnx"
-                "$<TARGET_FILE_DIR:${app_target}>/resources/models/"
-        COMMENT "Copying YOLO model files for ${app_target}"
     )
 
     # crashpad_handler.exe is required next to the application when

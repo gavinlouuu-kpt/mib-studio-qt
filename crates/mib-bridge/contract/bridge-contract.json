@@ -1,6 +1,6 @@
 {
   "$comment": "Single source of truth for the bridge command/event contract (BE-1, issue #271, epic #246, ADR 0004). C++ ties to these values via static_asserts in crates/mib-bridge/src/shim.cpp; Rust via crates/mib-bridge/tests/contract.rs; TypeScript via the generated desktop/src/bridgeContract.ts (scripts/gen_bridge_contract.py --check fails CI on drift). All changes must be additive: append values, never renumber or repurpose.",
-  "abi_version": 13,
+  "abi_version": 31,
   "event_kinds": {
     "FrameReady": 0,
     "CameraStatus": 1,
@@ -24,7 +24,9 @@
     "Trigger": 8,
     "Review": 9,
     "Pump": 10,
-    "Autofocus": 11
+    "Autofocus": 11,
+    "PulseGenerator": 12,
+    "Stage": 13
   },
   "review_image_datasets": {
     "ValidImage": 0,
@@ -43,6 +45,95 @@
     "Mock": 1,
     "Hardware": 2,
     "MindVision": 3
+  },
+  "discovery_device_kinds": {
+    "Camera": 0,
+    "Framegrabber": 1,
+    "Nanopositioner": 2,
+    "PulseGenerator": 3,
+    "MotionStage": 4
+  },
+  "discovery_job_states": {
+    "Queued": 0,
+    "Running": 1,
+    "Completed": 2,
+    "Cancelled": 3,
+    "Failed": 4
+  },
+  "discovery_identity_strengths": {
+    "None": 0,
+    "SessionLocal": 1,
+    "Persistent": 2
+  },
+  "discovery_identification_statuses": {
+    "Identified": 0,
+    "Unidentified": 1,
+    "Ambiguous": 2,
+    "Unsupported": 3
+  },
+  "discovery_error_kinds": {
+    "None": 0,
+    "InvalidRequest": 1,
+    "Busy": 2,
+    "OpenFailed": 3,
+    "PermissionDenied": 4,
+    "Timeout": 5,
+    "MalformedResponse": 6,
+    "Unsupported": 7,
+    "MissingSdk": 8,
+    "ProviderException": 9,
+    "Cancelled": 10,
+    "Overflow": 11,
+    "ShuttingDown": 12,
+    "TooManyJobs": 13
+  },
+  "registry_session_states": {
+    "SignedOut": 0,
+    "SignedIn": 1,
+    "CachedOffline": 2
+  },
+  "registry_connectivity": {
+    "Unknown": 0,
+    "Online": 1,
+    "Offline": 2,
+    "AuthenticationRequired": 3,
+    "PermissionDenied": 4,
+    "Failed": 5
+  },
+  "registry_job_kinds": {
+    "SignIn": 0,
+    "SignOut": 1,
+    "Refresh": 2,
+    "Download": 3,
+    "Materialize": 4,
+    "RecordValidation": 5,
+    "SaveDraft": 6,
+    "DeleteDraft": 7,
+    "SubmitDraft": 8,
+    "Transition": 9,
+    "FetchHistory": 10
+  },
+  "registry_job_states": {
+    "Queued": 0,
+    "Running": 1,
+    "Succeeded": 2,
+    "Partial": 3,
+    "Failed": 4,
+    "Cancelled": 5
+  },
+  "registry_central_states": {
+    "Submitted": 0,
+    "Approved": 1,
+    "Rejected": 2,
+    "Published": 3,
+    "Superseded": 4,
+    "Archived": 5,
+    "Revoked": 6
+  },
+  "registry_local_validation": {
+    "None": 0,
+    "Passed": 1,
+    "Failed": 2
   },
   "experiment_states": {
     "Idle": 0,
@@ -106,7 +197,8 @@
     "BatchMetrics": 3,
     "MaskRegeneration": 4,
     "Reanalysis": 5,
-    "PumpScan": 6
+    "PumpScan": 6,
+    "StageMove": 7
   },
   "pump_ids": {
     "Sample": 0,
@@ -121,6 +213,16 @@
   "pump_directions": {
     "Infuse": 0,
     "Withdraw": 1
+  },
+  "pump_models": {
+    "DlspSyringe": 0,
+    "TushuiPeristaltic": 1
+  },
+  "stage_move_states": {
+    "Idle": 0,
+    "Moving": 1,
+    "Homing": 2,
+    "Faulted": 3
   },
   "operation_states": {
     "Started": 0,
@@ -147,14 +249,14 @@
     "Error": 5
   },
   "frame_packet": {
-    "version": 1,
+    "version": 2,
     "header_bytes": 96,
     "byte_order": "little",
     "max_payload_bytes": 33554432,
     "max_pixels": 16777216,
     "max_dimension": 8192,
     "timestamp_semantics": "legacy raw timestamp_ns; unit and clock validity unavailable",
-    "identity_semantics": "source/session/config unavailable; reserved u64 slots zero",
+    "identity_semantics": "Live raw frames carry CaptureService generation and FrameStore epoch stamped atomically with pixels. Zero means unavailable; raw processing config is inapplicable. Review/background have separate explicit source ownership and zero capture identities.",
     "pull_kinds": {
       "latest": 1,
       "indexed": 2,
@@ -174,9 +276,9 @@
       "pixel_format": 48,
       "stride_bytes": 56,
       "payload_bytes": 64,
-      "session_id_reserved": 72,
       "config_revision_reserved": 80,
-      "source_id_reserved": 88
+      "capture_session": 72,
+      "store_generation": 88
     }
   },
   "json_transport": {
@@ -284,5 +386,153 @@
     "legacy_slots": "validSaved = persistence committed; invalidSaved = 0 (split no longer tracked); droppedValid = persistence pending (admitted - committed - failed); droppedInvalid = persistence failed",
     "typed_fields": "startGeneration/persistence*/completion/terminal/finalizationOk are exact; completion is a run_completion_states value, Unknown until terminal",
     "snapshot": "fetch_experiment_status carries the full status (generations, fault code/message, completion reason); fetch_experiment_readiness carries the gate list with readiness_gate_statuses values and the generation a Start must present"
+  },
+  "review_export_json": {
+    "request": {
+      "output_root": "string",
+      "format": [
+        "metrics_csv",
+        "images",
+        "all",
+        "charts"
+      ],
+      "frames": [
+        "valid",
+        "invalid",
+        "both"
+      ],
+      "conversion_factor": "positive finite number; optional",
+      "keep_partial_on_failure": "boolean; optional",
+      "explicit_destination": "string; optional",
+      "source_paths": "optional 1..256 source paths; independent readers; forbids explicit_destination"
+    },
+    "status": {
+      "state": [
+        "idle",
+        "running",
+        "completed",
+        "cancelled",
+        "failed"
+      ],
+      "operation_id": "decimal-string u64",
+      "completed": "decimal-string u64, progress only",
+      "total": "decimal-string u64, progress only",
+      "final_path": "published output, completed only",
+      "retained_partial_path": "visible partial output with failure manifest, terminal only",
+      "results": "per-file source_path/state/final_path/retained_partial_path/error for all attempted files; batch continues on failure and stops on cancellation"
+    },
+    "retention": "latest export snapshot retained until next accepted submit",
+    "concurrency": "one active export; busy submit rejected; cancel through operation_cancel; terminal after cleanup"
+  },
+  "checked_config_document": {
+    "read": "path -> ok/path/revision/document_json/error",
+    "apply": "path + required SHA256 baseline + image_processing-only JSON patch",
+    "limits": {
+      "document_bytes": 4194304,
+      "patch_bytes": 65536
+    },
+    "outcomes": [
+      "saved",
+      "applied",
+      "verified",
+      "conflict"
+    ],
+    "notes": "No force overwrite; no startup-file selection changes; saved-only is not successful application."
+  },
+  "preview_buffer_json": {
+    "snapshot": "available:boolean; first,last,count,capacity,generation,timestamp_first,timestamp_last:decimal-u64; timestamps_available,capture_running,recording:boolean",
+    "save_request": "action save(default)|resize|background; save: output_root existing directory, format tiff|avi, first,last decimal-u64, range_mode index(default)|timestamp(raw source units), filter_empty:boolean, fps finite (0,1000]; resize: capacity decimal-u64 1..1000000, confirm_clear:boolean; background: index decimal-u64 Mono8; optional generation decimal-u64 precondition",
+    "save_result": "ok:boolean; output_path:string including retained partial path; error:string",
+    "guards": "idle experiment and stopped capture; exact retained range and supplied ring generation; resize available-memory budget, shrink clearing requires confirmation; active-kernel empty filter; unique destination directory; no overwrite; AVI has no per-frame timestamps"
+  },
+  "local_profiles": {
+    "entrypoint": "profile_command(base, request_json) -> JSON",
+    "operations": [
+      "list",
+      "read",
+      "create",
+      "duplicate",
+      "rename",
+      "archive",
+      "apply",
+      "selection",
+      "restore",
+      "install_remote"
+    ],
+    "identity": "SHA256 over exact config.json, optional egrabberConfig.js and profile.meta.json bytes; baseline required for duplicate, rename, archive and apply",
+    "persistence": "Create stages a complete new directory; existing names never overwrite. Archive renames to hidden recoverable directory. Caller selects base directory. Changes serialize with experiment idle guard; not a cross-process CAS.",
+    "activation": "Stopped capture/realtime and disabled autofocus; validate all supported settings before mutation; processing/buffer/realtime/delivery/calibration/autofocus configuration/validated ROI only; no hardware connection or script execution",
+    "response": "ok, error?; profiles/warnings for list; profile for read/create/duplicate/rename; applied/message/profile_id/display_fps for apply; destination for archive; saved after create publication",
+    "startup": "Successful apply persists .selection.json. Restore only exact aggregate revision; selection returns separate saved choice and actual runtime profile_selection provenance.",
+    "remote": "profile_fetch_url HTTP(S), no credentials or redirects, 4 MiB, finite timeout; asynchronous outside bridge mutex. install_remote verifies SHA256, app version and processing contract, requires baseline/identity for replacement, preserves hidden full-directory backup, never applies settings."
+  },
+  "review_reanalysis_json": {
+    "request": {
+      "source_path": "existing HDF5, image folder or AVI path",
+      "output_path": "new HDF5 path; never overwritten",
+      "dataset": [
+        "all",
+        "/valid_frames/images",
+        "/invalid_frames/images",
+        "/recorded_frames/images"
+      ],
+      "start": "nonnegative integer; default 0",
+      "count": "nonnegative integer; 0 selects remaining subject to input budgets",
+      "source_kind": [
+        "hdf",
+        "folder",
+        "avi"
+      ],
+      "synthetic_background": "boolean; build shared quiet-tile background when no source background",
+      "roi": "optional {x,y,w,h}; positive size, nonnegative origin, source bounded",
+      "image_processing": "optional local config.json image_processing object; never applies to live settings",
+      "background_index": "optional nonnegative source frame index, loaded independently",
+      "background_dataset": "HDF dataset for selected background",
+      "clear_background": "discard saved source background before optional selection/synthetic build",
+      "max_frames": "integer 1..1000000; default 4096",
+      "max_input_mib": "integer 1..16384; default 256; input pixels only, processing needs additional memory"
+    },
+    "status": "review-export status vocabulary; own operation id; current settings, source ROI/background/identity, active core recorded"
+  },
+  "review_charts_json": {
+    "description": "all valid-file metrics; 128x128 density conserves every finite calibrated point; histogram exact; shared Qt math",
+    "counters": "decimal strings",
+    "calibration": "current backend pixel_to_micron, same as Qt; reference conditions labelled",
+    "curves": "bundled existing scaled_isoelastic_data_6.16-4.24 table"
+  },
+  "review_reanalysis_preview": "source_kind/source_path/dataset/index -> atomic Mono8 frame packet, independent reader, 64MiB frame limit",
+  "processing_core_management": {
+    "entrypoint": "processing_core_command(cache_root, request_json) -> JSON",
+    "operations": [
+      "info",
+      "restore",
+      "bundled",
+      "activate_local"
+    ],
+    "trust": "Existing portable cache/loader and shared Qt/Tauri compiled signer policy; selected index must match immutable manifest, ABI/contract/runtime/app bounds; never trust manifest-provided key alone.",
+    "persistence": "Atomic selection write in activateProcessingKernel preCommit callback; startup re-verifies signature/hash, failure marks selection unavailable; explicit bundled recovery honors pins."
+  },
+  "render_review_overlay": "source_path/valid/index/mode(0..4)/roi -> PNG bytes; independent same-reader image/mask/classification; shared Qt ProcessingOverlay; 64MiB source frame limit",
+  "monitoring_science": {
+    "row_area": "raw px^2",
+    "row_pixel_to_micron": "exact factor passed to analyzeObjects for this row;0=unknown;host-only,not persisted HDF",
+    "row_youngs_modulus": "stored kernel LUT kPa result;zero unavailable",
+    "calibrated_plot": "valid finite rows with known positive analysis-time factor;never rescale old rows by current config",
+    "reference_command": "fetch_monitoring_chart_reference -> JSON curves [{modulus,points}],curve_source;shared bundled review/Qt resource;explicit reference conditions"
+  },
+  "pump_connect_model": "pump, model (pump_models), port_name, baud_rate, modbus_address, microliters_per_rev -> CommandResult; either model can fill the Sample or Sheath slot; a peristaltic connect only reads registers 100-107; flow rates (µL/min or mL/min) convert to head speed with microliters_per_rev; out-of-range rates fail; purge runs at 100 rpm and stop restores the flow speed; syringe volume fails for peristaltic; fetch_pump_status adds model, microliters_per_rev, speed_rpm (v22)",
+  "stage_commands": "Z stage (#464, ADR 0013 Amendment 1; ABI 30 = no homing). The stage is never homed. Enforced in the backend, not the shell: stage_move_to(target_um) / stage_move_by(delta_um) are refused until the operator set zero in the current controller power-up (stage_set_zero), outside the travel envelope around that zero (+/-1000 um by default; +/-(span/2 - 100 um) = +/-2900 um only after the operator declares mid-travel), and need whole micrometres; a target outside the envelope is refused, never clamped, and so is an approach overshoot that would leave it; stage_set_zero(mid_travel) is the only command that sets zero: one register write (position counter = 0), no motion, accepted only for an idle stage with no operation, e-stop or driver alarm, and without mid_travel only while the stage is inside the window set by the first zero of that power-up; it clears the previous declaration; an e-stop or driver alarm clears zero_set (an operator Stop does not); the controller's power-up token is compared on every idle poll and before every motion opcode, so a power cycle while connected drops the zero and its window (a window survives an e-stop, alarm or failed move, but not a new power-up); power_up_token_register 0 (config refuses it without allow_session_only_zero) turns that off and is reported as session_only_zero; limit bits only stop a move heading toward an active switch and gate nothing else; limits_verified (record written only by the bench tool zc300ctl verify-limits --supervised; no bridge, server or UI path can write it) clears a wiring-unverified badge and never widens the envelope; nothing else moves: stage_connect(port_name, usb_serial, modbus_address) is observe-only (identity, profile check, power-up token), stage_apply_profile only writes and saves controller configuration (and clears zero_set), discovery kind MotionStage only reads identity (FC04); stage_stop is always accepted, also during an experiment; every other stage command, stage_set_zero included, fails while an experiment is not idle. Moves return an operation id (operation_kind StageMove) whose cancel stops the axis; stage_set_zero returns none. fetch_stage_status -> {valid, enabled, connected, configured, zero_set, mid_travel_declared, session_only_zero, limits_verified, busy, model, serial, firmware, port_name, move_state (stage_move_states), position_um, limit_positive, limit_negative, home, emergency_stop, driver_alarm, span_um, envelope_min_um, envelope_max_um, last_error}; home is a raw controller input that floats on this stage and carries no information. On the remote server every stage command except stage_stop and fetch_stage_status is a CONTROL command.",
+  "soft_trigger_camera": "Explicit MindVision camera software exposure trigger; shell requires armed Service mode, native command requires running MindVision camera and idle experiment; no automatic invocation",
+  "camera_alignment": {
+    "set_camera_overview": "overview bool -> CommandResult; MindVision and Aravis cameras; full sensor at the overview preset vs the saved experiment window; stops capture and realtime processing, swaps the frame store (8 frames in overview), restarts a capture that was running; rejected during experiment/recording; experiment readiness fails camera.mode while in overview",
+    "save_camera_roi": "x,y,width,height (sensor coordinates) -> CommandResult; bounds and steps from the camera; MindVision writes its profile, Aravis <data>/config/aravis-camera.json; applies at the next experiment-mode start",
+    "fetch_platform_info": "-> JSON {science: host|pl, host_processing, aravis, capabilities{instrument: desktop|pz7035, autofocus, trigger, host_background, frame_buffer, reanalysis, core_updates, egrabber_script, pl_identity, led_strobe, align_mode, run_mode, pump: null|{model, port, sample_address, sheath_address, microliters_per_rev}}}; science=pl when built with MIB_PL_SCIENCE (PZ7035 PS) or MIB_PL_SCIENCE=1 in the environment: apply_processing with realtime on fails, experiment start does not start the host pipeline, the host pipeline's readiness gates are replaced by science.pl",
+    "set_instrument_mode": "mode (align|run), x, y -> CommandResult; PZ7035 only (#501 P1, v27). Order: LED off and U-Net cell path off; producer staged (align: full field 400 fps / 2299.7 us with PzHmax 232 = HMAX 232 / VMAX 800 / SHS 64, then the producer stopped and whole frames from the bridge preview slots as the live camera (needs expected-core.json feature align_whole_frame_preview and a matching BUILD_ID, results8 on; otherwise the banded fallback 500 fps / 1899.7 us = 116 / 1280 / 64 with the producer streaming); run: 512x96 at x snapped to 8, y to 4, 5000 fps / 150 us = 58 / 256 / 64); capture start (AcquisitionStart applies ROI, timing, S[9], receiver reset); align: LED 100/135 us (bands: 0/125 us); run: capture stopped, cell path on, latency cleared, LED 7/60 us. Refused during an experiment or recording, when the PL is not configured (DEVCFG PCFG_DONE) or not the U-Net cell image. In run, start_capture and set_camera_overview are refused and readiness has instrument.mode instead of the live-camera gates",
+    "set_service_mode": "on bool -> CommandResult; the shell's Service / Commissioning mode latched in the backend (v27)",
+    "set_instrument_led": "delayUs, widthUs -> CommandResult; raw LED, refused unless set_service_mode(true), during an experiment, without a camera mode or outside its limits (run: delay 0-100, width 20-80 us; align: 0-400, 60-150 us; also in fetch_platform_info capabilities.led_limits); the next mode switch restores the preset (v27)",
+    "fetch_run_preview": "-> binary MIBC packet (run mode only, else error RUN_PREVIEW_UNAVAILABLE): 32-byte LE header 'MIBC' | u16 version 1 | u16 header 32 | u32 frame id | u16 width 512 | u16 height 96 | u16 listed | u16 flags | u16 cells | u16 blemishes | u32 dropped | u32 0; then gray (width*height), U-Net mask (width*height/8, 1 bit/px LSB first, row-major), listed x 18 u32 cell words (0-14 unet_cells_v2 payload, 15 = y<<16|x, 16 = h<<16|w, 17 = count<<24|rank<<16|valid); one PL cell capture (S[36]) of a single frame (v27)",
+    "fetch_run_accounting": "source (review | last_run) -> JSON; the reconciled run accounting (v31, #549). review = the file loaded for review (available false with a reason when none is open; recorded false for a raw recording or a legacy file without accounting; adds file_path), last_run = the run that finished last in this session (adds start_generation; available false before any run). Fields: completion (experiment_completion value) and completion_name, completion_reason, reconciled, admitted (frames the run claimed: the true denominator), empty, processed, scientifically_rejected, processing_failed, store_overwritten, store_not_committed, store_malformed (a declared loss: booked ingress-error frames), cancelled_by_policy, pending_at_stop, sequence_gaps, objects_detected, persistence_admitted/committed/failed/pending_at_stop, fatal_error, fatal_message, malformed_warn_fraction (0.001). Read-only; not a control command",
+    "fetch_instrument_status": "-> JSON {available, error?, core{build_id, profile_id, abi_version, science_profile, profile_version, expected: null|{build_id, profile_id, commit, image, abi_major, abi_minor}, pinned_profile_id, build_match, profile_match: match|mismatch|unknown}, led{on, preset: run|align|custom|off, delay_us, width_us, guard_fault, guard_trips}, link{rates_valid, ingress_errors_per_s, resyncs_per_s, bad_frames_per_s, dropped_per_s, ingress_errors_warn_per_s, resyncs_warn_per_s}, latency{last_us, max_us, over_budget, frames}}; read-only (#501); available=false off the PZ7035 or when the PL bridge is not loaded; build_match is unknown without /etc/yofo/expected-core.json; profile_match compares PROFILE_ID with the pinned unet-c4-multiline-v1 weights; v27: mode{name: align|run|unknown, run_x, run_y, service, align_source: bridge|bands|\"\"} and storage{path, writable, ram, free_bytes, filesystem, warning} (recording target of the data dir; ram = tmpfs/ramfs, warning = \"Recording to RAM: lost on power-off. Copy data off before shutdown. <N> GB free.\" or \"\"); results{available, running, frames, results, empty_frames, invalid_frames, truncated_frames, incomplete_frames, decode_errors, sequence_gaps, overruns, last_error}: the PL result stream provider's cumulative counters while an experiment runs (they restart with each run; the UI turns successive polls into frames/s, results/s and EMPTY/INVALID/truncated fractions), additive within the existing command",
+    "fetch_camera_geometry": "-> JSON {supported, overview, camera, sensor_width, sensor_height, roi{x,y,width,height}, width/height/offset_x/offset_y_increment, min_width, min_height, session{...}}; session is the last Aravis read-back (rate, limit, bands, delivered rate)"
   }
 }

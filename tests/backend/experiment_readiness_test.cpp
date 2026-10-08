@@ -20,21 +20,28 @@
 #include "backend/app/AppBackend.h"
 #include "backend/app/ExperimentCoordinator.h"
 #include "backend/playback/FrameStore.h"
+#include "backend/diagnostics/PipelineTimingRecorder.h"
 #include "backend/processing/ProcessingService.h"
 #include "backend/recording/Hdf5Service.h"
 #include "backend/services/CaptureService.h"
+#include "backend/services/RfGeneratorService.h"
 #include "backend/camera/mock/MockCamera.h"
 
 #include "support/assert.h"
+#include "support/fake_ssg.h"
 #include "support/frames.h"
+#include "support/faultinject.h"
+#include "support/fault_kernel.h"
 #include "support/tempdir.h"
 #include "support/watchdog.h"
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <thread>
@@ -93,6 +100,13 @@ void stopCapture(backend::AppBackend& b)
 
 int main()
 {
+#ifdef _WIN32
+    _putenv_s("MIB_DISABLED_SERVICES",
+              "auto_update,autofocus,trigger,syringe_pump,pulse_generator");
+#else
+    setenv("MIB_DISABLED_SERVICES", "auto_update,autofocus,trigger,syringe_pump,pulse_generator",
+           1);
+#endif
     mib::test::Watchdog wd(90);
     mib::test::TempDir td("experiment_readiness");
     const fs::path frames = td.path() / "frames";
@@ -103,6 +117,10 @@ int main()
     auto& coord = backend.experiment();
     coord.setApplicationIdentity("test-version", "test-build", "test-os");
     auto& proc = backend.processing();
+    auto kernel = std::make_shared<mib::test::FaultKernel>();
+    std::string kernelError;
+    MIB_REQUIRE(proc.activateProcessingKernel(kernel, &kernelError),
+                "fault kernel active: " + kernelError);
     {
         auto cfg = proc.getProcessingConfig();
         cfg.empty_frame_pixel_threshold = 1;
@@ -141,6 +159,7 @@ int main()
         MIB_EXPECT(statusOf(r, "camera.deliveryMode") == GateStatus::Unavailable, "delivery mode unknown when idle");
         MIB_EXPECT(statusOf(r, "camera.source") == GateStatus::Warn, "explicit mock is a warning, not a failure");
         MIB_EXPECT(statusOf(r, "trigger.output") == GateStatus::NotRequired, "sorting disabled -> trigger not required");
+        MIB_EXPECT(statusOf(r, "rf.generator") == GateStatus::NotRequired, "sorting disabled -> RF generator not required");
         ExperimentStartRequest req;
         req.outputPath = out1;
         req.readinessGeneration = r.generation;
@@ -150,6 +169,69 @@ int main()
         MIB_EXPECT(coord.state() == backend::app::ExperimentRunState::Idle, "still idle");
         const auto again = coord.evaluateReadiness(out1);
         MIB_EXPECT(again.generation == r.generation, "stable state keeps its generation");
+    }
+
+    // ---- 1b. RF sort generator gate (SSG3021X over the LAN transport) --------
+    // Sorting on: a missing or disabled link is not required; a
+    // configured link that is down or mis-armed fails closed, an armed
+    // instrument passes and its readback lands in the candidate snapshot.
+    {
+        wd.mark("rf gate");
+        auto cfgSort = proc.getProcessingConfig();
+        cfgSort.enable_target_group = true;
+        proc.setProcessingConfig(cfgSort);
+        auto r = coord.evaluateReadiness(out1);
+        MIB_EXPECT(statusOf(r, "rf.generator") == GateStatus::NotRequired, "sorting on, no rf_generator block -> not required");
+        MIB_EXPECT(!r.candidate.rfGeneratorConfigured, "candidate: not configured");
+
+        std::ifstream defaults(fs::path(__FILE__).parent_path().parent_path().parent_path() / "resources/defaults/config.json");
+        MIB_REQUIRE(defaults.good(), "bundled default config readable");
+        backend.setLastConfigJson(std::string(std::istreambuf_iterator<char>(defaults), {}));
+        r = coord.evaluateReadiness(out1);
+        MIB_EXPECT(statusOf(r, "rf.generator") == GateStatus::NotRequired, "bundled disabled RF generator -> not required");
+        MIB_EXPECT(!r.candidate.rfGeneratorConfigured, "bundled RF generator disabled");
+
+        backend.setLastConfigJson("{\"rf_generator\":{\"enabled\":true,\"transport\":\"lan\",\"resource\":\"127.0.0.1:1\",\"timeout_ms\":200}}");
+        r = coord.evaluateReadiness(out1);
+        MIB_EXPECT(statusOf(r, "rf.generator") == GateStatus::Fail, "configured but unreachable -> fail");
+        MIB_EXPECT(r.candidate.rfGeneratorConfigured && !r.candidate.rfGeneratorConnected &&
+                       !r.candidate.rfGeneratorError.empty(),
+                   "candidate carries the link error");
+#ifndef _WIN32
+        mib::test::FakeSsg ssg;
+        mib::test::LoopbackSsgServer server(ssg);
+        MIB_REQUIRE(server.start(), "loopback SSG up");
+        backend.setLastConfigJson("{\"rf_generator\":{\"enabled\":true,\"transport\":\"lan\",\"resource\":\"127.0.0.1:" +
+                                  std::to_string(server.port()) + "\",\"timeout_ms\":500}}");
+        r = coord.evaluateReadiness(out1);
+        dumpGates(r);
+        MIB_EXPECT(statusOf(r, "rf.generator") == GateStatus::Pass, "armed instrument -> pass");
+        MIB_EXPECT(r.candidate.rfGeneratorConnected && r.candidate.rfGeneratorIdentity == ssg.idn &&
+                       r.candidate.rfGeneratorTriggerMode == "EXTernal" &&
+                       std::fabs(r.candidate.rfGeneratorPulseWidthS - 50e-6) < 1e-12,
+                   "candidate carries identity, trigger mode and window");
+        {
+            std::lock_guard<std::mutex> lk(ssg.m);
+            ssg.trigMode = "AUTO";
+            ssg.rfOn = false;
+        }
+        r = coord.evaluateReadiness(out1);
+        MIB_EXPECT(statusOf(r, "rf.generator") == GateStatus::Fail, "mis-armed instrument -> fail");
+        MIB_EXPECT(r.candidate.rfGeneratorIssues.size() == 2, "both blocking issues listed");
+        const auto* g = r.gate("rf.generator");
+        MIB_EXPECT(g && g->reason.find("rf.triggerMode") != std::string::npos &&
+                       g->reason.find("rf.output") != std::string::npos,
+                   "gate reason names the issues");
+        server.stop();
+        backend.rfGenerator().disconnect();
+#endif
+        // Restore: link disabled, sorting off, so the remaining sections see
+        // the same backend as before.
+        backend.setLastConfigJson("{}");
+        cfgSort.enable_target_group = false;
+        proc.setProcessingConfig(cfgSort);
+        r = coord.evaluateReadiness(out1);
+        MIB_EXPECT(statusOf(r, "rf.generator") == GateStatus::NotRequired, "restored: not required");
     }
 
     // ---- 2. Running mock camera: ready; stale preflight refused ---------------
@@ -166,11 +248,31 @@ int main()
         MIB_EXPECT(statusOf(r, "processing.core") == GateStatus::Pass, "core pass (no pin)");
         MIB_EXPECT(statusOf(r, "processing.background") == GateStatus::Warn, "no background -> warn only");
         MIB_EXPECT(statusOf(r, "storage.output") == GateStatus::Pass, "writable output");
+        MIB_EXPECT(statusOf(r, "storage.roundtrip") == GateStatus::Pass,
+                   "destination HDF5 roundtrip verified");
         MIB_EXPECT(r.candidate.camera.simulated && !r.candidate.camera.fallback, "candidate records explicit mock");
         MIB_EXPECT(r.candidate.frameWidth == 96 && r.candidate.frameHeight == 96, "candidate geometry from frames");
         MIB_EXPECT(r.candidate.captureGeneration == backend.capture().lifecycleSnapshot().generation,
                    "candidate carries capture generation");
-        genReady = r.generation;
+        const auto originalBudget = proc.getMaxBufferedBytes();
+        proc.setMaxBufferedBytes(1);
+        const auto impossible = coord.evaluateReadiness(out1);
+        MIB_EXPECT(!impossible.ready && statusOf(impossible, "storage.buffer") == GateStatus::Fail,
+                   "oversized payload blocks readiness");
+        MIB_EXPECT(impossible.generation != r.generation, "buffer budget invalidates readiness");
+        const auto beforeSeries = proc.getProcessingConfig();
+        auto series = beforeSeries;
+        series.multi_image_enabled = true;
+        series.multi_image_count = 10;
+        proc.setProcessingConfig(series);
+        proc.setMaxBufferedBytes(4 * 96 * 96);
+        const auto oversizedSeries = coord.evaluateReadiness(out1);
+        MIB_EXPECT(!oversizedSeries.ready &&
+                       statusOf(oversizedSeries, "storage.buffer") == GateStatus::Fail,
+                   "oversized series blocks readiness");
+        proc.setProcessingConfig(beforeSeries);
+        proc.setMaxBufferedBytes(originalBudget);
+        genReady = coord.evaluateReadiness(out1).generation;
         MIB_EXPECT(coord.evaluateReadiness(out1).generation == genReady, "generation stable while nothing changes");
 
         // ROI edit after preflight -> stale.
@@ -229,6 +331,23 @@ int main()
         stopCapture(backend);
         const auto stopped = coord.evaluateReadiness(out1);
         MIB_EXPECT(!stopped.ready && stopped.generation != before.generation, "stop invalidates");
+        // Geometry can change independently of the capture lifecycle (SDK ROI /
+        // format renegotiation). Its payload gate must invalidate prior preflight.
+        const auto budget = proc.getMaxBufferedBytes();
+        proc.setMaxBufferedBytes(2 * 96 * 96);
+        auto store = backend.getFrameStore();
+        pushMat(*store, cv::Mat(96, 96, CV_8UC1, cv::Scalar(0)), 9000);
+        const auto small = coord.evaluateReadiness(out1);
+        pushMat(*store, cv::Mat(192, 96, CV_8UC1, cv::Scalar(0)), 9001);
+        const auto large = coord.evaluateReadiness(out1);
+        MIB_EXPECT(statusOf(small, "storage.buffer") != GateStatus::Fail &&
+                       statusOf(large, "storage.buffer") == GateStatus::Fail,
+                   "changed geometry changes payload feasibility");
+        MIB_EXPECT(large.generation != small.generation,
+                   "frame geometry invalidates readiness without a lifecycle change");
+        MIB_EXPECT(coord.evaluateReadiness(out1).generation == large.generation,
+                   "unchanged frame geometry keeps readiness stable");
+        proc.setMaxBufferedBytes(budget);
         MIB_REQUIRE(startCapture(backend), "restart capture");
         const auto restarted = coord.evaluateReadiness(out1);
         MIB_EXPECT(restarted.ready && restarted.generation != before.generation && restarted.generation != stopped.generation,
@@ -311,11 +430,29 @@ int main()
         MIB_EXPECT(frozen.readinessGeneration == r.generation && frozen.startGeneration == 1, "snapshot generations");
         MIB_EXPECT(frozen.roiW == 64 && frozen.roiH == 64, "snapshot froze the ROI in force at start");
         MIB_EXPECT(frozen.applicationVersion == "test-version", "application identity recorded");
-        MIB_EXPECT(frozen.camera.effective == "mock" && frozen.camera.simulated, "camera source frozen");
+        MIB_EXPECT(frozen.camera.effective == "mock" && frozen.camera.simulated,
+                   "camera source frozen");
 
-        // Later edits do not mutate the frozen run.
+        // Join the consumer before editing the live recipe so pipeline progress
+        // cannot end the run between the active snapshot and duplicate Start.
+        proc.stopRealtime();
+        const auto backgroundBefore = proc.backgroundGeneration();
+        // Later edits must be refused while the run owns the pipeline.
         proc.setRealtimeRoi(ProcessingService::Roi{0, 0, 32, 32});
         proc.setRealtimeBackgroundGray(cv::Mat(96, 96, CV_8UC1, cv::Scalar(9)));
+        MIB_EXPECT(proc.getRealtimeRoi().w == 64, "active run refuses direct ROI changes");
+        MIB_EXPECT(proc.backgroundGeneration() == backgroundBefore,
+                   "active run refuses direct background changes");
+        auto backgroundConfig = proc.getProcessingConfig();
+        backgroundConfig.auto_background_enabled = !backgroundConfig.auto_background_enabled;
+        const auto configBefore = proc.getConfigVersion();
+        proc.setProcessingConfig(backgroundConfig);
+        MIB_EXPECT(proc.getConfigVersion() == configBefore,
+                   "active run refuses background configuration");
+        std::string calibrationError;
+        MIB_EXPECT(!proc.startBackgroundCalibration({}, &calibrationError) &&
+                       calibrationError.find("not idle") != std::string::npos,
+                   "active run refuses calibration before touching its state");
         const auto after = coord.activeRun();
         MIB_REQUIRE(after.has_value(), "still active");
         MIB_EXPECT(after->roiW == 64 && after->backgroundSha256 == frozen.backgroundSha256 &&
@@ -343,7 +480,8 @@ int main()
         MIB_EXPECT(runJson == backend::app::runSnapshotToJson(frozen), "persisted snapshot equals the frozen one");
         MIB_EXPECT(runJson.find("\"requested\":\"mock\"") != std::string::npos &&
                        runJson.find("\"profile_id\":\"profile-A\"") != std::string::npos &&
-                       runJson.find("\"schema_version\":1") != std::string::npos,
+                       runJson.find("\"schema_version\":2") != std::string::npos &&
+                       runJson.find("\"method\":{") != std::string::npos,
                    "snapshot JSON content");
         MIB_EXPECT(readinessJson.find("\"camera.session\"") != std::string::npos, "readiness JSON persisted");
         reader.closeFile();
@@ -369,6 +507,7 @@ int main()
         coordinator.setStatusCallback([&](const backend::app::ExperimentStatus& s) {
             std::lock_guard<std::mutex> lk(seenMutex);
             seen.push_back(s.state);
+            throw std::runtime_error("injected observer failure");
         });
 
         const auto out = (td.path() / "status_run.h5").string();
@@ -399,6 +538,16 @@ int main()
     // ---- 6c. Backend-owned finalization -----------------------------------------
     {
         wd.mark("finalize complete");
+        proc.stopRealtime();
+        auto input = std::make_shared<backend::playback::FrameStore>();
+        auto cfg = proc.getProcessingConfig();
+        cfg.require_single_inner_contour = true;
+        proc.setProcessingConfig(cfg);
+        proc.setRealtimeRoi(ProcessingService::Roi{0, 0, 96, 96});
+        proc.setRealtimeBackgroundGray(cv::Mat());
+        proc.setInvalidFrameSamplingRate(1);
+        pushMat(*input, cv::Mat(96, 96, CV_8UC1, cv::Scalar(0)), 999);
+        proc.startRealtime(input);
         auto& coordinator = backend.experiment();
         std::optional<backend::app::ExperimentStatus> terminal;
         std::vector<backend::app::ExperimentRunState> seen;
@@ -417,11 +566,29 @@ int main()
         req.readinessGeneration = r.generation;
         const auto started = coordinator.start(req);
         MIB_REQUIRE(started.started(), "start: " + started.message);
-        // Let frames accumulate so a remainder exists at stop.
-        std::this_thread::sleep_for(std::chrono::milliseconds(400));
-        MIB_EXPECT(coordinator.status().validBuffered + coordinator.status().invalidBuffered > 0,
-                   "status reports buffered frames while active");
-        MIB_EXPECT(coordinator.requestStop(false) == backend::app::ExperimentStopOutcome::Accepted, "stop accepted");
+        // A ring passes the inner-contour rule; a solid disk fails it.
+        for (uint64_t i = 0; i < 10; ++i) {
+            cv::Mat frame = mib::test::ringFrame(96, 96, 0);
+            if (i >= 4) cv::circle(frame, cv::Point(32, 48), 19, cv::Scalar(220), -1);
+            pushMat(*input, frame, 1000 + i);
+            MIB_REQUIRE(waitFor(
+                            [&] {
+                                const auto a = proc.experimentAccountingSnapshot();
+                                return a.processed + a.scientificallyRejected == i + 1;
+                            },
+                            std::chrono::seconds(5)),
+                        "known frame classified before the next input");
+        }
+        // Flush before Stop so the remainder is empty but the run totals are not.
+        proc.flushBufferedFrames(backend.hdf5());
+        MIB_REQUIRE(proc.finishFlush(), "known mixed batch committed before Stop");
+        const auto saved = coordinator.status();
+        MIB_EXPECT(saved.validSaved == 4 && saved.invalidSaved == 6,
+                   "status separates committed frame classes");
+        MIB_EXPECT(saved.droppedValid == 0 && saved.droppedInvalid == 0,
+                   "pending frames are not policy drops");
+        MIB_EXPECT(coordinator.requestStop(false) == backend::app::ExperimentStopOutcome::Accepted,
+                   "stop accepted");
         {
             const auto second = coordinator.requestStop(false);
             MIB_EXPECT(second == backend::app::ExperimentStopOutcome::Busy ||
@@ -461,37 +628,108 @@ int main()
         uint64_t t0 = 0, t1 = 0; size_t v = 0, iv = 0;
         MIB_EXPECT(reader.readExperimentInfo(t0, t1, v, iv) && t0 == terminal->startWallClockNs,
                    "experiment info persisted by the coordinator");
+        std::vector<backend::services::ProcessedFrame> validFrames, invalidFrames;
+        MIB_REQUIRE(reader.readValidFrames(validFrames), "read saved valid frames");
+        MIB_REQUIRE(reader.readInvalidFrames(invalidFrames), "read saved invalid frames");
+        MIB_EXPECT(v == validFrames.size() && iv == invalidFrames.size(),
+                   "experiment totals equal all saved datasets, not the stop remainder");
+        MIB_EXPECT(v + iv == back.persistenceCommitted,
+                   "header totals reconcile with committed accounting");
+        MIB_EXPECT(v == 4 && iv == 6, "known mixed run stores four valid and six invalid totals");
+        MIB_EXPECT(terminal->validSaved == v && terminal->invalidSaved == iv,
+                   "terminal saved counters match file totals");
         reader.closeFile();
         coordinator.setStatusCallback({});
+        proc.stopRealtime();
+        proc.startRealtime(backend.getFrameStore());
     }
     {
         wd.mark("fatal save error");
         auto& coordinator = backend.experiment();
         const auto out = (td.path() / "fatal_run.h5").string();
+        proc.setFlushInterval(1000000);
+
         auto r = coordinator.evaluateReadiness(out);
         MIB_REQUIRE(r.ready, "ready for fatal test");
         ExperimentStartRequest req;
         req.outputPath = out;
         req.readinessGeneration = r.generation;
         MIB_REQUIRE(coordinator.start(req).started(), "start");
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        coordinator.onFatalSaveError("injected writer failure");
+        coordinator.reportUnresolvedFault("test.active", "active run fault");
+        const auto activeFault = coordinator.status();
+        std::string activeAckError;
+        MIB_EXPECT(!coordinator.acknowledgeFault(activeFault.startGeneration, activeFault.faultRevision,
+                       activeFault.faultCode, activeFault.faultMessage, activeAckError),
+                   "active experiment fault cannot be acknowledged before finalization");
+        MIB_REQUIRE(waitFor([&] { return proc.getBufferedFrameCounts().total() > 0; },
+                            std::chrono::seconds(20)),
+                    "frames buffered before save failure");
+        MIB_REQUIRE(proc.flushBufferedFrames(backend.hdf5()) > 0, "first batch submitted");
+        MIB_REQUIRE(proc.finishFlush(), "first batch persisted");
+        MIB_REQUIRE(backend.hdf5().flush(), "flush before injecting HDF5 fault");
+        MIB_REQUIRE(mib::test::blockHdf5ImageAppends(out), "inject HDF5 append failure");
+        MIB_REQUIRE(waitFor([&] { return proc.getBufferedFrameCounts().total() > 0; },
+                            std::chrono::seconds(20)),
+                    "second batch buffered");
+        proc.flushBufferedFrames(backend.hdf5());
         MIB_REQUIRE(waitFor([&] { return coordinator.status().terminal; }, std::chrono::seconds(20)),
                     "fatal error finalizes");
         const auto s = coordinator.status();
         MIB_EXPECT(s.state == backend::app::ExperimentRunState::Failed, "Failed after a fatal save error");
         MIB_EXPECT(!s.finalizationOk, "finalization not ok");
         MIB_EXPECT(s.completion == backend::recording::RunCompletionState::Failed, "completion Failed");
-        MIB_EXPECT(s.completionReason == "injected writer failure", "completion reason is the fault message");
+        MIB_EXPECT(s.completionReason.find("HDF5 write failed") != std::string::npos,
+                   "completion reason is the fault message");
+        MIB_EXPECT(s.persistenceCommitted > 0 && s.persistenceFailed > 0,
+                   "successful and failed batches counted separately");
         MIB_EXPECT(s.faultCode == "experiment.saveFailed", "fault code reported in status");
         MIB_EXPECT(!backend.hdf5().isFileOpen(), "file closed after failure");
         MIB_EXPECT(coordinator.hasUnresolvedFault(), "fault latched for the next preflight");
         MIB_EXPECT(!coordinator.evaluateReadiness(out).ready, "readiness blocked while the fault is latched");
         MIB_EXPECT(coordinator.requestStop(false) == backend::app::ExperimentStopOutcome::NotActive, "NotActive when Failed");
-        coordinator.clearUnresolvedFault();
-        MIB_EXPECT(coordinator.status().state == backend::app::ExperimentRunState::Idle, "Idle once the fault is cleared");
+        std::string acknowledgmentError;
+        MIB_EXPECT(!coordinator.acknowledgeFault(s.startGeneration + 1, s.faultRevision,
+                                                 s.faultCode, s.faultMessage, acknowledgmentError),
+                   "stale run cannot acknowledge current fault");
+        MIB_EXPECT(!coordinator.acknowledgeFault(s.startGeneration, s.faultRevision, s.faultCode,
+                                                 "stale message", acknowledgmentError),
+                   "changed fault requires review again");
+        MIB_EXPECT(coordinator.hasUnresolvedFault(),
+                   "rejected acknowledgment preserves readiness blocker");
+        coordinator.reportUnresolvedFault(s.faultCode, s.faultMessage);
+        MIB_EXPECT(!coordinator.acknowledgeFault(s.startGeneration, s.faultRevision, s.faultCode,
+                                                 s.faultMessage, acknowledgmentError),
+                   "same text repeated fault cannot be cleared by stale acknowledgment");
+        const auto repeated = coordinator.status();
+        MIB_REQUIRE(coordinator.acknowledgeFault(repeated.startGeneration, repeated.faultRevision,
+                                                 repeated.faultCode, repeated.faultMessage,
+                                                 acknowledgmentError),
+                    "explicit matching new fault acknowledged");
+        const auto acknowledged = coordinator.status();
+        MIB_EXPECT(acknowledged.state == backend::app::ExperimentRunState::Idle,
+                   "Idle once fault is acknowledged");
+        MIB_EXPECT(acknowledged.outputPath == out && !acknowledged.finalizationOk &&
+                       acknowledged.completion == backend::recording::RunCompletionState::Failed,
+                   "acknowledgment preserves failed file outcome");
+        MIB_EXPECT(!coordinator.acknowledgeFault(s.startGeneration, s.faultRevision, s.faultCode,
+                                                 s.faultMessage, acknowledgmentError),
+                   "duplicate acknowledgment rejected");
+        MIB_REQUIRE(mib::test::restoreHdf5ImageAppends(out), "restore image datasets after fault");
         backend::services::Hdf5Service reader;
         MIB_EXPECT(reader.loadFile(out), "failed run's file is readable");
+        backend::recording::RecordingAccountingSnapshot saved;
+        MIB_REQUIRE(reader.readRunAccounting(saved), "failed run accounting persisted");
+        MIB_EXPECT(saved.completion == backend::recording::RunCompletionState::Failed &&
+                       saved.persistenceFailed > 0 && saved.reconciled,
+                   "persisted write failure is Failed and reconciles");
+        MIB_EXPECT(saved.fatalMessage == s.completionReason,
+                   "persisted fatal reason matches terminal outcome");
+        backend::recording::RecordingAccountingSnapshot cached;
+        uint64_t generation = 0;
+        MIB_REQUIRE(coordinator.lastRunAccounting(cached, generation), "cached last accounting");
+        MIB_EXPECT(cached.completion == saved.completion &&
+                       cached.persistenceFailed == saved.persistenceFailed,
+                   "cached and persisted accounting agree after acknowledgement");
         reader.closeFile();
     }
     {
@@ -518,16 +756,37 @@ int main()
 
     // ---- 7. Bounded background calibration ------------------------------------
     stopCapture(backend);
-    std::this_thread::sleep_for(std::chrono::milliseconds(200)); // realtime loop drains the store
-    auto store = backend.getFrameStore();
+    proc.stopRealtime(); // join any captured frame still in flight
+    auto store = std::make_shared<backend::playback::FrameStore>();
     proc.setRealtimeRoi(ProcessingService::Roi{0, 0, 96, 96});
     const cv::Mat emptyFrame(96, 96, CV_8UC1, cv::Scalar(7));
     uint64_t ts = 10'000;
-    auto pushEmpty = [&] { pushMat(*store, emptyFrame, ++ts); std::this_thread::sleep_for(std::chrono::milliseconds(3)); };
-    auto pushRing = [&](int i) { pushMat(*store, mib::test::ringFrame(96, 96, i), ++ts); std::this_thread::sleep_for(std::chrono::milliseconds(3)); };
+    // The realtime cursor starts at index zero; seed it before calibration.
+    pushMat(*store, emptyFrame, ++ts);
+    auto& timing = backend::diagnostics::PipelineTimingRecorder::instance();
+    const bool timingWasEnabled = timing.isEnabled();
+    timing.setEnabled(true);
+    proc.startRealtime(store);
+    auto pushAndWait = [&](const cv::Mat& frame) {
+        const auto index = store->committedCount();
+        const auto emptyBefore =
+            timing.skippedCount(backend::diagnostics::PipelineSkipReason::EmptyFrame);
+        pushMat(*store, frame, ++ts);
+        const auto processed = [&] {
+            ProcessingService::RealtimeSnapshot snapshot;
+            return (proc.getLatestSnapshot(snapshot) && snapshot.index >= index) ||
+                   timing.skippedCount(backend::diagnostics::PipelineSkipReason::EmptyFrame) >
+                       emptyBefore;
+        };
+        MIB_REQUIRE(waitFor(processed, std::chrono::seconds(5)),
+                    "calibration frame processed before the next input");
+    };
+    auto pushEmpty = [&] { pushAndWait(emptyFrame); };
+    auto pushRing = [&](int i) { pushAndWait(mib::test::ringFrame(96, 96, i)); };
     using BgState = ProcessingService::BackgroundCalibrationState;
     auto waitFinished = [&] {
-        return waitFor([&] { return proc.backgroundCalibrationStatus().finished(); }, std::chrono::seconds(10));
+        return waitFor([&] { return proc.backgroundCalibrationStatus().finished(); },
+                       std::chrono::seconds(10));
     };
 
     {
@@ -560,6 +819,37 @@ int main()
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
         MIB_EXPECT(proc.backgroundGeneration() == genBefore + 1, "finished operation ignores later frames");
     }
+    {
+        wd.mark("bg publication idle gate");
+        proc.stopRealtime();
+        std::atomic<bool> allowStart{true};
+        proc.setBackgroundPublicationTransaction([&](const std::function<void()>& apply) {
+            if (!allowStart.exchange(false)) return false;
+            apply();
+            return true;
+        });
+        store = std::make_shared<backend::playback::FrameStore>();
+        pushMat(*store, emptyFrame, ++ts);
+        proc.startRealtime(store);
+        ProcessingService::BackgroundCalibrationRequest req;
+        req.requiredAccepted = 1;
+        req.maxAttempts = 10;
+        req.timeoutMs = 5000;
+        const auto generation = proc.backgroundGeneration();
+        MIB_REQUIRE(proc.startBackgroundCalibration(req), "start calibration before idle gate closes");
+        pushEmpty();
+        MIB_REQUIRE(waitFinished(), "publication refusal finishes calibration");
+        MIB_EXPECT(proc.backgroundCalibrationStatus().state == BgState::Cancelled,
+                   "closed idle transaction refuses calibration apply");
+        MIB_EXPECT(proc.backgroundGeneration() == generation, "refused apply preserves background");
+        proc.stopRealtime();
+        proc.setBackgroundPublicationTransaction([&](const std::function<void()>& apply) {
+            return backend.experiment().withIdleConfiguration(apply, false);
+        });
+        store = std::make_shared<backend::playback::FrameStore>();
+        pushMat(*store, emptyFrame, ++ts);
+        proc.startRealtime(store);
+    }
     const std::string goodSha = proc.backgroundSha256();
     const uint64_t goodGen = proc.backgroundGeneration();
     {
@@ -588,7 +878,7 @@ int main()
         req.maxAttempts = 50;
         req.timeoutMs = 100;
         MIB_REQUIRE(proc.startBackgroundCalibration(req), "start timeout calibration");
-        std::this_thread::sleep_for(std::chrono::milliseconds(150));
+        MIB_REQUIRE(waitFinished(), "timeout calibration finishes without frames");
         const auto st = proc.backgroundCalibrationStatus();
         MIB_EXPECT(st.state == BgState::FailedTimeout, "no frames -> timeout is reported, never Running forever");
         MIB_EXPECT(proc.backgroundGeneration() == goodGen, "background preserved on timeout");
@@ -599,6 +889,8 @@ int main()
         req.requiredAccepted = 5;
         req.maxAttempts = 50;
         MIB_REQUIRE(proc.startBackgroundCalibration(req), "start cancel calibration");
+        MIB_EXPECT(statusOf(coord.evaluateReadiness(out1), "processing.backgroundCalibration") == GateStatus::Fail,
+                   "pending calibration must block a frozen experiment start");
         pushEmpty();
         proc.cancelBackgroundCalibration();
         const auto st = proc.backgroundCalibrationStatus();
@@ -632,6 +924,7 @@ int main()
     {
         wd.mark("bg not running");
         proc.stopRealtime();
+        timing.setEnabled(timingWasEnabled);
         std::string err;
         MIB_EXPECT(!proc.startBackgroundCalibration(ProcessingService::BackgroundCalibrationRequest{}, &err) && !err.empty(),
                    "calibration refused when realtime is not running");

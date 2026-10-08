@@ -1,5 +1,6 @@
 ; InnoSetup installer script for MIB Studio Qt
-; This script packages the application with all dependencies and optionally installs egrabber
+; This script packages the application with all dependencies and optionally
+; installs eGrabber SDK, MindVision Camera SDK, and VC++ Redistributable
 
 #define AppName "MIB Studio Qt"
 ; AppVersion can be overridden from the command line:
@@ -23,8 +24,10 @@
 #define SourceDir "..\..\"
 #define EgrabberInstaller "egrabber-win-x86_64-25.10.0.57.exe"
 #define VCRedistInstaller "vc_redist.x64.exe"
+#define MindVisionInstaller "MindVision-Camera-Platform-Setup2.1.10.195_202604021438.exe"
 #define EgrabberPath AddBackslash(SourceDir) + "resources\\installers\\" + EgrabberInstaller
 #define VCRedistPath AddBackslash(SourceDir) + "resources\\installers\\" + VCRedistInstaller
+#define MindVisionPath AddBackslash(SourceDir) + "resources\\installers\\" + MindVisionInstaller
 
 [Setup]
 ; App identification
@@ -61,8 +64,18 @@ Name: "installvcredist"; Description: "Install Visual C++ Redistributable (requi
 #if FileExists(EgrabberPath)
 Name: "installegrabber"; Description: "Install eGrabber SDK (required for camera functionality)"; GroupDescription: "Additional components"
 #endif
+#if FileExists(MindVisionPath)
+Name: "installmindvision"; Description: "Install MindVision Camera SDK (required for MindVision cameras)"; GroupDescription: "Additional components"
+#endif
+
+[InstallDelete]
+; Unsigned processing-core DLLs packed by installers before this exclusion.
+Type: files; Name: "{app}\mib_processing_core*.dll"
 
 [Files]
+Source: "{#SourceDir}docs\release-notes\*.md"; DestDir: "{app}\resources\release-notes"; Flags: ignoreversion
+Source: "{#SourceDir}docs\manual\*"; DestDir: "{app}\resources\manual"; Flags: ignoreversion recursesubdirs createallsubdirs
+
 ; Main executables
 Source: "{#SourceDir}{#BuildDir}\{#AppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 
@@ -81,7 +94,9 @@ Source: "{#SourceDir}{#BuildDir}\Qt6*.dll"; DestDir: "{app}"; Flags: ignoreversi
 ; Third-party DLLs (deployed by windeployqt and CMake post-build)
 ; Expected: spdlog.dll, OpenCV DLLs, HDF5 DLLs, SQLite DLLs, codec DLLs (jpeg, tiff, webp, etc.)
 ; Also includes: XMT_DLL_SER.dll (Coremor), and other dependencies
-Source: "{#SourceDir}{#BuildDir}\*.dll"; DestDir: "{app}"; Flags: ignoreversion
+; Processing-core plugins are excluded: they reach rigs only as signed registry
+; downloads (ADR 0007), never from the install directory.
+Source: "{#SourceDir}{#BuildDir}\*.dll"; DestDir: "{app}"; Excludes: "mib_processing_core*.dll"; Flags: ignoreversion
 
 ; Qt plugins (critical: platforms/qwindows.dll must be present)
 Source: "{#SourceDir}{#BuildDir}\platforms\*"; DestDir: "{app}\platforms"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -102,6 +117,11 @@ Source: "{#VCRedistPath}"; DestDir: "{tmp}"; Flags: deleteafterinstall; Tasks: i
 ; eGrabber installer (bundled but only run if user selects the task)
 #if FileExists(EgrabberPath)
 Source: "{#EgrabberPath}"; DestDir: "{tmp}"; Flags: deleteafterinstall; Tasks: installegrabber
+#endif
+
+; MindVision Camera SDK installer (bundled but only run if user selects the task)
+#if FileExists(MindVisionPath)
+Source: "{#MindVisionPath}"; DestDir: "{tmp}"; Flags: deleteafterinstall; Tasks: installmindvision
 #endif
 
 [Dirs]
@@ -141,6 +161,11 @@ Filename: "{tmp}\{#VCRedistInstaller}"; Parameters: "/install /quiet /norestart"
 Filename: "{tmp}\{#EgrabberInstaller}"; Parameters: "/S"; StatusMsg: "Installing eGrabber SDK..."; Tasks: installegrabber; Flags: runhidden waituntilterminated
 #endif
 
+; Run MindVision Camera SDK installer if selected (silent mode)
+#if FileExists(MindVisionPath)
+Filename: "{tmp}\{#MindVisionInstaller}"; Parameters: "/S"; StatusMsg: "Installing MindVision Camera SDK..."; Tasks: installmindvision; Flags: runhidden waituntilterminated
+#endif
+
 [Code]
 
 // Function to check if Visual C++ 2015-2022 runtime is already installed
@@ -168,8 +193,10 @@ begin
     end;
   end;
 
-  // Additional fallback: Check for presence of key runtime DLLs in System32
-  if FileExists(ExpandConstant('{syswow64}\msvcp140.dll')) and FileExists(ExpandConstant('{syswow64}\vcruntime140.dll')) then
+  // Check all required x64 DLLs in native System32 ({sys} in 64-bit install mode).
+  if FileExists(ExpandConstant('{sys}\msvcp140.dll')) and
+     FileExists(ExpandConstant('{sys}\vcruntime140.dll')) and
+     FileExists(ExpandConstant('{sys}\vcruntime140_1.dll')) then
   begin
     Result := False; // Runtime DLLs found
     Exit;

@@ -29,122 +29,43 @@ The HDF5 Export GUI Application is a standalone PySide6 (Qt for Python) applicat
 
 ## Building the Application
 
+The export GUI ships inside the **MIB Studio Tools** bundle together with
+`mib_reanalyse_hdf5`; there is one packager per platform under `tools/`
+(`docs/howto/tools.md`). The former duplicate under `scripts/` was removed on
+2026-09-21 (TD-14).
+
 ### Windows
 
-1. **Navigate to the scripts directory:**
-   ```powershell
-   cd scripts
-   ```
+```powershell
+cd tools
+.\build_windows.ps1          # -Clean to rebuild from scratch
+```
 
-2. **Run the build script:**
-   ```powershell
-   .\build_windows.ps1
-   ```
+Output: `tools\dist\hdf5_export_app.exe` (plus `mib_reanalyse_hdf5.exe`).
 
-   To clean previous builds first:
-   ```powershell
-   .\build_windows.ps1 -Clean
-   ```
+### macOS / Linux
 
-3. **Find the executable:**
-   The built executable will be located at:
-   ```
-   scripts\dist\hdf5_export_app.exe
-   ```
+```bash
+cd tools
+./build_mac.sh               # --clean to rebuild; --dmg for MIB_Studio_Tools.dmg on macOS
+```
 
-### macOS
+Output: `tools/dist/hdf5_export_app.app` on macOS (`tools/dist/hdf5_export_app`
+on Linux) and `tools/dist/mib_reanalyse_hdf5`.
 
-1. **Navigate to the scripts directory:**
-   ```bash
-   cd scripts
-   ```
-
-2. **Make the build script executable (first time only):**
-   ```bash
-   chmod +x build_mac.sh
-   ```
-
-3. **Run the build script:**
-   ```bash
-   ./build_mac.sh
-   ```
-
-   To clean previous builds:
-   ```bash
-   ./build_mac.sh --clean
-   ```
-
-   To also create a DMG file:
-   ```bash
-   ./build_mac.sh --dmg
-   ```
-
-4. **Find the application bundle:**
-   The built application will be located at:
-   ```
-   scripts/dist/hdf5_export_app.app
-   ```
-
-   If you created a DMG:
-   ```
-   scripts/dist/hdf5_export_app.dmg
-   ```
-
-### Linux
-
-1. **Navigate to the scripts directory:**
-   ```bash
-   cd scripts
-   ```
-
-2. **Run the Unix build script:**
-   ```bash
-   ./build_mac.sh
-   ```
-
-   To clean previous builds:
-   ```bash
-   ./build_mac.sh --clean
-   ```
-
-3. **Find the executable:**
-   The built executable will be located at:
-   ```
-   scripts/dist/hdf5_export_app
-   ```
+Both scripts create `tools/.venv`, install `env/requirements-tools-runtime.txt`
+and `env/requirements-tools-build.txt`, and run PyInstaller with
+`tools/hdf5_export_app/hdf5_export.spec`, which packages
+`scripts/hdf5_export_app.py` and its `export_hdf5` / `export_worker` modules.
 
 ## Manual Build Process
 
-If you prefer to build manually:
-
-### 1. Set Up Virtual Environment
-
-**Windows:**
-```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-```
-
-**macOS / Linux:**
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+cd tools
+python3 -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\Activate.ps1
+pip install -r ../env/requirements-tools-runtime.txt -r ../env/requirements-tools-build.txt
+pyinstaller hdf5_export_app/hdf5_export.spec --clean --workpath build --distpath dist
 ```
-
-### 2. Install Dependencies
-
-```bash
-pip install --upgrade pip
-pip install -r requirements.txt
-```
-
-### 3. Build with PyInstaller
-
-```bash
-pyinstaller hdf5_export.spec --clean
-```
-
-The executable will be in the `dist` directory.
 
 ## Using the Application
 
@@ -179,7 +100,7 @@ Run from command line:
    - Choose where you want the exported files to be saved
 
 3. **Configure Export Options:**
-   - **Format:** Choose "CSV (metrics only)", "Images only", or "All (CSV + Images)"
+   - **Format:** Choose "CSV (metrics only)", "Images only", or "All (CSV + Images)". FCS is available through the native CLI.
    - **Frame Type:** Choose "Both", "Valid only", or "Invalid only"
    - **Pixel to Micron:** Enter the conversion factor (default: 0.4886)
 
@@ -251,6 +172,76 @@ Images are exported into a source-specific folder (`<input-basename>/`, suffixed
 
 Where `XXXXXX` is the zero-padded frame index.
 
+### FCS 3.1 export
+
+FCS export is a native, Qt-free path because the Python tool delegates to the
+same C++ writer used by the service. Build `hdf_export_cli`, then run:
+
+```bash
+cmake --preset linux-backend-only && cmake --build --preset linux-backend-only-build --target hdf_export_cli
+python scripts/export_hdf5.py -i experiment.h5 -o ./export \
+  --format fcs --fcs-event-mode detection --frame-type valid \
+  --native-cli build/linux-backend/src/backend/hdf_export_cli
+```
+
+On a multi-configuration generator, use the corresponding
+`build/linux-backend/src/backend/Release/hdf_export_cli` binary.
+
+The default is one event per accepted detection. `--frame-type invalid` or
+`both` explicitly includes rejected detections. The transaction publishes a
+folder containing `<base>.fcs` and `<base>_event_map.csv`; the sidecar columns
+are `fcs_event_index`, `source_frame_index`, `object_id`, `timestamp_ns`, and
+`event_mode`. The event index is the order in the FCS DATA segment; timestamps
+are exact uint64 nanoseconds in the sidecar and relative seconds in the FCS
+`Time` channel, relative to the first exported event. Repeated physical cells
+can therefore occur in multiple events with the same object ID; the ID is not
+a cross-frame tracking guarantee.
+
+The registry is contract-aware and follows the actual stored HDF5 compound
+members. These are the canonical channels (all values are written as 32-bit
+little-endian floats):
+
+| Contract | Channel | Stored member | Unit |
+|---|---|---|---|
+| 1–3 | `Area_um2` | `area` × calibration² | `um^2` |
+| 1–3 | `Area_px2` | `area` | `px^2` |
+| 1–3 | `Deformability` | `deformability` | unitless |
+| 1–3 | `AreaRatio` | `areaRatio` | unitless |
+| 1 | `RingRatio` | `ringRatio` | unitless |
+| 2–3 | `LaplacianVar` | `laplacianVariance` | `gray^2` |
+| 1–2 | `BrightQ1`…`BrightQ4` | `brightness_q1`…`brightness_q4` | `gray` |
+| 3 | `BrightMean` | `brightness_mean` | `gray` |
+| 3 | `BrightVar` | `brightness_variance` | `gray^2` |
+| 3 | `Pixels` / `Blemishes` | `pixelCount` / `blemishCount` | `count` |
+| 1–3 | `Time` | `timestampNs` | seconds from first event |
+
+Parameter names describe image measurements; they are not FSC/SSC or
+fluorescence channels. `$TIMESTEP=1` documents seconds for the `Time` parameter.
+Missing HDF5 members are omitted, so a missing count cannot create a phantom
+channel. The TEXT metadata records `$FIL` (source filename), contract, source,
+UTC export time, MIB version, and the caller-supplied pixel-to-micron
+calibration. HDF5 files remain the canonical source; images are not embedded
+in FCS and FlowJo image-view behavior is outside this exporter.
+
+Per-cell export is unavailable until cross-frame tracking identity is verified.
+`object_id` is assigned or reused within each frame and is never deduplicated;
+the canonical HDF5 images remain the source for image review.
+
+The writer uses FCS 3.1 little-endian 32-bit floating-point data. Non-finite
+stored metrics fail the export and the transaction is removed. Float32
+rounding is expected in FCS DATA; use the exact event-map integers for audit
+and compare channel values with a float32 tolerance. FlowIO coverage can be
+run when the optional dependency is installed:
+
+```bash
+python scripts/test_fcs_flowio.py \
+  --fixture-generator build/linux-backend/Release/fcs_writer_test \
+  --native-cli build/linux-backend/src/backend/hdf_export_cli
+```
+
+This is an offline reference-reader check. FlowJo import and image-view
+behavior still require a separate manual check.
+
 ## Troubleshooting
 
 ### Build Issues
@@ -261,15 +252,15 @@ Where `XXXXXX` is the zero-padded frame index.
 
 **"PyInstaller not found"**
 - Ensure you've activated the virtual environment
-- Run `pip install -r requirements.txt` again
+- Run `pip install -r ../env/requirements-scripts.txt` again
 - If you are using system Python (no venv), run:
   `python3 -m pip install --user pyinstaller`
 
 **"Module not found" errors during build**
-- Check that all dependencies in `requirements.txt` are installed
-- Try cleaning and rebuilding: `build_windows.ps1 -Clean` or `./build_mac.sh --clean`
+- Check that all dependencies in `env/requirements-scripts.txt` are installed
+- Try cleaning and rebuilding: `tools\build_windows.ps1 -Clean` or `tools/build_mac.sh --clean`
 - On Linux system Python, install user-scoped deps:
-  `python3 -m pip install --user -r requirements.txt`
+  `python3 -m pip install --user -r ../env/requirements-scripts.txt`
 
 ### Runtime Issues
 

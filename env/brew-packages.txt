@@ -1,0 +1,28 @@
+# Homebrew formulae for a macOS host, grouped like env/apt-packages.txt.
+# macOS ships one artefact: YOFO Review (sections base + desktop-shell; its
+# OpenCV / HDF5 come from Conan, statically — macos-review-core preset,
+# docs/howto/macos-build.md). The backend / frontend sections serve local
+# development of the Qt-free core and the Python tools from Homebrew.
+# section: base
+cmake
+ninja
+pkgconf
+git
+python@3.12
+sevenzip
+
+# section: backend
+opencv
+hdf5
+spdlog
+fmt
+nlohmann-json
+sqlite
+openssl@3
+
+# section: frontend
+qt
+
+# section: desktop-shell
+node@22
+rustup

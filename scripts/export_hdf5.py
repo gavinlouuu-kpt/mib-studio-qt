@@ -31,6 +31,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import shutil
+import signal
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -166,12 +170,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--format", "-f",
         type=str,
-        choices=["csv", "json", "images", "all"],
+        choices=["csv", "json", "images", "all", "fcs"],
         default="csv",
         help=(
             "Export format: csv (metrics only), json (gold-standard metrics "
             "JSON per docs/gold_standard_metrics.schema.json), images "
-            "(images only), or all (csv + images). Default: csv"
+            "(images only), all (csv + images), or fcs (native hdf_export_cli). Default: csv"
         )
     )
     parser.add_argument(
@@ -184,8 +188,16 @@ def parse_args() -> argparse.Namespace:
         "--frame-type", "-t",
         type=str,
         choices=["valid", "invalid", "both"],
-        default="both",
+        default=None,
         help="Export valid, invalid, or both frame types. Default: both"
+    )
+    parser.add_argument(
+        "--fcs-event-mode", choices=["detection"], default="detection",
+        help="FCS event semantics; the native writer currently exports one event per detection."
+    )
+    parser.add_argument(
+        "--native-cli", default=None,
+        help="Path to hdf_export_cli (or use MIB_HDF_EXPORT_CLI). Required for --format fcs."
     )
     return parser.parse_args()
 
@@ -241,6 +253,25 @@ def read_hdf5_images(h5_file: h5py.File, dataset_path: str) -> Optional[np.ndarr
     return dataset[:]  # Read entire dataset into memory
 
 
+def read_processing_contract_version(h5_file: h5py.File) -> int:
+    """Return the file's processing contract (1 when undeclared/unreadable).
+
+    Contract-aware export keys off this value: a Contract-2 recording exports
+    ``laplacian_variance`` and omits ``ring_ratio``; Contract 1 keeps ring; a
+    Contract-3 (unet-cells) recording exports brightness mean and variance and
+    the cell counts instead of the quartiles.
+    """
+    try:
+        if "processing_contract_version" in h5_file.attrs:
+            return int(h5_file.attrs["processing_contract_version"])
+        if "/experiment_info" in h5_file and \
+                "processing_contract_version" in h5_file["/experiment_info"].attrs:
+            return int(h5_file["/experiment_info"].attrs["processing_contract_version"])
+    except Exception:
+        pass
+    return 1
+
+
 def read_experiment_info(h5_file: h5py.File) -> Optional[dict]:
     """
     Read experiment info attributes from HDF5 file.
@@ -269,7 +300,8 @@ def export_metrics_to_csv(
     metadata_invalid: Optional[np.ndarray],
     output_path: Path,
     pixel_to_micron: float,
-    frame_type: str
+    frame_type: str,
+    contract_version: int = 1,
 ) -> Tuple[int, int]:
     """
     Export metrics to CSV file matching the C++ export format.
@@ -280,17 +312,34 @@ def export_metrics_to_csv(
         output_path: Path to output CSV file
         pixel_to_micron: Pixel to micron conversion factor
         frame_type: "valid", "invalid", or "both"
-        
+        contract_version: the file's processing contract; Contract 3 writes
+            brightness mean/variance and pixel/blemish counts in place of the
+            quartile columns
+
     Returns:
         Tuple of (valid_count, invalid_count) frames exported
     """
+    cells = int(contract_version) == 3
+
+    def brightness_columns(row) -> str:
+        if cells:
+            return (f"{float(metadata_value(row, 'brightness_mean', float('nan'))):.2f},"
+                    f"{float(metadata_value(row, 'brightness_variance', float('nan'))):.2f},"
+                    f"{int(metadata_value(row, 'pixelCount', 0))},"
+                    f"{int(metadata_value(row, 'blemishCount', 0))}\n")
+        return (f"{row['brightness_q1']:.2f},{row['brightness_q2']:.2f},"
+                f"{row['brightness_q3']:.2f},{row['brightness_q4']:.2f}\n")
+
     area_conversion_factor = pixel_to_micron * pixel_to_micron
     
     with open(output_path, 'w', encoding='utf-8') as f:
         # Write CSV header (matching C++ format exactly)
         f.write("Frame Type,Index,Timestamp,Object Id,Object Count,Deformability,Area,Area (um²),Area Ratio,Ring Ratio,")
         f.write("Valid,Touches Border,Single Inner,In Range,Inner Count,")
-        f.write("Bright Q1,Bright Q2,Bright Q3,Bright Q4\n")
+        if cells:
+            f.write("Bright Mean,Bright Var,Pixels,Blemishes\n")
+        else:
+            f.write("Bright Q1,Bright Q2,Bright Q3,Bright Q4\n")
         
         valid_count = 0
         invalid_count = 0
@@ -314,10 +363,7 @@ def export_metrics_to_csv(
                 f.write("Yes," if row['hasSingleInnerContour'] else "No,")
                 f.write("Yes," if row['inRange'] else "No,")
                 f.write(f"{row['innerContourCount']},")
-                f.write(f"{row['brightness_q1']:.2f},")
-                f.write(f"{row['brightness_q2']:.2f},")
-                f.write(f"{row['brightness_q3']:.2f},")
-                f.write(f"{row['brightness_q4']:.2f}\n")
+                f.write(brightness_columns(row))
                 valid_count += 1
         
         # Export invalid frames
@@ -339,17 +385,23 @@ def export_metrics_to_csv(
                 f.write("Yes," if row['hasSingleInnerContour'] else "No,")
                 f.write("Yes," if row['inRange'] else "No,")
                 f.write(f"{row['innerContourCount']},")
-                f.write(f"{row['brightness_q1']:.2f},")
-                f.write(f"{row['brightness_q2']:.2f},")
-                f.write(f"{row['brightness_q3']:.2f},")
-                f.write(f"{row['brightness_q4']:.2f}\n")
+                f.write(brightness_columns(row))
                 invalid_count += 1
 
     return valid_count, invalid_count
 
 
-def _frame_to_gold_standard_dict(row: "np.void", frame_type: str, pixel_to_micron: float) -> Dict[str, Any]:
-    """Map one metadata row to a gold-standard JSON frame object (schema v1)."""
+def _frame_to_gold_standard_dict(row: "np.void", frame_type: str, pixel_to_micron: float,
+                                 contract_version: int = 1) -> Dict[str, Any]:
+    """Map one metadata row to a gold-standard JSON frame object.
+
+    Contract-aware: a Contract-1 export carries ``ring_ratio``; a Contract-2
+    export (contract_version >= 2) omits ring width and carries the per-object
+    ``laplacian_variance`` focus metric instead. A Contract-3 (unet-cells)
+    export replaces the brightness quartiles with ``brightness_mean`` /
+    ``brightness_variance`` (null when not computed) and adds the cell fields
+    (schema $defs/unet_cell_frame).
+    """
     area = float(row['area'])
     document: Dict[str, Any] = {
         "frame_type": frame_type,
@@ -361,17 +413,36 @@ def _frame_to_gold_standard_dict(row: "np.void", frame_type: str, pixel_to_micro
         "area": area,
         "area_um2": area * pixel_to_micron * pixel_to_micron,
         "area_ratio": float(row['areaRatio']),
-        "ring_ratio": float(row['ringRatio']),
         "is_valid": bool(row['isValid']),
         "touches_border": bool(row['touchesBorder']),
         "has_single_inner_contour": bool(row['hasSingleInnerContour']),
         "in_range": bool(row['inRange']),
         "inner_contour_count": int(row['innerContourCount']),
-        "brightness_q1": float(row['brightness_q1']),
-        "brightness_q2": float(row['brightness_q2']),
-        "brightness_q3": float(row['brightness_q3']),
-        "brightness_q4": float(row['brightness_q4']),
     }
+    if int(contract_version) == 3:
+        def finite_or_none(value: float) -> Optional[float]:
+            return value if value == value else None  # NaN -> null
+
+        document["brightness_mean"] = finite_or_none(float(metadata_value(row, 'brightness_mean', float('nan'))))
+        document["brightness_variance"] = finite_or_none(
+            float(metadata_value(row, 'brightness_variance', float('nan'))))
+        document["contour_area"] = float(metadata_value(row, 'contourArea', 0.0))
+        document["pixel_count"] = int(metadata_value(row, 'pixelCount', 0))
+        document["blemish_count"] = int(metadata_value(row, 'blemishCount', 0))
+        document["degenerate_contour"] = bool(metadata_value(row, 'degenerateContour', 0))
+    else:
+        document["brightness_q1"] = float(row['brightness_q1'])
+        document["brightness_q2"] = float(row['brightness_q2'])
+        document["brightness_q3"] = float(row['brightness_q3'])
+        document["brightness_q4"] = float(row['brightness_q4'])
+    # Contract-1 focus metric: ring width. Omitted for Contract-2 documents.
+    if contract_version < 2 and metadata_has(row, "ringRatio"):
+        document["ring_ratio"] = float(row['ringRatio'])
+    # Contract-2 focus metric: per-object Laplacian variance. Emit when present
+    # and finite (NaN -> omitted, mirroring youngs_modulus).
+    laplacian = float(metadata_value(row, 'laplacianVariance', float('nan')))
+    if laplacian == laplacian:  # not NaN
+        document["laplacian_variance"] = laplacian
     # youngsModulus is only present in HDF5 metadata written by newer builds;
     # omit (rather than emit non-JSON NaN) when absent or out of LUT coverage.
     youngs_modulus = float(metadata_value(row, 'youngsModulus', float('nan')))
@@ -394,6 +465,7 @@ def export_metrics_to_json(
     pixel_to_micron: float,
     frame_type: str,
     source_label: str,
+    contract_version: int = 1,
 ) -> Tuple[int, int]:
     """
     Export metrics to gold-standard JSON matching
@@ -416,17 +488,17 @@ def export_metrics_to_json(
 
     if metadata_valid is not None and frame_type in ("valid", "both"):
         for row in metadata_valid:
-            frames.append(_frame_to_gold_standard_dict(row, "valid", pixel_to_micron))
+            frames.append(_frame_to_gold_standard_dict(row, "valid", pixel_to_micron, contract_version))
             valid_count += 1
 
     if metadata_invalid is not None and frame_type in ("invalid", "both"):
         for row in metadata_invalid:
-            frames.append(_frame_to_gold_standard_dict(row, "invalid", pixel_to_micron))
+            frames.append(_frame_to_gold_standard_dict(row, "invalid", pixel_to_micron, contract_version))
             invalid_count += 1
 
     document = {
         "version": GOLD_STANDARD_SCHEMA_VERSION,
-        "contract_version": GOLD_STANDARD_SCHEMA_VERSION,
+        "contract_version": max(int(contract_version), GOLD_STANDARD_SCHEMA_VERSION),
         "pixel_to_micron": pixel_to_micron,
         "source": source_label,
         "frames": frames,
@@ -626,13 +698,60 @@ def export_hdf5(
 def main() -> int:
     """Main entry point for command-line interface."""
     args = parse_args()
-    
+
+    if args.format == "fcs":
+        candidates = []
+        if args.native_cli:
+            explicit = Path(args.native_cli).expanduser().resolve()
+            if not (explicit.is_file() and os.access(explicit, os.X_OK)):
+                print(f"ERROR: --native-cli is not an executable file: {explicit}", file=sys.stderr)
+                return 2
+            candidates.append(explicit)
+        env_cli = os.environ.get("MIB_HDF_EXPORT_CLI")
+        if env_cli:
+            candidates.append(Path(env_cli).expanduser().resolve())
+        found = shutil.which("hdf_export_cli")
+        if found:
+            candidates.append(Path(found))
+        candidates.extend([
+            Path(__file__).resolve().parent / "hdf_export_cli",
+            Path(__file__).resolve().parent / "hdf_export_cli.exe",
+            Path(__file__).resolve().parents[1] / "build" / "linux-backend" / "hdf_export_cli",
+            Path(__file__).resolve().parents[1] / "build" / "linux-backend" / "hdf_export_cli.exe",
+            Path(__file__).resolve().parents[1] / "build" / "linux-backend" / "Release" / "hdf_export_cli",
+            Path(__file__).resolve().parents[1] / "build" / "linux-backend" / "Release" / "hdf_export_cli.exe",
+            Path(__file__).resolve().parents[1] / "build" / "linux-backend" / "src" / "backend" / "hdf_export_cli",
+            Path(__file__).resolve().parents[1] / "build" / "linux-backend" / "src" / "backend" / "hdf_export_cli.exe",
+        ])
+        cli = next((p.resolve() for p in candidates if p.is_file() and os.access(p, os.X_OK)), None)
+        if cli is None:
+            print("ERROR: --format fcs requires the native hdf_export_cli; "
+                  "build it or pass --native-cli PATH (or MIB_HDF_EXPORT_CLI).", file=sys.stderr)
+            return 2
+        command = [str(cli), "--input", str(Path(args.input).expanduser().resolve()),
+                   "--output", str(Path(args.output).expanduser().resolve()),
+                   "--format", "fcs", "--fcs-event-mode", args.fcs_event_mode,
+                   "--frame-type", args.frame_type or "valid", "--pixel-to-micron", str(args.pixel_to_micron)]
+        try:
+            child = subprocess.Popen(command)
+            try:
+                return child.wait()
+            except KeyboardInterrupt:
+                # Forward Ctrl-C to the native job and wait for its cleanup;
+                # HdfExportService removes its same-parent partial output.
+                child.send_signal(signal.SIGINT)
+                child.wait()
+                return 130
+        except OSError as exc:
+            print(f"ERROR: failed to start native hdf_export_cli: {exc}", file=sys.stderr)
+            return 2
+
     # Call the main export function
     return export_hdf5(
         Path(args.input),
         Path(args.output),
         args.format,
-        args.frame_type,
+        args.frame_type or "both",
         args.pixel_to_micron
     )
 

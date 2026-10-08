@@ -3,7 +3,10 @@
 #define NOMINMAX
 #endif
 #include "backend/app/AppBackend.h"
+#include "backend/app/ApplicationIdentity.h"
+#include <thread>
 #include "backend/app/ExperimentCoordinator.h"
+#include "backend/app/MethodApply.h"
 #include "backend/app/Tools.h"
 
 #include "backend/services/Logger.h"
@@ -17,6 +20,8 @@
 #include "backend/recording/RoiCrop.h"
 #include "backend/services/CaptureService.h"
 #include "backend/processing/ProcessingService.h"
+#include "backend/app/SciencePlacement.h"
+#include "backend/processing/pz/ExecutionProviderFactory.h"
 #include "backend/playback/PlaybackService.h"
 #include "backend/playback/FrameStore.h"
 #include "backend/camera/egrabber/EGrabberCamera.h"
@@ -25,22 +30,43 @@
 #include "backend/services/CameraControlService.h"
 #include "backend/services/AutofocusService.h"
 #include "backend/services/TriggerService.h"
-#include "backend/services/YoloService.h"
+#include "backend/services/DotGridService.h"
 #include "backend/services/SerialBus.h"
 #include "backend/services/SyringePumpService.h"
 #include "backend/services/PulseGeneratorService.h"
+#include "backend/services/StageService.h"
+#include "backend/services/RfGeneratorService.h"
+#include "backend/services/MonitoringDensityService.h"
+#include "backend/discovery/DeviceDiscoveryService.h"
+#include "backend/discovery/StartupDiscoveryCoordinator.h"
+#include "backend/discovery/providers/CameraEnumerationProvider.h"
+#include "backend/discovery/providers/NanopositionerProvider.h"
+#include "backend/discovery/providers/Zc300Provider.h"
+#include "backend/discovery/providers/PulseGeneratorProvider.h"
 #include "backend/processing/EModulusLutCatalog.h"
+#include "backend/profiles/ProfileRegistryWorker.h"
+
+#include "backend/camera/mindvision/MindVisionConfig.h"
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cctype>
 #include <cstring>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <nlohmann/json.hpp>
 #include <limits>
 #include <string>
 #include <utility>
 #include <spdlog/spdlog.h>
+#include <opencv2/core.hpp>
+#include "backend/processing/OpenCvThreads.h"
+#include "backend/pz/PzBridgePreviewCamera.h"
+#include "backend/pz/PzInstrumentControl.h"
+#include "backend/pz/PzPlatformMonitor.h"
 #ifdef _WIN32
 #include <windows.h>
 #include <shlobj.h>
@@ -52,11 +78,103 @@
 #ifndef MIB_HAS_MINDVISION
 #define MIB_HAS_MINDVISION 0
 #endif
+#ifndef MIB_HAS_ARAVIS
+#define MIB_HAS_ARAVIS 0
+#endif
+#if MIB_HAS_ARAVIS
+#include "backend/camera/aravis/AravisCamera.h"
+#endif
 
 namespace backend
 {
     namespace
     {
+    // OpenCV's MSVC build parallelises through the Concurrency Runtime: one worker
+    // per logical CPU whose idle workers spin. A per-frame parallel call in the
+    // realtime loop kept ~31 of 32 workers busy on the rig PC and starved the
+    // processing thread (5000 fps experiments fell to ~2900 processed/s).
+    // Processing already spreads frames over its own threads, so OpenCV's inner
+    // parallel_for is off by default (OpenCvThreads.h; processing-core plugins
+    // apply the same setting to their own, statically linked OpenCV).
+    void configureOpenCvThreads()
+    {
+        const auto setting = processing::applyOpenCvThreadsFromEnvironment();
+        if (setting.invalid)
+        {
+            SPDLOG_WARN("AppBackend: ignoring invalid MIB_OPENCV_THREADS='{}'", setting.raw);
+        }
+        if (setting.keepOpenCvDefault)
+        {
+            SPDLOG_INFO("AppBackend: OpenCV threads left at OpenCV default ({})", cv::getNumThreads());
+            return;
+        }
+        SPDLOG_INFO("AppBackend: OpenCV threads set to {} (getNumThreads={})", setting.threads, cv::getNumThreads());
+    }
+
+    // Builds the capture-owned MindVision camera for `path`. When the saved
+    // profile enables illuminated Live View, the same validated parse the
+    // camera uses at start (parseConfig: connection, range and timing rules)
+    // decides here whether a generator session is attached, so a profile that
+    // would fail at Play is rejected when it is staged. Throws std::runtime_error
+    // with the operator-facing reason; no hardware is touched.
+    std::unique_ptr<::camera::common::ICamera>
+    makeLiveCamera(int index, const std::string& path, services::PulseGeneratorService& generator,
+                   bool overview,
+                   std::function<void(const camera::mindvision::SdkCapability&)> capabilitySink) {
+        std::shared_ptr<services::IlluminationSession> session;
+        camera::mindvision::Config effective;
+        if (!path.empty()) {
+            std::ifstream input(path, std::ios::binary);
+            if (!input) throw std::runtime_error("Cannot read saved MindVision setup: " + path);
+            const std::string bytes((std::istreambuf_iterator<char>(input)), {});
+            const auto parsed = backend::camera::mindvision::parseConfig(bytes);
+            if (!parsed.ok) throw std::runtime_error(parsed.error);
+            effective =
+                overview ? camera::mindvision::overviewConfig(parsed.config) : parsed.config;
+            effective.requireExactGeometry = true;
+            if (effective.illuminatedLive) {
+                const auto timingError =
+                    camera::mindvision::detail::validateLiveViewTiming(effective);
+                if (!timingError.empty()) throw std::runtime_error(timingError);
+                const auto& lv = effective.liveView;
+                services::PulseGeneratorService::Config cfg;
+                cfg.portName = lv.port;
+                cfg.modbusAddress = static_cast<uint8_t>(lv.address);
+                cfg.serial.baudRate = lv.baud;
+                cfg.serial.dataBits = lv.dataBits;
+                cfg.serial.parity = lv.parity;
+                cfg.serial.stopBits = lv.stopBits;
+                const int channel = lv.channel - 1; // service channels are 0-based
+                const double hz = lv.frequencyHz;
+                const double duty = lv.dutyPercent;
+                session = std::make_shared<services::IlluminationSession>();
+                const auto owner = std::make_shared<char>();
+                session->prepare = [&generator, cfg, channel, hz, duty, owner] {
+                    auto resolved = cfg;
+                    if (resolved.portName == "auto") {
+                        std::string error;
+                        if (!generator.discoverLiveView(resolved, channel, services::serialbus::availablePorts(), &error)) {
+                            SPDLOG_ERROR("Illuminated Live View: {}", error);
+                            throw std::runtime_error(error);
+                        }
+                        SPDLOG_INFO("Illuminated Live View: pulse generator discovered on {} (addr {})",
+                                    resolved.portName, resolved.modbusAddress);
+                    }
+                    return generator.beginLiveView(resolved, channel, hz, duty, owner.get());
+                };
+                session->enable = [&generator, owner] {
+                    return generator.enableLiveView(owner.get());
+                };
+                session->disable = [&generator, owner] {
+                    return generator.endLiveView(owner.get());
+                };
+            }
+        }
+        return std::make_unique<::camera::common::MindVisionCamera>(
+            index, path, nullptr, session, overview,
+            path.empty() ? std::nullopt : std::make_optional(effective), std::move(capabilitySink));
+    }
+
         // Get a user-writable log path, falling back to dataDir if needed
         std::string getLogPath(const std::string &dataDir)
         {
@@ -138,18 +256,78 @@ namespace backend
         }
     }
 
-    AppBackend::AppBackend() = default;
+    AppBackend::AppBackend()
+    {
+        // Exists from construction so shells can bind to it before
+        // initialize(); it stays idle until a shell enables it, and its
+        // callbacks tolerate services that are not built yet.
+        monitoringDensity_ = std::make_unique<services::MonitoringDensityService>(
+            [this] {
+                // Valid monitoring cells in chart units (µm², deformability).
+                services::MonitoringDensityInput in;
+                if (!processingService_) return in;
+                in.pixelToMicron = processingService_->getPixelToMicronFactor();
+                const double areaFactor = in.pixelToMicron * in.pixelToMicron;
+                const auto cells = processingService_->getMonitoringValidPoints();
+                in.frameIndices.reserve(cells.size());
+                in.points.reserve(cells.size());
+                for (const auto& c : cells) {
+                    in.frameIndices.push_back(c.index);
+                    in.points.push_back({c.area * areaFactor, c.deformability});
+                }
+                return in;
+            },
+            [this] {
+                // Falling behind: frames dropped by the batch queue or the
+                // experiment buffer, or a batch queue backlog.
+                services::MonitoringPipelineLoad load;
+                if (!processingService_) return load;
+                const auto batch = processingService_->getBatchPipelineStats();
+                load.droppedFrames = batch.framesDropped + processingService_->getDroppedValidFrames() +
+                                     processingService_->getDroppedInvalidFrames();
+                load.queueDepth = batch.running ? batch.currentQueueDepth : 0;
+                load.queueCapacity = batch.running ? batch.queueCapacity : 0;
+                return load;
+            },
+            [this](std::string json) {
+                if (experimentCoordinator_) experimentCoordinator_->setLiveKdeCoreRecord(std::move(json));
+            });
+    }
 
     AppBackend::~AppBackend() {
         shutdown();
     }
 
     void AppBackend::shutdown() {
+        SPDLOG_INFO("AppBackend: shutdown begin");
+        // The registry worker shares nothing with the instrument; stop it
+        // first so an in-flight request is aborted rather than waited out.
+        if (profileRegistry_) {
+            profileRegistry_->shutdown();
+        }
+        // Discovery first (issue #419): stop the startup policy so no late
+        // result can select or connect anything, refuse new jobs, cancel and
+        // join every discovery worker. Only then may serial adapters and the
+        // camera be released below: a probe must never observe a half
+        // torn-down service graph.
+        if (startupDiscovery_) {
+            startupDiscovery_->stop();
+        }
+        if (deviceDiscovery_) {
+            SPDLOG_INFO("AppBackend: shutdown draining device discovery");
+            deviceDiscovery_->shutdownDiscovery();
+        }
         // Stop threads before member destruction begins. Members are destroyed
         // in reverse declaration order, so triggerService_/autofocusService_
         // die before processingService_ — a still-running realtime loop would
         // invoke its callbacks on freed services. Every call below is
         // idempotent, so shutdown() may run more than once.
+
+        // The density worker reads the monitoring ring and hands records to
+        // the coordinator: join it before either is finalized or stopped.
+        if (monitoringDensity_) {
+            monitoringDensity_->stop();
+        }
 
         // An active experiment is finalized (file closed, accounting written)
         // while every service it needs is still alive.
@@ -158,6 +336,9 @@ namespace backend
         }
 
         // Stop admitting new trigger requests before anything is torn down.
+        if (executionProvider_) {
+            executionProvider_->stop(); // no further ingest into processing
+        }
         if (processingService_) {
             processingService_->setTargetGroupCallback({});
             processingService_->setBackgroundCaptureCallback({});
@@ -171,6 +352,7 @@ namespace backend
         // left TriggerService holding a camera pointer across the camera's
         // destruction on the capture thread.
         if (captureService_) {
+            SPDLOG_INFO("AppBackend: shutdown stopping capture and releasing camera");
             captureService_->stop();
         }
         if (triggerService_) {
@@ -180,19 +362,50 @@ namespace backend
         if (captureService_) {
             captureService_->setCameraReadyCallback({});
         }
+        if (dotGridService_) {
+            dotGridService_->setPoseCallback({});
+            dotGridService_->stop();
+        }
         stopFrameRecording();
         if (processingService_) {
+            SPDLOG_INFO("AppBackend: shutdown stopping processing");
+            processingService_->stopBackgroundCalibration();
             processingService_->stopRealtime();
             processingService_->stopBatchPipeline();
             processingService_->stop();
         }
+        // Release hardware during explicit shutdown, while the service graph
+        // is still alive. Capture has ended its owned generator session and
+        // processing can no longer submit autofocus or trigger requests.
+        if (autofocusService_) {
+            SPDLOG_INFO("AppBackend: shutdown disconnecting nanopositioner");
+            autofocusService_->disconnect();
+        }
+        if (syringePumpService_) {
+            SPDLOG_INFO("AppBackend: shutdown disconnecting syringe pumps");
+            syringePumpService_->disconnect(services::SyringePumpService::PumpId::Sample);
+            syringePumpService_->disconnect(services::SyringePumpService::PumpId::Sheath);
+        }
+        if (pulseGeneratorService_) {
+            SPDLOG_INFO("AppBackend: shutdown disconnecting pulse generator");
+            pulseGeneratorService_->disconnect();
+        }
+        if (stageService_) {
+            // Cancels any operation (stopping the axis), joins the stage
+            // worker, then releases the port while the bus is alive.
+            SPDLOG_INFO("AppBackend: shutdown stopping the Z stage");
+            stageService_->shutdown();
+        }
+        if (rfGeneratorService_) rfGeneratorService_->disconnect();
         // All pipeline threads are stopped now, so the dump is an exact
         // snapshot of the recorded latency data.
         dumpPipelineTimingIfEnabled();
+        SPDLOG_INFO("AppBackend: shutdown complete");
     }
 
     bool AppBackend::initialize(const std::string &dataDir)
     {
+        dataDir_ = dataDir;
         std::filesystem::create_directories(dataDir);
 
         // Use user-writable location for logs if dataDir is in Program Files
@@ -219,11 +432,53 @@ namespace backend
             }
         }
 
+        {
+            const char *instrumentName = std::getenv("MIB_INSTRUMENT_NAME");
+            std::string identityWarning;
+            instrumentIdentity_ = profiles::loadOrCreateInstrumentIdentity(
+                dataDir, instrumentName ? instrumentName : "", &identityWarning);
+            if (!identityWarning.empty()) SPDLOG_WARN("AppBackend: {}", identityWarning);
+            SPDLOG_INFO("AppBackend: instrument id {}{}",
+                        instrumentIdentity_.id.empty() ? "<unknown>" : instrumentIdentity_.id,
+                        instrumentIdentity_.name.empty() ? "" : " (" + instrumentIdentity_.name + ")");
+        }
+
+        {
+            profiles::RegistryWorkerConfig registryConfig;
+            if (const char *url = std::getenv("MIB_PROFILE_REGISTRY_URL")) registryConfig.origin = url;
+            if (const char *key = std::getenv("MIB_PROFILE_REGISTRY_PUBLISHABLE_KEY"))
+                registryConfig.publishableKey = key;
+            registryConfig.cacheDir = std::filesystem::path(dataDir) / "profile_registry";
+            registryConfig.methodsDir = std::filesystem::path(dataDir) / "methods";
+            if (registryConfig.configured() && !profileRegistryTransport_)
+                SPDLOG_WARN("AppBackend: profile registry configured but the shell supplied no "
+                            "HTTP transport; registry disabled");
+            profileRegistry_ = std::make_unique<profiles::ProfileRegistryWorker>(
+                std::move(registryConfig), profileRegistryTransport_);
+            SPDLOG_INFO("AppBackend: central profile registry {}",
+                        profileRegistry_->snapshot().configured ? "enabled" : "disabled");
+        }
+
         sqliteService_ = std::make_unique<services::SqliteService>();
         hdf5Service_ = std::make_unique<services::Hdf5Service>();
         captureService_ = std::make_unique<services::CaptureService>();
         processingService_ = std::make_unique<services::ProcessingService>();
         experimentCoordinator_ = std::make_unique<app::ExperimentCoordinator>(*this);
+        experimentCoordinator_->setApplicationIdentity(
+            MIB_APPLICATION_VERSION, MIB_APPLICATION_BUILD_ID, MIB_APPLICATION_OS);
+        processingService_->setBackgroundPublicationTransaction([this](const std::function<void()>& apply) {
+            // A worker must not block on a transaction that may join that worker,
+            // so it only try-locks. Status polls hold the coordinator mutex
+            // briefly, so retry for a bounded time before giving up. Otherwise a
+            // calibration would be cancelled by mere contention. A joiner that
+            // holds the mutex is only delayed by this bound.
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
+            do {
+                if (experimentCoordinator_->withIdleConfiguration(apply, false)) return true;
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            } while (std::chrono::steady_clock::now() < deadline);
+            return false;
+        });
         // Funnel experiment flush-write failures to the coordinator (which
         // finalizes the run as Failed) and to the fatal-save-error sink the UI
         // surfaces.
@@ -231,22 +486,96 @@ namespace backend
             if (experimentCoordinator_) experimentCoordinator_->onFatalSaveError(msg);
             reportFatalSaveError(msg);
         });
+        processingService_->setFlushRequestCallback([this] {
+            if (experimentCoordinator_) experimentCoordinator_->requestFlush();
+        });
         playbackService_ = std::make_unique<services::PlaybackService>();
         cameraControlService_ = std::make_unique<services::CameraControlService>();
         autofocusService_ = std::make_unique<services::AutofocusService>();
         triggerService_ = std::make_unique<services::TriggerService>();
-        yoloService_ = std::make_unique<services::YoloService>();
         serialBusManager_ = std::make_unique<services::serialbus::SerialBusManager>();
         syringePumpService_ = std::make_unique<services::SyringePumpService>(*serialBusManager_);
         pulseGeneratorService_ = std::make_unique<services::PulseGeneratorService>(*serialBusManager_);
+        // Nothing connects or moves here: the shell applies the stage block
+        // and calls startup(), which only connects (ADR 0013 §5). The stage is
+        // never homed (Amendment 1). The limit-switch record, written only by
+        // `zc300ctl verify-limits --supervised`, just clears the panel's
+        // "wiring unverified" badge (#464).
+        stageService_ = std::make_unique<services::StageService>(
+            *serialBusManager_,
+            std::make_unique<services::FileStageReferenceStore>(
+                (std::filesystem::path(dataDir) / "stage_reference.json").string()),
+            std::make_shared<stage::LimitsVerificationStore>(
+                (std::filesystem::path(dataDir) / "stage_limits_verified.json").string()));
+        // An experiment and a moving stage exclude each other (#533): Start is refused while a
+        // stage operation is active, and the stage worker re-checks right before every opcode.
+        experimentCoordinator_->setStageBusyProbe(
+            [this] { return stageService_ && stageService_->motionPossible(); });
+        stageService_->setMotionGate(
+            [this] { return !experimentCoordinator_ || experimentCoordinator_->withIdleConfiguration([] {}); });
+        rfGeneratorService_ = std::make_unique<services::RfGeneratorService>();
         frameStore_ = std::make_shared<playback::FrameStore>(5000);
+        dotGridService_ = std::make_unique<services::DotGridService>();
+        dotGridService_->setFrameStore(frameStore_);
+
+        // Device discovery (issue #419, ADR 0005): one job service, compiled-in
+        // providers wrapping the existing enumeration/probe code, a camera
+        // guard so enumeration never runs behind a live capture, and the
+        // startup policy with the pre-#419 defaults (started by the shell).
+        deviceDiscovery_ = std::make_unique<discovery::DeviceDiscoveryService>();
+        deviceDiscovery_->registerProvider(
+            discovery::CameraEnumerationProvider::mindVision(*cameraControlService_));
+        deviceDiscovery_->registerProvider(
+            discovery::CameraEnumerationProvider::eGrabber(*cameraControlService_));
+        deviceDiscovery_->registerProvider(
+            discovery::CameraEnumerationProvider::eGrabberFramegrabbers(*cameraControlService_));
+        deviceDiscovery_->registerProvider(discovery::NanopositionerProvider::production());
+        deviceDiscovery_->registerProvider(
+            std::make_unique<discovery::PulseGeneratorProvider>(*pulseGeneratorService_));
+        // Z stage (#464): identity-only FC04 reads over an explicit scope;
+        // never connects, homes or moves (ADR 0013 §5).
+        deviceDiscovery_->registerProvider(std::make_unique<discovery::Zc300Provider>(*serialBusManager_));
+        const auto captureBusy = [this] { return captureService_ && captureService_->isRunning(); };
+        deviceDiscovery_->setResourceGuard(discovery::DeviceKind::Camera, captureBusy);
+        deviceDiscovery_->setResourceGuard(discovery::DeviceKind::Framegrabber, captureBusy);
+
+        discovery::StartupDiscoveryCoordinator::Hooks hooks;
+        hooks.cameraConfigured = [this] { return isCameraConfigured(); };
+        hooks.captureRunning = captureBusy;
+        hooks.nanopositionerConnected = [this] {
+            return autofocusService_ && autofocusService_->isConnected();
+        };
+        hooks.selectCamera = [this](const discovery::DiscoveredDevice &device) {
+            if (!device.camera || !experimentCoordinator_) return false;
+            bool selected = false;
+            experimentCoordinator_->withIdleConfiguration([&] {
+                if (captureService_->isRunning() || isCameraConfigured()) return;
+                const auto &cam = *device.camera;
+                if (cam.cameraType == services::CameraType::MindVision)
+                    setMindVisionCameraSelection(cam.cameraIndex, cam.label);
+                else setHardwareCameraSelection(cam.interfaceIndex, cam.deviceIndex, cam.label);
+                selected = true;
+            });
+            return selected;
+        };
+        hooks.connectNanopositioner = [this](const nanopositioner::Endpoint &endpoint) {
+            if (!experimentCoordinator_) return false;
+            bool connected = false;
+            experimentCoordinator_->withIdleConfiguration([&] {
+                if (captureService_->isRunning() || !autofocusService_ || autofocusService_->isConnected()) return;
+                connected = autofocusService_->connect(endpoint);
+            });
+            return connected;
+        };
+        startupDiscovery_ =
+            std::make_unique<discovery::StartupDiscoveryCoordinator>(*deviceDiscovery_, hooks);
 
         bool bootSqlite = true;
         bool bootHdf5 = true;
         bool bootProcessing = true;
-        bool bootYolo = true;
         bool bootAutofocus = true;
         bool bootTrigger = true;
+        bool bootDotGrid = true;
         bool bootCapture = true;
         bool bootPlayback = true;
         if (const char *rawDisabledServices = std::getenv("MIB_DISABLED_SERVICES"))
@@ -277,11 +606,11 @@ namespace backend
                     bootSqlite = false;
                     bootHdf5 = false;
                     bootProcessing = false;
-                    bootYolo = false;
                     bootAutofocus = false;
                     bootTrigger = false;
                     bootCapture = false;
                     bootPlayback = false;
+                    bootDotGrid = false;
                 }
                 else if (token == "sqlite")
                 {
@@ -297,7 +626,8 @@ namespace backend
                 }
                 else if (token == "yolo")
                 {
-                    bootYolo = false;
+                    // YoloService was removed (#565); the token stays accepted
+                    // so existing environments keep booting.
                 }
                 else if (token == "autofocus")
                 {
@@ -306,6 +636,10 @@ namespace backend
                 else if (token == "trigger")
                 {
                     bootTrigger = false;
+                }
+                else if (token == "dot_grid" || token == "dotgrid")
+                {
+                    bootDotGrid = false;
                 }
                 else if (token == "capture" || token == "camera")
                 {
@@ -331,8 +665,19 @@ namespace backend
             }
         }
 
-        SPDLOG_INFO("AppBackend boot toggles: sqlite={}, hdf5={}, processing={}, yolo={}, autofocus={}, trigger={}, capture={}, playback={}",
-                    bootSqlite, bootHdf5, bootProcessing, bootYolo, bootAutofocus, bootTrigger, bootCapture, bootPlayback);
+        SPDLOG_INFO("AppBackend boot toggles: sqlite={}, hdf5={}, processing={}, autofocus={}, trigger={}, capture={}, playback={}, dot_grid={}",
+                    bootSqlite, bootHdf5, bootProcessing, bootAutofocus, bootTrigger, bootCapture, bootPlayback, bootDotGrid);
+
+        // Dot-grid wafer localization: the thread idles until the frontend
+        // enables it (config "dot_grid.enabled"); it only ever reads FrameStore.
+        if (bootDotGrid)
+        {
+            dotGridService_->start();
+        }
+        else
+        {
+            SPDLOG_WARN("AppBackend: dot-grid localization disabled by MIB_DISABLED_SERVICES");
+        }
 
         if (bootSqlite)
         {
@@ -352,22 +697,8 @@ namespace backend
             SPDLOG_WARN("AppBackend: hdf5 bootstrap disabled by MIB_DISABLED_SERVICES");
         }
 
-        // Initialize YOLO service - resolve model path relative to data directory
-        // dataDir is typically {exeDir}/data, so we go up one level to get exeDir
         std::filesystem::path dataPath(dataDir);
-        std::filesystem::path exeDir = dataPath.parent_path();
-        std::filesystem::path modelPath = exeDir / "resources" / "models" / "yolo11n-seg.onnx";
-        if (bootYolo)
-        {
-            if (!yoloService_->initialize(modelPath.string()))
-            {
-                SPDLOG_WARN("YOLO model not loaded - segmentation features will not be available");
-            }
-        }
-        else
-        {
-            SPDLOG_WARN("AppBackend: yolo bootstrap disabled by MIB_DISABLED_SERVICES");
-        }
+        std::filesystem::path exeDir = resourceRoot_.empty() ? dataPath.parent_path() : std::filesystem::path(resourceRoot_);
 
         // Load Young's modulus LUT for emodulus gating
         if (bootProcessing)
@@ -424,6 +755,7 @@ namespace backend
                         lutInfo.remoteUpdated,
                         lutInfo.usedBundledFallback,
                         lutInfo.manifestUrl);
+            configureOpenCvThreads();
             processingService_->start();
         }
         else
@@ -431,6 +763,49 @@ namespace backend
             SPDLOG_WARN("AppBackend: processing bootstrap disabled by MIB_DISABLED_SERVICES");
         }
         // Note: startRealtime() is now called when Experiment tab becomes active, not during initialization
+
+        // PL science (ADR 0008): per-frame results come from an execution
+        // provider instead of the host pipeline (YOFO S1).
+        if (bootProcessing && !app::hostProcessingAvailable())
+        {
+            std::string providerError;
+            executionProvider_ = processing::pz::makeExecutionProviderFromEnv(&providerError);
+            if (executionProvider_)
+            {
+                executionProvider_->setSink([this](processing::ProviderFrame &&frame)
+                                            { processingService_->ingestProviderFrame(frame); });
+                SPDLOG_INFO("AppBackend: PL results from execution provider '{}'", executionProvider_->name());
+            }
+            else if (!providerError.empty())
+            {
+                SPDLOG_ERROR("AppBackend: {}", providerError);
+            }
+            // PL identity and health for preflight (#501): read-only, beside
+            // the board provider. Elsewhere the monitor reports why it is idle.
+            std::unique_ptr<pz::IPzPlatformRegisters> platformRegisters;
+            std::string platformError = "the execution provider is not the PZ7035 board (MIB_EXECUTION_PROVIDER=pz)";
+            if (executionProvider_ && executionProvider_->name() == "pz-devmem")
+            {
+#if defined(__linux__)
+                platformError.clear();
+                platformRegisters = pz::openDevMemPlatformRegisters(&platformError);
+                if (!platformRegisters) SPDLOG_ERROR("AppBackend: PZ7035 platform registers: {}", platformError);
+#endif
+            }
+            pzPlatformMonitor_ = std::make_unique<pz::PzPlatformMonitor>(std::move(platformRegisters), platformError);
+#if defined(__linux__)
+            // The one writer of LED, cell path and cell capture (#501 P1). Mapping reads no PL
+            // register; nothing is written until the operator picks a camera mode.
+            if (executionProvider_ && executionProvider_->name() == "pz-devmem")
+            {
+                std::string controlError;
+                if (auto registers = pz::openDevMemControlRegisters(&controlError))
+                    pzControl_ = std::make_unique<pz::PzInstrumentControl>(std::move(registers));
+                else
+                    SPDLOG_ERROR("AppBackend: PZ7035 control registers: {}", controlError);
+            }
+#endif
+        }
 
         // Wire autofocus service to receive ring ratios from processing service
         if (bootProcessing && bootAutofocus)
@@ -440,10 +815,22 @@ namespace backend
                 if (autofocusService_) {
                     autofocusService_->onRingRatio(ringRatio, timestampNs);
                 } });
+            // Contracts 2 and 3: per-object Laplacian variance drives the
+            // focus-score peak-seeker instead of the ring-width setpoint.
+            processingService_->setFocusSampleCallback(
+                [this](double laplacianVariance, int64_t timestampNs, uint64_t frameIndex,
+                       int objectId, int trackId)
+                {
+                    if (autofocusService_) {
+                        autofocusService_->onFocusSample(backend::services::autofocus::FocusSample{
+                            laplacianVariance, timestampNs, frameIndex, objectId, trackId});
+                    }
+                });
         }
         else
         {
             processingService_->setRingRatioCallback({});
+            processingService_->setFocusSampleCallback({});
             if (!bootAutofocus)
             {
                 SPDLOG_WARN("AppBackend: autofocus ring-ratio callback disabled by MIB_DISABLED_SERVICES");
@@ -464,10 +851,17 @@ namespace backend
                     triggerService_->onTargetGroupResult(signal);
                 }
             });
+            // Pulse records ride the experiment flush into /trigger_events so
+            // every sort decision is stored against its source frame.
+            processingService_->setTriggerEventSource([this]() {
+                return triggerService_ ? triggerService_->drainEvents()
+                                       : std::vector<recording::TriggerEventRecord>{};
+            });
         }
         else
         {
             processingService_->setTargetGroupCallback({});
+            processingService_->setTriggerEventSource({});
             if (!bootTrigger)
             {
                 SPDLOG_WARN("AppBackend: trigger callback wiring disabled by MIB_DISABLED_SERVICES");
@@ -588,6 +982,9 @@ namespace backend
                 captureService_->setCameraFactory([options]() mutable
                                                   { return std::make_unique<::camera::mock::MockCamera>(options); });
                 mockCameraConfigured_ = true;
+                aravisCameraConfigured_ = false;
+                aravisFake_ = false;
+                aravisDeviceId_.clear();
                 selectedIfIndex_ = -1;
                 selectedDevIndex_ = -1;
                 selectedMvCameraIndex_ = -1;
@@ -602,6 +999,7 @@ namespace backend
             };
 
             requestedCameraSource_ = cameraMode == "mock" ? "mock"
+                                     : cameraMode == "aravis" ? "aravis"
                                      : cameraMode == "mindvision" ? "mindvision"
                                      : (cameraMode == "egrabber" || cameraMode == "hardware") ? "egrabber"
                                      : cameraMode;
@@ -609,6 +1007,67 @@ namespace backend
             if (cameraMode == "mock")
             {
                 configureMock();
+            }
+            else if (cameraMode == "aravis")
+            {
+#if MIB_HAS_ARAVIS
+                ::camera::aravis::AravisCameraOptions options;
+                if (const char *envId = std::getenv("MIB_ARAVIS_DEVICE_ID"))
+                    options.deviceId = envId;
+                if (const char *envFake = std::getenv("MIB_ARAVIS_FAKE"))
+                {
+                    const auto fakeValue = toLower(envFake);
+                    options.useFake = fakeValue == "1" || fakeValue == "true" ||
+                                      fakeValue == "yes";
+                }
+                if (const char *envGige = std::getenv("MIB_ARAVIS_GIGE"))
+                {
+                    const auto gigeValue = toLower(envGige);
+                    options.enableGigEVision = gigeValue == "1" || gigeValue == "true" ||
+                                               gigeValue == "yes";
+                }
+                aravisDeviceId_ = options.deviceId;
+                aravisFake_ = options.useFake;
+                aravisGigE_ = options.enableGigEVision;
+                aravisOverview_.store(false);
+                loadAravisProfile();
+                mockCameraConfigured_ = false;
+                aravisCameraConfigured_ = true;
+                installAravisFactory();
+                selectedIfIndex_ = -1;
+                selectedDevIndex_ = -1;
+                selectedMvCameraIndex_ = -1;
+                selectedLabel_ = options.deviceId.empty() ? "Aravis camera (auto)" :
+                                 "Aravis camera " + options.deviceId;
+                if (options.useFake)
+                    selectedLabel_ += " (Fake)";
+                lastMindVisionConfigPath_.clear();
+                effectiveCameraSource_ = "aravis";
+                SPDLOG_INFO("AppBackend: configuring Aravis camera (device={}, fake={})",
+                            options.deviceId.empty() ? "<auto>" : options.deviceId,
+                            options.useFake);
+#else
+                // An explicit Aravis request is a hard configuration error in
+                // an Aravis-disabled binary. Keep a null factory so capture
+                // reports the failure instead of silently running MockCamera.
+                captureService_->setCameraFactory([]() -> std::unique_ptr<::camera::common::ICamera> {
+                    return nullptr;
+                });
+                mockCameraConfigured_ = false;
+                // Keep the explicit source selected so startup discovery does
+                // not silently replace it with a hardware/mock backend.
+                aravisCameraConfigured_ = true;
+                aravisFake_ = false;
+                aravisDeviceId_.clear();
+                effectiveCameraSource_ = "unavailable";
+                cameraFallbackReason_ = "Aravis support is disabled in this build (MIB_ENABLE_ARAVIS=OFF)";
+                selectedIfIndex_ = -1;
+                selectedDevIndex_ = -1;
+                selectedMvCameraIndex_ = -1;
+                selectedLabel_.clear();
+                lastMindVisionConfigPath_.clear();
+                SPDLOG_ERROR("AppBackend: Aravis mode requested but Aravis support is unavailable");
+#endif
             }
             else if (cameraMode == "mindvision")
             {
@@ -632,12 +1091,27 @@ namespace backend
                 }
                 SPDLOG_INFO("AppBackend: configuring MindVision camera (index={}, config={})",
                             cameraIndex, configPath.empty() ? "<none>" : configPath);
-                captureService_->setCameraFactory([cameraIndex, configPath]() mutable
-                                                  { return std::make_unique<::camera::common::MindVisionCamera>(cameraIndex, configPath); });
+                captureService_->setCameraFactory([this, cameraIndex, configPath]() mutable {
+                    return makeLiveCamera(
+                        cameraIndex, configPath, *pulseGeneratorService_,
+                        mindVisionOverview_.load(),
+                        [this](const camera::mindvision::SdkCapability& sensor) {
+                            std::lock_guard<std::mutex> lock(mindVisionSensorMutex_);
+                            mindVisionSensor_ = {sensor.sensorWidth, sensor.sensorHeight,
+                                                 sensor.minWidth, sensor.minHeight};
+                        });
+                });
                 mockCameraConfigured_ = false;
+                aravisCameraConfigured_ = false;
+                aravisFake_ = false;
+                aravisDeviceId_.clear();
                 effectiveCameraSource_ = "mindvision";
                 selectedIfIndex_ = -1;
                 selectedDevIndex_ = -1;
+                {
+                    std::lock_guard<std::mutex> lock(mindVisionSensorMutex_);
+                    mindVisionSensor_ = {};
+                }
                 selectedMvCameraIndex_ = cameraIndex;
                 selectedLabel_ = configPath.empty()
                     ? std::string("MindVision camera ") + std::to_string(cameraIndex)
@@ -657,6 +1131,9 @@ namespace backend
                 captureService_->setCameraFactory([]()
                                                   { return std::make_unique<::camera::common::EGrabberCamera>(); });
                 mockCameraConfigured_ = false;
+                aravisCameraConfigured_ = false;
+                aravisFake_ = false;
+                aravisDeviceId_.clear();
                 effectiveCameraSource_ = "egrabber";
                 selectedMvCameraIndex_ = -1;
             #else
@@ -664,6 +1141,14 @@ namespace backend
                 cameraMode = "mock";
                 configureMock();
                 cameraFallbackReason_ = "EGrabber SDK is unavailable in this build";
+#if MIB_HAS_MINDVISION
+                // An implicit fallback is not an operator selection. Leave
+                // startup discovery enabled so a single MindVision camera
+                // can be selected without a separate Connect action.
+                if (std::getenv("MIB_CAMERA_MODE") == nullptr) {
+                    mockCameraConfigured_ = false;
+                }
+#endif
 #endif
             }
             else
@@ -695,6 +1180,9 @@ namespace backend
             selectedLabel_.clear();
             lastMindVisionConfigPath_.clear();
             mockCameraConfigured_ = false;
+            aravisCameraConfigured_ = false;
+            aravisFake_ = false;
+            aravisDeviceId_.clear();
         }
 
         if (bootPlayback)
@@ -731,21 +1219,346 @@ namespace backend
     services::Hdf5Service &AppBackend::hdf5() { return *hdf5Service_; }
     services::CaptureService &AppBackend::capture() { return *captureService_; }
     services::ProcessingService &AppBackend::processing() { return *processingService_; }
+    processing::IExecutionProvider *AppBackend::executionProvider() { return executionProvider_.get(); }
+    pz::PzPlatformMonitor *AppBackend::pzPlatformMonitor() { return pzPlatformMonitor_.get(); }
+
+    // ---- PZ7035 camera modes (#501 P1; pz7035-imx426 docs/YOFO_HOST_INTERFACE.md) ----
+
+    namespace {
+    // Producer settings that give the qualified timings (HMAX/VMAX/SHS from rate and exposure,
+    // pz7035_gentl.c choose_hmax): Run 58/256/64, Align 116/1280/64.
+    constexpr double kRunFps = 5000.0, kRunExposureUs = 150.0;
+    // Align, whole frames from the bridge (results8 on): HMAX 232 / VMAX 800 / SHS 64, 400 fps;
+    // HMAX 116 would overflow the bridge tap. Banded fallback for older images: 116 / 1280 / 64.
+    constexpr double kAlignFps = 400.0, kAlignExposureUs = 2299.7;
+    constexpr int kAlignHmax = 232;
+    constexpr double kAlignBandsFps = 500.0, kAlignBandsExposureUs = 1899.7;
+    constexpr int kRunWidth = 512, kRunHeight = 96;
+    // ROI offsets: the producer takes x in steps of 8; the sensor lands y on a multiple of 4.
+    constexpr int kRunXStep = 8, kRunYStep = 4, kRunXMax = 816 - kRunWidth, kRunYMax = 624 - kRunHeight;
+    constexpr auto kCameraStartTimeout = std::chrono::seconds(10);
+    } // namespace
+
+    bool AppBackend::instrumentControlAvailable() const { return pzControl_ != nullptr; }
+
+    pz::InstrumentMode AppBackend::instrumentMode() const
+    {
+        return static_cast<pz::InstrumentMode>(instrumentMode_.load());
+    }
+
+    std::pair<int, int> AppBackend::instrumentRunOffset() const
+    {
+        return {instrumentRunX_.load(), instrumentRunY_.load()};
+    }
+
+    void AppBackend::setServiceMode(bool on) { serviceMode_.store(on); }
+
+    std::string AppBackend::alignSource() const
+    {
+        const int s = alignSource_.load();
+        return s == 1 ? "bridge" : s == 2 ? "bands" : "";
+    }
+
+    bool AppBackend::alignWholeFrameAvailable(std::string *why)
+    {
+        auto *provider = executionProvider_.get();
+        if (!provider || provider->name() != "pz-devmem") {
+            if (why) *why = "no PZ7035 results bridge";
+            return false;
+        }
+        std::string error;
+        const auto expected = pz::loadExpectedCore(pz::kExpectedCorePath, &error);
+        if (!expected) {
+            if (why) *why = "expected-core.json: " + (error.empty() ? std::string("missing") : error);
+            return false;
+        }
+        if (!expected->has(pz::kFeatureAlignWholeFrame)) {
+            if (why) *why = "the loaded build has no whole-frame Align preview (results8 or later)";
+            return false;
+        }
+        const auto identity = provider->identity();
+        if (!identity.valid || identity.buildId != expected->buildId) {
+            if (why) *why = "the PL BUILD_ID does not match expected-core.json";
+            return false;
+        }
+        return true;
+    }
+    bool AppBackend::serviceMode() const { return serviceMode_.load(); }
+
+    void AppBackend::setInstrumentControlForTesting(std::unique_ptr<pz::IPzControlRegisters> registers)
+    {
+        pzControl_ = std::make_unique<pz::PzInstrumentControl>(std::move(registers));
+    }
+
+    bool AppBackend::setInstrumentMode(pz::InstrumentMode mode, int x, int y, std::string *errorOut)
+    {
+        std::lock_guard<std::mutex> lock(instrumentModeMutex_);
+        auto fail = [&](const std::string &message) {
+            if (errorOut) *errorOut = message;
+            SPDLOG_WARN("AppBackend: instrument mode {}: {}", pz::instrumentModeName(mode), message);
+            return false;
+        };
+        if (!pzControl_) return fail("no PZ7035 control on this platform");
+        if (mode == pz::InstrumentMode::Unknown) return fail("choose Align or Run");
+        if (!captureService_) return fail("the backend is not initialized");
+        const auto run = experimentCoordinator_->state();
+        if (isFrameRecording() || run == app::ExperimentRunState::Starting ||
+            run == app::ExperimentRunState::Active || run == app::ExperimentRunState::Stopping)
+            return fail("Stop the experiment or recording before changing camera mode");
+        if (mode == pz::InstrumentMode::Run) {
+            x = std::clamp(x - x % kRunXStep, 0, kRunXMax - kRunXMax % kRunXStep);
+            y = std::clamp(y - y % kRunYStep, 0, kRunYMax);
+        }
+        std::string err;
+        // 1. LED off, cell path off: no producer AcquisitionStart may run with the U-Net enable set
+        //    (its command pulses clear bit 4), and the guard never sees a timing transient lit.
+        if (!pzControl_->ledOff(&err) || !pzControl_->setCellPath(false, &err)) return fail(err);
+        instrumentMode_.store(static_cast<int>(pz::InstrumentMode::Unknown));
+        captureService_->stop(); // also stops Align's bridge previews (bridge STOP)
+        alignSource_.store(0);
+        // Whole-frame Align needs results8 or later (expected-core.json feature + BUILD_ID match);
+        // otherwise the producer's banded preview at the older timing.
+        std::string wholeFrameWhy;
+        const bool wholeFrame = mode == pz::InstrumentMode::Align && alignWholeFrameAvailable(&wholeFrameWhy);
+        if (mode == pz::InstrumentMode::Align && !wholeFrame)
+            SPDLOG_INFO("AppBackend: Align uses the banded preview: {}", wholeFrameWhy);
+#if MIB_HAS_ARAVIS
+        // 2. Stage the producer settings. Every capture start reopens the device and writes rate,
+        //    exposure and region, so the producer re-applies the mode even if something else
+        //    touched the sensor meanwhile.
+        if (aravisCameraConfigured_) {
+            AravisProfile next = aravisProfile_;
+            if (mode == pz::InstrumentMode::Align) {
+                next.overviewFps = wholeFrame ? kAlignFps : kAlignBandsFps;
+                next.overviewExposureUs = wholeFrame ? kAlignExposureUs : kAlignBandsExposureUs;
+                next.overviewHmax = wholeFrame ? kAlignHmax : 0;
+            } else {
+                next.hasRoi = true;
+                next.x = x;
+                next.y = y;
+                next.width = kRunWidth;
+                next.height = kRunHeight;
+                next.experimentFps = kRunFps;
+                next.experimentExposureUs = kRunExposureUs;
+            }
+            if (!saveAravisProfile(next, &err)) return fail(err);
+            aravisProfile_ = next;
+            if (!setAravisOverview(mode == pz::InstrumentMode::Align, &err)) return fail(err);
+            installAravisFactory();
+        }
+#endif
+        // 3. AcquisitionStart applies ROI, timing, ingress geometry and the receiver reset.
+        captureService_->requestStart();
+        const auto until = std::chrono::steady_clock::now() + kCameraStartTimeout;
+        services::CaptureLifecycleSnapshot snap = captureService_->lifecycleSnapshot();
+        while (!snap.cameraReady && std::chrono::steady_clock::now() < until) {
+            if (snap.state == services::CaptureLifecycleState::Faulted) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            snap = captureService_->lifecycleSnapshot();
+        }
+        if (!snap.cameraReady) {
+            captureService_->stop();
+            return fail("the camera did not start" +
+                        (snap.lastFailureMessage.empty() ? std::string() : ": " + snap.lastFailureMessage));
+        }
+        if (mode == pz::InstrumentMode::Align && wholeFrame) {
+            // 4a. Align (results8 on): stop the producer stream (the sensor keeps the applied
+            //     232/800/64 timing), then whole frames from the bridge's preview slots through a
+            //     camera behind CaptureService, so the live view is unchanged. LED 100/135.
+            captureService_->stop();
+            processing::pz::BridgePreviewConfig preview; // 816x624, every 40th frame, 0x3F100000
+            auto *provider = executionProvider_.get();
+            captureService_->setCameraFactory([provider, preview]() -> std::unique_ptr<::camera::common::ICamera> {
+                if (!provider) return nullptr;
+                return std::make_unique<pz::PzBridgePreviewCamera>(*provider, preview);
+            });
+            captureService_->requestStart();
+            const auto previewUntil = std::chrono::steady_clock::now() + kCameraStartTimeout;
+            snap = captureService_->lifecycleSnapshot();
+            while (!snap.cameraReady && std::chrono::steady_clock::now() < previewUntil &&
+                   snap.state != services::CaptureLifecycleState::Faulted) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                snap = captureService_->lifecycleSnapshot();
+            }
+            if (!snap.cameraReady) {
+                captureService_->stop();
+                return fail("Align previews did not start" +
+                            (snap.lastFailureMessage.empty() ? std::string() : ": " + snap.lastFailureMessage));
+            }
+            // Success means a whole frame arrived, not only an armed bridge.
+            const auto firstFrameUntil = std::chrono::steady_clock::now() + std::chrono::seconds(12);
+            const auto framesBefore = captureService_->stats().framesProcessed.load();
+            while (captureService_->stats().framesProcessed.load() == framesBefore &&
+                   std::chrono::steady_clock::now() < firstFrameUntil &&
+                   captureService_->lifecycleSnapshot().cameraReady)
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            if (captureService_->stats().framesProcessed.load() == framesBefore) {
+                snap = captureService_->lifecycleSnapshot();
+                captureService_->stop();
+                return fail("no Align preview arrived" +
+                            (snap.lastFailureMessage.empty() ? std::string() : ": " + snap.lastFailureMessage));
+            }
+            if (!pzControl_->setLed(pz::kAlignLed, &err)) return fail(err);
+            alignSource_.store(1);
+        } else if (mode == pz::InstrumentMode::Align) {
+            // 4a'. Align on older images: previews from the producer's band capture, LED 0/125.
+            if (!pzControl_->setLed(pz::kAlignBandsLed, &err)) return fail(err);
+            alignSource_.store(2);
+        } else {
+            // 4b. Run: stop the producer stream (the sensor keeps streaming at the applied
+            //     timing), then the cell path, the latency monitor and the LED Run preset.
+            captureService_->stop();
+            if (!pzControl_->setCellPath(true, &err) || !pzControl_->clearLatency(&err) ||
+                !pzControl_->setLed(pz::kRunLed, &err))
+                return fail(err);
+            instrumentRunX_.store(x);
+            instrumentRunY_.store(y);
+        }
+        instrumentMode_.store(static_cast<int>(mode));
+        SPDLOG_INFO("AppBackend: instrument mode {}{}", pz::instrumentModeName(mode),
+                    mode == pz::InstrumentMode::Run ? fmt::format(" at ({}, {})", x, y) : std::string());
+        return true;
+    }
+
+    bool AppBackend::setInstrumentLed(double delayUs, double widthUs, std::string *errorOut)
+    {
+        std::lock_guard<std::mutex> lock(instrumentModeMutex_);
+        auto fail = [&](const std::string &message) {
+            if (errorOut) *errorOut = message;
+            return false;
+        };
+        if (!pzControl_) return fail("no PZ7035 control on this platform");
+        if (!serviceMode_.load()) return fail("raw LED values need Service / Commissioning mode");
+        const auto run = experimentCoordinator_->state();
+        if (run == app::ExperimentRunState::Starting || run == app::ExperimentRunState::Active ||
+            run == app::ExperimentRunState::Stopping)
+            return fail("the LED cannot change during an experiment");
+        const pz::LedSetting setting{delayUs, widthUs};
+        if (auto why = pz::checkLed(instrumentMode(), setting); !why.empty()) return fail(why);
+        std::string err;
+        if (!pzControl_->setLed(setting, &err)) return fail(err);
+        SPDLOG_INFO("AppBackend: LED {:.1f}/{:.1f} µs (service, {})", delayUs, widthUs,
+                    pz::instrumentModeName(instrumentMode()));
+        return true;
+    }
+
+    bool AppBackend::fetchRunPreview(std::vector<uint8_t> &out, std::string *errorOut)
+    {
+        if (!pzControl_) {
+            if (errorOut) *errorOut = "no PZ7035 control on this platform";
+            return false;
+        }
+        if (instrumentMode() != pz::InstrumentMode::Run) {
+            if (errorOut) *errorOut = "the run preview needs Run mode";
+            return false;
+        }
+        pz::PzCellCapture capture;
+        if (!pzControl_->captureCell(capture, std::chrono::milliseconds(100), errorOut)) return false;
+        out = pz::encodeRunPreview(capture);
+        return true;
+    }
     services::PlaybackService &AppBackend::playback() { return *playbackService_; }
     services::CameraControlService &AppBackend::cameraControl() { return *cameraControlService_; }
     services::AutofocusService &AppBackend::autofocus() { return *autofocusService_; }
     services::TriggerService &AppBackend::trigger() { return *triggerService_; }
-    services::YoloService &AppBackend::yolo() { return *yoloService_; }
+    services::DotGridService &AppBackend::dotGrid() { return *dotGridService_; }
     services::SyringePumpService &AppBackend::syringePump() { return *syringePumpService_; }
     services::PulseGeneratorService &AppBackend::pulseGenerator() { return *pulseGeneratorService_; }
+    services::StageService &AppBackend::stage() { return *stageService_; }
+    services::RfGeneratorService &AppBackend::rfGenerator() { return *rfGeneratorService_; }
+    discovery::DeviceDiscoveryService &AppBackend::deviceDiscovery() { return *deviceDiscovery_; }
+    discovery::StartupDiscoveryCoordinator &AppBackend::startupDiscovery() { return *startupDiscovery_; }
+    profiles::ProfileRegistryWorker &AppBackend::profileRegistry() { return *profileRegistry_; }
+
+    profiles::MethodContext AppBackend::methodContext() const
+    {
+        profiles::MethodContext context;
+        context.instrumentId = instrumentIdentity_.id;
+        if (processingService_)
+        {
+            const auto core = processingService_->activeProcessingCoreIdentity();
+            context.processingCoreVersion = core.version;
+            context.processingCoreSha256 = core.artifactSha256;
+        }
+        context.cameraSource = cameraSourceInfo().effective;
+        return context;
+    }
+
+    AppBackend::MethodValidationRequestResult AppBackend::requestMethodValidation(
+        const std::string &revisionId, const std::string &evidenceFile, bool passed)
+    {
+        MethodValidationRequestResult result;
+        if (!profileRegistry_)
+        {
+            result.error = "Backend not initialized";
+            return result;
+        }
+        std::string contentHash;
+        for (const auto &r : profileRegistry_->snapshot().revisions)
+            if (r.revisionId == revisionId) contentHash = r.contentHash;
+        if (contentHash.empty())
+        {
+            result.error = "Revision is not in the local cache";
+            return result;
+        }
+        std::string runJson;
+        {
+            // Separate read-only service: never touches the run being recorded.
+            services::Hdf5Service reader;
+            if (!reader.loadFile(evidenceFile))
+            {
+                result.error = "Cannot open the test-run file: " + evidenceFile;
+                return result;
+            }
+            reader.readRunSnapshotJson(runJson);
+            reader.closeFile();
+        }
+        const auto context = methodContext();
+        result.error = app::checkValidationEvidence(runJson, revisionId, contentHash, context.instrumentId,
+                                                    profiles::methodContextHash(context));
+        if (!result.error.empty()) return result;
+        profiles::LocalValidationRequest request;
+        request.revisionId = revisionId;
+        request.context = context;
+        request.instrumentName = instrumentIdentity_.name;
+        request.evidenceFile = evidenceFile;
+        request.passed = passed;
+        result.jobId = profileRegistry_->requestRecordValidation(std::move(request));
+        if (result.jobId == 0) result.error = "The registry worker refused the request";
+        return result;
+    }
+
+    profiles::MethodDraft AppBackend::currentConfigDraft(std::string *error) const
+    {
+        profiles::MethodDraft draft;
+        const auto config = getLastConfigJson();
+        if (config.empty())
+        {
+            if (error) *error = "No config.json is applied";
+            return draft;
+        }
+        draft.configJson = config;
+        if (processingService_)
+        {
+            const auto core = processingService_->activeProcessingCoreIdentity();
+            draft.processingCoreId = core.version;
+            draft.processingContractVersion = static_cast<int>(core.contractVersion);
+        }
+        draft.hardwareCompatibilityJson.clear();
+        return draft;
+    }
 
     void AppBackend::configureMockCamera(const ::camera::mock::MockCameraOptions &options)
     {
         if (!captureService_)
             return;
+        releaseMindVisionOverviewStore();
         requestedCameraSource_ = "mock";
         effectiveCameraSource_ = "mock";
         cameraFallbackReason_.clear();
+        aravisCameraConfigured_ = false;
+        aravisFake_ = false;
+        aravisDeviceId_.clear();
         captureService_->setCameraFactory([options]() mutable
                                           { return std::make_unique<::camera::mock::MockCamera>(options); });
         selectedIfIndex_ = -1;
@@ -766,6 +1579,10 @@ namespace backend
         if (mockCameraConfigured_)
         {
             out.mode = CameraSelectionSnapshot::Mode::Mock;
+        }
+        else if (aravisCameraConfigured_)
+        {
+            out.mode = CameraSelectionSnapshot::Mode::Aravis;
         }
         else if (selectedMvCameraIndex_ >= 0)
         {
@@ -792,6 +1609,7 @@ namespace backend
     {
         if (!captureService_)
             return;
+        releaseMindVisionOverviewStore();
         requestedCameraSource_ = "egrabber";
         cameraFallbackReason_.clear();
 
@@ -833,6 +1651,9 @@ namespace backend
         selectedMvCameraIndex_ = -1;
         lastMindVisionConfigPath_.clear();
         mockCameraConfigured_ = false;
+        aravisCameraConfigured_ = false;
+        aravisFake_ = false;
+        aravisDeviceId_.clear();
         effectiveCameraSource_ = "egrabber";
 
         captureService_->setCameraFactory([interfaceIndex, deviceIndex]()
@@ -846,18 +1667,34 @@ namespace backend
         if (!captureService_)
             return;
 
+        {
+            std::lock_guard<std::mutex> lock(mindVisionSensorMutex_);
+            mindVisionSensor_ = {};
+        }
         selectedMvCameraIndex_ = cameraIndex;
         selectedIfIndex_ = -1;
         selectedDevIndex_ = -1;
         selectedLabel_ = label;
         mockCameraConfigured_ = false;
+        aravisCameraConfigured_ = false;
+        aravisFake_ = false;
+        aravisDeviceId_.clear();
         requestedCameraSource_ = "mindvision";
         cameraFallbackReason_.clear();
 
 #if MIB_HAS_MINDVISION
+        if (lastMindVisionConfigPath_.empty())
+            lastMindVisionConfigPath_ = savedMindVisionConfigPath_;
         const std::string configPath = lastMindVisionConfigPath_;
-        captureService_->setCameraFactory([cameraIndex, configPath]()
-                                          { return std::make_unique<::camera::common::MindVisionCamera>(cameraIndex, configPath); });
+        captureService_->setCameraFactory([this, cameraIndex, configPath]() {
+            return makeLiveCamera(cameraIndex, configPath, *pulseGeneratorService_,
+                                  mindVisionOverview_.load(),
+                                  [this](const camera::mindvision::SdkCapability& sensor) {
+                                      std::lock_guard<std::mutex> lock(mindVisionSensorMutex_);
+                                      mindVisionSensor_ = {sensor.sensorWidth, sensor.sensorHeight,
+                                                           sensor.minWidth, sensor.minHeight};
+                                  });
+        });
         effectiveCameraSource_ = "mindvision";
 #else
         SPDLOG_WARN("MindVision camera selection requested but MindVision SDK is unavailable; falling back to mock camera");
@@ -917,6 +1754,46 @@ namespace backend
         return ok;
     }
 
+    bool AppBackend::stageMindVisionConfigFromFile(const std::string& path, std::string* errorOut) {
+        if (captureService_->isRunning()) {
+            if (errorOut) *errorOut = "Stop Live View before changing the saved camera setup";
+            return false;
+        }
+        try {
+            std::ifstream input(path);
+            if (!input) throw std::runtime_error("Cannot open camera setup");
+            const std::string bytes((std::istreambuf_iterator<char>(input)), {});
+            const auto parsed = backend::camera::mindvision::parseConfig(bytes);
+            if (!parsed.ok) throw std::runtime_error(parsed.error);
+            // Construct only: validates generator settings, no SDK/serial I/O.
+            auto candidate = makeLiveCamera(
+                selectedMvCameraIndex_, path, *pulseGeneratorService_, mindVisionOverview_.load(),
+                [this](const camera::mindvision::SdkCapability& sensor) {
+                    std::lock_guard<std::mutex> lock(mindVisionSensorMutex_);
+                    mindVisionSensor_ = {sensor.sensorWidth, sensor.sensorHeight, sensor.minWidth,
+                                         sensor.minHeight};
+                });
+            lastMindVisionConfigPath_ = path;
+            savedMindVisionConfigPath_ = path;
+            if (selectedMvCameraIndex_ >= 0) {
+                const int idx = selectedMvCameraIndex_;
+                captureService_->setCameraFactory([this, idx, path] {
+                    return makeLiveCamera(
+                        idx, path, *pulseGeneratorService_, mindVisionOverview_.load(),
+                        [this](const camera::mindvision::SdkCapability& sensor) {
+                            std::lock_guard<std::mutex> lock(mindVisionSensorMutex_);
+                            mindVisionSensor_ = {sensor.sensorWidth, sensor.sensorHeight,
+                                                 sensor.minWidth, sensor.minHeight};
+                        });
+                });
+            }
+            return true;
+        } catch (const std::exception& e) {
+            if (errorOut) *errorOut = e.what();
+            return false;
+        }
+    }
+
     bool AppBackend::applyMindVisionConfigFromFile(const std::string &path, std::string *errorOut)
     {
         if (selectedMvCameraIndex_ < 0)
@@ -935,13 +1812,451 @@ namespace backend
         if (ok)
         {
             lastMindVisionConfigPath_ = path;
+            savedMindVisionConfigPath_ = path;
             const int idx = selectedMvCameraIndex_;
             const std::string configPath = lastMindVisionConfigPath_;
-            captureService_->setCameraFactory([idx, configPath]()
-                                              { return std::make_unique<::camera::common::MindVisionCamera>(idx, configPath); });
+            captureService_->setCameraFactory([this, idx, configPath]() {
+                return makeLiveCamera(
+                    idx, configPath, *pulseGeneratorService_, mindVisionOverview_.load(),
+                    [this](const camera::mindvision::SdkCapability& sensor) {
+                        std::lock_guard<std::mutex> lock(mindVisionSensorMutex_);
+                        mindVisionSensor_ = {sensor.sensorWidth, sensor.sensorHeight,
+                                             sensor.minWidth, sensor.minHeight};
+                    });
+            });
             SPDLOG_INFO("MindVision capture factory updated with config: {}", path);
         }
         return ok;
+    }
+
+    void AppBackend::releaseMindVisionOverviewStore() {
+        // Also releases an Aravis Overview: any camera re-selection leaves Overview.
+        const bool aravis = aravisOverview_.load();
+        if (!mindVisionOverview_.load() && !aravis) return;
+        captureService_->stop();
+        processingService_->stopRealtime();
+        const size_t capacity = aravis ? (aravisExperimentCapacity_ ? aravisExperimentCapacity_ : 512)
+                                       : mindVisionExperimentCapacity_;
+        frameStore_ = std::make_shared<playback::FrameStore>(capacity);
+        captureService_->setFrameStore(frameStore_);
+        playbackService_->setFrameStore(frameStore_);
+        mindVisionOverview_.store(false);
+        aravisOverview_.store(false);
+    }
+
+    AppBackend::MindVisionSensor AppBackend::mindVisionSensor() const {
+        std::lock_guard<std::mutex> lock(mindVisionSensorMutex_);
+        return mindVisionSensor_;
+    }
+
+    bool AppBackend::setMindVisionOverview(bool overview, std::string* errorOut) {
+        auto fail = [&](const std::string& message) {
+            if (errorOut) *errorOut = message;
+            return false;
+        };
+        if (!isMindVisionCameraSelected()) return fail("No MindVision camera selected");
+        const auto run = experimentCoordinator_->state();
+        if (isFrameRecording() || run == app::ExperimentRunState::Starting ||
+            run == app::ExperimentRunState::Active || run == app::ExperimentRunState::Stopping)
+            return fail("Stop the experiment or recording before changing camera mode");
+        if (mindVisionOverview_.load() == overview) return true;
+        captureService_->stop();
+        processingService_->stopRealtime();
+        processingService_->setRealtimeEnabled(false);
+        try {
+            // Camera offsets are sensor coordinates. Processing receives the
+            // already-cropped image and uses local coordinates.
+            std::ifstream input(std::filesystem::u8path(lastMindVisionConfigPath_));
+            const auto parsed = camera::mindvision::parseConfig(
+                std::string(std::istreambuf_iterator<char>(input), {}));
+            if (!input || !parsed.ok) return fail("Cannot load MindVision experiment ROI");
+            processingService_->setRealtimeRoi({0, 0, parsed.config.width, parsed.config.height});
+            // A new store prevents stale overview images reaching processing and
+            // bounds full-sensor preview memory. Existing store readers can finish
+            // using their shared ownership; capture is joined before replacement.
+            if (overview) mindVisionExperimentCapacity_ = frameStore_->capacity();
+            auto next = std::make_shared<playback::FrameStore>(
+                overview ? 8 : mindVisionExperimentCapacity_);
+            frameStore_ = std::move(next);
+            captureService_->setFrameStore(frameStore_);
+            playbackService_->setFrameStore(frameStore_);
+            mindVisionOverview_.store(overview);
+            SPDLOG_INFO("MindVision mode staged: {}", overview ? "Overview" : "Experiment");
+            return true;
+        } catch (const std::exception& e) {
+            return fail(e.what());
+        }
+    }
+
+    bool AppBackend::saveMindVisionRoi(int x, int y, int width, int height, std::string* errorOut) {
+        auto fail = [&](const std::string& message) {
+            if (errorOut) *errorOut = message;
+            return false;
+        };
+        const auto run = experimentCoordinator_->state();
+        if (isFrameRecording() || run == app::ExperimentRunState::Starting ||
+            run == app::ExperimentRunState::Active || run == app::ExperimentRunState::Stopping)
+            return fail("Stop the experiment before editing its ROI");
+        if (!isMindVisionCameraSelected() || lastMindVisionConfigPath_.empty())
+            return fail("Select a saved MindVision profile first");
+        const auto sensor = mindVisionSensor();
+        if (x < 0 || y < 0 || width < std::max(1, sensor.minWidth) ||
+            height < std::max(1, sensor.minHeight) || x > 65535 || y > 65535 || width > 65535 ||
+            height > 65535 ||
+            (sensor.sensorWidth > 0 &&
+             (width > sensor.sensorWidth || x > sensor.sensorWidth - width)) ||
+            (sensor.sensorHeight > 0 &&
+             (height > sensor.sensorHeight || y > sensor.sensorHeight - height)))
+            return fail("ROI is outside the camera sensor bounds");
+        try {
+            const auto path = std::filesystem::u8path(lastMindVisionConfigPath_);
+            std::ifstream input(path, std::ios::binary);
+            if (!input) return fail("Cannot read MindVision experiment profile");
+            auto json = nlohmann::json::parse(input);
+            input.close();
+            json["offset_x"] = x;
+            json["offset_y"] = y;
+            json["width"] = width;
+            json["height"] = height;
+            const auto bytes = json.dump(2) + "\n";
+            const auto parsed = camera::mindvision::parseConfig(bytes);
+            if (!parsed.ok) return fail(parsed.error);
+            auto temporary = path;
+            temporary += ".roi-" + std::to_string(Tools::getTimestamp()) + ".tmp";
+            struct Cleanup {
+                std::filesystem::path path;
+                ~Cleanup() {
+                    std::error_code ec;
+                    std::filesystem::remove(path, ec);
+                }
+            } cleanup{temporary};
+            std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+            output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+            output.close();
+            if (!output) return fail("Cannot write temporary MindVision ROI profile");
+#ifdef _WIN32
+            if (!MoveFileExW(temporary.c_str(), path.c_str(),
+                             MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+                return fail("Cannot replace MindVision profile (Windows error " +
+                            std::to_string(GetLastError()) + ")");
+#else
+            std::error_code ec;
+            std::filesystem::rename(temporary, path, ec);
+            if (ec) return fail("Cannot replace MindVision profile: " + ec.message());
+#endif
+            return true;
+        } catch (const std::exception& e) {
+            return fail(e.what());
+        }
+    }
+
+    std::string AppBackend::aravisProfilePath() const
+    {
+        if (const char* env = std::getenv("MIB_ARAVIS_PROFILE"); env && *env) return env;
+        return (std::filesystem::u8path(dataDir_.empty() ? "." : dataDir_) / "config" / "aravis-camera.json")
+            .string();
+    }
+
+    void AppBackend::loadAravisProfile()
+    {
+        AravisProfile profile;
+        // The interim deployment variables seed a profile that does not exist yet.
+        if (const char* env = std::getenv("MIB_ARAVIS_FPS")) profile.experimentFps = std::atof(env);
+        if (const char* env = std::getenv("MIB_ARAVIS_EXPOSURE_US")) profile.experimentExposureUs = std::atof(env);
+        if (const char* env = std::getenv("MIB_ARAVIS_PREVIEW_HZ")) profile.previewRateHz = std::atof(env);
+        if (const char* env = std::getenv("MIB_ARAVIS_REGION")) {
+            if (std::sscanf(env, "%d,%d,%d,%d", &profile.x, &profile.y, &profile.width, &profile.height) == 4)
+                profile.hasRoi = true;
+            else
+                SPDLOG_WARN("AppBackend: ignoring MIB_ARAVIS_REGION='{}' (expected X,Y,W,H)", env);
+        }
+        const auto path = aravisProfilePath();
+        std::ifstream input(std::filesystem::u8path(path));
+        if (input) {
+            try {
+                const auto json = nlohmann::json::parse(input);
+                if (json.contains("roi") && json["roi"].is_object()) {
+                    const auto& roi = json["roi"];
+                    profile.x = roi.value("x", 0);
+                    profile.y = roi.value("y", 0);
+                    profile.width = roi.value("width", 0);
+                    profile.height = roi.value("height", 0);
+                    profile.hasRoi = profile.width > 0 && profile.height > 0;
+                }
+                if (json.contains("experiment")) {
+                    profile.experimentFps = json["experiment"].value("frame_rate_hz", profile.experimentFps);
+                    profile.experimentExposureUs = json["experiment"].value("exposure_us", profile.experimentExposureUs);
+                }
+                if (json.contains("overview")) {
+                    profile.overviewFps = json["overview"].value("frame_rate_hz", profile.overviewFps);
+                    profile.overviewExposureUs = json["overview"].value("exposure_us", profile.overviewExposureUs);
+                }
+                profile.previewRateHz = json.value("preview_rate_hz", profile.previewRateHz);
+            } catch (const std::exception& e) {
+                SPDLOG_WARN("AppBackend: ignoring malformed Aravis profile {}: {}", path, e.what());
+            }
+        }
+        aravisProfile_ = profile;
+        SPDLOG_INFO("AppBackend: Aravis profile {}: window {}, experiment {} Hz / {} us, overview {} Hz / {} us",
+                    path,
+                    profile.hasRoi ? fmt::format("{}x{}+{}+{}", profile.width, profile.height, profile.x, profile.y)
+                                   : std::string("device default"),
+                    profile.experimentFps, profile.experimentExposureUs, profile.overviewFps,
+                    profile.overviewExposureUs);
+        SPDLOG_INFO("AppBackend: Aravis preview rate {} images/s", profile.previewRateHz);
+    }
+
+    bool AppBackend::saveAravisProfile(const AravisProfile& profile, std::string* errorOut)
+    {
+        try {
+            nlohmann::json json;
+            if (profile.hasRoi)
+                json["roi"] = {{"x", profile.x}, {"y", profile.y}, {"width", profile.width}, {"height", profile.height}};
+            json["experiment"] = {{"frame_rate_hz", profile.experimentFps}, {"exposure_us", profile.experimentExposureUs}};
+            json["overview"] = {{"frame_rate_hz", profile.overviewFps}, {"exposure_us", profile.overviewExposureUs}};
+            json["preview_rate_hz"] = profile.previewRateHz;
+            const auto path = std::filesystem::u8path(aravisProfilePath());
+            std::filesystem::create_directories(path.parent_path());
+            auto temporary = path;
+            temporary += ".tmp";
+            {
+                std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+                output << json.dump(2) << "\n";
+                if (!output) {
+                    if (errorOut) *errorOut = "Cannot write the Aravis camera profile";
+                    return false;
+                }
+            }
+            std::error_code ec;
+            std::filesystem::rename(temporary, path, ec);
+            if (ec) {
+                if (errorOut) *errorOut = "Cannot replace the Aravis camera profile: " + ec.message();
+                return false;
+            }
+            return true;
+        } catch (const std::exception& e) {
+            if (errorOut) *errorOut = e.what();
+            return false;
+        }
+    }
+
+    void AppBackend::installAravisFactory()
+    {
+#if MIB_HAS_ARAVIS
+        ::camera::aravis::AravisCameraOptions options;
+        options.deviceId = aravisDeviceId_;
+        options.useFake = aravisFake_;
+        options.enableGigEVision = aravisGigE_;
+        const auto& profile = aravisProfile_;
+        if (profile.previewRateHz > 0) options.previewRateHz = profile.previewRateHz;
+        // PZ7035 line period: forced only for the whole-frame Align overview, otherwise automatic.
+        options.pzHmax = aravisOverview_.load() ? profile.overviewHmax : 0;
+        if (aravisOverview_.load()) {
+            options.fullSensor = true;
+            if (profile.overviewFps > 0) options.frameRateHz = profile.overviewFps;
+            if (profile.overviewExposureUs > 0) options.exposureUs = profile.overviewExposureUs;
+        } else {
+            if (profile.hasRoi)
+                options.region = ::camera::aravis::AravisRegion{profile.x, profile.y, profile.width, profile.height};
+            if (profile.experimentFps > 0) options.frameRateHz = profile.experimentFps;
+            if (profile.experimentExposureUs > 0) options.exposureUs = profile.experimentExposureUs;
+        }
+        options.onSession = [this, overview = aravisOverview_.load()](const ::camera::aravis::AravisSessionInfo& info) {
+            AravisSessionGeometry geometry;
+            geometry.sensorWidth = info.sensorWidth;
+            geometry.sensorHeight = info.sensorHeight;
+            geometry.widthIncrement = info.widthIncrement;
+            geometry.heightIncrement = info.heightIncrement;
+            geometry.offsetXIncrement = info.offsetXIncrement;
+            geometry.offsetYIncrement = info.offsetYIncrement;
+            geometry.json = nlohmann::json{
+                {"overview", overview},
+                {"vendor", info.vendor},
+                {"model", info.model},
+                {"region", {{"x", info.region.x}, {"y", info.region.y}, {"width", info.region.width},
+                            {"height", info.region.height}}},
+                {"frame_rate_hz", info.frameRateHz},
+                {"frame_rate_max_hz", info.frameRateMaxHz},
+                {"frame_rate_clamped", info.frameRateClamped},
+                {"frame_rate_limit", info.frameRateLimitReason},
+                {"exposure_us", info.exposureUs},
+                {"exposure_max_us", info.exposureMaxUs},
+                {"exposure_clamped", info.exposureClamped},
+                {"band_count", info.bandCount},
+                {"delivered_frame_rate_hz", info.deliveredFrameRateHz},
+                {"delivered_limit", info.deliveredFrameRateLimit},
+                {"preview_rate_hz", info.previewRateHz},
+            }.dump();
+            std::lock_guard<std::mutex> lock(aravisSessionMutex_);
+            aravisSession_ = std::move(geometry);
+        };
+        captureService_->setCameraFactory([this, options]() mutable -> std::unique_ptr<::camera::common::ICamera> {
+            // #501 P1: in Run the PZ7035 cell path is on, and a producer AcquisitionStart would
+            // clear the U-Net enable. Whatever asks for a capture start, the producer stays shut.
+            if (instrumentMode() == pz::InstrumentMode::Run) {
+                SPDLOG_WARN("AppBackend: camera start refused in Run mode (switch to Align for the live camera)");
+                return nullptr;
+            }
+            return std::make_unique<::camera::aravis::AravisCamera>(options);
+        });
+#endif
+    }
+
+    bool AppBackend::setAravisOverview(bool overview, std::string* errorOut)
+    {
+        auto fail = [&](const std::string& message) {
+            if (errorOut) *errorOut = message;
+            return false;
+        };
+        const auto run = experimentCoordinator_->state();
+        if (isFrameRecording() || run == app::ExperimentRunState::Starting ||
+            run == app::ExperimentRunState::Active || run == app::ExperimentRunState::Stopping)
+            return fail("Stop the experiment or recording before changing camera mode");
+        if (aravisOverview_.load() == overview) return true;
+        captureService_->stop();
+        processingService_->stopRealtime();
+        if (overview) {
+            // Overview frames must not reach processing (wrong timing, auto-background).
+            aravisRealtimeBeforeOverview_ = processingService_->isRealtimeEnabled();
+            processingService_->setRealtimeEnabled(false);
+            aravisExperimentCapacity_ = frameStore_->capacity();
+        } else {
+            processingService_->setRealtimeEnabled(aravisRealtimeBeforeOverview_);
+        }
+        // A new store keeps full-sensor images out of the experiment store and bounds
+        // overview memory, as for MindVision.
+        frameStore_ = std::make_shared<playback::FrameStore>(
+            overview ? 8 : (aravisExperimentCapacity_ ? aravisExperimentCapacity_ : 512));
+        captureService_->setFrameStore(frameStore_);
+        playbackService_->setFrameStore(frameStore_);
+        aravisOverview_.store(overview);
+        installAravisFactory();
+        SPDLOG_INFO("Aravis camera mode staged: {}", overview ? "Overview (full sensor)" : "Experiment window");
+        return true;
+    }
+
+    bool AppBackend::saveAravisRoi(int x, int y, int width, int height, std::string* errorOut)
+    {
+        auto fail = [&](const std::string& message) {
+            if (errorOut) *errorOut = message;
+            return false;
+        };
+        const auto run = experimentCoordinator_->state();
+        if (isFrameRecording() || run == app::ExperimentRunState::Starting ||
+            run == app::ExperimentRunState::Active || run == app::ExperimentRunState::Stopping)
+            return fail("Stop the experiment before editing its ROI");
+        AravisSessionGeometry session;
+        {
+            std::lock_guard<std::mutex> lock(aravisSessionMutex_);
+            session = aravisSession_;
+        }
+        if (session.sensorWidth <= 0 || session.sensorHeight <= 0)
+            return fail("The sensor size is not known yet; show the full sensor first");
+        if (x < 0 || y < 0 || width < session.widthIncrement || height < session.heightIncrement ||
+            width > session.sensorWidth || height > session.sensorHeight || x > session.sensorWidth - width ||
+            y > session.sensorHeight - height)
+            return fail("ROI is outside the camera sensor bounds");
+        if (width % session.widthIncrement || height % session.heightIncrement ||
+            x % session.offsetXIncrement || y % session.offsetYIncrement)
+            return fail("ROI must be in steps of " + std::to_string(session.offsetXIncrement) + " x " +
+                        std::to_string(session.offsetYIncrement) + " (offset) and " +
+                        std::to_string(session.widthIncrement) + " x " + std::to_string(session.heightIncrement) +
+                        " (size) pixels");
+        AravisProfile next = aravisProfile_;
+        next.hasRoi = true;
+        next.x = x;
+        next.y = y;
+        next.width = width;
+        next.height = height;
+        if (!saveAravisProfile(next, errorOut)) return false;
+        aravisProfile_ = next;
+        // The experiment factory picks the window up; the live Overview keeps the full sensor.
+        installAravisFactory();
+        return true;
+    }
+
+    AppBackend::CameraGeometry AppBackend::cameraGeometry() const
+    {
+        CameraGeometry g;
+        if (isMindVisionCameraSelected()) {
+            g.supported = true;
+            g.camera = "mindvision";
+            g.overview = mindVisionOverview_.load();
+            const auto sensor = mindVisionSensor();
+            g.sensorWidth = sensor.sensorWidth;
+            g.sensorHeight = sensor.sensorHeight;
+            g.minWidth = std::max(1, sensor.minWidth);
+            g.minHeight = std::max(1, sensor.minHeight);
+            try {
+                std::ifstream input(std::filesystem::u8path(lastMindVisionConfigPath_));
+                const auto parsed = camera::mindvision::parseConfig(
+                    std::string(std::istreambuf_iterator<char>(input), {}));
+                if (input && parsed.ok) {
+                    g.roiX = parsed.config.offsetX;
+                    g.roiY = parsed.config.offsetY;
+                    g.roiWidth = parsed.config.width;
+                    g.roiHeight = parsed.config.height;
+                }
+            } catch (...) {
+            }
+            return g;
+        }
+#if MIB_HAS_ARAVIS
+        if (aravisCameraConfigured_) {
+            g.supported = true;
+            g.camera = "aravis";
+            g.overview = aravisOverview_.load();
+            {
+                std::lock_guard<std::mutex> lock(aravisSessionMutex_);
+                g.sensorWidth = aravisSession_.sensorWidth;
+                g.sensorHeight = aravisSession_.sensorHeight;
+                g.widthIncrement = aravisSession_.widthIncrement;
+                g.heightIncrement = aravisSession_.heightIncrement;
+                g.offsetXIncrement = aravisSession_.offsetXIncrement;
+                g.offsetYIncrement = aravisSession_.offsetYIncrement;
+                g.sessionJson = aravisSession_.json;
+            }
+            g.minWidth = g.widthIncrement;
+            g.minHeight = g.heightIncrement;
+            if (aravisProfile_.hasRoi) {
+                g.roiX = aravisProfile_.x;
+                g.roiY = aravisProfile_.y;
+                g.roiWidth = aravisProfile_.width;
+                g.roiHeight = aravisProfile_.height;
+            }
+        }
+#endif
+        return g;
+    }
+
+    bool AppBackend::isCameraOverview() const
+    {
+        return mindVisionOverview_.load() || aravisOverview_.load();
+    }
+
+    bool AppBackend::setCameraOverview(bool overview, std::string* errorOut)
+    {
+        if (instrumentMode() == pz::InstrumentMode::Run) {
+            if (errorOut) *errorOut = "The instrument is in Run mode; switch camera modes with Align/Run";
+            return false;
+        }
+        if (isMindVisionCameraSelected()) return setMindVisionOverview(overview, errorOut);
+#if MIB_HAS_ARAVIS
+        if (aravisCameraConfigured_) return setAravisOverview(overview, errorOut);
+#endif
+        if (!overview) return true; // nothing to leave
+        if (errorOut) *errorOut = "The selected camera has no full-sensor overview";
+        return false;
+    }
+
+    bool AppBackend::saveCameraRoi(int x, int y, int width, int height, std::string* errorOut)
+    {
+        if (isMindVisionCameraSelected()) return saveMindVisionRoi(x, y, width, height, errorOut);
+#if MIB_HAS_ARAVIS
+        if (aravisCameraConfigured_) return saveAravisRoi(x, y, width, height, errorOut);
+#endif
+        if (errorOut) *errorOut = "The selected camera has no saved window";
+        return false;
     }
 
     bool AppBackend::isMindVisionCameraSelected() const
@@ -990,7 +2305,8 @@ namespace backend
         info.requested = requestedCameraSource_;
         info.effective = effectiveCameraSource_;
         info.label = selectedLabel_;
-        info.simulated = effectiveCameraSource_ == "mock";
+        info.simulated = effectiveCameraSource_ == "mock" ||
+                         (effectiveCameraSource_ == "aravis" && aravisFake_);
         info.fallback = !cameraFallbackReason_.empty() ||
                         (requestedCameraSource_ != "unknown" && requestedCameraSource_ != effectiveCameraSource_);
         info.fallbackReason = cameraFallbackReason_;
@@ -1001,6 +2317,8 @@ namespace backend
 
     app::ExperimentCoordinator &AppBackend::experiment() { return *experimentCoordinator_; }
 
+    services::MonitoringDensityService &AppBackend::monitoringDensity() { return *monitoringDensity_; }
+
     services::serialbus::SerialBusManager &AppBackend::serialBus() { return *serialBusManager_; }
 
     bool AppBackend::isCameraConfigured() const
@@ -1008,19 +2326,55 @@ namespace backend
         // Camera is configured if a hardware, MindVision, or mock camera is selected.
         return (selectedIfIndex_ >= 0 && selectedDevIndex_ >= 0)
             || (selectedMvCameraIndex_ >= 0)
-            || mockCameraConfigured_;
+            || mockCameraConfigured_
+            || aravisCameraConfigured_;
     }
 
-    bool AppBackend::startFrameRecording(const std::string& hdf5FilePath) {
-        if (frameRecordingRunning_.load()) {
+    bool AppBackend::startFrameRecording(const std::string& hdf5FilePath, std::string* error) {
+        std::lock_guard<std::mutex> lock(frameRecordingLifecycleMutex_);
+        if (error)
+            *error = "Frame recording start failed: check capture and processing-core readiness";
+        bool started = false;
+        // Use the same transaction mutex as experiment Start, through opening
+        // the file and acquiring recording ownership (not just a state check).
+        if (!experimentCoordinator_ || !experimentCoordinator_->withIdleConfiguration([&] {
+                started = startFrameRecordingLocked(hdf5FilePath, error);
+            })) {
+            if (error) *error = "Stop or reset the experiment before starting raw recording";
+            const auto status =
+                experimentCoordinator_ ? experimentCoordinator_->status() : app::ExperimentStatus{};
+            SPDLOG_WARN("Frame recording refused: experiment state={}, run={}",
+                        app::toString(status.state), status.startGeneration);
+            backend::services::CrashReporter::breadcrumb(
+                "recording", "start refused: experiment is not idle",
+                nlohmann::json{{"operation", "startFrameRecording"},
+                               {"owner", "experiment"},
+                               {"state", app::toString(status.state)},
+                               {"run", status.startGeneration}}
+                    .dump());
+            return false;
+        }
+        if (started && error) error->clear();
+        backend::services::CrashReporter::breadcrumb(
+            "recording", started ? "start admitted: raw writer acquired"
+                                 : "start refused: writer or readiness conflict");
+        return started;
+    }
+
+    bool AppBackend::startFrameRecordingLocked(const std::string& hdf5FilePath,
+                                               std::string* error) {
+        if (frameRecordingOwned_.load()) {
+            if (error) *error = "Stop the existing raw recording before starting another";
             SPDLOG_WARN("Frame recording already in progress");
             return false;
         }
         if (!captureService_ || !captureService_->isRunning()) {
+            if (error) *error = "Start capture before starting raw recording";
             SPDLOG_ERROR("Cannot start frame recording: camera not running");
             return false;
         }
         if (!processingService_ || !processingService_->isProcessingCorePinSatisfied()) {
+            if (error) *error = "Select an available processing core before starting raw recording";
             SPDLOG_ERROR("Cannot start frame recording: selected processing core is unavailable");
             return false;
         }
@@ -1028,8 +2382,11 @@ namespace backend
         // Open HDF5 file for recording
         auto& hdf5 = *hdf5Service_;
         if (hdf5.isFileOpen()) {
-            SPDLOG_WARN("HDF5 file already open, closing before recording");
-            hdf5.closeFile();
+            if (error)
+                *error = "Close the existing HDF5 file before starting raw recording; its writer "
+                         "will not be replaced";
+            SPDLOG_WARN("Frame recording refused: shared HDF5 file already open");
+            return false;
         }
 
         std::string path = hdf5FilePath;
@@ -1039,10 +2396,13 @@ namespace backend
         }
 
         if (!hdf5.openFile(path)) {
+            if (error)
+                *error = "Cannot open the raw recording output; choose a writable destination";
             SPDLOG_ERROR("Failed to open HDF5 file for recording: {}", path);
             return false;
         }
         if (!hdf5.initializeRecordingDatasets()) {
+            if (error) *error = "Cannot initialize raw recording datasets";
             hdf5.closeFile();
             return false;
         }
@@ -1059,6 +2419,7 @@ namespace backend
                 captureService_->activeDeliveryMode() == ::camera::common::FrameDeliveryMode::LatestFrame);
             lastRecordingAccounting_ = backend::recording::RecordingAccountingSnapshot{};
         }
+        frameRecordingOwned_.store(true);
         frameRecordingRunning_.store(true);
         {
             auto& m = backend::diagnostics::CrashStateMirror::instance().recorder;
@@ -1066,8 +2427,7 @@ namespace backend
             m.framesWritten.store(0);
             m.framesFiltered.store(0);
         }
-        backend::services::CrashReporter::breadcrumb("recording",
-            "frame recording started", path);
+        backend::services::CrashReporter::breadcrumb("recording", "frame recording started");
 
         // Launch recording thread
         frameRecordingThread_ = std::make_unique<std::thread>(
@@ -1317,6 +2677,7 @@ namespace backend
     }
 
     void AppBackend::stopFrameRecording() {
+        std::lock_guard<std::mutex> lock(frameRecordingLifecycleMutex_);
         if (!frameRecordingRunning_.load() &&
             (!frameRecordingThread_ || !frameRecordingThread_->joinable())) return;
 
@@ -1325,6 +2686,7 @@ namespace backend
             frameRecordingThread_->join();
         }
         frameRecordingThread_.reset();
+        frameRecordingOwned_.store(false);
         {
             auto& m = backend::diagnostics::CrashStateMirror::instance().recorder;
             m.recording.store(false);
@@ -1336,7 +2698,7 @@ namespace backend
     }
 
     bool AppBackend::isFrameRecording() const {
-        return frameRecordingRunning_.load();
+        return frameRecordingOwned_.load();
     }
 
     uint64_t AppBackend::frameRecordingCount() const {
@@ -1405,8 +2767,29 @@ namespace backend
     }
 
     void AppBackend::setLastConfigJson(const std::string& json) {
-        std::lock_guard<std::mutex> lk(configJsonMutex_);
-        lastConfigJson_ = json;
+        {
+            std::lock_guard<std::mutex> lk(configJsonMutex_);
+            lastConfigJson_ = json;
+        }
+        // Optional `rf_generator` block: {"enabled":true,"transport":"usb"|"lan",
+        // "resource":"auto"|"/dev/usbtmc0"|"USB0::...::INSTR"|"host[:port]",
+        // "timeout_ms":1000}. Absent or malformed = link disabled (logged).
+        if (!rfGeneratorService_) return;
+        services::RfGeneratorService::Config cfg;
+        try {
+            const auto parsed = nlohmann::json::parse(json, nullptr, /*allow_exceptions=*/false);
+            if (parsed.is_object() && parsed.contains("rf_generator") && parsed["rf_generator"].is_object()) {
+                const auto& rf = parsed["rf_generator"];
+                cfg.enabled = rf.value("enabled", false);
+                cfg.transport = rf.value("transport", std::string("usb"));
+                cfg.resource = rf.value("resource", std::string("auto"));
+                cfg.timeoutMs = rf.value("timeout_ms", 1000);
+            }
+        } catch (const std::exception& ex) {
+            SPDLOG_WARN("AppBackend: rf_generator config ignored: {}", ex.what());
+            cfg = {};
+        }
+        rfGeneratorService_->setConfig(cfg);
     }
 
     std::string AppBackend::getLastConfigJson() const {

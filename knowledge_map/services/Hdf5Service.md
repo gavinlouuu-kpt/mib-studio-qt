@@ -72,6 +72,24 @@ a macro). Unit-tested by `tests/backend/hdf_write_queue_test.cpp`.
   without batch dim).
 - **Multi-image series** (`multi_image_enabled` in ProcessingConfig):
   `getSeriesImageInfo`, `readSeriesImagesByIndex` — 4D `(N, seriesCount, H, W)`.
+  `readSeriesMeta(index, info, &contiguous)` returns the per-member identity
+  row (`/valid_frames/series_meta`, written in lock-step with
+  `series_images` so row i is the same series in both; members a partial
+  series never collected read back as `kAbsentSeriesFrame`) and the
+  `series_contiguous` flag; false on files that predate the datasets. The
+  append path takes the row width from the on-disk extent, never from the
+  batch — a batch whose first series is partial must not shrink the dataset
+  (`H5Dset_extent` would truncate every earlier row).
+- **Sort trigger events**: `appendTriggerEvents(records)` creates or extends
+  `/trigger_events` (compound, one row per `TriggerEventRecord`; the extent
+  is read from disk so a reopened file appends correctly);
+  `readTriggerEvents(out)` reads every row (false when absent).
+  `writeRfGeneratorProvenance` / `readRfGeneratorProvenance` — the sort
+  generator's readback as `rf_generator_*` attributes on the run-info group
+  (needs `writeExperimentInfo` first; rewrites replace). Guards:
+  `recording.trigger_alignment_roundtrip` (round-trip + fault injection:
+  closed/read-only writes fail, pre-feature files read false with cleared
+  outputs, out-of-range rows rejected).
 - **Frame recording mode** (raw frames, no contours):
   `initializeRecordingDatasets`, `appendRecordingFrames`, `writeRecordingInfo`
   with `RecordingFrameMeta` (index, timestampNs, width, height).
@@ -112,6 +130,28 @@ that predates provenance. The writer records the bundled identity when no
 explicit identity is supplied, preserving deterministic metadata for older
 call sites.
 
+`processing_contract_version` is the **executed** contract. A shipped core
+runs only its own contract (ADR 0007), so its identity is recorded as-is. A
+research build (Python wheel, `bundledProcessingContract() == 0`, source
+`bundled`) records the config's contract instead.
+
+`/experiment_info` also records the full Contract-2 era config (T0.2):
+`processing_config_processing_contract_version` (the profile's declared
+contract), `processing_config_difference_threshold`, the ring, area-ratio and
+Laplacian gates (`processing_config_enable_*`, `*_min`/`*_max`), and the
+channel band (`processing_config_auto_roi_*`, `processing_config_channel_band_y/h`,
+frame coordinates). Recording callers pass
+`ProcessingService::getEffectiveProcessingConfig()`, which adds the detected
+band. The write is mandatory, like core provenance. `readRecordedProcessingConfig`
+reads every `processing_config_*` attribute back into a `ProcessingConfig`;
+attributes an older file lacks keep the caller's values.
+
+`readRecordedProcessingContract` is the narrow export-reader path. It checks
+the root, `/experiment_info`, `/recording_info`, and `/run_provenance` groups,
+accepts only scalar integer values 1–3, and requires all present copies to
+agree. Arrays, non-integers, unsupported values, and conflicts return false;
+when no contract metadata exists it returns Contract 1 for legacy files.
+
 ## Run accounting (issue #367)
 
 `writeRunAccounting(RecordingAccountingSnapshot)` / `readRunAccounting(...)`
@@ -130,12 +170,28 @@ persist and read the versioned `accounting_*` attributes described in
 debug logging can prove HDF5 handles return to baseline after repeated
 jobs ([[HdfExportService]] stress test). HDF5 ids never leave this class.
 
+## KDE core contour records
+
+`writeKdeLiveJson` / `readKdeLiveJson` (`/monitoring @kde_live_json`) and
+`writeKdeAnalysisJson` / `readKdeAnalysisJson` (`/analysis @kde_core_json`)
+store the frontend's KDE core record verbatim (plus
+`kde_core_schema_version` = 1 on the group). Writers refuse with a warning
+when no file is open or it was opened read-only (`loadFile`); readers return
+false for an absent record or a non-string attribute. Parsing and schema
+checks belong to the codec (`backend/processing/KdeCoreRecord.h`), never to this
+class. `openFileForUpdate(path)` opens an existing, finished file read-write
+for such post-run metadata (never creates or truncates, no dataset appends;
+refuses a missing or read-only file). Guards: `recording.kde_core_roundtrip`,
+`recording.kde_core_fault`, `recording.kde_full_run_core`.
+See [[../data-model/HDF5-Storage]].
+
 ## Run configuration snapshot (issue #369)
 
 `writeRunSnapshotJson(runJson, readinessJson)` / `readRunSnapshotJson(...)`
 store the frozen `RunConfigurationSnapshot` and the readiness evaluation it
 was started from as variable-length UTF-8 string attributes
-(`run_snapshot_json`, `readiness_json`, `run_snapshot_schema_version` = 1)
+(`run_snapshot_json`, `readiness_json`, `run_snapshot_schema_version` = 2;
+v2 adds the #398 `method` block)
 on the `/run_provenance` group. [[../architecture/ExperimentCoordinator]]
 writes them immediately after `initializeDatasets()` and before the run may
 enter Running; a failure rolls the Start back and removes the file.
@@ -205,3 +261,42 @@ the library under a running thread. Guard: `recording.hdf5_exit_teardown`
 property, it did not reproduce the crash). Evidence:
 `docs/evidence/2026-09-08-crash-dump-review.md`.
 
+
+
+## Metadata presence for transactional exports
+
+`metadataDatasetPresent(valid)` distinguishes absent lazily-created valid/invalid
+metadata from HDF5 query errors. It returns nullopt on unavailable/error, false
+for an absent group/dataset, true for a present link (which must still decode).
+The shared exporter skips absent groups, but does not suppress malformed metadata
+read failures. A valid-only facade fixture caught this regression before the fix.
+
+## Experiment totals (#544)
+
+The shared coordinator writes run-wide successful valid/invalid writes to
+`experiment_info` totals after draining both flushes. Qt and React use this same
+finalization. Older files may contain only stop-time remainder counts. Recompute
+the saved totals from the first dimension of `/valid_frames/metadata` and
+`/invalid_frames/metadata` (missing dataset means zero); for image-bearing runs
+they also equal the first dimension of each class's `images` dataset. Metadata
+also covers imageless PL runs. These counts recover saved frames, not sampled-out
+invalid frames, buffer policy drops, or failed writes; persisted `accounting_*`
+attributes retain those distinctions when present. No migration is performed.
+
+## Image chunk layout (#226)
+
+New image datasets use one frame per chunk (mono and color). Series datasets
+use `{1, 1, H, W}`: one record and one series member per chunk, matching each
+write and avoiding repeated whole-chunk read-modify-write. Dataset dimensions
+and reader APIs are unchanged; existing files keep their original layouts.
+`recording.multi_image_series_roundtrip` inspects chunk properties and verifies
+three append batches, including non-contiguous series inputs.
+
+## Recording queue boundaries (#403)
+
+`HdfWriteQueue` rejects submits after Stop, serializes concurrent joins, and
+contains exceptions from error observers while retaining the original error.
+`backend.hdf_write_queue_fault` exercises throwing observers and simultaneous
+stops; `e2e.recording_403_*` verifies byte-pressure flushing and partial-series
+Stop, no-more-frames, and restart with HDF5 readback. Fatal run accounting is
+persisted as failed before closure (aligned with #589).

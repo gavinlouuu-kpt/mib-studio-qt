@@ -56,7 +56,12 @@ not claim `timestampsHostComparable`.
 
 - Mock camera **simulates** trigger output: `setTriggerOutput` flips an
   atomic line level and counts rising edges (`triggerPulseCount()`), always
-  returning true, so [[../services/TriggerService]] fires real pulses (and
+  returning true, and **emulates a loopback**: every level change is
+  reported synchronously through `setLineEventCallback` as a `LineEvent`
+  stamped in the mock's frame clock (steady_clock ns, the same clock
+  `grabFrame` uses) plus `Tools::getTimestamp`, as if the output were wired
+  into a timestamped input — so the pulse↔frame alignment path in
+  [[../services/TriggerService]] runs headless, so [[../services/TriggerService]] fires real pulses (and
   [[../diagnostics/PipelineTimingRecorder]] records them) in headless
   pipeline dry-runs — see `tests/tools/mock_pipeline_timing_run.cpp` and
   `docs/howto/pipeline-latency-diagnosis.md`. No electrical output exists,
@@ -75,3 +80,12 @@ not claim `timestampsHostComparable`.
   `directory_iterator` — the folder can vanish between the `exists()` check
   and iteration, and the throwing overload would propagate
   `std::filesystem_error` out of `start()`.
+
+## Getting frames (2026-09-21)
+
+Real 512x96 stream frames come from the Hub asset `512x96stream-mock-frames`
+(`env/assets.json`): `python3 scripts/provision-assets.py --asset
+512x96stream-mock-frames --count 1000` materialises them under
+`build/vendor/assets/datasets/512x96stream-mock-frames/` for
+`MIB_MOCK_CAMERA_DIR`. `scripts/fetch_hf_512x96stream.py` was removed. See
+[[../build-and-run/Assets]].

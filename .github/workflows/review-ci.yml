@@ -1,0 +1,175 @@
+name: YOFO Review CI
+
+# YOFO Review: the review-only React + Tauri product built from the same
+# desktop/ tree as MIB Studio (plan docs/exec-plans/active/
+# 2026-10-01-standalone-review-app.md, ADR 0014). This Linux lane proves the
+# product configuration: the review page builds, the review-only Tauri binary
+# (`--no-default-features --features review-only`, `tauri.review.conf.json`) links and boots under
+# Xvfb, and the version stamp agrees with cmake/MIBVersion.cmake.
+#
+# The macOS (PR 5) and Windows (PR 6) lanes that build the shipped bundles
+# live in the reusable review-bundles.yml (also used by review-release.yml).
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [develop, "plan/**", "review/**"]
+    paths:
+      - "desktop/**"
+      - "crates/mib-bridge/**"
+      - "include/backend/**"
+      - "src/backend/**"
+      - "cmake/**"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "scripts/gen_bridge_contract.py"
+      - "scripts/release/stamp-tauri-version.py"
+      - "conanfile.py"
+      - "conan/profiles/**"
+      - "tools/gen_review_link_manifest.py"
+      - "tools/test_gen_review_link_manifest.py"
+      - "tools/review_link_probe/**"
+      - ".github/workflows/review-ci.yml"
+      - ".github/workflows/review-bundles.yml"
+  pull_request:
+    branches: [develop]
+    paths:
+      - "desktop/**"
+      - "crates/mib-bridge/**"
+      - "include/backend/**"
+      - "src/backend/**"
+      - "cmake/**"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "scripts/gen_bridge_contract.py"
+      - "scripts/release/stamp-tauri-version.py"
+      - "conanfile.py"
+      - "conan/profiles/**"
+      - "tools/gen_review_link_manifest.py"
+      - "tools/test_gen_review_link_manifest.py"
+      - "tools/review_link_probe/**"
+      - ".github/workflows/review-ci.yml"
+      - ".github/workflows/review-bundles.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  review-linux:
+    name: YOFO Review (Linux, headless)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          # Version stamping reads the newest v* tag reachable from HEAD.
+          fetch-depth: 0
+
+      - name: Set up Linux build environment
+        uses: ./.github/actions/setup-linux-env
+        with:
+          sections: base,backend,desktop-shell
+          conan: "false"
+          mindvision: "false"
+          assets: none
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Version stamp agrees with cmake/MIBVersion.cmake
+        shell: bash
+        run: python3 scripts/release/stamp-tauri-version.py --check
+
+      - name: Build Qt-free backend archives
+        shell: bash
+        run: |
+          set -o pipefail
+          cmake --preset linux-backend-only -DMIB_ENABLE_MINDVISION=OFF
+          cmake --build --preset linux-backend-only-build \
+            --target mib_backend mib_review_core mib_processing
+
+      - name: Check bridge contract (drift gate, ADR 0004)
+        shell: bash
+        run: python3 scripts/gen_bridge_contract.py --check
+
+      - name: Review link-manifest generator tests (macOS / Windows link lines)
+        shell: bash
+        run: python3 tools/test_gen_review_link_manifest.py
+
+      - name: Build both pages (index.html = MIB Studio, review.html = YOFO Review)
+        shell: bash
+        working-directory: desktop
+        run: |
+          set -o pipefail
+          npm install
+          npm run build
+          test -f dist/review.html
+
+      - name: Frontend unit tests
+        shell: bash
+        working-directory: desktop
+        run: |
+          set -o pipefail
+          npm test
+
+      # `tauri build --config tauri.review.conf.json` hands the overlay to
+      # tauri-build through TAURI_CONFIG; setting it directly lets plain cargo
+      # embed the merged YOFO Review context (window → review.html, product
+      # name, identifier) without the bundler, which this Linux lane does not
+      # run.
+      - name: Build the review-only Tauri binary (YOFO Review context)
+        shell: bash
+        working-directory: desktop/src-tauri
+        env:
+          MIB_BRIDGE_NO_CMAKE: "1"
+          LD_LIBRARY_PATH: /usr/lib/x86_64-linux-gnu/hdf5/serial
+          MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL: "file:///nonexistent/mib-lut-manifest.json"
+        run: |
+          set -o pipefail
+          # YOFO Review is the binary without the default `studio` feature (ADR 0014).
+          TAURI_CONFIG="$(cat tauri.review.conf.json)" cargo build --no-default-features --features review-only
+          TAURI_CONFIG="$(cat tauri.review.conf.json)" cargo test --no-fail-fast --no-default-features --features review-only
+          TAURI_CONFIG="$(cat tauri.review.conf.json)" cargo clippy --all-targets --no-default-features --features review-only -- -D warnings
+          # The merged context must name the review product, not MIB Studio.
+          # grep without -q reads the whole stream: under pipefail `| grep -q`
+          # would SIGPIPE the writer at the first match and fail (or, inside
+          # `if`, silently pass) the check.
+          strings target/debug/mib-studio-desktop | grep "bio.yofo.review" > /dev/null
+          # ADR 0014: the review product links no AppBackend (cameras, serial,
+          # SQLite, Sentry) — only the review bridge over ReviewSession.
+          if nm -C target/debug/mib-studio-desktop | grep "backend::AppBackend" > /dev/null; then
+            echo "review-only binary links AppBackend" >&2; exit 1
+          fi
+          nm -C target/debug/mib-studio-desktop | grep "backend::review::ReviewSession" > /dev/null
+
+      - name: Review bridge tests (review-only feature, no AppBackend)
+        shell: bash
+        working-directory: crates/mib-bridge
+        env:
+          MIB_BRIDGE_NO_CMAKE: "1"
+          LD_LIBRARY_PATH: /usr/lib/x86_64-linux-gnu/hdf5/serial
+        run: |
+          set -o pipefail
+          cargo test --no-fail-fast --features review-only
+
+      - name: Smoke-launch YOFO Review under Xvfb
+        shell: bash
+        run: |
+          set -o pipefail
+          ./desktop/scripts/xvfb-smoke.sh \
+            desktop/src-tauri/target/debug/mib-studio-desktop 10
+
+  bundles:
+    name: Bundles
+    uses: ./.github/workflows/review-bundles.yml

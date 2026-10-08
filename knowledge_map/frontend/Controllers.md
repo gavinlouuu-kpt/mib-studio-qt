@@ -67,3 +67,10 @@ machine and the HDF5 file path for the current run.
   `startExperiment`/`endExperiment` — the controller calls into the backend.
 - HDF5 flushes at stop-time are coordinated through
   [[../services/Hdf5Service]] and `ProcessingService::flushBufferedFrames`.
+
+## Coordinated Stop result (#413)
+
+CameraController reports `CaptureFailureKind::ShutdownFailed` as a failed
+Stop command, retaining the actionable generator/LED message rather than
+saying the camera/rig stopped successfully. Startup still uses the existing
+asynchronous CaptureService lifecycle, not a second UI-side rig controller.

@@ -9,6 +9,7 @@
     {
       "name": "linux-release",
       "displayName": "Linux Release (Conan, no Windows SDKs)",
+      "description": "Conan toolchain: conan install . -pr conan/profiles/linux-gcc13 --output-folder=build/linux; apt sections base,backend,frontend (env/apt-packages.txt).",
       "generator": "Unix Makefiles",
       "binaryDir": "${sourceDir}/build/linux",
       "cacheVariables": {
@@ -28,11 +29,11 @@
     {
       "name": "linux-system-release",
       "displayName": "Linux Release (system packages, no Windows SDKs)",
+      "description": "System Qt/OpenCV/HDF5 from apt sections base,backend,frontend (scripts/bootstrap.sh --sections base,backend,frontend); Ninja; MindVision from build/vendor.",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/linux-system",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_IGNORE_PREFIX_PATH": "/home/gavin/miniconda3;/home/linuxbrew/.linuxbrew",
         "MIB_ENABLE_HARDWARE_SDKS": "OFF",
         "MIB_ENABLE_MINDVISION": "ON",
         "MIB_ENABLE_WINDOWS_PACKAGING": "OFF",
@@ -47,11 +48,11 @@
     {
       "name": "linux-backend-only",
       "displayName": "Linux Backend-only (system packages)",
+      "description": "Backend libs + CTest, no Qt SDK: apt sections base,backend (scripts/bootstrap.sh). What backend-ci, the sanitizer/soak lanes and the devcontainer use.",
       "generator": "Unix Makefiles",
       "binaryDir": "${sourceDir}/build/linux-backend",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_IGNORE_PREFIX_PATH": "/home/gavin/miniconda3;/home/linuxbrew/.linuxbrew",
         "MIB_BUILD_BACKEND_ONLY": "ON",
         "BUILD_TESTING": "ON",
         "MIB_ENABLE_HARDWARE_SDKS": "OFF",
@@ -66,8 +67,57 @@
       }
     },
     {
+      "name": "linux-armv7-yocto",
+      "displayName": "Linux ARMv7 backend (YOFO Yocto SDK)",
+      "description": "Backend + CTest runner cross-compiled for the PZ7035 PS (YOFO Studio impl spec S6). Source the SDK's environment-setup-* first. Aravis on, MIB_PL_SCIENCE on (the PL does the science, the host pipeline is refused); Sentry and MindVision off; HDF5 from the SDK (hdf5-dev).",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build/linux-armv7-yocto",
+      "toolchainFile": "${sourceDir}/cmake/toolchains/yocto-armv7.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "MIB_BUILD_BACKEND_ONLY": "ON",
+        "BUILD_TESTING": "ON",
+        "MIB_ENABLE_HARDWARE_SDKS": "OFF",
+        "MIB_ENABLE_MINDVISION": "OFF",
+        "MIB_ENABLE_ARAVIS": "ON",
+        "MIB_ENABLE_WINDOWS_PACKAGING": "OFF",
+        "MIB_USE_SENTRY": "OFF",
+        "MIB_PL_SCIENCE": "ON"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "linux-armhf-smoke",
+      "displayName": "Linux ARMv7 compile smoke (distro armhf toolchain)",
+      "description": "CI compile smoke for the PZ7035 PS code (ADR 0011): mib_processing + mib_backend with MIB_PL_SCIENCE, cross-compiled with gcc-arm-linux-gnueabihf and the armhf apt libraries (apt section armhf-cross; run scripts/ci/enable-armhf-apt.sh first). Aravis and tests off. Not the shipped target: that is linux-armv7-yocto.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-armhf-smoke",
+      "toolchainFile": "${sourceDir}/cmake/toolchains/linux-armhf.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "MIB_BUILD_BACKEND_ONLY": "ON",
+        "BUILD_TESTING": "OFF",
+        "MIB_ENABLE_HARDWARE_SDKS": "OFF",
+        "MIB_ENABLE_MINDVISION": "OFF",
+        "MIB_ENABLE_ARAVIS": "OFF",
+        "MIB_ENABLE_WINDOWS_PACKAGING": "OFF",
+        "MIB_USE_SENTRY": "OFF",
+        "MIB_PL_SCIENCE": "ON"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
       "name": "linux-sentry-release",
       "displayName": "Linux Release (Conan, sentry-native)",
+      "description": "linux-release with its own binary dir and Conan toolchain under build/linux-sentry (sentry-native variant).",
       "inherits": "linux-release",
       "binaryDir": "${sourceDir}/build/linux-sentry",
       "cacheVariables": {
@@ -78,6 +128,7 @@
     {
       "name": "windows-default",
       "displayName": "Windows VS2022 x64 (Conan)",
+      "description": "VS 2022 generator. After scripts/bootstrap.ps1 (assets, SDK) and conan install . -of build -pr conan/profiles/windows-msvc194.",
       "generator": "Visual Studio 17 2022",
       "architecture": "x64",
       "binaryDir": "${sourceDir}/build",
@@ -90,7 +141,7 @@
     {
       "name": "windows-ninja",
       "displayName": "Windows Ninja x64 Release (Conan, MSVC dev shell)",
-      "description": "Single-config Ninja build. Run from a VS 2022 x64 developer shell (vcvars64) after: conan install . -of build-ninja --build=missing -s build_type=Release -c tools.cmake.cmaketoolchain:generator=Ninja",
+      "description": "Single-config Ninja build in build-ninja/. From a VS 2022 x64 developer shell after: conan install . -of build-ninja --build=missing -s build_type=Release -pr conan/profiles/windows-msvc194-ninja (or scripts/bootstrap.ps1 -Generator Ninja).",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build-ninja",
       "condition": {
@@ -108,11 +159,67 @@
     {
       "name": "windows-ninja-ci",
       "displayName": "Windows Ninja x64 Release in build/ (CI)",
-      "description": "windows-ninja with the CI layout: binary dir build/, toolchain from `conan install . -of build ... -c tools.cmake.cmaketoolchain:generator=Ninja`. Executables land in build/Release like the VS tree.",
+      "description": "windows-ninja with the CI layout: binary dir build/, toolchain from conan install . -of build -pr conan/profiles/windows-msvc194-ninja. Executables land in build/Release like the VS tree.",
       "inherits": "windows-ninja",
       "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
         "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/conan_toolchain.cmake"
+      }
+    },
+    {
+      "name": "macos-review-core",
+      "displayName": "macOS review core (YOFO Review, static Conan deps)",
+      "description": "mib_review_core + mib_processing + link probe for the review-only Tauri build, in build/review-core/. After: conan install . -of build/review-core --build=missing -o \"&:review_core=True\" -pr:h conan/profiles/macos-appleclang-arm64 -pr:b conan/profiles/macos-appleclang-arm64 (docs/howto/macos-build.md).",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/review-core",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_POLICY_DEFAULT_CMP0091": "NEW",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/review-core/conan_toolchain.cmake",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "MIB_BUILD_BACKEND_ONLY": "ON",
+        "MIB_BUILD_PROCESSING_ONLY": "ON",
+        "MIB_BUILD_REVIEW_LINK_PROBE": "ON",
+        "BUILD_TESTING": "OFF",
+        "MIB_ENABLE_MINDVISION": "OFF",
+        "MIB_ENABLE_HARDWARE_SDKS": "OFF",
+        "MIB_ENABLE_COREMOR": "OFF",
+        "MIB_ENABLE_WINDOWS_PACKAGING": "OFF",
+        "MIB_USE_SENTRY": "OFF",
+        "MIB_BUILD_OEABT_TOOLS": "OFF"
+      }
+    },
+    {
+      "name": "windows-review-core",
+      "displayName": "Windows review core (YOFO Review, static Conan deps)",
+      "description": "mib_review_core + mib_processing + link probe for the review-only Tauri build, in build/review-core/. From a VS 2022 x64 developer shell after: conan install . -of build/review-core --build=missing -o \"&:review_core=True\" -pr:h conan/profiles/windows-msvc194-ninja -pr:b conan/profiles/windows-msvc194-ninja (docs/howto/build-installer.md).",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/review-core",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_POLICY_DEFAULT_CMP0091": "NEW",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/build/review-core/conan_toolchain.cmake",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "MIB_BUILD_BACKEND_ONLY": "ON",
+        "MIB_BUILD_PROCESSING_ONLY": "ON",
+        "MIB_BUILD_REVIEW_LINK_PROBE": "ON",
+        "BUILD_TESTING": "OFF",
+        "MIB_ENABLE_MINDVISION": "OFF",
+        "MIB_ENABLE_HARDWARE_SDKS": "OFF",
+        "MIB_ENABLE_COREMOR": "OFF",
+        "MIB_ENABLE_WINDOWS_PACKAGING": "OFF",
+        "MIB_USE_SENTRY": "OFF",
+        "MIB_BUILD_OEABT_TOOLS": "OFF"
       }
     }
   ],
@@ -131,6 +238,17 @@
       "name": "linux-backend-only-build",
       "displayName": "Build Linux Backend-only",
       "configurePreset": "linux-backend-only"
+    },
+    {
+      "name": "linux-armv7-yocto-build",
+      "displayName": "Build Linux ARMv7 backend",
+      "configurePreset": "linux-armv7-yocto"
+    },
+    {
+      "name": "linux-armhf-smoke-build",
+      "displayName": "Build Linux ARMv7 compile smoke",
+      "configurePreset": "linux-armhf-smoke",
+      "targets": ["mib_processing", "mib_backend"]
     },
     {
       "name": "linux-sentry-release-build",
@@ -156,6 +274,26 @@
     {
       "name": "windows-ninja-ci-build",
       "configurePreset": "windows-ninja-ci"
+    },
+    {
+      "name": "macos-review-core-build",
+      "displayName": "Build macos-review-core",
+      "configurePreset": "macos-review-core",
+      "targets": [
+        "mib_review_core",
+        "mib_processing",
+        "mib_review_link_probe"
+      ]
+    },
+    {
+      "name": "windows-review-core-build",
+      "displayName": "Build windows-review-core",
+      "configurePreset": "windows-review-core",
+      "targets": [
+        "mib_review_core",
+        "mib_processing",
+        "mib_review_link_probe"
+      ]
     }
   ],
   "testPresets": [
@@ -168,6 +306,11 @@
       },
       "execution": {
         "timeout": 30
+      },
+      "filter": {
+        "exclude": {
+          "label": "network"
+        }
       }
     },
     {
@@ -179,6 +322,11 @@
       },
       "execution": {
         "timeout": 30
+      },
+      "filter": {
+        "exclude": {
+          "label": "network"
+        }
       }
     },
     {
@@ -190,6 +338,11 @@
       },
       "execution": {
         "timeout": 30
+      },
+      "filter": {
+        "exclude": {
+          "label": "network"
+        }
       }
     },
     {
@@ -304,6 +457,19 @@
       },
       "name": "windows-ninja-hardware-test",
       "configurePreset": "windows-ninja"
+    },
+    {
+      "name": "linux-network-test",
+      "displayName": "Test Linux Backend-only: network-labelled tests only (Hub datasets)",
+      "configurePreset": "linux-backend-only",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "label": "network"
+        }
+      }
     }
   ]
 }

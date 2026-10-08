@@ -4,7 +4,10 @@
 > brightness) + scatter plots (deformability-vs-area, etc.).
 
 **Source:** `src/frontend/tabs/ExperimentMonitoringTab.cpp`,
-`include/frontend/tabs/ExperimentMonitoringTab.h`
+`include/frontend/tabs/ExperimentMonitoringTab.h`,
+`include/frontend/tabs/MonitoringRoiCrop.h`; the KDE is computed by
+[[../services/MonitoringDensityService]] (kernel + colour ramp in
+`include/backend/processing/MonitoringDensity.h`)
 **Related:** [[../services/ProcessingService]] (monitoring rings),
 [[../frontend/System-Utilities]] (`ZoomableChartView`),
 [[Dialogs]] (`MonitoringSettingsDialog`)
@@ -15,7 +18,10 @@
   `getMonitoringInvalidFrames()` on a timer (ring buffer of 1000 frames
   each).
 - Render via `QtCharts`: `QScatterSeries`, `QHistogramSeries`,
-  `QBarSeries`, etc. `frontend::ZoomableChartView` adds scroll/zoom.
+  `QBarSeries`, etc. `frontend::ZoomableChartView` adds scroll/zoom. Since
+  issue #466 its closed-hand cursor appears once the drag passes
+  `startDragDistance()` rather than on press, and middle-drag also pans;
+  the tab ignores the new click signals.
 - Live totals: valid count, invalid count, algo FPS, valid FPS.
 - `showEvent` / `hideEvent` pause rendering when the tab isn't visible **and**
   gate the backend accumulation: `showEvent` calls
@@ -36,6 +42,123 @@
     `hideEvent`. Intended for oscilloscope/sorter bring-up without
     needing live target-group classifications. See
     [[../services/TriggerService]].
+
+## Chart snapshots
+
+The chart snapshots stored in each experiment file at Stop and the chart
+TIFF export grab the `QChartView`, convert to `Format_RGB32` (B,G,R,A in
+memory) and hand the bytes to OpenCV as **BGRA** (`COLOR_BGRA2BGR`). Until
+2026-10-01 they were read as RGBA, so every stored/exported chart had red
+and blue swapped (blue points orange); the Review tab's export had the
+same bug, found by `integration.review_scatter_e2e`. Files written before
+the fix carry swapped snapshots; the metrics are unaffected.
+
+## Scatter density (KDE) colouring
+
+The **Density (KDE)** checkbox in the top row (`kdeToggleCheck`) colours every
+valid point of the Deformability-vs-Area scatter by its normalised local
+population density, the pseudocolour dot plot used in flow / deformability
+cytometry, so an operator can see where the population sits even when
+markers overlap.
+
+- **Kernel** — `include/backend/processing/MonitoringDensity.h` (Qt-free,
+  header-only): Gaussian KDE evaluated
+  at every sample with a **per-axis Silverman bandwidth** (`sigma_axis ·
+  n^(-1/6)` × user factor), normalised so the densest sample is 1. Per-axis
+  is not optional: area spans hundreds of µm² while deformability spans
+  0..1; one isotropic bandwidth in raw units merges populations that differ
+  only in deformability (the old, never-called `computeKDE` grid did exactly
+  that and used a 1-D normalisation — it was removed). `densityRampColor(t)`
+  is the sequential single-hue ramp (blue, light → dark; the light end still
+  clears 2:1 on the white chart). Guard: `processing.monitoring_density`
+  (invariants, per-axis separation with an isotropic control, degenerate
+  and non-finite input, order invariance, ratio-gated quadratic cost).
+- **Computed in the backend, never on the GUI thread** —
+  [[../services/MonitoringDensityService]] owns the estimate: a
+  lowest-priority worker (SCHED_IDLE / THREAD_PRIORITY_LOWEST) over the
+  processing monitoring ring, skipped while the pipeline drops frames or
+  the batch queue backs up, unchanged input skipped, next wake ≥ 20× the
+  last compute. The tab only pushes its settings and scatter axes
+  (`pushKdeSettings()`: enabled = toggle on **and** tab visible, interval,
+  factor, core fraction, axis range) and polls `generation()` every
+  `kKdePollMs` (100 ms, `kdeTimer_`); a new result is adopted on the GUI
+  thread (`pollKdeResult()`: density per frame index, contours, tooltip
+  numbers). The Qt worker job (`QtConcurrent` + `QFutureWatcher`) of the
+  first version is gone. 1000 cells cost ~90 ms of CPU inside the running
+  app on Linux (separable grid, one pairwise pass); the service then waits
+  ≥ 20× that, so the tooltip's "refreshed every" shows the effective
+  spacing (`max(interval, service nextIntervalMs)`).
+- **Cheap refresh: level series, not per-point colours.** While on, the
+  plain `scatterSeries_` / `targetGroupSeries_` are hidden and
+  `updateScatterplot` (every 500 ms) routes each point into one of
+  `kKdeLevels` (8) density-level `QScatterSeries` (`kdeLevelSeries_`,
+  circles; `kdeTargetLevelSeries_`, rectangles so the target group stays
+  identifiable without its blue), each with one ramp colour and hidden from
+  the legend. Points that arrived after the last estimate sit in the
+  sparsest level until the next tick; off empties and hides the level series
+  and shows the plain ones — the chart looks exactly as before. The first
+  cut used `QXYSeries::setPointsConfiguration` (per-point `Color`); Qt
+  Charts then rebuilds one graphics item per point on every refresh, which
+  `integration.monitoring_kde_e2e` measured as ~+220 ms of GUI-thread stall
+  per 500 ms refresh for 1000 points. Never go back to per-point
+  configuration for a live series.
+- **Settings** — `MonitoringSettingsDialog` exposes *KDE bandwidth factor*
+  (0.2–5, default 1) and *KDE update interval* (500–60000 ms); the toggle,
+  factor and interval persist in `QSettings` under `Monitoring/Kde*` with a
+  version guard (`Monitoring/KdeVersion`), like `Preview/*`, and are pushed
+  to the backend service on every change. Test hooks:
+  `kdeToggle()`, `requestKdeUpdate()`, `kdeJobInFlight()`,
+  `kdeTimerActive()`, `kdeGeneration()`, `scatterSeriesForTests()`,
+  `injectMonitoringFramesForTests()` (feeds the processing ring too, via
+  `appendMonitoringFrameForTests`), `kdeLevelSeriesForTests()`,
+  `kdeDensityForFrame()`. Guards: `frontend.monitoring_kde_density`
+  (offscreen widget) and `integration.monitoring_kde_e2e` (real
+  `MainWindow` on the mock-camera pipeline with the
+  `512x96stream-mock-frames` asset or synthetic cells; ratio gates on
+  capture, processing, ring filling, overlay lag and GUI responsiveness;
+  numbers in [[../task/2026-09-23-monitoring-kde-density]]).
+
+### Core contour (plan `docs/exec-plans/completed/2026-09-24-kde-core-region-split.md`)
+
+While KDE is on, one solid blue contour encloses the densest `Core %` of the
+samples (default 90%, Monitoring Settings, `Monitoring/KdeCoreFraction`).
+It is a true KDE iso-line: the backend service takes the level `t` = the
+`ceil(p·n)`-th largest point density (`coreLevel`), evaluates the same
+kernel on a 128 × 64 grid over the fixed axis ranges (`gaussianKdeGrid`,
+normalised by `rawKdeMaximum` so grid and points share [0, 1]), and traces
+it with marching squares (`isoContours`, saddles resolved by the cell
+centre, border-cut loops closed along the border). Loops come back in
+`MonitoringDensityResult::contours` in axis units; `redrawKdeContours` turns each into a
+`QLineSeries` (`core-contour-N`, 2 px cosmetic pen, legend marker hidden).
+A **reference** contour (dashed orange, `reference-contour-N`) is pinned
+from the live loops (`pinKdeReference`) or set from elsewhere
+(`setKdeReference`, used by the file-backed reference in PR 2); it survives
+re-estimates and is cleared with `clearKdeReference`. The service's
+fingerprint that skips unchanged input includes the fraction and the axis
+ranges. Both
+families are removed when KDE goes off, so the off state is the plain
+chart. The toggle tooltip carries the core count, loop count and reference
+label; nothing else is added to the tab. Test hooks:
+`kdeContourSeriesForTests`, `kdeReferenceSeriesForTests`,
+`lastKdeContours`, `lastKdeCoreCount`, `lastKdeCoreLevel`.
+**Stored record:** after every estimate the backend service hands the
+provisional record (codec `backend/processing/KdeCoreRecord.h`) to
+`ExperimentCoordinator::setLiveKdeCoreRecord` itself, which keeps it only
+while a run is `Active`; finalization writes the last one into the file
+(`/monitoring @kde_live_json`). `lastCoreRecordJson()` returns the same
+record for the estimate on screen. The tab never touches the run's file. **Reference from file:** `loadKdeReferenceFromFile(path)`
+reads the full-run record, else the live one, labels the reference
+"<file>, full-run|live estimate <p>%", and persists the path as
+`Monitoring/KdeReferencePath` (reloaded at startup; a vanished file is
+dropped with one info line; pin/clear forget it). Guards:
+`processing.monitoring_density` (level rank semantics, one loop per cloud,
+~90% enclosed, two clouds → two loops, translation invariance, border cut,
+degenerate input), `frontend.monitoring_kde_density` (series, pin/clear,
+fraction change re-estimates, off state, dialog controls). Measured in
+`integration.monitoring_kde_e2e` (Windows bench, before the move to the
+backend): 1000 points with grid + contour = 21 ms on the worker; GUI gates
+unchanged. Backend guards: `backend.monitoring_density_service`,
+`performance.monitoring_density_contention`, `e2e.experiment_coordinator`.
 
 ## Tune panel (issue #364)
 
@@ -106,6 +229,15 @@ exposed subset of `ProcessingConfig`, owned by the pure
   → empty crop). Guard: `frontend.monitoring_roi_crop`.
 - Histograms are computed client-side from the monitoring rings — not
   persisted.
+- **Never run the density estimate on the GUI thread and never hold
+  backend state across it.** `requestKdeUpdate()` copies indices and
+  (area, deformability) pairs into the lambda; the worker touches no widget,
+  no `ProcessedFrame` and no service. Apply results only in
+  `onKdeJobFinished()` (GUI thread) and only if the toggle is still on.
+- `updateScatterplot` clears and re-appends the series every 500 ms, which
+  also drops Qt's per-point configuration — that is why the density colours
+  are re-applied from `kdeDensityByIndex_` on every refresh instead of being
+  set once.
 - `loadCurrentConfig()` refreshes the histogram ring-ratio defaults as well
   as the tune panel baseline, so config reloads keep the visible chart
   range aligned with the saved thresholds. Never write tune values to the
@@ -115,3 +247,7 @@ exposed subset of `ProcessingConfig`, owned by the pure
   to preserve the final view).
 - See tasks `knowledge_map/task/ui-status-stats.md` and
   `fps_mbs_zero.md` for common metric-display issues.
+
+Profile switches refresh the tune baseline fingerprint through the watcher’s
+post-load `configFileChanged` notification, so Apply uses the selected document
+rather than the previous profile’s fingerprint (#583).

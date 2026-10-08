@@ -1,5 +1,6 @@
 #include "backend/recording/Hdf5Service.h"
 #include "backend/diagnostics/CrashStateMirror.h"
+#include "backend/processing/ProcessingContract.h"
 #include "backend/processing/ProcessingService.h"
 
 #include <spdlog/spdlog.h>
@@ -19,6 +20,8 @@
 #include <sstream>
 #include <filesystem>
 #include <algorithm>
+#include <optional>
+#include <limits>
 
 namespace backend::services
 {
@@ -32,6 +35,20 @@ namespace backend::services
             if (g_performanceTraceHook)
                 g_performanceTraceHook(name, operation, durationMs, jsonData);
         }
+
+        // H5Aread performs datatype conversion but does not validate the
+        // dataspace. Check the shape before reading into scalar storage.
+        bool isScalarAttribute(hid_t attribute)
+        {
+            if (attribute < 0) return false;
+            hid_t space = H5Aget_space(attribute);
+            if (space < 0) return false;
+            const hssize_t points = H5Sget_simple_extent_npoints(space);
+            const int rank = H5Sget_simple_extent_ndims(space);
+            H5Sclose(space);
+            return rank >= 0 && points == 1;
+        }
+
     }
 
     void setHdf5PerformanceTraceHook(PerformanceTraceFn fn)
@@ -48,7 +65,11 @@ namespace backend::services
         bool datasetsInitialized_{false};
         hsize_t validFramesWritten_{0};
         hsize_t invalidFramesWritten_{0};
+        // Set by the first batch of each group: imageless (PL results) or not.
+        std::optional<bool> validImageless_;
+        std::optional<bool> invalidImageless_;
         hsize_t seriesImagesWritten_{0}; // tracks /valid_frames/series_images row count
+        hsize_t triggerEventsWritten_{0}; // tracks /trigger_events row count
 
         // Time-interval flush state: append paths flush at most once per
         // flushInterval_ instead of every batch, so hot-path I/O stays cheap.
@@ -142,6 +163,15 @@ namespace backend::services
             double brightness_q4;
             double youngsModulus;
             uint8_t isTargetGroup;
+            double laplacianVariance; // Contract-2 focus metric; appended to keep prior offsets
+            // Contract 3 (unet-cells); appended to keep prior offsets. NaN / 0
+            // under Contracts 1-2 and when read from an older file.
+            double brightness_mean;
+            double brightness_variance;
+            double contourArea;
+            int32_t pixelCount;
+            int32_t blemishCount;
+            uint8_t degenerateContour;
         };
 
         hid_t createProcessedFrameMetadataType(bool includeBaseFields = true,
@@ -157,6 +187,7 @@ namespace backend::services
                 H5Tinsert(compTypeId, "area", HOFFSET(ProcessedFrameMetadataRecord, area), H5T_NATIVE_DOUBLE);
                 H5Tinsert(compTypeId, "areaRatio", HOFFSET(ProcessedFrameMetadataRecord, areaRatio), H5T_NATIVE_DOUBLE);
                 H5Tinsert(compTypeId, "ringRatio", HOFFSET(ProcessedFrameMetadataRecord, ringRatio), H5T_NATIVE_DOUBLE);
+                H5Tinsert(compTypeId, "laplacianVariance", HOFFSET(ProcessedFrameMetadataRecord, laplacianVariance), H5T_NATIVE_DOUBLE);
                 H5Tinsert(compTypeId, "isValid", HOFFSET(ProcessedFrameMetadataRecord, isValid), H5T_NATIVE_UINT8);
                 H5Tinsert(compTypeId, "touchesBorder", HOFFSET(ProcessedFrameMetadataRecord, touchesBorder), H5T_NATIVE_UINT8);
                 H5Tinsert(compTypeId, "hasSingleInnerContour", HOFFSET(ProcessedFrameMetadataRecord, hasSingleInnerContour), H5T_NATIVE_UINT8);
@@ -168,6 +199,12 @@ namespace backend::services
                 H5Tinsert(compTypeId, "brightness_q4", HOFFSET(ProcessedFrameMetadataRecord, brightness_q4), H5T_NATIVE_DOUBLE);
                 H5Tinsert(compTypeId, "youngsModulus", HOFFSET(ProcessedFrameMetadataRecord, youngsModulus), H5T_NATIVE_DOUBLE);
                 H5Tinsert(compTypeId, "isTargetGroup", HOFFSET(ProcessedFrameMetadataRecord, isTargetGroup), H5T_NATIVE_UINT8);
+                H5Tinsert(compTypeId, "brightness_mean", HOFFSET(ProcessedFrameMetadataRecord, brightness_mean), H5T_NATIVE_DOUBLE);
+                H5Tinsert(compTypeId, "brightness_variance", HOFFSET(ProcessedFrameMetadataRecord, brightness_variance), H5T_NATIVE_DOUBLE);
+                H5Tinsert(compTypeId, "contourArea", HOFFSET(ProcessedFrameMetadataRecord, contourArea), H5T_NATIVE_DOUBLE);
+                H5Tinsert(compTypeId, "pixelCount", HOFFSET(ProcessedFrameMetadataRecord, pixelCount), H5T_NATIVE_INT32);
+                H5Tinsert(compTypeId, "blemishCount", HOFFSET(ProcessedFrameMetadataRecord, blemishCount), H5T_NATIVE_INT32);
+                H5Tinsert(compTypeId, "degenerateContour", HOFFSET(ProcessedFrameMetadataRecord, degenerateContour), H5T_NATIVE_UINT8);
             }
             if (includeObjectFields)
             {
@@ -211,6 +248,7 @@ namespace backend::services
             md.area = frame.validation.area;
             md.areaRatio = frame.validation.areaRatio;
             md.ringRatio = frame.validation.ringRatio;
+            md.laplacianVariance = frame.validation.laplacianVariance;
             md.isValid = frame.validation.isValid ? 1 : 0;
             md.touchesBorder = frame.validation.touchesBorder ? 1 : 0;
             md.hasSingleInnerContour = frame.validation.hasSingleInnerContour ? 1 : 0;
@@ -222,6 +260,12 @@ namespace backend::services
             md.brightness_q4 = frame.validation.brightness.q4;
             md.youngsModulus = frame.validation.youngsModulus;
             md.isTargetGroup = frame.validation.isTargetGroup ? 1 : 0;
+            md.brightness_mean = frame.validation.brightnessMean;
+            md.brightness_variance = frame.validation.brightnessVariance;
+            md.contourArea = frame.validation.contourArea;
+            md.pixelCount = frame.validation.pixelCount;
+            md.blemishCount = frame.validation.blemishCount;
+            md.degenerateContour = frame.validation.degenerateContour ? 1 : 0;
             return md;
         }
     } // namespace
@@ -323,7 +367,10 @@ namespace backend::services
         impl_->lastIntervalFlush_ = std::chrono::steady_clock::now();
         impl_->validFramesWritten_ = 0;
         impl_->invalidFramesWritten_ = 0;
+        impl_->validImageless_.reset();
+        impl_->invalidImageless_.reset();
         impl_->seriesImagesWritten_ = 0;
+        impl_->triggerEventsWritten_ = 0;
         {
             auto& m = backend::diagnostics::CrashStateMirror::instance();
             m.hdf5.fileOpen.store(true);
@@ -491,19 +538,20 @@ namespace backend::services
             return false;
         }
 
-        // Create chunked dataset property for extensibility
+        // One frame per chunk matches each append write and avoids
+        // whole-chunk read-modify-write.
         hid_t propId = H5Pcreate(H5P_DATASET_CREATE);
         hsize_t chunkDims[4];
         if (channels == 1)
         {
-            chunkDims[0] = std::min(static_cast<hsize_t>(100), dims[0]); // Chunk size of 100 frames or less
+            chunkDims[0] = 1;
             chunkDims[1] = dims[1];
             chunkDims[2] = dims[2];
             H5Pset_chunk(propId, 3, chunkDims);
         }
         else
         {
-            chunkDims[0] = std::min(static_cast<hsize_t>(100), dims[0]);
+            chunkDims[0] = 1;
             chunkDims[1] = dims[1];
             chunkDims[2] = dims[2];
             chunkDims[3] = dims[3];
@@ -919,8 +967,8 @@ namespace backend::services
         }
 
         hid_t propId = H5Pcreate(H5P_DATASET_CREATE);
-        hsize_t chunkDims[4] = {std::min(static_cast<hsize_t>(10), dims[0]),
-                                seriesCount,
+        // Each write covers one series member, so each member owns a chunk.
+        hsize_t chunkDims[4] = {1, 1,
                                 static_cast<hsize_t>(height),
                                 static_cast<hsize_t>(width)};
         H5Pset_chunk(propId, 4, chunkDims);
@@ -1094,6 +1142,210 @@ namespace backend::services
         return true;
     }
 
+    // ---- series identity (/valid_frames/series_meta, series_contiguous) ----
+    // series_meta is a 2D compound dataset (N, seriesCount) parallel to
+    // series_images; series_contiguous is a 1D uint8 (N). Both are written
+    // in lock-step with series_images (same row count) so a row index means
+    // the same series in all three.
+    struct SeriesMetaRecord
+    {
+        uint64_t frameIndex;
+        uint64_t timestampNs;
+        uint64_t hostTimestampUs;
+    };
+
+    static hid_t createSeriesMetaType()
+    {
+        hid_t t = H5Tcreate(H5T_COMPOUND, sizeof(SeriesMetaRecord));
+        H5Tinsert(t, "frameIndex", HOFFSET(SeriesMetaRecord, frameIndex), H5T_NATIVE_UINT64);
+        H5Tinsert(t, "timestampNs", HOFFSET(SeriesMetaRecord, timestampNs), H5T_NATIVE_UINT64);
+        H5Tinsert(t, "hostTimestampUs", HOFFSET(SeriesMetaRecord, hostTimestampUs), H5T_NATIVE_UINT64);
+        return t;
+    }
+
+    // Flatten the series frames of a batch into (rows x seriesCount) records,
+    // padding members a partial series never collected with the absent
+    // sentinel so a reader never mistakes padding for frame 0.
+    static void collectSeriesMeta(const std::vector<ProcessedFrame>& frames, size_t seriesCount,
+                                  std::vector<SeriesMetaRecord>& records, std::vector<uint8_t>& contiguous)
+    {
+        for (const auto& f : frames)
+        {
+            if (f.seriesImages.empty()) continue;
+            contiguous.push_back(f.seriesContiguous ? 1u : 0u);
+            for (size_t s = 0; s < seriesCount; ++s)
+            {
+                SeriesMetaRecord r{Hdf5Service::kAbsentSeriesFrame, 0, 0};
+                if (s < f.seriesInfo.size() && s < f.seriesImages.size())
+                {
+                    r.frameIndex = f.seriesInfo[s].frameIndex;
+                    r.timestampNs = f.seriesInfo[s].timestampNs;
+                    r.hostTimestampUs = f.seriesInfo[s].hostTimestampUs;
+                }
+                records.push_back(r);
+            }
+        }
+    }
+
+    static bool writeSeriesMetaDatasets(hid_t fileId, const std::vector<ProcessedFrame>& frames,
+                                        size_t seriesCount)
+    {
+        std::vector<SeriesMetaRecord> records;
+        std::vector<uint8_t> contiguous;
+        collectSeriesMeta(frames, seriesCount, records, contiguous);
+        if (contiguous.empty()) return true;
+        const hsize_t rows = static_cast<hsize_t>(contiguous.size());
+
+        bool ok = true;
+        {
+            hid_t typeId = createSeriesMetaType();
+            hsize_t dims[2] = {rows, static_cast<hsize_t>(seriesCount)};
+            hsize_t maxDims[2] = {H5S_UNLIMITED, static_cast<hsize_t>(seriesCount)};
+            hid_t spaceId = H5Screate_simple(2, dims, maxDims);
+            hid_t propId = H5Pcreate(H5P_DATASET_CREATE);
+            hsize_t chunk[2] = {std::min<hsize_t>(256, rows), static_cast<hsize_t>(seriesCount)};
+            H5Pset_chunk(propId, 2, chunk);
+            hid_t dsId = H5Dcreate2(fileId, "/valid_frames/series_meta", typeId, spaceId, H5P_DEFAULT, propId,
+                                    H5P_DEFAULT);
+            H5Pclose(propId);
+            H5Sclose(spaceId);
+            if (dsId < 0 || H5Dwrite(dsId, typeId, H5S_ALL, H5S_ALL, H5P_DEFAULT, records.data()) < 0)
+            {
+                SPDLOG_ERROR("Failed to create/write /valid_frames/series_meta");
+                ok = false;
+            }
+            if (dsId >= 0) H5Dclose(dsId);
+            H5Tclose(typeId);
+        }
+        if (ok)
+        {
+            hsize_t dims[1] = {rows};
+            hsize_t maxDims[1] = {H5S_UNLIMITED};
+            hid_t spaceId = H5Screate_simple(1, dims, maxDims);
+            hid_t propId = H5Pcreate(H5P_DATASET_CREATE);
+            hsize_t chunk[1] = {std::min<hsize_t>(1024, rows)};
+            H5Pset_chunk(propId, 1, chunk);
+            hid_t dsId = H5Dcreate2(fileId, "/valid_frames/series_contiguous", H5T_NATIVE_UINT8, spaceId,
+                                    H5P_DEFAULT, propId, H5P_DEFAULT);
+            H5Pclose(propId);
+            H5Sclose(spaceId);
+            if (dsId < 0 ||
+                H5Dwrite(dsId, H5T_NATIVE_UINT8, H5S_ALL, H5S_ALL, H5P_DEFAULT, contiguous.data()) < 0)
+            {
+                SPDLOG_ERROR("Failed to create/write /valid_frames/series_contiguous");
+                ok = false;
+            }
+            if (dsId >= 0) H5Dclose(dsId);
+        }
+        return ok;
+    }
+
+    static bool appendSeriesMetaDatasets(hid_t fileId, const std::vector<ProcessedFrame>& frames,
+                                         hsize_t currentRows)
+    {
+        bool ok = true;
+        std::vector<SeriesMetaRecord> records;
+        std::vector<uint8_t> contiguous;
+        hsize_t rows = 0;
+        {
+            hid_t dsId = H5Dopen2(fileId, "/valid_frames/series_meta", H5P_DEFAULT);
+            if (dsId < 0)
+            {
+                SPDLOG_ERROR("Failed to open /valid_frames/series_meta for appending");
+                return false;
+            }
+            // The row width was fixed when the dataset was created; a batch
+            // whose first series is partial must not shrink it (set_extent
+            // would truncate every earlier row).
+            hid_t existing = H5Dget_space(dsId);
+            hsize_t currentDims[2] = {0, 0};
+            H5Sget_simple_extent_dims(existing, currentDims, nullptr);
+            H5Sclose(existing);
+            const size_t seriesCount = static_cast<size_t>(currentDims[1]);
+            collectSeriesMeta(frames, seriesCount, records, contiguous);
+            if (contiguous.empty())
+            {
+                H5Dclose(dsId);
+                return true;
+            }
+            rows = static_cast<hsize_t>(contiguous.size());
+            hid_t typeId = createSeriesMetaType();
+            hsize_t newDims[2] = {currentRows + rows, static_cast<hsize_t>(seriesCount)};
+            hid_t fileSpace = H5I_INVALID_HID;
+            hid_t memSpace = H5I_INVALID_HID;
+            if (H5Dset_extent(dsId, newDims) < 0)
+            {
+                ok = false;
+            }
+            else
+            {
+                fileSpace = H5Dget_space(dsId);
+                hsize_t start[2] = {currentRows, 0};
+                hsize_t count[2] = {rows, static_cast<hsize_t>(seriesCount)};
+                H5Sselect_hyperslab(fileSpace, H5S_SELECT_SET, start, nullptr, count, nullptr);
+                memSpace = H5Screate_simple(2, count, nullptr);
+                if (H5Dwrite(dsId, typeId, memSpace, fileSpace, H5P_DEFAULT, records.data()) < 0) ok = false;
+            }
+            if (memSpace >= 0) H5Sclose(memSpace);
+            if (fileSpace >= 0) H5Sclose(fileSpace);
+            H5Tclose(typeId);
+            H5Dclose(dsId);
+            if (!ok) SPDLOG_ERROR("Failed to append /valid_frames/series_meta");
+        }
+        if (ok)
+        {
+            hid_t dsId = H5Dopen2(fileId, "/valid_frames/series_contiguous", H5P_DEFAULT);
+            if (dsId < 0)
+            {
+                SPDLOG_ERROR("Failed to open /valid_frames/series_contiguous for appending");
+                return false;
+            }
+            hsize_t newDims[1] = {currentRows + rows};
+            hid_t fileSpace = H5I_INVALID_HID;
+            hid_t memSpace = H5I_INVALID_HID;
+            if (H5Dset_extent(dsId, newDims) < 0)
+            {
+                ok = false;
+            }
+            else
+            {
+                fileSpace = H5Dget_space(dsId);
+                hsize_t start[1] = {currentRows};
+                hsize_t count[1] = {rows};
+                H5Sselect_hyperslab(fileSpace, H5S_SELECT_SET, start, nullptr, count, nullptr);
+                memSpace = H5Screate_simple(1, count, nullptr);
+                if (H5Dwrite(dsId, H5T_NATIVE_UINT8, memSpace, fileSpace, H5P_DEFAULT, contiguous.data()) < 0)
+                    ok = false;
+            }
+            if (memSpace >= 0) H5Sclose(memSpace);
+            if (fileSpace >= 0) H5Sclose(fileSpace);
+            H5Dclose(dsId);
+            if (!ok) SPDLOG_ERROR("Failed to append /valid_frames/series_contiguous");
+        }
+        return ok;
+    }
+
+    // ---- sort trigger events (/trigger_events) ----
+    static hid_t createTriggerEventType()
+    {
+        using R = backend::recording::TriggerEventRecord;
+        hid_t t = H5Tcreate(H5T_COMPOUND, sizeof(R));
+        H5Tinsert(t, "sequence", HOFFSET(R, sequence), H5T_NATIVE_UINT64);
+        H5Tinsert(t, "frameIndex", HOFFSET(R, frameIndex), H5T_NATIVE_UINT64);
+        H5Tinsert(t, "grabUs", HOFFSET(R, grabUs), H5T_NATIVE_UINT64);
+        H5Tinsert(t, "objectId", HOFFSET(R, objectId), H5T_NATIVE_INT32);
+        H5Tinsert(t, "trackId", HOFFSET(R, trackId), H5T_NATIVE_INT32);
+        H5Tinsert(t, "generation", HOFFSET(R, generation), H5T_NATIVE_UINT64);
+        H5Tinsert(t, "requestUs", HOFFSET(R, requestUs), H5T_NATIVE_UINT64);
+        H5Tinsert(t, "wakeUs", HOFFSET(R, wakeUs), H5T_NATIVE_UINT64);
+        H5Tinsert(t, "fireUs", HOFFSET(R, fireUs), H5T_NATIVE_UINT64);
+        H5Tinsert(t, "pulseDoneUs", HOFFSET(R, pulseDoneUs), H5T_NATIVE_UINT64);
+        H5Tinsert(t, "lineEdgeTimestamp", HOFFSET(R, lineEdgeTimestamp), H5T_NATIVE_UINT64);
+        H5Tinsert(t, "lineEdgeHostUs", HOFFSET(R, lineEdgeHostUs), H5T_NATIVE_UINT64);
+        H5Tinsert(t, "outcome", HOFFSET(R, outcome), H5T_NATIVE_UINT8);
+        return t;
+    }
+
     bool Hdf5Service::initializeDatasets()
     {
         if (!isFileOpen())
@@ -1119,6 +1371,33 @@ namespace backend::services
         impl_->datasetsInitialized_ = true;
         SPDLOG_DEBUG("HDF5 datasets initialized (will be created on first append)");
         return true;
+    }
+
+    // A batch whose frames carry no images (PL results, YOFO S3).
+    static bool imagelessBatch(const std::vector<ProcessedFrame> &frames)
+    {
+        return !frames.empty() && std::all_of(frames.begin(), frames.end(), [](const ProcessedFrame &f) {
+                   return f.originalImage.empty() && f.processedImage.empty();
+               });
+    }
+
+    // Metadata rows only. A group is imageless for the whole run: mixing with
+    // image batches would misalign rows and images, so it is refused.
+    static bool appendMetadataOnly(hid_t fileId, const std::string &path,
+                                   const std::vector<ProcessedFrame> &frames, hsize_t &written,
+                                   std::optional<bool> &imageless)
+    {
+        if (imageless.has_value() && !*imageless)
+        {
+            SPDLOG_ERROR("HDF5: an imageless batch after frames with images in {}", path);
+            return false;
+        }
+        imageless = true;
+        const bool ok = written == 0 ? writeMetadataDataset(fileId, path, frames)
+                                     : appendMetadataDataset(fileId, path, frames, written);
+        if (ok)
+            written += frames.size();
+        return ok;
     }
 
     bool Hdf5Service::appendFrames(const std::vector<ProcessedFrame> &validFrames,
@@ -1151,38 +1430,55 @@ namespace backend::services
         if (!validFrames.empty())
         {
             const auto tVS = lag_clock::now();
-            // Create datasets if they don't exist
-            if (impl_->validFramesWritten_ == 0)
+            if (imagelessBatch(validFrames))
             {
-                std::vector<cv::Mat> validImages, validMasks;
-                for (const auto &frame : validFrames)
-                {
-                    validImages.push_back(frame.originalImage);
-                    validMasks.push_back(frame.processedImage);
-                }
-                if (!writeImageDataset(impl_->fileId_, "/valid_frames/images", validImages))
+                // PL results (YOFO S3): no images reach the PS live, so the
+                // run's rows are metadata only; images/masks are absent.
+                if (!appendMetadataOnly(impl_->fileId_, "/valid_frames/metadata", validFrames,
+                                        impl_->validFramesWritten_, impl_->validImageless_))
                     return false;
-                if (!writeImageDataset(impl_->fileId_, "/valid_frames/masks", validMasks))
-                    return false;
-                if (!writeMetadataDataset(impl_->fileId_, "/valid_frames/metadata", validFrames))
-                    return false;
-                impl_->validFramesWritten_ = validFrames.size();
             }
             else
             {
-                // Append to existing datasets
-                std::vector<cv::Mat> validImages, validMasks;
-                for (const auto &frame : validFrames)
+                if (impl_->validImageless_.value_or(false))
                 {
-                    validImages.push_back(frame.originalImage);
-                    validMasks.push_back(frame.processedImage);
+                    SPDLOG_ERROR("HDF5: frames with images after an imageless batch in /valid_frames");
+                    return false;
                 }
-                if (!appendImageDataset(impl_->fileId_, "/valid_frames/images", validImages, impl_->validFramesWritten_))
-                    return false;
-                if (!appendImageDataset(impl_->fileId_, "/valid_frames/masks", validMasks, impl_->validFramesWritten_))
-                    return false;
-                if (!appendMetadataDataset(impl_->fileId_, "/valid_frames/metadata", validFrames, impl_->validFramesWritten_))
-                    return false;
+                impl_->validImageless_ = false;
+                // Create datasets if they don't exist
+                if (impl_->validFramesWritten_ == 0)
+                {
+                    std::vector<cv::Mat> validImages, validMasks;
+                    for (const auto &frame : validFrames)
+                    {
+                        validImages.push_back(frame.originalImage);
+                        validMasks.push_back(frame.processedImage);
+                    }
+                    if (!writeImageDataset(impl_->fileId_, "/valid_frames/images", validImages))
+                        return false;
+                    if (!writeImageDataset(impl_->fileId_, "/valid_frames/masks", validMasks))
+                        return false;
+                    if (!writeMetadataDataset(impl_->fileId_, "/valid_frames/metadata", validFrames))
+                        return false;
+                    impl_->validFramesWritten_ = validFrames.size();
+                }
+                else
+                {
+                    // Append to existing datasets
+                    std::vector<cv::Mat> validImages, validMasks;
+                    for (const auto &frame : validFrames)
+                    {
+                        validImages.push_back(frame.originalImage);
+                        validMasks.push_back(frame.processedImage);
+                    }
+                    if (!appendImageDataset(impl_->fileId_, "/valid_frames/images", validImages, impl_->validFramesWritten_))
+                        return false;
+                    if (!appendImageDataset(impl_->fileId_, "/valid_frames/masks", validMasks, impl_->validFramesWritten_))
+                        return false;
+                    if (!appendMetadataDataset(impl_->fileId_, "/valid_frames/metadata", validFrames, impl_->validFramesWritten_))
+                        return false;
+                }
             }
             msValidImages = elapsedMs(tVS);
 
@@ -1196,18 +1492,33 @@ namespace backend::services
             }
             if (hasSeriesImages) {
                 const auto tSeries = lag_clock::now();
+                // The series count is fixed by the first batch (dataset extent).
+                size_t seriesCount = 0;
+                for (const auto &f : validFrames) {
+                    if (!f.seriesImages.empty()) { seriesCount = f.seriesImages.size(); break; }
+                }
                 if (impl_->seriesImagesWritten_ == 0) {
                     if (!writeSeriesImageDataset(impl_->fileId_, "/valid_frames/series_images", validFrames)) {
                         SPDLOG_WARN("Failed to write series_images dataset (non-fatal)");
                     } else {
+                        // Identity rows are written only when the image rows
+                        // were, so the two datasets never disagree on N.
+                        if (!writeSeriesMetaDatasets(impl_->fileId_, validFrames, seriesCount)) {
+                            SPDLOG_WARN("Failed to write series_meta datasets (non-fatal)");
+                        }
                         // Count how many frames had series data
                         for (const auto &f : validFrames) {
                             if (!f.seriesImages.empty()) ++impl_->seriesImagesWritten_;
                         }
                     }
                 } else {
+                    const hsize_t rowsBefore = impl_->seriesImagesWritten_;
                     if (!appendSeriesImageDataset(impl_->fileId_, "/valid_frames/series_images", validFrames, impl_->seriesImagesWritten_)) {
                         SPDLOG_WARN("Failed to append series_images dataset (non-fatal)");
+                    } else if (H5Lexists(impl_->fileId_, "/valid_frames/series_meta", H5P_DEFAULT) > 0) {
+                        if (!appendSeriesMetaDatasets(impl_->fileId_, validFrames, rowsBefore)) {
+                            SPDLOG_WARN("Failed to append series_meta datasets (non-fatal)");
+                        }
                     }
                 }
                 msSeries = elapsedMs(tSeries);
@@ -1218,36 +1529,53 @@ namespace backend::services
         if (!invalidFrames.empty())
         {
             const auto tInv = lag_clock::now();
-            if (impl_->invalidFramesWritten_ == 0)
+            if (imagelessBatch(invalidFrames))
             {
-                std::vector<cv::Mat> invalidImages, invalidMasks;
-                for (const auto &frame : invalidFrames)
-                {
-                    invalidImages.push_back(frame.originalImage);
-                    invalidMasks.push_back(frame.processedImage);
-                }
-                if (!writeImageDataset(impl_->fileId_, "/invalid_frames/images", invalidImages))
+                // PL results (YOFO S3): no images reach the PS live, so the
+                // run's rows are metadata only; images/masks are absent.
+                if (!appendMetadataOnly(impl_->fileId_, "/invalid_frames/metadata", invalidFrames,
+                                        impl_->invalidFramesWritten_, impl_->invalidImageless_))
                     return false;
-                if (!writeImageDataset(impl_->fileId_, "/invalid_frames/masks", invalidMasks))
-                    return false;
-                if (!writeMetadataDataset(impl_->fileId_, "/invalid_frames/metadata", invalidFrames))
-                    return false;
-                impl_->invalidFramesWritten_ = invalidFrames.size();
             }
             else
             {
-                std::vector<cv::Mat> invalidImages, invalidMasks;
-                for (const auto &frame : invalidFrames)
+                if (impl_->invalidImageless_.value_or(false))
                 {
-                    invalidImages.push_back(frame.originalImage);
-                    invalidMasks.push_back(frame.processedImage);
+                    SPDLOG_ERROR("HDF5: frames with images after an imageless batch in /invalid_frames");
+                    return false;
                 }
-                if (!appendImageDataset(impl_->fileId_, "/invalid_frames/images", invalidImages, impl_->invalidFramesWritten_))
-                    return false;
-                if (!appendImageDataset(impl_->fileId_, "/invalid_frames/masks", invalidMasks, impl_->invalidFramesWritten_))
-                    return false;
-                if (!appendMetadataDataset(impl_->fileId_, "/invalid_frames/metadata", invalidFrames, impl_->invalidFramesWritten_))
-                    return false;
+                impl_->invalidImageless_ = false;
+                if (impl_->invalidFramesWritten_ == 0)
+                {
+                    std::vector<cv::Mat> invalidImages, invalidMasks;
+                    for (const auto &frame : invalidFrames)
+                    {
+                        invalidImages.push_back(frame.originalImage);
+                        invalidMasks.push_back(frame.processedImage);
+                    }
+                    if (!writeImageDataset(impl_->fileId_, "/invalid_frames/images", invalidImages))
+                        return false;
+                    if (!writeImageDataset(impl_->fileId_, "/invalid_frames/masks", invalidMasks))
+                        return false;
+                    if (!writeMetadataDataset(impl_->fileId_, "/invalid_frames/metadata", invalidFrames))
+                        return false;
+                    impl_->invalidFramesWritten_ = invalidFrames.size();
+                }
+                else
+                {
+                    std::vector<cv::Mat> invalidImages, invalidMasks;
+                    for (const auto &frame : invalidFrames)
+                    {
+                        invalidImages.push_back(frame.originalImage);
+                        invalidMasks.push_back(frame.processedImage);
+                    }
+                    if (!appendImageDataset(impl_->fileId_, "/invalid_frames/images", invalidImages, impl_->invalidFramesWritten_))
+                        return false;
+                    if (!appendImageDataset(impl_->fileId_, "/invalid_frames/masks", invalidMasks, impl_->invalidFramesWritten_))
+                        return false;
+                    if (!appendMetadataDataset(impl_->fileId_, "/invalid_frames/metadata", invalidFrames, impl_->invalidFramesWritten_))
+                        return false;
+                }
             }
             msInvalid = elapsedMs(tInv);
         }
@@ -1520,8 +1848,59 @@ namespace backend::services
             H5Aclose(attrMI2);
         }
 
+        // Contract-2 era config (T0.2): the profile's declared contract, the
+        // canonical difference threshold, every object gate, and the channel
+        // band that gated objects (frame coordinates; callers pass
+        // ProcessingService::getEffectiveProcessingConfig()).
+        const auto writeScalar = [&](const char* name, hid_t type, const void* value) {
+            hid_t attribute = H5Acreate2(infoGroupId, name, type, scalarSpaceId,
+                                         H5P_DEFAULT, H5P_DEFAULT);
+            if (attribute < 0) return false;
+            const bool ok = H5Awrite(attribute, type, value) >= 0;
+            H5Aclose(attribute);
+            return ok;
+        };
+        const auto writeI32 = [&](const char* name, int value) {
+            const int32_t v = static_cast<int32_t>(value);
+            return writeScalar(name, H5T_NATIVE_INT32, &v);
+        };
+        const auto writeF64 = [&](const char* name, double value) {
+            return writeScalar(name, H5T_NATIVE_DOUBLE, &value);
+        };
+        const auto writeFlag = [&](const char* name, bool value) {
+            const uint8_t v = value ? 1 : 0;
+            return writeScalar(name, H5T_NATIVE_UINT8, &v);
+        };
+        const ProcessingConfig& pc = processingConfig;
+        const bool configOk =
+            writeI32("processing_config_processing_contract_version", pc.processing_contract_version) &&
+            writeI32("processing_config_difference_threshold", pc.bg_subtract_threshold) &&
+            writeFlag("processing_config_enable_ring_ratio_check", pc.enable_ring_ratio_check) &&
+            writeF64("processing_config_ring_ratio_min", pc.ring_ratio_min) &&
+            writeF64("processing_config_ring_ratio_max", pc.ring_ratio_max) &&
+            writeFlag("processing_config_enable_area_ratio_check", pc.enable_area_ratio_check) &&
+            writeF64("processing_config_area_ratio_threshold_max", pc.area_ratio_threshold_max) &&
+            writeFlag("processing_config_enable_laplacian_variance_check",
+                      pc.enable_laplacian_variance_check) &&
+            writeF64("processing_config_laplacian_variance_min", pc.laplacian_variance_min) &&
+            writeF64("processing_config_laplacian_variance_max", pc.laplacian_variance_max) &&
+            writeFlag("processing_config_auto_roi_from_background", pc.auto_roi_from_background) &&
+            writeF64("processing_config_auto_roi_wall_gradient_ratio", pc.auto_roi_wall_gradient_ratio) &&
+            writeI32("processing_config_auto_roi_wall_margin", pc.auto_roi_wall_margin) &&
+            writeI32("processing_config_channel_band_y", pc.channel_band_y) &&
+            writeI32("processing_config_channel_band_h", pc.channel_band_h);
+
         const auto defaultIdentity = backend::processing::bundledProcessingCoreIdentity();
-        const auto& coreIdentity = processingCore ? *processingCore : defaultIdentity;
+        auto coreIdentity = processingCore ? *processingCore : defaultIdentity;
+        // A shipped core runs only its own contract (ADR 0007), so its identity
+        // names the executed contract. A research build (Python wheel) runs the
+        // contract the config selects, so record that one instead.
+        if (coreIdentity.source == "bundled" &&
+            backend::processing::bundledProcessingContract() == 0 &&
+            backend::processing::contract::isSupportedProcessingContract(
+                pc.processing_contract_version)) {
+            coreIdentity.contractVersion = static_cast<uint32_t>(pc.processing_contract_version);
+        }
         const auto writeUint32Attribute = [&](const char* name, uint32_t value) {
             hid_t attribute = H5Acreate2(infoGroupId, name, H5T_NATIVE_UINT32, scalarSpaceId,
                                          H5P_DEFAULT, H5P_DEFAULT);
@@ -1560,7 +1939,7 @@ namespace backend::services
         H5Sclose(scalarSpaceId);
         H5Gclose(infoGroupId);
 
-        if (!provenanceOk) {
+        if (!provenanceOk || !configOk) {
             SPDLOG_ERROR("Failed to persist processing-core provenance");
             return false;
         }
@@ -1686,6 +2065,40 @@ namespace backend::services
         impl_->isOpen_ = true;
         impl_->writable_ = false;
         SPDLOG_INFO("HDF5 file opened for reading: {}", filePath);
+        return true;
+    }
+
+    bool Hdf5Service::openFileForUpdate(const std::string& filePath)
+    {
+        if (impl_->isOpen_)
+        {
+            SPDLOG_WARN("HDF5 file already open: {}", impl_->filePath_);
+            return false;
+        }
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(std::filesystem::u8path(filePath), ec))
+        {
+            SPDLOG_WARN("openFileForUpdate: not an existing file: {}", filePath);
+            return false;
+        }
+        const hid_t fileAccessId = createFileAccessPropertyList();
+        H5E_BEGIN_TRY
+        {
+            impl_->fileId_ = H5Fopen(filePath.c_str(), H5F_ACC_RDWR, fileAccessId);
+        }
+        H5E_END_TRY;
+        closePropertyList(fileAccessId);
+        if (impl_->fileId_ < 0)
+        {
+            impl_->fileId_ = H5I_INVALID_HID;
+            SPDLOG_WARN("openFileForUpdate: cannot open {} read-write (read-only, locked or already open)", filePath);
+            return false;
+        }
+        impl_->filePath_ = filePath;
+        impl_->isOpen_ = true;
+        impl_->writable_ = true;
+        impl_->datasetsInitialized_ = false;
+        SPDLOG_INFO("HDF5 file opened for update: {}", filePath);
         return true;
     }
 
@@ -1822,6 +2235,17 @@ namespace backend::services
             md.bboxHeight = 0.0;
             md.centroidX = 0.0;
             md.centroidY = 0.0;
+            // Default to NaN so a Contract-1 file (no laplacianVariance member)
+            // reads as "not computed" rather than 0; a Contract-2 file overwrites it.
+            md.laplacianVariance = std::numeric_limits<double>::quiet_NaN();
+            // Contract 3 members: absent before Contract 3 (and NaN / 0 when
+            // written under Contracts 1-2).
+            md.brightness_mean = std::numeric_limits<double>::quiet_NaN();
+            md.brightness_variance = std::numeric_limits<double>::quiet_NaN();
+            md.contourArea = 0.0;
+            md.pixelCount = 0;
+            md.blemishCount = 0;
+            md.degenerateContour = 0;
         }
 
         hid_t baseMemTypeId = createProcessedFrameMetadataType(true, false, false);
@@ -1896,6 +2320,7 @@ namespace backend::services
             frame.validation.area = md.area;
             frame.validation.areaRatio = md.areaRatio;
             frame.validation.ringRatio = md.ringRatio;
+            frame.validation.laplacianVariance = md.laplacianVariance;
             frame.validation.isValid = (md.isValid != 0);
             frame.validation.touchesBorder = (md.touchesBorder != 0);
             frame.validation.hasSingleInnerContour = (md.hasSingleInnerContour != 0);
@@ -1907,6 +2332,12 @@ namespace backend::services
             frame.validation.brightness.q4 = md.brightness_q4;
             frame.validation.youngsModulus = md.youngsModulus;
             frame.validation.isTargetGroup = (md.isTargetGroup != 0);
+            frame.validation.brightnessMean = md.brightness_mean;
+            frame.validation.brightnessVariance = md.brightness_variance;
+            frame.validation.contourArea = md.contourArea;
+            frame.validation.pixelCount = md.pixelCount;
+            frame.validation.blemishCount = md.blemishCount;
+            frame.validation.degenerateContour = (md.degenerateContour != 0);
             frames.push_back(frame);
         }
 
@@ -1926,6 +2357,13 @@ namespace backend::services
         if (!readMetadataDataset(impl_->fileId_, "/valid_frames/metadata", frames))
         {
             return false;
+        }
+
+        // A PL run (YOFO S3) records metadata only: no images or masks.
+        if (H5Lexists(impl_->fileId_, "/valid_frames/images", H5P_DEFAULT) <= 0 &&
+            H5Lexists(impl_->fileId_, "/valid_frames/masks", H5P_DEFAULT) <= 0)
+        {
+            return true;
         }
 
         // Read images
@@ -1975,6 +2413,13 @@ namespace backend::services
         if (!readMetadataDataset(impl_->fileId_, "/invalid_frames/metadata", frames))
         {
             return false;
+        }
+
+        // A PL run (YOFO S3) records metadata only: no images or masks.
+        if (H5Lexists(impl_->fileId_, "/invalid_frames/images", H5P_DEFAULT) <= 0 &&
+            H5Lexists(impl_->fileId_, "/invalid_frames/masks", H5P_DEFAULT) <= 0)
+        {
+            return true;
         }
 
         // Read images
@@ -2219,13 +2664,6 @@ namespace backend::services
         hid_t group = H5Gopen2(impl_->fileId_, groupPath, H5P_DEFAULT);
         if (group < 0) return false;
 
-        const auto isScalarAttribute = [](hid_t attribute) {
-            hid_t space = H5Aget_space(attribute);
-            if (space < 0) return false;
-            const hssize_t points = H5Sget_simple_extent_npoints(space);
-            H5Sclose(space);
-            return points == 1;
-        };
         const auto readUint32 = [&](const char* name, uint32_t& value) {
             hid_t attribute = H5Aopen(group, name, H5P_DEFAULT);
             if (attribute < 0) return false;
@@ -2289,6 +2727,137 @@ namespace backend::services
 
 // New scalable read APIs
 namespace backend::services {
+
+    bool Hdf5Service::readRecordedProcessingConfig(ProcessingConfig& config) const
+    {
+        if (!isFileOpen() || H5Lexists(impl_->fileId_, "/experiment_info", H5P_DEFAULT) <= 0)
+            return false;
+        hid_t group = H5Gopen2(impl_->fileId_, "/experiment_info", H5P_DEFAULT);
+        if (group < 0) return false;
+
+        // Missing attributes (older files) leave the struct default in place.
+        const auto readScalar = [&](const char* name, hid_t memType, void* out) {
+            if (H5Aexists(group, name) <= 0) return;
+            hid_t attribute = H5Aopen(group, name, H5P_DEFAULT);
+            if (attribute < 0) return;
+            H5Aread(attribute, memType, out);
+            H5Aclose(attribute);
+        };
+        const auto readInt = [&](const char* name, int& field) {
+            int32_t v = static_cast<int32_t>(field);
+            readScalar(name, H5T_NATIVE_INT32, &v);
+            field = static_cast<int>(v);
+        };
+        const auto readDouble = [&](const char* name, double& field) {
+            readScalar(name, H5T_NATIVE_DOUBLE, &field);
+        };
+        const auto readFlag = [&](const char* name, bool& field) {
+            uint8_t v = field ? 1 : 0;
+            readScalar(name, H5T_NATIVE_UINT8, &v);
+            field = v != 0;
+        };
+
+        readInt("processing_config_gaussian_blur_size", config.gaussian_blur_size);
+        readInt("processing_config_bg_subtract_threshold", config.bg_subtract_threshold);
+        readInt("processing_config_difference_threshold", config.bg_subtract_threshold);
+        readInt("processing_config_morph_kernel_size", config.morph_kernel_size);
+        readInt("processing_config_morph_iterations", config.morph_iterations);
+        readInt("processing_config_area_threshold_min", config.area_threshold_min);
+        readInt("processing_config_area_threshold_max", config.area_threshold_max);
+        readFlag("processing_config_enable_border_check", config.enable_border_check);
+        readFlag("processing_config_enable_area_range_check", config.enable_area_range_check);
+        readDouble("processing_config_deformability_threshold_min", config.deformability_threshold_min);
+        readDouble("processing_config_deformability_threshold_max", config.deformability_threshold_max);
+        readFlag("processing_config_enable_deformability_range_check",
+                 config.enable_deformability_range_check);
+        readFlag("processing_config_require_single_inner_contour", config.require_single_inner_contour);
+        readInt("processing_config_empty_frame_pixel_threshold", config.empty_frame_pixel_threshold);
+        readInt("processing_config_processing_contract_version", config.processing_contract_version);
+        readFlag("processing_config_enable_ring_ratio_check", config.enable_ring_ratio_check);
+        readDouble("processing_config_ring_ratio_min", config.ring_ratio_min);
+        readDouble("processing_config_ring_ratio_max", config.ring_ratio_max);
+        readFlag("processing_config_enable_area_ratio_check", config.enable_area_ratio_check);
+        readDouble("processing_config_area_ratio_threshold_max", config.area_ratio_threshold_max);
+        readFlag("processing_config_enable_laplacian_variance_check",
+                 config.enable_laplacian_variance_check);
+        readDouble("processing_config_laplacian_variance_min", config.laplacian_variance_min);
+        readDouble("processing_config_laplacian_variance_max", config.laplacian_variance_max);
+        readFlag("processing_config_auto_roi_from_background", config.auto_roi_from_background);
+        readDouble("processing_config_auto_roi_wall_gradient_ratio", config.auto_roi_wall_gradient_ratio);
+        readInt("processing_config_auto_roi_wall_margin", config.auto_roi_wall_margin);
+        readInt("processing_config_channel_band_y", config.channel_band_y);
+        readInt("processing_config_channel_band_h", config.channel_band_h);
+        uint8_t multiImage = config.multi_image_enabled ? 1 : 0;
+        readScalar("multi_image_enabled", H5T_NATIVE_UINT8, &multiImage);
+        config.multi_image_enabled = multiImage != 0;
+        readInt("multi_image_count", config.multi_image_count);
+
+        H5Gclose(group);
+        return true;
+    }
+
+    bool Hdf5Service::readRecordedProcessingContract(int& contract) const
+    {
+        if (!isFileOpen()) return false;
+
+        // Contract metadata was added after the first recording files. Those
+        // legacy files are deliberately interpreted as Contract 1. Any
+        // present metadata, however, must be a scalar integer in the supported
+        // range and every copy must agree; silently taking the first value
+        // would make a malformed or tampered file ambiguous.
+        std::optional<int> discovered;
+        const auto readContract = [](hid_t group, const char* name, int& value) {
+            if (H5Aexists(group, name) <= 0) return true; // absent is valid
+            hid_t attribute = H5Aopen(group, name, H5P_DEFAULT);
+            if (attribute < 0 || !isScalarAttribute(attribute)) {
+                if (attribute >= 0) H5Aclose(attribute);
+                return false;
+            }
+            hid_t type = H5Aget_type(attribute);
+            const bool integer = type >= 0 && H5Tget_class(type) == H5T_INTEGER &&
+                                 H5Tget_size(type) <= sizeof(uint64_t);
+            bool ok = false;
+            int64_t signedValue = 0;
+            uint64_t unsignedValue = 0;
+            if (integer) {
+                if (H5Tget_sign(type) == H5T_SGN_NONE)
+                    ok = H5Aread(attribute, H5T_NATIVE_UINT64, &unsignedValue) >= 0 &&
+                         unsignedValue >= 1 && unsignedValue <= 3;
+                else
+                    ok = H5Aread(attribute, H5T_NATIVE_INT64, &signedValue) >= 0 &&
+                         signedValue >= 1 && signedValue <= 3;
+            }
+            if (type >= 0) H5Tclose(type);
+            H5Aclose(attribute);
+            if (!ok) return false;
+            value = integer && signedValue > 0 ? static_cast<int>(signedValue)
+                                               : static_cast<int>(unsignedValue);
+            return true;
+        };
+
+        for (const char* path : {"/", "/experiment_info", "/recording_info", "/run_provenance"}) {
+            if (H5Lexists(impl_->fileId_, path, H5P_DEFAULT) <= 0) continue;
+            hid_t group = H5Gopen2(impl_->fileId_, path, H5P_DEFAULT);
+            if (group < 0) return false;
+            bool ok = true;
+            for (const char* name : {"processing_config_processing_contract_version",
+                                     "processing_contract_version"}) {
+                int value = 1;
+                if (!readContract(group, name, value)) {
+                    ok = false;
+                    break;
+                }
+                if (H5Aexists(group, name) > 0) {
+                    if (discovered && *discovered != value) ok = false;
+                    else discovered = value;
+                }
+            }
+            H5Gclose(group);
+            if (!ok) return false;
+        }
+        contract = discovered.value_or(1);
+        return true;
+    }
 
     bool Hdf5Service::getDatasetInfo(const std::string& datasetPath,
                                      size_t& outCount,
@@ -2538,6 +3107,44 @@ namespace backend::services {
         }
         SPDLOG_DEBUG("readImagesRange: loaded {} images from {}", outImages.size(), datasetPath);
         return true;
+    }
+
+    std::optional<bool> Hdf5Service::metadataDatasetPresent(bool valid) const
+    {
+        if (!isFileOpen()) return std::nullopt;
+        const char* group = valid ? "/valid_frames" : "/invalid_frames";
+        const htri_t groupExists = H5Lexists(impl_->fileId_, group, H5P_DEFAULT);
+        if (groupExists < 0) return std::nullopt;
+        if (groupExists == 0) return false;
+        const std::string path = std::string(group) + "/metadata";
+        const htri_t exists = H5Lexists(impl_->fileId_, path.c_str(), H5P_DEFAULT);
+        if (exists < 0) return std::nullopt;
+        return exists > 0;
+    }
+
+    bool Hdf5Service::readMetadataFieldNames(bool valid, std::vector<std::string>& names) const
+    {
+        names.clear();
+        if (!isFileOpen()) return false;
+        const std::string path = valid ? "/valid_frames/metadata" : "/invalid_frames/metadata";
+        hid_t dataset = H5Dopen2(impl_->fileId_, path.c_str(), H5P_DEFAULT);
+        if (dataset < 0) return false;
+        hid_t type = H5Dget_type(dataset);
+        bool ok = type >= 0 && H5Tget_class(type) == H5T_COMPOUND;
+        if (ok) {
+            const int count = H5Tget_nmembers(type);
+            if (count < 0) ok = false;
+            for (int i = 0; i < count; ++i) {
+                char* name = H5Tget_member_name(type, static_cast<unsigned>(i));
+                if (name) {
+                    names.emplace_back(name);
+                    H5free_memory(name);
+                } else { ok = false; break; }
+            }
+        }
+        if (type >= 0) H5Tclose(type);
+        H5Dclose(dataset);
+        return ok;
     }
 
     bool Hdf5Service::readValidMetadata(std::vector<ProcessedFrame>& frames)
@@ -2924,6 +3531,168 @@ namespace backend::services {
         H5Sclose(spaceId);
         H5Dclose(dsId);
         return true;
+    }
+
+    bool Hdf5Service::readSeriesMeta(size_t index, std::vector<SeriesImageInfo>& outInfo,
+                                     bool* outContiguous) const
+    {
+        outInfo.clear();
+        if (!isFileOpen()) return false;
+        if (H5Lexists(impl_->fileId_, "/valid_frames/series_meta", H5P_DEFAULT) <= 0) return false;
+
+        hid_t dsId = H5Dopen2(impl_->fileId_, "/valid_frames/series_meta", H5P_DEFAULT);
+        if (dsId < 0) return false;
+        hid_t spaceId = H5Dget_space(dsId);
+        if (H5Sget_simple_extent_ndims(spaceId) != 2)
+        {
+            H5Sclose(spaceId);
+            H5Dclose(dsId);
+            return false;
+        }
+        hsize_t dims[2];
+        H5Sget_simple_extent_dims(spaceId, dims, nullptr);
+        if (static_cast<hsize_t>(index) >= dims[0])
+        {
+            H5Sclose(spaceId);
+            H5Dclose(dsId);
+            return false;
+        }
+        const size_t seriesCount = static_cast<size_t>(dims[1]);
+        std::vector<SeriesMetaRecord> records(seriesCount);
+        hsize_t start[2] = {static_cast<hsize_t>(index), 0};
+        hsize_t count[2] = {1, dims[1]};
+        H5Sselect_hyperslab(spaceId, H5S_SELECT_SET, start, nullptr, count, nullptr);
+        hid_t memSpace = H5Screate_simple(2, count, nullptr);
+        hid_t typeId = createSeriesMetaType();
+        const herr_t st = H5Dread(dsId, typeId, memSpace, spaceId, H5P_DEFAULT, records.data());
+        H5Tclose(typeId);
+        H5Sclose(memSpace);
+        H5Sclose(spaceId);
+        H5Dclose(dsId);
+        if (st < 0) return false;
+        outInfo.reserve(seriesCount);
+        for (const auto& r : records) outInfo.push_back(SeriesImageInfo{r.frameIndex, r.timestampNs, r.hostTimestampUs});
+
+        if (outContiguous)
+        {
+            *outContiguous = true;
+            if (H5Lexists(impl_->fileId_, "/valid_frames/series_contiguous", H5P_DEFAULT) > 0)
+            {
+                hid_t cId = H5Dopen2(impl_->fileId_, "/valid_frames/series_contiguous", H5P_DEFAULT);
+                if (cId >= 0)
+                {
+                    hid_t cSpace = H5Dget_space(cId);
+                    hsize_t cStart[1] = {static_cast<hsize_t>(index)};
+                    hsize_t cCount[1] = {1};
+                    H5Sselect_hyperslab(cSpace, H5S_SELECT_SET, cStart, nullptr, cCount, nullptr);
+                    hid_t cMem = H5Screate_simple(1, cCount, nullptr);
+                    uint8_t flag = 1;
+                    if (H5Dread(cId, H5T_NATIVE_UINT8, cMem, cSpace, H5P_DEFAULT, &flag) >= 0)
+                        *outContiguous = flag != 0;
+                    H5Sclose(cMem);
+                    H5Sclose(cSpace);
+                    H5Dclose(cId);
+                }
+            }
+        }
+        return true;
+    }
+
+    bool Hdf5Service::appendTriggerEvents(const std::vector<backend::recording::TriggerEventRecord>& events)
+    {
+        if (events.empty()) return true;
+        if (!isFileOpen() || !impl_->writable_)
+        {
+            SPDLOG_ERROR("appendTriggerEvents: HDF5 file is not open for writing");
+            return false;
+        }
+        const char* path = "/trigger_events";
+        hid_t typeId = createTriggerEventType();
+        const hsize_t rows = static_cast<hsize_t>(events.size());
+        bool ok = true;
+        if (H5Lexists(impl_->fileId_, path, H5P_DEFAULT) <= 0)
+        {
+            hsize_t dims[1] = {rows};
+            hsize_t maxDims[1] = {H5S_UNLIMITED};
+            hid_t spaceId = H5Screate_simple(1, dims, maxDims);
+            hid_t propId = H5Pcreate(H5P_DATASET_CREATE);
+            hsize_t chunk[1] = {std::min<hsize_t>(1024, rows)};
+            H5Pset_chunk(propId, 1, chunk);
+            hid_t dsId = H5Dcreate2(impl_->fileId_, path, typeId, spaceId, H5P_DEFAULT, propId, H5P_DEFAULT);
+            H5Pclose(propId);
+            H5Sclose(spaceId);
+            if (dsId < 0 || H5Dwrite(dsId, typeId, H5S_ALL, H5S_ALL, H5P_DEFAULT, events.data()) < 0)
+            {
+                SPDLOG_ERROR("Failed to create/write {}", path);
+                ok = false;
+            }
+            if (dsId >= 0) H5Dclose(dsId);
+            if (ok) impl_->triggerEventsWritten_ = rows;
+        }
+        else
+        {
+            hid_t dsId = H5Dopen2(impl_->fileId_, path, H5P_DEFAULT);
+            if (dsId < 0)
+            {
+                H5Tclose(typeId);
+                SPDLOG_ERROR("Failed to open {} for appending", path);
+                return false;
+            }
+            // Trust the on-disk extent (a reopened file has no cached count).
+            hid_t fileSpace = H5Dget_space(dsId);
+            hsize_t currentDims[1];
+            H5Sget_simple_extent_dims(fileSpace, currentDims, nullptr);
+            H5Sclose(fileSpace);
+            hsize_t newDims[1] = {currentDims[0] + rows};
+            hid_t memSpace = H5I_INVALID_HID;
+            fileSpace = H5I_INVALID_HID;
+            if (H5Dset_extent(dsId, newDims) < 0)
+            {
+                ok = false;
+            }
+            else
+            {
+                fileSpace = H5Dget_space(dsId);
+                hsize_t start[1] = {currentDims[0]};
+                hsize_t count[1] = {rows};
+                H5Sselect_hyperslab(fileSpace, H5S_SELECT_SET, start, nullptr, count, nullptr);
+                memSpace = H5Screate_simple(1, count, nullptr);
+                if (H5Dwrite(dsId, typeId, memSpace, fileSpace, H5P_DEFAULT, events.data()) < 0) ok = false;
+            }
+            if (memSpace >= 0) H5Sclose(memSpace);
+            if (fileSpace >= 0) H5Sclose(fileSpace);
+            H5Dclose(dsId);
+            if (!ok) SPDLOG_ERROR("Failed to append {}", path);
+            else impl_->triggerEventsWritten_ = newDims[0];
+        }
+        H5Tclose(typeId);
+        if (ok) maybeIntervalFlush();
+        return ok;
+    }
+
+    bool Hdf5Service::readTriggerEvents(std::vector<backend::recording::TriggerEventRecord>& out) const
+    {
+        out.clear();
+        if (!isFileOpen()) return false;
+        const char* path = "/trigger_events";
+        if (H5Lexists(impl_->fileId_, path, H5P_DEFAULT) <= 0) return false;
+        hid_t dsId = H5Dopen2(impl_->fileId_, path, H5P_DEFAULT);
+        if (dsId < 0) return false;
+        hid_t spaceId = H5Dget_space(dsId);
+        hsize_t dims[1] = {0};
+        if (H5Sget_simple_extent_ndims(spaceId) == 1) H5Sget_simple_extent_dims(spaceId, dims, nullptr);
+        H5Sclose(spaceId);
+        bool ok = true;
+        if (dims[0] > 0)
+        {
+            out.resize(static_cast<size_t>(dims[0]));
+            hid_t typeId = createTriggerEventType();
+            ok = H5Dread(dsId, typeId, H5S_ALL, H5S_ALL, H5P_DEFAULT, out.data()) >= 0;
+            H5Tclose(typeId);
+            if (!ok) out.clear();
+        }
+        H5Dclose(dsId);
+        return ok;
     }
 
     // --- Frame recording mode implementation ---
@@ -3660,6 +4429,132 @@ namespace backend::services {
         return ok;
     }
 
+    // ---- RF sort generator provenance --------------------------------------
+
+    bool Hdf5Service::writeRfGeneratorProvenance(const backend::recording::RfGeneratorProvenance& p)
+    {
+        if (!isFileOpen() || !impl_->writable_) return false;
+        const char* groupPath = runInfoGroupPath(impl_->fileId_);
+        if (!groupPath) return false;
+        hid_t group = H5Gopen2(impl_->fileId_, groupPath, H5P_DEFAULT);
+        if (group < 0) return false;
+        hid_t scalar = H5Screate(H5S_SCALAR);
+        bool ok = true;
+        auto writeU64 = [&](const std::string& name, uint64_t value) {
+            if (H5Aexists(group, name.c_str()) > 0) H5Adelete(group, name.c_str());
+            hid_t attr = H5Acreate2(group, name.c_str(), H5T_NATIVE_UINT64, scalar, H5P_DEFAULT, H5P_DEFAULT);
+            if (attr < 0) { ok = false; return; }
+            if (H5Awrite(attr, H5T_NATIVE_UINT64, &value) < 0) ok = false;
+            H5Aclose(attr);
+        };
+        auto writeF64 = [&](const std::string& name, double value) {
+            if (H5Aexists(group, name.c_str()) > 0) H5Adelete(group, name.c_str());
+            hid_t attr = H5Acreate2(group, name.c_str(), H5T_NATIVE_DOUBLE, scalar, H5P_DEFAULT, H5P_DEFAULT);
+            if (attr < 0) { ok = false; return; }
+            if (H5Awrite(attr, H5T_NATIVE_DOUBLE, &value) < 0) ok = false;
+            H5Aclose(attr);
+        };
+        auto writeStr = [&](const std::string& name, const std::string& value) {
+            if (H5Aexists(group, name.c_str()) > 0) H5Adelete(group, name.c_str());
+            hid_t type = H5Tcopy(H5T_C_S1);
+            H5Tset_size(type, H5T_VARIABLE);
+            H5Tset_cset(type, H5T_CSET_UTF8);
+            hid_t attr = H5Acreate2(group, name.c_str(), type, scalar, H5P_DEFAULT, H5P_DEFAULT);
+            if (attr >= 0) {
+                const char* ptr = value.c_str();
+                if (H5Awrite(attr, type, &ptr) < 0) ok = false;
+                H5Aclose(attr);
+            } else {
+                ok = false;
+            }
+            H5Tclose(type);
+        };
+        writeU64("rf_generator_schema_version", backend::recording::RfGeneratorProvenance::kSchemaVersion);
+        writeStr("rf_generator_identity", p.identity);
+        writeStr("rf_generator_link", p.link);
+        writeU64("rf_generator_rf_output", p.rfOutputOn ? 1 : 0);
+        writeU64("rf_generator_pulse_mod", p.pulseModOn ? 1 : 0);
+        writeStr("rf_generator_pulse_source", p.pulseSource);
+        writeStr("rf_generator_pulse_mode", p.pulseMode);
+        writeStr("rf_generator_trigger_mode", p.triggerMode);
+        writeStr("rf_generator_trigger_slope", p.triggerSlope);
+        writeF64("rf_generator_trigger_delay_s", p.triggerDelayS);
+        writeF64("rf_generator_pulse_width_s", p.pulseWidthS);
+        writeF64("rf_generator_pulse_period_s", p.pulsePeriodS);
+        writeU64("rf_generator_pulse_out", p.pulseOutOn ? 1 : 0);
+        writeF64("rf_generator_frequency_hz", p.frequencyHz);
+        writeF64("rf_generator_power_dbm", p.powerDbm);
+        writeU64("rf_generator_sampled_host_us", p.sampledHostUs);
+        H5Sclose(scalar);
+        H5Gclose(group);
+        if (!ok) SPDLOG_ERROR("writeRfGeneratorProvenance: one or more attributes failed");
+        return ok;
+    }
+
+    bool Hdf5Service::readRfGeneratorProvenance(backend::recording::RfGeneratorProvenance& out) const
+    {
+        out = {};
+        if (!isFileOpen()) return false;
+        const char* groupPath = runInfoGroupPath(impl_->fileId_);
+        if (!groupPath) return false;
+        hid_t group = H5Gopen2(impl_->fileId_, groupPath, H5P_DEFAULT);
+        if (group < 0) return false;
+        if (H5Aexists(group, "rf_generator_schema_version") <= 0) {
+            H5Gclose(group);
+            return false;
+        }
+        auto readU64 = [&](const std::string& name, uint64_t& v) {
+            if (H5Aexists(group, name.c_str()) <= 0) return false;
+            hid_t attr = H5Aopen(group, name.c_str(), H5P_DEFAULT);
+            if (attr < 0) return false;
+            const bool ok = H5Aread(attr, H5T_NATIVE_UINT64, &v) >= 0;
+            H5Aclose(attr);
+            return ok;
+        };
+        auto readF64 = [&](const std::string& name, double& v) {
+            if (H5Aexists(group, name.c_str()) <= 0) return false;
+            hid_t attr = H5Aopen(group, name.c_str(), H5P_DEFAULT);
+            if (attr < 0) return false;
+            const bool ok = H5Aread(attr, H5T_NATIVE_DOUBLE, &v) >= 0;
+            H5Aclose(attr);
+            return ok;
+        };
+        auto readStr = [&](const std::string& name, std::string& v) {
+            if (H5Aexists(group, name.c_str()) <= 0) return false;
+            hid_t attr = H5Aopen(group, name.c_str(), H5P_DEFAULT);
+            if (attr < 0) return false;
+            hid_t type = H5Aget_type(attr);
+            bool ok = false;
+            if (type >= 0 && H5Tget_class(type) == H5T_STRING && H5Tis_variable_str(type) > 0) {
+                char* ptr = nullptr;
+                ok = H5Aread(attr, type, &ptr) >= 0;
+                if (ok) v = ptr ? ptr : "";
+                if (ptr) H5free_memory(ptr);
+            }
+            if (type >= 0) H5Tclose(type);
+            H5Aclose(attr);
+            return ok;
+        };
+        uint64_t u = 0;
+        readStr("rf_generator_identity", out.identity);
+        readStr("rf_generator_link", out.link);
+        if (readU64("rf_generator_rf_output", u)) out.rfOutputOn = u != 0;
+        if (readU64("rf_generator_pulse_mod", u)) out.pulseModOn = u != 0;
+        readStr("rf_generator_pulse_source", out.pulseSource);
+        readStr("rf_generator_pulse_mode", out.pulseMode);
+        readStr("rf_generator_trigger_mode", out.triggerMode);
+        readStr("rf_generator_trigger_slope", out.triggerSlope);
+        readF64("rf_generator_trigger_delay_s", out.triggerDelayS);
+        readF64("rf_generator_pulse_width_s", out.pulseWidthS);
+        readF64("rf_generator_pulse_period_s", out.pulsePeriodS);
+        if (readU64("rf_generator_pulse_out", u)) out.pulseOutOn = u != 0;
+        readF64("rf_generator_frequency_hz", out.frequencyHz);
+        readF64("rf_generator_power_dbm", out.powerDbm);
+        readU64("rf_generator_sampled_host_us", out.sampledHostUs);
+        H5Gclose(group);
+        return true;
+    }
+
     bool Hdf5Service::readAcquisitionProvenance(::camera::common::TimestampDescriptor& d,
                                                 AcquisitionTelemetrySnapshot& t) const
     {
@@ -3781,7 +4676,8 @@ namespace backend::services {
             if (H5Awrite(attr, H5T_NATIVE_UINT64, &value) < 0) ok = false;
             H5Aclose(attr);
         };
-        writeU64("run_snapshot_schema_version", 1);
+        // Mirrors RunConfigurationSnapshot::kSchemaVersion (v2: "method" block, #398 M2).
+        writeU64("run_snapshot_schema_version", 2);
         writeStr("run_snapshot_json", runSnapshotJson);
         writeStr("readiness_json", readinessJson);
         H5Sclose(scalar);
@@ -3818,6 +4714,108 @@ namespace backend::services {
         if (readinessJson) readStr("readiness_json", *readinessJson);
         H5Gclose(group);
         return ok && !runSnapshotJson.empty();
+    }
+
+    // ---- KDE core contour records (kde_core_schema_version = 1) -----------------
+
+    namespace {
+    constexpr uint64_t kKdeCoreSchemaVersion = 1;
+
+    bool writeGroupJsonAttribute(hid_t fileId, const char* groupPath, const char* name, const std::string& value)
+    {
+        hid_t group = H5Lexists(fileId, groupPath, H5P_DEFAULT) > 0
+                          ? H5Gopen2(fileId, groupPath, H5P_DEFAULT)
+                          : H5Gcreate2(fileId, groupPath, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+        if (group < 0) return false;
+        hid_t scalar = H5Screate(H5S_SCALAR);
+        bool ok = true;
+        if (H5Aexists(group, name) > 0 && H5Adelete(group, name) < 0) ok = false;
+        hid_t type = H5Tcopy(H5T_C_S1);
+        H5Tset_size(type, H5T_VARIABLE);
+        H5Tset_cset(type, H5T_CSET_UTF8);
+        if (ok) {
+            hid_t attr = H5Acreate2(group, name, type, scalar, H5P_DEFAULT, H5P_DEFAULT);
+            if (attr >= 0) {
+                const char* ptr = value.c_str();
+                if (H5Awrite(attr, type, &ptr) < 0) ok = false;
+                H5Aclose(attr);
+            } else {
+                ok = false;
+            }
+        }
+        H5Tclose(type);
+        if (ok) {
+            const char* versionName = "kde_core_schema_version";
+            hid_t attr = H5Aexists(group, versionName) > 0
+                             ? H5Aopen(group, versionName, H5P_DEFAULT)
+                             : H5Acreate2(group, versionName, H5T_NATIVE_UINT64, scalar, H5P_DEFAULT, H5P_DEFAULT);
+            if (attr < 0 || H5Awrite(attr, H5T_NATIVE_UINT64, &kKdeCoreSchemaVersion) < 0) ok = false;
+            if (attr >= 0) H5Aclose(attr);
+        }
+        H5Sclose(scalar);
+        H5Gclose(group);
+        return ok;
+    }
+
+    bool readGroupJsonAttribute(hid_t fileId, const char* groupPath, const char* name, std::string& value)
+    {
+        value.clear();
+        if (H5Lexists(fileId, groupPath, H5P_DEFAULT) <= 0) return false;
+        hid_t group = H5Gopen2(fileId, groupPath, H5P_DEFAULT);
+        if (group < 0) return false;
+        bool ok = false;
+        if (H5Aexists(group, name) > 0) {
+            hid_t attr = H5Aopen(group, name, H5P_DEFAULT);
+            if (attr >= 0) {
+                hid_t type = H5Aget_type(attr);
+                if (type >= 0 && H5Tget_class(type) == H5T_STRING && H5Tis_variable_str(type) > 0) {
+                    char* ptr = nullptr;
+                    ok = H5Aread(attr, type, &ptr) >= 0;
+                    if (ok) value = ptr ? ptr : "";
+                    if (ptr) H5free_memory(ptr);
+                }
+                if (type >= 0) H5Tclose(type);
+                H5Aclose(attr);
+            }
+        }
+        H5Gclose(group);
+        return ok && !value.empty();
+    }
+    } // namespace
+
+    bool Hdf5Service::writeKdeLiveJson(const std::string& json)
+    {
+        if (!isFileOpen() || !impl_->writable_) {
+            SPDLOG_WARN("writeKdeLiveJson: no writable HDF5 file open; KDE live record not stored");
+            return false;
+        }
+        const bool ok = writeGroupJsonAttribute(impl_->fileId_, "/monitoring", "kde_live_json", json);
+        if (!ok) SPDLOG_WARN("writeKdeLiveJson: attribute write failed");
+        return ok;
+    }
+
+    bool Hdf5Service::readKdeLiveJson(std::string& json) const
+    {
+        if (!isFileOpen()) { json.clear(); return false; }
+        return readGroupJsonAttribute(impl_->fileId_, "/monitoring", "kde_live_json", json);
+    }
+
+    bool Hdf5Service::writeKdeAnalysisJson(const std::string& json)
+    {
+        if (!isFileOpen() || !impl_->writable_) {
+            SPDLOG_WARN("writeKdeAnalysisJson: no writable HDF5 file open; KDE analysis record not stored");
+            return false;
+        }
+        const bool ok = writeGroupJsonAttribute(impl_->fileId_, "/analysis", "kde_core_json", json);
+        if (!ok) SPDLOG_WARN("writeKdeAnalysisJson: attribute write failed");
+        else if (!flush()) SPDLOG_WARN("writeKdeAnalysisJson: flush after write failed");
+        return ok;
+    }
+
+    bool Hdf5Service::readKdeAnalysisJson(std::string& json) const
+    {
+        if (!isFileOpen()) { json.clear(); return false; }
+        return readGroupJsonAttribute(impl_->fileId_, "/analysis", "kde_core_json", json);
     }
 
 } // namespace backend::services

@@ -23,8 +23,8 @@ jobs:
   # Path gate: the sanitizer lanes cost ~17 min (ASan+UBSan) and ~8 min
   # (TSan) per PR, and they only exercise the C++ backend. Docs, vault,
   # desktop/bridge, tools and wheel-only changes skip them. A skipped job
-  # still satisfies the required status check on develop/main. Nightly and
-  # manual runs always execute.
+  # still satisfies the required status checks on develop/main (see the
+  # step-level gates on the sanitize job). Nightly and manual runs always execute.
   changes:
     name: Detect C++ changes
     runs-on: ubuntu-24.04
@@ -49,14 +49,25 @@ jobs:
               - 'conanfile.*'
               - 'conan/**'
               - 'scripts/provision-mindvision-sdk.sh'
+              - 'env/**'
+              - '.github/actions/setup-linux-env/**'
               - '.github/workflows/sanitizers.yml'
 
+  # The job itself always runs so the matrix expands and the required status
+  # contexts "thread" and "address+undefined" exist on every PR (a job-level
+  # `if:` leaves an unexpanded "matrix.sanitizer" placeholder and branch
+  # protection waits forever). Each step is gated instead: a docs-only PR
+  # finishes in seconds with every step skipped and the contexts green.
   sanitize:
     name: ${{ matrix.sanitizer }}
     needs: changes
-    if: github.event_name != 'pull_request' || needs.changes.outputs.cpp == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    # The linux-backend-only preset uses Unix Makefiles with no job count, so
+    # without this every build compiled one file at a time on a 4-CPU runner.
+    env:
+      CMAKE_BUILD_PARALLEL_LEVEL: "4"
+      SCCACHE_GHA_ENABLED: "true"
     strategy:
       fail-fast: false
       matrix:
@@ -64,31 +75,54 @@ jobs:
 
     steps:
       - name: Checkout
+        if: github.event_name != 'pull_request' || needs.changes.outputs.cpp == 'true'
         uses: actions/checkout@v6
 
-      - name: Install Linux system packages
+      - name: Prepare sanitizer log directory
+        if: github.event_name != 'pull_request' || needs.changes.outputs.cpp == 'true'
         shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential cmake curl git libgl1-mesa-dev libhdf5-dev libopencv-dev \
-            libspdlog-dev libsqlite3-dev libxkbcommon-dev nlohmann-json3-dev \
-            pkg-config python3-numpy python3-pip qt6-base-dev qt6-serialport-dev
+        run: mkdir -p artifacts/sanitizers
 
-      - name: Provision pinned MindVision SDK
-        shell: bash
-        run: ./scripts/provision-mindvision-sdk.sh --github-env "$GITHUB_ENV"
+      - name: Set up Linux build environment
+        if: github.event_name != 'pull_request' || needs.changes.outputs.cpp == 'true'
+        uses: ./.github/actions/setup-linux-env
+        timeout-minutes: 10
+        with:
+          sections: base,backend,frontend,test-extras
+          conan: "false"
+          mindvision: "true"
+          assets: none
+
+      - name: Set up sccache
+        if: github.event_name != 'pull_request' || needs.changes.outputs.cpp == 'true'
+        uses: mozilla-actions/sccache-action@v0.0.11
+        timeout-minutes: 3
+        with:
+          version: "v0.16.0"
 
       - name: Configure (backend-only + sanitizer)
+        if: github.event_name != 'pull_request' || needs.changes.outputs.cpp == 'true'
+        timeout-minutes: 5
         shell: bash
-        run: cmake --preset linux-backend-only -DMIB_SANITIZER=${{ matrix.sanitizer }}
+        run: |
+          set -o pipefail
+          timeout --signal=TERM --kill-after=30s 4m \
+            cmake --preset linux-backend-only -DMIB_SANITIZER=${{ matrix.sanitizer }} \
+            2>&1 | tee artifacts/sanitizers/configure-${{ matrix.sanitizer }}.log
 
       - name: Build
+        if: github.event_name != 'pull_request' || needs.changes.outputs.cpp == 'true'
+        timeout-minutes: 36
         shell: bash
-        run: cmake --build --preset linux-backend-only-build
+        run: |
+          set -o pipefail
+          timeout --signal=TERM --kill-after=30s 35m \
+            cmake --build --preset linux-backend-only-build \
+            2>&1 | tee artifacts/sanitizers/build-${{ matrix.sanitizer }}.log
 
       - name: Test under sanitizer
+        if: github.event_name != 'pull_request' || needs.changes.outputs.cpp == 'true'
+        timeout-minutes: 13
         shell: bash
         env:
           # Route the e-modulus LUT manifest lookup to a file: URL so startup
@@ -106,6 +140,34 @@ jobs:
           # Memory/concurrency-relevant tests; exclude timing-sensitive
           # performance/integration tests (sanitizer slowdown skews budgets) and
           # network-backed tests.
-          ctest --test-dir build/linux-backend --output-on-failure --timeout 600 \
-            -L "backend|recording|processing|camera" \
-            -LE "integration|performance"
+          timeout --signal=TERM --kill-after=30s 12m \
+            ctest --test-dir build/linux-backend --output-on-failure --timeout 600 \
+              -L "backend|recording|processing|camera" \
+              -LE "integration|performance" \
+            2>&1 | tee artifacts/sanitizers/test-${{ matrix.sanitizer }}.log
+
+      - name: sccache statistics
+        if: always() && (github.event_name != 'pull_request' || needs.changes.outputs.cpp == 'true')
+        shell: bash
+        timeout-minutes: 1
+        run: |
+          mkdir -p artifacts/sanitizers
+          if command -v sccache >/dev/null 2>&1; then
+            sccache --show-stats 2>&1 | tee artifacts/sanitizers/sccache-stats-${{ matrix.sanitizer }}.log
+          else
+            echo "sccache was not available; cache statistics are unavailable" \
+              | tee artifacts/sanitizers/sccache-stats-${{ matrix.sanitizer }}.log
+          fi
+
+      - name: Upload sanitizer logs
+        if: always() && (github.event_name != 'pull_request' || needs.changes.outputs.cpp == 'true')
+        uses: actions/upload-artifact@v7
+        timeout-minutes: 3
+        with:
+          name: sanitizer-logs-${{ matrix.sanitizer }}-${{ github.run_id }}
+          path: |
+            artifacts/sanitizers/*.log
+            build/linux-backend/Testing/Temporary/LastTest.log
+            build/linux-backend/Testing/Temporary/LastTestsFailed.log
+          if-no-files-found: ignore
+          retention-days: 7

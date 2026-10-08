@@ -128,27 +128,29 @@ jobs:
           "artifact_version=$artifactVersion" >> $env:GITHUB_OUTPUT
           "current_version=$current" >> $env:GITHUB_OUTPUT
 
+      - name: Prepare release notes
+        shell: pwsh
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          if ('${{ steps.version.outputs.channel }}' -eq 'stable') {
+            python scripts/release_notes.py --version $version --check
+          } else {
+            $stableTags = @(git tag --merged HEAD --list 'v*' | Where-Object { $_ -match '^v[0-9]+\.[0-9]+\.[0-9]+$' } | Sort-Object { [version]$_.Substring(1) })
+            if ($LASTEXITCODE -ne 0 -or $stableTags.Count -eq 0) { throw 'No reachable stable tag for beta notes' }
+            $since = $stableTags[-1]
+            python scripts/release_notes.py --version $version --beta --since $since
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'Release notes preparation failed' }
+
       # ── Build environment ──────────────────────────────────────
 
       - name: Install Conan
         run: |
           pip install conan boto3 numpy
           conan profile detect --force
-          # Create CI profile pinned to msvc 194 to match prebuilt binaries on conancenter
-          @"
-          [settings]
-          os=Windows
-          arch=x86_64
-          compiler=msvc
-          compiler.version=194
-          compiler.cppstd=17
-          compiler.runtime=dynamic
-          build_type=Release
-          [conf]
-          tools.cmake.cmaketoolchain:generator=Ninja
-          "@ | Out-File -FilePath "$env:USERPROFILE\.conan2\profiles\ci" -Encoding UTF8
-          Write-Host "CI Conan profile created:"
-          conan profile show -pr ci
+          # Host/build profile lives in the repo (conan/profiles/windows-msvc194-ninja); the same
+          # file serves local builds, so CI and a developer PC resolve one graph.
+          conan profile show -pr conan/profiles/windows-msvc194-ninja
 
           # Add team Conan remote as primary
           if ($env:CONAN_REMOTE_URL) {
@@ -212,6 +214,13 @@ jobs:
             -PassThru
           "MIB_MINDVISION_SDK_ROOT=$($sdk.SdkRoot)" >> $env:GITHUB_ENV
           "MIB_MINDVISION_RUNTIME_DIR=$($sdk.RuntimeDir)" >> $env:GITHUB_ENV
+          New-Item -ItemType Directory -Force resources\installers | Out-Null
+          Copy-Item build\vendor\mindvision-sdk\mindvision-sdk-installer.exe `
+            resources\installers\MindVision-Camera-Platform-Setup2.1.10.195_202604021438.exe
+
+      - name: Provision pinned assets (env/assets.json)
+        shell: pwsh
+        run: python scripts/provision-assets.py --required-only
 
       # ── Build ──────────────────────────────────────────────────
       - name: Conan install
@@ -219,11 +228,11 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
 
-          conan install . -of build --build=missing -s build_type=Release -pr ci
+          conan install . -of build --build=missing -s build_type=Release -pr conan/profiles/windows-msvc194-ninja
           if ($LASTEXITCODE -ne 0) {
             Write-Host "WARNING: Conan install failed with current remotes (possibly team-conan). Retrying after disabling team-conan remote." -ForegroundColor Yellow
             conan remote remove team-conan 2>$null
-            conan install . -of build --build=missing -s build_type=Release -pr ci
+            conan install . -of build --build=missing -s build_type=Release -pr conan/profiles/windows-msvc194-ninja
             if ($LASTEXITCODE -ne 0) {
               Write-Host "ERROR: Conan install failed after removing team-conan remote." -ForegroundColor Red
               exit 1
@@ -618,10 +627,10 @@ jobs:
 
           if ($channel -eq "beta") {
             # Beta: pre-release; gh creates the tag server-side on this commit
-            & gh release create $tag @installers --title "v$version" --generate-notes --prerelease --target ${{ github.sha }}
+            & gh release create $tag @installers --title "v$version" --notes-file "docs/release-notes/v$version.md" --prerelease --target ${{ github.sha }}
           } else {
             # Release: full release (verified tag at the trigger SHA was pushed above)
-            & gh release create $tag @installers --title "v$version" --generate-notes
+            & gh release create $tag @installers --title "v$version" --notes-file "docs/release-notes/v$version.md"
           }
           if ($LASTEXITCODE -ne 0) { throw 'GitHub Release creation failed' }
         shell: pwsh
@@ -646,11 +655,12 @@ jobs:
           $channel = "${{ steps.version.outputs.channel }}"
           $artifactVersion = '${{ steps.version.outputs.artifact_version }}'
           $updateInstaller = Get-Item -LiteralPath "build\dist\MIB_Studio_Qt_Update_v$artifactVersion.exe"
-          python publish-update.py `
+          python scripts\release\publish-update.py `
             --installer $updateInstaller.FullName `
             --version $version `
             --channel $channel `
             --upload-method s3 `
+            --release-notes-file "docs/release-notes/v$version.md" `
             --release-notes-url "https://github.com/${{ github.repository }}/releases/tag/${{ steps.version.outputs.tag }}"
           if ($LASTEXITCODE -ne 0) { throw 'Cloudflare R2 update publish failed' }
         shell: pwsh

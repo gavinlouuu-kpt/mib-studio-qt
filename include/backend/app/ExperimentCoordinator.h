@@ -15,6 +15,7 @@
 #pragma once
 
 #include "backend/app/ExperimentReadiness.h"
+#include "backend/recording/RecordingAccounting.h"
 
 #include <atomic>
 #include <condition_variable>
@@ -63,6 +64,27 @@ public:
     // NotActive when there is no run.
     ExperimentStopOutcome requestStop(bool cancelled);
 
+    // Z stage (#533): Start is refused while the probe says a stage operation is active, so
+    // an experiment never starts under a moving stage. The probe runs with the coordinator
+    // lock held (lock order: coordinator, then stage), so it must not call back in. Stage
+    // moves are queued under the same lock (withIdleConfiguration), which makes the check
+    // and the queueing atomic against each other.
+    void setStageBusyProbe(std::function<bool()> probe);
+
+    // The reconciled accounting of the last finalized run (#549), with that run's start
+    // generation, or false before any run has finished. The UI uses it for the true admitted-frame
+    // count and the individual loss counts, which the status's reason text only summarises.
+    bool lastRunAccounting(recording::RecordingAccountingSnapshot& out, uint64_t& startGeneration) const;
+
+    // Latest provisional KDE core contour record (JSON, frontend codec) that
+    // the Monitoring view is showing. Accepted only while a run is Active;
+    // cleared at Start; written to the run's file during finalization
+    // (Hdf5Service::writeKdeLiveJson) as a copy of what was on screen. Never
+    // blocks or fails the stop.
+    void setLiveKdeCoreRecord(std::string json);
+
+    void requestFlush();
+
     // Fatal save-error funnel (writer thread): marks the run Failed and
     // finalizes it so the file is closed and readable.
     void onFatalSaveError(const std::string& message);
@@ -92,9 +114,18 @@ public:
     // readiness until cleared.
     void reportUnresolvedFault(const std::string& code, const std::string& message);
     void clearUnresolvedFault();
+    bool acknowledgeFault(uint64_t expectedRun, uint64_t expectedFaultRevision,
+                          const std::string& expectedCode, const std::string& expectedMessage,
+                          std::string& error);
+    // Runs a config transaction while Start is excluded. Nested service setters
+    // reuse the authorization of the enclosing idle transaction on this thread.
+    // Workers use wait=false to avoid waiting on transactions that may join them.
+    bool withIdleConfiguration(const std::function<void()>& transaction);
+    bool withIdleConfiguration(const std::function<void()>& transaction, bool wait);
     bool hasUnresolvedFault() const;
 
 private:
+    friend struct ExperimentConfigurationTestAccess;
     // Everything readiness depends on, in one comparable value.
     struct InvalidationKey {
         uint64_t captureGeneration{0};
@@ -112,7 +143,12 @@ private:
         double pixelToMicron{0.0};
         std::string outputPath;
         std::string profileId;
+        std::string method; // methodInvalidationKey (#398 M2)
         bool faulted{false};
+        uint64_t frameWidth{0}, frameHeight{0}, pixelFormat{0};
+        bool frameGeometryKnown{false};
+        uint64_t bufferBytes{0};
+        size_t flushInterval{0};
         bool operator==(const InvalidationKey& o) const;
         bool operator!=(const InvalidationKey& o) const { return !(*this == o); }
     };
@@ -133,9 +169,15 @@ private:
 
     AppBackend& backend_;
     mutable std::mutex mutex_;
+    std::function<bool()> stageBusyProbe_; // under mutex_
     std::atomic<uint64_t> readinessGeneration_{0};
     InvalidationKey lastKey_;
     bool haveLastKey_{false};
+    uint64_t storageProbeGeneration_{0};
+    uint64_t storageProbeTimeUs_{0};
+    bool storageProbeOk_{false};
+    std::string storageProbeReason_;
+
     ExperimentRunState state_{ExperimentRunState::Idle};
     uint64_t startCounter_{0};
     std::optional<RunConfigurationSnapshot> activeRun_;
@@ -143,21 +185,46 @@ private:
     std::string buildId_;
     std::string os_;
     bool faultActive_{false};
+    uint64_t faultRevision_{0};
     std::string faultCode_;
     std::string faultMessage_;
     // Terminal/lifecycle fields that outlive activeRun_ (reset on start).
     ExperimentStatus status_;
+    recording::RecordingAccountingSnapshot lastAccounting_{};
+    uint64_t lastAccountingGeneration_{0};
+    bool haveLastAccounting_{false};
     mutable std::mutex callbackMutex_;
     StatusCallback statusCallback_;
+    // publishLocked() invokes a copy of the callback outside every lock, so
+    // replacing or clearing it must wait for invocations already in flight:
+    // otherwise an owner that unregisters and is destroyed (BackendFacade at
+    // shutdown) can still be called on the worker thread.
+    std::condition_variable callbackIdle_;
+    int callbacksInFlight_{0};
     // Worker thread (periodic flush + finalization). Guarded by mutex_.
     std::thread worker_;
     std::condition_variable workerCv_;
     bool workerExit_{false};
+    bool flushRequested_{false};
     bool stopRequested_{false};
     bool cancelRequested_{false};
     bool fatalRequested_{false};
     std::string fatalMessage_;
     std::optional<RunConfigurationSnapshot> lastRun_;
+    // Provisional KDE core record for the active run (guarded by mutex_).
+    std::string liveKdeCoreJson_;
+    // Method provenance memo (guarded by mutex_): readiness is polled, so the
+    // registry snapshot copy and config canonicalization run only when an
+    // input changes.
+    struct MethodMemo {
+        bool valid{false};
+        std::string rawConfigSha256;
+        uint64_t registryGeneration{0};
+        std::string contextHash;
+        std::string instrumentName;
+        MethodProvenance method;
+    };
+    mutable MethodMemo methodMemo_;
     // Multi-image series runs force inline realtime processing; restored on
     // finalize (moved here from the Qt window).
     bool restoreRealtimeMode_{false};

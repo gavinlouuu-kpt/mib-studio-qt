@@ -1,0 +1,14 @@
+{
+  "version": 3,
+  "$comment": "Copy to CMakeUserPresets.json (gitignored) for machine-specific settings. Never put user paths in CMakePresets.json.",
+  "configurePresets": [
+    {
+      "name": "my-linux-backend",
+      "inherits": "linux-backend-only",
+      "displayName": "linux-backend-only, ignoring a conda/linuxbrew prefix on this machine",
+      "cacheVariables": {
+        "CMAKE_IGNORE_PREFIX_PATH": "/home/<you>/miniconda3;/home/linuxbrew/.linuxbrew"
+      }
+    }
+  ]
+}

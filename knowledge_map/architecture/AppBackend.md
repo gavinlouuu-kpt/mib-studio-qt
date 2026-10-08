@@ -1,5 +1,99 @@
 # AppBackend
 
+## Central profile registry worker (2026-10-02, #398)
+
+`initialize()` builds a `profiles::ProfileRegistryWorker` before any service,
+configured from `MIB_PROFILE_REGISTRY_URL` + `MIB_PROFILE_REGISTRY_PUBLISHABLE_KEY`
+with its cache under `<dataDir>/profile_registry/`. The shell injects the HTTPS
+POST via `setProfileRegistryTransport()` before `initialize()` (ADR 0002 seam;
+Qt: `makeQtRegistryHttpTransport()`); without env or transport the worker is
+inert. `shutdown()` stops it **first**: it shares nothing with the instrument,
+and its shutdown aborts an in-flight request rather than waiting out the
+timeout. Accessor: `profileRegistry()`. See [[../services/ProfileRegistryService]].
+
+M2a (2026-10-04): `initialize()` also loads the instrument identity
+(`instrumentIdentity()`: UUID in `<dataDir>/instrument_identity.json` +
+`MIB_INSTRUMENT_NAME`) before the worker, and gives the worker
+`methodsDir = <dataDir>/methods` for materialized revisions.
+`methodContext()` returns the context a local method validation binds to
+(instrument UUID, active processing core version + SHA-256, effective camera
+source); the coordinator and validation requests both use it.
+
+## Device discovery ownership (2026-09-16, #419)
+
+`initialize()` constructs [[../services/DeviceDiscoveryService]] after the
+hardware services, registers the compiled-in providers (MindVision, eGrabber
+cameras, eGrabber framegrabbers, nanopositioner, pulse generator), installs
+the capture-busy guard for camera kinds, and builds the
+`StartupDiscoveryCoordinator` with hooks onto `isCameraConfigured()`,
+`capture().isRunning()`, `autofocus().isConnected()`,
+`set*CameraSelection()` and `autofocus().connect()`. The coordinator is
+started by the Qt adapter (`DeviceInitManager`), not here. `shutdown()`
+begins with `startupDiscovery().stop()` and
+`deviceDiscovery().shutdownDiscovery()` so every probe has ended before
+capture and serial hardware are released. Accessors: `deviceDiscovery()`,
+`startupDiscovery()`. Both members are declared after the services they
+reference so they are destroyed first.
+
+## Aravis source selection (2026-09-27)
+
+`MIB_CAMERA_MODE=aravis` configures the optional [[../camera/AravisCamera]]
+factory. `MIB_ARAVIS_DEVICE_ID` selects a device, `MIB_ARAVIS_FAKE` is an
+explicit Fake-interface opt-in and `MIB_ARAVIS_GIGE` re-enables GigE Vision
+discovery (off by default). `MIB_ARAVIS_FPS`, `MIB_ARAVIS_EXPOSURE_US` and
+`MIB_ARAVIS_REGION=X,Y,W,H` seed the Aravis camera profile when it does not
+exist yet.
+
+**Science placement (ADR 0008).** `include/backend/app/SciencePlacement.h`:
+on the PZ7035 the PL processes every frame and the PS must never run the
+desktop pipeline. `hostProcessingAvailable()` gates every path that would
+start it (see [[Rust-Bridge]] ABI 21). The Aravis profile's `preview_rate_hz`
+(default 60; `MIB_ARAVIS_PREVIEW_HZ` seeds it) sets the producer's
+`PzPreviewRate`: previews the PS asks for per second, the PL still sees every
+frame. Measured on the PS at 512x96 / 1 kHz: uncapped ~500 previews/s at 70 %
+of a core, 60/s at 8 %, 30/s at 4 %.
+
+**PZ7035 camera modes (#501 P1).**
+- **Owner.** `pzControl_` (`pz::PzInstrumentControl`) is created beside the
+  `pz-devmem` provider. It writes nothing until a mode is chosen.
+- **Switching.** `setInstrumentMode(Align|Run, x, y)` holds
+  `instrumentModeMutex_` and is refused during an experiment or recording.
+  It sequences the LED, the cell path and the Aravis profile (Align
+  500 fps / 1899.7 µs; Run 5 kHz / 150 µs at the snapped window) around a
+  capture start; the full sequence is in [[../data-model/PZ7035-Records]].
+- **Run guard.** In Run the Aravis factory returns null, so no capture
+  start can reach the producer.
+- **LED.** `setServiceMode` latches Service mode; `setInstrumentLed`
+  requires it.
+- **Preview.** `fetchRunPreview` encodes one cell capture.
+
+**Camera & Alignment.** `setCameraOverview` / `saveCameraRoi` /
+`cameraGeometry` generalise the MindVision Overview to Aravis cameras. The
+Aravis profile `<data>/config/aravis-camera.json` (or `MIB_ARAVIS_PROFILE`)
+holds the experiment window and the rate/exposure of each mode (Overview
+default 830 Hz / 900 us, the lit PZ7035 full field). Overview: the camera
+factory switches to the whole sensor (`AravisCameraOptions::fullSensor`),
+realtime processing is switched off (and restored on leaving), the frame store
+becomes 8 frames; Experiment restores the store and acquires the saved window.
+Rejected during an experiment or recording; the readiness gate `camera.mode`
+fails while in Overview. Window saves are bounds- and step-checked against the
+camera's read-back (sensor size and Width/OffsetX increments, published by the
+adapter's `onSession` callback). Test: `backend.aravis_camera_overview`. If Aravis is disabled at build time, the
+request records an unavailable effective source and a null factory so capture
+reports the configuration error; it does not silently substitute MockCamera.
+
+## Explicit hardware shutdown (2026-09-15)
+
+`shutdown()` disconnects autofocus, both syringe pumps and the pulse
+generator after stopping capture/triggers and processing. Since #464 slice 3
+it then shuts down the [[../services/StageService]], which cancels any
+operation, stops a moving axis and joins its worker while the bus is alive.
+Callers need not
+destroy the backend to release serial adapters. The final shared-bus client
+releases the port. Each phase is logged to locate future shutdown stalls.
+`backend.hardware_shutdown` checks ten reconnect/shutdown cycles with three
+clients on one fake port. See [[../task/2026-09-15-hardware-shutdown]].
+
 > Composition root. Owns every backend service and the shared `FrameStore`.
 > Frontend code holds a single `backend::AppBackend&` and calls getters.
 
@@ -16,11 +110,20 @@ All services are `std::unique_ptr`; [[../data-model/FrameStore]] is
 sqliteService_, hdf5Service_,
 captureService_, processingService_, playbackService_,
 cameraControlService_, autofocusService_,
-triggerService_, yoloService_, syringePumpService_
+triggerService_, dotGridService_, syringePumpService_,
+pulseGeneratorService_, rfGeneratorService_,
+deviceDiscovery_, startupDiscovery_   // #419: declared last, destroyed first
 frameStore_  // shared_ptr<FrameStore>(5000)
 ```
 
 ## `initialize(dataDir)` — what it wires
+
+When EGrabber is unavailable but MindVision is enabled, an implicit default
+mock fallback leaves `isCameraConfigured()` false. This allows the existing
+single-camera startup discovery to select the rig. Explicit `MIB_CAMERA_MODE`
+choices and explicitly configured mock cameras retain their previous behavior.
+Regression: `backend.mindvision_selection_state` checks implicit versus
+explicit mock initialization without touching hardware (#413).
 
 See `src/backend/AppBackend.cpp` around lines 79–200.
 
@@ -30,15 +133,14 @@ See `src/backend/AppBackend.cpp` around lines 79–200.
 2. Instantiates all services + `FrameStore(5000)`.
 3. `sqliteService_->initialize(dataDir/app.sqlite3)`,
    `hdf5Service_->initialize(dataDir)`.
-4. Loads optional YOLO model from `resources/models/yolo11n-seg.onnx`.
-5. Resolves the Young's modulus LUT through the managed R2/cache helper,
+4. Resolves the Young's modulus LUT through the managed R2/cache helper,
    preferring the user-writable copy under the app-local data tree and
    falling back to the bundled `resources/isoelastic_curve/...` file on
    first run, offline launches, or update failures.
-6. Starts the processing worker pool (`processingService_->start()`).
+5. Starts the processing worker pool (`processingService_->start()`).
    Realtime loop is **not** started here — it starts when the Experiment tab
    becomes active.
-7. Wires callbacks:
+6. Wires callbacks:
    - `ProcessingService::RingRatioCallback` → `AutofocusService::onRingRatio`
    - `ProcessingService::TargetGroupCallback` → `TriggerService::onTargetGroupResult`
    - `CaptureService::CameraReadyCallback(camera, generation)` →
@@ -48,7 +150,7 @@ See `src/backend/AppBackend.cpp` around lines 79–200.
      and hands it the live `ICamera*`
    - `ProcessingService::BackgroundCaptureCallback` → emits Qt signal via
      [[../frontend/System-Utilities]] `BackgroundCaptureNotifier`
-8. Seeds the [[../diagnostics/CrashStateMirror]] with initial app context
+7. Seeds the [[../diagnostics/CrashStateMirror]] with initial app context
    (camera label, data dir, mock vs hardware vs MindVision, FrameStore
   capacity) and sets the Sentry tags (`camera_mode`, `data_dir`) on
   [[../services/CrashReporter]].
@@ -87,9 +189,9 @@ Supported backend tokens:
 - `sqlite`
 - `hdf5`
 - `processing`
-- `yolo`
 - `autofocus` (disables ring-ratio callback wiring from processing)
 - `trigger` (disables processing/camera trigger wiring)
+- `dot_grid` (alias: `dotgrid`; leaves [[../services/DotGridService]] constructed but not started)
 - `capture` (alias: `camera`)
 - `playback`
 - `all` (disables all backend startup paths above)
@@ -113,9 +215,40 @@ is joined), and `shutdown()` dumps again as a final snapshot. Runtime API:
 `TargetGroupSignal` so [[../services/TriggerService]] can correlate pulses
 with source frames. See `docs/howto/pipeline-latency-diagnosis.md`.
 
+### OpenCV thread pool (`MIB_OPENCV_THREADS`)
+
+Just before `processingService_->start()`, `initialize` calls
+`cv::setNumThreads(0)`, so OpenCV runs every operation inline on the calling
+thread.
+- **Why:** the Conan OpenCV on Windows parallelises through the MSVC
+  Concurrency Runtime: one worker per logical CPU, and idle workers spin.
+  The realtime path processes one small frame per call, so any OpenCV call
+  there that reaches `parallel_for` keeps the whole pool spinning and starves
+  the processing thread. Dev builds share one `opencv_core` DLL between the
+  host and the processing cores, but **released cores link OpenCV
+  statically** (the release audit forbids `opencv*` imports; v0.2.1 imports
+  only `CONCRT140.dll`), so the host's call never reaches them. Each core
+  therefore applies the same setting to its own OpenCV on its first
+  `create_context` (`ProcessingCorePlugin.cpp`). Both use the parser in
+  `include/backend/processing/OpenCvThreads.h`.
+- **Measured on the rig PC** (i9-13900, 32 logical CPUs, Coaxlink camera,
+  448x116 at 5000 fps, 2026-10-02): during a recorded run the pool kept 34
+  threads busy (~30 cores) and processing fell to ~2900 frames/s, ending
+  every run `incompleteLoss`. With the pool off: 5000 frames/s, 1.4 cores,
+  run complete. Evidence:
+  `docs/evidence/2026-10-02-opencv-pool-5000fps/`.
+- **Override:** `MIB_OPENCV_THREADS=N` (0–256) passes N instead;
+  `MIB_OPENCV_THREADS=opencv` keeps OpenCV's own default. An invalid value
+  logs a warning and keeps 0. The chosen value is logged at startup.
+- Guard: `backend.opencv_threads`.
+
 ## Shutdown
 
-`shutdown()` first calls `ExperimentCoordinator::shutdown()` so an active
+`shutdown()` first stops [[../services/MonitoringDensityService]] (its
+worker reads the monitoring ring and hands records to the coordinator; the
+service is built in the `AppBackend` constructor, idle until a shell enables
+it, and its record sink is wired to `ExperimentCoordinator::setLiveKdeCoreRecord`),
+then calls `ExperimentCoordinator::shutdown()` so an active
 run is finalized (file closed, accounting written) while every service it
 needs is still alive, then clears the target-group and background-capture
 callbacks (no new trigger requests are admitted), then stops capture **with the
@@ -165,6 +298,9 @@ StoreOverwritten, HDF5 reopen round-trip, legacy file → Unknown).
   live capture camera via `CaptureService::softTriggerActiveCamera` (requires
   capture running with `trigger_mode: 1`); exposed to the facade as
   `CameraCommandAction::SoftTriggerCamera`
+- `rfGenerator()` — accessor for [[../services/RfGeneratorService]] (SSG3021X
+  sort generator SCPI link). `setLastConfigJson` applies its optional
+  `rf_generator` config block; `shutdown()` disconnects it.
 - `pulseGenerator()` — accessor for [[../services/PulseGeneratorService]]
   (external-trigger pulse source, created alongside the syringe-pump service).
   Both serial services are constructed against the backend-owned
@@ -172,6 +308,11 @@ StoreOverwritten, HDF5 reopen round-trip, legacy file → Unknown).
   outlives their sessions) — one shared [[../services/ISerialPort]] owner per
   RS485 adapter; `serialBus()` exposes the manager so tests inject a fake
   serial-port factory
+- `stage()` — accessor for [[../services/StageService]] (Z stage, ADR 0013),
+  built on the same `SerialBusManager` with a `FileStageReferenceStore` at
+  `<dataDir>/stage_reference.json`; declared after `serialBusManager_` so it
+  is destroyed first. `initialize()` neither connects nor moves it; the shell
+  applies the stage config and calls `startup()` (read-only by default)
 
 ### Requested vs effective camera source (issue #369)
 
@@ -205,6 +346,12 @@ from the mock. `experiment()` exposes the coordinator (created in
 Separate from experiments: record non-empty raw frames directly to HDF5 with
 no contour processing.
 
+- Recording admission runs inside the coordinator idle transaction, excluding
+  experiment Start through writer acquisition. An experiment in Starting, Active
+  or Stopping, or any already-open HDF5 file (including the requested path),
+  refuses admission without closing or opening a file. Recording retains busy
+  ownership until Stop has joined its worker; failures must be stopped before
+  another writer can start. Callers can request a diagnostic error string.
 - `startFrameRecording(hdf5Path)`, `stopFrameRecording()`, `isFrameRecording()`
 - Counters: `frameRecordingCount()`, `frameRecordingFiltered()`
 - Uses a dedicated `frameRecordingThread_`. Empty frames are dropped via
@@ -289,3 +436,67 @@ memory benchmark evidence.
 `setLastConfigJson(json)` / `getLastConfigJson()` — raw JSON captured by the
 config watcher, stored as a string attribute on `/experiment_info` in HDF5
 (see `Hdf5Service::writeConfigJson`).
+
+## Saved illuminated Live View (#413)
+
+`stageMindVisionConfigFromFile` selects a next-start camera profile without
+hardware I/O. A single factory helper constructs all MindVision sessions and
+binds an optional generator session from `live_view` JSON to the existing
+PulseGeneratorService. Camera selection is separate from profile persistence;
+switching camera modes must not lose the remembered MindVision setup.
+See [lifecycle](../../docs/howto/illuminated-live-view.md).
+
+
+### Automatic default rig setup (September 14 follow-up)
+
+The bundled XGC/R5D profile now enables illuminated Live View with `port: "auto"`,
+9600 8N1, address 1, channel 1, 1000 Hz / 2% (20 µs pulse), exposure 100 µs,
+rising-edge external trigger and manual strobe 100 µs / zero delay with
+polarity 0 (the setting that pulses OUT1 on this rig; see the September 15
+measurements). The existing
+single-camera discovery selects the camera; Start performs read-only discovery
+of USB serial adapters at the configured address on the capture worker. Exactly
+one generator-compatible response is required before normal gated startup.
+No match or multiple matches produces a specific error; no output is enabled by
+discovery. Channel/wiring cannot be discovered electronically: channel 1 is the
+known rig preset, not an inferred connection. Custom address/serial/wiring uses
+Hardware Setup as an exception. Auto mode re-discovers the adapter each start,
+so port renumbering does not require manually saving a new path.
+
+Fresh installs save the bundled profile automatically. Only a byte-structure-
+equivalent historical bundled JSON profile at the default path is upgraded;
+custom and external profiles are preserved. Explicit saved ports continue to
+work unchanged. Discovery exceptions are recorded as camera startup failures
+and pass through illumination cleanup. The earlier mandatory one-time manual
+setup instructions apply only to custom or ambiguous rigs, not the default rig.
+Hardware acceptance of this changed build remains outstanding.
+
+
+### Single parse for the rig profile (September 14, second pass)
+
+`makeLiveCamera` builds the generator session from `parseConfig(...).config.liveView`
+instead of a second ad-hoc JSON read, so staging, the capture factory, the
+camera and the settings UI share one validation (connection fields, generator
+range, exposure/strobe versus trigger period). Errors carry the parser's
+operator-facing message.
+
+## MindVision acquisition modes (2026-09-15)
+
+`setMindVisionOverview(bool, error)` is a lifecycle-owner operation: it rejects
+active experiment/recording transitions, joins capture and realtime processing,
+stages the new mode, and replaces the shared FrameStore. Overview has 8 slots;
+Experiment restores the previous capacity. The empty replacement prevents old
+full-sensor frames becoming experiment backgrounds or processing inputs. The
+caller restarts realtime/playback and requests camera Start only when capture
+was already running. Switching providers releases the preview buffer limit.
+
+`mindVisionSensor()` returns a mutex-protected capability snapshot published by
+the capture worker. `saveMindVisionRoi` validates bounds and atomically replaces
+only width/height/offset fields of the selected JSON profile. ROI edits affect
+the next experiment start; immutable camera session configs avoid live-file
+races. Processing uses crop-local ROI coordinates (0,0,width,height).
+
+Recording pressure notifications are wired from
+`ProcessingService::setFlushRequestCallback()` to
+`ExperimentCoordinator::requestFlush()` (#403). The existing fatal save
+callback also receives experiment-buffer eviction failures.

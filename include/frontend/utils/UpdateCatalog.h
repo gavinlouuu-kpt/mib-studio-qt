@@ -15,6 +15,7 @@ struct VersionEntry {
     QString installerUrl;
     QString installerSha256Hex;
     QString releaseNotesUrl;
+    QString releaseNotes;
     QString publishedUtc;
     qint64 installerSizeBytes{-1};
 };
