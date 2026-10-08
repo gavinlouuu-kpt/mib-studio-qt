@@ -30,8 +30,12 @@ served (the writable probes `.mib_hdf5_probe_*`, partial files). Only regular fi
 
 **Browser-origin rules.** The listing and download are plain `GET`s, so a page on another origin could trigger them
 (the response is unreadable without CORS, which the server does not send, but a download is still a side effect and
-the instrument is often reached without a token). Reject a request whose `Sec-Fetch-Site` is present and is not
-`same-origin` or `none` (a typed URL or a link click from the Studio page); no CORS headers are added. This is the same
+the instrument is often reached without a token). Reject a request whose `Origin` is present and is not this server's own
+authority (its `Host`) or an `--allow-origin` (Codex review of #661: browsers send Fetch Metadata only to trustworthy origins,
+and plain HTTP to a Tailscale address is not one, so `Sec-Fetch-Site` alone is a no-op here); the same rule guards the `/ws`
+upgrade, which closes the cross-site-page-drives-the-instrument hole `--no-token` left open. `Sec-Fetch-Site`, when sent, must
+still be same-origin or none; no CORS headers are added. A top-level navigation may carry no Origin: accepted, the concurrency
+limit bounds the residual (a cross-site page can trigger a download it cannot read). This is the same
 trust level as `/ws`; it is not a substitute for the token on a non-loopback listener.
 
 **Load.** At most 2 concurrent downloads (the board is a 2-core A9 with a RAM root and the 5 kHz run on it); a third gets

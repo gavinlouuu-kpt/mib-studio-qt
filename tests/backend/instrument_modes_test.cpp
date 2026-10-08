@@ -14,6 +14,7 @@
 #include "backend/app/SciencePlacement.h"
 #include "backend/discovery/DeviceDiscoveryService.h"
 #include "backend/pz/AlignLock.h"
+#include "backend/processing/IExecutionProvider.h"
 #include "backend/pz/PzInstrumentControl.h"
 #include "backend/services/CaptureService.h"
 
@@ -23,6 +24,10 @@
 #include "support/watchdog.h"
 
 #include <algorithm>
+#include <array>
+#include <atomic>
+#include <chrono>
+#include <thread>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -39,6 +44,31 @@
 #endif
 
 namespace pz = backend::pz;
+
+// An execution provider that records how the live session drives it (#651 G5).
+class FakeProvider final : public backend::processing::IExecutionProvider {
+public:
+    std::string name() const override { return "fake-live"; }
+    void setSink(Sink) override {}
+    bool configure(const backend::processing::pz::CompiledProfile& profile, std::string*) override {
+        ++configures;
+        lastPage = profile.page;
+        return true;
+    }
+    bool start(uint64_t, std::string*) override {
+        ++starts;
+        running = true;
+        return true;
+    }
+    void stop() override {
+        if (running) ++stops;
+        running = false;
+    }
+    backend::processing::ProviderStatus status() const override { return {}; }
+    std::atomic<int> configures{0}, starts{0}, stops{0};
+    std::atomic<bool> running{false};
+    std::array<uint32_t, 32> lastPage{};
+};
 
 namespace {
 
@@ -693,6 +723,74 @@ void testModeSequence(const mib::test::TempDir& td) {
     MIB_EXPECT(s.live[S0 + 0] == 0, "shutdown switches the LED off");
 }
 
+// PL results in Run without an experiment (#651 G5): the provider runs while the instrument is in Run, stops
+// for Align, idle and an experiment's hand-over, resumes afterwards, and restarts with a recompiled profile
+// when a setting changes.
+void testLiveResults(const mib::test::TempDir& td) {
+    const auto frames = td.path() / "frames_live";
+    MIB_REQUIRE(mib::test::writeFrames(frames, 8, 512, 96), "mock frames");
+    setEnv("MIB_PL_SCIENCE", "1");
+    setEnv("MIB_CAMERA_MODE", "mock");
+    setEnv("MIB_MOCK_CAMERA_DIR", frames.string().c_str());
+    setEnv("MIB_DISABLED_SERVICES", "sqlite,hdf5,autofocus,trigger,playback");
+    setEnv("MIB_EXECUTION_PROVIDER", "none");
+    backend::AppBackend backend;
+    backend::bridge::BackendFacade facade(backend);
+    MIB_REQUIRE(facade.initialize((td.path() / "data_live").string()), "facade initializes");
+    FakeState s;
+    seedCellImage(s);
+    backend.setInstrumentControlForTesting(std::make_unique<FakeControl>(s));
+    auto provider = std::make_unique<FakeProvider>();
+    FakeProvider* fake = provider.get();
+    backend.setExecutionProviderForTesting(std::move(provider));
+    std::string err;
+
+    MIB_REQUIRE(backend.setInstrumentMode(pz::InstrumentMode::Align, 0, 0, &err), "Align: " + err);
+    MIB_EXPECT(!fake->running && fake->starts == 0 && !backend.liveResultsActive(), "Align: no live results");
+
+    MIB_REQUIRE(backend.setInstrumentMode(pz::InstrumentMode::Run, 152, 200, &err), "Run: " + err);
+    MIB_EXPECT(fake->running && fake->configures == 1 && fake->starts == 1 && backend.liveResultsActive(),
+               "Run: the provider is configured and started once, without an experiment");
+    const auto firstPage = fake->lastPage;
+
+    // The hand-over to an experiment, and back.
+    backend.stopLiveResults();
+    MIB_EXPECT(!fake->running && fake->stops == 1 && !backend.liveResultsActive(), "hand-over: the session stops");
+    backend.stopLiveResults();
+    MIB_EXPECT(fake->stops == 1, "stopping twice is harmless");
+    backend.resumeLiveResults();
+    MIB_EXPECT(fake->running && fake->starts == 2 && backend.liveResultsActive(), "after the run: the session resumes in Run");
+
+    // A setting the PL implements changes: the profile is recompiled and the provider restarts with it.
+    auto config = backend.processing().getProcessingConfig();
+    config.area_threshold_max = config.area_threshold_max + 40;
+    backend.processing().setProcessingConfig(config);
+    const auto restarted = [&] {
+        for (int i = 0; i < 40; ++i) {
+            if (fake->starts == 3) return true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        return false;
+    }();
+    MIB_EXPECT(restarted && fake->running && fake->lastPage != firstPage, "a changed gate restarts the session with the new profile page");
+    // A change the PL profile does not see (no page difference) does not restart it.
+    const int startsBefore = fake->starts;
+    backend.processing().setProcessingConfig(config); // the same values: a version bump, the same page
+    std::this_thread::sleep_for(std::chrono::milliseconds(700));
+    MIB_EXPECT(fake->starts == startsBefore, "an unchanged profile page does not restart the provider");
+
+    // Align and idle stop it.
+    MIB_REQUIRE(backend.setInstrumentMode(pz::InstrumentMode::Align, 0, 0, &err), "Align again: " + err);
+    MIB_EXPECT(!fake->running && !backend.liveResultsActive(), "Align stops the live session");
+    MIB_REQUIRE(backend.setInstrumentMode(pz::InstrumentMode::Run, 152, 200, &err), "Run again: " + err);
+    MIB_EXPECT(fake->running, "Run starts it again");
+    MIB_EXPECT(facade.setInstrumentMode("idle", 0, 0).ok && !fake->running && !backend.liveResultsActive(), "idle stops it");
+    backend.resumeLiveResults();
+    MIB_EXPECT(!fake->running, "no resume outside Run");
+    facade.shutdown();
+    backend.shutdown();
+}
+
 // The Run window survives a restart (#501): a Run switch writes <data>/instrument_run_window.json,
 // the next initialize() reads it; a file that is not a window the switch could have applied is
 // ignored. testModeSequence left (152, 200) there.
@@ -766,6 +864,7 @@ int main() {
     testRxSelfHeal();
     testRxHealCtrl();
     testModeSequence(td);
+    testLiveResults(td);
     testRunWindowPersists(td);
     testRecordingTarget(td);
     return mib::test::exitCode();

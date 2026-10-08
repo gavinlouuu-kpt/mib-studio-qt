@@ -36,6 +36,9 @@ struct CompiledProfile {
     std::array<uint32_t, 32> page{};
     std::vector<uint8_t> table0; // 200 x 200 u16 LE, Q8.8 kPa, 0xFFFF = no value; empty without a LUT
     std::vector<std::string> errors;
+    // Settings the operator changed from their defaults that the PL does not implement (no effect on this
+    // instrument): the profile still compiles, ok() stays true (#651 G7).
+    std::vector<std::string> warnings;
     bool ok() const { return errors.empty(); }
 };
 
@@ -49,6 +52,10 @@ struct PageField {
     const char* format; // bool, u4, u8, u16, q16_16, q0_16, q24_8
 };
 const std::vector<PageField>& unetCellsV2PageFields();
+
+// The names of the settings the PL does not implement that differ from their defaults (the content of
+// CompiledProfile::warnings).
+std::vector<std::string> plIgnoredSettingsChanged(const services::ProcessingConfig& config);
 
 CompiledProfile compileUnetCellsV2(const UnetCellsProfileInputs& in);
 

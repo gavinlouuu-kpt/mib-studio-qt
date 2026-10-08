@@ -132,6 +132,7 @@ def main() -> int:
 
     unit = (DEPLOY / "yofo-studio.service").read_text()
     check("ExecStartPre=/usr/libexec/yofo-studio/pl-ready" in unit, "unit waits for the PL")
+    check("WorkingDirectory=/var/lib/yofo-studio" in unit, "relative paths resolve under the data dir (G8)")
     check("--listen 127.0.0.1:8427" in unit and "--no-token" in unit, "unit is loopback-only without a token")
     check("--token-file" not in unit, "unit does not need a token file")
     check("0.0.0.0" not in unit, "unit never listens on all interfaces")

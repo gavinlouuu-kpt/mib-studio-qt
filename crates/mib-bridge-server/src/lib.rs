@@ -7,7 +7,10 @@
 //! Files: `GET /files?path=` lists and `GET /files/download?path=` downloads (Range supported), read-only, under
 //! the data dir only (`files.rs`: canonicalised paths, no symlinks out of the root, no dot-names, files an
 //! experiment is still writing are `in_progress` and not downloadable, at most 2 downloads at once, the
-//! token rule of `/ws`, cross-site requests refused).
+//! token rule of `/ws`, a request from another origin refused, listings paged and limited, files opened beneath
+//! the root descriptor with `openat2`). The same Origin rule applies to the `/ws` upgrade: a browser always sends
+//! `Origin` on a WebSocket handshake, so another site's page cannot drive the instrument through the visitor's
+//! browser, with or without a token (`--allow-origin` adds origins for a UI served from elsewhere in development).
 //!
 //! Diagnostics: `GET /diagnostics?lines=` (`diagnostics.rs`): versions, the installed bundle line, uptime, the tail of
 //! `<data>/logs/app.log` (size-capped) and the start-up key lines; read-only, same rules as `/files`.
@@ -84,6 +87,10 @@ pub struct ServerConfig {
     pub ping_interval: Duration,
     pub ping_timeout: Duration,
     pub client_grace: Duration,
+    /// Origins allowed besides the server's own (`--allow-origin`, repeatable): a UI served from elsewhere in development.
+    pub allowed_origins: Vec<String>,
+    /// Concurrent `/files` listings (a listing scans a directory); the next one is 429.
+    pub max_listings: usize,
 }
 
 impl ServerConfig {
@@ -98,6 +105,8 @@ impl ServerConfig {
             ping_interval: Duration::from_secs(2),
             ping_timeout: Duration::from_secs(5),
             client_grace: Duration::from_secs(5),
+            allowed_origins: Vec::new(),
+            max_listings: 2,
         }
     }
 }
@@ -135,6 +144,7 @@ pub struct Server {
     boot_id: String,
     /// Downloads in progress (`/files/download`), capped at `files::MAX_DOWNLOADS`.
     downloads: Arc<tokio::sync::Semaphore>,
+    listings: Arc<tokio::sync::Semaphore>,
     /// When this server process started (diagnostics uptime).
     started: std::time::Instant,
     /// Connected client ids in connection order; the first is the default controller.
@@ -176,6 +186,7 @@ const CONTROL_COMMANDS: &[&str] = &[
 impl Server {
     pub fn new(config: ServerConfig, state: Arc<AppState>) -> Arc<Self> {
         let (events, _) = broadcast::channel(256);
+        let max_listings = config.max_listings;
         Arc::new(Server {
             state,
             host: Arc::new(ConfigHost(config)),
@@ -185,6 +196,7 @@ impl Server {
             stop_and_saves: AtomicU64::new(0),
             boot_id: new_boot_id(),
             downloads: Arc::new(tokio::sync::Semaphore::new(files::MAX_DOWNLOADS)),
+            listings: Arc::new(tokio::sync::Semaphore::new(max_listings)),
             started: std::time::Instant::now(),
             sessions: std::sync::Mutex::new(SessionTable::default()),
         })
@@ -459,6 +471,11 @@ async fn upgrade(
 ) -> Response {
     if !server.authorized(&query, &headers) {
         return (StatusCode::UNAUTHORIZED, "token required").into_response();
+    }
+    // A browser always sends Origin on a WebSocket handshake: another site's page cannot drive the
+    // instrument through the visitor's browser, token or not (--no-token leaves the socket open).
+    if !files::origin_allowed(&server, &headers) {
+        return (StatusCode::FORBIDDEN, "requests from another origin are refused").into_response();
     }
     // Frame packets reach 32 MiB plus the header; requests are small JSON documents.
     ws.max_message_size(64 << 20).on_upgrade(move |socket| connection(server, socket, peer.to_string()))

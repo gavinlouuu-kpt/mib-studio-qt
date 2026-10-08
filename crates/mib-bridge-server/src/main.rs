@@ -2,7 +2,7 @@
 //! for the protocol.
 //!
 //!   yofo-studio-server [--listen ADDR] [--data-dir DIR] [--resource-dir DIR]
-//!                      [--core-cache-dir DIR] [--dist DIR] [--token-file PATH | --no-token]
+//!                      [--core-cache-dir DIR] [--dist DIR] [--allow-origin ORIGIN]... [--token-file PATH | --no-token]
 //!
 //! Defaults: listen 0.0.0.0:8427, data dir $XDG_DATA_HOME/yofo-studio (~/.local/share/...),
 //! token from /etc/yofo-studio/token. `--no-token` is accepted only on a loopback address.
@@ -17,7 +17,7 @@ use mib_bridge_server::{stop_and_save, Server, ServerConfig};
 fn usage() -> ! {
     eprintln!(
         "usage: yofo-studio-server [--listen ADDR] [--data-dir DIR] [--resource-dir DIR] \
-         [--core-cache-dir DIR] [--dist DIR] [--token-file PATH | --no-token]"
+         [--core-cache-dir DIR] [--dist DIR] [--allow-origin ORIGIN]... [--token-file PATH | --no-token]"
     );
     std::process::exit(2)
 }
@@ -47,6 +47,7 @@ async fn main() {
             "--resource-dir" => config.resource_dir = value(),
             "--core-cache-dir" => config.core_cache_dir = value(),
             "--dist" => config.dist_dir = Some(PathBuf::from(value())),
+            "--allow-origin" => config.allowed_origins.push(value()),
             "--token-file" => token_file = PathBuf::from(value()),
             "--no-token" => no_token = true,
             _ => usage(),

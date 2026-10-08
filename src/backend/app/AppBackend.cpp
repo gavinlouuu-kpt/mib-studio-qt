@@ -358,6 +358,7 @@ namespace backend
         }
 
         // Stop admitting new trigger requests before anything is torn down.
+        stopLiveResults();
         if (executionProvider_) {
             executionProvider_->stop(); // no further ingest into processing
         }
@@ -1330,6 +1331,104 @@ namespace backend
 
     bool AppBackend::instrumentIdle() const { return instrumentIdle_.load(); }
 
+    processing::pz::CompiledProfile AppBackend::compilePlProfile()
+    {
+        auto &proc = processing();
+        processing::pz::UnetCellsProfileInputs in;
+        in.config = proc.getEffectiveProcessingConfig(); // includes the detected channel band
+        in.pixelToMicron = proc.getPixelToMicronFactor();
+        in.storeInvalidEveryN = static_cast<uint32_t>(std::min<size_t>(proc.getInvalidFrameSamplingRate(), 0xFFFF));
+        in.lut = proc.eModulusLut().isLoaded() ? &proc.eModulusLut() : nullptr;
+        return processing::pz::compileUnetCellsV2(in);
+    }
+
+    bool AppBackend::startLiveResults(std::string *errorOut)
+    {
+        std::unique_lock<std::mutex> lock(liveMutex_);
+        auto fail = [&](const std::string &why) {
+            if (errorOut) *errorOut = why;
+            SPDLOG_WARN("AppBackend: live results not started: {}", why);
+            return false;
+        };
+        if (liveResultsActive_.load()) return true;
+        if (!executionProvider_ || !pzControl_) return fail("no PL execution provider");
+        if (instrumentMode() != pz::InstrumentMode::Run) return fail("the instrument is not in Run");
+        auto profile = compilePlProfile();
+        if (!profile.ok()) {
+            std::string why;
+            for (const auto &e : profile.errors) why += (why.empty() ? "" : "; ") + e;
+            return fail("the settings do not compile into the PL profile: " + why);
+        }
+        std::string providerError;
+        const uint64_t runId = 0; // a live session is not a run: nothing is admitted while no experiment is active
+        if (!executionProvider_->configure(profile, &providerError) || !executionProvider_->start(runId, &providerError))
+            return fail("the provider did not start: " + providerError);
+        liveProfile_ = std::move(profile);
+        liveConfigVersion_ = processing().getConfigVersion();
+        liveResultsActive_.store(true);
+        liveWatcherExit_ = false;
+        if (!liveWatcher_.joinable()) liveWatcher_ = std::thread([this] { liveWatcherLoop(); });
+        SPDLOG_INFO("AppBackend: live PL results started (Run, no experiment)");
+        return true;
+    }
+
+    void AppBackend::stopLiveResults()
+    {
+        std::thread watcher;
+        {
+            std::unique_lock<std::mutex> lock(liveMutex_);
+            if (!liveResultsActive_.exchange(false)) return;
+            if (executionProvider_) executionProvider_->stop();
+            liveWatcherExit_ = true;
+            liveCv_.notify_all();
+            watcher = std::move(liveWatcher_);
+        }
+        if (watcher.joinable()) watcher.join();
+        SPDLOG_INFO("AppBackend: live PL results stopped");
+    }
+
+    void AppBackend::resumeLiveResults()
+    {
+        if (instrumentMode() == pz::InstrumentMode::Run) (void)startLiveResults(nullptr);
+    }
+
+    // A tuned setting takes effect without a file: when the processing configuration changes, the profile is
+    // recompiled and, if the PL page or table differ, the provider is restarted with it (configure needs it stopped).
+    void AppBackend::liveWatcherLoop()
+    {
+        std::unique_lock<std::mutex> lock(liveMutex_);
+        while (!liveWatcherExit_) {
+            liveCv_.wait_for(lock, std::chrono::milliseconds(250));
+            if (liveWatcherExit_ || !liveResultsActive_.load()) break;
+            const uint64_t version = processing().getConfigVersion();
+            if (version == liveConfigVersion_) continue;
+            liveConfigVersion_ = version;
+            auto profile = compilePlProfile();
+            if (!profile.ok()) {
+                std::string why;
+                for (const auto &e : profile.errors) why += (why.empty() ? "" : "; ") + e;
+                SPDLOG_WARN("AppBackend: live PL results keep the previous profile: {}", why);
+                continue;
+            }
+            if (profile.page == liveProfile_.page && profile.table0 == liveProfile_.table0) continue;
+            executionProvider_->stop();
+            std::string providerError;
+            if (executionProvider_->configure(profile, &providerError) && executionProvider_->start(0, &providerError)) {
+                liveProfile_ = std::move(profile);
+                SPDLOG_INFO("AppBackend: live PL results restarted with the new profile");
+            } else {
+                // Put the previous profile back so the session keeps running.
+                SPDLOG_WARN("AppBackend: live PL results could not restart ({}); restoring the previous profile", providerError);
+                std::string again;
+                if (!(executionProvider_->configure(liveProfile_, &again) && executionProvider_->start(0, &again))) {
+                    SPDLOG_ERROR("AppBackend: live PL results stopped: {}", again);
+                    liveResultsActive_.store(false);
+                    break;
+                }
+            }
+        }
+    }
+
     bool AppBackend::instrumentRunWindowSet() const { return instrumentRunSet_.load(); }
     std::optional<uint32_t> AppBackend::plReceiverAutoResets()
     {
@@ -1448,6 +1547,13 @@ namespace backend
     }
     bool AppBackend::serviceMode() const { return serviceMode_.load(); }
 
+    void AppBackend::setExecutionProviderForTesting(std::unique_ptr<processing::IExecutionProvider> provider)
+    {
+        executionProvider_ = std::move(provider);
+        if (executionProvider_ && processingService_)
+            executionProvider_->setSink([this](processing::ProviderFrame &&frame) { processingService_->ingestProviderFrame(frame); });
+    }
+
     void AppBackend::setInstrumentControlForTesting(std::unique_ptr<pz::IPzControlRegisters> registers)
     {
         pzControl_ = std::make_unique<pz::PzInstrumentControl>(std::move(registers));
@@ -1474,6 +1580,7 @@ namespace backend
             x = std::clamp(x - x % kRunXStep, 0, kRunXMax - kRunXMax % kRunXStep);
             y = std::clamp(y - y % kRunYStep, 0, kRunYMax);
         }
+        stopLiveResults(); // the provider arms the bridge Align uses; the mode switch restarts it for Run (G5)
         std::string err;
         // 1. LED off, cell path off: no producer AcquisitionStart may run with the U-Net enable set
         //    (its command pulses clear bit 4), and the guard never sees a timing transient lit.
@@ -1616,6 +1723,7 @@ namespace backend
             saveRunWindow(dataDir_, x, y);
         }
         instrumentMode_.store(static_cast<int>(mode));
+        if (mode == pz::InstrumentMode::Run) (void)startLiveResults(nullptr); // live monitoring in Run without a file (G5)
         // The receiver and the sensor were reset: the link counters jump for about a second.
         if (pzPlatformMonitor_)
             pzPlatformMonitor_->settle(static_cast<uint64_t>(
@@ -1642,6 +1750,7 @@ namespace backend
             return fail("an experiment or recording is still running");
         std::string err;
         // The same order as a mode switch: nothing lit while the cell path or the camera changes.
+        stopLiveResults();
         if (!pzControl_->ledOff(&err) || !pzControl_->setCellPath(false, &err)) return fail(err);
         instrumentMode_.store(static_cast<int>(pz::InstrumentMode::Unknown));
         captureService_->stop();

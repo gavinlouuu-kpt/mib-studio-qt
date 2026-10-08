@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -15,6 +16,7 @@
 #include "backend/processing/EModulusLutCatalog.h" // HttpGetFn seam (ADR 0002)
 #include "backend/app/ExperimentReadiness.h"
 #include "backend/diagnostics/MemoryBudget.h"
+#include "backend/processing/pz/PzProfileCompiler.h"
 #include "backend/profiles/InstrumentIdentity.h"
 #include "backend/profiles/ProfileCache.h" // MethodDraft
 #include "backend/profiles/SupabaseProfileRegistry.h" // RegistryHttpTransport seam (ADR 0002)
@@ -124,6 +126,17 @@ namespace backend
         // receiver reset at AcquisitionStart; PzInstrumentControl writes the LED and cell path.
         // Refused during an experiment or recording, and when the PL is not configured.
         bool instrumentControlAvailable() const;
+        // PL results in Run without an experiment (#651 G5): the execution provider runs while the instrument
+        // is in Run (live monitoring, statistics, charts) and is handed over to an experiment and back.
+        // The PL profile the settings compile into: used by the coordinator and by the live session.
+        processing::pz::CompiledProfile compilePlProfile();
+        // Start the live session (needs a provider and Run mode); false with a reason when it cannot.
+        bool startLiveResults(std::string *errorOut);
+        // Stop it (idempotent). The coordinator calls this before it starts the provider itself.
+        void stopLiveResults();
+        // After an experiment ends: restart the session if the instrument is still in Run.
+        void resumeLiveResults();
+        bool liveResultsActive() const { return liveResultsActive_.load(); }
         // Service start: the standing RXH1 v1 CTRL value (persist 250 ms), read back and logged.
         void applyRxHealStandingCtrl();
         bool setInstrumentMode(pz::InstrumentMode mode, int x, int y, std::string *errorOut);
@@ -169,6 +182,7 @@ namespace backend
         // Run mode: one cell capture as a run-preview packet (pz::encodeRunPreview).
         bool fetchRunPreview(std::vector<uint8_t> &out, std::string *errorOut);
         void setInstrumentControlForTesting(std::unique_ptr<pz::IPzControlRegisters> registers);
+        void setExecutionProviderForTesting(std::unique_ptr<processing::IExecutionProvider> provider);
         services::PlaybackService &playback();
         services::CameraControlService &cameraControl();
         services::AutofocusService &autofocus();
@@ -401,6 +415,15 @@ namespace backend
         std::atomic<int> instrumentRunX_{0}, instrumentRunY_{0};
         std::atomic<bool> instrumentRunSet_{false};
         std::atomic<bool> instrumentIdle_{false};
+        // Live results (G5). liveMutex_ is a leaf lock: nothing takes the coordinator or the mode mutex inside it.
+        std::mutex liveMutex_;
+        std::atomic<bool> liveResultsActive_{false};
+        processing::pz::CompiledProfile liveProfile_;
+        uint64_t liveConfigVersion_{0};
+        std::thread liveWatcher_;
+        std::condition_variable liveCv_;
+        bool liveWatcherExit_{false};
+        void liveWatcherLoop();
         std::atomic<uint64_t> alignReceiverClears_{0}, alignLockFailures_{0};
         std::atomic<uint64_t> alignPlGaveUps_{0};     // times the PL self-heal gave up (host recovery took over)
         std::atomic<int64_t> alignLastPlGaveUpMs_{0}; // ms from stream start to the latest gave-up
