@@ -1251,6 +1251,8 @@ namespace backend
         return {instrumentRunX_.load(), instrumentRunY_.load()};
     }
 
+    bool AppBackend::instrumentRunWindowSet() const { return instrumentRunSet_.load(); }
+
     void AppBackend::setServiceMode(bool on) { serviceMode_.store(on); }
 
     std::string AppBackend::alignSource() const
@@ -1413,6 +1415,7 @@ namespace backend
                 return fail(err);
             instrumentRunX_.store(x);
             instrumentRunY_.store(y);
+            instrumentRunSet_.store(true);
         }
         instrumentMode_.store(static_cast<int>(mode));
         SPDLOG_INFO("AppBackend: instrument mode {}{}", pz::instrumentModeName(mode),
