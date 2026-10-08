@@ -744,7 +744,9 @@ and y of 4, as the producer's offset check requires, and the Camera & Alignment 
 resyncs, P[7] bad and P[6] dropped frames per second; only errors above 10/s and resyncs above 1/s warn,
 bad frames above 1% and dropped frames above 0.1% of the sensor's frame rate warn only when sustained for 5 s
 (`link.bad_frames_warn`/`dropped_warn`, from the backend; a drop in Run is data loss), so a baseline of a few per second
-does not (about 0.1/s at rest)) and **Latency** (S[47–51]: max in µs and frames over budget of the frames seen). The
+does not (about 0.1/s at rest)). Dropped frames are judged only while the results bridge is ARMED or RUNNING
+(`link.bridge_active`): P[6] counts every frame as dropped while nothing consumes the bridge (Run without an
+experiment, a stopped Align), which is not loss and **Latency** (S[47–51]: max in µs and frames over budget of the frames seen). The
 preflight Sensor link check lists the same rates and the sensor. The backend reports the rates
 invalid (`link.rates_valid` false, "measuring…") for 1.5 s after a camera mode switch
 (`PzPlatformMonitor::settle`, called by `AppBackend::setInstrumentMode`), because the receiver and

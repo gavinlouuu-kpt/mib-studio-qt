@@ -190,6 +190,7 @@ int main() {
     // Bad and dropped frames are judged against the frame rate (400 fps here: bad above 4/s, dropped
     // above 0.4/s) and warn only once sustained for 5 s; a blip does not, a closed sensor never does.
     {
+        r->bridgePage[PZ_MIB_REG_STATE] = PZ_MIB_STATE_RUNNING; // dropped frames count only while the bridge is consumed
         r->strobeWindow[9] = 250000; // 400 fps
         r->livePage[7] = 0;
         r->livePage[6] = 0;
@@ -217,6 +218,24 @@ int main() {
         (void)monitor.sample(53'500'000);
         r->livePage[6] = 90;
         MIB_EXPECT(monitor.sample(59'000'000).droppedWarn, "sustained dropped frames warn");
+        // Nothing consumes the bridge (stopped): P[6] counts every frame as dropped, which is not loss.
+        r->bridgePage[PZ_MIB_REG_STATE] = PZ_MIB_STATE_IDLE;
+        r->livePage[6] = 4000;
+        (void)monitor.sample(60'200'000);
+        r->livePage[6] = 8000;
+        (void)monitor.sample(66'200'000);
+        r->livePage[6] = 12000;
+        const auto idle = monitor.sample(72'200'000);
+        MIB_EXPECT(!idle.bridgeActive && idle.droppedPerS > idle.droppedWarnPerS && !idle.droppedWarn,
+                   "dropped frames do not warn while the bridge is stopped, however high the counter runs");
+        r->bridgePage[PZ_MIB_REG_STATE] = PZ_MIB_STATE_ARMED;
+        r->livePage[6] = 16000;
+        (void)monitor.sample(73'200'000);
+        r->livePage[6] = 20000;
+        (void)monitor.sample(79'200'000);
+        r->livePage[6] = 24000;
+        MIB_EXPECT(monitor.sample(85'200'000).droppedWarn, "armed bridge: the same drops warn once sustained");
+        r->bridgePage[PZ_MIB_REG_STATE] = PZ_MIB_STATE_RUNNING;
         // Sensor closed: thresholds are 0 and nothing warns.
         r->strobeWindow[9] = 0;
         r->livePage[6] = 500;
