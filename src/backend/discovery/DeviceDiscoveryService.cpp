@@ -271,6 +271,13 @@ bool DeviceDiscoveryService::hasProviderFor(DeviceKind kind) const
     return false;
 }
 
+void DeviceDiscoveryService::setBlockedKinds(std::vector<DeviceKind> kinds, std::string reason)
+{
+    std::lock_guard<std::mutex> lk(mutex_);
+    blockedKinds_ = std::move(kinds);
+    blockedReason_ = std::move(reason);
+}
+
 void DeviceDiscoveryService::setResourceGuard(DeviceKind kind, ResourceGuard guard)
 {
     std::lock_guard<std::mutex> lk(mutex_);
@@ -373,6 +380,15 @@ StartResult DeviceDiscoveryService::startDiscovery(const DiscoveryRequest& reque
         result.rejection = ErrorKind::ShuttingDown;
         result.reason = "discovery service is shutting down";
         return result;
+    }
+    for (const auto kind : request.kinds) {
+        for (const auto blocked : blockedKinds_) {
+            if (kind == blocked) {
+                result.rejection = ErrorKind::InvalidRequest;
+                result.reason = blockedReason_;
+                return result;
+            }
+        }
     }
     for (const auto& id : request.providers) {
         bool known = false;
