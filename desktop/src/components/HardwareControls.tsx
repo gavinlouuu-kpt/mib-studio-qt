@@ -7,6 +7,7 @@ import { HardwareCommandOwner, hardwareGate, numericInput, validateFocusConfig }
 import { PUMP_MODELS } from '../bridgeContract';
 import './HardwareControls.css';
 import {StartupDiscoveryControls} from './StartupDiscoveryControls';
+import {MICROLITERS_PER_MIN_UNIT, RPM_UNIT, directionLabel, flowToRpm, rpmToMicrolitersPerMin} from '../pumpRate';
 import {EndpointDiscovery} from './EndpointDiscovery';
 import {PulseGeneratorControls} from './PulseGeneratorControls';
 
@@ -107,7 +108,7 @@ export function HardwareControls({ready, experimentActive, append, mode = DEFAUL
     finally { setBusy(false); }
   }
   const update = <T,>(setter: (value: T[]) => void, values: T[], index: number, value: T) => setter(values.map((old, i) => i === index ? value : old));
-  const unitSelect = (value: number, onChange: (value: number) => void, rate: boolean) => <select value={value} disabled={configureDisabled} onChange={e => onChange(Number(e.target.value))}><option value={100}>{rate ? 'µL/min' : 'µL'}</option><option value={103}>{rate ? 'mL/min' : 'mL'}</option></select>;
+  const unitSelect = (value: number, onChange: (value: number) => void, rate: boolean, rpm = false) => <select value={value} disabled={configureDisabled} onChange={e => onChange(Number(e.target.value))}>{rpm && <option value={RPM_UNIT}>rpm (head)</option>}<option value={100}>{rate ? 'µL/min' : 'µL'}</option><option value={103}>{rate ? 'mL/min' : 'mL'}</option></select>;
   const autofocus = capabilities.autofocus;
   return <section className="hardware-controls" aria-label={autofocus ? 'Pump and autofocus controls' : 'Pump controls'}>
     <h2>{autofocus ? 'Pumps and autofocus' : 'Pumps'}</h2>
@@ -154,9 +155,17 @@ export function HardwareControls({ready, experimentActive, append, mode = DEFAUL
         </div>
         <div className="hardware-fields">
           <label>Flow rate<input type="number" min="0" value={rates[id]} disabled={configureDisabled || !connected || !stopped} onChange={e => update(setRates, rates, id, e.target.value)} /></label>
-          <label>Rate unit{unitSelect(units[id], value => update(setUnits, units, id, value), true)}</label>
-          <button disabled={configureDisabled || !connected || !stopped} onClick={() => void run('Set flow rate', 'configure', connected, () => bridge.pumpSetFlowRate(id, numericInput(rates[id], 'Flow rate', 0), units[id]))}>Apply rate</button>
-          <label>Direction<select value={directions[id]} disabled={configureDisabled || !connected || !stopped} onChange={e => update(setDirections, directions, id, Number(e.target.value))}><option value={0}>Infuse</option><option value={1}>Withdraw</option></select></label>
+          <label>Rate unit{unitSelect(units[id], value => update(setUnits, units, id, value), true, peristaltic)}</label>
+          <button disabled={configureDisabled || !connected || !stopped} onClick={() => void run('Set flow rate', 'configure', connected, () => {
+            const value = numericInput(rates[id], units[id] === RPM_UNIT ? 'Head speed' : 'Flow rate', 0);
+            // The backend takes a flow: rpm x the calibration the pump was connected with.
+            return units[id] === RPM_UNIT
+              ? bridge.pumpSetFlowRate(id, rpmToMicrolitersPerMin(value, status?.microliters_per_rev ?? Number(calibrations[id])), MICROLITERS_PER_MIN_UNIT)
+              : bridge.pumpSetFlowRate(id, value, units[id]);
+          })}>Apply rate</button>
+          {peristaltic && connected && status && flowToRpm(status.configured_flow_rate, status.flow_rate_unit, status.microliters_per_rev) !== null &&
+            <span className="mono">configured ≈ {flowToRpm(status.configured_flow_rate, status.flow_rate_unit, status.microliters_per_rev)!.toFixed(2)} rpm</span>}
+          <label>Direction<select value={directions[id]} disabled={configureDisabled || !connected || !stopped} onChange={e => update(setDirections, directions, id, Number(e.target.value))}><option value={0}>{directionLabel(peristaltic, 0)}</option><option value={1}>{directionLabel(peristaltic, 1)}</option></select></label>
           <button disabled={configureDisabled || !connected || !stopped} onClick={() => void run('Set direction', 'configure', connected, () => bridge.pumpSetDirection(id, directions[id]))}>Apply direction</button>
           {!peristaltic && <>
           <label>Syringe volume (1–9999)<input type="number" min="1" max="9999" step="1" value={volumes[id]} disabled={configureDisabled || !connected || !stopped} onChange={e => update(setVolumes, volumes, id, e.target.value)} /></label>
@@ -167,7 +176,7 @@ export function HardwareControls({ready, experimentActive, append, mode = DEFAUL
         {actuateReason && <p>{actuateReason}</p>}
         <div className="hardware-actions">
           <button disabled={busy || !!actuateReason || !stopped} onClick={() => void run('Start pump', 'actuate', connected, () => bridge.pumpStart(id))}>Run configured pump</button>
-          <button disabled={busy || !!actuateReason || !stopped} onClick={() => void run('Purge pump', 'actuate', connected, () => bridge.pumpPurge(id, directions[id]))}>Purge {directions[id] === 0 ? 'infuse' : 'withdraw'}</button>
+          <button disabled={busy || !!actuateReason || !stopped} onClick={() => void run('Purge pump', 'actuate', connected, () => bridge.pumpPurge(id, directions[id]))}>Purge {directions[id] === 0 ? 'infuse' : 'withdraw'}{peristaltic ? (directions[id] === 0 ? ' (CCW)' : ' (CW)') : ''}</button>
           <button disabled={busy || !ready} onClick={() => void run('Stop pump', 'stop', connected, () => bridge.pumpStop(id))}>Stop pump</button>
           <button disabled={busy || !ready} onClick={() => void run('Stop purge', 'stop', connected, () => bridge.pumpStopPurge(id))}>Stop purge</button>
         </div>

@@ -730,6 +730,13 @@ backend's camera modes instead of `set_camera_overview`:
   control S[0], the guard and its trip count (an alert on a fault). The next mode switch
   restores the preset anyway.
 
+**Pump rate in rpm (#501).** For a Tushui peristaltic pump the Rate unit select also offers "rpm
+(head)" (`pumpRate.ts`, pseudo unit 200): the UI sends flow = rpm x the calibration the pump was
+connected with (µL/rev), in µL/min, since the backend takes a flow; it refuses an rpm without a usable
+calibration. The panel shows the configured flow as "≈ x rpm" and labels the direction "Infuse (CCW)" /
+"Withdraw (CW)" (the Tushui heads). Starting, purging and changing settings still need Service mode
+and one-shot arming, and nothing is sent at load; stop is always available.
+
 **Recording to RAM (#501).** `fetch_instrument_status.storage.warning` feeds
 three places:
 - the preflight Storage check (a warning, not a failure);
