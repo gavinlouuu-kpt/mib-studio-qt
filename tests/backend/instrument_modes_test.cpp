@@ -312,7 +312,13 @@ void testModeSequence(const mib::test::TempDir& td) {
     MIB_EXPECT(!backend.setInstrumentMode(pz::InstrumentMode::Run, 0, 0, &err) && err.find("PCFG_DONE") != std::string::npos,
                "mode switch refused with the PL blank");
     MIB_EXPECT(s.writes.size() == writes, "no register written");
+    // Shutdown ends the session with the LED off (found on the PZ7035 on 2026-10-08: Studio left
+    // the strobe pulsing, S[0] = 1, after the process exited).
+    s.configured = true;
+    MIB_EXPECT(s.live[S0 + 0] == 1, "the Align LED is on before shutdown");
     facade.shutdown();
+    backend.shutdown(); // the server's bridge.shutdown() destroys the backend, which runs this
+    MIB_EXPECT(s.live[S0 + 0] == 0, "shutdown switches the LED off");
 }
 
 // Both states of the persistence warning (#501): a RAM-backed destination (tmpfs, like the JTAG
