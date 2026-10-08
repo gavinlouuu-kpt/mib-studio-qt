@@ -927,3 +927,8 @@ bundle `docs/release-notes/v*.md` and `docs/manual/*.md`; URL imports bundle man
 images. Local manual links navigate within the dialog, with an Index button and
 an explicit online-documentation button. Version discovery uses Tauri's app API,
 with the package version for development. This adds no bridge ABI surface.
+
+Issue #570: Review keeps unreadable run accounting as Unknown, displaying the
+existing `completion_reason` field rather than promoting `reconciled=false` to
+Failed when the outcome is Unknown. Known outcomes with unreconciled counters
+still show Failed. No bridge ABI or JSON field changes.
