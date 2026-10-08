@@ -392,6 +392,75 @@ void testRxSelfHeal() {
     }
 }
 
+// Service start writes the standing RXH1 v1 CTRL value (persist 250 ms) and reads it back; v2 builds,
+// images without the block and a blank PL are left alone.
+void testRxHealCtrl() {
+    using Kind = pz::PzInstrumentControl::RxHealCtrlResult::Kind;
+    const auto ctrlWrites = [](const FakeState& s) {
+        size_t n = 0;
+        for (const auto& w : s.writes) n += w.index == 257;
+        return n;
+    };
+    pz::PzInstrumentControl::RxHealCtrlResult r;
+    std::string err;
+    {   // results8: no block, no write
+        FakeState s;
+        seedCellImage(s);
+        pz::PzInstrumentControl control(std::make_unique<FakeControl>(s));
+        s.writes.clear();
+        MIB_REQUIRE(control.applyRxHealCtrl(pz::kRxHealCtrlPersist250, r, &err), err);
+        MIB_EXPECT(r.kind == Kind::Absent && s.writes.empty(), "no RXH1 block: nothing written");
+    }
+    {   // v1 at the default CTRL: one write of word 1, read back
+        FakeState s;
+        seedCellImage(s);
+        s.live[256] = pz::kRxHealId;
+        s.live[257] = 0x64140801u;
+        pz::PzInstrumentControl control(std::make_unique<FakeControl>(s));
+        s.writes.clear();
+        MIB_REQUIRE(control.applyRxHealCtrl(pz::kRxHealCtrlPersist250, r, &err), err);
+        MIB_EXPECT(r.kind == Kind::Written && r.before == 0x64140801u && r.after == 0x64FA0801u && s.live[257] == 0x64FA0801u,
+                   "v1 default CTRL becomes 0x64FA0801 (persist 250 ms), read back");
+        MIB_EXPECT(s.writes.size() == 1 && ctrlWrites(s) == 1, "exactly one register written: RXH1 CTRL");
+        s.writes.clear();
+        MIB_REQUIRE(control.applyRxHealCtrl(pz::kRxHealCtrlPersist250, r, &err), err);
+        MIB_EXPECT(r.kind == Kind::AlreadySet && s.writes.empty(), "already set: no write");
+    }
+    {   // a CTRL that does not hold the value is reported
+        FakeState s;
+        seedCellImage(s);
+        s.live[256] = pz::kRxHealId;
+        s.live[257] = 0x64140801u;
+        s.onWrite = [&](unsigned i, uint32_t) { if (i == 257) s.live[257] = 0x64140801u; };
+        pz::PzInstrumentControl control(std::make_unique<FakeControl>(s));
+        MIB_REQUIRE(control.applyRxHealCtrl(pz::kRxHealCtrlPersist250, r, &err), err);
+        MIB_EXPECT(r.kind == Kind::Mismatch && r.after == 0x64140801u, "a read-back mismatch is reported");
+    }
+    {   // heal v2 (word 24 set): CTRL left alone
+        FakeState s;
+        seedCellImage(s);
+        s.live[256] = pz::kRxHealId;
+        s.live[257] = 0x64140801u;
+        s.live[256 + pz::kRxHealV2Word] = 2;
+        pz::PzInstrumentControl control(std::make_unique<FakeControl>(s));
+        s.writes.clear();
+        MIB_REQUIRE(control.applyRxHealCtrl(pz::kRxHealCtrlPersist250, r, &err), err);
+        MIB_EXPECT(r.kind == Kind::V2 && s.writes.empty() && s.live[257] == 0x64140801u, "v2: CTRL untouched");
+    }
+    {   // a blank PL: nothing read or written
+        FakeState s;
+        seedCellImage(s);
+        s.live[256] = pz::kRxHealId;
+        pz::PzInstrumentControl control(std::make_unique<FakeControl>(s));
+        s.configured = false;
+        const auto reads = s.reads;
+        s.writes.clear();
+        MIB_EXPECT(!control.applyRxHealCtrl(pz::kRxHealCtrlPersist250, r, &err) && err.find("PCFG_DONE") != std::string::npos &&
+                       s.writes.empty() && s.reads == reads,
+                   "blank PL: refused, no access");
+    }
+}
+
 void testLedLimits() {
     using pz::InstrumentMode;
     MIB_EXPECT(pz::checkLed(InstrumentMode::Run, pz::kRunLed).empty(), "Run preset within Run limits");
@@ -668,6 +737,7 @@ int main() {
     testLedLimits();
     testAlignIngressRecovery();
     testRxSelfHeal();
+    testRxHealCtrl();
     testModeSequence(td);
     testRunWindowPersists(td);
     testRecordingTarget(td);

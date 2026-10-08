@@ -124,6 +124,8 @@ namespace backend
         // receiver reset at AcquisitionStart; PzInstrumentControl writes the LED and cell path.
         // Refused during an experiment or recording, and when the PL is not configured.
         bool instrumentControlAvailable() const;
+        // Service start: the standing RXH1 v1 CTRL value (persist 250 ms), read back and logged.
+        void applyRxHealStandingCtrl();
         bool setInstrumentMode(pz::InstrumentMode mode, int x, int y, std::string *errorOut);
         pz::InstrumentMode instrumentMode() const;
         // The safe state of an unattended instrument (no client for the server's grace time): LED

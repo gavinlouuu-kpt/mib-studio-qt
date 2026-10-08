@@ -227,6 +227,28 @@ bool PzInstrumentControl::rxHealStatus(RxHealStatus& out, std::string* error) {
     return true;
 }
 
+bool PzInstrumentControl::applyRxHealCtrl(uint32_t ctrl, RxHealCtrlResult& out, std::string* error) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!readyLocked(error)) return false;
+    out = RxHealCtrlResult{};
+    if (registers_->live(kRxHealWindow) != kRxHealId) return true; // no block: nothing to do
+    if (registers_->live(kRxHealWindow + kRxHealV2Word) != 0) {
+        out.kind = RxHealCtrlResult::Kind::V2; // heal v2 backs off itself: leave CTRL alone
+        out.before = out.after = registers_->live(kRxHealWindow + 1);
+        return true;
+    }
+    out.before = registers_->live(kRxHealWindow + 1);
+    if (out.before == ctrl) {
+        out.kind = RxHealCtrlResult::Kind::AlreadySet;
+        out.after = out.before;
+        return true;
+    }
+    registers_->setLive(kRxHealWindow + 1, ctrl);
+    out.after = registers_->live(kRxHealWindow + 1);
+    out.kind = out.after == ctrl ? RxHealCtrlResult::Kind::Written : RxHealCtrlResult::Kind::Mismatch;
+    return true;
+}
+
 bool PzInstrumentControl::resetReceiver(std::chrono::microseconds hold, std::string* error) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!readyLocked(error)) return false;

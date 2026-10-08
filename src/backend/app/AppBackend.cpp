@@ -829,12 +829,17 @@ namespace backend
             pzPlatformMonitor_ = std::make_unique<pz::PzPlatformMonitor>(std::move(platformRegisters), platformError);
 #if defined(__linux__)
             // The one writer of LED, cell path and cell capture (#501 P1). Mapping reads no PL
-            // register; nothing is written until the operator picks a camera mode.
+            // register. The LED and the cell path are written only when the operator picks a camera
+            // mode; the one write at start is the RXH1 v1 self-heal CTRL (a diagnostics-block setting,
+            // not an actuator), only on a configured cell-image PL.
             if (executionProvider_ && executionProvider_->name() == "pz-devmem")
             {
                 std::string controlError;
                 if (auto registers = pz::openDevMemControlRegisters(&controlError))
+                {
                     pzControl_ = std::make_unique<pz::PzInstrumentControl>(std::move(registers));
+                    applyRxHealStandingCtrl();
+                }
                 else
                     SPDLOG_ERROR("AppBackend: PZ7035 control registers: {}", controlError);
             }
@@ -1273,6 +1278,36 @@ namespace backend
     constexpr int kRunXStep = 8, kRunYStep = 4, kRunXMax = 816 - kRunWidth, kRunYMax = 624 - kRunHeight;
     constexpr auto kCameraStartTimeout = std::chrono::seconds(10);
     } // namespace
+
+    void AppBackend::applyRxHealStandingCtrl()
+    {
+        // The v1 receiver self-heal block: the standing persist time is 250 ms (written once here, read
+        // back). Studio is the /dev/mem owner, so the write belongs here, not in the restore script.
+        // Refused (nothing read or written) while the PL is blank or not the cell image.
+        if (!pzControl_) return;
+        pz::PzInstrumentControl::RxHealCtrlResult result;
+        std::string why;
+        if (!pzControl_->applyRxHealCtrl(pz::kRxHealCtrlPersist250, result, &why))
+        {
+            SPDLOG_INFO("AppBackend: RXH1 CTRL not set: {}", why);
+            return;
+        }
+        using Kind = pz::PzInstrumentControl::RxHealCtrlResult::Kind;
+        switch (result.kind)
+        {
+        case Kind::Absent: SPDLOG_INFO("AppBackend: no RXH1 self-heal block on this PL"); break;
+        case Kind::V2: SPDLOG_INFO("AppBackend: RXH1 v2: CTRL left at 0x{:08X}", result.before); break;
+        case Kind::AlreadySet: SPDLOG_INFO("AppBackend: RXH1 CTRL already 0x{:08X} (persist 250 ms)", result.after); break;
+        case Kind::Written:
+            SPDLOG_INFO("AppBackend: RXH1 CTRL 0x{:08X} -> 0x{:08X} (persist 250 ms), read back 0x{:08X}", result.before,
+                        pz::kRxHealCtrlPersist250, result.after);
+            break;
+        case Kind::Mismatch:
+            SPDLOG_WARN("AppBackend: RXH1 CTRL wrote 0x{:08X} over 0x{:08X} but reads back 0x{:08X}", pz::kRxHealCtrlPersist250,
+                        result.before, result.after);
+            break;
+        }
+    }
 
     bool AppBackend::instrumentControlAvailable() const { return pzControl_ != nullptr; }
 
