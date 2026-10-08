@@ -146,3 +146,5 @@ retries (~2 s at the default timing). `StageService` owns polling threads.
 - `SerialBus.cpp` is compiled into `oeabt_serial` (the shared native serial
   archive), so `zc300ctl` links without the backend and the Rust bridge's
   archive list is unchanged.
+
+The #595 teardown fairness harness holds one transaction in a fake-port condition gate until a Disconnect and six Stops have queued. A bounded condition wait replaces dependence on a 120 ms reply window. Grant order still requires at most four Stops before Disconnect, all six Stop grants and disconnected state.

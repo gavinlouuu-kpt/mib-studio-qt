@@ -172,3 +172,5 @@ Metrics CSV (Qt and YOFO Review, byte-identical for tools/review_parity) appends
 existing column position. Values come from persisted `validation.youngsModulus`
 and use three decimal places; NaN is an empty field. The exporter regression
 covers finite and NaN values, 24-column rows and repeated export soak timing.
+
+The #595 export soak permits a late median up to max(1.25 × early median, early median + 100 ms) on Windows, allowing filesystem/Defender bursts across several rounds (+20 ms elsewhere, where a round is ~5 ms). Sustained growth beyond that bound still fails; exact per-job HDF5 object baseline, identical manifests and source integrity remain required.

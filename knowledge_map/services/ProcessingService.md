@@ -857,3 +857,5 @@ queue and after a later remainder flush succeeds. Uncommitted submitted frames
 are `persistenceFailed`, not declared `persistencePendingAtStop`; the latch resets
 only when a new experiment starts. `experiment_accounting_test` injects an HDF5
 append failure and checks queue destruction, remainder writes and the next run.
+
+The #595 accounting harness drains inline cursor replay after switching from async batch before starting its exact-batch HDF5 failure case. Its append wait requires new admission/buffer progress and a nonempty buffer; cumulative admission alone does not prove a batch is available. Exact failed/committed totals, reconciliation, sticky failure and next-run reset remain asserted.
