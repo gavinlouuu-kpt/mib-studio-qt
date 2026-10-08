@@ -20,7 +20,7 @@ import { isString, isStringArray, usePersistedState } from "./persistedState";
 import { PreviewBufferControls, usePreviewBuffer } from "./previewBuffer";
 import { decimalU64 } from "./framePacket";
 import { FramePullScheduler } from "./framePullScheduler";
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {open, save, confirm} from "./transport/dialogs";
 import {openUrl, revealItemInDir} from "./transport/dialogs";
 import {
@@ -67,7 +67,9 @@ import { useLiveConfigDraft } from "./liveConfigDraft";
 import { previewIntervalMs } from "./previewPacing";
 import {CameraDocumentEditor,useCameraDocument} from "./cameraDocument";
 import { CoreManagementPanel, useCoreManagement } from "./coreManagement";
-import { initialWindow, rateSummary, RUN_WINDOW, snapRunWindow, snapWindow, type Rect } from "./cameraAlignment";
+import { rateSummary, RUN_WINDOW, snapRunWindow, type Rect } from "./cameraAlignment";
+import { runModeBlockReason, useCameraWindow, type CameraModeError } from "./cameraWindow";
+import { RunWindowNotice } from "./components/RunWindowNotice";
 import { holdBest, measureImage, sameBox } from "./imageQuality";
 import { formatResultsRates, resultsRates, type ResultsRates, type ResultsSample } from "./resultsRates";
 import { runPreviewRgba, type RunPreview } from "./runPreview";
@@ -299,12 +301,13 @@ export default function App() {
   const showRunMaskRef = useRef(true);
   showRunMaskRef.current = showRunMask;
   const [cameraGeometry, setCameraGeometry] = useState<CameraGeometry | null>(null);
-  const [cameraWindow, setCameraWindow] = useState<Rect | null>(null);
   const cameraGeometryRef = useRef<CameraGeometry | null>(null);
   cameraGeometryRef.current = cameraGeometry;
   const cameraWindowRef = useRef<Rect | null>(null);
-  cameraWindowRef.current = cameraWindow;
-  const windowDragRef = useRef<{dx: number; dy: number} | null>(null);
+  const refreshCameraGeometryRef = useRef<() => Promise<unknown>>(async () => undefined);
+  // Why the last Align/Run switch was refused (shown in the tab, not only logged); null when it worked.
+  const [modeError, setModeError] = useState<CameraModeError | null>(null);
+  const [modeRetry, setModeRetry] = useState(0);
 
   // Display-side measurements (frames actually drawn / bytes actually pulled
   // over the last 1s window). These are UI measurements, not backend claims.
@@ -1006,16 +1009,26 @@ export default function App() {
     return () => { live = false; window.clearInterval(id); };
   }, [ready, caps.pl_identity]);
 
+  const cameraWin = useCameraWindow({
+    instrumentModes, geometryRef: cameraGeometryRef, expActive, append, windowRef: cameraWindowRef,
+    refreshGeometry: () => refreshCameraGeometryRef.current(),
+  });
+  const cameraWindow = cameraWin.window, setCameraWindow = cameraWin.setWindow;
   const refreshCameraGeometry = useCallback(async (): Promise<CameraGeometry | null> => {
     try {
       const geometry = await bridge.fetchCameraGeometry();
       setCameraGeometry(geometry);
-      if (geometry.supported && geometry.sensor_width > 0) setCameraWindow((w) => w ?? initialWindow(geometry));
+      cameraWin.showDefault(geometry);
       return geometry;
     } catch {
       return null;
     }
-  }, []);
+  }, [cameraWin.showDefault]);
+  refreshCameraGeometryRef.current = refreshCameraGeometry;
+
+  // After a page reload the backend still holds the Run window it applied: take it back.
+  const instrumentMode = instrument?.mode;
+  useEffect(() => { cameraWin.restore(instrumentMode); }, [instrumentMode?.run_set, instrumentMode?.run_x, instrumentMode?.run_y, cameraWin.restore]);
 
   // Qt parity (MainWindow tab change): Camera & Alignment shows the whole sensor, Experiment the
   // saved window, other tabs leave the camera as it is; never during a run. A running capture
@@ -1031,12 +1044,14 @@ export default function App() {
         const want = tab === "overview" ? "align" : "run";
         const current = instrumentRef.current?.mode;
         const win = cameraWindowRef.current ? snapRunWindow(cameraWindowRef.current) : null;
-        if (want === "run" && !win) return append("Run: place the window in Camera & Alignment first");
-        if (current?.name === want && (want === "align" || (current.run_x === win!.x && current.run_y === win!.y))) return;
+        // No placed window: stay as we are; the Experiment tab says so and offers the way there.
+        if (want === "run" && (!win || !cameraWin.placedRef.current)) return;
+        if (current?.name === want && (want === "align" || (current.run_x === win!.x && current.run_y === win!.y))) { setModeError(null); return; }
         append(want === "align" ? "switching to Align (full sensor)…" : `switching to Run at (${win!.x}, ${win!.y})…`);
         const result = await bridge.setInstrumentMode(want, win?.x ?? 0, win?.y ?? 0);
         append(result.ok ? result.message : `Camera mode: ${result.message}`);
         if (cancelled) return;
+        setModeError(result.ok ? null : {mode: want, message: result.message});
         setRunning(result.ok && want === "align");
         await refreshCameraGeometry();
         return;
@@ -1049,7 +1064,7 @@ export default function App() {
       if (!cancelled) await refreshCameraGeometry();
     })();
     return () => { cancelled = true; };
-  }, [tab, ready, expActive, refreshCameraGeometry, append, instrumentModes]);
+  }, [tab, ready, expActive, refreshCameraGeometry, append, instrumentModes, cameraWin.placed, modeRetry]);
 
   // The camera's read-back (applied window, sensor and delivered rate) follows its restart.
   useEffect(() => {
@@ -1058,51 +1073,8 @@ export default function App() {
     return () => window.clearInterval(id);
   }, [ready, tab, refreshCameraGeometry]);
 
-  const saveCameraWindow = useCallback(async (rect: Rect) => {
-    if (instrumentModes) {
-      // The Run window is applied (and saved) by the switch to Run when Experiment opens.
-      const snapped = snapRunWindow(rect);
-      setCameraWindow(snapped);
-      append(`Run window (${snapped.x}, ${snapped.y}) 512×96: applied when Experiment opens`);
-      return;
-    }
-    const geometry = cameraGeometryRef.current;
-    if (!geometry?.supported) return;
-    const snapped = snapWindow(rect, geometry);
-    setCameraWindow(snapped);
-    const result = await bridge.saveCameraRoi(snapped.x, snapped.y, snapped.width, snapped.height);
-    append(result.ok ? result.message : `Camera ROI not saved: ${result.message}`);
-    await refreshCameraGeometry();
-  }, [append, refreshCameraGeometry, instrumentModes]);
-
-  // Drag the window on the full-sensor image; release saves it (Qt saves on every move).
-  const canvasPoint = (e: ReactPointerEvent<HTMLCanvasElement>) => {
-    const canvas = e.currentTarget, box = canvas.getBoundingClientRect();
-    return {x: (e.clientX - box.left) * canvas.width / box.width, y: (e.clientY - box.top) * canvas.height / box.height};
-  };
-  const onWindowPointerDown = (e: ReactPointerEvent<HTMLCanvasElement>) => {
-    const geometry = cameraGeometryRef.current, rect = cameraWindowRef.current;
-    if (!geometry?.overview || !rect || expActive) return;
-    const p = canvasPoint(e);
-    if (p.x < rect.x || p.y < rect.y || p.x > rect.x + rect.width || p.y > rect.y + rect.height) return;
-    windowDragRef.current = {dx: p.x - rect.x, dy: p.y - rect.y};
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
-  const onWindowPointerMove = (e: ReactPointerEvent<HTMLCanvasElement>) => {
-    const drag = windowDragRef.current, geometry = cameraGeometryRef.current, rect = cameraWindowRef.current;
-    if (!drag || !geometry || !rect) return;
-    const p = canvasPoint(e);
-    const next = instrumentModes
-      ? snapRunWindow({x: p.x - drag.dx, y: p.y - drag.dy})
-      : snapWindow({...rect, x: p.x - drag.dx, y: p.y - drag.dy}, geometry);
-    cameraWindowRef.current = next;
-    setCameraWindow(next);
-  };
-  const onWindowPointerUp = () => {
-    if (!windowDragRef.current) return;
-    windowDragRef.current = null;
-    if (cameraWindowRef.current) void saveCameraWindow(cameraWindowRef.current);
-  };
+  const saveCameraWindow = cameraWin.save;
+  const onWindowPointerDown = cameraWin.onPointerDown, onWindowPointerMove = cameraWin.onPointerMove, onWindowPointerUp = cameraWin.onPointerUp;
 
 
   const cameraScript = useCameraScript({
@@ -1114,13 +1086,18 @@ export default function App() {
   const mindvisionDocument=useCameraDocument(cameraDocumentContext,"json",operatingMode==="service"&&triggerArmed);
   const previewBuffer = usePreviewBuffer(ready, expActive, seekPreview, refreshConfig);
   const cores = useCoreManagement({ready,resume:resumedNative,active:expActive,append,onChanged:refreshConfig});
+  // PZ7035: the PL runs the experiment, so what matters is the backend's Run mode, not a live
+  // camera stream (Run stops the producer); a missing window or a refused switch says why.
+  const runModeBlock = instrumentModes ? runModeBlockReason({windowPlaced: cameraWin.placed, modeError, runMode}) : undefined;
   const startExperimentReason = !ready || !cores.initialized
     ? "Backend is not initialized"
-    : !running
-      ? "Camera must be running before starting an experiment"
-      : expActive
-        ? "Experiment is already running"
-        : experimentRequestBusy ? "Experiment start request pending" : undefined;
+    : instrumentModes && runModeBlock
+      ? runModeBlock
+      : !instrumentModes && !running
+        ? "Camera must be running before starting an experiment"
+        : expActive
+          ? "Experiment is already running"
+          : experimentRequestBusy ? "Experiment start request pending" : undefined;
   const checkedConfig = useConfigDocument({ready, active:expActive, append, refresh:refreshConfig});
   const profiles = useProfiles({currentConfig:checkedConfig.doc?.document_json??null, ready:ready && cores.initialized, resume:resumedNative, active:expActive, append, onOpen:(path)=>checkedConfig.run("open",path), onApplied:refreshConfig});
   useEffect(()=>{const fps=profiles.activeProfile?.display_fps;if(typeof fps==="number"&&Number.isFinite(fps))setPreviewFpsLimit(Math.min(240,Math.max(1,fps)));},[profiles.activeProfile]);
@@ -1739,6 +1716,8 @@ export default function App() {
             {/* ---- Overview ---- */}
             {tab === "overview" && (
               <>
+                {instrumentModes && <RunWindowNotice tab="overview" windowPlaced={cameraWin.placed} modeError={modeError}
+                  onPlaceWindow={() => setTab("overview")} onRetry={() => setModeRetry((n) => n + 1)} />}
                 <div className="toolbar">
                   <button onClick={() => setFitWindow((f) => !f)}>{fitWindow ? "Fit: Window" : "Fit: 1:1"}</button>
 
@@ -1882,6 +1861,8 @@ export default function App() {
                   </div>
                 </div>
 
+                {instrumentModes && <RunWindowNotice tab="experiment" windowPlaced={cameraWin.placed} modeError={modeError}
+                  onPlaceWindow={() => setTab("overview")} onRetry={() => setModeRetry((n) => n + 1)} />}
                 {readinessMessage && <p role="alert">Experiment readiness: {readinessMessage}</p>}
                 {!expActive && <RunOutcomeNotice outcome={runOutcome} />}
                 {startNotice && <p role="status" className="start-notice">{startNotice}</p>}

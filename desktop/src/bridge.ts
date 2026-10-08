@@ -538,6 +538,8 @@ export interface LedLimits { delay_min_us: number; delay_max_us: number; width_m
 /** Camera mode the backend applied last (ABI 27, #501 P1). */
 export interface InstrumentModeState {
   name: "align" | "run" | "unknown"; run_x: number; run_y: number; service: boolean;
+  /** True once a Run switch succeeded in the backend process: run_x/run_y are the operator's window, not the (0, 0) default. */
+  run_set?: boolean;
   /** Align live view: whole frames from the PL bridge (results8 on) or the producer's bands. */
   align_source?: "bridge" | "bands" | "";
 }
