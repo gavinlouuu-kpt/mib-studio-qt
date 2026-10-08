@@ -19,6 +19,10 @@ struct Fixture {
 }
 
 async fn start(tag: &str, token: Option<&str>) -> Fixture {
+    start_with(tag, token, |_| {}).await
+}
+
+async fn start_with(tag: &str, token: Option<&str>, tweak: impl FnOnce(&mut ServerConfig)) -> Fixture {
     let base = std::env::temp_dir().join(format!("yofo_files_{tag}_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&base);
     let root = base.join("data");
@@ -35,6 +39,7 @@ async fn start(tag: &str, token: Option<&str>) -> Fixture {
     std::os::unix::fs::symlink(root.join("a.txt"), root.join("inside-link.txt")).unwrap();
     let mut config = ServerConfig::new(root.to_string_lossy());
     config.token = token.map(str::to_string);
+    tweak(&mut config);
     let server = Server::new(config, Arc::new(AppState::new()));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -233,4 +238,103 @@ async fn caps_concurrent_downloads() {
         }
     }
     assert!(ok, "permits are released when the downloads end");
+}
+
+// ---- the Codex review of #661 ----
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn another_origin_is_refused_on_files_and_the_socket() {
+    let f = start_with("origin", None, |c| c.allowed_origins.push("http://dev.example:5173".into())).await;
+    // Host is "localhost": its own origin passes, an absent Origin passes, anything else is refused
+    assert_eq!(request(f.addr, "GET", "/files", &[("Origin", "http://localhost")]).await.status, 200);
+    assert_eq!(request(f.addr, "GET", "/files", &[]).await.status, 200);
+    assert_eq!(request(f.addr, "GET", "/files", &[("Origin", "http://evil.example")]).await.status, 403);
+    assert_eq!(request(f.addr, "GET", "/files", &[("Origin", "http://localhost:9999")]).await.status, 403);
+    assert_eq!(request(f.addr, "GET", "/files", &[("Origin", "null")]).await.status, 403);
+    assert_eq!(request(f.addr, "GET", "/files/download?path=a.txt", &[("Origin", "http://evil.example")]).await.status, 403);
+    assert_eq!(request(f.addr, "GET", "/files/download?path=a.txt", &[("Origin", "http://dev.example:5173")]).await.status, 200, "allow-listed");
+    assert_eq!(request(f.addr, "GET", "/files", &[("Origin", "http://LOCALHOST")]).await.status, 200, "host names compare case-insensitively");
+
+    // the WebSocket handshake: tokio-tungstenite sends no Origin (accepted); a browser from elsewhere sends one
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    let url = format!("ws://{}/ws", f.addr);
+    let accepted = tokio_tungstenite::connect_async(url.clone()).await;
+    assert!(accepted.is_ok(), "no Origin: accepted");
+    let mut cross = url.clone().into_client_request().unwrap();
+    cross.headers_mut().insert("Origin", "http://evil.example".parse().unwrap());
+    let refused = tokio_tungstenite::connect_async(cross).await;
+    match refused {
+        Err(tokio_tungstenite::tungstenite::Error::Http(response)) => assert_eq!(response.status(), 403),
+        other => panic!("a cross-origin socket must be refused with 403, got {:?}", other.map(|_| ())),
+    }
+    let mut same = url.into_client_request().unwrap();
+    let host = same.headers().get("Host").unwrap().to_str().unwrap().to_string();
+    same.headers_mut().insert("Origin", format!("http://{host}").parse().unwrap());
+    assert!(tokio_tungstenite::connect_async(same).await.is_ok(), "the server's own origin is accepted");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn a_fifo_is_refused_without_blocking_and_not_listed() {
+    let f = start("fifo", None).await;
+    let fifo = f.root.join("pipe");
+    assert!(std::process::Command::new("mkfifo").arg(&fifo).status().unwrap().success());
+    let started = std::time::Instant::now();
+    let reply = request(f.addr, "GET", "/files/download?path=pipe", &[]).await;
+    assert_eq!(reply.status, 404);
+    assert!(started.elapsed() < Duration::from_secs(3), "the FIFO open must not block");
+    let listing = request(f.addr, "GET", "/files", &[]).await.json();
+    assert!(!names(&listing).contains(&"pipe".to_string()));
+    // the server still serves after that
+    assert_eq!(request(f.addr, "GET", "/files/download?path=a.txt", &[]).await.status, 200);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn several_ranges_and_long_range_headers_are_refused_before_any_work() {
+    let f = start("range", None).await;
+    let few = request(f.addr, "GET", "/files/download?path=a.txt", &[("Range", "bytes=0-0,2-2")]).await;
+    assert_eq!(few.status, 416);
+    let many = format!("bytes={}", (0..5000).map(|i| format!("{i}-{i}")).collect::<Vec<_>>().join(","));
+    let started = std::time::Instant::now();
+    let reply = request(f.addr, "GET", "/files/download?path=a.txt", &[("Range", &many)]).await;
+    assert_eq!(reply.status, 416, "5,000 ranges");
+    assert!(started.elapsed() < Duration::from_secs(2));
+    let long = format!("bytes=0-{}", "9".repeat(100));
+    assert_eq!(request(f.addr, "GET", "/files/download?path=a.txt", &[("Range", &long)]).await.status, 416, "over 64 bytes");
+    // a satisfiable single range, an open end, a suffix, and one past the end
+    assert_eq!(request(f.addr, "GET", "/files/download?path=a.txt", &[("Range", "bytes=8-")]).await.body, b"89");
+    assert_eq!(request(f.addr, "GET", "/files/download?path=a.txt", &[("Range", "bytes=-3")]).await.body, b"789");
+    let past = request(f.addr, "GET", "/files/download?path=a.txt", &[("Range", "bytes=99-")]).await;
+    assert_eq!(past.status, 416);
+    assert_eq!(past.header("content-range"), Some("bytes */10"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn listings_are_paged_and_limited() {
+    let f = start("paging", None).await;
+    let many = f.root.join("many");
+    std::fs::create_dir_all(&many).unwrap();
+    for i in 0..2500 {
+        std::fs::write(many.join(format!("f{i:05}.txt")), b"x").unwrap();
+    }
+    let first = request(f.addr, "GET", "/files?path=many", &[]).await.json();
+    assert_eq!(first["entries"].as_array().unwrap().len(), 2000, "one page");
+    assert_eq!(first["total"], 2500);
+    assert_eq!(first["truncated"], true);
+    assert_eq!(first["entries"][0]["name"], "f00000.txt");
+    let rest = request(f.addr, "GET", "/files?path=many&offset=2000", &[]).await.json();
+    assert_eq!(rest["entries"].as_array().unwrap().len(), 500);
+    assert_eq!(rest["truncated"], false);
+    let small = request(f.addr, "GET", "/files?path=many&limit=10&offset=5", &[]).await.json();
+    assert_eq!(small["entries"].as_array().unwrap().len(), 10);
+    assert_eq!(small["entries"][0]["name"], "f00005.txt");
+    assert_eq!(request(f.addr, "GET", "/files?path=many&limit=999999", &[]).await.json()["limit"], 2000, "the page size is capped");
+
+    // the listing permit: with none to give, the next listing is 429
+    let none = start_with("nopermit", None, |c| c.max_listings = 0).await;
+    assert_eq!(request(none.addr, "GET", "/files", &[]).await.status, 429);
+    assert_eq!(request(none.addr, "GET", "/files/download?path=a.txt", &[]).await.status, 200, "downloads are a separate limit");
 }
