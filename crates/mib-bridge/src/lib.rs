@@ -1015,6 +1015,11 @@ pub mod ffi {
         fn fetch_processing_config_json(self: Pin<&mut BackendBridge>) -> BridgeConfigDocument;
         fn processing_core_command(self: Pin<&mut BackendBridge>, cache_root: &str, request: &str) -> String;
         fn profile_command(self: Pin<&mut BackendBridge>, base: &str, request: &str) -> String;
+        /// #398 M2c (ABI 32): re-apply the startup configuration (the last
+        /// applied local profile or central method). JSON {ok, restored, kind,
+        /// error?, notice?, roi_pending?}; `profile_base` only serves a legacy
+        /// profile selection when no startup pointer exists.
+        fn restore_startup_configuration(self: Pin<&mut BackendBridge>, profile_base: &str) -> String;
         fn fetch_config_document(self: Pin<&mut BackendBridge>, path: &str) -> BridgeCheckedConfigDocument;
         fn apply_config_document(self: Pin<&mut BackendBridge>, path: &str, baseline: &str, patch: &str) -> BridgeConfigTransactionResult;
 

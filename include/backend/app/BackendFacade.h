@@ -1014,6 +1014,11 @@ namespace backend::bridge
         std::string processingCoreCommand(const std::string& cacheRoot, const std::string& request);
         static std::string fetchProfileCatalogUrl(const std::string& url);
         std::string profileCommand(const std::string& base, const std::string& request);
+        // Re-applies the startup configuration (#398 M2c): the last applied
+        // local profile or central method (app/StartupConfiguration.h). JSON
+        // {ok, restored, kind, error?}; `profileBase` is the profiles folder,
+        // used only for a legacy selection when no pointer exists.
+        std::string restoreStartupConfigurationJson(const std::string& profileBase);
         app::ConfigDocumentSnapshot fetchConfigDocument(const std::string& path) const;
         app::ProcessingConfigTransactionResult applyConfigDocument(const std::string& path, const std::string& baselineRevision, const std::string& patchJson);
 

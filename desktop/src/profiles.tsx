@@ -6,6 +6,17 @@ import { configDocument } from "./configDocument";
 export interface Profile { name:string; path:string; revision:string; document_json?:string; script?:string|null; profile_id?:string;display_fps?:number }
 export interface ProfileReply { ok:boolean; error?:string; profiles?:Profile[]; profile?:Profile; destination?:string; warnings?:string[]; applied?:boolean; message?:string; display_fps?:number; profile_id?:string; active_profile?:Profile|null; selection?:Profile|null; restored?:boolean }
 export const profileCommand = (base:string, request:object) => invoke<ProfileReply>("profile_command",{base,request:JSON.stringify(request)});
+// #398 M2c: re-apply the startup configuration, i.e. the last applied local profile or
+// central method (one pointer, last applied wins). A failure applies nothing and carries a
+// notice; an ROI with no frame yet is pending, never a failure.
+export interface StartupRestoreReply extends ProfileReply { kind?:"profile"|"central"|null; notice?:string; revision_id?:string; roi_pending?:boolean }
+export const restoreStartupConfiguration = (profileBase:string) => invoke<StartupRestoreReply>("restore_startup_configuration",{profileBase});
+export function startupRestoreText(r:StartupRestoreReply):string {
+  if(r.notice&&!r.ok)return r.notice;
+  if(!r.restored)return "";
+  const what=r.kind==="central"?`Startup method ${r.revision_id??""} re-applied.`:(r.message??"Startup profile re-applied.");
+  return r.notice?`${what} ${r.notice}`:what;
+}
 function draftError(document:string):string {
   if(!document.trim())return "Profile draft is empty. Start a new draft from the current config or import a config.";
   try {
@@ -39,6 +50,17 @@ export function useProfiles({ready,active,resume=false,currentConfig,append,onOp
       }
       if(operation==="import") {const path=await open({multiple:false,filters:[{name:"Application configuration",extensions:["json"]}]});if(typeof path!=="string")return;const d=await configDocument.read(path);if(!d.ok)throw new Error(d.error);setDocument(d.document_json);setScript(null);setDirty(true);return;}
       if(operation==="open") {if(selected)await onOpen(selected.path);return;}
+      if(operation==="restore") {
+        const r=await restoreStartupConfiguration(directory);
+        if(r.restored&&onApplied){try{await onApplied();}catch(e){throw new Error(`Startup configuration re-applied, but UI refresh failed: ${String(e)}`);}}
+        if(directory){
+          const list=await profileCommand(directory,{operation:"list"});if(list.ok)setProfiles(list.profiles??[]);
+          const selection=await profileCommand(directory,{operation:"selection"});if(selection.ok)setActiveProfile(selection.active_profile??null);
+        }
+        const text=startupRestoreText(r);
+        setMessage(text);if(text)append(text);
+        return;
+      }
       let q:object={operation:operation==="restore"?"restore":"list"};
       if(operation==="read"&&target)q={operation,name:target.name};
       if(operation==="create") {const error=draftError(document);if(error)throw new Error(error);q={operation,name,document_json:document,script};}
@@ -56,7 +78,7 @@ export function useProfiles({ready,active,resume=false,currentConfig,append,onOp
       setMessage(text);if(text)append(text);
     }catch(e){setMessage(String(e));append(`Profiles: ${String(e)}`);}finally{pending.current=false;setBusy(false);}
   };
-  useEffect(()=>{if(!ready){restored.current=false;setActiveProfile(null);return;}if(base&&!restored.current){restored.current=true;if(active||resume){void profileCommand(base,{operation:"selection"}).then(r=>{if(r.ok)setActiveProfile(r.active_profile??null);else setMessage(r.error??"Cannot read runtime profile");}).catch(e=>setMessage(String(e)));}else void run("restore");}},[ready,resume,active]);
+  useEffect(()=>{if(!ready){restored.current=false;setActiveProfile(null);return;}if(!restored.current){restored.current=true;if(active||resume){if(base)void profileCommand(base,{operation:"selection"}).then(r=>{if(r.ok)setActiveProfile(r.active_profile??null);else setMessage(r.error??"Cannot read runtime profile");}).catch(e=>setMessage(String(e)));}else void run("restore");}},[ready,resume,active]);
   const remote=useProfileCatalog({base,selected,blocked:!ready||active||busy,dirty,onInstalled:(p)=>run("read",p),append});
   return {base,profiles,selected,activeProfile,remote,name,setName,document,edit:(v:string)=>{setDocument(v);setDirty(true);},script,editScript:(v:string|null)=>{setScript(v);setDirty(true);},dirty,busy,blocked:!ready||active||busy||remote.busy,message,newDraftError:currentConfig===null?noCurrentConfig:"",saveError:draftError(document),run};
 }
