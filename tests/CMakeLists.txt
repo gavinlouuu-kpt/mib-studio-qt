@@ -706,6 +706,11 @@ mib_backend_test_link(experiment_accounting_test PRIVATE Threads::Threads)
 add_test(NAME processing.experiment_accounting COMMAND $<TARGET_FILE:mib_backend_tests> experiment_accounting_test)
 set_tests_properties(processing.experiment_accounting PROPERTIES LABELS "processing;backend;recording;safety" TIMEOUT 240)
 
+mib_add_backend_test_executable(experiment_flush_backpressure_test processing/experiment_flush_backpressure_test.cpp)
+mib_backend_test_link(experiment_flush_backpressure_test PRIVATE Threads::Threads)
+add_test(NAME processing.experiment_flush_backpressure COMMAND $<TARGET_FILE:mib_backend_tests> experiment_flush_backpressure_test)
+set_tests_properties(processing.experiment_flush_backpressure PROPERTIES LABELS "processing;backend;recording;safety" TIMEOUT 120)
+
 mib_add_backend_test_executable(flush_byte_watermark_test processing/flush_byte_watermark_test.cpp)
 mib_backend_test_link(flush_byte_watermark_test PRIVATE Threads::Threads)
 add_test(NAME processing.flush_byte_watermark COMMAND $<TARGET_FILE:mib_backend_tests> flush_byte_watermark_test)
