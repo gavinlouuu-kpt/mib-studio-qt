@@ -3164,6 +3164,7 @@ std::string BackendFacade::fetchInstrumentStatusJson() {
           {"dropped_per_s", s.droppedPerS},
           {"bad_frames_warn", s.badFramesWarn},
           {"dropped_warn", s.droppedWarn},
+          {"bridge_active", s.bridgeActive},
           {"bad_frames_warn_per_s", s.badFramesWarnPerS},
           {"dropped_warn_per_s", s.droppedWarnPerS},
           {"ingress_errors_warn_per_s", pz::kIngressErrorWarnPerS},

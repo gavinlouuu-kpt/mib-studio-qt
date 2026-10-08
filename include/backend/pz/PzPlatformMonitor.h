@@ -130,6 +130,10 @@ struct PzPlatformStatus {
     // closed or inside the mode-switch settle window).
     bool badFramesWarn{false};
     bool droppedWarn{false};
+    // The results bridge is ARMED or RUNNING, i.e. something consumes the frames. P[6] counts every
+    // frame as dropped while nothing does (Run without an experiment, a stopped Align), so dropped
+    // frames are judged only while this is true.
+    bool bridgeActive{false};
     double badFramesWarnPerS{0.0};
     double droppedWarnPerS{0.0};
 
