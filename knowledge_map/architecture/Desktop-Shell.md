@@ -737,6 +737,20 @@ calibration. The panel shows the configured flow as "≈ x rpm" and labels the d
 "Withdraw (CW)" (the Tushui heads). Starting, purging and changing settings still need Service mode
 and one-shot arming, and nothing is sent at load; stop is always available.
 
+**Link health, sensor and latency (#501).** The PL core sidebar section shows three more rows from
+`fetch_instrument_status`: **Sensor** (the ingress geometry from S[29] at the actual frame rate from
+the XVS period in S[9], 100 MHz clocks; "closed" while no XVS runs; the run window's x is a multiple of 8
+and y of 4, as the producer's offset check requires, and the Camera & Alignment hint says so), **Link** (P[12] errors, P[14]
+resyncs, P[7] bad and P[6] dropped frames per second; only errors above 10/s and resyncs above 1/s warn,
+bad frames above 1% and dropped frames above 0.1% of the sensor's frame rate warn only when sustained for 5 s
+(`link.bad_frames_warn`/`dropped_warn`, from the backend; a drop in Run is data loss), so a baseline of a few per second
+does not (about 0.1/s at rest)) and **Latency** (S[47–51]: max in µs and frames over budget of the frames seen). The
+preflight Sensor link check lists the same rates and the sensor. The backend reports the rates
+invalid (`link.rates_valid` false, "measuring…") for 1.5 s after a camera mode switch
+(`PzPlatformMonitor::settle`, called by `AppBackend::setInstrumentMode`), because the receiver and
+sensor reset then and the counters jump; the first rates afterwards are measured from inside that
+window, so the switch's spike never shows. Pure formatting in `linkHealth.ts`.
+
 **Recording to RAM (#501).** `fetch_instrument_status.storage.warning` feeds
 three places:
 - the preflight Storage check (a warning, not a failure);

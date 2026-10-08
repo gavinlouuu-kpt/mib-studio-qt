@@ -35,6 +35,8 @@ constexpr uint32_t kPcfgDone = 1u << 2;
 
 constexpr unsigned kLiveDropped = 6, kLiveBadFrames = 7, kLiveIngressErrors = 12, kLiveResyncs = 14;
 constexpr unsigned kStrobeControl = 0, kStrobeDelay = 1, kStrobeWidth = 2, kStrobeStatus = 12, kStrobeGuard = 13;
+constexpr unsigned kXvsPeriod = 9, kIngressGeometry = 29;
+constexpr double kHostClockHz = 100e6; // the XVS period counts 100 MHz host clocks
 constexpr unsigned kLatencyLast = 47, kLatencyMax = 49, kLatencyOverBudget = 50, kLatencyFrames = 51;
 constexpr double kStrobeClockMHz = 100.0;  // S[10] kHz = 100,000 on these images
 constexpr double kLatencyClockMHz = 175.0;
@@ -253,6 +255,12 @@ PzPlatformStatus PzPlatformMonitor::sample(uint64_t nowUs) {
     s.guardFault = (r.strobe(kStrobeStatus) & (1u << 4)) != 0 || (guard & 0x80000000u) != 0;
     s.guardTrips = guard & 0x7FFFFFFFu;
 
+    s.xvsPeriodClocks = r.strobe(kXvsPeriod);
+    s.xvsFps = s.xvsPeriodClocks ? kHostClockHz / s.xvsPeriodClocks : 0.0;
+    const uint32_t geometry = r.strobe(kIngressGeometry);
+    s.geometryHeight = geometry >> 16;
+    s.geometryWidth = (geometry & 0xFFu) * 8u;
+
     s.latencyLastUs = r.strobe(kLatencyLast) / kLatencyClockMHz;
     s.latencyMaxUs = r.strobe(kLatencyMax) / kLatencyClockMHz;
     s.latencyOverBudget = r.strobe(kLatencyOverBudget);
@@ -260,7 +268,10 @@ PzPlatformStatus PzPlatformMonitor::sample(uint64_t nowUs) {
 
     const Counters now{r.live(kLiveIngressErrors), r.live(kLiveResyncs), r.live(kLiveBadFrames),
                        r.live(kLiveDropped)};
-    if (havePrevious_ && nowUs > previousUs_) {
+    if (nowUs < settleUntilUs_) {
+        // Right after a mode switch: no rates, and the next window starts here.
+        havePrevious_ = false;
+    } else if (havePrevious_ && nowUs > previousUs_) {
         const double seconds = static_cast<double>(nowUs - previousUs_) / 1e6;
         s.ratesValid = true;
         s.ingressErrorsPerS = rate(now.ingressErrors, previous_.ingressErrors, seconds);
@@ -268,10 +279,30 @@ PzPlatformStatus PzPlatformMonitor::sample(uint64_t nowUs) {
         s.badFramesPerS = rate(now.badFrames, previous_.badFrames, seconds);
         s.droppedPerS = rate(now.dropped, previous_.dropped, seconds);
     }
+    // Sustained loss against the sensor's frame rate: onset when the rate first exceeds the
+    // threshold, a warning once it has stayed above it for kSustainedUs.
+    s.badFramesWarnPerS = kBadFramesWarnFraction * s.xvsFps;
+    s.droppedWarnPerS = kDroppedWarnFraction * s.xvsFps;
+    const auto sustained = [&](bool above, uint64_t& since) {
+        if (!s.ratesValid || s.xvsFps <= 0.0 || !above) {
+            since = 0;
+            return false;
+        }
+        if (since == 0) since = nowUs;
+        return nowUs - since >= kSustainedUs;
+    };
+    s.badFramesWarn = sustained(s.badFramesPerS > s.badFramesWarnPerS, badSinceUs_);
+    s.droppedWarn = sustained(s.droppedPerS > s.droppedWarnPerS, droppedSinceUs_);
     havePrevious_ = true;
     previousUs_ = nowUs;
     previous_ = now;
     return s;
+}
+
+void PzPlatformMonitor::settle(uint64_t nowUs) {
+    std::scoped_lock lk(mutex_);
+    settleUntilUs_ = nowUs + kModeSettleUs;
+    havePrevious_ = false;
 }
 
 } // namespace backend::pz

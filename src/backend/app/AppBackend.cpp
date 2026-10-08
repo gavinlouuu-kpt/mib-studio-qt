@@ -1523,6 +1523,11 @@ namespace backend
             saveRunWindow(dataDir_, x, y);
         }
         instrumentMode_.store(static_cast<int>(mode));
+        // The receiver and the sensor were reset: the link counters jump for about a second.
+        if (pzPlatformMonitor_)
+            pzPlatformMonitor_->settle(static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch())
+                    .count()));
         SPDLOG_INFO("AppBackend: instrument mode {}{}", pz::instrumentModeName(mode),
                     mode == pz::InstrumentMode::Run ? fmt::format(" at ({}, {})", x, y) : std::string());
         return true;

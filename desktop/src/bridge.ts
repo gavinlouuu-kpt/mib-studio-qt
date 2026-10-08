@@ -626,7 +626,15 @@ export interface InstrumentStatus {
     dropped_per_s: number;
     ingress_errors_warn_per_s: number;
     resyncs_warn_per_s: number;
+    /** Sustained loss against the sensor's frame rate (bad above 1%, dropped above 0.1% for 5 s). */
+    bad_frames_warn?: boolean;
+    dropped_warn?: boolean;
+    bad_frames_warn_per_s?: number;
+    dropped_warn_per_s?: number;
   };
+  /** The sensor as the PL sees it: XVS period in 100 MHz clocks (0 while the sensor is closed), the
+   *  frame rate it gives, and the ingress geometry latched at the last receiver reset. */
+  sensor?: { xvs_period_clocks: number; fps: number; width: number; height: number };
   latency?: { last_us: number; max_us: number; over_budget: number; frames: number };
 }
 
