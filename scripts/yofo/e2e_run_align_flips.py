@@ -109,7 +109,8 @@ with sync_playwright() as p:
         time.sleep(hold)
         st0 = status(page)
         before = ((st0.get("mode") or {}).get("align_lock") or {}).get("receiver_clears", 0)
-        heal0 = ((st0.get("link") or {}).get("rx_heal") or {}).get("auto_resets")
+        h0 = (st0.get("link") or {}).get("rx_heal") or {}
+        heal0 = h0.get("auto_resets")
         gaveups0 = ((st0.get("mode") or {}).get("align_lock") or {}).get("pl_gave_ups", 0)
         t0 = time.time()
         tab(page, "Camera & Alignment")
@@ -133,6 +134,12 @@ with sync_playwright() as p:
                # results9: the PL self-heal makes the resets (host resets stay 0); its count shows here.
                "pl_heal_present": bool(heal1.get("present")), "pl_auto_resets": (heal1.get("auto_resets", 0) - heal0) if heal0 is not None else None,
                "pl_gave_up": bool(heal1.get("gave_up")),
+               # heal v2 (results11): flag clears are counted apart from receiver resets, plus episodes
+               "pl_v2": bool(heal1.get("v2")),
+               "pl_flag_clears": (heal1.get("flag_clears", 0) - h0.get("flag_clears", 0)) if heal1.get("v2") else None,
+               "pl_episodes": (heal1.get("episodes", 0) - h0.get("episodes", 0)) if heal1.get("v2") else None,
+               "pl_failed_episodes": (heal1.get("failed_episodes", 0) - h0.get("failed_episodes", 0)) if heal1.get("v2") else None,
+               "latency": (st1.get("latency") or {}),
                # #643: a PL gave-up is counted and timed; the host recovery then runs (resets > 0).
                "pl_gave_ups": lock.get("pl_gave_ups", 0) - gaveups0,
                "last_pl_gave_up_ms": lock.get("last_pl_gave_up_ms") if lock.get("pl_gave_ups", 0) > gaveups0 else None,

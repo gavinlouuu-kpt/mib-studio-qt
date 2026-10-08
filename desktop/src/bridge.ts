@@ -641,7 +641,7 @@ export interface InstrumentStatus {
     /** The results bridge is ARMED/RUNNING; dropped frames are judged only then (P[6] counts every frame otherwise). */
     bridge_active?: boolean;
     /** The PL receiver self-heal block (results9): present, gave up after its tries, auto-resets since the PL reset. */
-    rx_heal?: {present: boolean; gave_up: boolean; tries: number; auto_resets: number};
+    rx_heal?: {present: boolean; gave_up: boolean; tries: number; auto_resets: number; v2?: boolean; flag_clears?: number; episodes?: number; failed_episodes?: number};
     bad_frames_warn_per_s?: number;
     dropped_warn_per_s?: number;
   };

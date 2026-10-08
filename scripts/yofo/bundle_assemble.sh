@@ -88,7 +88,9 @@ mib_commit=$(sed -n '1s/.*commit \([0-9a-f]*\).*/\1/p' "$pkg/BUILD_INFO")
 [ -n "$mib_commit" ] || die "cannot read the mib-studio-qt commit from $pkg/BUILD_INFO"
 pz_short=$(printf '%.8s' "$commit")
 {
-    echo "YOFO Studio bundle: mib-studio-qt $mib_commit + pz7035-imx426 $pz_short ($ref), PL BUILD_ID ${build_id:0:8}, ABI $abi"
+    untagged=""
+    git -C "$repo" show-ref --verify --quiet "refs/tags/$ref" || untagged=" -- PRE-QUALIFICATION, untagged pz7035 $pz_short"
+    echo "YOFO Studio bundle: mib-studio-qt $mib_commit + pz7035-imx426 $pz_short ($ref), PL BUILD_ID ${build_id:0:8}, ABI $abi$untagged"
     sed '1d' "$pkg/BUILD_INFO" | grep -v '^expects:'
     echo "pz7035-imx426: $ref = $commit"
     echo "PL: $name BUILD_ID $build_id, ABI $abi, bitstream md5 $(md5sum "$build/pz_live.bit" | cut -d' ' -f1) (core.json image pz_live_$name; installed as /etc/yofo/expected-core.json)"

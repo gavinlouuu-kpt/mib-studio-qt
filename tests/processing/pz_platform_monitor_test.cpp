@@ -234,6 +234,17 @@ int main() {
         r->tornReads = {0x00FF00FFu, 0x00000009u, 0x00000009u};
         r->tornIndex = 259;
         MIB_EXPECT(monitor.rxHealAutoResets().value_or(0) == 9, "a torn counter read is repeated until two reads match");
+        // Heal v2 (CTRL2 at word 24 non-zero): flag clears, episodes and failed episodes are read.
+        MIB_EXPECT(!monitor.sample(17'955'000).rxHealV2, "v1: no v2 counters");
+        r->livePage[280] = 0x03e80001u;
+        r->livePage[261] = 4;  // flag clears
+        r->livePage[262] = 3;  // episodes
+        r->livePage[263] = 1;  // failed episodes
+        const auto v2 = monitor.sample(17'956'000);
+        MIB_EXPECT(v2.rxHealV2 && v2.rxHealFlagClears == 4 && v2.rxHealEpisodes == 3 && v2.rxHealFailedEpisodes == 1 &&
+                       v2.rxHealAutoResets == 9,
+                   "v2 counters beside the receiver-reset count");
+        r->livePage[280] = 0;
         r->configured = false;
         MIB_EXPECT(!monitor.rxHealAutoResets().has_value(), "no read while the PL is blank");
         r->configured = true;

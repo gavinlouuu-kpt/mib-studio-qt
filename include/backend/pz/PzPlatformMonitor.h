@@ -145,7 +145,9 @@ struct PzPlatformStatus {
     bool rxHealPresent{false};
     bool rxHealGaveUp{false};
     uint32_t rxHealTries{0};
-    uint32_t rxHealAutoResets{0}; // since the PL reset
+    uint32_t rxHealAutoResets{0}; // since the PL reset (receiver resets)
+    bool rxHealV2{false};         // heal v2 (CTRL2 at word 24 non-zero): the counters below exist
+    uint32_t rxHealFlagClears{0}, rxHealEpisodes{0}, rxHealFailedEpisodes{0};
     double badFramesWarnPerS{0.0};
     double droppedWarnPerS{0.0};
 
