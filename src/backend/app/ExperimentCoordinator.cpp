@@ -311,7 +311,7 @@ bool ExperimentCoordinator::InvalidationKey::operator==(const InvalidationKey& o
            configJsonSha256 == o.configJsonSha256 && coreVersion == o.coreVersion &&
            coreSha256 == o.coreSha256 && corePinSatisfied == o.corePinSatisfied &&
            backgroundGeneration == o.backgroundGeneration && roiX == o.roiX && roiY == o.roiY &&
-           roiW == o.roiW && roiH == o.roiH && pixelToMicron == o.pixelToMicron &&
+           roiW == o.roiW && roiH == o.roiH && roiPending == o.roiPending && pixelToMicron == o.pixelToMicron &&
            outputPath == o.outputPath && profileId == o.profileId && method == o.method &&
            faulted == o.faulted && frameWidth == o.frameWidth && frameHeight == o.frameHeight &&
            pixelFormat == o.pixelFormat && frameGeometryKnown == o.frameGeometryKnown &&
@@ -410,6 +410,8 @@ RunConfigurationSnapshot ExperimentCoordinator::candidateLocked(const std::strin
 
     const auto roi = proc.getRealtimeRoi();
     s.roiX = roi.x; s.roiY = roi.y; s.roiW = roi.w; s.roiH = roi.h;
+    s.roiPending = proc.realtimeRoiPending();
+    s.roiNotice = proc.pendingRoiNotice();
     s.sciencePlacement = app::sciencePlacement();
     if (auto* provider = backend_.executionProvider()) {
         s.executionProvider = provider->name();
@@ -523,6 +525,7 @@ ExperimentCoordinator::currentKeyLocked(const std::string& outputPath, const std
     k.corePinSatisfied = c.processingCorePinSatisfied;
     k.backgroundGeneration = c.backgroundGeneration;
     k.roiX = c.roiX; k.roiY = c.roiY; k.roiW = c.roiW; k.roiH = c.roiH;
+    k.roiPending = c.roiPending;
     k.pixelToMicron = c.pixelToMicron;
     k.outputPath = outputPath;
     k.profileId = profileId;
@@ -658,6 +661,12 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
                                    "processing runs on the PL; no execution provider brings its results to the PS",
                                    "set MIB_EXECUTION_PROVIDER=pz on the instrument"));
         }
+    } else if (c.roiPending) {
+        r.gates.push_back(gate("processing.roi", GateStatus::Fail,
+                               "the applied ROI is not validated yet; it is applied on the first captured frame",
+                               "start live view with realtime processing"));
+    } else if (!c.roiNotice.empty()) {
+        r.gates.push_back(gate("processing.roi", GateStatus::Warn, c.roiNotice, "set the ROI for this camera window"));
     } else if (c.roiW > 0 && c.roiH > 0) {
         r.gates.push_back(gate("processing.roi", GateStatus::Pass, {}, {},
                                std::to_string(c.roiW) + "x" + std::to_string(c.roiH) + "@" +

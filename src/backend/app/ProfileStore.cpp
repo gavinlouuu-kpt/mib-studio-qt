@@ -178,10 +178,13 @@ J apply(AppBackend& backend, const J& snapshot) {
         {"applied", true},
         {"display_fps", staged.displayFps},
         {"profile_id", snapshot.at("profile_id")},
+        {"roi_pending", staged.roiPending},
         {"message",
          std::string("Applied processing, buffer, realtime, delivery, calibration, autofocus ") +
              (staged.stage ? "and Z stage " : "") +
-             "configuration and validated ROI. No camera script or device connection was executed."}};
+             (staged.roiPending ? "configuration; the ROI is applied on the first captured frame."
+                                : "configuration and validated ROI.") +
+             " No camera script or device connection was executed."}};
 }
 void write(const fs::path& p, const std::string& bytes) {
     std::ofstream f(p, std::ios::binary | std::ios::trunc);

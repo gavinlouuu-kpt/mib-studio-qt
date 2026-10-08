@@ -109,21 +109,35 @@ int main() {
     MIB_EXPECT(!rejected["ok"] &&
                    backend.processing().getProcessingConfig().area_threshold_min == 42,
                "later invalid calibration cannot partially apply processing");
-    // The same shared validator as central methods (config_document_apply_test):
-    // an out-of-bounds value and an ROI outside the (absent) preview are
-    // refused on the profile path too, with nothing changed.
-    for (const auto& [name, document] :
-         std::vector<std::pair<std::string, std::string>>{{"bounds", R"({"buffer_threshold":0})"},
-                                                          {"offframe-roi", R"({"roi":{"x":0,"y":0,"w":5000,"h":10}})"}}) {
-        create["name"] = name;
-        create["document_json"] = document;
-        const auto made = call(create);
-        MIB_REQUIRE(made["ok"], made.dump());
-        const auto refused = call({{"operation", "apply"}, {"name", name}, {"baseline", made["profile"]["revision"]}});
-        MIB_EXPECT(!refused["ok"] && backend.processing().getFlushInterval() == 55 &&
-                       backend.processing().getProcessingConfig().area_threshold_min == 42,
-                   "profile path refuses " + name + " with nothing changed");
-    }
+    // The same shared validator as central methods (config_document_apply_test).
+    // An out-of-bounds value is refused with nothing changed...
+    create["name"] = "bounds";
+    create["document_json"] = R"({"buffer_threshold":0})";
+    const auto bounds = call(create);
+    MIB_REQUIRE(bounds["ok"], bounds.dump());
+    const auto refusedBounds =
+        call({{"operation", "apply"}, {"name", "bounds"}, {"baseline", bounds["profile"]["revision"]}});
+    MIB_EXPECT(!refusedBounds["ok"] &&
+                   refusedBounds["error"].get<std::string>().find("buffer_threshold must be between") !=
+                       std::string::npos &&
+                   backend.processing().getFlushInterval() == 55,
+               "profile path refuses an out-of-bounds value, naming the bound, with nothing changed");
+    // ...and an ROI with no frame and no known camera geometry is pending: the
+    // rest of the profile applies and the ROI waits for the first frame.
+    create["name"] = "pending-roi";
+    create["document_json"] = R"({"pixel_to_micron_factor":0.6,"roi":{"x":0,"y":0,"w":5000,"h":10}})";
+    const auto pendingRoi = call(create);
+    MIB_REQUIRE(pendingRoi["ok"], pendingRoi.dump());
+    const auto appliedPending =
+        call({{"operation", "apply"}, {"name", "pending-roi"}, {"baseline", pendingRoi["profile"]["revision"]}});
+    MIB_EXPECT(appliedPending["ok"] && appliedPending["roi_pending"] == true &&
+                   backend.processing().getPixelToMicronFactor() == 0.6 && backend.processing().realtimeRoiPending(),
+               "profile path: the rest applies and the ROI is pending");
+    // Back to the runtime profile for the selection checks below.
+    const auto reapplied = call({{"operation", "apply"},
+                                 {"name", "runtime"},
+                                 {"baseline", withMetadata["profile"]["revision"]}});
+    MIB_REQUIRE(reapplied["ok"], reapplied.dump());
     auto selected = call({{"operation", "selection"}});
     MIB_EXPECT(selected["selection"]["name"] == "runtime" &&
                    selected["active_profile"]["name"] == "runtime",

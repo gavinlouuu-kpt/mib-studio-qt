@@ -16,6 +16,7 @@
 #include <spdlog/spdlog.h>
 
 #include <cmath>
+#include <sstream>
 #include <stdexcept>
 
 namespace backend::app {
@@ -26,8 +27,11 @@ double number(const Json& root, const char* key, double fallback, double low, do
     if (!root.contains(key)) return fallback;
     if (!root.at(key).is_number()) throw std::runtime_error(std::string("Expected number: ") + key);
     const double value = root.at(key).get<double>();
-    if (!std::isfinite(value) || value < low || value > high)
-        throw std::runtime_error(std::string("Invalid range: ") + key);
+    if (!std::isfinite(value) || value < low || value > high) {
+        std::ostringstream message;
+        message << key << " must be between " << low << " and " << high << " (got " << value << ")";
+        throw std::runtime_error(message.str());
+    }
     return value;
 }
 
@@ -61,6 +65,16 @@ Json watcherCompatible(Json section) {
 }
 
 } // namespace
+
+RoiCheck checkRoi(const services::ProcessingService::Roi& r, FrameSize frame, FrameSize window) {
+    const FrameSize bound = frame.known() ? frame : window;
+    if (!bound.known()) return RoiCheck::Pending;
+    return r.x >= 0 && r.y >= 0 && r.w > 0 && r.h > 0 &&
+                   static_cast<uint64_t>(r.x) + static_cast<uint64_t>(r.w) <= bound.width &&
+                   static_cast<uint64_t>(r.y) + static_cast<uint64_t>(r.h) <= bound.height
+               ? RoiCheck::Fits
+               : RoiCheck::OutOfBounds;
+}
 
 std::string configApplyBlocker(AppBackend& backend) {
     if (backend.isFrameRecording()) return "Stop raw recording before applying a configuration";
@@ -173,12 +187,31 @@ StagedConfig stageConfigDocument(AppBackend& backend, const std::string& bytes) 
         s.roi.w = integer(r, "w", 0, 0, 1000000);
         s.roi.h = integer(r, "h", 0, 0, 1000000);
         if (s.roi.w || s.roi.h) {
-            playback::Frame frame;
-            if (!backend.getFrameStore()->getLatest(frame) || !s.roi.w || !s.roi.h ||
-                static_cast<uint64_t>(s.roi.x + s.roi.w) > frame.width ||
-                static_cast<uint64_t>(s.roi.y + s.roi.h) > frame.height)
-                throw std::runtime_error("ROI cannot be validated: capture a matching preview then "
-                                         "stop capture before applying");
+            if (!s.roi.w || !s.roi.h) throw std::runtime_error("roi needs both w and h (or both 0 for none)");
+            FrameSize frame, window;
+            playback::Frame latest;
+            if (backend.getFrameStore() && backend.getFrameStore()->getLatest(latest))
+                frame = {latest.width, latest.height};
+            const auto g = backend.cameraGeometry();
+            if (g.roiWidth > 0 && g.roiHeight > 0)
+                window = {static_cast<uint64_t>(g.roiWidth), static_cast<uint64_t>(g.roiHeight)};
+            else if (g.sensorWidth > 0 && g.sensorHeight > 0)
+                window = {static_cast<uint64_t>(g.sensorWidth), static_cast<uint64_t>(g.sensorHeight)};
+            switch (checkRoi(s.roi, frame, window)) {
+            case RoiCheck::Fits:
+                break;
+            case RoiCheck::Pending:
+                s.roiPending = true;
+                break;
+            case RoiCheck::OutOfBounds: {
+                const auto bound = frame.known() ? frame : window;
+                throw std::runtime_error("roi " + std::to_string(s.roi.w) + "x" + std::to_string(s.roi.h) + "@" +
+                                         std::to_string(s.roi.x) + "," + std::to_string(s.roi.y) +
+                                         " does not fit the " + std::to_string(bound.width) + "x" +
+                                         std::to_string(bound.height) +
+                                         (frame.known() ? " captured frame" : " camera window"));
+            }
+            }
         }
     }
     s.displayFps = integer(root, "display_fps", 60, 1, 240);
@@ -198,7 +231,10 @@ void commitStagedConfig(AppBackend& backend, const StagedConfig& s) {
     processing.setRealtimeProcessingMode(s.mode);
     processing.setRealtimeEnabled(s.realtimeEnabled);
     processing.setPixelToMicronFactor(s.pixelToMicron);
-    processing.setRealtimeRoi(s.roi);
+    if (s.roiPending)
+        processing.setPendingRealtimeRoi(s.roi);
+    else
+        processing.setRealtimeRoi(s.roi);
     backend.capture().setConfig(s.capture);
     backend.autofocus().setConfig(s.autofocus);
     if (s.stage) backend.stage().setConfig(*s.stage); // disconnected: checked when staged
@@ -221,8 +257,14 @@ ConfigApplyReport applyConfigDocument(AppBackend& backend, const std::string& te
     backend.setLastConfigJson(text);
 
     for (const auto* key : {"image_processing", "buffer_threshold", "experiment_buffer_max_mb", "realtime_processing",
-                            "pixel_to_micron_factor", "stage", "roi"})
+                            "pixel_to_micron_factor", "stage"})
         if (root.contains(key)) report.applied.emplace_back(key);
+    if (root.contains("roi")) {
+        if (staged.roiPending)
+            report.notApplied.emplace_back("roi (pending: applied on the first captured frame)");
+        else
+            report.applied.emplace_back("roi");
+    }
     report.applied.emplace_back("camera.frame_delivery_mode"); // missing = everyFrame, always applied
     for (const auto& item : root.items()) {
         const auto& key = item.key();

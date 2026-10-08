@@ -25,8 +25,10 @@
 //  - camera.frame_delivery_mode must be everyFrame or latestFrame (missing
 //    means everyFrame);
 //  - a stage block applies only while the Z stage is disconnected;
-//  - a non-empty roi must fit the latest captured frame (capture a matching
-//    preview, then stop capture);
+//  - a non-empty roi (checkRoi) must fit the latest captured frame; with no
+//    frame yet, the selected camera's capture window (or sensor) when known;
+//    with neither, it is applied on the first captured frame (pending: the
+//    rest of the document still applies, and Start waits for the ROI);
 //  - display_fps is validated (1..240) but is a display setting.
 //
 // Nothing that reads these settings may be running (configApplyBlocker): raw
@@ -51,6 +53,14 @@ class AppBackend;
 
 namespace backend::app {
 
+// The ROI rule. A frame (or camera window) size of 0 x 0 means unknown.
+enum class RoiCheck { Fits, OutOfBounds, Pending };
+struct FrameSize {
+    uint64_t width{0}, height{0};
+    bool known() const { return width > 0 && height > 0; }
+};
+RoiCheck checkRoi(const services::ProcessingService::Roi& roi, FrameSize latestFrame, FrameSize cameraWindow);
+
 // Why a configuration cannot be applied now: raw recording, live capture,
 // realtime processing or autofocus running. Empty = free to apply.
 std::string configApplyBlocker(AppBackend& backend);
@@ -69,6 +79,7 @@ struct StagedConfig {
     services::AutofocusService::Config autofocus;
     std::optional<services::StageConfig> stage;
     services::ProcessingService::Roi roi;
+    bool roiPending{false}; // validated and applied on the first captured frame
     int displayFps{60};
 };
 
