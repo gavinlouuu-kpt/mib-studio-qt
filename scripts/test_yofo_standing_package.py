@@ -78,8 +78,6 @@ def make_bundle_fixture(tmp: Path) -> tuple[Path, dict]:
 
 
 def check_bundle(check) -> None:
-    if sys.platform == "win32":  # the bundle is assembled on the Linux build host (bash, git, md5sum)
-        return
     script = ROOT / "scripts" / "yofo" / "bundle_assemble.sh"
     with tempfile.TemporaryDirectory() as tmp:
         pkg, env = make_bundle_fixture(Path(tmp))
@@ -107,6 +105,9 @@ def check_bundle(check) -> None:
 
 
 def main() -> int:
+    if sys.platform == "win32":  # board deployment scripts (sh, devmem2, bash, md5sum): the Linux build host checks them
+        print("yofo standing package: skipped on Windows")
+        return 0
     failures = []
 
     def check(condition: bool, message: str) -> None:
