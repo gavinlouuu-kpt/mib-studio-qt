@@ -79,7 +79,8 @@ struct StagedConfig {
     services::AutofocusService::Config autofocus;
     std::optional<services::StageConfig> stage;
     services::ProcessingService::Roi roi;
-    bool roiPending{false}; // validated and applied on the first captured frame
+    bool roiSpecified{false}; // the document has an roi; otherwise the ROI (and a pending one) is untouched
+    bool roiPending{false};   // validated and applied on the first captured frame
     int displayFps{60};
 };
 

@@ -126,6 +126,9 @@ int main() {
             MIB_EXPECT(gate != nullptr && gate->status == backend::app::GateStatus::Fail && !ready.ready,
                        "Start waits while the ROI is pending (processing.roi fails)");
         }
+        MIB_EXPECT(backend::app::applyConfigDocument(backend, R"({"buffer_threshold": 250})").ok &&
+                       proc.realtimeRoiPending(),
+                   "a later document without an roi leaves the pending ROI alone");
 
         // The first frame the realtime loop sees validates and applies it.
         MIB_REQUIRE(backend.capture().start(), "mock capture accepted");

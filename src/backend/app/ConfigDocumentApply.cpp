@@ -180,6 +180,7 @@ StagedConfig stageConfigDocument(AppBackend& backend, const std::string& bytes) 
 
     s.roi = processing.getRealtimeRoi();
     if (root.contains("roi")) {
+        s.roiSpecified = true;
         const auto& r = root.at("roi");
         if (!r.is_object()) throw std::runtime_error("roi must be an object");
         s.roi.x = integer(r, "x", 0, 0, 1000000);
@@ -233,7 +234,7 @@ void commitStagedConfig(AppBackend& backend, const StagedConfig& s) {
     processing.setPixelToMicronFactor(s.pixelToMicron);
     if (s.roiPending)
         processing.setPendingRealtimeRoi(s.roi);
-    else
+    else if (s.roiSpecified)
         processing.setRealtimeRoi(s.roi);
     backend.capture().setConfig(s.capture);
     backend.autofocus().setConfig(s.autofocus);
