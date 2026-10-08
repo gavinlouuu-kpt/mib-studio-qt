@@ -36,9 +36,9 @@ runs:
             index(want, "," sec ",") { print $1 }
           ' env/apt-packages.txt | tr '\n' ' ')"
         echo "sections=${SECTIONS}: ${pkgs}${EXTRA}"
-        sudo apt-get update
+        # Bounded attempt, then archive.ubuntu.com if the runner mirror crawls.
         # shellcheck disable=SC2086
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ${pkgs} ${EXTRA}
+        sudo scripts/ci/apt-install.sh ${pkgs} ${EXTRA}
 
     - name: Install Conan + NumPy (env/requirements-build.txt)
       if: inputs.conan == 'true'

@@ -51,6 +51,7 @@ jobs:
               - 'scripts/provision-mindvision-sdk.sh'
               - 'env/**'
               - '.github/actions/setup-linux-env/**'
+              - 'scripts/ci/apt-install.sh'
               - '.github/workflows/sanitizers.yml'
 
   # The job itself always runs so the matrix expands and the required status
