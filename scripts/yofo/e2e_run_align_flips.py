@@ -140,11 +140,14 @@ with sync_playwright() as p:
                "pl_episodes": (heal1.get("episodes", 0) - h0.get("episodes", 0)) if heal1.get("v2") else None,
                "pl_failed_episodes": (heal1.get("failed_episodes", 0) - h0.get("failed_episodes", 0)) if heal1.get("v2") else None,
                "latency": (st1.get("latency") or {}),
-               # results12: frames start only after a FrameStart line; nofs_frames = dropped for want of one
+               # results12: frames start only after a FrameStart line. The counters are zeroed by every
+               # receiver reset (the Align entry's apply), so they are reported as read at the lock:
+               # they then hold just this Align entry (nofs_frames about 1 = the partial frame of the mid-frame
+               # join; nofs_lines varies with the join phase), not a delta across the reset.
                "pl_fs_present": bool(heal1.get("fs_present")),
-               "pl_fs_seen": (heal1.get("fs_seen", 0) - h0.get("fs_seen", 0)) if heal1.get("fs_present") else None,
-               "pl_nofs_frames": (heal1.get("nofs_frames", 0) - h0.get("nofs_frames", 0)) if heal1.get("fs_present") else None,
-               "pl_nofs_lines": (heal1.get("nofs_lines", 0) - h0.get("nofs_lines", 0)) if heal1.get("fs_present") else None,
+               "pl_fs_seen_after_lock": heal1.get("fs_seen") if heal1.get("fs_present") else None,
+               "pl_nofs_frames_after_lock": heal1.get("nofs_frames") if heal1.get("fs_present") else None,
+               "pl_nofs_lines_after_lock": heal1.get("nofs_lines") if heal1.get("fs_present") else None,
                # #643: a PL gave-up is counted and timed; the host recovery then runs (resets > 0).
                "pl_gave_ups": lock.get("pl_gave_ups", 0) - gaveups0,
                "last_pl_gave_up_ms": lock.get("last_pl_gave_up_ms") if lock.get("pl_gave_ups", 0) > gaveups0 else None,
