@@ -307,3 +307,13 @@ even when metadata can still be written. `acknowledgeFault()` returns the
 coordinator to Idle only after finalization and for the matching run/fault
 revision; it preserves the failed saved-run outcome. Qt readiness and banner
 actions both use this contract.
+
+## Flush backpressure (#597)
+
+A flush request is a wake-up, not a promise that a batch will be submitted.
+ProcessingService retains frames in its bounded experiment buffer when the
+three-slot writer queue is full, allowing subsequent requests to coalesce them.
+The existing count/byte gates and periodic backstop remain active. Stop first
+drains the queue; after `endExperiment()`, its existing remainder flush writes
+any deferred frames and partial series through a fresh queue. No coordinator
+or bridge contract change is needed.

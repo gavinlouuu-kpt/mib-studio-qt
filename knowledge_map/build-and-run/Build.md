@@ -198,7 +198,9 @@ armv7-unknown-linux-gnueabihf`). The script maps the SDK compilers to cargo's
 target-specific variables (the generic `CC`/`CFLAGS` would hit host build
 scripts) and points the bridge at `build/linux-armv7-yocto`
 (`MIB_BRIDGE_BUILD_DIR`, `MIB_BRIDGE_SYSROOT`); `crates/mib-bridge/build.rs`
-links the Aravis libraries recorded in that tree's `CMakeCache.txt`.
+links the Aravis libraries recorded in that tree's `CMakeCache.txt`. The script also defines
+`SPDLOG_FMT_EXTERNAL` (with `SPDLOG_COMPILED_LIB`, `SPDLOG_SHARED_LIB`, `FMT_SHARED`) for the
+bridge shims, because the SDK's spdlog uses the external fmt and `review_shim.cpp` includes it.
 
 `cmake/toolchains/yocto-armv7.cmake` keeps every package search in the sysroot.
 HDF5 needs care: the SDK's HDF5 package config is unusable (absolute install
