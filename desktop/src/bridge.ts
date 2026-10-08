@@ -633,6 +633,8 @@ export interface InstrumentStatus {
     /** Sustained loss against the sensor's frame rate (bad above 1%, dropped above 0.1% for 5 s). */
     bad_frames_warn?: boolean;
     dropped_warn?: boolean;
+    /** The results bridge is ARMED/RUNNING; dropped frames are judged only then (P[6] counts every frame otherwise). */
+    bridge_active?: boolean;
     bad_frames_warn_per_s?: number;
     dropped_warn_per_s?: number;
   };

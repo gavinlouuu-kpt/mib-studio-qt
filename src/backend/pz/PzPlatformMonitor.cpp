@@ -291,8 +291,10 @@ PzPlatformStatus PzPlatformMonitor::sample(uint64_t nowUs) {
         if (since == 0) since = nowUs;
         return nowUs - since >= kSustainedUs;
     };
+    const uint32_t bridgeState = r.bridge(PZ_MIB_REG_STATE);
+    s.bridgeActive = bridgeState == PZ_MIB_STATE_ARMED || bridgeState == PZ_MIB_STATE_RUNNING;
     s.badFramesWarn = sustained(s.badFramesPerS > s.badFramesWarnPerS, badSinceUs_);
-    s.droppedWarn = sustained(s.droppedPerS > s.droppedWarnPerS, droppedSinceUs_);
+    s.droppedWarn = sustained(s.bridgeActive && s.droppedPerS > s.droppedWarnPerS, droppedSinceUs_);
     havePrevious_ = true;
     previousUs_ = nowUs;
     previous_ = now;
