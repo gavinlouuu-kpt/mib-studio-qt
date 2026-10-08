@@ -57,6 +57,13 @@ public:
         return false;
     }
 
+    // A serialized producer can defer a batch while retaining its own buffer.
+    // The writer only removes entries, so capacity cannot shrink before submit.
+    bool hasCapacity() const {
+        std::unique_lock<std::mutex> lk(mu_);
+        return !error_ && !stopRequested_ && queue_.size() < slots_;
+    }
+
     bool hasError() const {
         std::unique_lock<std::mutex> lk(mu_);
         return error_;
