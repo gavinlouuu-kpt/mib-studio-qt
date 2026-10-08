@@ -20,6 +20,8 @@ namespace {
 // docs/YOFO_HOST_INTERFACE.md, docs/LED_STROBE.md, tools/pzcell/pzcell.c.
 constexpr unsigned kCommand = 8;              // P[8]
 constexpr uint32_t kUnetEnable = 0x10u;       // P[8] bit 4, a level
+constexpr uint32_t kReceiverReset = 0x40u;    // P[8] bit 6, a pulse
+constexpr unsigned kIngressErrors = 12, kIngressStatus = 13, kIngressResyncs = 14; // P[12..14]
 constexpr unsigned kStrobeControl = 0, kStrobeDelay = 1, kStrobeWidth = 2, kStrobeEvery = 4, kStrobeGate = 5;
 constexpr unsigned kStrobeClockKhz = 10;
 constexpr unsigned kCaptureArm = 36, kCellImage = 41, kCaptureDone = 42, kCaptureTag = 43, kCaptureListing = 44,
@@ -194,6 +196,25 @@ bool PzInstrumentControl::cellPathOn(std::string* error) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!readyLocked(error)) return false;
     return S(kCellMode) != 0 && (registers_->live(kCommand) & kUnetEnable) != 0;
+}
+
+bool PzInstrumentControl::ingressStatus(IngressStatus& out, std::string* error) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!readyLocked(error)) return false;
+    out.status = registers_->live(kIngressStatus);
+    out.errors = registers_->live(kIngressErrors);
+    out.resyncs = registers_->live(kIngressResyncs);
+    return true;
+}
+
+bool PzInstrumentControl::resetReceiver(std::chrono::microseconds hold, std::string* error) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!readyLocked(error)) return false;
+    const uint32_t keep = registers_->live(kCommand) & kUnetEnable;
+    registers_->setLive(kCommand, keep | kReceiverReset);
+    registers_->sleepUs(static_cast<unsigned>(hold.count()));
+    registers_->setLive(kCommand, keep);
+    return true;
 }
 
 bool PzInstrumentControl::clearLatency(std::string* error) {

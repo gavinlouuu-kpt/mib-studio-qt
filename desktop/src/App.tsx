@@ -1065,7 +1065,7 @@ export default function App() {
       if (!cancelled) await refreshCameraGeometry();
     })();
     return () => { cancelled = true; };
-  }, [tab, ready, expActive, refreshCameraGeometry, append, instrumentModes, cameraWin.placed, modeRetry]);
+  }, [tab, ready, expActive, refreshCameraGeometry, append, instrumentModes, cameraWin.placed, modeRetry, instrumentMode?.idle]);
 
   // The camera's read-back (applied window, sensor and delivered rate) follows its restart.
   useEffect(() => {

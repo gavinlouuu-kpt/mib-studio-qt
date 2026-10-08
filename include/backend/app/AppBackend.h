@@ -125,11 +125,21 @@ namespace backend
         bool instrumentControlAvailable() const;
         bool setInstrumentMode(pz::InstrumentMode mode, int x, int y, std::string *errorOut);
         pz::InstrumentMode instrumentMode() const;
+        // The safe state of an unattended instrument (no client for the server's grace time): LED
+        // off, cell path off, the camera (producer stream / bridge previews) released. The sensor
+        // keeps the timing it was last given. Refused while an experiment or recording runs.
+        // instrumentIdle() stays true until the next mode switch (the UI resumes Align/Run).
+        bool enterInstrumentIdle(std::string *errorOut);
+        bool instrumentIdle() const;
         // The Run window (x, y) last applied or requested; snapped to the producer's steps.
         std::pair<int, int> instrumentRunOffset() const;
         // True once a Run switch has succeeded in this process: instrumentRunOffset() is then the
         // operator's window, not the (0, 0) default (the UI restores its window from it, #501).
         bool instrumentRunWindowSet() const;
+        // How often Align's ingress recovery fired in this process (#629): receiver resets issued and
+        // switches that never locked.
+        struct AlignLockCounters { uint64_t receiverClears{0}, failures{0}; };
+        AlignLockCounters alignLockCounters() const;
         // Service / Commissioning mode, latched by the shell: raw LED values are refused
         // outside it, on the backend side (not only in the UI).
         void setServiceMode(bool on);
@@ -380,6 +390,8 @@ namespace backend
         std::atomic<bool> instrumentStopped_{false}; // shutdown() switched the LED off already
         std::atomic<int> instrumentRunX_{0}, instrumentRunY_{0};
         std::atomic<bool> instrumentRunSet_{false};
+        std::atomic<bool> instrumentIdle_{false};
+        std::atomic<uint64_t> alignReceiverClears_{0}, alignLockFailures_{0};
         std::atomic<bool> serviceMode_{false};
         // Align live view: "bridge" (whole frames, results8 on) or "bands" (producer grabber).
         std::atomic<int> alignSource_{0}; // 0 none, 1 bridge, 2 bands (read by the status poll)

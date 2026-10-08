@@ -478,7 +478,9 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
   stops the axis.
 - **Server:** every stage command except `stage_stop` and
   `fetch_stage_status` is a `CONTROL_COMMANDS` entry. `stop_and_save` stops
-  a busy stage when the last client leaves.
+  a busy stage when the last client leaves, and puts a PZ7035 left in Align
+  or Run into its safe state (`set_instrument_mode idle`: LED off, cell path
+  off, camera released; `mode.idle` reads true until the next switch).
 - **Tests:** `contract.rs` `stage_commands_fail_safely_without_hardware`;
   `stage_motion_is_control_only_but_stop_is_not` in the server;
   `backend.stage_bridge_facade`.
