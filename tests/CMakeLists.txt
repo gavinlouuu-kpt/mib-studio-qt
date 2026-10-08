@@ -1196,6 +1196,15 @@ if(Python3_Interpreter_FOUND)
     )
 
     add_test(
+        NAME scripts.yofo_standing_package
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test_yofo_standing_package.py
+    )
+    set_tests_properties(scripts.yofo_standing_package PROPERTIES
+        LABELS "scripts;pl"
+        TIMEOUT 30
+    )
+
+    add_test(
         NAME scripts.export_hdf5_paths
         COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test_export_hdf5_paths.py
     )
