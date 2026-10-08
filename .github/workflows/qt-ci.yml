@@ -35,6 +35,7 @@ jobs:
               - 'CMakePresets.json'
               - 'env/**'
               - '.github/actions/setup-linux-env/**'
+              - 'scripts/ci/apt-install.sh'
               - '.github/workflows/qt-ci.yml'
             windows:
               - 'src/frontend/**'

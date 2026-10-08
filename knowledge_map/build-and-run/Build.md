@@ -42,7 +42,9 @@ Conan profile, public assets) then the doctor. Named volumes keep the
 Hugging Face and Conan caches across rebuilds; `HF_TOKEN` passes through from
 the host when set. The image is built per job/container, not published
 (decision in the plan). `.github/actions/setup-linux-env` is the one place
-Linux workflows get packages (`sections`, `extra-packages`), Conan
+Linux workflows get packages (`sections`, `extra-packages`; installed by
+`scripts/ci/apt-install.sh`, which bounds the first attempt to 240 s and
+retries from archive.ubuntu.com when the runner's Azure mirror crawls), Conan
 (`conan: "true"`), the MindVision SDK and assets; `backend-ci`, `bridge-ci`,
 `desktop-ci`, `review-ci` (YOFO Review, [[../frontend/YofoReview]]; builds
 `mib_review_core`, the Qt-free review library [[../services/ReviewSession]]
@@ -240,7 +242,7 @@ fails it.
 - **Packages:** `scripts/ci/enable-armhf-apt.sh` adds the armhf architecture
   (ports.ubuntu.com; the existing sources become amd64-only). Then
   `setup-linux-env` installs `base,armhf-cross` from `env/apt-packages.txt`.
-- **Cost:** the armhf packages take about 8 minutes to install, and the build
+- **Cost:** the setup step (armhf packages included) takes about 1.5 minutes, and the build
   about 2 minutes at 4 jobs (a runner has 4 vCPU; more parallel compiles than
   cores can exhaust memory).
 - **Gating:** like `sanitizers.yml`, a path filter gates the steps, not the
