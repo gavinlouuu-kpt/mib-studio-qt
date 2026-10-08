@@ -4294,11 +4294,25 @@ namespace backend::services {
             H5Gclose(group);
             return false;
         }
+        std::string readError;
+        auto required = [&](const char* name, bool ok) {
+            if (!ok && readError.empty()) {
+                readError =
+                    std::string(H5Aexists(group, name) == 0 ? "missing " : "cannot read ") + name;
+            }
+        };
+        auto isScalar = [](hid_t attr) {
+            hid_t space = H5Aget_space(attr);
+            if (space < 0) return false;
+            const bool scalar = H5Sget_simple_extent_type(space) == H5S_SCALAR;
+            H5Sclose(space);
+            return scalar;
+        };
         auto readU64 = [&](const char* name, uint64_t& v) {
             if (H5Aexists(group, name) <= 0) return false;
             hid_t attr = H5Aopen(group, name, H5P_DEFAULT);
             if (attr < 0) return false;
-            const bool ok = H5Aread(attr, H5T_NATIVE_UINT64, &v) >= 0;
+            const bool ok = isScalar(attr) && H5Aread(attr, H5T_NATIVE_UINT64, &v) >= 0;
             H5Aclose(attr);
             return ok;
         };
@@ -4307,7 +4321,7 @@ namespace backend::services {
             hid_t attr = H5Aopen(group, name, H5P_DEFAULT);
             if (attr < 0) return false;
             uint8_t raw = 0;
-            const bool ok = H5Aread(attr, H5T_NATIVE_UINT8, &raw) >= 0;
+            const bool ok = isScalar(attr) && H5Aread(attr, H5T_NATIVE_UINT8, &raw) >= 0;
             H5Aclose(attr);
             if (ok) v = raw != 0;
             return ok;
@@ -4318,7 +4332,8 @@ namespace backend::services {
             if (attr < 0) return false;
             hid_t type = H5Aget_type(attr);
             bool ok = false;
-            if (type >= 0 && H5Tget_class(type) == H5T_STRING && H5Tis_variable_str(type) > 0) {
+            if (isScalar(attr) && type >= 0 && H5Tget_class(type) == H5T_STRING &&
+                H5Tis_variable_str(type) > 0) {
                 char* ptr = nullptr;
                 ok = H5Aread(attr, type, &ptr) >= 0;
                 if (ok) v = ptr ? ptr : "";
@@ -4328,37 +4343,71 @@ namespace backend::services {
             H5Aclose(attr);
             return ok;
         };
-        readU64("accounting_schema_version", out.schemaVersion);
-        readU64("accounting_admitted_frames", out.admitted);
-        readU64("accounting_empty_frames", out.empty);
-        readU64("accounting_processed_frames", out.processed);
-        readU64("accounting_scientifically_rejected_frames", out.scientificallyRejected);
-        readU64("accounting_processing_failed_frames", out.processingFailed);
-        readU64("accounting_store_overwritten_frames", out.storeOverwritten);
-        readU64("accounting_store_not_committed_frames", out.storeNotCommitted);
-        readU64("accounting_store_malformed_frames", out.storeMalformed);
-        readU64("accounting_cancelled_by_policy_frames", out.cancelledByPolicy);
-        readU64("accounting_pending_at_stop_frames", out.pendingAtStop);
-        readU64("accounting_persistence_admitted_frames", out.persistenceAdmitted);
-        readU64("accounting_persistence_committed_frames", out.persistenceCommitted);
-        readU64("accounting_persistence_failed_frames", out.persistenceFailed);
-        readU64("accounting_persistence_pending_at_stop_frames", out.persistencePendingAtStop);
-        readU64("accounting_persistence_cancelled_by_policy_frames", out.persistenceCancelledByPolicy);
-        readU64("accounting_objects_detected", out.objectsDetected);
-        readU8("accounting_has_index_range", out.hasIndexRange);
-        readU64("accounting_first_frame_index", out.firstFrameIndex);
-        readU64("accounting_last_frame_index", out.lastFrameIndex);
-        readU64("accounting_sequence_gaps", out.sequenceGaps);
-        readU64("accounting_sequence_gap_frames", out.sequenceGapFrames);
-        readU64("accounting_session_generation", out.sessionGeneration);
-        readU8("accounting_policy_allows_drops", out.policyAllowsDrops);
-        readU8("accounting_fatal_error", out.fatalError);
-        readStr("accounting_fatal_message", out.fatalMessage);
+        required("accounting_schema_version",
+                 readU64("accounting_schema_version", out.schemaVersion));
+        required("accounting_admitted_frames", readU64("accounting_admitted_frames", out.admitted));
+        required("accounting_empty_frames", readU64("accounting_empty_frames", out.empty));
+        required("accounting_processed_frames",
+                 readU64("accounting_processed_frames", out.processed));
+        required("accounting_scientifically_rejected_frames",
+                 readU64("accounting_scientifically_rejected_frames", out.scientificallyRejected));
+        required("accounting_processing_failed_frames",
+                 readU64("accounting_processing_failed_frames", out.processingFailed));
+        required("accounting_store_overwritten_frames",
+                 readU64("accounting_store_overwritten_frames", out.storeOverwritten));
+        required("accounting_store_not_committed_frames",
+                 readU64("accounting_store_not_committed_frames", out.storeNotCommitted));
+        required("accounting_store_malformed_frames",
+                 readU64("accounting_store_malformed_frames", out.storeMalformed));
+        required("accounting_cancelled_by_policy_frames",
+                 readU64("accounting_cancelled_by_policy_frames", out.cancelledByPolicy));
+        required("accounting_pending_at_stop_frames",
+                 readU64("accounting_pending_at_stop_frames", out.pendingAtStop));
+        required("accounting_persistence_admitted_frames",
+                 readU64("accounting_persistence_admitted_frames", out.persistenceAdmitted));
+        required("accounting_persistence_committed_frames",
+                 readU64("accounting_persistence_committed_frames", out.persistenceCommitted));
+        required("accounting_persistence_failed_frames",
+                 readU64("accounting_persistence_failed_frames", out.persistenceFailed));
+        required(
+            "accounting_persistence_pending_at_stop_frames",
+            readU64("accounting_persistence_pending_at_stop_frames", out.persistencePendingAtStop));
+        required("accounting_persistence_cancelled_by_policy_frames",
+                 readU64("accounting_persistence_cancelled_by_policy_frames",
+                         out.persistenceCancelledByPolicy));
+        required("accounting_objects_detected",
+                 readU64("accounting_objects_detected", out.objectsDetected));
+        required("accounting_has_index_range",
+                 readU8("accounting_has_index_range", out.hasIndexRange));
+        required("accounting_first_frame_index",
+                 readU64("accounting_first_frame_index", out.firstFrameIndex));
+        required("accounting_last_frame_index",
+                 readU64("accounting_last_frame_index", out.lastFrameIndex));
+        required("accounting_sequence_gaps", readU64("accounting_sequence_gaps", out.sequenceGaps));
+        required("accounting_sequence_gap_frames",
+                 readU64("accounting_sequence_gap_frames", out.sequenceGapFrames));
+        required("accounting_session_generation",
+                 readU64("accounting_session_generation", out.sessionGeneration));
+        required("accounting_policy_allows_drops",
+                 readU8("accounting_policy_allows_drops", out.policyAllowsDrops));
+        required("accounting_fatal_error", readU8("accounting_fatal_error", out.fatalError));
+        required("accounting_fatal_message", readStr("accounting_fatal_message", out.fatalMessage));
         std::string completion;
-        readStr("accounting_completion_state", completion);
+        required("accounting_completion_state", readStr("accounting_completion_state", completion));
         out.completion = backend::recording::runCompletionStateFromString(completion);
-        readStr("accounting_completion_reason", out.completionReason);
-        readU8("accounting_reconciled", out.reconciled);
+        required("accounting_completion_reason",
+                 readStr("accounting_completion_reason", out.completionReason));
+        required("accounting_reconciled", readU8("accounting_reconciled", out.reconciled));
+        if (readError.empty() &&
+            out.schemaVersion != backend::recording::RecordingAccountingSnapshot::kSchemaVersion) {
+            readError =
+                "unsupported accounting_schema_version " + std::to_string(out.schemaVersion);
+        }
+        if (!readError.empty()) {
+            out = backend::recording::RecordingAccountingSnapshot{};
+            out.readError = readError;
+            out.completionReason = "accounting unreadable: " + readError;
+        }
         H5Gclose(group);
         return true;
     }

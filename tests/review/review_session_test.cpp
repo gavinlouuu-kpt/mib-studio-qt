@@ -26,6 +26,8 @@
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 
+#include <hdf5.h>
+
 #include <cmath>
 #include <filesystem>
 #include <string>
@@ -299,6 +301,36 @@ int main()
     }
     wd.mark("experiment");
 
+    // A partial accounting write must not look like a complete, reconciled run.
+    for (const char* attribute : {"accounting_admitted_frames", "accounting_reconciled", "accounting_completion_reason"})
+    {
+        const auto corrupt = td.path() / "unreadable_accounting.h5";
+        writeExperiment(corrupt, false, true, false);
+        const hid_t file = H5Fopen(corrupt.string().c_str(), H5F_ACC_RDWR, H5P_DEFAULT);
+        MIB_REQUIRE(file >= 0, "open accounting fault fixture");
+        const hid_t group = H5Gopen2(file, "/experiment_info", H5P_DEFAULT);
+        MIB_REQUIRE(group >= 0, "open accounting group");
+        MIB_REQUIRE(H5Adelete(group, attribute) >= 0, "delete required accounting attribute");
+        H5Gclose(group);
+        H5Fclose(file);
+        Hdf5Service reader;
+        MIB_REQUIRE(reader.loadFile(corrupt.string()), "load accounting fault fixture");
+        backend::recording::RecordingAccountingSnapshot a;
+        MIB_EXPECT(reader.readRunAccounting(a), "accounting remains present");
+        MIB_EXPECT(a.completion == backend::recording::RunCompletionState::Unknown && !a.reconciled,
+                   "unreadable accounting is Unknown, not reconciled");
+        MIB_EXPECT(a.completionReason == std::string("accounting unreadable: missing ") + attribute,
+                   "unreadable accounting names missing attribute");
+        MIB_EXPECT(!a.readError.empty() && a.processed == 0, "explicit unreadable state clears partial counters");
+        reader.closeFile();
+        ReviewSession s;
+        MIB_REQUIRE(s.open(corrupt.string()), "review corrupt accounting");
+        MIB_EXPECT(s.metadata().hasAccounting, "review retains accounting presence");
+        MIB_EXPECT(s.accountingSummary().find("run unknown") != std::string::npos &&
+                       s.accountingSummary().find(a.completionReason) != std::string::npos,
+                   "review shows Unknown with the unreadable reason");
+    }
+
     // ---- legacy file: no snapshot, no accounting ------------------------------
     {
         ReviewSession s;
@@ -307,6 +339,12 @@ int main()
         const auto meta = s.metadata();
         MIB_EXPECT(!meta.pixelToMicronFromFile && std::fabs(meta.pixelToMicron - 0.5) < 1e-12, "legacy factor fallback");
         MIB_EXPECT(!meta.hasAccounting, "legacy accounting");
+        Hdf5Service reader;
+        MIB_REQUIRE(reader.loadFile(legacy.string()), "load legacy accounting fixture");
+        backend::recording::RecordingAccountingSnapshot a;
+        MIB_EXPECT(!reader.readRunAccounting(a) && a.readError.empty() &&
+                       a.completion == backend::recording::RunCompletionState::Unknown,
+                   "legacy read remains absent, Unknown, without corruption reason");
         MIB_EXPECT(s.accountingSummary().find("legacy") != std::string::npos, "legacy accounting text");
         s.setFallbackPixelToMicron(2.0);
         MIB_EXPECT(std::fabs(s.scatter().areaUm2[0] - 100.0 * 4.0) < 1e-9, "fallback change applies");

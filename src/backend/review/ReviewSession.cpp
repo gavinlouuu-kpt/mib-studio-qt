@@ -556,6 +556,7 @@ namespace backend::review
         if (!impl_->open) return {};
         if (!impl_->meta.hasAccounting) return " · accounting: not recorded (legacy file)";
         const auto &a = impl_->meta.accounting;
+        if (!a.readError.empty()) return " · run unknown — " + a.completionReason;
         const std::uint64_t storeLoss = a.storeOverwritten + a.storeNotCommitted + a.storeMalformed;
         std::ostringstream text;
         text << " · run " << recording::toString(a.completion);
