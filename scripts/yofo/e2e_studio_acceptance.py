@@ -133,9 +133,13 @@ with sync_playwright() as p:
                 break
         led, sensor = side(page, "LED:"), side(page, "Sensor:")
         page.screenshot(path=str(outdir / "3_align.png"))
-        ok = bool(got) and "align" in led and ("400" in sensor or not sensor.strip() or sensor.strip() == "—")
+        # The Sensor row exists once the backend reports `sensor` (#622): from then on it is required
+        # to read ~400 fps, so this check tightens by itself; without the row only frame and LED count.
+        has_sensor_row = page.locator(".side-row", has=page.locator(".k", has_text="Sensor:")).count() > 0
+        sensor_ok = ("400" in sensor) if has_sensor_row else True
+        ok = bool(got) and "align" in led and sensor_ok
         record("Align", ok, f"frame mean {got['mean']:.0f} DN" if got else "no frame", ) if ok else \
-            record("Align", False, f"frame={got} led='{led}' sensor='{sensor}' notices={[t for t in page.locator('.mode-notice').all_inner_texts()]}")
+            record("Align", False, f"frame={got} led='{led}' sensor='{sensor}' (row {'present' if has_sensor_row else 'absent: package predates #622'}) notices={[t for t in page.locator('.mode-notice').all_inner_texts()]}")
 
         # 4. Run at 5 kHz: place the window, switch, preview, a short experiment.
         window_ok = False
