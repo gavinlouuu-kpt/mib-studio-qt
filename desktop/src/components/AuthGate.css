@@ -13,3 +13,25 @@
   flex-direction: column;
   gap: 0.25rem;
 }
+
+/* The link to the instrument dropped or the instrument restarted (the app stays mounted). */
+.connection-banner {
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+  margin: 0;
+  padding: 6px 12px;
+  background: var(--warn-bg, #fff4d6);
+  color: var(--warn, #8a5a00);
+  border-bottom: 1px solid var(--border, #ccc);
+}
+.auth-gate-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1001;
+  margin: 0;
+  max-width: none;
+  padding: 4rem 16px;
+  background: var(--bg, #fff);
+  align-items: center;
+}
