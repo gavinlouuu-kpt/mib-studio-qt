@@ -1871,7 +1871,9 @@ export default function App() {
                   <>
                     <div className="canvas-wrap">
                       {!lastMeta && !runPreviewInfo && <span className="canvas-hint">{instrumentModes
-                        ? (runMode ? "Waiting for the PL cell capture…" : "Switching to Run…")
+                        ? (runMode ? "Waiting for the PL cell capture…"
+                          : !cameraWin.placed ? "No run window placed yet"
+                          : modeError?.mode === "run" ? "The camera is not in Run mode" : "Switching to Run…")
                         : "No frame yet — configure a camera and press Start Camera"}</span>}
                       <canvas ref={previewCanvasRef} className={fitWindow ? "fit" : ""} />
                     </div>
