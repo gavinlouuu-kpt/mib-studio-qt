@@ -1227,3 +1227,5 @@ button.btn:disabled,
 /* PZ7035 camera-mode problems the operator must act on: no run window, or a refused switch (#501) */
 .mode-notice { display: flex; gap: 12px; align-items: center; margin: 6px 0; padding: 6px 10px; border-left: 3px solid var(--warn); color: var(--warn); }
 .mode-notice span { flex: 1 1 auto; }
+
+.side-row .v.warn { color: var(--warn); }

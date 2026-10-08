@@ -627,6 +627,9 @@ export interface InstrumentStatus {
     ingress_errors_warn_per_s: number;
     resyncs_warn_per_s: number;
   };
+  /** The sensor as the PL sees it: XVS period in 100 MHz clocks (0 while the sensor is closed), the
+   *  frame rate it gives, and the ingress geometry latched at the last receiver reset. */
+  sensor?: { xvs_period_clocks: number; fps: number; width: number; height: number };
   latency?: { last_us: number; max_us: number; over_budget: number; frames: number };
 }
 

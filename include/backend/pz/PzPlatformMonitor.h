@@ -122,6 +122,14 @@ struct PzPlatformStatus {
     double badFramesPerS{0.0};
     double droppedPerS{0.0};
 
+    // Sensor: S[9] reads the XVS period in 100 MHz host clocks (0 while the sensor is closed);
+    // S[29] reads the ingress geometry {lines, OB lines, slots of 8 pixels} written at the last
+    // receiver reset (0x00602040 = the 512x96 default, 0x02702066 = 816x624 full field).
+    uint32_t xvsPeriodClocks{0};
+    double xvsFps{0.0};
+    uint32_t geometryWidth{0};
+    uint32_t geometryHeight{0};
+
     // Latency monitor (S[47..51], 175 MHz clocks), SOF -> last result.
     double latencyLastUs{0.0};
     double latencyMaxUs{0.0};
@@ -138,6 +146,12 @@ public:
     // One sample at host time `nowUs` (monotonic). Thread-safe.
     PzPlatformStatus sample(uint64_t nowUs);
 
+    // A camera mode switch resets the receiver and the sensor: the link counters jump for about a
+    // second (docs/YOFO_HOST_INTERFACE.md). Rates are reported invalid (`ratesValid` false) until
+    // `kModeSettleUs` after `nowUs`, and the first valid rate starts after that window.
+    void settle(uint64_t nowUs);
+    static constexpr uint64_t kModeSettleUs = 1'500'000;
+
 private:
     struct Counters {
         uint32_t ingressErrors{0}, resyncs{0}, badFrames{0}, dropped{0};
@@ -147,6 +161,7 @@ private:
     std::string expectedCorePath_;
     std::mutex mutex_;
     bool havePrevious_{false};
+    uint64_t settleUntilUs_{0};
     uint64_t previousUs_{0};
     Counters previous_{};
 };

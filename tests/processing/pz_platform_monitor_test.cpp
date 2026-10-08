@@ -173,6 +173,37 @@ int main() {
         MIB_EXPECT(monitor.sample(16'800'000).ratesValid, "rates resume on the second sample");
     }
 
+    // Sensor readout: S[9] is the XVS period in 100 MHz clocks, S[29] the ingress geometry.
+    {
+        const auto closed = monitor.sample(17'000'000);
+        MIB_EXPECT(closed.xvsPeriodClocks == 0 && closed.xvsFps == 0.0, "no XVS while the sensor is closed");
+        r->strobeWindow[9] = 249966;       // 400 fps, as measured on the board
+        r->strobeWindow[29] = 0x02702066u; // 624 lines, 32 OB lines, 102 slots of 8 pixels
+        const auto open = monitor.sample(17'100'000);
+        MIB_EXPECT(open.xvsPeriodClocks == 249966 && std::abs(open.xvsFps - 400.0544) < 1e-3, "XVS period as fps");
+        MIB_EXPECT(open.geometryWidth == 816 && open.geometryHeight == 624, "ingress geometry 816x624");
+        r->strobeWindow[29] = 0x00602040u; // the 512x96 default
+        const auto run = monitor.sample(17'200'000);
+        MIB_EXPECT(run.geometryWidth == 512 && run.geometryHeight == 96, "default geometry 512x96");
+    }
+
+    // A mode switch resets the receiver: rates are invalid for the settle window, then resume from
+    // the end of it (a spike during the switch never shows).
+    r->livePage[12] = 100;
+    (void)monitor.sample(18'000'000);
+    r->livePage[12] = 5000; // the counters jump during the switch
+    monitor.settle(18'100'000);
+    MIB_EXPECT(!monitor.sample(18'200'000).ratesValid && !monitor.sample(19'000'000).ratesValid,
+               "no rates inside the settle window");
+    {
+        const auto after = monitor.sample(19'700'000); // past 18'100'000 + 1.5 s
+        MIB_EXPECT(after.ratesValid && after.ingressErrorsPerS == 0.0,
+                   "rates resume after the window, measured from inside it: the switch's spike never shows");
+        r->livePage[12] = 5002;
+        const auto next = monitor.sample(20'700'000);
+        MIB_EXPECT(next.ratesValid && std::abs(next.ingressErrorsPerS - 2.0) < 1e-9, "and are normal afterwards");
+    }
+
     // No bridge (PL not loaded): unavailable.
     r->bridgePage[PZ_MIB_REG_IDENTITY] = 0;
     {

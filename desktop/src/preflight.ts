@@ -19,6 +19,7 @@
 // Pure module: no React/Tauri imports so it is unit-testable in plain Node.
 
 import type { InstrumentStatus, PlatformCapabilities } from "./bridge";
+import { linkReadout, sensorReadout } from "./linkHealth";
 import { DESKTOP_CAPABILITIES, isPz7035 } from "./platformCapabilities";
 
 export type CheckStatus = "passed" | "warning" | "failed" | "not-required";
@@ -228,10 +229,6 @@ function plCoreCheck(i: PreflightInput): PreflightCheck {
   return { ...base, status, expected, detected, detail, recovery };
 }
 
-function fmtRate(v: number) {
-  return v < 10 ? v.toFixed(1) : v.toFixed(0);
-}
-
 /** PZ7035: sensor link health from the PL's cumulative counters. */
 function sensorLinkCheck(i: PreflightInput): PreflightCheck {
   const s = i.instrument;
@@ -243,14 +240,15 @@ function sensorLinkCheck(i: PreflightInput): PreflightCheck {
   if (!l.rates_valid) {
     return { ...base, status: "warning", detected: "measuring", detail: "Measuring link error rates…", recovery: [] };
   }
-  const detected = `${fmtRate(l.ingress_errors_per_s)} err/s · ${fmtRate(l.resyncs_per_s)} resync/s`;
+  const detected = linkReadout(s).text;
+  const sensor = sensorReadout(s);
   const issues: string[] = [];
   if (l.ingress_errors_per_s > l.ingress_errors_warn_per_s) issues.push(`ingress errors above ${l.ingress_errors_warn_per_s}/s`);
   if (l.resyncs_per_s > l.resyncs_warn_per_s) issues.push(`resyncs above ${l.resyncs_warn_per_s}/s`);
   if (l.bad_frames_per_s > 0) issues.push("bad frames rising");
   return issues.length
     ? { ...base, status: "warning", detected, detail: `Sensor link: ${issues.join(", ")}. Check the sensor cable and the LED wiring.`, recovery: [RETRY] }
-    : { ...base, status: "passed", detected, detail: "Link errors within the known baseline.", recovery: [] };
+    : { ...base, status: "passed", detected, detail: `Link errors within the known baseline. Sensor ${sensor.text}.`, recovery: [] };
 }
 
 /** PZ7035: LED strobe; the PL guards are authoritative, a trip fails preflight. */

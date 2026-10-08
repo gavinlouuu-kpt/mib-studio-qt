@@ -69,6 +69,7 @@ import {CameraDocumentEditor,useCameraDocument} from "./cameraDocument";
 import { CoreManagementPanel, useCoreManagement } from "./coreManagement";
 import { rateSummary, RUN_WINDOW, snapRunWindow, type Rect } from "./cameraAlignment";
 import { runModeBlockReason, useCameraWindow, type CameraModeError } from "./cameraWindow";
+import { latencyReadout, linkReadout, sensorReadout } from "./linkHealth";
 import { RunWindowNotice } from "./components/RunWindowNotice";
 import { holdBest, measureImage, sameBox } from "./imageQuality";
 import { formatResultsRates, resultsRates, type ResultsRates, type ResultsSample } from "./resultsRates";
@@ -1416,8 +1417,9 @@ export default function App() {
               cls={instrument?.core?.profile_match === "match" ? "ok" : "dim"} />
             <SideRow k="LED:" v={instrument?.led ? (instrument.led.guard_fault ? "GUARD TRIPPED" : instrument.led.on ? `${instrument.led.preset} ${instrument.led.delay_us}/${instrument.led.width_us} µs` : "off") : "—"}
               cls={instrument?.led && !instrument.led.guard_fault ? "" : "dim"} />
-            <SideRow k="Latency max:" v={instrument?.latency && instrument.latency.frames > 0 ? `${metricNumber(instrument.latency.max_us, 1)} µs` : "—"}
-              cls={instrument?.latency && instrument.latency.frames > 0 ? "" : "dim"} />
+            <SideRow k="Sensor:" v={sensorReadout(instrument).text} cls={sensorReadout(instrument).cls} />
+            <SideRow k="Link:" v={linkReadout(instrument).text} cls={linkReadout(instrument).cls} />
+            <SideRow k="Latency:" v={latencyReadout(instrument).text} cls={latencyReadout(instrument).cls} />
           </div>}
           {caps.autofocus && <div className="side-section">
             <h4>Autofocus</h4>

@@ -700,6 +700,17 @@ backend's camera modes instead of `set_camera_overview`:
   clamped to the limits) or restores the preset. The next mode switch
   restores the preset anyway.
 
+**Link health, sensor and latency (#501).** The PL core sidebar section shows three more rows from
+`fetch_instrument_status`: **Sensor** (the ingress geometry from S[29] at the actual frame rate from
+the XVS period in S[9], 100 MHz clocks; "closed" while no XVS runs), **Link** (P[12] errors, P[14]
+resyncs, P[7] bad and P[6] dropped frames per second, warning above 10 errors/s, 1 resync/s or any
+bad frame) and **Latency** (S[47–51]: max in µs and frames over budget of the frames seen). The
+preflight Sensor link check lists the same rates and the sensor. The backend reports the rates
+invalid (`link.rates_valid` false, "measuring…") for 1.5 s after a camera mode switch
+(`PzPlatformMonitor::settle`, called by `AppBackend::setInstrumentMode`), because the receiver and
+sensor reset then and the counters jump; the first rates afterwards are measured from inside that
+window, so the switch's spike never shows. Pure formatting in `linkHealth.ts`.
+
 **Recording to RAM (#501).** `fetch_instrument_status.storage.warning` feeds
 three places:
 - the preflight Storage check (a warning, not a failure);
