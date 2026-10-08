@@ -9,6 +9,8 @@
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <thread>
+#include <utility>
+#include <vector>
 int main() {
     mib::test::Watchdog watchdog;
     mib::test::TempDir temp;
@@ -107,6 +109,21 @@ int main() {
     MIB_EXPECT(!rejected["ok"] &&
                    backend.processing().getProcessingConfig().area_threshold_min == 42,
                "later invalid calibration cannot partially apply processing");
+    // The same shared validator as central methods (config_document_apply_test):
+    // an out-of-bounds value and an ROI outside the (absent) preview are
+    // refused on the profile path too, with nothing changed.
+    for (const auto& [name, document] :
+         std::vector<std::pair<std::string, std::string>>{{"bounds", R"({"buffer_threshold":0})"},
+                                                          {"offframe-roi", R"({"roi":{"x":0,"y":0,"w":5000,"h":10}})"}}) {
+        create["name"] = name;
+        create["document_json"] = document;
+        const auto made = call(create);
+        MIB_REQUIRE(made["ok"], made.dump());
+        const auto refused = call({{"operation", "apply"}, {"name", name}, {"baseline", made["profile"]["revision"]}});
+        MIB_EXPECT(!refused["ok"] && backend.processing().getFlushInterval() == 55 &&
+                       backend.processing().getProcessingConfig().area_threshold_min == 42,
+                   "profile path refuses " + name + " with nothing changed");
+    }
     auto selected = call({{"operation", "selection"}});
     MIB_EXPECT(selected["selection"]["name"] == "runtime" &&
                    selected["active_profile"]["name"] == "runtime",
@@ -123,7 +140,7 @@ int main() {
     MIB_EXPECT(!staleRestore["ok"] && backend.processing().getPixelToMicronFactor() == 0.7,
                "startup refuses changed profile revision");
     const auto listed = call({{"operation", "list"}});
-    MIB_EXPECT(listed["profiles"].size() == 4, "archives and malformed entries excluded");
+    MIB_EXPECT(listed["profiles"].size() == 6, "archives and malformed entries excluded");
     const auto sha = [](const std::string& text) {
         return backend::processing::processingCoreBytesSha256(
             reinterpret_cast<const uint8_t*>(text.data()), text.size());
