@@ -5,8 +5,21 @@ import {isRemote} from "./index";
 // Native dialogs and the opener in the desktop shell; browser stand-ins against the
 // instrument, where every path is a path on the instrument's filesystem (the server opens it).
 
+// The instrument's data directory, from fetch_instrument_status (storage.path). A relative default such as
+// "experiment.h5" would land in the server's working directory; against the instrument it starts under the
+// data directory instead (#651 G8).
+let remoteDefaultDir = "";
+export const setRemoteDefaultDir = (dir: string): void => { remoteDefaultDir = dir; };
+
+/** `defaultPath` made absolute under `dir` when it is relative and `dir` is known; unchanged otherwise. */
+export function resolveRemoteDefault(dir: string, defaultPath: string | undefined): string {
+  const p = defaultPath ?? "";
+  if (!dir || !p || p.startsWith("/") || /^[A-Za-z]:[\\/]/.test(p)) return p;
+  return `${dir.replace(/[\\/]+$/, "")}/${p}`;
+}
+
 function promptPath(title: string | undefined, defaultPath: string | undefined): string | null {
-  const value = window.prompt(`${title ?? "Path on the instrument"}`, defaultPath ?? "");
+  const value = window.prompt(`${title ?? "Path on the instrument"}`, resolveRemoteDefault(remoteDefaultDir, defaultPath));
   return value && value.trim() ? value.trim() : null;
 }
 
