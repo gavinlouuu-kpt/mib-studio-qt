@@ -9,6 +9,9 @@
 //! experiment is still writing are `in_progress` and not downloadable, at most 2 downloads at once, the
 //! token rule of `/ws`, cross-site requests refused).
 //!
+//! Diagnostics: `GET /diagnostics?lines=` (`diagnostics.rs`): versions, the installed bundle line, uptime, the tail of
+//! `<data>/logs/app.log` (size-capped) and the start-up key lines; read-only, same rules as `/files`.
+//!
 //! Protocol on `/ws` (token on the upgrade: `?token=` or `Authorization: Bearer`):
 //! - client -> server text: `{"request_id": n, "cmd": "start_capture", "args": {...}}`, the
 //!   name and camelCase arguments exactly as the webview passes them to Tauri's `invoke`;
@@ -60,6 +63,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::sync::{broadcast, mpsc};
 
+mod diagnostics;
 mod files;
 mod platform;
 
@@ -131,6 +135,8 @@ pub struct Server {
     boot_id: String,
     /// Downloads in progress (`/files/download`), capped at `files::MAX_DOWNLOADS`.
     downloads: Arc<tokio::sync::Semaphore>,
+    /// When this server process started (diagnostics uptime).
+    started: std::time::Instant,
     /// Connected client ids in connection order; the first is the default controller.
     sessions: std::sync::Mutex<SessionTable>,
 }
@@ -179,6 +185,7 @@ impl Server {
             stop_and_saves: AtomicU64::new(0),
             boot_id: new_boot_id(),
             downloads: Arc::new(tokio::sync::Semaphore::new(files::MAX_DOWNLOADS)),
+            started: std::time::Instant::now(),
             sessions: std::sync::Mutex::new(SessionTable::default()),
         })
     }
@@ -245,6 +252,7 @@ impl Server {
             .route("/ws", get(upgrade))
             .route("/healthz", get(health))
             .route("/auth", get(auth))
+            .route("/diagnostics", get(diagnostics::diagnostics))
             .route("/files", get(files::list))
             .route("/files/download", get(files::download))
             .with_state(self.clone());

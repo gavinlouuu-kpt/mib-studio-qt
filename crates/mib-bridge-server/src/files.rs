@@ -36,7 +36,7 @@ fn not_found() -> Response {
 }
 
 /// The token rule of `/ws`, then the cross-site rule.
-fn gate(server: &Server, token: &Option<String>, headers: &HeaderMap) -> Option<Response> {
+pub(crate) fn gate(server: &Server, token: &Option<String>, headers: &HeaderMap) -> Option<Response> {
     if !server.authorized(&AuthQuery { token: token.clone() }, headers) {
         return Some((StatusCode::UNAUTHORIZED, "token required").into_response());
     }

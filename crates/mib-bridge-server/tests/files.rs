@@ -234,3 +234,66 @@ async fn caps_concurrent_downloads() {
     }
     assert!(ok, "permits are released when the downloads end");
 }
+
+// ---- GET /diagnostics (#651 G12) ----
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn diagnostics_reports_the_log_tail_key_lines_and_the_bundle() {
+    let f = start("diag", Some(TOKEN)).await;
+    let logs = f.root.join("logs");
+    std::fs::create_dir_all(&logs).unwrap();
+    let mut log: Vec<u8> = Vec::new();
+    for i in 0..2000 {
+        log.extend_from_slice(format!("[2026-10-09 10:00:{:02}] [app] [info] line {i}\n", i % 60).as_bytes());
+    }
+    log.extend_from_slice(b"[2026-10-09 10:01:00] [app] [info] AppBackend: Young's modulus LUT source=bundled-fallback, path=/usr/share/yofo-studio/resources/x.txt\n");
+    log.extend_from_slice(b"bad bytes \xff\xfe here\n");
+    log.extend_from_slice(b"[2026-10-09 10:01:02] [app] [info] AppBackend: RXH1 v2: CTRL left at 0x64140801\n");
+    std::fs::write(logs.join("app.log"), &log).unwrap();
+    // the bundle line sits next to the UI: <dist>/../BUILD_INFO
+    // (this server has no dist dir, so the bundle is null; checked below with a second server)
+    let url = format!("/diagnostics?lines=5&token={TOKEN}");
+    assert_eq!(request(f.addr, "GET", "/diagnostics", &[]).await.status, 401, "token rule");
+    assert_eq!(request(f.addr, "GET", &url, &[("Sec-Fetch-Site", "cross-site")]).await.status, 403);
+    let reply = request(f.addr, "GET", &url, &[]).await;
+    assert_eq!(reply.status, 200);
+    let d = reply.json();
+    assert!(d["server"]["version"].as_str().unwrap().len() > 0);
+    assert!(d["server"]["uptime_s"].as_u64().is_some());
+    assert_eq!(d["bundle"], Value::Null);
+    let tail = d["log"]["tail"].as_array().unwrap();
+    assert_eq!(tail.len(), 5, "only the requested lines");
+    assert!(tail.last().unwrap().as_str().unwrap().contains("RXH1 v2"));
+    assert!(tail.iter().any(|l| l.as_str().unwrap().contains("bad bytes")), "invalid UTF-8 is replaced, not an error");
+    assert_eq!(d["log"]["tail_truncated"], true);
+    let keys: Vec<&str> = d["key_lines"].as_array().unwrap().iter().map(|l| l.as_str().unwrap()).collect();
+    assert!(keys.iter().any(|l| l.contains("Young's modulus LUT")) && keys.iter().any(|l| l.contains("RXH1")));
+    assert!(!keys.iter().any(|l| l.contains("line 17")), "ordinary lines are not key lines");
+    // the cap: a huge request is clamped to 500 lines
+    let big = request(f.addr, "GET", &format!("/diagnostics?lines=100000&token={TOKEN}"), &[]).await.json();
+    assert_eq!(big["log"]["tail"].as_array().unwrap().len(), 500);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn diagnostics_without_a_log_and_with_a_bundle_line() {
+    let base = std::env::temp_dir().join(format!("yofo_diag_bundle_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let share = base.join("share");
+    let dist = share.join("dist");
+    let data = base.join("data");
+    std::fs::create_dir_all(&dist).unwrap();
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::write(share.join("BUILD_INFO"), "YOFO Studio bundle: mib-studio-qt abc12345 + pz7035-imx426 00043db7 (pl-results12)\nbuilt: now\n").unwrap();
+    let mut config = ServerConfig::new(data.to_string_lossy());
+    config.dist_dir = Some(dist);
+    let server = Server::new(config, Arc::new(AppState::new()));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(server.clone().serve(listener, std::future::pending()));
+    let d = request(addr, "GET", "/diagnostics", &[]).await.json();
+    assert!(d["bundle"].as_str().unwrap().starts_with("YOFO Studio bundle: mib-studio-qt abc12345"));
+    assert_eq!(d["log"], Value::Null, "no log yet");
+    assert_eq!(d["key_lines"], serde_json::json!([]));
+}

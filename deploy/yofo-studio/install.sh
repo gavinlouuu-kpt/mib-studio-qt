@@ -15,6 +15,8 @@ install -m 0755 yofo-studio-server /usr/bin/yofo-studio-server
 rm -rf /usr/share/yofo-studio/dist
 tar -C /usr/share/yofo-studio -xf dist.tar
 install -m 0755 pl-ready.sh /usr/libexec/yofo-studio/pl-ready
+# The bundle line, next to the UI: the server reports it in /diagnostics.
+install -m 0644 BUILD_INFO /usr/share/yofo-studio/BUILD_INFO
 # The E-modulus LUT: the unit passes --resource-dir /usr/share/yofo-studio, the server looks in resources/isoelastic_curve.
 if [ -d resources/isoelastic_curve ]; then
     install -d /usr/share/yofo-studio/resources/isoelastic_curve

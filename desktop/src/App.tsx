@@ -22,6 +22,7 @@ import { decimalU64 } from "./framePacket";
 import { FramePullScheduler } from "./framePullScheduler";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {open, save, confirm} from "./transport/dialogs";
+import { DiagnosticsPanel } from "./components/DiagnosticsPanel";
 import { noImagesNotice } from "./review/noImages";
 import {openUrl, revealItemInDir} from "./transport/dialogs";
 import {
@@ -187,6 +188,7 @@ export default function App() {
     setOfflineHelp(kind);
   };
   const [showAbout, setShowAbout] = useState(false);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [showCentralMethods, setShowCentralMethods] = useState(false);
 
   // Camera discovery/selection (bridge schema v7, BE-2). The selection
@@ -1339,6 +1341,8 @@ export default function App() {
             { label: "Processing Settings…", onClick: () => {setTab("experiment");setExpTab("preview");setConfigTab("app");} },
             { label: "Pixel to Micron…", onClick: () => {setTab("experiment");setExpTab("preview");setConfigTab("app");} },
             { label: "Monitoring Settings…", onClick: () => {setTab("experiment");setExpTab("monitoring");} },
+            // Board diagnostics (versions, log tail, download) are served by the instrument's server: browser only.
+            ...(isRemote ? [{ label: "Diagnostics…", onClick: () => setShowDiagnostics(true) }] : []),
             // The central registry import and the application updater are desktop-shell features: in the
             // browser they would only dead-end (G10). Pixel to Micron stays (its control is on the PL too).
             ...(isRemote ? [] : [
@@ -2488,6 +2492,21 @@ export default function App() {
 
       {offlineHelp && <OfflineHelp kind={offlineHelp} version={helpVersion} close={() => setOfflineHelp(null)} />}
       {/* ---- About modal ---- */}
+      {showDiagnostics && isRemote && (
+        <div className="modal-backdrop" onClick={() => setShowDiagnostics(false)}>
+          <div className="modal" style={{ maxWidth: 900, width: "90vw" }} onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Diagnostics">
+            <h3>Diagnostics</h3>
+            <DiagnosticsPanel instrumentLines={[
+              ...(instrument?.core ? [`PL build ${instrument.core.build_id.slice(0, 8)}, weights ${instrument.core.profile_id.slice(0, 8)}, ABI ${instrument.core.abi_version}, expected ${instrument.core.expected?.image ?? "?"} (${instrument.core.build_match})`] : []),
+              ...(instrument?.sensor ? [`sensor ${instrument.sensor.width}x${instrument.sensor.height} at ${instrument.sensor.fps.toFixed(1)} fps`] : []),
+              ...(instrument?.storage ? [`storage ${instrument.storage.path}${instrument.storage.ram ? " (RAM)" : ""}, ${Math.round((instrument.storage.free_bytes ?? 0) / 1e6)} MB free`] : []),
+            ]} />
+            <div className="actions">
+              <button className="btn" onClick={() => setShowDiagnostics(false)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
       {showAbout && (
         <div className="modal-backdrop" onClick={() => setShowAbout(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="About">
