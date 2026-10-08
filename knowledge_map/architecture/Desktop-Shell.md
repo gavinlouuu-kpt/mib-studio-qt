@@ -706,7 +706,8 @@ backend's camera modes instead of `set_camera_overview`:
   the ingress is stuck (P[13] bits 15:8, the sticky lane overflow flags, every
   frame lost; #629) it makes up to eight 100 ms receiver resets (`AlignLock`,
   counted in `mode.align_lock`) before the operator error "Align preview not
-  locking". With no client for the server's grace time the instrument goes
+  locking" (on results9 the PL self-heal block does the resets and the host
+  only waits, `link.rx_heal`). With no client for the server's grace time the instrument goes
   idle (LED off, cell path off, camera released) and a reconnecting page
   resumes the tab's mode. Experiment means Run at the
   window placed there: 512×96, x on 8 and y on 4 (`snapRunWindow`), LED

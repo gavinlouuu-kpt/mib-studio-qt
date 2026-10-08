@@ -1296,6 +1296,11 @@ namespace backend
     bool AppBackend::instrumentIdle() const { return instrumentIdle_.load(); }
 
     bool AppBackend::instrumentRunWindowSet() const { return instrumentRunSet_.load(); }
+    std::optional<uint32_t> AppBackend::plReceiverAutoResets()
+    {
+        return pzPlatformMonitor_ ? pzPlatformMonitor_->rxHealAutoResets() : std::nullopt;
+    }
+
     AppBackend::AlignLockCounters AppBackend::alignLockCounters() const
     {
         return {alignReceiverClears_.load(), alignLockFailures_.load(), alignLastStuckP13_.load()};
@@ -1516,6 +1521,7 @@ namespace backend
                 return captureService_->stats().framesProcessed.load() != framesBefore;
             };
             hooks.readStatus = [&](pz::IngressStatus &st) { return pzControl_->ingressStatus(st, nullptr); };
+            hooks.readHeal = [&](pz::RxHealStatus &heal) { return pzControl_->rxHealStatus(heal, nullptr); };
             hooks.clearFlags = [&](std::chrono::milliseconds hold) {
                 return pzControl_->resetReceiver(std::chrono::duration_cast<std::chrono::microseconds>(hold), nullptr);
             };
@@ -1529,8 +1535,8 @@ namespace backend
             hooks.pause = [](std::chrono::milliseconds wait) { std::this_thread::sleep_for(wait); };
             const auto lock = pz::awaitAlignLock(hooks);
             if (lock.recovered)
-                SPDLOG_WARN("AppBackend: Align preview {} after {} receiver reset(s)", lock.locked ? "recovered" : "did not lock",
-                            lock.clears);
+                SPDLOG_WARN("AppBackend: Align preview {} after {} host receiver reset(s){}", lock.locked ? "recovered" : "did not lock",
+                            lock.clears, lock.healedByPl ? " (PL self-heal)" : "");
             if (!lock.locked) {
                 ++alignLockFailures_;
                 snap = captureService_->lifecycleSnapshot();

@@ -32,6 +32,35 @@ AlignLockResult awaitAlignLock(const AlignLockHooks& hooks, const AlignLockPolic
         out.error = "no Align preview arrived" + (haveStatus ? " (" + describe(st) + ")" : std::string());
         return out;
     }
+    RxHealStatus heal;
+    if (hooks.readHeal && hooks.readHeal(heal) && heal.present) {
+        // The PL self-heal is there: wait for it. The operator error only when it reports gave-up
+        // (or never ends); the host does not pulse the receiver on top of it.
+        std::chrono::milliseconds waited{0};
+        while (waited < policy.healWait) {
+            if (hooks.waitPreview(policy.healPoll)) {
+                out.locked = true;
+                out.recovered = true;
+                out.healedByPl = true;
+                return out;
+            }
+            waited += policy.healPoll;
+            if (!hooks.readHeal(heal) || !heal.present) break;
+            if (heal.gaveUp()) {
+                char text[200];
+                std::snprintf(text, sizeof text,
+                              "Align preview not locking: the receiver self-heal gave up after %u tries (lane flags 0x%02X, %s)",
+                              heal.tries(), heal.laneFlags(), describe(st).c_str());
+                out.error = text;
+                return out;
+            }
+        }
+        if (heal.present) {
+            out.error = "Align preview not locking: the receiver self-heal did not finish in " +
+                        std::to_string(policy.healWait.count()) + " ms (" + describe(st) + ")";
+            return out;
+        }
+    }
     for (int attempt = 0; attempt < policy.attempts; ++attempt) {
         if (hooks.onAttempt) hooks.onAttempt(attempt + 1, st);
         ++out.clears;

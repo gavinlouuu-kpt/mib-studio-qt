@@ -117,7 +117,13 @@ export function describeRunOutcome(s: ExperimentStatus | null, accounting?: RunA
   const mine = !!accounting && accounting.available && accounting.recorded !== false && accounting.completion !== undefined &&
     (accounting.start_generation === undefined || String(accounting.start_generation) === s.start_generation);
   const admitted = mine ? Number(accounting!.admitted) || 0 : Number(s.persistence_admitted) || 0;
-  return describeCompletion(s.completion, s.completion_reason, admitted);
+  const outcome = describeCompletion(s.completion, s.completion_reason, admitted);
+  // A PL receiver auto-reset (results9 self-heal) loses frames: say how many happened in the run.
+  const heals = mine ? Number(accounting!.receiver_auto_resets) || 0 : 0;
+  if (heals > 0) {
+    return { ...outcome, attention: true, headline: `${outcome.headline} Receiver auto-resets during the run: ${heals} (each loses frames).` };
+  }
+  return outcome;
 }
 
 /** The outcome saved in the file loaded for review, or null when none is open. A raw recording or a

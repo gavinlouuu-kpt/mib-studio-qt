@@ -296,6 +296,83 @@ void testAlignIngressRecovery() {
     }
 }
 
+// results9's PL receiver self-heal (RXH1 at P[256]): with the block present the PL does the resets;
+// the host waits and shows the operator error only when the block reports gave-up.
+void testRxSelfHeal() {
+    {
+        FakeState s;
+        seedCellImage(s);
+        pz::PzInstrumentControl control(std::make_unique<FakeControl>(s));
+        std::string err;
+        pz::RxHealStatus heal;
+        MIB_REQUIRE(control.rxHealStatus(heal, &err) && !heal.present, "results8: no RXH1 block (reads 0)");
+        s.live[256] = 0x52584831u;
+        s.live[257] = 0x64140801u;
+        s.live[258] = (0xFFu << 16) | 0x200u | 3u; // 3 tries, flags set, all lanes
+        s.live[259] = 7;
+        s.live[260] = 0x0301u;
+        MIB_REQUIRE(control.rxHealStatus(heal, &err) && heal.present, "results9: RXH1 present");
+        MIB_EXPECT(heal.tries() == 3 && heal.flagsSet() && !heal.gaveUp() && heal.laneFlags() == 0xFF && heal.autoResets == 7 &&
+                       heal.control == 0x64140801u && heal.lastPulse == 0x0301u,
+                   "status, count and last pulse words");
+        s.live[258] |= 0x100u;
+        MIB_EXPECT(control.rxHealStatus(heal, &err) && heal.gaveUp(), "gave-up bit");
+        s.writes.clear();
+        (void)control.rxHealStatus(heal, &err);
+        MIB_EXPECT(s.writes.empty(), "reading the block writes nothing");
+    }
+    struct Run {
+        bool present{true};
+        int previewAfterPolls{-1}; // the preview arrives after this many heal polls (-1 never)
+        int gaveUpAfterPolls{-1};
+        int polls{0}, clears{0};
+    };
+    const auto run = [](Run& r) {
+        pz::AlignLockHooks h;
+        h.waitPreview = [&](std::chrono::milliseconds wait) {
+            if (wait.count() >= 1000) return false; // the first 1 s wait: nothing yet
+            ++r.polls;
+            return r.previewAfterPolls >= 0 && r.polls > r.previewAfterPolls;
+        };
+        h.readStatus = [](pz::IngressStatus& st) { st.status = 0x0001FF20u; st.errors = 11; st.resyncs = 15; return true; };
+        h.readHeal = [&](pz::RxHealStatus& heal) {
+            heal = pz::RxHealStatus{};
+            heal.present = r.present;
+            heal.status = (0xFFu << 16) | 0x200u | 4u | (r.gaveUpAfterPolls >= 0 && r.polls >= r.gaveUpAfterPolls ? 0x100u : 0u);
+            return true;
+        };
+        h.clearFlags = [&](std::chrono::milliseconds) { ++r.clears; return true; };
+        h.pause = [](std::chrono::milliseconds) {};
+        return pz::awaitAlignLock(h);
+    };
+    {
+        Run r;
+        r.previewAfterPolls = 3;
+        const auto out = run(r);
+        MIB_EXPECT(out.locked && out.healedByPl && r.clears == 0, "the PL heal locks the preview: the host sends no reset");
+    }
+    {
+        Run r;
+        r.gaveUpAfterPolls = 2;
+        const auto out = run(r);
+        MIB_EXPECT(!out.locked && r.clears == 0 && out.error.find("self-heal gave up after 4 tries") != std::string::npos &&
+                       out.error.find("lane flags 0xFF") != std::string::npos,
+                   "gave-up is the operator error, with no host reset: " + out.error);
+    }
+    {
+        Run r; // never heals, never gives up: bounded by healWait
+        const auto out = run(r);
+        MIB_EXPECT(!out.locked && r.clears == 0 && out.error.find("did not finish") != std::string::npos, "a stuck heal ends in an error");
+        MIB_EXPECT(r.polls <= 6000 / 250 + 1, "the wait is bounded");
+    }
+    {
+        Run r; // no RXH1 block: the host recovery as before
+        r.present = false;
+        const auto out = run(r);
+        MIB_EXPECT(!out.locked && r.clears == 8, "results8: eight host resets");
+    }
+}
+
 void testLedLimits() {
     using pz::InstrumentMode;
     MIB_EXPECT(pz::checkLed(InstrumentMode::Run, pz::kRunLed).empty(), "Run preset within Run limits");
@@ -571,6 +648,7 @@ int main() {
     testControl();
     testLedLimits();
     testAlignIngressRecovery();
+    testRxSelfHeal();
     testModeSequence(td);
     testRunWindowPersists(td);
     testRecordingTarget(td);

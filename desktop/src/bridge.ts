@@ -577,6 +577,8 @@ export interface RunAccounting {
   /** false for a raw recording or a legacy file without accounting (review only). */
   recorded?: boolean;
   start_generation?: number;
+  /** PL receiver auto-resets during the run (results9 self-heal; each loses frames); null on an image without it. */
+  receiver_auto_resets?: number | null;
   file_path?: string;
   /** Contract experiment_completion value. */
   completion?: number;
@@ -638,6 +640,8 @@ export interface InstrumentStatus {
     dropped_warn?: boolean;
     /** The results bridge is ARMED/RUNNING; dropped frames are judged only then (P[6] counts every frame otherwise). */
     bridge_active?: boolean;
+    /** The PL receiver self-heal block (results9): present, gave up after its tries, auto-resets since the PL reset. */
+    rx_heal?: {present: boolean; gave_up: boolean; tries: number; auto_resets: number};
     bad_frames_warn_per_s?: number;
     dropped_warn_per_s?: number;
   };

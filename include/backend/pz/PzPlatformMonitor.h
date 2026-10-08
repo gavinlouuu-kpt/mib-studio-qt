@@ -141,6 +141,11 @@ struct PzPlatformStatus {
     // frame as dropped while nothing does (Run without an experiment, a stopped Align), so dropped
     // frames are judged only while this is true.
     bool bridgeActive{false};
+    // The PL receiver self-heal block (results9; RXH1 at P[256]): absent on results8.
+    bool rxHealPresent{false};
+    bool rxHealGaveUp{false};
+    uint32_t rxHealTries{0};
+    uint32_t rxHealAutoResets{0}; // since the PL reset
     double badFramesWarnPerS{0.0};
     double droppedWarnPerS{0.0};
 
@@ -172,6 +177,8 @@ public:
     // second (docs/YOFO_HOST_INTERFACE.md). Rates are reported invalid (`ratesValid` false) until
     // `kModeSettleUs` after `nowUs`, and the first valid rate starts after that window.
     void settle(uint64_t nowUs);
+    // The PL's auto-reset count (RXH1 P[259]); nullopt on an image without the block or a blank PL.
+    std::optional<uint32_t> rxHealAutoResets();
     static constexpr uint64_t kModeSettleUs = 1'500'000;
 
 private:

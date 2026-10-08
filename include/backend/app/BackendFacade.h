@@ -1270,6 +1270,10 @@ namespace backend::bridge
         // experiment is also a tracked operation so it can be correlated and
         // cancelled through the generic operation surface.
         std::atomic<std::uint64_t> experimentOperationId_{0};
+        // The PL receiver auto-reset count (results9 RXH1) at the start of the running experiment,
+        // and the delta over the last finished one; -1 = not known (no block on this image).
+        std::atomic<std::int64_t> runHealStart_{-1};
+        std::atomic<std::int64_t> lastRunHealResets_{-1};
 
         // Review state (BE-6): the loaded file path (jobs open their own
         // read-only reader on it) and the lazily cached metrics metadata.

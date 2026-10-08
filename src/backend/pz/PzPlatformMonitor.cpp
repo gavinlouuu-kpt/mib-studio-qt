@@ -1,5 +1,7 @@
 #include "backend/pz/PzPlatformMonitor.h"
 
+#include "backend/pz/AlignLock.h"
+
 #include "pz_mib_abi.h" // vendored bundle (register offsets)
 
 #include <nlohmann/json.hpp>
@@ -32,6 +34,19 @@ constexpr unsigned kStrobeWindowWord = 0x200 / 4;
 constexpr uint64_t kDevcfgPage = 0xF8007000u; // Zynq-7000 DEVCFG (PS)
 constexpr unsigned kDevcfgIntStsWord = 0x00C / 4;
 constexpr uint32_t kPcfgDone = 1u << 2;
+
+// The RXH1 counters cross clock domains with no CDC and can tear (results9): read until two
+// consecutive reads match. The ID and the gave-up flag are safe. After a few mismatches the last
+// read stands (a counter that moves every read is still a count of the right size).
+uint32_t stableRead(IPzPlatformRegisters& r, unsigned index) {
+    uint32_t previous = r.live(index);
+    for (int i = 0; i < 8; ++i) {
+        const uint32_t again = r.live(index);
+        if (again == previous) return again;
+        previous = again;
+    }
+    return previous;
+}
 
 constexpr unsigned kLiveDropped = 6, kLiveBadFrames = 7, kLiveIngressErrors = 12, kLiveResyncs = 14;
 constexpr unsigned kStrobeControl = 0, kStrobeDelay = 1, kStrobeWidth = 2, kStrobeStatus = 12, kStrobeGuard = 13;
@@ -293,6 +308,13 @@ PzPlatformStatus PzPlatformMonitor::sample(uint64_t nowUs) {
     };
     const uint32_t bridgeState = r.bridge(PZ_MIB_REG_STATE);
     s.bridgeActive = bridgeState == PZ_MIB_STATE_ARMED || bridgeState == PZ_MIB_STATE_RUNNING;
+    s.rxHealPresent = r.live(kRxHealWindow) == kRxHealId;
+    if (s.rxHealPresent) {
+        const uint32_t heal = r.live(kRxHealWindow + 2);
+        s.rxHealTries = heal & 0xFFu;
+        s.rxHealGaveUp = (heal & 0x100u) != 0;
+        s.rxHealAutoResets = stableRead(r, kRxHealWindow + 3);
+    }
     // Ingress errors: the average over the last kSustainedUs, from the oldest retained sample at
     // least that old. History restarts with the rates (mode switch, PL reload).
     if (!s.ratesValid && !havePrevious_) errorHistory_.clear();
@@ -313,6 +335,13 @@ PzPlatformStatus PzPlatformMonitor::sample(uint64_t nowUs) {
     previousUs_ = nowUs;
     previous_ = now;
     return s;
+}
+
+std::optional<uint32_t> PzPlatformMonitor::rxHealAutoResets() {
+    std::scoped_lock lk(mutex_);
+    if (!registers_ || !registers_->plConfigured(nullptr)) return std::nullopt;
+    if (registers_->live(kRxHealWindow) != kRxHealId) return std::nullopt;
+    return stableRead(*registers_, kRxHealWindow + 3);
 }
 
 void PzPlatformMonitor::settle(uint64_t nowUs) {
