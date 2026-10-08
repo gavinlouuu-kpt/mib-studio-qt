@@ -10,6 +10,7 @@
 #include <cmath>
 #include <fstream>
 #include <map>
+#include <vector>
 
 namespace pz = backend::pz;
 
@@ -20,7 +21,17 @@ struct FakeRegisters final : pz::IPzPlatformRegisters {
     std::map<uint32_t, uint32_t> bridgePage;
     bool configured = true;
     int plReads = 0; // reads of the PL window (a blank PL would stall the bus)
-    uint32_t live(unsigned i) override { ++plReads; return livePage[i]; }
+    std::vector<uint32_t> tornReads; // queued values for P[tornIndex] before the page value (a torn counter)
+    unsigned tornIndex = 0;
+    uint32_t live(unsigned i) override {
+        ++plReads;
+        if (i == tornIndex && !tornReads.empty()) {
+            const uint32_t v = tornReads.front();
+            tornReads.erase(tornReads.begin());
+            return v;
+        }
+        return livePage[i];
+    }
     uint32_t strobe(unsigned i) override { ++plReads; return strobeWindow[i]; }
     uint32_t bridge(uint32_t off) override { ++plReads; return bridgePage[off]; }
     bool plConfigured(std::string* why) override {
@@ -185,6 +196,72 @@ int main() {
         r->strobeWindow[29] = 0x00602040u; // the 512x96 default
         const auto run = monitor.sample(17'200'000);
         MIB_EXPECT(run.geometryWidth == 512 && run.geometryHeight == 96, "default geometry 512x96");
+    }
+
+    // The PL receiver self-heal block (results9, RXH1 at P[256]): absent on results8, then present.
+    {
+        const auto before = monitor.sample(17'900'000);
+        MIB_EXPECT(!before.rxHealPresent && !monitor.rxHealAutoResets().has_value(), "no RXH1 block: absent, no count");
+        r->livePage[256] = 0x52584831u;
+        r->livePage[258] = 0x100u | 5u; // gave up after 5 tries
+        r->livePage[259] = 9;
+        const auto after = monitor.sample(17'950'000);
+        MIB_EXPECT(after.rxHealPresent && after.rxHealGaveUp && after.rxHealTries == 5 && after.rxHealAutoResets == 9,
+                   "RXH1 status words");
+        MIB_EXPECT(monitor.rxHealAutoResets().value_or(0) == 9, "auto-reset count for the run accounting");
+        // The counter crosses clock domains with no CDC and can tear: read again until two reads match.
+        r->tornReads = {0x00FF00FFu, 0x00000009u, 0x00000009u};
+        r->tornIndex = 259;
+        MIB_EXPECT(monitor.rxHealAutoResets().value_or(0) == 9, "a torn counter read is repeated until two reads match");
+        r->configured = false;
+        MIB_EXPECT(!monitor.rxHealAutoResets().has_value(), "no read while the PL is blank");
+        r->configured = true;
+        r->livePage[256] = 0;
+        r->livePage[258] = 0;
+        r->livePage[259] = 0;
+        (void)monitor.sample(17'960'000);
+    }
+
+    // Ingress errors are judged as a 5 s average: a burst of 13 inside the window does not warn,
+    // 12/s sustained does, and the window restarts after a mode-switch settle.
+    {
+        r->strobeWindow[9] = 250000;
+        r->livePage[12] = 1000;
+        monitor.settle(18'000'000);
+        (void)monitor.sample(18'000'000);
+        (void)monitor.sample(19'600'000); // past the settle window: history starts
+        auto at = [&](uint64_t us, uint32_t errors) {
+            r->livePage[12] = errors;
+            return monitor.sample(us);
+        };
+        MIB_EXPECT(!at(20'000'000, 1000).ingressErrorsWarn, "no full window yet");
+        const auto burst = at(23'000'000, 1013); // a burst of 13 in 3 s
+        MIB_EXPECT(!burst.ingressErrorsWarn && burst.ingressErrorsAvgPerS == 0.0, "window still filling");
+        const auto after = at(25'000'000, 1013); // 5.4 s after the first sample: the average is 13 / 5.4 ≈ 2.4/s
+        MIB_EXPECT(!after.ingressErrorsWarn && after.ingressErrorsAvgPerS > 2.0 && after.ingressErrorsAvgPerS < 3.0,
+                   "a burst of 13 averages to about 2.4/s: no warning");
+        MIB_EXPECT(after.ingressErrorsPerS == 0.0 || after.ingressErrorsPerS < 10.0, "instantaneous rate for the readout only");
+        // 12/s sustained: 12 more every second for 6 s.
+        uint32_t errors = 1013;
+        uint64_t t = 25'000'000;
+        pz::PzPlatformStatus last;
+        for (int i = 0; i < 6; ++i) {
+            t += 1'000'000;
+            errors += 12;
+            last = at(t, errors);
+        }
+        MIB_EXPECT(last.ingressErrorsAvgPerS > 11.5 && last.ingressErrorsWarn, "12/s sustained for 5 s warns");
+        // The link recovers: the warning clears once the window no longer holds the errors.
+        for (int i = 0; i < 6; ++i) {
+            t += 1'000'000;
+            last = at(t, errors);
+        }
+        MIB_EXPECT(!last.ingressErrorsWarn && last.ingressErrorsAvgPerS == 0.0, "clean for 5 s: no warning");
+        // A mode switch restarts the window.
+        errors += 600;
+        monitor.settle(t + 100'000);
+        const auto switched = at(t + 1'000'000, errors);
+        MIB_EXPECT(!switched.ingressErrorsWarn && !switched.ratesValid, "inside the settle window: no warning");
     }
 
     // Bad and dropped frames are judged against the frame rate (400 fps here: bad above 4/s, dropped

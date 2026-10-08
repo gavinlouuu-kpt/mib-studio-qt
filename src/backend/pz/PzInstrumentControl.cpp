@@ -215,7 +215,14 @@ bool PzInstrumentControl::rxHealStatus(RxHealStatus& out, std::string* error) {
     out.present = true;
     out.control = registers_->live(kRxHealWindow + 1);
     out.status = registers_->live(kRxHealWindow + 2);
-    out.autoResets = registers_->live(kRxHealWindow + 3);
+    // The counter can tear (no CDC in results9): read until two consecutive reads match.
+    uint32_t count = registers_->live(kRxHealWindow + 3);
+    for (int i = 0; i < 8; ++i) {
+        const uint32_t again = registers_->live(kRxHealWindow + 3);
+        if (again == count) break;
+        count = again;
+    }
+    out.autoResets = count;
     out.lastPulse = registers_->live(kRxHealWindow + 4);
     return true;
 }

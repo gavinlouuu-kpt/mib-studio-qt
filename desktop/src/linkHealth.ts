@@ -24,7 +24,7 @@ export function linkReadout(s: InstrumentStatus | null | undefined): Readout {
   const l = s.link;
   if (!l.rates_valid) return { text: "measuring…", cls: "dim" };
   const text = `${rate(l.ingress_errors_per_s)} err/s · ${rate(l.resyncs_per_s)} resync/s · ${rate(l.bad_frames_per_s)} bad/s · ${rate(l.dropped_per_s)} drop/s`;
-  const warn = l.ingress_errors_per_s > l.ingress_errors_warn_per_s || l.resyncs_per_s > l.resyncs_warn_per_s || !!l.bad_frames_warn || !!l.dropped_warn;
+  const warn = !!l.ingress_errors_warn || l.resyncs_per_s > l.resyncs_warn_per_s || !!l.bad_frames_warn || !!l.dropped_warn;
   return { text, cls: warn ? "warn" : "" };
 }
 

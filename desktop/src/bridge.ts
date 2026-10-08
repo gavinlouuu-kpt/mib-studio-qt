@@ -627,6 +627,9 @@ export interface InstrumentStatus {
   link?: {
     rates_valid: boolean;
     ingress_errors_per_s: number;
+    /** Ingress errors averaged over the last 5 s, and the warning from it (above ingress_errors_warn_per_s). */
+    ingress_errors_avg_per_s?: number;
+    ingress_errors_warn?: boolean;
     resyncs_per_s: number;
     bad_frames_per_s: number;
     dropped_per_s: number;
