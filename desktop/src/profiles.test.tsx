@@ -117,3 +117,11 @@ it("a failed startup restore shows its notice instead of failing silently",async
  expect(model.message).toBe(notice);
  expect(ctx.append).toHaveBeenCalledWith(notice);
 });
+
+it("does not mention autofocus in the apply help on an instrument without a nanopositioner (PZ7035)",async()=>{
+ const text=()=>host.textContent??"";
+ expect(text()).toContain("disabled autofocus");
+ await act(async()=>root.render(<ProfilesPanel model={model} autofocus={false}/>));
+ expect(text()).toContain("Apply requires stopped capture/realtime.");
+ expect(text().toLowerCase()).not.toContain("autofocus");
+});

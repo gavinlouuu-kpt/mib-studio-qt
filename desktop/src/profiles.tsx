@@ -82,8 +82,9 @@ export function useProfiles({ready,active,resume=false,currentConfig,append,onOp
   const remote=useProfileCatalog({base,selected,blocked:!ready||active||busy,dirty,onInstalled:(p)=>run("read",p),append});
   return {base,profiles,selected,activeProfile,remote,name,setName,document,edit:(v:string)=>{setDocument(v);setDirty(true);},script,editScript:(v:string|null)=>{setScript(v);setDirty(true);},dirty,busy,blocked:!ready||active||busy||remote.busy,message,newDraftError:currentConfig===null?noCurrentConfig:"",saveError:draftError(document),run};
 }
-// `egrabberScript` false on the PZ7035 (#550 m11): there is no EGrabber camera script there.
-export function ProfilesPanel({model:m,egrabberScript=true}:{model:ReturnType<typeof useProfiles>;egrabberScript?:boolean}) {
+// `egrabberScript` false on the PZ7035 (#550 m11): there is no EGrabber camera script there. `autofocus`
+// false too: no nanopositioner, so the help text does not mention it.
+export function ProfilesPanel({model:m,egrabberScript=true,autofocus=true}:{model:ReturnType<typeof useProfiles>;egrabberScript?:boolean;autofocus?:boolean}) {
   return <section aria-label="Local profiles"><h5>Local configuration profiles</h5>
     <p>Choose an existing profiles folder (including one from MIB Studio Qt) or a new local folder. Saving creates a new profile; existing profiles are never silently overwritten.</p>
     <div className="toolbar"><button disabled={m.blocked} onClick={()=>void m.run("choose")}>Choose Profiles Folder…</button><button disabled={m.blocked||!m.base} onClick={()=>void m.run("list")}>Refresh Profiles</button><button disabled={m.blocked||!!m.newDraftError} title={m.newDraftError||undefined} onClick={()=>void m.run("new")}>New Draft from Current Config</button><button disabled={m.blocked} onClick={()=>void m.run("import")}>Import Config to Draft…</button></div>
@@ -96,6 +97,6 @@ export function ProfilesPanel({model:m,egrabberScript=true}:{model:ReturnType<ty
     {egrabberScript&&m.script!==null&&<textarea className="script-editor" aria-label="Profile camera script" disabled={m.blocked} value={m.script} onChange={e=>m.editScript(e.target.value)}/>}
     <p role="status">{m.busy?"Profile operation in progress…":m.message|| (m.dirty?"Unsaved profile draft":"")}</p>
     <ProfileCatalogPanel model={m.remote}/>
-    <p>Apply requires stopped capture/realtime and disabled autofocus. It applies processing, buffer, realtime, calibration, delivery mode, autofocus settings and the ROI (validated now, or on the first captured frame if none was captured yet; Start waits for it). It does not connect hardware or execute the optional camera script. Last successfully applied profile settings are restored on startup only if its saved revision is unchanged. Catalog updates are checksum/compatibility checked and preserve a backup; installation never applies settings automatically.</p>
+    <p>{autofocus?"Apply requires stopped capture/realtime and disabled autofocus. It applies processing, buffer, realtime, calibration, delivery mode, autofocus settings and the ROI":"Apply requires stopped capture/realtime. It applies processing, buffer, realtime, calibration, delivery mode and the ROI"} (validated now, or on the first captured frame if none was captured yet; Start waits for it). It does not connect hardware or execute the optional camera script. Last successfully applied profile settings are restored on startup only if its saved revision is unchanged. Catalog updates are checksum/compatibility checked and preserve a backup; installation never applies settings automatically.</p>
   </section>;
 }

@@ -1949,7 +1949,7 @@ export default function App() {
                             </span>}
                           </div>
                           {caps.core_updates && <CoreManagementPanel model={cores} updatesBlocked={running || recording || expActive || scriptDocument.busy || mindvisionDocument.busy || reviewSourceBusy || experimentRequestBusy || cameraScript.busy || checkedConfig.busy || profiles.busy || profiles.remote.busy || reviewExport.busy || reanalysis.busy || previewBuffer.busy || scriptDocument.dirty || mindvisionDocument.dirty || configDirty || quickDraft.dirty || checkedConfig.dirty || profiles.dirty} />}
-                          <ProfilesPanel model={profiles} egrabberScript={caps.egrabber_script} />
+                          <ProfilesPanel model={profiles} egrabberScript={caps.egrabber_script} autofocus={caps.autofocus} />
                           <ConfigDocumentEditor model={checkedConfig} />
                           <div className="config-grid">
                             <div className="config-group" style={{ flex: 2 }}>
@@ -2023,7 +2023,7 @@ export default function App() {
                       {/* UX-9: trigger tests are commissioning controls, gated
                           behind Service mode; a running periodic test stays
                           stoppable in Operator mode as a safety fallback. */}
-                      {operatingMode === "service" ? (
+                      {caps.trigger && (operatingMode === "service" ? (
                         <>
                           <label className="arm-toggle" title="Arm the hardware-actuating trigger controls">
                             <input
@@ -2119,9 +2119,9 @@ export default function App() {
                         <span className="commissioning-hint mono">
                           Trigger tests are in Service / Commissioning mode
                         </span>
-                      )}
+                      ))}
                       <span className="mono right">
-                        triggers {trigStatus?.trigger_count ?? 0} · buffered v{monSnapshot?.valid_held ?? 0}/i
+                        {caps.trigger ? `triggers ${trigStatus?.trigger_count ?? 0} · ` : ""}buffered v{monSnapshot?.valid_held ?? 0}/i
                         {monSnapshot?.invalid_held ?? 0} · evicted{" "}
                         {Math.max(
                           0,
