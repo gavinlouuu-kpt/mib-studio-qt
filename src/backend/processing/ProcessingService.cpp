@@ -2169,11 +2169,11 @@ bool ProcessingService::needsFlush() const {
 }
 
 size_t ProcessingService::flushBufferedFrames(class Hdf5Service& hdf5) {
-    // Move the accumulated frames out (brief lock) so capture/processing never
-    // blocks on the HDF5 write, then hand them to the write queue. The queue's
-    // dedicated writer thread performs the slow append; capture keeps filling a
-    // fresh buffer. Overflow or a write failure is fatal (stop + surface) rather
-    // than a silent trim-and-drop.
+    // Serialize capacity check, buffer handoff and submit. The writer only
+    // removes queued batches; a full queue leaves frames in the bounded buffer
+    // so a later flush coalesces them instead of failing on a transient stall.
+    std::scoped_lock qlk(flushQueueMutex_);
+    if (flushQueue_ && !flushQueue_->hasCapacity()) return 0;
     ExperimentBatch batch;
     if (experimentBuffer_.empty()) return 0;
     // Move out — cv::Mat moves are O(1) refcount transfers.
@@ -2193,7 +2193,6 @@ size_t ProcessingService::flushBufferedFrames(class Hdf5Service& hdf5) {
     for (const auto& f : batch.valid) batchBytes += processedFrameBytes(f);
     for (const auto& f : batch.invalid) batchBytes += processedFrameBytes(f);
 
-    std::scoped_lock qlk(flushQueueMutex_);
     if (!flushQueue_) {
         Hdf5Service* h = &hdf5;
         auto writeFn = [this, h](const ExperimentBatch& b) -> bool {

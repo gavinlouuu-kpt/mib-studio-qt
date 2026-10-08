@@ -60,6 +60,7 @@ struct ExperimentBatch {
 };
 
 class ProcessingService {
+    friend struct ProcessingServiceFlushTestAccess;
 public:
     using Job = std::function<void()>;
 

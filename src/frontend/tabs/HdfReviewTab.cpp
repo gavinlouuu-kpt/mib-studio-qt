@@ -320,6 +320,7 @@ QString HdfReviewTab::accountingSummary() const
     if (!hdfReader_->readRunAccounting(a)) {
         return tr(" · accounting: not recorded (legacy file)");
     }
+    if (!a.readError.empty()) return tr(" · run unknown — %1").arg(QString::fromStdString(a.completionReason));
     const uint64_t storeLoss = a.storeOverwritten + a.storeNotCommitted + a.storeMalformed;
     QString text = tr(" · run %1").arg(QString::fromLatin1(backend::recording::toString(a.completion)));
     if (!a.reconciled) text += tr(" (accounting does not reconcile)");

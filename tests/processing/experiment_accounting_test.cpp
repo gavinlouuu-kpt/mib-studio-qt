@@ -308,6 +308,17 @@ int main()
                    "late outcomes after the settlement are dropped");
         svc.setRealtimeProcessingMode(ProcessingService::RealtimeProcessingMode::Inline);
         svc.setRealtimeBatchSettings(previous);
+        // Switching back to inline restarts its cursor. Drain the replay before
+        // the next run, whose exact one-frame batches must contain only its input.
+        pushMat(*store, mib::test::ringFrame(96, 96, 0), ++ts);
+        const auto replayEnd = store->latestAvailableIndex();
+        MIB_REQUIRE(waitFor(
+                        [&] {
+                            ProcessingService::RealtimeSnapshot snap;
+                            return svc.getLatestSnapshot(snap) && snap.index >= replayEnd;
+                        },
+                        std::chrono::seconds(20)),
+                    "inline replay drained before failure experiment");
         svc.clearAccumulatedFrames();
     }
 
@@ -323,11 +334,17 @@ int main()
         svc.startExperiment();
         uint64_t pushed = 0;
         auto append = [&] {
+            const auto enteredBefore = svc.experimentAccountingSnapshot().persistenceAdmitted +
+                                       svc.getBufferedFrameCounts().total();
             pushMat(*store, mib::test::ringFrame(96, 96, 0), 30'000'000 + ++pushed);
             MIB_REQUIRE(waitFor(
                             [&] {
-                                return svc.experimentAccountingSnapshot().persistenceAdmitted >=
-                                       pushed;
+                                // Admission is cumulative and includes policy drops; the
+                                // failure injection needs an actual batch left to flush.
+                                return svc.experimentAccountingSnapshot().persistenceAdmitted +
+                                               svc.getBufferedFrameCounts().total() >
+                                           enteredBefore &&
+                                       svc.getBufferedFrameCounts().total() > 0;
                             },
                             std::chrono::seconds(20)),
                         "frame admitted to persistence");

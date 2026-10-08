@@ -276,11 +276,12 @@ if(BUILD_TESTING)
 
     # End-to-end: real MainWindow on the mock-camera pipeline with synthetic
     # cells; KDE off / on / off phases gated on ratios (capture, processing,
-    # monitoring ring, overlay lag, GUI responsiveness). ~25 s, integration lane.
+    # monitoring ring, overlay lag, GUI responsiveness). Each phase waits for
+    # frame/KDE work; allow the bounded 120 s progress waits under parallel CI load.
     mib_test_runner_add(mib_frontend_tests monitoring_kde_e2e_test ${PROJECT_SOURCE_DIR}/tests/frontend/monitoring_kde_e2e_test.cpp)
     add_test(NAME integration.monitoring_kde_e2e COMMAND $<TARGET_FILE:mib_frontend_tests> monitoring_kde_e2e_test
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
-    set_tests_properties(integration.monitoring_kde_e2e PROPERTIES LABELS "integration;e2e;frontend;monitoring;performance" TIMEOUT 300)
+    set_tests_properties(integration.monitoring_kde_e2e PROPERTIES LABELS "integration;e2e;frontend;monitoring;performance" TIMEOUT 900)
 
     # End-to-end (#467): real MainWindow records an experiment on the real
     # 512x96 cell stream, then Review opens it and the Charts scatter is

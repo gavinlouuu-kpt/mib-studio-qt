@@ -201,6 +201,8 @@ public:
     // required accounting does not reconcile is recorded as `failed`, never
     // `complete`. readRunAccounting returns false (completion = Unknown) for
     // legacy files that predate the schema; it never reinterprets old counts.
+    // Present but unreadable accounting returns true with readError, Unknown
+    // completion, and cleared counters; completionReason names the failed attribute.
     bool writeRunAccounting(const backend::recording::RecordingAccountingSnapshot& accounting);
     bool readRunAccounting(backend::recording::RecordingAccountingSnapshot& accounting) const;
 

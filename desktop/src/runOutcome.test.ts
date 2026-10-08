@@ -150,6 +150,14 @@ describe("run accounting denominators and the Review tab (#549, ABI 31)", () => 
     expect(describeReviewOutcome(null)).toBeNull();
   });
 
+  it("keeps unreadable accounting Unknown and shows the attribute reason", () => {
+    const reason = "accounting unreadable: missing accounting_admitted_frames";
+    const o = describeReviewOutcome(ACC({ source: "review", reconciled: false,
+      completion: RUN_COMPLETION_STATES.Unknown, completion_reason: reason }))!;
+    expect(o.severity).toBe("unknown");
+    expect(o.headline).toContain(reason);
+  });
+
   it("calls a file whose counters do not reconcile a failure", () => {
     const o = describeReviewOutcome(ACC({ source: "review", reconciled: false, completion: RUN_COMPLETION_STATES.Complete, completion_reason: "all admitted frames reconciled" }))!;
     expect(o.severity).toBe("failed");
