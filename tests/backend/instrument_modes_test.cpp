@@ -13,6 +13,7 @@
 #include "backend/app/RecordingTarget.h"
 #include "backend/app/SciencePlacement.h"
 #include "backend/discovery/DeviceDiscoveryService.h"
+#include "backend/pz/AlignLock.h"
 #include "backend/pz/PzInstrumentControl.h"
 #include "backend/services/CaptureService.h"
 
@@ -21,6 +22,7 @@
 #include "support/tempdir.h"
 #include "support/watchdog.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -175,6 +177,123 @@ void testControl() {
     s.live[S0 + 41] = 0;
     MIB_EXPECT(!control.ledOff(&err) && err.find("CEL2") != std::string::npos, "not the U-Net cell image");
     MIB_EXPECT(s.writes.size() == writes, "nothing written on another image");
+}
+
+// The Align ingress recovery (#629): sticky lane overflow flags (P[13] bits 15:8) stop every
+// preview and clear only at a receiver reset; each reset (P[8] bit 6 held ~100 ms) is a fresh try
+// at the lane deskew (about 40-45 % each), so up to eight are made before the operator error.
+void testAlignIngressRecovery() {
+    {
+        FakeState s;
+        seedCellImage(s);
+        s.live[8] = 0x11; // U-Net enabled: the receiver reset must keep it
+        s.live[13] = 0x0001FF22u;
+        s.live[12] = 11;
+        s.live[14] = 15;
+        pz::PzInstrumentControl control(std::make_unique<FakeControl>(s));
+        std::string err;
+        pz::IngressStatus st;
+        MIB_REQUIRE(control.ingressStatus(st, &err), "ingress status: " + err);
+        MIB_EXPECT(st.status == 0x0001FF22u && st.laneOverflow() == 0xFF && st.errors == 11 && st.resyncs == 15,
+                   "P[13], P[12], P[14] and the lane overflow byte");
+        s.writes.clear();
+        MIB_REQUIRE(control.resetReceiver(std::chrono::milliseconds(100), &err), "receiver reset: " + err);
+        MIB_EXPECT(s.writes.size() == 2 && s.writes[0].index == 8 && s.writes[0].value == 0x50u &&
+                       s.writes[1].index == 8 && s.writes[1].value == 0x10u,
+                   "P[8] bit 6 asserted with bit 4 kept, then released");
+        s.configured = false;
+        s.writes.clear();
+        MIB_EXPECT(!control.resetReceiver(std::chrono::milliseconds(100), &err) && !control.ingressStatus(st, &err) &&
+                       s.writes.empty(),
+                   "no reset and no status read while the PL is blank");
+    }
+
+    struct Run {
+        int lockAfterClears{-1}; // the preview arrives after this many resets (-1: never)
+        bool overflow{true};
+        bool clearFails{false};
+        bool slowStart{false};
+        int clears{0};
+        long long holdMs{0};
+        std::vector<int> attempts;
+    };
+    const auto run = [](Run& r) {
+        pz::AlignLockHooks h;
+        h.waitPreview = [&](std::chrono::milliseconds wait) {
+            if (r.slowStart) return wait.count() > 5000;
+            return r.lockAfterClears >= 0 && r.clears >= r.lockAfterClears && r.clears > 0;
+        };
+        h.readStatus = [&](pz::IngressStatus& st) {
+            const bool cleared = r.lockAfterClears > 0 && r.clears >= r.lockAfterClears;
+            st.status = r.overflow && !cleared ? 0x0001FF20u : 0x00000020u;
+            st.errors = 11;
+            st.resyncs = 15;
+            return true;
+        };
+        h.clearFlags = [&](std::chrono::milliseconds hold) {
+            ++r.clears;
+            r.holdMs = hold.count();
+            return !r.clearFails;
+        };
+        h.onAttempt = [&](int attempt, const pz::IngressStatus&) { r.attempts.push_back(attempt); };
+        h.pause = [](std::chrono::milliseconds) {};
+        return pz::awaitAlignLock(h);
+    };
+
+    {   // A healthy start: the first wait is enough, nothing is read or reset.
+        bool touched = false;
+        pz::AlignLockHooks h;
+        h.waitPreview = [](std::chrono::milliseconds) { return true; };
+        h.readStatus = [&](pz::IngressStatus&) { touched = true; return true; };
+        h.clearFlags = [&](std::chrono::milliseconds) { touched = true; return true; };
+        h.pause = [](std::chrono::milliseconds) {};
+        const auto out = pz::awaitAlignLock(h);
+        MIB_EXPECT(out.locked && !out.recovered && out.clears == 0 && !touched, "no recovery on a healthy start");
+    }
+    {   // Stuck flags, the first reset clears them: held 100 ms, one attempt logged.
+        Run r;
+        r.lockAfterClears = 1;
+        const auto out = run(r);
+        MIB_EXPECT(out.locked && out.recovered && out.clears == 1 && r.holdMs == 100 && r.attempts == std::vector<int>{1},
+                   "one 100 ms reset recovers");
+    }
+    {   // Each reset is a fresh try: the third one locks.
+        Run r;
+        r.lockAfterClears = 3;
+        const auto out = run(r);
+        MIB_EXPECT(out.locked && out.clears == 3 && r.attempts == (std::vector<int>{1, 2, 3}), "third reset locks");
+    }
+    {   // The seventh reset locks (the board needed up to four): still inside the eight.
+        Run r;
+        r.lockAfterClears = 7;
+        const auto out = run(r);
+        MIB_EXPECT(out.locked && out.clears == 7, "seventh reset locks");
+    }
+    {   // It never locks: eight attempts, then the operator error with the readings.
+        Run r;
+        const auto out = run(r);
+        MIB_EXPECT(!out.locked && out.clears == 8 && r.attempts.size() == 8, "eight attempts");
+        MIB_EXPECT(out.error.find("Align preview not locking") == 0 && out.error.find("lane overflow 0xFF") != std::string::npos &&
+                       out.error.find("errors 11") != std::string::npos && out.error.find("8 receiver resets") != std::string::npos,
+                   "operator error names the flags and the attempts: " + out.error);
+    }
+    {   // A refused reset ends the recovery with a plain reason.
+        Run r;
+        r.clearFails = true;
+        const auto out = run(r);
+        MIB_EXPECT(!out.locked && out.clears == 1 && out.error.find("reset was refused") != std::string::npos, "refused reset");
+    }
+    {   // No overflow flags: a slow start gets the rest of the wait and no reset is issued.
+        Run r;
+        r.overflow = false;
+        r.slowStart = true;
+        auto out = run(r);
+        MIB_EXPECT(out.locked && out.clears == 0 && r.clears == 0, "slow start without flags: no reset");
+        Run q;
+        q.overflow = false;
+        out = run(q);
+        MIB_EXPECT(!out.locked && q.clears == 0 && out.error.find("no Align preview arrived") == 0, "no preview, no flags: plain error");
+    }
 }
 
 void testLedLimits() {
@@ -348,6 +467,25 @@ void testModeSequence(const mib::test::TempDir& td) {
     MIB_EXPECT(s.live[S0 + 46] == 0 && backend.capture().lifecycleSnapshot().cameraReady, "Align again, streaming");
     MIB_EXPECT(!cellOnWhileStreaming, "still never on while streaming");
 
+    // The unattended safe state (the server asks for it when the last client has been gone for its
+    // grace time): LED off, cell path off, camera released; resumed by the next mode switch.
+    {
+        MIB_EXPECT(s.live[S0 + 0] == 1 && !backend.instrumentIdle(), "Align is lit before the idle rule");
+        auto idle = facade.setInstrumentMode("idle", 0, 0);
+        MIB_EXPECT(idle.ok, "idle: " + idle.message);
+        MIB_EXPECT(s.live[S0 + 0] == 0 && s.live[S0 + 46] == 0 && (s.live[8] & 0x10u) == 0,
+                   "idle: LED off, cell path off");
+        MIB_EXPECT(backend.instrumentMode() == pz::InstrumentMode::Unknown && backend.instrumentIdle() &&
+                       !backend.capture().lifecycleSnapshot().isActive(),
+                   "idle: mode unknown, camera released");
+        MIB_EXPECT(facade.fetchInstrumentStatusJson().find("\"idle\":true") != std::string::npos, "status reports idle");
+        MIB_REQUIRE(backend.setInstrumentMode(pz::InstrumentMode::Run, 152, 200, &err), "Run after idle: " + err);
+        MIB_EXPECT(!backend.instrumentIdle() && s.live[S0 + 0] == 1 && s.live[S0 + 46] == 1, "a mode switch ends idle");
+        idle = facade.setInstrumentMode("idle", 0, 0);
+        MIB_EXPECT(idle.ok && s.live[S0 + 0] == 0 && s.live[S0 + 46] == 0, "idle from Run turns the LED and cell path off");
+        MIB_REQUIRE(backend.setInstrumentMode(pz::InstrumentMode::Align, 0, 0, &err), "Align after idle: " + err);
+    }
+
     // A blank PL refuses the switch and writes nothing.
     s.configured = false;
     const auto writes = s.writes.size();
@@ -432,6 +570,7 @@ int main() {
     mib::test::TempDir td("instrument_modes");
     testControl();
     testLedLimits();
+    testAlignIngressRecovery();
     testModeSequence(td);
     testRunWindowPersists(td);
     testRecordingTarget(td);

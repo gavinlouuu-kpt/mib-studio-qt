@@ -3030,9 +3030,16 @@ std::string BackendFacade::fetchPlatformInfoJson() const {
 BackendCommandResult BackendFacade::setInstrumentMode(const std::string& mode, int x, int y) {
     if (!initialized_) return {false, BackendCommandType::Camera, "backend is not initialized"};
     pz::InstrumentMode m = pz::InstrumentMode::Unknown;
+    if (mode == "idle") {
+        // The unattended safe state (the server calls it after the last client has been gone for its grace time).
+        std::string error;
+        if (!backend_.enterInstrumentIdle(&error)) return {false, BackendCommandType::Camera, error};
+        emitEvent(makeCameraStatus(CameraState::Stopped));
+        return {true, BackendCommandType::Camera, "Idle: LED off, cell path off, camera released"};
+    }
     if (mode == "align") m = pz::InstrumentMode::Align;
     else if (mode == "run") m = pz::InstrumentMode::Run;
-    else return {false, BackendCommandType::Camera, "camera mode must be align or run"};
+    else return {false, BackendCommandType::Camera, "camera mode must be align, run or idle"};
     std::string error;
     if (!backend_.setInstrumentMode(m, x, y, &error)) {
         emitEvent(BackendErrorEvent{BackendErrorSource::Camera, BackendCommandType::Camera, error});
@@ -3076,12 +3083,18 @@ std::vector<std::uint8_t> BackendFacade::fetchRunPreviewPacket(std::string* erro
 std::string BackendFacade::fetchInstrumentStatusJson() {
     // Camera mode the backend applied last (#501 P1); "unknown" until the operator picks one.
     const auto [runX, runY] = backend_.instrumentRunOffset();
+    const auto alignLock = backend_.alignLockCounters();
     const nlohmann::json mode{{"name", pz::instrumentModeName(backend_.instrumentMode())},
                               {"run_x", runX},
                               {"run_y", runY},
                               {"run_set", backend_.instrumentRunWindowSet()},
+                              {"idle", backend_.instrumentIdle()},
                               {"service", backend_.serviceMode()},
-                              {"align_source", backend_.alignSource()}};
+                              {"align_source", backend_.alignSource()},
+                              {"align_lock",
+                               {{"receiver_clears", alignLock.receiverClears},
+                                {"failures", alignLock.failures},
+                                {"last_stuck_p13", alignLock.lastStuckP13}}}};
     // Where recordings land (#501): RAM on today's JTAG RAM root, lost at power-off.
     const auto target = app::recordingTarget(backend_.dataDir());
     const nlohmann::json storage{{"path", target.path},

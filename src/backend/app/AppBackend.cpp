@@ -1293,7 +1293,13 @@ namespace backend
                "are not used here, and their serial ports are never probed (the pumps share the RS485 bus)";
     }
 
+    bool AppBackend::instrumentIdle() const { return instrumentIdle_.load(); }
+
     bool AppBackend::instrumentRunWindowSet() const { return instrumentRunSet_.load(); }
+    AppBackend::AlignLockCounters AppBackend::alignLockCounters() const
+    {
+        return {alignReceiverClears_.load(), alignLockFailures_.load(), alignLastStuckP13_.load()};
+    }
 
     namespace
     {
@@ -1399,6 +1405,7 @@ namespace backend
     bool AppBackend::setInstrumentMode(pz::InstrumentMode mode, int x, int y, std::string *errorOut)
     {
         std::lock_guard<std::mutex> lock(instrumentModeMutex_);
+        instrumentIdle_.store(false);
         auto fail = [&](const std::string &message) {
             if (errorOut) *errorOut = message;
             SPDLOG_WARN("AppBackend: instrument mode {}: {}", pz::instrumentModeName(mode), message);
@@ -1454,55 +1461,81 @@ namespace backend
         }
 #endif
         // 3. AcquisitionStart applies ROI, timing, ingress geometry and the receiver reset.
-        captureService_->requestStart();
-        const auto until = std::chrono::steady_clock::now() + kCameraStartTimeout;
-        services::CaptureLifecycleSnapshot snap = captureService_->lifecycleSnapshot();
-        while (!snap.cameraReady && std::chrono::steady_clock::now() < until) {
-            if (snap.state == services::CaptureLifecycleState::Faulted) break;
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
-            snap = captureService_->lifecycleSnapshot();
-        }
-        if (!snap.cameraReady) {
+        const auto startProducer = [&]() -> std::string {
+            captureService_->requestStart();
+            const auto until = std::chrono::steady_clock::now() + kCameraStartTimeout;
+            services::CaptureLifecycleSnapshot started = captureService_->lifecycleSnapshot();
+            while (!started.cameraReady && std::chrono::steady_clock::now() < until) {
+                if (started.state == services::CaptureLifecycleState::Faulted) break;
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                started = captureService_->lifecycleSnapshot();
+            }
+            if (started.cameraReady) return {};
             captureService_->stop();
-            return fail("the camera did not start" +
-                        (snap.lastFailureMessage.empty() ? std::string() : ": " + snap.lastFailureMessage));
-        }
+            return "the camera did not start" +
+                   (started.lastFailureMessage.empty() ? std::string() : ": " + started.lastFailureMessage);
+        };
+        if (const auto why = startProducer(); !why.empty()) return fail(why);
+        services::CaptureLifecycleSnapshot snap;
         if (mode == pz::InstrumentMode::Align && wholeFrame) {
             // 4a. Align (results8 on): stop the producer stream (the sensor keeps the applied
             //     232/800/64 timing), then whole frames from the bridge's preview slots through a
             //     camera behind CaptureService, so the live view is unchanged. LED 100/135.
-            captureService_->stop();
-            processing::pz::BridgePreviewConfig preview; // 816x624, every 40th frame, 0x3F100000
-            auto *provider = executionProvider_.get();
-            captureService_->setCameraFactory([provider, preview]() -> std::unique_ptr<::camera::common::ICamera> {
-                if (!provider) return nullptr;
-                return std::make_unique<pz::PzBridgePreviewCamera>(*provider, preview);
-            });
-            captureService_->requestStart();
-            const auto previewUntil = std::chrono::steady_clock::now() + kCameraStartTimeout;
-            snap = captureService_->lifecycleSnapshot();
-            while (!snap.cameraReady && std::chrono::steady_clock::now() < previewUntil &&
-                   snap.state != services::CaptureLifecycleState::Faulted) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(20));
-                snap = captureService_->lifecycleSnapshot();
-            }
-            if (!snap.cameraReady) {
+            const auto startPreview = [&]() -> std::string {
                 captureService_->stop();
-                return fail("Align previews did not start" +
-                            (snap.lastFailureMessage.empty() ? std::string() : ": " + snap.lastFailureMessage));
-            }
-            // Success means a whole frame arrived, not only an armed bridge.
-            const auto firstFrameUntil = std::chrono::steady_clock::now() + std::chrono::seconds(12);
-            const auto framesBefore = captureService_->stats().framesProcessed.load();
-            while (captureService_->stats().framesProcessed.load() == framesBefore &&
-                   std::chrono::steady_clock::now() < firstFrameUntil &&
-                   captureService_->lifecycleSnapshot().cameraReady)
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            if (captureService_->stats().framesProcessed.load() == framesBefore) {
+                processing::pz::BridgePreviewConfig preview; // 816x624, every 40th frame, 0x3F100000
+                auto *provider = executionProvider_.get();
+                captureService_->setCameraFactory([provider, preview]() -> std::unique_ptr<::camera::common::ICamera> {
+                    if (!provider) return nullptr;
+                    return std::make_unique<pz::PzBridgePreviewCamera>(*provider, preview);
+                });
+                captureService_->requestStart();
+                const auto previewUntil = std::chrono::steady_clock::now() + kCameraStartTimeout;
+                auto started = captureService_->lifecycleSnapshot();
+                while (!started.cameraReady && std::chrono::steady_clock::now() < previewUntil &&
+                       started.state != services::CaptureLifecycleState::Faulted) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                    started = captureService_->lifecycleSnapshot();
+                }
+                if (started.cameraReady) return {};
+                captureService_->stop();
+                return "Align previews did not start" +
+                       (started.lastFailureMessage.empty() ? std::string() : ": " + started.lastFailureMessage);
+            };
+            if (const auto why = startPreview(); !why.empty()) return fail(why);
+            // Success means a whole frame arrived, not only an armed bridge. The ingress can sit in
+            // a stuck state (sticky lane overflow flags, every frame lost): detect it, clear it
+            // with receiver resets, and say so plainly when it never locks (#629).
+            auto framesBefore = captureService_->stats().framesProcessed.load();
+            pz::AlignLockHooks hooks;
+            hooks.waitPreview = [&](std::chrono::milliseconds wait) {
+                const auto until = std::chrono::steady_clock::now() + wait;
+                while (captureService_->stats().framesProcessed.load() == framesBefore &&
+                       std::chrono::steady_clock::now() < until && captureService_->lifecycleSnapshot().cameraReady)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                return captureService_->stats().framesProcessed.load() != framesBefore;
+            };
+            hooks.readStatus = [&](pz::IngressStatus &st) { return pzControl_->ingressStatus(st, nullptr); };
+            hooks.clearFlags = [&](std::chrono::milliseconds hold) {
+                return pzControl_->resetReceiver(std::chrono::duration_cast<std::chrono::microseconds>(hold), nullptr);
+            };
+            hooks.onAttempt = [&](int attempt, const pz::IngressStatus &st) {
+                ++alignReceiverClears_;
+                alignLastStuckP13_.store(st.status);
+                SPDLOG_WARN("AppBackend: Align preview stuck (P[13] 0x{:08X}, lane overflow 0x{:02X}, errors {}, resyncs {}): "
+                            "receiver reset attempt {}",
+                            st.status, st.laneOverflow(), st.errors, st.resyncs, attempt);
+            };
+            hooks.pause = [](std::chrono::milliseconds wait) { std::this_thread::sleep_for(wait); };
+            const auto lock = pz::awaitAlignLock(hooks);
+            if (lock.recovered)
+                SPDLOG_WARN("AppBackend: Align preview {} after {} receiver reset(s)", lock.locked ? "recovered" : "did not lock",
+                            lock.clears);
+            if (!lock.locked) {
+                ++alignLockFailures_;
                 snap = captureService_->lifecycleSnapshot();
                 captureService_->stop();
-                return fail("no Align preview arrived" +
-                            (snap.lastFailureMessage.empty() ? std::string() : ": " + snap.lastFailureMessage));
+                return fail(lock.error + (snap.lastFailureMessage.empty() ? std::string() : ": " + snap.lastFailureMessage));
             }
             if (!pzControl_->setLed(pz::kAlignLed, &err)) return fail(err);
             alignSource_.store(1);
@@ -1530,6 +1563,31 @@ namespace backend
                     .count()));
         SPDLOG_INFO("AppBackend: instrument mode {}{}", pz::instrumentModeName(mode),
                     mode == pz::InstrumentMode::Run ? fmt::format(" at ({}, {})", x, y) : std::string());
+        return true;
+    }
+
+    bool AppBackend::enterInstrumentIdle(std::string *errorOut)
+    {
+        std::lock_guard<std::mutex> lock(instrumentModeMutex_);
+        auto fail = [&](const std::string &message) {
+            if (errorOut) *errorOut = message;
+            SPDLOG_WARN("AppBackend: instrument idle: {}", message);
+            return false;
+        };
+        if (!pzControl_) return fail("no PZ7035 control on this platform");
+        if (!captureService_) return fail("the backend is not initialized");
+        const auto run = experimentCoordinator_->state();
+        if (isFrameRecording() || run == app::ExperimentRunState::Starting || run == app::ExperimentRunState::Active ||
+            run == app::ExperimentRunState::Stopping)
+            return fail("an experiment or recording is still running");
+        std::string err;
+        // The same order as a mode switch: nothing lit while the cell path or the camera changes.
+        if (!pzControl_->ledOff(&err) || !pzControl_->setCellPath(false, &err)) return fail(err);
+        instrumentMode_.store(static_cast<int>(pz::InstrumentMode::Unknown));
+        captureService_->stop();
+        alignSource_.store(0);
+        instrumentIdle_.store(true);
+        SPDLOG_INFO("AppBackend: instrument idle (LED off, cell path off, camera released)");
         return true;
     }
 

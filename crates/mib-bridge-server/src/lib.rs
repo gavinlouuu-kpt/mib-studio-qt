@@ -31,7 +31,8 @@
 //! Client loss: the server pings every `ping_interval` and drops a connection that is silent
 //! for `ping_timeout`. When the last client has been gone for `client_grace`, it stops and
 //! saves: an active experiment gets `experiment_stop` (final flush and finalisation) and a raw
-//! recording `stop_recording`. Capture keeps running. This differs on purpose from the desktop
+//! recording `stop_recording`; a PZ7035 in Align or Run goes to its safe state (LED off, cell path
+//! off, camera released). On other instruments capture keeps running. This differs on purpose from the desktop
 //! close guard, which refuses to close instead: a remote operator who lost the link can no
 //! longer see the run (ADR 0008).
 
@@ -375,6 +376,17 @@ pub fn stop_and_save(state: &AppState) -> Vec<String> {
             match mib_app_commands::stop_recording(state) {
                 Ok(r) => actions.push(format!("stop_recording: {}", serde_json::to_string(&r).unwrap_or_default())),
                 Err(e) => actions.push(format!("stop_recording failed: {e}")),
+            }
+        }
+    }
+    // The PZ7035 left in Align (LED strobing) or Run with nobody watching goes to its safe state:
+    // LED off, cell path off, camera released. The sensor keeps its last timing.
+    if let Ok(status) = mib_app_commands::fetch_instrument_status(state) {
+        let name = status["mode"]["name"].as_str().unwrap_or("unknown");
+        if status["available"] == json!(true) && (name == "align" || name == "run") {
+            match mib_app_commands::set_instrument_mode(state, "idle", 0, 0) {
+                Ok(r) => actions.push(format!("instrument idle (was {name}): {}", serde_json::to_string(&r).unwrap_or_default())),
+                Err(e) => actions.push(format!("instrument idle failed: {e}")),
             }
         }
     }

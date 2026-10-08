@@ -134,7 +134,9 @@ fn instrument_mode_commands_off_the_instrument() {
     let refused = bridge.pin_mut().set_instrument_mode("run", 152, 200);
     assert!(!refused.ok && refused.message.contains("no PZ7035 control"), "{}", refused.message);
     let bad = bridge.pin_mut().set_instrument_mode("sideways", 0, 0);
-    assert!(!bad.ok && bad.message.contains("align or run"), "{}", bad.message);
+    assert!(!bad.ok && bad.message.contains("align, run or idle"), "{}", bad.message);
+    let idle = bridge.pin_mut().set_instrument_mode("idle", 0, 0);
+    assert!(!idle.ok && idle.message.contains("no PZ7035 control"), "{}", idle.message);
     assert!(bridge.pin_mut().set_service_mode(true).ok);
     assert!(!bridge.pin_mut().set_instrument_led(7.0, 60.0).ok);
     assert!(bridge.pin_mut().set_service_mode(false).ok);

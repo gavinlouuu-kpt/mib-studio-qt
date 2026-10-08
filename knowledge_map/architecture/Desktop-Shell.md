@@ -702,7 +702,13 @@ backend's camera modes instead of `set_camera_overview`:
 - **Opening a tab switches the mode.** Camera & Alignment means Align: the
   full sensor at 400 fps, shown as whole frames from the PL bridge (results8
   on, LED 100/135 µs) or as the producer's bands on older images (LED
-  0/125 µs). Status `mode.align_source` tells which. Experiment means Run at the
+  0/125 µs). Status `mode.align_source` tells which. Align checks that a preview arrives: if
+  the ingress is stuck (P[13] bits 15:8, the sticky lane overflow flags, every
+  frame lost; #629) it makes up to eight 100 ms receiver resets (`AlignLock`,
+  counted in `mode.align_lock`) before the operator error "Align preview not
+  locking". With no client for the server's grace time the instrument goes
+  idle (LED off, cell path off, camera released) and a reconnecting page
+  resumes the tab's mode. Experiment means Run at the
   window placed there: 512×96, x on 8 and y on 4 (`snapRunWindow`), LED
   7/60 µs, the U-Net on.
 - **Placing the window.** Dragging only moves it; releasing (or Save camera

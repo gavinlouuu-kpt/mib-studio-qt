@@ -12,6 +12,8 @@
 // by one mutex: P[8] is read-modify-write (bit 4 is the U-Net enable level).
 // Qt-free.
 
+#include "backend/pz/AlignLock.h"
+
 #include <chrono>
 #include <cstdint>
 #include <memory>
@@ -108,6 +110,11 @@ public:
     // S[46] and P[8] bit 4 (the U-Net enable level), together.
     bool setCellPath(bool on, std::string* error);
     bool cellPathOn(std::string* error);
+    // P[13] ingress status, P[12] errors, P[14] resyncs (reads).
+    bool ingressStatus(IngressStatus& out, std::string* error);
+    // One receiver reset: P[8] bit 6 held for `hold` with bit 4 (the U-Net enable level) kept,
+    // then released. Clears the sticky lane overflow flags (#629).
+    bool resetReceiver(std::chrono::microseconds hold, std::string* error);
     // Latency monitor clear (any write to S[47]) at the start of a run.
     bool clearLatency(std::string* error);
     // Arm S[36], wait for S[42] bit 0, read the frame from the window. Cell path must be on.
