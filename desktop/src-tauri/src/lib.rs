@@ -657,6 +657,11 @@ fn profile_command(state: State<AppState>, base: String, request: String) -> Res
 }
 
 #[tauri::command]
+fn restore_startup_configuration(state: State<AppState>, profile_base: String) -> Result<serde_json::Value, String> {
+    cmds::config_document::restore_startup_configuration(&state, profile_base)
+}
+
+#[tauri::command]
 async fn profile_fetch_url(url: String) -> Result<serde_json::Value, String> {
     tauri::async_runtime::spawn_blocking(move || cmds::config_document::profile_fetch_url(url))
         .await
@@ -772,6 +777,7 @@ pub fn run() {
             processing_core_command,
             profile_fetch_url,
             profile_command,
+            restore_startup_configuration,
             camera_document,
             fetch_config_document,
             apply_config_document,

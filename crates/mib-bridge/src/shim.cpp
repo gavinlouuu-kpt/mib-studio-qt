@@ -1400,6 +1400,10 @@ rust::String BackendBridge::profile_command(rust::Str base, rust::Str request) {
     return rust::String(impl_->facade.profileCommand(toStd(base), toStd(request)));
 }
 
+rust::String BackendBridge::restore_startup_configuration(rust::Str profile_base) {
+    return rust::String(impl_->facade.restoreStartupConfigurationJson(toStd(profile_base)));
+}
+
 BridgeCheckedConfigDocument BackendBridge::fetch_config_document(rust::Str path) {
     BridgeCheckedConfigDocument out{};
     try {

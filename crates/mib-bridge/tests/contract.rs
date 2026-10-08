@@ -1552,6 +1552,18 @@ fn local_profiles_roundtrip_and_conflict() {
     let stale: serde_json::Value = serde_json::from_str(&bridge.pin_mut().profile_command(&base,r#"{"operation":"archive","name":"test","baseline":"stale"}"#)).unwrap();
     assert_eq!(stale["ok"],false);
     assert!(data_dir.as_path().join("profiles/test/config.json").exists());
+    // ABI 32 (#398 M2c): nothing applied yet, so nothing to restore.
+    let nothing: serde_json::Value =
+        serde_json::from_str(&bridge.pin_mut().restore_startup_configuration("")).unwrap();
+    assert_eq!((nothing["ok"].clone(), nothing["restored"].clone()), (serde_json::json!(true), serde_json::json!(false)));
+    // Applying the profile records it as the startup configuration; restore re-applies it.
+    let rev = read["profile"]["revision"].as_str().unwrap().to_string();
+    let apply = format!(r#"{{"operation":"apply","name":"test","baseline":"{rev}"}}"#);
+    let applied: serde_json::Value = serde_json::from_str(&bridge.pin_mut().profile_command(&base, &apply)).unwrap();
+    assert_eq!(applied["ok"], true, "{applied}");
+    let restored: serde_json::Value =
+        serde_json::from_str(&bridge.pin_mut().restore_startup_configuration("")).unwrap();
+    assert_eq!((restored["kind"].clone(), restored["restored"].clone()), (serde_json::json!("profile"), serde_json::json!(true)), "{restored}");
     bridge.pin_mut().shutdown();
     let _ = std::fs::remove_dir_all(data_dir);
 }

@@ -148,6 +148,7 @@ pub const COMMANDS: &[&str] = &[
     "fetch_config_document",
     "apply_config_document",
     "profile_command",
+    "restore_startup_configuration",
     "profile_fetch_url",
     "fetch_preview_buffer",
     "save_preview_buffer",
@@ -767,6 +768,14 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
             }
             let a: A = args(value)?;
             crate::config_document::profile_command(state, a.base, a.request).and_then(json)
+        }
+        "restore_startup_configuration" => {
+            #[derive(Deserialize)]
+            struct A {
+                #[serde(rename = "profileBase")] profile_base: String,
+            }
+            let a: A = args(value)?;
+            crate::config_document::restore_startup_configuration(state, a.profile_base).and_then(json)
         }
         "profile_fetch_url" => {
             #[derive(Deserialize)]

@@ -150,6 +150,7 @@ public:
     BridgeConfigDocument fetch_processing_config_json();
     rust::String processing_core_command(rust::Str cache_root, rust::Str request);
     rust::String profile_command(rust::Str base, rust::Str request);
+    rust::String restore_startup_configuration(rust::Str profile_base);
     BridgeCheckedConfigDocument fetch_config_document(rust::Str path);
     BridgeConfigTransactionResult apply_config_document(rust::Str path, rust::Str baseline, rust::Str patch);
     BridgeCommandResult apply_processing_config_json(rust::Str json);
