@@ -1440,6 +1440,7 @@ namespace backend
     void AppBackend::setInstrumentControlForTesting(std::unique_ptr<pz::IPzControlRegisters> registers)
     {
         pzControl_ = std::make_unique<pz::PzInstrumentControl>(std::move(registers));
+        applyRxHealStandingCtrl(); // as at service start, so the tests pin the start-up write allow-list
     }
 
     bool AppBackend::setInstrumentMode(pz::InstrumentMode mode, int x, int y, std::string *errorOut)

@@ -492,6 +492,14 @@ void testModeSequence(const mib::test::TempDir& td) {
 
     FakeState s;
     seedCellImage(s);
+    // The results10 PL (RXH1 v1 at its default CTRL): the one write at service start is its CTRL word.
+    s.live[256] = pz::kRxHealId;
+    s.live[257] = 0x64140801u;
+    // The start-up write allow-list: exactly one register, RXH1 CTRL word 1 = P[257], and nothing to the
+    // LED strobe (S[0..5], P[128..133]), P[8] (command / U-Net enable), the cell path (S[46]) or the SPI.
+    const auto onlyRxHealCtrlWritten = [&] {
+        return s.writes.size() == 1 && s.writes[0].index == 257 && s.writes[0].value == pz::kRxHealCtrlPersist250;
+    };
     // The rule the producer imposes: the cell path never goes on while the camera stream runs.
     bool cellOnWhileStreaming = false;
     s.onWrite = [&](unsigned i, uint32_t v) {
@@ -500,8 +508,9 @@ void testModeSequence(const mib::test::TempDir& td) {
     };
     backend.setInstrumentControlForTesting(std::make_unique<FakeControl>(s));
     MIB_REQUIRE(backend.instrumentControlAvailable(), "control injected");
-    MIB_EXPECT(backend.instrumentMode() == pz::InstrumentMode::Unknown && s.writes.empty(),
-               "nothing is written until a mode is chosen");
+    MIB_EXPECT(backend.instrumentMode() == pz::InstrumentMode::Unknown && onlyRxHealCtrlWritten(),
+               "the only write before a mode is chosen is RXH1 CTRL word 1 (persist 250 ms): no LED, P[8], cell path or SPI");
+    MIB_EXPECT(s.live[257] == pz::kRxHealCtrlPersist250, "the CTRL write took");
     {
         // Everything the UI polls at load, with no operator action: reads only (the standing
         // YOFO Studio unit on the board must not touch the PL or the pump bus before an operator
@@ -515,7 +524,7 @@ void testModeSequence(const mib::test::TempDir& td) {
         (void)facade.fetchPumpStatus(1, pump);
         backend::bridge::BackendStageStatus stage;
         (void)facade.fetchStageStatus(stage);
-        MIB_EXPECT(s.writes.empty(), "the status polls the UI makes at load write no PL register");
+        MIB_EXPECT(onlyRxHealCtrlWritten(), "the status polls the UI makes at load write no PL register (still only the CTRL write)");
     }
 
     {
