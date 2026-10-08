@@ -255,6 +255,19 @@ int main() {
         r->tornReads = {0x00FF00FFu, 3u, 3u};
         r->tornIndex = 289;
         MIB_EXPECT(monitor.rxNoFsFrames().value_or(99) == 3, "a torn nofs_frames read is repeated until two reads match");
+        // Over a run the deltas accumulate across receiver resets, which zero the counters (#648 review).
+        r->livePage[289] = 3;
+        MIB_REQUIRE(monitor.beginNoFsRun(), "run tracking begins when the counters exist");
+        r->livePage[289] = 5;  // +2
+        (void)monitor.sample(17'959'000);
+        r->livePage[289] = 1;  // a reset zeroed it and one more frame was dropped: +1
+        (void)monitor.sample(17'960'000);
+        r->livePage[289] = 4;  // +3
+        MIB_EXPECT(monitor.endNoFsRun().value_or(999) == 6, "nofs_frames accumulate across a mid-run reset: 2 + 1 + 3");
+        MIB_EXPECT(!monitor.endNoFsRun().has_value(), "a finished run is not counted twice");
+        r->livePage[288] = 0;
+        MIB_EXPECT(!monitor.beginNoFsRun(), "no tracking on a build without the counters");
+        r->livePage[288] = 5000;
         r->configured = false;
         MIB_EXPECT(!monitor.rxNoFsFrames().has_value(), "no read while the PL is blank");
         r->configured = true;

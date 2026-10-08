@@ -231,17 +231,17 @@ namespace backend::bridge
             {
                 if (runHealStart_.load() < 0)
                     if (const auto count = backend_.plReceiverAutoResets()) runHealStart_.store(*count);
-                if (runNoFsStart_.load() < 0)
-                    if (const auto count = backend_.plNoFsFrames()) runNoFsStart_.store(*count);
+                if (!runNoFsTracking_.load() && backend_.plNoFsRunBegin()) runNoFsTracking_.store(true);
             }
             else if (status.terminal)
             {
                 const auto start = runHealStart_.exchange(-1);
                 const auto count = backend_.plReceiverAutoResets();
                 lastRunHealResets_.store(start >= 0 && count ? (*count >= start ? *count - start : *count) : -1);
-                const auto noFsStart = runNoFsStart_.exchange(-1);
-                const auto noFs = backend_.plNoFsFrames();
-                lastRunNoFsFrames_.store(noFsStart >= 0 && noFs ? (*noFs >= noFsStart ? *noFs - noFsStart : *noFs) : -1);
+                // Accumulated across receiver resets (the counters are zeroed by a reset), not end - start.
+                const bool tracked = runNoFsTracking_.exchange(false);
+                const auto noFs = tracked ? backend_.plNoFsRunEnd() : std::nullopt;
+                lastRunNoFsFrames_.store(noFs ? static_cast<std::int64_t>(*noFs) : -1);
             }
             if (status.terminal)
             {

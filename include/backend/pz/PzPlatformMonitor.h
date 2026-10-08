@@ -189,6 +189,13 @@ public:
     // Frames dropped because no FrameStart was seen (RXH1 word 33), tear-safe; nullopt on a build
     // without the counters (fs_seen, word 32, still zero), without the block, or with a blank PL.
     std::optional<uint32_t> rxNoFsFrames();
+    // The counters are zeroed by a receiver reset (a heal or P[8] bit 6) as well as by a clear, so
+    // "end minus start" under-counts when a reset lands mid-run. Over a run the monitor accumulates the
+    // deltas instead: every status sample and the end read add (value - last) or, when the value fell,
+    // the new value. begin returns false (and nothing is tracked) on a build without the counters;
+    // end returns the frames dropped for want of a FrameStart during the run.
+    bool beginNoFsRun();
+    std::optional<uint64_t> endNoFsRun();
     static constexpr uint64_t kModeSettleUs = 1'500'000;
 
 private:
@@ -203,6 +210,18 @@ private:
     uint64_t settleUntilUs_{0};
     uint64_t badSinceUs_{0}, droppedSinceUs_{0}; // 0 = not above its threshold
     std::deque<std::pair<uint64_t, uint32_t>> errorHistory_; // (host time, P[12]) over the window
+    struct DeltaSum {
+        bool have{false};
+        uint32_t last{0};
+        uint64_t total{0};
+        void add(uint32_t value) {
+            if (have) total += value >= last ? value - last : value; // fell: a reset zeroed it
+            have = true;
+            last = value;
+        }
+    };
+    DeltaSum noFsRun_;
+    bool noFsRunActive_{false};
     uint64_t previousUs_{0};
     Counters previous_{};
 };

@@ -327,6 +327,7 @@ PzPlatformStatus PzPlatformMonitor::sample(uint64_t nowUs) {
         s.rxNoFsFrames = stableRead(r, kRxHealWindow + kRxFsNoFsFrames);
         s.rxNoFsLines = stableRead(r, kRxHealWindow + kRxFsNoFsLines);
         s.rxFsPresent = s.rxFsSeen != 0 || s.rxNoFsFrames != 0 || s.rxNoFsLines != 0;
+        if (noFsRunActive_ && s.rxFsPresent) noFsRun_.add(s.rxNoFsFrames);
         s.rxHealV2 = r.live(kRxHealWindow + kRxHealV2Word) != 0;
         if (s.rxHealV2) {
             s.rxHealFlagClears = stableRead(r, kRxHealWindow + 5);
@@ -369,6 +370,27 @@ std::optional<uint32_t> PzPlatformMonitor::rxNoFsFrames() {
     if (registers_->live(kRxHealWindow) != kRxHealId) return std::nullopt;
     if (stableRead(*registers_, kRxHealWindow + kRxFsFsSeen) == 0) return std::nullopt; // no counters (or no frame yet)
     return stableRead(*registers_, kRxHealWindow + kRxFsNoFsFrames);
+}
+
+bool PzPlatformMonitor::beginNoFsRun() {
+    std::scoped_lock lk(mutex_);
+    noFsRunActive_ = false;
+    noFsRun_ = DeltaSum{};
+    if (!registers_ || !registers_->plConfigured(nullptr)) return false;
+    if (registers_->live(kRxHealWindow) != kRxHealId) return false;
+    if (stableRead(*registers_, kRxHealWindow + kRxFsFsSeen) == 0) return false;
+    noFsRun_.add(stableRead(*registers_, kRxHealWindow + kRxFsNoFsFrames));
+    noFsRunActive_ = true;
+    return true;
+}
+
+std::optional<uint64_t> PzPlatformMonitor::endNoFsRun() {
+    std::scoped_lock lk(mutex_);
+    if (!noFsRunActive_) return std::nullopt;
+    noFsRunActive_ = false;
+    if (registers_ && registers_->plConfigured(nullptr) && registers_->live(kRxHealWindow) == kRxHealId)
+        noFsRun_.add(stableRead(*registers_, kRxHealWindow + kRxFsNoFsFrames));
+    return noFsRun_.total;
 }
 
 void PzPlatformMonitor::settle(uint64_t nowUs) {

@@ -147,6 +147,9 @@ namespace backend
         std::optional<uint32_t> plReceiverAutoResets();
         // Frames the PL dropped because no FrameStart was seen (results12); nullopt without the counters.
         std::optional<uint32_t> plNoFsFrames();
+        // Over a run: begin when it starts, end when it finishes (reset-safe accumulation, see the monitor).
+        bool plNoFsRunBegin();
+        std::optional<uint64_t> plNoFsRunEnd();
         // Service / Commissioning mode, latched by the shell: raw LED values are refused
         // outside it, on the backend side (not only in the UI).
         void setServiceMode(bool on);
