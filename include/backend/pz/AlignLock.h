@@ -33,6 +33,11 @@ struct RxHealStatus {
     uint32_t status{0};     // [7:0] tries this episode, [8] gave up, [9] flags set now, [10] settled, [23:16] lane flags
     uint32_t autoResets{0}; // auto-reset count since the PL reset
     uint32_t lastPulse{0};  // [7:0] flags at the pulse, [15:8] its try number
+    // Heal v2 (results11+; CTRL2 at word 24 is non-zero): flag clears and episodes counted separately.
+    bool v2{false};
+    uint32_t flagClears{0};     // word 5: flag clears issued (a clear during Run means frames were corrupted before it)
+    uint32_t episodes{0};       // word 6
+    uint32_t failedEpisodes{0}; // word 7: episodes that reached persistent failure
     unsigned tries() const { return status & 0xFFu; }
     bool gaveUp() const { return (status & 0x100u) != 0; }
     bool flagsSet() const { return (status & 0x200u) != 0; }

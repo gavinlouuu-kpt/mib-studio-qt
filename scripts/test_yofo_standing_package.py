@@ -97,6 +97,14 @@ def check_bundle(check) -> None:
         shutil.rmtree(pkg / "host")
         board = subprocess.run("grep -v '  host/' MD5SUMS | md5sum -c --quiet", shell=True, cwd=pkg)
         check(board.returncode == 0, "the board-side check passes without the host/ part")
+        # A tagged ref is a release; a bare commit is marked as a pre-qualification build.
+        check("PRE-QUALIFICATION" not in first, "a tagged ref is not marked pre-qualification")
+        commit = subprocess.run(["git", "rev-parse", "pl-test"], cwd=env["PZ7035_REPO"], capture_output=True, text=True).stdout.strip()
+        (pkg / "BUILD_INFO").write_text("yofo-studio standing package, commit abc12345\nbuilt: now\n")  # a fresh staged package
+        pre = subprocess.run(["bash", str(script), str(pkg)], env={**os.environ, **env, "PZ7035_REF": commit, "PZ_PL_IMAGE": "test"},
+                             capture_output=True, text=True)
+        check(pre.returncode == 0 and "PRE-QUALIFICATION, untagged pz7035" in (pkg / "BUILD_INFO").read_text().splitlines()[0],
+              f"an untagged commit is marked pre-qualification: {pre.stderr}")
         # A core.json of another image is refused.
         (Path(env["PZ7035_REPO"]) / "build" / "pz_live_test" / "core.json").write_text(
             '{"build_id": "ff", "image": "pz_live_other", "abi": {"major": 1, "minor": 3}}')

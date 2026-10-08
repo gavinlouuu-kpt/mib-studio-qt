@@ -224,6 +224,12 @@ bool PzInstrumentControl::rxHealStatus(RxHealStatus& out, std::string* error) {
     }
     out.autoResets = count;
     out.lastPulse = registers_->live(kRxHealWindow + 4);
+    out.v2 = registers_->live(kRxHealWindow + kRxHealV2Word) != 0;
+    if (out.v2) {
+        out.flagClears = registers_->live(kRxHealWindow + 5);
+        out.episodes = registers_->live(kRxHealWindow + 6);
+        out.failedEpisodes = registers_->live(kRxHealWindow + 7);
+    }
     return true;
 }
 

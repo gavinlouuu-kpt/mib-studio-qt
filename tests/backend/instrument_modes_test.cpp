@@ -317,6 +317,15 @@ void testRxSelfHeal() {
                    "status, count and last pulse words");
         s.live[258] |= 0x100u;
         MIB_EXPECT(control.rxHealStatus(heal, &err) && heal.gaveUp(), "gave-up bit");
+        MIB_EXPECT(!heal.v2 && heal.flagClears == 0, "v1: no v2 counters");
+        s.live[256 + pz::kRxHealV2Word] = 0x03e80001u; // heal v2: CTRL2
+        s.live[261] = 6;
+        s.live[262] = 5;
+        s.live[263] = 2;
+        MIB_EXPECT(control.rxHealStatus(heal, &err) && heal.v2 && heal.flagClears == 6 && heal.episodes == 5 &&
+                       heal.failedEpisodes == 2 && heal.autoResets == 7,
+                   "v2: flag clears, episodes and failed episodes beside the receiver-reset count");
+        s.live[256 + pz::kRxHealV2Word] = 0;
         s.writes.clear();
         (void)control.rxHealStatus(heal, &err);
         MIB_EXPECT(s.writes.empty(), "reading the block writes nothing");

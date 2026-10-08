@@ -323,6 +323,12 @@ PzPlatformStatus PzPlatformMonitor::sample(uint64_t nowUs) {
         s.rxHealTries = heal & 0xFFu;
         s.rxHealGaveUp = (heal & 0x100u) != 0;
         s.rxHealAutoResets = stableRead(r, kRxHealWindow + 3);
+        s.rxHealV2 = r.live(kRxHealWindow + kRxHealV2Word) != 0;
+        if (s.rxHealV2) {
+            s.rxHealFlagClears = stableRead(r, kRxHealWindow + 5);
+            s.rxHealEpisodes = stableRead(r, kRxHealWindow + 6);
+            s.rxHealFailedEpisodes = stableRead(r, kRxHealWindow + 7);
+        }
     }
     // Ingress errors: the average over the last kSustainedUs, from the oldest retained sample at
     // least that old. History restarts with the rates (mode switch, PL reload).
