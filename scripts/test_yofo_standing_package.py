@@ -135,6 +135,7 @@ def main() -> int:
     check("--listen 127.0.0.1:8427" in unit and "--no-token" in unit, "unit is loopback-only without a token")
     check("--token-file" not in unit, "unit does not need a token file")
     check("0.0.0.0" not in unit, "unit never listens on all interfaces")
+    check("--resource-dir /usr/share/yofo-studio" in unit, "unit passes the resource dir (E-modulus LUT, G6)")
     check("MIB_CAMERA_MODE=aravis" in unit and "GENICAM_GENTL32_PATH=/usr/lib/genicam" in unit,
           "unit selects the Aravis/GenTL producer")
 
@@ -142,6 +143,10 @@ def main() -> int:
     check(install.index("md5sum -c") < install.index("install -m 0755 yofo-studio-server"),
           "install.sh verifies MD5SUMS before installing anything")
     check("/etc/yofo-studio/token" not in install.replace("# ", ""), "install.sh does not require a token")
+    check("/usr/share/yofo-studio/resources/isoelastic_curve" in install, "install.sh installs the LUT under the resource dir")
+    check((ROOT / "resources" / "isoelastic_curve" / "scaled_isoelastic_data_LUT_6.16-4.24.txt").is_file(), "the LUT the server loads exists in the repo")
+    package = (ROOT / "scripts" / "yofo" / "package_studio.sh").read_text()
+    check("resources/isoelastic_curve" in package and "resources/isoelastic_curve/*" in package, "the package ships the LUT and lists it in MD5SUMS")
 
     check_bundle(check)
 

@@ -15,6 +15,11 @@ install -m 0755 yofo-studio-server /usr/bin/yofo-studio-server
 rm -rf /usr/share/yofo-studio/dist
 tar -C /usr/share/yofo-studio -xf dist.tar
 install -m 0755 pl-ready.sh /usr/libexec/yofo-studio/pl-ready
+# The E-modulus LUT: the unit passes --resource-dir /usr/share/yofo-studio, the server looks in resources/isoelastic_curve.
+if [ -d resources/isoelastic_curve ]; then
+    install -d /usr/share/yofo-studio/resources/isoelastic_curve
+    install -m 0644 resources/isoelastic_curve/* /usr/share/yofo-studio/resources/isoelastic_curve/
+fi
 install -m 0644 yofo-studio.service /etc/systemd/system/yofo-studio.service
 # A bundle carries its producer and the identity of its PL: install them so the pair is matched.
 if [ -f producer/libpz7035_gentl.cti ]; then

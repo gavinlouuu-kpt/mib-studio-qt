@@ -15,7 +15,7 @@ Environment=MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL=file:///nonexistent/mib-lut-man
 # Loopback only, no token: reach it through an SSH tunnel (ssh -L 8427:127.0.0.1:8427 board).
 # --no-token is refused by the server on any other address.
 ExecStart=/usr/bin/yofo-studio-server --listen 127.0.0.1:8427 --no-token \
-    --dist /usr/share/yofo-studio/dist --data-dir /var/lib/yofo-studio
+    --dist /usr/share/yofo-studio/dist --data-dir /var/lib/yofo-studio --resource-dir /usr/share/yofo-studio
 Restart=on-failure
 RestartSec=3
 # The producer maps the PL through /dev/uio*; root until a udev rule hands them to a group.
