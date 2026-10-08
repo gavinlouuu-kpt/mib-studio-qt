@@ -106,6 +106,10 @@ int main()
             MIB_REQUIRE(waitFor([&] { return trig.getDroppedPulsesNoCameraCount() >= 1; },
                                 std::chrono::seconds(5)),
                         "no-camera drop counted");
+            // The worker bumps the counter (and logs) before it records the event.
+            MIB_REQUIRE(waitFor([&] { return trig.bufferedEventCount() >= 1; },
+                                std::chrono::seconds(5)),
+                        "no-camera record buffered");
             auto ev = trig.drainEvents();
             MIB_REQUIRE(ev.size() == 1, "no-camera drop recorded");
             MIB_EXPECT(is(ev[0], TriggerOutcome::DroppedNoCamera), "outcome DroppedNoCamera");
@@ -127,6 +131,10 @@ int main()
             MIB_REQUIRE(waitFor([&] { return trig.getDroppedPulsesSetFailedCount() >= 1; },
                                 std::chrono::seconds(5)),
                         "set-failed drop counted");
+            // The worker bumps the counter (and logs) before it records the event.
+            MIB_REQUIRE(waitFor([&] { return trig.bufferedEventCount() >= 1; },
+                                std::chrono::seconds(5)),
+                        "set-failed record buffered");
             auto ev = trig.drainEvents();
             MIB_REQUIRE(ev.size() == 1, "set-failed drop recorded");
             MIB_EXPECT(is(ev[0], TriggerOutcome::DroppedSetFailed), "outcome DroppedSetFailed");
