@@ -1240,6 +1240,7 @@ namespace backend
                 "AppBackend initialized");
         }
 
+        loadInstrumentRunWindow();
         SPDLOG_INFO("Backend initialized.");
         return true;
     }
@@ -1281,6 +1282,68 @@ namespace backend
     }
 
     bool AppBackend::instrumentRunWindowSet() const { return instrumentRunSet_.load(); }
+
+    namespace
+    {
+        std::filesystem::path runWindowFile(const std::string &dataDir)
+        {
+            return std::filesystem::path(dataDir) / "instrument_run_window.json";
+        }
+
+        void saveRunWindow(const std::string &dataDir, int x, int y)
+        {
+            if (dataDir.empty()) return;
+            try
+            {
+                const auto path = runWindowFile(dataDir);
+                const auto tmp = std::filesystem::path(path).concat(".tmp");
+                {
+                    std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+                    out << nlohmann::json{{"x", x}, {"y", y}, {"set", true}}.dump();
+                    if (!out) throw std::runtime_error("write failed");
+                }
+                std::filesystem::rename(tmp, path);
+            }
+            catch (const std::exception &ex)
+            {
+                SPDLOG_WARN("AppBackend: the Run window was not saved: {}", ex.what());
+            }
+        }
+    } // namespace
+
+    void AppBackend::loadInstrumentRunWindow()
+    {
+        if (dataDir_.empty()) return;
+        std::error_code ec;
+        const auto path = runWindowFile(dataDir_);
+        if (!std::filesystem::exists(path, ec)) return;
+        try
+        {
+            std::ifstream in(path, std::ios::binary);
+            const auto j = nlohmann::json::parse(in, nullptr, /*allow_exceptions=*/false);
+            // Only a window the Run switch could have applied: on the grid and on the sensor.
+            if (!j.is_object() || !j.value("set", false) || !j.contains("x") || !j.contains("y") ||
+                !j["x"].is_number_integer() || !j["y"].is_number_integer())
+            {
+                SPDLOG_WARN("AppBackend: {} is not a Run window; ignored", path.string());
+                return;
+            }
+            const int x = j["x"].get<int>(), y = j["y"].get<int>();
+            if (x < 0 || y < 0 || x > kRunXMax || y > kRunYMax || x % kRunXStep != 0 || y % kRunYStep != 0)
+            {
+                SPDLOG_WARN("AppBackend: the saved Run window ({}, {}) is off the grid or sensor; ignored", x, y);
+                return;
+            }
+            instrumentRunX_.store(x);
+            instrumentRunY_.store(y);
+            instrumentRunSet_.store(true);
+            SPDLOG_INFO("AppBackend: Run window restored at ({}, {})", x, y);
+        }
+        catch (const std::exception &ex)
+        {
+            SPDLOG_WARN("AppBackend: the saved Run window could not be read: {}", ex.what());
+        }
+    }
 
     void AppBackend::setServiceMode(bool on) { serviceMode_.store(on); }
 
@@ -1445,6 +1508,7 @@ namespace backend
             instrumentRunX_.store(x);
             instrumentRunY_.store(y);
             instrumentRunSet_.store(true);
+            saveRunWindow(dataDir_, x, y);
         }
         instrumentMode_.store(static_cast<int>(mode));
         SPDLOG_INFO("AppBackend: instrument mode {}{}", pz::instrumentModeName(mode),

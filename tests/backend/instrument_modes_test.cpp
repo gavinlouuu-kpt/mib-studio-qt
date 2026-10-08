@@ -22,6 +22,7 @@
 
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <cstring>
 #include <functional>
 #include <map>
@@ -321,6 +322,38 @@ void testModeSequence(const mib::test::TempDir& td) {
     MIB_EXPECT(s.live[S0 + 0] == 0, "shutdown switches the LED off");
 }
 
+// The Run window survives a restart (#501): a Run switch writes <data>/instrument_run_window.json,
+// the next initialize() reads it; a file that is not a window the switch could have applied is
+// ignored. testModeSequence left (152, 200) there.
+void testRunWindowPersists(const mib::test::TempDir& td) {
+    const auto data = td.path() / "data";
+    const auto file = data / "instrument_run_window.json";
+    MIB_REQUIRE(std::filesystem::exists(file), "the Run switch saved the window");
+    const auto restart = [&]() {
+        backend::AppBackend backend;
+        backend::bridge::BackendFacade facade(backend);
+        MIB_REQUIRE(facade.initialize(data.string()), "facade initializes");
+        const auto set = backend.instrumentRunWindowSet();
+        const auto offset = backend.instrumentRunOffset();
+        facade.shutdown();
+        return std::make_pair(set, offset);
+    };
+    auto r = restart();
+    MIB_EXPECT(r.first && r.second == std::make_pair(152, 200), "a restart restores the Run window");
+
+    const auto write = [&](const std::string& text) { std::ofstream(file, std::ios::trunc) << text; };
+    write("{\"x\":157,\"y\":200,\"set\":true}");
+    MIB_EXPECT(!restart().first, "an off-grid x is ignored");
+    write("{\"x\":152,\"y\":600,\"set\":true}");
+    MIB_EXPECT(!restart().first, "a window off the sensor is ignored");
+    write("not json");
+    MIB_EXPECT(!restart().first, "garbage is ignored");
+    write("{\"x\":152,\"y\":200,\"set\":false}");
+    MIB_EXPECT(!restart().first, "a file that says 'not set' is ignored");
+    std::filesystem::remove(file);
+    MIB_EXPECT(!restart().first, "no file: no window");
+}
+
 // Both states of the persistence warning (#501): a RAM-backed destination (tmpfs, like the JTAG
 // RAM root) warns with the operator text; a disk destination does not.
 void testRecordingTarget(const mib::test::TempDir& td) {
@@ -359,6 +392,7 @@ int main() {
     testControl();
     testLedLimits();
     testModeSequence(td);
+    testRunWindowPersists(td);
     testRecordingTarget(td);
     return mib::test::exitCode();
 }
