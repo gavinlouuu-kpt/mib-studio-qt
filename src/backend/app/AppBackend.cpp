@@ -2562,6 +2562,15 @@ namespace backend
     }
 
     bool AppBackend::startFrameRecording(const std::string& hdf5FilePath, std::string* error) {
+        // Raw Record writes the ~60 fps preview frames the producer delivers (Align only), not the 5 kHz
+        // PL results, with no free-space guard on the RAM root. Until #649's ring save exists, a PL-science
+        // instrument uses an experiment instead (#651 G9).
+        if (!app::hostProcessingAvailable()) {
+            if (error)
+                *error = "Raw recording is not available on a PL-science instrument yet: it would only save the preview "
+                         "frames (about 60 fps), not the 5 kHz results. Use an experiment (#649 adds saving the buffered frames).";
+            return false;
+        }
         std::lock_guard<std::mutex> lock(frameRecordingLifecycleMutex_);
         if (error)
             *error = "Frame recording start failed: check capture and processing-core readiness";

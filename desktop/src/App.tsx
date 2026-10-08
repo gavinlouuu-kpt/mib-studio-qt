@@ -1908,9 +1908,11 @@ export default function App() {
                         autoBackgroundEnabled={autoBackgroundEnabled} append={append} refresh={refreshConfig}
                         onConfigure={() => setConfigTab("app")} />
 
-                      <button onClick={onToggleRecord} disabled={!running} title={running ? "Record raw frames to an HDF5 file" : "Camera is not running"}>
+                      {/* Raw Record is the host camera path; on a PL-science instrument it would save only the preview
+                          frames (G9), so it is hidden until #649 saves the buffered frames. */}
+                      {caps.frame_buffer && <button onClick={onToggleRecord} disabled={!running} title={running ? "Record raw frames to an HDF5 file" : "Camera is not running"}>
                         {recording ? "Stop Recording" : "Record"}
-                      </button>
+                      </button>}
                       <button onClick={() => setFitWindow((f) => !f)}>{fitWindow ? "Fit: Window" : "Fit: 1:1"}</button>
                     </div>
                     {caps.frame_buffer && <PreviewBufferControls model={previewBuffer} />}

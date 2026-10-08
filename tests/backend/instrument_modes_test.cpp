@@ -521,6 +521,15 @@ void testModeSequence(const mib::test::TempDir& td) {
                "the only write before a mode is chosen is RXH1 CTRL word 1 (persist 250 ms): no LED, P[8], cell path or SPI");
     MIB_EXPECT(s.live[257] == pz::kRxHealCtrlPersist250, "the CTRL write took");
     {
+        // Raw Record is refused on a PL-science instrument (#651 G9): the producer's preview frames are not
+        // the 5 kHz results, and the RAM root has no free-space guard.
+        std::string recordError;
+        MIB_EXPECT(!backend.startFrameRecording((td.path() / "clip.h5").string(), &recordError) &&
+                       recordError.find("PL-science") != std::string::npos,
+                   "raw recording is refused on a PL-science instrument: " + recordError);
+        MIB_EXPECT(!std::filesystem::exists(td.path() / "clip.h5"), "and creates no file");
+    }
+    {
         // Everything the UI polls at load, with no operator action: reads only (the standing
         // YOFO Studio unit on the board must not touch the PL or the pump bus before an operator
         // does; serial ports are opened only by the pump/stage/discovery commands, which the UI
