@@ -194,6 +194,11 @@ public:
     // deltas instead: every status sample and the end read add (value - last) or, when the value fell,
     // the new value. begin returns false (and nothing is tracked) on a build without the counters;
     // end returns the frames dropped for want of a FrameStart during the run.
+    // Assumption (coordinator, 2026-10-08): the accumulation only sees resets that have a status sample
+    // between them. That holds because a Run cannot continue without a connected client: the server's
+    // idle rule stops and saves 5 s after the last client leaves, so the UI's status polling is always
+    // present during a Run; heal resets during Run are also measured at 0. If the idle rule ever lets a
+    // Run go on unattended, the monitor needs its own periodic sampling here.
     bool beginNoFsRun();
     std::optional<uint64_t> endNoFsRun();
     static constexpr uint64_t kModeSettleUs = 1'500'000;

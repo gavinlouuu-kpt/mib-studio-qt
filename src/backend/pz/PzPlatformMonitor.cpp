@@ -372,6 +372,7 @@ std::optional<uint32_t> PzPlatformMonitor::rxNoFsFrames() {
     return stableRead(*registers_, kRxHealWindow + kRxFsNoFsFrames);
 }
 
+// See the assumption in the header: status samples are always present during a Run (no unattended Run).
 bool PzPlatformMonitor::beginNoFsRun() {
     std::scoped_lock lk(mutex_);
     noFsRunActive_ = false;
