@@ -576,6 +576,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "futures-util",
+ "libc",
  "mib-app-commands",
  "serde",
  "serde_json",
