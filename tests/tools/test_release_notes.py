@@ -42,12 +42,15 @@ class ReleaseNotesTest(unittest.TestCase):
             folder = root / "knowledge_map/current-state/recent"
             folder.mkdir(parents=True)
             (folder / "2026-10-06-old.md").write_text("old", encoding="utf-8")
-            (folder / "2026-10-07-new.md").write_text("new", encoding="utf-8")
+            (folder / "2026-10-07-new.md").write_text(
+                "new, see [[architecture/AppBackend]] and [[build-and-run/Assets|the assets note]]", encoding="utf-8")
             with patch.object(notes.subprocess, "check_output", return_value="2026-10-06\n"):
                 text = notes.generate_beta(root, "v9.8.6", "9.8.7-beta.1")
             self.assertIn("Changes since v9.8.6 (beta, uncurated)", text)
             self.assertIn("new", text)
             self.assertNotIn("old", text)
+            self.assertIn("see AppBackend and the assets note", text)
+            self.assertNotIn("[[", text)
 
 
 if __name__ == "__main__":

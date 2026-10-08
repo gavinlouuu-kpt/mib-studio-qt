@@ -17,6 +17,11 @@ def capped(text):
     return text.encode("utf-8")[:LIMIT].decode("utf-8", errors="ignore")
 
 
+def unlink_vault(text):
+    # Vault wikilinks mean nothing to an operator: [[a/B]] -> B, [[a/B|label]] -> label.
+    return re.sub(r"\[\[(?:[^]|]*/)?([^]|]+)(?:\|([^]]+))?\]\]", lambda m: m[2] or m[1], text)
+
+
 def plain(text):
     text = re.sub(r"!\[([^]]*)\]\([^)]*\)", r"\1", text)
     text = re.sub(r"\[([^]]+)\]\([^)]*\)", r"\1", text)
@@ -47,7 +52,7 @@ def generate_beta(root, since, version):
               if re.match(r"\d{4}-\d{2}-\d{2}-", p.name) and p.name[:10] > cutoff]
     text = f"# MIB Studio v{version} — {date.today().isoformat()}\n\n"
     text += f"## Changes since {since} (beta, uncurated)\n\n"
-    return text + ("\n\n".join(bodies) or "No recent changes recorded.\n")
+    return text + (unlink_vault("\n\n".join(bodies)) or "No recent changes recorded.\n")
 
 
 def main(argv=None):
