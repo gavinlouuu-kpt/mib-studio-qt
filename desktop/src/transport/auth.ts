@@ -29,15 +29,19 @@ export function tokenFromLocation(location: Location = window.location): string 
   return new URLSearchParams(location.search).get("token") ?? (storedToken() || memoryToken);
 }
 
-/** The server's /auth URL: the page origin, or the origin of ?server=ws(s)://host/ws. */
-export function authUrl(location: Location = window.location, token = tokenFromLocation(location)): string {
+/** The server's HTTP origin: the page origin, or the origin of ?server=ws(s)://host/ws. */
+export function serverOrigin(location: Location = window.location): string {
   const explicit = new URLSearchParams(location.search).get("server");
-  let origin = location.origin;
   if (explicit) {
     const u = new URL(explicit);
-    origin = `${u.protocol === "wss:" ? "https:" : "http:"}//${u.host}`;
+    return `${u.protocol === "wss:" ? "https:" : "http:"}//${u.host}`;
   }
-  return `${origin}/auth${token ? `?token=${encodeURIComponent(token)}` : ""}`;
+  return location.origin;
+}
+
+/** The server's /auth URL: the page origin, or the origin of ?server=ws(s)://host/ws. */
+export function authUrl(location: Location = window.location, token = tokenFromLocation(location)): string {
+  return `${serverOrigin(location)}/auth${token ? `?token=${encodeURIComponent(token)}` : ""}`;
 }
 
 export type AuthOutcome = "authorized" | "unauthorized" | "unreachable";

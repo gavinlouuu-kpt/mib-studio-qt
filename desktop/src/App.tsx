@@ -23,6 +23,9 @@ import { FramePullScheduler } from "./framePullScheduler";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {open, save, confirm} from "./transport/dialogs";
 import { DiagnosticsPanel } from "./components/DiagnosticsPanel";
+import { downloadUrl } from "./filesView";
+import { serverOrigin, tokenFromLocation } from "./transport/auth";
+import { FilesPanel } from "./components/FilesPanel";
 import { noImagesNotice } from "./review/noImages";
 import {openUrl, revealItemInDir} from "./transport/dialogs";
 import {
@@ -175,7 +178,7 @@ export default function App() {
   const [alignmentConfirmedFor, setAlignmentConfirmedFor] = usePersistedState("yofo.alignmentConfirmedFor", "", isString);
   const didInitStage = useRef(false);
   const [connectTab, setConnectTab] = useState<"cameras" | "mindvision" | "framegrabbers">("cameras");
-  const [expTab, setExpTab] = useState<"preview" | "monitoring">("preview");
+  const [expTab, setExpTab] = useState<"preview" | "monitoring" | "files">("preview");
   const [configTab, setConfigTab] = useState<"app" | "script">("app");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     () => localStorage.getItem(SIDEBAR_KEY) === "1",
@@ -1853,6 +1856,9 @@ export default function App() {
                     <button className={expTab === "preview" ? "active" : ""} onClick={() => setExpTab("preview")}>
                       Preview
                     </button>
+                    {isRemote && <button className={expTab === "files" ? "active" : ""} onClick={() => setExpTab("files")}>
+                      Files
+                    </button>}
                     <button className={expTab === "monitoring" ? "active" : ""} onClick={() => setExpTab("monitoring")}>
                       Monitoring
                     </button>
@@ -1878,6 +1884,12 @@ export default function App() {
                   onPlaceWindow={() => setTab("overview")} onRetry={() => setModeRetry((n) => n + 1)} />}
                 {readinessMessage && <p role="alert">Experiment readiness: {readinessMessage}</p>}
                 {!expActive && <RunOutcomeNotice outcome={runOutcome} />}
+                {/* The finished run's file can be fetched from the browser (G3): the instrument keeps it on its own disk. */}
+                {isRemote && !expActive && expStatus?.valid && expStatus.terminal && expStatus.finalization_ok && !expStatus.cancelled && expStatus.output_path && (
+                  <p className="mono"><a href={downloadUrl(serverOrigin(), expStatus.output_path, tokenFromLocation())} download>
+                    Download {expStatus.output_path.split("/").pop()}
+                  </a></p>
+                )}
                 {startNotice && <p role="status" className="start-notice">{startNotice}</p>}
 
                 {expTab === "preview" && (
@@ -1918,9 +1930,11 @@ export default function App() {
                         autoBackgroundEnabled={autoBackgroundEnabled} append={append} refresh={refreshConfig}
                         onConfigure={() => setConfigTab("app")} />
 
-                      <button onClick={onToggleRecord} disabled={!running} title={running ? "Record raw frames to an HDF5 file" : "Camera is not running"}>
+                      {/* Raw Record is the host camera path; on a PL-science instrument it would save only the preview
+                          frames (G9), so it is hidden until #649 saves the buffered frames. */}
+                      {caps.frame_buffer && <button onClick={onToggleRecord} disabled={!running} title={running ? "Record raw frames to an HDF5 file" : "Camera is not running"}>
                         {recording ? "Stop Recording" : "Record"}
-                      </button>
+                      </button>}
                       <button onClick={() => setFitWindow((f) => !f)}>{fitWindow ? "Fit: Window" : "Fit: 1:1"}</button>
                     </div>
                     {caps.frame_buffer && <PreviewBufferControls model={previewBuffer} />}
@@ -2020,6 +2034,7 @@ export default function App() {
                   </>
                 )}
 
+                {expTab === "files" && isRemote && <FilesPanel ramWarning={instrument?.storage?.warning || undefined} />}
                 {expTab === "monitoring" && (
                   <>
                     <div className="toolbar">
