@@ -216,6 +216,15 @@ SSH tunnel; the UI skips the token prompt when `/auth` says `token_required=fals
 (ctest `scripts.yofo_standing_package`) checks the guard against a fake `devmem2`, the unit and
 install.sh.
 
+**Instrument bundle (YOFO Studio release = PL + PS).** `package_studio.sh --bundle` (or
+`scripts/yofo/bundle_assemble.sh PKG_DIR` on a staged package; `PZ7035_REF`, default `pl-results9`)
+adds the PL bitstream and `ps7_init.tcl`, the firmware, the Linux boot set (under `host/`, 70 MB,
+never copied to the board), and the producer, `core.json` and slot tools (board side). One
+`MD5SUMS` lists everything; the first `BUILD_INFO` line names the mib-studio-qt and pz7035-imx426
+commits, the PL BUILD_ID and the ABI. `install.sh` installs the bundle's producer and its
+`core.json` as `/etc/yofo/expected-core.json`, so the preflight identity check compares against the
+bundle's own PL. Plan: `docs/exec-plans/active/2026-10-08-yofo-studio-bundle.md`.
+
 `cmake/toolchains/yocto-armv7.cmake` keeps every package search in the sysroot.
 HDF5 needs care: the SDK's HDF5 package config is unusable (absolute install
 dir, imported targets at `/usr/lib`) and FindHDF5 would otherwise ask the
