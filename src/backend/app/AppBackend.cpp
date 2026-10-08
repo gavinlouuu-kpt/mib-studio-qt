@@ -1298,7 +1298,7 @@ namespace backend
     bool AppBackend::instrumentRunWindowSet() const { return instrumentRunSet_.load(); }
     AppBackend::AlignLockCounters AppBackend::alignLockCounters() const
     {
-        return {alignReceiverClears_.load(), alignLockFailures_.load()};
+        return {alignReceiverClears_.load(), alignLockFailures_.load(), alignLastStuckP13_.load()};
     }
 
     namespace
@@ -1521,6 +1521,7 @@ namespace backend
             };
             hooks.onAttempt = [&](int attempt, const pz::IngressStatus &st) {
                 ++alignReceiverClears_;
+                alignLastStuckP13_.store(st.status);
                 SPDLOG_WARN("AppBackend: Align preview stuck (P[13] 0x{:08X}, lane overflow 0x{:02X}, errors {}, resyncs {}): "
                             "receiver reset attempt {}",
                             st.status, st.laneOverflow(), st.errors, st.resyncs, attempt);

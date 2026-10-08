@@ -5,9 +5,10 @@
                                               [--take-control]
 
 Each flip opens the Experiment tab (Run, LED 7/60), holds, opens Camera & Alignment (Align) and
-waits for a whole-frame preview. Reports per flip: ok/FAIL, seconds to the preview, the mode notice
-if the switch failed, and the Align recovery counters from `fetch_instrument_status`
-(`mode.align_lock.receiver_clears` / `failures`). Exits non-zero if any flip failed. It never
+waits for a whole-frame preview. Reports per flip: ok/FAIL, seconds to the preview, the resets it needed and P[13] before the
+recovery, the mode notice if the switch failed (`mode.align_lock` in `fetch_instrument_status`),
+and t_epoch to line the flip up with the board's lost counter (counter 4 must stay flat for 5 s
+after the lock: read it with scripts such as /mnt/hdd/shared/exports/studio-run-align-readings.sh). Exits non-zero if any flip failed. It never
 touches the pumps and starts no experiment. `--take-control` claims the controller role over
 the page's own socket (for a server whose build lacks the Take control banner, or when another
 tab holds it): use it only when the operator has agreed. Needs the Run window placed first
@@ -110,14 +111,19 @@ with sync_playwright() as p:
         took = time.time() - t0
         lock = status(page).get("align_lock") or {}
         row = {"flip": n, "run": run_ok, "align": ok, "seconds": round(took, 1),
-               "resets": lock.get("receiver_clears", 0) - before, "failures": lock.get("failures"), "notice": note}
+               "resets": lock.get("receiver_clears", 0) - before, "failures": lock.get("failures"),
+               "p13_before_recovery": hex(lock.get("last_stuck_p13", 0)) if lock.get("receiver_clears", 0) > before else None,
+               "t_epoch": round(t0, 1), "notice": note}
+        if ok:
+            time.sleep(5)  # the lost counter must stay flat while the previews continue (read on the board)
+            row["still_previewing"] = preview_mean(page) > 20
         results.append(row)
         print(("ok  " if ok else "FAIL"), json.dumps(row), flush=True)
         page.screenshot(path=str(outdir / f"flip{n:02d}.png"))
     browser.close()
 
 (outdir / "flips.json").write_text(json.dumps(results, indent=2))
-good = sum(1 for r in results if r["align"])
+good = sum(1 for r in results if r["align"] and r.get("still_previewing"))
 total_resets = sum(r["resets"] for r in results)
 print(f"\n{good}/{len(results)} Run->Align switches locked; receiver resets issued: {total_resets}")
 sys.exit(0 if good == len(results) else 1)

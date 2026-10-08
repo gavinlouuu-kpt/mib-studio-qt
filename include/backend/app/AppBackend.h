@@ -138,7 +138,7 @@ namespace backend
         bool instrumentRunWindowSet() const;
         // How often Align's ingress recovery fired in this process (#629): receiver resets issued and
         // switches that never locked.
-        struct AlignLockCounters { uint64_t receiverClears{0}, failures{0}; };
+        struct AlignLockCounters { uint64_t receiverClears{0}, failures{0}; uint32_t lastStuckP13{0}; };
         AlignLockCounters alignLockCounters() const;
         // Service / Commissioning mode, latched by the shell: raw LED values are refused
         // outside it, on the backend side (not only in the UI).
@@ -392,6 +392,7 @@ namespace backend
         std::atomic<bool> instrumentRunSet_{false};
         std::atomic<bool> instrumentIdle_{false};
         std::atomic<uint64_t> alignReceiverClears_{0}, alignLockFailures_{0};
+        std::atomic<uint32_t> alignLastStuckP13_{0}; // P[13] read before the latest recovery attempt
         std::atomic<bool> serviceMode_{false};
         // Align live view: "bridge" (whole frames, results8 on) or "bands" (producer grabber).
         std::atomic<int> alignSource_{0}; // 0 none, 1 bridge, 2 bands (read by the status poll)
