@@ -145,6 +145,8 @@ namespace backend
         AlignLockCounters alignLockCounters() const;
         // The PL receiver auto-reset count (results9 RXH1); nullopt without the block.
         std::optional<uint32_t> plReceiverAutoResets();
+        // Frames the PL dropped because no FrameStart was seen (results12); nullopt without the counters.
+        std::optional<uint32_t> plNoFsFrames();
         // Service / Commissioning mode, latched by the shell: raw LED values are refused
         // outside it, on the backend side (not only in the UI).
         void setServiceMode(bool on);

@@ -1274,6 +1274,9 @@ namespace backend::bridge
         // and the delta over the last finished one; -1 = not known (no block on this image).
         std::atomic<std::int64_t> runHealStart_{-1};
         std::atomic<std::int64_t> lastRunHealResets_{-1};
+        // Frames the PL dropped for want of a FrameStart (results12): lost data during a run.
+        std::atomic<std::int64_t> runNoFsStart_{-1};
+        std::atomic<std::int64_t> lastRunNoFsFrames_{-1};
 
         // Review state (BE-6): the loaded file path (jobs open their own
         // read-only reader on it) and the lazily cached metrics metadata.

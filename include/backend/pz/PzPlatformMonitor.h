@@ -146,6 +146,11 @@ struct PzPlatformStatus {
     bool rxHealGaveUp{false};
     uint32_t rxHealTries{0};
     uint32_t rxHealAutoResets{0}; // since the PL reset (receiver resets)
+    // results12 (frames start only after a FrameStart line): FrameStarts seen, frames dropped because no
+    // FS was seen (a mid-frame join or a lost FS line: lost data in a run), and the lines dropped with them.
+    // fsPresent: the build counts them (fs_seen is non-zero once a frame has come); all 0 otherwise.
+    bool rxFsPresent{false};
+    uint32_t rxFsSeen{0}, rxNoFsFrames{0}, rxNoFsLines{0};
     bool rxHealV2{false};         // heal v2 (CTRL2 at word 24 non-zero): the counters below exist
     uint32_t rxHealFlagClears{0}, rxHealEpisodes{0}, rxHealFailedEpisodes{0};
     double badFramesWarnPerS{0.0};
@@ -181,6 +186,9 @@ public:
     void settle(uint64_t nowUs);
     // The PL's auto-reset count (RXH1 P[259]); nullopt on an image without the block or a blank PL.
     std::optional<uint32_t> rxHealAutoResets();
+    // Frames dropped because no FrameStart was seen (RXH1 word 33), tear-safe; nullopt on a build
+    // without the counters (fs_seen, word 32, still zero), without the block, or with a blank PL.
+    std::optional<uint32_t> rxNoFsFrames();
     static constexpr uint64_t kModeSettleUs = 1'500'000;
 
 private:

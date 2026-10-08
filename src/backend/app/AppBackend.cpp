@@ -1336,6 +1336,11 @@ namespace backend
         return pzPlatformMonitor_ ? pzPlatformMonitor_->rxHealAutoResets() : std::nullopt;
     }
 
+    std::optional<uint32_t> AppBackend::plNoFsFrames()
+    {
+        return pzPlatformMonitor_ ? pzPlatformMonitor_->rxNoFsFrames() : std::nullopt;
+    }
+
     AppBackend::AlignLockCounters AppBackend::alignLockCounters() const
     {
         return {alignReceiverClears_.load(), alignLockFailures_.load(), alignLastStuckP13_.load(), alignPlGaveUps_.load(), alignLastPlGaveUpMs_.load()};

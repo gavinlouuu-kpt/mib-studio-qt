@@ -23,6 +23,7 @@ struct IngressStatus {
 // 0x40100400 (P[256..]), ID 'RXH1' at index 0; reads 0 on an image without the block.
 inline constexpr uint32_t kRxHealId = 0x52584831u;
 inline constexpr unsigned kRxHealWindow = 256; // P[256] = 0x40100400
+inline constexpr unsigned kRxFsFsSeen = 32, kRxFsNoFsFrames = 33, kRxFsNoFsLines = 34; // results12: frames start only after a FrameStart line
 inline constexpr unsigned kRxHealV2Word = 24;  // non-zero on heal v2 builds (results11+), which back off on their own
 // CTRL word 1 = [0] enable, [15:8] max tries, [23:16] persist ms, [31:24] clear ms. Default 0x64140801; the
 // qualified standing value for v1 raises persist to 250 ms (0xFA): 2/14 PL gave-ups against 7/22 (2026-10-08).

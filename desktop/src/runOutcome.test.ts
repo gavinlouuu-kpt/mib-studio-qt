@@ -182,4 +182,15 @@ describe("receiver auto-resets (results9 self-heal)", () => {
     expect(describeRunOutcome(BASE, acc({ receiver_auto_resets: null }))!.headline).not.toContain("auto-resets");
     expect(describeRunOutcome(BASE, null)!.attention).toBe(false);
   });
+
+  it("names the frames the PL dropped for want of a FrameStart as lost data (results12)", () => {
+    const o = describeRunOutcome(BASE, acc({ nofs_frames: 4 }))!;
+    expect(o.headline).toContain("Frames dropped by the PL for want of a FrameStart: 4 (lost data)");
+    expect(o.attention).toBe(true);
+    const both = describeRunOutcome(BASE, acc({ receiver_auto_resets: 1, nofs_frames: 2 }))!;
+    expect(both.headline).toContain("Receiver auto-resets during the run: 1");
+    expect(both.headline).toContain("for want of a FrameStart: 2");
+    expect(describeRunOutcome(BASE, acc({ nofs_frames: 0 }))!.headline).not.toContain("FrameStart");
+    expect(describeRunOutcome(BASE, acc({ nofs_frames: null }))!.headline).not.toContain("FrameStart");
+  });
 });
