@@ -22,6 +22,7 @@ import { decimalU64 } from "./framePacket";
 import { FramePullScheduler } from "./framePullScheduler";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {open, save, confirm} from "./transport/dialogs";
+import { noImagesNotice } from "./review/noImages";
 import {openUrl, revealItemInDir} from "./transport/dialogs";
 import {
   bridge,
@@ -2223,6 +2224,7 @@ export default function App() {
                       : "No file selected"}
                   </span>
                 </div>
+                {noImagesNotice(reviewMeta) && <p className="pending-note" role="status" data-testid="review-no-images">{noImagesNotice(reviewMeta)}</p>}
                 <div className="subtabs" role="tablist" aria-label="Review views">
                   <button className={reviewTab === "raw" ? "active" : ""} onClick={() => { ++metricsGeneration.current; setMetricsPage(null); setReviewTab("raw"); }}>
                     Raw Frames

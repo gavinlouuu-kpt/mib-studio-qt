@@ -1,3 +1,4 @@
+import { noImagesNotice } from "./noImages";
 import { metricNumber } from "../metricFormat";
 // The HDF5 review module (UI-4, #269; plan 2026-10-01-standalone-review-app).
 //
@@ -468,6 +469,7 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
             : "No file selected"}
         </span>
       </div>
+      {noImagesNotice(info) && <p className="pending-note" role="status" data-testid="review-no-images">{noImagesNotice(info)}</p>}
       <div className="subtabs" role="tablist" aria-label="Review views">
         <button
           className={reviewTab === "valid" ? "active" : ""}
