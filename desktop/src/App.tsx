@@ -23,7 +23,7 @@ import { FramePullScheduler } from "./framePullScheduler";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {open, save, confirm} from "./transport/dialogs";
 import { noImagesNotice } from "./review/noImages";
-import {openUrl, revealItemInDir} from "./transport/dialogs";
+import {openUrl, revealItemInDir, setRemoteDefaultDir} from "./transport/dialogs";
 import {
   bridge,
   mono8ToImageData,
@@ -1030,6 +1030,9 @@ export default function App() {
 
   // After a page reload the backend still holds the Run window it applied: take it back.
   const instrumentMode = instrument?.mode;
+  // Relative default save paths in the browser start under the instrument's data directory (G8).
+  const instrumentDataDir = instrument?.storage?.path ?? "";
+  useEffect(() => { setRemoteDefaultDir(instrumentDataDir); }, [instrumentDataDir]);
   useEffect(() => { cameraWin.restore(instrumentMode); }, [instrumentMode?.run_set, instrumentMode?.run_x, instrumentMode?.run_y, cameraWin.restore]);
 
   // Qt parity (MainWindow tab change): Camera & Alignment shows the whole sensor, Experiment the
