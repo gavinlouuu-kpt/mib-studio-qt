@@ -32,7 +32,17 @@ struct FakeRegisters final : pz::IPzPlatformRegisters {
         }
         return livePage[i];
     }
-    uint32_t strobe(unsigned i) override { ++plReads; return strobeWindow[i]; }
+    std::vector<uint32_t> tornStrobeReads; // queued values for S[tornStrobeIndex] before the window value
+    unsigned tornStrobeIndex = 0;
+    uint32_t strobe(unsigned i) override {
+        ++plReads;
+        if (i == tornStrobeIndex && !tornStrobeReads.empty()) {
+            const uint32_t v = tornStrobeReads.front();
+            tornStrobeReads.erase(tornStrobeReads.begin());
+            return v;
+        }
+        return strobeWindow[i];
+    }
     uint32_t bridge(uint32_t off) override { ++plReads; return bridgePage[off]; }
     bool plConfigured(std::string* why) override {
         if (!configured && why) *why = "PL not configured (DEVCFG PCFG_DONE = 0): load the PL image";
@@ -196,6 +206,17 @@ int main() {
         r->strobeWindow[29] = 0x00602040u; // the 512x96 default
         const auto run = monitor.sample(17'200'000);
         MIB_EXPECT(run.geometryWidth == 512 && run.geometryHeight == 96, "default geometry 512x96");
+    }
+
+    // The latency words can tear (no CDC from the 175 MHz domain): a torn read is repeated.
+    {
+        r->strobeWindow[50] = 7; // over budget
+        r->tornStrobeReads = {0x0000FFFFu, 7u, 7u};
+        r->tornStrobeIndex = 50;
+        const auto s = monitor.sample(17'800'000);
+        MIB_EXPECT(s.latencyOverBudget == 7, "a torn latency word is read again until two reads match");
+        r->strobeWindow[50] = 0;
+        r->tornStrobeIndex = 0;
     }
 
     // The PL receiver self-heal block (results9, RXH1 at P[256]): absent on results8, then present.

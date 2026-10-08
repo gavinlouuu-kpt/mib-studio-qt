@@ -35,17 +35,25 @@ constexpr uint64_t kDevcfgPage = 0xF8007000u; // Zynq-7000 DEVCFG (PS)
 constexpr unsigned kDevcfgIntStsWord = 0x00C / 4;
 constexpr uint32_t kPcfgDone = 1u << 2;
 
-// The RXH1 counters cross clock domains with no CDC and can tear (results9): read until two
-// consecutive reads match. The ID and the gave-up flag are safe. After a few mismatches the last
-// read stands (a counter that moves every read is still a count of the right size).
-uint32_t stableRead(IPzPlatformRegisters& r, unsigned index) {
-    uint32_t previous = r.live(index);
+// Words that cross clock domains with no CDC can tear (results9: the RXH1 counters; report_cdc on
+// results9/10: the latency monitor S[47..56], 175 MHz -> host clock): read until two consecutive
+// reads match. The ID and the gave-up flag are safe. After a few mismatches the last read stands (a
+// counter that moves every read is still a count of the right size).
+template <typename Read>
+uint32_t stableWord(Read read) {
+    uint32_t previous = read();
     for (int i = 0; i < 8; ++i) {
-        const uint32_t again = r.live(index);
+        const uint32_t again = read();
         if (again == previous) return again;
         previous = again;
     }
     return previous;
+}
+uint32_t stableRead(IPzPlatformRegisters& r, unsigned index) {
+    return stableWord([&] { return r.live(index); });
+}
+uint32_t stableStrobe(IPzPlatformRegisters& r, unsigned index) {
+    return stableWord([&] { return r.strobe(index); });
 }
 
 constexpr unsigned kLiveDropped = 6, kLiveBadFrames = 7, kLiveIngressErrors = 12, kLiveResyncs = 14;
@@ -276,10 +284,11 @@ PzPlatformStatus PzPlatformMonitor::sample(uint64_t nowUs) {
     s.geometryHeight = geometry >> 16;
     s.geometryWidth = (geometry & 0xFFu) * 8u;
 
-    s.latencyLastUs = r.strobe(kLatencyLast) / kLatencyClockMHz;
-    s.latencyMaxUs = r.strobe(kLatencyMax) / kLatencyClockMHz;
-    s.latencyOverBudget = r.strobe(kLatencyOverBudget);
-    s.latencyFrames = r.strobe(kLatencyFrames);
+    // The latency words are not synchronised across clock domains and can tear: stable reads.
+    s.latencyLastUs = stableStrobe(r, kLatencyLast) / kLatencyClockMHz;
+    s.latencyMaxUs = stableStrobe(r, kLatencyMax) / kLatencyClockMHz;
+    s.latencyOverBudget = stableStrobe(r, kLatencyOverBudget);
+    s.latencyFrames = stableStrobe(r, kLatencyFrames);
 
     const Counters now{r.live(kLiveIngressErrors), r.live(kLiveResyncs), r.live(kLiveBadFrames),
                        r.live(kLiveDropped)};
