@@ -59,6 +59,7 @@
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <limits>
+#include <optional>
 #include <string>
 #include <utility>
 #include <spdlog/spdlog.h>
@@ -89,6 +90,27 @@ namespace backend
 {
     namespace
     {
+    // Reads a variable from the OS environment, not the C runtime's startup
+    // copy: on Windows the MSVC CRT snapshots the environment at process start,
+    // so a variable the host sets later (the Tauri shell or a Rust test via
+    // std::env::set_var -> SetEnvironmentVariable) is invisible to std::getenv
+    // (#571; the bridge shim's queueCapacityFromEnv does the same).
+    std::optional<std::string> processEnvironmentValue(const char* name)
+    {
+#ifdef _WIN32
+        const DWORD size = GetEnvironmentVariableA(name, nullptr, 0);
+        if (size == 0) return std::nullopt;
+        std::string value(size, '\0');
+        const DWORD n = GetEnvironmentVariableA(name, value.data(), size);
+        if (n == 0 || n >= size) return std::nullopt;
+        value.resize(n);
+        return value;
+#else
+        if (const char* value = std::getenv(name)) return std::string(value);
+        return std::nullopt;
+#endif
+    }
+
     // OpenCV's MSVC build parallelises through the Concurrency Runtime: one worker
     // per logical CPU whose idle workers spin. A per-frame parallel call in the
     // realtime loop kept ~31 of 32 workers busy on the rig PC and starved the
@@ -445,9 +467,9 @@ namespace backend
 
         {
             profiles::RegistryWorkerConfig registryConfig;
-            if (const char *url = std::getenv("MIB_PROFILE_REGISTRY_URL")) registryConfig.origin = url;
-            if (const char *key = std::getenv("MIB_PROFILE_REGISTRY_PUBLISHABLE_KEY"))
-                registryConfig.publishableKey = key;
+            if (auto url = processEnvironmentValue("MIB_PROFILE_REGISTRY_URL")) registryConfig.origin = *url;
+            if (auto key = processEnvironmentValue("MIB_PROFILE_REGISTRY_PUBLISHABLE_KEY"))
+                registryConfig.publishableKey = *key;
             registryConfig.cacheDir = std::filesystem::path(dataDir) / "profile_registry";
             registryConfig.methodsDir = std::filesystem::path(dataDir) / "methods";
             if (registryConfig.configured() && !profileRegistryTransport_)
