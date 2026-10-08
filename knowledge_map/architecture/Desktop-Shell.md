@@ -741,7 +741,7 @@ and one-shot arming, and nothing is sent at load; stop is always available.
 `fetch_instrument_status`: **Sensor** (the ingress geometry from S[29] at the actual frame rate from
 the XVS period in S[9], 100 MHz clocks; "closed" while no XVS runs; the run window's x is a multiple of 8
 and y of 4, as the producer's offset check requires, and the Camera & Alignment hint says so), **Link** (P[12] errors, P[14]
-resyncs, P[7] bad and P[6] dropped frames per second; only errors above 10/s and resyncs above 1/s warn,
+resyncs, P[7] bad and P[6] dropped frames per second; only resyncs above 1/s and the 5 s average of errors above 10/s warn (`link.ingress_errors_warn`, `ingress_errors_avg_per_s`: Run at 5 kHz shows bursts of 8–13 errors, about 1.1/s on average, so one burst must not warn),
 bad frames above 1% and dropped frames above 0.1% of the sensor's frame rate warn only when sustained for 5 s
 (`link.bad_frames_warn`/`dropped_warn`, from the backend; a drop in Run is data loss), so a baseline of a few per second
 does not (about 0.1/s at rest)). Dropped frames are judged only while the results bridge is ARMED or RUNNING
