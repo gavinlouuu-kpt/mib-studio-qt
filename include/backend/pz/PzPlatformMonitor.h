@@ -89,6 +89,11 @@ const char* idMatchName(IdMatch m);
 // ingress errors 0.2/s dark, ~2/s with the LED at 7/60; resyncs ~0.1/s.
 inline constexpr double kIngressErrorWarnPerS = 10.0;
 inline constexpr double kResyncWarnPerS = 1.0;
+// Bad and dropped frames are judged against the sensor's frame rate, and only when the rate stays
+// above the threshold for kSustainedUs (a drop in Run is data loss; a blip is not a warning).
+inline constexpr double kBadFramesWarnFraction = 0.01;   // of the XVS frame rate
+inline constexpr double kDroppedWarnFraction = 0.001;    // of the XVS frame rate
+inline constexpr uint64_t kSustainedUs = 5'000'000;
 
 struct PzPlatformStatus {
     bool available{false};
@@ -121,6 +126,12 @@ struct PzPlatformStatus {
     double resyncsPerS{0.0};
     double badFramesPerS{0.0};
     double droppedPerS{0.0};
+    // Sustained loss, from the rates relative to the sensor's frame rate (never while the sensor is
+    // closed or inside the mode-switch settle window).
+    bool badFramesWarn{false};
+    bool droppedWarn{false};
+    double badFramesWarnPerS{0.0};
+    double droppedWarnPerS{0.0};
 
     // Sensor: S[9] reads the XVS period in 100 MHz host clocks (0 while the sensor is closed);
     // S[29] reads the ingress geometry {lines, OB lines, slots of 8 pixels} written at the last
@@ -162,6 +173,7 @@ private:
     std::mutex mutex_;
     bool havePrevious_{false};
     uint64_t settleUntilUs_{0};
+    uint64_t badSinceUs_{0}, droppedSinceUs_{0}; // 0 = not above its threshold
     uint64_t previousUs_{0};
     Counters previous_{};
 };

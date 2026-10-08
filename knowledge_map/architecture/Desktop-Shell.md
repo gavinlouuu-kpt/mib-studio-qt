@@ -702,9 +702,12 @@ backend's camera modes instead of `set_camera_overview`:
 
 **Link health, sensor and latency (#501).** The PL core sidebar section shows three more rows from
 `fetch_instrument_status`: **Sensor** (the ingress geometry from S[29] at the actual frame rate from
-the XVS period in S[9], 100 MHz clocks; "closed" while no XVS runs), **Link** (P[12] errors, P[14]
+the XVS period in S[9], 100 MHz clocks; "closed" while no XVS runs; the run window's x is a multiple of 8
+and y of 4, as the producer's offset check requires, and the Camera & Alignment hint says so), **Link** (P[12] errors, P[14]
 resyncs, P[7] bad and P[6] dropped frames per second; only errors above 10/s and resyncs above 1/s warn,
-bad and dropped frames are shown (a few per second is the baseline, about 0.1/s at rest)) and **Latency** (S[47–51]: max in µs and frames over budget of the frames seen). The
+bad frames above 1% and dropped frames above 0.1% of the sensor's frame rate warn only when sustained for 5 s
+(`link.bad_frames_warn`/`dropped_warn`, from the backend; a drop in Run is data loss), so a baseline of a few per second
+does not (about 0.1/s at rest)) and **Latency** (S[47–51]: max in µs and frames over budget of the frames seen). The
 preflight Sensor link check lists the same rates and the sensor. The backend reports the rates
 invalid (`link.rates_valid` false, "measuring…") for 1.5 s after a camera mode switch
 (`PzPlatformMonitor::settle`, called by `AppBackend::setInstrumentMode`), because the receiver and

@@ -279,6 +279,20 @@ PzPlatformStatus PzPlatformMonitor::sample(uint64_t nowUs) {
         s.badFramesPerS = rate(now.badFrames, previous_.badFrames, seconds);
         s.droppedPerS = rate(now.dropped, previous_.dropped, seconds);
     }
+    // Sustained loss against the sensor's frame rate: onset when the rate first exceeds the
+    // threshold, a warning once it has stayed above it for kSustainedUs.
+    s.badFramesWarnPerS = kBadFramesWarnFraction * s.xvsFps;
+    s.droppedWarnPerS = kDroppedWarnFraction * s.xvsFps;
+    const auto sustained = [&](bool above, uint64_t& since) {
+        if (!s.ratesValid || s.xvsFps <= 0.0 || !above) {
+            since = 0;
+            return false;
+        }
+        if (since == 0) since = nowUs;
+        return nowUs - since >= kSustainedUs;
+    };
+    s.badFramesWarn = sustained(s.badFramesPerS > s.badFramesWarnPerS, badSinceUs_);
+    s.droppedWarn = sustained(s.droppedPerS > s.droppedWarnPerS, droppedSinceUs_);
     havePrevious_ = true;
     previousUs_ = nowUs;
     previous_ = now;

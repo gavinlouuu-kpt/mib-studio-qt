@@ -245,6 +245,8 @@ function sensorLinkCheck(i: PreflightInput): PreflightCheck {
   const issues: string[] = [];
   if (l.ingress_errors_per_s > l.ingress_errors_warn_per_s) issues.push(`ingress errors above ${l.ingress_errors_warn_per_s}/s`);
   if (l.resyncs_per_s > l.resyncs_warn_per_s) issues.push(`resyncs above ${l.resyncs_warn_per_s}/s`);
+  if (l.bad_frames_warn) issues.push("bad frames above 1% of the frame rate for 5 s");
+  if (l.dropped_warn) issues.push("dropped frames above 0.1% of the frame rate for 5 s (data loss in Run)");
   return issues.length
     ? { ...base, status: "warning", detected, detail: `Sensor link: ${issues.join(", ")}. Check the sensor cable and the LED wiring.`, recovery: [RETRY] }
     : { ...base, status: "passed", detected, detail: `Link errors within the known baseline. Sensor ${sensor.text}.`, recovery: [] };

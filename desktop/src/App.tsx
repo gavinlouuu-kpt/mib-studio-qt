@@ -1776,6 +1776,7 @@ export default function App() {
                         : "Experiment window"}
                     </strong>
                     {cameraGeometry.overview && " — drag the yellow box or edit X/Y/W/H, then save; Experiment uses it."}
+                    {cameraGeometry.overview && instrumentModes && ` The run window is ${RUN_WINDOW.width}×${RUN_WINDOW.height}: x a multiple of ${RUN_WINDOW.xStep}, y a multiple of ${RUN_WINDOW.yStep} (the producer's offset check).`}
                     {rateSummary(cameraGeometry) && <span> {rateSummary(cameraGeometry)}</span>}
                   </div>
                 )}

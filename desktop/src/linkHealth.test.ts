@@ -23,8 +23,11 @@ describe("sensor link, sensor and latency readouts (#501)", () => {
     const hot = status({ link: { ...status().link!, ingress_errors_per_s: 25, resyncs_per_s: 0.5 } });
     expect(linkReadout(hot)).toEqual({ text: "25 err/s · 0.5 resync/s · 0.0 bad/s · 0.0 drop/s", cls: "warn" });
     expect(linkReadout(status({ link: { ...status().link!, resyncs_per_s: 2 } })).cls).toBe("warn");
-    // bad and dropped frames are shown, but only errors and resyncs warn (the doc's thresholds)
-    expect(linkReadout(status({ link: { ...status().link!, bad_frames_per_s: 3, dropped_per_s: 2 } }))).toEqual({ text: "0.2 err/s · 0.1 resync/s · 3.0 bad/s · 2.0 drop/s", cls: "" });
+    // bad and dropped frames are shown, and warn only when the backend reports them sustained above
+    // their share of the frame rate (a baseline of a few per second does not)
+    expect(linkReadout(status({ link: { ...status().link!, bad_frames_per_s: 3, dropped_per_s: 0.2 } }))).toEqual({ text: "0.2 err/s · 0.1 resync/s · 3.0 bad/s · 0.2 drop/s", cls: "" });
+    expect(linkReadout(status({ link: { ...status().link!, bad_frames_per_s: 8, bad_frames_warn: true } })).cls).toBe("warn");
+    expect(linkReadout(status({ link: { ...status().link!, dropped_per_s: 1, dropped_warn: true } })).cls).toBe("warn");
     // inside the settle window after a mode switch the backend reports no valid rates: nothing warns
     expect(linkReadout(status({ link: { ...status().link!, rates_valid: false, ingress_errors_per_s: 500 } }))).toEqual({ text: "measuring…", cls: "dim" });
   });
@@ -57,5 +60,9 @@ describe("sensor link in preflight (#501)", () => {
     const hot = link(status({ link: { ...status().link!, resyncs_per_s: 3 } }));
     expect(hot.status).toBe("warning");
     expect(hot.detail).toContain("resyncs above 1/s");
+    const loss = link(status({ link: { ...status().link!, dropped_warn: true, bad_frames_warn: true } }));
+    expect(loss.status).toBe("warning");
+    expect(loss.detail).toContain("dropped frames above 0.1% of the frame rate");
+    expect(loss.detail).toContain("bad frames above 1% of the frame rate");
   });
 });

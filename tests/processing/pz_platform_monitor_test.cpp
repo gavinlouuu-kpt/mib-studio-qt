@@ -187,6 +187,43 @@ int main() {
         MIB_EXPECT(run.geometryWidth == 512 && run.geometryHeight == 96, "default geometry 512x96");
     }
 
+    // Bad and dropped frames are judged against the frame rate (400 fps here: bad above 4/s, dropped
+    // above 0.4/s) and warn only once sustained for 5 s; a blip does not, a closed sensor never does.
+    {
+        r->strobeWindow[9] = 250000; // 400 fps
+        r->livePage[7] = 0;
+        r->livePage[6] = 0;
+        (void)monitor.sample(30'000'000);
+        r->livePage[7] = 100; // 100 bad frames in 10 s = 10/s: above 1% of 400
+        r->livePage[6] = 2;   // 0.2 dropped/s: below 0.1% of 400 (0.4)
+        auto s0 = monitor.sample(40'000'000);
+        MIB_EXPECT(s0.ratesValid && s0.badFramesWarnPerS == 4.0 && std::abs(s0.droppedWarnPerS - 0.4) < 1e-9, "thresholds follow the frame rate");
+        MIB_EXPECT(!s0.badFramesWarn && !s0.droppedWarn, "above the threshold, but not yet for 5 s");
+        r->livePage[7] = 150;
+        r->livePage[6] = 3;
+        auto s1 = monitor.sample(43'000'000); // 16.7 bad/s for 3 s
+        MIB_EXPECT(!s1.badFramesWarn, "3 s above the threshold is not sustained");
+        r->livePage[7] = 250;
+        r->livePage[6] = 4;
+        auto s2 = monitor.sample(46'000'000);
+        MIB_EXPECT(s2.badFramesWarn, "6 s above the threshold is sustained");
+        MIB_EXPECT(!s2.droppedWarn, "0.33 dropped/s is below 0.1% of 400");
+        // The rate drops back: the warning clears at once and the clock restarts.
+        auto s3 = monitor.sample(47'000'000);
+        MIB_EXPECT(!s3.badFramesWarn, "back under the threshold: no warning");
+        r->livePage[6] = 30;  // a burst of drops: 26/3 s ≈ 8.7/s
+        (void)monitor.sample(48'000'000);
+        r->livePage[6] = 60;
+        (void)monitor.sample(53'500'000);
+        r->livePage[6] = 90;
+        MIB_EXPECT(monitor.sample(59'000'000).droppedWarn, "sustained dropped frames warn");
+        // Sensor closed: thresholds are 0 and nothing warns.
+        r->strobeWindow[9] = 0;
+        r->livePage[6] = 500;
+        MIB_EXPECT(!monitor.sample(60'000'000).droppedWarn, "no warning while the sensor is closed");
+        r->strobeWindow[9] = 249966;
+    }
+
     // A mode switch resets the receiver: rates are invalid for the settle window, then resume from
     // the end of it (a spike during the switch never shows).
     r->livePage[12] = 100;
