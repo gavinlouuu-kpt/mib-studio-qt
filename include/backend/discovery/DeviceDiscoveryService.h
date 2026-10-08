@@ -58,6 +58,11 @@ public:
     // touching hardware (e.g. camera enumeration while capture is running).
     void setResourceGuard(DeviceKind kind, ResourceGuard guard);
 
+    // Kinds this instrument never uses: startDiscovery() refuses a request naming one of them
+    // with `reason` (shown to the operator) before any provider touches a port. An empty list
+    // clears the block.
+    void setBlockedKinds(std::vector<DeviceKind> kinds, std::string reason);
+
     // Validation happens before any work starts. Identical non-terminal
     // requests are coalesced onto the running job.
     static std::optional<std::string> validate(const DiscoveryRequest& request);
@@ -103,6 +108,8 @@ private:
     mutable std::condition_variable cv_;
     std::vector<std::unique_ptr<IDeviceDiscoveryProvider>> providers_;
     std::map<DeviceKind, ResourceGuard> guards_;
+    std::vector<DeviceKind> blockedKinds_;
+    std::string blockedReason_;
     std::map<std::string, std::shared_ptr<std::mutex>> resourceMutexes_;
     std::map<std::uint64_t, std::shared_ptr<Job>> jobs_;
     std::uint64_t nextJobId_{1};

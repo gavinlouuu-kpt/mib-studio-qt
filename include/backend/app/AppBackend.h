@@ -133,6 +133,9 @@ namespace backend
         // Service / Commissioning mode, latched by the shell: raw LED values are refused
         // outside it, on the backend side (not only in the UI).
         void setServiceMode(bool on);
+        // Empty, or why this instrument never opens the nanopositioner, pulse generator or ZC300
+        // stage ports: science runs on the PL (PZ7035), whose RS485 bus carries the pumps.
+        std::string plScienceSerialBlockReason() const;
         // The Run window survives a restart: written by every successful Run switch to
         // <dataDir>/instrument_run_window.json, read at initialize(). Never cleared, only replaced.
         void loadInstrumentRunWindow();

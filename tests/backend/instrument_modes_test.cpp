@@ -12,6 +12,7 @@
 #include "backend/app/ExperimentCoordinator.h"
 #include "backend/app/RecordingTarget.h"
 #include "backend/app/SciencePlacement.h"
+#include "backend/discovery/DeviceDiscoveryService.h"
 #include "backend/pz/PzInstrumentControl.h"
 #include "backend/services/CaptureService.h"
 
@@ -231,6 +232,31 @@ void testModeSequence(const mib::test::TempDir& td) {
         backend::bridge::BackendStageStatus stage;
         (void)facade.fetchStageStatus(stage);
         MIB_EXPECT(s.writes.empty(), "the status polls the UI makes at load write no PL register");
+    }
+
+    {
+        // PL science never probes or opens the nanopositioner, pulse-generator or ZC300 ports (the
+        // RS485 bus carries the pumps): the backend refuses, with a reason the UI shows.
+        for (const auto kind : {backend::discovery::DeviceKind::Nanopositioner, backend::discovery::DeviceKind::PulseGenerator,
+                                backend::discovery::DeviceKind::MotionStage}) {
+            backend::discovery::DiscoveryRequest request;
+            request.kinds = {kind};
+            const auto started = backend.deviceDiscovery().startDiscovery(request);
+            MIB_EXPECT(!started.accepted && started.reason.find("runs science on the PL") != std::string::npos,
+                       "serial hardware discovery is refused on a PL-science instrument");
+        }
+        backend::discovery::DiscoveryRequest cameras;
+        cameras.kinds = {backend::discovery::DeviceKind::Camera};
+        const auto cameraJob = backend.deviceDiscovery().startDiscovery(cameras);
+        MIB_EXPECT(cameraJob.accepted, "camera discovery still works: " + cameraJob.reason);
+        if (cameraJob.accepted) backend.deviceDiscovery().cancelDiscovery(cameraJob.jobId);
+        backend::bridge::StageCommand connect;
+        connect.action = backend::bridge::StageCommandAction::Connect;
+        connect.portName = "/dev/ttyPS1";
+        connect.modbusAddress = 5;
+        const auto stage = facade.dispatch(connect);
+        MIB_EXPECT(!stage.ok && stage.message.find("runs science on the PL") != std::string::npos,
+                   "ZC300 stage connect is refused on a PL-science instrument: " + stage.message);
     }
 
     std::string err;

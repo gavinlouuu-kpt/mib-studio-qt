@@ -565,6 +565,11 @@ namespace backend
         // never connects, homes or moves (ADR 0013 §5).
         deviceDiscovery_->registerProvider(std::make_unique<discovery::Zc300Provider>(*serialBusManager_));
         const auto captureBusy = [this] { return captureService_ && captureService_->isRunning(); };
+        if (const auto blockReason = plScienceSerialBlockReason(); !blockReason.empty())
+            deviceDiscovery_->setBlockedKinds({discovery::DeviceKind::Nanopositioner,
+                                               discovery::DeviceKind::PulseGenerator,
+                                               discovery::DeviceKind::MotionStage},
+                                              blockReason);
         deviceDiscovery_->setResourceGuard(discovery::DeviceKind::Camera, captureBusy);
         deviceDiscovery_->setResourceGuard(discovery::DeviceKind::Framegrabber, captureBusy);
 
@@ -1279,6 +1284,13 @@ namespace backend
     std::pair<int, int> AppBackend::instrumentRunOffset() const
     {
         return {instrumentRunX_.load(), instrumentRunY_.load()};
+    }
+
+    std::string AppBackend::plScienceSerialBlockReason() const
+    {
+        if (app::hostProcessingAvailable()) return {};
+        return "This instrument runs science on the PL: the nanopositioner, pulse generator and ZC300 stage "
+               "are not used here, and their serial ports are never probed (the pumps share the RS485 bus)";
     }
 
     bool AppBackend::instrumentRunWindowSet() const { return instrumentRunSet_.load(); }

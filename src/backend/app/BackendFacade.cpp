@@ -2081,6 +2081,8 @@ namespace backend::bridge
         // checked but not held across serial I/O.
         if (command.action == StageCommandAction::Connect || command.action == StageCommandAction::Disconnect)
         {
+            if (command.action == StageCommandAction::Connect)
+                if (const auto blocked = backend_.plScienceSerialBlockReason(); !blocked.empty()) return fail(blocked);
             if (!backend_.experiment().withIdleConfiguration([] {}))
                 return fail("Stage connection cannot change during an experiment");
             if (command.action == StageCommandAction::Disconnect)
