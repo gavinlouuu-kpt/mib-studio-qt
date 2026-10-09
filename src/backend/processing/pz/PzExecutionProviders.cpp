@@ -375,6 +375,8 @@ std::string PzDevMemExecutionProvider::ringPlacementProblem() {
 backend::pz::RingStatus PzDevMemExecutionProvider::ringStatus() {
     backend::pz::RingStatus none;
     none.why = "no frame ring is armed";
+    none.restoreNeeded = ringRestoreNeeded_.load();
+    if (none.restoreNeeded) none.why = "the frame ring never reached idle after STOP: the PL needs a restore";
     if (!ringProgrammed_.load()) return none;
     std::string why;
     if (!backend::pz::pzPlConfigured(&why)) {
@@ -541,12 +543,7 @@ bool PzDevMemExecutionProvider::start(uint64_t runId, std::string* error) {
     }
     if (!backend::pz::pzPlConfigured(error) || !ensureMapped(error)) return false;
     auto* map = map_.get();
-    const uint32_t hz = map->reg(PZ_MIB_REG_TIMESTAMP_HZ);
-    pipeline_.setTimestampHz(hz ? hz : PZ_MIB_TIMESTAMP_HZ_DEFAULT);
-    pipeline_.reset(runId, map->reg(PZ_MIB_REG_EPOCH),
-                    map->reg(PZ_MIB_REG_GENERATION));
-    // The every-frame ring is programmed before ARM (STORE_MODE is latched there) and only where it is safe: the
-    // PL does not enforce a DDR floor, so a ring that would overlap Linux's RAM refuses the run.
+    // Before the generation is read below: RESET_GENERATION changes it.
     ringProgrammed_.store(false);
     ringRestoreNeeded_.store(false);
     if (layout_.ringFrames > 0) {
@@ -571,6 +568,12 @@ bool PzDevMemExecutionProvider::start(uint64_t runId, std::string* error) {
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
         }
     }
+    const uint32_t hz = map->reg(PZ_MIB_REG_TIMESTAMP_HZ);
+    pipeline_.setTimestampHz(hz ? hz : PZ_MIB_TIMESTAMP_HZ_DEFAULT);
+    pipeline_.reset(runId, map->reg(PZ_MIB_REG_EPOCH),
+                    map->reg(PZ_MIB_REG_GENERATION));
+    // The every-frame ring is programmed before ARM (STORE_MODE is latched there) and only where it is safe: the
+    // PL does not enforce a DDR floor, so a ring that would overlap Linux's RAM refuses the run.
     if (layout_.ringFrames > 0) {
         std::string why;
         const auto end = readLinuxRamEnd(&why);
