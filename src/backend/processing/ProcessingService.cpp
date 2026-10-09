@@ -645,6 +645,7 @@ void ProcessingService::startExperiment() {
     lastDropLogUs_.store(0, std::memory_order_relaxed);
     resetRealtimeMetrics();
     experimentAccounting_.reset(experimentAccountingGeneration_, experimentAccountingPolicyAllowsDrops_);
+    providerLossLogged_.store(0, std::memory_order_relaxed);
     experimentSettled_.store(false, std::memory_order_release);
     backend::diagnostics::PipelineTimingRecorder::instance().resetLiveLatency();
     // Reset auto-capture counter when experiment starts
@@ -2708,8 +2709,22 @@ void ProcessingService::accumulateProviderIdentification(const backend::processi
 
 void ProcessingService::ingestProviderFrame(const backend::processing::ProviderFrame& frame) {
     const uint64_t idx = frame.frameId;
+    // The accounting keeps only counts, so a run that ends incompleteLoss says nothing about where the loss
+    // was. Name the frames (the first few per run) so the board owner can line them up with the receiver's
+    // counters (2026-10-09: a 55-frame gap and one malformed frame in a 100,100-frame run).
+    constexpr uint32_t kMaxLossLogsPerRun = 32;
+    const bool tracking = experimentActive_.load(std::memory_order_relaxed);
+    const bool hadRange = experimentAccounting_.hasAdmitted();
+    const uint64_t lastIdx = experimentAccounting_.lastAdmittedIndex();
     noteRealtimeAdmitted(idx);
+    if (tracking && hadRange && idx > lastIdx + 1 &&
+        providerLossLogged_.fetch_add(1, std::memory_order_relaxed) < kMaxLossLogsPerRun) {
+        SPDLOG_WARN("Experiment: PL frame index gap: {} frame(s) missing between frame {} and frame {}", idx - lastIdx - 1, lastIdx, idx);
+    }
     if (frame.invalid()) {
+        if (tracking && providerLossLogged_.fetch_add(1, std::memory_order_relaxed) < kMaxLossLogsPerRun) {
+            SPDLOG_WARN("Experiment: PL frame {} is malformed (ingress error): nothing was measured", idx);
+        }
         // An ingress-error frame: the input was unusable, nothing was measured.
         noteRealtimeOutcome(idx, backend::recording::FrameOutcome::StoreMalformed);
         return;

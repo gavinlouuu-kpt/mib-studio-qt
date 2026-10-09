@@ -56,9 +56,10 @@ uint32_t stableStrobe(IPzPlatformRegisters& r, unsigned index) {
     return stableWord([&] { return r.strobe(index); });
 }
 
-constexpr unsigned kLiveDropped = 6, kLiveBadFrames = 7, kLiveIngressErrors = 12, kLiveResyncs = 14;
+constexpr unsigned kLiveCommand = 8, kLiveDropped = 6, kLiveBadFrames = 7, kLiveIngressErrors = 12, kLiveResyncs = 14;
 constexpr unsigned kStrobeControl = 0, kStrobeDelay = 1, kStrobeWidth = 2, kStrobeStatus = 12, kStrobeGuard = 13;
-constexpr unsigned kXvsPeriod = 9, kIngressGeometry = 29;
+constexpr unsigned kXvsPeriod = 9, kIngressGeometry = 29, kCellMode = 46;
+constexpr uint32_t kUnetEnable = 0x10u; // P[8] bit 4: the same level PzInstrumentControl::setCellPath writes
 constexpr double kHostClockHz = 100e6; // the XVS period counts 100 MHz host clocks
 constexpr unsigned kLatencyLast = 47, kLatencyMax = 49, kLatencyOverBudget = 50, kLatencyFrames = 51;
 constexpr double kStrobeClockMHz = 100.0;  // S[10] kHz = 100,000 on these images
@@ -317,6 +318,10 @@ PzPlatformStatus PzPlatformMonitor::sample(uint64_t nowUs) {
     };
     const uint32_t bridgeState = r.bridge(PZ_MIB_REG_STATE);
     s.bridgeActive = bridgeState == PZ_MIB_STATE_ARMED || bridgeState == PZ_MIB_STATE_RUNNING;
+    // P[6] is the frames-dropped counter of the streaming U-Net path, which starts only in cell mode
+    // (Run): in Align the bridge is armed for previews but every frame counts as dropped (about the
+    // sensor rate), which is not loss.
+    s.cellPathOn = r.strobe(kCellMode) != 0 && (r.live(kLiveCommand) & kUnetEnable) != 0;
     s.rxHealPresent = r.live(kRxHealWindow) == kRxHealId;
     if (s.rxHealPresent) {
         const uint32_t heal = r.live(kRxHealWindow + 2);
@@ -350,7 +355,7 @@ PzPlatformStatus PzPlatformMonitor::sample(uint64_t nowUs) {
         errorHistory_.clear();
     }
     s.badFramesWarn = sustained(s.badFramesPerS > s.badFramesWarnPerS, badSinceUs_);
-    s.droppedWarn = sustained(s.bridgeActive && s.droppedPerS > s.droppedWarnPerS, droppedSinceUs_);
+    s.droppedWarn = sustained(s.bridgeActive && s.cellPathOn && s.droppedPerS > s.droppedWarnPerS, droppedSinceUs_);
     havePrevious_ = true;
     previousUs_ = nowUs;
     previous_ = now;
