@@ -108,6 +108,13 @@ describe("the experiment list", () => {
     // reason 7 alone is enough even if the flag were missing
     expect(runRow(run({ reason: 7, counts_unknown: false })).seen).toBe("—");
   });
+  it("a run whose totals do not add up shows no numbers and says so", () => {
+    const r = runRow(run({ totals_inconsistent: true }));
+    expect(r.completion).toBe("Totals inconsistent: numbers not shown");
+    expect([r.seen, r.stored, r.empty, r.dropped, r.duration]).toEqual(["—", "—", "—", "—", "—"]);
+    expect(r.unknownTotals).toBe(true);
+    expect(completionView(run({ reason: 7, counts_unknown: true, totals_inconsistent: true })).text).toBe("Recovered after power loss: true totals unknown");
+  });
   it("drops make a run partial, with the percent of the frames that passed the filter", () => {
     expect(completionView(run({ dropped: 21 }))).toEqual({ tone: "bad", text: "Partial: 21 dropped (2.0 %)" });
     expect(completionView(run({ dropped: 5 }))).toEqual({ tone: "warn", text: "Partial: 5 dropped (0.5 %)" });

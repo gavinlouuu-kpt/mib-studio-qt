@@ -490,10 +490,10 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
 `fetch_ssd_status` (JSON: `configured`, `state` ABSENT/INITIALISING/RECOVERING/READY/RECORDING/STOPPING/WEDGED/RUN_TABLE_FULL/RAW_FULL/UNFORMATTED,
 `usable`, `active`, `reason`, log room, `open_run` with the live counters, `recovered_runs`/`recovered_ids`, `skipped_bad_entries`) and
 `fetch_ssd_runs` (`{ok, reason, runs[]}`, the run table oldest first); a short `ssd` block rides on `fetch_instrument_status`. Both are reads open to
-every client. `BackendFacade` → `AppBackend::ssdStore()` → `pz::SsdStore` (`include/backend/pz/SsdStore.h`), which runs the board owner's `pzrec` CLI
+every client. `BackendFacade` → `AppBackend::ssdStore()` (the store is stood up by `initialize()`; before that it is the empty ABSENT one) → `pz::SsdStore` (`include/backend/pz/SsdStore.h`), which runs the board owner's `pzrec` CLI
 (pz7035 `tools/pzrec`, JSON is the contract) through `ISsdDevice`/`PzrecCliDevice` in a background thread with a bounded timeout: the bridge never waits
 for pzrec. Configuration: env `MIB_PZREC` (the binary) and `MIB_SSD_IMAGE` (a disk image or device); unset is ABSENT ("No SSD: nothing can be saved").
-A failing, hanging or garbled pzrec is WEDGED with its stderr as the reason, never READY. `recovered_runs`/`recovered_ids` are derived from the run table (reason 7 above the highest id seen before this start, kept in `<data-dir>/ssd-state.json`), not taken from pzrec's one-shot status fields. Run starts/stops, export and delete are later phases (S2, S3).
+A failing, hanging or garbled pzrec (the runner is bounded by the child's exit and a deadline, output over 4 MiB is refused) is WEDGED with its stderr as the reason, never READY. `recovered_runs`/`recovered_ids` are derived from the run table (reason 7 above the highest id seen before this start, kept in `<data-dir>/ssd-state.json`), not taken from pzrec's one-shot status fields. Run starts/stops, export and delete are later phases (S2, S3).
 Merge coordination: 35 is taken; the next free number is 36, to be reserved with the coordinator.
 
 ## ABI 34: the every-frame ring (#649 v1)

@@ -58,6 +58,8 @@ export interface SsdRun {
   sampler_n: number;
   reason: number;
   counts_unknown: boolean;
+  /** The totals do not add up (seen = empty + invalid not sampled + passed; passed = written + dropped + failed): shown as "—". */
+  totals_inconsistent?: boolean;
   size_bytes: number;
   recoveries: number;
   first_frame_id: number;
@@ -158,6 +160,7 @@ function recoveredRunsText(ids: number[], count: number): string {
 export function completionView(r: SsdRun): { tone: Tone; text: string } {
   if (r.open) return { tone: "info", text: "Recording" };
   if (r.reason === 7 || r.counts_unknown) return { tone: "warn", text: "Recovered after power loss: true totals unknown" };
+  if (r.totals_inconsistent) return { tone: "warn", text: "Totals inconsistent: numbers not shown" };
   const pct = r.passed > 0 ? (100 * r.dropped) / r.passed : 0;
   const dropped = r.dropped > 0 ? `Partial: ${r.dropped.toLocaleString("en-US")} dropped (${pct < 0.1 ? "<0.1" : pct.toFixed(pct < 10 ? 1 : 0)} %)` : "";
   switch (r.reason) {
@@ -213,7 +216,7 @@ export function runDurationSeconds(r: Pick<SsdRun, "first_ticks" | "last_ticks" 
 /** `live`: the open run's counters from the status (the table does not hold the run being recorded) and the wall clock for its elapsed time. */
 export function runRow(r: SsdRun, live?: { open: SsdOpenRun | null | undefined; nowMs: number }): SsdRunRow {
   const open = r.open && live?.open && live.open.id === r.id ? live.open : null;
-  const unknown = !open && (r.counts_unknown || r.reason === 7 || r.open);
+  const unknown = !open && (r.counts_unknown || r.totals_inconsistent === true || r.reason === 7 || r.open);
   const seen = open ? open.seen : r.seen, written = open ? open.written : r.written, empty = open ? open.empty_filtered : r.empty_filtered;
   const droppedN = open ? open.dropped : r.dropped, passed = open ? open.passed : r.passed;
   const num = (n: number) => (unknown ? "—" : n.toLocaleString("en-US"));
@@ -233,7 +236,7 @@ export function runRow(r: SsdRun, live?: { open: SsdOpenRun | null | undefined; 
     completion: completion.text,
     tone: completion.tone,
     deleted: r.deleted,
-    unknownTotals: !open && (r.counts_unknown || r.reason === 7),
+    unknownTotals: !open && (r.counts_unknown || r.totals_inconsistent === true || r.reason === 7),
     clockUnsynced: r.wall_source === 0,
   };
 }

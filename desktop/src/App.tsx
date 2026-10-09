@@ -769,7 +769,7 @@ export default function App() {
     poll();
     const id = window.setInterval(poll, 2000);
     return () => { cancelled = true; window.clearInterval(id); };
-  }, [ready]);
+  }, [ready, isRemote]);
   const refreshInstrument = useCallback(() => { void bridge.fetchInstrumentStatus().then(setInstrument).catch(() => undefined); }, []);
   const onStopRun = useCallback(async () => {
     try {

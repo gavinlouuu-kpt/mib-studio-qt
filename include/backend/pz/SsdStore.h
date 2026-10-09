@@ -45,6 +45,7 @@ struct SsdRun {
     uint32_t recoveries{0};
     uint32_t reason{0};          // completion reason (0 clean, 1 drain fault, 5 not stopped, 6 length limit, 7 recovered at mount, 8 abort, 9 space limit)
     bool countsUnknown{false};   // reason 7: the totals are not known, no numbers are shown
+    bool totalsInconsistent{false}; // the totals do not add up (seen = empty + invalid not sampled + passed; passed = written + dropped + failed): no numbers either
 };
 
 struct SsdStatus {
@@ -88,7 +89,7 @@ private:
 };
 
 // Runs a command with a timeout, capturing stdout and stderr (exposed for the tests of the timeout and exit-code handling).
-struct RunResult { bool started{false}; bool timedOut{false}; int exitCode{-1}; std::string out, err; };
+struct RunResult { bool started{false}; bool timedOut{false}; bool truncated{false}; int exitCode{-1}; std::string out, err; };  // truncated: more than 4 MiB on a pipe
 RunResult runBounded(const std::vector<std::string>& argv, std::chrono::milliseconds timeout);
 
 // The store never blocks its callers on the CLI: with `background` a thread refreshes the status every `interval` (and the run table when the status says it

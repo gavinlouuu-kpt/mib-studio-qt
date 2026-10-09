@@ -4,9 +4,11 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <thread>
 #include <utility>
 
 #if !defined(_WIN32)
@@ -14,6 +16,7 @@
 #include <poll.h>
 #include <signal.h>
 #include <spawn.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 extern char** environ;
@@ -151,11 +154,38 @@ bool parseSsdRuns(const std::string& text, std::vector<SsdRun>& out, std::string
             !getBool(e, "counts_unknown", r.countsUnknown, why)) {
             return false;
         }
+        // A table the library could not have written is refused whole: a list the UI cannot trust is worse than none.
+        if (r.endLba < r.startLba) {
+            if (why) *why = "pzrec runs: run " + std::to_string(r.id) + " ends before it starts";
+            return false;
+        }
+        for (const auto& other : runs) {
+            if (other.id == r.id) {
+                if (why) *why = "pzrec runs: duplicate run id " + std::to_string(r.id);
+                return false;
+            }
+        }
+        // The totals must add up: seen = empty + invalid not sampled + passed, passed = written + dropped + failed. A run that does not add up shows
+        // no numbers (the same "—" as a run with unknown totals) and says so.
+        if (!r.countsUnknown && !r.open &&
+            (r.seen != r.emptyFiltered + r.invalidNotSampled + r.passed || r.passed != r.written + r.dropped + r.failed)) {
+            r.totalsInconsistent = true;
+        }
         runs.push_back(r);
     }
     out = std::move(runs);
     return true;
 }
+
+namespace {
+#if !defined(_WIN32)
+bool makePipe(int fds[2]) {
+    if (pipe(fds) != 0) return false;
+    for (int i = 0; i < 2; ++i) fcntl(fds[i], F_SETFD, fcntl(fds[i], F_GETFD) | FD_CLOEXEC);
+    return true;
+}
+#endif
+} // namespace
 
 RunResult runBounded(const std::vector<std::string>& argv, std::chrono::milliseconds timeout) {
     RunResult r;
@@ -166,8 +196,8 @@ RunResult runBounded(const std::vector<std::string>& argv, std::chrono::millisec
 #else
     if (argv.empty()) { r.err = "no command"; return r; }
     int outPipe[2], errPipe[2];
-    if (pipe2(outPipe, O_CLOEXEC) != 0) { r.err = std::string("pipe: ") + std::strerror(errno); return r; }
-    if (pipe2(errPipe, O_CLOEXEC) != 0) {
+    if (!makePipe(outPipe)) { r.err = std::string("pipe: ") + std::strerror(errno); return r; }
+    if (!makePipe(errPipe)) {
         r.err = std::string("pipe: ") + std::strerror(errno);
         close(outPipe[0]); close(outPipe[1]);
         return r;
@@ -194,33 +224,56 @@ RunResult runBounded(const std::vector<std::string>& argv, std::chrono::millisec
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     int fds[2] = {outPipe[0], errPipe[0]};
     bool open[2] = {true, true};
+    for (int fd : fds) fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
     constexpr size_t kMaxCapture = 4u << 20;  // a run table of 256 entries is about 60 KB
-    while (open[0] || open[1]) {
+    auto drain = [&](int i) {
+        char buf[4096];
+        for (;;) {
+            const ssize_t got = read(fds[i], buf, sizeof buf);
+            if (got > 0) {
+                std::string& dst = i == 0 ? r.out : r.err;
+                if (dst.size() < kMaxCapture) dst.append(buf, static_cast<size_t>(got));
+                else r.truncated = true;
+                continue;
+            }
+            if (got < 0 && (errno == EINTR)) continue;
+            if (got < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return;
+            open[i] = false;  // EOF or a hard error
+            return;
+        }
+    };
+    int status = 0;
+    bool exited = false;
+    // The child's exit, not the pipes, ends the wait: a child that closes its output and keeps running, or a grandchild that inherits the pipes and
+    // outlives it, must not hold us past the deadline. Every wait below is bounded by the deadline; the last resort is SIGKILL.
+    while (!exited) {
         const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
-        if (left.count() <= 0) { r.timedOut = true; break; }
+        if (left.count() <= 0) break;
         pollfd p[2];
         int n = 0, idx[2];
         for (int i = 0; i < 2; ++i) if (open[i]) { p[n] = {fds[i], POLLIN, 0}; idx[n++] = i; }
-        const int pr = poll(p, n, static_cast<int>(std::min<long long>(left.count(), 1000)));
-        if (pr < 0) { if (errno == EINTR) continue; break; }
-        for (int k = 0; k < n; ++k) {
-            if (!(p[k].revents & (POLLIN | POLLHUP | POLLERR))) continue;
-            char buf[4096];
-            const ssize_t got = read(fds[idx[k]], buf, sizeof buf);
-            if (got > 0) {
-                std::string& dst = idx[k] == 0 ? r.out : r.err;
-                if (dst.size() < kMaxCapture) dst.append(buf, static_cast<size_t>(got));
-            } else if (got == 0 || (got < 0 && errno != EINTR && errno != EAGAIN)) {
-                open[idx[k]] = false;
-            }
+        if (n > 0) {
+            const int pr = poll(p, n, static_cast<int>(std::min<long long>(left.count(), 50)));
+            if (pr > 0) for (int k = 0; k < n; ++k) if (p[k].revents & (POLLIN | POLLHUP | POLLERR)) drain(idx[k]);
+            // pr < 0 (not EINTR) or a closed pipe: fall through to the bounded wait for the exit below
+            if (pr < 0 && errno != EINTR) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        } else {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
+        const pid_t w = waitpid(pid, &status, WNOHANG);
+        if (w == pid) exited = true;
+        else if (w < 0 && errno != EINTR) { exited = true; status = 0; }
+    }
+    if (exited) {
+        for (int i = 0; i < 2; ++i) if (open[i]) drain(i);  // what the child wrote before it exited
+        r.exitCode = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+    } else {
+        r.timedOut = true;
+        kill(pid, SIGKILL);
+        while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
     }
     close(outPipe[0]);
     close(errPipe[0]);
-    if (r.timedOut) kill(pid, SIGKILL);
-    int status = 0;
-    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
-    if (!r.timedOut) r.exitCode = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
     return r;
 #endif
 }
@@ -237,6 +290,7 @@ bool PzrecCliDevice::call(const char* verb, std::string& json, std::string* erro
     };
     if (!r.started) { if (error) *error = "pzrec could not be run: " + firstLine(r.err); return false; }
     if (r.timedOut) { if (error) *error = "pzrec " + std::string(verb) + " did not answer within " + std::to_string(timeout_.count()) + " ms"; return false; }
+    if (r.truncated) { if (error) *error = "pzrec " + std::string(verb) + " wrote more than 4 MiB: refused"; return false; }
     if (r.exitCode != 0) {
         if (error) {
             *error = "pzrec " + std::string(verb) + " exited with " + std::to_string(r.exitCode);
@@ -309,20 +363,34 @@ uint32_t readSeenId(const std::string& path) {
     return it->get<uint32_t>();
 }
 
-// Atomic (a temporary file, then rename): a power loss leaves the old value or the new one, never half of it.
+// Atomic and durable (a temporary file, fsync, rename, fsync of the directory): a power loss leaves the old value or the new one, never half of it.
 void writeSeenId(const std::string& path, uint32_t id) {
     if (path.empty()) return;
     std::error_code ec;
+    const std::filesystem::path target(path);
+    if (target.has_parent_path()) std::filesystem::create_directories(target.parent_path(), ec);
     const std::string tmp = path + ".tmp";
+    const std::string body = json{{"last_seen_run_id", id}}.dump() + "\n";
+#if !defined(_WIN32)
+    const int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) return;
+    bool ok = ::write(fd, body.data(), body.size()) == static_cast<ssize_t>(body.size()) && ::fsync(fd) == 0;
+    ::close(fd);
+    if (!ok || std::rename(tmp.c_str(), path.c_str()) != 0) { std::filesystem::remove(tmp, ec); return; }
+    const std::string dir = target.has_parent_path() ? target.parent_path().string() : std::string(".");
+    const int dfd = ::open(dir.c_str(), O_RDONLY);
+    if (dfd >= 0) { ::fsync(dfd); ::close(dfd); }
+#else
     {
         std::ofstream out(tmp, std::ios::trunc);
         if (!out) return;
-        out << json{{"last_seen_run_id", id}}.dump() << "\n";
+        out << body;
         out.flush();
         if (!out) { std::filesystem::remove(tmp, ec); return; }
     }
     std::filesystem::rename(tmp, path, ec);
     if (ec) std::filesystem::remove(tmp, ec);
+#endif
 }
 } // namespace
 

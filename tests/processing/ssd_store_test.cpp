@@ -276,6 +276,41 @@ int main(int argc, char** argv) {
         for (const auto& p : {good, bad, slow, junk}) std::remove(p.c_str());
     }
 
+    // --- bounded in every way: pipes closed, grandchildren, huge output --------------------------------------------------------
+    {
+        const auto t0 = std::chrono::steady_clock::now();
+        const auto closed = pz::runBounded({"/bin/sh", "-c", "exec >&- 2>&-; sleep 30"}, milliseconds(300));
+        MIB_EXPECT(closed.timedOut && std::chrono::steady_clock::now() - t0 < std::chrono::seconds(5), "a child that closes its output and keeps running is killed at the deadline");
+        const auto t1 = std::chrono::steady_clock::now();
+        const auto grand = pz::runBounded({"/bin/sh", "-c", "echo hi; sleep 3 & exit 0"}, milliseconds(5000));
+        MIB_EXPECT(!grand.timedOut && grand.exitCode == 0 && grand.out == "hi\n" && std::chrono::steady_clock::now() - t1 < std::chrono::seconds(2),
+                   "a grandchild holding the pipes does not hold us once the child has exited");
+        const std::string huge = writeScript("fake_pzrec_huge", "head -c 5000000 /dev/zero | tr '\\0' x");
+        pz::SsdStore hugeStore(std::make_unique<pz::PzrecCliDevice>(huge, "/tmp/none.img", milliseconds(10000)), milliseconds(0));
+        const auto h = hugeStore.status();
+        MIB_EXPECT(h.state == pz::SsdState::Wedged && h.reason.find("4 MiB") != std::string::npos, "an output past the 4 MiB cap is refused, not parsed as a prefix: " + h.reason);
+        std::remove(huge.c_str());
+    }
+
+    // --- a run table the library could not have written ------------------------------------------------------------------------------
+    {
+        std::vector<pz::SsdRun> runs;
+        std::string why;
+        const std::string run1 = std::string(kRuns).substr(std::string(kRuns).find('{'), std::string(kRuns).find("},") - std::string(kRuns).find('{') + 1);
+        MIB_EXPECT(!pz::parseSsdRuns("[" + run1 + "," + run1 + "]", runs, &why) && why.find("duplicate run id 1") != std::string::npos, "duplicate run ids refuse the table: " + why);
+        MIB_EXPECT(!pz::parseSsdRuns("[" + replaceFirst(replaceFirst(run1, "\"start_lba\":2048", "\"start_lba\":999999"), "\"end_lba\":123849", "\"end_lba\":5") + "]", runs, &why) &&
+                       why.find("ends before it starts") != std::string::npos, "end_lba < start_lba refuses the table");
+        MIB_REQUIRE(pz::parseSsdRuns("[" + run1 + "]", runs, &why), why);
+        MIB_EXPECT(!runs[0].totalsInconsistent, "the real run's totals add up");
+        MIB_REQUIRE(pz::parseSsdRuns("[" + replaceFirst(run1, "\"seen\":50000", "\"seen\":50001") + "]", runs, &why), why);
+        MIB_EXPECT(runs[0].totalsInconsistent && !runs[0].countsUnknown, "seen != empty + invalid not sampled + passed is flagged");
+        MIB_REQUIRE(pz::parseSsdRuns("[" + replaceFirst(run1, "\"written\":1050", "\"written\":1049") + "]", runs, &why), why);
+        MIB_EXPECT(runs[0].totalsInconsistent, "passed != written + dropped + failed is flagged");
+        // Unknown totals (reason 7) and the open run are not judged by the identities.
+        MIB_REQUIRE(pz::parseSsdRuns(kRuns, runs, &why) && runs.size() == 2, why);
+        MIB_EXPECT(!runs[1].totalsInconsistent, "a reason-7 run with zero counters is not 'inconsistent'");
+    }
+
     // --- the real pzrec on a fake disk (optional) ------------------------------------------------------------------------
     if (argc > 1) {
         const std::string pzrec = argv[1];

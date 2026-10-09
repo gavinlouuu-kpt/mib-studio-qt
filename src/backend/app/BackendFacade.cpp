@@ -3137,7 +3137,7 @@ nlohmann::json ssdRunsJson(backend::AppBackend& app) {
         // A run recovered at mount has unknown totals: the UI shows no numbers for it (the counts stay in the JSON as the entry's own, flagged).
         nlohmann::json e{{"id", r.id}, {"open", r.open}, {"deleted", r.deleted}, {"incomplete", r.incomplete},
                          {"start_unix_ms", r.startUnixMs}, {"wall_source", r.wallSource}, {"client_tag", r.clientTag},
-                         {"filter", r.filter}, {"sampler_n", r.samplerN}, {"reason", r.reason}, {"counts_unknown", r.countsUnknown},
+                         {"filter", r.filter}, {"sampler_n", r.samplerN}, {"reason", r.reason}, {"counts_unknown", r.countsUnknown}, {"totals_inconsistent", r.totalsInconsistent},
                          {"size_bytes", r.endLba > r.startLba ? (r.endLba - r.startLba) * kSectorBytes : 0}, {"recoveries", r.recoveries},
                          {"first_frame_id", r.firstFrameId}, {"last_frame_id", r.lastFrameId}, {"tick_hz", r.tickHz},
                          {"first_ticks", r.firstTicks}, {"last_ticks", r.lastTicks},
