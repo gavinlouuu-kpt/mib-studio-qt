@@ -369,6 +369,14 @@ std::optional<uint32_t> PzPlatformMonitor::rxHealAutoResets() {
     return stableRead(*registers_, kRxHealWindow + 3);
 }
 
+std::optional<double> PzPlatformMonitor::sensorFps() {
+    std::scoped_lock lk(mutex_);
+    if (!registers_ || !registers_->plConfigured(nullptr)) return std::nullopt;
+    const uint32_t period = stableStrobe(*registers_, kXvsPeriod);
+    if (period == 0) return std::nullopt;
+    return kHostClockHz / period;
+}
+
 std::optional<uint32_t> PzPlatformMonitor::rxNoFsFrames() {
     std::scoped_lock lk(mutex_);
     if (!registers_ || !registers_->plConfigured(nullptr)) return std::nullopt;

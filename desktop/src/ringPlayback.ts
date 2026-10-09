@@ -60,7 +60,7 @@ export function decodeRingFrame(buf: ArrayBuffer): RingFrame {
     const w = (k: number) => v.getUint32(at + 4 * k, true);
     cells.push({
       x: w(15) & 0xffff, y: w(15) >>> 16, width: w(16) & 0xffff, height: w(16) >>> 16,
-      valid: w(17) !== 0,
+      valid: (w(17) & 0xffff) !== 0, // word 17 as in the run preview: count << 24 | rank << 16 | valid
       payload: Array.from({ length: 15 }, (_, k) => w(k)),
     });
   }

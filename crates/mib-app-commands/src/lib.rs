@@ -1374,6 +1374,34 @@ pub fn save_camera_roi(state: &AppState, x: i32, y: i32, w: i32, h: i32) -> Resu
 }
 
 /// PZ7035 camera mode (ABI 27, #501 P1): "align" or "run" at the window offset (x, y).
+/// The every-frame ring's status (ABI 34, #649 v1): JSON, also the `ring` block of the instrument status.
+pub fn fetch_ring_status(state: &AppState) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().fetch_ring_status()).map_err(|e| e.to_string())
+}
+
+/// One buffered frame as a 'MIBR' packet; the error names why there is none (out of range, overwritten, not frozen).
+pub fn fetch_ring_frame(state: &AppState, seq: u64) -> Result<Vec<u8>, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    let bytes = guard.pin_mut().fetch_ring_frame(seq);
+    if bytes.is_empty() {
+        return Err(format!("RING_FRAME_UNAVAILABLE: {}", guard.pin_mut().ring_frame_error()));
+    }
+    Ok(bytes)
+}
+
+/// Stop Run and hold the frame ring for playback.
+pub fn ring_freeze(state: &AppState) -> Result<CmdResult, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().ring_freeze().into())
+}
+
+/// Resume Run: a new frame ring.
+pub fn ring_resume(state: &AppState) -> Result<CmdResult, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().ring_resume().into())
+}
+
 pub fn sync_wall_clock(state: &AppState, unix_ms: i64) -> Result<CmdResult, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     Ok(guard.pin_mut().sync_wall_clock(unix_ms).into())

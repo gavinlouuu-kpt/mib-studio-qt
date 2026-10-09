@@ -3046,6 +3046,76 @@ std::string BackendFacade::fetchPlatformInfoJson() const {
     }.dump();
 }
 
+namespace {
+// The ring as the UI needs it (fetch_ring_status and the `ring` block of the instrument status). `available` means a
+// ring is wanted and fits; the buffered range is what is readable now (live while running, the last N when frozen).
+nlohmann::json ringStatusJson(backend::AppBackend& backend) {
+    nlohmann::json j{{"available", false}, {"reason", ""},          {"frozen", false},   {"invalid", false},
+                     {"run_frozen", backend.runFrozen()}, {"capacity_frames", backend.ringFramesWanted()},
+                     {"first_seq", 0},      {"last_seq", 0},        {"count", 0},        {"sensor_fps", 0.0},
+                     {"state", 0},          {"head", -1}};
+    if (backend.ringFramesWanted() == 0) {
+        j["reason"] = "This instrument keeps no frame ring (the PL image or the kernel's mem= setting has no room for one).";
+        return j;
+    }
+    if (const std::string problem = backend.ringPlacementProblem(); !problem.empty()) {
+        j["reason"] = problem;
+        return j;
+    }
+    j["available"] = true;
+    if (auto* monitor = backend.pzPlatformMonitor()) {
+        if (const auto fps = monitor->sensorFps()) j["sensor_fps"] = *fps;
+    }
+    const auto st = backend.ringStatus();
+    if (!st.valid) {
+        j["reason"] = st.why;
+        return j;
+    }
+    j["state"] = st.state;
+    j["head"] = st.head;
+    j["capacity_frames"] = st.records;
+    j["count"] = st.count();
+    j["first_seq"] = st.lo;
+    j["last_seq"] = st.final > 0 ? st.final - 1 : 0;
+    j["frozen"] = st.frozen;
+    j["invalid"] = st.fault;
+    if (st.fault) j["reason"] = st.invalidReason;
+    return j;
+}
+} // namespace
+
+std::string BackendFacade::fetchRingStatusJson() { return ringStatusJson(backend_).dump(); }
+
+std::vector<std::uint8_t> BackendFacade::fetchRingFramePacket(std::uint64_t seq, std::string *error) {
+    std::vector<std::uint8_t> out;
+    if (!initialized_) {
+        if (error) *error = "backend is not initialized";
+        return out;
+    }
+    std::string why;
+    const auto outcome = backend_.ringFrame(seq, out, &why);
+    if (outcome != pz::RingRead::Ok) {
+        out.clear();
+        if (error) *error = std::string(pz::ringReadName(outcome)) + ": " + why;
+    }
+    return out;
+}
+
+BackendCommandResult BackendFacade::freezeRun() {
+    if (!initialized_) return {false, BackendCommandType::Camera, "backend is not initialized"};
+    std::string error;
+    if (!backend_.freezeRun(&error)) return {false, BackendCommandType::Camera, error};
+    emitEvent(makeCameraStatus(CameraState::Stopped));
+    return {true, BackendCommandType::Camera, "Run stopped: the buffered frames are held for playback, LED off"};
+}
+
+BackendCommandResult BackendFacade::resumeRun() {
+    if (!initialized_) return {false, BackendCommandType::Camera, "backend is not initialized"};
+    std::string error;
+    if (!backend_.resumeRun(&error)) return {false, BackendCommandType::Camera, error};
+    return {true, BackendCommandType::Camera, "Run resumed: a new frame ring, LED on"};
+}
+
 BackendCommandResult BackendFacade::syncWallClock(int64_t unixMs) {
     std::string why;
     const bool changed = backend_.syncWallClock(unixMs, &why);
@@ -3139,6 +3209,8 @@ std::string BackendFacade::fetchInstrumentStatusJson() {
                                    {"source", wall.source},
                                    {"offset_ns", wall.offsetNs},
                                    {"last_sync_unix_ms", wall.lastSyncUnixMs}};
+    // The every-frame ring (#649 v1, ABI 34): capacity, the buffered range and whether it can be played back.
+    const nlohmann::json ring = ringStatusJson(backend_);
     // The PL result stream while an experiment runs (#501 live statistics): cumulative counters,
     // so the UI turns successive polls into rates. The counters restart with each run.
     nlohmann::json results{{"available", false}};
@@ -3163,7 +3235,7 @@ std::string BackendFacade::fetchInstrumentStatusJson() {
                               {"error", initialized_ ? "not a PZ7035 instrument" : "backend is not initialized"},
                               {"results", results},
                               {"mode", mode},
-                              {"storage", storage}, {"wall_clock", wallClock}}
+                              {"storage", storage}, {"wall_clock", wallClock}, {"ring", ring}}
             .dump();
     }
     const auto nowUs = static_cast<uint64_t>(
@@ -3174,7 +3246,7 @@ std::string BackendFacade::fetchInstrumentStatusJson() {
         return nlohmann::json{
             {"available", false}, {"error", s.error}, {"pinned_profile_id", s.pinnedProfileId}, {"mode", mode},
             {"results", results},
-            {"storage", storage}, {"wall_clock", wallClock}}
+            {"storage", storage}, {"wall_clock", wallClock}, {"ring", ring}}
             .dump();
     }
     nlohmann::json expected = nullptr;
@@ -3245,7 +3317,7 @@ std::string BackendFacade::fetchInstrumentStatusJson() {
           {"frames", s.latencyFrames}}},
         {"mode", mode},
         {"results", results},
-        {"storage", storage}, {"wall_clock", wallClock},
+        {"storage", storage}, {"wall_clock", wallClock}, {"ring", ring},
     }.dump();
 }
 

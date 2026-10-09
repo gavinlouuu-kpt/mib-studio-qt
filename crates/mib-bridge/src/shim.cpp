@@ -485,6 +485,7 @@ struct BackendBridge::Impl {
     const std::size_t queueCapacity{queueCapacityFromEnv()};
     std::uint64_t droppedSinceLastPoll{0};
     std::uint64_t droppedTotal{0};
+    std::string ringFrameError; // why the last fetch_ring_frame failed (read under the same bridge lock)
 
     void installSink() {
         facade.setEventSink([this](const backend::bridge::BackendEvent& ev) {
@@ -2077,6 +2078,40 @@ BridgeCommandResult BackendBridge::set_instrument_mode(rust::Str mode, std::int3
     catch (...) { return errorResult("set_instrument_mode: unknown error"); }
 }
 
+rust::String BackendBridge::fetch_ring_status() {
+    try {
+        return rust::String(impl_->facade.fetchRingStatusJson());
+    } catch (...) {
+        return rust::String("{\"available\":false,\"reason\":\"fetch_ring_status failed\"}");
+    }
+}
+
+rust::Vec<std::uint8_t> BackendBridge::fetch_ring_frame(std::uint64_t seq) {
+    try {
+        impl_->ringFrameError.clear();
+        return bytesToVec(impl_->facade.fetchRingFramePacket(seq, &impl_->ringFrameError));
+    } catch (...) {
+        impl_->ringFrameError = "unknown error";
+        return {};
+    }
+}
+
+rust::String BackendBridge::ring_frame_error() { return rust::String(impl_->ringFrameError); }
+
+BridgeCommandResult BackendBridge::ring_freeze() {
+    try {
+        return toBridgeResult(impl_->facade.freezeRun());
+    } catch (const std::exception& e) { return errorResult(std::string("ring_freeze: ") + e.what()); }
+    catch (...) { return errorResult("ring_freeze: unknown error"); }
+}
+
+BridgeCommandResult BackendBridge::ring_resume() {
+    try {
+        return toBridgeResult(impl_->facade.resumeRun());
+    } catch (const std::exception& e) { return errorResult(std::string("ring_resume: ") + e.what()); }
+    catch (...) { return errorResult("ring_resume: unknown error"); }
+}
+
 BridgeCommandResult BackendBridge::sync_wall_clock(std::int64_t unix_ms) {
     try {
         return toBridgeResult(impl_->facade.syncWallClock(unix_ms));
@@ -2396,7 +2431,7 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 33; }
+std::uint32_t bridge_abi_version() { return 34; }
 
 } // namespace mib_bridge
 

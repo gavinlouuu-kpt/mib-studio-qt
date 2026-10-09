@@ -162,6 +162,10 @@ pub const COMMANDS: &[&str] = &[
     "fetch_run_accounting",
     "set_instrument_mode",
     "sync_wall_clock",
+    "fetch_ring_status",
+    "fetch_ring_frame",
+    "ring_freeze",
+    "ring_resume",
     "set_service_mode",
     "set_instrument_led",
     "fetch_run_preview",
@@ -807,6 +811,17 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
             let a: A = args(value)?;
             crate::camera_document::camera_document(a.action, a.path, a.kind, a.baseline, a.text).and_then(json)
         }
+        "fetch_ring_status" => crate::fetch_ring_status(state).and_then(json),
+        "fetch_ring_frame" => {
+            #[derive(Deserialize)]
+            struct A {
+                seq: u64,
+            }
+            let a: A = args(value)?;
+            crate::fetch_ring_frame(state, a.seq).map(Reply::Binary)
+        }
+        "ring_freeze" => crate::ring_freeze(state).and_then(json),
+        "ring_resume" => crate::ring_resume(state).and_then(json),
         "sync_wall_clock" => {
             #[derive(Deserialize)]
             struct A {

@@ -539,6 +539,18 @@ bool PzDevMemExecutionProvider::start(uint64_t runId, std::string* error) {
     }
     if (!backend::pz::pzPlConfigured(error) || !ensureMapped(error)) return false;
     auto* map = map_.get();
+    // A ring the last STOP did not complete (DRAINING, or the sticky RING_STALLED / STOP_STUCK bits of results13) is left
+    // by RESET_GENERATION, then ARM (board owner, pz7035 docs/FRAME_RING.md). Done before the generation is read below,
+    // because the reset changes it.
+    if (layout_.ringFrames > 0) {
+        const uint32_t storeState = map->reg(PZ_MIB_REG_STORE_STATE);
+        if ((storeState & backend::pz::kRingStateCodeMask) == PZ_MIB_STORE_STATE_DRAINING ||
+            (storeState & (backend::pz::kRingStateStalled | backend::pz::kRingStateStopStuck)) != 0) {
+            SPDLOG_WARN("PzDevMemExecutionProvider: the frame ring was left in STORE_STATE 0x{:x}: RESET_GENERATION before ARM", storeState);
+            map->setReg(PZ_MIB_REG_CONTROL, PZ_MIB_CONTROL_RESET_GENERATION);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    }
     const uint32_t hz = map->reg(PZ_MIB_REG_TIMESTAMP_HZ);
     pipeline_.setTimestampHz(hz ? hz : PZ_MIB_TIMESTAMP_HZ_DEFAULT);
     pipeline_.reset(runId, map->reg(PZ_MIB_REG_EPOCH),

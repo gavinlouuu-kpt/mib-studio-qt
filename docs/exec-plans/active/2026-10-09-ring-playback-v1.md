@@ -27,6 +27,8 @@ overlay is record-based because the PL does the science.
   256-entry tracking window; FINAL is frozen below it) and bit 10 `STOP_STUCK` (STOP did not complete in about 84 ms; the device stays
   DRAINING). Either one means "ring invalid": no playback is offered, the reason is shown, and recovery is stop, RESET_GENERATION, re-arm.
   Frozen = STATE IDLE after STOP with neither bit set.
+  Recovery: RESET_GENERATION (CONTROL bit 3) written in DRAINING or with a sticky bit set, then ARM; the provider does this at the start
+  of a run (before it reads the generation) and logs it. A third sticky bit (11) is named in the board owner's wording to come.
 - Sequences restart at 0 at every ARM. Read before re-arming.
 - The PL enforces no DDR floor. Studio validates base and size: at or above Linux's RAM end (from `/proc/iomem`), at or above
   0x00100000, ending at or below 0x3F000000 (the PL's result ring and preview slots). Otherwise it refuses to arm, with a gate reason.

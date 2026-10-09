@@ -190,6 +190,8 @@ public:
     // Frames dropped because no FrameStart was seen (RXH1 word 33), tear-safe; nullopt on a build
     // without the counters (fs_seen, word 32, still zero), without the block, or with a blank PL.
     std::optional<uint32_t> rxNoFsFrames();
+    // The sensor's frame rate from S[9] (the XVS period), without a full sample; nullopt without a PL or a sensor.
+    std::optional<double> sensorFps();
     // The counters are zeroed by a receiver reset (a heal or P[8] bit 6) as well as by a clear, so
     // "end minus start" under-counts when a reset lands mid-run. Over a run the monitor accumulates the
     // deltas instead: every status sample and the end read add (value - last) or, when the value fell,

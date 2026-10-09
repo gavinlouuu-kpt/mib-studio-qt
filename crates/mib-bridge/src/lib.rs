@@ -1194,6 +1194,14 @@ pub mod ffi {
         fn set_instrument_mode(self: Pin<&mut BackendBridge>, mode: &str, x: i32, y: i32) -> BridgeCommandResult;
         /// The client's wall clock (ms since the epoch): stamps saved files on a board without an RTC (G14).
         fn sync_wall_clock(self: Pin<&mut BackendBridge>, unix_ms: i64) -> BridgeCommandResult;
+        /// #649 v1 (ABI 34): the every-frame ring. `fetch_ring_status` is JSON (the `ring` block of the instrument status),
+        /// `fetch_ring_frame` one buffered frame as a 'MIBR' packet (empty on failure: `ring_frame_error` says why),
+        /// `ring_freeze` stops Run and holds the ring for playback, `ring_resume` re-arms it.
+        fn fetch_ring_status(self: Pin<&mut BackendBridge>) -> String;
+        fn fetch_ring_frame(self: Pin<&mut BackendBridge>, seq: u64) -> Vec<u8>;
+        fn ring_frame_error(self: Pin<&mut BackendBridge>) -> String;
+        fn ring_freeze(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
+        fn ring_resume(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
         /// Service / Commissioning mode latch; raw LED values are refused outside it.
         fn set_service_mode(self: Pin<&mut BackendBridge>, on: bool) -> BridgeCommandResult;
         /// Raw LED delay/width in µs (Service mode, per-mode limits).

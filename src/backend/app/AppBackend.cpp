@@ -1805,6 +1805,11 @@ namespace backend
         return executionProvider_->ringStatus();
     }
 
+    std::string AppBackend::ringPlacementProblem()
+    {
+        return executionProvider_ ? executionProvider_->ringPlacementProblem() : std::string();
+    }
+
     uint32_t AppBackend::ringFramesWanted() const
     {
         return executionProvider_ ? executionProvider_->ringFramesWanted() : 0;
