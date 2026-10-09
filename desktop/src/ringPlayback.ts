@@ -25,6 +25,8 @@ export interface RingStatus {
   restore_needed: boolean;
   /** The PL fault the last Run start cleared automatically (0: none): shown once, never hidden. */
   fault_cleared?: number;
+  /** The bridge STATE (6 = FAULT) that start cleared, also when the FAULT register read 0. */
+  fault_cleared_state?: number;
   /** Run stopped by the operator (the backend holds it). */
   run_frozen: boolean;
   capacity_frames: number;
@@ -103,9 +105,10 @@ export function decodeRingFrame(buf: ArrayBuffer): RingFrame {
 }
 
 /** "PL fault 0x104 cleared at Run start", or empty when none was cleared. */
-export function faultClearedNote(s: Pick<RingStatus, "fault_cleared"> | null | undefined): string {
+export function faultClearedNote(s: Pick<RingStatus, "fault_cleared" | "fault_cleared_state"> | null | undefined): string {
   const v = s?.fault_cleared ?? 0;
-  return v > 0 ? `PL fault 0x${v.toString(16)} cleared at Run start` : "";
+  if (v > 0) return `PL fault 0x${v.toString(16)} cleared at Run start`;
+  return (s?.fault_cleared_state ?? 0) > 0 ? "PL in FAULT state (FAULT register 0x0) cleared at Run start" : "";
 }
 
 // ---- capacity and range ------------------------------------------------------------------------------------------
@@ -173,6 +176,7 @@ export interface CellMetrics {
   reason: number;
   cutOff: boolean;
   target: boolean;
+  /** NaN when the PL left the word out. */
   contourArea: number;
   hullArea: number;
   areaRatio: number;
@@ -201,8 +205,8 @@ export function cellMetrics(c: Pick<RingCell, "payload" | "payloadValidity">): C
     reason: (w[0] >>> 16) & 15,
     cutOff: ((w[0] >>> 20) & 1) !== 0,
     target: ((w[0] >>> 24) & 1) !== 0,
-    contourArea: ok(1) ? w[1] / 65536 : 0,
-    hullArea: ok(2) ? w[2] / 65536 : 0,
+    contourArea: q16(1),   // NaN, shown as "—", when the PL left it out (a rejected cell): never 0
+    hullArea: q16(2),
     areaRatio: q16(4),
     deformability: ok(5) ? (w[5] & 0xffff) / 65536 : Number.NaN,
     areaUm2: q16(9),

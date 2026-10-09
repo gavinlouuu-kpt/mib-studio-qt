@@ -1380,7 +1380,7 @@ pub fn fetch_ring_status(state: &AppState) -> Result<serde_json::Value, String> 
     serde_json::from_str(&guard.pin_mut().fetch_ring_status()).map_err(|e| e.to_string())
 }
 
-/// One buffered frame as a 'MIBR' packet; the error names why there is none (out of range, overwritten, not frozen).
+/// One buffered frame as a 'MIBR' packet; the error names why there is none (out of range, overwritten while copied, malformed, no ring).
 pub fn fetch_ring_frame(state: &AppState, seq: u64) -> Result<Vec<u8>, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     let bytes = guard.pin_mut().fetch_ring_frame(seq);

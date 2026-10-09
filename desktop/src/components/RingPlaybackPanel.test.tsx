@@ -132,6 +132,29 @@ describe("ring playback panel (#649 v1)", () => {
     expect(fetchFrame).not.toHaveBeenCalled();
   });
 
+  it("says a failed resume instead of throwing, and shows a rejected cell's missing area as a dash", async () => {
+    const append = vi.fn();
+    const onResume = vi.fn(async () => { throw new Error("VIEWER_ONLY: another client controls the instrument"); });
+    await act(async () => root.render(<RingPlaybackPanel status={status()} fetchFrame={async (s) => frameAt(s)} onResume={onResume} append={append} />));
+    await flush();
+    const rows = host.querySelectorAll("table.ring-cells tbody tr");
+    expect(rows[1].textContent).not.toContain("0.0"); // the rejected cell has no area: a dash, never 0.0
+    await act(async () => button("Resume Run (discards these frames)").click());
+    await flush();
+    expect(append).toHaveBeenCalledWith(expect.stringContaining("VIEWER_ONLY"));
+  });
+
+  it("fetches nothing after it is unmounted", async () => {
+    let calls = 0;
+    const fetchFrame = vi.fn(async (seq: number) => { calls += 1; return frameAt(seq); });
+    await act(async () => root.render(<RingPlaybackPanel status={status()} fetchFrame={fetchFrame} onResume={async () => ok} append={() => {}} />));
+    await flush();
+    const before = calls;
+    await act(async () => root.render(<div />));
+    await flush();
+    expect(calls).toBe(before);
+  });
+
   it("reports a frame that could not be fetched (overwritten while copied)", async () => {
     const fetchFrame = vi.fn(async () => { throw new Error("RING_FRAME_UNAVAILABLE: overwritten: frame 5099 was overwritten while it was copied"); });
     await act(async () => root.render(<RingPlaybackPanel status={status()} fetchFrame={fetchFrame} onResume={async () => ok} append={() => {}} />));

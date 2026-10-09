@@ -886,8 +886,11 @@ void testRingPlayback(const mib::test::TempDir& td) {
                    "an invalid ring is reported with the reason");
         // STOP_STUCK: not frozen, not invalid, flagged stop incomplete; the frames below FINAL stay readable.
         fake->ring.faultCleared = 0x104;
-        MIB_EXPECT(nlohmann::json::parse(facade.fetchRingStatusJson())["fault_cleared"] == 0x104, "a PL fault cleared at Run start is in the ring status");
+        fake->ring.faultState = 6;
+        const auto cleared = nlohmann::json::parse(facade.fetchRingStatusJson());
+        MIB_EXPECT(cleared["fault_cleared"] == 0x104 && cleared["fault_cleared_state"] == 6, "a PL fault cleared at Run start is in the ring status");
         fake->ring.faultCleared = 0;
+        fake->ring.faultState = 0;
         fake->ring.fault = false;
         fake->ring.frozen = false;
         fake->ring.stopStuck = true;
@@ -953,10 +956,19 @@ void testRingPlayback(const mib::test::TempDir& td) {
     MIB_EXPECT(!backend.runFrozen() && fake->running && fake->starts == startsBefore + 1 && s.live[S0 + 0] == 1 && backend.liveResultsActive(),
                "Resume: the session is armed again and the LED is on");
     MIB_EXPECT(backend.resumeRun(&err) && fake->starts == startsBefore + 1, "resuming a running Run is harmless");
-    // A mode switch ends a stopped Run.
+    // A camera mode switch does not silently discard the frames the operator stopped to review: it is refused until Resume (idle ends it).
     MIB_REQUIRE(facade.freezeRun().ok, "freeze again through the facade");
-    MIB_REQUIRE(backend.setInstrumentMode(pz::InstrumentMode::Align, 0, 0, &err), "Align from a stopped Run: " + err);
-    MIB_EXPECT(!backend.runFrozen(), "Align ends the stopped Run");
+    MIB_EXPECT(!backend.setInstrumentMode(pz::InstrumentMode::Align, 0, 0, &err) && err.find("resume Run first") != std::string::npos && backend.runFrozen(),
+               "Align from a stopped Run is refused with the reason, and the Run stays held");
+    MIB_EXPECT(!backend.setInstrumentMode(pz::InstrumentMode::Run, 152, 200, &err) && backend.runFrozen(), "so is a Run window change");
+    fake->placementProblem = "frame ring: boot with a smaller mem=";
+    MIB_REQUIRE(facade.resumeRun().ok, "resume");
+    MIB_EXPECT(!backend.freezeRun(&err) && err.find("mem=") != std::string::npos && !backend.runFrozen(), "Stop is refused when the ring does not fit, not only in the UI");
+    fake->placementProblem.clear();
+    MIB_REQUIRE(facade.freezeRun().ok, "freeze again");
+    MIB_REQUIRE(facade.resumeRun().ok, "resume again");
+    MIB_REQUIRE(backend.setInstrumentMode(pz::InstrumentMode::Align, 0, 0, &err), "Align after Resume: " + err);
+    MIB_EXPECT(!backend.runFrozen(), "Align after Resume: no stopped Run");
     MIB_REQUIRE(backend.setInstrumentMode(pz::InstrumentMode::Run, 152, 200, &err), "Run: " + err);
     MIB_REQUIRE(backend.freezeRun(&err), "freeze before idle: " + err);
     MIB_EXPECT(facade.setInstrumentMode("idle", 0, 0).ok && !backend.runFrozen(), "idle ends it too");

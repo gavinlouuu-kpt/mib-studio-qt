@@ -81,6 +81,7 @@ struct RingStatus {
     // Set by the provider when the wait for IDLE ran out without a sticky bit: a hardware fault, the PL needs a restore.
     bool restoreNeeded{false};
     uint32_t faultCleared{0};   // set by the provider: the PL fault the last Run start cleared automatically
+    uint32_t faultState{0};     // the bridge STATE (FAULT) that start cleared, 0 if it was not in FAULT
     int64_t head{-1};           // newest sequence started (-1: none)
     uint64_t final{0};          // every sequence below it is complete and acknowledged
     uint32_t records{0};        // N
@@ -126,6 +127,8 @@ struct RingArmOutcome {
     std::string why;
     // The FAULT register value the automatic FAULT_CLEAR removed (0: none). Never hidden: logged and shown ("PL fault 0x... cleared at Run start").
     uint32_t faultCleared{0};
+    // The bridge STATE when it was FAULT and was cleared (0: it was not): reported even when the FAULT register read 0.
+    uint32_t faultState{0};
 };
 
 enum class RingRead { Ok, Unavailable, OutOfRange, Overwritten, Malformed };

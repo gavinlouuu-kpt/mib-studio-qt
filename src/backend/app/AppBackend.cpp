@@ -1588,7 +1588,10 @@ namespace backend
         if (isFrameRecording() || run == app::ExperimentRunState::Starting ||
             run == app::ExperimentRunState::Active || run == app::ExperimentRunState::Stopping)
             return fail("Stop the experiment or recording before changing camera mode");
-        runFrozen_.store(false); // a mode switch ends the stopped Run and its ring
+        // A stopped Run holds the frames the operator stopped to review: a mode switch (Align, a Run window change) would discard them
+        // silently. Resume (a new ring) or the unattended idle state end it; nothing else.
+        if (runFrozen_.load())
+            return fail("Run is stopped to review the buffered frames: resume Run first (a camera mode switch would discard them)");
         if (mode == pz::InstrumentMode::Run) {
             x = std::clamp(x - x % kRunXStep, 0, kRunXMax - kRunXMax % kRunXStep);
             y = std::clamp(y - y % kRunYStep, 0, kRunYMax);
@@ -1758,6 +1761,7 @@ namespace backend
         if (!pzControl_ || !executionProvider_) return fail("no PZ7035 control on this platform");
         if (executionProvider_->ringFramesWanted() == 0)
             return fail("this instrument keeps no frame ring: the PL image or the kernel's mem= setting has no room for one");
+        if (const std::string problem = executionProvider_->ringPlacementProblem(); !problem.empty()) return fail(problem);
         if (instrumentMode() != pz::InstrumentMode::Run) return fail("Stop applies in Run");
         const auto run = experimentCoordinator_->state();
         if (isFrameRecording() || run == app::ExperimentRunState::Starting || run == app::ExperimentRunState::Active ||

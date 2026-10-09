@@ -31,9 +31,12 @@ export function RingPlaybackPanel({ status, fetchFrame, onResume, append, ssdPat
   const [busy, setBusy] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const carry = useRef(0);
+  // Nothing is fetched, and no state is set, after the panel is gone (a Resume ends it while a frame is in flight).
+  const mounted = useRef(true);
+  useEffect(() => () => { mounted.current = false; }, []);
 
   // A new ring (resume, then stop again) starts at its newest frame.
-  const ringKey = `${status.first_seq}:${status.capacity_frames}`;
+  const ringKey = `${status.first_seq}:${status.last_seq}:${status.capacity_frames}`;
   useEffect(() => { setSeq(status.last_seq); setPlaying(false); carry.current = 0; setFirst(null); }, [ringKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // One frame in flight; the latest wanted sequence follows it.
@@ -44,9 +47,9 @@ export function RingPlaybackPanel({ status, fetchFrame, onResume, append, ssdPat
     inFlight.current = true;
     const target = wanted.current;
     void fetchFrame(target)
-      .then((f) => { setFrame(f); setError(""); })
-      .catch((e) => setError(String(e).replace(/^Error: /, "")))
-      .finally(() => { inFlight.current = false; if (wanted.current !== target) pull(); });
+      .then((f) => { if (mounted.current) { setFrame(f); setError(""); } })
+      .catch((e) => { if (mounted.current) setError(String(e).replace(/^Error: /, "")); })
+      .finally(() => { inFlight.current = false; if (mounted.current && wanted.current !== target) pull(); });
   }, [fetchFrame]);
   useEffect(() => { wanted.current = seq; if (availability.ok) pull(); }, [seq, availability.ok, pull]);
   // The first buffered frame anchors the elapsed time.
@@ -90,7 +93,9 @@ export function RingPlaybackPanel({ status, fetchFrame, onResume, append, ssdPat
     try {
       const r = await onResume();
       append(r.ok ? r.message : `Resume: ${r.message}`);
-    } finally { setBusy(false); }
+    } catch (e) {
+      append(`Resume: ${String(e).replace(/^Error: /, "")}`); // a viewer (not the controller) or a lost connection: said, not an unhandled rejection
+    } finally { if (mounted.current) setBusy(false); }
   };
   const save = saveClipState(ssdPathAvailable);
 

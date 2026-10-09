@@ -757,14 +757,20 @@ export default function App() {
   // Stop in Run holds the frame ring for playback; resume re-arms it (a new ring).
   const refreshInstrument = useCallback(() => { void bridge.fetchInstrumentStatus().then(setInstrument).catch(() => undefined); }, []);
   const onStopRun = useCallback(async () => {
-    const r = await bridge.ringFreeze();
-    append(r.ok ? r.message : `Stop: ${r.message}`);
+    try {
+      const r = await bridge.ringFreeze();
+      append(r.ok ? r.message : `Stop: ${r.message}`);
+    } catch (e) {
+      append(`Stop: ${String(e).replace(/^Error: /, "")}`); // a viewer (not the controller) or a lost connection
+    }
     refreshInstrument();
   }, [append, refreshInstrument]);
   const onResumeRun = useCallback(async () => {
-    const r = await bridge.ringResume();
-    refreshInstrument();
-    return r;
+    try {
+      return await bridge.ringResume();
+    } finally {
+      refreshInstrument();
+    }
   }, [refreshInstrument]);
 
   const onStartCamera = useCallback(async () => {
@@ -1085,6 +1091,12 @@ export default function App() {
         // No placed window: stay as we are; the Experiment tab says so and offers the way there.
         if (want === "run" && (!win || !cameraWin.placedRef.current)) return;
         if (current?.name === want && (want === "align" || (current.run_x === win!.x && current.run_y === win!.y))) { setModeError(null); return; }
+        // A stopped Run holds the frames the operator stopped to review: a tab change must not silently discard them (the backend refuses the
+        // switch as well). Resume Run ends it, and this effect then switches to the tab's mode.
+        if (instrumentRef.current?.ring?.run_frozen) {
+          append("Run is stopped to review the buffered frames: Resume Run before changing the camera mode");
+          return;
+        }
         append(want === "align" ? "switching to Align (full sensor)…" : `switching to Run at (${win!.x}, ${win!.y})…`);
         const result = await bridge.setInstrumentMode(want, win?.x ?? 0, win?.y ?? 0);
         append(result.ok ? result.message : `Camera mode: ${result.message}`);
@@ -1102,7 +1114,7 @@ export default function App() {
       if (!cancelled) await refreshCameraGeometry();
     })();
     return () => { cancelled = true; };
-  }, [tab, ready, expActive, refreshCameraGeometry, append, instrumentModes, cameraWin.placed, modeRetry, instrumentMode?.idle]);
+  }, [tab, ready, expActive, refreshCameraGeometry, append, instrumentModes, cameraWin.placed, modeRetry, instrumentMode?.idle, instrument?.ring?.run_frozen]);
 
   // The camera's read-back (applied window, sensor and delivered rate) follows its restart.
   useEffect(() => {

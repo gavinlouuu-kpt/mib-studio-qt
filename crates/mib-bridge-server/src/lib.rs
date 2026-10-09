@@ -582,6 +582,18 @@ async fn connection(server: Arc<Server>, socket: WebSocket, peer: String) {
 mod stage_control_tests {
     use super::CONTROL_COMMANDS;
 
+    // The frame ring (#649, ABI 34): Stop and Resume change what the instrument does (the LED, a new ring), so they need control; reading the
+    // status and a buffered frame does not (a viewer may watch the playback).
+    #[test]
+    fn ring_stop_and_resume_are_control_commands_but_reads_are_not() {
+        for cmd in ["ring_freeze", "ring_resume"] {
+            assert!(CONTROL_COMMANDS.contains(&cmd), "{cmd} must be a CONTROL command");
+        }
+        for cmd in ["fetch_ring_status", "fetch_ring_frame"] {
+            assert!(!CONTROL_COMMANDS.contains(&cmd), "{cmd} is a read: viewers may use it");
+        }
+    }
+
     // Z stage (#464): everything that can move or reconfigure the stage needs
     // control; Stop and the status read stay available to every client.
     #[test]

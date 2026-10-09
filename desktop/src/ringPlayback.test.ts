@@ -194,6 +194,10 @@ describe("cell measurements", () => {
     expect(full.laplacianVariance).toBeCloseTo(4.5, 4);
     const partial = cellMetrics({ payload, payloadValidity: 0b11 }); // only words 0 and 1
     expect(partial.contourArea).toBeCloseTo(120.5, 4);
+    expect(Number.isNaN(partial.hullArea)).toBe(true); // word 2 left out: not available, never 0
+    const rejected = cellMetrics({ payload, payloadValidity: 0b1 }); // a rejected cell: only word 0
+    expect(Number.isNaN(rejected.contourArea) && Number.isNaN(rejected.hullArea)).toBe(true);
+    expect(metricText(rejected.hullArea, 1)).toBe("—");
     expect(Number.isNaN(partial.deformability)).toBe(true);
     expect(Number.isNaN(partial.youngsModulusKpa)).toBe(true);
     expect(metricText(partial.deformability)).toBe("—");
@@ -206,6 +210,7 @@ describe("a fault cleared at Run start", () => {
     expect(faultClearedNote({ fault_cleared: 0x104 })).toBe("PL fault 0x104 cleared at Run start");
     expect(faultClearedNote({ fault_cleared: 0 })).toBe("");
     expect(faultClearedNote({})).toBe("");
+    expect(faultClearedNote({ fault_cleared: 0, fault_cleared_state: 6 })).toBe("PL in FAULT state (FAULT register 0x0) cleared at Run start");
     expect(faultClearedNote(null)).toBe("");
   });
 });

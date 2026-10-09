@@ -210,6 +210,7 @@ RingArmOutcome PzFrameRing::quiesce(const std::function<void()>& onMutate, std::
     }
     if (state == PZ_MIB_STATE_FAULT) {
         r.faultCleared = io_.reg(PZ_MIB_REG_FAULT);  // seen before it is cleared
+        r.faultState = state;                        // reported even when the register reads 0: never a silent clear
         mutate();
         io_.setReg(PZ_MIB_REG_CONTROL, PZ_MIB_CONTROL_FAULT_CLEAR);
     }

@@ -26,3 +26,10 @@ frame was cut", "Invalid frame" and "The mask of this frame is incomplete" and n
 An automatic FAULT_CLEAR at Run start never hides the fault (coordinator's condition): `PzFrameRing::quiesce` returns the FAULT register value it
 cleared, the provider logs "PL fault 0x... cleared at Run start" and keeps it until the next start, the ring status carries `fault_cleared`, the Run status
 line shows "PL fault 0x... cleared at Run start", the log gets it once, and Diagnostics lists it.
+
+Review of #677: a camera mode switch while the Run is stopped is refused by the backend ("resume Run first"; the Camera & Alignment tab and a Run window change no
+longer discard the frames the operator stopped to review: the tab says so in the log and switches after Resume); Stop is also refused in the backend when
+the ring does not fit; a rejected cell's missing area shows "—" (the contour and hull areas are NaN when the PL left the word out); `fault_cleared_state`
+reports a bridge FAULT cleared with the FAULT register at 0; Stop, Resume and the panel catch a rejected command (a viewer) and say so; the panel does not
+fetch or set state after it is gone; `ring_freeze`/`ring_resume` are control commands and `fetch_ring_*` are not (server test); `fetch_ring_frame` rejects a
+missing, negative, fractional or string `seq` (dispatch test).
