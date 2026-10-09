@@ -209,6 +209,7 @@ RingArmOutcome PzFrameRing::quiesce(const std::function<void()>& onMutate, std::
         state = PZ_MIB_STATE_DRAINING;
     }
     if (state == PZ_MIB_STATE_FAULT) {
+        r.faultCleared = io_.reg(PZ_MIB_REG_FAULT);  // seen before it is cleared
         mutate();
         io_.setReg(PZ_MIB_REG_CONTROL, PZ_MIB_CONTROL_FAULT_CLEAR);
     }
@@ -222,6 +223,7 @@ RingArmOutcome PzFrameRing::quiesce(const std::function<void()>& onMutate, std::
         return r;
     }
     if (io_.reg(PZ_MIB_REG_FAULT) != 0) {  // ARM is ignored while a fault bit is set
+        if (r.faultCleared == 0) r.faultCleared = io_.reg(PZ_MIB_REG_FAULT);
         mutate();
         io_.setReg(PZ_MIB_REG_CONTROL, PZ_MIB_CONTROL_FAULT_CLEAR);
         if (io_.reg(PZ_MIB_REG_FAULT) != 0) {

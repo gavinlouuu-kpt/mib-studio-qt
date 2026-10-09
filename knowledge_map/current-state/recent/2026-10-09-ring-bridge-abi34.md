@@ -22,3 +22,7 @@ A new ring starts with RESET_GENERATION in IDLE only, then ARM.
 
 The `MIBR` flags gain bit 2 (frame invalid), bit 3 (frame cut: the MONO8 block is INCOMPLETE) and bit 4 (mask incomplete); the panel says "This
 frame was cut", "Invalid frame" and "The mask of this frame is incomplete" and never draws an incomplete mask.
+
+An automatic FAULT_CLEAR at Run start never hides the fault (coordinator's condition): `PzFrameRing::quiesce` returns the FAULT register value it
+cleared, the provider logs "PL fault 0x... cleared at Run start" and keeps it until the next start, the ring status carries `fault_cleared`, the Run status
+line shows "PL fault 0x... cleared at Run start", the log gets it once, and Diagnostics lists it.

@@ -23,6 +23,8 @@ export interface RingStatus {
   stop_incomplete: boolean;
   /** STOP never reached IDLE within the bound: a hardware fault, the PL needs a restore. */
   restore_needed: boolean;
+  /** The PL fault the last Run start cleared automatically (0: none): shown once, never hidden. */
+  fault_cleared?: number;
   /** Run stopped by the operator (the backend holds it). */
   run_frozen: boolean;
   capacity_frames: number;
@@ -98,6 +100,12 @@ export function decodeRingFrame(buf: ArrayBuffer): RingFrame {
     mask: new Uint8Array(buf, HEADER + grayBytes, maskBytes),
     cells,
   };
+}
+
+/** "PL fault 0x104 cleared at Run start", or empty when none was cleared. */
+export function faultClearedNote(s: Pick<RingStatus, "fault_cleared"> | null | undefined): string {
+  const v = s?.fault_cleared ?? 0;
+  return v > 0 ? `PL fault 0x${v.toString(16)} cleared at Run start` : "";
 }
 
 // ---- capacity and range ------------------------------------------------------------------------------------------

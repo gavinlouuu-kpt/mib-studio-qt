@@ -26,6 +26,7 @@ import { volatileDataNotice } from "./diagnosticsView";
 import { useWallClockSync } from "./transport/wallClockSync";
 import { DiagnosticsPanel } from "./components/DiagnosticsPanel";
 import { RingPlaybackPanel } from "./components/RingPlaybackPanel";
+import { faultClearedNote } from "./ringPlayback";
 import { downloadUrl } from "./filesView";
 import { serverOrigin, tokenFromLocation } from "./transport/auth";
 import { FilesPanel } from "./components/FilesPanel";
@@ -310,6 +311,8 @@ export default function App() {
   // Run stopped to review the frame ring (#649 v1): the cell-capture preview pauses and the playback takes its place.
   const ring = instrument?.ring;
   const runFrozen = runMode && !!ring?.run_frozen;
+  // A PL fault that the Run start cleared automatically is never hidden: said once in the log, and kept on the run card and in Diagnostics.
+  const faultNote = faultClearedNote(ring);
   const [runPreviewInfo, setRunPreviewInfo] = useState<{frameId: number; listed: number; cells: number; blemishes: number} | null>(null);
   const [showRunMask, setShowRunMask] = useState(true);
   const showRunMaskRef = useRef(true);
@@ -341,6 +344,11 @@ export default function App() {
     // <app_log>/desktop-shell.log for correlation with the backend logs.
     void bridge.shellLog("info", line).catch(() => {});
   }, []);
+  const lastFaultNote = useRef("");
+  useEffect(() => {
+    if (faultNote && faultNote !== lastFaultNote.current) append(faultNote);
+    lastFaultNote.current = faultNote;
+  }, [faultNote, append]);
 
   // Initialize the backend on boot (empty data dir resolves to Tauri's
   // app_data_dir on the Rust side) — the Qt app has no manual init step.
@@ -1938,6 +1946,7 @@ export default function App() {
                           {(instrument.results.decode_errors ?? 0) > 0 && ` · decode errors ${instrument.results.decode_errors}`}
                           {(instrument.results.sequence_gaps ?? 0) > 0 && ` · frame gaps ${instrument.results.sequence_gaps}`}</>}
                         {" · "}<label><input type="checkbox" checked={showRunMask} onChange={(e) => setShowRunMask(e.target.checked)} /> U-Net mask</label>
+                        {faultNote && <>{" · "}<span className="warn" role="status" data-testid="fault-cleared">{faultNote}</span></>}
                         {ring?.available && !runFrozen && !expActive && (
                           <>{" · "}<button onClick={() => void onStopRun()} title={`Stop: hold the last ${ring.capacity_frames.toLocaleString("en-US")} frames for playback`}>Stop</button></>
                         )}
@@ -2551,6 +2560,7 @@ export default function App() {
               ...(instrument?.core ? [`PL build ${instrument.core.build_id.slice(0, 8)}, weights ${instrument.core.profile_id.slice(0, 8)}, ABI ${instrument.core.abi_version}, expected ${instrument.core.expected?.image ?? "?"} (${instrument.core.build_match})`] : []),
               ...(instrument?.sensor ? [`sensor ${instrument.sensor.width}x${instrument.sensor.height} at ${instrument.sensor.fps.toFixed(1)} fps`] : []),
               ...(instrument?.storage ? [`storage ${instrument.storage.path}${instrument.storage.ram ? " (RAM)" : ""}, ${Math.round((instrument.storage.free_bytes ?? 0) / 1e6)} MB free`] : []),
+              ...(faultNote ? [faultNote] : []),
             ]} />
             <div className="actions">
               <button className="btn" onClick={() => setShowDiagnostics(false)}>Close</button>

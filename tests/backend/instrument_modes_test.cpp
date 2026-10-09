@@ -885,6 +885,9 @@ void testRingPlayback(const mib::test::TempDir& td) {
         MIB_EXPECT(bad["invalid"] == true && bad["frozen"] == false && bad["reason"].get<std::string>().find("RING_STALLED") != std::string::npos,
                    "an invalid ring is reported with the reason");
         // STOP_STUCK: not frozen, not invalid, flagged stop incomplete; the frames below FINAL stay readable.
+        fake->ring.faultCleared = 0x104;
+        MIB_EXPECT(nlohmann::json::parse(facade.fetchRingStatusJson())["fault_cleared"] == 0x104, "a PL fault cleared at Run start is in the ring status");
+        fake->ring.faultCleared = 0;
         fake->ring.fault = false;
         fake->ring.frozen = false;
         fake->ring.stopStuck = true;

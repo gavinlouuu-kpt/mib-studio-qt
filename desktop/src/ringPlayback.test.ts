@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  advancePlayback, capacityText, cellMetrics, frameNotes, metricText, clampSeq, contourPixels, decodeRingFrame, elapsedText, nextOverlay, noMaskNote,
+  advancePlayback, capacityText, cellMetrics, faultClearedNote, frameNotes, metricText, clampSeq, contourPixels, decodeRingFrame, elapsedText, nextOverlay, noMaskNote,
   playbackAvailability, rangeText, ringFrameRgba, saveClipState, secondsText, stepSeq, type RingFrame, type RingStatus,
 } from "./ringPlayback";
 
@@ -198,5 +198,14 @@ describe("cell measurements", () => {
     expect(Number.isNaN(partial.youngsModulusKpa)).toBe(true);
     expect(metricText(partial.deformability)).toBe("—");
     expect(metricText(full.deformability, 3)).toBe("0.050");
+  });
+});
+
+describe("a fault cleared at Run start", () => {
+  it("is named, with its register value, and empty when nothing was cleared", () => {
+    expect(faultClearedNote({ fault_cleared: 0x104 })).toBe("PL fault 0x104 cleared at Run start");
+    expect(faultClearedNote({ fault_cleared: 0 })).toBe("");
+    expect(faultClearedNote({})).toBe("");
+    expect(faultClearedNote(null)).toBe("");
   });
 });

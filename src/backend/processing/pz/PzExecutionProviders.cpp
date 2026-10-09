@@ -394,6 +394,7 @@ backend::pz::RingStatus PzDevMemExecutionProvider::ringStatus() {
     backend::pz::RingStatus none;
     none.why = "no frame ring is armed";
     none.restoreNeeded = ringRestoreNeeded_.load();
+    none.faultCleared = ringClearedFault_.load();
     if (none.restoreNeeded) none.why = "the frame ring never reached idle after STOP: the PL needs a restore";
     if (!ringProgrammed_.load()) return none;
     std::string why;
@@ -405,6 +406,7 @@ backend::pz::RingStatus PzDevMemExecutionProvider::ringStatus() {
     if (!ring_) return none;
     auto st = backend::pz::PzFrameRing(*ring_, ringLinuxEnd_.load()).status();
     st.restoreNeeded = ringRestoreNeeded_.load();
+    st.faultCleared = ringClearedFault_.load();
     return st;
 }
 
@@ -563,6 +565,7 @@ bool PzDevMemExecutionProvider::start(uint64_t runId, std::string* error) {
     if (!backend::pz::pzPlConfigured(error) || !ensureMapped(error)) return false;
     auto* map = map_.get();
     ringRestoreNeeded_.store(false);
+    ringClearedFault_.store(0);
     // One lock over the recovery, the programming and ARM: a reader (status, a frame fetch) never sees the ring half-programmed or
     // read a frame across a re-ARM; stop() and the readers take the same mutex.
     std::unique_lock<std::mutex> ringLock(ringMutex_, std::defer_lock);
@@ -599,6 +602,11 @@ bool PzDevMemExecutionProvider::start(uint64_t runId, std::string* error) {
         // RESET_GENERATION in IDLE if a sticky fault bit was left. The claim "a ring is armed" is dropped only here, at the first
         // register write, so a failure before it keeps an intact frozen ring readable.
         const auto q = ring->quiesce([&] { ringProgrammed_.store(false); });
+        if (q.faultCleared != 0) {
+            // Cleared automatically, never silently: logged here, shown in the ring status (run card and Diagnostics).
+            ringClearedFault_.store(q.faultCleared);
+            SPDLOG_WARN("PzDevMemExecutionProvider: PL fault 0x{:x} cleared at Run start", q.faultCleared);
+        }
         if (!q.ok) {
             ringRestoreNeeded_.store(q.restoreNeeded);
             if (error) *error = "frame ring: " + q.why;
