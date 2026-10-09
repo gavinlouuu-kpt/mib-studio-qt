@@ -59,7 +59,7 @@ reads runs back. The window is the board owner's to define; Studio needs the fol
 | R1 | **State** word: ABSENT, INITIALISING (IDENTIFY, superblock), RECOVERING (mount-time recovery, or a core-reset recovery during a run), READY, RECORDING, STOPPING (draining), WEDGED (drive not answering; the A400 is self-powered, the board cannot cycle it), FULL; plus a last-error code. | UI states (section 4); start gate. |
 | R2 | **Start / stop commands** with arguments: filter mode (all frames, frames with a cell, frames with a valid cell), include-INT8 off, and a 64-bit **start time (unix ms)** and a 32-bit **client tag** written before start. Stop is graceful (drain to disk, write trailer, close run) and returns a run id; an *abort* is separate. | D1, section 1.1. |
 | R3 | **Live counters** (read-only, coherent snapshot): frames seen, frames filtered as empty, frames passed by the filter, records on disk, records dropped by overload, records failed (not recoverable), drain recoveries, bytes written, ring fill (records waiting) and drain rate. | Honest accounting (section 4). |
-| R4 | **A larger run table (hard requirement: no silent overwrite)**: at least 256 entries (a table of 64-byte entries in sectors after the superblock), no `run % N` overwrite while there is free space; an explicit "run table full" state. | Experiment list. |
+| R4 | **A larger run table (hard requirement: no silent overwrite)**: at least 256 entries (a table of 64-byte entries in sectors after the superblock), no `run % N` overwrite while there is free space; an explicit "run table full" state; a `deleted` flag per entry (section 3.5). | Experiment list. |
 | R5 | **Run entry fields**: run id, start unix ms and client tag (from R2), first and last frame id, first and last PL timestamp ticks and the tick rate (duration is derived), records, frames seen, frames empty, dropped, failed, drain recoveries, completion reason (0 clean, 1 drain fault, 5 not stopped, 6 length limit, 7 recovered at mount, as in `store_rec.h`), flags. | Experiment list and export. |
 | R6 | **Drop placement**: each stored record carries `lost_before` (a u32 in its FRAME record: records dropped since the previous stored record). | Studio can reconstruct exactly where the run has gaps and book them (`sequenceGaps`), without a per-run list that can overflow. |
 | R7 | **Linux block access to the SSD** (replaces the read DMA of the first version of this note): the raw record area is readable by Linux, read only, as a block range (a partition or an offset window) of the same block device that carries the ext4 area, with large sequential reads (at least 1 MiB per request) at the rate the board owner measures; the partition table and the PL superblock must not collide at LBA 0; refused or throttled while RECORDING so that filesystem I/O can never cause a drain drop (arbitration is the board owner's, drain writes have priority). | Export (section 3), clips and Files on the ext4 area (section 3.4). |
@@ -70,7 +70,7 @@ reads runs back. The window is the board owner's to define; Studio needs the fol
 
 New bridge commands (JSON, additive, listed in `bridge-contract.json` when implemented; the ABI number is decided then):
 `ssd_status`, `ssd_runs {offset, limit}`, `ssd_run_info {run}`, `ssd_export_start {run, first?, last?}`, `ssd_export_status`,
-`ssd_export_cancel`, `ssd_export_delete {run}`; `experiment_start` gains `storage: "ssd"` (the only target once S2 ships; the eMMC metadata-only target is transitional) and `keep_recording` with `max_duration_s`.
+`ssd_export_cancel`, `ssd_export_delete {run}`, `ssd_run_delete {run, confirm_unexported}`; `experiment_start` gains `storage: "ssd"` (the only target once S2 ships; the eMMC metadata-only target is transitional) and `keep_recording` with `max_duration_s`.
 A platform capability `ssd_store` is true only when the PL image reports the writer, so the bundle and UI degrade to today's
 behaviour on an older image. The PS code is one class, `SsdStore`, behind an interface (`ISsdDevice`: window registers and the
 read DMA) with two implementations: the `/dev/mem` one and a file-backed fake for tests (section 6).
@@ -96,9 +96,9 @@ Source: the SSD run table (R4, R5), read through the status path (no DMA needed;
 | Size on SSD, estimated HDF5 size | records x 59,392 B; records x about 98.5 KB |
 | Export | none, exporting (progress), ready (size, path on the SSD, Download, Delete), failed (reason) |
 
-Actions: Export (full or range), Download, Delete export, Open in Review (only after the export, using the existing review open
-on the board's path, or download and open on the PC). **No delete of the SSD run in v1** (the run table is append only; erasing
-a run is a separate decision for the board owner and Gavin). Paging and permits reuse the Files view machinery
+Actions: Export (full, parts or range), Download, Delete export, Delete run, Open in Review (only after the export, using the existing
+review open on the board's path, or download and open on the PC). **Delete run** follows the coordinator's lifecycle policy (section 3.5).
+A row carries an "exported" badge once an export of the run exists on the ext4 area. Paging and permits reuse the Files view machinery
 (`filesView.ts`, page of 2,000 entries); at 256 runs one page is enough.
 
 ## 3. Export of an SSD run to the PC experiment HDF5 (c)
@@ -213,6 +213,26 @@ export time; h5py and Review read filtered datasets transparently, so only the A
   trailer and listed as failed or recovered. The eMMC is never used as a fallback for user data. Today's metadata-only experiment to the eMMC
   is the transitional behaviour until S2 ships; at S2 it is removed from the UI (the coordinator is asked to confirm).
 
+### 3.5 SSD layout and raw-area lifecycle (coordinator policy, 2026-10-09)
+
+- **One GPT on the SSD, two partitions**: the raw record partition and the ext4 partition. The PL drain is confined to the raw partition's
+  LBA range, read from its superblock. The split is chosen when the SSD is formatted, by a format tool (the board owner's); the default is
+  raw 40 % and ext4 60 %, because HDF5 is about 1.67 times the raw size of the same records. Studio shows the free space of both areas
+  (strip, Diagnostics, list header).
+- **The raw area is a log.** Runs append at the head; space is reclaimed from the tail when the oldest runs are deleted. Deleting a middle
+  run only marks it deleted (the `deleted` flag in its run entry); its space returns once everything older has been freed. Studio therefore
+  shows two numbers for a deleted middle run: it is gone from the list, but the raw free space does not grow until the older runs are
+  freed (the list header says "N GB waiting for older runs").
+- **Nothing is ever auto-deleted.** Only the user deletes, from the experiment list. Deleting a run that has no export asks for an explicit
+  confirmation that names the run and says it cannot be recovered; a run with an export on the ext4 area shows an "exported" badge, and
+  its delete asks the ordinary confirmation. Each export has an optional "delete the raw run after a verified export" (default off). The
+  verification is: the file closed and renamed, then re-opened read-only, with the frame count, the first and last frame id and the
+  `accounting_*` terms equal to the run's; only then the run is marked deleted.
+- **Raw area full** (or the run table full): Start refuses with "SSD raw area full: export/delete old runs". **ext4 full**: the export (and
+  Save clip) refuses up front from the size estimate (section 3.2).
+- **Studio checks, not the PL, enforce the policy**: the delete command and the confirm flag are Studio's (`ssd_run_delete`), the head and
+  tail bookkeeping and the superblock update are the board owner's.
+
 ## 4. UI states (d)
 
 The Run page gets a storage strip (also shown in Diagnostics) and the Experiments view gets row badges. States:
@@ -225,7 +245,8 @@ The Run page gets a storage strip (also shown in Diagnostics) and the Experiment
 | **Recording** | strip, run card | stored records, empty frames skipped (neutral, not an error), dropped (amber when above zero, red above 1 % of passed frames), recoveries so far (informational: 1 to 2 per GB is normal), write rate, ring fill, elapsed | A drop count is cumulative and never resets inside a run; the card shows the rate over the last 10 s so a burst is visible. |
 | **Stopping** | strip | "Writing the last N records, about s s" | Controls locked; from the ring fill and the drain rate. |
 | **Wedged / error** | strip, banner | "SSD not responding. The drive is self-powered; power-cycle it." | The run (if any) is closed on a best-effort basis; the list shows it as failed or recovered; start disabled. |
-| **Full / run table full** | strip, start gate | "SSD full" | Start disabled; the list explains. |
+| **Raw area full / run table full** | strip, start gate | "SSD raw area full: export/delete old runs" | Start refuses with exactly that reason; the list shows the free space of the raw area and offers Delete run. |
+| **ext4 area full** | strip, export and clip gates | "SSD files area full" (free space shown) | Export and Save clip refuse up front using the size estimate; the user deletes exports or clips. |
 | **Run closed by mount-time recovery** | list badge, detail | "Recovered after power loss: N records found, true totals unknown" | Selectable and exportable; the export marks `incompleteLoss`, `reconciled=false`. |
 | **Drops, finished run** | list badge | "Partial: N dropped (x %)" | The same counts as in the exported accounting, so Review's accounting panel agrees. |
 
@@ -287,7 +308,8 @@ power loss, the export rate end to end, and the Run page with real counters.
 | S2 | Record to SSD (`experiment_start storage=ssd`), live counters, accounting, idle option | results13 plus the writer image |
 | S3 | Storage layout (mount, `--storage-dir`, second Files root, `storage.ssd` gate), export to the ext4 area, download; Review opens it | R7 (block access) and the ext4 area |
 | S3b | Save clip from the ring to the ext4 area (#649, enabled once S3 lands) | S3 |
-| S4 | Raw-run download, parts export option, raw-area reclaim or delete (if wanted) | decisions |
+| S3c | Delete run (log reclaim), "exported" badge, optional "delete raw after verified export" | S3 and the board owner's tail reclaim |
+| S4 | Raw-run download, parts export option | decisions |
 
 S1 can be built and tested against the fake before any new PL image exists. Nothing starts before #649 v1 is merged.
 
@@ -296,6 +318,5 @@ S1 can be built and tested against the fake before any new PL image exists. Noth
 R1 to R9 above, and: the filter predicate (any RESULT, or any valid RESULT) and whether it can sample invalid-only frames
 like the PC; whether `lost_before` fits the FRAME record without an ABI bump; the DMA buffer size and where it sits relative to the ring
 carve-out (it reduces the ring); and the measured rate of the read DMA into PS DDR. After Gavin's storage change (R7): the block device design
-(kernel driver or NBD/ublk over UIO) and its sustained throughput B; how the partition table and the PL superblock share LBA 0; the split
-between the raw area and the ext4 area (raw is append only in the run table: what reclaims it, and who decides?); and the arbitration test
-(drain drops with concurrent ext4 I/O).
+(kernel driver or NBD/ublk over UIO) and its sustained throughput B; how the partition table and the PL superblock share LBA 0; the arbitration test
+(drain drops with concurrent ext4 I/O). The layout and raw-area lifecycle are decided by the coordinator (section 3.5); the board owner implements the mechanics.

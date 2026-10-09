@@ -17,3 +17,9 @@ state, logs). The note now exports a run from the raw record area to an HDF5 fil
 except that area), keeps the parts export as an option, puts Save clip on the same ext4 area (disabled in #649 v1, enabled with the SSD
 path), splits the data dir (settings on the eMMC, user data in a new `--storage-dir`), and states what the UI shows without the SSD:
 nothing can be saved, explicitly, with no eMMC fallback. Time estimates are now a function of the unmeasured block throughput.
+
+Layout and lifecycle (coordinator policy, same day): one GPT with a raw record partition (PL drain confined to it) and an ext4 partition,
+default split 40/60, chosen at format time. The raw area is a log: append at the head, reclaim from the tail; a deleted middle run is only
+marked. Nothing is auto-deleted; the user deletes from the experiment list, with an explicit confirmation for an unexported run, an
+"exported" badge, and an optional "delete raw after a verified export" (default off). Raw area full refuses Start; ext4 full refuses export
+and clips up front. The eMMC metadata-only experiment stays, labelled interim, until the SSD Record ships.
