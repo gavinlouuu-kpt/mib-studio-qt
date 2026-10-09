@@ -1055,6 +1055,13 @@ namespace backend::bridge
         BackendCommandResult setInstrumentMode(const std::string &mode, int x, int y);
         // The client's wall clock in ms since the epoch (G14): stamps saved files on a board without an RTC.
         BackendCommandResult syncWallClock(int64_t unixMs);
+        // #649 v1 (ABI 34): Stop in Run holds the every-frame ring for playback, resume re-arms; one buffered frame as a
+        // 'MIBR' packet (empty on failure, `error` says why); the ring's status as JSON (also the `ring` block of the
+        // instrument status).
+        BackendCommandResult freezeRun();
+        BackendCommandResult resumeRun();
+        std::vector<std::uint8_t> fetchRingFramePacket(std::uint64_t seq, std::string *error);
+        std::string fetchRingStatusJson();
         // The shell's Service / Commissioning mode, latched in the backend: raw LED values are
         // refused outside it.
         BackendCommandResult setServiceMode(bool on);

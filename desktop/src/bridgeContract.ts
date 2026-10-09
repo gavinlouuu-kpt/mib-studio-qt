@@ -3,7 +3,7 @@
 // Regenerate with: python3 scripts/gen_bridge_contract.py
 // CI verifies this file with: python3 scripts/gen_bridge_contract.py --check
 
-export const BRIDGE_ABI_VERSION = 33;
+export const BRIDGE_ABI_VERSION = 34;
 
 export const EVENT_KINDS = {
   FrameReady: 0,

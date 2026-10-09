@@ -1,4 +1,5 @@
 import { decodeRunPreview } from "./runPreview";
+import { decodeRingFrame, type RingStatus } from "./ringPlayback";
 import type { StartupPreference } from './startupPreference';
 import type { ReviewExportRequest, ReviewExportStatus } from "./reviewExport";
 // Typed client for the Tauri command layer that wraps the Rust ↔ C++ bridge
@@ -612,6 +613,8 @@ export interface InstrumentStatus {
   results?: ResultsStreamState;
   mode?: InstrumentModeState;
   storage?: RecordingTargetState;
+  /** The every-frame ring (ABI 34): capacity, the buffered range and whether playback is offered. */
+  ring?: RingStatus;
   /** Where saved files' wall-clock times come from (G14): the board has no RTC. */
   wall_clock?: { synced: boolean; source: "client_sync" | "board_clock_unsynced" | "system_clock"; offset_ns: number; last_sync_unix_ms: number };
   error?: string;
@@ -857,6 +860,11 @@ export const bridge = {
   setServiceMode: (on: boolean) => invokeCommand("set_service_mode", {on}),
   setInstrumentLed: (delayUs: number, widthUs: number) => invokeCommand("set_instrument_led", {delayUs, widthUs}),
   fetchRunPreview: async () => decodeRunPreview(await invoke<ArrayBuffer>("fetch_run_preview")),
+  // The every-frame ring (ABI 34, #649 v1): Stop in Run holds it for playback, Resume re-arms it (a new ring).
+  fetchRingStatus: () => invoke<RingStatus>("fetch_ring_status"),
+  fetchRingFrame: async (seq: number) => decodeRingFrame(await invoke<ArrayBuffer>("fetch_ring_frame", { seq })),
+  ringFreeze: () => invokeCommand("ring_freeze"),
+  ringResume: () => invokeCommand("ring_resume"),
   fetchBackground: () => pullFrame("fetch_background_packet", 4),
   setBackgroundFromCurrentFrame: () =>
     sourceMutation("set_background_from_current_frame"),

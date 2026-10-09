@@ -102,7 +102,9 @@ fn abi_version_is_stable() {
     // local profile or central method (one startup pointer) at startup.
     // v33 sync_wall_clock (#651 G14): the client's clock for files saved on a board without an RTC;
     // fetch_instrument_status gains wall_clock{synced, source, offset_ns, last_sync_unix_ms}.
-    assert_eq!(ffi::bridge_abi_version(), 33);
+    // v34 the every-frame ring (#649 v1): fetch_ring_status, fetch_ring_frame (MIBR), ring_freeze, ring_resume and the
+    // `ring` block of fetch_instrument_status.
+    assert_eq!(ffi::bridge_abi_version(), 34);
 }
 
 // ABI 31 (#549): with nothing loaded and no run finished, the accounting says so and why.
@@ -143,6 +145,17 @@ fn instrument_mode_commands_off_the_instrument() {
     assert!(!bridge.pin_mut().set_instrument_led(7.0, 60.0).ok);
     assert!(bridge.pin_mut().set_service_mode(false).ok);
     assert!(bridge.pin_mut().fetch_run_preview().is_empty());
+    // The every-frame ring (ABI 34): off the PZ7035 there is none, said plainly; nothing is armed or held.
+    let ring: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_ring_status()).unwrap();
+    assert_eq!(ring["available"], serde_json::json!(false), "{ring}");
+    assert_eq!(ring["run_frozen"], serde_json::json!(false), "{ring}");
+    assert!(ring["reason"].as_str().unwrap().contains("no frame ring"), "{ring}");
+    assert!(bridge.pin_mut().fetch_ring_frame(0).is_empty());
+    assert!(bridge.pin_mut().ring_frame_error().contains("no frame ring"), "{}", bridge.pin_mut().ring_frame_error());
+    let frozen = bridge.pin_mut().ring_freeze();
+    assert!(!frozen.ok && frozen.message.contains("no PZ7035 control"), "{}", frozen.message);
+    let resumed = bridge.pin_mut().ring_resume();
+    assert!(!resumed.ok && resumed.message.contains("no PZ7035 control"), "{}", resumed.message);
     let info: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_platform_info()).unwrap();
     assert_eq!(info["capabilities"]["run_mode"], serde_json::json!(false), "{info}");
     bridge.pin_mut().shutdown();

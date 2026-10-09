@@ -485,6 +485,14 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
   `stage_motion_is_control_only_but_stop_is_not` in the server;
   `backend.stage_bridge_facade`.
 
+## ABI 34: the every-frame ring (#649 v1)
+
+`fetch_ring_status` (JSON, also the `ring` block of `fetch_instrument_status`), `fetch_ring_frame {seq}` (a binary `MIBR` packet:
+48-byte header, gray, packed mask, cells in the `MIBC` run-preview word layout; error `RING_FRAME_UNAVAILABLE: <outcome>: <why>`),
+`ring_freeze` and `ring_resume` (control commands in the YOFO Studio server). `BackendFacade` → `AppBackend::freezeRun/resumeRun/ringFrame`
+→ the execution provider's ring (`PzFrameRing`, results13). Off the PZ7035 the status says there is no ring and the commands refuse.
+Merge coordination: 34 is taken; the next free number is 35, to be reserved with the coordinator.
+
 ## ABI 33: wall-clock sync (#651 G14)
 
 `sync_wall_clock(unix_ms)` (a control command in the YOFO Studio server, `{unixMs}` in JSON) hands the controlling browser's clock to

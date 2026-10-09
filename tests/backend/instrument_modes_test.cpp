@@ -18,6 +18,8 @@
 #include "backend/pz/PzInstrumentControl.h"
 #include "backend/services/CaptureService.h"
 
+#include <nlohmann/json.hpp>
+
 #include "support/assert.h"
 #include "support/frames.h"
 #include "support/tempdir.h"
@@ -863,6 +865,60 @@ void testRingPlayback(const mib::test::TempDir& td) {
     MIB_EXPECT(backend.runFrozen() && !fake->running && fake->stops == stopsBefore + 1 && s.live[S0 + 0] == 0 && !backend.liveResultsActive(),
                "Stop: the provider stopped, the LED is off, the Run is held");
     MIB_EXPECT(backend.freezeRun(&err) && fake->stops == stopsBefore + 1, "stopping twice is harmless");
+    // The bridge view (ABI 34): the status JSON, the `ring` block of the instrument status, a frame, and the commands.
+    {
+        const auto j = nlohmann::json::parse(facade.fetchRingStatusJson());
+        MIB_EXPECT(j["available"] == true && j["frozen"] == true && j["invalid"] == false && j["run_frozen"] == true &&
+                       j["count"] == 100 && j["first_seq"] == 0 && j["last_seq"] == 99 && j["capacity_frames"] == 100,
+                   "fetch_ring_status: a frozen ring of 100 frames, readable 0 to 99");
+        const auto instrument = nlohmann::json::parse(facade.fetchInstrumentStatusJson());
+        MIB_EXPECT(instrument.contains("ring") && instrument["ring"]["run_frozen"] == true, "the instrument status carries the ring block");
+        std::string frameError;
+        const auto packet = facade.fetchRingFramePacket(5, &frameError);
+        MIB_EXPECT(packet.size() > 48 && std::memcmp(packet.data(), "MIBR", 4) == 0 && frameError.empty(), "fetch_ring_frame: a MIBR packet");
+        MIB_EXPECT(facade.fetchRingFramePacket(500, &frameError).empty() && frameError.find("out_of_range") != std::string::npos,
+                   "fetch_ring_frame: a sequence out of range says so");
+        fake->ring.fault = true;
+        fake->ring.frozen = false;
+        fake->ring.invalidReason = "the ring stalled (RING_STALLED): re-arm";
+        const auto bad = nlohmann::json::parse(facade.fetchRingStatusJson());
+        MIB_EXPECT(bad["invalid"] == true && bad["frozen"] == false && bad["reason"].get<std::string>().find("RING_STALLED") != std::string::npos,
+                   "an invalid ring is reported with the reason");
+        // STOP_STUCK: not frozen, not invalid, flagged stop incomplete; the frames below FINAL stay readable.
+        fake->ring.faultCleared = 0x104;
+        fake->ring.faultState = 6;
+        const auto cleared = nlohmann::json::parse(facade.fetchRingStatusJson());
+        MIB_EXPECT(cleared["fault_cleared"] == 0x104 && cleared["fault_cleared_state"] == 6, "a PL fault cleared at Run start is in the ring status");
+        fake->ring.faultCleared = 0;
+        fake->ring.faultState = 0;
+        fake->ring.fault = false;
+        fake->ring.frozen = false;
+        fake->ring.stopStuck = true;
+        fake->ring.stopIncomplete = true;
+        fake->ring.invalidReason.clear();
+        const auto stuck = nlohmann::json::parse(facade.fetchRingStatusJson());
+        MIB_EXPECT(stuck["stop_incomplete"] == true && stuck["invalid"] == false && stuck["frozen"] == false && stuck["count"] == 100 &&
+                       stuck["restore_needed"] == false,
+                   "STOP_STUCK: stop incomplete, not invalid, the range stays");
+        MIB_EXPECT(facade.fetchRingFramePacket(7, &frameError).size() > 48, "STOP_STUCK: a frame below FINAL is still served");
+        fake->ring.stopStuck = false;
+        fake->ring.stopIncomplete = false;
+        // A stop that never reached IDLE: restore needed.
+        fake->ring.restoreNeeded = true;
+        fake->ring.valid = false;
+        fake->ring.why = "the frame ring never reached idle after STOP: the PL needs a restore";
+        const auto restore = nlohmann::json::parse(facade.fetchRingStatusJson());
+        MIB_EXPECT(restore["restore_needed"] == true && restore["reason"].get<std::string>().find("restore") != std::string::npos,
+                   "a stop that never reached IDLE is reported as restore needed");
+        fake->ring.restoreNeeded = false;
+        fake->ring.valid = true;
+        fake->ring.why.clear();
+        fake->ring.frozen = true;
+        fake->placementProblem = "frame ring: boot with a smaller mem=";
+        const auto nofit = nlohmann::json::parse(facade.fetchRingStatusJson());
+        MIB_EXPECT(nofit["available"] == false && nofit["reason"].get<std::string>().find("mem=") != std::string::npos, "a ring that does not fit is unavailable with the remedy");
+        fake->placementProblem.clear();
+    }
     {
         const auto st = backend.ringStatus();
         MIB_EXPECT(st.valid && st.count() == 100 && st.frozen, "the ring's status reaches the backend");
@@ -896,14 +952,23 @@ void testRingPlayback(const mib::test::TempDir& td) {
     }
     // Resume re-arms: a new ring, the LED back on.
     const int startsBefore = fake->starts;
-    MIB_REQUIRE(backend.resumeRun(&err), "resume: " + err);
+    MIB_REQUIRE(facade.resumeRun().ok, "resume through the facade");
     MIB_EXPECT(!backend.runFrozen() && fake->running && fake->starts == startsBefore + 1 && s.live[S0 + 0] == 1 && backend.liveResultsActive(),
                "Resume: the session is armed again and the LED is on");
     MIB_EXPECT(backend.resumeRun(&err) && fake->starts == startsBefore + 1, "resuming a running Run is harmless");
-    // A mode switch ends a stopped Run.
-    MIB_REQUIRE(backend.freezeRun(&err), "freeze again: " + err);
-    MIB_REQUIRE(backend.setInstrumentMode(pz::InstrumentMode::Align, 0, 0, &err), "Align from a stopped Run: " + err);
-    MIB_EXPECT(!backend.runFrozen(), "Align ends the stopped Run");
+    // A camera mode switch does not silently discard the frames the operator stopped to review: it is refused until Resume (idle ends it).
+    MIB_REQUIRE(facade.freezeRun().ok, "freeze again through the facade");
+    MIB_EXPECT(!backend.setInstrumentMode(pz::InstrumentMode::Align, 0, 0, &err) && err.find("resume Run first") != std::string::npos && backend.runFrozen(),
+               "Align from a stopped Run is refused with the reason, and the Run stays held");
+    MIB_EXPECT(!backend.setInstrumentMode(pz::InstrumentMode::Run, 152, 200, &err) && backend.runFrozen(), "so is a Run window change");
+    fake->placementProblem = "frame ring: boot with a smaller mem=";
+    MIB_REQUIRE(facade.resumeRun().ok, "resume");
+    MIB_EXPECT(!backend.freezeRun(&err) && err.find("mem=") != std::string::npos && !backend.runFrozen(), "Stop is refused when the ring does not fit, not only in the UI");
+    fake->placementProblem.clear();
+    MIB_REQUIRE(facade.freezeRun().ok, "freeze again");
+    MIB_REQUIRE(facade.resumeRun().ok, "resume again");
+    MIB_REQUIRE(backend.setInstrumentMode(pz::InstrumentMode::Align, 0, 0, &err), "Align after Resume: " + err);
+    MIB_EXPECT(!backend.runFrozen(), "Align after Resume: no stopped Run");
     MIB_REQUIRE(backend.setInstrumentMode(pz::InstrumentMode::Run, 152, 200, &err), "Run: " + err);
     MIB_REQUIRE(backend.freezeRun(&err), "freeze before idle: " + err);
     MIB_EXPECT(facade.setInstrumentMode("idle", 0, 0).ok && !backend.runFrozen(), "idle ends it too");

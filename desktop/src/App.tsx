@@ -25,6 +25,8 @@ import {open, save, confirm} from "./transport/dialogs";
 import { volatileDataNotice } from "./diagnosticsView";
 import { useWallClockSync } from "./transport/wallClockSync";
 import { DiagnosticsPanel } from "./components/DiagnosticsPanel";
+import { RingPlaybackPanel } from "./components/RingPlaybackPanel";
+import { faultClearedNote } from "./ringPlayback";
 import { downloadUrl } from "./filesView";
 import { serverOrigin, tokenFromLocation } from "./transport/auth";
 import { FilesPanel } from "./components/FilesPanel";
@@ -306,6 +308,11 @@ export default function App() {
   const instrumentRef = useRef<InstrumentStatus | null>(null);
   instrumentRef.current = instrument;
   const runMode = instrument?.mode?.name === "run";
+  // Run stopped to review the frame ring (#649 v1): the cell-capture preview pauses and the playback takes its place.
+  const ring = instrument?.ring;
+  const runFrozen = runMode && !!ring?.run_frozen;
+  // A PL fault that the Run start cleared automatically is never hidden: said once in the log, and kept on the run card and in Diagnostics.
+  const faultNote = faultClearedNote(ring);
   const [runPreviewInfo, setRunPreviewInfo] = useState<{frameId: number; listed: number; cells: number; blemishes: number} | null>(null);
   const [showRunMask, setShowRunMask] = useState(true);
   const showRunMaskRef = useRef(true);
@@ -337,6 +344,11 @@ export default function App() {
     // <app_log>/desktop-shell.log for correlation with the backend logs.
     void bridge.shellLog("info", line).catch(() => {});
   }, []);
+  const lastFaultNote = useRef("");
+  useEffect(() => {
+    if (faultNote && faultNote !== lastFaultNote.current) append(faultNote);
+    lastFaultNote.current = faultNote;
+  }, [faultNote, append]);
 
   // Initialize the backend on boot (empty data dir resolves to Tauri's
   // app_data_dir on the Rust side) — the Qt app has no manual init step.
@@ -730,7 +742,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!ready || !runMode || tab !== "experiment") { setRunPreviewInfo(null); return; }
+    if (!ready || !runMode || runFrozen || tab !== "experiment") { setRunPreviewInfo(null); return; }
     let busy = false, live = true;
     const id = window.setInterval(() => {
       if (busy) return;
@@ -740,7 +752,26 @@ export default function App() {
         .finally(() => { busy = false; });
     }, 100);
     return () => { live = false; window.clearInterval(id); };
-  }, [ready, runMode, tab, drawRunPreview]);
+  }, [ready, runMode, runFrozen, tab, drawRunPreview]);
+
+  // Stop in Run holds the frame ring for playback; resume re-arms it (a new ring).
+  const refreshInstrument = useCallback(() => { void bridge.fetchInstrumentStatus().then(setInstrument).catch(() => undefined); }, []);
+  const onStopRun = useCallback(async () => {
+    try {
+      const r = await bridge.ringFreeze();
+      append(r.ok ? r.message : `Stop: ${r.message}`);
+    } catch (e) {
+      append(`Stop: ${String(e).replace(/^Error: /, "")}`); // a viewer (not the controller) or a lost connection
+    }
+    refreshInstrument();
+  }, [append, refreshInstrument]);
+  const onResumeRun = useCallback(async () => {
+    try {
+      return await bridge.ringResume();
+    } finally {
+      refreshInstrument();
+    }
+  }, [refreshInstrument]);
 
   const onStartCamera = useCallback(async () => {
     try {
@@ -1060,6 +1091,12 @@ export default function App() {
         // No placed window: stay as we are; the Experiment tab says so and offers the way there.
         if (want === "run" && (!win || !cameraWin.placedRef.current)) return;
         if (current?.name === want && (want === "align" || (current.run_x === win!.x && current.run_y === win!.y))) { setModeError(null); return; }
+        // A stopped Run holds the frames the operator stopped to review: a tab change must not silently discard them (the backend refuses the
+        // switch as well). Resume Run ends it, and this effect then switches to the tab's mode.
+        if (instrumentRef.current?.ring?.run_frozen) {
+          append("Run is stopped to review the buffered frames: Resume Run before changing the camera mode");
+          return;
+        }
         append(want === "align" ? "switching to Align (full sensor)…" : `switching to Run at (${win!.x}, ${win!.y})…`);
         const result = await bridge.setInstrumentMode(want, win?.x ?? 0, win?.y ?? 0);
         append(result.ok ? result.message : `Camera mode: ${result.message}`);
@@ -1077,7 +1114,7 @@ export default function App() {
       if (!cancelled) await refreshCameraGeometry();
     })();
     return () => { cancelled = true; };
-  }, [tab, ready, expActive, refreshCameraGeometry, append, instrumentModes, cameraWin.placed, modeRetry, instrumentMode?.idle]);
+  }, [tab, ready, expActive, refreshCameraGeometry, append, instrumentModes, cameraWin.placed, modeRetry, instrumentMode?.idle, instrument?.ring?.run_frozen]);
 
   // The camera's read-back (applied window, sensor and delivered rate) follows its restart.
   useEffect(() => {
@@ -1900,7 +1937,10 @@ export default function App() {
 
                 {expTab === "preview" && (
                   <>
-                    <div className="canvas-wrap">
+                    {runFrozen && ring && (
+                      <RingPlaybackPanel status={ring} fetchFrame={bridge.fetchRingFrame} onResume={onResumeRun} append={append} />
+                    )}
+                    <div className="canvas-wrap" hidden={runFrozen}>
                       {!lastMeta && !runPreviewInfo && <span className="canvas-hint">{instrumentModes
                         ? (runMode ? "Waiting for the PL cell capture…"
                           : !cameraWin.placed ? "No run window placed yet"
@@ -1918,7 +1958,14 @@ export default function App() {
                           {(instrument.results.decode_errors ?? 0) > 0 && ` · decode errors ${instrument.results.decode_errors}`}
                           {(instrument.results.sequence_gaps ?? 0) > 0 && ` · frame gaps ${instrument.results.sequence_gaps}`}</>}
                         {" · "}<label><input type="checkbox" checked={showRunMask} onChange={(e) => setShowRunMask(e.target.checked)} /> U-Net mask</label>
+                        {faultNote && <>{" · "}<span className="warn" role="status" data-testid="fault-cleared">{faultNote}</span></>}
+                        {ring?.available && !runFrozen && !expActive && (
+                          <>{" · "}<button onClick={() => void onStopRun()} title={`Stop: hold the last ${ring.capacity_frames.toLocaleString("en-US")} frames for playback`}>Stop</button></>
+                        )}
                       </p>
+                    )}
+                    {instrumentModes && runMode && !runFrozen && ring && !ring.available && ring.reason && (
+                      <p className="pending-note" role="status" data-testid="ring-note">Frame ring: {ring.reason}</p>
                     )}
                     {instrumentModes && operatingMode === "service" && (runMode || instrument?.mode?.name === "align") && (
                       <InstrumentLedControls mode={runMode ? "run" : "align"} alignBands={instrument?.mode?.align_source === "bands"} limits={caps.led_limits?.[runMode ? "run" : "align"]}
@@ -2525,6 +2572,7 @@ export default function App() {
               ...(instrument?.core ? [`PL build ${instrument.core.build_id.slice(0, 8)}, weights ${instrument.core.profile_id.slice(0, 8)}, ABI ${instrument.core.abi_version}, expected ${instrument.core.expected?.image ?? "?"} (${instrument.core.build_match})`] : []),
               ...(instrument?.sensor ? [`sensor ${instrument.sensor.width}x${instrument.sensor.height} at ${instrument.sensor.fps.toFixed(1)} fps`] : []),
               ...(instrument?.storage ? [`storage ${instrument.storage.path}${instrument.storage.ram ? " (RAM)" : ""}, ${Math.round((instrument.storage.free_bytes ?? 0) / 1e6)} MB free`] : []),
+              ...(faultNote ? [faultNote] : []),
             ]} />
             <div className="actions">
               <button className="btn" onClick={() => setShowDiagnostics(false)}>Close</button>

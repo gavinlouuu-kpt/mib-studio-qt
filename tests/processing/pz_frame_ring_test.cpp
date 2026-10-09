@@ -625,6 +625,16 @@ int main() {
             pz::PzFrameRing ring(b, kLinuxEnd);
             const auto q = ring.quiesce(nullptr, kShort);
             MIB_EXPECT(q.ok && b.log == std::vector<std::string>{"FAULT_CLEAR"} && b.regs[PZ_MIB_REG_STATE] == PZ_MIB_STATE_IDLE, "FAULT: FAULT_CLEAR returns the bridge to IDLE");
+            MIB_EXPECT(q.faultCleared == 0x100 && q.faultState == PZ_MIB_STATE_FAULT, "the cleared FAULT value and the STATE are reported, not hidden");
+            Bridge zeroFault(PZ_MIB_STATE_FAULT);
+            pz::PzFrameRing ring4(zeroFault, kLinuxEnd);
+            const auto q4 = ring4.quiesce(nullptr, kShort);
+            MIB_EXPECT(q4.ok && q4.faultCleared == 0 && q4.faultState == PZ_MIB_STATE_FAULT, "STATE FAULT with the FAULT register at 0 is still reported (never a silent 0)");
+            Bridge idleFault;
+            idleFault.regs[PZ_MIB_REG_FAULT] = 0x20;
+            pz::PzFrameRing ring3(idleFault, kLinuxEnd);
+            const auto q3 = ring3.quiesce(nullptr, kShort);
+            MIB_EXPECT(q3.ok && q3.faultCleared == 0x20, "a fault bit left in an IDLE bridge is cleared and reported too");
             Bridge stuck;
             stuck.regs[PZ_MIB_REG_FAULT] = 0x100;
             stuck.faultSources = 0x100;

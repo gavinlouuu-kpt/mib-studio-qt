@@ -176,7 +176,7 @@ const CONTROL_COMMANDS: &[&str] = &[
     "processing_core_command",
     "save_preview_buffer", "set_processed_preview_enabled",
     // PZ7035 (#501 P1): camera modes and the LED drive hardware; service mode unlocks raw LED.
-    "set_instrument_mode", "sync_wall_clock", "set_service_mode", "set_instrument_led",
+    "set_instrument_mode", "sync_wall_clock", "ring_freeze", "ring_resume", "set_service_mode", "set_instrument_led",
     // Z stage (#464). stage_stop is deliberately absent: any client may stop
     // the axis (Stop is always accepted, ADR 0013 §5).
     "stage_connect", "stage_disconnect", "stage_move_to", "stage_move_by", "stage_set_zero",
@@ -581,6 +581,18 @@ async fn connection(server: Arc<Server>, socket: WebSocket, peer: String) {
 #[cfg(test)]
 mod stage_control_tests {
     use super::CONTROL_COMMANDS;
+
+    // The frame ring (#649, ABI 34): Stop and Resume change what the instrument does (the LED, a new ring), so they need control; reading the
+    // status and a buffered frame does not (a viewer may watch the playback).
+    #[test]
+    fn ring_stop_and_resume_are_control_commands_but_reads_are_not() {
+        for cmd in ["ring_freeze", "ring_resume"] {
+            assert!(CONTROL_COMMANDS.contains(&cmd), "{cmd} must be a CONTROL command");
+        }
+        for cmd in ["fetch_ring_status", "fetch_ring_frame"] {
+            assert!(!CONTROL_COMMANDS.contains(&cmd), "{cmd} is a read: viewers may use it");
+        }
+    }
 
     // Z stage (#464): everything that can move or reconfigure the stage needs
     // control; Stop and the status read stay available to every client.

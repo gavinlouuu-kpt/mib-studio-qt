@@ -1,0 +1,335 @@
+// PZ7035 frame-ring playback (#649 v1): what Studio shows after Stop in Run. The PL keeps the newest N frames with their
+// own mask and cell results; the server freezes the ring and serves one frame at a time as a 'MIBR' packet. Pure module:
+// unit-testable in plain Node. The packet layout is in PzFrameRing.h (`buildRingPacket`); the cell words are the
+// 'MIBC' run-preview layout (runPreview.ts), so the same fields drive the cell table.
+import type { RunPreviewCell } from "./runPreview";
+
+/** A ring cell: the run-preview cell plus the payload validity mask (word 18 of the MIBR cell). */
+export interface RingCell extends RunPreviewCell {
+  index: number;
+  payloadValidity: number;
+}
+
+/** `fetch_ring_status` (bridge ABI 34). Sequences are the ring's own: frame 0 is the first after the run was armed. */
+export interface RingStatus {
+  available: boolean;
+  /** Why there is no ring or no playback (placement, image, not armed, invalid). */
+  reason?: string;
+  /** STATE = IDLE after STOP, FINAL = HEAD + 1, neither sticky bit: the buffered frames can be played back. */
+  frozen: boolean;
+  /** RING_STALLED, RESET_GENERATION refused or FAULT: re-arm needed, no playback. */
+  invalid: boolean;
+  /** STOP_STUCK: not frozen, but the records below the newest stay readable (flagged). */
+  stop_incomplete: boolean;
+  /** STOP never reached IDLE within the bound: a hardware fault, the PL needs a restore. */
+  restore_needed: boolean;
+  /** The PL fault the last Run start cleared automatically (0: none): shown once, never hidden. */
+  fault_cleared?: number;
+  /** The bridge STATE (6 = FAULT) that start cleared, also when the FAULT register read 0. */
+  fault_cleared_state?: number;
+  /** Run stopped by the operator (the backend holds it). */
+  run_frozen: boolean;
+  capacity_frames: number;
+  /** First and last readable sequence (inclusive); count 0 when empty. */
+  first_seq: number;
+  last_seq: number;
+  count: number;
+  sensor_fps: number;
+}
+
+export interface RingFrame {
+  seq: number;
+  frameId: number;
+  timestampTicks: number;
+  tickHz: number;
+  flags: number;
+  width: number;
+  height: number;
+  maskPresent: boolean;
+  resultsTruncated: boolean;
+  /** FRAME INVALID or PARTIAL: an ingress-error frame, nothing was measured. */
+  frameInvalid: boolean;
+  /** The MONO8 block is INCOMPLETE: the PL closed the frame early (an open frame at Stop, or a lost line). */
+  cut: boolean;
+  /** The MASK1 block is INCOMPLETE: never shown as present. */
+  maskIncomplete: boolean;
+  gray: Uint8Array;
+  /** 1 bit per pixel, LSB first, row-major; all zero when `maskPresent` is false. */
+  mask: Uint8Array;
+  cells: RingCell[];
+}
+
+const HEADER = 48;
+const CELL_WORDS = 19;
+
+export function decodeRingFrame(buf: ArrayBuffer): RingFrame {
+  if (buf.byteLength < HEADER) throw new Error("ring frame: short packet");
+  const v = new DataView(buf);
+  if (String.fromCharCode(v.getUint8(0), v.getUint8(1), v.getUint8(2), v.getUint8(3)) !== "MIBR")
+    throw new Error("ring frame: bad magic");
+  if (v.getUint16(4, true) !== 1 || v.getUint16(6, true) !== HEADER) throw new Error("ring frame: unsupported version");
+  const width = v.getUint16(40, true), height = v.getUint16(42, true), listed = v.getUint16(44, true);
+  const bits = v.getUint16(46, true);
+  const grayBytes = width * height, maskBytes = grayBytes / 8;
+  if (width === 0 || height === 0 || width % 8 !== 0) throw new Error("ring frame: bad geometry");
+  const expected = HEADER + grayBytes + maskBytes + listed * CELL_WORDS * 4;
+  if (buf.byteLength !== expected) throw new Error(`ring frame: ${buf.byteLength} bytes, expected ${expected}`);
+  const cells: RingCell[] = [];
+  for (let c = 0; c < listed; c++) {
+    const at = HEADER + grayBytes + maskBytes + c * CELL_WORDS * 4;
+    const w = (k: number) => v.getUint32(at + 4 * k, true);
+    cells.push({
+      x: w(15) & 0xffff, y: w(15) >>> 16, width: w(16) & 0xffff, height: w(16) >>> 16,
+      valid: (w(17) & 0xffff) !== 0, // word 17 as in the run preview: count << 24 | rank << 16 | valid
+      index: (w(17) >>> 16) & 0xff,
+      payloadValidity: w(18),
+      payload: Array.from({ length: 15 }, (_, k) => w(k)),
+    });
+  }
+  return {
+    seq: Number(v.getBigUint64(8, true)),
+    frameId: Number(v.getBigUint64(16, true)),
+    timestampTicks: Number(v.getBigUint64(24, true)),
+    tickHz: v.getUint32(32, true),
+    flags: v.getUint32(36, true),
+    width, height,
+    maskPresent: (bits & 1) !== 0,
+    resultsTruncated: (bits & 2) !== 0,
+    frameInvalid: (bits & 4) !== 0,
+    cut: (bits & 8) !== 0,
+    maskIncomplete: (bits & 16) !== 0,
+    gray: new Uint8Array(buf, HEADER, grayBytes),
+    mask: new Uint8Array(buf, HEADER + grayBytes, maskBytes),
+    cells,
+  };
+}
+
+/** "PL fault 0x104 cleared at Run start", or empty when none was cleared. */
+export function faultClearedNote(s: Pick<RingStatus, "fault_cleared" | "fault_cleared_state"> | null | undefined): string {
+  const v = s?.fault_cleared ?? 0;
+  if (v > 0) return `PL fault 0x${v.toString(16)} cleared at Run start`;
+  return (s?.fault_cleared_state ?? 0) > 0 ? "PL in FAULT state (FAULT register 0x0) cleared at Run start" : "";
+}
+
+// ---- capacity and range ------------------------------------------------------------------------------------------
+
+/** Frames and seconds at the sensor rate, e.g. "5,000 frames · 1.0 s at 5,001 fps". */
+export function capacityText(s: Pick<RingStatus, "capacity_frames" | "sensor_fps">): string {
+  const frames = s.capacity_frames.toLocaleString("en-US");
+  if (!(s.sensor_fps > 0)) return `${frames} frames`;
+  return `${frames} frames · ${secondsText(s.capacity_frames / s.sensor_fps)} at ${Math.round(s.sensor_fps).toLocaleString("en-US")} fps`;
+}
+
+export function secondsText(seconds: number): string {
+  if (!(seconds >= 0) || !Number.isFinite(seconds)) return "—";
+  if (seconds < 10) return `${seconds.toFixed(2)} s`;
+  if (seconds < 100) return `${seconds.toFixed(1)} s`;
+  return `${Math.round(seconds)} s`;
+}
+
+export interface PlaybackAvailability {
+  ok: boolean;
+  /** Shown instead of the controls when !ok. */
+  reason: string;
+  /** Shown with the controls when ok (a stop that did not complete). */
+  note?: string;
+}
+
+/** Playback is offered only for a frozen, valid ring with frames in it. */
+export function playbackAvailability(s: RingStatus | null | undefined): PlaybackAvailability {
+  if (!s) return { ok: false, reason: "No frame ring status yet." };
+  if (!s.available) return { ok: false, reason: s.reason || "This instrument keeps no frame ring." };
+  if (s.restore_needed) return { ok: false, reason: "Restore needed: the ring never reached idle after Stop, so the PL's tap or clock is broken. Restore the PL." };
+  if (s.invalid) return { ok: false, reason: s.reason || "The ring is not valid: resume Run to re-arm it." };
+  if (!s.run_frozen) return { ok: false, reason: "Stop Run to review the buffered frames." };
+  if (!s.frozen && !s.stop_incomplete) return { ok: false, reason: s.reason || "The ring is not frozen yet." };
+  if (s.count <= 0) return { ok: false, reason: "The ring is empty: nothing was buffered before Stop." };
+  return s.stop_incomplete
+    ? { ok: true, reason: "", note: "Stop incomplete (STOP_STUCK): the PL did not close the last frame. The frames up to the newest complete one are shown; the very last frame may be missing." }
+    : { ok: true, reason: "" };
+}
+
+/** "Frames 120 to 5,119 · 5,000 frames · 1.00 s" */
+export function rangeText(s: Pick<RingStatus, "first_seq" | "last_seq" | "count" | "sensor_fps">): string {
+  if (s.count <= 0) return "No buffered frames";
+  const seconds = s.sensor_fps > 0 ? ` · ${secondsText(s.count / s.sensor_fps)}` : "";
+  return `Frames ${s.first_seq.toLocaleString("en-US")} to ${s.last_seq.toLocaleString("en-US")} · ${s.count.toLocaleString("en-US")} frames${seconds}`;
+}
+
+/** Elapsed time of a frame since the first buffered one, from the packets' tick stamps ("+0.0123 s"). */
+export function elapsedText(frame: Pick<RingFrame, "timestampTicks" | "tickHz">, first: Pick<RingFrame, "timestampTicks"> | null): string {
+  if (!first || !(frame.tickHz > 0)) return "";
+  const seconds = (frame.timestampTicks - first.timestampTicks) / frame.tickHz;
+  return `+${seconds.toFixed(4)} s`;
+}
+
+// ---- the cell's measurements ---------------------------------------------------------------------------------------
+
+export const CELL_REASONS: Record<number, string> = {
+  0: "valid", 1: "no contour", 2: "touches the border", 3: "area outside the gate", 5: "deformability outside the gate",
+  6: "area ratio outside the gate", 7: "Laplacian outside the gate", 8: "outside the channel",
+};
+
+export interface CellMetrics {
+  objectId: number;
+  /** 0 = valid, else the reason the cell was rejected (CELL_REASONS). */
+  reason: number;
+  cutOff: boolean;
+  target: boolean;
+  /** NaN when the PL left the word out. */
+  contourArea: number;
+  hullArea: number;
+  areaRatio: number;
+  deformability: number;
+  areaUm2: number;
+  youngsModulusKpa: number;
+  brightnessMean: number;
+  laplacianVariance: number;
+  centroidX: number;
+  centroidY: number;
+  pixelCount: number;
+  blemishCount: number;
+}
+
+/**
+ * The unet_cells_v2 payload (words 0-14) in host units, as the backend decodes it (`decodeUnetCellsV2`): a word the validity
+ * mask leaves out is NaN, never 0.
+ */
+export function cellMetrics(c: Pick<RingCell, "payload" | "payloadValidity">): CellMetrics {
+  const w = c.payload, ok = (i: number) => ((c.payloadValidity >>> i) & 1) !== 0;
+  const q16 = (i: number) => (ok(i) ? w[i] / 65536 : Number.NaN);
+  const sq16 = (i: number) => (ok(i) ? (w[i] | 0) / 65536 : Number.NaN);
+  const q8 = (i: number) => (ok(i) ? w[i] / 256 : Number.NaN);
+  return {
+    objectId: w[0] & 0xffff,
+    reason: (w[0] >>> 16) & 15,
+    cutOff: ((w[0] >>> 20) & 1) !== 0,
+    target: ((w[0] >>> 24) & 1) !== 0,
+    contourArea: q16(1),   // NaN, shown as "—", when the PL left it out (a rejected cell): never 0
+    hullArea: q16(2),
+    areaRatio: q16(4),
+    deformability: ok(5) ? (w[5] & 0xffff) / 65536 : Number.NaN,
+    areaUm2: q16(9),
+    youngsModulusKpa: q16(10),
+    brightnessMean: q16(6),
+    laplacianVariance: q8(11),
+    centroidX: sq16(7),
+    centroidY: sq16(8),
+    pixelCount: w[13] & 0xffff,
+    blemishCount: w[13] >>> 16,
+  };
+}
+
+/** A number for the cell table, "—" when the PL left it out. */
+export function metricText(v: number, digits = 2): string {
+  return Number.isFinite(v) ? v.toFixed(digits) : "—";
+}
+
+// ---- scrub, step, play -------------------------------------------------------------------------------------------
+
+export interface SeqRange {
+  first: number;
+  last: number;
+}
+
+export function clampSeq(seq: number, r: SeqRange): number {
+  if (!Number.isFinite(seq)) return r.first;
+  return Math.min(r.last, Math.max(r.first, Math.round(seq)));
+}
+
+export function stepSeq(seq: number, delta: number, r: SeqRange): number {
+  return clampSeq(seq + delta, r);
+}
+
+/** Display rates offered for play: frames shown per second (the sensor ran at 5,000). */
+export const DISPLAY_FPS = [1, 5, 10, 30, 60] as const;
+export const DEFAULT_DISPLAY_FPS = 30;
+
+/**
+ * Playback clock: frames to advance after `elapsedMs` at `displayFps`, carrying the fractional remainder so a
+ * slow tick does not slow the playback. Returns the new sequence, the remainder, and whether the end was reached.
+ */
+export function advancePlayback(
+  seq: number, carry: number, elapsedMs: number, displayFps: number, r: SeqRange, loop = false,
+): { seq: number; carry: number; ended: boolean } {
+  const wanted = carry + (Math.max(0, elapsedMs) * displayFps) / 1000;
+  const whole = Math.floor(wanted);
+  const rest = wanted - whole;
+  if (whole <= 0) return { seq, carry: rest, ended: false };
+  let next = seq + whole;
+  if (next <= r.last) return { seq: next, carry: rest, ended: false };
+  if (loop && r.last >= r.first) {
+    const span = r.last - r.first + 1;
+    next = r.first + ((next - r.first) % span);
+    return { seq: next, carry: rest, ended: false };
+  }
+  return { seq: r.last, carry: 0, ended: true };
+}
+
+// ---- overlays ------------------------------------------------------------------------------------------------------
+
+export type OverlayMode = "off" | "mask" | "contours" | "both";
+export const OVERLAY_MODES: readonly OverlayMode[] = ["off", "mask", "contours", "both"];
+export const OVERLAY_LABEL: Record<OverlayMode, string> = { off: "Off", mask: "Mask", contours: "Contours", both: "Both" };
+
+export function nextOverlay(m: OverlayMode): OverlayMode {
+  return OVERLAY_MODES[(OVERLAY_MODES.indexOf(m) + 1) % OVERLAY_MODES.length];
+}
+
+/** Pixels of the mask that have an unset 4-neighbour or touch the border: the outline of each region. */
+export function contourPixels(mask: Uint8Array, width: number, height: number): Uint8Array {
+  const bit = (x: number, y: number) => (mask[(y * width + x) >> 3] >> ((y * width + x) & 7)) & 1;
+  const out = new Uint8Array(width * height);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (!bit(x, y)) continue;
+      const edge = x === 0 || y === 0 || x === width - 1 || y === height - 1 ||
+        !bit(x - 1, y) || !bit(x + 1, y) || !bit(x, y - 1) || !bit(x, y + 1);
+      if (edge) out[y * width + x] = 1;
+    }
+  }
+  return out;
+}
+
+/** RGBA of the frame under the chosen overlay (the mask tint of the Run preview; contours in amber). */
+export function ringFrameRgba(f: RingFrame, overlay: OverlayMode): Uint8ClampedArray<ArrayBuffer> {
+  const n = f.width * f.height;
+  const out = new Uint8ClampedArray(new ArrayBuffer(n * 4));
+  const showMask = overlay === "mask" || overlay === "both";
+  const outline = overlay === "contours" || overlay === "both" ? contourPixels(f.mask, f.width, f.height) : null;
+  for (let i = 0; i < n; i++) {
+    const g = f.gray[i];
+    const masked = showMask && ((f.mask[i >> 3] >> (i & 7)) & 1) === 1;
+    if (outline && outline[i]) {
+      out[4 * i] = 255; out[4 * i + 1] = 176; out[4 * i + 2] = 0;
+    } else if (masked) {
+      out[4 * i] = Math.min(255, g * 0.5 + 110); out[4 * i + 1] = g * 0.6; out[4 * i + 2] = Math.min(255, g * 0.5 + 110);
+    } else {
+      out[4 * i] = g; out[4 * i + 1] = g; out[4 * i + 2] = g;
+    }
+    out[4 * i + 3] = 255;
+  }
+  return out;
+}
+
+/** Why a frame has no mask, shown on the canvas. */
+export function noMaskNote(f: Pick<RingFrame, "maskPresent" | "maskIncomplete">): string {
+  if (f.maskPresent) return "";
+  return f.maskIncomplete ? "The mask of this frame is incomplete and is not shown." : "No result for this frame: the U-Net did not deliver a mask.";
+}
+
+/** What is wrong with the frame itself (a cut or an invalid frame), shown above the controls; empty for a good frame. */
+export function frameNotes(f: Pick<RingFrame, "cut" | "frameInvalid">): string[] {
+  const notes: string[] = [];
+  if (f.cut) notes.push("This frame was cut: the PL closed it early, so the image is incomplete.");
+  if (f.frameInvalid) notes.push("Invalid frame: the input was unusable and nothing was measured.");
+  return notes;
+}
+
+// ---- Save clip (arrives with the SSD path, #667) ------------------------------------------------------------------
+
+export function saveClipState(ssdPathAvailable: boolean): { enabled: boolean; reason: string } {
+  return ssdPathAvailable
+    ? { enabled: true, reason: "" }
+    : { enabled: false, reason: "Saving needs the SSD (not available yet)." };
+}

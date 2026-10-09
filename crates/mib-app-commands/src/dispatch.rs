@@ -162,6 +162,10 @@ pub const COMMANDS: &[&str] = &[
     "fetch_run_accounting",
     "set_instrument_mode",
     "sync_wall_clock",
+    "fetch_ring_status",
+    "fetch_ring_frame",
+    "ring_freeze",
+    "ring_resume",
     "set_service_mode",
     "set_instrument_led",
     "fetch_run_preview",
@@ -807,6 +811,17 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
             let a: A = args(value)?;
             crate::camera_document::camera_document(a.action, a.path, a.kind, a.baseline, a.text).and_then(json)
         }
+        "fetch_ring_status" => crate::fetch_ring_status(state).and_then(json),
+        "fetch_ring_frame" => {
+            #[derive(Deserialize)]
+            struct A {
+                seq: u64,
+            }
+            let a: A = args(value)?;
+            crate::fetch_ring_frame(state, a.seq).map(Reply::Binary)
+        }
+        "ring_freeze" => crate::ring_freeze(state).and_then(json),
+        "ring_resume" => crate::ring_resume(state).and_then(json),
         "sync_wall_clock" => {
             #[derive(Deserialize)]
             struct A {
@@ -912,6 +927,32 @@ mod tests {
             }
             assert!(COMMANDS.contains(&name), "{name} is a Tauri command but not dispatchable");
         }
+    }
+
+    // The ring commands (ABI 34): `seq` is a JSON number (u64); a missing, negative or string value is INVALID_ARGUMENTS before the backend is asked, and off the
+    // PZ7035 the status says there is no ring and the frame and freeze commands fail with their reason.
+    #[test]
+    #[serial]
+    fn ring_commands_through_dispatch() {
+        let data = std::env::temp_dir().join(format!("mib_dispatch_ring_{}", std::process::id()));
+        let state = AppState::new();
+        let host = TestHost(data.to_string_lossy().into_owned());
+        assert_eq!(dispatch(&state, &host, "init", json!({ "dataDir": "" })).unwrap(), Reply::Json(json!(true)));
+        for bad in [json!({}), json!({ "seq": -1 }), json!({ "seq": "3" }), json!({ "seq": 1.5 }), json!({ "seq": null })] {
+            let err = dispatch(&state, &host, "fetch_ring_frame", bad.clone()).unwrap_err();
+            assert!(err.starts_with("INVALID_ARGUMENTS"), "{bad}: {err}");
+        }
+        let err = dispatch(&state, &host, "fetch_ring_frame", json!({ "seq": 3 })).unwrap_err();
+        assert!(err.starts_with("RING_FRAME_UNAVAILABLE"), "{err}");
+        let Reply::Json(status) = dispatch(&state, &host, "fetch_ring_status", Value::Null).unwrap() else { panic!("JSON") };
+        assert_eq!(status["available"], json!(false), "{status}");
+        assert_eq!(status["run_frozen"], json!(false), "{status}");
+        let Reply::Json(freeze) = dispatch(&state, &host, "ring_freeze", Value::Null).unwrap() else { panic!("JSON") };
+        assert_eq!(freeze["ok"], json!(false), "{freeze}");
+        let Reply::Json(resume) = dispatch(&state, &host, "ring_resume", Value::Null).unwrap() else { panic!("JSON") };
+        assert_eq!(resume["ok"], json!(false), "{resume}");
+        state.bridge.lock().unwrap().pin_mut().shutdown();
+        let _ = std::fs::remove_dir_all(&data);
     }
 
     #[test]

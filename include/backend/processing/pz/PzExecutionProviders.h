@@ -141,6 +141,8 @@ private:
     backend::pz::RingPlan ringPlan_;       // the plan the last ARM programmed
     std::atomic<bool> ringProgrammed_{false};
     std::atomic<uint64_t> ringLinuxEnd_{0};      // where Linux's RAM ended when the ring was armed (the reader refuses without it)
+    std::atomic<uint32_t> ringClearedState_{0};  // the bridge STATE that start cleared when it was FAULT
+    std::atomic<uint32_t> ringClearedFault_{0};  // the PL fault the last start cleared automatically (shown, never hidden)
     std::atomic<bool> ringRestoreNeeded_{false}; // the last STOP never reached IDLE within the bound: a hardware fault
 };
 #endif
