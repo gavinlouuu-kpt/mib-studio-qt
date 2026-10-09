@@ -6,3 +6,8 @@ eMMC with a space check, estimated times, the case that does not fit), the UI st
 mount-time recovery), how a run coexists with ring playback and Save clip, and the tests that need no board. No code. Findings:
 the PC has no experiment list widget, the run table has no times or drop counts and only 29 slots, and the idle rule would end an
 unattended run.
+
+Coordinator decisions (same day): one control (the Experiment start/stop with `storage=ssd`); export staged on the eMMC, and a run
+bigger than the free space exports automatically in consecutive parts by frame-id range; v1 uncompressed with a follow-up to
+measure gzip-1 or LZF on the mask dataset; the unattended opt-in applies to SSD runs only and needs a maximum duration; the
+run table of at least 256 entries with no silent overwrite is a hard requirement.

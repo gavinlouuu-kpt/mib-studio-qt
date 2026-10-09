@@ -38,14 +38,14 @@ Facts used (all from repository files, none newly measured): store record 59,392
    6 s (`crates/mib-bridge-server/src/lib.rs`). For a PC experiment that is the parity behaviour; for an unattended SSD run
    it would end the recording. See D4.
 
-## Decisions for the coordinator or Gavin
+## Decisions (coordinator, 2026-10-09: D1 to D4 accepted, with the changes noted)
 
 | # | Question | Recommendation |
 |---|---|---|
-| D1 | One control or two? "Record" (Gavin's word) vs the existing Start/Stop Experiment. | **One control: the existing Experiment start/stop with a storage target `ssd`**, labelled "Record to SSD" while the SSD is ready, "Record to eMMC (metadata only)" otherwise. It keeps the gates, provenance, accounting and idle handling the PC experiment has. PC raw "Record" stays hidden on the PZ. |
-| D2 | Where does the export land? | Stage on the eMMC (section 3); for runs that do not fit, a frame or time range export, and a later raw-run download (no staging). |
-| D3 | Does Stop during a recording close the run and freeze the ring for review? | Yes (section 5). |
-| D4 | Idle rule for SSD runs. | Keep parity (idle stop closes the run safely) by default; an explicit "keep recording when I leave" checkbox at start, stored in the run, for unattended runs. |
+| D1 | One control or two? "Record" (Gavin's word) vs the existing Start/Stop Experiment. | **Accepted.** **One control: the existing Experiment start/stop with a storage target `ssd`**, labelled "Record to SSD" while the SSD is ready, "Record to eMMC (metadata only)" otherwise. It keeps the gates, provenance, accounting and idle handling the PC experiment has. PC raw "Record" stays hidden on the PZ. |
+| D2 | Where does the export land? | **Accepted with a change.** Staged on the eMMC with the space check (section 3). A run bigger than the free space exports automatically in consecutive parts by frame-id range (section 3.2); the user downloads a part, deletes it, then exports the next. Raw-run download stays a later phase. v1 is uncompressed (the PC writer has no deflate); measuring compression is a follow-up (section 3.3). |
+| D3 | Does Stop during a recording close the run and freeze the ring for review? | **Accepted** (section 5). |
+| D4 | Idle rule for SSD runs. | **Accepted with bounds.** The idle stop stays unchanged for every other mode. The opt-in "keep recording when I leave" applies only to `storage=ssd` runs and requires a **maximum duration entered at start**: there are no unbounded unattended runs. The run ends through the normal Stop path at that time, so LED and strobe shutdown is identical. The run card shows "unattended until HH:MM". |
 
 ## 1. Run control through the PL register window (a)
 
@@ -58,7 +58,7 @@ reads runs back. The window is the board owner's to define; Studio needs the fol
 | R1 | **State** word: ABSENT, INITIALISING (IDENTIFY, superblock), RECOVERING (mount-time recovery, or a core-reset recovery during a run), READY, RECORDING, STOPPING (draining), WEDGED (drive not answering; the A400 is self-powered, the board cannot cycle it), FULL; plus a last-error code. | UI states (section 4); start gate. |
 | R2 | **Start / stop commands** with arguments: filter mode (all frames, frames with a cell, frames with a valid cell), include-INT8 off, and a 64-bit **start time (unix ms)** and a 32-bit **client tag** written before start. Stop is graceful (drain to disk, write trailer, close run) and returns a run id; an *abort* is separate. | D1, section 1.1. |
 | R3 | **Live counters** (read-only, coherent snapshot): frames seen, frames filtered as empty, frames passed by the filter, records on disk, records dropped by overload, records failed (not recoverable), drain recoveries, bytes written, ring fill (records waiting) and drain rate. | Honest accounting (section 4). |
-| R4 | **A larger run table**: at least 256 entries (a table of 64-byte entries in sectors after the superblock), no `run % N` overwrite while there is free space; an explicit "run table full" state. | Experiment list. |
+| R4 | **A larger run table (hard requirement: no silent overwrite)**: at least 256 entries (a table of 64-byte entries in sectors after the superblock), no `run % N` overwrite while there is free space; an explicit "run table full" state. | Experiment list. |
 | R5 | **Run entry fields**: run id, start unix ms and client tag (from R2), first and last frame id, first and last PL timestamp ticks and the tick rate (duration is derived), records, frames seen, frames empty, dropped, failed, drain recoveries, completion reason (0 clean, 1 drain fault, 5 not stopped, 6 length limit, 7 recovered at mount, as in `store_rec.h`), flags. | Experiment list and export. |
 | R6 | **Drop placement**: each stored record carries `lost_before` (a u32 in its FRAME record: records dropped since the previous stored record). | Studio can reconstruct exactly where the run has gaps and book them (`sequenceGaps`), without a per-run list that can overflow. |
 | R7 | **Read DMA**: `read(lba, sectors)` into a PS buffer in the PL carve-out (size and base reported by the window; at least 16 MiB, double-buffered or a ring of chunks), completion by status or IRQ, error code on a failed read. Refused (clear status) while RECORDING. | Export (section 3); replaces the 512 B port. |
@@ -148,6 +148,15 @@ Per record in the run, in frame-id order:
   reserve (settings, saved clips, logs). Estimate = records x 98.5 KB (image 49,152 + mask 49,152 + a 192-byte row, plus HDF5
   overhead). Refused with the numbers and the largest frame range that would fit. Mid-export `ENOSPC` aborts, deletes the part file,
   and says so. Existing exports are never auto-deleted.
+- **Runs larger than the free space export in consecutive parts** (decision D2). Studio computes the part size from the free space
+  (free minus the 512 MiB reserve, divided by 98.5 KB per record, rounded down to whole records) and splits the run by frame-id
+  range into N parts; the UI says "part 1 of N". An export job produces one part; the user downloads it, deletes it, and starts the
+  next part (the list row offers "Export part k of N" and shows which parts are on the eMMC). No range arithmetic for the user.
+  Each part is a complete experiment file: the full run provenance, `accounting_*` for its own frame range (the run totals appear
+  in `config_json` as `run_totals`, so a part is not mistaken for the whole run), and its frame range and part number in
+  `/experiment_info` (`export_part`, `export_parts`, `export_first_frame`, `export_last_frame`). A part boundary never splits a
+  frame, and a gap (`lost_before`) that falls on a boundary is booked in the part that contains the following record. A run that
+  fits is a single file without part attributes.
 - Only one export runs at a time, and not while a run is RECORDING (R7 refuses the DMA); the UI says "Export available after the
   run is stopped".
 
@@ -165,8 +174,10 @@ slowest stage, so the stages overlap and the time is about the HDF5 size / 22 MB
 | Large: typical, 1 h | 309,600 | 18.4 GB | about 30.5 GB | about 23 min if it fitted | **no**: range export (about 13 min at a time) or raw download (about 4.5 min of SSD read) |
 | Dense, 60 s (SSD-limited at about 37 MB/s, about 620 records/s) | about 37,000 | 2.2 GB | about 3.7 GB | about 3 min | yes |
 
-Compression (gzip on the chunks) could roughly halve the file but is not in the PC layout and its ARM CPU cost is unmeasured; not
-proposed for v1. Download to the PC then adds file size / min(eMMC read about 23 MB/s, network): 5.1 GB about 4 min.
+Compression (gzip on the chunks) could roughly halve the file but is not in the PC layout (the PC writer has no deflate) and its ARM CPU cost is
+unmeasured; v1 stays uncompressed. **Follow-up item:** measure gzip level 1 and LZF on the mask dataset on the A9 (the mask is mostly zeros, so
+it should shrink far more than the image). If the eMMC write rate is the bottleneck, a cheaper filter may cut the export time; h5py and Review read
+filtered datasets transparently, so only the ARM build's HDF5 filter support and the CPU cost need checking. Download to the PC then adds file size / min(eMMC read about 23 MB/s, network): 5.1 GB about 4 min.
 
 ## 4. UI states (d)
 
@@ -201,8 +212,9 @@ Premise (decision 3, R8): one store ring in PS DDR; the SSD drain is a consumer 
 - **Ring mode conflict to settle with the board owner (R8):** with the drain active, overwriting a record the drain has not
   consumed is a loss; with no recording it is the review buffer working. Studio sets the mode per run; the cost is that a run
   with a slow drain can lose a record the ring would otherwise have kept for review.
-- **Idle rule (D4):** a run ends with the last client by default (parity); the opt-in keeps it recording and the server
-  keeps the registers in a safe state (LED policy unchanged: the board owner's hand-back rule for LED and pumps still applies).
+- **Idle rule (D4):** a run ends with the last client by default (parity). The opt-in (SSD runs only) needs a maximum duration entered at start
+  and keeps the run going without clients until that time; the run then ends through the normal Stop path, so LED and strobe shutdown is identical
+  to a manual Stop. The run card shows "unattended until HH:MM"; the idle stop is unchanged for every other mode.
 
 ## 6. Tests without the board (f)
 
@@ -215,7 +227,7 @@ Premise (decision 3, R8): one store ring in PS DDR; the SSD drain is a consumer 
 3. **Review opens it**: the exported file goes through the bridge's review open in the existing backend test harness (frames > 0,
    metrics table, accounting panel states for `complete`, `intentionallyPartial`, `incompleteLoss` / not reconciled).
 4. **Accounting table test**: every row of the section 3.1 table as a table-driven unit test, including `reconcile` true/false.
-5. **Space and cleanup**: injected `statvfs` (full, almost full, ample), ENOSPC at the 64 MiB check, cancel mid-export, a stale
+5. **Space, parts, unattended runs and cleanup**: part sizing and boundaries (a gap on a boundary, a run that fits in one file), no opt-in without a maximum duration, stop at the deadline through the normal path, injected `statvfs` (full, almost full, ample), ENOSPC at the 64 MiB check, cancel mid-export, a stale
    `.part` at start-up, rename atomicity, two exports refused, export refused while RECORDING.
 6. **State machine**: a fake register window (a small model of R1 to R9) drives `SsdStore` through every transition, including
    RECOVERING during a run, WEDGED, a drop burst and a mount-time recovery; asserts the gates, the counters and the strip view
