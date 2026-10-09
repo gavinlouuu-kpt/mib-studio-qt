@@ -114,11 +114,17 @@ RingStatus PzFrameRing::status() {
     s.records = io_.reg(PZ_MIB_REG_STORE_RECORDS);
     s.recordBytes = io_.reg(PZ_MIB_REG_STORE_RECORD_BYTES);
     s.base = io_.reg(PZ_MIB_REG_STORE_BASE_LO) | static_cast<uint64_t>(io_.reg(PZ_MIB_REG_STORE_BASE_HI)) << 32;
-    s.state = io_.reg(PZ_MIB_REG_STORE_STATE);
+    const uint32_t stateReg = io_.reg(PZ_MIB_REG_STORE_STATE);
+    s.state = stateReg & kRingStateCodeMask;
+    s.stalled = (stateReg & kRingStateStalled) != 0;
+    s.stopStuck = (stateReg & kRingStateStopStuck) != 0;
     const uint32_t headRaw = io_.reg(PZ_MIB_REG_STORE_HEAD_SEQ);
     s.final = io_.reg(kRingRegFinalSeq);
     s.head = headRaw == kHeadNone ? -1 : static_cast<int64_t>(headRaw);
-    s.fault = s.state == PZ_MIB_STORE_STATE_FAULT;
+    s.fault = s.state == PZ_MIB_STORE_STATE_FAULT || s.stalled || s.stopStuck;
+    if (s.stalled) s.invalidReason = "the ring stalled (RING_STALLED): an acknowledgement was lost, so the buffered frames cannot be trusted; re-arm";
+    else if (s.stopStuck) s.invalidReason = "STOP did not complete in time (STOP_STUCK): the ring is not frozen; re-arm";
+    else if (s.fault) s.invalidReason = "the ring reports a fault: re-arm";
     if (s.records == 0) {
         s.why = "no frame ring is configured";
         return s;
@@ -151,6 +157,7 @@ RingRead PzFrameRing::readFrame(uint64_t seq, RingFrame& out, std::string* why) 
     };
     const RingStatus st = status();
     if (!st.valid) return fail(RingRead::Unavailable, st.why);
+    if (st.fault) return fail(RingRead::Unavailable, st.invalidReason);
     if (seq < st.lo || seq >= st.final)
         return fail(RingRead::OutOfRange, "frame " + std::to_string(seq) + " is not in the readable range [" +
                                               std::to_string(st.lo) + ", " + std::to_string(st.final) + ")");

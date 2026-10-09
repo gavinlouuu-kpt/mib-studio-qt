@@ -20,6 +20,10 @@
 namespace backend::pz {
 
 inline constexpr uint32_t kRingRegFinalSeq = 0x3BCu;      // STORE_FINAL_SEQ, ABI 1.4
+// STORE_STATE: bits 8:0 are the state code; two sticky bits (results13 fb1d858) hold until the next ARM.
+inline constexpr uint32_t kRingStateCodeMask = 0x1FFu;
+inline constexpr uint32_t kRingStateStalled = 1u << 9;    // RING_STALLED: an unacknowledged record left the 256-entry window, FINAL is frozen below it
+inline constexpr uint32_t kRingStateStopStuck = 1u << 10; // STOP_STUCK: STOP did not complete in about 84 ms, the device stays DRAINING
 inline constexpr uint32_t kStoreModeContinuous = 1u;
 inline constexpr uint32_t kStoreModeRingOnly = 1u << 9;   // no drain: overwriting is the purpose
 inline constexpr uint64_t kRingCeiling = 0x3F000000ull;   // the PL's result ring and preview slots start here
@@ -53,8 +57,11 @@ std::optional<uint64_t> systemRamEnd(const std::string& iomemText);
 struct RingStatus {
     bool valid{false};          // the registers describe a configured ring
     std::string why;            // what is wrong when !valid
-    uint32_t state{0};          // STORE_STATE (PZ_MIB_STORE_STATE_*)
-    bool fault{false};          // STORE_STATE = FAULT: not frozen, re-arm needed
+    uint32_t state{0};          // STORE_STATE code (PZ_MIB_STORE_STATE_*), the sticky bits removed
+    bool stalled{false};        // RING_STALLED
+    bool stopStuck{false};      // STOP_STUCK
+    bool fault{false};          // FAULT, RING_STALLED or STOP_STUCK: the ring is invalid, re-arm (stop, RESET_GENERATION, ARM)
+    std::string invalidReason;  // why, when fault; playback is not offered
     int64_t head{-1};           // newest sequence started (-1: none)
     uint64_t final{0};          // every sequence below it is complete and acknowledged
     uint32_t records{0};        // N

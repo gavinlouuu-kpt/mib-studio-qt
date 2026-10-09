@@ -162,11 +162,50 @@ int main() {
         io.configure(9, 10, PZ_MIB_STORE_STATE_FAULT);
         s = ring.status();
         MIB_EXPECT(s.fault && !s.frozen, "a ring fault is never frozen: re-arm needed");
+        // The sticky bits hold until the next ARM and invalidate the ring whatever the state code says.
+        io.configure(9, 10, PZ_MIB_STORE_STATE_IDLE | pz::kRingStateStalled);
+        s = ring.status();
+        MIB_EXPECT(s.valid && s.stalled && s.fault && !s.frozen && s.state == PZ_MIB_STORE_STATE_IDLE &&
+                       s.invalidReason.find("RING_STALLED") != std::string::npos,
+                   "RING_STALLED: IDLE and FINAL = HEAD + 1 but not frozen, with the reason");
+        io.configure(9, 10, PZ_MIB_STORE_STATE_DRAINING | pz::kRingStateStopStuck);
+        s = ring.status();
+        MIB_EXPECT(s.stopStuck && s.fault && !s.frozen && s.invalidReason.find("STOP_STUCK") != std::string::npos,
+                   "STOP_STUCK: the device stays DRAINING and the ring is invalid");
+        io.configure(9, 10, PZ_MIB_STORE_STATE_IDLE | pz::kRingStateStalled | pz::kRingStateStopStuck);
+        MIB_EXPECT(ring.status().fault && !ring.status().frozen, "both bits: invalid");
+        io.configure(9, 10, PZ_MIB_STORE_STATE_IDLE);
+        MIB_EXPECT(ring.status().frozen && !ring.status().fault, "frozen means IDLE with neither bit set");
         io.regs[PZ_MIB_REG_STORE_RECORDS] = 0;
         MIB_EXPECT(!ring.status().valid, "no ring configured");
         io.configure(9, 10, PZ_MIB_STORE_STATE_IDLE);
         io.regs[PZ_MIB_REG_STORE_BASE_LO] = 0x1000; // below the DDR floor
         MIB_EXPECT(!ring.status().valid, "a base below the floor is not trusted");
+    }
+
+    // ---- an invalid ring offers no playback ----------------------------------------------------------------
+    {
+        FakeIo io;
+        pz::PzFrameRing ring(io);
+        for (uint64_t q = 6; q <= 9; ++q) putRecord(io, q, static_cast<uint8_t>(q));
+        pz::RingFrame f;
+        std::string why;
+        io.configure(9, 10, PZ_MIB_STORE_STATE_IDLE);
+        MIB_EXPECT(ring.readFrame(8, f, &why) == pz::RingRead::Ok, "the same ring reads when frozen");
+        io.configure(9, 10, PZ_MIB_STORE_STATE_IDLE | pz::kRingStateStalled);
+        MIB_EXPECT(ring.readFrame(8, f, &why) == pz::RingRead::Unavailable && why.find("RING_STALLED") != std::string::npos,
+                   "RING_STALLED: no frame is offered, the reason names it");
+        io.configure(9, 10, PZ_MIB_STORE_STATE_DRAINING | pz::kRingStateStopStuck);
+        MIB_EXPECT(ring.readFrame(8, f, &why) == pz::RingRead::Unavailable && why.find("STOP_STUCK") != std::string::npos,
+                   "STOP_STUCK: no frame is offered");
+        io.configure(9, 10, PZ_MIB_STORE_STATE_FAULT);
+        MIB_EXPECT(ring.readFrame(8, f, &why) == pz::RingRead::Unavailable, "FAULT: no frame is offered");
+        // awaitFrozen returns at once on an invalid ring (it will never freeze) rather than waiting out the timeout.
+        io.configure(9, 10, PZ_MIB_STORE_STATE_DRAINING | pz::kRingStateStopStuck);
+        const auto t0 = std::chrono::steady_clock::now();
+        const auto st = ring.awaitFrozen(std::chrono::milliseconds(500));
+        MIB_EXPECT(st.fault && !st.frozen && std::chrono::steady_clock::now() - t0 < std::chrono::milliseconds(200),
+                   "an invalid ring does not wait out the timeout");
     }
 
     // ---- awaitFrozen -------------------------------------------------------------------------------------
