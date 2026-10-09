@@ -90,6 +90,9 @@ public:
         uint64_t ringBase{0x3F000000u};
         size_t ringBytes{1u << 20};
         std::chrono::microseconds poll{500};
+        // The every-frame ring (results13): frames to keep, 0 = none. From MIB_PZ_RING_FRAMES; the placement is
+        // validated against Linux's RAM before every ARM and a run is refused when it does not fit.
+        uint32_t ringFrames{0};
     };
     explicit PzDevMemExecutionProvider(Layout layout);
     ~PzDevMemExecutionProvider() override;
@@ -108,10 +111,16 @@ public:
     bool fetchPreview(uint64_t lastFrameId, std::chrono::milliseconds timeout, BridgePreviewImage& out,
                       std::string* error) override;
     void stopPreview() override;
+    uint32_t ringFramesWanted() const override { return layout_.ringFrames; }
+    std::string ringPlacementProblem() override;
+    backend::pz::RingStatus ringStatus() override;
+    backend::pz::RingRead ringRead(uint64_t seq, backend::pz::RingFrame& out, std::string* why) override;
+    uint32_t ringTickHz() override;
 
 private:
     class Mapping;
     class PreviewIo;
+    class RingIo;
     void run();
     bool ensureMapped(std::string* error);
 
@@ -127,6 +136,12 @@ private:
     std::unique_ptr<PreviewIo> preview_;   // set while previewing
     BridgePreviewConfig previewConfig_;
     std::atomic<bool> previewing_{false};
+    std::mutex ringMutex_;                 // the ring io, its mapping and the plan
+    std::unique_ptr<RingIo> ring_;
+    backend::pz::RingPlan ringPlan_;       // the plan the last ARM programmed
+    std::atomic<bool> ringProgrammed_{false};
+    std::atomic<uint64_t> ringLinuxEnd_{0};      // where Linux's RAM ended when the ring was armed (the reader refuses without it)
+    std::atomic<bool> ringRestoreNeeded_{false}; // the last STOP never reached IDLE within the bound: a hardware fault
 };
 #endif
 

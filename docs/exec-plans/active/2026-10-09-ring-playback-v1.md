@@ -33,6 +33,14 @@ overlay is record-based because the PL does the science.
   waits for IDLE (bounded) before it does either, and never writes RESET_GENERATION in another state. Ruling (coordinator, 2026-10-09): **RING_STALLED stays "ring invalid, no playback, re-arm"**, although the records below FINAL are stable. A stall means a DDR
   write was never acknowledged for 255 frames (a memory-path fault), so nothing in that window is trusted, and the readable range could hold frames far
   older than the Stop, which would mislead a "last second" review. STOP_STUCK stays readable and flagged.
+- **Which STATE** (review of #674, checked against the RTL): the contract's STATE is the **bridge STATE register (0x040)**: IDLE, ARMED, RUNNING, DRAINING, FAULT. In ring-only
+  mode `STORE_STATE` (0x3A0) never reads DRAINING (the drain is off), so it is used **only for its sticky fault bits 9, 10 and 11**. Frozen = bridge STATE IDLE and
+  FINAL = HEAD + 1 with no fault. The RTL ignores ARM unless the bridge is IDLE with no fault, and refuses RESET_GENERATION outside IDLE, so a new ring is started by:
+  leaving the previous run (STOP a leftover ARMED or RUNNING, wait for IDLE within the 1 s bound, FAULT_CLEAR a FAULT; a fault register that stays set or a bridge that
+  never reaches IDLE refuses with "restore the PL"), RESET_GENERATION in IDLE when a sticky bit was left (verified by the generation), programming the ring,
+  ARM, and a check that the bridge reads ARMED (otherwise the start fails with the reason, never "armed"). The claim "a ring is armed" is dropped only at the first
+  register write, so a failure before it (placement, capability, an unreadable `/proc/iomem`) leaves an intact frozen ring readable. Without a ring wanted, a PL with the
+  store gets STORE_MODE = 0 so a mode left by an earlier Studio is not latched.
 - Beyond the board owner's rule, the reader (review of #673): a copy is also dropped when the registers changed under it (HEAD restarted below its
   snapshot, a new epoch or generation, a changed record count, base or state: a re-ARM, which the HEAD' window test alone cannot see because the head
   restarts and the old FRAME header still matches); the FRAME header's own sequence is not the store sequence (each record's wire sequence restarts at 0), so
@@ -53,7 +61,7 @@ overlay is record-based because the PL does the science.
 | Piece | Where | State |
 |---|---|---|
 | Placement, programming, status, freeze wait, frame read under the reader rule, record decode, browser packet | `PzFrameRing` (`include/backend/pz/PzFrameRing.h`) over `IRingIo` (registers + physical reads) | **done**, tested against a fake ring (`pz_frame_ring_test`) |
-| `/dev/mem` implementation of `IRingIo`, ring size configuration, programming before ARM in the provider, freeze after STOP | `PzDevMemExecutionProvider`, `AppBackend` | next |
+| `/dev/mem` implementation of `IRingIo`, ring size (`MIB_PZ_RING_FRAMES`), programming before ARM in the provider, freeze after STOP, `freezeRun`/`resumeRun`, the `ring.placement` and `run.frozen` gates | `PzDevMemExecutionProvider`, `AppBackend`, `ExperimentCoordinator` | **done** (part 2), tested with a fake provider |
 | `fetch_ring_status`, `fetch_ring_frame {seq}` (binary `MIBR`), `ring_freeze`, `ring_resume` | bridge, contract, dispatch, TS | next |
 | Playback panel: capacity in frames and seconds, scrub, step, play at a display fps, overlays Off / Mask / Contours / Both, the frame's cells; Save clip disabled with the reason | `desktop/src` | next |
 
