@@ -59,3 +59,9 @@ version = `mib-studio-qt <commit> + pz7035-imx426 <commit>`.
 - [x] bundle assembly and install.sh changes
 - [ ] restore script change (board owner)
 - [ ] first bundle restore on the board
+
+## Frame ring (results13, #649)
+
+`PZ_RING_FRAMES` with a matching `mem=` in `PZ_BOOTARGS` (for example 5000 frames and `mem=720M`) puts `MIB_PZ_RING_FRAMES` in the bundle's unit and a
+`frame ring:` line in BUILD_INFO; the assembly refuses a `mem=` that reaches the ring base. Nobody edits the standing unit by hand: the ring
+size and the boot arg are changed together, in a new bundle.
