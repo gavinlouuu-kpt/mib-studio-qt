@@ -23,10 +23,15 @@ overlay is record-based because the PL does the science.
 - **Frozen** = `STATE = IDLE` after STOP and `FINAL = HEAD + 1`, never earlier; `DRAINING` lasts until the open frame's record is
   complete (an ~84 ms watchdog bounds it). A coming ring-fault indication means "not frozen, re-arm needed": the reader treats
   `STATE = FAULT` that way today and gets the exact bit from the board owner.
-- Two sticky `STORE_STATE` bits hold until the next ARM (results13 fb1d858): bit 9 `RING_STALLED` (an unacknowledged record fell out of the
-  256-entry tracking window; FINAL is frozen below it) and bit 10 `STOP_STUCK` (STOP did not complete in about 84 ms; the device stays
-  DRAINING). Either one means "ring invalid": no playback is offered, the reason is shown, and recovery is stop, RESET_GENERATION, re-arm.
-  Frozen = STATE IDLE after STOP with neither bit set.
+- STOP handling (the board owner's final wording): after STOP the device reaches IDLE by itself in about 2 ms (the tap closes an open frame at the
+  next SOF or after 2 ms without data, the frame marked bad), also when the sensor stream has stopped. Studio waits for IDLE for up to 1 s; if it does
+  not come, the PL needs a restore ("restore needed"). Three sticky `STORE_STATE` fault bits hold until the next ARM or a hardware reset
+  (RESET_GENERATION does not clear them): bit 9 `RING_STALLED` (an unacknowledged record left the tracking window: **ring invalid, re-arm, no
+  playback**), bit 10 `STOP_STUCK` (the tap or its clock is broken; the device stays DRAINING; the records below FINAL are stable, so playback of
+  the frozen part continues under the reader rule, flagged **"stop incomplete"**) and bit 11 (RESET_GENERATION was refused because the ring was
+  not idle: invalid). Frozen = STATE IDLE after STOP with no bit set. A new ring starts with RESET_GENERATION **only in IDLE**, then ARM; the provider
+  waits for IDLE (bounded) before it does either, and never writes RESET_GENERATION in another state. (Open point: the board owner's note says
+  playback may also continue under RING_STALLED; the coordinator's rule, "ring invalid, re-arm", stands until the coordinator changes it.)
 - Sequences restart at 0 at every ARM. Read before re-arming.
 - The PL enforces no DDR floor. Studio validates base and size: at or above Linux's RAM end (from `/proc/iomem`), at or above
   0x00100000, ending at or below 0x3F000000 (the PL's result ring and preview slots). Otherwise it refuses to arm, with a gate reason.

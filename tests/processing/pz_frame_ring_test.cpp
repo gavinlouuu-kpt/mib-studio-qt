@@ -170,10 +170,14 @@ int main() {
                    "RING_STALLED: IDLE and FINAL = HEAD + 1 but not frozen, with the reason");
         io.configure(9, 10, PZ_MIB_STORE_STATE_DRAINING | pz::kRingStateStopStuck);
         s = ring.status();
-        MIB_EXPECT(s.stopStuck && s.fault && !s.frozen && s.invalidReason.find("STOP_STUCK") != std::string::npos,
-                   "STOP_STUCK: the device stays DRAINING and the ring is invalid");
+        MIB_EXPECT(s.valid && s.stopStuck && s.stopIncomplete && !s.fault && !s.frozen && s.lo == 6 && s.final == 10,
+                   "STOP_STUCK: the device stays DRAINING, the ring is not frozen but not invalid: stop incomplete, the records below FINAL stay readable");
+        io.configure(9, 10, PZ_MIB_STORE_STATE_IDLE | pz::kRingStateResetRefused);
+        s = ring.status();
+        MIB_EXPECT(s.resetRefused && s.fault && !s.frozen && s.invalidReason.find("RESET_GENERATION") != std::string::npos,
+                   "bit 11: RESET_GENERATION was refused: invalid");
         io.configure(9, 10, PZ_MIB_STORE_STATE_IDLE | pz::kRingStateStalled | pz::kRingStateStopStuck);
-        MIB_EXPECT(ring.status().fault && !ring.status().frozen, "both bits: invalid");
+        MIB_EXPECT(ring.status().fault && !ring.status().frozen, "stalled and stuck: invalid (the stall wins)");
         io.configure(9, 10, PZ_MIB_STORE_STATE_IDLE);
         MIB_EXPECT(ring.status().frozen && !ring.status().fault, "frozen means IDLE with neither bit set");
         io.regs[PZ_MIB_REG_STORE_RECORDS] = 0;
@@ -196,16 +200,22 @@ int main() {
         MIB_EXPECT(ring.readFrame(8, f, &why) == pz::RingRead::Unavailable && why.find("RING_STALLED") != std::string::npos,
                    "RING_STALLED: no frame is offered, the reason names it");
         io.configure(9, 10, PZ_MIB_STORE_STATE_DRAINING | pz::kRingStateStopStuck);
-        MIB_EXPECT(ring.readFrame(8, f, &why) == pz::RingRead::Unavailable && why.find("STOP_STUCK") != std::string::npos,
-                   "STOP_STUCK: no frame is offered");
+        MIB_EXPECT(ring.readFrame(8, f, &why) == pz::RingRead::Ok && ring.readFrame(9, f, &why) == pz::RingRead::Ok,
+                   "STOP_STUCK: the frozen part is still read, under the reader rule");
+        MIB_EXPECT(ring.readFrame(10, f, &why) == pz::RingRead::OutOfRange, "STOP_STUCK: the open frame (at FINAL and beyond) is never offered");
+        io.configure(9, 10, PZ_MIB_STORE_STATE_IDLE | pz::kRingStateResetRefused);
+        MIB_EXPECT(ring.readFrame(8, f, &why) == pz::RingRead::Unavailable && why.find("RESET_GENERATION") != std::string::npos,
+                   "bit 11: no frame is offered");
         io.configure(9, 10, PZ_MIB_STORE_STATE_FAULT);
         MIB_EXPECT(ring.readFrame(8, f, &why) == pz::RingRead::Unavailable, "FAULT: no frame is offered");
-        // awaitFrozen returns at once on an invalid ring (it will never freeze) rather than waiting out the timeout.
-        io.configure(9, 10, PZ_MIB_STORE_STATE_DRAINING | pz::kRingStateStopStuck);
-        const auto t0 = std::chrono::steady_clock::now();
-        const auto st = ring.awaitFrozen(std::chrono::milliseconds(500));
-        MIB_EXPECT(st.fault && !st.frozen && std::chrono::steady_clock::now() - t0 < std::chrono::milliseconds(200),
-                   "an invalid ring does not wait out the timeout");
+        // awaitFrozen returns at once on a ring that will never freeze (invalid, or stuck) rather than waiting out the timeout.
+        for (const uint32_t state : {PZ_MIB_STORE_STATE_DRAINING | pz::kRingStateStopStuck, PZ_MIB_STORE_STATE_IDLE | pz::kRingStateStalled}) {
+            io.configure(9, 10, state);
+            const auto t0 = std::chrono::steady_clock::now();
+            const auto st = ring.awaitFrozen(std::chrono::milliseconds(500));
+            MIB_EXPECT(!st.frozen && (st.fault || st.stopIncomplete) && std::chrono::steady_clock::now() - t0 < std::chrono::milliseconds(200),
+                       "a ring that will not freeze does not wait out the timeout");
+        }
     }
 
     // ---- awaitFrozen -------------------------------------------------------------------------------------
