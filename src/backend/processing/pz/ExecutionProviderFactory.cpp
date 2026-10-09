@@ -2,7 +2,10 @@
 
 #include "backend/processing/pz/PzExecutionProviders.h"
 
+#include <cerrno>
 #include <cstdlib>
+
+#include <spdlog/spdlog.h>
 
 // mib_processing defines MIB_PL_SCIENCE (0/1); a file compiled outside CMake
 // (e.g. a tool build) gets the desktop default.
@@ -21,7 +24,16 @@ std::unique_ptr<IExecutionProvider> makeExecutionProvider(const std::string& spe
         PzDevMemExecutionProvider::Layout layout;
         // The every-frame ring (results13): frames to keep; 0 or unset = none. The standing unit sets it when the bundle's
         // kernel leaves room for it (mem=).
-        if (const char* frames = std::getenv("MIB_PZ_RING_FRAMES")) layout.ringFrames = static_cast<uint32_t>(std::strtoul(frames, nullptr, 10));
+        // Digits only, 1 to 1,000,000 frames; anything else is logged and means no ring (never a silently wrong size).
+        if (const char* frames = std::getenv("MIB_PZ_RING_FRAMES"); frames && *frames) {
+            char* endp = nullptr;
+            errno = 0;
+            const unsigned long value = std::strtoul(frames, &endp, 10);
+            if (errno != 0 || endp == frames || *endp != '\0' || value == 0 || value > 1000000ul)
+                spdlog::error("MIB_PZ_RING_FRAMES='{}' is not a frame count from 1 to 1000000: no frame ring", frames);
+            else
+                layout.ringFrames = static_cast<uint32_t>(value);
+        }
         return std::make_unique<PzDevMemExecutionProvider>(layout);
 #else
         if (error) *error = "MIB_EXECUTION_PROVIDER=pz needs Linux on the PZ7035 PS";

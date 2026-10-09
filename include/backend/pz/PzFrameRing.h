@@ -16,6 +16,7 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -23,9 +24,9 @@
 namespace backend::pz {
 
 inline constexpr uint32_t kRingRegFinalSeq = 0x3BCu;      // STORE_FINAL_SEQ, ABI 1.4
-// STORE_STATE: bits 8:0 are the state code; three sticky fault bits hold until the next ARM or a hardware reset (RESET_GENERATION
-// does not clear them). Final wording of the board owner (pz7035 docs/FRAME_RING.md):
-inline constexpr uint32_t kRingStateCodeMask = 0x1FFu;
+// The device's STATE is the bridge STATE register (0x040: IDLE, ARMED, RUNNING, DRAINING, FAULT). STORE_STATE (0x3A0) is used only for its three
+// sticky fault bits, which hold until the next ARM or a hardware reset (RESET_GENERATION does not clear them): in ring-only mode its state code never
+// reads DRAINING (the drain is off), so it says nothing about a STOP. Final wording of the board owner (pz7035 docs/FRAME_RING.md):
 inline constexpr uint32_t kRingStateStalled = 1u << 9;       // RING_STALLED: an unacknowledged record left the tracking window, FINAL is frozen below it
 inline constexpr uint32_t kRingStateStopStuck = 1u << 10;    // STOP_STUCK: the tap or its clock is broken; the device stays DRAINING (records below FINAL are stable)
 inline constexpr uint32_t kRingStateResetRefused = 1u << 11; // RESET_GENERATION was written outside IDLE and refused
@@ -69,11 +70,11 @@ std::optional<uint64_t> systemRamEnd(const std::string& iomemText);
 struct RingStatus {
     bool valid{false};          // the registers describe a configured ring
     std::string why;            // what is wrong when !valid
-    uint32_t state{0};          // STORE_STATE code (PZ_MIB_STORE_STATE_*), the sticky bits removed
+    uint32_t state{0};          // the bridge STATE (PZ_MIB_STATE_*)
     bool stalled{false};        // RING_STALLED
     bool stopStuck{false};      // STOP_STUCK
     bool resetRefused{false};   // RESET_GENERATION was refused
-    bool fault{false};          // FAULT, RING_STALLED or RESET_GENERATION refused: the ring is invalid, re-arm (stop, RESET_GENERATION in IDLE, ARM)
+    bool fault{false};          // bridge FAULT, RING_STALLED or RESET_GENERATION refused: the ring is invalid, re-arm (stop, RESET_GENERATION in IDLE, ARM)
     std::string invalidReason;  // why, when fault; playback is not offered
     // STOP_STUCK: the records below FINAL stay stable and readable under the reader rule, flagged "stop incomplete"; the ring is not frozen.
     bool stopIncomplete{false};
@@ -117,6 +118,13 @@ struct RingFrame {
     std::vector<RingCell> cells;
 };
 
+// The outcome of leaving a previous run or of arming a new ring: ok, or why not (and whether only a restore of the PL helps).
+struct RingArmOutcome {
+    bool ok{false};
+    bool restoreNeeded{false};
+    std::string why;
+};
+
 enum class RingRead { Ok, Unavailable, OutOfRange, Overwritten, Malformed };
 const char* ringReadName(RingRead r);
 
@@ -128,6 +136,13 @@ public:
     // Before ARM: base, number of records and STORE_MODE = CONTINUOUS | RING_ONLY, read back.
     bool program(const RingPlan& plan, std::string* error);
     RingStatus status();
+    // Before a new ring is programmed: leave the previous run. The bridge STATE must be IDLE (the RTL ignores ARM and refuses RESET_GENERATION
+    // in any other state): a leftover ARMED or RUNNING is stopped first, DRAINING is waited out (bounded), a FAULT is cleared; a FAULT register
+    // that stays set refuses (ARM would be ignored). Then RESET_GENERATION, in IDLE, when a sticky fault bit was left, verified by the generation.
+    // `onMutate` runs once before the first register write (the caller drops its "ring armed" claim there, never earlier).
+    RingArmOutcome quiesce(const std::function<void()>& onMutate, std::chrono::milliseconds bound = std::chrono::milliseconds(kRingFreezeWaitMs));
+    // After ARM: the bridge STATE must read ARMED (or RUNNING), otherwise the ARM was ignored.
+    RingArmOutcome awaitArmed(std::chrono::milliseconds bound = std::chrono::milliseconds(200));
     // After STOP: poll until frozen, a fault, STOP_STUCK, or the bound (the device reaches IDLE by itself in about 2 ms). Past the bound without
     // a sticky bit the status says `restoreNeeded`: the tap or its clock is broken.
     RingStatus awaitFrozen(std::chrono::milliseconds timeout = std::chrono::milliseconds(kRingFreezeWaitMs));

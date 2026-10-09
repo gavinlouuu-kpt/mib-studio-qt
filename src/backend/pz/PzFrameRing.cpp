@@ -135,8 +135,8 @@ RingStatus PzFrameRing::status() {
     s.base = baseLo | static_cast<uint64_t>(baseHi) << 32;
     s.epoch = io_.reg(PZ_MIB_REG_EPOCH);
     s.generation = io_.reg(PZ_MIB_REG_GENERATION);
-    const uint32_t stateReg = io_.reg(PZ_MIB_REG_STORE_STATE);
-    s.state = stateReg & kRingStateCodeMask;
+    const uint32_t stateReg = io_.reg(PZ_MIB_REG_STORE_STATE);   // the sticky fault bits only
+    s.state = io_.reg(PZ_MIB_REG_STATE);                          // the bridge STATE
     s.stalled = (stateReg & kRingStateStalled) != 0;
     s.stopStuck = (stateReg & kRingStateStopStuck) != 0;
     s.resetRefused = (stateReg & kRingStateResetRefused) != 0;
@@ -144,7 +144,7 @@ RingStatus PzFrameRing::status() {
     s.final = io_.reg(kRingRegFinalSeq);
     s.head = headOf(headRaw);
     // STOP_STUCK is not a fault of the frames below FINAL: they are stable and readable, flagged "stop incomplete".
-    s.fault = s.state == PZ_MIB_STORE_STATE_FAULT || s.stalled || s.resetRefused;
+    s.fault = s.state == PZ_MIB_STATE_FAULT || s.stalled || s.resetRefused;
     s.stopIncomplete = s.stopStuck;
     if (s.stalled) s.invalidReason = "the ring stalled (RING_STALLED): an acknowledgement was lost, so the buffered frames cannot be trusted; re-arm";
     else if (s.resetRefused) s.invalidReason = "RESET_GENERATION was refused (the ring was not idle): re-arm";
@@ -185,8 +185,81 @@ RingStatus PzFrameRing::status() {
         s.invalidReason = "the 32-bit frame sequence limit was reached (about 9.9 days at 5 kHz): re-arm";
     }
     s.lo = static_cast<uint64_t>(std::max<int64_t>(0, s.head + 1 - static_cast<int64_t>(s.records)));
-    s.frozen = !s.fault && s.state == PZ_MIB_STORE_STATE_IDLE && s.final == static_cast<uint64_t>(s.head + 1);
+    s.frozen = !s.fault && s.state == PZ_MIB_STATE_IDLE && s.final == static_cast<uint64_t>(s.head + 1);
     return s;
+}
+
+RingArmOutcome PzFrameRing::quiesce(const std::function<void()>& onMutate, std::chrono::milliseconds bound) {
+    RingArmOutcome r;
+    bool mutated = false;
+    auto mutate = [&] {
+        if (!mutated && onMutate) onMutate();
+        mutated = true;
+    };
+    auto hexs = [](uint32_t v) {
+        std::ostringstream o;
+        o << "0x" << std::hex << v;
+        return o.str();
+    };
+    const auto until = std::chrono::steady_clock::now() + bound;
+    uint32_t state = io_.reg(PZ_MIB_REG_STATE);
+    if (state == PZ_MIB_STATE_ARMED || state == PZ_MIB_STATE_RUNNING) {
+        mutate();
+        io_.setReg(PZ_MIB_REG_CONTROL, PZ_MIB_CONTROL_STOP);
+        state = PZ_MIB_STATE_DRAINING;
+    }
+    if (state == PZ_MIB_STATE_FAULT) {
+        mutate();
+        io_.setReg(PZ_MIB_REG_CONTROL, PZ_MIB_CONTROL_FAULT_CLEAR);
+    }
+    while (io_.reg(PZ_MIB_REG_STATE) != PZ_MIB_STATE_IDLE && std::chrono::steady_clock::now() < until)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    state = io_.reg(PZ_MIB_REG_STATE);
+    if (state != PZ_MIB_STATE_IDLE) {
+        r.restoreNeeded = true;
+        r.why = "the bridge did not reach IDLE (STATE " + std::to_string(state) + ", FAULT " + hexs(io_.reg(PZ_MIB_REG_FAULT)) +
+                "): restore the PL";
+        return r;
+    }
+    if (io_.reg(PZ_MIB_REG_FAULT) != 0) {  // ARM is ignored while a fault bit is set
+        mutate();
+        io_.setReg(PZ_MIB_REG_CONTROL, PZ_MIB_CONTROL_FAULT_CLEAR);
+        if (io_.reg(PZ_MIB_REG_FAULT) != 0) {
+            r.why = "the PL still reports fault " + hexs(io_.reg(PZ_MIB_REG_FAULT)) + " after FAULT_CLEAR, so it would ignore ARM: restore the PL";
+            r.restoreNeeded = true;
+            return r;
+        }
+    }
+    const uint32_t sticky = io_.reg(PZ_MIB_REG_STORE_STATE) & (kRingStateStalled | kRingStateStopStuck | kRingStateResetRefused);
+    if (sticky != 0) {
+        mutate();
+        const uint32_t generation = io_.reg(PZ_MIB_REG_GENERATION);
+        io_.setReg(PZ_MIB_REG_CONTROL, PZ_MIB_CONTROL_RESET_GENERATION);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        if (io_.reg(PZ_MIB_REG_GENERATION) == generation) {
+            r.why = "RESET_GENERATION did not take (STORE_STATE " + hexs(io_.reg(PZ_MIB_REG_STORE_STATE)) + "): restore the PL";
+            r.restoreNeeded = true;
+            return r;
+        }
+    }
+    r.ok = true;
+    return r;
+}
+
+RingArmOutcome PzFrameRing::awaitArmed(std::chrono::milliseconds bound) {
+    RingArmOutcome r;
+    const auto until = std::chrono::steady_clock::now() + bound;
+    uint32_t state = io_.reg(PZ_MIB_REG_STATE);
+    while (state != PZ_MIB_STATE_ARMED && state != PZ_MIB_STATE_RUNNING && std::chrono::steady_clock::now() < until) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        state = io_.reg(PZ_MIB_REG_STATE);
+    }
+    if (state != PZ_MIB_STATE_ARMED && state != PZ_MIB_STATE_RUNNING) {
+        r.why = "the PL did not arm (STATE " + std::to_string(state) + ", FAULT " + std::to_string(io_.reg(PZ_MIB_REG_FAULT)) + "): ARM was ignored";
+        return r;
+    }
+    r.ok = true;
+    return r;
 }
 
 RingStatus PzFrameRing::awaitFrozen(std::chrono::milliseconds timeout) {
@@ -215,7 +288,7 @@ RingRead PzFrameRing::readFrame(uint64_t seq, RingFrame& out, std::string* why) 
                                               std::to_string(st.lo) + ", " + std::to_string(st.final) + ")");
     const uint64_t at = st.base + (seq % st.records) * static_cast<uint64_t>(st.recordBytes);
     const Snapshot before{st.records, static_cast<uint32_t>(st.base), static_cast<uint32_t>(st.base >> 32), st.epoch, st.generation,
-                          io_.reg(PZ_MIB_REG_STORE_STATE), st.head};
+                          io_.reg(PZ_MIB_REG_STATE), st.head};
 
     // 1. The record set (the area is zero-padded after the records), its size from STORE_SET_BYTES.
     std::vector<uint8_t> set(st.setBytes);
@@ -290,7 +363,7 @@ RingRead PzFrameRing::readFrame(uint64_t seq, RingFrame& out, std::string* why) 
     std::atomic_thread_fence(std::memory_order_seq_cst);
     const uint32_t headRaw = io_.reg(PZ_MIB_REG_STORE_HEAD_SEQ);
     const Snapshot after{io_.reg(PZ_MIB_REG_STORE_RECORDS), io_.reg(PZ_MIB_REG_STORE_BASE_LO), io_.reg(PZ_MIB_REG_STORE_BASE_HI),
-                         io_.reg(PZ_MIB_REG_EPOCH), io_.reg(PZ_MIB_REG_GENERATION), io_.reg(PZ_MIB_REG_STORE_STATE), headOf(headRaw)};
+                         io_.reg(PZ_MIB_REG_EPOCH), io_.reg(PZ_MIB_REG_GENERATION), io_.reg(PZ_MIB_REG_STATE), headOf(headRaw)};
     if (after.records != before.records || after.base_lo != before.base_lo || after.base_hi != before.base_hi ||
         after.epoch != before.epoch || after.generation != before.generation)
         return fail(RingRead::Overwritten, "the ring was re-armed or reprogrammed while frame " + std::to_string(seq) + " was copied");
