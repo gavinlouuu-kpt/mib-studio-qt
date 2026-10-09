@@ -74,6 +74,7 @@ def make_bundle_fixture(tmp: Path) -> tuple[Path, dict]:
     for name in ("yofo-studio-server", "dist.tar", "yofo-studio.service", "pl-ready.sh"):
         (pkg / name).write_text(name)
     shutil.copy(DEPLOY / "install.sh", pkg / "install.sh")
+    shutil.copy(DEPLOY / "yofo-studio.service", pkg / "yofo-studio.service")  # the real unit: the ring setting edits it
     return pkg, env
 
 
@@ -105,6 +106,31 @@ def check_bundle(check) -> None:
                              capture_output=True, text=True)
         check(pre.returncode == 0 and "PRE-QUALIFICATION, untagged pz7035" in (pkg / "BUILD_INFO").read_text().splitlines()[0],
               f"an untagged commit is marked pre-qualification: {pre.stderr}")
+        # The every-frame ring (#649): MIB_PZ_RING_FRAMES and the boot args' mem= are set together, in one bundle.
+        (pkg / "BUILD_INFO").write_text("yofo-studio standing package, commit abc12345\nbuilt: now\nexpects: nothing\n")
+        plain = (pkg / "yofo-studio.service").read_text()
+        check("MIB_PZ_RING_FRAMES" not in plain, "no ring requested: the unit has no ring setting")
+        ring_env = {**os.environ, **env, "PZ_RING_FRAMES": "5000", "PZ_BOOTARGS": "uio_pdrv_genirq.of_id=generic-uio mem=720M"}
+        ok = subprocess.run(["bash", str(script), str(pkg)], env=ring_env, capture_output=True, text=True)
+        unit = (pkg / "yofo-studio.service").read_text()
+        info = (pkg / "BUILD_INFO").read_text()
+        check(ok.returncode == 0 and unit.count("Environment=MIB_PZ_RING_FRAMES=5000") == 1 and unit.index("[Service]") < unit.index("MIB_PZ_RING_FRAMES"),
+              f"mem=720M with 5000 frames: the unit gets MIB_PZ_RING_FRAMES=5000 once: {ok.stderr}")
+        check("frame ring: 5000 frames (283.2 MiB)" in info and "mem=720M" in info and "boot args: uio_pdrv_genirq.of_id=generic-uio mem=720M" in info,
+              "BUILD_INFO records the ring, the placement and the boot args together")
+        (pkg / "BUILD_INFO").write_text("yofo-studio standing package, commit abc12345\nbuilt: now\nexpects: nothing\n")
+        again = subprocess.run(["bash", str(script), str(pkg)], env=ring_env, capture_output=True, text=True)
+        check(again.returncode == 0 and (pkg / "yofo-studio.service").read_text().count("MIB_PZ_RING_FRAMES") == 1, "reassembling does not duplicate the setting")
+        (pkg / "BUILD_INFO").write_text("yofo-studio standing package, commit abc12345\nbuilt: now\nexpects: nothing\n")
+        clash = subprocess.run(["bash", str(script), str(pkg)], env={**ring_env, "PZ_BOOTARGS": "uio_pdrv_genirq.of_id=generic-uio mem=1008M"},
+                               capture_output=True, text=True)
+        check(clash.returncode != 0 and "mem=1008M" in clash.stderr and "lower mem=" in clash.stderr, f"mem=1008M leaves no room for the ring: refused with the remedy: {clash.stderr}")
+        nomem = subprocess.run(["bash", str(script), str(pkg)], env={**ring_env, "PZ_BOOTARGS": "uio_pdrv_genirq.of_id=generic-uio"},
+                               capture_output=True, text=True)
+        check(nomem.returncode != 0 and "needs a mem=" in nomem.stderr, "a ring without a mem= in the boot args is refused")
+        toobig = subprocess.run(["bash", str(script), str(pkg)], env={**ring_env, "PZ_RING_FRAMES": "17000"}, capture_output=True, text=True)
+        check(toobig.returncode != 0, "a ring larger than the DDR is refused")
+        (pkg / "BUILD_INFO").write_text("yofo-studio standing package, commit abc12345\nbuilt: now\nexpects: nothing\n")
         # A core.json of another image is refused.
         (Path(env["PZ7035_REPO"]) / "build" / "pz_live_test" / "core.json").write_text(
             '{"build_id": "ff", "image": "pz_live_other", "abi": {"major": 1, "minor": 3}}')
