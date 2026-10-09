@@ -139,8 +139,80 @@ def check_bundle(check) -> None:
         check(nomem.returncode != 0 and "needs a mem=" in nomem.stderr, "a ring without a mem= in the boot args is refused")
         toobig = subprocess.run(["bash", str(script), str(pkg)], env={**ring_env, "PZ_RING_FRAMES": "17000"}, capture_output=True, text=True)
         check(toobig.returncode != 0, "a ring larger than the DDR is refused")
-        (pkg / "BUILD_INFO").write_text("yofo-studio standing package, commit abc12345\nbuilt: now\nexpects: nothing\n")
+        # The SSD bounce buffer (results14): outside Linux's RAM (mem=) and below the ring.
+        fresh = lambda: (pkg / "BUILD_INFO").write_text("yofo-studio standing package, commit abc12345\nbuilt: now\nexpects: nothing\n")
+        asm = lambda extra: subprocess.run(["bash", str(script), str(pkg)], env={**ring_env, **extra}, capture_output=True, text=True)
+        fresh()
+        ok = asm({"PZ_SSD_BOUNCE": "0x2D000000"})
+        info = (pkg / "BUILD_INFO").read_text()
+        check(ok.returncode == 0 and "ssd bounce: 0x2D000000 (1 MiB)\n" in info, f"mem=720M, ring 5000, bounce at 0x2D000000: recorded in BUILD_INFO: {ok.stderr}")
+        fresh()
+        check("ssd bounce" not in (asm({}).returncode == 0 and (pkg / "BUILD_INFO").read_text()), "no PZ_SSD_BOUNCE: no bounce line")
+        for label, extra, needle in [
+            ("inside Linux's RAM", {"PZ_SSD_BOUNCE": "0x2C000000"}, "lies inside Linux's RAM"),
+            ("overlapping the ring", {"PZ_SSD_BOUNCE": "0x2D400000"}, "overlaps the frame ring"),
+            ("unaligned", {"PZ_SSD_BOUNCE": "0x2D000100"}, "4 KiB aligned"),
+            ("an empty size", {"PZ_SSD_BOUNCE": "0x2D000000", "PZ_SSD_BOUNCE_BYTES": "0"}, "non-empty"),
+            ("no mem= in the boot args", {"PZ_SSD_BOUNCE": "0x2D000000", "PZ_BOOTARGS": "uio_pdrv_genirq.of_id=generic-uio", "PZ_RING_FRAMES": "0"}, "needs a mem="),
+        ]:
+            fresh()
+            bad = asm(extra)
+            check(bad.returncode != 0 and needle in bad.stderr, f"a bounce buffer {label} is refused ({needle}): {bad.stderr}")
+        fresh()
+        noring = asm({"PZ_RING_FRAMES": "0", "PZ_SSD_BOUNCE": "0x3EF00000", "PZ_BOOTARGS": "uio_pdrv_genirq.of_id=generic-uio mem=720M"})
+        check(noring.returncode == 0, f"without a ring the bounce may sit up to the 0x3F000000 ceiling: {noring.stderr}")
+        fresh()
+        past = asm({"PZ_RING_FRAMES": "0", "PZ_SSD_BOUNCE": "0x3F000000", "PZ_BOOTARGS": "uio_pdrv_genirq.of_id=generic-uio mem=720M"})
+        check(past.returncode != 0 and "overlaps the frame ring" in past.stderr, "a bounce buffer past the ring ceiling is refused")
+
+        # pzrec (results14): built for armv7 from a pz7035 commit, or prebuilt; named in BUILD_INFO, listed in MD5SUMS.
+        repo = Path(env["PZ7035_REPO"])
+        git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=repo, check=True, capture_output=True, text=True).stdout.strip()
+        (repo / "tools" / "pzrec").mkdir(parents=True)
+        (repo / "abi").mkdir()
+        (repo / "abi" / "README").write_text("abi\n")
+        (repo / "tools" / "pzrec" / "pzrec.c").write_text("/* fake */\n")
+        (repo / "tools" / "pzrec" / "Makefile").write_text(
+            "OUT ?= build\n$(OUT)/pzrec:\n\tmkdir -p $(OUT)\n\tprintf '\\177ELF\\001\\001\\001\\000\\000\\000\\000\\000\\000\\000\\000\\000\\002\\000\\050\\000' > $@\n")
+        git("add", "-A"); git("commit", "-qm", "pzrec")
+        pzrec_commit = git("rev-parse", "HEAD")
+        sdk = Path(tmp) / "sdk"
+        sdk.mkdir()
+        (sdk / "environment-setup-fake").write_text("export CC=cc CFLAGS=-O0\n")
+        fresh()
+        built = asm({"PZ_PZREC_COMMIT": pzrec_commit, "YOFO_SDK": str(sdk)})
+        info = (pkg / "BUILD_INFO").read_text()
+        listed = {line.split(None, 1)[1] for line in (pkg / "MD5SUMS").read_text().splitlines()}
+        check(built.returncode == 0 and (pkg / "tools" / "pzrec").is_file() and "tools/pzrec" in listed, f"pzrec built from the commit and listed in MD5SUMS: {built.stderr}")
+        check(f"pzrec: {pzrec_commit[:8]} (tools/pzrec, armv7, md5 " in info, "BUILD_INFO has the `pzrec: <commit>` line")
+        check(subprocess.run(["md5sum", "-c", "--quiet", "MD5SUMS"], cwd=pkg).returncode == 0, "MD5SUMS verifies with pzrec")
+        unit = (pkg / "yofo-studio.service").read_text()
+        check("MIB_PZREC" not in unit and "MIB_SSD_IMAGE" not in unit, "the unit gets no pzrec environment (Studio stays without an SSD)")
+        fresh()
+        nosdk = asm({"PZ_PZREC_COMMIT": pzrec_commit})
+        check(nosdk.returncode != 0 and "YOFO_SDK" in nosdk.stderr, "building pzrec needs the SDK")
+        fresh()
+        nocommit = asm({"PZ_PZREC_COMMIT": "deadbeef", "YOFO_SDK": str(sdk)})
+        check(nocommit.returncode != 0 and "not a commit" in nocommit.stderr, "an unknown pzrec commit is refused")
+        fresh()
+        notool = asm({"PZ_PZREC_COMMIT": "pl-test", "YOFO_SDK": str(sdk)})
+        check(notool.returncode != 0 and "has no tools/pzrec" in notool.stderr, "a commit without tools/pzrec is refused")
+        arm = Path(tmp) / "pzrec-arm"
+        arm.write_bytes(b"\x7fELF\x01\x01\x01" + bytes(9) + b"\x02\x00\x28\x00" + b"rest")
+        x86 = Path(tmp) / "pzrec-x86"
+        x86.write_bytes(b"\x7fELF\x01\x01\x01" + bytes(9) + b"\x02\x00\x3e\x00" + b"rest")
+        fresh()
+        pre = asm({"PZ_PZREC_COMMIT": pzrec_commit, "PZ_PZREC": str(arm)})
+        check(pre.returncode == 0 and (pkg / "tools" / "pzrec").read_bytes() == arm.read_bytes(), f"a prebuilt armv7 pzrec is taken as it is: {pre.stderr}")
+        fresh()
+        wrong = asm({"PZ_PZREC_COMMIT": pzrec_commit, "PZ_PZREC": str(x86)})
+        check(wrong.returncode != 0 and "not an armv7 binary" in wrong.stderr, "an x86 pzrec is refused")
+        fresh()
+        plain = asm({})
+        check(plain.returncode == 0 and not (pkg / "tools" / "pzrec").exists() and "pzrec:" not in (pkg / "BUILD_INFO").read_text(), "without PZ_PZREC_COMMIT the bundle carries no pzrec")
+
         # A core.json of another image is refused.
+        fresh()
         (Path(env["PZ7035_REPO"]) / "build" / "pz_live_test" / "core.json").write_text(
             '{"build_id": "ff", "image": "pz_live_other", "abi": {"major": 1, "minor": 3}}')
         wrong = subprocess.run(["bash", str(script), str(pkg)], env=dict(os.environ, **env), capture_output=True, text=True)

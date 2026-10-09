@@ -9,10 +9,18 @@
 # assembly refuses a bundle whose boot args leave no room for that ring above Linux (mem= must not reach the ring base,
 # which ends at the PL's 0x3F000000 area): the two numbers are set together, in the same bundle and BUILD_INFO.
 #
+# PZ_PZREC_COMMIT (results14, #667): ship the board owner's `pzrec` CLI (pz7035 tools/pzrec) as tools/pzrec, armv7, named in BUILD_INFO
+# (`pzrec: <commit>`) and listed in MD5SUMS. Built from that commit with the YOFO SDK (YOFO_SDK), or taken from PZ_PZREC (a prebuilt armv7
+# binary; it must be a 32-bit ARM ELF). The unit gets no MIB_PZREC / MIB_SSD_IMAGE here: Studio stays without an SSD until that is decided.
+#
+# PZ_SSD_BOUNCE (results14): the PL's SSD bounce buffer, a physical address (for example 0x2D000000, size PZ_SSD_BOUNCE_BYTES, default 1 MiB, 4 KiB
+# aligned) recorded in BUILD_INFO (`ssd bounce: 0x2D000000 (1 MiB)`). It must lie between the end of mem= and the ring base (the ring ceiling
+# 0x3F000000 when there is no ring): Linux must not own it, the ring must not overlap it.
+#
 # Layout (see docs/exec-plans/active/2026-10-08-yofo-studio-bundle.md):
 #   board side  yofo-studio-server dist.tar yofo-studio.service install.sh pl-ready.sh BUILD_INFO MD5SUMS
 #               core.json  (-> /etc/yofo/expected-core.json)      producer/libpz7035_gentl.cti
-#               tools/{pzcell,pzres,pzpump,page.bin,lut.bin}
+#               tools/{pzcell,pzres,pzpump,page.bin,lut.bin}  [tools/pzrec with PZ_PZREC_COMMIT]
 #   host side   host/pl/{pz_live.bit,ps7_init.tcl}  host/firmware/live_server.elf
 #               host/linux/{pz7035-live-uio.dtb,<rootfs>.cpio.gz.u-boot,bootargs}
 # The restore script copies only the board side to the RAM root (the host side is 70 MB) and
@@ -36,6 +44,10 @@ dtb=${PZ_DTB:-$dev/linux-boot-20260930/pz7035-live-uio.dtb}
 rootfs=${PZ_ROOTFS:-$linux_repo/build/pz7035-fh/tmp/deploy/images/pz7035-fh/yofo-image-pz7035-fh.rootfs.cpio.gz.u-boot}
 bootargs=${PZ_BOOTARGS:-uio_pdrv_genirq.of_id=generic-uio mem=1008M}
 ring_frames=${PZ_RING_FRAMES:-0}
+pzrec_commit=${PZ_PZREC_COMMIT:-}
+pzrec_bin=${PZ_PZREC:-}
+ssd_bounce=${PZ_SSD_BOUNCE:-}
+ssd_bounce_bytes=${PZ_SSD_BOUNCE_BYTES:-0x100000}
 tools=${PZ_TOOLS_DIR:-/home/gavin/Developer/.worktrees/pz7035-yofo-host-if/tools}
 pzpump=${PZ_PZPUMP:-$dev/pump-tushui-20261004/pzpump}
 slot=${PZ_SLOT_DATA:-$dev/results-hw-20261005/results6}
@@ -106,6 +118,58 @@ PY
     grep -q '^\[Service\]' "$pkg/yofo-studio.service" || die "the staged unit has no [Service] section"
 fi
 
+# 2c. The SSD bounce buffer (results14): outside Linux's RAM and below the ring, so neither can overlap it.
+bounce_note=""
+if [ -n "$ssd_bounce" ]; then
+    bounce_note=$(python3 - "$ssd_bounce" "$ssd_bounce_bytes" "$ring_frames" "$bootargs" <<'PY' || exit 1
+import re, sys
+addr, size, frames, args = int(sys.argv[1], 0), int(sys.argv[2], 0), int(sys.argv[3]), sys.argv[4]
+m = re.search(r"(?:^|\s)mem=(\d+)([KMG]?)", args)
+if not m:
+    sys.exit("bundle: PZ_SSD_BOUNCE needs a mem= in the boot args (Linux must stop below the bounce buffer)")
+mem = int(m.group(1)) * {"": 1, "K": 1 << 10, "M": 1 << 20, "G": 1 << 30}[m.group(2)]
+RECORD, CEILING, FLOOR = 59392, 0x3F000000, 0x00100000
+ring_base = (CEILING - frames * RECORD) // 4096 * 4096 if frames > 0 else CEILING
+if size <= 0 or size % 4096 or addr % 4096:
+    sys.exit(f"bundle: the SSD bounce buffer 0x{addr:08X} (+0x{size:X}) must be 4 KiB aligned and non-empty")
+if addr < FLOOR or addr < mem:
+    sys.exit(f"bundle: the SSD bounce buffer 0x{addr:08X} lies inside Linux's RAM (mem={m.group(1)}{m.group(2)} ends at 0x{mem:08X}): move it to 0x{mem:08X} or above, or lower mem=")
+if addr + size > ring_base:
+    sys.exit(f"bundle: the SSD bounce buffer 0x{addr:08X}-0x{addr + size:08X} overlaps the frame ring (it starts at 0x{ring_base:08X}"
+             f"{'' if frames > 0 else ', the ring ceiling'}): move it down or keep fewer ring frames")
+mib = size / (1 << 20)
+print(f"ssd bounce: 0x{addr:08X} ({mib:g} MiB)")
+PY
+)
+fi
+
+# 2d. pzrec (results14): built for armv7 from a pz7035 commit, or a prebuilt armv7 binary.
+pzrec_note=""; pzrec_stage=""
+if [ -n "$pzrec_commit" ]; then
+    pzrec_full=$(git -C "$repo" rev-parse --verify "$pzrec_commit^{commit}" 2>/dev/null) || die "PZ_PZREC_COMMIT $pzrec_commit is not a commit in $repo"
+    git -C "$repo" cat-file -e "$pzrec_full:tools/pzrec/pzrec.c" 2>/dev/null || die "pz7035 $pzrec_commit has no tools/pzrec"
+    pzrec_stage=$(mktemp -d); trap 'rm -rf "$pzrec_stage"' EXIT
+    if [ -z "$pzrec_bin" ]; then
+        [ -n "${YOFO_SDK:-}" ] || die "PZ_PZREC_COMMIT needs YOFO_SDK (to build pzrec for armv7) or PZ_PZREC (a prebuilt armv7 binary)"
+        git -C "$repo" archive "$pzrec_full" tools/pzrec abi | tar -x -C "$pzrec_stage"
+        # the SDK's CC carries the sysroot and the CPU flags; a subshell keeps its environment out of the rest of the script
+        ( unset PKG_CONFIG_PATH LD_LIBRARY_PATH
+          # shellcheck disable=SC1090
+          . "$YOFO_SDK"/environment-setup-*
+          make -C "$pzrec_stage/tools/pzrec" CC="$CC" CFLAGS="$CFLAGS" OUT="$pzrec_stage/out" >"$pzrec_stage/make.log" 2>&1 ) \
+            || { tail -n 20 "$pzrec_stage/make.log" >&2; die "pzrec did not build from $pzrec_commit"; }
+        pzrec_bin=$pzrec_stage/out/pzrec
+    fi
+    need "$pzrec_bin" "pzrec binary"
+    # 32-bit little-endian ARM ELF: e_ident = 7f 'E' 'L' 'F' 01 01, e_machine (offset 18, LE) = 0x28
+    python3 - "$pzrec_bin" <<'PY' || die "pzrec is not an armv7 binary"
+import sys
+h = open(sys.argv[1], "rb").read(20)
+sys.exit(0 if len(h) == 20 and h[:6] == b"\x7fELF\x01\x01" and h[18:20] == b"\x28\x00" else 1)
+PY
+    pzrec_note="pzrec: ${pzrec_full:0:8} (tools/pzrec, armv7, md5 $(md5sum "$pzrec_bin" | cut -d' ' -f1))"
+fi
+
 # 3. Copy.
 rm -rf "$pkg/host" "$pkg/producer" "$pkg/tools"
 install -d "$pkg/host/pl" "$pkg/host/firmware" "$pkg/host/linux" "$pkg/producer" "$pkg/tools"
@@ -119,6 +183,7 @@ install -m 0644 "$build/core.json" "$pkg/core.json"
 install -m 0644 "$cti" "$pkg/producer/libpz7035_gentl.cti"
 install -m 0755 "$tools/pzcell/pzcell" "$tools/pzres/pzres" "$pzpump" "$pkg/tools/"
 install -m 0644 "$slot/page.bin" "$slot/lut.bin" "$pkg/tools/"
+[ -z "$pzrec_note" ] || install -m 0755 "$pzrec_bin" "$pkg/tools/pzrec"
 
 if [ "$ring_frames" != 0 ]; then
     # one line, set together with the boot args above
@@ -140,7 +205,9 @@ pz_short=$(printf '%.8s' "$commit")
     echo "firmware: live_server.elf from commit $fw_commit$fw_note"
     echo "linux: $(basename "$dtb") + $(basename "$rootfs"), pz7035-linux $(git -C "$linux_repo" rev-parse --short=8 HEAD 2>/dev/null || echo "not in git"), boot args: $bootargs"
     [ -z "$ring_note" ] || echo "$ring_note"
+    [ -z "$bounce_note" ] || echo "$bounce_note"
     echo "producer: libpz7035_gentl.cti md5 $cti_md5 ($cti_note)"
+    [ -z "$pzrec_note" ] || echo "$pzrec_note"
     echo "tools: pzcell, pzres from $(src_of "$tools/pzcell/pzcell"), pzpump, page.bin, lut.bin from $(basename "$slot")"
     echo "boot check: Studio's preflight compares the loaded PL's BUILD_ID with core.json from this bundle; a mismatch means the wrong image is loaded"
 } > "$pkg/BUILD_INFO.new"
