@@ -23,6 +23,7 @@ import { FramePullScheduler } from "./framePullScheduler";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {open, save, confirm} from "./transport/dialogs";
 import { volatileDataNotice } from "./diagnosticsView";
+import { useWallClockSync } from "./transport/wallClockSync";
 import { DiagnosticsPanel } from "./components/DiagnosticsPanel";
 import { downloadUrl } from "./filesView";
 import { serverOrigin, tokenFromLocation } from "./transport/auth";
@@ -160,6 +161,7 @@ function Menu(props: {
 // All implemented bridge schema-v3 actions stay wired; everything else is
 // visible but disabled with an explanatory tooltip.
 export default function App() {
+  useWallClockSync(); // the PZ7035 has no RTC: the controlling browser sends its clock (G14)
   const [abi, setAbi] = useState<number | null>(null);
   const [ready, setReady] = useState(false);
   const [running, setRunning] = useState(false);

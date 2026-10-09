@@ -241,6 +241,9 @@ public:
     // see ::camera::common::legacyTimestampInterpretation().
     bool writeAcquisitionProvenance(const ::camera::common::TimestampDescriptor& descriptor,
                                     const AcquisitionTelemetrySnapshot& telemetry);
+    // Where the wall-clock times of this file (start_time_ns, end_time_ns) came from (G14): client_sync,
+    // board_clock_unsynced (a board without an RTC that no client has synced) or system_clock.
+    bool writeWallClockProvenance(const std::string& source, int64_t offsetNs);
     bool readAcquisitionProvenance(::camera::common::TimestampDescriptor& descriptor,
                                    AcquisitionTelemetrySnapshot& telemetry) const;
 

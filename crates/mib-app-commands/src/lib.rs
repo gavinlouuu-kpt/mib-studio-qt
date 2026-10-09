@@ -1374,6 +1374,11 @@ pub fn save_camera_roi(state: &AppState, x: i32, y: i32, w: i32, h: i32) -> Resu
 }
 
 /// PZ7035 camera mode (ABI 27, #501 P1): "align" or "run" at the window offset (x, y).
+pub fn sync_wall_clock(state: &AppState, unix_ms: i64) -> Result<CmdResult, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().sync_wall_clock(unix_ms).into())
+}
+
 pub fn set_instrument_mode(state: &AppState, mode: &str, x: i32, y: i32) -> Result<CmdResult, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     Ok(guard.pin_mut().set_instrument_mode(mode, x, y).into())

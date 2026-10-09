@@ -485,6 +485,14 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
   `stage_motion_is_control_only_but_stop_is_not` in the server;
   `backend.stage_bridge_facade`.
 
+## ABI 33: wall-clock sync (#651 G14)
+
+`sync_wall_clock(unix_ms)` (a control command in the YOFO Studio server, `{unixMs}` in JSON) hands the controlling browser's clock to
+`backend::app::WallClock`, so files saved on a board without an RTC carry the right date; a host with a clock ignores it.
+`fetch_instrument_status` gains `wall_clock{synced, source, offset_ns, last_sync_unix_ms}`. Both are ABI 33 (additive changes bump the
+number, ADR 0004). Merge coordination: 33 is taken; the next free number is 34, to be reserved with the coordinator.
+`BackendFacade::syncWallClock` → `AppBackend::syncWallClock` → `WallClock::sync`.
+
 ## ABI 32: startup configuration restore (#398 M2c)
 
 `restore_startup_configuration(profile_base)` re-applies the last applied local profile or

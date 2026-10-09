@@ -4414,6 +4414,41 @@ namespace backend::services {
 
     // ---- Acquisition time/telemetry provenance (issue #368) --------------------
 
+    bool Hdf5Service::writeWallClockProvenance(const std::string& source, int64_t offsetNs)
+    {
+        if (!isFileOpen()) return false;
+        const char* groupPath = runInfoGroupPath(impl_->fileId_);
+        if (!groupPath) return false;
+        hid_t group = H5Gopen2(impl_->fileId_, groupPath, H5P_DEFAULT);
+        if (group < 0) return false;
+        hid_t scalar = H5Screate(H5S_SCALAR);
+        bool ok = true;
+        if (H5Aexists(group, "timestamp_wall_source") > 0) H5Adelete(group, "timestamp_wall_source");
+        if (H5Aexists(group, "timestamp_wall_offset_ns") > 0) H5Adelete(group, "timestamp_wall_offset_ns");
+        hid_t type = H5Tcopy(H5T_C_S1);
+        H5Tset_size(type, H5T_VARIABLE);
+        H5Tset_cset(type, H5T_CSET_UTF8);
+        hid_t attr = H5Acreate2(group, "timestamp_wall_source", type, scalar, H5P_DEFAULT, H5P_DEFAULT);
+        if (attr >= 0) {
+            const char* ptr = source.c_str();
+            if (H5Awrite(attr, type, &ptr) < 0) ok = false;
+            H5Aclose(attr);
+        } else {
+            ok = false;
+        }
+        H5Tclose(type);
+        attr = H5Acreate2(group, "timestamp_wall_offset_ns", H5T_NATIVE_INT64, scalar, H5P_DEFAULT, H5P_DEFAULT);
+        if (attr >= 0) {
+            if (H5Awrite(attr, H5T_NATIVE_INT64, &offsetNs) < 0) ok = false;
+            H5Aclose(attr);
+        } else {
+            ok = false;
+        }
+        H5Sclose(scalar);
+        H5Gclose(group);
+        return ok;
+    }
+
     bool Hdf5Service::writeAcquisitionProvenance(const ::camera::common::TimestampDescriptor& d,
                                                  const AcquisitionTelemetrySnapshot& t)
     {

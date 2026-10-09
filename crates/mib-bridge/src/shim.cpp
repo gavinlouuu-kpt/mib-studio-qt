@@ -2077,6 +2077,13 @@ BridgeCommandResult BackendBridge::set_instrument_mode(rust::Str mode, std::int3
     catch (...) { return errorResult("set_instrument_mode: unknown error"); }
 }
 
+BridgeCommandResult BackendBridge::sync_wall_clock(std::int64_t unix_ms) {
+    try {
+        return toBridgeResult(impl_->facade.syncWallClock(unix_ms));
+    } catch (const std::exception& e) { return errorResult(std::string("sync_wall_clock: ") + e.what()); }
+    catch (...) { return errorResult("sync_wall_clock: unknown error"); }
+}
+
 BridgeCommandResult BackendBridge::set_service_mode(bool on) {
     try {
         return toBridgeResult(impl_->facade.setServiceMode(on));
@@ -2389,7 +2396,7 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 32; }
+std::uint32_t bridge_abi_version() { return 33; }
 
 } // namespace mib_bridge
 

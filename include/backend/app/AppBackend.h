@@ -150,6 +150,8 @@ namespace backend
         pz::RingStatus ringStatus();
         pz::RingRead ringFrame(uint64_t seq, std::vector<uint8_t> &packet, std::string *why);
         uint32_t ringFramesWanted() const;
+        // Accept a client time for the wall clock (G14). Refused while a run or recording is active.
+        bool syncWallClock(int64_t unixMs, std::string *why);
         pz::InstrumentMode instrumentMode() const;
         // The safe state of an unattended instrument (no client for the server's grace time): LED
         // off, cell path off, the camera (producer stream / bridge previews) released. The sensor

@@ -3,7 +3,11 @@
 # the PS software plus the PL image, firmware, Linux boot set, producer and slot tools it was
 # qualified with, listed in one MD5SUMS and named by one BUILD_INFO line.
 #
-#   [PZ7035_REF=pl-results9] scripts/yofo/bundle_assemble.sh PKG_DIR
+#   [PZ7035_REF=pl-results9] [PZ_RING_FRAMES=5000 PZ_BOOTARGS='... mem=720M'] scripts/yofo/bundle_assemble.sh PKG_DIR
+#
+# PZ_RING_FRAMES (results13+, #649): the frames the PL's every-frame ring keeps. The unit gets MIB_PZ_RING_FRAMES, and the
+# assembly refuses a bundle whose boot args leave no room for that ring above Linux (mem= must not reach the ring base,
+# which ends at the PL's 0x3F000000 area): the two numbers are set together, in the same bundle and BUILD_INFO.
 #
 # Layout (see docs/exec-plans/active/2026-10-08-yofo-studio-bundle.md):
 #   board side  yofo-studio-server dist.tar yofo-studio.service install.sh pl-ready.sh BUILD_INFO MD5SUMS
@@ -28,6 +32,7 @@ linux_repo=${PZ_LINUX_REPO:-/home/gavin/Developer/pz7035-linux}
 dtb=${PZ_DTB:-$dev/linux-boot-20260930/pz7035-live-uio.dtb}
 rootfs=${PZ_ROOTFS:-$linux_repo/build/pz7035-fh/tmp/deploy/images/pz7035-fh/yofo-image-pz7035-fh.rootfs.cpio.gz.u-boot}
 bootargs=${PZ_BOOTARGS:-uio_pdrv_genirq.of_id=generic-uio mem=1008M}
+ring_frames=${PZ_RING_FRAMES:-0}
 tools=${PZ_TOOLS_DIR:-/home/gavin/Developer/.worktrees/pz7035-yofo-host-if/tools}
 pzpump=${PZ_PZPUMP:-$dev/pump-tushui-20261004/pzpump}
 slot=${PZ_SLOT_DATA:-$dev/results-hw-20261005/results6}
@@ -69,6 +74,30 @@ if [ -n "$fw_full" ] && ! git -C "$repo" merge-base --is-ancestor "$fw_full" "$c
     fw_note=" (NOT an ancestor of $ref: check the firmware)"
 fi
 
+# 2b. The frame ring and the boot args must agree (the PL does not enforce a DDR floor; Studio checks /proc/iomem as well).
+ring_note=""
+if [ "$ring_frames" != 0 ]; then
+    ring_note=$(python3 - "$ring_frames" "$bootargs" <<'PY' || exit 1
+import re, sys
+frames, args = int(sys.argv[1]), sys.argv[2]
+m = re.search(r"(?:^|\s)mem=(\d+)([KMG]?)", args)
+if not m:
+    sys.exit("bundle: PZ_RING_FRAMES needs a mem= in the boot args (Linux must stop below the ring)")
+mem = int(m.group(1)) * {"": 1, "K": 1 << 10, "M": 1 << 20, "G": 1 << 30}[m.group(2)]
+RECORD, CEILING, FLOOR = 59392, 0x3F000000, 0x00100000
+size = frames * RECORD
+base = (CEILING - size) // 4096 * 4096
+if frames <= 0 or base < FLOOR:
+    sys.exit(f"bundle: a ring of {frames} frames does not fit the DDR")
+if base < mem:
+    sys.exit(f"bundle: boot args mem={m.group(1)}{m.group(2)} reach 0x{mem:08x} but a ring of {frames} frames ({size / 2**20:.1f} MiB) starts at 0x{base:08x}: "
+             f"lower mem= to at most {base >> 20} MiB (for example mem={base >> 20}M) or keep fewer frames")
+print(f"frame ring: {frames} frames ({size / 2**20:.1f} MiB) at 0x{base:08x}-0x{base + size:08x}, Linux limited by mem={m.group(1)}{m.group(2)} (ends 0x{mem:08x}), unit MIB_PZ_RING_FRAMES={frames}")
+PY
+)
+    grep -q '^\[Service\]' "$pkg/yofo-studio.service" || die "the staged unit has no [Service] section"
+fi
+
 # 3. Copy.
 rm -rf "$pkg/host" "$pkg/producer" "$pkg/tools"
 install -d "$pkg/host/pl" "$pkg/host/firmware" "$pkg/host/linux" "$pkg/producer" "$pkg/tools"
@@ -83,6 +112,12 @@ install -m 0644 "$cti" "$pkg/producer/libpz7035_gentl.cti"
 install -m 0755 "$tools/pzcell/pzcell" "$tools/pzres/pzres" "$pzpump" "$pkg/tools/"
 install -m 0644 "$slot/page.bin" "$slot/lut.bin" "$pkg/tools/"
 
+if [ "$ring_frames" != 0 ]; then
+    # one line, set together with the boot args above
+    sed -i '/^Environment=MIB_PZ_RING_FRAMES=/d' "$pkg/yofo-studio.service"
+    sed -i "/^\[Service\]/a Environment=MIB_PZ_RING_FRAMES=$ring_frames" "$pkg/yofo-studio.service"
+fi
+
 # 4. BUILD_INFO: one line names the bundle (mib + pz7035 commits, PL BUILD_ID, ABI); the rest says where each part came from.
 mib_commit=$(sed -n '1s/.*commit \([0-9a-f]*\).*/\1/p' "$pkg/BUILD_INFO")
 [ -n "$mib_commit" ] || die "cannot read the mib-studio-qt commit from $pkg/BUILD_INFO"
@@ -96,6 +131,7 @@ pz_short=$(printf '%.8s' "$commit")
     echo "PL: $name BUILD_ID $build_id, ABI $abi, bitstream md5 $(md5sum "$build/pz_live.bit" | cut -d' ' -f1) (core.json image pz_live_$name; installed as /etc/yofo/expected-core.json)"
     echo "firmware: live_server.elf from commit $fw_commit$fw_note"
     echo "linux: $(basename "$dtb") + $(basename "$rootfs"), pz7035-linux $(git -C "$linux_repo" rev-parse --short=8 HEAD 2>/dev/null || echo "not in git"), boot args: $bootargs"
+    [ -z "$ring_note" ] || echo "$ring_note"
     echo "producer: libpz7035_gentl.cti md5 $cti_md5 (pz7035-imx426 main 0f67861d retime)"
     echo "tools: pzcell, pzres from $(src_of "$tools/pzcell/pzcell"), pzpump, page.bin, lut.bin from $(basename "$slot")"
     echo "boot check: Studio's preflight compares the loaded PL's BUILD_ID with core.json from this bundle; a mismatch means the wrong image is loaded"

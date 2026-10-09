@@ -161,6 +161,7 @@ pub const COMMANDS: &[&str] = &[
     "fetch_platform_info",
     "fetch_run_accounting",
     "set_instrument_mode",
+    "sync_wall_clock",
     "set_service_mode",
     "set_instrument_led",
     "fetch_run_preview",
@@ -805,6 +806,14 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
             }
             let a: A = args(value)?;
             crate::camera_document::camera_document(a.action, a.path, a.kind, a.baseline, a.text).and_then(json)
+        }
+        "sync_wall_clock" => {
+            #[derive(Deserialize)]
+            struct A {
+                #[serde(rename = "unixMs")] unix_ms: i64,
+            }
+            let a: A = args(value)?;
+            crate::sync_wall_clock(state, a.unix_ms).and_then(json)
         }
         "set_instrument_mode" => {
             #[derive(Deserialize)]

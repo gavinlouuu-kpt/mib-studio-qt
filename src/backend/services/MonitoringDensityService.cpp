@@ -1,4 +1,5 @@
 #include "backend/services/MonitoringDensityService.h"
+#include "backend/app/WallClock.h"
 
 #include "backend/processing/KdeCoreRecord.h"
 
@@ -61,9 +62,7 @@ std::int64_t threadCpuUs() {
 }
 
 std::uint64_t nowNs() {
-    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                          std::chrono::system_clock::now().time_since_epoch())
-                                          .count());
+    return backend::app::WallClock::nowNs(); // the KDE's computed_at_ns is persisted: same source as the run's times (G14)
 }
 
 } // namespace
