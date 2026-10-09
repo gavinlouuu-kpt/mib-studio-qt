@@ -104,7 +104,9 @@ fn abi_version_is_stable() {
     // fetch_instrument_status gains wall_clock{synced, source, offset_ns, last_sync_unix_ms}.
     // v34 the every-frame ring (#649 v1): fetch_ring_status, fetch_ring_frame (MIBR), ring_freeze, ring_resume and the
     // `ring` block of fetch_instrument_status.
-    assert_eq!(ffi::bridge_abi_version(), 34);
+    // v35 the SATA SSD record store, read only (#667 S1): fetch_ssd_status, fetch_ssd_runs and the `ssd` block of
+    // fetch_instrument_status.
+    assert_eq!(ffi::bridge_abi_version(), 35);
 }
 
 // ABI 31 (#549): with nothing loaded and no run finished, the accounting says so and why.
@@ -156,6 +158,15 @@ fn instrument_mode_commands_off_the_instrument() {
     assert!(!frozen.ok && frozen.message.contains("no PZ7035 control"), "{}", frozen.message);
     let resumed = bridge.pin_mut().ring_resume();
     assert!(!resumed.ok && resumed.message.contains("no PZ7035 control"), "{}", resumed.message);
+    // The SSD record store (ABI 35): nothing configured is ABSENT, said plainly; the run table is empty with the same reason.
+    let ssd: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_ssd_status()).unwrap();
+    assert_eq!(ssd["configured"], serde_json::json!(false), "{ssd}");
+    assert_eq!(ssd["state"], serde_json::json!("ABSENT"), "{ssd}");
+    assert_eq!(ssd["usable"], serde_json::json!(false), "{ssd}");
+    assert_eq!(ssd["reason"], serde_json::json!("No SSD: nothing can be saved"), "{ssd}");
+    let ssd_runs: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_ssd_runs()).unwrap();
+    assert_eq!(ssd_runs["ok"], serde_json::json!(false), "{ssd_runs}");
+    assert_eq!(ssd_runs["runs"], serde_json::json!([]), "{ssd_runs}");
     let info: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_platform_info()).unwrap();
     assert_eq!(info["capabilities"]["run_mode"], serde_json::json!(false), "{info}");
     bridge.pin_mut().shutdown();

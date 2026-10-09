@@ -589,7 +589,7 @@ mod stage_control_tests {
         for cmd in ["ring_freeze", "ring_resume"] {
             assert!(CONTROL_COMMANDS.contains(&cmd), "{cmd} must be a CONTROL command");
         }
-        for cmd in ["fetch_ring_status", "fetch_ring_frame"] {
+        for cmd in ["fetch_ring_status", "fetch_ring_frame", "fetch_ssd_status", "fetch_ssd_runs"] {
             assert!(!CONTROL_COMMANDS.contains(&cmd), "{cmd} is a read: viewers may use it");
         }
     }

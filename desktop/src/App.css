@@ -1238,3 +1238,16 @@ button.btn:disabled,
 .ring-playback table.ring-cells td:nth-child(2), .ring-playback table.ring-cells td:nth-child(3) { text-align: left; }
 .ring-playback table.ring-cells tr.invalid td { color: #b42318; }
 .ring-playback table.ring-cells tr.valid td { color: #1a7f37; }
+
+/* SATA SSD record store, read only (#667 S1) */
+.ssd-strip { margin: 6px 0; padding: 4px 8px; border-left: 3px solid var(--border, #bbb); }
+.ssd-strip.warn { border-left-color: var(--warn); }
+.ssd-strip.bad { border-left-color: var(--err); }
+.ssd-strip.ok { border-left-color: var(--ok); }
+.ssd-table { border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.ssd-table th, .ssd-table td { padding: 2px 8px; text-align: right; white-space: nowrap; }
+.ssd-table td:nth-child(2), .ssd-table td:nth-child(3), .ssd-table td:last-child, .ssd-table th:nth-child(2), .ssd-table th:nth-child(3), .ssd-table th:last-child { text-align: left; }
+.ssd-table tr.deleted td { opacity: 0.55; text-decoration: line-through; }
+.ssd-table td.tone-ok { color: #1a7f37; }
+.ssd-table td.tone-warn { color: var(--warn); }
+.ssd-table td.tone-bad { color: #b42318; }

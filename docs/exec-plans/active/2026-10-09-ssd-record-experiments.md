@@ -314,6 +314,8 @@ power loss, the export rate end to end, and the Run page with real counters.
 
 S1 can be built and tested against the fake before any new PL image exists. Nothing starts before #649 v1 is merged.
 
+**S1 status (2026-10-09):** built against `libpzrec`/`pzrec` on a file-backed fake disk (bridge ABI 35, `SsdStore`, strip, read-only Recordings list, informational `storage.ssd` gate); see `knowledge_map/current-state/recent/2026-10-09-ssd-s1-store.md`. The gate becomes blocking with S2.
+
 ## Alignment with the board owner's design (pz7035 `docs/SSD_RECORDING_DESIGN.md`, 15603ac9)
 
 The board owner's note settles the interface; where it differs from the requirements above, it wins:

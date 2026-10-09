@@ -2112,6 +2112,22 @@ BridgeCommandResult BackendBridge::ring_resume() {
     catch (...) { return errorResult("ring_resume: unknown error"); }
 }
 
+rust::String BackendBridge::fetch_ssd_status() {
+    try {
+        return rust::String(impl_->facade.fetchSsdStatusJson());
+    } catch (...) {
+        return rust::String("{\"configured\":false,\"state\":\"ABSENT\",\"usable\":false,\"active\":false,\"reason\":\"fetch_ssd_status failed\"}");
+    }
+}
+
+rust::String BackendBridge::fetch_ssd_runs() {
+    try {
+        return rust::String(impl_->facade.fetchSsdRunsJson());
+    } catch (...) {
+        return rust::String("{\"ok\":false,\"reason\":\"fetch_ssd_runs failed\",\"runs\":[]}");
+    }
+}
+
 BridgeCommandResult BackendBridge::sync_wall_clock(std::int64_t unix_ms) {
     try {
         return toBridgeResult(impl_->facade.syncWallClock(unix_ms));
@@ -2431,7 +2447,7 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 34; }
+std::uint32_t bridge_abi_version() { return 35; }
 
 } // namespace mib_bridge
 

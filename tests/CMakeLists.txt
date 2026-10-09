@@ -519,6 +519,18 @@ mib_add_backend_test_executable(pz_frame_ring_test processing/pz_frame_ring_test
 add_test(NAME processing.pz_frame_ring COMMAND $<TARGET_FILE:mib_backend_tests> pz_frame_ring_test)
 set_tests_properties(processing.pz_frame_ring PROPERTIES LABELS "processing;backend;pl" TIMEOUT 60)
 
+# #667 S1: the SSD record store (pzrec JSON contract, honest failure modes, the bounded child process). POSIX only (shell stand-ins for pzrec).
+# Set MIB_PZREC (a built pz7035 tools/pzrec/build/pzrec) to also run the real CLI on a fake disk image.
+if(UNIX)
+    mib_add_backend_test_executable(ssd_store_test processing/ssd_store_test.cpp)
+    set(_mib_ssd_store_args ssd_store_test)
+    if(DEFINED ENV{MIB_PZREC} AND EXISTS "$ENV{MIB_PZREC}")
+        list(APPEND _mib_ssd_store_args "$ENV{MIB_PZREC}")
+    endif()
+    add_test(NAME processing.ssd_store COMMAND $<TARGET_FILE:mib_backend_tests> ${_mib_ssd_store_args})
+    set_tests_properties(processing.ssd_store PROPERTIES LABELS "processing;backend;pl" TIMEOUT 60)
+endif()
+
 mib_add_backend_test_executable(channel_roi_detect_test processing/channel_roi_detect_test.cpp)
 add_test(NAME processing.channel_roi_detect COMMAND $<TARGET_FILE:mib_backend_tests> channel_roi_detect_test)
 set_tests_properties(processing.channel_roi_detect PROPERTIES LABELS "processing;backend" TIMEOUT 30)

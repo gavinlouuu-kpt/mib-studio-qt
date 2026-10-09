@@ -1266,6 +1266,19 @@ namespace backend
     processing::IExecutionProvider *AppBackend::executionProvider() { return executionProvider_.get(); }
     pz::PzPlatformMonitor *AppBackend::pzPlatformMonitor() { return pzPlatformMonitor_.get(); }
 
+    pz::SsdStore &AppBackend::ssdStore()
+    {
+        std::call_once(ssdOnce_, [this] {
+            const char *pzrec = std::getenv("MIB_PZREC");
+            const char *image = std::getenv("MIB_SSD_IMAGE");
+            std::unique_ptr<pz::ISsdDevice> device;
+            if (pzrec && *pzrec && image && *image)
+                device = std::make_unique<pz::PzrecCliDevice>(pzrec, image);
+            ssdStore_ = std::make_unique<pz::SsdStore>(std::move(device), std::chrono::milliseconds(1000), /*background=*/true);
+        });
+        return *ssdStore_;
+    }
+
     // ---- PZ7035 camera modes (#501 P1; pz7035-imx426 docs/YOFO_HOST_INTERFACE.md) ----
 
     namespace {

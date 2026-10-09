@@ -18,6 +18,7 @@
 #include "backend/diagnostics/MemoryBudget.h"
 #include "backend/processing/pz/PzProfileCompiler.h"
 #include "backend/pz/PzFrameRing.h"
+#include "backend/pz/SsdStore.h"
 #include "backend/profiles/InstrumentIdentity.h"
 #include "backend/profiles/ProfileCache.h" // MethodDraft
 #include "backend/profiles/SupabaseProfileRegistry.h" // RegistryHttpTransport seam (ADR 0002)
@@ -116,6 +117,9 @@ namespace backend
         processing::IExecutionProvider *executionProvider();
         // Read-only PZ7035 identity and health (#501); null off the instrument.
         pz::PzPlatformMonitor *pzPlatformMonitor();
+        // The SATA SSD record store (#667 S1, read only): always present, ABSENT unless MIB_PZREC (the pzrec CLI) and MIB_SSD_IMAGE
+        // (a disk image or device it reads) are both set.
+        pz::SsdStore &ssdStore();
         // The data directory given to initialize() (recordings default under it).
         const std::string &dataDir() const { return dataDir_; }
 
@@ -422,6 +426,8 @@ namespace backend
         // before the service it feeds.
         std::unique_ptr<processing::IExecutionProvider> executionProvider_;
         std::unique_ptr<pz::PzPlatformMonitor> pzPlatformMonitor_;
+        std::once_flag ssdOnce_;
+        std::unique_ptr<pz::SsdStore> ssdStore_;
         std::unique_ptr<pz::PzInstrumentControl> pzControl_;
         mutable std::mutex instrumentModeMutex_; // serialises mode switches
         std::atomic<int> instrumentMode_{0};      // pz::InstrumentMode
