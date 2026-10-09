@@ -86,7 +86,8 @@
   `timestamp_native_ticks_per_second`, `timestamp_semantic`,
   `timestamp_validity`, `timestamp_counter_bits`, `timestamp_session_generation`,
   `timestamp_host_receipt_domain` (what the per-frame `hostTimestampUs` column
-  means) and, per metric, `telemetry_<name>_value` / `_validity` /
+  means), the wall-clock provenance `timestamp_wall_source` (`client_sync` | `board_clock_unsynced` | `system_clock`) and
+  `timestamp_wall_offset_ns` (int64, from `Hdf5Service::writeWallClockProvenance`, G14: where `start_time_ns` / `end_time_ns` came from) and, per metric, `telemetry_<name>_value` / `_validity` /
   `_sample_host_time_us` for frames delivered, capture frame/data rate, SDK
   queue depth, input buffers, underruns, transport loss, intentional
   discards, frame age and publish latency. The per-frame `timestampNs`

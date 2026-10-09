@@ -95,6 +95,8 @@ struct RunConfigurationSnapshot {
     uint64_t captureGeneration{0};    // CaptureService session generation
     uint64_t startHostTimeUs{0};
     uint64_t startWallClockNs{0};
+    std::string wallClockSource;      // client_sync | board_clock_unsynced | system_clock (G14)
+    int64_t wallClockOffsetNs{0};
 
     CameraSourceInfo camera;
     bool cameraReady{false};

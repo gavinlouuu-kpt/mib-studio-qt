@@ -1,4 +1,5 @@
 #include "backend/processing/BatchMaskSources.h"
+#include "backend/app/WallClock.h"
 
 #include "backend/recording/Hdf5Service.h"
 #include "backend/processing/ProcessingService.h"
@@ -357,9 +358,7 @@ bool saveMasksToHdf5(const std::vector<ProcessedFrame>& frames,
         else invalid.push_back(f);
     }
 
-    const auto nowNs = static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count());
+    const uint64_t nowNs = backend::app::WallClock::nowNs();
     uint64_t startTimeNs = nowNs;
     uint64_t endTimeNs = nowNs;
     if (useFrameTimestamps) {
