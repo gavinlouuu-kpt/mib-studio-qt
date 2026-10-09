@@ -67,6 +67,10 @@ export interface WorkflowFacts {
   experimentCompleted: boolean;
   reviewFileOpen: boolean;
   reviewValid: boolean;
+  /** The PZ7035's camera mode (align | run | unknown), given only on an instrument with camera modes (#651 G15). There the camera is the
+   *  instrument itself: Run and Align do not wait for the Preflight confirmation, and the stepper follows the mode the operator is in.
+   *  Left out (the desktop), the stages chain exactly as before. */
+  instrumentMode?: "align" | "run" | "unknown";
 }
 
 export interface StageView {
@@ -171,7 +175,10 @@ function deriveAlignment(f: WorkflowFacts, preflight: StageView): StageView {
   const blocking: string[] = [];
   let status: StageStatus;
 
-  if (preflight.status !== "complete") {
+  if (f.instrumentMode !== undefined) {
+    // The PZ7035: the camera is the instrument, its modes need no Preflight confirmation and no "camera started" step.
+    status = isExperimentActive(f.experimentState) || confirmed(f.alignmentSignature, f.alignmentConfirmedFor) ? "complete" : "ready";
+  } else if (preflight.status !== "complete") {
     status = "not-started";
     blocking.push("Complete Hardware Preflight first");
   } else if (isExperimentActive(f.experimentState)) {
@@ -210,6 +217,14 @@ function deriveExperiment(f: WorkflowFacts, alignment: StageView): StageView {
 
   if (isExperimentActive(f.experimentState)) {
     status = "running";
+  } else if (f.instrumentMode !== undefined) {
+    // The PZ7035 starts Run on its own: neither Preflight nor Alignment has to be confirmed first.
+    if (f.experimentState === EXPERIMENT_STATES.Failed) {
+      status = "needs-attention";
+      blocking.push("The previous experiment failed — review the error and retry");
+    } else {
+      status = f.experimentCompleted ? "complete" : "ready";
+    }
   } else if (alignment.status !== "complete") {
     status = "not-started";
     blocking.push("Complete Camera & Alignment first");
@@ -348,7 +363,12 @@ export function deriveWorkflow(f: WorkflowFacts): WorkflowView {
   // earliest stage that is not yet Complete. Everything complete → Review.
   const running = stages.find((s) => s.status === "running");
   const firstIncomplete = stages.find((s) => s.status !== "complete");
-  const current = running ?? firstIncomplete ?? review;
+  // The PZ7035 follows its camera mode: in Run the operator is at the Experiment stage, in Align at Camera & Alignment (unless that stage
+  // is already complete), not at a Preflight confirmation Run does not need. With no mode yet (start-up) the earliest incomplete stage decides.
+  let modeStage: StageView | undefined;
+  if (f.instrumentMode === "run") modeStage = experiment.status === "complete" ? review : experiment;
+  else if (f.instrumentMode === "align") modeStage = alignment.status === "complete" ? experiment : alignment;
+  const current = running ?? modeStage ?? firstIncomplete ?? review;
 
   const allComplete = stages.every((s) => s.status === "complete");
   const recommended = allComplete ? null : recommendedFor(current, f);
