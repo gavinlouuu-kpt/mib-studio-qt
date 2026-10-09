@@ -65,3 +65,5 @@ version = `mib-studio-qt <commit> + pz7035-imx426 <commit>`.
 `PZ_RING_FRAMES` with a matching `mem=` in `PZ_BOOTARGS` (for example 5000 frames and `mem=720M`) puts `MIB_PZ_RING_FRAMES` in the bundle's unit and a
 `frame ring:` line in BUILD_INFO; the assembly refuses a `mem=` that reaches the ring base. Nobody edits the standing unit by hand: the ring
 size and the boot arg are changed together, in a new bundle.
+
+`PZ_CTI_COMMIT` (with `PZ_CTI` and `PZ_CTI_MD5`) names the commit the producer was built from; BUILD_INFO then names the Studio commit, the PL tag and the producer commit.
