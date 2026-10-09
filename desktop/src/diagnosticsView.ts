@@ -50,3 +50,11 @@ export function diagnosticsText(d: Diagnostics, instrumentLines: string[], level
   ];
   return parts.join("\n");
 }
+
+/** The data directory is on the RAM root (no eMMC partition mounted): everything saved there is lost at power-off. */
+export function volatileDataNotice(storage: { ram?: boolean; path?: string; free_bytes?: number } | null | undefined): string | null {
+  if (!storage?.ram) return null;
+  const free = storage.free_bytes ? ` ${(storage.free_bytes / 1e9).toFixed(1)} GB free.` : "";
+  return `The data directory is volatile: ${storage.path ?? "it"} is on the RAM root, so experiments, settings and logs are lost at power-off. ` +
+    `Copy data off before shutdown; installing the bundle with the eMMC data partition present makes it persistent.${free}`;
+}

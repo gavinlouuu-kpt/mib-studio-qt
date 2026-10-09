@@ -11,6 +11,10 @@ cd "$here"
 # the board side is checked here.
 grep -v '  host/' MD5SUMS | md5sum -c >/dev/null || { echo "install: MD5SUMS check failed" >&2; exit 1; }
 install -d /usr/share/yofo-studio /usr/libexec/yofo-studio /var/lib/yofo-studio
+# The data directory goes on the eMMC partition (label yofo-data) when it is there; the RAM root forgets
+# mounts at boot, so this runs on every install, before the unit is (re)started. Without the partition the
+# directory stays on RAM and Studio's Diagnostics view says it is volatile.
+sh ./mount-data.sh || echo "install: the data partition could not be mounted; the data directory stays on the RAM root" >&2
 install -m 0755 yofo-studio-server /usr/bin/yofo-studio-server
 rm -rf /usr/share/yofo-studio/dist
 tar -C /usr/share/yofo-studio -xf dist.tar

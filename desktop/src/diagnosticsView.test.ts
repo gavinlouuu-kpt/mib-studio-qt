@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { diagnosticsText, diagnosticsUrl, filterLines, formatUptime, lineLevel, type Diagnostics } from "./diagnosticsView";
+import { diagnosticsText, diagnosticsUrl, filterLines, formatUptime, lineLevel, volatileDataNotice, type Diagnostics } from "./diagnosticsView";
 
 const lines = [
   "[2026-10-09 10:00:00.001] [app] [info] [A.cpp:1] fine",
@@ -39,5 +39,11 @@ describe("diagnostics view model (#651 G12)", () => {
     expect(text).toContain("careful");
     expect(text).not.toContain("fine");
     expect(diagnosticsText({ ...d, bundle: null, log: null }, [], "all")).toContain("no log file");
+  });
+  it("warns that the data directory is volatile only on the RAM root", () => {
+    expect(volatileDataNotice({ ram: true, path: "/var/lib/yofo-studio", free_bytes: 4e8 })).toContain("data directory is volatile");
+    expect(volatileDataNotice({ ram: true, path: "/var/lib/yofo-studio", free_bytes: 4e8 })).toContain("0.4 GB free");
+    expect(volatileDataNotice({ ram: false, path: "/var/lib/yofo-studio" })).toBeNull();
+    expect(volatileDataNotice(null)).toBeNull();
   });
 });

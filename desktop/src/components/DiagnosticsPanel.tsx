@@ -5,7 +5,7 @@ import { serverOrigin, tokenFromLocation } from "../transport/auth";
 
 // Board diagnostics without a shell (#651 G12): versions, the installed bundle, the PL identity from the
 // instrument status, the start-up lines and the log tail; Copy for an issue, Download for the whole log.
-export function DiagnosticsPanel({ instrumentLines }: { instrumentLines: string[] }) {
+export function DiagnosticsPanel({ instrumentLines, volatileNotice }: { instrumentLines: string[]; volatileNotice?: string | null }) {
   const [data, setData] = useState<Diagnostics | null>(null);
   const [error, setError] = useState("");
   const [level, setLevel] = useState<LogLevel>("all");
@@ -50,6 +50,7 @@ export function DiagnosticsPanel({ instrumentLines }: { instrumentLines: string[
           </select>
         </label>
       </div>
+      {volatileNotice && <p className="pending-note" role="alert" data-testid="volatile-data">{volatileNotice}</p>}
       {error && <p role="alert">{error}</p>}
       {data && (
         <>
