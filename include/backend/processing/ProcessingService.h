@@ -774,6 +774,7 @@ private:
     // failure counter. Written by the realtime thread, the flush writer, and
     // appendExperimentFrame; read by experimentAccountingSnapshot().
     backend::recording::RecordingAccounting experimentAccounting_;
+    std::atomic<uint32_t> providerLossLogged_{0}; // gap and malformed-frame log lines in this run (capped)
     std::atomic<uint64_t> processingFailures_{0};
     uint64_t experimentAccountingGeneration_{0};
     bool experimentAccountingPolicyAllowsDrops_{false};
