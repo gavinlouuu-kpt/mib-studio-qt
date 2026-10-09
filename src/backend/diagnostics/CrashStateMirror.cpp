@@ -1,4 +1,5 @@
 #include "backend/diagnostics/CrashStateMirror.h"
+#include "backend/app/WallClock.h"
 
 #include <algorithm>
 #include <chrono>
@@ -41,8 +42,7 @@ std::string readSafeString(std::mutex& m, const char* buf, size_t cap) {
 
 uint64_t nowEpochMs() {
     using namespace std::chrono;
-    return static_cast<uint64_t>(duration_cast<milliseconds>(
-        system_clock::now().time_since_epoch()).count());
+    return backend::app::WallClock::nowNs() / 1'000'000;
 }
 
 } // namespace

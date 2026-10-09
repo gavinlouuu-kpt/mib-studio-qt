@@ -1211,6 +1211,15 @@ if(Python3_Interpreter_FOUND)
     )
 
     add_test(
+        NAME scripts.wall_clock_sources
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test_wall_clock_sources.py
+    )
+    set_tests_properties(scripts.wall_clock_sources PROPERTIES
+        LABELS "scripts;pl"
+        TIMEOUT 30
+    )
+
+    add_test(
         NAME scripts.export_hdf5_paths
         COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test_export_hdf5_paths.py
     )

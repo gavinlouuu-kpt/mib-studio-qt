@@ -1020,6 +1020,9 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
     RunConfigurationSnapshot run = result.readiness.candidate;
     run.startGeneration = ++startCounter_;
     run.startHostTimeUs = Tools::getTimestamp();
+    // Hold the wall clock from the start stamp until the run has stamped and persisted its end (every
+    // finalisation path, failed ones included): a resync in between would change the end's offset.
+    auto wallHold = WallClock::hold();
     run.startWallClockNs = WallClock::nowNs();
     {
         const auto wall = WallClock::status();
@@ -1102,6 +1105,7 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
         SPDLOG_INFO("ExperimentCoordinator: PL results from '{}' (run id {})", provider->name(), runId);
     }
     activeRun_ = run;
+    wallHold_ = std::move(wallHold); // released at the terminal status of finalizeLocked
     lastRun_ = run;
     liveKdeCoreJson_.clear();
     stopRequested_ = cancelRequested_ = fatalRequested_ = false;
@@ -1462,6 +1466,7 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
     lastAccountingGeneration_ = run.startGeneration;
     haveLastAccounting_ = true;
     activeRun_.reset();
+    wallHold_.reset(); // the end time and the provenance are on disk (or the run failed): the clock may move again
     status_.endWallClockNs = endNs;
     status_.terminal = true;
     status_.finalizationOk = ok && !failed;

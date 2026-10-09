@@ -1,4 +1,5 @@
 #include "backend/review/ReviewJobs.h"
+#include "backend/app/WallClock.h"
 
 #include "backend/processing/BatchMaskSources.h"
 #include "backend/processing/KdeCoreRecord.h"
@@ -35,10 +36,7 @@ namespace backend::review
 
         std::uint64_t nowNs()
         {
-            return static_cast<std::uint64_t>(
-                std::chrono::duration_cast<std::chrono::nanoseconds>(
-                    std::chrono::system_clock::now().time_since_epoch())
-                    .count());
+            return backend::app::WallClock::nowNs();
         }
 
         recording::HdfExportSeriesRange toServiceRange(const ExportSeriesRange &r)

@@ -1565,7 +1565,7 @@ namespace backend
 
     bool AppBackend::syncWallClock(int64_t unixMs, std::string *why)
     {
-        app::WallClock::setBoardWithoutRtc(!app::hostProcessingAvailable());
+        // Whether this platform takes a client time was decided at startup (the constructor), not by the caller.
         const auto run = experimentCoordinator_ ? experimentCoordinator_->state() : app::ExperimentRunState::Idle;
         const bool locked = isFrameRecording() || run == app::ExperimentRunState::Starting ||
                             run == app::ExperimentRunState::Active || run == app::ExperimentRunState::Stopping;
@@ -2795,6 +2795,8 @@ namespace backend
             [this, processingCoreLease = std::move(processingCoreLease)]() mutable {
             SPDLOG_INFO("Frame recording thread started");
 
+            // Hold the clock until the end time and the provenance are written (also when the recording fails).
+            const auto wallHold = backend::app::WallClock::hold();
             const uint64_t startTimeNs = backend::app::WallClock::nowNs();
             const auto recordingWall = backend::app::WallClock::status();
             const auto recordingConfig = processingService_->getProcessingConfig();

@@ -11,6 +11,7 @@
 #include "backend/app/AppBackend.h"
 #include "backend/app/ApplicationIdentity.h"
 #include "backend/app/BackendFacade.h"
+#include "backend/app/WallClock.h"
 #include "backend/app/ExperimentCoordinator.h"
 #include "backend/app/ExperimentReadiness.h"
 #include "backend/camera/mock/MockCamera.h"
@@ -767,6 +768,13 @@ int main()
             std::cerr << "fatal-path experiment start failed: " << started.message << "\n";
             return 32;
         }
+        // G14: the run holds the wall clock from its start stamp until it has stamped and persisted its end,
+        // so a resync cannot move the end's offset, also while a failed run drains its writers.
+        if (app::WallClock::status().holds != 1)
+        {
+            std::cerr << "an active run must hold the wall clock\n";
+            return 135;
+        }
         coordinator.onFatalSaveError("Injected: disk full while flushing");
         if (!waitFor([&] {
                 return statusIsTerminal(coordinator.status(), app::ExperimentRunState::Failed);
@@ -774,6 +782,11 @@ int main()
         {
             std::cerr << "fatal error did not drive the experiment to Failed\n";
             return 33;
+        }
+        if (app::WallClock::status().holds != 0)
+        {
+            std::cerr << "the wall clock must be released at the failed run's terminal status\n";
+            return 136;
         }
         {
             const auto s = coordinator.status();
