@@ -365,8 +365,11 @@ export function deriveWorkflow(f: WorkflowFacts): WorkflowView {
   const firstIncomplete = stages.find((s) => s.status !== "complete");
   // The PZ7035 follows its camera mode: in Run the operator is at the Experiment stage, in Align at Camera & Alignment (unless that stage
   // is already complete), not at a Preflight confirmation Run does not need. With no mode yet (start-up) the earliest incomplete stage decides.
+  // An unconfirmed Preflight may be skipped, a failing one may not: with required checks failing (or the core invalid) the backend refuses the
+  // start, so the banner keeps pointing at Preflight and its remedy.
   let modeStage: StageView | undefined;
-  if (f.instrumentMode === "run") modeStage = experiment.status === "complete" ? review : experiment;
+  if (preflight.status === "needs-attention") modeStage = undefined;
+  else if (f.instrumentMode === "run") modeStage = experiment.status === "complete" ? review : experiment;
   else if (f.instrumentMode === "align") modeStage = alignment.status === "complete" ? experiment : alignment;
   const current = running ?? modeStage ?? firstIncomplete ?? review;
 

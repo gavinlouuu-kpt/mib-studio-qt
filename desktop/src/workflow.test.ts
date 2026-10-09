@@ -249,6 +249,34 @@ describe("deriveWorkflow — PZ7035 camera modes (G15)", () => {
     expect(view.currentStageId).toBe("experiment");
   });
 
+  it("a failing Preflight is not skipped: required failures keep the banner on Preflight in Run and in Align", () => {
+    for (const mode of ["run", "align"] as const) {
+      const view = deriveWorkflow({ ...PZ, instrumentMode: mode, requiredFailures: ["Storage missing: no writable data folder"] });
+      expect(view.stages.find((s) => s.id === "preflight")!.status).toBe("needs-attention");
+      expect(view.currentStageId).toBe("preflight");
+      expect(view.recommended).toMatchObject({ stageId: "preflight", kind: "navigate", label: "Resolve hardware preflight" });
+    }
+  });
+
+  it("an invalid core keeps the banner on Preflight too (no checklist given)", () => {
+    const view = deriveWorkflow({ ...PZ, instrumentMode: "run", coreValid: false });
+    expect(view.currentStageId).toBe("preflight");
+    expect(view.recommended?.label).toBe("Resolve hardware preflight");
+  });
+
+  it("a running experiment still wins over a failing Preflight (it cannot be un-run)", () => {
+    const view = deriveWorkflow({ ...PZ, instrumentMode: "run", requiredFailures: ["x: y"], experimentState: EXPERIMENT_STATES.Active });
+    expect(view.currentStageId).toBe("experiment");
+  });
+
+  it("in Align after a failed experiment with the alignment unconfirmed the next step is still Camera & Alignment (decision, not accident)", () => {
+    const view = deriveWorkflow({ ...PZ, instrumentMode: "align", experimentState: EXPERIMENT_STATES.Failed });
+    expect(view.currentStageId).toBe("alignment");
+    expect(view.recommended).toMatchObject({ stageId: "alignment", kind: "confirm-alignment", label: "Confirm alignment & ROI" });
+    // the failed experiment is still shown on its own stage
+    expect(view.stages.find((s) => s.id === "experiment")!.status).toBe("needs-attention");
+  });
+
   it("a finished experiment moves the next step to Review", () => {
     const view = deriveWorkflow({ ...PZ, instrumentMode: "run", experimentCompleted: true });
     expect(view.currentStageId).toBe("review");
