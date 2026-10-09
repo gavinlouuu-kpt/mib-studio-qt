@@ -27,6 +27,9 @@ name=${PZ_PL_IMAGE:-${ref#pl-}}
 dev=/mnt/hdd/developer-data/IMX426
 cti=${PZ_CTI:-$dev/gentl/main-0f67861-retime/libpz7035_gentl.cti}
 cti_md5=${PZ_CTI_MD5:-bc89cd389dbc0ccfa2400e1e5dc0512f}
+# The pz7035-imx426 commit the producer (.cti) was built from, named in BUILD_INFO next to the PL tag; checked to exist in the repo.
+# Unset: the producer of the earlier bundles (main 0f67861d retime).
+cti_commit=${PZ_CTI_COMMIT:-}
 fw=${PZ_FIRMWARE:-/home/gavin/Developer/.worktrees/pz7035-mask-stage/build/pz_live_firmware/live_server.elf}
 linux_repo=${PZ_LINUX_REPO:-/home/gavin/Developer/pz7035-linux}
 dtb=${PZ_DTB:-$dev/linux-boot-20260930/pz7035-live-uio.dtb}
@@ -60,6 +63,11 @@ print(c["image"], c["build_id"], "%d.%d" % (c["abi"]["major"], c["abi"]["minor"]
 
 # 2. Firmware, producer, Linux boot set, slot tools.
 need "$fw" "firmware"; need "$cti" "producer"; need "$dtb" "device tree"; need "$rootfs" "RAM root"
+cti_note="pz7035-imx426 main 0f67861d retime"
+if [ -n "$cti_commit" ]; then
+    cti_full=$(git -C "$repo" rev-parse --verify "$cti_commit^{commit}" 2>/dev/null) || die "PZ_CTI_COMMIT $cti_commit is not a commit in $repo"
+    cti_note="pz7035-imx426 ${cti_full:0:8}"
+fi
 [ "$(md5sum "$cti" | cut -d' ' -f1)" = "$cti_md5" ] || die "producer md5 is not $cti_md5"
 for f in pzcell/pzcell pzres/pzres; do need "$tools/$f" "slot tool"; done
 need "$pzpump" "pzpump"; need "$slot/page.bin" "page.bin"; need "$slot/lut.bin" "lut.bin"
@@ -132,7 +140,7 @@ pz_short=$(printf '%.8s' "$commit")
     echo "firmware: live_server.elf from commit $fw_commit$fw_note"
     echo "linux: $(basename "$dtb") + $(basename "$rootfs"), pz7035-linux $(git -C "$linux_repo" rev-parse --short=8 HEAD 2>/dev/null || echo "not in git"), boot args: $bootargs"
     [ -z "$ring_note" ] || echo "$ring_note"
-    echo "producer: libpz7035_gentl.cti md5 $cti_md5 (pz7035-imx426 main 0f67861d retime)"
+    echo "producer: libpz7035_gentl.cti md5 $cti_md5 ($cti_note)"
     echo "tools: pzcell, pzres from $(src_of "$tools/pzcell/pzcell"), pzpump, page.bin, lut.bin from $(basename "$slot")"
     echo "boot check: Studio's preflight compares the loaded PL's BUILD_ID with core.json from this bundle; a mismatch means the wrong image is loaded"
 } > "$pkg/BUILD_INFO.new"
