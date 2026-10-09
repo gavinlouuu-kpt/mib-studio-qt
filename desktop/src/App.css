@@ -837,6 +837,10 @@ button.btn:disabled,
   position: relative;
 }
 
+.canvas-wrap[hidden] {
+  display: none;
+}
+
 .canvas-wrap canvas {
   image-rendering: pixelated;
   background: #111;
