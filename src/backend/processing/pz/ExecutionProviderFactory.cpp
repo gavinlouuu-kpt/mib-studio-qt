@@ -18,7 +18,11 @@ std::unique_ptr<IExecutionProvider> makeExecutionProvider(const std::string& spe
     if (spec.empty() || spec == "host" || spec == "none") return nullptr;
     if (spec == "pz") {
 #if defined(__linux__)
-        return std::make_unique<PzDevMemExecutionProvider>(PzDevMemExecutionProvider::Layout{});
+        PzDevMemExecutionProvider::Layout layout;
+        // The every-frame ring (results13): frames to keep; 0 or unset = none. The standing unit sets it when the bundle's
+        // kernel leaves room for it (mem=).
+        if (const char* frames = std::getenv("MIB_PZ_RING_FRAMES")) layout.ringFrames = static_cast<uint32_t>(std::strtoul(frames, nullptr, 10));
+        return std::make_unique<PzDevMemExecutionProvider>(layout);
 #else
         if (error) *error = "MIB_EXECUTION_PROVIDER=pz needs Linux on the PZ7035 PS";
         return nullptr;

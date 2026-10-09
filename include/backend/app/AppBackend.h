@@ -17,6 +17,7 @@
 #include "backend/app/ExperimentReadiness.h"
 #include "backend/diagnostics/MemoryBudget.h"
 #include "backend/processing/pz/PzProfileCompiler.h"
+#include "backend/pz/PzFrameRing.h"
 #include "backend/profiles/InstrumentIdentity.h"
 #include "backend/profiles/ProfileCache.h" // MethodDraft
 #include "backend/profiles/SupabaseProfileRegistry.h" // RegistryHttpTransport seam (ADR 0002)
@@ -140,6 +141,15 @@ namespace backend
         // Service start: the standing RXH1 v1 CTRL value (persist 250 ms), read back and logged.
         void applyRxHealStandingCtrl();
         bool setInstrumentMode(pz::InstrumentMode mode, int x, int y, std::string *errorOut);
+        // #649 v1: Stop in Run freezes the every-frame ring (provider STOP, wait for the device's frozen state, LED off)
+        // so the buffered frames can be played back; resume re-arms (a new ring, the old frames are gone), LED on.
+        bool freezeRun(std::string *errorOut);
+        bool resumeRun(std::string *errorOut);
+        bool runFrozen() const { return runFrozen_.load(); }
+        // The ring's registers, one frame as a browser packet ('MIBR', PzFrameRing.h), and the configured size.
+        pz::RingStatus ringStatus();
+        pz::RingRead ringFrame(uint64_t seq, std::vector<uint8_t> &packet, std::string *why);
+        uint32_t ringFramesWanted() const;
         pz::InstrumentMode instrumentMode() const;
         // The safe state of an unattended instrument (no client for the server's grace time): LED
         // off, cell path off, the camera (producer stream / bridge previews) released. The sensor
@@ -414,6 +424,7 @@ namespace backend
         std::atomic<bool> instrumentStopped_{false}; // shutdown() switched the LED off already
         std::atomic<int> instrumentRunX_{0}, instrumentRunY_{0};
         std::atomic<bool> instrumentRunSet_{false};
+        std::atomic<bool> runFrozen_{false}; // Run stopped to review the frame ring (#649)
         std::atomic<bool> instrumentIdle_{false};
         // Live results (G5). liveMutex_ is a leaf lock: nothing takes the coordinator or the mode mutex inside it.
         std::mutex liveMutex_;

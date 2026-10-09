@@ -11,6 +11,7 @@
 #include "backend/processing/ProcessingTypes.h"
 #include "backend/processing/pz/PzBridgePreview.h"
 #include "backend/processing/pz/PzProfileCompiler.h"
+#include "backend/pz/PzFrameRing.h"
 #include "backend/pz/PzRecords.h"
 
 #include <chrono>
@@ -108,6 +109,22 @@ public:
         return false;
     }
     virtual void stopPreview() {}
+
+    // The every-frame ring of the results13 image (#649 v1): the newest N frames with their mask and cells,
+    // kept in PS DDR, frozen by stop(). A provider without one reports it unavailable.
+    // The configured size in frames (0: no ring wanted).
+    virtual uint32_t ringFramesWanted() const { return 0; }
+    // Why a wanted ring cannot be armed (its placement against Linux's RAM, the PL image); empty when it can.
+    virtual std::string ringPlacementProblem() { return {}; }
+    // The ring's registers now (valid only once a run armed it), and the newest stop's outcome.
+    virtual backend::pz::RingStatus ringStatus() { return {}; }
+    virtual backend::pz::RingRead ringRead(uint64_t seq, backend::pz::RingFrame& out, std::string* why) {
+        (void)seq, (void)out;
+        if (why) *why = "the " + name() + " provider has no frame ring";
+        return backend::pz::RingRead::Unavailable;
+    }
+    // Device ticks per second (the FRAME timestamps), 0 when unknown.
+    virtual uint32_t ringTickHz() { return 0; }
 };
 
 // FilterResult view of one unet_cells_v2 cell, including the Laplacian and

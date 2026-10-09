@@ -36,7 +36,7 @@ overlay is record-based because the PL does the science.
 | Piece | Where | State |
 |---|---|---|
 | Placement, programming, status, freeze wait, frame read under the reader rule, record decode, browser packet | `PzFrameRing` (`include/backend/pz/PzFrameRing.h`) over `IRingIo` (registers + physical reads) | **done**, tested against a fake ring (`pz_frame_ring_test`) |
-| `/dev/mem` implementation of `IRingIo`, ring size configuration, programming before ARM in the provider, freeze after STOP | `PzDevMemExecutionProvider`, `AppBackend` | next |
+| `/dev/mem` implementation of `IRingIo`, ring size (`MIB_PZ_RING_FRAMES`), programming before ARM in the provider, freeze after STOP, `freezeRun`/`resumeRun`, the `ring.placement` and `run.frozen` gates | `PzDevMemExecutionProvider`, `AppBackend`, `ExperimentCoordinator` | **done** (part 2), tested with a fake provider |
 | `fetch_ring_status`, `fetch_ring_frame {seq}` (binary `MIBR`), `ring_freeze`, `ring_resume` | bridge, contract, dispatch, TS | next |
 | Playback panel: capacity in frames and seconds, scrub, step, play at a display fps, overlays Off / Mask / Contours / Both, the frame's cells; Save clip disabled with the reason | `desktop/src` | next |
 

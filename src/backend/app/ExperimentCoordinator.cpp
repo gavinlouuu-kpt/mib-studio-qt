@@ -638,6 +638,20 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
         if (auto* provider = backend_.executionProvider()) {
             r.gates.push_back(gate("science.pl", GateStatus::Pass, {}, {},
                                    "results from execution provider '" + provider->name() + "'"));
+            // The every-frame ring (#649): a ring that was asked for but does not fit above Linux's RAM refuses the run.
+            if (provider->ringFramesWanted() > 0) {
+                const std::string why = provider->ringPlacementProblem();
+                if (why.empty())
+                    r.gates.push_back(gate("ring.placement", GateStatus::Pass, {}, {},
+                                           std::to_string(provider->ringFramesWanted()) + " frames"));
+                else
+                    r.gates.push_back(gate("ring.placement", GateStatus::Fail, why,
+                                           "boot the instrument with a smaller mem= (the bundle's bootargs), or run without a ring"));
+            }
+            // Run stopped to review the frame ring: resume (a new ring) before an experiment.
+            if (backend_.runFrozen())
+                r.gates.push_back(gate("run.frozen", GateStatus::Fail, "Run is stopped to review the buffered frames",
+                                       "resume Run first"));
             // The settings must compile into the PL profile page (S2).
             const auto profile = compilePlProfile(backend_);
             if (profile.ok() && !profile.warnings.empty()) {

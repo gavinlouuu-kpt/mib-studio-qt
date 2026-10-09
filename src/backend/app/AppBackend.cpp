@@ -1576,6 +1576,7 @@ namespace backend
         if (isFrameRecording() || run == app::ExperimentRunState::Starting ||
             run == app::ExperimentRunState::Active || run == app::ExperimentRunState::Stopping)
             return fail("Stop the experiment or recording before changing camera mode");
+        runFrozen_.store(false); // a mode switch ends the stopped Run and its ring
         if (mode == pz::InstrumentMode::Run) {
             x = std::clamp(x - x % kRunXStep, 0, kRunXMax - kRunXMax % kRunXStep);
             y = std::clamp(y - y % kRunYStep, 0, kRunYMax);
@@ -1734,6 +1735,83 @@ namespace backend
         return true;
     }
 
+    bool AppBackend::freezeRun(std::string *errorOut)
+    {
+        std::lock_guard<std::mutex> lock(instrumentModeMutex_);
+        auto fail = [&](const std::string &message) {
+            if (errorOut) *errorOut = message;
+            SPDLOG_WARN("AppBackend: stop run: {}", message);
+            return false;
+        };
+        if (!pzControl_ || !executionProvider_) return fail("no PZ7035 control on this platform");
+        if (executionProvider_->ringFramesWanted() == 0)
+            return fail("this instrument keeps no frame ring: the PL image or the kernel's mem= setting has no room for one");
+        if (instrumentMode() != pz::InstrumentMode::Run) return fail("Stop applies in Run");
+        const auto run = experimentCoordinator_->state();
+        if (isFrameRecording() || run == app::ExperimentRunState::Starting || run == app::ExperimentRunState::Active ||
+            run == app::ExperimentRunState::Stopping)
+            return fail("Stop the experiment or recording first");
+        if (runFrozen_.load()) return true;
+        stopLiveResults(); // the provider's STOP, then the wait for the device's frozen state (never assumed)
+        std::string err;
+        if (!pzControl_->ledOff(&err)) return fail(err);
+        runFrozen_.store(true);
+        SPDLOG_INFO("AppBackend: Run stopped: the frame ring is held for playback (LED off)");
+        return true;
+    }
+
+    bool AppBackend::resumeRun(std::string *errorOut)
+    {
+        std::lock_guard<std::mutex> lock(instrumentModeMutex_);
+        auto fail = [&](const std::string &message) {
+            if (errorOut) *errorOut = message;
+            SPDLOG_WARN("AppBackend: resume run: {}", message);
+            return false;
+        };
+        if (!pzControl_) return fail("no PZ7035 control on this platform");
+        if (!runFrozen_.load()) return true;
+        if (instrumentMode() != pz::InstrumentMode::Run) {
+            runFrozen_.store(false);
+            return fail("the instrument is not in Run");
+        }
+        std::string err;
+        // The cell path stayed on; the LED comes back with the Run preset, the latency monitor restarts, and the live
+        // session re-arms the bridge: a new ring from sequence 0 (the buffered frames are gone).
+        if (!pzControl_->clearLatency(&err) || !pzControl_->setLed(pz::kRunLed, &err)) return fail(err);
+        if (!startLiveResults(&err)) return fail(err);
+        runFrozen_.store(false);
+        if (pzPlatformMonitor_)
+            pzPlatformMonitor_->settle(static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count()));
+        SPDLOG_INFO("AppBackend: Run resumed: a new frame ring");
+        return true;
+    }
+
+    pz::RingStatus AppBackend::ringStatus()
+    {
+        if (!executionProvider_) return {};
+        return executionProvider_->ringStatus();
+    }
+
+    uint32_t AppBackend::ringFramesWanted() const
+    {
+        return executionProvider_ ? executionProvider_->ringFramesWanted() : 0;
+    }
+
+    pz::RingRead AppBackend::ringFrame(uint64_t seq, std::vector<uint8_t> &packet, std::string *why)
+    {
+        if (!executionProvider_) {
+            if (why) *why = "no frame ring on this platform";
+            return pz::RingRead::Unavailable;
+        }
+        pz::RingFrame frame;
+        const auto outcome = executionProvider_->ringRead(seq, frame, why);
+        if (outcome != pz::RingRead::Ok) return outcome;
+        const uint32_t hz = executionProvider_->ringTickHz();
+        packet = pz::buildRingPacket(frame, hz ? hz : 100000000u);
+        return outcome;
+    }
+
     bool AppBackend::enterInstrumentIdle(std::string *errorOut)
     {
         std::lock_guard<std::mutex> lock(instrumentModeMutex_);
@@ -1750,6 +1828,7 @@ namespace backend
             return fail("an experiment or recording is still running");
         std::string err;
         // The same order as a mode switch: nothing lit while the cell path or the camera changes.
+        runFrozen_.store(false);
         stopLiveResults();
         if (!pzControl_->ledOff(&err) || !pzControl_->setCellPath(false, &err)) return fail(err);
         instrumentMode_.store(static_cast<int>(pz::InstrumentMode::Unknown));

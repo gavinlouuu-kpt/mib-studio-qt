@@ -65,6 +65,29 @@ public:
         running = false;
     }
     backend::processing::ProviderStatus status() const override { return {}; }
+    // The every-frame ring (#649): what the provider reports, nothing read from a device.
+    uint32_t ringFramesWanted() const override { return ringFrames; }
+    std::string ringPlacementProblem() override { return placementProblem; }
+    backend::pz::RingStatus ringStatus() override { return ring; }
+    backend::pz::RingRead ringRead(uint64_t seq, backend::pz::RingFrame& out, std::string* why) override {
+        if (seq < ring.lo || seq >= ring.final) {
+            if (why) *why = "out of range";
+            return backend::pz::RingRead::OutOfRange;
+        }
+        out = backend::pz::RingFrame{};
+        out.seq = seq;
+        out.frameId = 500 + seq;
+        out.width = 512;
+        out.height = 96;
+        out.gray.assign(512u * 96u, 7);
+        out.mask.assign(512u * 96u / 8u, 0);
+        out.maskPresent = true;
+        return backend::pz::RingRead::Ok;
+    }
+    uint32_t ringTickHz() override { return 100000000u; }
+    std::atomic<uint32_t> ringFrames{0};
+    std::string placementProblem;
+    backend::pz::RingStatus ring;
     std::atomic<int> configures{0}, starts{0}, stops{0};
     std::atomic<bool> running{false};
     std::array<uint32_t, 32> lastPage{};
@@ -791,6 +814,89 @@ void testLiveResults(const mib::test::TempDir& td) {
     backend.shutdown();
 }
 
+// Stop in Run holds the every-frame ring for playback and resume re-arms (#649 v1): only in Run, only with a ring, the
+// provider stops (the freeze itself is the provider's, waited for there), the LED goes off, a mode switch ends the stopped Run,
+// and the readiness gates say why an experiment cannot start from a stopped Run or with a ring that does not fit.
+void testRingPlayback(const mib::test::TempDir& td) {
+    const auto frames = td.path() / "frames_ring";
+    MIB_REQUIRE(mib::test::writeFrames(frames, 8, 512, 96), "mock frames");
+    setEnv("MIB_PL_SCIENCE", "1");
+    setEnv("MIB_CAMERA_MODE", "mock");
+    setEnv("MIB_MOCK_CAMERA_DIR", frames.string().c_str());
+    setEnv("MIB_DISABLED_SERVICES", "sqlite,hdf5,autofocus,trigger,playback");
+    setEnv("MIB_EXECUTION_PROVIDER", "none");
+    backend::AppBackend backend;
+    backend::bridge::BackendFacade facade(backend);
+    MIB_REQUIRE(facade.initialize((td.path() / "data_ring").string()), "facade initializes");
+    FakeState s;
+    seedCellImage(s);
+    backend.setInstrumentControlForTesting(std::make_unique<FakeControl>(s));
+    auto provider = std::make_unique<FakeProvider>();
+    FakeProvider* fake = provider.get();
+    backend.setExecutionProviderForTesting(std::move(provider));
+    std::string err;
+
+    MIB_REQUIRE(backend.setInstrumentMode(pz::InstrumentMode::Run, 152, 200, &err), "Run: " + err);
+    MIB_EXPECT(!backend.freezeRun(&err) && err.find("no frame ring") != std::string::npos && !backend.runFrozen() && fake->running,
+               "no ring configured: Stop is refused with the reason and Run goes on");
+
+    fake->ringFrames = 100;
+    MIB_REQUIRE(backend.setInstrumentMode(pz::InstrumentMode::Align, 0, 0, &err), "Align: " + err);
+    MIB_EXPECT(!backend.freezeRun(&err) && err.find("applies in Run") != std::string::npos, "Stop is a Run action");
+    MIB_REQUIRE(backend.setInstrumentMode(pz::InstrumentMode::Run, 152, 200, &err), "Run again: " + err);
+    MIB_EXPECT(fake->running && s.live[S0 + 0] == 1, "Run: the provider runs and the LED is on");
+
+    fake->ring.valid = true;
+    fake->ring.records = 100;
+    fake->ring.recordBytes = pz::kRingRecordBytes;
+    fake->ring.head = 99;
+    fake->ring.final = 100;
+    fake->ring.lo = 0;
+    fake->ring.frozen = true;
+    const int stopsBefore = fake->stops;
+    MIB_REQUIRE(backend.freezeRun(&err), "freeze: " + err);
+    MIB_EXPECT(backend.runFrozen() && !fake->running && fake->stops == stopsBefore + 1 && s.live[S0 + 0] == 0 && !backend.liveResultsActive(),
+               "Stop: the provider stopped, the LED is off, the Run is held");
+    MIB_EXPECT(backend.freezeRun(&err) && fake->stops == stopsBefore + 1, "stopping twice is harmless");
+    {
+        const auto st = backend.ringStatus();
+        MIB_EXPECT(st.valid && st.count() == 100 && st.frozen, "the ring's status reaches the backend");
+        std::vector<uint8_t> packet;
+        MIB_EXPECT(backend.ringFrame(42, packet, &err) == pz::RingRead::Ok && packet.size() > 48 && std::memcmp(packet.data(), "MIBR", 4) == 0 &&
+                       packet[8] == 42,
+                   "a frame comes back as a MIBR packet of that sequence");
+        MIB_EXPECT(backend.ringFrame(100, packet, &err) == pz::RingRead::OutOfRange, "a sequence beyond FINAL is out of range");
+    }
+    // An experiment cannot start from a stopped Run, and a ring that does not fit says why.
+    {
+        const auto out = (td.path() / "ring_exp.h5").string();
+        auto readiness = backend.experiment().evaluateReadiness(out, "pl");
+        const auto* frozen = readiness.gate("run.frozen");
+        MIB_EXPECT(frozen && frozen->blocksStart(), "a stopped Run blocks an experiment (run.frozen)");
+        fake->placementProblem = "frame ring: Linux owns all the DDR below the PL area: boot with a smaller mem=";
+        readiness = backend.experiment().evaluateReadiness(out, "pl");
+        const auto* placement = readiness.gate("ring.placement");
+        MIB_EXPECT(placement && placement->blocksStart() && placement->reason.find("mem=") != std::string::npos,
+                   "a ring that does not fit blocks with the remedy (ring.placement)");
+        fake->placementProblem.clear();
+    }
+    // Resume re-arms: a new ring, the LED back on.
+    const int startsBefore = fake->starts;
+    MIB_REQUIRE(backend.resumeRun(&err), "resume: " + err);
+    MIB_EXPECT(!backend.runFrozen() && fake->running && fake->starts == startsBefore + 1 && s.live[S0 + 0] == 1 && backend.liveResultsActive(),
+               "Resume: the session is armed again and the LED is on");
+    MIB_EXPECT(backend.resumeRun(&err) && fake->starts == startsBefore + 1, "resuming a running Run is harmless");
+    // A mode switch ends a stopped Run.
+    MIB_REQUIRE(backend.freezeRun(&err), "freeze again: " + err);
+    MIB_REQUIRE(backend.setInstrumentMode(pz::InstrumentMode::Align, 0, 0, &err), "Align from a stopped Run: " + err);
+    MIB_EXPECT(!backend.runFrozen(), "Align ends the stopped Run");
+    MIB_REQUIRE(backend.setInstrumentMode(pz::InstrumentMode::Run, 152, 200, &err), "Run: " + err);
+    MIB_REQUIRE(backend.freezeRun(&err), "freeze before idle: " + err);
+    MIB_EXPECT(facade.setInstrumentMode("idle", 0, 0).ok && !backend.runFrozen(), "idle ends it too");
+    facade.shutdown();
+    backend.shutdown();
+}
+
 // The Run window survives a restart (#501): a Run switch writes <data>/instrument_run_window.json,
 // the next initialize() reads it; a file that is not a window the switch could have applied is
 // ignored. testModeSequence left (152, 200) there.
@@ -865,6 +971,7 @@ int main() {
     testRxHealCtrl();
     testModeSequence(td);
     testLiveResults(td);
+    testRingPlayback(td);
     testRunWindowPersists(td);
     testRecordingTarget(td);
     return mib::test::exitCode();

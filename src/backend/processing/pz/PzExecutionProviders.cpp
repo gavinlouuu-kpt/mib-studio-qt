@@ -7,7 +7,10 @@
 
 #include <cmath>
 #include <cstdio>
+#include <fstream>
+#include <iterator>
 #include <limits>
+#include <optional>
 
 #if defined(__linux__)
 #include <cerrno>
@@ -300,7 +303,123 @@ private:
     volatile uint8_t* slots_{nullptr};
 };
 
+// The ring's registers through the provider's mapping, its memory through a read-only map of the whole ring
+// (mapped on first use after an ARM; the ring is outside Linux's RAM, so /dev/mem may map it).
+class PzDevMemExecutionProvider::RingIo final : public backend::pz::IRingIo {
+public:
+    explicit RingIo(Mapping& map) : map_(map) { fd_ = ::open("/dev/mem", O_RDONLY | O_SYNC); }
+    ~RingIo() override {
+        unmap();
+        if (fd_ >= 0) close(fd_);
+    }
+    bool ok() const { return fd_ >= 0; }
+    uint32_t reg(uint32_t offset) override { return map_.reg(offset); }
+    void setReg(uint32_t offset, uint32_t value) override { map_.setReg(offset, value); }
+    bool ensureMapped(uint64_t base, uint64_t bytes) {
+        if (mem_ && base == base_ && bytes == bytes_) return true;
+        unmap();
+        void* p = mmap(nullptr, static_cast<size_t>(bytes), PROT_READ, MAP_SHARED, fd_, static_cast<off_t>(base));
+        if (p == MAP_FAILED) return false;
+        mem_ = static_cast<volatile uint8_t*>(p);
+        base_ = base;
+        bytes_ = bytes;
+        return true;
+    }
+    bool read(uint64_t physical, void* dst, size_t bytes) override {
+        if (!mem_ || physical < base_ || physical + bytes > base_ + bytes_) return false;
+        std::memcpy(dst, const_cast<const uint8_t*>(mem_ + (physical - base_)), bytes);
+        return true;
+    }
+
+private:
+    void unmap() {
+        if (mem_) munmap(const_cast<uint8_t*>(mem_), static_cast<size_t>(bytes_));
+        mem_ = nullptr;
+    }
+    Mapping& map_;
+    int fd_{-1};
+    volatile uint8_t* mem_{nullptr};
+    uint64_t base_{0}, bytes_{0};
+};
+
+namespace {
+// The end of Linux's RAM from /proc/iomem (the `mem=` limit). Unknown (not root, no ranges) means no ring.
+std::optional<uint64_t> readLinuxRamEnd(std::string* why) {
+    std::ifstream in("/proc/iomem");
+    if (!in) {
+        if (why) *why = "cannot read /proc/iomem to find where Linux's RAM ends";
+        return std::nullopt;
+    }
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const auto end = backend::pz::systemRamEnd(text);
+    if (!end || *end <= 1) {
+        if (why) *why = "/proc/iomem shows no RAM ranges (Studio must run as root on the instrument)";
+        return std::nullopt;
+    }
+    return end;
+}
+} // namespace
+
 PzDevMemExecutionProvider::PzDevMemExecutionProvider(Layout layout) : layout_(layout) {}
+
+std::string PzDevMemExecutionProvider::ringPlacementProblem() {
+    if (layout_.ringFrames == 0) return {};
+    std::string why;
+    const auto end = readLinuxRamEnd(&why);
+    if (!end) return "frame ring: " + why;
+    const auto plan = backend::pz::planRing(layout_.ringFrames, *end);
+    if (!plan.ok) return "frame ring: " + plan.why;
+    return {};
+}
+
+backend::pz::RingStatus PzDevMemExecutionProvider::ringStatus() {
+    backend::pz::RingStatus none;
+    none.why = "no frame ring is armed";
+    if (!ringProgrammed_.load()) return none;
+    std::string why;
+    if (!backend::pz::pzPlConfigured(&why)) {
+        none.why = why;
+        return none;
+    }
+    std::lock_guard<std::mutex> lock(ringMutex_);
+    if (!ring_) return none;
+    return backend::pz::PzFrameRing(*ring_).status();
+}
+
+backend::pz::RingRead PzDevMemExecutionProvider::ringRead(uint64_t seq, backend::pz::RingFrame& out, std::string* why) {
+    if (!ringProgrammed_.load()) {
+        if (why) *why = "no frame ring is armed";
+        return backend::pz::RingRead::Unavailable;
+    }
+    std::string configured;
+    if (!backend::pz::pzPlConfigured(&configured)) {
+        if (why) *why = configured;
+        return backend::pz::RingRead::Unavailable;
+    }
+    std::lock_guard<std::mutex> lock(ringMutex_);
+    if (!ring_) {
+        if (why) *why = "no frame ring is armed";
+        return backend::pz::RingRead::Unavailable;
+    }
+    backend::pz::PzFrameRing ring(*ring_);
+    const auto st = ring.status();
+    if (!st.valid) {
+        if (why) *why = st.why;
+        return backend::pz::RingRead::Unavailable;
+    }
+    if (!ring_->ensureMapped(st.base, static_cast<uint64_t>(st.records) * st.recordBytes)) {
+        if (why) *why = "mmap of the frame ring failed (is the ring outside Linux's RAM? boot with a smaller mem=)";
+        return backend::pz::RingRead::Unavailable;
+    }
+    return ring.readFrame(seq, out, why);
+}
+
+uint32_t PzDevMemExecutionProvider::ringTickHz() {
+    std::string why;
+    if (!backend::pz::pzPlConfigured(&why) || !ensureMapped(&why)) return 0;
+    const uint32_t hz = map_->reg(PZ_MIB_REG_TIMESTAMP_HZ);
+    return hz ? hz : PZ_MIB_TIMESTAMP_HZ_DEFAULT;
+}
 
 PzDevMemExecutionProvider::~PzDevMemExecutionProvider() {
     stopPreview();
@@ -314,6 +433,7 @@ bool PzDevMemExecutionProvider::startPreview(const BridgePreviewConfig& config, 
         return false;
     }
     if (!backend::pz::pzPlConfigured(error) || !ensureMapped(error)) return false;
+    ringProgrammed_.store(false); // the preview arms the bridge again: the ring is gone
     auto io = std::make_unique<PreviewIo>(*map_, config.previewBase, static_cast<size_t>(config.slots) * config.slotBytes());
     if (!io->ok()) {
         if (error) *error = "mmap preview slots (boot Linux with mem=1008M)";
@@ -423,6 +543,40 @@ bool PzDevMemExecutionProvider::start(uint64_t runId, std::string* error) {
     pipeline_.setTimestampHz(hz ? hz : PZ_MIB_TIMESTAMP_HZ_DEFAULT);
     pipeline_.reset(runId, map->reg(PZ_MIB_REG_EPOCH),
                     map->reg(PZ_MIB_REG_GENERATION));
+    // The every-frame ring is programmed before ARM (STORE_MODE is latched there) and only where it is safe: the
+    // PL does not enforce a DDR floor, so a ring that would overlap Linux's RAM refuses the run.
+    ringProgrammed_.store(false);
+    if (layout_.ringFrames > 0) {
+        std::string why;
+        const auto end = readLinuxRamEnd(&why);
+        if (!end) {
+            if (error) *error = "frame ring: " + why;
+            return false;
+        }
+        const auto plan = backend::pz::planRing(layout_.ringFrames, *end);
+        if (!plan.ok) {
+            if (error) *error = "frame ring: " + plan.why;
+            return false;
+        }
+        if ((map->reg(PZ_MIB_REG_CAPABILITIES) & PZ_MIB_CAPABILITIES_FRAME_STORE) == 0) {
+            if (error) *error = "frame ring: this PL image has no frame ring (it needs results13)";
+            return false;
+        }
+        std::lock_guard<std::mutex> lock(ringMutex_);
+        if (!ring_) ring_ = std::make_unique<RingIo>(*map);
+        if (!ring_->ok()) {
+            if (error) *error = "frame ring: cannot open /dev/mem";
+            return false;
+        }
+        if (!backend::pz::PzFrameRing(*ring_).program(plan, &why)) {
+            if (error) *error = "frame ring: " + why;
+            return false;
+        }
+        ringPlan_ = plan;
+        ringProgrammed_.store(true);
+        SPDLOG_INFO("PzDevMemExecutionProvider: frame ring {} frames ({:.0f} MiB) at 0x{:08x}", plan.records,
+                    static_cast<double>(plan.bytes) / (1024.0 * 1024.0), static_cast<uint32_t>(plan.base));
+    }
     // As pzres start: ring base, tail = head (both free-running), run id, ARM.
     map->setReg(PZ_MIB_REG_RESULT_RING_BASE_LO, static_cast<uint32_t>(layout_.ringBase));
     map->setReg(PZ_MIB_REG_RESULT_RING_BASE_HI, static_cast<uint32_t>(layout_.ringBase >> 32));
@@ -468,6 +622,21 @@ void PzDevMemExecutionProvider::stop() {
     stopRequested_.store(true);
     if (thread_.joinable()) thread_.join();
     running_.store(false);
+    // The ring freezes only when the device says so: STATE = IDLE with FINAL = HEAD + 1 and neither sticky bit. The
+    // frame the device had open at STOP completes first (a watchdog bounds it); anything else is reported, never assumed.
+    if (ringProgrammed_.load()) {
+        std::lock_guard<std::mutex> lock(ringMutex_);
+        if (ring_) {
+            const auto st = backend::pz::PzFrameRing(*ring_).awaitFrozen(std::chrono::milliseconds(300));
+            if (st.frozen)
+                SPDLOG_INFO("PzDevMemExecutionProvider: frame ring frozen: {} frames readable (sequences {} to {})", st.count(), st.lo,
+                            st.final ? st.final - 1 : 0);
+            else
+                SPDLOG_WARN("PzDevMemExecutionProvider: frame ring not frozen after STOP ({}, state {}, head {}, final {})",
+                            st.valid ? (st.invalidReason.empty() ? std::string("still draining") : st.invalidReason) : st.why, st.state, st.head,
+                            st.final);
+        }
+    }
 }
 
 ProviderStatus PzDevMemExecutionProvider::status() const {
