@@ -773,6 +773,15 @@ export default function App() {
     }
   }, [refreshInstrument]);
 
+  const resumeFromBanner = useCallback(async () => {
+    try {
+      const r = await onResumeRun();
+      if (r && !r.ok) append(`Resume Run: ${r.message}`);
+    } catch (e) {
+      append(`Resume Run: ${e}`);
+    }
+  }, [onResumeRun, append]);
+
   const onStartCamera = useCallback(async () => {
     try {
       setReviewing(false);
@@ -1776,6 +1785,13 @@ export default function App() {
               <>
                 {instrumentModes && <RunWindowNotice tab="overview" windowPlaced={cameraWin.placed} modeError={modeError}
                   onPlaceWindow={() => setTab("overview")} onRetry={() => setModeRetry((n) => n + 1)} />}
+                {runFrozen && (
+                  <p className="pending-note" role="status" data-testid="stopped-banner">
+                    Run is stopped to review buffered frames. Resume Run to switch to Align.{" "}
+                    <button onClick={() => void resumeFromBanner()}>Resume Run (discards the buffered frames)</button>{" "}
+                    <button onClick={() => setTab("experiment")}>Back to the playback</button>
+                  </p>
+                )}
                 <div className="toolbar">
                   <button onClick={() => setFitWindow((f) => !f)}>{fitWindow ? "Fit: Window" : "Fit: 1:1"}</button>
 
@@ -1948,7 +1964,10 @@ export default function App() {
                         : "No frame yet — configure a camera and press Start Camera"}</span>}
                       <canvas ref={previewCanvasRef} className={fitWindow ? "fit" : ""} />
                     </div>
-                    {instrumentModes && runMode && (
+                    {instrumentModes && runMode && runFrozen && (
+                      <p className="mono" role="status" data-testid="live-preview-paused">Live preview paused while Run is stopped.</p>
+                    )}
+                    {instrumentModes && runMode && !runFrozen && (
                       <p className="mono" role="status">
                         Run 512×96 at ({instrument?.mode?.run_x}, {instrument?.mode?.run_y}) · frame {runPreviewInfo?.frameId ?? "—"}
                         {" · "}listed {runPreviewInfo?.listed ?? "—"} · cells {runPreviewInfo?.cells ?? "—"} · blemishes {runPreviewInfo?.blemishes ?? "—"}
