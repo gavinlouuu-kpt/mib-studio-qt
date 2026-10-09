@@ -106,6 +106,15 @@ def check_bundle(check) -> None:
                              capture_output=True, text=True)
         check(pre.returncode == 0 and "PRE-QUALIFICATION, untagged pz7035" in (pkg / "BUILD_INFO").read_text().splitlines()[0],
               f"an untagged commit is marked pre-qualification: {pre.stderr}")
+        # The producer's own commit is named in BUILD_INFO when given, and must exist in the pz7035 repo.
+        (pkg / "BUILD_INFO").write_text("yofo-studio standing package, commit abc12345\nbuilt: now\nexpects: nothing\n")
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=env["PZ7035_REPO"], capture_output=True, text=True).stdout.strip()
+        withcti = subprocess.run(["bash", str(script), str(pkg)], env={**os.environ, **env, "PZ_CTI_COMMIT": head}, capture_output=True, text=True)
+        check(withcti.returncode == 0 and f"(pz7035-imx426 {head[:8]})" in (pkg / "BUILD_INFO").read_text(), f"the producer commit is named in BUILD_INFO: {withcti.stderr}")
+        (pkg / "BUILD_INFO").write_text("yofo-studio standing package, commit abc12345\nbuilt: now\nexpects: nothing\n")
+        badcti = subprocess.run(["bash", str(script), str(pkg)], env={**os.environ, **env, "PZ_CTI_COMMIT": "deadbeef"}, capture_output=True, text=True)
+        check(badcti.returncode != 0 and "PZ_CTI_COMMIT" in badcti.stderr, "an unknown producer commit is refused")
+        (pkg / "BUILD_INFO").write_text("yofo-studio standing package, commit abc12345\nbuilt: now\nexpects: nothing\n")
         # The every-frame ring (#649): MIB_PZ_RING_FRAMES and the boot args' mem= are set together, in one bundle.
         (pkg / "BUILD_INFO").write_text("yofo-studio standing package, commit abc12345\nbuilt: now\nexpects: nothing\n")
         plain = (pkg / "yofo-studio.service").read_text()
