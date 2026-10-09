@@ -313,6 +313,26 @@ power loss, the export rate end to end, and the Run page with real counters.
 
 S1 can be built and tested against the fake before any new PL image exists. Nothing starts before #649 v1 is merged.
 
+## Alignment with the board owner's design (pz7035 `docs/SSD_RECORDING_DESIGN.md`, 15603ac9)
+
+The board owner's note settles the interface; where it differs from the requirements above, it wins:
+
+| Topic | Board owner's design | Effect on Studio |
+|---|---|---|
+| Control path | The PL window at 0x40102000 holds the drain, link and counters; sequencing (run table, start/stop, trailer, recovery) is `libpzrec` (C ABI) and the `pzrec` CLI (JSON), in user space. | Studio calls `libpzrec` (or the CLI) through one `SsdStore` class behind `ISsdDevice`; no register sequencing in Studio. S1 runs against `libpzrec` on a file-backed fake block device. |
+| State word (R1) | ABSENT, INITIALISING, RECOVERING, READY, RECORDING, STOPPING, WEDGED, RUN_TABLE_FULL, RAW_FULL, plus `last_error`. | The UI states of section 4 map one to one; RUN_TABLE_FULL and RAW_FULL are separate refusals. |
+| Start arguments (R2) | Filter mode (ALL, ANY_RESULT, VALID_ONLY), sampler N, `start_unix_ms`, `client_tag`; graceful stop and abort are separate. | `start_unix_ms` comes from `WallClock` (G14). Studio asks for a one-byte time-source flag in the run entry (`client_sync` or `board_clock_unsynced`) so the export can write `timestamp_wall_source`. |
+| Counters (R3) | Coherent snapshot: seen, empty_filtered, invalid_not_sampled, passed, written, dropped, failed, recoveries, bytes, ring fill, drain rate; identities `seen = empty + invalid_not_sampled + passed` and `passed = written + dropped + failed`. | Accounting mapping of 3.1 becomes: `admitted = seen`, `empty = empty_filtered`, `scientificallyRejected = invalid_not_sampled`, `persistenceCommitted = written`, `cancelledByPolicy = dropped` (declared), `persistenceFailed = failed`; the identities are asserted on read and a violation is shown, not hidden. |
+| Run table (R4, R5) | 256 entries of 128 bytes (formatted up to 1024), append-only, never wraps; `DELETED` flag; start unix ms, client tag, first/last frame id and ticks, the seven totals, recoveries, reason (0 clean, 1 drain fault, 2 stall, 3 length, 5 not stopped, 6 length limit, 7 recovered at mount, 8 aborted, 9 raw full). Superblock v2 at the first sector of the raw partition (A/B). | The list columns of section 2 come from the entry; reason 9 maps to `complete` (ended at the space limit), 8 to `incompleteLoss`, 7 to `incompleteLoss` and not reconciled. |
+| Drop placement (R6) | A saturating `drops_before` byte in FRAME reserved byte 0, patched by the drain with the FRAME CRC recomputed; no FRAME version bump. | The exporter reads it to book `sequenceGaps` and to place a gap on a part boundary; `pz_store_to_mib.py` and `mib_abi.py` accept a non-zero reserved byte. The store sequence is per seen frame, so a sequence gap alone does not mean loss. |
+| Block access (R7) | A kernel module `pzblk` (blk-mq) with a scatter-gather DMA in the PL: the disk is `/dev/yofoblk0`, the raw area `/dev/yofoblk0p1` (read only for Studio; writes only through `libpzrec`), the ext4 area `p2`. No read DMA window and no 16 MiB buffer. Expected 110 to 140 MB/s read and 100 to 137 MB/s write at Gen1 (estimate). | The export reads `/dev/yofoblk0p1` with sequential reads of 1 MiB or more and writes the HDF5 to the ext4 mount; the timings of 3.3 are planned with B = 100 MB/s. |
+| Arbitration (R8) | The drain wins: a PS command is limited to 1 MiB and admitted only while the drain backlog is under a threshold (25 % of the ring by default). Block I/O waits, the drain does not. The 0-drop test with concurrent ext4 I/O is section 7.4 of their note. | Studio still refuses export and clip saves while RECORDING in v1, and relaxes it only after that test passes. The run list while recording uses the window snapshot, not the disk. |
+| Mount recovery (R9) | `libpzrec` returns the runs it closed (count, ids, reason 7). | Shown as the notice of section 4. |
+| Layout and lifecycle | One GPT (raw partition 1, ext4 partition 2), default 40/60 chosen by `pzssd-format`; the raw area is a log with head and tail; Start refused with RAW_FULL below a 1 GiB minimum. | As section 3.5. |
+| Gen2, SSD | Gen2 is attempted separately; Gen1 is the shipped fallback; the SSD to buy is a DRAM TLC drive (Crucial MX500 500 GB). | No Studio change; the export time scales with the measured B. |
+
+S1 therefore needs only `libpzrec` and the `pzrec` CLI on a file-backed fake block device, which the board owner builds next.
+
 ## Open questions for the board owner
 
 R1 to R9 above, and: the filter predicate (any RESULT, or any valid RESULT) and whether it can sample invalid-only frames
