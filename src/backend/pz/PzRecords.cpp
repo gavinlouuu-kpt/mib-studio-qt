@@ -262,6 +262,23 @@ std::vector<uint8_t> encodeResultRecord(const ResultRecord& res, uint32_t sequen
     return finish(PZ_MIB_RECORD_TYPE_RESULT, PZ_MIB_RESULT_VERSION, std::move(body), sequence);
 }
 
+std::vector<uint8_t> encodeImageRecord(const ImageRecord& img, uint32_t sequence) {
+    pz_mib_image_record r{};
+    r.frame_id = img.frameId;
+    r.timestamp = img.timestamp;
+    r.byte_offset = img.byteOffset;
+    r.byte_length = img.byteLength;
+    r.pixel_format = img.pixelFormat;
+    r.flags = img.flags;
+    r.width = img.width;
+    r.height = img.height;
+    r.stride = img.stride;
+    r.epoch = img.epoch;
+    std::vector<uint8_t> body(sizeof r);
+    std::memcpy(body.data(), &r, sizeof r);
+    return finish(PZ_MIB_RECORD_TYPE_IMAGE, PZ_MIB_IMAGE_VERSION, std::move(body), sequence);
+}
+
 std::vector<std::pair<size_t, size_t>> splitRecords(const uint8_t* data, size_t size) {
     std::vector<std::pair<size_t, size_t>> out;
     size_t pos = 0;
