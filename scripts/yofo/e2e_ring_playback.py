@@ -33,8 +33,14 @@ INIT = """
   window.__replies = {};
   window.WebSocket = class extends W {
     constructor(...a) {
-      super(...a); window.__ws = this;
-      this.addEventListener('message', e => { try { if (typeof e.data === 'string') { const m = JSON.parse(e.data); if (m.request_id >= 800000) window.__replies[m.request_id] = m; } } catch (_) {} });
+      super(...a); window.__ws = this; this.binaryType = 'arraybuffer';
+      this.addEventListener('message', e => { try {
+        if (typeof e.data === 'string') { const m = JSON.parse(e.data); if (m.request_id >= 800000) window.__replies[m.request_id] = m; }
+        else if (e.data instanceof ArrayBuffer && e.data.byteLength >= 8) {
+          const id = Number(new DataView(e.data).getBigUint64(0, true));
+          if (id >= 800000) window.__replies[id] = {request_id: id, binary: e.data.byteLength - 8, magic: String.fromCharCode(...new Uint8Array(e.data, 8, 4))};
+        }
+      } catch (_) {} });
       if (%s) this.addEventListener('open', () => this.send(JSON.stringify({request_id: 900001, cmd: 'take_control', args: null})));
     }
   };
@@ -133,7 +139,7 @@ with sync_playwright() as p:
     record("ring configured", bool(st.get("available")) and st.get("capacity_frames", 0) >= 5000, json.dumps({k: st.get(k) for k in ("available", "capacity_frames", "count", "sensor_fps", "reason")}))
     t0 = time.time()
     r, took = call(page, "fetch_ring_frame", {"seq": max(0, st.get("last_seq", 1) - 8)}, wait=15)
-    record("a frame read while running does not hang", r is not None and took < 5, f"{took * 1000:.0f} ms: {'ok' if r and r.get('ok') is not None else str(r)[:160]}")
+    record("a frame read while running does not hang", r is not None and took < 5 and (r.get("binary", 0) > 0 or "error" in r), f"{took * 1000:.0f} ms: {str(r)[:160]}")
 
     # 2. Stop: the panel.
     stop = page.get_by_role("button", name="Stop", exact=True)
