@@ -1,4 +1,5 @@
 #include "backend/processing/EModulusLutCatalog.h"
+#include "backend/app/WallClock.h"
 
 #include "backend/processing/ProcessingCoreLoader.h" // processingCore*Sha256
 
@@ -72,7 +73,8 @@ std::string fileUrlToPath(const std::string& url) {
 // Current UTC timestamp as ISO-8601 with milliseconds and a trailing 'Z',
 // matching Qt::ISODateWithMs on a UTC QDateTime closely enough for the sidecar.
 std::string isoNowUtc() {
-    const auto now = std::chrono::system_clock::now();
+    const auto now = std::chrono::system_clock::time_point(std::chrono::duration_cast<std::chrono::system_clock::duration>(
+        std::chrono::nanoseconds(static_cast<std::int64_t>(backend::app::WallClock::nowNs()))));
     const auto secs = std::chrono::time_point_cast<std::chrono::seconds>(now);
     const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - secs).count();
     const std::time_t t = std::chrono::system_clock::to_time_t(secs);

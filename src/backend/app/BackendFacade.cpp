@@ -2,6 +2,7 @@
 #include "backend/processing/IExecutionProvider.h"
 #include "backend/recording/RecordingAccounting.h"
 #include "backend/app/RecordingTarget.h"
+#include "backend/app/WallClock.h"
 #include "backend/pz/PzInstrumentControl.h"
 #include "backend/app/SciencePlacement.h"
 #include "backend/app/ProfileStore.h"
@@ -3045,6 +3046,15 @@ std::string BackendFacade::fetchPlatformInfoJson() const {
     }.dump();
 }
 
+BackendCommandResult BackendFacade::syncWallClock(int64_t unixMs) {
+    std::string why;
+    const bool changed = backend_.syncWallClock(unixMs, &why);
+    const auto s = app::WallClock::status();
+    if (!changed && !why.empty() && !s.synced) return {false, BackendCommandType::Operation, why};
+    return {true, BackendCommandType::Operation,
+            changed ? "wall clock synced from the client" : (why.empty() ? "wall clock already in step" : why)};
+}
+
 BackendCommandResult BackendFacade::setInstrumentMode(const std::string& mode, int x, int y) {
     if (!initialized_) return {false, BackendCommandType::Camera, "backend is not initialized"};
     pz::InstrumentMode m = pz::InstrumentMode::Unknown;
@@ -3123,6 +3133,12 @@ std::string BackendFacade::fetchInstrumentStatusJson() {
                                  {"free_bytes", target.freeBytes},
                                  {"filesystem", target.filesystem},
                                  {"warning", app::recordingTargetWarning(target)}};
+    // Where the wall-clock times of saved files come from (G14): the board has no RTC.
+    const auto wall = app::WallClock::status();
+    const nlohmann::json wallClock{{"synced", wall.synced},
+                                   {"source", wall.source},
+                                   {"offset_ns", wall.offsetNs},
+                                   {"last_sync_unix_ms", wall.lastSyncUnixMs}};
     // The PL result stream while an experiment runs (#501 live statistics): cumulative counters,
     // so the UI turns successive polls into rates. The counters restart with each run.
     nlohmann::json results{{"available", false}};
@@ -3147,7 +3163,7 @@ std::string BackendFacade::fetchInstrumentStatusJson() {
                               {"error", initialized_ ? "not a PZ7035 instrument" : "backend is not initialized"},
                               {"results", results},
                               {"mode", mode},
-                              {"storage", storage}}
+                              {"storage", storage}, {"wall_clock", wallClock}}
             .dump();
     }
     const auto nowUs = static_cast<uint64_t>(
@@ -3158,7 +3174,7 @@ std::string BackendFacade::fetchInstrumentStatusJson() {
         return nlohmann::json{
             {"available", false}, {"error", s.error}, {"pinned_profile_id", s.pinnedProfileId}, {"mode", mode},
             {"results", results},
-            {"storage", storage}}
+            {"storage", storage}, {"wall_clock", wallClock}}
             .dump();
     }
     nlohmann::json expected = nullptr;
@@ -3229,7 +3245,7 @@ std::string BackendFacade::fetchInstrumentStatusJson() {
           {"frames", s.latencyFrames}}},
         {"mode", mode},
         {"results", results},
-        {"storage", storage},
+        {"storage", storage}, {"wall_clock", wallClock},
     }.dump();
 }
 

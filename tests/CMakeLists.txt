@@ -397,6 +397,12 @@ mib_backend_test_link(rf_generator_service_test PRIVATE Threads::Threads)
 add_test(NAME backend.rf_generator_service COMMAND $<TARGET_FILE:mib_backend_tests> rf_generator_service_test)
 set_tests_properties(backend.rf_generator_service PROPERTIES LABELS "backend;trigger;safety" TIMEOUT 60)
 
+# #651 G14: wall-clock source for saved files on a board without an RTC.
+mib_add_backend_test_executable(wall_clock_test backend/wall_clock_test.cpp)
+mib_backend_test_link(wall_clock_test PRIVATE Threads::Threads)
+add_test(NAME backend.wall_clock COMMAND $<TARGET_FILE:mib_backend_tests> wall_clock_test)
+set_tests_properties(backend.wall_clock PROPERTIES LABELS "backend;recording;hdf5;pl" TIMEOUT 60)
+
 # Issue #368: timestamp semantics + per-metric telemetry validity/freshness.
 mib_add_backend_test_executable(timestamp_telemetry_test backend/timestamp_telemetry_test.cpp)
 mib_backend_test_link(timestamp_telemetry_test PRIVATE Threads::Threads)
@@ -1200,6 +1206,15 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test_yofo_standing_package.py
     )
     set_tests_properties(scripts.yofo_standing_package PROPERTIES
+        LABELS "scripts;pl"
+        TIMEOUT 30
+    )
+
+    add_test(
+        NAME scripts.wall_clock_sources
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test_wall_clock_sources.py
+    )
+    set_tests_properties(scripts.wall_clock_sources PROPERTIES
         LABELS "scripts;pl"
         TIMEOUT 30
     )

@@ -11,6 +11,8 @@
 #include "backend/app/AppBackend.h"
 #include "backend/app/ApplicationIdentity.h"
 #include "backend/app/BackendFacade.h"
+#include <hdf5.h>
+#include "backend/app/WallClock.h"
 #include "backend/app/ExperimentCoordinator.h"
 #include "backend/app/ExperimentReadiness.h"
 #include "backend/camera/mock/MockCamera.h"
@@ -741,6 +743,17 @@ int main()
             return 31;
         }
 
+        // G14: a board without an RTC whose clock a client synced before the run. A resync is attempted over and over
+        // from before the injected failure until the run is terminal; none may land, so the persisted start and end
+        // come from one offset and the file says client_sync.
+        constexpr int64_t kSyncedMs = 1'790'000'000'000LL;
+        app::WallClock::setBoardWithoutRtc(true);
+        std::string syncWhy;
+        if (!app::WallClock::sync(kSyncedMs, false, &syncWhy))
+        {
+            std::cerr << "initial wall-clock sync refused: " << syncWhy << "\n";
+            return 137;
+        }
         app::ExperimentCoordinator &coordinator = backendApp.experiment();
         const std::string expFatal = (dataDir / "exp_fatal.h5").string();
         // Preflight → start handshake. The gates settle as the mock camera's
@@ -767,6 +780,24 @@ int main()
             std::cerr << "fatal-path experiment start failed: " << started.message << "\n";
             return 32;
         }
+        // G14: the run holds the wall clock from its start stamp until it has stamped and persisted its end,
+        // so a resync cannot move the end's offset, also while a failed run drains its writers.
+        if (app::WallClock::status().holds != 1)
+        {
+            std::cerr << "an active run must hold the wall clock\n";
+            return 135;
+        }
+        std::atomic<bool> resyncStop{false};
+        std::atomic<int> resyncAccepted{0};
+        std::thread resyncer([&] {
+            int64_t step = 0;
+            while (!resyncStop.load())
+            {
+                step += 3'600'000; // an hour further each time: a landed resync would show as an hour in the file
+                if (app::WallClock::sync(kSyncedMs + step, false, nullptr)) resyncAccepted.fetch_add(1);
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        });
         coordinator.onFatalSaveError("Injected: disk full while flushing");
         if (!waitFor([&] {
                 return statusIsTerminal(coordinator.status(), app::ExperimentRunState::Failed);
@@ -774,6 +805,11 @@ int main()
         {
             std::cerr << "fatal error did not drive the experiment to Failed\n";
             return 33;
+        }
+        if (app::WallClock::status().holds != 0)
+        {
+            std::cerr << "the wall clock must be released at the failed run's terminal status\n";
+            return 136;
         }
         {
             const auto s = coordinator.status();
@@ -784,7 +820,11 @@ int main()
                 return 34;
             }
         }
-        // The file was still finalized (data flushed, closed) and reopens.
+        resyncStop.store(true);
+        resyncer.join();
+        // Resyncs that land after the run released its hold (its end is already stamped) are harmless; what must never
+        // happen is one landing before: the persisted start and end then differ by the hour-sized step.
+        // The file was still finalized (data flushed, closed) and reopens; its start and end come from one offset.
         {
             backend::services::Hdf5Service reader;
             if (!reader.loadFile(expFatal))
@@ -792,8 +832,51 @@ int main()
                 std::cerr << "fatal-path experiment file failed to load\n";
                 return 35;
             }
+            uint64_t startNs = 0, endNs = 0;
+            size_t valid = 0, invalid = 0;
+            if (!reader.readExperimentInfo(startNs, endNs, valid, invalid))
+            {
+                std::cerr << "fatal-path experiment info unreadable\n";
+                return 139;
+            }
             reader.closeFile();
+            const uint64_t synced0 = static_cast<uint64_t>(kSyncedMs) * 1'000'000ULL;
+            if (startNs < synced0 || startNs > synced0 + 600ULL * 1'000'000'000ULL || endNs < startNs ||
+                endNs - startNs > 600ULL * 1'000'000'000ULL)
+            {
+                std::cerr << "persisted start/end do not share one clock: start " << startNs << " end " << endNs << "\n";
+                return 140;
+            }
+            hid_t file = H5Fopen(expFatal.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+            std::string source;
+            if (file >= 0)
+            {
+                hid_t g = H5Gopen2(file, "/experiment_info", H5P_DEFAULT);
+                hid_t a = g >= 0 ? H5Aopen(g, "timestamp_wall_source", H5P_DEFAULT) : -1;
+                if (a >= 0)
+                {
+                    hid_t type = H5Tcopy(H5T_C_S1);
+                    H5Tset_size(type, H5T_VARIABLE);
+                    H5Tset_cset(type, H5T_CSET_UTF8);
+                    char *ptr = nullptr;
+                    if (H5Aread(a, type, &ptr) >= 0 && ptr)
+                    {
+                        source = ptr;
+                        H5free_memory(ptr);
+                    }
+                    H5Tclose(type);
+                    H5Aclose(a);
+                }
+                if (g >= 0) H5Gclose(g);
+                H5Fclose(file);
+            }
+            if (source != "client_sync")
+            {
+                std::cerr << "timestamp_wall_source is '" << source << "', expected client_sync\n";
+                return 141;
+            }
         }
+        app::WallClock::resetForTesting();
         coordinator.shutdown(); // idempotent after Failed
         backendApp.capture().stop();
         backendApp.shutdown();

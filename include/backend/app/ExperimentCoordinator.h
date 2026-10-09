@@ -14,6 +14,7 @@
 // close), so no client (Qt window or bridge) touches Hdf5Service for a run.
 #pragma once
 
+#include "backend/app/WallClock.h"
 #include "backend/app/ExperimentReadiness.h"
 #include "backend/recording/RecordingAccounting.h"
 
@@ -183,6 +184,7 @@ private:
     std::atomic<ExperimentRunState> state_{ExperimentRunState::Idle};
     uint64_t startCounter_{0};
     std::optional<RunConfigurationSnapshot> activeRun_;
+    std::optional<WallClock::Hold> wallHold_; // keeps the wall-clock offset fixed for the run (G14)
     std::string appVersion_{"unknown"};
     std::string buildId_;
     std::string os_;

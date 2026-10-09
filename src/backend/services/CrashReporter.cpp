@@ -1,4 +1,5 @@
 #include "backend/services/CrashReporter.h"
+#include "backend/app/WallClock.h"
 #include "backend/services/MinidumpUploader.h"
 
 #include <spdlog/spdlog.h>
@@ -78,7 +79,7 @@ CrashGlobals& globals() {
 }
 
 std::string isoTimestamp() {
-    std::time_t now = std::time(nullptr);
+    std::time_t now = static_cast<std::time_t>(backend::app::WallClock::nowNs() / 1'000'000'000ULL);
     std::tm tm{};
 #ifdef _WIN32
     localtime_s(&tm, &now);
@@ -113,10 +114,7 @@ double parseSampleRate(const char* value, double fallback) {
 }
 
 uint64_t epochMicrosNow() {
-    return static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::microseconds>(
-            std::chrono::system_clock::now().time_since_epoch())
-            .count());
+    return backend::app::WallClock::nowNs() / 1000;
 }
 
 // Captures the registered state snapshot. try_lock avoids deadlock when the

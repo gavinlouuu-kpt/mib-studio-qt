@@ -100,7 +100,9 @@ fn abi_version_is_stable() {
     // last finished run, for the Review tab and the run outcome notice.
     // v32 restore_startup_configuration (#398 M2c): re-apply the last applied
     // local profile or central method (one startup pointer) at startup.
-    assert_eq!(ffi::bridge_abi_version(), 32);
+    // v33 sync_wall_clock (#651 G14): the client's clock for files saved on a board without an RTC;
+    // fetch_instrument_status gains wall_clock{synced, source, offset_ns, last_sync_unix_ms}.
+    assert_eq!(ffi::bridge_abi_version(), 33);
 }
 
 // ABI 31 (#549): with nothing loaded and no run finished, the accounting says so and why.

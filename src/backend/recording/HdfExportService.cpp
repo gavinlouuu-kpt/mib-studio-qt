@@ -1,4 +1,5 @@
 #include "backend/recording/ReviewChartData.h"
+#include "backend/app/WallClock.h"
 #include "backend/recording/HdfExportService.h"
 
 #include "backend/recording/Hdf5Service.h"
@@ -327,7 +328,7 @@ HdfExportResult HdfExportService::run(const HdfExportRequest& request, const Hdf
             options.metadata.source = request.sourcePath;
             options.metadata.contract = options.contract;
             options.metadata.pixelToMicron = request.conversionFactor;
-            const std::time_t now = std::time(nullptr);
+            const std::time_t now = static_cast<std::time_t>(backend::app::WallClock::nowNs() / 1'000'000'000ULL);
             std::tm utc{};
 #if defined(_WIN32)
             gmtime_s(&utc, &now);
