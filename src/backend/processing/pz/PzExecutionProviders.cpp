@@ -383,7 +383,9 @@ backend::pz::RingStatus PzDevMemExecutionProvider::ringStatus() {
     }
     std::lock_guard<std::mutex> lock(ringMutex_);
     if (!ring_) return none;
-    return backend::pz::PzFrameRing(*ring_).status();
+    auto st = backend::pz::PzFrameRing(*ring_).status();
+    st.restoreNeeded = ringRestoreNeeded_.load();
+    return st;
 }
 
 backend::pz::RingRead PzDevMemExecutionProvider::ringRead(uint64_t seq, backend::pz::RingFrame& out, std::string* why) {
@@ -546,6 +548,29 @@ bool PzDevMemExecutionProvider::start(uint64_t runId, std::string* error) {
     // The every-frame ring is programmed before ARM (STORE_MODE is latched there) and only where it is safe: the
     // PL does not enforce a DDR floor, so a ring that would overlap Linux's RAM refuses the run.
     ringProgrammed_.store(false);
+    ringRestoreNeeded_.store(false);
+    if (layout_.ringFrames > 0) {
+        // A new ring starts with RESET_GENERATION in IDLE only, then ARM (RESET_GENERATION in any other state is refused and sets a
+        // sticky fault bit). After a STOP the device reaches IDLE by itself in about 2 ms; one that does not within the bound has a
+        // broken tap or clock and needs a restore.
+        const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(backend::pz::kRingFreezeWaitMs);
+        uint32_t storeState = map->reg(PZ_MIB_REG_STORE_STATE);
+        while ((storeState & backend::pz::kRingStateCodeMask) == PZ_MIB_STORE_STATE_DRAINING && std::chrono::steady_clock::now() < until) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            storeState = map->reg(PZ_MIB_REG_STORE_STATE);
+        }
+        if ((storeState & backend::pz::kRingStateCodeMask) == PZ_MIB_STORE_STATE_DRAINING) {
+            ringRestoreNeeded_.store(true);
+            if (error) *error = "frame ring: the device is still draining a stopped run (STORE_STATE 0x" +
+                                std::string(fmt::format("{:x}", storeState)) + "): restore the PL";
+            return false;
+        }
+        if ((storeState & (backend::pz::kRingStateStalled | backend::pz::kRingStateStopStuck | backend::pz::kRingStateResetRefused)) != 0) {
+            SPDLOG_WARN("PzDevMemExecutionProvider: the last frame ring ended with STORE_STATE 0x{:x}: RESET_GENERATION in IDLE, then ARM", storeState);
+            map->setReg(PZ_MIB_REG_CONTROL, PZ_MIB_CONTROL_RESET_GENERATION);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    }
     if (layout_.ringFrames > 0) {
         std::string why;
         const auto end = readLinuxRamEnd(&why);
@@ -627,14 +652,19 @@ void PzDevMemExecutionProvider::stop() {
     if (ringProgrammed_.load()) {
         std::lock_guard<std::mutex> lock(ringMutex_);
         if (ring_) {
-            const auto st = backend::pz::PzFrameRing(*ring_).awaitFrozen(std::chrono::milliseconds(300));
+            const auto st = backend::pz::PzFrameRing(*ring_).awaitFrozen(std::chrono::milliseconds(backend::pz::kRingFreezeWaitMs));
+            // No sticky bit and no IDLE within the bound: not a ring fault but a broken tap or clock (the tap closes an open frame in about 2 ms).
+            ringRestoreNeeded_.store(st.valid && !st.frozen && !st.fault && !st.stopStuck);
             if (st.frozen)
                 SPDLOG_INFO("PzDevMemExecutionProvider: frame ring frozen: {} frames readable (sequences {} to {})", st.count(), st.lo,
                             st.final ? st.final - 1 : 0);
             else
                 SPDLOG_WARN("PzDevMemExecutionProvider: frame ring not frozen after STOP ({}, state {}, head {}, final {})",
-                            st.valid ? (st.invalidReason.empty() ? std::string("still draining") : st.invalidReason) : st.why, st.state, st.head,
-                            st.final);
+                            st.valid ? (!st.invalidReason.empty() ? st.invalidReason
+                                        : st.stopStuck        ? std::string("stop incomplete (STOP_STUCK): the frames below FINAL stay readable")
+                                                              : std::string("still draining: restore needed"))
+                                     : st.why,
+                            st.state, st.head, st.final);
         }
     }
 }

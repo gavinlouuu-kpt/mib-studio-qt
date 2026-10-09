@@ -140,6 +140,7 @@ private:
     std::unique_ptr<RingIo> ring_;
     backend::pz::RingPlan ringPlan_;       // the plan the last ARM programmed
     std::atomic<bool> ringProgrammed_{false};
+    std::atomic<bool> ringRestoreNeeded_{false}; // the last STOP never reached IDLE within the bound: a hardware fault
 };
 #endif
 
