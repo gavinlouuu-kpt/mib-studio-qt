@@ -33,6 +33,17 @@ overlay is record-based because the PL does the science.
   waits for IDLE (bounded) before it does either, and never writes RESET_GENERATION in another state. Ruling (coordinator, 2026-10-09): **RING_STALLED stays "ring invalid, no playback, re-arm"**, although the records below FINAL are stable. A stall means a DDR
   write was never acknowledged for 255 frames (a memory-path fault), so nothing in that window is trusted, and the readable range could hold frames far
   older than the Stop, which would mislead a "last second" review. STOP_STUCK stays readable and flagged.
+- Beyond the board owner's rule, the reader (review of #673): a copy is also dropped when the registers changed under it (HEAD restarted below its
+  snapshot, a new epoch or generation, a changed record count, base or state: a re-ARM, which the HEAD' window test alone cannot see because the head
+  restarts and the old FRAME header still matches); the FRAME header's own sequence is not the store sequence (each record's wire sequence restarts at 0), so
+  it is not used as a check. `frozen` and `stop incomplete` can both be true: STOP_STUCK on a ring that reached IDLE after all is the state where playback is
+  allowed and flagged. IMAGE INCOMPLETE and FRAME INVALID are honoured: an incomplete mask is never shown as present, a cut frame and an invalid
+  frame are flagged. The record set area comes from `STORE_SET_BYTES`; the registers (base, record size, set size, count) are validated before any
+  read (BASE_HI = 0, base inside the DDR window and at or above Linux's RAM end, no wrap), so a wrong register cannot expose Linux's RAM; duplicate
+  MONO8/MASK1 records, a first record that is not FRAME, image blocks inside the set area or beyond the record and oversize records are malformed.
+- Limit: sequences are 32 bits with unsigned arithmetic; a ring-only run near 2^32 (about 9.9 days at 5 kHz) is refused with "sequence limit reached: re-arm"
+  (no wrap support).
+- Placement needs Linux's RAM end: an unknown end (unreadable or all-zero `/proc/iomem`, as without CAP_SYS_ADMIN) refuses the plan and the run.
 - Sequences restart at 0 at every ARM. Read before re-arming.
 - The PL enforces no DDR floor. Studio validates base and size: at or above Linux's RAM end (from `/proc/iomem`), at or above
   0x00100000, ending at or below 0x3F000000 (the PL's result ring and preview slots). Otherwise it refuses to arm, with a gate reason.

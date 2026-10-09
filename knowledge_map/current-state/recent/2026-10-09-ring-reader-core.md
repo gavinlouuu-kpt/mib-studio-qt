@@ -12,3 +12,10 @@ STOP handling follows the board owner's final wording: after STOP the device rea
 bounded at 1 s ("restore needed" past it); `RING_STALLED` (bit 9) and `RESET_GENERATION` refused (bit 11) make the ring invalid, while
 `STOP_STUCK` (bit 10) leaves the records below FINAL readable under the reader rule, flagged "stop incomplete" (`stopIncomplete`). The
 sticky bits hold until the next ARM; a new ring starts with RESET_GENERATION in IDLE only.
+
+Review of #673 (a Claude review agent): `planRing` and `PzFrameRing` now require Linux's RAM end (unknown or zeroed `/proc/iomem` refuses); a copy
+is dropped when the epoch, generation, record count, base or state changed under it or the head restarted (a Resume during a fetch); `status()`
+validates every register before any read (BASE_HI, window, Linux's end, no wrap, `STORE_SET_BYTES`); IMAGE INCOMPLETE and FRAME INVALID are carried in
+the `MIBR` flags (bits 2 to 4) and an incomplete mask is never shown as present; `awaitFrozen` owns the 1 s bound and sets `restoreNeeded`;
+duplicate and out-of-place records are malformed; a 32-bit sequence near the limit is refused. `frozen` with `stopIncomplete` is the intended state for
+STOP_STUCK on a ring that reached IDLE.
