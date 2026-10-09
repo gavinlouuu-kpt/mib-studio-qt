@@ -4,6 +4,12 @@
 // 'MIBC' run-preview layout (runPreview.ts), so the same fields drive the cell table.
 import type { RunPreviewCell } from "./runPreview";
 
+/** A ring cell: the run-preview cell plus the payload validity mask (word 18 of the MIBR cell). */
+export interface RingCell extends RunPreviewCell {
+  index: number;
+  payloadValidity: number;
+}
+
 /** `fetch_ring_status` (bridge ABI 34). Sequences are the ring's own: frame 0 is the first after the run was armed. */
 export interface RingStatus {
   available: boolean;
@@ -36,11 +42,11 @@ export interface RingFrame {
   gray: Uint8Array;
   /** 1 bit per pixel, LSB first, row-major; all zero when `maskPresent` is false. */
   mask: Uint8Array;
-  cells: RunPreviewCell[];
+  cells: RingCell[];
 }
 
 const HEADER = 48;
-const CELL_WORDS = 18;
+const CELL_WORDS = 19;
 
 export function decodeRingFrame(buf: ArrayBuffer): RingFrame {
   if (buf.byteLength < HEADER) throw new Error("ring frame: short packet");
@@ -54,13 +60,15 @@ export function decodeRingFrame(buf: ArrayBuffer): RingFrame {
   if (width === 0 || height === 0 || width % 8 !== 0) throw new Error("ring frame: bad geometry");
   const expected = HEADER + grayBytes + maskBytes + listed * CELL_WORDS * 4;
   if (buf.byteLength !== expected) throw new Error(`ring frame: ${buf.byteLength} bytes, expected ${expected}`);
-  const cells: RunPreviewCell[] = [];
+  const cells: RingCell[] = [];
   for (let c = 0; c < listed; c++) {
     const at = HEADER + grayBytes + maskBytes + c * CELL_WORDS * 4;
     const w = (k: number) => v.getUint32(at + 4 * k, true);
     cells.push({
       x: w(15) & 0xffff, y: w(15) >>> 16, width: w(16) & 0xffff, height: w(16) >>> 16,
       valid: (w(17) & 0xffff) !== 0, // word 17 as in the run preview: count << 24 | rank << 16 | valid
+      index: (w(17) >>> 16) & 0xff,
+      payloadValidity: w(18),
       payload: Array.from({ length: 15 }, (_, k) => w(k)),
     });
   }
@@ -124,6 +132,67 @@ export function elapsedText(frame: Pick<RingFrame, "timestampTicks" | "tickHz">,
   if (!first || !(frame.tickHz > 0)) return "";
   const seconds = (frame.timestampTicks - first.timestampTicks) / frame.tickHz;
   return `+${seconds.toFixed(4)} s`;
+}
+
+// ---- the cell's measurements ---------------------------------------------------------------------------------------
+
+export const CELL_REASONS: Record<number, string> = {
+  0: "valid", 1: "no contour", 2: "touches the border", 3: "area outside the gate", 5: "deformability outside the gate",
+  6: "area ratio outside the gate", 7: "Laplacian outside the gate", 8: "outside the channel",
+};
+
+export interface CellMetrics {
+  objectId: number;
+  /** 0 = valid, else the reason the cell was rejected (CELL_REASONS). */
+  reason: number;
+  cutOff: boolean;
+  target: boolean;
+  contourArea: number;
+  hullArea: number;
+  areaRatio: number;
+  deformability: number;
+  areaUm2: number;
+  youngsModulusKpa: number;
+  brightnessMean: number;
+  laplacianVariance: number;
+  centroidX: number;
+  centroidY: number;
+  pixelCount: number;
+  blemishCount: number;
+}
+
+/**
+ * The unet_cells_v2 payload (words 0-14) in host units, as the backend decodes it (`decodeUnetCellsV2`): a word the validity
+ * mask leaves out is NaN, never 0.
+ */
+export function cellMetrics(c: Pick<RingCell, "payload" | "payloadValidity">): CellMetrics {
+  const w = c.payload, ok = (i: number) => ((c.payloadValidity >>> i) & 1) !== 0;
+  const q16 = (i: number) => (ok(i) ? w[i] / 65536 : Number.NaN);
+  const sq16 = (i: number) => (ok(i) ? (w[i] | 0) / 65536 : Number.NaN);
+  const q8 = (i: number) => (ok(i) ? w[i] / 256 : Number.NaN);
+  return {
+    objectId: w[0] & 0xffff,
+    reason: (w[0] >>> 16) & 15,
+    cutOff: ((w[0] >>> 20) & 1) !== 0,
+    target: ((w[0] >>> 24) & 1) !== 0,
+    contourArea: ok(1) ? w[1] / 65536 : 0,
+    hullArea: ok(2) ? w[2] / 65536 : 0,
+    areaRatio: q16(4),
+    deformability: ok(5) ? (w[5] & 0xffff) / 65536 : Number.NaN,
+    areaUm2: q16(9),
+    youngsModulusKpa: q16(10),
+    brightnessMean: q16(6),
+    laplacianVariance: q8(11),
+    centroidX: sq16(7),
+    centroidY: sq16(8),
+    pixelCount: w[13] & 0xffff,
+    blemishCount: w[13] >>> 16,
+  };
+}
+
+/** A number for the cell table, "—" when the PL left it out. */
+export function metricText(v: number, digits = 2): string {
+  return Number.isFinite(v) ? v.toFixed(digits) : "—";
 }
 
 // ---- scrub, step, play -------------------------------------------------------------------------------------------

@@ -240,6 +240,8 @@ RingRead PzFrameRing::readFrame(uint64_t seq, RingFrame& out, std::string* why) 
         c.height = r.bboxH;
         c.flags = r.flags;
         c.valid = (r.flags & kResultValid) != 0;
+        c.index = r.resultIndex;
+        c.payloadValidity = r.payloadValidity;
         for (size_t k = 0; k < c.payload.size() && k < r.payload.size(); ++k) c.payload[k] = r.payload[k];
         f.cells.push_back(c);
     }
@@ -248,7 +250,7 @@ RingRead PzFrameRing::readFrame(uint64_t seq, RingFrame& out, std::string* why) 
 }
 
 std::vector<uint8_t> buildRingPacket(const RingFrame& f, uint32_t tickHz) {
-    constexpr size_t kHeader = 48, kCellWords = 18;
+    constexpr size_t kHeader = 48, kCellWords = 19;
     std::vector<uint8_t> b(kHeader + f.gray.size() + f.mask.size() + f.cells.size() * kCellWords * 4, 0);
     auto put = [&](size_t at, uint64_t v, unsigned bytes) {
         for (unsigned i = 0; i < bytes; ++i) b[at + i] = static_cast<uint8_t>(v >> (8 * i));
@@ -272,7 +274,8 @@ std::vector<uint8_t> buildRingPacket(const RingFrame& f, uint32_t tickHz) {
         for (size_t k = 0; k < 15; ++k) put(at + 4 * k, c.payload[k], 4);
         put(at + 4 * 15, static_cast<uint32_t>(c.x) | static_cast<uint32_t>(c.y) << 16, 4);
         put(at + 4 * 16, static_cast<uint32_t>(c.width) | static_cast<uint32_t>(c.height) << 16, 4);
-        put(at + 4 * 17, c.valid ? 1u : 0u, 4);
+        put(at + 4 * 17, (static_cast<uint32_t>(f.cells.size()) & 0xFFu) << 24 | static_cast<uint32_t>(c.index & 0xFFu) << 16 | (c.valid ? 1u : 0u), 4);
+        put(at + 4 * 18, c.payloadValidity, 4);
         at += kCellWords * 4;
     }
     return b;

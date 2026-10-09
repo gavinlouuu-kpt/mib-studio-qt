@@ -6,3 +6,11 @@ capacity, the readable range, sensor fps; `fetch_ring_frame {seq}` (binary `MIBR
 STOP did not complete (DRAINING, RING_STALLED, STOP_STUCK) by RESET_GENERATION before the next ARM. `desktop/src/bridge.ts` gains
 `fetchRingStatus`, `fetchRingFrame`, `ringFreeze`, `ringResume` and the `ring` type. The playback panel follows. Tested: the facade
 view in `instrument_modes_test`, the off-PZ contract in `contract.rs`, the dispatch and server lists.
+
+The browser side: `Stop` in the Run status line (when a ring is available and no experiment runs) freezes the ring; the preview pauses and
+`RingPlaybackPanel` takes its place: capacity in frames and seconds at the sensor rate, the buffered range, first / previous / play /
+next / newest, a scrub slider, a display rate (1 to 60 fps), the overlay (Off, Mask, Contours, Both) and the frame's own cells with their
+measurements decoded from the PL payload (`cellMetrics`, NaN shown as "—" where the PL left a word out). A frame whose mask was not
+delivered says so; a ring that is invalid or empty shows the reason instead of controls; `Resume Run` re-arms (a new ring, said on the
+button) and `Save clip` stays disabled with "Saving needs the SSD (not available yet)." until the SSD path (#667). The `MIBR` cell
+record is 19 words: the `MIBC` words plus the payload validity mask.

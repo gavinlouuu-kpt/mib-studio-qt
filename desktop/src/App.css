@@ -1229,3 +1229,12 @@ button.btn:disabled,
 .mode-notice span { flex: 1 1 auto; }
 
 .side-row .v.warn { color: var(--warn); }
+
+/* PZ7035 frame-ring playback (#649 v1) */
+.ring-playback .ring-controls { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 6px 0; }
+.ring-playback .ring-controls input[type="range"] { flex: 1 1 240px; min-width: 160px; }
+.ring-playback table.ring-cells { border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.ring-playback table.ring-cells th, .ring-playback table.ring-cells td { padding: 2px 8px; text-align: right; }
+.ring-playback table.ring-cells td:nth-child(2), .ring-playback table.ring-cells td:nth-child(3) { text-align: left; }
+.ring-playback table.ring-cells tr.invalid td { color: #b42318; }
+.ring-playback table.ring-cells tr.valid td { color: #1a7f37; }

@@ -25,6 +25,7 @@ import {open, save, confirm} from "./transport/dialogs";
 import { volatileDataNotice } from "./diagnosticsView";
 import { useWallClockSync } from "./transport/wallClockSync";
 import { DiagnosticsPanel } from "./components/DiagnosticsPanel";
+import { RingPlaybackPanel } from "./components/RingPlaybackPanel";
 import { downloadUrl } from "./filesView";
 import { serverOrigin, tokenFromLocation } from "./transport/auth";
 import { FilesPanel } from "./components/FilesPanel";
@@ -306,6 +307,9 @@ export default function App() {
   const instrumentRef = useRef<InstrumentStatus | null>(null);
   instrumentRef.current = instrument;
   const runMode = instrument?.mode?.name === "run";
+  // Run stopped to review the frame ring (#649 v1): the cell-capture preview pauses and the playback takes its place.
+  const ring = instrument?.ring;
+  const runFrozen = runMode && !!ring?.run_frozen;
   const [runPreviewInfo, setRunPreviewInfo] = useState<{frameId: number; listed: number; cells: number; blemishes: number} | null>(null);
   const [showRunMask, setShowRunMask] = useState(true);
   const showRunMaskRef = useRef(true);
@@ -730,7 +734,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!ready || !runMode || tab !== "experiment") { setRunPreviewInfo(null); return; }
+    if (!ready || !runMode || runFrozen || tab !== "experiment") { setRunPreviewInfo(null); return; }
     let busy = false, live = true;
     const id = window.setInterval(() => {
       if (busy) return;
@@ -740,7 +744,20 @@ export default function App() {
         .finally(() => { busy = false; });
     }, 100);
     return () => { live = false; window.clearInterval(id); };
-  }, [ready, runMode, tab, drawRunPreview]);
+  }, [ready, runMode, runFrozen, tab, drawRunPreview]);
+
+  // Stop in Run holds the frame ring for playback; resume re-arms it (a new ring).
+  const refreshInstrument = useCallback(() => { void bridge.fetchInstrumentStatus().then(setInstrument).catch(() => undefined); }, []);
+  const onStopRun = useCallback(async () => {
+    const r = await bridge.ringFreeze();
+    append(r.ok ? r.message : `Stop: ${r.message}`);
+    refreshInstrument();
+  }, [append, refreshInstrument]);
+  const onResumeRun = useCallback(async () => {
+    const r = await bridge.ringResume();
+    refreshInstrument();
+    return r;
+  }, [refreshInstrument]);
 
   const onStartCamera = useCallback(async () => {
     try {
@@ -1900,7 +1917,10 @@ export default function App() {
 
                 {expTab === "preview" && (
                   <>
-                    <div className="canvas-wrap">
+                    {runFrozen && ring && (
+                      <RingPlaybackPanel status={ring} fetchFrame={bridge.fetchRingFrame} onResume={onResumeRun} append={append} />
+                    )}
+                    <div className="canvas-wrap" hidden={runFrozen}>
                       {!lastMeta && !runPreviewInfo && <span className="canvas-hint">{instrumentModes
                         ? (runMode ? "Waiting for the PL cell capture…"
                           : !cameraWin.placed ? "No run window placed yet"
@@ -1918,7 +1938,13 @@ export default function App() {
                           {(instrument.results.decode_errors ?? 0) > 0 && ` · decode errors ${instrument.results.decode_errors}`}
                           {(instrument.results.sequence_gaps ?? 0) > 0 && ` · frame gaps ${instrument.results.sequence_gaps}`}</>}
                         {" · "}<label><input type="checkbox" checked={showRunMask} onChange={(e) => setShowRunMask(e.target.checked)} /> U-Net mask</label>
+                        {ring?.available && !runFrozen && !expActive && (
+                          <>{" · "}<button onClick={() => void onStopRun()} title={`Stop: hold the last ${ring.capacity_frames.toLocaleString("en-US")} frames for playback`}>Stop</button></>
+                        )}
                       </p>
+                    )}
+                    {instrumentModes && runMode && !runFrozen && ring && !ring.available && ring.reason && (
+                      <p className="pending-note" role="status" data-testid="ring-note">Frame ring: {ring.reason}</p>
                     )}
                     {instrumentModes && operatingMode === "service" && (runMode || instrument?.mode?.name === "align") && (
                       <InstrumentLedControls mode={runMode ? "run" : "align"} alignBands={instrument?.mode?.align_source === "bands"} limits={caps.led_limits?.[runMode ? "run" : "align"]}

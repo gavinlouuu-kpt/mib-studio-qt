@@ -39,8 +39,8 @@ overlay is record-based because the PL does the science.
 |---|---|---|
 | Placement, programming, status, freeze wait, frame read under the reader rule, record decode, browser packet | `PzFrameRing` (`include/backend/pz/PzFrameRing.h`) over `IRingIo` (registers + physical reads) | **done**, tested against a fake ring (`pz_frame_ring_test`) |
 | `/dev/mem` implementation of `IRingIo`, ring size (`MIB_PZ_RING_FRAMES`), programming before ARM in the provider, freeze after STOP, `freezeRun`/`resumeRun`, the `ring.placement` and `run.frozen` gates | `PzDevMemExecutionProvider`, `AppBackend`, `ExperimentCoordinator` | **done** (part 2), tested with a fake provider |
-| `fetch_ring_status`, `fetch_ring_frame {seq}` (binary `MIBR`), `ring_freeze`, `ring_resume` | bridge, contract, dispatch, TS | next |
-| Playback panel: capacity in frames and seconds, scrub, step, play at a display fps, overlays Off / Mask / Contours / Both, the frame's cells; Save clip disabled with the reason | `desktop/src` | next |
+| `fetch_ring_status`, `fetch_ring_frame {seq}` (binary `MIBR`), `ring_freeze`, `ring_resume`, the `ring` block of the instrument status (bridge ABI 34) | bridge, contract, dispatch, TS | **done** (part 3), tested (facade view, off-PZ contract, dispatch lists) |
+| Playback panel: capacity in frames and seconds, scrub, step, play at a display fps, overlays Off / Mask / Contours / Both, the frame's cells; Save clip disabled with the reason; Stop button in Run | `desktop/src` (`ringPlayback.ts`, `RingPlaybackPanel.tsx`, `App.tsx`) | **done** (part 3), jsdom and unit tests; not clicked through on a board |
 
 **Capacity.** Frames = ring bytes / 59,392; seconds = frames / the sensor fps (`fetch_instrument_status.sensor.fps`, 5000.8 in Run).
 5000 frames (the PC default) need 283 MiB, 1.0 s at 5 kHz, and `mem=` of about 720M in the bundle's `bootargs` (the board owner's
@@ -53,9 +53,10 @@ first). The freeze never claims frozen before `STATE = IDLE` and `FINAL = HEAD +
 frozen: re-arm needed" and playback is not offered for that window.
 
 **Packet `MIBR` v1** (`buildRingPacket`): a 48-byte header (sequence, frame id, timestamp ticks, tick Hz, frame flags, width, height,
-cells, mask present, results truncated), the gray frame, the packed mask (1 bit per pixel, LSB first), then per cell the 18 words of
-the `MIBC` run preview (payload words 0-14, `x | y << 16`, `width | height << 16`, valid), so the browser reuses the run-preview
-decoder for the cell table and the overlays.
+cells, mask present, results truncated), the gray frame, the packed mask (1 bit per pixel, LSB first), then per cell 19 words:
+the 18 words of the `MIBC` run preview (payload words 0-14, `x | y << 16`, `width | height << 16`, `cells << 24 | index << 16 | valid`)
+and the payload validity mask, so the browser decodes the cell's measurements (area, deformability, E, ...) with NaN where the PL left a
+word out, as the backend's `decodeUnetCellsV2` does.
 
 **Overlays.** Off, Mask (tint, as the Run preview), Contours (the mask's boundary pixels, drawn in the browser), Both; cells
 coloured valid (green) or invalid (red) from the record's own VALID flag, with bounding boxes. A frame whose mask block was

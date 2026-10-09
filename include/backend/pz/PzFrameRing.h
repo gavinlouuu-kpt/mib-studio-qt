@@ -76,6 +76,8 @@ struct RingCell {
     uint16_t x{0}, y{0}, width{0}, height{0};
     uint16_t flags{0};
     bool valid{false};
+    uint16_t index{0};          // result index within the frame
+    uint32_t payloadValidity{0}; // which payload words carry a value (the others are 'not available', never 0)
     std::array<uint32_t, 15> payload{};  // unet_cells_v2 words 0-14
 };
 
@@ -113,8 +115,9 @@ private:
 //   0 "MIBR", 4 u16 version 1, 6 u16 header bytes 48, 8 u64 seq, 16 u64 frame id, 24 u64 timestamp ticks,
 //   32 u32 tick Hz, 36 u32 frame flags, 40 u16 width, 42 u16 height, 44 u16 cells, 46 u16 bit0 mask present
 //   bit1 results truncated
-// then width*height gray bytes, width*height/8 mask bytes, then per cell 18 u32 words: payload words 0-14,
-// word 15 = x | y << 16, word 16 = width | height << 16, word 17 = valid (the layout of the 'MIBC' run preview).
+// then width*height gray bytes, width*height/8 mask bytes, then per cell 19 u32 words: payload words 0-14,
+// word 15 = x | y << 16, word 16 = width | height << 16, word 17 = cells << 24 | index << 16 | valid, as the 'MIBC' run
+// preview, and word 18 = the payload validity mask (a word the mask leaves out is not available, not 0).
 std::vector<uint8_t> buildRingPacket(const RingFrame& frame, uint32_t tickHz);
 
 } // namespace backend::pz

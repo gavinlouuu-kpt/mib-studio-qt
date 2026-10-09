@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
-  advancePlayback, capacityText, clampSeq, contourPixels, decodeRingFrame, elapsedText, nextOverlay, noMaskNote,
+  advancePlayback, capacityText, cellMetrics, metricText, clampSeq, contourPixels, decodeRingFrame, elapsedText, nextOverlay, noMaskNote,
   playbackAvailability, rangeText, ringFrameRgba, saveClipState, secondsText, stepSeq, type RingFrame, type RingStatus,
 } from "./ringPlayback";
 
 function packet(opts: { seq?: number; w?: number; h?: number; cells?: number; mask?: boolean; truncated?: boolean } = {}): ArrayBuffer {
   const w = opts.w ?? 16, h = opts.h ?? 4, cells = opts.cells ?? 2;
   const gray = w * h, maskBytes = gray / 8;
-  const buf = new ArrayBuffer(48 + gray + maskBytes + cells * 18 * 4);
+  const buf = new ArrayBuffer(48 + gray + maskBytes + cells * 19 * 4);
   const v = new DataView(buf);
   "MIBR".split("").forEach((c, i) => v.setUint8(i, c.charCodeAt(0)));
   v.setUint16(4, 1, true); v.setUint16(6, 48, true);
@@ -18,9 +18,9 @@ function packet(opts: { seq?: number; w?: number; h?: number; cells?: number; ma
   for (let i = 0; i < gray; i++) v.setUint8(48 + i, i % 251);
   for (let i = 0; i < maskBytes; i++) v.setUint8(48 + gray + i, i === 1 ? 0xff : 0);
   for (let c = 0; c < cells; c++) {
-    const at = 48 + gray + maskBytes + c * 72;
+    const at = 48 + gray + maskBytes + c * 76;
     for (let k = 0; k < 15; k++) v.setUint32(at + 4 * k, 1000 * (c + 1) + k, true);
-    v.setUint32(at + 60, 3 | (1 << 16), true); v.setUint32(at + 64, 5 | (2 << 16), true); v.setUint32(at + 68, c === 0 ? 1 : 0, true);
+    v.setUint32(at + 60, 3 | (1 << 16), true); v.setUint32(at + 64, 5 | (2 << 16), true); v.setUint32(at + 68, (cells << 24) | (c << 16) | (c === 0 ? 1 : 0), true); v.setUint32(at + 72, 0x7fff, true);
   }
   return buf;
 }
@@ -44,6 +44,8 @@ describe("MIBR packet", () => {
     expect(f.cells).toHaveLength(2);
     expect(f.cells[0]).toMatchObject({ x: 3, y: 1, width: 5, height: 2, valid: true });
     expect(f.cells[1].valid).toBe(false);
+    expect(f.cells[1].index).toBe(1);
+    expect(f.cells[0].payloadValidity).toBe(0x7fff);
     expect(f.cells[0].payload[3]).toBe(1003);
     expect(f.cells[1].payload[14]).toBe(2014);
   });
@@ -152,5 +154,30 @@ describe("overlays", () => {
     expect(contours[4 * 9 + 1]).toBe(176);
     expect(contours[4 * 0]).toBe(f.gray[0]);
     expect(off[3]).toBe(255);
+  });
+});
+
+describe("cell measurements", () => {
+  it("decodes the unet_cells_v2 words in host units, NaN where the PL left a word out", () => {
+    const payload = new Array(15).fill(0);
+    payload[0] = 3 | (0 << 16) | (1 << 24); // object 3, valid, target
+    payload[1] = Math.round(120.5 * 65536); payload[2] = Math.round(130.25 * 65536); payload[4] = Math.round(0.92 * 65536);
+    payload[5] = Math.round(0.05 * 65536) | (4 << 16) | (2 << 24); // deformability 0.05, 2 cells
+    payload[6] = Math.round(88.5 * 65536); payload[7] = (-12.5 * 65536) | 0; payload[9] = Math.round(300 * 65536);
+    payload[10] = Math.round(1.75 * 65536); payload[11] = Math.round(4.5 * 256); payload[13] = 410 | (3 << 16);
+    const full = cellMetrics({ payload, payloadValidity: 0x7fff });
+    expect(full).toMatchObject({ objectId: 3, reason: 0, cutOff: false, target: true, pixelCount: 410, blemishCount: 3 });
+    expect(full.contourArea).toBeCloseTo(120.5, 4);
+    expect(full.hullArea).toBeCloseTo(130.25, 4);
+    expect(full.deformability).toBeCloseTo(0.05, 4);
+    expect(full.youngsModulusKpa).toBeCloseTo(1.75, 4);
+    expect(full.centroidX).toBeCloseTo(-12.5, 4);
+    expect(full.laplacianVariance).toBeCloseTo(4.5, 4);
+    const partial = cellMetrics({ payload, payloadValidity: 0b11 }); // only words 0 and 1
+    expect(partial.contourArea).toBeCloseTo(120.5, 4);
+    expect(Number.isNaN(partial.deformability)).toBe(true);
+    expect(Number.isNaN(partial.youngsModulusKpa)).toBe(true);
+    expect(metricText(partial.deformability)).toBe("—");
+    expect(metricText(full.deformability, 3)).toBe("0.050");
   });
 });

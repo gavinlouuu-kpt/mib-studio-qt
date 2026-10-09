@@ -258,14 +258,17 @@ int main() {
         // The packet the browser decodes.
         ring.readFrame(7, f, &why);
         const auto packet = pz::buildRingPacket(f, 100000000u);
-        MIB_EXPECT(packet.size() == 48 + f.gray.size() + f.mask.size() + 2 * 18 * 4, "packet size");
+        MIB_EXPECT(packet.size() == 48 + f.gray.size() + f.mask.size() + 2 * 19 * 4, "packet size");
         MIB_EXPECT(std::memcmp(packet.data(), "MIBR", 4) == 0 && packet[4] == 1 && packet[6] == 48 && packet[8] == 7 && packet[16] == (1007 & 0xFF) && packet[44] == 2 && (packet[46] & 1),
                    "packet header: magic, version, seq, frame id, cells, mask present");
         const size_t cellAt = 48 + f.gray.size() + f.mask.size();
-        uint32_t w15 = 0, w17 = 0;
+        uint32_t w15 = 0, w17 = 0, w17b = 0, w18 = 0;
         std::memcpy(&w15, packet.data() + cellAt + 4 * 15, 4);
-        std::memcpy(&w17, packet.data() + cellAt + 18 * 4 + 4 * 17, 4);
-        MIB_EXPECT(w15 == (100u | 20u << 16) && w17 == 0, "cell words 15 (x|y) and 17 (valid) follow the run-preview layout");
+        std::memcpy(&w17, packet.data() + cellAt + 4 * 17, 4);
+        std::memcpy(&w18, packet.data() + cellAt + 4 * 18, 4);
+        std::memcpy(&w17b, packet.data() + cellAt + 19 * 4 + 4 * 17, 4);
+        MIB_EXPECT(w15 == (100u | 20u << 16) && w17 == (2u << 24 | 0u << 16 | 1u) && w17b == (2u << 24 | 1u << 16 | 0u) && w18 == 0x7FFF,
+                   "cell words 15 (x|y), 17 (count|index|valid) follow the run-preview layout; word 18 is the payload validity");
     }
 
     // ---- the reader rule: a record overwritten while it was copied ---------------------------------------
