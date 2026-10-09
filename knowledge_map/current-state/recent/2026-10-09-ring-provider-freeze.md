@@ -9,3 +9,8 @@ stops the live session, switches the LED off and holds the Run (`runFrozen`); `r
 LED Run preset; a mode switch or idle ends a stopped Run. A stopped Run blocks an experiment (`run.frozen` gate).
 `ringStatus`/`ringFrame` expose the provider's ring (a frame as a `MIBR` packet). The bridge commands and the playback panel
 need bridge ABI 34 and come next. Tested with a ring-capable fake provider (`instrument_modes_test`).
+
+Final STOP handling (board owner's wording): `stop()` waits up to 1 s for IDLE (the device gets there in about 2 ms by itself); a stop
+that never reaches IDLE without a sticky bit marks `restoreNeeded` (a broken tap or clock; the PL needs a restore). A new run waits for
+IDLE (bounded; otherwise the start fails with "restore the PL"), writes RESET_GENERATION only in IDLE and only when a sticky fault bit
+(9, 10 or 11) was left, then ARMs; it never writes RESET_GENERATION in another state.

@@ -118,12 +118,15 @@ RingStatus PzFrameRing::status() {
     s.state = stateReg & kRingStateCodeMask;
     s.stalled = (stateReg & kRingStateStalled) != 0;
     s.stopStuck = (stateReg & kRingStateStopStuck) != 0;
+    s.resetRefused = (stateReg & kRingStateResetRefused) != 0;
     const uint32_t headRaw = io_.reg(PZ_MIB_REG_STORE_HEAD_SEQ);
     s.final = io_.reg(kRingRegFinalSeq);
     s.head = headRaw == kHeadNone ? -1 : static_cast<int64_t>(headRaw);
-    s.fault = s.state == PZ_MIB_STORE_STATE_FAULT || s.stalled || s.stopStuck;
+    // STOP_STUCK is not a fault of the frames below FINAL: they are stable and readable, flagged "stop incomplete".
+    s.fault = s.state == PZ_MIB_STORE_STATE_FAULT || s.stalled || s.resetRefused;
+    s.stopIncomplete = s.stopStuck;
     if (s.stalled) s.invalidReason = "the ring stalled (RING_STALLED): an acknowledgement was lost, so the buffered frames cannot be trusted; re-arm";
-    else if (s.stopStuck) s.invalidReason = "STOP did not complete in time (STOP_STUCK): the ring is not frozen; re-arm";
+    else if (s.resetRefused) s.invalidReason = "RESET_GENERATION was refused (the ring was not idle): re-arm";
     else if (s.fault) s.invalidReason = "the ring reports a fault: re-arm";
     if (s.records == 0) {
         s.why = "no frame ring is configured";
@@ -143,7 +146,8 @@ RingStatus PzFrameRing::status() {
 RingStatus PzFrameRing::awaitFrozen(std::chrono::milliseconds timeout) {
     const auto until = std::chrono::steady_clock::now() + timeout;
     RingStatus s = status();
-    while (s.valid && !s.frozen && !s.fault && std::chrono::steady_clock::now() < until) {
+    // STOP_STUCK never turns into frozen (the device stays DRAINING): no point waiting it out.
+    while (s.valid && !s.frozen && !s.fault && !s.stopStuck && std::chrono::steady_clock::now() < until) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
         s = status();
     }
