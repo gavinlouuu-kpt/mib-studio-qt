@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <functional>
+#include <iterator>
 #include <string>
 #include <sys/stat.h>
 #include <thread>
@@ -152,27 +153,56 @@ int main(int argc, char** argv) {
         MIB_EXPECT(!store.runs(runs, &why) && runs.empty(), "a garbled run table is reported, no partial list");
     }
 
-    // --- a recovery is reported by pzrec once; the store keeps it ---------------------------------------------------------
+    // --- "recovered at mount" comes from the run table (reason 7), the notice after a restart from the persisted highest id ---------------
     {
-        auto dev = std::make_unique<FakeDevice>();
-        FakeDevice* d = dev.get();
-        d->runsText = kRuns;
-        pz::SsdStore store(std::move(dev), milliseconds(0));
-        d->statusText = replaceFirst(replaceFirst(kStatusReady, "\"recovered_runs\":0", "\"recovered_runs\":1"), "\"recovered_ids\":[0,0,0,0,0,0,0,0]", "\"recovered_ids\":[2,0,0,0,0,0,0,0]");
-        auto s = store.status();
-        MIB_EXPECT(s.recoveredRuns == 1 && s.recoveredIds == std::vector<uint32_t>({2}), "the recovery shows on the call that did it");
-        d->statusText = kStatusReady;  // pzrec's next answer has forgotten it
-        s = store.status();
-        MIB_EXPECT(s.recoveredRuns == 1 && s.recoveredIds == std::vector<uint32_t>({2}), "and stays reported afterwards");
-        d->statusText = replaceFirst(replaceFirst(kStatusReady, "\"recovered_runs\":0", "\"recovered_runs\":1"), "\"recovered_ids\":[0,0,0,0,0,0,0,0]", "\"recovered_ids\":[2,0,0,0,0,0,0,0]");
-        MIB_EXPECT(store.status().recoveredRuns == 1, "the same run is not counted twice");
-        d->statusText = replaceFirst(replaceFirst(kStatusReady, "\"recovered_runs\":0", "\"recovered_runs\":1"), "\"recovered_ids\":[0,0,0,0,0,0,0,0]", "\"recovered_ids\":[7,0,0,0,0,0,0,0]");
-        s = store.status();
-        MIB_EXPECT(s.recoveredRuns == 2 && s.recoveredIds == std::vector<uint32_t>({2, 7}), "a later recovery adds to it");
-        d->statusText = replaceFirst(kStatusReady, "\"skipped_bad_entries\":0", "\"skipped_bad_entries\":3");
-        MIB_EXPECT(store.status().skippedBadEntries == 3, "skipped entries are reported");
-        d->statusText = kStatusReady;
-        MIB_EXPECT(store.status().skippedBadEntries == 3, "and kept");
+        const std::string state = "/tmp/ssd_store_state." + std::to_string(::getpid()) + ".json";
+        std::remove(state.c_str());
+        auto make = [&](FakeDevice** out, const std::string& runsText, const std::string& stateFile) {
+            auto dev = std::make_unique<FakeDevice>();
+            *out = dev.get();
+            dev->statusText = kStatusReady;  // pzrec's own recovered_runs fields are ignored: the table is the truth
+            dev->runsText = runsText;
+            return std::make_unique<pz::SsdStore>(std::move(dev), milliseconds(0), false, stateFile);
+        };
+        FakeDevice* d = nullptr;
+        // kRuns: run 1 clean, run 2 deleted + reason 7.
+        auto first = make(&d, kRuns, state);
+        auto s = first->status();
+        MIB_EXPECT(s.recoveredRuns == 1 && s.recoveredIds == std::vector<uint32_t>({2}), "first start: the reason-7 run is announced");
+        s = first->status();
+        MIB_EXPECT(s.recoveredRuns == 1, "and stays announced for this process (no latch needed: the table says it)");
+        std::ifstream f(state);
+        std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        MIB_EXPECT(content.find("\"last_seen_run_id\":2") != std::string::npos, "the highest id seen is persisted: " + content);
+        // A restart: Studio has seen run 2 before, so no notice; the run still shows reason 7 in the table.
+        auto second = make(&d, kRuns, state);
+        s = second->status();
+        std::vector<pz::SsdRun> runs;
+        MIB_EXPECT(s.recoveredRuns == 0 && s.recoveredIds.empty(), "restart: nothing new to announce");
+        MIB_EXPECT(second->runs(runs, nullptr) && runs[1].reason == 7 && runs[1].countsUnknown, "the entry keeps its reason 7 badge");
+        // A new recovery at mount while Studio was away: a reason-7 run above the persisted id.
+        const std::string withNew = replaceFirst(kRuns, "\n]", ",\n  {\"run_id\":3,\"flags\":0,\"open\":0,\"deleted\":0,\"incomplete\":1,\"start_lba\":130000,\"end_lba\":130100,\"start_unix_ms\":1791530200000,\"wall_source\":1,\"client_tag\":0,\"filter\":0,\"sampler_n\":0,\"rec_sectors\":116,\"first_frame_id\":0,\"last_frame_id\":0,\"first_ticks\":0,\"last_ticks\":0,\"tick_hz\":0,\"seen\":0,\"empty_filtered\":0,\"invalid_not_sampled\":0,\"passed\":0,\"written\":0,\"dropped\":0,\"failed\":0,\"recoveries\":0,\"reason\":7,\"counts_unknown\":true}\n]");
+        auto third = make(&d, withNew, state);
+        s = third->status();
+        MIB_EXPECT(s.recoveredRuns == 1 && s.recoveredIds == std::vector<uint32_t>({3}), "after a restart only the runs recovered since are announced");
+        std::ifstream f3(state);
+        std::string c3((std::istreambuf_iterator<char>(f3)), std::istreambuf_iterator<char>());
+        MIB_EXPECT(c3.find("\"last_seen_run_id\":3") != std::string::npos, "the id moves up");
+        // A recovery during the run of this process is announced too (id above the baseline).
+        auto fourth = make(&d, kRuns, state);  // baseline 3
+        fourth->status();
+        d->runsText = withNew.substr(0, withNew.size());  // same table: id 3 is not above 3
+        fourth->refresh(true);
+        MIB_EXPECT(fourth->status().recoveredRuns == 0, "ids at or below the baseline are not announced");
+        // A corrupt or foreign state file: baseline 0, so everything with reason 7 is announced (the safe direction).
+        std::ofstream(state) << "{not json";
+        auto fifth = make(&d, kRuns, state);
+        MIB_EXPECT(fifth->status().recoveredRuns == 1, "an unreadable state file announces rather than hides");
+        // No state file configured: same.
+        auto sixth = make(&d, kRuns, "");
+        MIB_EXPECT(sixth->status().recoveredRuns == 1, "no state file: announced each start");
+        std::remove(state.c_str());
+        std::remove((state + ".tmp").c_str());
     }
 
     // --- the cache and the background refresher ----------------------------------------------------------------------

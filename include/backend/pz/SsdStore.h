@@ -97,7 +97,9 @@ RunResult runBounded(const std::vector<std::string>& argv, std::chrono::millisec
 class SsdStore {
 public:
     // `device` null: no SSD configured (ABSENT).
-    explicit SsdStore(std::unique_ptr<ISsdDevice> device, std::chrono::milliseconds interval = std::chrono::milliseconds(1000), bool background = false);
+    // `stateFile` (on the eMMC, may be empty): where the highest run id Studio has seen is kept, so that "recovered at mount" is told once after a restart.
+    explicit SsdStore(std::unique_ptr<ISsdDevice> device, std::chrono::milliseconds interval = std::chrono::milliseconds(1000), bool background = false,
+                      std::string stateFile = {});
     ~SsdStore();
     SsdStore(const SsdStore&) = delete;
     SsdStore& operator=(const SsdStore&) = delete;
@@ -123,9 +125,13 @@ private:
     bool haveRuns_{false};
     uint64_t runsSignature_{0};
     int ticksSinceRuns_{0};
-    // What a mount-time recovery closed is reported by pzrec once (by the call that did it): kept here for the life of this process so the UI never loses it.
-    std::vector<uint32_t> latchedRecoveredIds_;
-    uint32_t latchedRecovered_{0}, latchedSkipped_{0};
+    // "Recovered at mount" comes from the run table, never from pzrec's one-shot status fields: a run with reason 7 is the recovery, for as long as the
+    // entry exists. The notice after a restart names the reason-7 runs whose id is above the highest id Studio saw before (`seenBaseline_`, read once
+    // from `stateFile_`); the highest id seen now is written back.
+    std::string stateFile_;
+    bool baselineLoaded_{false};
+    uint32_t seenBaseline_{0}, seenPersisted_{0};
+    std::vector<uint32_t> noticeIds_;
     std::chrono::steady_clock::time_point statusAt_{};
 };
 

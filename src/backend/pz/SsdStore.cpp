@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <utility>
 
 #if !defined(_WIN32)
@@ -250,8 +252,8 @@ bool PzrecCliDevice::call(const char* verb, std::string& json, std::string* erro
 bool PzrecCliDevice::status(std::string& json, std::string* error) { return call("status", json, error); }
 bool PzrecCliDevice::runs(std::string& json, std::string* error) { return call("runs", json, error); }
 
-SsdStore::SsdStore(std::unique_ptr<ISsdDevice> device, std::chrono::milliseconds interval, bool background)
-    : device_(std::move(device)), interval_(interval), background_(background && device_ != nullptr) {
+SsdStore::SsdStore(std::unique_ptr<ISsdDevice> device, std::chrono::milliseconds interval, bool background, std::string stateFile)
+    : device_(std::move(device)), interval_(interval), background_(background && device_ != nullptr), stateFile_(std::move(stateFile)) {
     if (background_) {
         thread_ = std::thread([this] {
             std::unique_lock<std::mutex> lock(m_);
@@ -295,6 +297,32 @@ uint64_t signatureOf(const SsdStatus& s) {
         h = (h ^ v) * 1099511628211ull;
     }
     return h;
+}
+uint32_t readSeenId(const std::string& path) {
+    if (path.empty()) return 0;
+    std::ifstream in(path);
+    if (!in) return 0;
+    const json j = json::parse(in, nullptr, false);
+    if (j.is_discarded() || !j.is_object()) return 0;
+    auto it = j.find("last_seen_run_id");
+    if (it == j.end() || !it->is_number_unsigned() || it->get<uint64_t>() > 0xFFFFFFFFull) return 0;
+    return it->get<uint32_t>();
+}
+
+// Atomic (a temporary file, then rename): a power loss leaves the old value or the new one, never half of it.
+void writeSeenId(const std::string& path, uint32_t id) {
+    if (path.empty()) return;
+    std::error_code ec;
+    const std::string tmp = path + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::trunc);
+        if (!out) return;
+        out << json{{"last_seen_run_id", id}}.dump() << "\n";
+        out.flush();
+        if (!out) { std::filesystem::remove(tmp, ec); return; }
+    }
+    std::filesystem::rename(tmp, path, ec);
+    if (ec) std::filesystem::remove(tmp, ec);
 }
 } // namespace
 
@@ -346,22 +374,8 @@ void SsdStore::refresh(bool force) {
         runsOk = device_->runs(rtext, &rerror) && parseSsdRuns(rtext, runs, &rerror);
         if (!runsOk) runsWhy = "SSD run table unreadable: " + rerror;
     }
-    std::lock_guard<std::mutex> lock(m_);
-    if (ok) {
-        std::vector<uint32_t> fresh;
-        for (uint32_t id : s.recoveredIds)
-            if (std::find(latchedRecoveredIds_.begin(), latchedRecoveredIds_.end(), id) == latchedRecoveredIds_.end()) fresh.push_back(id);
-        if (!fresh.empty()) {
-            latchedRecovered_ += static_cast<uint32_t>(fresh.size());
-            latchedRecoveredIds_.insert(latchedRecoveredIds_.end(), fresh.begin(), fresh.end());
-        } else if (s.recoveredIds.empty() && s.recoveredRuns > 0) {
-            latchedRecovered_ += s.recoveredRuns;
-        }
-        latchedSkipped_ = std::max(latchedSkipped_, s.skippedBadEntries);
-        s.recoveredRuns = latchedRecovered_;
-        s.recoveredIds = latchedRecoveredIds_;
-        s.skippedBadEntries = latchedSkipped_;
-    }
+    uint32_t persistId = 0;
+    std::unique_lock<std::mutex> lock(m_);
     status_ = std::move(s);
     haveStatus_ = true;
     statusAt_ = std::chrono::steady_clock::now();
@@ -374,6 +388,21 @@ void SsdStore::refresh(bool force) {
         ticksSinceRuns_ = 0;
         runsSignature_ = signatureOf(status_);
         if (runsOk) {
+            if (!baselineLoaded_) {
+                baselineLoaded_ = true;
+                seenBaseline_ = seenPersisted_ = readSeenId(stateFile_);
+            }
+            // The recovery is whatever the table says: reason 7 entries above what Studio had seen before this start.
+            noticeIds_.clear();
+            uint32_t maxId = 0;
+            for (const auto& r : runs) {
+                maxId = std::max(maxId, r.id);
+                if (r.reason == 7 && r.id > seenBaseline_) noticeIds_.push_back(r.id);
+            }
+            if (maxId > seenPersisted_) {
+                seenPersisted_ = maxId;
+                persistId = maxId;
+            }
             runs_ = std::move(runs);
             haveRuns_ = true;
             runsWhy_.clear();
@@ -383,6 +412,10 @@ void SsdStore::refresh(bool force) {
             runsWhy_ = runsWhy;
         }
     }
+    status_.recoveredRuns = static_cast<uint32_t>(noticeIds_.size());
+    status_.recoveredIds = noticeIds_;
+    lock.unlock();
+    if (persistId != 0) writeSeenId(stateFile_, persistId);
 }
 
 SsdStatus SsdStore::status() {

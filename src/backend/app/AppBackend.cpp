@@ -1274,7 +1274,9 @@ namespace backend
             std::unique_ptr<pz::ISsdDevice> device;
             if (pzrec && *pzrec && image && *image)
                 device = std::make_unique<pz::PzrecCliDevice>(pzrec, image);
-            ssdStore_ = std::make_unique<pz::SsdStore>(std::move(device), std::chrono::milliseconds(1000), /*background=*/true);
+            // The highest run id seen is kept with Studio's own state on the eMMC (the data dir), so "recovered at mount" is told once after a restart.
+            const std::string stateFile = dataDir_.empty() ? std::string() : (std::filesystem::path(dataDir_) / "ssd-state.json").string();
+            ssdStore_ = std::make_unique<pz::SsdStore>(std::move(device), std::chrono::milliseconds(1000), /*background=*/true, stateFile);
         });
         return *ssdStore_;
     }
