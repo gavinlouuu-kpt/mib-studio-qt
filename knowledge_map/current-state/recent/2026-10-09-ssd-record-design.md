@@ -11,3 +11,9 @@ Coordinator decisions (same day): one control (the Experiment start/stop with `s
 bigger than the free space exports automatically in consecutive parts by frame-id range; v1 uncompressed with a follow-up to
 measure gzip-1 or LZF on the mask dataset; the unattended opt-in applies to SSD runs only and needs a maximum duration; the
 run table of at least 256 entries with no silent overwrite is a hard requirement.
+
+Storage change (Gavin, same day): all recorded data and clips go to the SSD; the eMMC keeps only firmware and internal data (settings,
+state, logs). The note now exports a run from the raw record area to an HDF5 file on the SSD's ext4 area (no eMMC staging, no size cap
+except that area), keeps the parts export as an option, puts Save clip on the same ext4 area (disabled in #649 v1, enabled with the SSD
+path), splits the data dir (settings on the eMMC, user data in a new `--storage-dir`), and states what the UI shows without the SSD:
+nothing can be saved, explicitly, with no eMMC fallback. Time estimates are now a function of the unmeasured block throughput.

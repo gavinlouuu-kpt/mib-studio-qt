@@ -5,14 +5,15 @@ Status: active (design, no code)
 ## Goal
 
 [#667](https://github.com/gavinlouuu-kpt/mib-studio-qt/issues/667): on the PZ7035, Record writes the experiment to the
-SATA SSD through the PL writer (coordinator decisions 1 to 6 in the issue), Studio lists the SSD runs as experiments and exports
-one as the PC experiment HDF5, which YOFO Review opens unchanged. This note is the Studio side. It builds on the parity spec
+SATA SSD through the PL writer (coordinator decisions 1 to 6 in the issue, as amended by Gavin on 2026-10-09: all recorded data and clips go
+to the SSD, the eMMC is only for firmware and internal data), Studio lists the SSD runs as experiments and exports one as the PC
+experiment HDF5 on the SSD's ext4 area, which YOFO Review opens unchanged. This note is the Studio side. It builds on the parity spec
 ([2026-10-08-playback-save-parity.md](2026-10-08-playback-save-parity.md), #653) and on the board owner's
-`docs/FRAME_RING_FEASIBILITY.md` (pz7035 #33). Order of work stays: #649 v1 (ring playback and Save clip to the eMMC) first.
+`docs/FRAME_RING_FEASIBILITY.md` (pz7035 #33). Order of work: #649 v1 (ring playback first; Save clip arrives with the SSD path, section 5) first.
 
 Facts used (all from repository files, none newly measured): store record 59,392 B (4 KiB record set + 49,152 B image +
-6,144 B packed mask); SSD sustained about 110 MB/s rested and about 37 to 46 MB/s after the SLC cache is spent; eMMC
-`yofo-data` 7 GiB free and about 22 MB/s (#666); uncached `/dev/mem` read 68 MB/s; run table of 29 slots with 16-byte entries
+6,144 B packed mask); SSD sustained about 110 MB/s rested and about 37 to 46 MB/s after the SLC cache is spent; the eMMC
+`yofo-data` partition is for Studio's settings and state only (#666); uncached `/dev/mem` read 68 MB/s; run table of 29 slots with 16-byte entries
 `{start_lba, records, end_lba, flags}` and a `PZRT` trailer sector per run (`firmware/pz7035/sata_rec.h`, `store_rec.h`).
 
 ## Findings that shape the design
@@ -42,8 +43,8 @@ Facts used (all from repository files, none newly measured): store record 59,392
 
 | # | Question | Recommendation |
 |---|---|---|
-| D1 | One control or two? "Record" (Gavin's word) vs the existing Start/Stop Experiment. | **Accepted.** **One control: the existing Experiment start/stop with a storage target `ssd`**, labelled "Record to SSD" while the SSD is ready, "Record to eMMC (metadata only)" otherwise. It keeps the gates, provenance, accounting and idle handling the PC experiment has. PC raw "Record" stays hidden on the PZ. |
-| D2 | Where does the export land? | **Accepted with a change.** Staged on the eMMC with the space check (section 3). A run bigger than the free space exports automatically in consecutive parts by frame-id range (section 3.2); the user downloads a part, deletes it, then exports the next. Raw-run download stays a later phase. v1 is uncompressed (the PC writer has no deflate); measuring compression is a follow-up (section 3.3). |
+| D1 | One control or two? "Record" (Gavin's word) vs the existing Start/Stop Experiment. | **Accepted.** **One control: the existing Experiment start/stop with a storage target `ssd`**, labelled "Record to SSD"; disabled with the reason when the SSD is not ready (there is no eMMC fallback for user data, section 3.4). It keeps the gates, provenance, accounting and idle handling the PC experiment has. PC raw "Record" stays hidden on the PZ. |
+| D2 | Where does the export land? | **Changed by Gavin (2026-10-09, #667 comment).** All recorded data goes to the SSD, clips included; the eMMC holds only firmware and internal data (settings, state, logs, OTA later). The SSD has two areas: the raw record area (PL drain) and an ext4 area that Linux mounts through a block device. An export is raw area to HDF5 file on the ext4 area (section 3); there is no eMMC staging and no 13-minute cap. Parts stay an *option* for downloads (section 3.2). Compression follow-up stays (section 3.3). v1 is uncompressed (the PC writer has no deflate). |
 | D3 | Does Stop during a recording close the run and freeze the ring for review? | **Accepted** (section 5). |
 | D4 | Idle rule for SSD runs. | **Accepted with bounds.** The idle stop stays unchanged for every other mode. The opt-in "keep recording when I leave" applies only to `storage=ssd` runs and requires a **maximum duration entered at start**: there are no unbounded unattended runs. The run ends through the normal Stop path at that time, so LED and strobe shutdown is identical. The run card shows "unattended until HH:MM". |
 
@@ -61,7 +62,7 @@ reads runs back. The window is the board owner's to define; Studio needs the fol
 | R4 | **A larger run table (hard requirement: no silent overwrite)**: at least 256 entries (a table of 64-byte entries in sectors after the superblock), no `run % N` overwrite while there is free space; an explicit "run table full" state. | Experiment list. |
 | R5 | **Run entry fields**: run id, start unix ms and client tag (from R2), first and last frame id, first and last PL timestamp ticks and the tick rate (duration is derived), records, frames seen, frames empty, dropped, failed, drain recoveries, completion reason (0 clean, 1 drain fault, 5 not stopped, 6 length limit, 7 recovered at mount, as in `store_rec.h`), flags. | Experiment list and export. |
 | R6 | **Drop placement**: each stored record carries `lost_before` (a u32 in its FRAME record: records dropped since the previous stored record). | Studio can reconstruct exactly where the run has gaps and book them (`sequenceGaps`), without a per-run list that can overflow. |
-| R7 | **Read DMA**: `read(lba, sectors)` into a PS buffer in the PL carve-out (size and base reported by the window; at least 16 MiB, double-buffered or a ring of chunks), completion by status or IRQ, error code on a failed read. Refused (clear status) while RECORDING. | Export (section 3); replaces the 512 B port. |
+| R7 | **Linux block access to the SSD** (replaces the read DMA of the first version of this note): the raw record area is readable by Linux, read only, as a block range (a partition or an offset window) of the same block device that carries the ext4 area, with large sequential reads (at least 1 MiB per request) at the rate the board owner measures; the partition table and the PL superblock must not collide at LBA 0; refused or throttled while RECORDING so that filesystem I/O can never cause a drain drop (arbitration is the board owner's, drain writes have priority). | Export (section 3), clips and Files on the ext4 area (section 3.4). |
 | R8 | **Ring and drain coexistence**: the drain is a pure consumer of the shared store ring; stopping a run does not clear the ring and freezes it as #649 specifies. A ring mode in which overwrite is loss (SSD drain) or not loss (review only) is set per run. | Section 5. |
 | R9 | **Mount-time recovery** reports what it closed: count of runs closed, their ids, reason 7, in the window and in the run entry. | Section 4. |
 
@@ -69,7 +70,7 @@ reads runs back. The window is the board owner's to define; Studio needs the fol
 
 New bridge commands (JSON, additive, listed in `bridge-contract.json` when implemented; the ABI number is decided then):
 `ssd_status`, `ssd_runs {offset, limit}`, `ssd_run_info {run}`, `ssd_export_start {run, first?, last?}`, `ssd_export_status`,
-`ssd_export_cancel`, `ssd_export_delete {run}`; `experiment_start` gains `storage: "ssd" | "emmc"` and `keep_recording`.
+`ssd_export_cancel`, `ssd_export_delete {run}`; `experiment_start` gains `storage: "ssd"` (the only target once S2 ships; the eMMC metadata-only target is transitional) and `keep_recording` with `max_duration_s`.
 A platform capability `ssd_store` is true only when the PL image reports the writer, so the bundle and UI degrade to today's
 behaviour on an older image. The PS code is one class, `SsdStore`, behind an interface (`ISsdDevice`: window registers and the
 read DMA) with two implementations: the `/dev/mem` one and a file-backed fake for tests (section 6).
@@ -93,7 +94,7 @@ Source: the SSD run table (R4, R5), read through the status path (no DMA needed;
 | Dropped (count and percent of frames that passed the filter) | R5 |
 | Completion | clean; clean, ended at the length limit; partial (declared drops); recovered after power loss; failed |
 | Size on SSD, estimated HDF5 size | records x 59,392 B; records x about 98.5 KB |
-| Export | none, exporting (progress), ready on the eMMC (size, Download, Delete), failed (reason) |
+| Export | none, exporting (progress), ready (size, path on the SSD, Download, Delete), failed (reason) |
 
 Actions: Export (full or range), Download, Delete export, Open in Review (only after the export, using the existing review open
 on the board's path, or download and open on the PC). **No delete of the SSD run in v1** (the run table is append only; erasing
@@ -134,50 +135,83 @@ Per record in the run, in frame-id order:
 | reason 1 or 5, failed records | `incompleteLoss` (`failed` if the run produced nothing) |
 | reason 7 (recovered at mount) | `incompleteLoss`, `reconciled = false`: the true totals are unknown, the file says so |
 
-### 3.2 Where the file lands, and why not streamed
+### 3.2 Where the file lands
 
-- **Stage on the eMMC data partition**, `<data-dir>/exports/run-<id>-<start>.h5`, written as `.run-<id>.part` and renamed when
+- **On the SSD's ext4 area**, `<ssd>/yofo-studio/experiments/run-<id>-<start>.h5`, written as `.run-<id>.part` and renamed when
   complete, so a crash, cancel or power loss never leaves a file that looks finished. Stale `.part` files are removed at server start.
-  Served afterwards by the Files route (#661, Range, 2 concurrent downloads), which already confines paths and checks Origin.
-- **Streaming the HDF5 into a download is not feasible**: the HDF5 library needs a seekable file (chunk index and superblock are
-  rewritten at close). Hand-writing a streamable layout would be a second writer, with its own parity risk. Rejected.
-- **A raw-run download is the streaming path** (phase S3): the store records from the SSD DMA straight into the HTTP body
-  (`/ssd/runs/<id>/raw`, Range, same gates), no staging, no eMMC limit. The PC then runs `pz_store_to_mib.py` (extended to read a
-  stream with the run header). It is the answer for runs that do not fit the eMMC, at the price of a PC-side step.
-- **Space check, before the export starts and again every 64 MiB written**: required = estimated HDF5 size x 1.05 + 512 MiB
-  reserve (settings, saved clips, logs). Estimate = records x 98.5 KB (image 49,152 + mask 49,152 + a 192-byte row, plus HDF5
-  overhead). Refused with the numbers and the largest frame range that would fit. Mid-export `ENOSPC` aborts, deletes the part file,
-  and says so. Existing exports are never auto-deleted.
-- **Runs larger than the free space export in consecutive parts** (decision D2). Studio computes the part size from the free space
-  (free minus the 512 MiB reserve, divided by 98.5 KB per record, rounded down to whole records) and splits the run by frame-id
-  range into N parts; the UI says "part 1 of N". An export job produces one part; the user downloads it, deletes it, and starts the
-  next part (the list row offers "Export part k of N" and shows which parts are on the eMMC). No range arithmetic for the user.
-  Each part is a complete experiment file: the full run provenance, `accounting_*` for its own frame range (the run totals appear
-  in `config_json` as `run_totals`, so a part is not mistaken for the whole run), and its frame range and part number in
-  `/experiment_info` (`export_part`, `export_parts`, `export_first_frame`, `export_last_frame`). A part boundary never splits a
-  frame, and a gap (`lost_before`) that falls on a boundary is booked in the part that contains the following record. A run that
-  fits is a single file without part attributes.
-- Only one export runs at a time, and not while a run is RECORDING (R7 refuses the DMA); the UI says "Export available after the
-  run is stopped".
+  Served by the Files route (#661, Range, 2 concurrent downloads), which already confines paths and checks Origin, with the SSD mount as
+  a second root (section 3.4). Nothing is staged on the eMMC.
+- **The export reads the raw record area through the block device (R7) and writes the HDF5 to the ext4 area of the same drive.**
+  Both go over the one SATA link, so the cost per record is 59.4 KB read plus 98.5 KB written (3.3).
+- **Streaming the HDF5 into a download is still not feasible** (the HDF5 library needs a seekable file), and is no longer needed: the file
+  is on the SSD and downloads with Range from there.
+- **Space check, before the export starts and every 64 MiB written**: required = estimated HDF5 size x 1.05 + 1 GiB reserve on the ext4
+  area. Estimate = records x 98.5 KB (image 49,152 + mask 49,152 + a 192-byte row, plus HDF5 overhead). Refused with the numbers when
+  it does not fit; mid-export `ENOSPC` aborts and deletes the part file. Existing exports and clips are never auto-deleted. The
+  ext4 area has a fixed size set when the drive is prepared (open question below), so a long recording can still outgrow it.
+- **Parts are an option, not a necessity** (D2 as accepted before the storage change): "Export in parts of K frames" splits a run by
+  frame-id range into N complete experiment files (full run provenance, `accounting_*` for the part's own range, the run totals in
+  `config_json.run_totals`, and `export_part`, `export_parts`, `export_first_frame`, `export_last_frame` in `/experiment_info`; a part
+  boundary never splits a frame, and a gap that falls on a boundary is booked in the part holding the following record). It is
+  offered for downloads to a PC with little disk space, and as the way out when the ext4 area cannot hold the whole run (then
+  "part 1 of N" is sized to the free space, the user downloads and deletes it, and exports the next). A run that is exported whole is
+  a single file without part attributes.
+- **A raw-run download** (`/ssd/runs/<id>/raw`, Range, same gates, phase S4) stays an option: store records straight to the HTTP body, the
+  PC converts with `pz_store_to_mib.py`. It avoids the ext4 write and is the fastest way to move a very large run.
+- One export runs at a time, and **none while a run is RECORDING**: Studio refuses it and the UI says "Export available after the run is
+  stopped". This is Studio's rule on top of the board owner's drain-priority arbitration; it can be relaxed to a rate-limited read if
+  the board test shows no drops with concurrent I/O.
 
 ### 3.3 How long it takes (estimates, to be replaced by a board measurement)
 
-Rates used: typical scene 86 valid frames/s (issue decision 1); eMMC write 22 MB/s (measured, #666); PS read of the DMA buffer
-68 MB/s (measured uncached `/dev/mem`, feasibility note); SSD read about 130 MB/s (measured, `SATA_BRINGUP.md`). The eMMC write is the
-slowest stage, so the stages overlap and the time is about the HDF5 size / 22 MB/s.
+The limit is no longer the eMMC. It is the block path (the PL block port plus whatever serves it to Linux: a kernel driver or an NBD/ublk
+server over UIO, the board owner's choice), shared by the 59.4 KB read and the 98.5 KB write of each record, so time per record is
+158 KB / B, with B the sustained block throughput (unmeasured). The three columns assume B = 30, 60 and 100 MB/s. The drive itself is
+about 110 MB/s rested, 37 to 46 MB/s after the SLC cache is spent (A400, Gen1), so a multi-GB write can fall into the slow region; a Gen2
+link and a DRAM TLC SSD (Gavin's plan) lift that ceiling. Typical scene = 86 valid frames/s.
 
-| Run | Records | SSD | HDF5 | Export time | Fits the eMMC (7 GiB)? |
-|---|---|---|---|---|---|
-| Typical, 1 min | 5,160 | 306 MB | about 0.51 GB | about 25 s | yes |
-| Typical, 10 min | 51,600 | 3.06 GB | about 5.1 GB | about 4 min | yes (70 %) |
-| Typical, 13 min | about 67,000 | 4.0 GB | about 6.6 GB | about 5 min | limit; longer needs a range or S3 |
-| Large: typical, 1 h | 309,600 | 18.4 GB | about 30.5 GB | about 23 min if it fitted | **no**: range export (about 13 min at a time) or raw download (about 4.5 min of SSD read) |
-| Dense, 60 s (SSD-limited at about 37 MB/s, about 620 records/s) | about 37,000 | 2.2 GB | about 3.7 GB | about 3 min | yes |
+| Run | Records | Raw on SSD | HDF5 | B = 30 MB/s | B = 60 MB/s | B = 100 MB/s |
+|---|---|---|---|---|---|---|
+| Typical, 1 min | 5,160 | 0.31 GB | 0.51 GB | 27 s | 14 s | 8 s |
+| Typical, 10 min | 51,600 | 3.1 GB | 5.1 GB | 4.5 min | 2.3 min | 1.4 min |
+| Typical, 1 h | 309,600 | 18.4 GB | 30.5 GB | 27 min | 14 min | 8 min |
+| Dense, 60 s (drain-limited at about 37 MB/s, about 620 records/s) | about 37,000 | 2.2 GB | 3.7 GB | 3.2 min | 1.6 min | 1 min |
 
-Compression (gzip on the chunks) could roughly halve the file but is not in the PC layout (the PC writer has no deflate) and its ARM CPU cost is
-unmeasured; v1 stays uncompressed. **Follow-up item:** measure gzip level 1 and LZF on the mask dataset on the A9 (the mask is mostly zeros, so
-it should shrink far more than the image). If the eMMC write rate is the bottleneck, a cheaper filter may cut the export time; h5py and Review read
-filtered datasets transparently, so only the ARM build's HDF5 filter support and the CPU cost need checking. Download to the PC then adds file size / min(eMMC read about 23 MB/s, network): 5.1 GB about 4 min.
+No size cap other than the ext4 area. Downloading the file to the PC adds file size / min(SSD read, network): 5.1 GB in about 1 to 2
+minutes at 50 to 100 MB/s. The PS ceiling is also unmeasured: the HDF5 writer on the A9 (chunk (1, H, W), no filter) and the block driver
+share the CPU; the earlier `/dev/mem` read of 68 MB/s is an upper bound for any PS copy.
+
+Compression (gzip on the chunks) could roughly halve the file but is not in the PC layout (the PC writer has no deflate) and its ARM CPU
+cost is unmeasured; v1 stays uncompressed. **Follow-up item:** measure gzip level 1 and LZF on the mask dataset on the A9 (the mask is
+mostly zeros, so it should shrink far more than the image). If the block path or the drive is the bottleneck, a cheaper filter may cut the
+export time; h5py and Review read filtered datasets transparently, so only the ARM build's HDF5 filter support and the CPU cost need checking.
+
+### 3.4 Storage layout and the data directory
+
+| What | Where | Why |
+|---|---|---|
+| Studio settings, state, logs, the run window, future OTA | the eMMC data partition, `/var/lib/yofo-studio` (#666, unchanged) | Gavin: the eMMC is for firmware and internal data. Survives without the SSD. |
+| Raw run records | the SSD raw record area, written by the PL drain | full-rate path, not a Linux file |
+| Experiment HDF5 exports, clips (Save from the ring), anything the user saves | the SSD ext4 area, `<ssd>/yofo-studio/{experiments,clips}/` | all recorded data goes to the SSD |
+
+- **Mount.** A `mount-ssd.sh`, in the style of `mount-data.sh`, mounts the ext4 area by label (`yofo-ssd`) at a fixed mount point
+  (for example `/mnt/ssd`) with `noatime,commit=30,errors=remount-ro`, after the block device exists. The unit does not wait for it:
+  the server polls the mount (every 2 s) and the state becomes "SSD absent" until it appears and "SSD ready" when it does (a SATA
+  link is not hot-plugged, but the block driver and the PL link come up after Studio starts). After an unclean power-off the journal is
+  replayed by the mount; if a check is needed the script runs `e2fsck -p` first and reports it. The block driver and the label are the board
+  owner's to provide.
+- **Studio configuration.** `--data-dir` stays on the eMMC. A new `--storage-dir` (the SSD mount) holds user data. Default output
+  paths (`resolveRemoteDefault`) move to the storage directory when it is mounted and there is **no default when it is not**. The Files
+  view and the download route (#661) get the storage directory as a second confined root (own `openat2` confinement, same Origin and
+  Range rules); the data directory root stays for logs and the run window.
+- **Storage status.** `recordingTarget` classifies the target as `ssd` (ext4 on the SSD device), `emmc`, `ram` or `absent`. The gate
+  `storage.persistent` (warn on RAM) is replaced for experiments by a **blocking** gate `storage.ssd`: SSD READY, ext4 area mounted,
+  writable (the existing probe), free space for the minimum run. Diagnostics shows both: "Settings: eMMC (persistent)" and
+  "Data: SSD, 212 GB free" or "Data: no SSD".
+- **Without the SSD nothing can be saved, and the UI says so explicitly.** Start Experiment, Save clip, Export and the Files "save" targets
+  are disabled with the same reason ("No SSD: nothing can be saved"). A run in progress when the SSD disappears is closed with the best-effort
+  trailer and listed as failed or recovered. The eMMC is never used as a fallback for user data. Today's metadata-only experiment to the eMMC
+  is the transitional behaviour until S2 ships; at S2 it is removed from the UI (the coordinator is asked to confirm).
 
 ## 4. UI states (d)
 
@@ -185,7 +219,7 @@ The Run page gets a storage strip (also shown in Diagnostics) and the Experiment
 
 | State | Where | Shown | Behaviour |
 |---|---|---|---|
-| **SSD absent** (R1 ABSENT) | strip, start gate | "No SSD detected" | Record to SSD disabled with the reason; the eMMC metadata-only experiment stays available. No spinner. |
+| **SSD absent** (R1 ABSENT, or the ext4 area not mounted) | strip, banner, start gate | "No SSD: nothing can be saved" | Experiments, exports and Save clip are all disabled with that reason (section 3.4). Run, previews, live results and ring playback keep working. No spinner, no fallback to the eMMC. |
 | **Initialising / recovering** (INITIALISING, RECOVERING) | strip | "SSD starting" / "SSD recovering (n runs closed)" with elapsed time | Start disabled; auto-clears. After a mount-time recovery (R9) a notice names the runs it closed and links to them in the list. |
 | **Ready** | strip | model, free space, "about N h at the typical rate" (explicitly "dense scenes use more") | Start enabled. |
 | **Recording** | strip, run card | stored records, empty frames skipped (neutral, not an error), dropped (amber when above zero, red above 1 % of passed frames), recoveries so far (informational: 1 to 2 per GB is normal), write rate, ring fill, elapsed | A drop count is cumulative and never resets inside a run; the card shows the rate over the last 10 s so a burst is visible. |
@@ -205,8 +239,11 @@ Premise (decision 3, R8): one store ring in PS DDR; the SSD drain is a consumer 
   the filter and the trailer is written), and then the ring is frozen. The review buffer is the last 0.9 to 2.1 s of **every** frame
   (feasibility note: 256 to 600 MiB), whether or not the SSD run kept them. A cell frame that the SSD dropped under overload is
   still in the ring if it is recent, and the playback marks it ("not on the SSD").
-- **Save clip** (to the eMMC, #649) works after Stop exactly as without a run; it is independent of the SSD run, and a clip and an
-  export write to the same eMMC (22 MB/s shared), so Studio runs them one at a time and says which one is waiting.
+- **Save clip** (from the ring, after Stop) writes an HDF5 to the SSD's ext4 area, `<ssd>/yofo-studio/clips/`, with the same
+  `Hdf5Service` writer and the same layout as an export (content as decided in #649). It arrives with the SSD path: in #649 v1 the
+  control is **disabled** with "Saving needs the SSD (not available yet)", never silently missing and never written to the eMMC. With the SSD
+  absent it stays disabled with "No SSD: nothing can be saved". A clip and an export write to the same drive, so Studio runs them one at a
+  time and says which one is waiting.
 - **While recording** the ring is moving, so playback and Save clip are not offered (the live results view continues). Reading
   the ring range while running is possible (feasibility 4.2) but not needed.
 - **Ring mode conflict to settle with the board owner (R8):** with the drain active, overwriting a record the drain has not
@@ -227,7 +264,7 @@ Premise (decision 3, R8): one store ring in PS DDR; the SSD drain is a consumer 
 3. **Review opens it**: the exported file goes through the bridge's review open in the existing backend test harness (frames > 0,
    metrics table, accounting panel states for `complete`, `intentionallyPartial`, `incompleteLoss` / not reconciled).
 4. **Accounting table test**: every row of the section 3.1 table as a table-driven unit test, including `reconcile` true/false.
-5. **Space, parts, unattended runs and cleanup**: part sizing and boundaries (a gap on a boundary, a run that fits in one file), no opt-in without a maximum duration, stop at the deadline through the normal path, injected `statvfs` (full, almost full, ample), ENOSPC at the 64 MiB check, cancel mid-export, a stale
+5. **Space, parts, unattended runs, storage layout and cleanup**: a missing mount point and a mount that appears later (the fake is a temporary directory plus a parsed `mountinfo` sample), SSD absent disabling every save path, default paths with and without the mount, the second Files root,  part sizing and boundaries (a gap on a boundary, a run that fits in one file), no opt-in without a maximum duration, stop at the deadline through the normal path, injected `statvfs` (full, almost full, ample), ENOSPC at the 64 MiB check, cancel mid-export, a stale
    `.part` at start-up, rename atomicity, two exports refused, export refused while RECORDING.
 6. **State machine**: a fake register window (a small model of R1 to R9) drives `SsdStore` through every transition, including
    RECOVERING during a run, WEDGED, a drop burst and a mount-time recovery; asserts the gates, the counters and the strip view
@@ -236,10 +273,10 @@ Premise (decision 3, R8): one store ring in PS DDR; the SSD drain is a consumer 
 7. **Security**: the export download goes through the existing Files route tests (Origin, confinement, Range, permits); a new
    route (`/ssd/runs/<id>/raw`, S3) gets the same.
 8. **Throughput on the dev PC**: a 50,000-record synthetic image measures the CPU-bound part of the exporter (decode, unpack,
-   HDF5 write to a tmpfs) so a regression is visible without the board; the eMMC and DMA parts are measured once on the board.
+   HDF5 write to a tmpfs) so a regression is visible without the board; the block path and the ext4 write are measured once on the board.
 
-Not testable here, and to be run in a board slot: the DMA read (R7), real drops and recoveries, mount-time recovery after a real
-power loss, the eMMC write rate during an export, and the Run page with real counters.
+Not testable here, and to be run in a board slot: the block read of the raw area (R7) and the ext4 area (mount, journal replay after power loss, drain priority with concurrent I/O), real drops and recoveries, mount-time recovery after a real
+power loss, the export rate end to end, and the Run page with real counters.
 
 ## 7. Phasing
 
@@ -248,8 +285,9 @@ power loss, the eMMC write rate during an export, and the Run page with real cou
 | S0 | This note; agree R1 to R9 with the board owner | now |
 | S1 | `SsdStore`, fake device and window, `ssd_status`, `ssd_runs`, strip and the Experiments list (read only), gate `storage.ssd` | the window (R1 to R6) |
 | S2 | Record to SSD (`experiment_start storage=ssd`), live counters, accounting, idle option | results13 plus the writer image |
-| S3 | Export to the eMMC and download; Review opens it | R7 (read DMA) |
-| S4 | Raw-run download, range export, SSD-run delete (if wanted) | decisions |
+| S3 | Storage layout (mount, `--storage-dir`, second Files root, `storage.ssd` gate), export to the ext4 area, download; Review opens it | R7 (block access) and the ext4 area |
+| S3b | Save clip from the ring to the ext4 area (#649, enabled once S3 lands) | S3 |
+| S4 | Raw-run download, parts export option, raw-area reclaim or delete (if wanted) | decisions |
 
 S1 can be built and tested against the fake before any new PL image exists. Nothing starts before #649 v1 is merged.
 
@@ -257,4 +295,7 @@ S1 can be built and tested against the fake before any new PL image exists. Noth
 
 R1 to R9 above, and: the filter predicate (any RESULT, or any valid RESULT) and whether it can sample invalid-only frames
 like the PC; whether `lost_before` fits the FRAME record without an ABI bump; the DMA buffer size and where it sits relative to the ring
-carve-out (it reduces the ring); and the measured rate of the read DMA into PS DDR.
+carve-out (it reduces the ring); and the measured rate of the read DMA into PS DDR. After Gavin's storage change (R7): the block device design
+(kernel driver or NBD/ublk over UIO) and its sustained throughput B; how the partition table and the PL superblock share LBA 0; the split
+between the raw area and the ext4 area (raw is append only in the run table: what reclaims it, and who decides?); and the arbitration test
+(drain drops with concurrent ext4 I/O).
