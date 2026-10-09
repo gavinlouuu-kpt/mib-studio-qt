@@ -3090,6 +3090,68 @@ nlohmann::json ringStatusJson(backend::AppBackend& backend) {
 
 std::string BackendFacade::fetchRingStatusJson() { return ringStatusJson(backend_).dump(); }
 
+namespace {
+constexpr uint64_t kSectorBytes = 512;
+
+// The SATA SSD as the UI needs it (#667 S1, ABI 35): the state and why, the log's room, the open run and its live counters, and what the last
+// mount-time recovery closed. `usable` is true when a run could be recorded now (READY); RECORDING / STOPPING are `active`.
+nlohmann::json ssdStatusJson(backend::AppBackend& app, bool full) {
+    namespace pz = backend::pz;
+    auto& store = app.ssdStore();
+    const pz::SsdStatus st = store.status();
+    nlohmann::json j{{"configured", store.configured()},
+                     {"state", pz::ssdStateName(st.state)},
+                     {"usable", st.state == pz::SsdState::Ready},
+                     {"active", st.state == pz::SsdState::Recording || st.state == pz::SsdState::Stopping},
+                     {"reason", st.reason},
+                     {"last_error", st.lastError}};
+    if (!full) return j;
+    j["raw_bytes"] = st.rawSectors * kSectorBytes;
+    j["free_bytes"] = st.freeSectors * kSectorBytes;
+    j["min_run_bytes"] = st.minRunSectors * kSectorBytes;
+    j["runs"] = st.runs;
+    j["next_run_id"] = st.nextRunId;
+    j["table_entries"] = st.tableEntries;
+    j["recovered_runs"] = st.recoveredRuns;
+    j["recovered_ids"] = st.recoveredIds;
+    j["skipped_bad_entries"] = st.skippedBadEntries;
+    if (st.openRun) {
+        j["open_run"] = {{"id", st.openRunId}, {"start_unix_ms", st.openStartUnixMs}, {"client_tag", st.openClientTag}, {"wall_source", st.openWallSource},
+                         {"seen", st.counters.seen}, {"empty_filtered", st.counters.emptyFiltered}, {"invalid_not_sampled", st.counters.invalidNotSampled},
+                         {"passed", st.counters.passed}, {"written", st.counters.written}, {"dropped", st.counters.dropped}, {"failed", st.counters.failed},
+                         {"bytes_written", st.counters.bytesWritten}, {"drain_kbps", st.counters.drainKbps},
+                         {"first_frame_id", st.counters.firstFrameId}, {"last_frame_id", st.counters.lastFrameId}};
+    } else {
+        j["open_run"] = nullptr;
+    }
+    return j;
+}
+
+nlohmann::json ssdRunsJson(backend::AppBackend& app) {
+    namespace pz = backend::pz;
+    std::vector<pz::SsdRun> runs;
+    std::string why;
+    const bool ok = app.ssdStore().runs(runs, &why);
+    nlohmann::json list = nlohmann::json::array();
+    for (const auto& r : runs) {
+        // A run recovered at mount has unknown totals: the UI shows no numbers for it (the counts stay in the JSON as the entry's own, flagged).
+        nlohmann::json e{{"id", r.id}, {"open", r.open}, {"deleted", r.deleted}, {"incomplete", r.incomplete},
+                         {"start_unix_ms", r.startUnixMs}, {"wall_source", r.wallSource}, {"client_tag", r.clientTag},
+                         {"filter", r.filter}, {"sampler_n", r.samplerN}, {"reason", r.reason}, {"counts_unknown", r.countsUnknown}, {"totals_inconsistent", r.totalsInconsistent},
+                         {"size_bytes", r.endLba > r.startLba ? (r.endLba - r.startLba) * kSectorBytes : 0}, {"recoveries", r.recoveries},
+                         {"first_frame_id", r.firstFrameId}, {"last_frame_id", r.lastFrameId}, {"tick_hz", r.tickHz},
+                         {"first_ticks", r.firstTicks}, {"last_ticks", r.lastTicks},
+                         {"seen", r.seen}, {"empty_filtered", r.emptyFiltered}, {"invalid_not_sampled", r.invalidNotSampled},
+                         {"passed", r.passed}, {"written", r.written}, {"dropped", r.dropped}, {"failed", r.failed}};
+        list.push_back(std::move(e));
+    }
+    return {{"ok", ok}, {"reason", ok ? std::string() : why}, {"runs", std::move(list)}};
+}
+} // namespace
+
+std::string BackendFacade::fetchSsdStatusJson() { return ssdStatusJson(backend_, true).dump(); }
+std::string BackendFacade::fetchSsdRunsJson() { return ssdRunsJson(backend_).dump(); }
+
 std::vector<std::uint8_t> BackendFacade::fetchRingFramePacket(std::uint64_t seq, std::string *error) {
     std::vector<std::uint8_t> out;
     if (!initialized_) {
@@ -3216,6 +3278,8 @@ std::string BackendFacade::fetchInstrumentStatusJson() {
                                    {"last_sync_unix_ms", wall.lastSyncUnixMs}};
     // The every-frame ring (#649 v1, ABI 34): capacity, the buffered range and whether it can be played back.
     const nlohmann::json ring = ringStatusJson(backend_);
+    // The SSD record store in brief (#667 S1, ABI 35): the state and why; fetch_ssd_status has the rest.
+    const nlohmann::json ssd = ssdStatusJson(backend_, false);
     // The PL result stream while an experiment runs (#501 live statistics): cumulative counters,
     // so the UI turns successive polls into rates. The counters restart with each run.
     nlohmann::json results{{"available", false}};
@@ -3240,7 +3304,7 @@ std::string BackendFacade::fetchInstrumentStatusJson() {
                               {"error", initialized_ ? "not a PZ7035 instrument" : "backend is not initialized"},
                               {"results", results},
                               {"mode", mode},
-                              {"storage", storage}, {"wall_clock", wallClock}, {"ring", ring}}
+                              {"storage", storage}, {"wall_clock", wallClock}, {"ring", ring}, {"ssd", ssd}}
             .dump();
     }
     const auto nowUs = static_cast<uint64_t>(
@@ -3251,7 +3315,7 @@ std::string BackendFacade::fetchInstrumentStatusJson() {
         return nlohmann::json{
             {"available", false}, {"error", s.error}, {"pinned_profile_id", s.pinnedProfileId}, {"mode", mode},
             {"results", results},
-            {"storage", storage}, {"wall_clock", wallClock}, {"ring", ring}}
+            {"storage", storage}, {"wall_clock", wallClock}, {"ring", ring}, {"ssd", ssd}}
             .dump();
     }
     nlohmann::json expected = nullptr;
@@ -3322,7 +3386,7 @@ std::string BackendFacade::fetchInstrumentStatusJson() {
           {"frames", s.latencyFrames}}},
         {"mode", mode},
         {"results", results},
-        {"storage", storage}, {"wall_clock", wallClock}, {"ring", ring},
+        {"storage", storage}, {"wall_clock", wallClock}, {"ring", ring}, {"ssd", ssd},
     }.dump();
 }
 

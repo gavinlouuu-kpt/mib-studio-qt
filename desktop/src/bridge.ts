@@ -1,5 +1,6 @@
 import { decodeRunPreview } from "./runPreview";
 import { decodeRingFrame, type RingStatus } from "./ringPlayback";
+import type { SsdBrief, SsdRuns, SsdStatus } from "./ssdView";
 import type { StartupPreference } from './startupPreference';
 import type { ReviewExportRequest, ReviewExportStatus } from "./reviewExport";
 // Typed client for the Tauri command layer that wraps the Rust ↔ C++ bridge
@@ -615,6 +616,8 @@ export interface InstrumentStatus {
   storage?: RecordingTargetState;
   /** The every-frame ring (ABI 34): capacity, the buffered range and whether playback is offered. */
   ring?: RingStatus;
+  /** The SATA SSD record store in brief (ABI 35, #667 S1); `fetchSsdStatus` has the rest. */
+  ssd?: SsdBrief;
   /** Where saved files' wall-clock times come from (G14): the board has no RTC. */
   wall_clock?: { synced: boolean; source: "client_sync" | "board_clock_unsynced" | "system_clock"; offset_ns: number; last_sync_unix_ms: number };
   error?: string;
@@ -865,6 +868,9 @@ export const bridge = {
   fetchRingFrame: async (seq: number) => decodeRingFrame(await invoke<ArrayBuffer>("fetch_ring_frame", { seq })),
   ringFreeze: () => invokeCommand("ring_freeze"),
   ringResume: () => invokeCommand("ring_resume"),
+  // The SATA SSD record store, read only (ABI 35, #667 S1).
+  fetchSsdStatus: () => invoke<SsdStatus>("fetch_ssd_status"),
+  fetchSsdRuns: () => invoke<SsdRuns>("fetch_ssd_runs"),
   fetchBackground: () => pullFrame("fetch_background_packet", 4),
   setBackgroundFromCurrentFrame: () =>
     sourceMutation("set_background_from_current_frame"),

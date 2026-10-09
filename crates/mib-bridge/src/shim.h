@@ -210,6 +210,8 @@ public:
     rust::String ring_frame_error();
     BridgeCommandResult ring_freeze();
     BridgeCommandResult ring_resume();
+    rust::String fetch_ssd_status();
+    rust::String fetch_ssd_runs();
     BridgeCommandResult set_service_mode(bool on);
     BridgeCommandResult set_instrument_led(double delay_us, double width_us);
     rust::Vec<std::uint8_t> fetch_run_preview();

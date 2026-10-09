@@ -25,6 +25,9 @@ import {open, save, confirm} from "./transport/dialogs";
 import { volatileDataNotice } from "./diagnosticsView";
 import { useWallClockSync } from "./transport/wallClockSync";
 import { DiagnosticsPanel } from "./components/DiagnosticsPanel";
+import { SsdRunsPanel } from "./components/SsdRunsPanel";
+import { SsdStrip } from "./components/SsdStrip";
+import { stripView, type SsdStatus } from "./ssdView";
 import { RingPlaybackPanel } from "./components/RingPlaybackPanel";
 import { faultClearedNote } from "./ringPlayback";
 import { downloadUrl } from "./filesView";
@@ -183,7 +186,7 @@ export default function App() {
   const [alignmentConfirmedFor, setAlignmentConfirmedFor] = usePersistedState("yofo.alignmentConfirmedFor", "", isString);
   const didInitStage = useRef(false);
   const [connectTab, setConnectTab] = useState<"cameras" | "mindvision" | "framegrabbers">("cameras");
-  const [expTab, setExpTab] = useState<"preview" | "monitoring" | "files">("preview");
+  const [expTab, setExpTab] = useState<"preview" | "monitoring" | "files" | "recordings">("preview");
   const [configTab, setConfigTab] = useState<"app" | "script">("app");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     () => localStorage.getItem(SIDEBAR_KEY) === "1",
@@ -755,6 +758,18 @@ export default function App() {
   }, [ready, runMode, runFrozen, tab, drawRunPreview]);
 
   // Stop in Run holds the frame ring for playback; resume re-arms it (a new ring).
+  // The SATA SSD record store (#667 S1, read only): polled on its own (the server answers from a cache, no child process per call) while connected to a
+  // server; without MIB_PZREC and MIB_SSD_IMAGE it says ABSENT and the strip and the Recordings tab stay hidden.
+  const [ssd, setSsd] = useState<SsdStatus | null>(null);
+  const ssdConfigured = !!ssd?.configured;
+  useEffect(() => {
+    if (!ready || !isRemote) { setSsd(null); return; }
+    let cancelled = false;
+    const poll = () => { void bridge.fetchSsdStatus().then((s) => { if (!cancelled) setSsd(s); }).catch(() => undefined); };
+    poll();
+    const id = window.setInterval(poll, 2000);
+    return () => { cancelled = true; window.clearInterval(id); };
+  }, [ready, isRemote]);
   const refreshInstrument = useCallback(() => { void bridge.fetchInstrumentStatus().then(setInstrument).catch(() => undefined); }, []);
   const onStopRun = useCallback(async () => {
     try {
@@ -1910,6 +1925,7 @@ export default function App() {
             {/* ---- Experiment ---- */}
             {tab === "experiment" && (
               <>
+                {isRemote && ssdConfigured && <SsdStrip status={ssd} />}
                 <div className="toolbar">
                   <div className="subtabs" role="tablist" aria-label="Experiment views">
                     <button className={expTab === "preview" ? "active" : ""} onClick={() => setExpTab("preview")}>
@@ -1917,6 +1933,9 @@ export default function App() {
                     </button>
                     {isRemote && <button className={expTab === "files" ? "active" : ""} onClick={() => setExpTab("files")}>
                       Files
+                    </button>}
+                    {isRemote && ssdConfigured && <button className={expTab === "recordings" ? "active" : ""} onClick={() => setExpTab("recordings")}>
+                      Recordings
                     </button>}
                     <button className={expTab === "monitoring" ? "active" : ""} onClick={() => setExpTab("monitoring")}>
                       Monitoring
@@ -2110,6 +2129,7 @@ export default function App() {
                   </>
                 )}
 
+                {expTab === "recordings" && isRemote && ssdConfigured && <SsdRunsPanel status={ssd} active={tab === "experiment" && expTab === "recordings"} />}
                 {expTab === "files" && isRemote && <FilesPanel ramWarning={instrument?.storage?.warning || undefined} />}
                 {expTab === "monitoring" && (
                   <>
@@ -2592,6 +2612,7 @@ export default function App() {
               ...(instrument?.sensor ? [`sensor ${instrument.sensor.width}x${instrument.sensor.height} at ${instrument.sensor.fps.toFixed(1)} fps`] : []),
               ...(instrument?.storage ? [`storage ${instrument.storage.path}${instrument.storage.ram ? " (RAM)" : ""}, ${Math.round((instrument.storage.free_bytes ?? 0) / 1e6)} MB free`] : []),
               ...(faultNote ? [faultNote] : []),
+              ...(ssd ? [`SSD: ${stripView(ssd).text}`] : []),
             ]} />
             <div className="actions">
               <button className="btn" onClick={() => setShowDiagnostics(false)}>Close</button>

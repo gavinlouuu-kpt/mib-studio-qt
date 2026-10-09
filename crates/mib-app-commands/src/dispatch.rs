@@ -166,6 +166,8 @@ pub const COMMANDS: &[&str] = &[
     "fetch_ring_frame",
     "ring_freeze",
     "ring_resume",
+    "fetch_ssd_status",
+    "fetch_ssd_runs",
     "set_service_mode",
     "set_instrument_led",
     "fetch_run_preview",
@@ -822,6 +824,8 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
         }
         "ring_freeze" => crate::ring_freeze(state).and_then(json),
         "ring_resume" => crate::ring_resume(state).and_then(json),
+        "fetch_ssd_status" => crate::fetch_ssd_status(state).and_then(json),
+        "fetch_ssd_runs" => crate::fetch_ssd_runs(state).and_then(json),
         "sync_wall_clock" => {
             #[derive(Deserialize)]
             struct A {
@@ -951,6 +955,11 @@ mod tests {
         assert_eq!(freeze["ok"], json!(false), "{freeze}");
         let Reply::Json(resume) = dispatch(&state, &host, "ring_resume", Value::Null).unwrap() else { panic!("JSON") };
         assert_eq!(resume["ok"], json!(false), "{resume}");
+        // The SSD record store (ABI 35): read only, open to every client, ABSENT without pzrec configured.
+        let Reply::Json(ssd) = dispatch(&state, &host, "fetch_ssd_status", Value::Null).unwrap() else { panic!("JSON") };
+        assert_eq!(ssd["state"], json!("ABSENT"), "{ssd}");
+        let Reply::Json(runs) = dispatch(&state, &host, "fetch_ssd_runs", Value::Null).unwrap() else { panic!("JSON") };
+        assert_eq!(runs["runs"], json!([]), "{runs}");
         state.bridge.lock().unwrap().pin_mut().shutdown();
         let _ = std::fs::remove_dir_all(&data);
     }

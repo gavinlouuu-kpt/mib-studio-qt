@@ -1204,6 +1204,10 @@ pub mod ffi {
         fn ring_freeze(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
         /// Resume Run: re-arm, a new ring (controller only).
         fn ring_resume(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
+        /// #667 S1 (ABI 35): the SATA SSD record store, read only. `fetch_ssd_status` is JSON (state, reason, log room, the open run and its
+        /// counters, what the last mount-time recovery closed; also a short `ssd` block of the instrument status), `fetch_ssd_runs` the run table.
+        fn fetch_ssd_status(self: Pin<&mut BackendBridge>) -> String;
+        fn fetch_ssd_runs(self: Pin<&mut BackendBridge>) -> String;
         /// Service / Commissioning mode latch; raw LED values are refused outside it.
         fn set_service_mode(self: Pin<&mut BackendBridge>, on: bool) -> BridgeCommandResult;
         /// Raw LED delay/width in µs (Service mode, per-mode limits).

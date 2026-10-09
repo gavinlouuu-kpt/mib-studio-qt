@@ -795,6 +795,22 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
         }
     }
 
+    // --- the SATA SSD (#667 S1) -------------------------------------------
+    // Informative until the experiment records to the SSD (S2): today's experiment writes its file as before, so the SSD's state never blocks
+    // it. S2 turns the not-READY states into failures (READY, not RECOVERING, room in the raw area and the run table).
+    if (!app::hostProcessingAvailable()) {
+        auto& ssd = backend_.ssdStore();
+        const auto st = ssd.status();
+        if (!ssd.configured()) {
+            r.gates.push_back(gate("storage.ssd", GateStatus::NotRequired, st.reason, {}, "no SSD"));
+        } else if (st.state == pz::SsdState::Ready) {
+            r.gates.push_back(gate("storage.ssd", GateStatus::Pass, {}, {}, std::string("READY, ") + std::to_string(st.freeSectors * 512 / 1000000) + " MB free"));
+        } else {
+            r.gates.push_back(gate("storage.ssd", GateStatus::Warn, st.reason.empty() ? std::string(pz::ssdStateName(st.state)) : st.reason,
+                                   "this experiment does not record to the SSD yet; it is not affected", pz::ssdStateName(st.state)));
+        }
+    }
+
     // --- output / storage --------------------------------------------------
     if (outputPath.empty()) {
         r.gates.push_back(gate("storage.output", GateStatus::Unavailable, "no output path chosen yet",

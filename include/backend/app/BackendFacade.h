@@ -1062,6 +1062,9 @@ namespace backend::bridge
         BackendCommandResult resumeRun();
         std::vector<std::uint8_t> fetchRingFramePacket(std::uint64_t seq, std::string *error);
         std::string fetchRingStatusJson();
+        // #667 S1 (ABI 35): the SATA SSD record store, read only.
+        std::string fetchSsdStatusJson();
+        std::string fetchSsdRunsJson();
         // The shell's Service / Commissioning mode, latched in the backend: raw LED values are
         // refused outside it.
         BackendCommandResult setServiceMode(bool on);

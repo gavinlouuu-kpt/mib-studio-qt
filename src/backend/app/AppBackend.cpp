@@ -439,6 +439,7 @@ namespace backend
     bool AppBackend::initialize(const std::string &dataDir)
     {
         dataDir_ = dataDir;
+        createSsdStore();
         std::filesystem::create_directories(dataDir);
 
         // Use user-writable location for logs if dataDir is in Program Files
@@ -1265,6 +1266,28 @@ namespace backend
     services::ProcessingService &AppBackend::processing() { return *processingService_; }
     processing::IExecutionProvider *AppBackend::executionProvider() { return executionProvider_.get(); }
     pz::PzPlatformMonitor *AppBackend::pzPlatformMonitor() { return pzPlatformMonitor_.get(); }
+
+    pz::SsdStore &AppBackend::ssdStore()
+    {
+        std::lock_guard<std::mutex> lock(ssdMutex_);
+        if (ssdStore_) return *ssdStore_;
+        static pz::SsdStore notInitialized(nullptr);  // before initialize(): nothing configured, nothing run
+        return notInitialized;
+    }
+
+    void AppBackend::createSsdStore()
+    {
+        std::lock_guard<std::mutex> lock(ssdMutex_);
+        if (ssdStore_) return;
+        const char *pzrec = std::getenv("MIB_PZREC");
+        const char *image = std::getenv("MIB_SSD_IMAGE");
+        std::unique_ptr<pz::ISsdDevice> device;
+        if (pzrec && *pzrec && image && *image)
+            device = std::make_unique<pz::PzrecCliDevice>(pzrec, image);
+        // The highest run id seen is kept with Studio's own state on the eMMC (the data dir), so "recovered at mount" is told once after a restart.
+        const std::string stateFile = dataDir_.empty() ? std::string() : (std::filesystem::path(dataDir_) / "ssd-state.json").string();
+        ssdStore_ = std::make_unique<pz::SsdStore>(std::move(device), std::chrono::milliseconds(1000), /*background=*/true, stateFile);
+    }
 
     // ---- PZ7035 camera modes (#501 P1; pz7035-imx426 docs/YOFO_HOST_INTERFACE.md) ----
 

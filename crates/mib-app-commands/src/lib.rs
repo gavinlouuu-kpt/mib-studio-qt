@@ -1390,6 +1390,18 @@ pub fn fetch_ring_frame(state: &AppState, seq: u64) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+/// The SATA SSD record store's status (ABI 35, #667 S1): JSON.
+pub fn fetch_ssd_status(state: &AppState) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().fetch_ssd_status()).map_err(|e| e.to_string())
+}
+
+/// The SSD run table (ABI 35, #667 S1): JSON `{ok, reason, runs}`.
+pub fn fetch_ssd_runs(state: &AppState) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().fetch_ssd_runs()).map_err(|e| e.to_string())
+}
+
 /// Stop Run and hold the frame ring for playback.
 pub fn ring_freeze(state: &AppState) -> Result<CmdResult, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
