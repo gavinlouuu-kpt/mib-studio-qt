@@ -7,3 +7,8 @@ FINAL = HEAD + 1, never earlier; a fault is never frozen), and copies a frame un
 after the copy and drop it if the ring moved past it; the FRAME header compared before and after). `buildRingPacket` makes the `MIBR`
 v1 packet for the browser. `encodeImageRecord` joins the record encoders. The provider, bridge commands and the playback panel follow;
 the plan is `docs/exec-plans/active/2026-10-09-ring-playback-v1.md`. Tested against a fake ring (`processing.pz_frame_ring`); no board yet.
+
+STOP handling follows the board owner's final wording: after STOP the device reaches IDLE by itself in about 2 ms, so the freeze wait is
+bounded at 1 s ("restore needed" past it); `RING_STALLED` (bit 9) and `RESET_GENERATION` refused (bit 11) make the ring invalid, while
+`STOP_STUCK` (bit 10) leaves the records below FINAL readable under the reader rule, flagged "stop incomplete" (`stopIncomplete`). The
+sticky bits hold until the next ARM; a new ring starts with RESET_GENERATION in IDLE only.

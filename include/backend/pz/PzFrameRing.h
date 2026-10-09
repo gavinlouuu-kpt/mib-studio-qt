@@ -20,10 +20,15 @@
 namespace backend::pz {
 
 inline constexpr uint32_t kRingRegFinalSeq = 0x3BCu;      // STORE_FINAL_SEQ, ABI 1.4
-// STORE_STATE: bits 8:0 are the state code; two sticky bits (results13 fb1d858) hold until the next ARM.
+// STORE_STATE: bits 8:0 are the state code; three sticky fault bits hold until the next ARM or a hardware reset (RESET_GENERATION
+// does not clear them). Final wording of the board owner (pz7035 docs/FRAME_RING.md):
 inline constexpr uint32_t kRingStateCodeMask = 0x1FFu;
-inline constexpr uint32_t kRingStateStalled = 1u << 9;    // RING_STALLED: an unacknowledged record left the 256-entry window, FINAL is frozen below it
-inline constexpr uint32_t kRingStateStopStuck = 1u << 10; // STOP_STUCK: STOP did not complete in about 84 ms, the device stays DRAINING
+inline constexpr uint32_t kRingStateStalled = 1u << 9;       // RING_STALLED: an unacknowledged record left the tracking window, FINAL is frozen below it
+inline constexpr uint32_t kRingStateStopStuck = 1u << 10;    // STOP_STUCK: the tap or its clock is broken; the device stays DRAINING (records below FINAL are stable)
+inline constexpr uint32_t kRingStateResetRefused = 1u << 11; // RESET_GENERATION was written outside IDLE and refused
+// After STOP the device reaches IDLE by itself in about 2 ms (the tap closes an open frame at the next SOF or after 2 ms without data,
+// the frame marked bad), so a wait much longer than that means a hardware fault: "restore needed".
+inline constexpr int kRingFreezeWaitMs = 1000;
 inline constexpr uint32_t kStoreModeContinuous = 1u;
 inline constexpr uint32_t kStoreModeRingOnly = 1u << 9;   // no drain: overwriting is the purpose
 inline constexpr uint64_t kRingCeiling = 0x3F000000ull;   // the PL's result ring and preview slots start here
@@ -60,8 +65,13 @@ struct RingStatus {
     uint32_t state{0};          // STORE_STATE code (PZ_MIB_STORE_STATE_*), the sticky bits removed
     bool stalled{false};        // RING_STALLED
     bool stopStuck{false};      // STOP_STUCK
-    bool fault{false};          // FAULT, RING_STALLED or STOP_STUCK: the ring is invalid, re-arm (stop, RESET_GENERATION, ARM)
+    bool resetRefused{false};   // RESET_GENERATION was refused
+    bool fault{false};          // FAULT, RING_STALLED or RESET_GENERATION refused: the ring is invalid, re-arm (stop, RESET_GENERATION in IDLE, ARM)
     std::string invalidReason;  // why, when fault; playback is not offered
+    // STOP_STUCK: the records below FINAL stay stable and readable under the reader rule, flagged "stop incomplete"; the ring is not frozen.
+    bool stopIncomplete{false};
+    // Set by the provider when the wait for IDLE ran out without a sticky bit: a hardware fault, the PL needs a restore.
+    bool restoreNeeded{false};
     int64_t head{-1};           // newest sequence started (-1: none)
     uint64_t final{0};          // every sequence below it is complete and acknowledged
     uint32_t records{0};        // N
