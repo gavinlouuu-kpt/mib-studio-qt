@@ -8,6 +8,7 @@
 #include "backend/app/ExperimentCoordinator.h"
 #include "backend/app/MethodApply.h"
 #include "backend/app/Tools.h"
+#include "backend/app/WallClock.h"
 
 #include "backend/services/Logger.h"
 #include "backend/services/CrashReporter.h"
@@ -280,6 +281,8 @@ namespace backend
 
     AppBackend::AppBackend()
     {
+        // A PL-science instrument is the PZ7035: no RTC, so an unsynced clock is labelled as such in saved files (G14).
+        app::WallClock::setBoardWithoutRtc(!app::hostProcessingAvailable());
         // Exists from construction so shells can bind to it before
         // initialize(); it stays idle until a shell enables it, and its
         // callbacks tolerate services that are not built yet.
@@ -1560,6 +1563,15 @@ namespace backend
         applyRxHealStandingCtrl(); // as at service start, so the tests pin the start-up write allow-list
     }
 
+    bool AppBackend::syncWallClock(int64_t unixMs, std::string *why)
+    {
+        app::WallClock::setBoardWithoutRtc(!app::hostProcessingAvailable());
+        const auto run = experimentCoordinator_ ? experimentCoordinator_->state() : app::ExperimentRunState::Idle;
+        const bool locked = isFrameRecording() || run == app::ExperimentRunState::Starting ||
+                            run == app::ExperimentRunState::Active || run == app::ExperimentRunState::Stopping;
+        return app::WallClock::sync(unixMs, locked, why);
+    }
+
     bool AppBackend::setInstrumentMode(pz::InstrumentMode mode, int x, int y, std::string *errorOut)
     {
         std::lock_guard<std::mutex> lock(instrumentModeMutex_);
@@ -2783,9 +2795,8 @@ namespace backend
             [this, processingCoreLease = std::move(processingCoreLease)]() mutable {
             SPDLOG_INFO("Frame recording thread started");
 
-            const uint64_t startTimeNs = static_cast<uint64_t>(
-                std::chrono::duration_cast<std::chrono::nanoseconds>(
-                    std::chrono::system_clock::now().time_since_epoch()).count());
+            const uint64_t startTimeNs = backend::app::WallClock::nowNs();
+            const auto recordingWall = backend::app::WallClock::status();
             const auto recordingConfig = processingService_->getProcessingConfig();
             const bool recordingMultiImageEnabled =
                 recordingConfig.multi_image_enabled && recordingConfig.multi_image_count > 1;
@@ -2976,9 +2987,7 @@ namespace backend
             }
 
             // Write recording info
-            const uint64_t endTimeNs = static_cast<uint64_t>(
-                std::chrono::duration_cast<std::chrono::nanoseconds>(
-                    std::chrono::system_clock::now().time_since_epoch()).count());
+            const uint64_t endTimeNs = backend::app::WallClock::nowNs();
 
             if (!hdf5Service_->writeRecordingInfo(startTimeNs, endTimeNs,
                                                   frameRecordingWritten_.load(),
@@ -2993,6 +3002,9 @@ namespace backend
                 }
                 reportFatalSaveError(
                     "Frame recording metadata/processing-core provenance write failed");
+            }
+            if (!hdf5Service_->writeWallClockProvenance(recordingWall.source, recordingWall.offsetNs)) {
+                SPDLOG_ERROR("Frame recording: failed to persist wall-clock provenance");
             }
             // Final reconciliation (issue #367): a run is Complete only when
             // every admitted frame and every writer admission reconcile.

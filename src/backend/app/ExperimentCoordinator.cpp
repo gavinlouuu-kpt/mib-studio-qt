@@ -1,5 +1,6 @@
 #include "backend/app/ExperimentCoordinator.h"
 #include "backend/app/RecordingTarget.h"
+#include "backend/app/WallClock.h"
 #include "backend/pz/PzInstrumentControl.h"
 #include "backend/processing/IExecutionProvider.h"
 #include "backend/processing/pz/PzProfileCompiler.h"
@@ -231,6 +232,8 @@ std::string runSnapshotToJson(const RunConfigurationSnapshot& s)
       << ",\"capture_generation\":" << s.captureGeneration
       << ",\"start_host_time_us\":" << s.startHostTimeUs
       << ",\"start_wall_clock_ns\":" << s.startWallClockNs
+      << ",\"wall_clock_source\":" << q(s.wallClockSource)
+      << ",\"wall_clock_offset_ns\":" << s.wallClockOffsetNs
       << ",\"camera\":{\"requested\":" << q(s.camera.requested)
       << ",\"effective\":" << q(s.camera.effective) << ",\"label\":" << q(s.camera.label)
       << ",\"simulated\":" << (s.camera.simulated ? "true" : "false")
@@ -764,6 +767,20 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
         r.gates.push_back(gate("rf.generator", GateStatus::Pass, {}, {}, d.str()));
     }
 
+    // --- wall clock (G14) --------------------------------------------------
+    // A board without an RTC stamps files from the time a client sent; with no client sync the date in the
+    // file is whatever the board booted with. Non-blocking: unattended runs still start, and the file says so.
+    if (!app::hostProcessingAvailable()) {
+        const auto wall = WallClock::status();
+        if (wall.synced) {
+            r.gates.push_back(gate("clock.wall", GateStatus::Pass, {}, {}, wall.source));
+        } else {
+            r.gates.push_back(gate("clock.wall", GateStatus::Warn,
+                                   "The board has no real-time clock and no client has sent its time: the dates in the saved file will be wrong (marked board_clock_unsynced)",
+                                   "keep a browser connected as the controller for a few seconds", wall.source));
+        }
+    }
+
     // --- output / storage --------------------------------------------------
     if (outputPath.empty()) {
         r.gates.push_back(gate("storage.output", GateStatus::Unavailable, "no output path chosen yet",
@@ -1003,9 +1020,12 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
     RunConfigurationSnapshot run = result.readiness.candidate;
     run.startGeneration = ++startCounter_;
     run.startHostTimeUs = Tools::getTimestamp();
-    run.startWallClockNs = static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count());
+    run.startWallClockNs = WallClock::nowNs();
+    {
+        const auto wall = WallClock::status();
+        run.wallClockSource = wall.source;
+        run.wallClockOffsetNs = wall.offsetNs;
+    }
     run.outputPath = path;
 
     // 5. Persistence resources.
@@ -1355,8 +1375,7 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
             SPDLOG_WARN("ExperimentCoordinator: {} trailing trigger event(s) not persisted", tail.size());
         }
     }
-    const uint64_t endNs = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count());
+    const uint64_t endNs = WallClock::nowNs();
     auto accounting = proc.experimentAccountingSnapshot();
     // The queue is gone after finishFlush(), so preserve a fatal flush result
     // in the run snapshot before persisting and caching accounting.
@@ -1392,6 +1411,9 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
             if (!hdf5.writeAcquisitionProvenance(backend_.capture().timestampDescriptor(),
                                                  backend_.capture().telemetrySnapshot())) {
                 SPDLOG_ERROR("ExperimentCoordinator: acquisition provenance could not be persisted");
+            }
+            if (!hdf5.writeWallClockProvenance(run.wallClockSource, run.wallClockOffsetNs)) {
+                SPDLOG_ERROR("ExperimentCoordinator: wall-clock provenance could not be persisted");
             }
             // Sorter settings as read back at readiness time (the generator is
             // not re-queried here: the run used what was verified at start).

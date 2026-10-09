@@ -204,6 +204,7 @@ public:
     rust::String fetch_platform_info();
     rust::String fetch_run_accounting(rust::Str source);
     BridgeCommandResult set_instrument_mode(rust::Str mode, std::int32_t x, std::int32_t y);
+    BridgeCommandResult sync_wall_clock(std::int64_t unix_ms);
     BridgeCommandResult set_service_mode(bool on);
     BridgeCommandResult set_instrument_led(double delay_us, double width_us);
     rust::Vec<std::uint8_t> fetch_run_preview();

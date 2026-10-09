@@ -34,7 +34,8 @@ Facts used (all from repository files, none newly measured): store record 59,392
 4. **The run table is too small for decision 6.** It has 29 slots (older runs are overwritten by `run % 29`) and no start time,
    duration, drop count or reason in the entry (the reason is in the trailer sector). Requests R4 to R6 below.
 5. **The board has no trustworthy wall clock** (RAM root, JTAG boot, no RTC): the start time must come from Studio at RUN_START
-   (the browser or server clock, flagged when not synchronised), not from the PL.
+   (the controlling browser's clock through `sync_wall_clock`, kept as an offset to the monotonic clock by `backend::app::WallClock`,
+   with the source recorded: G14, #651), not from the PL. The run table's start time and its source flag use the same `WallClock`.
 6. **The idle rule collides with long recordings.** The server stops and saves when the last client has been gone for about
    6 s (`crates/mib-bridge-server/src/lib.rs`). For a PC experiment that is the parity behaviour; for an unattended SSD run
    it would end the recording. See D4.

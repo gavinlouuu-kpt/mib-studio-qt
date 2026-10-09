@@ -468,6 +468,7 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/app/AppBackend.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/BackendFacade.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/RecordingTarget.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/WallClock.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/pz/PzBridgePreviewCamera.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ReviewReanalysis.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ReviewCharts.cpp

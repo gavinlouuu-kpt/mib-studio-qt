@@ -612,6 +612,8 @@ export interface InstrumentStatus {
   results?: ResultsStreamState;
   mode?: InstrumentModeState;
   storage?: RecordingTargetState;
+  /** Where saved files' wall-clock times come from (G14): the board has no RTC. */
+  wall_clock?: { synced: boolean; source: "client_sync" | "board_clock_unsynced" | "system_clock"; offset_ns: number; last_sync_unix_ms: number };
   error?: string;
   pinned_profile_id?: string;
   core?: {

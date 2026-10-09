@@ -176,7 +176,7 @@ const CONTROL_COMMANDS: &[&str] = &[
     "processing_core_command",
     "save_preview_buffer", "set_processed_preview_enabled",
     // PZ7035 (#501 P1): camera modes and the LED drive hardware; service mode unlocks raw LED.
-    "set_instrument_mode", "set_service_mode", "set_instrument_led",
+    "set_instrument_mode", "sync_wall_clock", "set_service_mode", "set_instrument_led",
     // Z stage (#464). stage_stop is deliberately absent: any client may stop
     // the axis (Stop is always accepted, ADR 0013 §5).
     "stage_connect", "stage_disconnect", "stage_move_to", "stage_move_by", "stage_set_zero",

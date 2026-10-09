@@ -1192,6 +1192,8 @@ pub mod ffi {
         fn fetch_run_accounting(self: Pin<&mut BackendBridge>, source: &str) -> String;
         /// PZ7035 camera mode (ABI 27, #501 P1): "align" | "run" with the Run window offset.
         fn set_instrument_mode(self: Pin<&mut BackendBridge>, mode: &str, x: i32, y: i32) -> BridgeCommandResult;
+        /// The client's wall clock (ms since the epoch): stamps saved files on a board without an RTC (G14).
+        fn sync_wall_clock(self: Pin<&mut BackendBridge>, unix_ms: i64) -> BridgeCommandResult;
         /// Service / Commissioning mode latch; raw LED values are refused outside it.
         fn set_service_mode(self: Pin<&mut BackendBridge>, on: bool) -> BridgeCommandResult;
         /// Raw LED delay/width in µs (Service mode, per-mode limits).

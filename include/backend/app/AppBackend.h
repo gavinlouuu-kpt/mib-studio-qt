@@ -140,6 +140,8 @@ namespace backend
         // Service start: the standing RXH1 v1 CTRL value (persist 250 ms), read back and logged.
         void applyRxHealStandingCtrl();
         bool setInstrumentMode(pz::InstrumentMode mode, int x, int y, std::string *errorOut);
+        // Accept a client time for the wall clock (G14). Refused while a run or recording is active.
+        bool syncWallClock(int64_t unixMs, std::string *why);
         pz::InstrumentMode instrumentMode() const;
         // The safe state of an unattended instrument (no client for the server's grace time): LED
         // off, cell path off, the camera (producer stream / bridge previews) released. The sensor

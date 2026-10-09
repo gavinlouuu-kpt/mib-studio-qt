@@ -1053,6 +1053,8 @@ namespace backend::bridge
         // PZ7035 camera modes (ABI 27, #501 P1): "align" | "run" (window at x, y; snapped to
         // x % 8, y % 4). Refused during an experiment/recording and with the PL unconfigured.
         BackendCommandResult setInstrumentMode(const std::string &mode, int x, int y);
+        // The client's wall clock in ms since the epoch (G14): stamps saved files on a board without an RTC.
+        BackendCommandResult syncWallClock(int64_t unixMs);
         // The shell's Service / Commissioning mode, latched in the backend: raw LED values are
         // refused outside it.
         BackendCommandResult setServiceMode(bool on);
