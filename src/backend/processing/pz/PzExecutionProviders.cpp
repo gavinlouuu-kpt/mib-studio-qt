@@ -5,6 +5,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <fstream>
@@ -313,7 +314,10 @@ public:
         if (fd_ >= 0) close(fd_);
     }
     bool ok() const { return fd_ >= 0; }
-    uint32_t reg(uint32_t offset) override { return map_.reg(offset); }
+    uint32_t reg(uint32_t offset) override {
+        std::atomic_thread_fence(std::memory_order_seq_cst); // DMB: the register read is ordered after the data reads before it
+        return map_.reg(offset);
+    }
     void setReg(uint32_t offset, uint32_t value) override { map_.setReg(offset, value); }
     bool ensureMapped(uint64_t base, uint64_t bytes) {
         if (mem_ && base == base_ && bytes == bytes_) return true;
@@ -327,7 +331,18 @@ public:
     }
     bool read(uint64_t physical, void* dst, size_t bytes) override {
         if (!mem_ || physical < base_ || physical + bytes > base_ + bytes_) return false;
-        std::memcpy(dst, const_cast<const uint8_t*>(mem_ + (physical - base_)), bytes);
+        // The map is device memory (O_SYNC): no unaligned accesses. Word loads when aligned (a ring record is), bytes otherwise.
+        const volatile uint8_t* src = mem_ + (physical - base_);
+        auto* out = static_cast<uint8_t*>(dst);
+        size_t i = 0;
+        if ((reinterpret_cast<uintptr_t>(src) & 3u) == 0) {
+            for (; i + 4 <= bytes; i += 4) {
+                const uint32_t word = *reinterpret_cast<const volatile uint32_t*>(src + i);
+                std::memcpy(out + i, &word, 4);
+            }
+        }
+        for (; i < bytes; ++i) out[i] = src[i];
+        std::atomic_thread_fence(std::memory_order_seq_cst); // DMB before the caller re-reads HEAD
         return true;
     }
 
@@ -352,8 +367,8 @@ std::optional<uint64_t> readLinuxRamEnd(std::string* why) {
     }
     const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     const auto end = backend::pz::systemRamEnd(text);
-    if (!end || *end <= 1) {
-        if (why) *why = "/proc/iomem shows no RAM ranges (Studio must run as root on the instrument)";
+    if (!end) {
+        if (why) *why = "/proc/iomem shows no usable RAM range (an unprivileged read shows zeros: Studio must run as root on the instrument)";
         return std::nullopt;
     }
     return end;
@@ -385,7 +400,7 @@ backend::pz::RingStatus PzDevMemExecutionProvider::ringStatus() {
     }
     std::lock_guard<std::mutex> lock(ringMutex_);
     if (!ring_) return none;
-    auto st = backend::pz::PzFrameRing(*ring_).status();
+    auto st = backend::pz::PzFrameRing(*ring_, ringLinuxEnd_.load()).status();
     st.restoreNeeded = ringRestoreNeeded_.load();
     return st;
 }
@@ -405,7 +420,7 @@ backend::pz::RingRead PzDevMemExecutionProvider::ringRead(uint64_t seq, backend:
         if (why) *why = "no frame ring is armed";
         return backend::pz::RingRead::Unavailable;
     }
-    backend::pz::PzFrameRing ring(*ring_);
+    backend::pz::PzFrameRing ring(*ring_, ringLinuxEnd_.load());
     const auto st = ring.status();
     if (!st.valid) {
         if (why) *why = st.why;
@@ -546,6 +561,10 @@ bool PzDevMemExecutionProvider::start(uint64_t runId, std::string* error) {
     // Before the generation is read below: RESET_GENERATION changes it.
     ringProgrammed_.store(false);
     ringRestoreNeeded_.store(false);
+    // One lock over the recovery, the programming and ARM: a reader (status, a frame fetch) never sees the ring half-programmed or
+    // read a frame across a re-ARM; stop() and the readers take the same mutex.
+    std::unique_lock<std::mutex> ringLock(ringMutex_, std::defer_lock);
+    if (layout_.ringFrames > 0) ringLock.lock();
     if (layout_.ringFrames > 0) {
         // A new ring starts with RESET_GENERATION in IDLE only, then ARM (RESET_GENERATION in any other state is refused and sets a
         // sticky fault bit). After a STOP the device reaches IDLE by itself in about 2 ms; one that does not within the bound has a
@@ -590,17 +609,17 @@ bool PzDevMemExecutionProvider::start(uint64_t runId, std::string* error) {
             if (error) *error = "frame ring: this PL image has no frame ring (it needs results13)";
             return false;
         }
-        std::lock_guard<std::mutex> lock(ringMutex_);
         if (!ring_) ring_ = std::make_unique<RingIo>(*map);
         if (!ring_->ok()) {
             if (error) *error = "frame ring: cannot open /dev/mem";
             return false;
         }
-        if (!backend::pz::PzFrameRing(*ring_).program(plan, &why)) {
+        if (!backend::pz::PzFrameRing(*ring_, *end).program(plan, &why)) {
             if (error) *error = "frame ring: " + why;
             return false;
         }
         ringPlan_ = plan;
+        ringLinuxEnd_.store(*end);
         ringProgrammed_.store(true);
         SPDLOG_INFO("PzDevMemExecutionProvider: frame ring {} frames ({:.0f} MiB) at 0x{:08x}", plan.records,
                     static_cast<double>(plan.bytes) / (1024.0 * 1024.0), static_cast<uint32_t>(plan.base));
@@ -655,9 +674,8 @@ void PzDevMemExecutionProvider::stop() {
     if (ringProgrammed_.load()) {
         std::lock_guard<std::mutex> lock(ringMutex_);
         if (ring_) {
-            const auto st = backend::pz::PzFrameRing(*ring_).awaitFrozen(std::chrono::milliseconds(backend::pz::kRingFreezeWaitMs));
-            // No sticky bit and no IDLE within the bound: not a ring fault but a broken tap or clock (the tap closes an open frame in about 2 ms).
-            ringRestoreNeeded_.store(st.valid && !st.frozen && !st.fault && !st.stopStuck);
+            const auto st = backend::pz::PzFrameRing(*ring_, ringLinuxEnd_.load()).awaitFrozen(); // owns the 1 s bound and the restore-needed verdict
+            ringRestoreNeeded_.store(st.restoreNeeded);
             if (st.frozen)
                 SPDLOG_INFO("PzDevMemExecutionProvider: frame ring frozen: {} frames readable (sequences {} to {})", st.count(), st.lo,
                             st.final ? st.final - 1 : 0);

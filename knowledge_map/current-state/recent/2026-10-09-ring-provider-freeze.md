@@ -14,3 +14,8 @@ Final STOP handling (board owner's wording): `stop()` waits up to 1 s for IDLE (
 that never reaches IDLE without a sticky bit marks `restoreNeeded` (a broken tap or clock; the PL needs a restore). A new run waits for
 IDLE (bounded; otherwise the start fails with "restore the PL"), writes RESET_GENERATION only in IDLE and only when a sticky fault bit
 (9, 10 or 11) was left, then ARMs; it never writes RESET_GENERATION in another state.
+
+Review of #673/#674: the provider holds one mutex over the pre-ARM recovery, the programming and ARM (the status poll and a frame fetch take the same
+mutex, so a Resume during a fetch cannot interleave); the reader gets Linux's RAM end from the provider (an unreadable or zeroed `/proc/iomem` refuses the
+run); the `/dev/mem` ring map is read with aligned word loads (device memory takes no unaligned access) and DMBs around the HEAD' re-read; `stop()` takes the
+restore-needed verdict from `awaitFrozen`, which owns the 1 s bound.
