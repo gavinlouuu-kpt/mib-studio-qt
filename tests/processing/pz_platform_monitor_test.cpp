@@ -327,6 +327,8 @@ int main() {
     // above 0.4/s) and warn only once sustained for 5 s; a blip does not, a closed sensor never does.
     {
         r->bridgePage[PZ_MIB_REG_STATE] = PZ_MIB_STATE_RUNNING; // dropped frames count only while the bridge is consumed
+        r->strobeWindow[46] = 1;     // ... and the cell path is on (Run)
+        r->livePage[8] = 0x10;
         r->strobeWindow[9] = 250000; // 400 fps
         r->livePage[7] = 0;
         r->livePage[6] = 0;
@@ -371,6 +373,36 @@ int main() {
         (void)monitor.sample(79'200'000);
         r->livePage[6] = 24000;
         MIB_EXPECT(monitor.sample(85'200'000).droppedWarn, "armed bridge: the same drops warn once sustained");
+        // Align: the bridge is armed for previews but the cell path is off, and P[6] counts every frame as
+        // dropped (about 400/s here, the sensor rate; measured on results12). That is not loss: no warning.
+        r->strobeWindow[46] = 0;
+        r->livePage[8] = 0;
+        r->livePage[6] = 24400;
+        (void)monitor.sample(86'200'000);
+        r->livePage[6] = 26800;
+        (void)monitor.sample(92'200'000);
+        r->livePage[6] = 29200;
+        const auto align = monitor.sample(98'200'000);
+        MIB_EXPECT(align.bridgeActive && !align.cellPathOn && align.droppedPerS > 100 * align.droppedWarnPerS && !align.droppedWarn,
+                   "Align (bridge armed, cell path off): a dropped counter at the frame rate never warns");
+        // Run entry: the cell path comes on and the counter stops moving: no warning; drops above 0.1 % warn again.
+        r->strobeWindow[46] = 1;
+        r->livePage[8] = 0x10;
+        r->livePage[6] = 29200;
+        (void)monitor.sample(99'200'000);
+        MIB_EXPECT(!monitor.sample(105'200'000).droppedWarn, "Run with no drops: no warning");
+        r->livePage[6] = 29300;
+        (void)monitor.sample(106'200'000);
+        r->livePage[6] = 29400;
+        (void)monitor.sample(112'200'000);
+        r->livePage[6] = 29500;
+        MIB_EXPECT(monitor.sample(118'200'000).droppedWarn, "Run (cell path on): drops above 0.1% for 5 s warn");
+        // Back to Align: the warning clears at once.
+        r->strobeWindow[46] = 0;
+        r->livePage[8] = 0;
+        MIB_EXPECT(!monitor.sample(119'200'000).droppedWarn, "back in Align: no warning");
+        r->strobeWindow[46] = 1;
+        r->livePage[8] = 0x10;
         r->bridgePage[PZ_MIB_REG_STATE] = PZ_MIB_STATE_RUNNING;
         // Sensor closed: thresholds are 0 and nothing warns.
         r->strobeWindow[9] = 0;

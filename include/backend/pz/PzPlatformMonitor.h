@@ -141,6 +141,7 @@ struct PzPlatformStatus {
     // frame as dropped while nothing does (Run without an experiment, a stopped Align), so dropped
     // frames are judged only while this is true.
     bool bridgeActive{false};
+    bool cellPathOn{false}; // S[46] and P[8] bit 4: the cell path (Run); dropped frames count only then
     // The PL receiver self-heal block (results9; RXH1 at P[256]): absent on results8.
     bool rxHealPresent{false};
     bool rxHealGaveUp{false};
