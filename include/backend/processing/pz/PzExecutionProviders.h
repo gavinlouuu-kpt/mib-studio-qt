@@ -140,6 +140,7 @@ private:
     std::unique_ptr<RingIo> ring_;
     backend::pz::RingPlan ringPlan_;       // the plan the last ARM programmed
     std::atomic<bool> ringProgrammed_{false};
+    std::atomic<uint64_t> ringLinuxEnd_{0};      // where Linux's RAM ended when the ring was armed (the reader refuses without it)
     std::atomic<bool> ringRestoreNeeded_{false}; // the last STOP never reached IDLE within the bound: a hardware fault
 };
 #endif
