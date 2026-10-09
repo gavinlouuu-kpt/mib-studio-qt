@@ -22,6 +22,7 @@ import { decimalU64 } from "./framePacket";
 import { FramePullScheduler } from "./framePullScheduler";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {open, save, confirm} from "./transport/dialogs";
+import { volatileDataNotice } from "./diagnosticsView";
 import { DiagnosticsPanel } from "./components/DiagnosticsPanel";
 import { downloadUrl } from "./filesView";
 import { serverOrigin, tokenFromLocation } from "./transport/auth";
@@ -2518,7 +2519,7 @@ export default function App() {
         <div className="modal-backdrop" onClick={() => setShowDiagnostics(false)}>
           <div className="modal" style={{ maxWidth: 900, width: "90vw" }} onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Diagnostics">
             <h3>Diagnostics</h3>
-            <DiagnosticsPanel instrumentLines={[
+            <DiagnosticsPanel volatileNotice={volatileDataNotice(instrument?.storage)} instrumentLines={[
               ...(instrument?.core ? [`PL build ${instrument.core.build_id.slice(0, 8)}, weights ${instrument.core.profile_id.slice(0, 8)}, ABI ${instrument.core.abi_version}, expected ${instrument.core.expected?.image ?? "?"} (${instrument.core.build_match})`] : []),
               ...(instrument?.sensor ? [`sensor ${instrument.sensor.width}x${instrument.sensor.height} at ${instrument.sensor.fps.toFixed(1)} fps`] : []),
               ...(instrument?.storage ? [`storage ${instrument.storage.path}${instrument.storage.ram ? " (RAM)" : ""}, ${Math.round((instrument.storage.free_bytes ?? 0) / 1e6)} MB free`] : []),

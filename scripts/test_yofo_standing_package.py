@@ -112,6 +112,105 @@ def check_bundle(check) -> None:
         check(wrong.returncode != 0 and "pz_live_other" in wrong.stderr, "a core.json for another image is refused")
 
 
+FAKE_COMMANDS = {
+    # exit 0 when the fake partition is "mounted" (a marker file the fake mount creates)
+    "mountpoint": "#!/bin/sh\n[ -e \"$FAKE_MOUNTED\" ]\n",
+    # a partition with the label exists when FAKE_LABEL is set
+    "blkid": "#!/bin/sh\n[ -n \"${FAKE_LABEL:-}\" ]\n",
+    # mount -o OPTS -L LABEL DIR: records the call, then "mounts": the partition's files appear in DIR
+    "mount": (
+        "#!/bin/sh\n"
+        "echo \"mount $*\" >> \"$FAKE_LOG\"\n"
+        "[ -z \"${FAKE_MOUNT_FAILS:-}\" ] || exit 32\n"
+        "for last; do :; done\n"
+        "touch \"$FAKE_MOUNTED\"\n"
+        "mkdir -p \"$last/lost+found\"\n"
+        "[ -d \"${FAKE_PARTITION:-/nonexistent}\" ] && cp -a \"$FAKE_PARTITION\"/. \"$last\"/\n"
+        "exit 0\n"
+    ),
+    "systemctl": (
+        "#!/bin/sh\necho \"systemctl $*\" >> \"$FAKE_LOG\"\n"
+        "if [ \"$1\" = is-active ]; then [ -n \"${FAKE_UNIT_ACTIVE:-}\" ]; exit $?; fi\n"
+        "exit 0\n"
+    ),
+}
+
+
+def run_mount_data(tmp: Path, *, label=True, seed=None, partition=None, unit_active=False, mounted=False, mount_fails=False):
+    """Run deploy/yofo-studio/mount-data.sh against fake mount/blkid/mountpoint/systemctl; returns (code, out, dir, log)."""
+    bindir = tmp / "bin"
+    bindir.mkdir(exist_ok=True)
+    for name, body in FAKE_COMMANDS.items():
+        path = bindir / name
+        path.write_text(body)
+        path.chmod(0o755)
+    data = tmp / "data"
+    shutil.rmtree(data, ignore_errors=True)
+    data.mkdir()
+    for name, text in (seed or {}).items():
+        (data / name).write_text(text)
+    part = tmp / "partition"
+    shutil.rmtree(part, ignore_errors=True)
+    if partition is not None:
+        part.mkdir()
+        for name, text in partition.items():
+            (part / name).write_text(text)
+    log = tmp / "log"
+    log.write_text("")
+    marker = tmp / "mounted"
+    marker.unlink(missing_ok=True)
+    if mounted:
+        marker.touch()
+    env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}", YOFO_DATA_DIR=str(data), FAKE_LOG=str(log), FAKE_MOUNTED=str(marker),
+               FAKE_PARTITION=str(part))
+    if label:
+        env["FAKE_LABEL"] = "1"
+    if unit_active:
+        env["FAKE_UNIT_ACTIVE"] = "1"
+    if mount_fails:
+        env["FAKE_MOUNT_FAILS"] = "1"
+    run = subprocess.run(["sh", str(DEPLOY / "mount-data.sh")], env=env, capture_output=True, text=True)
+    return run.returncode, run.stdout + run.stderr, data, log.read_text().splitlines()
+
+
+def check_mount_data(check) -> None:
+    if sys.platform == "win32":
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        # no partition with the label: the RAM directory stays as it is, nothing is mounted, and it says so
+        code, out, data, log = run_mount_data(tmp, label=False, seed={"keep.txt": "ram"})
+        check(code == 0 and not any(l.startswith("mount ") for l in log) and (data / "keep.txt").read_text() == "ram",
+              f"no label: the RAM directory is left alone ({code}, {log})")
+        check("volatile" in out, f"no label: the script says the directory is volatile: {out!r}")
+        # already a mount point: nothing to do
+        code, out, data, log = run_mount_data(tmp, mounted=True, seed={"keep.txt": "ram"})
+        check(code == 0 and log == [] and (data / "keep.txt").exists(), f"already mounted: untouched ({log})")
+        # a fresh (empty) partition is seeded from the RAM directory, and the options are the agreed ones
+        code, out, data, log = run_mount_data(tmp, seed={"experiment.h5": "run", "instrument_run_window.json": "{}"}, partition={})
+        check(code == 0 and any("mount -o noatime,commit=30 -L yofo-data" in l for l in log), f"mount options and label: {log}")
+        check((data / "experiment.h5").read_text() == "run" and (data / "instrument_run_window.json").exists(),
+              "an empty partition is seeded with the RAM directory's files")
+        check(not list(tmp.glob("data.seed.*")), "the seed copy is removed")
+        # a partition that already has data keeps it; the RAM files go into a from-ram folder
+        code, out, data, log = run_mount_data(tmp, seed={"ram.h5": "ram"}, partition={"old.h5": "old"})
+        folders = list(data.glob("from-ram-*"))
+        check(code == 0 and (data / "old.h5").read_text() == "old" and not (data / "ram.h5").exists() and len(folders) == 1
+              and (folders[0] / "ram.h5").read_text() == "ram", "a partition with data keeps it; the RAM files are kept beside it")
+        # an empty RAM directory and an empty partition: just mounted
+        code, out, data, log = run_mount_data(tmp, partition={})
+        check(code == 0 and any(l.startswith("mount ") for l in log) and not list(data.glob("from-ram-*")), "nothing to seed")
+        # the unit is stopped around the mount and started again
+        code, out, data, log = run_mount_data(tmp, unit_active=True, seed={"a": "1"}, partition={})
+        order = [l for l in log if l.startswith(("systemctl stop", "mount ", "systemctl start"))]
+        check([o.split()[0] + " " + o.split()[1] for o in order] == ["systemctl stop", "mount -o", "systemctl start"],
+              f"the running unit is stopped, the mount happens, the unit starts again: {order}")
+        # a failed mount puts the RAM files back, exits non-zero and restarts the unit
+        code, out, data, log = run_mount_data(tmp, unit_active=True, seed={"a": "1"}, partition={}, mount_fails=True)
+        check(code != 0 and (data / "a").read_text() == "1" and not list(tmp.glob("data.seed.*")) and log[-1] == "systemctl start yofo-studio",
+              f"failed mount: RAM files restored, unit restarted ({code}, {log})")
+
+
 def main() -> int:
     if sys.platform == "win32":  # board deployment scripts (sh, devmem2, bash, md5sum): the Linux build host checks them
         print("yofo standing package: skipped on Windows")
@@ -144,6 +243,7 @@ def main() -> int:
     check(install.index("md5sum -c") < install.index("install -m 0755 yofo-studio-server"),
           "install.sh verifies MD5SUMS before installing anything")
     check("/etc/yofo-studio/token" not in install.replace("# ", ""), "install.sh does not require a token")
+    check("mount-data.sh" in install and install.index("mount-data.sh") < install.index("install -m 0755 yofo-studio-server"), "install.sh mounts the data partition before it installs the server (and so before the unit starts)")
     check("/usr/share/yofo-studio/BUILD_INFO" in install, "install.sh leaves BUILD_INFO next to the UI for /diagnostics")
     check("/usr/share/yofo-studio/resources/isoelastic_curve" in install, "install.sh installs the LUT under the resource dir")
     check((ROOT / "resources" / "isoelastic_curve" / "scaled_isoelastic_data_LUT_6.16-4.24.txt").is_file(), "the LUT the server loads exists in the repo")
@@ -151,6 +251,7 @@ def main() -> int:
     check("resources/isoelastic_curve" in package and "resources/isoelastic_curve/*" in package, "the package ships the LUT and lists it in MD5SUMS")
 
     check_bundle(check)
+    check_mount_data(check)
 
     for failure in failures:
         print("FAIL:", failure, file=sys.stderr)

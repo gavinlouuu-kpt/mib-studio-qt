@@ -220,6 +220,9 @@ SSH tunnel; the UI skips the token prompt when `/auth` says `token_required=fals
 (ctest `scripts.yofo_standing_package`) checks the guard against a fake `devmem2`, the unit and
 install.sh.
 
+**Data partition.** `install.sh` runs `mount-data.sh`, which mounts the eMMC ext4 partition (label `yofo-data`) at `/var/lib/yofo-studio` before the unit starts
+(see `recent/2026-10-09-g2-data-partition-mount.md`); without the partition the data dir stays on the RAM root and the preflight/Diagnostics say so.
+
 **Instrument bundle (YOFO Studio release = PL + PS).** `package_studio.sh --bundle` (or
 `scripts/yofo/bundle_assemble.sh PKG_DIR` on a staged package; `PZ7035_REF`, default `pl-results9`)
 adds the PL bitstream and `ps7_init.tcl`, the firmware, the Linux boot set (under `host/`, 70 MB,
