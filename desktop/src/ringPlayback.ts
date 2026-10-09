@@ -17,8 +17,12 @@ export interface RingStatus {
   reason?: string;
   /** STATE = IDLE after STOP, FINAL = HEAD + 1, neither sticky bit: the buffered frames can be played back. */
   frozen: boolean;
-  /** RING_STALLED, STOP_STUCK or FAULT: re-arm needed, no playback. */
+  /** RING_STALLED, RESET_GENERATION refused or FAULT: re-arm needed, no playback. */
   invalid: boolean;
+  /** STOP_STUCK: not frozen, but the records below the newest stay readable (flagged). */
+  stop_incomplete: boolean;
+  /** STOP never reached IDLE within the bound: a hardware fault, the PL needs a restore. */
+  restore_needed: boolean;
   /** Run stopped by the operator (the backend holds it). */
   run_frozen: boolean;
   capacity_frames: number;
@@ -107,17 +111,22 @@ export interface PlaybackAvailability {
   ok: boolean;
   /** Shown instead of the controls when !ok. */
   reason: string;
+  /** Shown with the controls when ok (a stop that did not complete). */
+  note?: string;
 }
 
 /** Playback is offered only for a frozen, valid ring with frames in it. */
 export function playbackAvailability(s: RingStatus | null | undefined): PlaybackAvailability {
   if (!s) return { ok: false, reason: "No frame ring status yet." };
   if (!s.available) return { ok: false, reason: s.reason || "This instrument keeps no frame ring." };
+  if (s.restore_needed) return { ok: false, reason: "Restore needed: the ring never reached idle after Stop, so the PL's tap or clock is broken. Restore the PL." };
   if (s.invalid) return { ok: false, reason: s.reason || "The ring is not valid: resume Run to re-arm it." };
   if (!s.run_frozen) return { ok: false, reason: "Stop Run to review the buffered frames." };
-  if (!s.frozen) return { ok: false, reason: s.reason || "The ring is not frozen yet." };
+  if (!s.frozen && !s.stop_incomplete) return { ok: false, reason: s.reason || "The ring is not frozen yet." };
   if (s.count <= 0) return { ok: false, reason: "The ring is empty: nothing was buffered before Stop." };
-  return { ok: true, reason: "" };
+  return s.stop_incomplete
+    ? { ok: true, reason: "", note: "Stop incomplete (STOP_STUCK): the PL did not close the last frame. The frames up to the newest complete one are shown; the very last frame may be missing." }
+    : { ok: true, reason: "" };
 }
 
 /** "Frames 120 to 5,119 · 5,000 frames · 1.00 s" */

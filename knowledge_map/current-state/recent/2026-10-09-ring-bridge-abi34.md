@@ -14,3 +14,8 @@ measurements decoded from the PL payload (`cellMetrics`, NaN shown as "—" wher
 delivered says so; a ring that is invalid or empty shows the reason instead of controls; `Resume Run` re-arms (a new ring, said on the
 button) and `Save clip` stays disabled with "Saving needs the SSD (not available yet)." until the SSD path (#667). The `MIBR` cell
 record is 19 words: the `MIBC` words plus the payload validity mask.
+
+Final STOP handling (board owner's wording): the status gains `stop_incomplete` (STOP_STUCK: not frozen, the records below FINAL stay
+readable and the panel shows "Stop incomplete") and `restore_needed` (STOP never reached IDLE within 1 s: the PL needs a restore; no
+playback, and the next run refuses to start with "restore the PL"). `invalid` is RING_STALLED, RESET_GENERATION refused (bit 11) or FAULT.
+A new ring starts with RESET_GENERATION in IDLE only, then ARM.

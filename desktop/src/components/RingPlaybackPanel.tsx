@@ -104,6 +104,7 @@ export function RingPlaybackPanel({ status, fetchFrame, onResume, append, ssdPat
         <p className="pending-note" role="alert" data-testid="ring-unavailable">{availability.reason}</p>
       ) : (
         <>
+          {availability.note && <p className="pending-note" role="status" data-testid="ring-stop-incomplete">{availability.note}</p>}
           <div className="canvas-wrap">
             <canvas ref={canvasRef} className="fit" aria-label="Buffered frame" />
           </div>

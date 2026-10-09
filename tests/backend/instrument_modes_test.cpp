@@ -879,9 +879,30 @@ void testRingPlayback(const mib::test::TempDir& td) {
         const auto bad = nlohmann::json::parse(facade.fetchRingStatusJson());
         MIB_EXPECT(bad["invalid"] == true && bad["frozen"] == false && bad["reason"].get<std::string>().find("RING_STALLED") != std::string::npos,
                    "an invalid ring is reported with the reason");
+        // STOP_STUCK: not frozen, not invalid, flagged stop incomplete; the frames below FINAL stay readable.
         fake->ring.fault = false;
-        fake->ring.frozen = true;
+        fake->ring.frozen = false;
+        fake->ring.stopStuck = true;
+        fake->ring.stopIncomplete = true;
         fake->ring.invalidReason.clear();
+        const auto stuck = nlohmann::json::parse(facade.fetchRingStatusJson());
+        MIB_EXPECT(stuck["stop_incomplete"] == true && stuck["invalid"] == false && stuck["frozen"] == false && stuck["count"] == 100 &&
+                       stuck["restore_needed"] == false,
+                   "STOP_STUCK: stop incomplete, not invalid, the range stays");
+        MIB_EXPECT(facade.fetchRingFramePacket(7, &frameError).size() > 48, "STOP_STUCK: a frame below FINAL is still served");
+        fake->ring.stopStuck = false;
+        fake->ring.stopIncomplete = false;
+        // A stop that never reached IDLE: restore needed.
+        fake->ring.restoreNeeded = true;
+        fake->ring.valid = false;
+        fake->ring.why = "the frame ring never reached idle after STOP: the PL needs a restore";
+        const auto restore = nlohmann::json::parse(facade.fetchRingStatusJson());
+        MIB_EXPECT(restore["restore_needed"] == true && restore["reason"].get<std::string>().find("restore") != std::string::npos,
+                   "a stop that never reached IDLE is reported as restore needed");
+        fake->ring.restoreNeeded = false;
+        fake->ring.valid = true;
+        fake->ring.why.clear();
+        fake->ring.frozen = true;
         fake->placementProblem = "frame ring: boot with a smaller mem=";
         const auto nofit = nlohmann::json::parse(facade.fetchRingStatusJson());
         MIB_EXPECT(nofit["available"] == false && nofit["reason"].get<std::string>().find("mem=") != std::string::npos, "a ring that does not fit is unavailable with the remedy");

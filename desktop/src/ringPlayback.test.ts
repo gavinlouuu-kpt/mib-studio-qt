@@ -26,7 +26,7 @@ function packet(opts: { seq?: number; w?: number; h?: number; cells?: number; ma
 }
 
 const status = (over: Partial<RingStatus> = {}): RingStatus => ({
-  available: true, frozen: true, invalid: false, run_frozen: true, capacity_frames: 5000, first_seq: 120, last_seq: 5119,
+  available: true, frozen: true, invalid: false, stop_incomplete: false, restore_needed: false, run_frozen: true, capacity_frames: 5000, first_seq: 120, last_seq: 5119,
   count: 5000, sensor_fps: 5000.8, ...over,
 });
 
@@ -81,6 +81,14 @@ describe("capacity, range and availability", () => {
     expect(playbackAvailability(status({ invalid: true, reason: "the ring stalled (RING_STALLED)" })).reason).toMatch(/RING_STALLED/);
     expect(playbackAvailability(status({ run_frozen: false })).reason).toMatch(/Stop Run/);
     expect(playbackAvailability(status({ frozen: false })).ok).toBe(false);
+    // STOP_STUCK: not frozen, but the frames below the newest stay readable, flagged.
+    const stuck = playbackAvailability(status({ frozen: false, stop_incomplete: true }));
+    expect(stuck.ok).toBe(true);
+    expect(stuck.note).toMatch(/Stop incomplete/);
+    expect(playbackAvailability(status()).note).toBeUndefined();
+    // A stop that never reached IDLE: a hardware fault, restore needed, never playback.
+    expect(playbackAvailability(status({ frozen: false, restore_needed: true })).reason).toMatch(/Restore needed/);
+    expect(playbackAvailability(status({ invalid: true, stop_incomplete: true, reason: "RING_STALLED" })).ok).toBe(false);
     expect(playbackAvailability(status({ count: 0 })).reason).toMatch(/empty/);
   });
   it("shows the elapsed time from the first buffered frame", () => {

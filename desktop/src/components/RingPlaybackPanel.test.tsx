@@ -8,7 +8,7 @@ import type { RingFrame, RingStatus } from "../ringPlayback";
 let host: HTMLDivElement, root: Root;
 const ok = { ok: true, command: 0, message: "Run resumed", operation_id: "0" };
 const status = (over: Partial<RingStatus> = {}): RingStatus => ({
-  available: true, frozen: true, invalid: false, run_frozen: true, capacity_frames: 5000, first_seq: 100, last_seq: 5099,
+  available: true, frozen: true, invalid: false, stop_incomplete: false, restore_needed: false, run_frozen: true, capacity_frames: 5000, first_seq: 100, last_seq: 5099,
   count: 5000, sensor_fps: 5000, ...over,
 });
 
@@ -106,6 +106,22 @@ describe("ring playback panel (#649 v1)", () => {
     await flush();
     expect(onResume).toHaveBeenCalledTimes(1);
     expect(append).toHaveBeenCalledWith("Run resumed");
+  });
+
+  it("plays the frozen part under a stop that did not complete, with the flag shown", async () => {
+    const fetchFrame = vi.fn(async (seq: number) => frameAt(seq));
+    await act(async () => root.render(<RingPlaybackPanel status={status({ frozen: false, stop_incomplete: true })} fetchFrame={fetchFrame} onResume={async () => ok} append={() => {}} />));
+    await flush();
+    expect(host.querySelector("[data-testid=ring-stop-incomplete]")?.textContent).toMatch(/Stop incomplete/);
+    expect(fetchFrame).toHaveBeenCalledWith(5099);
+    expect(host.querySelector("input[type=range]")).not.toBeNull();
+  });
+
+  it("says restore needed instead of offering playback", async () => {
+    const fetchFrame = vi.fn();
+    await act(async () => root.render(<RingPlaybackPanel status={status({ frozen: false, restore_needed: true })} fetchFrame={fetchFrame} onResume={async () => ok} append={() => {}} />));
+    expect(host.querySelector("[data-testid=ring-unavailable]")?.textContent).toMatch(/Restore needed/);
+    expect(fetchFrame).not.toHaveBeenCalled();
   });
 
   it("reports a frame that could not be fetched (overwritten while copied)", async () => {

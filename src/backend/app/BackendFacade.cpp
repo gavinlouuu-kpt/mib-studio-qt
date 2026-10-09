@@ -3053,7 +3053,7 @@ nlohmann::json ringStatusJson(backend::AppBackend& backend) {
     nlohmann::json j{{"available", false}, {"reason", ""},          {"frozen", false},   {"invalid", false},
                      {"run_frozen", backend.runFrozen()}, {"capacity_frames", backend.ringFramesWanted()},
                      {"first_seq", 0},      {"last_seq", 0},        {"count", 0},        {"sensor_fps", 0.0},
-                     {"state", 0},          {"head", -1}};
+                     {"state", 0},          {"head", -1},        {"stop_incomplete", false}, {"restore_needed", false}};
     if (backend.ringFramesWanted() == 0) {
         j["reason"] = "This instrument keeps no frame ring (the PL image or the kernel's mem= setting has no room for one).";
         return j;
@@ -3067,10 +3067,12 @@ nlohmann::json ringStatusJson(backend::AppBackend& backend) {
         if (const auto fps = monitor->sensorFps()) j["sensor_fps"] = *fps;
     }
     const auto st = backend.ringStatus();
+    j["restore_needed"] = st.restoreNeeded;
     if (!st.valid) {
         j["reason"] = st.why;
         return j;
     }
+    j["stop_incomplete"] = st.stopIncomplete;
     j["state"] = st.state;
     j["head"] = st.head;
     j["capacity_frames"] = st.records;
