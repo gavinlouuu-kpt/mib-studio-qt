@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""G14: every wall-clock time that ends up in a file goes through backend::app::WallClock.
+"""G14: the experiment, recording and export paths take their wall-clock times from backend::app::WallClock.
 
 The PZ7035 has no RTC, so `std::chrono::system_clock::now()` / `std::time(nullptr)` in the backend would stamp
-the boot date. This guard lists the only places allowed to read the system clock directly; any new one must
-either use WallClock::nowNs() or be added here with the reason it is not a persisted date."""
+the boot date. This guard lists the only places in src/backend and include/backend allowed to read the system
+clock directly; any new one must either use WallClock::nowNs() or be added here with the reason it is not a
+science-file date. Known scope limits (not covered): the Qt frontend (PC only), and operational metadata such as the
+profile registry and cache timestamps (SQLite CURRENT_TIMESTAMP), which still use the board clock."""
 import re
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PATTERN = re.compile(r"system_clock::now|std::time\s*\(|\btime\s*\(\s*(nullptr|NULL|0)\s*\)|QDateTime::currentDateTime|currentMSecsSinceEpoch")
+PATTERN = re.compile(r"system_clock::now|std::time\s*\(|\btime\s*\(\s*(nullptr|NULL|0)\s*\)|gettimeofday|CLOCK_REALTIME|QDateTime::currentDateTime|currentMSecsSinceEpoch")
 ALLOWED = {
     "include/backend/app/WallClock.h": "the source itself",
     "src/backend/app/ExperimentCoordinator.cpp": "provider run id (an opaque identifier, not a date)",
@@ -38,10 +40,10 @@ def main() -> int:
     if "std::time(nullptr)" in export:
         bad.append("HdfExportService.cpp: exportTime must use WallClock")
     if bad:
-        print("system-clock reads outside backend::app::WallClock (route them through WallClock::nowNs()):")
+        print("system-clock reads outside backend::app::WallClock in the backend (route experiment/recording/export times through WallClock::nowNs()):")
         print("\n".join(bad))
         return 1
-    print("every persisted wall-clock time goes through WallClock")
+    print("experiment, recording and export wall-clock times go through WallClock")
     return 0
 
 

@@ -6,7 +6,10 @@
 #include "support/assert.h"
 #include "support/tempdir.h"
 
+#include <atomic>
+#include <chrono>
 #include <hdf5.h>
+#include <thread>
 #include <string>
 #include <utility>
 
@@ -97,6 +100,34 @@ int main() {
     }
     MIB_EXPECT(app::WallClock::sync(kClient + 3'600'000, false, &why), "an hour later and idle: accepted");
     MIB_EXPECT(app::WallClock::nowNs() == static_cast<uint64_t>(kClient + 3'600'000) * 1'000'000ULL, "the new offset applies");
+
+    // A run starting while a sync is between its check and its commit: the hold waits for the commit, so the run's
+    // start is stamped with the new offset (never the old one, which would give it a start and an end from different clocks).
+    {
+        app::WallClock::resetForTesting();
+        app::WallClock::setClocksForTesting(5'000'000'000LL, kBoot * 1'000'000LL);
+        app::WallClock::setBoardWithoutRtc(true);
+        MIB_REQUIRE(app::WallClock::sync(kClient, false, &why), "synced once");
+        std::atomic<bool> attempting{false}, holdTaken{false};
+        std::atomic<uint64_t> startStamp{0};
+        std::thread run;
+        app::WallClock::setSyncPauseForTesting([&] {
+            run = std::thread([&] {
+                attempting.store(true);
+                auto hold = app::WallClock::hold(); // blocks until sync() has committed
+                startStamp.store(app::WallClock::nowNs());
+                holdTaken.store(true);
+            });
+            while (!attempting.load()) std::this_thread::yield();
+            for (int i = 0; i < 2000 && !holdTaken.load(); ++i) std::this_thread::sleep_for(std::chrono::microseconds(100));
+            MIB_EXPECT(!holdTaken.load(), "a hold cannot be taken between sync's check and its commit");
+        });
+        MIB_EXPECT(app::WallClock::sync(kClient + 3'600'000, false, &why), "the hour-later sync commits");
+        run.join();
+        app::WallClock::setSyncPauseForTesting(nullptr);
+        MIB_EXPECT(startStamp.load() == static_cast<uint64_t>(kClient + 3'600'000) * 1'000'000ULL,
+                   "the run's start is stamped with the committed offset");
+    }
 
     // The file says where the time came from.
     {

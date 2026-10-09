@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <functional>
 #include <mutex>
 #include <string>
 
@@ -33,6 +34,7 @@ class WallClock {
         std::atomic<int> holds{0};
         std::atomic<int64_t> testSteadyNs{-1};
         std::atomic<int64_t> testSystemNs{-1};
+        std::function<void()> syncPause; // test hook: runs inside sync() between its checks and its commit
     };
     static State& st() {
         static State s;
@@ -53,7 +55,12 @@ public:
     // never come from different offsets and its source label stays true.
     class Hold {
     public:
-        Hold() : active_(true) { st().holds.fetch_add(1); }
+        // Taken under the same mutex as sync()'s check and commit: a hold either comes before the check (the sync
+        // is refused) or after the commit (the run stamps its start with the new offset). Never in between.
+        Hold() : active_(true) {
+            std::lock_guard<std::mutex> lock(st().mutex);
+            st().holds.fetch_add(1);
+        }
         Hold(Hold&& other) noexcept : active_(other.active_) { other.active_ = false; }
         Hold& operator=(Hold&& other) noexcept {
             if (this != &other) {
@@ -103,6 +110,7 @@ public:
             if (why) *why = "a run is active: the clock is kept until it ends";
             return false;
         }
+        if (s.syncPause) s.syncPause();
         const int64_t offset = unixMs * 1'000'000LL - steadyNs();
         if (s.synced.load() && std::llabs(offset - s.offsetNs.load()) < kJitterNs) {
             s.lastSyncMs.store(unixMs);
@@ -140,6 +148,11 @@ public:
         s.noRtc.store(false);
         s.testSteadyNs.store(-1);
         s.testSystemNs.store(-1);
+        s.syncPause = nullptr;
+    }
+    static void setSyncPauseForTesting(std::function<void()> pause) {
+        std::lock_guard<std::mutex> lock(st().mutex);
+        st().syncPause = std::move(pause);
     }
     static void setClocksForTesting(int64_t steady, int64_t system) {
         st().testSteadyNs.store(steady);
