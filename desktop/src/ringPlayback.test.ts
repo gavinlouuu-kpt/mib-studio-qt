@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
-  advancePlayback, capacityText, cellMetrics, metricText, clampSeq, contourPixels, decodeRingFrame, elapsedText, nextOverlay, noMaskNote,
+  advancePlayback, capacityText, cellMetrics, frameNotes, metricText, clampSeq, contourPixels, decodeRingFrame, elapsedText, nextOverlay, noMaskNote,
   playbackAvailability, rangeText, ringFrameRgba, saveClipState, secondsText, stepSeq, type RingFrame, type RingStatus,
 } from "./ringPlayback";
 
-function packet(opts: { seq?: number; w?: number; h?: number; cells?: number; mask?: boolean; truncated?: boolean } = {}): ArrayBuffer {
+function packet(opts: { seq?: number; w?: number; h?: number; cells?: number; mask?: boolean; truncated?: boolean; flags?: number } = {}): ArrayBuffer {
   const w = opts.w ?? 16, h = opts.h ?? 4, cells = opts.cells ?? 2;
   const gray = w * h, maskBytes = gray / 8;
   const buf = new ArrayBuffer(48 + gray + maskBytes + cells * 19 * 4);
@@ -14,7 +14,7 @@ function packet(opts: { seq?: number; w?: number; h?: number; cells?: number; ma
   v.setBigUint64(8, BigInt(opts.seq ?? 7), true); v.setBigUint64(16, 1007n, true); v.setBigUint64(24, 5_035_000n, true);
   v.setUint32(32, 100_000_000, true); v.setUint32(36, 0, true);
   v.setUint16(40, w, true); v.setUint16(42, h, true); v.setUint16(44, cells, true);
-  v.setUint16(46, (opts.mask === false ? 0 : 1) | (opts.truncated ? 2 : 0), true);
+  v.setUint16(46, (opts.mask === false ? 0 : 1) | (opts.truncated ? 2 : 0) | (opts.flags ?? 0), true);
   for (let i = 0; i < gray; i++) v.setUint8(48 + i, i % 251);
   for (let i = 0; i < maskBytes; i++) v.setUint8(48 + gray + i, i === 1 ? 0xff : 0);
   for (let c = 0; c < cells; c++) {
@@ -54,6 +54,17 @@ describe("MIBR packet", () => {
     expect(f.maskPresent).toBe(false);
     expect(f.resultsTruncated).toBe(true);
     expect(noMaskNote(f)).toMatch(/No result for this frame/);
+  });
+  it("carries a cut frame, an invalid frame and an incomplete mask, and says so", () => {
+    const f = decodeRingFrame(packet({ mask: false, flags: 4 | 8 | 16 }));
+    expect(f.frameInvalid).toBe(true);
+    expect(f.cut).toBe(true);
+    expect(f.maskIncomplete).toBe(true);
+    expect(f.maskPresent).toBe(false);
+    expect(frameNotes(f)).toHaveLength(2);
+    expect(frameNotes(f)[0]).toMatch(/cut/);
+    expect(noMaskNote(f)).toMatch(/incomplete/);
+    expect(frameNotes(decodeRingFrame(packet()))).toEqual([]);
   });
   it("rejects a malformed packet", () => {
     expect(() => decodeRingFrame(new ArrayBuffer(8))).toThrow(/short/);

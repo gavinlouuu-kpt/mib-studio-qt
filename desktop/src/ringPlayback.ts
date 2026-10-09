@@ -43,6 +43,12 @@ export interface RingFrame {
   height: number;
   maskPresent: boolean;
   resultsTruncated: boolean;
+  /** FRAME INVALID or PARTIAL: an ingress-error frame, nothing was measured. */
+  frameInvalid: boolean;
+  /** The MONO8 block is INCOMPLETE: the PL closed the frame early (an open frame at Stop, or a lost line). */
+  cut: boolean;
+  /** The MASK1 block is INCOMPLETE: never shown as present. */
+  maskIncomplete: boolean;
   gray: Uint8Array;
   /** 1 bit per pixel, LSB first, row-major; all zero when `maskPresent` is false. */
   mask: Uint8Array;
@@ -85,6 +91,9 @@ export function decodeRingFrame(buf: ArrayBuffer): RingFrame {
     width, height,
     maskPresent: (bits & 1) !== 0,
     resultsTruncated: (bits & 2) !== 0,
+    frameInvalid: (bits & 4) !== 0,
+    cut: (bits & 8) !== 0,
+    maskIncomplete: (bits & 16) !== 0,
     gray: new Uint8Array(buf, HEADER, grayBytes),
     mask: new Uint8Array(buf, HEADER + grayBytes, maskBytes),
     cells,
@@ -292,8 +301,17 @@ export function ringFrameRgba(f: RingFrame, overlay: OverlayMode): Uint8ClampedA
 }
 
 /** Why a frame has no mask, shown on the canvas. */
-export function noMaskNote(f: Pick<RingFrame, "maskPresent">): string {
-  return f.maskPresent ? "" : "No result for this frame: the U-Net did not deliver a mask.";
+export function noMaskNote(f: Pick<RingFrame, "maskPresent" | "maskIncomplete">): string {
+  if (f.maskPresent) return "";
+  return f.maskIncomplete ? "The mask of this frame is incomplete and is not shown." : "No result for this frame: the U-Net did not deliver a mask.";
+}
+
+/** What is wrong with the frame itself (a cut or an invalid frame), shown above the controls; empty for a good frame. */
+export function frameNotes(f: Pick<RingFrame, "cut" | "frameInvalid">): string[] {
+  const notes: string[] = [];
+  if (f.cut) notes.push("This frame was cut: the PL closed it early, so the image is incomplete.");
+  if (f.frameInvalid) notes.push("Invalid frame: the input was unusable and nothing was measured.");
+  return notes;
 }
 
 // ---- Save clip (arrives with the SSD path, #667) ------------------------------------------------------------------

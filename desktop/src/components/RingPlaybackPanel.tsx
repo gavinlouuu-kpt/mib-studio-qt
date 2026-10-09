@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { CmdResult } from "../bridge";
 import {
   advancePlayback, capacityText, CELL_REASONS, cellMetrics, clampSeq, DEFAULT_DISPLAY_FPS, DISPLAY_FPS, elapsedText,
-  metricText, nextOverlay, noMaskNote, OVERLAY_LABEL, playbackAvailability, rangeText, ringFrameRgba, saveClipState,
+  frameNotes, metricText, nextOverlay, noMaskNote, OVERLAY_LABEL, playbackAvailability, rangeText, ringFrameRgba, saveClipState,
   stepSeq, type OverlayMode, type RingFrame, type RingStatus,
 } from "../ringPlayback";
 
@@ -108,6 +108,7 @@ export function RingPlaybackPanel({ status, fetchFrame, onResume, append, ssdPat
           <div className="canvas-wrap">
             <canvas ref={canvasRef} className="fit" aria-label="Buffered frame" />
           </div>
+          {frame && frameNotes(frame).map((n) => <p key={n} className="pending-note" role="status">{n}</p>)}
           {frame && !frame.maskPresent && <p className="pending-note" role="status">{noMaskNote(frame)}</p>}
           {frame?.resultsTruncated && <p className="pending-note" role="status">More cells than the PL can list: the list is cut.</p>}
           {error && <p className="pending-note" role="alert">{error}</p>}

@@ -17,7 +17,7 @@ function frameAt(seq: number, withMask = true): RingFrame {
   payload[0] = 1; payload[2] = Math.round(130 * 65536); payload[5] = Math.round(0.05 * 65536) | (1 << 24); payload[4] = Math.round(0.9 * 65536);
   return {
     seq, frameId: 1000 + seq, timestampTicks: 100_000 * seq, tickHz: 100_000_000, flags: 0, width: 16, height: 4, maskPresent: withMask,
-    resultsTruncated: false, gray: new Uint8Array(64).fill(50), mask: new Uint8Array(8),
+    resultsTruncated: false, frameInvalid: false, cut: false, maskIncomplete: false, gray: new Uint8Array(64).fill(50), mask: new Uint8Array(8),
     cells: [
       { x: 1, y: 1, width: 4, height: 2, valid: true, index: 0, payloadValidity: 0x7fff, payload },
       { x: 8, y: 0, width: 3, height: 3, valid: false, index: 1, payloadValidity: 0b1, payload: [(2) | (3 << 16), ...new Array(14).fill(0)] },
@@ -115,6 +115,14 @@ describe("ring playback panel (#649 v1)", () => {
     expect(host.querySelector("[data-testid=ring-stop-incomplete]")?.textContent).toMatch(/Stop incomplete/);
     expect(fetchFrame).toHaveBeenCalledWith(5099);
     expect(host.querySelector("input[type=range]")).not.toBeNull();
+  });
+
+  it("flags a cut frame", async () => {
+    const fetchFrame = vi.fn(async (seq: number) => ({ ...frameAt(seq), cut: true, maskIncomplete: true, maskPresent: false }));
+    await act(async () => root.render(<RingPlaybackPanel status={status()} fetchFrame={fetchFrame} onResume={async () => ok} append={() => {}} />));
+    await flush();
+    expect(host.textContent).toContain("This frame was cut");
+    expect(host.textContent).toContain("The mask of this frame is incomplete");
   });
 
   it("says restore needed instead of offering playback", async () => {

@@ -19,3 +19,6 @@ Final STOP handling (board owner's wording): the status gains `stop_incomplete` 
 readable and the panel shows "Stop incomplete") and `restore_needed` (STOP never reached IDLE within 1 s: the PL needs a restore; no
 playback, and the next run refuses to start with "restore the PL"). `invalid` is RING_STALLED, RESET_GENERATION refused (bit 11) or FAULT.
 A new ring starts with RESET_GENERATION in IDLE only, then ARM.
+
+The `MIBR` flags gain bit 2 (frame invalid), bit 3 (frame cut: the MONO8 block is INCOMPLETE) and bit 4 (mask incomplete); the panel says "This
+frame was cut", "Invalid frame" and "The mask of this frame is incomplete" and never draws an incomplete mask.
