@@ -30,8 +30,9 @@ overlay is record-based because the PL does the science.
   playback**), bit 10 `STOP_STUCK` (the tap or its clock is broken; the device stays DRAINING; the records below FINAL are stable, so playback of
   the frozen part continues under the reader rule, flagged **"stop incomplete"**) and bit 11 (RESET_GENERATION was refused because the ring was
   not idle: invalid). Frozen = STATE IDLE after STOP with no bit set. A new ring starts with RESET_GENERATION **only in IDLE**, then ARM; the provider
-  waits for IDLE (bounded) before it does either, and never writes RESET_GENERATION in another state. (Open point: the board owner's note says
-  playback may also continue under RING_STALLED; the coordinator's rule, "ring invalid, re-arm", stands until the coordinator changes it.)
+  waits for IDLE (bounded) before it does either, and never writes RESET_GENERATION in another state. Ruling (coordinator, 2026-10-09): **RING_STALLED stays "ring invalid, no playback, re-arm"**, although the records below FINAL are stable. A stall means a DDR
+  write was never acknowledged for 255 frames (a memory-path fault), so nothing in that window is trusted, and the readable range could hold frames far
+  older than the Stop, which would mislead a "last second" review. STOP_STUCK stays readable and flagged.
 - Sequences restart at 0 at every ARM. Read before re-arming.
 - The PL enforces no DDR floor. Studio validates base and size: at or above Linux's RAM end (from `/proc/iomem`), at or above
   0x00100000, ending at or below 0x3F000000 (the PL's result ring and preview slots). Otherwise it refuses to arm, with a gate reason.
