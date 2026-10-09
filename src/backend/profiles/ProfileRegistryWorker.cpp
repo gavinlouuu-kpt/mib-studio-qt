@@ -1,3 +1,4 @@
+#include "backend/app/WallClock.h"
 #include "backend/profiles/ProfileRegistryWorker.h"
 #include "backend/processing/ProcessingCoreSha256.h"
 #include "backend/profiles/InstrumentIdentity.h"
@@ -71,7 +72,8 @@ void makeWritable(const std::filesystem::path& dir) {
 }
 
 std::string utcNowIso8601() {
-    const auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    // The synced wall clock (#671), not the board's own: the PZ7035 has no RTC.
+    const auto now = static_cast<std::time_t>(backend::app::WallClock::nowNs() / 1'000'000'000ull);
     std::tm tm{};
 #ifdef _WIN32
     gmtime_s(&tm, &now);
@@ -744,7 +746,9 @@ RegistryJobStatus ProfileRegistryWorker::doRefresh() {
             cursor = *next;
         }
     }
-    lastSuccessfulRefresh_ = std::chrono::system_clock::now();
+    // Shown to the operator as a time: the synced wall clock (#671), not the board's own (no RTC). Token expiry stays on the system clock: it is relative.
+    lastSuccessfulRefresh_ = std::chrono::system_clock::time_point(
+        std::chrono::duration_cast<std::chrono::system_clock::duration>(std::chrono::nanoseconds(backend::app::WallClock::nowNs())));
     return {0, RegistryJobKind::Refresh, RegistryJobState::Succeeded,
             "Refreshed " + std::to_string(projects_.size()) + " project(s), " +
                 std::to_string(pages) + " page(s)"};
