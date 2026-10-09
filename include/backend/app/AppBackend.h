@@ -143,7 +143,8 @@ namespace backend
         bool setInstrumentMode(pz::InstrumentMode mode, int x, int y, std::string *errorOut);
         // #649 v1: Stop in Run freezes the every-frame ring (provider STOP, wait for the device's frozen state, LED off)
         // so the buffered frames can be played back; resume re-arms (a new ring, the old frames are gone), LED on.
-        bool freezeRun(std::string *errorOut);
+        // `noteOut`: what the freeze did not achieve (the ring is not frozen, stop incomplete, restore needed), also on success.
+        bool freezeRun(std::string *errorOut, std::string *noteOut = nullptr);
         bool resumeRun(std::string *errorOut);
         bool runFrozen() const { return runFrozen_.load(); }
         // The ring's registers, one frame as a browser packet ('MIBR', PzFrameRing.h), and the configured size.

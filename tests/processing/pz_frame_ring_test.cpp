@@ -37,7 +37,8 @@ struct FakeIo final : pz::IRingIo {
         std::memcpy(dst, mem.data() + (phys - kBase), n);
         return true;
     }
-    void configure(uint32_t head, uint32_t final_, uint32_t state) {
+    // `bridgeState`: the bridge STATE register (0x040); `sticky`: the sticky fault bits of STORE_STATE (0x3A0), the only part of it Studio reads.
+    void configure(uint32_t head, uint32_t final_, uint32_t bridgeState, uint32_t sticky = 0) {
         regs[PZ_MIB_REG_STORE_BASE_LO] = static_cast<uint32_t>(kBase);
         regs[PZ_MIB_REG_STORE_BASE_HI] = 0;
         regs[PZ_MIB_REG_STORE_RECORDS] = kN;
@@ -47,7 +48,8 @@ struct FakeIo final : pz::IRingIo {
         regs[PZ_MIB_REG_GENERATION] = 2;
         regs[PZ_MIB_REG_STORE_HEAD_SEQ] = head;
         regs[pz::kRingRegFinalSeq] = final_;
-        regs[PZ_MIB_REG_STORE_STATE] = state;
+        regs[PZ_MIB_REG_STATE] = bridgeState;
+        regs[PZ_MIB_REG_STORE_STATE] = sticky;
     }
 };
 
@@ -172,75 +174,75 @@ int main() {
     {
         FakeIo io;
         pz::PzFrameRing ring(io, kLinuxEnd);
-        io.configure(0xFFFFFFFFu, 0, PZ_MIB_STORE_STATE_IDLE);
+        io.configure(0xFFFFFFFFu, 0, PZ_MIB_STATE_IDLE);
         auto s = ring.status();
         MIB_EXPECT(s.valid && s.head == -1 && s.count() == 0 && s.frozen, "no frame yet: empty and frozen");
-        io.configure(9, 9, PZ_MIB_STORE_STATE_CAPTURING); // 10 started, 9 complete, ring of 4
+        io.configure(9, 9, PZ_MIB_STATE_RUNNING); // 10 started, 9 complete, ring of 4
         s = ring.status();
         MIB_EXPECT(s.lo == 6 && s.final == 9 && s.count() == 3 && !s.frozen, "lo = HEAD + 1 - N; readable 6..8; running is not frozen");
-        io.configure(9, 10, PZ_MIB_STORE_STATE_DRAINING);
+        io.configure(9, 10, PZ_MIB_STATE_DRAINING);
         MIB_EXPECT(!ring.status().frozen, "DRAINING is not frozen even with FINAL = HEAD + 1");
-        io.configure(9, 9, PZ_MIB_STORE_STATE_IDLE);
+        io.configure(9, 9, PZ_MIB_STATE_IDLE);
         MIB_EXPECT(!ring.status().frozen, "IDLE with FINAL below HEAD + 1 is not frozen");
-        io.configure(9, 10, PZ_MIB_STORE_STATE_IDLE);
+        io.configure(9, 10, PZ_MIB_STATE_IDLE);
         s = ring.status();
         MIB_EXPECT(s.frozen && s.lo == 6 && s.count() == 4 && !s.stopIncomplete, "IDLE and FINAL = HEAD + 1: frozen, the last 4 frames");
-        io.configure(9, 10, PZ_MIB_STORE_STATE_FAULT);
+        io.configure(9, 10, PZ_MIB_STATE_FAULT);
         s = ring.status();
         MIB_EXPECT(s.fault && !s.frozen, "a ring fault is never frozen: re-arm needed");
         // The sticky bits hold until the next ARM and invalidate the ring whatever the state code says (RING_STALLED, bit 11).
-        io.configure(9, 10, PZ_MIB_STORE_STATE_IDLE | pz::kRingStateStalled);
+        io.configure(9, 10, PZ_MIB_STATE_IDLE, pz::kRingStateStalled);
         s = ring.status();
-        MIB_EXPECT(s.valid && s.stalled && s.fault && !s.frozen && s.state == PZ_MIB_STORE_STATE_IDLE &&
+        MIB_EXPECT(s.valid && s.stalled && s.fault && !s.frozen && s.state == PZ_MIB_STATE_IDLE &&
                        s.invalidReason.find("RING_STALLED") != std::string::npos,
                    "RING_STALLED: IDLE and FINAL = HEAD + 1 but not frozen, with the reason");
-        io.configure(9, 10, PZ_MIB_STORE_STATE_DRAINING | pz::kRingStateStopStuck);
+        io.configure(9, 10, PZ_MIB_STATE_DRAINING, pz::kRingStateStopStuck);
         s = ring.status();
         MIB_EXPECT(s.valid && s.stopStuck && s.stopIncomplete && !s.fault && !s.frozen && s.lo == 6 && s.final == 10,
                    "STOP_STUCK while DRAINING: not frozen, not invalid: stop incomplete, the records below FINAL stay readable");
-        io.configure(9, 10, PZ_MIB_STORE_STATE_IDLE | pz::kRingStateStopStuck);
+        io.configure(9, 10, PZ_MIB_STATE_IDLE, pz::kRingStateStopStuck);
         s = ring.status();
         MIB_EXPECT(s.frozen && s.stopIncomplete && !s.fault && s.invalidReason.empty(),
                    "STOP_STUCK on a ring that reached IDLE after all: frozen AND stop incomplete = playback allowed and flagged");
-        io.configure(9, 10, PZ_MIB_STORE_STATE_IDLE | pz::kRingStateResetRefused);
+        io.configure(9, 10, PZ_MIB_STATE_IDLE, pz::kRingStateResetRefused);
         s = ring.status();
         MIB_EXPECT(s.resetRefused && s.fault && !s.frozen && s.invalidReason.find("RESET_GENERATION") != std::string::npos,
                    "bit 11: RESET_GENERATION was refused: invalid");
-        io.configure(9, 10, PZ_MIB_STORE_STATE_IDLE | pz::kRingStateStalled | pz::kRingStateStopStuck);
+        io.configure(9, 10, PZ_MIB_STATE_IDLE, pz::kRingStateStalled | pz::kRingStateStopStuck);
         MIB_EXPECT(ring.status().fault && !ring.status().frozen, "stalled and stuck: invalid (the stall wins)");
-        io.configure(9, 10, PZ_MIB_STORE_STATE_IDLE);
+        io.configure(9, 10, PZ_MIB_STATE_IDLE);
         MIB_EXPECT(ring.status().frozen && !ring.status().fault, "frozen means IDLE with no fault bit set");
         // Hostile or wrong registers never make a read reach Linux's RAM or wrap the arithmetic.
         io.regs[PZ_MIB_REG_STORE_RECORDS] = 0;
         MIB_EXPECT(!ring.status().valid, "no ring configured");
-        io.configure(9, 10, PZ_MIB_STORE_STATE_IDLE);
+        io.configure(9, 10, PZ_MIB_STATE_IDLE);
         io.regs[PZ_MIB_REG_STORE_BASE_LO] = 0x1000;
         MIB_EXPECT(!ring.status().valid, "a base below the floor is not trusted");
-        io.configure(9, 10, PZ_MIB_STORE_STATE_IDLE);
+        io.configure(9, 10, PZ_MIB_STATE_IDLE);
         io.regs[PZ_MIB_REG_STORE_BASE_HI] = 1;
         MIB_EXPECT(!ring.status().valid, "BASE_HI != 0 is not trusted (the PL area is below 4 GiB)");
-        io.configure(9, 10, PZ_MIB_STORE_STATE_IDLE);
+        io.configure(9, 10, PZ_MIB_STATE_IDLE);
         io.regs[PZ_MIB_REG_STORE_BASE_LO] = 0xFFFFF000u;
         io.regs[PZ_MIB_REG_STORE_RECORDS] = 0xFFFFFFFFu;
         MIB_EXPECT(!ring.status().valid, "a base near 4 GiB with a huge record count cannot wrap the sum into 'valid'");
-        io.configure(9, 10, PZ_MIB_STORE_STATE_IDLE);
+        io.configure(9, 10, PZ_MIB_STATE_IDLE);
         io.regs[PZ_MIB_REG_STORE_BASE_LO] = static_cast<uint32_t>(kLinuxEnd - 0x100000);
         MIB_EXPECT(!ring.status().valid && ring.status().why.find("Linux") != std::string::npos, "a base inside Linux's RAM is refused");
-        io.configure(9, 10, PZ_MIB_STORE_STATE_IDLE);
+        io.configure(9, 10, PZ_MIB_STATE_IDLE);
         io.regs[PZ_MIB_REG_STORE_BASE_LO] = static_cast<uint32_t>(0x3F000000ull - 2ull * kRec);
         MIB_EXPECT(!ring.status().valid, "records reaching past the PL area are refused");
-        io.configure(9, 10, PZ_MIB_STORE_STATE_IDLE);
+        io.configure(9, 10, PZ_MIB_STATE_IDLE);
         io.regs[PZ_MIB_REG_STORE_SET_BYTES] = 0;
         MIB_EXPECT(!ring.status().valid && ring.status().why.find("STORE_SET_BYTES") != std::string::npos, "an unset record-set size is not trusted");
-        io.configure(9, 10, PZ_MIB_STORE_STATE_IDLE);
+        io.configure(9, 10, PZ_MIB_STATE_IDLE);
         io.regs[PZ_MIB_REG_STORE_SET_BYTES] = kRec + 8;
         MIB_EXPECT(!ring.status().valid, "a record-set size larger than the record is not trusted");
-        io.configure(9, 10, PZ_MIB_STORE_STATE_IDLE);
+        io.configure(9, 10, PZ_MIB_STATE_IDLE);
         pz::PzFrameRing blind(io, 0);
         MIB_EXPECT(!blind.status().valid && blind.status().why.find("unknown") != std::string::npos,
                    "without a known end of Linux's RAM the ring is never valid");
         // 32-bit sequences: no wrap support; near 2^32 the run is refused with a reason.
-        io.configure(0xFFF00001u, 0xFFF00002u, PZ_MIB_STORE_STATE_CAPTURING);
+        io.configure(0xFFF00001u, 0xFFF00002u, PZ_MIB_STATE_RUNNING);
         s = ring.status();
         MIB_EXPECT(s.valid && s.fault && s.invalidReason.find("sequence limit") != std::string::npos, "the 32-bit sequence limit is a refusal with a reason, not a wrap");
     }
@@ -249,13 +251,13 @@ int main() {
     {
         FakeIo io;
         pz::PzFrameRing ring(io, kLinuxEnd);
-        io.configure(9, 9, PZ_MIB_STORE_STATE_DRAINING);
+        io.configure(9, 9, PZ_MIB_STATE_DRAINING);
         // The state turns to IDLE after a few register polls (the open frame completes).
         struct Ticker final : pz::IRingIo {
             FakeIo& f; int n = 0;
             explicit Ticker(FakeIo& x) : f(x) {}
             uint32_t reg(uint32_t o) override {
-                if (o == PZ_MIB_REG_STORE_STATE && ++n > 12) { f.regs[PZ_MIB_REG_STORE_STATE] = PZ_MIB_STORE_STATE_IDLE; f.regs[pz::kRingRegFinalSeq] = 10; }
+                if (o == PZ_MIB_REG_STATE && ++n > 12) { f.regs[PZ_MIB_REG_STATE] = PZ_MIB_STATE_IDLE; f.regs[pz::kRingRegFinalSeq] = 10; }
                 return f.reg(o);
             }
             void setReg(uint32_t o, uint32_t v) override { f.setReg(o, v); }
@@ -264,15 +266,16 @@ int main() {
         pz::PzFrameRing r2(ticker, kLinuxEnd);
         const auto frozen = r2.awaitFrozen(std::chrono::milliseconds(500));
         MIB_EXPECT(frozen.frozen && frozen.final == 10 && !frozen.restoreNeeded, "frozen once the open frame completed");
-        io.configure(9, 9, PZ_MIB_STORE_STATE_DRAINING);
+        io.configure(9, 9, PZ_MIB_STATE_DRAINING);
         const auto stuck = ring.awaitFrozen(std::chrono::milliseconds(20));
         MIB_EXPECT(!stuck.frozen && stuck.restoreNeeded,
                    "a ring that never freezes within the bound and shows no sticky bit needs a restore (the bound is owned here, not by callers)");
         MIB_EXPECT(pz::kRingFreezeWaitMs == 1000, "the default bound is 1 s");
         // Prompt returns: a ring that will not freeze by waiting is not waited on.
-        for (const uint32_t state : {PZ_MIB_STORE_STATE_DRAINING | pz::kRingStateStopStuck, PZ_MIB_STORE_STATE_IDLE | pz::kRingStateStalled,
-                                      PZ_MIB_STORE_STATE_IDLE | pz::kRingStateResetRefused, static_cast<uint32_t>(PZ_MIB_STORE_STATE_FAULT)}) {
-            io.configure(9, 10, state);
+        struct Case { uint32_t bridge, sticky; };
+        for (const Case c : {Case{PZ_MIB_STATE_DRAINING, pz::kRingStateStopStuck}, Case{PZ_MIB_STATE_IDLE, pz::kRingStateStalled},
+                             Case{PZ_MIB_STATE_IDLE, pz::kRingStateResetRefused}, Case{PZ_MIB_STATE_FAULT, 0}}) {
+            io.configure(9, 10, c.bridge, c.sticky);
             const auto t0 = std::chrono::steady_clock::now();
             const auto st = ring.awaitFrozen(std::chrono::milliseconds(500));
             MIB_EXPECT(!st.frozen && !st.restoreNeeded && (st.fault || st.stopIncomplete) && std::chrono::steady_clock::now() - t0 < std::chrono::milliseconds(200),
@@ -285,7 +288,7 @@ int main() {
         FakeIo io;
         pz::PzFrameRing ring(io, kLinuxEnd);
         for (uint64_t s = 6; s <= 9; ++s) putRecord(io, s, static_cast<uint8_t>(s * 3));
-        io.configure(9, 10, PZ_MIB_STORE_STATE_IDLE);
+        io.configure(9, 10, PZ_MIB_STATE_IDLE);
         pz::RingFrame f;
         std::string why;
         MIB_EXPECT(ring.readFrame(7, f, &why) == pz::RingRead::Ok, "read 7: " + why);
@@ -316,7 +319,7 @@ int main() {
         MIB_EXPECT(w15 == (100u | 20u << 16) && w17 == (2u << 24 | 0u << 16 | 1u) && w17b == (2u << 24 | 1u << 16 | 0u) && w18 == 0x7FFF,
                    "cell words 15 (x|y), 17 (count|index|valid) follow the run-preview layout; word 18 is the payload validity");
         // An empty ring has nothing to read.
-        io.configure(0xFFFFFFFFu, 0, PZ_MIB_STORE_STATE_IDLE);
+        io.configure(0xFFFFFFFFu, 0, PZ_MIB_STATE_IDLE);
         MIB_EXPECT(ring.readFrame(0, f, &why) == pz::RingRead::OutOfRange, "head = -1: nothing to read, out of range");
     }
 
@@ -329,7 +332,7 @@ int main() {
         std::string why;
         const auto blockAddr = [&](uint64_t seq) { return slotAddr(seq) + pz::kRingSetBytes; };
         // HEAD moves on while sequence 7 is being copied: slot of 7 is reused by 11 (7 mod 4 = 11 mod 4); its pixels are rewritten too.
-        io.configure(10, 10, PZ_MIB_STORE_STATE_CAPTURING); // running: 11 started, 10 complete, readable 7..9
+        io.configure(10, 10, PZ_MIB_STATE_RUNNING); // running: 11 started, 10 complete, readable 7..9
         io.onRead = [&](uint64_t phys, size_t n) {
             if (n == 49152 && phys == blockAddr(7)) {
                 std::fill(io.mem.begin() + (7 % kN) * static_cast<size_t>(kRec) + pz::kRingSetBytes, io.mem.begin() + (7 % kN) * static_cast<size_t>(kRec) + pz::kRingSetBytes + 49152, 0xEE);
@@ -361,7 +364,7 @@ int main() {
         FakeIo small;
         pz::PzFrameRing smallRing(small, kLinuxEnd);
         for (uint64_t s = 0; s < 3; ++s) putRecord(small, s, 1);
-        small.configure(2, 2, PZ_MIB_STORE_STATE_CAPTURING);
+        small.configure(2, 2, PZ_MIB_STATE_RUNNING);
         MIB_EXPECT(smallRing.status().lo == 0, "HEAD 2 with N = 4: lo is 0");
         small.onRead = [&](uint64_t phys, size_t n) {
             if (n == 49152 && phys == slotAddr(0) + pz::kRingSetBytes) { small.regs[PZ_MIB_REG_STORE_HEAD_SEQ] = 4; small.onRead = nullptr; }
@@ -376,28 +379,28 @@ int main() {
         for (uint64_t q = 6; q <= 9; ++q) putRecord(io, q, static_cast<uint8_t>(q)); // the header test above damaged record 8
         // A re-ARM while a frame is being copied (Resume while the browser fetches): the head restarts, the old header still matches,
         // and the old pixels are mixed with new ones. HEAD' = 1 would pass the window rule (lo2 = 0), so the registers must catch it.
-        io.configure(10, 10, PZ_MIB_STORE_STATE_CAPTURING);
+        io.configure(10, 10, PZ_MIB_STATE_RUNNING);
         io.onRead = [&](uint64_t phys, size_t n) {
             if (n == 49152 && phys == blockAddr(8)) { io.regs[PZ_MIB_REG_STORE_HEAD_SEQ] = 1; io.onRead = nullptr; }
         };
         MIB_EXPECT(ring.readFrame(8, f, &why) == pz::RingRead::Overwritten && why.find("restarted") != std::string::npos,
                    "a re-ARM mid-read (HEAD restarts below the snapshot): dropped, even though HEAD' passes the window rule");
-        io.configure(10, 10, PZ_MIB_STORE_STATE_CAPTURING);
+        io.configure(10, 10, PZ_MIB_STATE_RUNNING);
         io.onRead = [&](uint64_t phys, size_t n) {
             if (n == 49152 && phys == blockAddr(8)) { io.regs[PZ_MIB_REG_EPOCH] = 6; io.regs[PZ_MIB_REG_STORE_HEAD_SEQ] = 12; io.onRead = nullptr; }
         };
         MIB_EXPECT(ring.readFrame(8, f, &why) == pz::RingRead::Overwritten && why.find("re-armed") != std::string::npos,
                    "a new epoch mid-read (a re-ARM that already got past the old head): dropped");
         for (const uint32_t reg : {static_cast<uint32_t>(PZ_MIB_REG_GENERATION), static_cast<uint32_t>(PZ_MIB_REG_STORE_RECORDS), static_cast<uint32_t>(PZ_MIB_REG_STORE_BASE_LO)}) {
-            io.configure(10, 10, PZ_MIB_STORE_STATE_CAPTURING);
+            io.configure(10, 10, PZ_MIB_STATE_RUNNING);
             io.onRead = [&](uint64_t phys, size_t n) {
                 if (n == 49152 && phys == blockAddr(8)) { io.regs[reg] += reg == PZ_MIB_REG_STORE_BASE_LO ? 0x1000u : 1u; io.onRead = nullptr; }
             };
             MIB_EXPECT(ring.readFrame(8, f, &why) == pz::RingRead::Overwritten, "a changed generation, record count or base mid-read: dropped");
         }
-        io.configure(10, 10, PZ_MIB_STORE_STATE_CAPTURING);
+        io.configure(10, 10, PZ_MIB_STATE_RUNNING);
         io.onRead = [&](uint64_t phys, size_t n) {
-            if (n == 49152 && phys == blockAddr(8)) { io.regs[PZ_MIB_REG_STORE_STATE] = PZ_MIB_STORE_STATE_DRAINING; io.onRead = nullptr; }
+            if (n == 49152 && phys == blockAddr(8)) { io.regs[PZ_MIB_REG_STATE] = PZ_MIB_STATE_DRAINING; io.onRead = nullptr; }
         };
         MIB_EXPECT(ring.readFrame(8, f, &why) == pz::RingRead::Overwritten && why.find("state") != std::string::npos, "a state change mid-read (STOP, a re-ARM): dropped");
         io.onRead = nullptr;
@@ -407,7 +410,7 @@ int main() {
     {
         FakeIo io;
         pz::PzFrameRing ring(io, kLinuxEnd);
-        io.configure(2, 3, PZ_MIB_STORE_STATE_IDLE);
+        io.configure(2, 3, PZ_MIB_STATE_IDLE);
         pz::RingFrame f;
         std::string why;
         RecOpts noResult; noResult.maskNoResult = true;
@@ -445,7 +448,7 @@ int main() {
     {
         FakeIo io;
         pz::PzFrameRing ring(io, kLinuxEnd);
-        io.configure(2, 3, PZ_MIB_STORE_STATE_IDLE);
+        io.configure(2, 3, PZ_MIB_STATE_IDLE);
         pz::RingFrame f;
         std::string why;
         pz::ImageRecord mono, mask;
@@ -523,6 +526,134 @@ int main() {
             length = 8;
             std::memcpy(io.mem.data() + 6, &length, 2);
             MIB_EXPECT(ring.readFrame(0, f, &why) == pz::RingRead::Malformed, "a record length below the header size is malformed");
+        }
+    }
+
+    // ---- leaving a run and arming a new ring (the bridge STATE as the RTL has it) ---------------------------
+    {
+        // A model of pz_mib_abi_regs.v: ARM only in IDLE with no fault; STOP only in ARMED/RUNNING (-> DRAINING, IDLE after the frames end);
+        // RESET_GENERATION only in IDLE, refused (bit 11, sticky) elsewhere; FAULT_CLEAR returns FAULT to IDLE. STORE_STATE never reads
+        // DRAINING in ring-only mode: it holds only the sticky bits, cleared by ARM.
+        struct Bridge final : pz::IRingIo {
+            std::map<uint32_t, uint32_t> regs;
+            std::vector<std::string> log;
+            int drainPolls = 2, drainLeft = 0;
+            bool neverDrains = false, resetIgnored = false;
+            uint32_t faultSources = 0;
+            Bridge(uint32_t state = PZ_MIB_STATE_IDLE) { regs[PZ_MIB_REG_STATE] = state; regs[PZ_MIB_REG_GENERATION] = 7; }
+            uint32_t reg(uint32_t o) override {
+                if (o == PZ_MIB_REG_STATE && regs[PZ_MIB_REG_STATE] == PZ_MIB_STATE_DRAINING && !neverDrains && drainLeft > 0 && --drainLeft == 0)
+                    regs[PZ_MIB_REG_STATE] = PZ_MIB_STATE_IDLE;
+                return regs[o];
+            }
+            void setReg(uint32_t o, uint32_t v) override {
+                if (o != PZ_MIB_REG_CONTROL) {
+                    log.push_back("write " + std::to_string(o));
+                    regs[o] = v;
+                    return;
+                }
+                uint32_t& state = regs[PZ_MIB_REG_STATE];
+                if (v & PZ_MIB_CONTROL_FAULT_CLEAR) { log.push_back("FAULT_CLEAR"); regs[PZ_MIB_REG_FAULT] = faultSources; if (state == PZ_MIB_STATE_FAULT) state = PZ_MIB_STATE_IDLE; }
+                if (v & PZ_MIB_CONTROL_ARM) {
+                    log.push_back("ARM");
+                    if (state == PZ_MIB_STATE_IDLE && regs[PZ_MIB_REG_FAULT] == 0) {
+                        state = PZ_MIB_STATE_ARMED;
+                        regs[PZ_MIB_REG_STORE_STATE] &= ~(pz::kRingStateStalled | pz::kRingStateStopStuck | pz::kRingStateResetRefused);
+                    }
+                }
+                if (v & PZ_MIB_CONTROL_STOP) {
+                    log.push_back("STOP");
+                    if (state == PZ_MIB_STATE_ARMED || state == PZ_MIB_STATE_RUNNING) { state = PZ_MIB_STATE_DRAINING; drainLeft = drainPolls; }
+                }
+                if (v & PZ_MIB_CONTROL_RESET_GENERATION) {
+                    log.push_back("RESET_GENERATION");
+                    if (state == PZ_MIB_STATE_IDLE) { if (!resetIgnored) regs[PZ_MIB_REG_GENERATION] += 1; }
+                    else regs[PZ_MIB_REG_STORE_STATE] |= pz::kRingStateResetRefused;
+                }
+            }
+            bool read(uint64_t, void*, size_t) override { return false; }
+        };
+        constexpr auto kShort = std::chrono::milliseconds(30);
+        // 1. A clean IDLE bridge: nothing to leave, no register is written, the caller's claim is not dropped.
+        {
+            Bridge b;
+            pz::PzFrameRing ring(b, kLinuxEnd);
+            int mutated = 0;
+            const auto q = ring.quiesce([&] { ++mutated; }, kShort);
+            MIB_EXPECT(q.ok && b.log.empty() && mutated == 0, "an IDLE bridge with no sticky bit: quiesce writes nothing and the claim stays");
+        }
+        // 2. A leftover RUNNING bridge is stopped first, then waited out, and only then does anything else happen.
+        {
+            Bridge b(PZ_MIB_STATE_RUNNING);
+            b.regs[PZ_MIB_REG_STORE_STATE] = pz::kRingStateStopStuck;
+            pz::PzFrameRing ring(b, kLinuxEnd);
+            int mutated = 0;
+            const auto q = ring.quiesce([&] { ++mutated; }, std::chrono::milliseconds(200));
+            MIB_EXPECT(q.ok && mutated == 1 && b.log.size() == 2 && b.log[0] == "STOP" && b.log[1] == "RESET_GENERATION" && b.regs[PZ_MIB_REG_STATE] == PZ_MIB_STATE_IDLE,
+                       "RUNNING: STOP, wait for IDLE, then RESET_GENERATION in IDLE (STOP_STUCK left); the claim is dropped once, before the first write");
+            MIB_EXPECT(b.regs[PZ_MIB_REG_GENERATION] == 8, "the generation moved");
+        }
+        // 3. DRAINING that never ends: no register is written after the bound, restore needed (the old code polled a state that never reads DRAINING).
+        {
+            Bridge b(PZ_MIB_STATE_DRAINING);
+            b.neverDrains = true;
+            pz::PzFrameRing ring(b, kLinuxEnd);
+            const auto q = ring.quiesce(nullptr, kShort);
+            MIB_EXPECT(!q.ok && q.restoreNeeded && b.log.empty() && q.why.find("IDLE") != std::string::npos,
+                       "a bridge stuck in DRAINING: restore needed, no RESET_GENERATION is written while DRAINING");
+        }
+        // 4. Each sticky bit alone, and bit 11: RESET_GENERATION in IDLE, verified by the generation; one that does not take fails.
+        for (const uint32_t bit : {pz::kRingStateStalled, pz::kRingStateStopStuck, pz::kRingStateResetRefused}) {
+            Bridge b;
+            b.regs[PZ_MIB_REG_STORE_STATE] = bit;
+            pz::PzFrameRing ring(b, kLinuxEnd);
+            const auto q = ring.quiesce(nullptr, kShort);
+            MIB_EXPECT(q.ok && b.log == std::vector<std::string>{"RESET_GENERATION"} && b.regs[PZ_MIB_REG_GENERATION] == 8, "a sticky fault bit: RESET_GENERATION in IDLE, generation moved");
+        }
+        {
+            Bridge b;
+            b.regs[PZ_MIB_REG_STORE_STATE] = pz::kRingStateStalled;
+            b.resetIgnored = true;
+            pz::PzFrameRing ring(b, kLinuxEnd);
+            const auto q = ring.quiesce(nullptr, kShort);
+            MIB_EXPECT(!q.ok && q.restoreNeeded && q.why.find("RESET_GENERATION did not take") != std::string::npos, "a RESET_GENERATION that does not move the generation fails");
+        }
+        // 5. A FAULT bridge is cleared; a fault that stays set would make the PL ignore ARM.
+        {
+            Bridge b(PZ_MIB_STATE_FAULT);
+            b.regs[PZ_MIB_REG_FAULT] = 0x100;
+            pz::PzFrameRing ring(b, kLinuxEnd);
+            const auto q = ring.quiesce(nullptr, kShort);
+            MIB_EXPECT(q.ok && b.log == std::vector<std::string>{"FAULT_CLEAR"} && b.regs[PZ_MIB_REG_STATE] == PZ_MIB_STATE_IDLE, "FAULT: FAULT_CLEAR returns the bridge to IDLE");
+            Bridge stuck;
+            stuck.regs[PZ_MIB_REG_FAULT] = 0x100;
+            stuck.faultSources = 0x100;
+            pz::PzFrameRing ring2(stuck, kLinuxEnd);
+            const auto q2 = ring2.quiesce(nullptr, kShort);
+            MIB_EXPECT(!q2.ok && q2.why.find("fault") != std::string::npos, "a fault register that stays set refuses (ARM would be ignored)");
+        }
+        // 6. The whole order: quiesce, program, ARM, verified; an ARM the PL ignored is reported, not reported as armed.
+        {
+            Bridge b(PZ_MIB_STATE_RUNNING);
+            b.regs[PZ_MIB_REG_STORE_STATE] = pz::kRingStateStopStuck;
+            pz::PzFrameRing ring(b, kLinuxEnd);
+            const auto plan = pz::planRing(5000, kLinuxEnd);
+            MIB_REQUIRE(ring.quiesce(nullptr, std::chrono::milliseconds(200)).ok, "quiesce");
+            std::string why;
+            MIB_REQUIRE(ring.program(plan, &why), "program: " + why);
+            b.setReg(PZ_MIB_REG_CONTROL, PZ_MIB_CONTROL_ARM);
+            MIB_EXPECT(ring.awaitArmed(kShort).ok && b.regs[PZ_MIB_REG_STATE] == PZ_MIB_STATE_ARMED, "after ARM the bridge reads ARMED");
+            MIB_EXPECT(b.regs[PZ_MIB_REG_STORE_STATE] == 0, "the ARM cleared the sticky bits");
+            const auto at = [&](const std::string& what) { return std::find(b.log.begin(), b.log.end(), what) - b.log.begin(); };
+            MIB_EXPECT(at("STOP") < at("RESET_GENERATION") && at("RESET_GENERATION") < at("write " + std::to_string(PZ_MIB_REG_STORE_BASE_LO)) &&
+                           at("write " + std::to_string(PZ_MIB_REG_STORE_MODE)) < at("ARM"),
+                       "the order is STOP, RESET_GENERATION, base/records/mode, ARM");
+            Bridge ignored;                         // ARM is ignored while a fault is set
+            ignored.regs[PZ_MIB_REG_FAULT] = 0x4;
+            pz::PzFrameRing ring2(ignored, kLinuxEnd);
+            ignored.setReg(PZ_MIB_REG_CONTROL, PZ_MIB_CONTROL_ARM);
+            const auto a = ring2.awaitArmed(kShort);
+            MIB_EXPECT(!a.ok && a.why.find("ignored") != std::string::npos, "an ignored ARM is reported, never 'armed'");
         }
     }
 

@@ -33,6 +33,14 @@ overlay is record-based because the PL does the science.
   waits for IDLE (bounded) before it does either, and never writes RESET_GENERATION in another state. Ruling (coordinator, 2026-10-09): **RING_STALLED stays "ring invalid, no playback, re-arm"**, although the records below FINAL are stable. A stall means a DDR
   write was never acknowledged for 255 frames (a memory-path fault), so nothing in that window is trusted, and the readable range could hold frames far
   older than the Stop, which would mislead a "last second" review. STOP_STUCK stays readable and flagged.
+- **Which STATE** (review of #674, checked against the RTL): the contract's STATE is the **bridge STATE register (0x040)**: IDLE, ARMED, RUNNING, DRAINING, FAULT. In ring-only
+  mode `STORE_STATE` (0x3A0) never reads DRAINING (the drain is off), so it is used **only for its sticky fault bits 9, 10 and 11**. Frozen = bridge STATE IDLE and
+  FINAL = HEAD + 1 with no fault. The RTL ignores ARM unless the bridge is IDLE with no fault, and refuses RESET_GENERATION outside IDLE, so a new ring is started by:
+  leaving the previous run (STOP a leftover ARMED or RUNNING, wait for IDLE within the 1 s bound, FAULT_CLEAR a FAULT; a fault register that stays set or a bridge that
+  never reaches IDLE refuses with "restore the PL"), RESET_GENERATION in IDLE when a sticky bit was left (verified by the generation), programming the ring,
+  ARM, and a check that the bridge reads ARMED (otherwise the start fails with the reason, never "armed"). The claim "a ring is armed" is dropped only at the first
+  register write, so a failure before it (placement, capability, an unreadable `/proc/iomem`) leaves an intact frozen ring readable. Without a ring wanted, a PL with the
+  store gets STORE_MODE = 0 so a mode left by an earlier Studio is not latched.
 - Beyond the board owner's rule, the reader (review of #673): a copy is also dropped when the registers changed under it (HEAD restarted below its
   snapshot, a new epoch or generation, a changed record count, base or state: a re-ARM, which the HEAD' window test alone cannot see because the head
   restarts and the old FRAME header still matches); the FRAME header's own sequence is not the store sequence (each record's wire sequence restarts at 0), so

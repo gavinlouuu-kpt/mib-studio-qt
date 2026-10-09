@@ -3105,10 +3105,11 @@ std::vector<std::uint8_t> BackendFacade::fetchRingFramePacket(std::uint64_t seq,
 
 BackendCommandResult BackendFacade::freezeRun() {
     if (!initialized_) return {false, BackendCommandType::Camera, "backend is not initialized"};
-    std::string error;
-    if (!backend_.freezeRun(&error)) return {false, BackendCommandType::Camera, error};
+    std::string error, note;
+    if (!backend_.freezeRun(&error, &note)) return {false, BackendCommandType::Camera, error};
     emitEvent(makeCameraStatus(CameraState::Stopped));
-    return {true, BackendCommandType::Camera, "Run stopped: the buffered frames are held for playback, LED off"};
+    return {true, BackendCommandType::Camera,
+            "Run stopped: the buffered frames are held for playback, LED off" + (note.empty() ? std::string() : " (" + note + ")")};
 }
 
 BackendCommandResult BackendFacade::resumeRun() {

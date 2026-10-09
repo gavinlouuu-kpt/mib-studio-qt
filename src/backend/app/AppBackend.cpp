@@ -1747,7 +1747,7 @@ namespace backend
         return true;
     }
 
-    bool AppBackend::freezeRun(std::string *errorOut)
+    bool AppBackend::freezeRun(std::string *errorOut, std::string *noteOut)
     {
         std::lock_guard<std::mutex> lock(instrumentModeMutex_);
         auto fail = [&](const std::string &message) {
@@ -1765,10 +1765,18 @@ namespace backend
             return fail("Stop the experiment or recording first");
         if (runFrozen_.load()) return true;
         stopLiveResults(); // the provider's STOP, then the wait for the device's frozen state (never assumed)
+        runFrozen_.store(true); // stopped from here on, whatever follows: the frozen Run is held even if the LED write fails
+        // What the freeze achieved, said plainly: not frozen (restore the PL), stop incomplete, or a ring fault.
+        std::string note;
+        const auto st = executionProvider_->ringStatus();
+        if (st.restoreNeeded) note = "the ring did not freeze: restore the PL";
+        else if (st.valid && st.fault) note = st.invalidReason;
+        else if (st.valid && st.stopIncomplete) note = "stop incomplete (STOP_STUCK): the frames below the newest are readable";
+        else if (st.valid && !st.frozen) note = "the ring is not frozen yet";
+        if (noteOut) *noteOut = note;
         std::string err;
-        if (!pzControl_->ledOff(&err)) return fail(err);
-        runFrozen_.store(true);
-        SPDLOG_INFO("AppBackend: Run stopped: the frame ring is held for playback (LED off)");
+        if (!pzControl_->ledOff(&err)) return fail("Run is stopped, but the LED could not be switched off: " + err);
+        SPDLOG_INFO("AppBackend: Run stopped: the frame ring is held for playback (LED off){}", note.empty() ? std::string() : "; " + note);
         return true;
     }
 
@@ -1787,10 +1795,15 @@ namespace backend
             return fail("the instrument is not in Run");
         }
         std::string err;
-        // The cell path stayed on; the LED comes back with the Run preset, the latency monitor restarts, and the live
-        // session re-arms the bridge: a new ring from sequence 0 (the buffered frames are gone).
-        if (!pzControl_->clearLatency(&err) || !pzControl_->setLed(pz::kRunLed, &err)) return fail(err);
+        // The live session re-arms the bridge: a new ring from sequence 0 (the buffered frames are gone). It starts first: a start that
+        // fails leaves the LED off and the intact frozen ring readable. The LED comes on only once frames can flow.
+        if (!pzControl_->clearLatency(&err)) return fail(err);
         if (!startLiveResults(&err)) return fail(err);
+        if (!pzControl_->setLed(pz::kRunLed, &err)) {
+            stopLiveResults();
+            (void)pzControl_->ledOff(nullptr);
+            return fail("the LED could not be switched on: " + err);
+        }
         runFrozen_.store(false);
         if (pzPlatformMonitor_)
             pzPlatformMonitor_->settle(static_cast<uint64_t>(

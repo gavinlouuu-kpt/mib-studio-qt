@@ -57,7 +57,11 @@ public:
         lastPage = profile.page;
         return true;
     }
-    bool start(uint64_t, std::string*) override {
+    bool start(uint64_t, std::string* error) override {
+        if (failStart) {
+            if (error) *error = "frame ring: the device is still draining a stopped run: restore the PL";
+            return false;
+        }
         ++starts;
         running = true;
         return true;
@@ -88,6 +92,7 @@ public:
     }
     uint32_t ringTickHz() override { return 100000000u; }
     std::atomic<uint32_t> ringFrames{0};
+    std::atomic<bool> failStart{false};
     std::string placementProblem;
     backend::pz::RingStatus ring;
     std::atomic<int> configures{0}, starts{0}, stops{0};
@@ -929,6 +934,15 @@ void testRingPlayback(const mib::test::TempDir& td) {
         MIB_EXPECT(placement && placement->blocksStart() && placement->reason.find("mem=") != std::string::npos,
                    "a ring that does not fit blocks with the remedy (ring.placement)");
         fake->placementProblem.clear();
+    }
+    // A resume whose start fails: the LED stays off, the Run stays held, and the intact frozen ring is still readable.
+    {
+        fake->failStart = true;
+        MIB_EXPECT(!backend.resumeRun(&err) && err.find("restore the PL") != std::string::npos, "a failed start fails the resume with its reason");
+        MIB_EXPECT(backend.runFrozen() && s.live[S0 + 0] == 0 && !backend.liveResultsActive(), "a failed resume keeps the Run held with the LED off (never lit without frames)");
+        std::vector<uint8_t> packet;
+        MIB_EXPECT(backend.ringFrame(42, packet, &err) == pz::RingRead::Ok && backend.ringStatus().frozen, "the frozen ring is still readable after a failed resume");
+        fake->failStart = false;
     }
     // Resume re-arms: a new ring, the LED back on.
     const int startsBefore = fake->starts;
