@@ -50,8 +50,11 @@ freeze exact revision identity/content into historical runs.
   Supabase password sign-in / refresh rotation / sign-out, in-memory tokens,
   AppBackend-owned `ProfileRegistryWorker` with bounded/cancellable refresh across
   member projects (`registry_list_projects`), offline reopen of the last user's cache.
-- [ ] M1: refresh-token persistence in the OS keychain (shell-owned seam) so a
-  restart does not require a password; today a restart is CachedOffline until sign-in.
+- [~] M1: refresh-token persistence in the OS keychain: declined (2026-10-09, Gavin).
+  Registry tokens stay in memory only. After a restart the registry reopens the last
+  user's cache offline (CachedOffline): cached methods, Apply and the startup
+  configuration restore work without network. Refresh, download and authoring need a
+  fresh sign-in.
 - [~] M1 (Qt): a Settings → Central Methods… dialog was built (#475) and dropped
   unmerged: ADR 0011 makes Qt fixes-only, so the registry UI is React/Tauri only.
   The shared fake Supabase it introduced (`tests/support/fake_supabase.h`) stays.
