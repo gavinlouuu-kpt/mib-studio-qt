@@ -514,6 +514,11 @@ add_test(NAME processing.pz_records COMMAND $<TARGET_FILE:mib_backend_tests> pz_
          ${PROJECT_SOURCE_DIR}/scripts/conformance/unet-cells-v2-pl-vectors.json)
 set_tests_properties(processing.pz_records PROPERTIES LABELS "processing;backend;pl" TIMEOUT 60)
 
+# #649 v1: the results13 frame ring reader (placement, freeze, the reader rule, the browser packet).
+mib_add_backend_test_executable(pz_frame_ring_test processing/pz_frame_ring_test.cpp)
+add_test(NAME processing.pz_frame_ring COMMAND $<TARGET_FILE:mib_backend_tests> pz_frame_ring_test)
+set_tests_properties(processing.pz_frame_ring PROPERTIES LABELS "processing;backend;pl" TIMEOUT 60)
+
 mib_add_backend_test_executable(channel_roi_detect_test processing/channel_roi_detect_test.cpp)
 add_test(NAME processing.channel_roi_detect COMMAND $<TARGET_FILE:mib_backend_tests> channel_roi_detect_test)
 set_tests_properties(processing.channel_roi_detect PROPERTIES LABELS "processing;backend" TIMEOUT 30)

@@ -185,6 +185,8 @@ Decoded decodeRecord(const uint8_t* data, size_t size,
 // tests): 8-byte aligned, sequence and CRC filled in.
 std::vector<uint8_t> encodeFrameRecord(const FrameRecord& frame, uint32_t sequence);
 std::vector<uint8_t> encodeResultRecord(const ResultRecord& result, uint32_t sequence);
+// IMAGE records as the store writer emits them (frame-store records: tests, replay).
+std::vector<uint8_t> encodeImageRecord(const ImageRecord& image, uint32_t sequence);
 
 // Split a drained ring buffer into records by their length fields: (offset,
 // length) pairs. Stops at a length below the header size.
