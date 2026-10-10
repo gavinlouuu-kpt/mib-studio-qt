@@ -28,13 +28,13 @@ RUNS = Path(__file__).resolve().parent / "testdata" / "s2-runs.json"
 FLAG_STORED = 1 << 8
 
 
-def build_record(frame_id, ticks, *, run_id=18, drops=0, epoch=5, objects=(), seed=0, profile=2, version=3):
+def build_record(frame_id, ticks, *, run_id=18, drops=0, epoch=5, objects=(), seed=0, profile=2, version=3, frame_flags=0):
     """One stored record exactly as the layout doc says: set area (FRAME, IMAGE x2, RESULT x n), MONO8 at 4096, MASK1 at 53248."""
     rng = np.random.default_rng(seed + frame_id)
     img = rng.integers(0, 256, (96, 512), dtype=np.uint8)
     mask = (rng.random((96, 512)) < 0.05).astype(np.uint8)
     packed = np.packbits(mask, axis=1, bitorder="little")
-    frame = mib_abi.encode_record(ABI, "FRAME", 0, dict(run_id=run_id, frame_id=frame_id, timestamp=ticks, epoch=epoch, flags=FLAG_STORED, result_count=len(objects),
+    frame = mib_abi.encode_record(ABI, "FRAME", 0, dict(run_id=run_id, frame_id=frame_id, timestamp=ticks, epoch=epoch, flags=FLAG_STORED | frame_flags, result_count=len(objects),
                                                             result_limit=64, science_profile=profile, profile_version=version, width=512, height=96, pixel_format=1,
                                                             reserved=[drops, 0, 0]))
     frame = bytearray(frame)
@@ -132,6 +132,20 @@ class Synthetic(Base):
         report = json.loads((self.d / "quarantine" / "in.bin.report.json").read_text())
         found = [p["code"] for p in report["problems"]] + [b["code"] for b in report["bad_records"]]
         self.assertIn(code, found, report)
+
+    def test_a_cell_of_an_empty_or_invalid_frame_is_not_valid_anywhere(self):
+        # the frame flags EMPTY (bit 0) and INVALID (bit 2) beat a result that carries its own valid flag: the row lands in /invalid_frames and says isValid = inRange = 0
+        recs = [build_record(1000 + 2 * k, 62_000_000_000 + 40_000 * k, objects=[cell(1)], frame_flags=fl, drops=1 if k else 0)[0] for k, fl in enumerate((0, 1, 4, 0))]
+        rep = P.convert(self.write(recs), self.d / "o.h5", RUN, expected_records=4)
+        self.assertTrue(rep.ok and rep.converted, rep)
+        with h5py.File(self.d / "o.h5") as f:
+            self.assertEqual(list(f["valid_frames/metadata"][:]["index"]), [1000, 1006])
+            self.assertEqual(list(f["valid_frames/metadata"][:]["isValid"]), [1, 1])
+            iv = f["invalid_frames/metadata"][:]
+            self.assertEqual(list(iv["index"]), [1002, 1004])
+            self.assertEqual(list(iv["isValid"]), [0, 0])
+            self.assertEqual(list(iv["inRange"]), [0, 0])
+            self.assertAlmostEqual(iv["area"][0], 630.0)                       # the measurement itself is kept
 
     def test_truncated_stream(self):
         recs, _, _ = stream(4)
@@ -338,6 +352,13 @@ class Contract(Base):
         self.assertIn("X-Record-Bytes", P.check_download_headers({**good, "x-record-bytes": "1024"}, 5, 0))
         self.assertIn("X-First-Record", P.check_download_headers(good, 5, 3))
         self.assertIn("garbled", P.check_download_headers({**good, "x-record-count": "many"}, 5, 0))
+        zero = P.check_download_headers({**good, "x-record-count": "0", "content-length": "0"}, 5, 0)
+        self.assertIn("holds no records", zero)
+        self.assertNotIn("does not match", zero)
+        nolen = P.check_download_headers({k: v for k, v in good.items() if k != "content-length"}, 5, 0)
+        self.assertIn("no Content-Length", nolen)
+        self.assertNotIn("KeyError", nolen)
+        self.assertIn("does not match", P.check_download_headers({**good, "content-length": "123"}, 5, 0))
 
     def test_default_expected_count(self):
         run = P.RunInfo(18, written=27119)

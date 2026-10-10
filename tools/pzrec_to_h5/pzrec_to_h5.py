@@ -147,7 +147,11 @@ def check_download_headers(h: dict, run_id: int, first: int) -> str | None:
             return f"X-Record-Bytes {g['x-record-bytes']}, expected {REC_BYTES}"
         if int(g["x-first-record"]) != first:
             return f"X-First-Record {g['x-first-record']}, asked for {first}"
-        if int(g["x-record-count"]) < 1 or int(g["content-length"]) != int(g["x-record-count"]) * REC_BYTES:
+        if "content-length" not in g:
+            return "the response has no Content-Length (a chunked or proxied body): the download cannot be verified, so it is refused"
+        if int(g["x-record-count"]) < 1:
+            return f"X-Record-Count is {g['x-record-count']}: the window holds no records (--from is at or past the end of the run, or the run is empty)"
+        if int(g["content-length"]) != int(g["x-record-count"]) * REC_BYTES:
             return f"Content-Length {g['content-length']} does not match X-Record-Count {g['x-record-count']} x {REC_BYTES}"
     except (KeyError, ValueError) as e:
         return f"the download headers are incomplete or garbled: {e!r}"
@@ -229,8 +233,9 @@ def decode_cell(res: dict) -> dict | None:
         emodulus_kpa=q16(10), laplacian_variance=q8(11), pixel_count=w[13] & 0xFFFF, blemish_count=w[13] >> 16, brightness_variance=q8(14))
 
 
-def metadata_row(frame_id: int, wall: int, res: dict | None, n_results: int) -> tuple[np.ndarray, bool]:
-    """(row, this result is a valid cell). A frame without results gets one row that is not valid."""
+def metadata_row(frame_id: int, wall: int, res: dict | None, n_results: int, frame_ok: bool = True) -> tuple[np.ndarray, bool]:
+    """(row, this result is a valid cell of a good frame). A frame without results gets one row that is not valid. A cell of an EMPTY/INVALID frame (`frame_ok` False)
+    is not valid either: isValid and inRange are 0, the same as its place in /invalid_frames."""
     row = np.zeros((), METADATA)
     row["index"], row["timestampNs"], row["trackId"] = frame_id, wall, -1
     for k in ("deformability", "ringRatio", "laplacianVariance", "brightness_q1", "brightness_q2", "brightness_q3", "brightness_q4", "youngsModulus",
@@ -241,11 +246,11 @@ def metadata_row(frame_id: int, wall: int, res: dict | None, n_results: int) -> 
     row["bboxX"], row["bboxY"], row["bboxWidth"], row["bboxHeight"] = res["bbox_x"], res["bbox_y"], res["bbox_w"], res["bbox_h"]
     row["objectCount"] = n_results
     c = decode_cell(res)
-    valid = bool(res["flags"] & RESULT_VALID)
+    valid = bool(res["flags"] & RESULT_VALID) and frame_ok
     if c is None:                                     # another profile: the envelope is all there is, never invented numbers
         row["isValid"] = row["inRange"] = int(valid)
         return row, valid
-    valid = c["reason"] == REASON_NONE
+    valid = c["reason"] == REASON_NONE and frame_ok
     row["objectId"], row["objectCount"] = c["object_id"], c["cell_count"]
     row["isValid"] = row["inRange"] = int(valid)
     row["touchesBorder"], row["isTargetGroup"], row["degenerateContour"] = int(c["cut_off"]), int(c["target"]), int(c["reason"] == REASON_NO_CONTOUR)
@@ -366,10 +371,10 @@ def convert(input_path: str | Path, out_path: str | Path, run: RunInfo, *, expec
                 mask255 = np.zeros(rec.image.shape, np.uint8) if no_mask else (rec.mask * np.uint8(255)).astype(np.uint8)
                 frame_ok = not h["flags"] & (FRAME_INVALID | FRAME_EMPTY)
                 for r in (results or [None]):
-                    row, valid = metadata_row(h["frame_id"], wall, r, len(results))
+                    row, valid = metadata_row(h["frame_id"], wall, r, len(results), frame_ok)
                     unknown_profile += r is not None and decode_cell(r) is None
                     # per object, as Studio (appendExperimentFrame(row, isValid)): a valid cell of a good frame is a valid row; a rejected cell, an empty or invalid frame, a frame without results is not
-                    gname = "/valid_frames" if (valid and frame_ok) else "/invalid_frames"
+                    gname = "/valid_frames" if valid else "/invalid_frames"
                     if gname not in groups:
                         groups[gname] = Group(h5, gname, shape, gzip)
                     groups[gname].add(rec.image, mask255, row, (run.run_id, h["frame_id"], i, h["timestamp"], wall, h["drops_before"], h["epoch"], h["flags"],
