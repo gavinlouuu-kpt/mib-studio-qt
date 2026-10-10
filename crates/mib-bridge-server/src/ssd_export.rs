@@ -39,6 +39,8 @@ const KILL_WAIT: Duration = Duration::from_secs(10);
 /// After stdout's EOF the reader must exit this soon.
 const EXIT_WAIT: Duration = Duration::from_secs(15);
 const STDERR_CAP: usize = 64 * 1024;
+/// The C++ lease outlives the reader's bound by 60 s (SsdStore::kExportKillMarginSeconds); the supervisor needs SIGTERM grace + SIGKILL wait + 5 s for stderr after the bound.
+const _: () = assert!(TERM_GRACE_MS / 1000 + KILL_WAIT.as_secs() + 5 <= 60);
 
 /// A time bound in ms, shortened only by the tests (`MIB_SSD_EXPORT_IDLE_MS`, `MIB_SSD_EXPORT_TERM_GRACE_MS`).
 fn bound(env: &str, default_ms: u64) -> Duration {
@@ -289,6 +291,46 @@ impl Reader {
     }
 }
 
+type BeginResult = Result<Result<Value, String>, tokio::task::JoinError>;
+
+/// The lease a begin answer granted, if it granted one.
+fn granted_lease(r: &BeginResult) -> Option<u64> {
+    let v = r.as_ref().ok()?.as_ref().ok()?;
+    if v.get("ok").and_then(Value::as_bool) == Some(true) {
+        v.get("lease").and_then(Value::as_u64).filter(|l| *l != 0)
+    } else {
+        None
+    }
+}
+
+/// The handler's end of the begin task. A oneshot `send` succeeds while the receiver is alive and parks the value: if hyper drops the handler between that send and the next poll
+/// (the client disconnected), the granted lease would die with the receiver and nobody would end it. Dropping this guard takes such a parked answer and ends its lease.
+struct BeginReceiver<F: Fn(u64)> {
+    rx: Option<tokio::sync::oneshot::Receiver<BeginResult>>,
+    orphaned: F,
+}
+
+impl<F: Fn(u64)> BeginReceiver<F> {
+    async fn recv(&mut self) -> Result<BeginResult, tokio::sync::oneshot::error::RecvError> {
+        let rx = self.rx.as_mut().expect("received once");
+        let r = rx.await;
+        self.rx = None;
+        r
+    }
+}
+
+impl<F: Fn(u64)> Drop for BeginReceiver<F> {
+    fn drop(&mut self) {
+        if let Some(mut rx) = self.rx.take() {
+            if let Ok(r) = rx.try_recv() {
+                if let Some(lease) = granted_lease(&r) {
+                    (self.orphaned)(lease);
+                }
+            }
+        }
+    }
+}
+
 struct Flow {
     reader: Option<Reader>,
     pending: Option<Bytes>,
@@ -325,21 +367,32 @@ pub(crate) async fn records(
     };
     let state = server.state().clone();
     let (from, count) = (query.from.unwrap_or(0), query.count.unwrap_or(0));
-    // The begin runs in a detached task: if this handler is dropped meanwhile (the client left), the task still gets the answer, and a lease it was granted is ended at once,
-    // not left to the C++ expiry.
+    // The begin runs in a detached task: if this handler is dropped before the answer arrives (the client left), the task sees the closed channel and ends the lease it was granted;
+    // if the answer was parked just before the drop, the BeginReceiver guard ends it. Either way a lease nobody uses is not left to the C++ expiry.
     let begin = {
         let (tx, rx) = tokio::sync::oneshot::channel();
-        let state = state.clone();
+        let end_lease = {
+            let state = state.clone();
+            move |lease: u64| {
+                let state = state.clone();
+                if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                    handle.spawn(async move {
+                        let _ = tokio::task::spawn_blocking(move || mib_app_commands::ssd_export_end(&state, lease, 0, "the client left before the download started")).await;
+                    });
+                }
+            }
+        };
+        let task_end = end_lease.clone();
+        let st = state.clone();
         tokio::spawn(async move {
-            let st = state.clone();
             let r = tokio::task::spawn_blocking(move || mib_app_commands::ssd_export_begin(&st, id, from, count)).await;
-            if let Err(Ok(Ok(v))) = tx.send(r) {
-                if let Some(lease) = v.get("lease").and_then(Value::as_u64).filter(|_| v.get("ok").and_then(Value::as_bool) == Some(true)) {
-                    let _ = tokio::task::spawn_blocking(move || mib_app_commands::ssd_export_end(&state, lease, 0, "the client left before the download started")).await;
+            if let Err(unsent) = tx.send(r) {
+                if let Some(lease) = granted_lease(&unsent) {
+                    task_end(lease);
                 }
             }
         });
-        rx.await
+        BeginReceiver { rx: Some(rx), orphaned: end_lease }.recv().await
     };
     let begin = match begin {
         Ok(Ok(Ok(v))) => v,
@@ -523,6 +576,38 @@ pub(crate) async fn records(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_lease_granted_into_an_unpolled_receiver_is_ended() {
+        use std::sync::{Arc, Mutex};
+        let ended = Arc::new(Mutex::new(Vec::<u64>::new()));
+        let guard = |rx| {
+            let ended = ended.clone();
+            BeginReceiver { rx: Some(rx), orphaned: move |l| ended.lock().unwrap().push(l) }
+        };
+        // delivered, handler dropped before it polled: the lease is ended
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        assert!(tx.send(Ok(Ok(json!({"ok": true, "lease": 7})))).is_ok());
+        drop(guard(rx));
+        assert_eq!(*ended.lock().unwrap(), vec![7]);
+        // a refusal and an error hold no lease
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        assert!(tx.send(Ok(Ok(json!({"ok": false, "code": "BUSY", "reason": "x"})))).is_ok());
+        drop(guard(rx));
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        assert!(tx.send(Ok(Err("boom".to_string()))).is_ok());
+        drop(guard(rx));
+        // consumed by the handler: its lease belongs to the handler now
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        assert!(tx.send(Ok(Ok(json!({"ok": true, "lease": 9})))).is_ok());
+        let mut g = guard(rx);
+        assert_eq!(granted_lease(&g.recv().await.unwrap()), Some(9));
+        drop(g);
+        // never delivered: nothing parked
+        let (_tx, rx) = tokio::sync::oneshot::channel::<BeginResult>();
+        drop(guard(rx));
+        assert_eq!(*ended.lock().unwrap(), vec![7]);
+    }
 
     #[test]
     fn the_last_byte_of_the_body_is_held_back() {
