@@ -23,7 +23,8 @@
 # PZ_STUDIO_SSD=1 (S2, #667): Studio drives the SSD. The unit gets MIB_PZREC=/usr/bin/pzrec (install.sh installs tools/pzrec there), MIB_SSD_IMAGE (PZ_STUDIO_SSD_IMAGE, default
 # `disk`: a placeholder, the CLI ignores IMG with --bounce-phys) and MIB_PZREC_ARGS, as Environment= lines named in BUILD_INFO (`studio ssd: ...`). The arguments are derived so they
 # cannot drift from the rest of the bundle: --bounce-phys/--bounce-bytes from PZ_SSD_BOUNCE(_BYTES), --ring-base/--ring-bytes from PZ_RING_FRAMES, --disk-sectors from the required
-# PZ_DISK_SECTORS (no default). It refuses without pzrec in the bundle (PZ_PZREC_COMMIT), a ring, a bounce buffer or PZ_DISK_SECTORS. Without the switch the unit has none of them.
+# PZ_DISK_SECTORS (no default). PZ_SSD_FILTER=all|any|valid (optional) adds MIB_SSD_FILTER to the unit: the filter of the SSD runs (the product default, valid, is the PC rule;
+# `all` also stores EMPTY frames and is the heaviest drain load). It refuses without pzrec in the bundle (PZ_PZREC_COMMIT), a ring, a bounce buffer or PZ_DISK_SECTORS. Without the switch the unit has none of them.
 #
 # Layout (see docs/exec-plans/active/2026-10-08-yofo-studio-bundle.md):
 #   board side  yofo-studio-server dist.tar yofo-studio.service install.sh pl-ready.sh BUILD_INFO MD5SUMS
@@ -61,6 +62,7 @@ ssd_bounce_bytes=${PZ_SSD_BOUNCE_BYTES:-0x100000}
 studio_ssd=${PZ_STUDIO_SSD:-0}
 studio_ssd_image=${PZ_STUDIO_SSD_IMAGE:-disk}
 disk_sectors=${PZ_DISK_SECTORS:-}
+ssd_filter=${PZ_SSD_FILTER:-}
 tools=${PZ_TOOLS_DIR:-/home/gavin/Developer/.worktrees/pz7035-yofo-host-if/tools}
 pzpump=${PZ_PZPUMP:-$dev/pump-tushui-20261004/pzpump}
 slot=${PZ_SLOT_DATA:-$dev/results-hw-20261005/results6}
@@ -210,6 +212,7 @@ if [ "$studio_ssd" != 0 ]; then
     case "$disk_sectors" in ''|*[!0-9]*) die "PZ_DISK_SECTORS must be a decimal number: $disk_sectors" ;; esac
     [ "$disk_sectors" -gt 0 ] || die "PZ_DISK_SECTORS must be positive"
     case "$studio_ssd_image" in ''|*\"*|*\\*|*' '*|*'%'*) die "PZ_STUDIO_SSD_IMAGE must be one word without quotes, backslashes or percent signs: $studio_ssd_image" ;; esac
+    case "$ssd_filter" in ''|all|any|valid) ;; *) die "PZ_SSD_FILTER must be all, any or valid: $ssd_filter" ;; esac
     ring_geometry=$(python3 - "$ring_frames" <<'PY'
 import sys
 frames = int(sys.argv[1])
@@ -222,6 +225,7 @@ PY
     studio_ssd_args=$(printf -- '--hw pl --devmem /dev/mem --pl-base 0x40102000 --bounce-phys 0x%08X --bounce-bytes %d --ring-base %s --ring-bytes %s --disk-sectors %s' \
         "$((ssd_bounce))" "$((ssd_bounce_bytes))" "$ring_base" "$ring_bytes" "$disk_sectors")
     studio_ssd_note="studio ssd: unit MIB_PZREC=$studio_ssd_pzrec MIB_SSD_IMAGE=$studio_ssd_image MIB_PZREC_ARGS=\"$studio_ssd_args\""
+    [ -z "$ssd_filter" ] || studio_ssd_note="$studio_ssd_note MIB_SSD_FILTER=$ssd_filter"
     grep -q '^\[Service\]' "$pkg/yofo-studio.service" || die "the staged unit has no [Service] section"
 fi
 
@@ -249,12 +253,13 @@ fi
 
 if [ -n "$studio_ssd_note" ]; then
     # re-assembly replaces the three lines; a value with spaces is quoted for systemd (Environment="NAME=value with spaces")
-    sed -i '/^Environment="\?MIB_PZREC=/d;/^Environment="\?MIB_SSD_IMAGE=/d;/^Environment="\?MIB_PZREC_ARGS=/d' "$pkg/yofo-studio.service"
+    sed -i '/^Environment="\?MIB_PZREC=/d;/^Environment="\?MIB_SSD_IMAGE=/d;/^Environment="\?MIB_PZREC_ARGS=/d;/^Environment=MIB_SSD_FILTER=/d' "$pkg/yofo-studio.service"
+    [ -z "$ssd_filter" ] || sed -i "/^\[Service\]/a Environment=MIB_SSD_FILTER=$ssd_filter" "$pkg/yofo-studio.service"
     sed -i "/^\[Service\]/a Environment=\"MIB_PZREC_ARGS=$studio_ssd_args\"" "$pkg/yofo-studio.service"
     sed -i "/^\[Service\]/a Environment=\"MIB_SSD_IMAGE=$studio_ssd_image\"" "$pkg/yofo-studio.service"
     sed -i "/^\[Service\]/a Environment=\"MIB_PZREC=$studio_ssd_pzrec\"" "$pkg/yofo-studio.service"
 else
-    sed -i '/^Environment="\?MIB_PZREC=/d;/^Environment="\?MIB_SSD_IMAGE=/d;/^Environment="\?MIB_PZREC_ARGS=/d' "$pkg/yofo-studio.service"
+    sed -i '/^Environment="\?MIB_PZREC=/d;/^Environment="\?MIB_SSD_IMAGE=/d;/^Environment="\?MIB_PZREC_ARGS=/d;/^Environment=MIB_SSD_FILTER=/d' "$pkg/yofo-studio.service"
 fi
 
 # 4. BUILD_INFO: one line names the bundle (mib + pz7035 commits, PL BUILD_ID, ABI); the rest says where each part came from.

@@ -1296,6 +1296,9 @@ namespace backend
         // The highest run id seen is kept with Studio's own state on the eMMC (the data dir), so "recovered at mount" is told once after a restart.
         const std::string stateFile = dataDir_.empty() ? std::string() : (std::filesystem::path(dataDir_) / "ssd-state.json").string();
         ssdStore_ = std::make_unique<pz::SsdStore>(std::move(device), std::chrono::milliseconds(1000), /*background=*/true, stateFile);
+        // The filter of the SSD runs: all, any or valid (default valid, the PC rule). A bad value blocks SSD runs with the reason (storage.ssd gate and the Start).
+        ssdStore_->setFilterFromEnv(std::getenv("MIB_SSD_FILTER"));
+        if (!ssdStore_->configProblem().empty()) SPDLOG_ERROR("AppBackend: {}", ssdStore_->configProblem());
     }
 
     void AppBackend::setSsdStoreForTesting(std::unique_ptr<pz::SsdStore> store)
