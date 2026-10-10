@@ -803,6 +803,13 @@ set_tests_properties(recording.trigger_alignment_roundtrip PROPERTIES LABELS "re
 # Round-trip on experiment/legacy/recording fixtures + fault injection.
 mib_add_backend_test_executable(review_session_test review/review_session_test.cpp)
 add_test(NAME review.session COMMAND $<TARGET_FILE:mib_backend_tests> review_session_test)
+# An HDF5 file converted from an SSD run (#667, tools/pzrec_to_h5) opens in ReviewSession: MIB_SSD_H5_REVIEW="<file.h5> <valid rows> <invalid rows> [<first frame id>]".
+if(DEFINED ENV{MIB_SSD_H5_REVIEW})
+    separate_arguments(_mib_ssd_h5_args UNIX_COMMAND "$ENV{MIB_SSD_H5_REVIEW}")
+    mib_add_backend_test_executable(ssd_h5_review_test review/ssd_h5_review_test.cpp)
+    add_test(NAME review.ssd_h5 COMMAND $<TARGET_FILE:mib_backend_tests> ssd_h5_review_test ${_mib_ssd_h5_args})
+    set_tests_properties(review.ssd_h5 PROPERTIES LABELS "review;backend" TIMEOUT 120)
+endif()
 set_tests_properties(review.session PROPERTIES LABELS "review;recording;backend;hdf5;safety" TIMEOUT 120)
 # ReviewJobs: exports (= direct HdfExportService output), cancel, batch,
 # regenerate masks, core contour, density (grid ≈ direct), single flight.

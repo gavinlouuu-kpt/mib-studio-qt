@@ -1,0 +1,727 @@
+{
+  "$comment": "Classical Contract-1 profile (science_profile 1, version 1). Page and payload meaning for the opaque platform fields of ABI >= 1.2. Host reference: mib-studio-qt BundledProcessingKernel/ProcessingScience (subtract-ring, Contract 1). Decision: docs/decisions/0002; port list: docs/processing/MIB_PARITY_PORT.md. Version 2 (2026-10-07, pz7035-imx426#16): the E-modulus table v2 (PROFILE_TABLE1, u32 q16_16 plus a validity bitmap) with q32_32 / q0_32 axes in page words 22-27 replaces the v1 table (PROFILE_TABLE0, u16 q8_8) and its q16_16 / q0_16 axes in words 19-21 (now reserved); otherwise unchanged from version 1.",
+  "science_profile": 1,
+  "profile_version": 2,
+  "requires_abi": {
+    "major": 1,
+    "minor": 3
+  },
+  "requires_capabilities": [
+    "PROFILE_PAGE",
+    "TABLE_LOADER",
+    "EMODULUS_TABLE_V2"
+  ],
+  "geometry": {
+    "roi2_width": 512,
+    "roi2_height": 96,
+    "note": "fixed processing window; ROI_SIZE must equal it"
+  },
+  "formats": {
+    "u8": "unsigned",
+    "u16": "unsigned",
+    "u24": "unsigned",
+    "u32": "unsigned",
+    "bool": "1 bit",
+    "q16_16": "unsigned fixed point, 16 fractional bits",
+    "q0_16": "unsigned fixed point in [0,1), 16 fractional bits",
+    "q8_8": "unsigned fixed point, 8 fractional bits",
+    "enum:reason": "see enums.reason",
+    "q32_32": "unsigned fixed point, 32 fractional bits, split in a low and a high page word",
+    "q0_32": "unsigned fixed point in [0,1), 32 fractional bits"
+  },
+  "enums": {
+    "reason": {
+      "NONE": 0,
+      "NO_CONTOUR": 1,
+      "BORDER": 2,
+      "AREA": 3,
+      "RING": 4,
+      "DEFORM": 5,
+      "AREA_RATIO": 6
+    }
+  },
+  "page_words": 32,
+  "page": [
+    {
+      "name": "blur_kernel",
+      "word": 0,
+      "bits": [
+        0,
+        7
+      ],
+      "format": "u8",
+      "source": "gaussian_blur_size",
+      "doc": "odd; the image rejects values it does not implement (readiness)"
+    },
+    {
+      "name": "morph_kernel",
+      "word": 0,
+      "bits": [
+        8,
+        15
+      ],
+      "format": "u8",
+      "source": "morph_kernel_size"
+    },
+    {
+      "name": "morph_iterations",
+      "word": 0,
+      "bits": [
+        16,
+        23
+      ],
+      "format": "u8",
+      "source": "morph_iterations"
+    },
+    {
+      "name": "require_single_inner_contour",
+      "word": 0,
+      "bits": [
+        24,
+        24
+      ],
+      "format": "bool",
+      "source": "filters.require_single_inner_contour"
+    },
+    {
+      "name": "outer_fallback",
+      "word": 0,
+      "bits": [
+        25,
+        25
+      ],
+      "format": "bool",
+      "source": "!filters.require_single_inner_contour",
+      "doc": "top-level outer contours are objects when a frame has no inner contour"
+    },
+    {
+      "name": "enable_border_check",
+      "word": 0,
+      "bits": [
+        26,
+        26
+      ],
+      "format": "bool",
+      "source": "filters.enable_border_check"
+    },
+    {
+      "name": "enable_area_range_check",
+      "word": 0,
+      "bits": [
+        27,
+        27
+      ],
+      "format": "bool",
+      "source": "filters.enable_area_range_check"
+    },
+    {
+      "name": "enable_deformability_range_check",
+      "word": 0,
+      "bits": [
+        28,
+        28
+      ],
+      "format": "bool",
+      "source": "filters.enable_deformability_range_check"
+    },
+    {
+      "name": "enable_area_ratio_check",
+      "word": 0,
+      "bits": [
+        29,
+        29
+      ],
+      "format": "bool",
+      "source": "filters.enable_area_ratio_check"
+    },
+    {
+      "name": "enable_ring_ratio_check",
+      "word": 0,
+      "bits": [
+        30,
+        30
+      ],
+      "format": "bool",
+      "source": "filters.enable_ring_ratio_check"
+    },
+    {
+      "name": "target_group_enabled",
+      "word": 0,
+      "bits": [
+        31,
+        31
+      ],
+      "format": "bool",
+      "source": "target_group.enabled"
+    },
+    {
+      "name": "threshold",
+      "word": 1,
+      "bits": [
+        0,
+        7
+      ],
+      "format": "u8",
+      "source": "bg_subtract_threshold"
+    },
+    {
+      "name": "empty_frame_pixels",
+      "word": 1,
+      "bits": [
+        8,
+        31
+      ],
+      "format": "u24",
+      "source": "empty_frame_pixel_threshold",
+      "doc": "counted before morphology"
+    },
+    {
+      "name": "min_contour_area_px",
+      "word": 2,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "u32",
+      "source": "constant 10 (ProcessingScience)"
+    },
+    {
+      "name": "border_margin_px",
+      "word": 3,
+      "bits": [
+        0,
+        15
+      ],
+      "format": "u16",
+      "source": "constant 2 (ProcessingScience)"
+    },
+    {
+      "name": "target_group_emodulus_enabled",
+      "word": 3,
+      "bits": [
+        31,
+        31
+      ],
+      "format": "bool",
+      "source": "target_group.emodulus_enabled"
+    },
+    {
+      "name": "pixel_to_micron",
+      "word": 4,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q16_16",
+      "source": "p2m (um per px)"
+    },
+    {
+      "name": "area_min_um2",
+      "word": 5,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q16_16",
+      "source": "area_threshold_min"
+    },
+    {
+      "name": "area_max_um2",
+      "word": 6,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q16_16",
+      "source": "area_threshold_max"
+    },
+    {
+      "name": "deformability_min",
+      "word": 7,
+      "bits": [
+        0,
+        15
+      ],
+      "format": "q0_16",
+      "source": "deformability_threshold_min"
+    },
+    {
+      "name": "deformability_max",
+      "word": 8,
+      "bits": [
+        0,
+        15
+      ],
+      "format": "q0_16",
+      "source": "deformability_threshold_max"
+    },
+    {
+      "name": "area_ratio_max",
+      "word": 9,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q16_16",
+      "source": "area_ratio_threshold_max"
+    },
+    {
+      "name": "ring_ratio_min",
+      "word": 10,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q16_16",
+      "source": "ring_ratio_min",
+      "doc": "open interval"
+    },
+    {
+      "name": "ring_ratio_max",
+      "word": 11,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q16_16",
+      "source": "ring_ratio_max",
+      "doc": "open interval"
+    },
+    {
+      "name": "target_area_min_um2",
+      "word": 12,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q16_16",
+      "source": "target_group.area_min"
+    },
+    {
+      "name": "target_area_max_um2",
+      "word": 13,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q16_16",
+      "source": "target_group.area_max"
+    },
+    {
+      "name": "target_deformability_min",
+      "word": 14,
+      "bits": [
+        0,
+        15
+      ],
+      "format": "q0_16",
+      "source": "target_group.deformability_min"
+    },
+    {
+      "name": "target_deformability_max",
+      "word": 15,
+      "bits": [
+        0,
+        15
+      ],
+      "format": "q0_16",
+      "source": "target_group.deformability_max"
+    },
+    {
+      "name": "target_emodulus_min_kpa",
+      "word": 16,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q16_16",
+      "source": "target_group.emodulus_min"
+    },
+    {
+      "name": "target_emodulus_max_kpa",
+      "word": 17,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q16_16",
+      "source": "target_group.emodulus_max"
+    },
+    {
+      "name": "store_invalid_every_n",
+      "word": 18,
+      "bits": [
+        0,
+        15
+      ],
+      "format": "u16",
+      "source": "invalidFrameSamplingRate (default 100); 0 = never"
+    },
+    {
+      "name": "store_multi_image_frames",
+      "word": 18,
+      "bits": [
+        16,
+        23
+      ],
+      "format": "u8",
+      "source": "multi_image.count when multi_image.enabled"
+    },
+    {
+      "name": "store_valid_anchored",
+      "word": 18,
+      "bits": [
+        24,
+        24
+      ],
+      "format": "bool",
+      "source": "recording policy"
+    },
+    {
+      "name": "store_mask",
+      "word": 18,
+      "bits": [
+        25,
+        25
+      ],
+      "format": "bool",
+      "source": "recording policy"
+    },
+    {
+      "name": "store_all_frames",
+      "word": 18,
+      "bits": [
+        26,
+        26
+      ],
+      "format": "bool",
+      "source": "raw recording mode (needs the admission gate)"
+    },
+    {
+      "name": "lut_area_min_um2_lo",
+      "word": 22,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "u32",
+      "source": "EModulusLut low word of the grid origin, q32_32 um^2"
+    },
+    {
+      "name": "lut_area_min_um2_hi",
+      "word": 23,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "u32",
+      "source": "EModulusLut high word of the grid origin, q32_32 um^2"
+    },
+    {
+      "name": "lut_area_step_um2_lo",
+      "word": 24,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "u32",
+      "source": "EModulusLut low word of the grid step, q32_32 um^2"
+    },
+    {
+      "name": "lut_area_step_um2_hi",
+      "word": 25,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "u32",
+      "source": "EModulusLut high word of the grid step, q32_32 um^2"
+    },
+    {
+      "name": "lut_deformability_min",
+      "word": 26,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "u32",
+      "source": "EModulusLut grid origin, q0_32"
+    },
+    {
+      "name": "lut_deformability_step",
+      "word": 27,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "u32",
+      "source": "EModulusLut grid step, q0_32"
+    }
+  ],
+  "payload_words": 16,
+  "payload_validity": "bit n set = payload word n valid; words 13-15 reserved and never valid in version 1",
+  "payload": [
+    {
+      "name": "object_id",
+      "word": 0,
+      "bits": [
+        0,
+        15
+      ],
+      "format": "u16",
+      "source": "objectId (1..N, bbox order)"
+    },
+    {
+      "name": "reason",
+      "word": 0,
+      "bits": [
+        16,
+        19
+      ],
+      "format": "enum:reason",
+      "source": "invalid reason; NONE when valid"
+    },
+    {
+      "name": "border_touch",
+      "word": 0,
+      "bits": [
+        20,
+        20
+      ],
+      "format": "bool",
+      "source": "touchesBorder"
+    },
+    {
+      "name": "outer_fallback",
+      "word": 0,
+      "bits": [
+        21,
+        21
+      ],
+      "format": "bool",
+      "source": "object is an outer contour (no inner contour in frame)"
+    },
+    {
+      "name": "hole_ambiguous",
+      "word": 0,
+      "bits": [
+        22,
+        22
+      ],
+      "format": "bool",
+      "source": "inner area 0; outer area used (cannot occur with the host area filter >= 10; always 0)"
+    },
+    {
+      "name": "emodulus_out_of_coverage",
+      "word": 0,
+      "bits": [
+        23,
+        23
+      ],
+      "format": "bool",
+      "source": "youngsModulus = NaN on the host"
+    },
+    {
+      "name": "target_group",
+      "word": 0,
+      "bits": [
+        24,
+        24
+      ],
+      "format": "bool",
+      "source": "isTargetGroup"
+    },
+    {
+      "name": "outer_contour_area",
+      "word": 1,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q16_16",
+      "source": "contourArea(parent) in px2 (a multiple of 0.5; exact in Q16.16; no host field, ring_ratio is derived from it)"
+    },
+    {
+      "name": "hole_contour_area",
+      "word": 2,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q16_16",
+      "source": "contourArea(object contour) in px2 (exact in Q16.16)"
+    },
+    {
+      "name": "hull_area",
+      "word": 3,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q16_16",
+      "source": "hull area of the inner contour (px2) = FilterResult.area"
+    },
+    {
+      "name": "hull_perimeter",
+      "word": 4,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q16_16",
+      "source": "arcLength(hull)"
+    },
+    {
+      "name": "area_ratio",
+      "word": 5,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q16_16",
+      "source": "areaRatio"
+    },
+    {
+      "name": "ring_ratio",
+      "word": 6,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q16_16",
+      "source": "ringRatio"
+    },
+    {
+      "name": "emodulus_kpa",
+      "word": 7,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q16_16",
+      "source": "youngsModulus"
+    },
+    {
+      "name": "deformability",
+      "word": 8,
+      "bits": [
+        0,
+        15
+      ],
+      "format": "q0_16",
+      "source": "deformability"
+    },
+    {
+      "name": "hole_count",
+      "word": 8,
+      "bits": [
+        16,
+        23
+      ],
+      "format": "u8",
+      "source": "innerContourCount: inner contours (area >= 10) in the frame, as the host reports it"
+    },
+    {
+      "name": "hull_count",
+      "word": 8,
+      "bits": [
+        24,
+        31
+      ],
+      "format": "u8",
+      "source": "hull points"
+    },
+    {
+      "name": "brightness_q1",
+      "word": 9,
+      "bits": [
+        0,
+        7
+      ],
+      "format": "u8",
+      "source": "brightness_q1"
+    },
+    {
+      "name": "brightness_q2",
+      "word": 9,
+      "bits": [
+        8,
+        15
+      ],
+      "format": "u8",
+      "source": "brightness_q2"
+    },
+    {
+      "name": "brightness_q3",
+      "word": 9,
+      "bits": [
+        16,
+        23
+      ],
+      "format": "u8",
+      "source": "brightness_q3"
+    },
+    {
+      "name": "brightness_q4",
+      "word": 9,
+      "bits": [
+        24,
+        31
+      ],
+      "format": "u8",
+      "source": "brightness_q4"
+    },
+    {
+      "name": "centroid_x",
+      "word": 10,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q16_16",
+      "source": "centroidX (ROI 1 coordinates; Q8.8 could not hold x >= 256)"
+    },
+    {
+      "name": "centroid_y",
+      "word": 11,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q16_16",
+      "source": "centroidY (ROI 1 coordinates)"
+    },
+    {
+      "name": "area_um2",
+      "word": 12,
+      "bits": [
+        0,
+        31
+      ],
+      "format": "q16_16",
+      "source": "hull_area * p2m^2 (the E-modulus LUT input)"
+    }
+  ],
+  "tables": {
+    "PROFILE_TABLE1": {
+      "name": "emodulus_table_v2",
+      "layout": "row-major [deformability][area], 200 x 200 cells, cell k = d * 200 + a. Bytes 0-159,999: value of cell k as u32 kPa in q16_16, little-endian, at 4k. Bytes 160,000-164,999: validity bitmap, bit (k mod 8) of byte 160,000 + k / 8; set = value present, cleared = no value (NaN on the host; the value word is ignored and should be 0)",
+      "bytes": 165000,
+      "axes": "page words 22-27 (area q32_32 um^2, deformability q0_32); cell (d, a) is at area_min + a * area_step, deformability_min + d * deformability_step",
+      "builder": "the host quantises its EModulusLut grid: value = round(E * 2^16) (half up), E must be finite and in [0, 65536) else the build fails; NaN -> bit cleared; axes = round(x * 2^32). Constraints (the page loader of the host rejects violations): 0 < area_step < 2^44 (4096 um^2), area_min < 2^52 (2^20 um^2), 0 < deformability_step < 2^32, deformability_min < 2^32",
+      "source": "mib-studio-qt EModulusLut grid (IDW from the TSV)",
+      "evaluator": "inputs are exactly the payload fields area_um2 (q16_16, saturated) and deformability (q0_16). X = area << 16, Y = deformability << 16; NaN (emodulus_out_of_coverage) unless area_min <= X <= area_min + 199 area_step and deformability_min <= Y <= deformability_min + 199 deformability_step (inclusive at both ends, as EModulusLut::lookup). ia = floor((X - area_min) 2^32 / area_step), a0 = min(ia >> 32, 199), a1 = min(a0 + 1, 199), fa = ia - a0 2^32 (q0_32); the same for deformability. NaN if any of the four cells (d0|d1, a0|a1) has no value, also at weight 0 (as the host). top = v00 (2^32 - fa) + v10 fa, bot = v01 (2^32 - fa) + v11 fa, E = (top (2^32 - fd) + bot fd + 2^63) >> 64 (q16_16, one rounding). Vectors: tests/vectors/emod_v2 (tools/emod_ref, EModulusLut at mib-studio-qt ac0a7b08)"
+    },
+    "BACKGROUND": {
+      "layout": "ROI 2 blurred background, 512 x 96 u8, row-major",
+      "bytes": 49152,
+      "source": "PS auto/calibrated background (mean of empty preview frames)"
+    }
+  },
+  "conformance_tolerances": {
+    "integer_fields": "exact",
+    "ratios_and_deformability": "1e-4 absolute",
+    "emodulus": "1e-4 kPa absolute against EModulusLut::lookup on the loaded v2 table for the same (area_um2, deformability) payload values, and the same NaN decision (vectors tests/vectors/emod_v2; bound 2^-17 kPa final rounding + 2^-32 |cell difference| per axis from the q0_32 weights, <= 3.8e-5 kPa)",
+    "centroid": "1/256 px"
+  }
+}

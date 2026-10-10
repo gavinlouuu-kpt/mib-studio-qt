@@ -1,0 +1,15 @@
+{
+  "repository": "gavinlouuu-kpt/pz7035-imx426",
+  "commit": "6d1937d1e6650ca02929f9b6f33a765796139c82",
+  "branch": "main (PR #64 merged)",
+  "note": "pzrec stored-record layout doc and reference decoder; byte copies at the same relative paths so the decoder finds the ABI schema and profiles. tools/pzrec_to_h5 refuses a copy whose sha256 differs. Re-vendor with the same file list when pz7035 changes the decoder or the layout.",
+  "files": {
+    "abi/profiles/classical_contract1_v2.json": "969cda20654c9504b6c0a8e2b5362e4340a14b121822c0210a7663db83191ddf",
+    "abi/profiles/unet_cells_v3.json": "c3f94facc0c33b7b30b5ad308b6a49114d5719afe3f3b6d462cf365d40bd0806",
+    "abi/pz_mib_abi.json": "5dc7aa5ed1f39456678a8b4a9e37f0fe2074bc1fc2e725a8b55173d3259612f3",
+    "src/imx426/__init__.py": "3a1e9c017121b59461e1f77915543130a3273c5161540246d2eda75c49977047",
+    "src/imx426/mib_abi.py": "3a1019d8c08cfc5e6c14754bfbeef82f5ebc4564f9d66c641c61981695f6b137",
+    "tools/pzrec/pzrec_decode.py": "3532606aadf2a035a92cf65076d63693082df0d17339f6cc8a61d78fe6a4b3bc",
+    "tools/pzrec/pzrec_records.md": "1913d048609b23a32fad8b18e3886891a57a57f18e80a27d8c06074172b9a140"
+  }
+}
