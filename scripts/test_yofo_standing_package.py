@@ -236,6 +236,46 @@ def check_bundle(check) -> None:
         none = asm({})
         check(none.returncode == 0 and not (pkg / "modules").exists() and "module:" not in (pkg / "BUILD_INFO").read_text(), "without PZ_PZBLK_KO there is no modules/")
 
+        # Studio drives the SSD (S2, #667): the unit's three variables, derived from the bundle's own numbers, named in BUILD_INFO.
+        ssd = {"PZ_PZREC_COMMIT": pzrec_commit, "PZ_PZREC": str(arm), "PZ_STUDIO_SSD": "1", "PZ_DISK_SECTORS": "468862128", "PZ_SSD_BOUNCE": "0x2D000000"}
+        want_args = ("--hw pl --devmem /dev/mem --pl-base 0x40102000 --bounce-phys 0x2D000000 --bounce-bytes 1048576 --ring-base 0x2D4CC000 "
+                     "--ring-bytes 0x11B34000 --disk-sectors 468862128")
+        fresh()
+        on = asm(ssd)
+        unit = (pkg / "yofo-studio.service").read_text()
+        info = (pkg / "BUILD_INFO").read_text()
+        check(on.returncode == 0 and unit.count('Environment="MIB_PZREC=/usr/bin/pzrec"') == 1 and unit.count('Environment="MIB_SSD_IMAGE=disk"') == 1
+              and unit.count(f'Environment="MIB_PZREC_ARGS={want_args}"') == 1 and unit.index("[Service]") < unit.index("MIB_PZREC="), f"the unit gets the three variables once: {on.stderr}\n{unit}")
+        check(f'studio ssd: unit MIB_PZREC=/usr/bin/pzrec MIB_SSD_IMAGE=disk MIB_PZREC_ARGS="{want_args}"\n' in info, "BUILD_INFO shows the three values")
+        check(f"ring-base 0x2D4CC000" in info or "0x2d4cc000" in info, "the ring base derived for the arguments is the one BUILD_INFO names")
+        fresh()
+        again = asm(ssd)
+        check(again.returncode == 0 and (pkg / "yofo-studio.service").read_text().count("MIB_PZREC") == 2, "reassembling does not duplicate them (MIB_PZREC and MIB_PZREC_ARGS)")
+        fresh()
+        other = asm({**ssd, "PZ_RING_FRAMES": "4000", "PZ_SSD_BOUNCE": "0x2D000000", "PZ_SSD_BOUNCE_BYTES": "0x200000"})
+        check(other.returncode == 0 and "--bounce-bytes 2097152" in (pkg / "yofo-studio.service").read_text() and "--ring-base 0x" in (pkg / "yofo-studio.service").read_text()
+              and "--ring-base 0x2D4CC000" not in (pkg / "yofo-studio.service").read_text(), f"the ring and bounce arguments follow PZ_RING_FRAMES and PZ_SSD_BOUNCE_BYTES: {other.stderr}")
+        for label, extra, needle in [
+            ("no PZ_DISK_SECTORS", {"PZ_DISK_SECTORS": ""}, "PZ_DISK_SECTORS"),
+            ("a non-numeric PZ_DISK_SECTORS", {"PZ_DISK_SECTORS": "468862128x"}, "decimal"),
+            ("no bounce buffer", {"PZ_SSD_BOUNCE": ""}, "PZ_SSD_BOUNCE"),
+            ("no ring", {"PZ_RING_FRAMES": "0"}, "PZ_RING_FRAMES"),
+            ("a quote in the image", {"PZ_STUDIO_SSD_IMAGE": 'a"b'}, "one word"),
+            ("a bad switch value", {"PZ_STUDIO_SSD": "yes"}, "must be 1"),
+        ]:
+            fresh()
+            r = asm({**ssd, **extra})
+            check(r.returncode != 0 and needle in r.stderr, f"{label} is refused ({needle}): {r.stderr}")
+        fresh()
+        r = asm({k: v for k, v in ssd.items() if k not in ("PZ_PZREC_COMMIT", "PZ_PZREC")})
+        check(r.returncode != 0 and "needs pzrec in the bundle" in r.stderr, "the switch needs pzrec in the bundle")
+        fresh()
+        off = asm({"PZ_PZREC_COMMIT": pzrec_commit, "PZ_PZREC": str(arm)})
+        check(off.returncode == 0 and "MIB_PZREC" not in (pkg / "yofo-studio.service").read_text() and "studio ssd" not in (pkg / "BUILD_INFO").read_text(),
+              "without the switch the unit has none of them (and an earlier assembly's lines are removed)")
+        install = (Path(__file__).resolve().parent.parent / "deploy" / "yofo-studio" / "install.sh").read_text()
+        check("install -m 0755 tools/pzrec /usr/bin/pzrec" in install, "install.sh installs tools/pzrec as /usr/bin/pzrec")
+
         # A core.json of another image is refused.
         fresh()
         (Path(env["PZ7035_REPO"]) / "build" / "pz_live_test" / "core.json").write_text(

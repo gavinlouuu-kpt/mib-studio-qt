@@ -20,6 +20,11 @@
 # PZ_PZBLK_KO (results14, #667): the SSD block-device kernel module (pzblk.ko) as modules/pzblk.ko, with PZ_PZBLK_MD5 checked when given and the
 # kernel's vermagic named in BUILD_INFO. The unit never loads it: the board owner loads it by hand (insmod) in the bring-up.
 #
+# PZ_STUDIO_SSD=1 (S2, #667): Studio drives the SSD. The unit gets MIB_PZREC=/usr/bin/pzrec (install.sh installs tools/pzrec there), MIB_SSD_IMAGE (PZ_STUDIO_SSD_IMAGE, default
+# `disk`: a placeholder, the CLI ignores IMG with --bounce-phys) and MIB_PZREC_ARGS, as Environment= lines named in BUILD_INFO (`studio ssd: ...`). The arguments are derived so they
+# cannot drift from the rest of the bundle: --bounce-phys/--bounce-bytes from PZ_SSD_BOUNCE(_BYTES), --ring-base/--ring-bytes from PZ_RING_FRAMES, --disk-sectors from the required
+# PZ_DISK_SECTORS (no default). It refuses without pzrec in the bundle (PZ_PZREC_COMMIT), a ring, a bounce buffer or PZ_DISK_SECTORS. Without the switch the unit has none of them.
+#
 # Layout (see docs/exec-plans/active/2026-10-08-yofo-studio-bundle.md):
 #   board side  yofo-studio-server dist.tar yofo-studio.service install.sh pl-ready.sh BUILD_INFO MD5SUMS
 #               core.json  (-> /etc/yofo/expected-core.json)      producer/libpz7035_gentl.cti
@@ -53,6 +58,9 @@ ssd_bounce=${PZ_SSD_BOUNCE:-}
 pzblk_ko=${PZ_PZBLK_KO:-}
 pzblk_md5=${PZ_PZBLK_MD5:-}
 ssd_bounce_bytes=${PZ_SSD_BOUNCE_BYTES:-0x100000}
+studio_ssd=${PZ_STUDIO_SSD:-0}
+studio_ssd_image=${PZ_STUDIO_SSD_IMAGE:-disk}
+disk_sectors=${PZ_DISK_SECTORS:-}
 tools=${PZ_TOOLS_DIR:-/home/gavin/Developer/.worktrees/pz7035-yofo-host-if/tools}
 pzpump=${PZ_PZPUMP:-$dev/pump-tushui-20261004/pzpump}
 slot=${PZ_SLOT_DATA:-$dev/results-hw-20261005/results6}
@@ -191,6 +199,32 @@ PY
     pzblk_note="module: modules/pzblk.ko md5 $pzblk_sum, vermagic ${vermagic:-unknown}; NOT loaded by the unit (the board owner loads it by hand)"
 fi
 
+# 2f. Studio drives the SSD (S2, #667): the unit's three variables, derived from the bundle's own numbers.
+studio_ssd_note=""; studio_ssd_pzrec="/usr/bin/pzrec"; studio_ssd_args=""
+if [ "$studio_ssd" != 0 ]; then
+    [ "$studio_ssd" = 1 ] || die "PZ_STUDIO_SSD must be 1 (or unset)"
+    [ -n "$pzrec_note" ] || die "PZ_STUDIO_SSD needs pzrec in the bundle (PZ_PZREC_COMMIT)"
+    [ -n "$ssd_bounce" ] || die "PZ_STUDIO_SSD needs PZ_SSD_BOUNCE (the bounce buffer pzrec reads the disk through)"
+    [ "$ring_frames" != 0 ] || die "PZ_STUDIO_SSD needs PZ_RING_FRAMES (the SSD drain consumes the frame ring)"
+    [ -n "$disk_sectors" ] || die "PZ_STUDIO_SSD needs PZ_DISK_SECTORS (the SSD's size in 512-byte sectors; no default)"
+    case "$disk_sectors" in ''|*[!0-9]*) die "PZ_DISK_SECTORS must be a decimal number: $disk_sectors" ;; esac
+    [ "$disk_sectors" -gt 0 ] || die "PZ_DISK_SECTORS must be positive"
+    case "$studio_ssd_image" in ''|*\"*|*\\*|*' '*|*'%'*) die "PZ_STUDIO_SSD_IMAGE must be one word without quotes, backslashes or percent signs: $studio_ssd_image" ;; esac
+    ring_geometry=$(python3 - "$ring_frames" <<'PY'
+import sys
+frames = int(sys.argv[1])
+RECORD, CEILING = 59392, 0x3F000000
+base = (CEILING - frames * RECORD) // 4096 * 4096
+print(f"0x{base:08X} 0x{CEILING - base:08X}")
+PY
+)
+    read -r ring_base ring_bytes <<<"$ring_geometry"
+    studio_ssd_args=$(printf -- '--hw pl --devmem /dev/mem --pl-base 0x40102000 --bounce-phys 0x%08X --bounce-bytes %d --ring-base %s --ring-bytes %s --disk-sectors %s' \
+        "$((ssd_bounce))" "$((ssd_bounce_bytes))" "$ring_base" "$ring_bytes" "$disk_sectors")
+    studio_ssd_note="studio ssd: unit MIB_PZREC=$studio_ssd_pzrec MIB_SSD_IMAGE=$studio_ssd_image MIB_PZREC_ARGS=\"$studio_ssd_args\""
+    grep -q '^\[Service\]' "$pkg/yofo-studio.service" || die "the staged unit has no [Service] section"
+fi
+
 # 3. Copy.
 rm -rf "$pkg/host" "$pkg/producer" "$pkg/tools" "$pkg/modules"
 install -d "$pkg/host/pl" "$pkg/host/firmware" "$pkg/host/linux" "$pkg/producer" "$pkg/tools"
@@ -213,6 +247,16 @@ if [ "$ring_frames" != 0 ]; then
     sed -i "/^\[Service\]/a Environment=MIB_PZ_RING_FRAMES=$ring_frames" "$pkg/yofo-studio.service"
 fi
 
+if [ -n "$studio_ssd_note" ]; then
+    # re-assembly replaces the three lines; a value with spaces is quoted for systemd (Environment="NAME=value with spaces")
+    sed -i '/^Environment="\?MIB_PZREC=/d;/^Environment="\?MIB_SSD_IMAGE=/d;/^Environment="\?MIB_PZREC_ARGS=/d' "$pkg/yofo-studio.service"
+    sed -i "/^\[Service\]/a Environment=\"MIB_PZREC_ARGS=$studio_ssd_args\"" "$pkg/yofo-studio.service"
+    sed -i "/^\[Service\]/a Environment=\"MIB_SSD_IMAGE=$studio_ssd_image\"" "$pkg/yofo-studio.service"
+    sed -i "/^\[Service\]/a Environment=\"MIB_PZREC=$studio_ssd_pzrec\"" "$pkg/yofo-studio.service"
+else
+    sed -i '/^Environment="\?MIB_PZREC=/d;/^Environment="\?MIB_SSD_IMAGE=/d;/^Environment="\?MIB_PZREC_ARGS=/d' "$pkg/yofo-studio.service"
+fi
+
 # 4. BUILD_INFO: one line names the bundle (mib + pz7035 commits, PL BUILD_ID, ABI); the rest says where each part came from.
 mib_commit=$(sed -n '1s/.*commit \([0-9a-f]*\).*/\1/p' "$pkg/BUILD_INFO")
 [ -n "$mib_commit" ] || die "cannot read the mib-studio-qt commit from $pkg/BUILD_INFO"
@@ -230,6 +274,7 @@ pz_short=$(printf '%.8s' "$commit")
     [ -z "$bounce_note" ] || echo "$bounce_note"
     echo "producer: libpz7035_gentl.cti md5 $cti_md5 ($cti_note)"
     [ -z "$pzrec_note" ] || echo "$pzrec_note"
+    [ -z "$studio_ssd_note" ] || echo "$studio_ssd_note"
     [ -z "$pzblk_note" ] || echo "$pzblk_note"
     echo "tools: pzcell, pzres from $(src_of "$tools/pzcell/pzcell"), pzpump, page.bin, lut.bin from $(basename "$slot")"
     echo "boot check: Studio's preflight compares the loaded PL's BUILD_ID with core.json from this bundle; a mismatch means the wrong image is loaded"
