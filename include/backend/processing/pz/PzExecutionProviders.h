@@ -112,6 +112,7 @@ public:
                       std::string* error) override;
     void stopPreview() override;
     uint32_t ringFramesWanted() const override { return layout_.ringFrames; }
+    void setRecordToSsd(bool on) override { recordToSsd_.store(on); }
     std::string ringPlacementProblem() override;
     backend::pz::RingStatus ringStatus() override;
     backend::pz::RingRead ringRead(uint64_t seq, backend::pz::RingFrame& out, std::string* why) override;
@@ -131,6 +132,7 @@ private:
     std::unique_ptr<Mapping> map_;
     std::thread thread_;
     std::atomic<bool> stopRequested_{false};
+    std::atomic<bool> recordToSsd_{false};
     std::atomic<bool> running_{false};
     std::mutex previewMutex_;              // serialises preview start/fetch/stop
     std::unique_ptr<PreviewIo> preview_;   // set while previewing

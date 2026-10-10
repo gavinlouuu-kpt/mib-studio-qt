@@ -107,7 +107,7 @@ RingPlan planRing(uint32_t frames, uint64_t linuxRamEnd, uint32_t recordBytes) {
     return p;
 }
 
-bool PzFrameRing::program(const RingPlan& plan, std::string* error) {
+bool PzFrameRing::program(const RingPlan& plan, std::string* error, bool ssdDrain) {
     if (!plan.ok) {
         if (error) *error = plan.why.empty() ? "the ring plan is not valid" : plan.why;
         return false;
@@ -115,12 +115,13 @@ bool PzFrameRing::program(const RingPlan& plan, std::string* error) {
     io_.setReg(PZ_MIB_REG_STORE_BASE_LO, static_cast<uint32_t>(plan.base));
     io_.setReg(PZ_MIB_REG_STORE_BASE_HI, static_cast<uint32_t>(plan.base >> 32));
     io_.setReg(PZ_MIB_REG_STORE_RECORDS, plan.records);
-    io_.setReg(PZ_MIB_REG_STORE_MODE, kStoreModeContinuous | kStoreModeRingOnly);
+    const uint32_t mode = kStoreModeContinuous | kStoreModeRingOnly | (ssdDrain ? kStoreModeDrain : 0u);
+    io_.setReg(PZ_MIB_REG_STORE_MODE, mode);
     const uint64_t base = io_.reg(PZ_MIB_REG_STORE_BASE_LO) | static_cast<uint64_t>(io_.reg(PZ_MIB_REG_STORE_BASE_HI)) << 32;
     if (base != plan.base || io_.reg(PZ_MIB_REG_STORE_RECORDS) != plan.records ||
-        (io_.reg(PZ_MIB_REG_STORE_MODE) & (kStoreModeContinuous | kStoreModeRingOnly)) !=
-            (kStoreModeContinuous | kStoreModeRingOnly)) {
-        if (error) *error = "the PL did not take the ring registers (this image has no frame ring)";
+        (io_.reg(PZ_MIB_REG_STORE_MODE) & mode) != mode) {
+        if (error) *error = ssdDrain ? "the PL did not take the ring registers with the SSD drain bit (this image has no SSD recorder)"
+                                     : "the PL did not take the ring registers (this image has no frame ring)";
         return false;
     }
     return true;

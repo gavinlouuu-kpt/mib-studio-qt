@@ -575,6 +575,19 @@ bool PzDevMemExecutionProvider::start(uint64_t runId, std::string* error) {
     std::optional<backend::pz::PzFrameRing> ring;
     backend::pz::RingPlan plan;
     uint64_t linuxEnd = 0;
+    const bool ssdRun = recordToSsd_.load();
+    if (ssdRun) {
+        // The drain consumes the ring (one store, one ring, #667 R8): an SSD run without a ring has nothing to drain, and a PL without the recorder
+        // would silently run ring-only while the run table says RECORDING.
+        if (layout_.ringFrames == 0) {
+            if (error) *error = "SSD recording needs the frame ring (MIB_PZ_RING_FRAMES)";
+            return false;
+        }
+        if ((map->reg(PZ_MIB_REG_CAPABILITIES) & backend::pz::kCapabilitySsdRecorder) == 0) {
+            if (error) *error = "this PL image has no SSD recorder (capability bit 17)";
+            return false;
+        }
+    }
     if (layout_.ringFrames > 0) {
         ringLock.lock();
         // Checked before any register is touched: a ring that cannot be placed refuses the run and leaves a frozen ring (and its frames)
@@ -627,7 +640,7 @@ bool PzDevMemExecutionProvider::start(uint64_t runId, std::string* error) {
     if (ring) {
         ringProgrammed_.store(false); // the registers below change the ring
         std::string why;
-        if (!ring->program(plan, &why)) {
+        if (!ring->program(plan, &why, ssdRun)) {
             if (error) *error = "frame ring: " + why;
             return false;
         }

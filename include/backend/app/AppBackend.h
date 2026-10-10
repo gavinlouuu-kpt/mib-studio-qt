@@ -122,6 +122,8 @@ namespace backend
         pz::SsdStore &ssdStore();
         // Stands the store up once the data dir is known (initialize()); public for the tests of the state file.
         void createSsdStore();
+        // Tests: stand a store over a scripted device in (replaces the one initialize() made; call before any run).
+        void setSsdStoreForTesting(std::unique_ptr<pz::SsdStore> store);
         // The data directory given to initialize() (recordings default under it).
         const std::string &dataDir() const { return dataDir_; }
 

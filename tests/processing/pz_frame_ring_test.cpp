@@ -168,6 +168,13 @@ int main() {
                        (io.regs[PZ_MIB_REG_STORE_MODE] & pz::kStoreModeRingOnly) && (io.regs[PZ_MIB_REG_STORE_MODE] & pz::kStoreModeContinuous),
                    "base, records and CONTINUOUS|RING_ONLY are written");
         MIB_EXPECT(!ring.program(pz::planRing(5000, 0x3F000000ull), &err) && err.find("mem=") != std::string::npos, "an invalid plan is never written");
+        MIB_EXPECT((io.regs[PZ_MIB_REG_STORE_MODE] & pz::kStoreModeDrain) == 0, "a ring-only run does not set the SSD drain bit");
+        // an SSD run (#667 S2): CONTINUOUS | RING_ONLY | DRAIN = 0x601
+        FakeIo io2;
+        pz::PzFrameRing ring2(io2, kLinuxEnd);
+        MIB_EXPECT(ring2.program(plan, &err, /*ssdDrain=*/true), "program with the drain bit: " + err);
+        MIB_EXPECT(io2.regs[PZ_MIB_REG_STORE_MODE] == 0x601u && pz::kStoreModeDrain == (1u << 10) && pz::kCapabilitySsdRecorder == (1u << 17),
+                   "an SSD run arms the store in CONTINUOUS|RING_ONLY|DRAIN (0x601); the recorder capability is bit 17");
     }
 
     // ---- status ------------------------------------------------------------------------------------------

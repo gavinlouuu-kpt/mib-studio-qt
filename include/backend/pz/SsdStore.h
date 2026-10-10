@@ -9,6 +9,7 @@
 // as the reason, never READY. No device configured is ABSENT ("No SSD: nothing can be saved"). A run whose totals are unknown (mount-time recovery,
 // reason 7, `counts_unknown`) carries no numbers for the UI.
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -68,24 +69,45 @@ struct SsdStatus {
 bool parseSsdStatus(const std::string& json, SsdStatus& out, std::string* why);
 bool parseSsdRuns(const std::string& json, std::vector<SsdRun>& out, std::string* why);
 
+// The arguments of `pzrec start` (R2). The PC rule is VALID_ONLY with the invalid sampler; `startUnixMs` comes from the WallClock (G14) and `clientSynced`
+// says whether a client set it (pzrec's `wall_source` 1) or the board's unsynchronised clock did (0).
+enum class SsdFilter { All, AnyResult, ValidOnly };
+struct SsdStartArgs {
+    SsdFilter filter{SsdFilter::ValidOnly};
+    uint32_t samplerN{0};
+    uint32_t clientTag{0};
+    uint64_t startUnixMs{0};
+    bool clientSynced{false};
+};
+
 class ISsdDevice {
 public:
     virtual ~ISsdDevice() = default;
     // One pzrec call each; false with `error` (the stderr or the reason it could not run) on any failure.
     virtual bool status(std::string& json, std::string* error) = 0;
     virtual bool runs(std::string& json, std::string* error) = 0;
+    // `pzrec start` / `pzrec stop [--abort]`: on success `json` is the status object the CLI prints after the call. A fake that does not record fails them.
+    virtual bool start(const SsdStartArgs&, std::string& json, std::string* error) { (void)json; if (error) *error = "this SSD device cannot start a run"; return false; }
+    virtual bool stop(bool abort, std::string& json, std::string* error) { (void)abort; (void)json; if (error) *error = "this SSD device cannot stop a run"; return false; }
 };
 
 // `pzrec <verb> <image>` run as a child process with a bounded time. POSIX only; elsewhere every call fails ("pzrec is not available on this platform").
 class PzrecCliDevice final : public ISsdDevice {
 public:
-    PzrecCliDevice(std::string pzrecPath, std::string imagePath, std::chrono::milliseconds timeout = std::chrono::milliseconds(3000));
+    // `extraArgs` follow the image on every call (the board's `--hw pl --bounce-phys ...`; the CLI reads its options anywhere after IMG).
+    // `startTimeout` / `stopTimeout` bound the two calls that sequence the drain; a stop that outlives its timeout is killed and retried by the store.
+    PzrecCliDevice(std::string pzrecPath, std::string imagePath, std::chrono::milliseconds timeout = std::chrono::milliseconds(3000),
+                   std::vector<std::string> extraArgs = {}, std::chrono::milliseconds startTimeout = std::chrono::milliseconds(15000),
+                   std::chrono::milliseconds stopTimeout = std::chrono::milliseconds(30000));
     bool status(std::string& json, std::string* error) override;
     bool runs(std::string& json, std::string* error) override;
+    bool start(const SsdStartArgs& args, std::string& json, std::string* error) override;
+    bool stop(bool abort, std::string& json, std::string* error) override;
 private:
-    bool call(const char* verb, std::string& json, std::string* error);
+    bool call(const std::vector<std::string>& verbAndArgs, std::chrono::milliseconds timeout, std::string& json, std::string* error);
     std::string pzrec_, image_;
-    std::chrono::milliseconds timeout_;
+    std::chrono::milliseconds timeout_, startTimeout_, stopTimeout_;
+    std::vector<std::string> extra_;
 };
 
 // Runs a command with a timeout, capturing stdout and stderr (exposed for the tests of the timeout and exit-code handling).
@@ -110,7 +132,27 @@ public:
     // Runs pzrec now (status, then the run table when needed) and updates the cache; the thread calls it, tests call it directly.
     void refresh(bool force = false);
     bool configured() const { return device_ != nullptr; }
+
+    // ---- Record (#667 S2) ----------------------------------------------------------------------------------------------------------------------------
+    // The start sequence of an SSD run, in the caller's order: prepareRun() (a fresh `pzrec status` under a short timeout; READY and no open run, else a
+    // refusal that names the state, never a retry loop) returns the run-table id N that pzrec_start will allocate; the caller writes N to the bridge's RUN_ID
+    // before ARM; startRun(N, args) runs `pzrec start` after the ARM and checks that the run it opened has id N.
+    struct Prepared { bool ok{false}; uint32_t runId{0}; std::string why; SsdState state{SsdState::Absent}; };
+    Prepared prepareRun();
+    // `opened` is true when pzrec opened a run even though startRun fails (a different id): the caller must stop it.
+    bool startRun(uint32_t expectedId, const SsdStartArgs& args, std::string* why, bool* opened = nullptr);
+    // The stop never blocks its caller: beginStop() starts a thread that runs `pzrec stop` with a timeout per attempt and retries (a stop took 19 minutes on the
+    // library before pz7035 #48); waitStopped() waits for it under a deadline. Until it ends status() reads STOPPING. A stop that fails every attempt keeps the
+    // run's id and the reason (stopResult()) and the next refresh shows what pzrec says; Studio does not claim the run was closed.
+    void beginStop(bool abort = false);
+    bool stopping() const;
+    // true: the run is closed. false with `why`: still stopping (`stillRunning` true) or every attempt failed.
+    bool waitStopped(std::chrono::milliseconds deadline, std::string* why, bool* stillRunning = nullptr);
+    // The run this store opened and has not seen closed (0: none).
+    uint32_t openedRunId() const;
+    void setStopRetries(int attempts, std::chrono::milliseconds backoff) { stopAttempts_ = attempts; stopBackoff_ = backoff; }
 private:
+    void stopWorker(bool abort);
     SsdStatus statusLocked() const;
     std::unique_ptr<ISsdDevice> device_;
     std::chrono::milliseconds interval_;
@@ -134,6 +176,17 @@ private:
     uint32_t seenBaseline_{0}, seenPersisted_{0};
     std::vector<uint32_t> noticeIds_;
     std::chrono::steady_clock::time_point statusAt_{};
+    // Record state. Every pzrec call is serialised on deviceMutex_: two processes must never sequence the window or the disk at once.
+    mutable std::mutex deviceMutex_;
+    mutable std::mutex stopMutex_;
+    std::condition_variable stopCv_;
+    std::thread stopThread_;
+    std::atomic<bool> stopRunning_{false}, shuttingDown_{false};
+    bool stopDone_{false}, stopOk_{false};
+    std::string stopWhy_;
+    uint32_t openedRunId_{0};            // guarded by m_
+    int stopAttempts_{5};
+    std::chrono::milliseconds stopBackoff_{2000};
 };
 
 } // namespace backend::pz

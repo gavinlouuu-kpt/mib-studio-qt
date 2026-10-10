@@ -35,6 +35,11 @@ inline constexpr uint32_t kRingStateResetRefused = 1u << 11; // RESET_GENERATION
 inline constexpr int kRingFreezeWaitMs = 1000;
 inline constexpr uint32_t kStoreModeContinuous = 1u;
 inline constexpr uint32_t kStoreModeRingOnly = 1u << 9;   // no drain: overwriting is the purpose
+// SSD run (results14, #667): CONTINUOUS | RING_ONLY | DRAIN, written before ARM with the ring programmed as for ring-only. With DRAIN set and no `pzrec start`
+// the ring behaves exactly as ring-only; START begins the drain after the ARM (board owner, 2026-10-10). Gated by capability bit 17 SSD_RECORDER (bit 12
+// STORE_DRAIN is not set in this PL).
+inline constexpr uint32_t kStoreModeDrain = 1u << 10;
+inline constexpr uint32_t kCapabilitySsdRecorder = 1u << 17;
 inline constexpr uint64_t kRingCeiling = 0x3F000000ull;   // the PL's result ring and preview slots start here
 inline constexpr uint64_t kRingFloor = 0x00100000ull;     // the PL does not enforce a DDR floor: Studio does
 inline constexpr uint32_t kRingRecordBytes = 59392;       // 512 x 96: 4096 set + 49152 MONO8 + 6144 MASK1, rounded
@@ -140,7 +145,7 @@ public:
     // wrong register can never make a read expose Linux RAM.
     PzFrameRing(IRingIo& io, uint64_t linuxRamEnd) : io_(io), linuxRamEnd_(linuxRamEnd) {}
     // Before ARM: base, number of records and STORE_MODE = CONTINUOUS | RING_ONLY, read back.
-    bool program(const RingPlan& plan, std::string* error);
+    bool program(const RingPlan& plan, std::string* error, bool ssdDrain = false);
     RingStatus status();
     // Before a new ring is programmed: leave the previous run. The bridge STATE must be IDLE (the RTL ignores ARM and refuses RESET_GENERATION
     // in any other state): a leftover ARMED or RUNNING is stopped first, DRAINING is waited out (bounded), a FAULT is cleared; a FAULT register
