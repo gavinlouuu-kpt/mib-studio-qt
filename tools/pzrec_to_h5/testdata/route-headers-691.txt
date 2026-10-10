@@ -1,0 +1,25 @@
+# Response headers of GET /ssd/runs/5/records, captured from the route of #691 (feat/ssd-export-run-headers d3fe7421) in its Rust test fixture (run 5, 8 records).
+content-type: application/octet-stream
+cache-control: no-store
+content-length: 475136
+x-run-id: 5
+x-record-count: 8
+x-record-bytes: 59392
+x-first-record: 0
+x-run-start-unix-ms: 1791530000000
+x-run-tick-hz: 100000000
+x-run-first-ticks: 0
+x-run-last-ticks: 1
+x-run-first-frame-id: 1
+x-run-last-frame-id: 8
+x-run-seen: 8
+x-run-filter: 0
+x-run-written: 8
+x-run-client-tag: 1
+x-run-wall-source: 1
+x-run-reason: 0
+x-run-bytes: 475648
+x-run-exact-drops: 1
+content-disposition: attachment; filename="run-5-records.bin"
+connection: close
+date: Sat, 10 Oct 2026 19:45:32 GMT
