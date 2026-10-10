@@ -202,3 +202,92 @@ describe("deriveWorkflow — required checklist failures (#548)", () => {
     expect(view({ ...noHostCore, requiredFailures: undefined }).status).toBe("needs-attention");
   });
 });
+
+// #651 G15: on the PZ7035 the camera is the instrument. Run and Align need no Preflight confirmation and the stepper follows the mode.
+describe("deriveWorkflow — PZ7035 camera modes (G15)", () => {
+  const PZ: WorkflowFacts = { ...BASE, cameraConfigured: true, instrumentMode: "unknown" };
+
+  it("in Run the next step is the experiment, not the Preflight confirmation", () => {
+    const view = deriveWorkflow({ ...PZ, instrumentMode: "run" });
+    expect(view.currentStageId).toBe("experiment");
+    expect(view.recommended).toMatchObject({ stageId: "experiment", kind: "navigate", label: "Start the experiment" });
+    expect(view.stages.find((s) => s.id === "preflight")!.status).toBe("ready"); // still unconfirmed, and advisory
+    expect(view.stages.find((s) => s.id === "alignment")!.status).toBe("ready");
+    expect(view.stages.find((s) => s.id === "experiment")!.status).toBe("ready");
+  });
+
+  it("in Align the next step is Camera & Alignment", () => {
+    const view = deriveWorkflow({ ...PZ, instrumentMode: "align" });
+    expect(view.currentStageId).toBe("alignment");
+    expect(view.recommended).toMatchObject({ stageId: "alignment", kind: "confirm-alignment" });
+  });
+
+  it("in Align with the alignment confirmed the experiment is next", () => {
+    const view = deriveWorkflow({ ...PZ, instrumentMode: "align", alignmentSignature: "pz", alignmentConfirmedFor: "pz" });
+    expect(view.currentStageId).toBe("experiment");
+  });
+
+  it("with no mode yet the earliest incomplete stage decides, as at start-up", () => {
+    const view = deriveWorkflow(PZ);
+    expect(view.currentStageId).toBe("preflight");
+    expect(view.recommended).toMatchObject({ kind: "confirm-preflight" });
+  });
+
+  it("a running experiment is the current stage whatever the mode", () => {
+    for (const mode of ["align", "run", "unknown"] as const) {
+      const view = deriveWorkflow({ ...PZ, instrumentMode: mode, experimentState: EXPERIMENT_STATES.Active });
+      expect(view.currentStageId).toBe("experiment");
+      expect(view.stages.find((s) => s.id === "experiment")!.status).toBe("running");
+    }
+  });
+
+  it("a failed experiment needs attention in Run, with the reason", () => {
+    const view = deriveWorkflow({ ...PZ, instrumentMode: "run", experimentState: EXPERIMENT_STATES.Failed });
+    const exp = view.stages.find((s) => s.id === "experiment")!;
+    expect(exp.status).toBe("needs-attention");
+    expect(exp.blocking[0]).toContain("failed");
+    expect(view.currentStageId).toBe("experiment");
+  });
+
+  it("a failing Preflight is not skipped: required failures keep the banner on Preflight in Run and in Align", () => {
+    for (const mode of ["run", "align"] as const) {
+      const view = deriveWorkflow({ ...PZ, instrumentMode: mode, requiredFailures: ["Storage missing: no writable data folder"] });
+      expect(view.stages.find((s) => s.id === "preflight")!.status).toBe("needs-attention");
+      expect(view.currentStageId).toBe("preflight");
+      expect(view.recommended).toMatchObject({ stageId: "preflight", kind: "navigate", label: "Resolve hardware preflight" });
+    }
+  });
+
+  it("an invalid core keeps the banner on Preflight too (no checklist given)", () => {
+    const view = deriveWorkflow({ ...PZ, instrumentMode: "run", coreValid: false });
+    expect(view.currentStageId).toBe("preflight");
+    expect(view.recommended?.label).toBe("Resolve hardware preflight");
+  });
+
+  it("a running experiment still wins over a failing Preflight (it cannot be un-run)", () => {
+    const view = deriveWorkflow({ ...PZ, instrumentMode: "run", requiredFailures: ["x: y"], experimentState: EXPERIMENT_STATES.Active });
+    expect(view.currentStageId).toBe("experiment");
+  });
+
+  it("in Align after a failed experiment with the alignment unconfirmed the next step is still Camera & Alignment (decision, not accident)", () => {
+    const view = deriveWorkflow({ ...PZ, instrumentMode: "align", experimentState: EXPERIMENT_STATES.Failed });
+    expect(view.currentStageId).toBe("alignment");
+    expect(view.recommended).toMatchObject({ stageId: "alignment", kind: "confirm-alignment", label: "Confirm alignment & ROI" });
+    // the failed experiment is still shown on its own stage
+    expect(view.stages.find((s) => s.id === "experiment")!.status).toBe("needs-attention");
+  });
+
+  it("a finished experiment moves the next step to Review", () => {
+    const view = deriveWorkflow({ ...PZ, instrumentMode: "run", experimentCompleted: true });
+    expect(view.currentStageId).toBe("review");
+  });
+
+  it("the desktop does not change: without a camera mode the stages still chain on the Preflight confirmation", () => {
+    const desktop: WorkflowFacts = { ...BASE, cameraConfigured: true, cameraRunning: true };
+    const view = deriveWorkflow(desktop);
+    expect(view.currentStageId).toBe("preflight");
+    expect(view.stages.find((s) => s.id === "alignment")!.status).toBe("not-started");
+    expect(view.stages.find((s) => s.id === "experiment")!.status).toBe("not-started");
+    expect(view.recommended).toMatchObject({ kind: "confirm-preflight" });
+  });
+});

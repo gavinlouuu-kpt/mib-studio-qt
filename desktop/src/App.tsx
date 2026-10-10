@@ -1261,6 +1261,8 @@ export default function App() {
     experimentCompleted,
     reviewFileOpen: reviewMeta?.file_open ?? false,
     reviewValid: reviewMeta?.valid ?? false,
+    // The PZ7035's camera mode (G15): Run and Align need no Preflight confirmation and the stepper follows the mode.
+    instrumentMode: instrumentModes ? instrument?.mode?.name ?? "unknown" : undefined,
   };
   const workflow = deriveWorkflow(workflowFacts);
   const stageByTab = Object.fromEntries(workflow.stages.map((s) => [s.tab, s])) as Record<
