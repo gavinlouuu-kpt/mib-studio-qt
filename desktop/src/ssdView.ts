@@ -108,8 +108,11 @@ export function formatDuration(seconds: number): string {
   return h > 0 ? `${h} h ${String(m).padStart(2, "0")} min` : `${m} min ${String(r).padStart(2, "0")} s`;
 }
 
-/** The storage strip: what the SSD is doing and why, in the design's words (#667 section 4). */
-export function stripView(s: SsdStatus): { tone: Tone; text: string; detail: string } {
+/** Stopping a run waits for the PL to empty the frame ring onto the drive: up to ring ÷ drain rate, about 8 s for a full ring at 5 kHz on this drive (S2 slot, 2026-10-10). */
+export const STOP_NOTE = "Stopping takes up to about 8 s at 5 kHz (the frame ring is emptied onto the SSD).";
+
+/** The storage strip: what the SSD is doing and why, in the design's words (#667 section 4). `stoppingSeconds` is how long the state has read STOPPING (the caller times it). */
+export function stripView(s: SsdStatus, stoppingSeconds?: number): { tone: Tone; text: string; detail: string } {
   const recoveredNote = recoveryNotice(s);
   switch (s.state) {
     case "ABSENT":
@@ -137,7 +140,11 @@ export function stripView(s: SsdStatus): { tone: Tone; text: string; detail: str
       };
     }
     case "STOPPING":
-      return { tone: "info", text: "SSD writing the last records", detail: "" };
+      return {
+        tone: "info",
+        text: stoppingSeconds !== undefined && stoppingSeconds >= 1 ? `SSD writing the last records · ${Math.floor(stoppingSeconds)} s` : "SSD writing the last records",
+        detail: STOP_NOTE,
+      };
     case "WEDGED":
       return { tone: "bad", text: s.reason || "SSD not responding. The drive is self-powered; power-cycle it.", detail: "" };
     case "RUN_TABLE_FULL":
