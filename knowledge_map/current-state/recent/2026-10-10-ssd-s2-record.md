@@ -21,3 +21,8 @@ active", never READY. Live counters need a window-only read (`pzrec snapshot` st
 mutex; a periodic refresh skips its turn while a start or stop owns the device. The gap between the ARM and `pzrec start` is not a problem (the feeder decides records only after START).
 Tests: `ssd_record_test` (scripted pzrec + the real CLI via `MIB_PZREC`), `ssd_experiment_test` (the lifecycle on the real CLI's simulated drain, refusals, mismatch, failing stop),
 `pz_frame_ring_test` (0x601). Not tested without the board: the drain bit on the PL and the real stop time (`pzrec start` right after the ARM at 5 kHz is what slot F did).
+
+Review fixes (#685): the invalid sampler of the SSD run is the processing service's rate (`getInvalidFrameSamplingRate()`, as for the HDF5 file); after a stop that failed every attempt the
+store polls pzrec again (the drain was stopped first, so the gate is open), shows "SSD run N was not confirmed closed: <reason>" and forgets the run once pzrec reports no open run; the
+abort after an id mismatch waits 2 s (the store keeps retrying in the background). A run that ends by itself during the experiment (raw limit, drain fault) stays invisible until the
+stop: it needs the window-only read (`pzrec snapshot --window-only`, S3).

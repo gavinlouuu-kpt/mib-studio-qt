@@ -223,6 +223,7 @@ int main(int argc, char** argv) {
         std::string why;
         MIB_REQUIRE(backend.ssdStore().runs(runs, &why) && runs.size() == 1, why);
         MIB_EXPECT(runs[0].id == 1 && !runs[0].open && runs[0].reason == 0 && runs[0].clientTag == started.run.startGeneration, "the table holds the closed run with the experiment's generation as tag");
+        MIB_EXPECT(runs[0].samplerN == 1, "the invalid sampler is the processing service's rate (the test set 1), as for the HDF5 file");
         MIB_EXPECT(runs[0].startUnixMs == started.run.startWallClockNs / 1000000ull, "start_unix_ms is the run's wall-clock start");
 
         // the next run takes the next id

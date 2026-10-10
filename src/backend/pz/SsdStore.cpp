@@ -445,7 +445,7 @@ void SsdStore::refresh(bool force) {
     if (!device_) return;
     {
         std::lock_guard<std::mutex> lock(m_);
-        if (openedRunId_ != 0 && !stopRunning_) {
+        if (openedRunId_ != 0 && !stopRunning_ && !stopFailed_) {
             // Studio's own run is open: while a run is active the PL's admission gate holds back every read and write of the disk (`pzrec status`, `runs`,
             // `delete`, a second `start`; board owner, 2026-10-10), so pzrec is not called at all, not even to be refused. The state is RECORDING with the
             // run Studio opened; the live counters need a window-only read (`snapshot`), which the CLI does not offer yet. Never READY.
@@ -490,8 +490,22 @@ void SsdStore::refresh(bool force) {
         if (!runsOk) runsWhy = "SSD run table unreadable: " + rerror;
     }
     uint32_t persistId = 0;
+    std::string stopWhy;
+    {
+        std::lock_guard<std::mutex> sm(stopMutex_);
+        stopWhy = stopWhy_;
+    }
     std::unique_lock<std::mutex> lock(m_);
     status_ = std::move(s);
+    if (openedRunId_ != 0 && stopFailed_) {
+        // Every stop attempt failed: the drain was stopped first (prestop), so the gate is open and pzrec can be read. It decides whether the run is closed.
+        if (ok && !status_.openRun) {
+            openedRunId_ = 0;
+            stopFailed_ = false;
+        } else if (ok) {
+            status_.reason = "SSD run " + std::to_string(openedRunId_) + " was not confirmed closed: " + (stopWhy.empty() ? std::string("pzrec stop did not finish") : stopWhy);
+        }
+    }
     haveStatus_ = true;
     statusAt_ = std::chrono::steady_clock::now();
     if (!ok || status_.state == SsdState::Unformatted || status_.state == SsdState::Initialising || status_.state == SsdState::Wedged ||
@@ -604,6 +618,7 @@ bool SsdStore::startRun(uint32_t expectedId, const SsdStartArgs& args, std::stri
     std::lock_guard<std::mutex> device(deviceMutex_);
     std::string text, error;
     if (!device_->start(args, text, &error)) {
+        // A run found open after a failed start is assumed to be Studio's own: nothing else starts runs on this unit (the unit is the only caller).
         // A refusal opens nothing, but a start that was killed on its timeout may have written the entry and sent START: ask what is open now, and when even
         // that cannot be read after a timeout, assume it is (the caller aborts; an abort of nothing fails harmlessly).
         std::string stext, serror;

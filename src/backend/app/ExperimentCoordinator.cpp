@@ -1144,7 +1144,8 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
         if (providerOk && ssdRecord) {
             pz::SsdStartArgs args;
             args.filter = pz::SsdFilter::ValidOnly;      // the PC rule: frames with a valid cell, plus the invalid sample
-            args.samplerN = 100;                        // 1 invalid-only frame in 100 (the Tauri path)
+            // the same rate as the HDF5 path (default 100 = the Tauri path, 1 = every invalid-only frame): the file and the SSD run keep the same frames
+            args.samplerN = static_cast<uint32_t>(std::min<size_t>(backend_.processing().getInvalidFrameSamplingRate(), 0xFFFFFFFFu));
             args.clientTag = static_cast<uint32_t>(run.startGeneration);
             args.startUnixMs = run.startWallClockNs / 1'000'000ull;
             args.clientSynced = run.wallClockSource == "client_sync";
@@ -1155,10 +1156,11 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
                 providerError = "SSD: " + ssdWhy;
                 provider->stop();
                 if (opened) {
-                    // pzrec opened a run we cannot use: abort it (bounded; a failed abort is named, the SSD strip shows what pzrec says).
+                    // pzrec opened a run we cannot use: abort it. The wait is short because this start holds the coordinator; the store keeps retrying the abort
+                    // in the background and the SSD strip shows STOPPING, then what pzrec says.
                     ssdRecord->beginStop(/*abort=*/true);
                     std::string abortWhy;
-                    if (!ssdRecord->waitStopped(std::chrono::seconds(20), &abortWhy)) providerError += "; the aborted run is not confirmed closed (" + abortWhy + ")";
+                    if (!ssdRecord->waitStopped(std::chrono::seconds(2), &abortWhy)) providerError += "; the aborted run is not confirmed closed (" + abortWhy + ")";
                 }
             }
         }

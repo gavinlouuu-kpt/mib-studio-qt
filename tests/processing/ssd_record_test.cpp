@@ -241,6 +241,33 @@ int main(int argc, char** argv) {
         MIB_EXPECT(store3->openedRunId() == p.runId, "the run is still open as far as Studio knows");
         MIB_EXPECT(dev3->stopCalls == 5, "five attempts");
 
+        // after every attempt failed pzrec is read again (the drain was stopped first): the run is open, the reason is the fault text
+        dev3->statusCalls = 0;
+        store3->refresh(true);
+        {
+            const auto sf = store3->status();
+            MIB_EXPECT(dev3->statusCalls == 1 && sf.reason.find("not confirmed closed") != std::string::npos && sf.reason.find("did not answer") != std::string::npos,
+                       "a failed stop is polled and shown with its reason: " + sf.reason);
+        }
+        // pzrec reports the run closed by itself: Studio forgets it
+        {
+            FakeRecorder* devF = nullptr;
+            auto storeF = storeOver(devF);
+            std::string whyF;
+            auto pf = storeF->prepareRun();
+            MIB_REQUIRE(storeF->startRun(pf.runId, args(), &whyF), whyF);
+            devF->stopFailures = 100;
+            storeF->beginStop();
+            MIB_EXPECT(!storeF->waitStopped(milliseconds(5000), &whyF), "every stop attempt failed");
+            {
+                std::lock_guard<std::mutex> lock(devF->m);
+                devF->open = false;
+                devF->state = "READY";
+            }
+            storeF->refresh(true);
+            MIB_EXPECT(storeF->openedRunId() == 0 && storeF->status().state == pz::SsdState::Ready, "a run pzrec reports closed is forgotten");
+        }
+
         // the next prepare retries the stop of a run that was never confirmed closed
         dev3->stopFailures = 0;
         auto again = store3->prepareRun();
