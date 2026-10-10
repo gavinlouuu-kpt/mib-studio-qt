@@ -95,30 +95,32 @@ class Synthetic(Base):
         self.assertFalse((self.d / "o.h5.partial").exists())
         with h5py.File(self.d / "o.h5") as f:
             v, iv = f["valid_frames"], f["invalid_frames"]
-            # frames 0 (2 objects), 1 (1), 3 (2), 4 (1) have a valid cell; frames 2 and 5 have no results: invalid, one row each
-            self.assertEqual((v["metadata"].shape[0], iv["metadata"].shape[0]), (6, 2))
-            self.assertEqual(v["images"].shape, (6, 96, 512))
-            self.assertTrue(np.array_equal(v["images"][0], imgs[0]) and np.array_equal(v["images"][1], imgs[0]))        # repeated on every row of the frame
+            # routed per object, as Studio: frames 0 and 3 have a valid cell and a rejected one (reason AREA), frames 1 and 4 one valid cell, frames 2 and 5 no results
+            self.assertEqual((v["metadata"].shape[0], iv["metadata"].shape[0]), (4, 4))
+            self.assertEqual(v["images"].shape, (4, 96, 512))
+            self.assertTrue(np.array_equal(v["images"][0], imgs[0]) and np.array_equal(iv["images"][0], imgs[0]))        # repeated on every row of the frame
             self.assertTrue(np.array_equal(v["masks"][0], masks[0] * 255) and v["masks"].dtype == np.uint8)
-            self.assertTrue(np.array_equal(iv["images"][0], imgs[2]))
+            self.assertTrue(np.array_equal(iv["images"][1], imgs[2]))
             m = v["metadata"][:]
-            self.assertEqual(list(m["index"][:3]), [1000, 1000, 1002])
-            self.assertEqual(list(m["isValid"][:3]), [1, 0, 1])                                                          # reason AREA is not a valid cell
+            self.assertEqual(list(m["index"]), [1000, 1002, 1006, 1008])
+            self.assertEqual(list(m["isValid"]), [1, 1, 1, 1])
+            self.assertEqual(list(iv["metadata"][:]["isValid"]), [0, 0, 0, 0])                                           # the AREA-rejected cells, the no-result frames
+            self.assertEqual(list(iv["metadata"][:]["index"]), [1000, 1004, 1006, 1010])
             self.assertAlmostEqual(m["area"][0], 630.0)
             self.assertAlmostEqual(m["youngsModulus"][0], 24.6, places=3)
-            self.assertAlmostEqual(m["centroidX"][0], 185.1, places=3)
+            self.assertAlmostEqual(m["centroidX"][0], 185.1, places=3)         # unsigned q16.16, as the vendored profile
             self.assertEqual((m["pixelCount"][0], m["blemishCount"][0], m["objectCount"][0]), (385, 18, 1))
             self.assertEqual(m["bboxX"][0], 161)
             ssd = v["ssd_meta"][:]
             self.assertEqual(list(ssd["ssd_run_id"][:2]), [18, 18])
-            self.assertEqual(list(ssd["frame_id"][:3]), [1000, 1000, 1002])
-            self.assertEqual(list(ssd["drops_before"][:3]), [0, 0, 1])
-            self.assertEqual(list(ssd["record_index"][:3]), [0, 0, 1])
+            self.assertEqual(list(ssd["frame_id"]), [1000, 1002, 1006, 1008])
+            self.assertEqual(list(ssd["drops_before"]), [0, 1, 1, 1])
+            self.assertEqual(list(ssd["record_index"]), [0, 1, 3, 4])
             # wall time = start_unix_ms x 1e6 + (ticks - first_ticks) / tick_hz
             self.assertEqual(int(m["timestampNs"][0]), 1791639269355 * 1_000_000)
-            self.assertEqual(int(m["timestampNs"][2]), 1791639269355 * 1_000_000 + 40_000 * 10)
+            self.assertEqual(int(m["timestampNs"][1]), 1791639269355 * 1_000_000 + 40_000 * 10)
             info = f["experiment_info"].attrs
-            self.assertEqual((info["total_valid_frames"], info["total_invalid_frames"], info["roi_w"], info["roi_h"]), (6, 2, 512, 96))
+            self.assertEqual((info["total_valid_frames"], info["total_invalid_frames"], info["roi_w"], info["roi_h"]), (4, 4, 512, 96))
             cfg = json.loads(info["config_json"])
             self.assertEqual((cfg["ssd_run_id"], cfg["records_converted"], cfg["salvaged"]), (18, 6, False))
             self.assertEqual(cfg["input_sha256"], hashlib.sha256(b"".join(recs)).hexdigest())
@@ -234,6 +236,8 @@ class Fetch(Base):
                     self.send_header("Content-Length", str(n * REC))
                     self.send_header("X-Record-Count", str(n))
                     self.send_header("X-Run-Id", "18")
+                    self.send_header("X-Record-Bytes", str(REC))
+                    self.send_header("X-First-Record", "0")
                     for k, v in (extra or {}).items():
                         self.send_header(k, v)
                 else:
@@ -254,6 +258,35 @@ class Fetch(Base):
         with h5py.File(self.d / "run-18-records.h5") as f:                       # no --runs: the run table came from the headers
             cfg = json.loads(f["experiment_info"].attrs["config_json"])
             self.assertEqual((cfg["start_unix_ms"], cfg["first_ticks"], cfg["filter"], cfg["run_records"]), (1791639269355, 62_000_000_000, "all", 4))
+
+    def test_fetch_without_runs_against_the_headers_of_691(self):
+        """The header block of the #691 route (testdata/route-headers-691.txt, run 5, 8 records) in front of 8 real-layout records: fetch needs no --runs."""
+        text = (Path(__file__).resolve().parent / "testdata" / "route-headers-691.txt").read_text()
+        route_headers = dict(line.split(": ", 1) for line in text.splitlines() if line and not line.startswith("#"))
+        recs = [build_record(1 + k, 100 + 40_000 * k, run_id=5, objects=[cell(1)] if k % 2 else [])[0] for k in range(8)]       # frame ids 1..8, no drops: exact_drops holds
+        body = b"".join(recs)
+        assert len(body) == int(route_headers["content-length"])
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                self.send_response(200)
+                for k, v in route_headers.items():
+                    if k not in ("connection", "date"):
+                        self.send_header(k, v)
+                self.end_headers()
+                self.wfile.write(body)
+                self.close_connection = True
+        url = self.serve(H)
+        self.assertEqual(P.main(["fetch", url, "--run", "5", "--out-dir", str(self.d)]), 0)
+        with h5py.File(self.d / "run-5-records.h5") as f:
+            cfg = json.loads(f["experiment_info"].attrs["config_json"])
+            self.assertEqual((cfg["ssd_run_id"], cfg["tick_hz"], cfg["filter"], cfg["run_records"], cfg["exact_drops_check"], cfg["records_converted"]), (5, 100_000_000, "all", 8, True, 8))
+        # a run asked for but another delivered: refused before the body is read
+        self.assertEqual(P.main(["fetch", url, "--run", "6", "--out-dir", str(self.d / "other")]), 2)
+        self.assertTrue((self.d / "other" / "quarantine" / "run-6-records.bin.report.json").exists())
 
     def test_short_body_is_quarantined(self):
         recs, _, _ = stream(4)
@@ -281,6 +314,56 @@ class Fetch(Base):
         self.assertEqual(P.main(["fetch", url, "--run", "18", "--out-dir", str(self.d)]), 1)
         self.assertTrue((self.d / "quarantine" / "run-18-records.bin").exists())
         self.assertFalse((self.d / "run-18-records.h5").exists())
+
+
+class Contract(Base):
+    def test_headers_of_the_export_route_691(self):
+        text = (Path(__file__).resolve().parent / "testdata" / "route-headers-691.txt").read_text()
+        h = dict(line.split(": ", 1) for line in text.splitlines() if line and not line.startswith("#"))
+        self.assertIsNone(P.check_download_headers(h, 5, 0))
+        run = P.RunInfo.from_headers(h, 5)
+        self.assertEqual((run.run_id, run.start_unix_ms, run.tick_hz, run.first_ticks, run.filter, run.wall_source, run.client_tag, run.written, run.reason, run.exact_drops),
+                         (5, 1791530000000, 100_000_000, 0, "all", 1, 1, 8, 0, True))
+
+    def test_garbled_headers_are_refused_not_crashes(self):
+        good = dict(line.split(": ", 1) for line in (Path(__file__).resolve().parent / "testdata" / "route-headers-691.txt").read_text().splitlines() if line and not line.startswith("#"))
+        for key, value in (("x-run-start-unix-ms", "abc"), ("x-run-tick-hz", "0"), ("x-run-tick-hz", "-5")):
+            with self.assertRaises(P.ConvertError, msg=(key, value)):
+                P.RunInfo.from_headers({**good, key: value}, 5)
+        with self.assertRaises(P.ConvertError):
+            P.RunInfo.from_headers({k: v for k, v in good.items() if k != "x-run-id"}, 5)
+        with self.assertRaises(P.ConvertError):
+            P.RunInfo.from_headers(good, 6)                                  # run 5 downloaded for --run 6
+        self.assertIn("X-Run-Id", P.check_download_headers(good, 6, 0))
+        self.assertIn("X-Record-Bytes", P.check_download_headers({**good, "x-record-bytes": "1024"}, 5, 0))
+        self.assertIn("X-First-Record", P.check_download_headers(good, 5, 3))
+        self.assertIn("garbled", P.check_download_headers({**good, "x-record-count": "many"}, 5, 0))
+
+    def test_default_expected_count(self):
+        run = P.RunInfo(18, written=27119)
+        self.assertEqual((P.default_expected(run, 0, 0), P.default_expected(run, 100, 0), P.default_expected(run, 100, 20), P.default_expected(P.RunInfo(18), 0, 0)),
+                         (27119, 27019, 20, None))
+
+    def test_a_short_stream_of_a_longer_run_is_refused_by_default(self):
+        recs, _, _ = stream(4)
+        run = P.RunInfo(18, RUN.start_unix_ms, first_ticks=RUN.first_ticks, filter="all", written=27119)
+        self.write(recs)
+        self.assertEqual(P.main(["convert", str(self.d / "in.bin"), "--out", str(self.d / "o.h5"), "--run", "18", "--start-unix-ms", "1791639269355",
+                                 "--first-ticks", "62000000000", "--expect-records", "4"]), 0)
+        runs = self.d / "runs.json"
+        runs.write_text(json.dumps([{"run_id": 18, "start_unix_ms": 1791639269355, "tick_hz": 100000000, "first_ticks": 62000000000, "filter": 0, "written": 27119}]))
+        (self.d / "o.h5").unlink()
+        self.assertEqual(P.main(["convert", str(self.d / "in.bin"), "--out", str(self.d / "o.h5"), "--run", "18", "--runs", str(runs)]), 1)
+        self.assertFalse((self.d / "o.h5").exists())
+        # a window says so
+        self.assertEqual(P.main(["convert", str(self.d / "in.bin"), "--out", str(self.d / "o.h5"), "--run", "18", "--runs", str(runs), "--from", "100", "--count", "4"]), 0)
+
+    def test_a_run_table_entry_that_does_not_belong_to_the_stream_is_refused(self):
+        recs, _, _ = stream(3)
+        late = P.RunInfo(18, RUN.start_unix_ms, first_ticks=62_000_000_000 + 1_000_000, filter="all")        # first_ticks after the records
+        rep = P.convert(self.write(recs), self.d / "o.h5", late)
+        self.assertFalse(rep.converted)
+        self.assertTrue(all(b["code"] == "TIME_BEFORE_RUN" for b in rep.bad_records) and rep.bad_records)
 
 
 @unittest.skipUnless((REF / "run19_from0_count5.bin").exists(), "the S2 reference records are on the HDD only")

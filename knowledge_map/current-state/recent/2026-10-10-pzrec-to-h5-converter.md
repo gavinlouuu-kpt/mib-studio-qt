@@ -18,3 +18,5 @@ decoder, fetch against a stand-in server: ok, short body, 503 with reason, bad s
 Speed: 3,000 synthetic records (178 MB) convert in 0.7 s with 124 MB RSS.
 
 `fetch` reads the run table entry from the `X-Run-*` headers of the download (start_unix_ms, tick_hz, first_ticks, filter, written, exact-drops; they arrive with the self-describing route, #667 follow-up of the export route) and needs no `--runs`; `--runs` still overrides them.
+
+Review fixes (#690): rows are routed per object like Studio (a rejected cell goes to `/invalid_frames`, `total_valid_frames` counts rows); a stream shorter than the run table's count is refused unless `--from/--count` says it is a window; the `fetch` headers are validated before the body (run id, record bytes, first record, length) and garbled values are a clean error; the header block of the #691 route is pinned in `testdata/route-headers-691.txt` (and found a real bug: hyper sends lowercase names); centroids follow the vendored profile (unsigned q16.16); ticks before `first_ticks` are refused (`TIME_BEFORE_RUN`).

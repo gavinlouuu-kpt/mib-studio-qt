@@ -116,17 +116,51 @@ class RunInfo:
             exact_drops=_drops_exact(row))
 
     @staticmethod
-    def from_headers(h: dict) -> "RunInfo | None":
-        """The X-Run-* headers of the download (the run table entry of the whole run); None when the server does not send them."""
-        g = {k.lower(): v for k, v in h.items()}
-        if "x-run-start-unix-ms" not in g or "x-run-tick-hz" not in g:
+    def from_headers(h: dict, expect_run: int | None = None) -> "RunInfo | None":
+        """The X-Run-* headers of the download (the run table entry of the whole run); None when the server does not send them. Garbled values are a ConvertError, never a traceback."""
+        g = {k.lower(): v.strip() for k, v in h.items()}
+        if "x-run-start-unix-ms" not in g and "x-run-tick-hz" not in g:
             return None
-        num = lambda k: int(g[k]) if k in g else None
-        flt = num("x-run-filter")
-        return RunInfo(
-            run_id=int(g["x-run-id"]), start_unix_ms=int(g["x-run-start-unix-ms"]), tick_hz=int(g["x-run-tick-hz"]), first_ticks=num("x-run-first-ticks") or 0,
-            filter=FILTER_NAMES.get(flt), wall_source=num("x-run-wall-source"), client_tag=num("x-run-client-tag"), written=num("x-run-written"),
-            reason=num("x-run-reason"), exact_drops=g.get("x-run-exact-drops") == "1")
+        try:
+            num = lambda k, default=None: int(g[k]) if k in g else default
+            run_id = int(g["x-run-id"])
+            info = RunInfo(
+                run_id=run_id, start_unix_ms=int(g["x-run-start-unix-ms"]), tick_hz=int(g["x-run-tick-hz"]), first_ticks=num("x-run-first-ticks", 0),
+                filter=FILTER_NAMES.get(num("x-run-filter")), wall_source=num("x-run-wall-source"), client_tag=num("x-run-client-tag"), written=num("x-run-written"),
+                reason=num("x-run-reason"), exact_drops=g.get("x-run-exact-drops") == "1")
+        except (KeyError, ValueError) as e:
+            raise ConvertError(f"the download's X-Run-* headers are unusable: {e!r}") from e
+        if info.tick_hz <= 0:
+            raise ConvertError(f"X-Run-Tick-Hz is {info.tick_hz}")
+        if expect_run is not None and info.run_id != expect_run:
+            raise ConvertError(f"the download is of run {info.run_id}, run {expect_run} was asked for")
+        return info
+
+
+def check_download_headers(h: dict, run_id: int, first: int) -> str | None:
+    """What the route promises on every download (X-Run-Id, X-Record-Count, X-Record-Bytes = 59,392, X-First-Record); the problem found, or None. Checked before the body is read."""
+    g = {k.lower(): v.strip() for k, v in h.items()}
+    try:
+        if int(g["x-run-id"]) != run_id:
+            return f"X-Run-Id {g['x-run-id']} for a request of run {run_id}"
+        if int(g["x-record-bytes"]) != REC_BYTES:
+            return f"X-Record-Bytes {g['x-record-bytes']}, expected {REC_BYTES}"
+        if int(g["x-first-record"]) != first:
+            return f"X-First-Record {g['x-first-record']}, asked for {first}"
+        if int(g["x-record-count"]) < 1 or int(g["content-length"]) != int(g["x-record-count"]) * REC_BYTES:
+            return f"Content-Length {g['content-length']} does not match X-Record-Count {g['x-record-count']} x {REC_BYTES}"
+    except (KeyError, ValueError) as e:
+        return f"the download headers are incomplete or garbled: {e!r}"
+    return None
+
+
+def default_expected(run: "RunInfo", first: int, count: int) -> int | None:
+    """The records the stream must hold: the run's `written` for the whole run, count for a window (or written - first)."""
+    if count:
+        return count
+    if run.written is None:
+        return None
+    return run.written - first if first else run.written
 
 
 def load_run(runs_path: Path, run_id: int) -> RunInfo:
@@ -181,18 +215,17 @@ def _finite(x: float, default: float = 0.0) -> float:
 
 
 def decode_cell(res: dict) -> dict | None:
-    """The U-Net cell fields of one RESULT, as Studio's decodeUnetCellsV2 (PzRecords.cpp): words flagged invalid in payload_validity are NaN (areas 0); centroids are signed q16.16."""
+    """The U-Net cell fields of one RESULT, as Studio's decodeUnetCellsV2 (PzRecords.cpp): words flagged invalid in payload_validity are NaN (the two areas 0). Centroids are unsigned q16.16 as in the vendored profile (the RTL yields non-negative ROI coordinates); Studio's decoder reads them signed, which only differs for values >= 32768 px."""
     if res["science_profile"] != UNET_PROFILE or res["profile_version"] != UNET_VERSION or len(res["payload"]) < 15:
         return None
     w, v = res["payload"], res["payload_validity"]
     ok = lambda i: bool(v >> i & 1)
     q16 = lambda i: w[i] / 65536.0 if ok(i) else NAN
-    s32 = lambda i: ((w[i] ^ 0x80000000) - 0x80000000) / 65536.0 if ok(i) else NAN
     q8 = lambda i: w[i] / 256.0 if ok(i) else NAN
     return dict(
         object_id=w[0] & 0xFFFF, reason=w[0] >> 16 & 15, cut_off=bool(w[0] >> 20 & 1), target=bool(w[0] >> 24 & 1),
         contour_area=w[1] / 65536.0 if ok(1) else 0.0, hull_area=w[2] / 65536.0 if ok(2) else 0.0, area_ratio=q16(4),
-        deformability=(w[5] & 0xFFFF) / 65536.0 if ok(5) else NAN, cell_count=w[5] >> 24, brightness_mean=q16(6), centroid_x=s32(7), centroid_y=s32(8),
+        deformability=(w[5] & 0xFFFF) / 65536.0 if ok(5) else NAN, cell_count=w[5] >> 24, brightness_mean=q16(6), centroid_x=q16(7), centroid_y=q16(8),
         emodulus_kpa=q16(10), laplacian_variance=q8(11), pixel_count=w[13] & 0xFFFF, blemish_count=w[13] >> 16, brightness_variance=q8(14))
 
 
@@ -303,6 +336,8 @@ def convert(input_path: str | Path, out_path: str | Path, run: RunInfo, *, expec
                     continue
                 problems = list(rec.problems)
                 h = rec.header
+                if h["timestamp"] < run.first_ticks:
+                    problems.append(f"TIME_BEFORE_RUN: ticks {h['timestamp']} are before the run's first_ticks {run.first_ticks}: the run table entry does not belong to this stream")
                 if prev_header is not None and prev_index == i - 1:
                     problems += dec.check_gap(prev_header, h, run.filter, run.exact_drops)
                 if rec.image is None:
@@ -329,17 +364,14 @@ def convert(input_path: str | Path, out_path: str | Path, run: RunInfo, *, expec
                 drops_total += h["drops_before"]
                 results = rec.results
                 mask255 = np.zeros(rec.image.shape, np.uint8) if no_mask else (rec.mask * np.uint8(255)).astype(np.uint8)
-                rows, any_valid = [], False
+                frame_ok = not h["flags"] & (FRAME_INVALID | FRAME_EMPTY)
                 for r in (results or [None]):
                     row, valid = metadata_row(h["frame_id"], wall, r, len(results))
                     unknown_profile += r is not None and decode_cell(r) is None
-                    any_valid |= valid
-                    rows.append((row, r))
-                is_valid_frame = any_valid and not h["flags"] & (FRAME_INVALID | FRAME_EMPTY)
-                gname = "/valid_frames" if is_valid_frame else "/invalid_frames"
-                if gname not in groups:
-                    groups[gname] = Group(h5, gname, shape, gzip)
-                for k, (row, r) in enumerate(rows):
+                    # per object, as Studio (appendExperimentFrame(row, isValid)): a valid cell of a good frame is a valid row; a rejected cell, an empty or invalid frame, a frame without results is not
+                    gname = "/valid_frames" if (valid and frame_ok) else "/invalid_frames"
+                    if gname not in groups:
+                        groups[gname] = Group(h5, gname, shape, gzip)
                     groups[gname].add(rec.image, mask255, row, (run.run_id, h["frame_id"], i, h["timestamp"], wall, h["drops_before"], h["epoch"], h["flags"],
                                                                 r["result_index"] if r else -1, len(results)))
             tail = f.read()
@@ -425,9 +457,12 @@ def fetch(base_url: str, token: str | None, run_id: int, out_dir: str | Path, *,
     headers: dict = {}
     try:
         with urllib.request.urlopen(urllib.request.Request(url), timeout=timeout) as resp:
-            headers = dict(resp.headers.items())
-            declared = int(headers.get("Content-Length", -1))
-            records = int(headers.get("X-Record-Count", -1))
+            headers = {k.lower(): v for k, v in resp.headers.items()}      # hyper sends lowercase names; compare case-insensitively
+            bad = check_download_headers(headers, run_id, first)
+            if bad:
+                return _quarantine_download(None, out_dir, name, run_id, headers, bad), headers, "HEADERS"
+            declared = int(headers.get("content-length", -1))
+            records = int(headers.get("x-record-count", -1))
             with open(part, "wb") as out:
                 got = 0
                 while True:
@@ -440,7 +475,7 @@ def fetch(base_url: str, token: str | None, run_id: int, out_dir: str | Path, *,
                 return _quarantine_download(part, out_dir, name, run_id, headers, f"Content-Length {declared}, X-Record-Count {records} x {REC_BYTES}, received {got}"), headers, "LENGTH"
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", "replace")[:2000]
-        return _quarantine_download(None, out_dir, name, run_id, dict(e.headers.items()), f"HTTP {e.code}: {body}"), dict(e.headers.items()), f"HTTP_{e.code}"
+        return _quarantine_download(None, out_dir, name, run_id, {k.lower(): v for k, v in e.headers.items()}, f"HTTP {e.code}: {body}"), {k.lower(): v for k, v in e.headers.items()}, f"HTTP_{e.code}"
     except (http.client.IncompleteRead, http.client.HTTPException, OSError) as e:
         return _quarantine_download(part if part.exists() else None, out_dir, name, run_id, headers, f"the transfer failed: {e!r}"), headers, "TRANSFER"
     os.replace(part, dest)
@@ -465,7 +500,7 @@ def _run_from_args(a, headers: dict | None = None) -> RunInfo:
     if a.runs:
         run = load_run(a.runs, a.run)
     elif headers:
-        run = RunInfo.from_headers(headers)
+        run = RunInfo.from_headers(headers, a.run)
     if run is None:
         if a.start_unix_ms is None:
             raise ConvertError("the run table entry is needed (--runs runs.json --run N, or --start-unix-ms/--tick-hz/--first-ticks)")
@@ -486,7 +521,7 @@ def main(argv=None) -> int:
         p.add_argument("--start-unix-ms", type=int)
         p.add_argument("--tick-hz", type=int, default=100_000_000)
         p.add_argument("--first-ticks", type=int)
-        p.add_argument("--expect-records", type=int, help="records the stream must hold (default: the run table's count when the whole run is read)")
+        p.add_argument("--expect-records", type=int, help="records the stream must hold (default: the run table's count for the whole run, --count or count-from-the-end for a window)")
         p.add_argument("--salvage", action="store_true", help="convert the intact records of a damaged stream (flagged in /experiment_info)")
         p.add_argument("--gzip", action="store_true")
         p.add_argument("--no-verify-decoder", action="store_true")
@@ -495,6 +530,8 @@ def main(argv=None) -> int:
     c.add_argument("input")
     c.add_argument("--out", required=True)
     c.add_argument("--quarantine-dir")
+    c.add_argument("--from", dest="first", type=int, default=0, help="the input starts at this record of the run (a window)")
+    c.add_argument("--count", type=int, default=0, help="the input holds this many records (a window)")
     common(c)
     f = sub.add_parser("fetch")
     f.add_argument("url", help="Studio base URL, e.g. http://192.168.137.2:8427")
@@ -508,7 +545,7 @@ def main(argv=None) -> int:
     try:
         if a.cmd == "convert":
             run = _run_from_args(a)
-            expect = a.expect_records
+            expect = a.expect_records if a.expect_records is not None else default_expected(run, a.first, a.count)
             rep = convert(a.input, a.out, run, expected_records=expect, salvage=a.salvage, gzip=a.gzip, quarantine_dir=a.quarantine_dir, verify_decoder=not a.no_verify_decoder)
         else:
             dest, headers, problem = fetch(a.url, a.token, a.run, a.out_dir, first=a.first, count=a.count)
@@ -516,7 +553,9 @@ def main(argv=None) -> int:
                 print(f"download failed ({problem}); quarantined: {dest}", file=sys.stderr)
                 return 2
             run = _run_from_args(a, headers)
-            expect = a.expect_records if a.expect_records is not None else int(headers["X-Record-Count"])
+            expect = a.expect_records if a.expect_records is not None else default_expected(run, a.first, a.count)
+            if expect is None:
+                expect = int(headers["x-record-count"])
             out = Path(a.out_dir) / (dest.stem + ".h5")
             rep = convert(dest, out, run, expected_records=expect, salvage=a.salvage, gzip=a.gzip, quarantine_dir=Path(a.out_dir) / "quarantine",
                           verify_decoder=not a.no_verify_decoder, source={"download_url": a.url})

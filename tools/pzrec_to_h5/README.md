@@ -7,7 +7,7 @@ and MIB Studio open: `/valid_frames` and `/invalid_frames` with `images`, `masks
 # from a downloaded file (the run table entry from `pzrec runs` or the Studio runs listing)
 python3 tools/pzrec_to_h5/pzrec_to_h5.py convert run18.bin --runs runs.json --run 18 --out run18.h5 --expect-records 27119
 # download and convert in one go (token as for the Files view); the run table entry comes from the X-Run-* headers of the download
-# (Studio with the self-describing route), --runs runs.json overrides it
+# (the self-describing route, #691 d3fe7421; header block pinned in testdata/route-headers-691.txt), --runs runs.json overrides it
 python3 tools/pzrec_to_h5/pzrec_to_h5.py fetch http://192.168.137.2:8427 --token T --run 18 --out-dir exports/
 python3 -m pytest tools/pzrec_to_h5          # synthetic records always, the S2 reference records when the HDD is mounted
 ```
@@ -29,14 +29,21 @@ server's reason) or interrupted is quarantined the same way. `--salvage` convert
 
 | | |
 |---|---|
-| `/valid_frames/images`, `/masks` | uint8 (N, 96, 512): the raw MONO8 window; the U-Net mask as 0/255. One row per RESULT, the image and mask repeated on every row of a frame (as Studio does). |
-| `/valid_frames/metadata` | Studio's `ProcessedFrameMetadataRecord` (fields by name). `index` = **frame_id**, `timestampNs` = wall unix ns, one row per RESULT: area = hull area, centroid, bbox, deformability, E-modulus (kPa), Laplacian variance, brightness mean/variance, contour area, pixel and blemish counts, `isValid` = reason NONE. A word the profile flags invalid is NaN, never 0 (Studio's rule). |
+| `/valid_frames/images`, `/masks` | uint8 (N, 96, 512): the raw MONO8 window; the U-Net mask as 0/255. One row per RESULT, the image and mask repeated on every row of a frame (as Studio does). Rows are routed **per object**, as Studio's `appendExperimentFrame(row, isValid)`: a valid cell of a good frame goes to `/valid_frames`; a rejected cell (reason != NONE), a cell of an EMPTY/INVALID frame and a frame without results go to `/invalid_frames`. `total_valid_frames` counts rows. |
+| `/valid_frames/metadata` | Studio's `ProcessedFrameMetadataRecord` (fields by name). `index` = **frame_id**, `timestampNs` = wall unix ns, one row per RESULT: area = hull area, centroid, bbox, deformability, E-modulus (kPa), Laplacian variance, brightness mean/variance, contour area, pixel and blemish counts, `isValid` = reason NONE. A payload word the profile flags invalid is NaN (Studio's rule); the two areas (`area`, `contourArea`) are 0.0 then, as in Studio. `brightness_mean`, `brightness_variance`, `contourArea`, `pixelCount`, `blemishCount` and `degenerateContour` are members Studio's record has too (appended); the compound is the full Studio type, field order tolerated by name. |
 | `/valid_frames/ssd_meta` | parallel to `metadata`: `ssd_run_id`, `frame_id`, `record_index` (ordinal in the stream), `ticks`, `wall_unix_ns`, `drops_before`, `epoch`, `frame_flags`, `result_index`, `result_count`. |
-| `/invalid_frames/...` | the same for frames without a valid cell (no results, all rejected, EMPTY or INVALID frames). |
+| `/invalid_frames/...` | the same for the rows above that are not valid cells. |
 | `/experiment_info` | `start_time_ns`/`end_time_ns` (wall), totals, ROI 0,0,512,96, `processing_core_source`, `ssd_run_id`, `salvaged`, `config_json` (run table values, filter, tick rate, input sha256, decoder commit, converter version). |
 
 Wall time = `start_unix_ms` x 1e6 + (ticks - first_ticks) / tick_hz from the run table (accurate to the Start-to-first-frame delay; `wall_source` 0 means the board's client clock was not synced, flagged in `config_json`).
+Centroids are unsigned q16.16 as in the vendored profile (the RTL yields non-negative ROI coordinates); Studio's own decoder reads them signed, which only differs above 32768 px. A record whose ticks are before the run table's `first_ticks` is refused (`TIME_BEFORE_RUN`: the entry does not belong to the stream).
 Results of a profile other than U-Net cells v3 keep the platform envelope only (bbox, validity); numbers are NaN, a warning is reported.
+
+## Size
+
+Rows are duplicated per RESULT and nothing is compressed by default: a 1.6 GB run (27,119 records) becomes about 3-4 GB of HDF5 (`--gzip`, level 4 with shuffle, is about 7x slower but much smaller). Keep that much free next to the input; the output is written as `.partial` first.
+
+`convert` expects the run table's count for the whole run (`--expect-records`, or `--from/--count` for a window); a short stream of a longer run is refused. `fetch` checks the response headers (X-Run-Id equals `--run`, X-Record-Bytes 59392, X-First-Record equals `--from`, Content-Length equals X-Record-Count x 59392) before it reads the body; garbled `X-Run-*` values are a clean error.
 
 ## Review check
 
