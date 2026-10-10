@@ -1,6 +1,7 @@
 #include "backend/pz/SsdStore.h"
 
 #include <nlohmann/json.hpp>
+#include <spdlog/spdlog.h>
 
 #include <algorithm>
 #include <cerrno>
@@ -319,6 +320,21 @@ bool PzrecCliDevice::start(const SsdStartArgs& a, std::string& json, std::string
                 startTimeout_, json, error);
 }
 
+bool PzrecCliDevice::windowSnapshot(std::string& json, std::string* error) {
+    return call({"snapshot", "--window-only"}, timeout_, json, error);
+}
+
+bool PzrecCliDevice::readArgv(uint32_t run, uint64_t from, uint64_t count, std::vector<std::string>& argv) {
+    // pzrec read RUN IMG <the same options as start/stop> --summary [--from F] [--count N]: RUN comes before the image; --summary makes a clean finish
+    // report its exact byte count on stderr.
+    argv = {pzrec_, "read", std::to_string(run), image_};
+    argv.insert(argv.end(), extra_.begin(), extra_.end());
+    argv.push_back("--summary");
+    if (from != 0) { argv.push_back("--from"); argv.push_back(std::to_string(from)); }
+    if (count != 0) { argv.push_back("--count"); argv.push_back(std::to_string(count)); }
+    return true;
+}
+
 bool PzrecCliDevice::stop(bool abort, std::string& json, std::string* error) {
     std::vector<std::string> v{"stop"};
     if (abort) v.push_back("--abort");
@@ -445,6 +461,7 @@ void SsdStore::refresh(bool force) {
     if (!device_) return;
     {
         std::lock_guard<std::mutex> lock(m_);
+        if (exportHeldLocked()) return;          // the cache stays as it was; the export owns the disk
         if (openedRunId_ != 0 && !stopRunning_ && !stopFailed_) {
             // Studio's own run is open: while a run is active the PL's admission gate holds back every read and write of the disk (`pzrec status`, `runs`,
             // `delete`, a second `start`; board owner, 2026-10-10), so pzrec is not called at all, not even to be refused. The state is RECORDING with the
@@ -464,6 +481,11 @@ void SsdStore::refresh(bool force) {
     std::unique_lock<std::mutex> device(deviceMutex_, std::defer_lock);
     if (force) device.lock();
     else if (!device.try_lock()) return;
+    {
+        // An export owns the window and the disk (one bounce buffer): stand down, also when the lease was taken after the check above.
+        std::lock_guard<std::mutex> lock(m_);
+        if (exportHeldLocked()) return;
+    }
     SsdStatus s;
     std::string text, error;
     const bool ok = device_->status(text, &error) && parseSsdStatus(text, s, &error);
@@ -609,6 +631,13 @@ SsdStore::Prepared SsdStore::prepareRun() {
         }
         return p;
     }
+    {
+        std::lock_guard<std::mutex> lock(m_);
+        if (exportHeldLocked()) {
+            p.why = "export in progress: a download of run " + std::to_string(exportRun_) + " is reading the SSD";
+            return p;
+        }
+    }
     refresh(true);      // a fresh answer under the device's short timeout: the cached state may be a second old
     const SsdStatus st = status();
     p.state = st.state;
@@ -621,13 +650,32 @@ SsdStore::Prepared SsdStore::prepareRun() {
         p.why = "the SSD reports no next run id";
         return p;
     }
+    {
+        // The check and the marker are one step against exportBegin(): either the lease is taken first (refused above) or the marker is set first (the export refuses).
+        std::lock_guard<std::mutex> lock(m_);
+        if (exportHeldLocked()) {
+            p.why = "export in progress: a download of run " + std::to_string(exportRun_) + " is reading the SSD";
+            return p;
+        }
+        prepared_ = true;
+        preparedAt_ = std::chrono::steady_clock::now();
+    }
     p.ok = true;
     p.runId = st.nextRunId;
     return p;
 }
 
+void SsdStore::cancelPrepare() {
+    std::lock_guard<std::mutex> lock(m_);
+    prepared_ = false;
+}
+
 bool SsdStore::startRun(uint32_t expectedId, const SsdStartArgs& args, std::string* why, bool* opened) {
     if (opened) *opened = false;
+    {
+        std::lock_guard<std::mutex> lock(m_);
+        prepared_ = false;      // from here the open run (or its refusal) speaks for itself
+    }
     auto fail = [&](const std::string& text) {
         if (why) *why = text;
         return false;
@@ -752,6 +800,133 @@ bool SsdStore::waitStopped(std::chrono::milliseconds deadline, std::string* why,
     }
     if (!stopOk_ && why) *why = stopWhy_;
     return stopOk_;
+}
+
+// ---- Export (#667) -------------------------------------------------------------------------------------------------------------------------------
+
+bool SsdStore::exportHeldLocked() {
+    if (exportLease_ == 0) return false;
+    if (std::chrono::steady_clock::now() > exportDeadline_) {
+        SPDLOG_WARN("SsdStore: export lease {} for run {} expired after its bound plus the kill margin without exportEnd (the caller is gone; its reader has been terminated and killed by then): released", exportLease_, exportRun_);
+        exportLease_ = 0;
+        return false;
+    }
+    return true;
+}
+
+bool SsdStore::exportActive() {
+    std::lock_guard<std::mutex> lock(m_);
+    return exportHeldLocked();
+}
+
+namespace {
+// How long one download may take: two bounce-path commands (about 25 s each, the bound of one block command) and a margin, plus the body at a floor rate
+// of 5 MB/s (the board owner measures the bounce path at about 27 MB/s). The caller terminates its reader at this bound, independently of whether the client reads; the lease itself
+// lasts kExportKillMarginSeconds longer (SIGTERM grace, SIGKILL wait).
+uint32_t exportBoundSeconds(uint64_t bytes) {
+    const uint64_t s = 2 * 25 + 35 + (bytes + 4'999'999) / 5'000'000;
+    return static_cast<uint32_t>(std::min<uint64_t>(s, 24 * 3600));
+}
+} // namespace
+
+// The pzrec calls of exportBegin (window, status, runs: each up to the device timeout, plus a wait for deviceMutex_) run while the caller holds the bridge mutex (mib-app-commands),
+// as prepareRun's do: other bridge commands wait that long (milliseconds when pzrec answers, a few seconds when it does not).
+SsdStore::ExportBegin SsdStore::exportBegin(uint32_t run, uint64_t from, uint64_t count) {
+    ExportBegin out;
+    out.runId = run;
+    auto refuse = [&](const char* code, const std::string& why) {
+        out.ok = false;
+        out.code = code;
+        out.reason = why;
+        SPDLOG_INFO("SsdStore: export of run {} refused: {}", run, why);
+        return out;
+    };
+    if (!device_) return refuse("UNAVAILABLE", reasonFor(SsdState::Absent));
+    if (!configProblem_.empty()) return refuse("UNAVAILABLE", configProblem_);
+    // The lease first (so a Start that comes now is refused), under the same lock as the state checks: this is the atomic step against prepareRun/startRun/stop.
+    uint64_t lease = 0;
+    {
+        std::lock_guard<std::mutex> lock(m_);
+        if (exportHeldLocked()) return refuse("BUSY", "another export is in progress (run " + std::to_string(exportRun_) + ")");
+        if (stopRunning_) return refuse("BUSY", "the SSD run is still being stopped: wait for it to finish");
+        if (openedRunId_ != 0)
+            return refuse("BUSY", stopFailed_ ? "SSD run " + std::to_string(openedRunId_) + " was not confirmed closed after its stop: download only when it is"
+                                              : "Studio is recording (SSD run " + std::to_string(openedRunId_) + "): download only when idle");
+        if (prepared_ && std::chrono::steady_clock::now() - preparedAt_ < std::chrono::seconds(120)) return refuse("BUSY", "an experiment is starting: download only when idle");
+        prepared_ = false;
+        lease = nextLease_++;
+        exportLease_ = lease;
+        exportRun_ = run;
+        exportBytes_ = 0;
+        exportDeadline_ = std::chrono::steady_clock::now() + std::chrono::seconds(120);      // provisional, until the size is known
+    }
+    auto release = [&](const char* code, const std::string& why) {
+        std::lock_guard<std::mutex> lock(m_);
+        if (exportLease_ == lease) exportLease_ = 0;
+        out.ok = false;
+        out.code = code;
+        out.reason = why;
+        SPDLOG_INFO("SsdStore: export of run {} refused: {}", run, why);
+        return out;
+    };
+    std::lock_guard<std::mutex> device(deviceMutex_);      // waits for a refresh already in flight; none starts while the lease is held
+    // 1. The window must show no run (registers only, no disk): a run Studio did not start, an armed drain, a stop still draining.
+    {
+        std::string text, error;
+        if (!device_->windowSnapshot(text, &error)) return release("UNAVAILABLE", "cannot verify that no run is active: " + error);
+        const json j = json::parse(text, nullptr, false);
+        if (j.is_discarded() || !j.is_object() || !j.contains("state") || !j["state"].is_string()) return release("UNAVAILABLE", "the window snapshot is unreadable: cannot verify that no run is active");
+        const std::string state = j["state"].get<std::string>();
+        if (state != "IDLE") return release("BUSY", "the SSD drain is " + state + " (a run is active or not yet closed): download only when idle");
+    }
+    // 2. The run table, fresh (the disk is readable now): the record count the body will hold.
+    SsdStatus st;
+    std::vector<SsdRun> runs;
+    {
+        std::string text, error;
+        if (!device_->status(text, &error) || !parseSsdStatus(text, st, &error)) return release("UNAVAILABLE", "SSD not responding: " + error);
+        if (st.state != SsdState::Ready || st.openRun) return release("UNAVAILABLE", std::string("the SSD is ") + ssdStateName(st.state) + (st.openRun ? " with an open run" : "") + ": download only when READY");
+        std::string rtext, rerror;
+        if (!device_->runs(rtext, &rerror) || !parseSsdRuns(rtext, runs, &rerror)) return release("UNAVAILABLE", "SSD run table unreadable: " + rerror);
+    }
+    const SsdRun* found = nullptr;
+    for (const auto& r : runs) if (r.id == run) found = &r;
+    if (!found) return release("NO_SUCH_RUN", "no such run " + std::to_string(run));
+    if (found->deleted) return release("RUN_DELETED", "run " + std::to_string(run) + " was deleted");
+    if (found->open) return release("NOT_OFFERED", "run " + std::to_string(run) + " is still open");
+    if (found->countsUnknown || found->totalsInconsistent) return release("NOT_OFFERED", "run " + std::to_string(run) + " has no reliable record count (recovered at mount or inconsistent totals): not offered");
+    if (found->recSectors * 512 != kRecordBytes) return release("NOT_OFFERED", "run " + std::to_string(run) + " has an unexpected record size (" + std::to_string(found->recSectors * 512) + " B)");
+    if (found->written == 0) return release("NOT_OFFERED", "run " + std::to_string(run) + " holds no records");
+    if (from >= found->written) return release("BAD_RANGE", "--from " + std::to_string(from) + " is outside the run (" + std::to_string(found->written) + " records)");
+    const uint64_t records = count != 0 ? count : found->written - from;
+    if (records > found->written - from) return release("BAD_RANGE", "--from/--count do not lie inside the run (" + std::to_string(found->written) + " records): refused, never clipped");
+    std::vector<std::string> argv;
+    if (!device_->readArgv(run, from, count, argv)) return release("UNAVAILABLE", "this SSD device cannot read a run");
+    // 3. The lease is real now: its bound follows the size.
+    {
+        std::lock_guard<std::mutex> lock(m_);
+        if (exportLease_ != lease) return release("BUSY", "the export lease was lost");     // expired meanwhile: not given
+        exportBytes_ = records * kRecordBytes;
+        out.maxSeconds = exportMaxSecondsOverride_ ? exportMaxSecondsOverride_ : exportBoundSeconds(exportBytes_);
+        exportDeadline_ = std::chrono::steady_clock::now() + std::chrono::seconds(out.maxSeconds + exportMarginSeconds_);
+    }
+    out.ok = true;
+    out.lease = lease;
+    out.records = records;
+    out.bytes = records * kRecordBytes;
+    out.argv = std::move(argv);
+    SPDLOG_INFO("SsdStore: export lease {} taken for run {}: {} records, {} bytes, bound {} s", lease, run, records, out.bytes, out.maxSeconds);
+    return out;
+}
+
+void SsdStore::exportEnd(uint64_t lease, uint64_t bytesSent, const std::string& outcome) {
+    std::lock_guard<std::mutex> lock(m_);
+    if (lease == 0 || exportLease_ != lease) {
+        SPDLOG_DEBUG("SsdStore: export end for lease {} ({}): not held (already released or expired)", lease, outcome);
+        return;
+    }
+    SPDLOG_INFO("SsdStore: export lease {} released for run {}: {} of {} bytes sent, outcome: {}", lease, exportRun_, bytesSent, exportBytes_, outcome);
+    exportLease_ = 0;
 }
 
 } // namespace backend::pz

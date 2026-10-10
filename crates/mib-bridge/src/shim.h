@@ -212,6 +212,8 @@ public:
     BridgeCommandResult ring_resume();
     rust::String fetch_ssd_status();
     rust::String fetch_ssd_runs();
+    rust::String ssd_export_begin(std::uint32_t run, std::uint64_t from, std::uint64_t count);
+    void ssd_export_end(std::uint64_t lease, std::uint64_t bytes_sent, rust::Str outcome);
     BridgeCommandResult set_service_mode(bool on);
     BridgeCommandResult set_instrument_led(double delay_us, double width_us);
     rust::Vec<std::uint8_t> fetch_run_preview();

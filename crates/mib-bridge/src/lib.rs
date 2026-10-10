@@ -1208,6 +1208,10 @@ pub mod ffi {
         /// counters, what the last mount-time recovery closed; also a short `ssd` block of the instrument status), `fetch_ssd_runs` the run table.
         fn fetch_ssd_status(self: Pin<&mut BackendBridge>) -> String;
         fn fetch_ssd_runs(self: Pin<&mut BackendBridge>) -> String;
+        /// #667 (ABI 36): the lease of one SSD run download, taken by the HTTP route (not a WebSocket command). JSON `{ok, lease, run_id, records, bytes,
+        /// max_seconds, argv[]}` or `{ok: false, reason}`; refused while anything records. `ssd_export_end` releases it after the reader has exited (idempotent).
+        fn ssd_export_begin(self: Pin<&mut BackendBridge>, run: u32, from: u64, count: u64) -> String;
+        fn ssd_export_end(self: Pin<&mut BackendBridge>, lease: u64, bytes_sent: u64, outcome: &str);
         /// Service / Commissioning mode latch; raw LED values are refused outside it.
         fn set_service_mode(self: Pin<&mut BackendBridge>, on: bool) -> BridgeCommandResult;
         /// Raw LED delay/width in µs (Service mode, per-mode limits).
