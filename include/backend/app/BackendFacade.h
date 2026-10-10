@@ -1065,6 +1065,9 @@ namespace backend::bridge
         // #667 S1 (ABI 35): the SATA SSD record store, read only.
         std::string fetchSsdStatusJson();
         std::string fetchSsdRunsJson();
+        // Export of one closed SSD run (#667, ABI 36): the lease for the HTTP download route. `{ok, lease, run_id, records, bytes, max_seconds, argv[]}` or `{ok:false, reason}`.
+        std::string ssdExportBeginJson(std::uint32_t run, std::uint64_t from, std::uint64_t count);
+        void ssdExportEnd(std::uint64_t lease, std::uint64_t bytesSent, const std::string &outcome);
         // The shell's Service / Commissioning mode, latched in the backend: raw LED values are
         // refused outside it.
         BackendCommandResult setServiceMode(bool on);

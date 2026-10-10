@@ -159,6 +159,9 @@ Per record in the run, in frame-id order:
   a single file without part attributes.
 - **A raw-run download** (`/ssd/runs/<id>/raw`, Range, same gates, phase S4) stays an option: store records straight to the HTTP body, the
   PC converts with `pz_store_to_mib.py`. It avoids the ext4 write and is the fastest way to move a very large run.
+  **Built (2026-10-10, bridge ABI 36)** as `GET /ssd/runs/{id}/records[?from&count]` (not `/raw`; no Range): the stdout of `pzrec read` piped to the
+  body under one export lease, idle only, verified against pzrec's `--summary` (see `knowledge_map/current-state/recent/2026-10-10-ssd-export-route.md`).
+  The PC converter that checks length and per-record CRC/framing is the next task.
 - One export runs at a time, and **none while a run is RECORDING**: Studio refuses it and the UI says "Export available after the run is
   stopped". This is Studio's rule on top of the board owner's drain-priority arbitration; it can be relaxed to a rate-limited read if
   the board test shows no drops with concurrent I/O.

@@ -1402,6 +1402,20 @@ pub fn fetch_ssd_runs(state: &AppState) -> Result<serde_json::Value, String> {
     serde_json::from_str(&guard.pin_mut().fetch_ssd_runs()).map_err(|e| e.to_string())
 }
 
+/// The lease of one SSD run download (ABI 36, #667): JSON `{ok, lease, run_id, records, bytes, max_seconds, argv}` or `{ok: false, reason}`. Not a WebSocket command: the
+/// HTTP export route is the only caller. May take a few seconds (the window, the status and the run table are read), so call it from a blocking task.
+pub fn ssd_export_begin(state: &AppState, run: u32, from: u64, count: u64) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().ssd_export_begin(run, from, count)).map_err(|e| e.to_string())
+}
+
+/// Release the lease after the reader process has exited (idempotent; `bytes_sent` and `outcome` are for the log).
+pub fn ssd_export_end(state: &AppState, lease: u64, bytes_sent: u64, outcome: &str) -> Result<(), String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    guard.pin_mut().ssd_export_end(lease, bytes_sent, outcome);
+    Ok(())
+}
+
 /// Stop Run and hold the frame ring for playback.
 pub fn ring_freeze(state: &AppState) -> Result<CmdResult, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;

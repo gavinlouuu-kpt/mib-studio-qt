@@ -68,6 +68,7 @@ use tokio::sync::{broadcast, mpsc};
 
 mod diagnostics;
 mod files;
+mod ssd_export;
 mod platform;
 
 /// Experiment states that a client loss must finalise (`bridgeContract.ts` EXPERIMENT_STATES).
@@ -144,6 +145,8 @@ pub struct Server {
     boot_id: String,
     /// Downloads in progress (`/files/download`), capped at `files::MAX_DOWNLOADS`.
     downloads: Arc<tokio::sync::Semaphore>,
+    /// One SSD run download at a time (#667): the SSD has one bounce buffer.
+    ssd_export: Arc<tokio::sync::Semaphore>,
     listings: Arc<tokio::sync::Semaphore>,
     /// When this server process started (diagnostics uptime).
     started: std::time::Instant,
@@ -196,6 +199,7 @@ impl Server {
             stop_and_saves: AtomicU64::new(0),
             boot_id: new_boot_id(),
             downloads: Arc::new(tokio::sync::Semaphore::new(files::MAX_DOWNLOADS)),
+            ssd_export: Arc::new(tokio::sync::Semaphore::new(1)),
             listings: Arc::new(tokio::sync::Semaphore::new(max_listings)),
             started: std::time::Instant::now(),
             sessions: std::sync::Mutex::new(SessionTable::default()),
@@ -267,6 +271,7 @@ impl Server {
             .route("/diagnostics", get(diagnostics::diagnostics))
             .route("/files", get(files::list))
             .route("/files/download", get(files::download))
+            .route("/ssd/runs/{id}/records", get(ssd_export::records))
             .with_state(self.clone());
         if let Some(dist) = &self.config().dist_dir {
             router = router.fallback_service(tower_http::services::ServeDir::new(dist));

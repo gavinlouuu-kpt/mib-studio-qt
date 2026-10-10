@@ -2128,6 +2128,23 @@ rust::String BackendBridge::fetch_ssd_runs() {
     }
 }
 
+rust::String BackendBridge::ssd_export_begin(std::uint32_t run, std::uint64_t from, std::uint64_t count) {
+    try {
+        return rust::String(impl_->facade.ssdExportBeginJson(run, from, count));
+    } catch (const std::exception& e) {
+        return rust::String(std::string("{\"ok\":false,\"reason\":\"ssd_export_begin failed: ") + e.what() + "\"}");
+    } catch (...) {
+        return rust::String("{\"ok\":false,\"reason\":\"ssd_export_begin failed\"}");
+    }
+}
+
+void BackendBridge::ssd_export_end(std::uint64_t lease, std::uint64_t bytes_sent, rust::Str outcome) {
+    try {
+        impl_->facade.ssdExportEnd(lease, bytes_sent, std::string(outcome));
+    } catch (...) {
+    }
+}
+
 BridgeCommandResult BackendBridge::sync_wall_clock(std::int64_t unix_ms) {
     try {
         return toBridgeResult(impl_->facade.syncWallClock(unix_ms));
@@ -2447,7 +2464,7 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 35; }
+std::uint32_t bridge_abi_version() { return 36; }
 
 } // namespace mib_bridge
 

@@ -89,6 +89,10 @@ public:
     // `pzrec start` / `pzrec stop [--abort]`: on success `json` is the status object the CLI prints after the call. A fake that does not record fails them.
     virtual bool start(const SsdStartArgs&, std::string& json, std::string* error) { (void)json; if (error) *error = "this SSD device cannot start a run"; return false; }
     virtual bool stop(bool abort, std::string& json, std::string* error) { (void)abort; (void)json; if (error) *error = "this SSD device cannot stop a run"; return false; }
+    // The live window state from the registers alone (`pzrec snapshot --window-only`): never opens the disk. Fails ("no reading") when the window is absent.
+    virtual bool windowSnapshot(std::string& json, std::string* error) { (void)json; if (error) *error = "this SSD device has no window to read"; return false; }
+    // The command line of `pzrec read RUN IMG ARGS --summary [--from F] [--count N]` (RUN before IMG): one argument per element, never a shell string.
+    virtual bool readArgv(uint32_t run, uint64_t from, uint64_t count, std::vector<std::string>& argv) { (void)run; (void)from; (void)count; (void)argv; return false; }
 };
 
 // `pzrec <verb> <image>` run as a child process with a bounded time. POSIX only; elsewhere every call fails ("pzrec is not available on this platform").
@@ -103,6 +107,8 @@ public:
     bool runs(std::string& json, std::string* error) override;
     bool start(const SsdStartArgs& args, std::string& json, std::string* error) override;
     bool stop(bool abort, std::string& json, std::string* error) override;
+    bool windowSnapshot(std::string& json, std::string* error) override;
+    bool readArgv(uint32_t run, uint64_t from, uint64_t count, std::vector<std::string>& argv) override;
 private:
     bool call(const std::vector<std::string>& verbAndArgs, std::chrono::milliseconds timeout, std::string& json, std::string* error);
     std::string pzrec_, image_;
@@ -158,6 +164,34 @@ public:
     // The run this store opened and has not seen closed (0: none).
     uint32_t openedRunId() const;
     void setStopRetries(int attempts, std::chrono::milliseconds backoff) { stopAttempts_ = attempts; stopBackoff_ = backoff; }
+
+    // ---- Export (#667): download of one closed run's raw records, idle only -------------------------------------------------------------------------
+    // One lease covers the whole download: taken before the reader process is spawned (the open phase included) and released by exportEnd() after that process
+    // has exited, so the periodic refresh, prepareRun and the export never touch the window and the disk (one bounce buffer) at the same time. Taking it refuses,
+    // with the reason, while Studio records (own run, a Start in progress, STOPPING, a stop that failed), the window shows a run active, or another lease is held.
+    // The lease expires on its own (`maxSeconds` from the start of the download) so that a crashed caller cannot hold the SSD for ever; the caller kills its reader
+    // at the same bound.
+    struct ExportBegin {
+        bool ok{false};
+        uint64_t lease{0};
+        uint32_t runId{0};
+        uint64_t records{0}, bytes{0};       // what the body holds: `records` x 59,392 B
+        uint32_t maxSeconds{0};
+        std::vector<std::string> argv;
+        std::string reason;                  // why not, when !ok
+        std::string code;                    // BUSY (a recording, a Start, another export: try later), UNAVAILABLE (the SSD or the window cannot be read), NO_SUCH_RUN,
+                                             // RUN_DELETED, NOT_OFFERED (open, recovered without a count, empty), BAD_RANGE
+    };
+    static constexpr uint64_t kRecordBytes = 59392;
+    // `count` 0: to the end of the run. `from` and `count` must lie inside the run's `written` records (refused, never clipped).
+    ExportBegin exportBegin(uint32_t run, uint64_t from = 0, uint64_t count = 0);
+    // Idempotent: an unknown or already released lease is a no-op. `bytesSent` and `outcome` are for the log only.
+    void exportEnd(uint64_t lease, uint64_t bytesSent, const std::string& outcome);
+    bool exportActive();
+    // A Start that did not reach startRun() (a failure between prepareRun and the start) calls this; after startRun() it is a no-op.
+    void cancelPrepare();
+    // Tests: the lease bound, normally derived from the run's size.
+    void setExportMaxSecondsForTesting(uint32_t seconds) { exportMaxSecondsOverride_ = seconds; }
 private:
     void stopWorker(bool abort);
     SsdStatus statusLocked() const;
@@ -194,6 +228,13 @@ private:
     bool stopDone_{false}, stopOk_{false};
     std::string stopWhy_;
     uint32_t openedRunId_{0};            // guarded by m_
+    // Export lease (guarded by m_). `prepared_`: a Start passed prepareRun() and has not reached startRun() yet (expires after 120 s).
+    uint64_t exportLease_{0}, nextLease_{1}, exportBytes_{0};
+    uint32_t exportRun_{0}, exportMaxSecondsOverride_{0};
+    std::chrono::steady_clock::time_point exportDeadline_{};
+    bool prepared_{false};
+    std::chrono::steady_clock::time_point preparedAt_{};
+    bool exportHeldLocked();             // expires an overdue lease (logs it); true while one is held
     int stopAttempts_{5};
     std::chrono::milliseconds stopBackoff_{2000};
 };

@@ -804,6 +804,8 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
         const auto st = ssd.status();
         if (!ssd.configured()) {
             r.gates.push_back(gate("storage.ssd", GateStatus::NotRequired, st.reason, {}, "no SSD"));
+        } else if (ssd.exportActive()) {
+            r.gates.push_back(gate("storage.ssd", GateStatus::Fail, "export in progress: a download is reading the SSD", "wait for the download to finish", "export"));
         } else if (!ssd.configProblem().empty()) {
             r.gates.push_back(gate("storage.ssd", GateStatus::Fail, ssd.configProblem(), "fix MIB_SSD_FILTER in the unit", "configuration"));
         } else if (st.state == pz::SsdState::Ready && !st.openRun) {
@@ -1067,6 +1069,11 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
     // 4b. The SSD run (#667 S2): ask pzrec for the id it will give the run, before anything is opened. The id goes into the snapshot, into RUN_ID of the
     // bridge before ARM (the stored records carry it) and is checked against the run pzrec opens after ARM. A refusal names the SSD state.
     pz::SsdStore* ssdRecord = nullptr;
+    // A start that fails between prepareRun and startRun must not leave the SSD marked "an experiment is starting" (a download would be refused for 2 minutes).
+    struct PrepareGuard {
+        pz::SsdStore* store{nullptr};
+        ~PrepareGuard() { if (store) store->cancelPrepare(); }
+    } prepareGuard;
     if (!app::hostProcessingAvailable() && backend_.executionProvider() && backend_.ssdStore().configured()) {
         ssdRecord = &backend_.ssdStore();
         const auto prep = ssdRecord->prepareRun();      // bounded by pzrec's short timeout; the start already holds the coordinator for the provider's longer one
@@ -1080,6 +1087,7 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
             return result;
         }
         run.ssdRunId = prep.runId;
+        prepareGuard.store = ssdRecord;
     }
 
     // 5. Persistence resources.

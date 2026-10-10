@@ -44,6 +44,10 @@ struct FakeRecorder final : pz::ISsdDevice {
     std::function<void()> onStop;             // runs inside `stop` (blocking gates)
     int startCalls = 0, stopCalls = 0, statusCalls = 0, abortStops = 0;
     pz::SsdStartArgs lastStart;
+    std::string windowState = "IDLE";
+    std::string windowError;                   // the window snapshot fails with this
+    std::string runsText = "[]";
+    int windowCalls = 0;
 
     bool status(std::string& json, std::string* error) override {
         std::lock_guard<std::mutex> lock(m);
@@ -52,7 +56,20 @@ struct FakeRecorder final : pz::ISsdDevice {
         json = statusJson(state, open, openId, next);
         return true;
     }
-    bool runs(std::string& json, std::string*) override { json = "[]"; return true; }
+    bool runs(std::string& json, std::string*) override { std::lock_guard<std::mutex> lock(m); json = runsText; return true; }
+    bool windowSnapshot(std::string& json, std::string* error) override {
+        std::lock_guard<std::mutex> lock(m);
+        ++windowCalls;
+        if (!windowError.empty()) { if (error) *error = windowError; return false; }
+        json = "{\"state\":\"" + windowState + "\",\"state_code\":0}";
+        return true;
+    }
+    bool readArgv(uint32_t run, uint64_t from, uint64_t count, std::vector<std::string>& argv) override {
+        argv = {"pzrec", "read", std::to_string(run), "disk", "--hw", "pl", "--summary"};
+        if (from) { argv.push_back("--from"); argv.push_back(std::to_string(from)); }
+        if (count) { argv.push_back("--count"); argv.push_back(std::to_string(count)); }
+        return true;
+    }
     bool start(const pz::SsdStartArgs& a, std::string& json, std::string* error) override {
         std::lock_guard<std::mutex> lock(m);
         ++startCalls;
@@ -88,6 +105,15 @@ struct FakeRecorder final : pz::ISsdDevice {
         return true;
     }
 };
+
+std::string runRow(uint32_t id, uint64_t written, bool open = false, bool deleted = false, uint32_t reason = 0, bool countsUnknown = false, uint32_t recSectors = 116) {
+    char buf[900];
+    std::snprintf(buf, sizeof buf,
+                  R"([{"run_id":%u,"flags":0,"open":%d,"deleted":%d,"incomplete":0,"start_lba":2048,"end_lba":%llu,"start_unix_ms":1791530000000,"wall_source":1,"client_tag":1,"filter":0,"sampler_n":0,"rec_sectors":%u,"record_sectors":%u,"first_frame_id":1,"last_frame_id":%llu,"first_ticks":0,"last_ticks":1,"tick_hz":100000000,"seen":%llu,"empty_filtered":0,"invalid_not_sampled":0,"passed":%llu,"written":%llu,"dropped":0,"failed":0,"recoveries":0,"reason":%u,"counts_unknown":%s}])",
+                  id, open, deleted, (unsigned long long)(2048 + written * recSectors + 1), recSectors, recSectors, (unsigned long long)written, (unsigned long long)written,
+                  (unsigned long long)written, (unsigned long long)written, reason, countsUnknown ? "true" : "false");
+    return buf;
+}
 
 pz::SsdStartArgs args() {
     pz::SsdStartArgs a;
@@ -348,6 +374,99 @@ int main(int argc, char** argv) {
         store->beginStop();
         MIB_REQUIRE(store->waitStopped(milliseconds(5000), &why), why);
         MIB_EXPECT(store->status().state == pz::SsdState::Ready && dev->statusCalls > 0, "READY after the stop, read from pzrec");
+    }
+
+    // --- export lease (#667): one lease for the whole download, two-way exclusion with Start --------------------------------
+    {
+        FakeRecorder* dev = nullptr;
+        auto store = storeOver(dev);
+        dev->runsText = runRow(5, 1000);
+        auto b = store->exportBegin(5);
+        MIB_REQUIRE(b.ok, b.reason);
+        MIB_EXPECT(b.lease != 0 && b.runId == 5 && b.records == 1000 && b.bytes == 1000ull * 59392 && b.maxSeconds > 80, "run 5: records, bytes (x 59,392) and a bound");
+        MIB_EXPECT(b.argv.size() >= 4 && b.argv[1] == "read" && b.argv[2] == "5" && b.argv[3] == "disk" && b.argv.back() == "--summary", "RUN before IMG, --summary, one argument per element");
+        MIB_EXPECT(store->exportActive(), "the lease is held");
+        // two-way exclusion
+        auto p = store->prepareRun();
+        MIB_EXPECT(!p.ok && p.why.find("export in progress") != std::string::npos, "Start is refused while a download is in flight: " + p.why);
+        auto second = store->exportBegin(5);
+        MIB_EXPECT(!second.ok && second.reason.find("another export") != std::string::npos, "one lease at a time: " + second.reason);
+        // the refresh stands down
+        dev->statusCalls = 0;
+        for (int i = 0; i < 3; ++i) store->refresh(true);
+        (void)store->status();
+        MIB_EXPECT(dev->statusCalls == 0, "no pzrec status while the lease is held");
+        store->exportEnd(b.lease, b.bytes, "complete");
+        MIB_EXPECT(!store->exportActive(), "released after the end");
+        store->exportEnd(b.lease, b.bytes, "complete again");     // idempotent
+        store->exportEnd(999, 0, "unknown lease");
+        MIB_EXPECT(!store->exportActive() && store->prepareRun().ok, "Start works again after the end");
+        store->cancelPrepare();
+        // Start first, then the download: refused (a Start passed prepareRun, or a run is open)
+        auto pr = store->prepareRun();
+        MIB_REQUIRE(pr.ok, pr.why);
+        auto late = store->exportBegin(5);
+        MIB_EXPECT(!late.ok && late.reason.find("starting") != std::string::npos, "download after Start's prepare is refused: " + late.reason);
+        store->cancelPrepare();
+        MIB_EXPECT(store->exportBegin(5).ok, "a Start that did not reach startRun() frees the SSD again (cancelPrepare)");
+    }
+    {
+        FakeRecorder* dev = nullptr;
+        auto store = storeOver(dev);
+        std::string why;
+        dev->runsText = runRow(5, 1000);
+        auto p = store->prepareRun();
+        MIB_REQUIRE(p.ok, p.why);
+        MIB_REQUIRE(store->startRun(p.runId, args(), &why), why);
+        auto b = store->exportBegin(5);
+        MIB_EXPECT(!b.ok && b.reason.find("recording") != std::string::npos, "download while Studio records: refused: " + b.reason);
+        dev->windowCalls = 0;
+        store->beginStop();
+        MIB_REQUIRE(store->waitStopped(milliseconds(5000), &why), why);
+        MIB_EXPECT(store->exportBegin(5).ok, "after the stop the download is possible");
+    }
+    {
+        // refusals, one by one
+        FakeRecorder* dev = nullptr;
+        auto store = storeOver(dev);
+        dev->runsText = runRow(5, 1000);
+        for (const char* st : {"ARMED", "DRAINING", "STOPPING", "FAULT", "WEDGED"}) {
+            dev->windowState = st;
+            auto b = store->exportBegin(5);
+            MIB_EXPECT(!b.ok && b.reason.find(st) != std::string::npos && !store->exportActive(), std::string("a window in ") + st + " refuses and leaves no lease: " + b.reason);
+        }
+        dev->windowState = "IDLE";
+        dev->windowError = "window absent or counters torn";
+        auto b = store->exportBegin(5);
+        MIB_EXPECT(!b.ok && b.reason.find("cannot verify") != std::string::npos && !store->exportActive(), "no window reading: cannot verify idle, refused: " + b.reason);
+        dev->windowError.clear();
+        MIB_EXPECT(!store->exportBegin(6).ok && store->exportBegin(6).reason.find("no such run") != std::string::npos, "no such run");
+        dev->runsText = runRow(5, 1000, false, true);
+        MIB_EXPECT(store->exportBegin(5).reason.find("deleted") != std::string::npos, "deleted run");
+        dev->runsText = runRow(5, 1000, true);
+        MIB_EXPECT(store->exportBegin(5).reason.find("still open") != std::string::npos, "open run");
+        dev->runsText = runRow(5, 1000, false, false, 7, true);
+        MIB_EXPECT(store->exportBegin(5).reason.find("no reliable record count") != std::string::npos, "a run recovered at mount (count unknown) is not offered");
+        dev->runsText = runRow(5, 0);
+        MIB_EXPECT(store->exportBegin(5).reason.find("no records") != std::string::npos, "an empty run");
+        dev->runsText = runRow(5, 1000, false, false, 0, false, 100);
+        MIB_EXPECT(store->exportBegin(5).reason.find("record size") != std::string::npos, "an unexpected record size");
+        dev->runsText = runRow(5, 1000);
+        auto w = store->exportBegin(5, 10, 100);
+        MIB_REQUIRE(w.ok, w.reason);
+        MIB_EXPECT(w.records == 100 && w.bytes == 100ull * 59392 && w.argv[w.argv.size() - 4] == "--from" && w.argv[w.argv.size() - 3] == "10" && w.argv[w.argv.size() - 2] == "--count" && w.argv.back() == "100", "a window: count x 59,392 and --from/--count");
+        store->exportEnd(w.lease, 0, "test");
+        MIB_EXPECT(store->exportBegin(5, 1000).reason.find("outside the run") != std::string::npos, "--from beyond the run is refused");
+        MIB_EXPECT(store->exportBegin(5, 900, 200).reason.find("never clipped") != std::string::npos, "--count past the end is refused, not clipped");
+        auto tail = store->exportBegin(5, 900);
+        MIB_EXPECT(tail.ok && tail.records == 100, "from alone runs to the end");
+        store->exportEnd(tail.lease, 0, "test");
+        // the lease expires by itself: a caller that never ends it does not hold the SSD for ever
+        store->setExportMaxSecondsForTesting(1);
+        auto e = store->exportBegin(5);
+        MIB_REQUIRE(e.ok && e.maxSeconds == 1, e.reason);
+        std::this_thread::sleep_for(milliseconds(1300));
+        MIB_EXPECT(!store->exportActive() && store->exportBegin(5).ok, "an expired lease is released and a new one can be taken");
     }
 
     // --- the real pzrec on a fake disk ----------------------------------------------------------------------------

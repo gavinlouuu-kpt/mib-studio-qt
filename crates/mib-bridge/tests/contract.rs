@@ -106,7 +106,8 @@ fn abi_version_is_stable() {
     // `ring` block of fetch_instrument_status.
     // v35 the SATA SSD record store, read only (#667 S1): fetch_ssd_status, fetch_ssd_runs and the `ssd` block of
     // fetch_instrument_status.
-    assert_eq!(ffi::bridge_abi_version(), 35);
+    // v36 the SSD run download lease (#667): ssd_export_begin / ssd_export_end for the HTTP export route.
+    assert_eq!(ffi::bridge_abi_version(), 36);
 }
 
 // ABI 31 (#549): with nothing loaded and no run finished, the accounting says so and why.
@@ -167,6 +168,13 @@ fn instrument_mode_commands_off_the_instrument() {
     let ssd_runs: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_ssd_runs()).unwrap();
     assert_eq!(ssd_runs["ok"], serde_json::json!(false), "{ssd_runs}");
     assert_eq!(ssd_runs["runs"], serde_json::json!([]), "{ssd_runs}");
+    // ABI 36: no lease without a configured SSD, and ending a lease nobody holds is a no-op.
+    let lease: serde_json::Value = serde_json::from_str(&bridge.pin_mut().ssd_export_begin(1, 0, 0)).unwrap();
+    assert_eq!(lease["ok"], serde_json::json!(false), "{lease}");
+    assert!(lease["reason"].as_str().is_some_and(|r| !r.is_empty()), "{lease}");
+    assert!(lease["code"].as_str().is_some_and(|c| !c.is_empty()), "{lease}");
+    bridge.pin_mut().ssd_export_end(0, 0, "nothing held");
+    bridge.pin_mut().ssd_export_end(12345, 0, "never given");
     let info: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_platform_info()).unwrap();
     assert_eq!(info["capabilities"]["run_mode"], serde_json::json!(false), "{info}");
     bridge.pin_mut().shutdown();

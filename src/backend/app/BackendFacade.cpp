@@ -3152,6 +3152,18 @@ nlohmann::json ssdRunsJson(backend::AppBackend& app) {
 std::string BackendFacade::fetchSsdStatusJson() { return ssdStatusJson(backend_, true).dump(); }
 std::string BackendFacade::fetchSsdRunsJson() { return ssdRunsJson(backend_).dump(); }
 
+std::string BackendFacade::ssdExportBeginJson(std::uint32_t run, std::uint64_t from, std::uint64_t count) {
+    if (!initialized_) return nlohmann::json{{"ok", false}, {"reason", "backend is not initialized"}}.dump();
+    const auto b = backend_.ssdStore().exportBegin(run, from, count);
+    if (!b.ok) return nlohmann::json{{"ok", false}, {"code", b.code}, {"reason", b.reason}}.dump();
+    return nlohmann::json{{"ok", true}, {"lease", b.lease}, {"run_id", b.runId}, {"records", b.records}, {"bytes", b.bytes}, {"max_seconds", b.maxSeconds}, {"argv", b.argv}}.dump();
+}
+
+void BackendFacade::ssdExportEnd(std::uint64_t lease, std::uint64_t bytesSent, const std::string &outcome) {
+    if (!initialized_) return;
+    backend_.ssdStore().exportEnd(lease, bytesSent, outcome);
+}
+
 std::vector<std::uint8_t> BackendFacade::fetchRingFramePacket(std::uint64_t seq, std::string *error) {
     std::vector<std::uint8_t> out;
     if (!initialized_) {
