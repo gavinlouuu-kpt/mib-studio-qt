@@ -1,10 +1,26 @@
 #include "backend/profiles/ProfileCache.h"
+#include "backend/app/WallClock.h"
 #include <sqlite3.h>
+#include <ctime>
 #include <limits>
 #include <optional>
 
 namespace backend::profiles {
 namespace {
+// The time stamped into the cache's rows, in SQLite's own CURRENT_TIMESTAMP format (UTC, "YYYY-MM-DD HH:MM:SS", so old and new rows sort together).
+// The board has no RTC: SQLite's CURRENT_TIMESTAMP would be whatever the boot left; the synced wall clock (a client's time, #671) is used instead.
+std::string wallNow() {
+    const std::time_t t = static_cast<std::time_t>(backend::app::WallClock::nowNs() / 1'000'000'000ull);
+    std::tm tm{};
+#ifdef _WIN32
+    gmtime_s(&tm, &t);
+#else
+    gmtime_r(&t, &tm);
+#endif
+    char out[32];
+    std::strftime(out, sizeof(out), "%Y-%m-%d %H:%M:%S", &tm);
+    return out;
+}
 void check(int code) {
     if (code != SQLITE_OK && code != SQLITE_DONE && code != SQLITE_ROW)
         throw RegistryError(RegistryErrorCode::Storage, "Profile cache database operation failed");
@@ -214,8 +230,8 @@ void ProfileCache::store(const Revision& r) {
             impl_->db,
             "INSERT INTO "
             "registry_revisions(revision_id,method_id,project_id,parent_id,display_name,author_id,"
-            "content,hash,number,metadata_version,state,release_notes) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)");
+            "content,hash,number,metadata_version,state,release_notes,downloaded_at,synced_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
         q.bind(1, r.revisionId);
         q.bind(2, r.methodId);
         q.bind(3, r.projectId);
@@ -228,6 +244,9 @@ void ProfileCache::store(const Revision& r) {
         q.bind(10, r.metadataVersion);
         q.bind(11, toString(r.state));
         q.bind(12, r.releaseNotes);
+        const std::string now = wallNow();
+        q.bind(13, now);
+        q.bind(14, now);
         q.step();
     }
     transaction.commit();
@@ -273,12 +292,13 @@ void ProfileCache::updateState(const std::string& id, CentralState state, uint64
         throw RegistryError(RegistryErrorCode::Conflict, "Revocation is terminal");
     Statement q(
         impl_->db,
-        "UPDATE registry_revisions SET state=?,metadata_version=?,synced_at=CURRENT_TIMESTAMP "
+        "UPDATE registry_revisions SET state=?,metadata_version=?,synced_at=? "
         "WHERE revision_id=? AND metadata_version<=?");
     q.bind(1, toString(state));
     q.bind(2, version);
-    q.bind(3, id);
-    q.bind(4, version);
+    q.bind(3, wallNow());
+    q.bind(4, id);
+    q.bind(5, version);
     q.step();
 }
 void ProfileCache::recordValidation(const LocalValidation& v) {
@@ -290,10 +310,10 @@ void ProfileCache::recordValidation(const LocalValidation& v) {
     Statement q(impl_->db,
                 "INSERT INTO "
                 "registry_validations(revision_id,instrument_id,hash,context_hash,validator_id,"
-                "evidence,passed) VALUES(?,?,?,?,?,?,?) ON "
+                "evidence,passed,validated_at) VALUES(?,?,?,?,?,?,?,?) ON "
                 "CONFLICT(revision_id,instrument_id,context_hash) DO UPDATE SET "
                 "hash=excluded.hash,validator_id=excluded.validator_id,evidence=excluded.evidence,"
-                "passed=excluded.passed,validated_at=CURRENT_TIMESTAMP");
+                "passed=excluded.passed,validated_at=excluded.validated_at");
     q.bind(1, v.revisionId);
     q.bind(2, v.instrumentId);
     q.bind(3, v.contentHash);
@@ -301,6 +321,7 @@ void ProfileCache::recordValidation(const LocalValidation& v) {
     q.bind(5, v.validatorId);
     q.bind(6, v.evidence);
     q.bind(7, uint64_t(v.passed));
+    q.bind(8, wallNow());
     q.step();
 }
 std::vector<LocalValidationRecord> ProfileCache::listValidations() const {
@@ -336,8 +357,8 @@ void ProfileCache::saveDraft(const MethodDraft& d) {
     Statement q(impl_->db,
                 "INSERT INTO registry_drafts(draft_id,project_id,method_id,new_method,method_name,"
                 "method_description,base_revision_id,config_json,camera_script,core_id,"
-                "contract_version,hardware_json,release_notes,revision_id) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(draft_id) DO UPDATE SET "
+                "contract_version,hardware_json,release_notes,revision_id,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(draft_id) DO UPDATE SET "
                 "project_id=excluded.project_id,method_id=excluded.method_id,"
                 "new_method=excluded.new_method,method_name=excluded.method_name,"
                 "method_description=excluded.method_description,"
@@ -345,7 +366,7 @@ void ProfileCache::saveDraft(const MethodDraft& d) {
                 "camera_script=excluded.camera_script,core_id=excluded.core_id,"
                 "contract_version=excluded.contract_version,hardware_json=excluded.hardware_json,"
                 "release_notes=excluded.release_notes,revision_id=excluded.revision_id,"
-                "updated_at=CURRENT_TIMESTAMP");
+                "updated_at=excluded.updated_at");
     q.bind(1, d.draftId);
     q.bind(2, d.projectId);
     q.bind(3, d.methodId);
@@ -360,6 +381,9 @@ void ProfileCache::saveDraft(const MethodDraft& d) {
     q.bind(12, d.hardwareCompatibilityJson);
     q.bind(13, d.releaseNotes);
     q.bind(14, d.revisionId);
+    const std::string now = wallNow();
+    q.bind(15, now);
+    q.bind(16, now);
     q.step();
     transaction.commit();
 }
@@ -385,9 +409,10 @@ void ProfileCache::deleteDraft(const std::string& id) {
 }
 void ProfileCache::markDraftSubmitted(const std::string& id, const std::string& revisionId) {
     Statement q(impl_->db, "UPDATE registry_drafts SET submitted_revision_id=?,"
-                           "updated_at=CURRENT_TIMESTAMP WHERE draft_id=?");
+                           "updated_at=? WHERE draft_id=?");
     q.bind(1, revisionId);
-    q.bind(2, id);
+    q.bind(2, wallNow());
+    q.bind(3, id);
     q.step();
 }
 Eligibility ProfileCache::eligibility(const std::string& id, const std::string& instrument,
