@@ -231,6 +231,24 @@ async fn streams_the_records_of_a_closed_run_verified() {
     assert_eq!(reply.header("x-record-count"), Some("8"));
     assert_eq!(reply.header("x-record-bytes"), Some("59392"));
     assert_eq!(reply.header("cache-control"), Some("no-store"));
+    // the download is self-describing: the run table entry of the whole run
+    for (name, want) in [
+        ("x-run-start-unix-ms", "1791530000000"),
+        ("x-run-tick-hz", "100000000"),
+        ("x-run-first-ticks", "0"),
+        ("x-run-first-frame-id", "1"),
+        ("x-run-last-frame-id", "8"),
+        ("x-run-seen", "8"),
+        ("x-run-filter", "0"),
+        ("x-run-written", "8"),
+        ("x-run-client-tag", "1"),
+        ("x-run-wall-source", "1"),
+        ("x-run-reason", "0"),
+        ("x-run-exact-drops", "1"),
+    ] {
+        assert_eq!(reply.header(name), Some(want), "{name}");
+    }
+    assert!(reply.header("x-run-bytes").is_some());
     assert_eq!(reply.body.len(), 8 * REC);
     assert!(reply.body.iter().all(|b| *b == b'A'));
     f.wait_lease_free().await;
@@ -414,6 +432,7 @@ async fn the_lease_and_the_route_exclude_each_other_both_ways() {
     assert_eq!(held["records"], 8);
     assert_eq!(held["bytes"], 8 * REC);
     assert_eq!(held["argv"][1], "read");
+    assert_eq!((held["run"]["tick_hz"].clone(), held["run"]["written"].clone(), held["run"]["exact_drops"].clone()), (100000000.into(), 8.into(), true.into()));
     let route = get(&f, "/ssd/runs/5/records").await;
     assert_eq!((route.status, route.json()["code"].as_str()), (503, Some("BUSY")));
     assert_eq!(f.reads(), 0);

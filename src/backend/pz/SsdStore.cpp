@@ -911,6 +911,7 @@ SsdStore::ExportBegin SsdStore::exportBegin(uint32_t run, uint64_t from, uint64_
         exportDeadline_ = std::chrono::steady_clock::now() + std::chrono::seconds(out.maxSeconds + exportMarginSeconds_);
     }
     out.ok = true;
+    out.run = *found;
     out.lease = lease;
     out.records = records;
     out.bytes = records * kRecordBytes;

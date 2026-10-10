@@ -350,6 +350,7 @@ pub(crate) async fn records(
     let records = begin.get("records").and_then(Value::as_u64).unwrap_or(0);
     let bytes = begin.get("bytes").and_then(Value::as_u64).unwrap_or(0);
     let max_seconds = begin.get("max_seconds").and_then(Value::as_u64).unwrap_or(120);
+    let run_table = begin.get("run").cloned().unwrap_or(Value::Null);
     let argv: Vec<String> = begin.get("argv").and_then(Value::as_array).map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
     // Release helper for failures before a supervisor exists.
     let release_now = |outcome: String| {
@@ -476,6 +477,29 @@ pub(crate) async fn records(
         if let Ok(v) = HeaderValue::from_str(&value) {
             h.insert(header::HeaderName::from_static(name), v);
         }
+    }
+    // The run table entry (the whole run's values, also for a window): a download is self-describing. Integers, X-Run-Exact-Drops is 1 or 0.
+    for (name, key) in [
+        ("x-run-start-unix-ms", "start_unix_ms"),
+        ("x-run-tick-hz", "tick_hz"),
+        ("x-run-first-ticks", "first_ticks"),
+        ("x-run-last-ticks", "last_ticks"),
+        ("x-run-first-frame-id", "first_frame_id"),
+        ("x-run-last-frame-id", "last_frame_id"),
+        ("x-run-seen", "seen"),
+        ("x-run-filter", "filter"),
+        ("x-run-written", "written"),
+        ("x-run-client-tag", "client_tag"),
+        ("x-run-wall-source", "wall_source"),
+        ("x-run-reason", "reason"),
+        ("x-run-bytes", "size_bytes"),
+    ] {
+        if let Some(n) = run_table.get(key).and_then(Value::as_u64) {
+            h.insert(header::HeaderName::from_static(name), HeaderValue::from(n));
+        }
+    }
+    if let Some(exact) = run_table.get("exact_drops").and_then(Value::as_bool) {
+        h.insert(header::HeaderName::from_static("x-run-exact-drops"), HeaderValue::from_static(if exact { "1" } else { "0" }));
     }
     if let Ok(v) = HeaderValue::from_str(&format!("attachment; filename=\"run-{id}-records.bin\"")) {
         h.insert(header::CONTENT_DISPOSITION, v);

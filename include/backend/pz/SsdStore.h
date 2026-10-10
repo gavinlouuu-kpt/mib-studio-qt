@@ -178,6 +178,7 @@ public:
         uint64_t records{0}, bytes{0};       // what the body holds: `records` x 59,392 B
         uint32_t maxSeconds{0};
         std::vector<std::string> argv;
+        SsdRun run;                          // the run table entry (a copy), so a download is self-describing: start time, tick rate, first ticks, filter, counters
         std::string reason;                  // why not, when !ok
         std::string code;                    // BUSY (a recording, a Start, another export: try later), UNAVAILABLE (the SSD or the window cannot be read), NO_SUCH_RUN,
                                              // RUN_DELETED, NOT_OFFERED (open, recovered without a count, empty), BAD_RANGE
