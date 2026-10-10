@@ -17,10 +17,13 @@
 # aligned) recorded in BUILD_INFO (`ssd bounce: 0x2D000000 (1 MiB)`). It must lie between the end of mem= and the ring base (the ring ceiling
 # 0x3F000000 when there is no ring): Linux must not own it, the ring must not overlap it.
 #
+# PZ_PZBLK_KO (results14, #667): the SSD block-device kernel module (pzblk.ko) as modules/pzblk.ko, with PZ_PZBLK_MD5 checked when given and the
+# kernel's vermagic named in BUILD_INFO. The unit never loads it: the board owner loads it by hand (insmod) in the bring-up.
+#
 # Layout (see docs/exec-plans/active/2026-10-08-yofo-studio-bundle.md):
 #   board side  yofo-studio-server dist.tar yofo-studio.service install.sh pl-ready.sh BUILD_INFO MD5SUMS
 #               core.json  (-> /etc/yofo/expected-core.json)      producer/libpz7035_gentl.cti
-#               tools/{pzcell,pzres,pzpump,page.bin,lut.bin}  [tools/pzrec with PZ_PZREC_COMMIT]
+#               tools/{pzcell,pzres,pzpump,page.bin,lut.bin}  [tools/pzrec with PZ_PZREC_COMMIT]  [modules/pzblk.ko with PZ_PZBLK_KO]
 #   host side   host/pl/{pz_live.bit,ps7_init.tcl}  host/firmware/live_server.elf
 #               host/linux/{pz7035-live-uio.dtb,<rootfs>.cpio.gz.u-boot,bootargs}
 # The restore script copies only the board side to the RAM root (the host side is 70 MB) and
@@ -47,6 +50,8 @@ ring_frames=${PZ_RING_FRAMES:-0}
 pzrec_commit=${PZ_PZREC_COMMIT:-}
 pzrec_bin=${PZ_PZREC:-}
 ssd_bounce=${PZ_SSD_BOUNCE:-}
+pzblk_ko=${PZ_PZBLK_KO:-}
+pzblk_md5=${PZ_PZBLK_MD5:-}
 ssd_bounce_bytes=${PZ_SSD_BOUNCE_BYTES:-0x100000}
 tools=${PZ_TOOLS_DIR:-/home/gavin/Developer/.worktrees/pz7035-yofo-host-if/tools}
 pzpump=${PZ_PZPUMP:-$dev/pump-tushui-20261004/pzpump}
@@ -170,8 +175,24 @@ PY
     pzrec_note="pzrec: ${pzrec_full:0:8} (tools/pzrec, armv7, md5 $(md5sum "$pzrec_bin" | cut -d' ' -f1))"
 fi
 
+# 2e. pzblk.ko (results14): shipped as a file, never loaded by the unit.
+pzblk_note=""
+if [ -n "$pzblk_ko" ]; then
+    need "$pzblk_ko" "pzblk.ko"
+    pzblk_sum=$(md5sum "$pzblk_ko" | cut -d' ' -f1)
+    if [ -n "$pzblk_md5" ] && [ "$pzblk_sum" != "$pzblk_md5" ]; then die "pzblk.ko md5 is $pzblk_sum, not $pzblk_md5"; fi
+    # a kernel module is an ELF file; 32-bit ARM like the board's kernel (e_machine 0x28)
+    python3 - "$pzblk_ko" <<'PY' || die "pzblk.ko is not a 32-bit ARM ELF module"
+import sys
+h = open(sys.argv[1], "rb").read(20)
+sys.exit(0 if len(h) == 20 and h[:6] == b"\x7fELF\x01\x01" and h[18:20] == b"\x28\x00" else 1)
+PY
+    vermagic=$(modinfo -F vermagic "$pzblk_ko" 2>/dev/null || true)
+    pzblk_note="module: modules/pzblk.ko md5 $pzblk_sum, vermagic ${vermagic:-unknown}; NOT loaded by the unit (the board owner loads it by hand)"
+fi
+
 # 3. Copy.
-rm -rf "$pkg/host" "$pkg/producer" "$pkg/tools"
+rm -rf "$pkg/host" "$pkg/producer" "$pkg/tools" "$pkg/modules"
 install -d "$pkg/host/pl" "$pkg/host/firmware" "$pkg/host/linux" "$pkg/producer" "$pkg/tools"
 install -m 0644 "$build/pz_live.bit" "$pkg/host/pl/pz_live.bit"
 install -m 0644 "$ps7" "$pkg/host/pl/ps7_init.tcl"
@@ -184,6 +205,7 @@ install -m 0644 "$cti" "$pkg/producer/libpz7035_gentl.cti"
 install -m 0755 "$tools/pzcell/pzcell" "$tools/pzres/pzres" "$pzpump" "$pkg/tools/"
 install -m 0644 "$slot/page.bin" "$slot/lut.bin" "$pkg/tools/"
 [ -z "$pzrec_note" ] || install -m 0755 "$pzrec_bin" "$pkg/tools/pzrec"
+[ -z "$pzblk_note" ] || { install -d "$pkg/modules"; install -m 0644 "$pzblk_ko" "$pkg/modules/pzblk.ko"; }
 
 if [ "$ring_frames" != 0 ]; then
     # one line, set together with the boot args above
@@ -208,6 +230,7 @@ pz_short=$(printf '%.8s' "$commit")
     [ -z "$bounce_note" ] || echo "$bounce_note"
     echo "producer: libpz7035_gentl.cti md5 $cti_md5 ($cti_note)"
     [ -z "$pzrec_note" ] || echo "$pzrec_note"
+    [ -z "$pzblk_note" ] || echo "$pzblk_note"
     echo "tools: pzcell, pzres from $(src_of "$tools/pzcell/pzcell"), pzpump, page.bin, lut.bin from $(basename "$slot")"
     echo "boot check: Studio's preflight compares the loaded PL's BUILD_ID with core.json from this bundle; a mismatch means the wrong image is loaded"
 } > "$pkg/BUILD_INFO.new"
