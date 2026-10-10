@@ -32,6 +32,10 @@ if [ -f producer/libpz7035_gentl.cti ]; then
     install -d -m 755 /usr/lib/genicam
     install -m 0644 producer/libpz7035_gentl.cti /usr/lib/genicam/libpz7035_gentl.cti
 fi
+# The SSD tool (results14, #667): Studio runs it as MIB_PZREC=/usr/bin/pzrec when the unit has the SSD environment (bundle_assemble.sh PZ_STUDIO_SSD=1).
+if [ -f tools/pzrec ]; then
+    install -m 0755 tools/pzrec /usr/bin/pzrec
+fi
 if [ -f core.json ]; then
     install -D -m 0644 core.json /etc/yofo/expected-core.json
 fi
