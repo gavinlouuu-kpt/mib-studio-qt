@@ -97,6 +97,7 @@ struct RunConfigurationSnapshot {
     uint64_t startWallClockNs{0};
     std::string wallClockSource;      // client_sync | board_clock_unsynced | system_clock (G14)
     int64_t wallClockOffsetNs{0};
+    uint32_t ssdRunId{0};             // the SATA SSD run-table id this run records to (#667 S2; 0: no SSD run). Also the RUN_ID of its store records.
 
     CameraSourceInfo camera;
     bool cameraReady{false};

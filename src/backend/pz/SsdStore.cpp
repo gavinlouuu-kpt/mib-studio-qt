@@ -278,22 +278,28 @@ RunResult runBounded(const std::vector<std::string>& argv, std::chrono::millisec
 #endif
 }
 
-PzrecCliDevice::PzrecCliDevice(std::string pzrecPath, std::string imagePath, std::chrono::milliseconds timeout)
-    : pzrec_(std::move(pzrecPath)), image_(std::move(imagePath)), timeout_(timeout) {}
+PzrecCliDevice::PzrecCliDevice(std::string pzrecPath, std::string imagePath, std::chrono::milliseconds timeout, std::vector<std::string> extraArgs,
+                               std::chrono::milliseconds startTimeout, std::chrono::milliseconds stopTimeout)
+    : pzrec_(std::move(pzrecPath)), image_(std::move(imagePath)), timeout_(timeout), startTimeout_(startTimeout), stopTimeout_(stopTimeout),
+      extra_(std::move(extraArgs)) {}
 
-bool PzrecCliDevice::call(const char* verb, std::string& json, std::string* error) {
-    const RunResult r = runBounded({pzrec_, verb, image_}, timeout_);
+bool PzrecCliDevice::call(const std::vector<std::string>& verbAndArgs, std::chrono::milliseconds timeout, std::string& json, std::string* error) {
+    const std::string verb = verbAndArgs.empty() ? std::string() : verbAndArgs.front();
+    std::vector<std::string> argv{pzrec_, verb, image_};
+    argv.insert(argv.end(), verbAndArgs.begin() + (verbAndArgs.empty() ? 0 : 1), verbAndArgs.end());
+    argv.insert(argv.end(), extra_.begin(), extra_.end());
+    const RunResult r = runBounded(argv, timeout);
     auto firstLine = [](std::string s) {
         while (!s.empty() && (s.back() == '\n' || s.back() == '\r' || s.back() == ' ')) s.pop_back();
         if (s.size() > 300) s.resize(300);
         return s;
     };
     if (!r.started) { if (error) *error = "pzrec could not be run: " + firstLine(r.err); return false; }
-    if (r.timedOut) { if (error) *error = "pzrec " + std::string(verb) + " did not answer within " + std::to_string(timeout_.count()) + " ms"; return false; }
-    if (r.truncated) { if (error) *error = "pzrec " + std::string(verb) + " wrote more than 4 MiB: refused"; return false; }
+    if (r.timedOut) { if (error) *error = "pzrec " + verb + " did not answer within " + std::to_string(timeout.count()) + " ms"; return false; }
+    if (r.truncated) { if (error) *error = "pzrec " + verb + " wrote more than 4 MiB: refused"; return false; }
     if (r.exitCode != 0) {
         if (error) {
-            *error = "pzrec " + std::string(verb) + " exited with " + std::to_string(r.exitCode);
+            *error = "pzrec " + verb + " exited with " + std::to_string(r.exitCode);
             const std::string detail = firstLine(r.err.empty() ? r.out : r.err);
             if (!detail.empty()) *error += ": " + detail;
         }
@@ -303,8 +309,21 @@ bool PzrecCliDevice::call(const char* verb, std::string& json, std::string* erro
     return true;
 }
 
-bool PzrecCliDevice::status(std::string& json, std::string* error) { return call("status", json, error); }
-bool PzrecCliDevice::runs(std::string& json, std::string* error) { return call("runs", json, error); }
+bool PzrecCliDevice::status(std::string& json, std::string* error) { return call({"status"}, timeout_, json, error); }
+bool PzrecCliDevice::runs(std::string& json, std::string* error) { return call({"runs"}, timeout_, json, error); }
+
+bool PzrecCliDevice::start(const SsdStartArgs& a, std::string& json, std::string* error) {
+    const char* filter = a.filter == SsdFilter::All ? "all" : a.filter == SsdFilter::AnyResult ? "any" : "valid";
+    return call({"start", "--filter", filter, "--sampler", std::to_string(a.samplerN), "--start-ms", std::to_string(a.startUnixMs), "--wall-source",
+                 a.clientSynced ? "1" : "0", "--tag", std::to_string(a.clientTag)},
+                startTimeout_, json, error);
+}
+
+bool PzrecCliDevice::stop(bool abort, std::string& json, std::string* error) {
+    std::vector<std::string> v{"stop"};
+    if (abort) v.push_back("--abort");
+    return call(v, stopTimeout_, json, error);
+}
 
 SsdStore::SsdStore(std::unique_ptr<ISsdDevice> device, std::chrono::milliseconds interval, bool background, std::string stateFile)
     : device_(std::move(device)), interval_(interval), background_(background && device_ != nullptr), stateFile_(std::move(stateFile)) {
@@ -322,6 +341,12 @@ SsdStore::SsdStore(std::unique_ptr<ISsdDevice> device, std::chrono::milliseconds
 }
 
 SsdStore::~SsdStore() {
+    shuttingDown_ = true;
+    {
+        std::lock_guard<std::mutex> lock(stopMutex_);
+    }
+    stopCv_.notify_all();
+    if (stopThread_.joinable()) stopThread_.join();
     {
         std::lock_guard<std::mutex> lock(m_);
         stop_ = true;
@@ -407,6 +432,12 @@ SsdStatus SsdStore::statusLocked() const {
         s.reason = reasonFor(SsdState::Initialising);
         return s;
     }
+    if (stopRunning_) {
+        SsdStatus s = status_;
+        s.state = SsdState::Stopping;
+        s.reason = "Stopping the SSD run";
+        return s;
+    }
     return status_;
 }
 
@@ -414,9 +445,25 @@ void SsdStore::refresh(bool force) {
     if (!device_) return;
     {
         std::lock_guard<std::mutex> lock(m_);
+        if (openedRunId_ != 0 && !stopRunning_ && !stopFailed_) {
+            // Studio's own run is open: while a run is active the PL's admission gate holds back every read and write of the disk (`pzrec status`, `runs`,
+            // `delete`, a second `start`; board owner, 2026-10-10), so pzrec is not called at all, not even to be refused. The state is RECORDING with the
+            // run Studio opened; the live counters need a window-only read (`snapshot`), which the CLI does not offer yet. Never READY.
+            status_.state = SsdState::Recording;
+            status_.openRun = true;
+            status_.openRunId = openedRunId_;
+            status_.reason = "Recording; live counters are not read while the run is active (the disk is held back)";
+            haveStatus_ = true;
+            statusAt_ = std::chrono::steady_clock::now();
+            return;
+        }
         if (!force && haveStatus_ && std::chrono::steady_clock::now() - statusAt_ < interval_) return;
     }
-    // The pzrec calls run without the lock held: a slow child never blocks status() readers.
+    // The pzrec calls run without the lock held: a slow child never blocks status() readers. They are serialised on deviceMutex_: a start or a stop in
+    // progress owns the window and the disk, so a periodic refresh that finds the device busy skips its turn (a forced one waits).
+    std::unique_lock<std::mutex> device(deviceMutex_, std::defer_lock);
+    if (force) device.lock();
+    else if (!device.try_lock()) return;
     SsdStatus s;
     std::string text, error;
     const bool ok = device_->status(text, &error) && parseSsdStatus(text, s, &error);
@@ -443,8 +490,22 @@ void SsdStore::refresh(bool force) {
         if (!runsOk) runsWhy = "SSD run table unreadable: " + rerror;
     }
     uint32_t persistId = 0;
+    std::string stopWhy;
+    {
+        std::lock_guard<std::mutex> sm(stopMutex_);
+        stopWhy = stopWhy_;
+    }
     std::unique_lock<std::mutex> lock(m_);
     status_ = std::move(s);
+    if (openedRunId_ != 0 && stopFailed_) {
+        // Every stop attempt failed: the drain was stopped first (prestop), so the gate is open and pzrec can be read. It decides whether the run is closed.
+        if (ok && !status_.openRun) {
+            openedRunId_ = 0;
+            stopFailed_ = false;
+        } else if (ok) {
+            status_.reason = "SSD run " + std::to_string(openedRunId_) + " was not confirmed closed: " + (stopWhy.empty() ? std::string("pzrec stop did not finish") : stopWhy);
+        }
+    }
     haveStatus_ = true;
     statusAt_ = std::chrono::steady_clock::now();
     if (!ok || status_.state == SsdState::Unformatted || status_.state == SsdState::Initialising || status_.state == SsdState::Wedged ||
@@ -503,6 +564,176 @@ bool SsdStore::runs(std::vector<SsdRun>& out, std::string* why) {
     }
     out = runs_;
     return true;
+}
+
+// ---- Record (#667 S2) ----------------------------------------------------------------------------------------------------------------------------
+
+SsdStore::Prepared SsdStore::prepareRun() {
+    Prepared p;
+    if (!device_) {
+        p.why = reasonFor(SsdState::Absent);
+        return p;
+    }
+    if (stopRunning_) {
+        p.state = SsdState::Stopping;
+        p.why = "the previous SSD run is still being stopped";
+        return p;
+    }
+    if (const uint32_t open = openedRunId(); open != 0) {
+        p.state = SsdState::Recording;
+        if (stopFailed_) {
+            // A run this Studio opened was never confirmed closed (its stop failed every attempt): try again now instead of leaving the SSD stuck.
+            beginStop(false);
+            p.state = SsdState::Stopping;
+            p.why = "the previous SSD run " + std::to_string(open) + " was not confirmed closed: closing it now, try again in a moment";
+        } else {
+            p.why = "SSD run " + std::to_string(open) + " is open (RECORDING)";
+        }
+        return p;
+    }
+    refresh(true);      // a fresh answer under the device's short timeout: the cached state may be a second old
+    const SsdStatus st = status();
+    p.state = st.state;
+    if (st.state != SsdState::Ready || st.openRun) {
+        p.why = std::string("the SSD is ") + ssdStateName(st.state) + (st.openRun ? " with an open run" : "") +
+                (st.reason.empty() ? std::string() : ": " + st.reason);
+        return p;
+    }
+    if (st.nextRunId == 0) {
+        p.why = "the SSD reports no next run id";
+        return p;
+    }
+    p.ok = true;
+    p.runId = st.nextRunId;
+    return p;
+}
+
+bool SsdStore::startRun(uint32_t expectedId, const SsdStartArgs& args, std::string* why, bool* opened) {
+    if (opened) *opened = false;
+    auto fail = [&](const std::string& text) {
+        if (why) *why = text;
+        return false;
+    };
+    if (!device_) return fail(reasonFor(SsdState::Absent));
+    std::lock_guard<std::mutex> device(deviceMutex_);
+    std::string text, error;
+    if (!device_->start(args, text, &error)) {
+        // A run found open after a failed start is assumed to be Studio's own: nothing else starts runs on this unit (the unit is the only caller).
+        // A refusal opens nothing, but a start that was killed on its timeout may have written the entry and sent START: ask what is open now, and when even
+        // that cannot be read after a timeout, assume it is (the caller aborts; an abort of nothing fails harmlessly).
+        std::string stext, serror;
+        SsdStatus st;
+        const bool known = device_->status(stext, &serror) && parseSsdStatus(stext, st, &serror);
+        const bool timedOut = error.find("did not answer") != std::string::npos;
+        const bool open = known ? st.openRun : timedOut;
+        if (open) {
+            {
+                std::lock_guard<std::mutex> lock(m_);
+                openedRunId_ = known && st.openRunId ? st.openRunId : expectedId;
+            }
+            if (opened) *opened = true;
+        }
+        return fail("pzrec start failed: " + error);
+    }
+    SsdStatus st;
+    std::string perror;
+    if (!parseSsdStatus(text, st, &perror)) {
+        // The CLI exited 0 but its answer does not parse: a run may be open; the caller must stop it.
+        std::lock_guard<std::mutex> lock(m_);
+        openedRunId_ = expectedId;
+        if (opened) *opened = true;
+        return fail("pzrec start answered with unreadable status: " + perror);
+    }
+    if (!st.openRun) return fail(std::string("pzrec start returned without an open run (state ") + ssdStateName(st.state) + ")");
+    {
+        std::lock_guard<std::mutex> lock(m_);
+        openedRunId_ = st.openRunId;
+        st.reason = reasonFor(st.state);
+        status_ = st;
+        haveStatus_ = true;
+        statusAt_ = std::chrono::steady_clock::now();
+    }
+    if (st.openRunId != expectedId) {
+        if (opened) *opened = true;
+        return fail("run id mismatch: pzrec opened run " + std::to_string(st.openRunId) + ", expected " + std::to_string(expectedId));
+    }
+    return true;
+}
+
+bool SsdStore::stopping() const { return stopRunning_; }
+
+uint32_t SsdStore::openedRunId() const {
+    std::lock_guard<std::mutex> lock(m_);
+    return openedRunId_;
+}
+
+void SsdStore::beginStop(bool abort) {
+    if (!device_) return;
+    std::lock_guard<std::mutex> lock(stopMutex_);
+    if (stopRunning_) return;
+    if (stopThread_.joinable()) stopThread_.join();     // a finished earlier attempt
+    stopRunning_ = true;
+    stopFailed_ = false;
+    stopDone_ = false;
+    stopOk_ = false;
+    stopWhy_.clear();
+    stopThread_ = std::thread([this, abort] { stopWorker(abort); });
+}
+
+void SsdStore::stopWorker(bool abort) {
+    bool ok = false;
+    std::string why;
+    for (int attempt = 1; attempt <= stopAttempts_ && !shuttingDown_ && !ok; ++attempt) {
+        {
+            std::lock_guard<std::mutex> device(deviceMutex_);
+            std::string text, error;
+            if (device_->stop(abort, text, &error)) {
+                ok = true;
+            } else {
+                why = error;
+                // A killed or doubted attempt may have closed the run after all (or the drain had ended on its own): trust pzrec's own answer.
+                std::string stext, serror;
+                SsdStatus st;
+                if (device_->status(stext, &serror) && parseSsdStatus(stext, st, &serror) && !st.openRun) ok = true;
+            }
+        }
+        if (!ok && attempt < stopAttempts_) {
+            std::unique_lock<std::mutex> lock(stopMutex_);
+            stopCv_.wait_for(lock, stopBackoff_, [this] { return shuttingDown_.load(); });
+        }
+    }
+    if (ok) {
+        {
+            std::lock_guard<std::mutex> lock(m_);
+            openedRunId_ = 0;
+        }
+        refresh(true);
+    }
+    std::lock_guard<std::mutex> lock(stopMutex_);
+    stopOk_ = ok;
+    stopFailed_ = !ok;
+    stopWhy_ = ok ? std::string() : (why.empty() ? std::string("pzrec stop did not finish") : why);
+    stopDone_ = true;
+    stopRunning_ = false;
+    stopCv_.notify_all();
+}
+
+bool SsdStore::waitStopped(std::chrono::milliseconds deadline, std::string* why, bool* stillRunning) {
+    if (stillRunning) *stillRunning = false;
+    std::unique_lock<std::mutex> lock(stopMutex_);
+    if (!stopRunning_ && !stopDone_) {
+        // nothing was started
+        const uint32_t open = openedRunId();
+        if (open != 0 && why) *why = "no stop is in progress for run " + std::to_string(open);
+        return open == 0;
+    }
+    if (!stopCv_.wait_for(lock, deadline, [this] { return stopDone_; })) {
+        if (stillRunning) *stillRunning = true;
+        if (why) *why = "the SSD run is still stopping";
+        return false;
+    }
+    if (!stopOk_ && why) *why = stopWhy_;
+    return stopOk_;
 }
 
 } // namespace backend::pz

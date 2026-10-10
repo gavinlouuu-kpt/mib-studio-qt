@@ -57,6 +57,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <sstream>
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <limits>
@@ -1282,11 +1283,25 @@ namespace backend
         const char *pzrec = std::getenv("MIB_PZREC");
         const char *image = std::getenv("MIB_SSD_IMAGE");
         std::unique_ptr<pz::ISsdDevice> device;
-        if (pzrec && *pzrec && image && *image)
-            device = std::make_unique<pz::PzrecCliDevice>(pzrec, image);
+        if (pzrec && *pzrec && image && *image) {
+            // MIB_PZREC_ARGS: the board's options after the image (`--hw pl --bounce-phys 0x2D000000 --disk-sectors N`, or `--hw pl` with the pzblk device as the
+            // image), split on white space. Empty on the file-backed fake.
+            std::vector<std::string> extra;
+            if (const char *args = std::getenv("MIB_PZREC_ARGS")) {
+                std::istringstream in(args);
+                for (std::string word; in >> word;) extra.push_back(word);
+            }
+            device = std::make_unique<pz::PzrecCliDevice>(pzrec, image, std::chrono::milliseconds(3000), std::move(extra));
+        }
         // The highest run id seen is kept with Studio's own state on the eMMC (the data dir), so "recovered at mount" is told once after a restart.
         const std::string stateFile = dataDir_.empty() ? std::string() : (std::filesystem::path(dataDir_) / "ssd-state.json").string();
         ssdStore_ = std::make_unique<pz::SsdStore>(std::move(device), std::chrono::milliseconds(1000), /*background=*/true, stateFile);
+    }
+
+    void AppBackend::setSsdStoreForTesting(std::unique_ptr<pz::SsdStore> store)
+    {
+        std::lock_guard<std::mutex> lock(ssdMutex_);
+        ssdStore_ = std::move(store);
     }
 
     // ---- PZ7035 camera modes (#501 P1; pz7035-imx426 docs/YOFO_HOST_INTERFACE.md) ----

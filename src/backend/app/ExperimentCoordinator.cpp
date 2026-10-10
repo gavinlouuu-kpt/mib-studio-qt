@@ -234,6 +234,7 @@ std::string runSnapshotToJson(const RunConfigurationSnapshot& s)
       << ",\"start_wall_clock_ns\":" << s.startWallClockNs
       << ",\"wall_clock_source\":" << q(s.wallClockSource)
       << ",\"wall_clock_offset_ns\":" << s.wallClockOffsetNs
+      << (s.ssdRunId != 0 ? ",\"ssd_run_id\":" + std::to_string(s.ssdRunId) : std::string())
       << ",\"camera\":{\"requested\":" << q(s.camera.requested)
       << ",\"effective\":" << q(s.camera.effective) << ",\"label\":" << q(s.camera.label)
       << ",\"simulated\":" << (s.camera.simulated ? "true" : "false")
@@ -795,19 +796,19 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
         }
     }
 
-    // --- the SATA SSD (#667 S1) -------------------------------------------
-    // Informative until the experiment records to the SSD (S2): today's experiment writes its file as before, so the SSD's state never blocks
-    // it. S2 turns the not-READY states into failures (READY, not RECOVERING, room in the raw area and the run table).
+    // --- the SATA SSD (#667) -------------------------------------------------
+    // With an SSD configured the experiment records to it (S2): the gate blocks until the SSD is READY with no open run (room in the raw area and in the
+    // run table are states of pzrec: RAW_FULL and RUN_TABLE_FULL refuse). Without an SSD configured nothing changes: the experiment writes its file as before.
     if (!app::hostProcessingAvailable()) {
         auto& ssd = backend_.ssdStore();
         const auto st = ssd.status();
         if (!ssd.configured()) {
             r.gates.push_back(gate("storage.ssd", GateStatus::NotRequired, st.reason, {}, "no SSD"));
-        } else if (st.state == pz::SsdState::Ready) {
+        } else if (st.state == pz::SsdState::Ready && !st.openRun) {
             r.gates.push_back(gate("storage.ssd", GateStatus::Pass, {}, {}, std::string("READY, ") + std::to_string(st.freeSectors * 512 / 1000000) + " MB free"));
         } else {
-            r.gates.push_back(gate("storage.ssd", GateStatus::Warn, st.reason.empty() ? std::string(pz::ssdStateName(st.state)) : st.reason,
-                                   "this experiment does not record to the SSD yet; it is not affected", pz::ssdStateName(st.state)));
+            r.gates.push_back(gate("storage.ssd", GateStatus::Fail, st.reason.empty() ? std::string(pz::ssdStateName(st.state)) : st.reason,
+                                   "wait for the SSD to be READY, or see the SSD strip", pz::ssdStateName(st.state)));
         }
     }
 
@@ -1061,6 +1062,24 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
     }
     run.outputPath = path;
 
+    // 4b. The SSD run (#667 S2): ask pzrec for the id it will give the run, before anything is opened. The id goes into the snapshot, into RUN_ID of the
+    // bridge before ARM (the stored records carry it) and is checked against the run pzrec opens after ARM. A refusal names the SSD state.
+    pz::SsdStore* ssdRecord = nullptr;
+    if (!app::hostProcessingAvailable() && backend_.executionProvider() && backend_.ssdStore().configured()) {
+        ssdRecord = &backend_.ssdStore();
+        const auto prep = ssdRecord->prepareRun();      // bounded by pzrec's short timeout; the start already holds the coordinator for the provider's longer one
+        if (!prep.ok) {
+            state_ = ExperimentRunState::Idle;
+            result.outcome = ExperimentStartOutcome::NotReady;
+            result.message = "SSD: " + prep.why;
+            SPDLOG_ERROR("ExperimentCoordinator: {}", result.message);
+            restoreModeOnFailure();
+            publishLocked(lk, "start failed");
+            return result;
+        }
+        run.ssdRunId = prep.runId;
+    }
+
     // 5. Persistence resources.
     auto& hdf5 = backend_.hdf5();
     if (!hdf5.openFile(path)) {
@@ -1107,15 +1126,44 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
     } else if (auto* provider = backend_.executionProvider()) {
         // PL science: arm after the run's accounting started, so every frame the
         // PL reports from here on is admitted once.
-        const uint64_t runId = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
-                                                         std::chrono::system_clock::now().time_since_epoch())
-                                                         .count());
+        // An SSD run's id is the run-table id (RUN_ID of the stored records = the table's id, pz7035 #49); otherwise the start time as before.
+        const uint64_t runId = ssdRecord ? static_cast<uint64_t>(run.ssdRunId)
+                                         : static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                                     std::chrono::system_clock::now().time_since_epoch())
+                                                                     .count());
         std::string providerError;
         backend_.stopLiveResults(); // the live session (Run without a file) hands the provider to the run (G5)
         const auto profile = compilePlProfile(backend_);
         bool providerOk = profile.ok() && provider->configure(profile, &providerError);
         if (!profile.ok()) providerError = "the settings do not compile into the PL profile";
+        // Order of an SSD run: RUN_ID and the store mode with the drain bit before ARM (the provider's start), then `pzrec start` after the ARM. ARM under an
+        // open run would abort it, so the run cannot be opened first.
+        provider->setRecordToSsd(ssdRecord != nullptr);
         providerOk = providerOk && provider->start(runId, &providerError);
+        provider->setRecordToSsd(false);
+        if (providerOk && ssdRecord) {
+            pz::SsdStartArgs args;
+            args.filter = pz::SsdFilter::ValidOnly;      // the PC rule: frames with a valid cell, plus the invalid sample
+            // the same rate as the HDF5 path (default 100 = the Tauri path, 1 = every invalid-only frame): the file and the SSD run keep the same frames
+            args.samplerN = static_cast<uint32_t>(std::min<size_t>(backend_.processing().getInvalidFrameSamplingRate(), 0xFFFFFFFFu));
+            args.clientTag = static_cast<uint32_t>(run.startGeneration);
+            args.startUnixMs = run.startWallClockNs / 1'000'000ull;
+            args.clientSynced = run.wallClockSource == "client_sync";
+            std::string ssdWhy;
+            bool opened = false;
+            if (!ssdRecord->startRun(run.ssdRunId, args, &ssdWhy, &opened)) {
+                providerOk = false;
+                providerError = "SSD: " + ssdWhy;
+                provider->stop();
+                if (opened) {
+                    // pzrec opened a run we cannot use: abort it. The wait is short because this start holds the coordinator; the store keeps retrying the abort
+                    // in the background and the SSD strip shows STOPPING, then what pzrec says.
+                    ssdRecord->beginStop(/*abort=*/true);
+                    std::string abortWhy;
+                    if (!ssdRecord->waitStopped(std::chrono::seconds(2), &abortWhy)) providerError += "; the aborted run is not confirmed closed (" + abortWhy + ")";
+                }
+            }
+        }
         if (!providerOk) {
             // Roll back as for a provenance failure; the results source is a
             // start prerequisite, so the outcome is NotReady with the reason.
@@ -1341,6 +1389,11 @@ void ExperimentCoordinator::worker()
     }
 }
 
+namespace {
+// How long a finishing SSD run waits for `pzrec stop` (the store retries past it; the end is then reported as "still stopping").
+constexpr std::chrono::seconds kSsdStopDeadline{60};
+} // namespace
+
 void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, bool cancelled, bool failed,
                                            const std::string& failMessage)
 {
@@ -1364,6 +1417,14 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
 
     // PL science: stop the provider first. It delivers what the device wrote
     // before STOP, so the run's last frames are ingested before the drain.
+    // SSD run (#667 S2): close the SSD run first or at the same time? Both: `pzrec stop` (graceful: the drain finishes the records that passed, the trailer is
+    // written) starts on its own thread, the bridge STOP follows, and the end waits for pzrec under a deadline. The stop never blocks the UI (this is the
+    // coordinator's worker, the bridge reports "stopping") and it tolerates a slow or retried pzrec stop: past the deadline the run is finalised with a fault
+    // that names the SSD run, which pzrec may still be closing (the strip shows STOPPING until it has).
+    bool ssdStopOk = true;
+    std::string ssdStopWhy;
+    bool ssdStopPending = false;
+    if (run.ssdRunId != 0) backend_.ssdStore().beginStop(/*abort=*/cancelled);       // a save error of the HDF5 file does not make the SSD data bad: graceful
     if (!app::hostProcessingAvailable()) {
         if (auto* provider = backend_.executionProvider()) {
             provider->stop();
@@ -1374,8 +1435,16 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
                         st.sequenceGaps, st.overruns);
         }
     }
+    if (run.ssdRunId != 0) {
+        ssdStopOk = backend_.ssdStore().waitStopped(kSsdStopDeadline, &ssdStopWhy, &ssdStopPending);
+        if (!ssdStopOk) {
+            SPDLOG_ERROR("ExperimentCoordinator: SSD run {} {}: {}", run.ssdRunId, ssdStopPending ? "is still stopping" : "was not confirmed closed", ssdStopWhy);
+        } else {
+            SPDLOG_INFO("ExperimentCoordinator: SSD run {} closed", run.ssdRunId);
+        }
+    }
 
-    bool ok = true;
+    bool ok = ssdStopOk;
     bool flushOk = true;
     const bool fileOpen = hdf5.isFileOpen();
     // 2. Drain the async write queue (writer thread stopped afterwards).
@@ -1521,6 +1590,13 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
             ++faultRevision_;
             faultCode_ = "experiment.provenanceFailed";
             faultMessage_ = "mandatory metadata/processing-core provenance could not be saved for the last run";
+        } else if (!ssdStopOk) {
+            faultActive_ = true;
+            ++faultRevision_;
+            faultCode_ = "experiment.ssdStopFailed";
+            faultMessage_ = std::string("SSD run ") + std::to_string(run.ssdRunId) +
+                            (ssdStopPending ? " is still stopping; the SSD strip shows when it is closed" : " was not confirmed closed") +
+                            (ssdStopWhy.empty() ? std::string() : ": " + ssdStopWhy);
         }
     }
     state_ = (failed || !ok) ? ExperimentRunState::Failed : ExperimentRunState::Idle;

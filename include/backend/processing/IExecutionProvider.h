@@ -88,6 +88,9 @@ public:
     virtual void setSink(Sink sink) = 0;
     // Commit a compiled profile (page + E-modulus table) while stopped (S2).
     virtual bool configure(const pz::CompiledProfile& profile, std::string* error) = 0;
+    // The next start() is an SSD run (#667 S2): the store is armed with the drain bit (before ARM, ring programmed as for ring-only) and `runId` is the run-table id.
+    // A provider without a store ignores it. Cleared by the caller for ring-only runs; start() consumes nothing.
+    virtual void setRecordToSsd(bool) {}
     virtual bool start(uint64_t runId, std::string* error) = 0;
     virtual void stop() = 0;
     virtual ProviderStatus status() const = 0;

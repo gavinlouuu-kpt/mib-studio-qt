@@ -316,6 +316,8 @@ S1 can be built and tested against the fake before any new PL image exists. Noth
 
 **S1 status (2026-10-09):** built against `libpzrec`/`pzrec` on a file-backed fake disk (bridge ABI 35, `SsdStore`, strip, read-only Recordings list, informational `storage.ssd` gate); see `knowledge_map/current-state/recent/2026-10-09-ssd-s1-store.md`. The gate becomes blocking with S2.
 
+**S2 status (2026-10-10):** experiment start/stop record to the SSD through `pzrec` (run-id plan, DRAIN store mode, async tolerant stop), no bridge ABI change; see `knowledge_map/current-state/recent/2026-10-10-ssd-s2-record.md`. `experiment_start storage=ssd` is not added: an experiment records to the SSD whenever one is configured. The idle option (`keep_recording`) and the "Record to SSD" label are later.
+
 ## Alignment with the board owner's design (pz7035 `docs/SSD_RECORDING_DESIGN.md`, 15603ac9)
 
 The board owner's note settles the interface; where it differs from the requirements above, it wins:
