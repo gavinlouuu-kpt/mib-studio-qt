@@ -82,6 +82,13 @@ describe("the storage strip", () => {
     expect(stripView(open(0)).text).toBe("SSD recording run 2 · stored 1,000 · empty skipped 3,900 · dropped 0");
     expect(stripView(status({ state: "RECORDING", active: true, open_run: null })).text).toBe("SSD recording");
   });
+  it("a stopping run shows the elapsed time and the stop bound", () => {
+    const stopping = status({ state: "STOPPING", active: true, open_run: null });
+    expect(stripView(stopping).text).toBe("SSD writing the last records");
+    expect(stripView(stopping).detail).toContain("up to about 8 s");
+    expect(stripView(stopping, 0.4).text).toBe("SSD writing the last records");
+    expect(stripView(stopping, 3.7).text).toBe("SSD writing the last records · 3 s");
+  });
   it("a recovery is never hidden once the SSD is ready again", () => {
     const v = stripView(status({ recovered_runs: 2, recovered_ids: [4, 5] }));
     expect(v.detail).toBe("Recovered after power loss: runs 4, 5 closed, true totals unknown.");
