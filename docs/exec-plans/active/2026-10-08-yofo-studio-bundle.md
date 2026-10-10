@@ -71,3 +71,5 @@ size and the boot arg are changed together, in a new bundle.
 `PZ_PZREC_COMMIT` (results14, #667) puts the board owner's `pzrec` CLI (pz7035 `tools/pzrec`) in the bundle as `tools/pzrec` (armv7): built from that commit with `YOFO_SDK`, or taken from `PZ_PZREC` (a prebuilt 32-bit ARM ELF, anything else is refused). BUILD_INFO gets `pzrec: <commit> (tools/pzrec, armv7, md5 ...)` and MD5SUMS lists the binary. The unit gets no `MIB_PZREC` / `MIB_SSD_IMAGE`: Studio stays without an SSD until that is decided.
 
 `PZ_SSD_BOUNCE` (with `PZ_SSD_BOUNCE_BYTES`, default 1 MiB, 4 KiB aligned) records the PL's SSD bounce buffer in BUILD_INFO (`ssd bounce: 0x2D000000 (1 MiB)`). The assembly refuses an address inside Linux's RAM (the `mem=` end) or one that overlaps the frame ring (the ring base, or the 0x3F000000 ceiling without a ring).
+
+`PZ_PZBLK_KO` (with `PZ_PZBLK_MD5`, checked) ships the SSD block-device module as `modules/pzblk.ko` (32-bit ARM ELF, listed in MD5SUMS, kernel vermagic in BUILD_INFO). The unit never loads it: the board owner loads it by hand in the bring-up.

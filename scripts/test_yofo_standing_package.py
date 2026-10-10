@@ -211,6 +211,31 @@ def check_bundle(check) -> None:
         plain = asm({})
         check(plain.returncode == 0 and not (pkg / "tools" / "pzrec").exists() and "pzrec:" not in (pkg / "BUILD_INFO").read_text(), "without PZ_PZREC_COMMIT the bundle carries no pzrec")
 
+        # pzblk.ko (results14): a file in modules/, listed in MD5SUMS, named in BUILD_INFO, never in the unit.
+        ko = Path(tmp) / "pzblk.ko"
+        ko.write_bytes(b"\x7fELF\x01\x01\x01" + bytes(9) + b"\x01\x00\x28\x00" + b"module")
+        import hashlib as _h
+        ko_md5 = _h.md5(ko.read_bytes()).hexdigest()
+        fresh()
+        withko = asm({"PZ_PZBLK_KO": str(ko), "PZ_PZBLK_MD5": ko_md5})
+        info = (pkg / "BUILD_INFO").read_text()
+        listed = {line.split(None, 1)[1] for line in (pkg / "MD5SUMS").read_text().splitlines()}
+        check(withko.returncode == 0 and (pkg / "modules" / "pzblk.ko").read_bytes() == ko.read_bytes() and "modules/pzblk.ko" in listed,
+              f"pzblk.ko is shipped in modules/ and listed in MD5SUMS: {withko.stderr}")
+        check(f"module: modules/pzblk.ko md5 {ko_md5}" in info and "NOT loaded by the unit" in info, "BUILD_INFO names the module and says it is not auto-loaded")
+        check("pzblk" not in (pkg / "yofo-studio.service").read_text() and "insmod" not in (pkg / "yofo-studio.service").read_text(), "the unit does not load the module")
+        fresh()
+        badmd5 = asm({"PZ_PZBLK_KO": str(ko), "PZ_PZBLK_MD5": "0" * 32})
+        check(badmd5.returncode != 0 and "pzblk.ko md5" in badmd5.stderr, "a wrong pzblk.ko md5 is refused")
+        notelf = Path(tmp) / "notelf.ko"
+        notelf.write_bytes(b"not a module")
+        fresh()
+        bad = asm({"PZ_PZBLK_KO": str(notelf)})
+        check(bad.returncode != 0 and "not a 32-bit ARM ELF" in bad.stderr, "a file that is not an ARM ELF module is refused")
+        fresh()
+        none = asm({})
+        check(none.returncode == 0 and not (pkg / "modules").exists() and "module:" not in (pkg / "BUILD_INFO").read_text(), "without PZ_PZBLK_KO there is no modules/")
+
         # A core.json of another image is refused.
         fresh()
         (Path(env["PZ7035_REPO"]) / "build" / "pz_live_test" / "core.json").write_text(
