@@ -181,7 +181,7 @@ private:
     mutable std::mutex stopMutex_;
     std::condition_variable stopCv_;
     std::thread stopThread_;
-    std::atomic<bool> stopRunning_{false}, shuttingDown_{false};
+    std::atomic<bool> stopRunning_{false}, shuttingDown_{false}, stopFailed_{false};
     bool stopDone_{false}, stopOk_{false};
     std::string stopWhy_;
     uint32_t openedRunId_{0};            // guarded by m_

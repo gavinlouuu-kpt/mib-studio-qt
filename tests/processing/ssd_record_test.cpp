@@ -280,24 +280,27 @@ int main(int argc, char** argv) {
         MIB_EXPECT(std::chrono::steady_clock::now() - t1 < milliseconds(2000), "shutdown cancels the retry backoff");
     }
 
-    // --- while Studio's own run is open a failing status is not WEDGED -----------------------------------------
+    // --- while Studio's own run is open pzrec is not called at all (the PL's gate holds the disk back) ----------
     {
         FakeRecorder* dev = nullptr;
         auto store = storeOver(dev);
         std::string why;
         auto p = store->prepareRun();
         MIB_REQUIRE(store->startRun(p.runId, args(), &why), why);
+        dev->statusCalls = 0;
         dev->statusError = "pzrec status exited with 1: cannot read the disk: the block path is held back";
-        store->refresh(true);
+        for (int i = 0; i < 5; ++i) store->refresh(true);
+        (void)store->status();
+        MIB_EXPECT(dev->statusCalls == 0, "no pzrec status during the run");
         const auto st = store->status();
-        MIB_EXPECT(st.state == pz::SsdState::Recording && st.reason.find("counters unavailable") != std::string::npos, "RECORDING without counters, with the reason: " + st.reason);
-        MIB_EXPECT(!st.ok() || st.state == pz::SsdState::Recording, "never READY");
-        // the run ended by itself (limit): pzrec says READY with no open run
+        MIB_EXPECT(st.state == pz::SsdState::Recording && st.openRunId == p.runId && st.reason.find("not read while the run is active") != std::string::npos,
+                   "RECORDING with the run Studio opened and the reason there are no counters: " + st.reason);
+        MIB_EXPECT(!store->prepareRun().ok && store->openedRunId() == p.runId && dev->stopCalls == 0, "a prepare during a run refuses and does not stop it");
+        // after the stop the disk is read again
         dev->statusError.clear();
-        dev->open = false;
-        dev->state = "READY";
-        store->refresh(true);
-        MIB_EXPECT(store->status().state == pz::SsdState::Ready && store->openedRunId() == 0, "an ended run is forgotten");
+        store->beginStop();
+        MIB_REQUIRE(store->waitStopped(milliseconds(5000), &why), why);
+        MIB_EXPECT(store->status().state == pz::SsdState::Ready && dev->statusCalls > 0, "READY after the stop, read from pzrec");
     }
 
     // --- the real pzrec on a fake disk ----------------------------------------------------------------------------

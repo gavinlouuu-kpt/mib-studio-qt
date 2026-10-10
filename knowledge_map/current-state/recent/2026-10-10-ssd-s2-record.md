@@ -15,7 +15,9 @@ the bridge STOP follows at once, and the run's end waits up to 60 s for pzrec. T
 (`experiment.ssdStopFailed`, "SSD run N is still stopping / was not confirmed closed") and the next `prepareRun` closes the stuck run before refusing. A user cancel aborts (reason 8);
 a save error of the HDF5 file stops gracefully, the SSD data is not bad.
 
-Honesty while recording: pzrec cannot open the disk at 5 kHz (the block path is held back), so a failing `status` during Studio's own run keeps the state RECORDING with "live counters
-unavailable: ..." instead of WEDGED, never READY. Every pzrec call is serialised on one mutex; a periodic refresh skips its turn while a start or stop owns the device.
+Honesty while recording: while a run is active the PL's admission gate holds back every disk read and write (`pzrec status`, `runs`, `delete`, a second `start`; RTL answer, 2026-10-10),
+so `SsdStore` does not call pzrec at all during Studio's own run (not even to be refused): the state is RECORDING with the run Studio opened, "live counters are not read while the run is
+active", never READY. Live counters need a window-only read (`pzrec snapshot` still opens the disk) and are a follow-up. Disk reads resume after the stop. Every pzrec call is serialised on one
+mutex; a periodic refresh skips its turn while a start or stop owns the device. The gap between the ARM and `pzrec start` is not a problem (the feeder decides records only after START).
 Tests: `ssd_record_test` (scripted pzrec + the real CLI via `MIB_PZREC`), `ssd_experiment_test` (the lifecycle on the real CLI's simulated drain, refusals, mismatch, failing stop),
-`pz_frame_ring_test` (0x601). Not tested without the board: the drain bit on the PL, `pzrec start` right after the ARM at 5 kHz (the block path may already be held back), the real stop time.
+`pz_frame_ring_test` (0x601). Not tested without the board: the drain bit on the PL and the real stop time (`pzrec start` right after the ARM at 5 kHz is what slot F did).

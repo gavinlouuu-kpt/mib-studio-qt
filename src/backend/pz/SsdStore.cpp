@@ -445,6 +445,18 @@ void SsdStore::refresh(bool force) {
     if (!device_) return;
     {
         std::lock_guard<std::mutex> lock(m_);
+        if (openedRunId_ != 0 && !stopRunning_) {
+            // Studio's own run is open: while a run is active the PL's admission gate holds back every read and write of the disk (`pzrec status`, `runs`,
+            // `delete`, a second `start`; board owner, 2026-10-10), so pzrec is not called at all, not even to be refused. The state is RECORDING with the
+            // run Studio opened; the live counters need a window-only read (`snapshot`), which the CLI does not offer yet. Never READY.
+            status_.state = SsdState::Recording;
+            status_.openRun = true;
+            status_.openRunId = openedRunId_;
+            status_.reason = "Recording; live counters are not read while the run is active (the disk is held back)";
+            haveStatus_ = true;
+            statusAt_ = std::chrono::steady_clock::now();
+            return;
+        }
         if (!force && haveStatus_ && std::chrono::steady_clock::now() - statusAt_ < interval_) return;
     }
     // The pzrec calls run without the lock held: a slow child never blocks status() readers. They are serialised on deviceMutex_: a start or a stop in
@@ -456,18 +468,9 @@ void SsdStore::refresh(bool force) {
     std::string text, error;
     const bool ok = device_->status(text, &error) && parseSsdStatus(text, s, &error);
     if (!ok) {
-        const bool recordingByUs = [&] { std::lock_guard<std::mutex> lock(m_); return openedRunId_ != 0; }();
         s = SsdStatus{};
-        if (recordingByUs) {
-            // While Studio's own run is open the block path is held back (pzrec cannot open the disk at 5 kHz), so a failed status says nothing about the
-            // drive: the state stays RECORDING, without counters, and says why. It is never READY.
-            s.state = SsdState::Recording;
-            s.openRun = true;
-            s.reason = "Recording; live counters unavailable: " + error;
-        } else {
-            s.state = SsdState::Wedged;
-            s.reason = "SSD not responding: " + error;
-        }
+        s.state = SsdState::Wedged;
+        s.reason = "SSD not responding: " + error;
     } else {
         s.reason = reasonFor(s.state);
     }
@@ -491,12 +494,7 @@ void SsdStore::refresh(bool force) {
     status_ = std::move(s);
     haveStatus_ = true;
     statusAt_ = std::chrono::steady_clock::now();
-    if (ok && openedRunId_ != 0 && !status_.openRun && status_.state == SsdState::Ready && !stopRunning_) {
-        openedRunId_ = 0;       // the run ended by itself (limit, drain fault): pzrec says READY with no open run
-    }
-    if (!ok && status_.state == SsdState::Recording) {
-        // keep the last run table: nothing new can be read until the run is closed
-    } else if (!ok || status_.state == SsdState::Unformatted || status_.state == SsdState::Initialising || status_.state == SsdState::Wedged ||
+    if (!ok || status_.state == SsdState::Unformatted || status_.state == SsdState::Initialising || status_.state == SsdState::Wedged ||
         status_.state == SsdState::Absent) {
         runs_.clear();
         haveRuns_ = false;
@@ -568,10 +566,15 @@ SsdStore::Prepared SsdStore::prepareRun() {
         return p;
     }
     if (const uint32_t open = openedRunId(); open != 0) {
-        // A run this Studio opened was never confirmed closed (its stop failed every attempt): try again now instead of leaving the SSD stuck.
-        beginStop(false);
-        p.state = SsdState::Stopping;
-        p.why = "the previous SSD run " + std::to_string(open) + " was not confirmed closed: closing it now, try again in a moment";
+        p.state = SsdState::Recording;
+        if (stopFailed_) {
+            // A run this Studio opened was never confirmed closed (its stop failed every attempt): try again now instead of leaving the SSD stuck.
+            beginStop(false);
+            p.state = SsdState::Stopping;
+            p.why = "the previous SSD run " + std::to_string(open) + " was not confirmed closed: closing it now, try again in a moment";
+        } else {
+            p.why = "SSD run " + std::to_string(open) + " is open (RECORDING)";
+        }
         return p;
     }
     refresh(true);      // a fresh answer under the device's short timeout: the cached state may be a second old
@@ -655,6 +658,7 @@ void SsdStore::beginStop(bool abort) {
     if (stopRunning_) return;
     if (stopThread_.joinable()) stopThread_.join();     // a finished earlier attempt
     stopRunning_ = true;
+    stopFailed_ = false;
     stopDone_ = false;
     stopOk_ = false;
     stopWhy_.clear();
@@ -692,6 +696,7 @@ void SsdStore::stopWorker(bool abort) {
     }
     std::lock_guard<std::mutex> lock(stopMutex_);
     stopOk_ = ok;
+    stopFailed_ = !ok;
     stopWhy_ = ok ? std::string() : (why.empty() ? std::string("pzrec stop did not finish") : why);
     stopDone_ = true;
     stopRunning_ = false;
