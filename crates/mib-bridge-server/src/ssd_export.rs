@@ -8,13 +8,14 @@
 //! no Start in progress), released only after the reader has exited. While it is held Studio refuses to start a run and does not poll pzrec. A completed download is
 //! verified, not assumed: pzrec's own byte count (`--summary` on stderr), the bytes sent and `records x 59,392` must agree and the exit code must be 0, otherwise the
 //! response ends with an error (the body is shorter than its `Content-Length`, so the client sees an aborted transfer, never a 200 that looks complete) and the route
-//! logs why. A client that goes away, or a reader that goes quiet, gets SIGTERM, then SIGKILL; pzrec stops between two disk commands, so on the bounce path the
-//! lease is held up to one block command (about 25 s) after a cancel (a pzblk-backed IMG could wait up to the driver's 30 min admit timeout: this bundle uses the
+//! logs why. A client that goes away, a reader that goes quiet, or a download that outlives its bound (whether or not the client still reads)
+//! gets SIGTERM, then SIGKILL, from a detached supervisor task that owns the process and releases the lease only after reaping it; pzrec stops between two disk commands, so on the
+//! bounce path the lease is held up to one block command (about 25 s) after a cancel (a pzblk-backed IMG could wait up to the driver's 30 min admit timeout: this bundle uses the
 //! bounce path). The route takes no recovery action: what the reader's open does (it may close an interrupted run) is pzrec's.
 
 use std::process::Stdio;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use axum::body::{Body, Bytes};
 use axum::extract::{Path, Query, State};
@@ -125,92 +126,121 @@ pub(crate) fn verdict(exit_code: Option<i32>, report: &ReaderReport, sent: u64, 
     }
 }
 
-/// The reader process and the lease it holds. Dropped without `finish()` (a client that went away) it is terminated and the lease released in a task.
+/// What the supervisor found when it reaped the reader.
+struct Exit {
+    code: Option<i32>,
+    stderr: String,
+    /// The supervisor ended it (SIGTERM/SIGKILL: the client went away, the time bound, a protocol error), it did not exit by itself.
+    terminated: bool,
+}
+
+/// The stream's side of one download. The process and the lease belong to `supervise()`, a detached task, so that nothing the HTTP side does (a client that vanishes, a dropped
+/// future in any phase, a client that stops reading) can leak the lease or leave the reader alive: dropping the Reader asks the supervisor to terminate the process.
 struct Reader {
-    child: Child,
     stdout: ChildStdout,
-    stderr: Option<tokio::task::JoinHandle<Vec<u8>>>,
-    lease: u64,
-    state: Arc<AppState>,
+    cancel: tokio::sync::mpsc::UnboundedSender<String>,
+    done: Option<tokio::sync::oneshot::Receiver<Exit>>,
+    verdict: Option<tokio::sync::oneshot::Sender<(u64, String)>>,
     run: u32,
     expected: u64,
     sent: u64,
-    deadline: Instant,
+}
+
+impl Drop for Reader {
+    fn drop(&mut self) {
+        // Harmless when the supervisor is past its select (the process exited by itself and the verdict is on its way).
+        let _ = self.cancel.send("the client went away".to_string());
+    }
+}
+
+/// Owns the reader process from spawn to reaping, and the lease from `ssd_export_begin` to `ssd_export_end`. The one place where the lease is released: after the process has been
+/// reaped, never before. The bound (`deadline`) is enforced here, independent of whether anyone polls the stream. If the process cannot be reaped (a reader stuck in the kernel) the
+/// lease is not released from here; the C++ side expires it (bound + kill margin) and logs it.
+#[allow(clippy::too_many_arguments)]
+async fn supervise(
+    mut child: Child,
+    mut stderr: tokio::process::ChildStderr,
+    state: Arc<AppState>,
+    lease: u64,
+    run: u32,
+    deadline: tokio::time::Instant,
+    mut cancel_rx: tokio::sync::mpsc::UnboundedReceiver<String>,
+    exit_tx: tokio::sync::oneshot::Sender<Exit>,
+    verdict_rx: tokio::sync::oneshot::Receiver<(u64, String)>,
     _permit: tokio::sync::OwnedSemaphorePermit,
+) {
+    let err_task = tokio::spawn(async move {
+        // A cap on what is kept; pzrec's per-retry lines could exceed it, then the summary may be cut: the verdict fails safe (no summary = not verified).
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            match stderr.read(&mut chunk).await {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    if buf.len() < STDERR_CAP {
+                        buf.extend_from_slice(&chunk[..n.min(STDERR_CAP - buf.len())]);
+                    }
+                }
+            }
+        }
+        buf
+    });
+    let mut why: Option<String> = None;
+    let mut status = None;
+    tokio::select! {
+        s = child.wait() => { status = s.ok(); }
+        w = cancel_rx.recv() => { why = Some(w.unwrap_or_else(|| "the stream ended".to_string())); }
+        _ = tokio::time::sleep_until(deadline) => { why = Some("the download exceeded its time bound".to_string()); }
+    }
+    if why.is_some() {
+        if let Some(pid) = child.id() {
+            // pzrec ends between two disk commands on SIGTERM (exit 3)
+            unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+        }
+        match tokio::time::timeout(bound("MIB_SSD_EXPORT_TERM_GRACE_MS", TERM_GRACE_MS), child.wait()).await {
+            Ok(Ok(s)) => status = Some(s),
+            _ => {
+                let _ = child.start_kill();
+                if let Ok(Ok(s)) = tokio::time::timeout(KILL_WAIT, child.wait()).await {
+                    status = Some(s);
+                }
+            }
+        }
+    }
+    let reaped = status.is_some();
+    let text = match tokio::time::timeout(Duration::from_secs(5), err_task).await {
+        Ok(Ok(bytes)) => String::from_utf8_lossy(&bytes).into_owned(),
+        _ => String::new(),
+    };
+    let report = parse_stderr(&text);
+    let code = status.and_then(|s| s.code());
+    let _ = exit_tx.send(Exit { code, stderr: text, terminated: why.is_some() });
+    if !reaped {
+        eprintln!("ssd export: run {run}: the reader (lease {lease}) could not be reaped after SIGKILL; the lease is not released from here, it expires by itself");
+        return;
+    }
+    let (sent, outcome) = match &why {
+        Some(w) => {
+            eprintln!("ssd export: run {run} reader terminated ({w}); pzrec said: {}", report.raw);
+            (0, format!("terminated: {w}"))
+        }
+        None => match tokio::time::timeout(Duration::from_secs(120), verdict_rx).await {
+            Ok(Ok(v)) => v,
+            _ => (0, "the stream gave no verdict".to_string()),
+        },
+    };
+    let r = tokio::task::spawn_blocking(move || mib_app_commands::ssd_export_end(&state, lease, sent, &outcome)).await;
+    if !matches!(r, Ok(Ok(()))) {
+        eprintln!("ssd export: lease {lease} of run {run} could not be released: {r:?}");
+    }
 }
 
 impl Reader {
-    async fn stderr_text(&mut self) -> String {
-        match self.stderr.take() {
-            Some(h) => String::from_utf8_lossy(&tokio::time::timeout(Duration::from_secs(5), h).await.ok().and_then(Result::ok).unwrap_or_default()).into_owned(),
-            None => String::new(),
-        }
-    }
-
-    async fn release(&self, outcome: String) {
-        let (state, lease, sent) = (self.state.clone(), self.lease, self.sent);
-        let run = self.run;
-        let r = tokio::task::spawn_blocking(move || mib_app_commands::ssd_export_end(&state, lease, sent, &outcome)).await;
-        if !matches!(r, Ok(Ok(()))) {
-            eprintln!("ssd export: lease {lease} of run {run} could not be released: {r:?}");
-        }
-    }
-
-    /// SIGTERM, then SIGKILL; the lease is released after the process has exited.
-    async fn terminate(mut self, why: &str) -> ReaderReport {
-        if let Some(pid) = self.child.id() {
-            // pzrec stops between two disk commands on SIGTERM (exit 3)
-            unsafe { libc::kill(pid as i32, libc::SIGTERM) };
-        }
-        let waited = tokio::time::timeout(bound("MIB_SSD_EXPORT_TERM_GRACE_MS", TERM_GRACE_MS), self.child.wait()).await;
-        if waited.is_err() {
-            let _ = self.child.start_kill();
-            let _ = tokio::time::timeout(KILL_WAIT, self.child.wait()).await;
-        }
-        let report = parse_stderr(&self.stderr_text().await);
-        eprintln!(
-            "ssd export: run {} reader terminated ({why}) after {} of {} bytes; pzrec said: {}",
-            self.run, self.sent, self.expected, report.raw
-        );
-        self.release(format!("terminated: {why}")).await;
-        report
-    }
-
-    /// stdout has ended: wait for the exit, read pzrec's last words, judge, release.
-    async fn finish(mut self) -> Result<(), String> {
-        let status = match tokio::time::timeout(EXIT_WAIT, self.child.wait()).await {
-            Ok(Ok(s)) => Some(s),
-            _ => {
-                let _ = self.child.start_kill();
-                let _ = tokio::time::timeout(KILL_WAIT, self.child.wait()).await;
-                None
-            }
-        };
-        let code = status.and_then(|s| s.code());
-        let report = parse_stderr(&self.stderr_text().await);
-        let result = verdict(code, &report, self.sent, self.expected);
-        match &result {
-            Ok(()) => eprintln!("ssd export: run {} sent {} bytes, verified against pzrec's summary", self.run, self.sent),
-            Err(e) => eprintln!("ssd export: run {} FAILED: {e}", self.run),
-        }
-        self.release(match &result {
-            Ok(()) => "complete".to_string(),
-            Err(e) => format!("failed: {e}"),
-        })
-        .await;
-        result
-    }
-
-    /// The next piece of stdout, bounded by the idle timeout and the lease bound. `Ok(None)` is the end of the stream.
+    /// The next piece of stdout, bounded by the idle timeout (the time bound of the whole download is the supervisor's). `Ok(None)` is the end of the stream.
     async fn read_chunk(&mut self) -> Result<Option<Bytes>, String> {
-        let left = self.deadline.saturating_duration_since(Instant::now());
-        if left.is_zero() {
-            return Err("the download exceeded its time bound".to_string());
-        }
         let mut buf = vec![0u8; CHUNK];
-        let idle = bound("MIB_SSD_EXPORT_IDLE_MS", IDLE_TIMEOUT_MS);
-        match tokio::time::timeout(idle.min(left), self.stdout.read(&mut buf)).await {
-            Err(_) => Err(if left < idle { "the download exceeded its time bound".to_string() } else { "the reader went quiet".to_string() }),
+        match tokio::time::timeout(bound("MIB_SSD_EXPORT_IDLE_MS", IDLE_TIMEOUT_MS), self.stdout.read(&mut buf)).await {
+            Err(_) => Err("the reader went quiet".to_string()),
             Ok(Err(e)) => Err(format!("reading the reader's output failed: {e}")),
             Ok(Ok(0)) => Ok(None),
             Ok(Ok(n)) => {
@@ -219,25 +249,47 @@ impl Reader {
             }
         }
     }
-}
 
-/// The stream's owner: dropped while the reader is still live (the client went away) it terminates the reader and releases the lease in a task.
-struct Guard(Option<Reader>);
+    /// Ask the supervisor to terminate the process and wait (bounded) until it has been reaped: what pzrec said. The supervisor releases the lease.
+    async fn terminate(mut self, why: &str) -> ReaderReport {
+        let _ = self.cancel.send(why.to_string());
+        let bound_all = bound("MIB_SSD_EXPORT_TERM_GRACE_MS", TERM_GRACE_MS) + KILL_WAIT + Duration::from_secs(8);
+        let exit = match self.done.take() {
+            Some(rx) => tokio::time::timeout(bound_all, rx).await.ok().and_then(Result::ok),
+            None => None,
+        };
+        let report = exit.map(|e| parse_stderr(&e.stderr)).unwrap_or_default();
+        eprintln!("ssd export: run {} download ended: {why} (after {} of {} bytes)", self.run, self.sent, self.expected);
+        report
+    }
 
-impl Drop for Guard {
-    fn drop(&mut self) {
-        if let Some(reader) = self.0.take() {
-            if let Ok(handle) = tokio::runtime::Handle::try_current() {
-                handle.spawn(async move {
-                    reader.terminate("client disconnected").await;
-                });
+    /// stdout has ended: wait for the exit, judge, hand the verdict to the supervisor (which releases the lease).
+    async fn finish(mut self) -> Result<(), String> {
+        let Some(mut rx) = self.done.take() else { return Err("the reader's exit was not observed".to_string()) };
+        let exit = match tokio::time::timeout(EXIT_WAIT, &mut rx).await {
+            Ok(r) => r.ok(),
+            Err(_) => {
+                let _ = self.cancel.send("the reader did not exit after its output ended".to_string());
+                let bound_all = bound("MIB_SSD_EXPORT_TERM_GRACE_MS", TERM_GRACE_MS) + KILL_WAIT + Duration::from_secs(8);
+                tokio::time::timeout(bound_all, rx).await.ok().and_then(Result::ok)
             }
+        };
+        let Some(exit) = exit else { return Err("the reader could not be stopped".to_string()) };
+        let report = parse_stderr(&exit.stderr);
+        let result = if exit.terminated { Err(format!("the reader had to be terminated: {}", report.raw)) } else { verdict(exit.code, &report, self.sent, self.expected) };
+        match &result {
+            Ok(()) => eprintln!("ssd export: run {} sent {} bytes, verified against pzrec's summary", self.run, self.sent),
+            Err(e) => eprintln!("ssd export: run {} FAILED: {e}", self.run),
         }
+        if let Some(tx) = self.verdict.take() {
+            let _ = tx.send((self.sent, match &result { Ok(()) => "complete".to_string(), Err(e) => format!("failed: {e}") }));
+        }
+        result
     }
 }
 
 struct Flow {
-    guard: Guard,
+    reader: Option<Reader>,
     pending: Option<Bytes>,
     held: Option<Bytes>,
 }
@@ -265,7 +317,8 @@ pub(crate) async fn records(
     if let Some(refused) = files::gate(&server, &query.token, &headers) {
         return refused;
     }
-    // One download at a time (a 2-core A9 next to a 5 kHz run; the SSD has one bounce buffer). A second request is refused at once.
+    // One download at a time (a 2-core A9 next to a 5 kHz run; the SSD has one bounce buffer). A second request is refused at once. The permit is held by the supervisor until the
+    // lease is released.
     let Ok(permit) = server.ssd_export.clone().try_acquire_owned() else {
         return error_response(StatusCode::CONFLICT, json!({"error": "another export is in progress", "code": "BUSY"}));
     };
@@ -298,7 +351,7 @@ pub(crate) async fn records(
     let bytes = begin.get("bytes").and_then(Value::as_u64).unwrap_or(0);
     let max_seconds = begin.get("max_seconds").and_then(Value::as_u64).unwrap_or(120);
     let argv: Vec<String> = begin.get("argv").and_then(Value::as_array).map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
-    // Release helper for failures before a Reader exists.
+    // Release helper for failures before a supervisor exists.
     let release_now = |outcome: String| {
         let state = state.clone();
         async move {
@@ -318,52 +371,40 @@ pub(crate) async fn records(
             return error_response(StatusCode::BAD_GATEWAY, json!({"error": format!("pzrec could not be started: {e}")}));
         }
     };
-    let (Some(stdout), Some(mut stderr)) = (child.stdout.take(), child.stderr.take()) else {
+    let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
         let _ = child.start_kill();
         let _ = child.wait().await;
         release_now("no pipes".to_string()).await;
         return error_response(StatusCode::BAD_GATEWAY, json!({"error": "pzrec's pipes could not be opened"}));
     };
-    let stderr_task = tokio::spawn(async move {
-        let mut buf = Vec::new();
-        let mut chunk = [0u8; 4096];
-        loop {
-            match stderr.read(&mut chunk).await {
-                Ok(0) | Err(_) => break,
-                Ok(n) => {
-                    if buf.len() < STDERR_CAP {
-                        buf.extend_from_slice(&chunk[..n.min(STDERR_CAP - buf.len())]);
-                    }
-                }
-            }
-        }
-        buf
-    });
-    let mut reader = Reader {
-        child,
-        stdout,
-        stderr: Some(stderr_task),
-        lease,
-        state: state.clone(),
-        run: id,
-        expected: bytes,
-        sent: 0,
-        deadline: Instant::now() + Duration::from_secs(max_seconds),
-        _permit: permit,
-    };
+    let (cancel_tx, cancel_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (exit_tx, exit_rx) = tokio::sync::oneshot::channel();
+    let (verdict_tx, verdict_rx) = tokio::sync::oneshot::channel();
+    // The reader's own time bound (the lease outlives it by the kill margin): a test can shorten it.
+    let max_ms = bound("MIB_SSD_EXPORT_MAX_MS", max_seconds.saturating_mul(1000)).min(Duration::from_secs(max_seconds));
+    tokio::spawn(supervise(child, stderr, state.clone(), lease, id, tokio::time::Instant::now() + max_ms, cancel_rx, exit_tx, verdict_rx, permit));
+    let mut reader = Reader { stdout, cancel: cancel_tx, done: Some(exit_rx), verdict: Some(verdict_tx), run: id, expected: bytes, sent: 0 };
     // The first chunk before any status: a reader that is refused (a run became active, no such run, an IO error in the open) ends before one byte, and
-    // then the response can carry pzrec's own error with the right status instead of a 200 and a broken body.
-    let first = reader.read_chunk().await;
-    let first = match first {
+    // then the response can carry pzrec's own error with the right status instead of a 200 and a broken body. If this future is dropped here the Reader's Drop
+    // makes the supervisor terminate the process and release the lease.
+    let first = match reader.read_chunk().await {
         Ok(Some(chunk)) => chunk,
         Ok(None) => {
             // EOF before a byte: pzrec's last words say why
-            let status = reader.child.wait().await.ok().and_then(|s| s.code());
-            let report = parse_stderr(&reader.stderr_text().await);
+            let exit = match reader.done.take() {
+                Some(rx) => tokio::time::timeout(EXIT_WAIT, rx).await.ok().and_then(Result::ok),
+                None => None,
+            };
+            let (status, report) = match &exit {
+                Some(e) => (e.code, parse_stderr(&e.stderr)),
+                None => (None, ReaderReport::default()),
+            };
             let http = if status == Some(0) { StatusCode::BAD_GATEWAY } else { status_for_reader(&report) };
             let message = report.error.clone().unwrap_or_else(|| "pzrec read produced no data".to_string());
             eprintln!("ssd export: run {id} reader ended before any data (exit {status:?}): {}", report.raw);
-            reader.release(format!("no data: {message}")).await;
+            if let Some(tx) = reader.verdict.take() {
+                let _ = tx.send((0, format!("no data: {message}")));
+            }
             return error_response(
                 http,
                 json!({"error": message, "pzrec": {"name": report.name, "code": report.code, "exit_code": status, "stderr": report.raw}, "bytes_sent": 0}),
@@ -385,19 +426,19 @@ pub(crate) async fn records(
     // The last byte of the body is held back until the reader has exited and the counts agree: a download whose end is bad (pzrec exits 1 after its last
     // record, its summary disagrees) is then short of its Content-Length, an aborted transfer, and cannot pass for a whole one.
     let (first, held) = withhold(first, reader.sent, reader.expected);
-    let flow = Flow { guard: Guard(Some(reader)), pending: Some(first), held };
+    let flow = Flow { reader: Some(reader), pending: Some(first), held };
     let stream = futures_util::stream::unfold(Some(flow), |flow| async move {
         let mut flow = flow?;
         if let Some(chunk) = flow.pending.take() {
             return Some((Ok::<Bytes, std::io::Error>(chunk), Some(flow)));
         }
         loop {
-            let reader = flow.guard.0.as_mut()?;
+            let reader = flow.reader.as_mut()?;
             match reader.read_chunk().await {
                 Ok(Some(chunk)) => {
                     reader.sent += chunk.len() as u64;
                     if reader.sent > reader.expected {
-                        let reader = flow.guard.0.take()?;
+                        let reader = flow.reader.take()?;
                         let report = reader.terminate("more data than the run holds").await;
                         return Some((Err(io_error(format!("the reader sent more than the run holds: {}", report.raw))), None));
                     }
@@ -410,14 +451,14 @@ pub(crate) async fn records(
                     }
                 }
                 Ok(None) => {
-                    let reader = flow.guard.0.take()?;
+                    let reader = flow.reader.take()?;
                     return match reader.finish().await {
                         Ok(()) => flow.held.take().map(|last| (Ok(last), None)),
                         Err(e) => Some((Err(io_error(e)), None)),
                     };
                 }
                 Err(why) => {
-                    let reader = flow.guard.0.take()?;
+                    let reader = flow.reader.take()?;
                     let report = reader.terminate(&why).await;
                     return Some((Err(io_error(format!("{why}: {}", report.raw))), None));
                 }

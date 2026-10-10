@@ -8,7 +8,7 @@ records in order. The S1 runs listing stays the index; `?from=` and `?count=` se
 **Idle only, two ways.** `ssd_export_begin` takes one lease for the whole download (before `pzrec read` is spawned, released after it has exited). It refuses (503 `BUSY`) while anything
 records or is armed: Studio's own run, a Start in progress (`prepareRun` .. `startRun`), STOPPING, an open run, or a drain window that is not IDLE (`pzrec snapshot --window-only`, registers only,
 no disk; a window that cannot be read refuses too). And while the lease is held `prepareRun` and the `storage.ssd` gate refuse with "export in progress", `refresh()` stands down (no pzrec call
-beside the reader). One lease at a time (a second request is 409 at once); a lease also expires on its own (`max_seconds` = 2 × 25 s + 35 s + bytes / 5 MB/s, after the reader must be dead).
+beside the reader). One lease at a time (a second request is 409 at once); a lease also expires on its own so a crashed caller cannot hold the SSD for ever: `max_seconds` = 2 × 25 s + 35 s + bytes / 5 MB/s is the reader's time bound, enforced by a detached supervisor task in the route whether or not the client still reads, and the lease outlives it by 60 s (SIGTERM grace 35 s + SIGKILL wait 10 s + margin), so it cannot expire while the reader is still alive.
 If a run starts behind a download anyway, `pzrec read` ends with ACTIVE and the response ends as an error.
 
 **Verified, never silently short.** The route reads the first chunk before it answers, so a refusal before any byte (ACTIVE, HW, NO_SUCH_RUN, RUN_DELETED, ARGS, IO, BAD_STATE/WEDGED) is a proper
@@ -17,12 +17,11 @@ route takes no recovery action. After the first byte a failure can only end the 
 otherwise the response is aborted and the reason (code, name, bytes) is logged and put in the lease's release line. The **last byte of the body is held back** until that verdict, so even a
 failure after the last record leaves the client short of its `Content-Length`. A reader quiet for 90 s, or beyond the lease bound, is terminated (504 before the first byte).
 
-**Cancellation bound.** A client that disconnects gets its reader SIGTERM (pzrec ends between two disk commands with exit 3), then SIGKILL after 35 s; the lease is released only after the
-process has exited. On the bounce path (this bundle) pzrec stops after at most one block command, about 25 s; a pzblk-backed IMG could wait up to the driver's 30 min admit timeout. Until then
+**Cancellation bound.** A client that disconnects (in any phase, also before the first byte or while the reader is being terminated), a client that stops reading, and a download that outlives its bound all end the same way: the supervisor task that owns the process sends SIGTERM (pzrec ends between two disk commands with exit 3), then SIGKILL after 35 s, and releases the lease only after the process has been reaped (a reader stuck in the kernel keeps the lease until the C++ expiry, which logs it). On the bounce path (this bundle) pzrec stops after at most one block command, about 25 s; a pzblk-backed IMG could wait up to the driver's 30 min admit timeout. Until then
 Studio refuses a new Start ("export in progress").
 
 **Bridge ABI 36**, two additive commands, called only by this route (not in the WebSocket table): `ssd_export_begin {run, from, count}` → `{ok, lease, run_id, records, bytes, max_seconds, argv}`
 or `{ok: false, code, reason}` (`code`: BUSY, UNAVAILABLE, NO_SUCH_RUN, RUN_DELETED, NOT_OFFERED, BAD_RANGE; argv is a vector, no shell string), and `ssd_export_end {lease, bytes_sent, outcome}`
 (idempotent). Tests: `ssd_record_test` (lease, both orders, window states, expiry, ranges), `crates/mib-bridge-server/tests/ssd_export.rs` (a fake pzrec behind the real route: streaming,
 gate, refusals, every pzrec code, failure inside a record, counts that disagree, cancel with SIGTERM seen and lease released, SIGKILL of a reader that ignores SIGTERM, a second download refused,
-exclusion both ways), `crates/mib-bridge/tests/contract.rs`. Not tested without the board: the real read rate (about 27 MB/s expected on the bounce path).
+exclusion both ways), `crates/mib-bridge/tests/contract.rs`. `ssd_export_begin` runs its pzrec calls (window, status, runs) while the bridge mutex is held, as `prepareRun` does: other bridge commands wait that long (milliseconds when pzrec answers, a few seconds when it does not). Not tested without the board: the real read rate (about 27 MB/s expected on the bounce path).

@@ -29,7 +29,7 @@ read) ;;
 *) echo "unexpected verb $verb" >&2; exit 2;;
 esac
 echo $$ > "$D/pid"
-COUNT=8; prev=
+COUNT=8; [ -f "$D/count" ] && COUNT=$(cat "$D/count"); prev=
 for a in "$@"; do [ "$prev" = --count ] && COUNT=$a; prev=$a; done
 N=$((COUNT*59392))
 emit() { head -c $1 /dev/zero | tr '\0' 'A'; }
@@ -46,6 +46,9 @@ err) echo "{\"error\":\"fake $2\",\"code\":$3,\"name\":\"$2\"}" >&2; exit 1;;
 slow) trap 'echo "{\"interrupted\":\"signal\",\"run_id\":5,\"bytes_written\":100000,\"records_written\":1}" >&2; touch "$D/terminated"; exit 3' TERM; emit 100000; while :; do sleep 0.1; done;;
 hang) trap '' TERM; emit 100000; while :; do sleep 0.1; done;;
 quiet) trap 'touch "$D/terminated"; exit 3' TERM; while :; do sleep 0.1; done;;
+steady) trap 'touch "$D/terminated"; exit 3' TERM; while :; do head -c 20000 /dev/zero | tr '\0' 'A'; sleep 0.1; done;;
+flood) exec head -c $N /dev/zero;;
+deaf) trap '' TERM; while :; do sleep 0.1; done;;
 esac
 "#;
 
@@ -122,6 +125,7 @@ async fn start(tag: &str) -> Fixture {
     std::env::set_var("MIB_PZREC_ARGS", "--hw pl");
     std::env::set_var("MIB_SSD_EXPORT_IDLE_MS", "1500");
     std::env::set_var("MIB_SSD_EXPORT_TERM_GRACE_MS", "800");
+    std::env::remove_var("MIB_SSD_EXPORT_MAX_MS");
     let fixture_files = [
         ("window", "IDLE".to_string()),
         ("status.json", status_json(false)),
@@ -422,4 +426,60 @@ async fn the_lease_and_the_route_exclude_each_other_both_ways() {
     f.set("window", "DRAINING");
     let refused = mib_app_commands::ssd_export_begin(&f.state, 5, 0, 0).unwrap();
     assert_eq!((refused["ok"].clone(), refused["code"].clone()), (Value::Bool(false), Value::String("BUSY".into())));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn a_client_that_stops_reading_cannot_hold_the_lease_past_the_bound() {
+    let f = start("stall").await;
+    f.mode("flood");
+    f.set("count", "3000");                                  // 178 MB: far more than the socket and the pipe hold
+    f.set("runs.json", &format!("[{}]", run_row(5, 3000, false, false)));
+    std::env::set_var("MIB_SSD_EXPORT_MAX_MS", "1500");
+    let mut stream = tokio::net::TcpStream::connect(f.addr).await.unwrap();
+    stream.write_all(request_text(&format!("/ssd/runs/5/records?token={TOKEN}"), &[]).as_bytes()).await.unwrap();
+    // the socket stays open and is never read: the pipe fills, nobody polls the stream
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!f.lease_free(), "held while the download runs");
+    f.wait_lease_free().await;
+    assert!(pid_gone(&f.dir).await, "the reader was terminated by the supervisor with the client still connected");
+    drop(stream);
+    std::env::remove_var("MIB_SSD_EXPORT_MAX_MS");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn a_client_that_drops_a_steady_download_is_noticed_without_the_idle_timeout() {
+    let f = start("steady").await;
+    f.mode("steady");
+    // output every 100 ms keeps the idle timeout (1.5 s) from ever firing: only the dropped stream can end this
+    let mut stream = tokio::net::TcpStream::connect(f.addr).await.unwrap();
+    stream.write_all(request_text(&format!("/ssd/runs/5/records?token={TOKEN}"), &[]).as_bytes()).await.unwrap();
+    let mut buf = vec![0u8; 8192];
+    for _ in 0..3 {
+        let n = tokio::time::timeout(Duration::from_secs(5), stream.read(&mut buf)).await.expect("data").unwrap();
+        assert!(n > 0);
+    }
+    let dropped = std::time::Instant::now();
+    drop(stream);
+    f.wait_lease_free().await;
+    assert!(dropped.elapsed() < Duration::from_millis(1400), "released in {:?}: that is the drop path, not the idle timeout", dropped.elapsed());
+    assert!(f.dir.join("terminated").exists() && pid_gone(&f.dir).await);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn a_future_dropped_while_the_reader_is_being_terminated_still_releases_the_lease() {
+    let f = start("midterm").await;
+    f.mode("deaf");                                          // ignores SIGTERM and writes nothing
+    std::env::set_var("MIB_SSD_EXPORT_IDLE_MS", "500");
+    std::env::set_var("MIB_SSD_EXPORT_TERM_GRACE_MS", "3000");
+    let mut stream = tokio::net::TcpStream::connect(f.addr).await.unwrap();
+    stream.write_all(request_text(&format!("/ssd/runs/5/records?token={TOKEN}"), &[]).as_bytes()).await.unwrap();
+    // 0.5 s idle -> the route terminates the reader and waits out the 3 s grace; the client leaves in the middle of that
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    assert!(!f.lease_free(), "still held during the grace");
+    drop(stream);
+    f.wait_lease_free().await;
+    assert!(pid_gone(&f.dir).await, "SIGKILL after the grace, though nobody was waiting for the answer");
 }

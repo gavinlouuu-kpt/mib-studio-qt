@@ -807,7 +807,7 @@ bool SsdStore::waitStopped(std::chrono::milliseconds deadline, std::string* why,
 bool SsdStore::exportHeldLocked() {
     if (exportLease_ == 0) return false;
     if (std::chrono::steady_clock::now() > exportDeadline_) {
-        SPDLOG_WARN("SsdStore: export lease {} for run {} expired after its bound without exportEnd (the caller is gone; its reader is assumed dead): released", exportLease_, exportRun_);
+        SPDLOG_WARN("SsdStore: export lease {} for run {} expired after its bound plus the kill margin without exportEnd (the caller is gone; its reader has been terminated and killed by then): released", exportLease_, exportRun_);
         exportLease_ = 0;
         return false;
     }
@@ -821,13 +821,16 @@ bool SsdStore::exportActive() {
 
 namespace {
 // How long one download may take: two bounce-path commands (about 25 s each, the bound of one block command) and a margin, plus the body at a floor rate
-// of 5 MB/s (the board owner measures the bounce path at about 27 MB/s). The caller kills its reader at the same bound.
+// of 5 MB/s (the board owner measures the bounce path at about 27 MB/s). The caller terminates its reader at this bound, independently of whether the client reads; the lease itself
+// lasts kExportKillMarginSeconds longer (SIGTERM grace, SIGKILL wait).
 uint32_t exportBoundSeconds(uint64_t bytes) {
     const uint64_t s = 2 * 25 + 35 + (bytes + 4'999'999) / 5'000'000;
     return static_cast<uint32_t>(std::min<uint64_t>(s, 24 * 3600));
 }
 } // namespace
 
+// The pzrec calls of exportBegin (window, status, runs: each up to the device timeout, plus a wait for deviceMutex_) run while the caller holds the bridge mutex (mib-app-commands),
+// as prepareRun's do: other bridge commands wait that long (milliseconds when pzrec answers, a few seconds when it does not).
 SsdStore::ExportBegin SsdStore::exportBegin(uint32_t run, uint64_t from, uint64_t count) {
     ExportBegin out;
     out.runId = run;
@@ -846,7 +849,9 @@ SsdStore::ExportBegin SsdStore::exportBegin(uint32_t run, uint64_t from, uint64_
         std::lock_guard<std::mutex> lock(m_);
         if (exportHeldLocked()) return refuse("BUSY", "another export is in progress (run " + std::to_string(exportRun_) + ")");
         if (stopRunning_) return refuse("BUSY", "the SSD run is still being stopped: wait for it to finish");
-        if (openedRunId_ != 0) return refuse("BUSY", "Studio is recording (SSD run " + std::to_string(openedRunId_) + "): download only when idle");
+        if (openedRunId_ != 0)
+            return refuse("BUSY", stopFailed_ ? "SSD run " + std::to_string(openedRunId_) + " was not confirmed closed after its stop: download only when it is"
+                                              : "Studio is recording (SSD run " + std::to_string(openedRunId_) + "): download only when idle");
         if (prepared_ && std::chrono::steady_clock::now() - preparedAt_ < std::chrono::seconds(120)) return refuse("BUSY", "an experiment is starting: download only when idle");
         prepared_ = false;
         lease = nextLease_++;
@@ -903,7 +908,7 @@ SsdStore::ExportBegin SsdStore::exportBegin(uint32_t run, uint64_t from, uint64_
         if (exportLease_ != lease) return release("BUSY", "the export lease was lost");     // expired meanwhile: not given
         exportBytes_ = records * kRecordBytes;
         out.maxSeconds = exportMaxSecondsOverride_ ? exportMaxSecondsOverride_ : exportBoundSeconds(exportBytes_);
-        exportDeadline_ = std::chrono::steady_clock::now() + std::chrono::seconds(out.maxSeconds);
+        exportDeadline_ = std::chrono::steady_clock::now() + std::chrono::seconds(out.maxSeconds + exportMarginSeconds_);
     }
     out.ok = true;
     out.lease = lease;

@@ -462,10 +462,13 @@ int main(int argc, char** argv) {
         MIB_EXPECT(tail.ok && tail.records == 100, "from alone runs to the end");
         store->exportEnd(tail.lease, 0, "test");
         // the lease expires by itself: a caller that never ends it does not hold the SSD for ever
-        store->setExportMaxSecondsForTesting(1);
+        // the lease outlives the reader's own bound by the kill margin (the reader is terminated at maxSeconds, SIGKILLed later): still held right after the bound
+        store->setExportMaxSecondsForTesting(1, 2);
         auto e = store->exportBegin(5);
         MIB_REQUIRE(e.ok && e.maxSeconds == 1, e.reason);
         std::this_thread::sleep_for(milliseconds(1300));
+        MIB_EXPECT(store->exportActive() && !store->exportBegin(5).ok, "the lease is still held after the reader's bound, during its kill margin");
+        std::this_thread::sleep_for(milliseconds(2000));
         MIB_EXPECT(!store->exportActive() && store->exportBegin(5).ok, "an expired lease is released and a new one can be taken");
     }
 
@@ -497,5 +500,5 @@ int main(int argc, char** argv) {
         std::remove((img + ".fakehw").c_str());
         std::remove((img + ".fakeparams").c_str());
     }
-    return 0;
+    return mib::test::exitCode();
 }

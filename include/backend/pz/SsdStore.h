@@ -169,8 +169,8 @@ public:
     // One lease covers the whole download: taken before the reader process is spawned (the open phase included) and released by exportEnd() after that process
     // has exited, so the periodic refresh, prepareRun and the export never touch the window and the disk (one bounce buffer) at the same time. Taking it refuses,
     // with the reason, while Studio records (own run, a Start in progress, STOPPING, a stop that failed), the window shows a run active, or another lease is held.
-    // The lease expires on its own (`maxSeconds` from the start of the download) so that a crashed caller cannot hold the SSD for ever; the caller kills its reader
-    // at the same bound.
+    // The lease expires on its own (`maxSeconds` + kExportKillMarginSeconds from the start of the download) so that a crashed caller cannot hold the SSD for ever;
+    // the caller terminates its reader at `maxSeconds` (SIGTERM, SIGKILL) whether or not the client reads, so the reader is dead when the lease expires.
     struct ExportBegin {
         bool ok{false};
         uint64_t lease{0};
@@ -190,8 +190,14 @@ public:
     bool exportActive();
     // A Start that did not reach startRun() (a failure between prepareRun and the start) calls this; after startRun() it is a no-op.
     void cancelPrepare();
-    // Tests: the lease bound, normally derived from the run's size.
-    void setExportMaxSecondsForTesting(uint32_t seconds) { exportMaxSecondsOverride_ = seconds; }
+    // The lease outlives the reader's own bound (`maxSeconds`, when the caller starts to terminate it) by this much: SIGTERM grace 35 s + SIGKILL wait 10 s + 15 s margin, so the
+    // lease cannot expire while the reader is still alive inside a block command (two disk users).
+    static constexpr uint32_t kExportKillMarginSeconds = 60;
+    // Tests: the lease bound, normally derived from the run's size, and the margin after it.
+    void setExportMaxSecondsForTesting(uint32_t seconds, uint32_t marginSeconds = kExportKillMarginSeconds) {
+        exportMaxSecondsOverride_ = seconds;
+        exportMarginSeconds_ = marginSeconds;
+    }
 private:
     void stopWorker(bool abort);
     SsdStatus statusLocked() const;
@@ -228,9 +234,9 @@ private:
     bool stopDone_{false}, stopOk_{false};
     std::string stopWhy_;
     uint32_t openedRunId_{0};            // guarded by m_
-    // Export lease (guarded by m_). `prepared_`: a Start passed prepareRun() and has not reached startRun() yet (expires after 120 s).
+    // Export lease (guarded by m_). `prepared_`: a Start passed prepareRun() and has not reached startRun() yet (a stale mark expires after 120 s: a Start that died between the two calls must not block downloads for ever; a live Start that is slower is still safe, because exportBegin then waits for deviceMutex_ behind its pzrec start and sees the drain ARMED/DRAINING in the window snapshot).
     uint64_t exportLease_{0}, nextLease_{1}, exportBytes_{0};
-    uint32_t exportRun_{0}, exportMaxSecondsOverride_{0};
+    uint32_t exportRun_{0}, exportMaxSecondsOverride_{0}, exportMarginSeconds_{kExportKillMarginSeconds};
     std::chrono::steady_clock::time_point exportDeadline_{};
     bool prepared_{false};
     std::chrono::steady_clock::time_point preparedAt_{};
