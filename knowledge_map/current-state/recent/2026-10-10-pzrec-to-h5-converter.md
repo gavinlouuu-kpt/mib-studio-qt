@@ -16,3 +16,5 @@ Tests: `python3 -m pytest tools/pzrec_to_h5` (synthetic records built with the v
 decoder, fetch against a stand-in server: ok, short body, 503 with reason, bad stream; the fixed S2 reference records on the HDD: image, mask, wall time and metadata equal the decoder's
 `rows()`), and `ssd_h5_review_test` (a converted real window opens in `ReviewSession`: 20 records of run 18 = 40 valid rows, images 96x512, masks 0/255, metadata index = frame id).
 Speed: 3,000 synthetic records (178 MB) convert in 0.7 s with 124 MB RSS.
+
+`fetch` reads the run table entry from the `X-Run-*` headers of the download (start_unix_ms, tick_hz, first_ticks, filter, written, exact-drops; they arrive with the self-describing route, #667 follow-up of the export route) and needs no `--runs`; `--runs` still overrides them.

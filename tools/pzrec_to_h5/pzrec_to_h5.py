@@ -117,16 +117,16 @@ class RunInfo:
 
     @staticmethod
     def from_headers(h: dict) -> "RunInfo | None":
-        """The X-* headers of the download (a self-describing download); None when the server does not send the run table values."""
+        """The X-Run-* headers of the download (the run table entry of the whole run); None when the server does not send them."""
         g = {k.lower(): v for k, v in h.items()}
-        if "x-start-unix-ms" not in g or "x-tick-hz" not in g:
+        if "x-run-start-unix-ms" not in g or "x-run-tick-hz" not in g:
             return None
-        flt = g.get("x-filter")
+        num = lambda k: int(g[k]) if k in g else None
+        flt = num("x-run-filter")
         return RunInfo(
-            run_id=int(g["x-run-id"]), start_unix_ms=int(g["x-start-unix-ms"]), tick_hz=int(g["x-tick-hz"]), first_ticks=int(g.get("x-first-ticks", 0)),
-            filter=FILTER_NAMES.get(int(flt)) if flt and flt.isdigit() else flt, wall_source=int(g["x-wall-source"]) if "x-wall-source" in g else None,
-            client_tag=int(g["x-client-tag"]) if "x-client-tag" in g else None, written=int(g["x-run-records"]) if "x-run-records" in g else None,
-            reason=int(g["x-end-reason"]) if "x-end-reason" in g else None, exact_drops=g.get("x-drops-exact") == "1")
+            run_id=int(g["x-run-id"]), start_unix_ms=int(g["x-run-start-unix-ms"]), tick_hz=int(g["x-run-tick-hz"]), first_ticks=num("x-run-first-ticks") or 0,
+            filter=FILTER_NAMES.get(flt), wall_source=num("x-run-wall-source"), client_tag=num("x-run-client-tag"), written=num("x-run-written"),
+            reason=num("x-run-reason"), exact_drops=g.get("x-run-exact-drops") == "1")
 
 
 def load_run(runs_path: Path, run_id: int) -> RunInfo:

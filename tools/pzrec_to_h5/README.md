@@ -6,8 +6,9 @@ and MIB Studio open: `/valid_frames` and `/invalid_frames` with `images`, `masks
 ```bash
 # from a downloaded file (the run table entry from `pzrec runs` or the Studio runs listing)
 python3 tools/pzrec_to_h5/pzrec_to_h5.py convert run18.bin --runs runs.json --run 18 --out run18.h5 --expect-records 27119
-# download and convert in one go (token as for the Files view)
-python3 tools/pzrec_to_h5/pzrec_to_h5.py fetch http://192.168.137.2:8427 --token T --run 18 --runs runs.json --out-dir exports/
+# download and convert in one go (token as for the Files view); the run table entry comes from the X-Run-* headers of the download
+# (Studio with the self-describing route), --runs runs.json overrides it
+python3 tools/pzrec_to_h5/pzrec_to_h5.py fetch http://192.168.137.2:8427 --token T --run 18 --out-dir exports/
 python3 -m pytest tools/pzrec_to_h5          # synthetic records always, the S2 reference records when the HDD is mounted
 ```
 

@@ -247,10 +247,13 @@ class Fetch(Base):
 
     def test_download_and_convert(self):
         recs, _, _ = stream(4)
-        hdr = {"X-Start-Unix-Ms": "1791639269355", "X-Tick-Hz": "100000000", "X-First-Ticks": "62000000000", "X-Filter": "0", "X-Wall-Source": "1"}
+        hdr = {"X-Run-Start-Unix-Ms": "1791639269355", "X-Run-Tick-Hz": "100000000", "X-Run-First-Ticks": "62000000000", "X-Run-Filter": "0", "X-Run-Wall-Source": "1", "X-Run-Written": "4"}
         url = self.serve(self.handler(b"".join(recs), extra=hdr))
         self.assertEqual(P.main(["fetch", url, "--run", "18", "--out-dir", str(self.d)]), 0)
         self.assertTrue((self.d / "run-18-records.h5").exists() and (self.d / "run-18-records.bin").exists())
+        with h5py.File(self.d / "run-18-records.h5") as f:                       # no --runs: the run table came from the headers
+            cfg = json.loads(f["experiment_info"].attrs["config_json"])
+            self.assertEqual((cfg["start_unix_ms"], cfg["first_ticks"], cfg["filter"], cfg["run_records"]), (1791639269355, 62_000_000_000, "all", 4))
 
     def test_short_body_is_quarantined(self):
         recs, _, _ = stream(4)
@@ -273,7 +276,7 @@ class Fetch(Base):
         bad = bytearray(recs[1])
         bad[20] ^= 1
         recs[1] = bytes(bad)
-        hdr = {"X-Start-Unix-Ms": "1791639269355", "X-Tick-Hz": "100000000", "X-First-Ticks": "62000000000", "X-Filter": "0"}
+        hdr = {"X-Run-Start-Unix-Ms": "1791639269355", "X-Run-Tick-Hz": "100000000", "X-Run-First-Ticks": "62000000000", "X-Run-Filter": "0"}
         url = self.serve(self.handler(b"".join(recs), extra=hdr))
         self.assertEqual(P.main(["fetch", url, "--run", "18", "--out-dir", str(self.d)]), 1)
         self.assertTrue((self.d / "quarantine" / "run-18-records.bin").exists())
