@@ -804,6 +804,8 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
         const auto st = ssd.status();
         if (!ssd.configured()) {
             r.gates.push_back(gate("storage.ssd", GateStatus::NotRequired, st.reason, {}, "no SSD"));
+        } else if (!ssd.configProblem().empty()) {
+            r.gates.push_back(gate("storage.ssd", GateStatus::Fail, ssd.configProblem(), "fix MIB_SSD_FILTER in the unit", "configuration"));
         } else if (st.state == pz::SsdState::Ready && !st.openRun) {
             r.gates.push_back(gate("storage.ssd", GateStatus::Pass, {}, {}, std::string("READY, ") + std::to_string(st.freeSectors * 512 / 1000000) + " MB free"));
         } else {
@@ -1143,7 +1145,7 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
         provider->setRecordToSsd(false);
         if (providerOk && ssdRecord) {
             pz::SsdStartArgs args;
-            args.filter = pz::SsdFilter::ValidOnly;      // the PC rule: frames with a valid cell, plus the invalid sample
+            args.filter = ssdRecord->filter();           // MIB_SSD_FILTER, default valid: the PC rule (frames with a valid cell, plus the invalid sample)
             // the same rate as the HDF5 path (default 100 = the Tauri path, 1 = every invalid-only frame): the file and the SSD run keep the same frames
             args.samplerN = static_cast<uint32_t>(std::min<size_t>(backend_.processing().getInvalidFrameSamplingRate(), 0xFFFFFFFFu));
             args.clientTag = static_cast<uint32_t>(run.startGeneration);

@@ -132,6 +132,13 @@ public:
     // Runs pzrec now (status, then the run table when needed) and updates the cache; the thread calls it, tests call it directly.
     void refresh(bool force = false);
     bool configured() const { return device_ != nullptr; }
+    // The filter of the runs Studio starts (MIB_SSD_FILTER = all|any|valid; default valid, the PC rule). A value that is none of them is a configuration problem:
+    // `configProblem()` is non-empty and prepareRun() refuses, so a typo never records with another filter than the one asked for.
+    SsdFilter filter() const { return filter_; }
+    const std::string& configProblem() const { return configProblem_; }
+    // Parses the setting; nullptr/empty = valid. False (with `problem`) for anything else.
+    static bool parseFilter(const char* text, SsdFilter& out, std::string* problem);
+    void setFilterFromEnv(const char* text);
 
     // ---- Record (#667 S2) ----------------------------------------------------------------------------------------------------------------------------
     // The start sequence of an SSD run, in the caller's order: prepareRun() (a fresh `pzrec status` under a short timeout; READY and no open run, else a
@@ -176,6 +183,8 @@ private:
     uint32_t seenBaseline_{0}, seenPersisted_{0};
     std::vector<uint32_t> noticeIds_;
     std::chrono::steady_clock::time_point statusAt_{};
+    SsdFilter filter_{SsdFilter::ValidOnly};
+    std::string configProblem_;
     // Record state. Every pzrec call is serialised on deviceMutex_: two processes must never sequence the window or the disk at once.
     mutable std::mutex deviceMutex_;
     mutable std::mutex stopMutex_;

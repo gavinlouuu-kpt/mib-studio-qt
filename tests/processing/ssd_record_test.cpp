@@ -110,6 +110,26 @@ std::unique_ptr<pz::SsdStore> storeOver(FakeRecorder*& raw) {
 } // namespace
 
 int main(int argc, char** argv) {
+    // --- the filter setting (MIB_SSD_FILTER) ------------------------------------------------------------------
+    {
+        pz::SsdFilter f = pz::SsdFilter::All;
+        std::string problem;
+        MIB_EXPECT(pz::SsdStore::parseFilter(nullptr, f, &problem) && f == pz::SsdFilter::ValidOnly, "unset: valid");
+        MIB_EXPECT(pz::SsdStore::parseFilter("", f, &problem) && f == pz::SsdFilter::ValidOnly, "empty: valid");
+        MIB_EXPECT(pz::SsdStore::parseFilter("all", f, &problem) && f == pz::SsdFilter::All, "all");
+        MIB_EXPECT(pz::SsdStore::parseFilter("any", f, &problem) && f == pz::SsdFilter::AnyResult, "any");
+        MIB_EXPECT(pz::SsdStore::parseFilter("valid", f, &problem) && f == pz::SsdFilter::ValidOnly, "valid");
+        MIB_EXPECT(!pz::SsdStore::parseFilter("ALL", f, &problem) && problem.find("MIB_SSD_FILTER=ALL") != std::string::npos, "anything else is a problem: " + problem);
+        FakeRecorder* dev = nullptr;
+        auto store = storeOver(dev);
+        store->setFilterFromEnv("everything");
+        MIB_EXPECT(store->filter() == pz::SsdFilter::ValidOnly && !store->configProblem().empty(), "a bad value keeps valid and records the problem");
+        const auto p = store->prepareRun();
+        MIB_EXPECT(!p.ok && p.why.find("MIB_SSD_FILTER=everything") != std::string::npos && dev->statusCalls == 0, "a bad filter refuses the run before pzrec is asked: " + p.why);
+        store->setFilterFromEnv("all");
+        MIB_EXPECT(store->configProblem().empty() && store->filter() == pz::SsdFilter::All && store->prepareRun().ok, "a good value clears it");
+    }
+
     // --- prepare: READY and no open run, or a refusal that names the state ----------------------------------------
     {
         FakeRecorder* dev = nullptr;

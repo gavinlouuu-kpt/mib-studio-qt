@@ -226,7 +226,8 @@ int main(int argc, char** argv) {
         MIB_EXPECT(runs[0].samplerN == 1, "the invalid sampler is the processing service's rate (the test set 1), as for the HDF5 file");
         MIB_EXPECT(runs[0].startUnixMs == started.run.startWallClockNs / 1000000ull, "start_unix_ms is the run's wall-clock start");
 
-        // the next run takes the next id
+        // the filter follows the store's setting (MIB_SSD_FILTER): the default is valid, `all` is another filter in the table
+        backend.ssdStore().setFilterFromEnv("all");
         const auto ready2 = coord.evaluateReadiness(out + "2.h5", "pl");
         MIB_REQUIRE(ready2.ready, "ready again");
         ExperimentStartRequest req2;
@@ -236,8 +237,12 @@ int main(int argc, char** argv) {
         const auto started2 = coord.start(req2);
         MIB_REQUIRE(started2.outcome == ExperimentStartOutcome::Started, "second run starts: " + started2.message);
         MIB_EXPECT(started2.run.ssdRunId == 2, "ids are monotone");
+        std::vector<bpz::SsdRun> runs2;
         coord.requestStop(false);
         MIB_REQUIRE(waitFor([&] { return coord.status().terminal && backend.ssdStore().openedRunId() == 0; }, std::chrono::seconds(30)), "second run finalizes");
+        backend.ssdStore().refresh(true);
+        MIB_REQUIRE(backend.ssdStore().runs(runs2, &why) && runs2.size() == 2, why);
+        MIB_EXPECT(runs2[0].filter != runs2[1].filter, "run 2 used the `all` filter, run 1 the default");
 
         backend.capture().stop();
         backend.shutdown();

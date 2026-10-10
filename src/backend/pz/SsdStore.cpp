@@ -568,10 +568,28 @@ bool SsdStore::runs(std::vector<SsdRun>& out, std::string* why) {
 
 // ---- Record (#667 S2) ----------------------------------------------------------------------------------------------------------------------------
 
+bool SsdStore::parseFilter(const char* text, SsdFilter& out, std::string* problem) {
+    const std::string t = text ? text : "";
+    if (t.empty() || t == "valid") { out = SsdFilter::ValidOnly; return true; }
+    if (t == "all") { out = SsdFilter::All; return true; }
+    if (t == "any") { out = SsdFilter::AnyResult; return true; }
+    if (problem) *problem = "MIB_SSD_FILTER=" + t + " is not all, any or valid";
+    return false;
+}
+
+void SsdStore::setFilterFromEnv(const char* text) {
+    configProblem_.clear();
+    if (!parseFilter(text, filter_, &configProblem_)) filter_ = SsdFilter::ValidOnly;
+}
+
 SsdStore::Prepared SsdStore::prepareRun() {
     Prepared p;
     if (!device_) {
         p.why = reasonFor(SsdState::Absent);
+        return p;
+    }
+    if (!configProblem_.empty()) {
+        p.why = configProblem_;
         return p;
     }
     if (stopRunning_) {
