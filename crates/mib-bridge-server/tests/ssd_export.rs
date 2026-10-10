@@ -22,7 +22,7 @@ D="__DIR__"
 verb=$1
 echo "$@" >> "$D/calls"
 case "$verb" in
-snapshot) echo "{\"state\":\"$(cat $D/window)\",\"state_code\":0}"; exit 0;;
+snapshot) [ -f "$D/delay" ] && sleep $(cat "$D/delay"); echo "{\"state\":\"$(cat $D/window)\",\"state_code\":0}"; exit 0;;
 status) cat "$D/status.json"; exit 0;;
 runs) cat "$D/runs.json"; exit 0;;
 read) ;;
@@ -501,4 +501,19 @@ async fn a_future_dropped_while_the_reader_is_being_terminated_still_releases_th
     drop(stream);
     f.wait_lease_free().await;
     assert!(pid_gone(&f.dir).await, "SIGKILL after the grace, though nobody was waiting for the answer");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn a_handler_dropped_while_the_lease_is_being_taken_does_not_leave_it_held() {
+    let f = start("begindrop").await;
+    f.set("delay", "1");                                     // the window snapshot of the begin takes a second
+    let mut stream = tokio::net::TcpStream::connect(f.addr).await.unwrap();
+    stream.write_all(request_text(&format!("/ssd/runs/5/records?token={TOKEN}"), &[]).as_bytes()).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    drop(stream);                                            // the client leaves while the begin is still running
+    tokio::time::sleep(Duration::from_millis(1500)).await;   // the begin has finished and granted a lease nobody will use
+    std::fs::remove_file(f.dir.join("delay")).unwrap();
+    f.wait_lease_free().await;
+    assert_eq!(f.reads(), 0, "no reader was ever started");
 }

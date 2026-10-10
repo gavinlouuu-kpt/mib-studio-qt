@@ -30,3 +30,5 @@ exclusion both ways), `crates/mib-bridge/tests/contract.rs`. `ssd_export_begin` 
 reason, size_bytes, exact_drops) and the route sends it as headers `X-Run-Start-Unix-Ms`, `X-Run-Tick-Hz`, `X-Run-First-Ticks`, `X-Run-Last-Ticks`, `X-Run-First-Frame-Id`, `X-Run-Last-Frame-Id`, `X-Run-Seen`,
 `X-Run-Filter` (0 all, 1 any, 2 valid), `X-Run-Written`, `X-Run-Client-Tag`, `X-Run-Wall-Source`, `X-Run-Reason`, `X-Run-Bytes`, `X-Run-Exact-Drops` (1 when every frame id gap was a drain drop). They describe the
 whole run, also for a `?from&count` window. Additive fields of the same two ABI 36 commands; `tools/pzrec_to_h5 fetch` needs no `--runs` file then.
+
+A client that leaves while `ssd_export_begin` is still running gets its lease ended at once by the detached begin task (not left to the C++ expiry); `kExportKillMarginSeconds` is static_asserted against the route's SIGTERM grace + SIGKILL wait + stderr wait (35 + 10 + 5 s).

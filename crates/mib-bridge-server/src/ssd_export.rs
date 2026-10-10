@@ -148,7 +148,8 @@ struct Reader {
 
 impl Drop for Reader {
     fn drop(&mut self) {
-        // Harmless when the supervisor is past its select (the process exited by itself and the verdict is on its way).
+        // Dropping `cancel` would already tell the supervisor (its receiver sees the channel close); the explicit message gives the reason in the log. Harmless when the
+        // supervisor is past its select (the process exited by itself and the verdict is on its way).
         let _ = self.cancel.send("the client went away".to_string());
     }
 }
@@ -324,14 +325,26 @@ pub(crate) async fn records(
     };
     let state = server.state().clone();
     let (from, count) = (query.from.unwrap_or(0), query.count.unwrap_or(0));
+    // The begin runs in a detached task: if this handler is dropped meanwhile (the client left), the task still gets the answer, and a lease it was granted is ended at once,
+    // not left to the C++ expiry.
     let begin = {
+        let (tx, rx) = tokio::sync::oneshot::channel();
         let state = state.clone();
-        tokio::task::spawn_blocking(move || mib_app_commands::ssd_export_begin(&state, id, from, count)).await
+        tokio::spawn(async move {
+            let st = state.clone();
+            let r = tokio::task::spawn_blocking(move || mib_app_commands::ssd_export_begin(&st, id, from, count)).await;
+            if let Err(Ok(Ok(v))) = tx.send(r) {
+                if let Some(lease) = v.get("lease").and_then(Value::as_u64).filter(|_| v.get("ok").and_then(Value::as_bool) == Some(true)) {
+                    let _ = tokio::task::spawn_blocking(move || mib_app_commands::ssd_export_end(&state, lease, 0, "the client left before the download started")).await;
+                }
+            }
+        });
+        rx.await
     };
     let begin = match begin {
-        Ok(Ok(v)) => v,
-        Ok(Err(e)) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, json!({"error": format!("the export could not be started: {e}")})),
-        Err(_) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, json!({"error": "the export could not be started"})),
+        Ok(Ok(Ok(v))) => v,
+        Ok(Ok(Err(e))) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, json!({"error": format!("the export could not be started: {e}")})),
+        Ok(Err(_)) | Err(_) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, json!({"error": "the export could not be started"})),
     };
     if !begin.get("ok").and_then(Value::as_bool).unwrap_or(false) {
         let reason = begin.get("reason").and_then(Value::as_str).unwrap_or("refused").to_string();
