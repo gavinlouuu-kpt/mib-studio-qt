@@ -3156,7 +3156,14 @@ std::string BackendFacade::ssdExportBeginJson(std::uint32_t run, std::uint64_t f
     if (!initialized_) return nlohmann::json{{"ok", false}, {"reason", "backend is not initialized"}}.dump();
     const auto b = backend_.ssdStore().exportBegin(run, from, count);
     if (!b.ok) return nlohmann::json{{"ok", false}, {"code", b.code}, {"reason", b.reason}}.dump();
-    return nlohmann::json{{"ok", true}, {"lease", b.lease}, {"run_id", b.runId}, {"records", b.records}, {"bytes", b.bytes}, {"max_seconds", b.maxSeconds}, {"argv", b.argv}}.dump();
+    const auto& r = b.run;
+    // The run table entry of the download: the PC converter needs it for wall time, the drops_before rule and the report. exact_drops: filter ALL and seen equal to the frame id
+    // span, so every frame id gap was a drain drop (pzrec_decode.drops_exact).
+    const nlohmann::json runTable = {{"start_unix_ms", r.startUnixMs}, {"tick_hz", r.tickHz}, {"first_ticks", r.firstTicks}, {"last_ticks", r.lastTicks}, {"first_frame_id", r.firstFrameId},
+                                {"last_frame_id", r.lastFrameId}, {"seen", r.seen}, {"filter", r.filter}, {"written", r.written}, {"client_tag", r.clientTag},
+                                {"wall_source", r.wallSource}, {"reason", r.reason}, {"size_bytes", (r.endLba - r.startLba) * 512},
+                                {"exact_drops", r.filter == 0 && r.lastFrameId >= r.firstFrameId && r.seen == r.lastFrameId - r.firstFrameId + 1}};
+    return nlohmann::json{{"ok", true}, {"lease", b.lease}, {"run_id", b.runId}, {"records", b.records}, {"bytes", b.bytes}, {"max_seconds", b.maxSeconds}, {"argv", b.argv}, {"run", runTable}}.dump();
 }
 
 void BackendFacade::ssdExportEnd(std::uint64_t lease, std::uint64_t bytesSent, const std::string &outcome) {

@@ -819,6 +819,10 @@ bool SsdStore::exportActive() {
     return exportHeldLocked();
 }
 
+// The route's supervisor terminates a reader at maxSeconds: SIGTERM, up to 35 s grace, SIGKILL, up to 10 s, up to 5 s for the stderr, so the reader is gone about 50 s after the bound.
+// The lease must outlive that (crates/mib-bridge-server/src/ssd_export.rs: TERM_GRACE_MS, KILL_WAIT, the 5 s stderr wait).
+static_assert(SsdStore::kExportKillMarginSeconds >= 35 + 10 + 5, "the export lease must outlive the reader's SIGTERM grace, SIGKILL wait and stderr wait");
+
 namespace {
 // How long one download may take: two bounce-path commands (about 25 s each, the bound of one block command) and a margin, plus the body at a floor rate
 // of 5 MB/s (the board owner measures the bounce path at about 27 MB/s). The caller terminates its reader at this bound, independently of whether the client reads; the lease itself
@@ -911,6 +915,7 @@ SsdStore::ExportBegin SsdStore::exportBegin(uint32_t run, uint64_t from, uint64_
         exportDeadline_ = std::chrono::steady_clock::now() + std::chrono::seconds(out.maxSeconds + exportMarginSeconds_);
     }
     out.ok = true;
+    out.run = *found;
     out.lease = lease;
     out.records = records;
     out.bytes = records * kRecordBytes;

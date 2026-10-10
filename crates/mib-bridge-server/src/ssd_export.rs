@@ -39,6 +39,8 @@ const KILL_WAIT: Duration = Duration::from_secs(10);
 /// After stdout's EOF the reader must exit this soon.
 const EXIT_WAIT: Duration = Duration::from_secs(15);
 const STDERR_CAP: usize = 64 * 1024;
+/// The C++ lease outlives the reader's bound by 60 s (SsdStore::kExportKillMarginSeconds); the supervisor needs SIGTERM grace + SIGKILL wait + 5 s for stderr after the bound.
+const _: () = assert!(TERM_GRACE_MS / 1000 + KILL_WAIT.as_secs() + 5 <= 60);
 
 /// A time bound in ms, shortened only by the tests (`MIB_SSD_EXPORT_IDLE_MS`, `MIB_SSD_EXPORT_TERM_GRACE_MS`).
 fn bound(env: &str, default_ms: u64) -> Duration {
@@ -148,7 +150,8 @@ struct Reader {
 
 impl Drop for Reader {
     fn drop(&mut self) {
-        // Harmless when the supervisor is past its select (the process exited by itself and the verdict is on its way).
+        // Dropping `cancel` would already tell the supervisor (its receiver sees the channel close); the explicit message gives the reason in the log. Harmless when the
+        // supervisor is past its select (the process exited by itself and the verdict is on its way).
         let _ = self.cancel.send("the client went away".to_string());
     }
 }
@@ -288,6 +291,46 @@ impl Reader {
     }
 }
 
+type BeginResult = Result<Result<Value, String>, tokio::task::JoinError>;
+
+/// The lease a begin answer granted, if it granted one.
+fn granted_lease(r: &BeginResult) -> Option<u64> {
+    let v = r.as_ref().ok()?.as_ref().ok()?;
+    if v.get("ok").and_then(Value::as_bool) == Some(true) {
+        v.get("lease").and_then(Value::as_u64).filter(|l| *l != 0)
+    } else {
+        None
+    }
+}
+
+/// The handler's end of the begin task. A oneshot `send` succeeds while the receiver is alive and parks the value: if hyper drops the handler between that send and the next poll
+/// (the client disconnected), the granted lease would die with the receiver and nobody would end it. Dropping this guard takes such a parked answer and ends its lease.
+struct BeginReceiver<F: Fn(u64)> {
+    rx: Option<tokio::sync::oneshot::Receiver<BeginResult>>,
+    orphaned: F,
+}
+
+impl<F: Fn(u64)> BeginReceiver<F> {
+    async fn recv(&mut self) -> Result<BeginResult, tokio::sync::oneshot::error::RecvError> {
+        let rx = self.rx.as_mut().expect("received once");
+        let r = rx.await;
+        self.rx = None;
+        r
+    }
+}
+
+impl<F: Fn(u64)> Drop for BeginReceiver<F> {
+    fn drop(&mut self) {
+        if let Some(mut rx) = self.rx.take() {
+            if let Ok(r) = rx.try_recv() {
+                if let Some(lease) = granted_lease(&r) {
+                    (self.orphaned)(lease);
+                }
+            }
+        }
+    }
+}
+
 struct Flow {
     reader: Option<Reader>,
     pending: Option<Bytes>,
@@ -324,14 +367,37 @@ pub(crate) async fn records(
     };
     let state = server.state().clone();
     let (from, count) = (query.from.unwrap_or(0), query.count.unwrap_or(0));
+    // The begin runs in a detached task: if this handler is dropped before the answer arrives (the client left), the task sees the closed channel and ends the lease it was granted;
+    // if the answer was parked just before the drop, the BeginReceiver guard ends it. Either way a lease nobody uses is not left to the C++ expiry.
     let begin = {
-        let state = state.clone();
-        tokio::task::spawn_blocking(move || mib_app_commands::ssd_export_begin(&state, id, from, count)).await
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let end_lease = {
+            let state = state.clone();
+            move |lease: u64| {
+                let state = state.clone();
+                if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                    handle.spawn(async move {
+                        let _ = tokio::task::spawn_blocking(move || mib_app_commands::ssd_export_end(&state, lease, 0, "the client left before the download started")).await;
+                    });
+                }
+            }
+        };
+        let task_end = end_lease.clone();
+        let st = state.clone();
+        tokio::spawn(async move {
+            let r = tokio::task::spawn_blocking(move || mib_app_commands::ssd_export_begin(&st, id, from, count)).await;
+            if let Err(unsent) = tx.send(r) {
+                if let Some(lease) = granted_lease(&unsent) {
+                    task_end(lease);
+                }
+            }
+        });
+        BeginReceiver { rx: Some(rx), orphaned: end_lease }.recv().await
     };
     let begin = match begin {
-        Ok(Ok(v)) => v,
-        Ok(Err(e)) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, json!({"error": format!("the export could not be started: {e}")})),
-        Err(_) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, json!({"error": "the export could not be started"})),
+        Ok(Ok(Ok(v))) => v,
+        Ok(Ok(Err(e))) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, json!({"error": format!("the export could not be started: {e}")})),
+        Ok(Err(_)) | Err(_) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, json!({"error": "the export could not be started"})),
     };
     if !begin.get("ok").and_then(Value::as_bool).unwrap_or(false) {
         let reason = begin.get("reason").and_then(Value::as_str).unwrap_or("refused").to_string();
@@ -350,6 +416,7 @@ pub(crate) async fn records(
     let records = begin.get("records").and_then(Value::as_u64).unwrap_or(0);
     let bytes = begin.get("bytes").and_then(Value::as_u64).unwrap_or(0);
     let max_seconds = begin.get("max_seconds").and_then(Value::as_u64).unwrap_or(120);
+    let run_table = begin.get("run").cloned().unwrap_or(Value::Null);
     let argv: Vec<String> = begin.get("argv").and_then(Value::as_array).map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
     // Release helper for failures before a supervisor exists.
     let release_now = |outcome: String| {
@@ -477,6 +544,29 @@ pub(crate) async fn records(
             h.insert(header::HeaderName::from_static(name), v);
         }
     }
+    // The run table entry (the whole run's values, also for a window): a download is self-describing. Integers, X-Run-Exact-Drops is 1 or 0.
+    for (name, key) in [
+        ("x-run-start-unix-ms", "start_unix_ms"),
+        ("x-run-tick-hz", "tick_hz"),
+        ("x-run-first-ticks", "first_ticks"),
+        ("x-run-last-ticks", "last_ticks"),
+        ("x-run-first-frame-id", "first_frame_id"),
+        ("x-run-last-frame-id", "last_frame_id"),
+        ("x-run-seen", "seen"),
+        ("x-run-filter", "filter"),
+        ("x-run-written", "written"),
+        ("x-run-client-tag", "client_tag"),
+        ("x-run-wall-source", "wall_source"),
+        ("x-run-reason", "reason"),
+        ("x-run-bytes", "size_bytes"),
+    ] {
+        if let Some(n) = run_table.get(key).and_then(Value::as_u64) {
+            h.insert(header::HeaderName::from_static(name), HeaderValue::from(n));
+        }
+    }
+    if let Some(exact) = run_table.get("exact_drops").and_then(Value::as_bool) {
+        h.insert(header::HeaderName::from_static("x-run-exact-drops"), HeaderValue::from_static(if exact { "1" } else { "0" }));
+    }
     if let Ok(v) = HeaderValue::from_str(&format!("attachment; filename=\"run-{id}-records.bin\"")) {
         h.insert(header::CONTENT_DISPOSITION, v);
     }
@@ -486,6 +576,38 @@ pub(crate) async fn records(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_lease_granted_into_an_unpolled_receiver_is_ended() {
+        use std::sync::{Arc, Mutex};
+        let ended = Arc::new(Mutex::new(Vec::<u64>::new()));
+        let guard = |rx| {
+            let ended = ended.clone();
+            BeginReceiver { rx: Some(rx), orphaned: move |l| ended.lock().unwrap().push(l) }
+        };
+        // delivered, handler dropped before it polled: the lease is ended
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        assert!(tx.send(Ok(Ok(json!({"ok": true, "lease": 7})))).is_ok());
+        drop(guard(rx));
+        assert_eq!(*ended.lock().unwrap(), vec![7]);
+        // a refusal and an error hold no lease
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        assert!(tx.send(Ok(Ok(json!({"ok": false, "code": "BUSY", "reason": "x"})))).is_ok());
+        drop(guard(rx));
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        assert!(tx.send(Ok(Err("boom".to_string()))).is_ok());
+        drop(guard(rx));
+        // consumed by the handler: its lease belongs to the handler now
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        assert!(tx.send(Ok(Ok(json!({"ok": true, "lease": 9})))).is_ok());
+        let mut g = guard(rx);
+        assert_eq!(granted_lease(&g.recv().await.unwrap()), Some(9));
+        drop(g);
+        // never delivered: nothing parked
+        let (_tx, rx) = tokio::sync::oneshot::channel::<BeginResult>();
+        drop(guard(rx));
+        assert_eq!(*ended.lock().unwrap(), vec![7]);
+    }
 
     #[test]
     fn the_last_byte_of_the_body_is_held_back() {

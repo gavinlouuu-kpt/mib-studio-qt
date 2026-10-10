@@ -1209,7 +1209,8 @@ pub mod ffi {
         fn fetch_ssd_status(self: Pin<&mut BackendBridge>) -> String;
         fn fetch_ssd_runs(self: Pin<&mut BackendBridge>) -> String;
         /// #667 (ABI 36): the lease of one SSD run download, taken by the HTTP route (not a WebSocket command). JSON `{ok, lease, run_id, records, bytes,
-        /// max_seconds, argv[]}` or `{ok: false, reason}`; refused while anything records. `ssd_export_end` releases it after the reader has exited (idempotent).
+        /// max_seconds, argv[], run{start_unix_ms, tick_hz, first_ticks, last_ticks, first_frame_id, last_frame_id, seen, filter, written, client_tag, wall_source,
+        /// reason, size_bytes, exact_drops}}` or `{ok: false, code, reason}`; refused while anything records. `ssd_export_end` releases it after the reader has exited (idempotent).
         fn ssd_export_begin(self: Pin<&mut BackendBridge>, run: u32, from: u64, count: u64) -> String;
         fn ssd_export_end(self: Pin<&mut BackendBridge>, lease: u64, bytes_sent: u64, outcome: &str);
         /// Service / Commissioning mode latch; raw LED values are refused outside it.
