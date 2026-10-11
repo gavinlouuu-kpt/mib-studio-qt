@@ -32,9 +32,15 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from websockets.sync.client import connect
 
 HERE = Path(__file__).resolve().parent
+
+
+def connect_ws(base):
+    """The WebSocket to Studio. `websockets` is imported here, not at the top: the driver's helpers and their tests need none (CI has none)."""
+    from websockets.sync.client import connect
+
+    return connect("ws" + base[4:] + "/ws", open_timeout=15, max_size=None)
 
 
 class Studio:
@@ -43,7 +49,7 @@ class Studio:
         self.log = log
         self.seq = 810000
         self.lock = threading.Lock()
-        self.ws = connect("ws" + self.base[4:] + "/ws", open_timeout=15, max_size=None)
+        self.ws = connect_ws(self.base)
 
     def call(self, cmd, args=None, wait=30, binary=False):
         """The reply (the `ok` object, or {'error': ...}); with binary=True the payload bytes of a binary reply."""
@@ -188,7 +194,7 @@ def reconnect(st, log):
         st.ws.close()
     except Exception:  # noqa: BLE001
         pass
-    st.ws = connect("ws" + st.base[4:] + "/ws", open_timeout=15, max_size=None)
+    st.ws = connect_ws(st.base)
     log("reconnected; take_control: " + json.dumps(st.call("take_control")))
 
 
