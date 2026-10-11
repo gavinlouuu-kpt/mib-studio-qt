@@ -5,6 +5,7 @@
 import contextlib
 import io
 import json
+import os
 import shutil
 import struct
 import sys
@@ -728,7 +729,7 @@ class DriverNames(unittest.TestCase):
 
     def test_the_driver_never_writes_a_name_the_board_owner_owns(self):
         import re
-        source = (HERE / "slot_driver.py").read_text()
+        source = (HERE / "slot_driver.py").read_text(encoding="utf-8")
         names = set(re.findall(r'\bout\s*/\s*"([^"]+)"', source))
         self.assertIn("driver-post.runs.json", names, "the run table the driver judges against is its own file")
         self.assertGreater(len(names), 15, "the scan found the driver's output names")
@@ -737,6 +738,7 @@ class DriverNames(unittest.TestCase):
         self.assertNotIn('"post.runs.json"', source.replace("(driver-post.runs.json: post.runs.json belongs", ""), "post.runs.json appears only in the docstring")
 
 
+@unittest.skipUnless(os.name == "posix", "findmnt/HDD guard is a Linux host check")
 class GuardPath(unittest.TestCase):
     """slot_driver.guard_path asks findmnt about the nearest existing parent, so a fresh OUT directory on the HDD is accepted and an unmounted /mnt/hdd still is not."""
 
