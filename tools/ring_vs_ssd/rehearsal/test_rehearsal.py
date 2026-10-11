@@ -121,9 +121,44 @@ class Rehearsal(unittest.TestCase):
             self.assertEqual(diff[0], 2 * F.REC + 4096 + 1000)
 
 
+class SlotDriverGuards(unittest.TestCase):
+    """The driver's safety helpers (no Studio needed). Skipped where `websockets` is not installed."""
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        try:
+            import slot_driver
+        except ImportError as e:
+            raise unittest.SkipTest(f"slot_driver needs websockets: {e}")
+        cls.D = slot_driver
+
+    def test_find_key_walks_nested_objects(self):
+        self.assertEqual(self.D.find_key({"a": [{"b": {"id": 5}}]}, "id"), 5)
+        self.assertIsNone(self.D.find_key({"a": 1}, "id"))
+
+    def test_guard_path_accepts_non_hdd_paths(self):
+        with tempfile.TemporaryDirectory() as t:
+            self.assertEqual(self.D.guard_path("OUT", t), Path(t).resolve())
+
+    def test_guard_path_refuses_an_unmounted_hdd_path(self):
+        import unittest.mock as mock
+
+        class R:
+            stdout = "/\n"
+
+        with mock.patch.object(self.D.subprocess, "run", return_value=R()):
+            with self.assertRaises(SystemExit) as c:
+                self.D.guard_path("--dl", "/mnt/hdd/shared/exports/x")
+            self.assertIn("not mounted", str(c.exception))
+        R.stdout = "/mnt/hdd\n"
+        with mock.patch.object(self.D.subprocess, "run", return_value=R()):
+            self.assertEqual(self.D.guard_path("--dl", "/mnt/hdd/shared/x"), Path("/mnt/hdd/shared/x"))
+
+
 if __name__ == "__main__":
     if "--write" in sys.argv:
         GOLDEN.write_text(json.dumps(golden(), indent=1, sort_keys=True) + "\n")
         print(f"wrote {GOLDEN}")
         sys.exit(0)
-    sys.exit(0 if unittest.TextTestRunner(verbosity=1).run(unittest.defaultTestLoader.loadTestsFromTestCase(Rehearsal)).wasSuccessful() else 1)
+    sys.exit(0 if unittest.TextTestRunner(verbosity=1).run(unittest.defaultTestLoader.loadTestsFromTestCase(Rehearsal)).wasSuccessful() and unittest.TextTestRunner(verbosity=1).run(unittest.defaultTestLoader.loadTestsFromTestCase(SlotDriverGuards)).wasSuccessful() else 1)
