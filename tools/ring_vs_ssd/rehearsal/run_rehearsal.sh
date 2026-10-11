@@ -3,6 +3,7 @@
 # NOT the board. See README.md in this directory.
 #
 #   run_rehearsal.sh OUT FPS[:DURATION_S[:DROP_EVERY]] ...        e.g.  run_rehearsal.sh /tmp/reh 5000:8 1000:12 5000:8:97
+#   DRIVER_ARGS="--dl DIR --h5-dir DIR" adds options to every slot_driver.py call; REHEARSAL_CORRUPT_ID / REHEARSAL_DROP_UNTIL pass to the fake pzrec.
 #
 # Needs: the host backend built (cmake --preset linux-backend-only; mib_backend), crates/mib-bridge-server built with MIB_BRIDGE_NO_CMAKE=1
 # (target/debug/yofo-studio-server), python3 with numpy and websockets. Each cycle starts a fresh Studio on 127.0.0.1:$PORT (default 18427, never the
@@ -47,7 +48,7 @@ for cycle in "$@"; do
     for _ in $(seq 1 120); do curl -sf "http://127.0.0.1:$port/healthz" >/dev/null && break; sleep 1; done
     curl -sf "http://127.0.0.1:$port/healthz" >/dev/null || { echo "Studio did not come up" >&2; journalctl --user -u "$unit" --no-pager | tail -20 >&2; exit 1; }
     rc=0
-    python3 "$here/../slot_driver.py" "http://127.0.0.1:$port" "$work/out" --label "$label" --duration "$dur" --idle-s 3 --reread 20 --sample-hz 2 --resume-at-end || rc=$?
+    python3 "$here/../slot_driver.py" "http://127.0.0.1:$port" "$work/out" --label "$label" --duration "$dur" --idle-s 3 --reread 20 --sample-hz 2 --resume-at-end ${DRIVER_ARGS:-} || rc=$?
     journalctl --user -u "$unit" --no-pager > "$work/studio.log" 2>&1 || true
     systemctl --user stop "$unit" 2>/dev/null || true
     trap - EXIT

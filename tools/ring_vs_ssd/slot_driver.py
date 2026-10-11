@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """One cycle of the #693 slot, driven through Studio's own interface (WebSocket + the export route), then judged by ring_vs_ssd.
 
-  python3 slot_driver.py http://HOST:8427 OUT --label R3-5000fps [--duration 10] [--idle-s 600] [--reread 50] [--sample-hz 0] [--resume-at-end]
+  python3 slot_driver.py http://HOST:8427 OUT --label R3-5000fps [--duration 10] [--idle-s 600] [--reread 50] [--sample-hz 0] [--resume-at-end] [--dl DIR] [--h5-dir DIR]
 
 What it does (Studio owns the window: nothing here touches pzrec, the registers or the board other than through Studio's commands):
   1. take_control, read the instrument / SSD / ring status (pre-*.json); switch to Run if the instrument is not there (set_instrument_mode run)
@@ -12,9 +12,16 @@ What it does (Studio owns the window: nothing here touches pzrec, the registers 
   6. GET /ssd/runs/ID/records (DL/runID.bin, headers saved), fetch_ssd_runs again (post.runs.json)
   7. fetch_ring_status (ring-status-2.json) and ~--reread spread sequences again (ring2/), wait --idle-s, fetch_ring_status (ring-status-3.json)
   8. ring_vs_ssd.py with all of it -> OUT/ring-vs-ssd/{summary.txt,ring-vs-ssd.json}; exit 0 only when it passes
+--dl DIR writes the export exactly as the board owner's run_export.sh does (DIR/run<N>.bin, run<N>.headers in curl -D style with lowercase names, run<N>.time in seconds, run<N>.md5 written
+after the file), so that script can skip its own fetch; default OUT/DL. --h5-dir DIR puts the experiment's HDF5 file there (default: relative to Studio's working directory, /var/lib/yofo-studio on the board).
+Safety: only Studio commands (take_control, init, set_instrument_mode run, fetch_*, experiment_start/stop, ring_resume with --resume-at-end) and the export GET are ever sent; every wait is bounded
+(--stop-timeout, per-call waits, the download's socket timeout --dl-timeout). On Ctrl-C, SIGTERM or any failure while the experiment this driver started is still running, it sends experiment_stop once
+and waits for the run to close (bounded), then leaves the ring held. It never sends experiment_cancel.
 The rate is not set here (it is whatever Studio's Run is): the label only names the output. --resume-at-end sends ring_resume afterwards (default: the ring stays held).
 """
 import argparse
+import hashlib
+import signal
 import json
 import subprocess
 import sys
@@ -70,7 +77,7 @@ def save(path, obj):
     path.write_text(json.dumps(obj, indent=1, sort_keys=True) if not isinstance(obj, str) else obj)
 
 
-def main():
+def _main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("base")
     ap.add_argument("out")
@@ -82,6 +89,9 @@ def main():
     ap.add_argument("--stop-timeout", type=float, default=240.0)
     ap.add_argument("--mode-xy", default="152,200", help="Run ROI offset x,y if the instrument must be switched to Run")
     ap.add_argument("--resume-at-end", action="store_true")
+    ap.add_argument("--dl", help="directory for the export in the board owner's layout (default OUT/DL)")
+    ap.add_argument("--h5-dir", default="", help="directory for the experiment's HDF5 file (default: Studio's working directory)")
+    ap.add_argument("--dl-timeout", type=float, default=300.0, help="socket timeout of the export download, seconds without a byte")
     ap.add_argument("--no-judge", action="store_true", help="collect only; do not run ring_vs_ssd")
     a = ap.parse_args()
     out = Path(a.out)
@@ -95,6 +105,7 @@ def main():
         logf.flush()
 
     st = Studio(a.base, log)
+    ACTIVE["st"], ACTIVE["log"] = st, log
     log(f"connected; healthz {json.dumps(st.get('/healthz'))}")
     save(out / "auth.json", st.get("/auth"))
     log("take_control: " + json.dumps(st.call("take_control")))
@@ -116,7 +127,7 @@ def main():
         if isinstance(r, dict) and (r.get("error") or r.get("ok") is False):
             sys.exit("could not switch to Run")
 
-    name = f"slot693_{a.label}.h5"
+    name = str(Path(a.h5_dir) / f"slot693_{a.label}.h5") if a.h5_dir else f"slot693_{a.label}.h5"
     ready = st.call("fetch_experiment_readiness", {"outputPath": name})
     save(out / "pre-readiness.json", ready)
     blockers = [g for g in (ready or {}).get("gates", []) if g.get("status") in (2, 3, "fail", "block")] if isinstance(ready, dict) else []
@@ -143,6 +154,7 @@ def main():
     log("experiment_start: " + json.dumps(start)[:400])
     if not (isinstance(start, dict) and start.get("ok") is True and not start.get("error")):
         sys.exit("experiment_start refused")
+    ACTIVE["running"] = True                     # from here a failure or Ctrl-C stops the run this driver started (see main)
     th = None
     if a.sample_hz > 0:
         th = threading.Thread(target=sampler, daemon=True)
@@ -151,7 +163,10 @@ def main():
     during = st.call("fetch_ssd_status")
     save(out / "during-ssd.json", during)
     t_stop = time.time()
-    log("experiment_stop: " + json.dumps(st.call("experiment_stop", wait=60))[:300])
+    stop_reply = st.call("experiment_stop", wait=60)
+    log("experiment_stop: " + json.dumps(stop_reply)[:300])
+    if isinstance(stop_reply, dict) and stop_reply.get("ok") is True:
+        ACTIVE["running"] = False
     deadline = time.time() + a.stop_timeout
     state = {}
     while time.time() < deadline:
@@ -194,21 +209,33 @@ def main():
         (out / "ring" / f"seq-{s}.mibr").write_bytes(r)
     log(f"read {last - first + 1} ring frames in {time.time() - t0:.1f} s")
 
-    (out / "DL").mkdir(exist_ok=True)
+    dl = Path(a.dl) if a.dl else out / "DL"
+    dl.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
     try:
-        resp = urllib.request.urlopen(f"{st.base}/ssd/runs/{rid}/records", timeout=3600)
+        resp = urllib.request.urlopen(f"{st.base}/ssd/runs/{rid}/records", timeout=a.dl_timeout)
     except urllib.error.HTTPError as e:
-        save(out / "DL" / f"run{rid}.error", f"{e.code} {e.reason}\n{e.read().decode(errors='replace')}\n")
-        sys.exit(f"export refused: {e.code} {e.reason}: {e.read()[:300]!r}")
-    heads = {k: v for k, v in resp.getheaders()}
+        body = e.read()
+        (dl / f"run{rid}.error").write_text(f"{e.code} {e.reason}\n{body.decode(errors='replace')}\n")
+        sys.exit(f"export refused: {e.code} {e.reason}: {body[:300]!r}")
+    # curl -D style, as received (lowercase names): the board owner's scripts read these
+    head = f"HTTP/1.1 {resp.status} {resp.reason}\r\n" + "".join(f"{k.lower()}: {v}\r\n" for k, v in resp.getheaders()) + "\r\n"
+    (dl / f"run{rid}.headers").write_bytes(head.encode())
+    heads = {k.lower(): v for k, v in resp.getheaders()}
     n = 0
-    with open(out / "DL" / f"run{rid}.bin", "wb") as f:
+    md5 = hashlib.md5()
+    with open(dl / f"run{rid}.bin", "wb") as f:
         while chunk := resp.read(1 << 20):
             f.write(chunk)
+            md5.update(chunk)
             n += len(chunk)
-    save(out / "DL" / f"run{rid}.headers", heads)
-    log(f"export: {n} bytes in {time.time() - t0:.1f} s ({n / max(time.time() - t0, 1e-9) / 1e6:.1f} MB/s), headers {json.dumps({k: v for k, v in heads.items() if k.lower().startswith('x-')})}")
+    took = time.time() - t0
+    want = int(heads.get("content-length", "-1"))
+    (dl / f"run{rid}.time").write_text(f"{took:.6f}\n")
+    (dl / f"run{rid}.md5").write_text(f"{md5.hexdigest()}  run{rid}.bin\n")  # last: its mtime says the file is complete
+    log(f"export: {n} bytes in {took:.1f} s ({n / max(took, 1e-9) / 1e6:.1f} MB/s), headers {json.dumps({k: v for k, v in heads.items() if k.startswith('x-')})}")
+    if want >= 0 and n != want:
+        sys.exit(f"the export is short: {n} of {want} bytes")
     post = st.call("fetch_ssd_runs")
     save(out / "post.runs.json", post)
 
@@ -231,7 +258,7 @@ def main():
     rc = 0
     if not a.no_judge:
         cmd = [sys.executable, str(HERE / "ring_vs_ssd.py"), "--ring", str(out / "ring"), "--status", str(out / "ring-status-1.json"), "--ring2", str(out / "ring2"),
-               "--status2", str(out / "ring-status-2.json"), "--status3", str(out / "ring-status-3.json"), "--run", str(out / "DL" / f"run{rid}.bin"), "--runs",
+               "--status2", str(out / "ring-status-2.json"), "--status3", str(out / "ring-status-3.json"), "--run", str(dl / f"run{rid}.bin"), "--runs",
                str(out / "post.runs.json"), "--run-id", str(rid), "--out", str(out / "ring-vs-ssd")]
         log("judge: " + " ".join(cmd))
         p = subprocess.run(cmd, capture_output=True, text=True)
@@ -242,6 +269,36 @@ def main():
         log("ring_resume: " + json.dumps(st.call("ring_resume", wait=60))[:300])
     save(out / "summary.json", {"label": a.label, "run_id": rid, "duration_s": a.duration, "stop_s": stop_took, "wall_start": t_start, "ring_vs_ssd_exit": rc, "run_row": row})
     sys.exit(rc)
+
+
+ACTIVE = {"st": None, "log": print, "running": False}
+
+
+def main():
+    """_main, plus the one safety rule: if the experiment this driver started is still running when it dies (Ctrl-C, SIGTERM, a failed step), send experiment_stop once and wait, bounded, for it to close."""
+    def on_term(*_):
+        raise KeyboardInterrupt()
+
+    signal.signal(signal.SIGTERM, on_term)
+    signal.signal(signal.SIGINT, on_term)  # also when the shell started us with SIGINT ignored (a background job)
+    try:
+        _main()
+    except BaseException:
+        st = ACTIVE["st"]
+        if ACTIVE["running"] and st is not None:
+            try:
+                ACTIVE["log"]("interrupted while the experiment is running: experiment_stop (bounded)")
+                st.call("experiment_stop", wait=30)
+                end = time.time() + 240
+                while time.time() < end:
+                    es = st.call("fetch_experiment_status", wait=10)
+                    if isinstance(es, dict) and es.get("terminal"):
+                        break
+                    time.sleep(1)
+                ACTIVE["log"]("the experiment is closed; the ring is left held")
+            except BaseException as e:  # noqa: BLE001 - nothing more can be done
+                ACTIVE["log"](f"could not stop the experiment: {e!r}: stop it in Studio")
+        raise
 
 
 if __name__ == "__main__":
