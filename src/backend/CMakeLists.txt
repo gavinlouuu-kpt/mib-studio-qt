@@ -70,6 +70,7 @@ add_library(mib_processing STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/pz/AlignLock.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/pz/PzInstrumentControl.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/pz/PzExecutionProviders.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/processing/pz/RehearsalProvider.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/pz/ExecutionProviderFactory.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/pz/PzBridgePreview.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/pz/PzProfileCompiler.cpp

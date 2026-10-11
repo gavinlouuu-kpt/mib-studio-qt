@@ -1,6 +1,7 @@
 #include "backend/processing/pz/ExecutionProviderFactory.h"
 
 #include "backend/processing/pz/PzExecutionProviders.h"
+#include "backend/processing/pz/RehearsalProvider.h"
 
 #include <cerrno>
 #include <cstdlib>
@@ -55,7 +56,22 @@ std::unique_ptr<IExecutionProvider> makeExecutionProvider(const std::string& spe
         std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
         return std::make_unique<ReplayExecutionProvider>(std::move(bytes), fps);
     }
-    if (error) *error = "unknown MIB_EXECUTION_PROVIDER '" + spec + "' (pz | replay:<file>[@fps] | none)";
+    if (spec.rfind("rehearsal:", 0) == 0) {
+        // Development hosts only (#693): the frame ring and the SSD run without a board, see RehearsalProvider.h.
+        double fps = 0.0;
+        unsigned long frames = 5000;
+        char* end = nullptr;
+        const char* args = spec.c_str() + 10;
+        fps = std::strtod(args, &end);
+        if (end && *end == ':') frames = std::strtoul(end + 1, &end, 10);
+        const char* dir = std::getenv("MIB_REHEARSAL_DIR");
+        if (!(fps >= 1.0 && fps <= 20000.0) || frames == 0 || frames > 1000000ul || !dir || !*dir) {
+            if (error) *error = "MIB_EXECUTION_PROVIDER=rehearsal:<fps>[:<ring frames>] needs a rate of 1 to 20000 fps, 1 to 1000000 frames and MIB_REHEARSAL_DIR";
+            return nullptr;
+        }
+        return std::make_unique<RehearsalProvider>(fps, static_cast<uint32_t>(frames), dir);
+    }
+    if (error) *error = "unknown MIB_EXECUTION_PROVIDER '" + spec + "' (pz | replay:<file>[@fps] | rehearsal:<fps>[:<frames>] | none)";
     return nullptr;
 }
 

@@ -212,7 +212,7 @@ frame-id gaps and 0 incomplete frames:
 ## Ingest and lifecycle (YOFO S1)
 
 - **Selection** — `MIB_EXECUTION_PROVIDER` (`ExecutionProviderFactory`):
-  `pz` for `/dev/mem`, `replay:<file>[@fps]`, or `none`. Unset means `pz` in
+  `pz` for `/dev/mem`, `replay:<file>[@fps]`, `rehearsal:<fps>[:<frames>]` (a development host only: a frame ring and register stubs without a board, #693, `tools/ring_vs_ssd/rehearsal/README.md`), or `none`. Unset means `pz` in
   a `MIB_PL_SCIENCE` build (#501) and none elsewhere. (`MIB_PL_SCIENCE` comes from `mib_processing`;
   a file compiled outside CMake defaults to 0, the desktop.) With `MIB_PL_SCIENCE`,
   `AppBackend` creates the provider, sets its sink to

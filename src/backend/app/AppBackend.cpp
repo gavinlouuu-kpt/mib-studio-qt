@@ -23,6 +23,7 @@
 #include "backend/processing/ProcessingService.h"
 #include "backend/app/SciencePlacement.h"
 #include "backend/processing/pz/ExecutionProviderFactory.h"
+#include "backend/processing/pz/RehearsalProvider.h"
 #include "backend/playback/PlaybackService.h"
 #include "backend/playback/FrameStore.h"
 #include "backend/camera/egrabber/EGrabberCamera.h"
@@ -833,6 +834,12 @@ namespace backend
 #endif
             }
             pzPlatformMonitor_ = std::make_unique<pz::PzPlatformMonitor>(std::move(platformRegisters), platformError);
+            // Development hosts (#693): a rehearsal provider brings registers with nothing behind them, so Run, the LED and the ring hold work without a board.
+            if (executionProvider_ && executionProvider_->name() == "rehearsal")
+            {
+                pzControl_ = std::make_unique<pz::PzInstrumentControl>(processing::pz::makeRehearsalRegisters());
+                SPDLOG_WARN("AppBackend: REHEARSAL provider: no PZ7035 behind this instrument (development host)");
+            }
 #if defined(__linux__)
             // The one writer of LED, cell path and cell capture (#501 P1). Mapping reads no PL
             // register. The LED and the cell path are written only when the operator picks a camera

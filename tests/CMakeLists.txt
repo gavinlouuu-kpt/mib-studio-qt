@@ -523,7 +523,14 @@ set_tests_properties(processing.pz_frame_ring PROPERTIES LABELS "processing;back
 mib_add_backend_test_executable(ring_packet_golden_test processing/ring_packet_golden_test.cpp)
 add_test(NAME processing.ring_packet_golden COMMAND $<TARGET_FILE:mib_backend_tests> ring_packet_golden_test ${PROJECT_SOURCE_DIR}/tools/ring_vs_ssd/testdata)
 set_tests_properties(processing.ring_packet_golden PROPERTIES LABELS "processing;backend;pl" TIMEOUT 60)
+# #693: the host rehearsal provider (frame content equal to the fake pzrec's golden, ring behaviour like the PL's).
+mib_add_backend_test_executable(rehearsal_provider_test processing/rehearsal_provider_test.cpp)
+add_test(NAME processing.rehearsal_provider COMMAND $<TARGET_FILE:mib_backend_tests> rehearsal_provider_test ${PROJECT_SOURCE_DIR}/tools/ring_vs_ssd/rehearsal/testdata/frames.json)
+set_tests_properties(processing.rehearsal_provider PROPERTIES LABELS "processing;backend;pl" TIMEOUT 60)
 if(Python3_Interpreter_FOUND)
+    # #693: the host rehearsal's fake pzrec and golden frame content (POSIX, numpy; passes without running elsewhere).
+    add_test(NAME tools.ring_vs_ssd_rehearsal COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tools/test_ring_vs_ssd_rehearsal.py)
+    set_tests_properties(tools.ring_vs_ssd_rehearsal PROPERTIES LABELS "tools;pl" TIMEOUT 120)
     # #693: the ring-vs-SSD comparison tool (synthetic packets and records, a mutant per criterion, the golden packets above). numpy only; skipped without it.
     add_test(NAME tools.ring_vs_ssd COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tools/test_ring_vs_ssd.py)
     set_tests_properties(tools.ring_vs_ssd PROPERTIES LABELS "tools;pl" SKIP_RETURN_CODE 77 TIMEOUT 120)

@@ -12,6 +12,8 @@ python3 tools/ring_vs_ssd/ring_vs_ssd.py \
 
 Exit 0 only when every check passes, 1 on any FAIL, 2 on unusable input (a ring status without `epoch`: bridge ABI 37 is needed; an empty or headerless export; a run table without the run or with a filter other than ALL). Output: `ring-vs-ssd.json` and `summary.txt`.
 
+`slot_driver.py` is the slot's cycle (Run, SSD run, Stop, every ring frame, export, re-read, idle, then this tool); `rehearsal/` runs it against a host Studio with a fake pzrec (see `rehearsal/README.md`).
+
 ## Inputs (what the slot saves)
 
 | Input | Content |
