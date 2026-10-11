@@ -1395,6 +1395,9 @@ namespace backend
             return false;
         };
         if (liveResultsActive_.load()) return true;
+        // An experiment owns the provider from its Start until it has finalized: a live session must not arm it in between.
+        if (const auto run = experimentCoordinator_->stateNow(); run != app::ExperimentRunState::Idle && run != app::ExperimentRunState::Failed)
+            return fail(std::string("an experiment is ") + app::toString(run));
         if (!executionProvider_ || !pzControl_) return fail("no PL execution provider");
         if (instrumentMode() != pz::InstrumentMode::Run) return fail("the instrument is not in Run");
         auto profile = compilePlProfile();
@@ -1823,7 +1826,10 @@ namespace backend
         else if (st.valid && !st.frozen) note = "the ring is not frozen yet";
         if (noteOut) *noteOut = note;
         std::string err;
-        if (!pzControl_->ledOff(&err)) return fail("Run is stopped, but the LED could not be switched off: " + err);
+        if (!pzControl_->ledOff(&err)) {
+            setHoldNote("The Run is stopped and its frames are held, but the LED could not be switched off: " + err);
+            return fail("Run is stopped, but the LED could not be switched off: " + err);
+        }
         SPDLOG_INFO("AppBackend: Run stopped: the frame ring is held for playback (LED off){}", note.empty() ? std::string() : "; " + note);
         return true;
     }
@@ -1854,6 +1860,9 @@ namespace backend
         if (!pzControl_->setLed(pz::kRunLed, &err)) {
             stopLiveResults();
             (void)pzControl_->ledOff(nullptr);
+            // The live start re-armed the provider: the buffered frames are gone and runFrozen_ now describes the new, empty ring.
+            if (executionProvider_) heldEpoch_.store(executionProvider_->ringStatus().epoch);
+            setHoldNote("Resume Run armed a new ring, but the LED could not be switched on: " + err);
             return fail("the LED could not be switched on: " + err);
         }
         runFrozen_.store(false);

@@ -1094,6 +1094,22 @@ void testRingHeldAfterSsdRun(const mib::test::TempDir& td) {
     MIB_REQUIRE(facade.resumeRun().ok && backend.holdNote().empty(), "resume clears the note");
     backend.stopLiveResults();
     MIB_REQUIRE(backend.holdRingAfterRun(&why), "held again: " + why);
+    // A Resume whose LED cannot be switched on has armed a new ring: the stale hold says so and reports the live epoch
+    {
+        const uint32_t oldEpoch = fake->ring.epoch;
+        fake->ring.epoch = oldEpoch + 1;
+        const uint32_t clockKhz = s.live[S0 + 10];
+        s.live[S0 + 10] = 0; // the strobe block reports no clock: setLed fails after the provider has re-armed
+        std::string resumeErr;
+        MIB_EXPECT(!backend.resumeRun(&resumeErr) && backend.runFrozen() && !backend.liveResultsActive() && backend.heldRingEpoch() == oldEpoch + 1 &&
+                   backend.holdNote().find("new ring") != std::string::npos,
+                   "a failed Resume leaves a held Run over the new ring: " + resumeErr + " / " + backend.holdNote());
+        s.live[S0 + 10] = clockKhz;
+        fake->ring.epoch = oldEpoch;
+        MIB_REQUIRE(backend.resumeRun(&err) && backend.holdNote().empty(), "a later Resume works: " + err);
+        backend.stopLiveResults();
+        MIB_REQUIRE(backend.holdRingAfterRun(&why), "held again: " + why);
+    }
 
     // An experiment start from the held ring: the LED comes on and the stopped Run ends; the run's own provider start arms (not the live session).
     const int startsHeld = fake->starts;
@@ -1255,12 +1271,15 @@ void testSsdRunHoldsRingThroughTheCoordinator(const mib::test::TempDir& td) {
     bool racedOk = true;
     std::string racedErr;
     std::thread racer;
+    bool fired = false; // the hook must not clear itself: that would destroy the lambda while it runs
     fake->onConfigure = [&] {
-        fake->onConfigure = nullptr;
+        if (fired) return;
+        fired = true;
         racer = std::thread([&] { racedOk = backend.resumeRun(&racedErr); });
         std::this_thread::sleep_for(std::chrono::milliseconds(150)); // the racer passes its run_frozen check and waits for the coordinator
     };
     const auto second = startRun("coord2.h5", true);
+    fake->onConfigure = nullptr;
     if (racer.joinable()) racer.join();
     MIB_EXPECT(!racedOk && racedErr.find("experiment is starting or running") != std::string::npos, "a Resume Run racing the Start is refused: " + racedErr);
     MIB_REQUIRE(second.outcome == backend::app::ExperimentStartOutcome::Started, "run 2 starts with the acknowledgement: " + second.message);

@@ -108,6 +108,8 @@ public:
     ExperimentStatus status() const;
 
     ExperimentRunState state() const;
+    /// The state without taking the coordinator mutex (safe under it and under the live mutex); a snapshot.
+    ExperimentRunState stateNow() const { return state_.load(); }
     // Frozen snapshot of the active run (empty when Idle).
     std::optional<RunConfigurationSnapshot> activeRun() const;
     uint64_t readinessGeneration() const { return readinessGeneration_.load(); }
