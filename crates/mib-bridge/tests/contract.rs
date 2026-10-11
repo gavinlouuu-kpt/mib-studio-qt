@@ -107,7 +107,8 @@ fn abi_version_is_stable() {
     // v35 the SATA SSD record store, read only (#667 S1): fetch_ssd_status, fetch_ssd_runs and the `ssd` block of
     // fetch_instrument_status.
     // v36 the SSD run download lease (#667): ssd_export_begin / ssd_export_end for the HTTP export route.
-    assert_eq!(ffi::bridge_abi_version(), 36);
+    // v37 the ring status carries the ARM epoch; an SSD run leaves its ring held for playback (#693, D3).
+    assert_eq!(ffi::bridge_abi_version(), 37);
 }
 
 // ABI 31 (#549): with nothing loaded and no run finished, the accounting says so and why.
@@ -152,6 +153,7 @@ fn instrument_mode_commands_off_the_instrument() {
     let ring: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_ring_status()).unwrap();
     assert_eq!(ring["available"], serde_json::json!(false), "{ring}");
     assert_eq!(ring["run_frozen"], serde_json::json!(false), "{ring}");
+    assert_eq!(ring["epoch"], serde_json::json!(0), "ABI 37: the epoch is in the status, 0 without a ring: {ring}");
     assert!(ring["reason"].as_str().unwrap().contains("no frame ring"), "{ring}");
     assert!(bridge.pin_mut().fetch_ring_frame(0).is_empty());
     assert!(bridge.pin_mut().ring_frame_error().contains("no frame ring"), "{}", bridge.pin_mut().ring_frame_error());

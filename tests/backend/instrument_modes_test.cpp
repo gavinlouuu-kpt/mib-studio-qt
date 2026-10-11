@@ -16,6 +16,7 @@
 #include "backend/pz/AlignLock.h"
 #include "backend/processing/IExecutionProvider.h"
 #include "backend/pz/PzInstrumentControl.h"
+#include "backend/pz/SsdStore.h"
 #include "backend/services/CaptureService.h"
 
 #include <nlohmann/json.hpp>
@@ -933,7 +934,9 @@ void testRingPlayback(const mib::test::TempDir& td) {
         const auto out = (td.path() / "ring_exp.h5").string();
         auto readiness = backend.experiment().evaluateReadiness(out, "pl");
         const auto* frozen = readiness.gate("run.frozen");
-        MIB_EXPECT(frozen && frozen->blocksStart(), "a stopped Run blocks an experiment (run.frozen)");
+        MIB_EXPECT(frozen && frozen->status == backend::app::GateStatus::Warn && !frozen->blocksStart() &&
+                       frozen->remediation.find("discards") != std::string::npos,
+                   "a stopped Run warns that an experiment start discards the buffered frames (run.frozen), it does not block (#693 D3)");
         fake->placementProblem = "frame ring: Linux owns all the DDR below the PL area: boot with a smaller mem=";
         readiness = backend.experiment().evaluateReadiness(out, "pl");
         const auto* placement = readiness.gate("ring.placement");
@@ -972,6 +975,138 @@ void testRingPlayback(const mib::test::TempDir& td) {
     MIB_REQUIRE(backend.setInstrumentMode(pz::InstrumentMode::Run, 152, 200, &err), "Run: " + err);
     MIB_REQUIRE(backend.freezeRun(&err), "freeze before idle: " + err);
     MIB_EXPECT(facade.setInstrumentMode("idle", 0, 0).ok && !backend.runFrozen(), "idle ends it too");
+    facade.shutdown();
+    backend.shutdown();
+}
+
+// The ring of an SSD run (#649 / #693, D3): when the run has stopped and closed, Stop leads to playback. The coordinator calls holdRingAfterRun instead of
+// re-arming the live session; Resume Run and an experiment start end it; an export of the run's records leaves the frozen ring as it is (the ring status and
+// its frames are the same before and after the lease).
+class ScriptedSsdDevice final : public backend::pz::ISsdDevice {
+public:
+    bool status(std::string& json, std::string*) override {
+        json = R"({"state":"READY","state_code":3,"last_error":"OK","raw_sectors":417792,"head_lba":2048,"tail_lba":2048,"free_sectors":415744,"min_run_sectors":131072,"runs":1,"next_run_id":2,"table_entries":256,"open_run":false,"open_run_id":0,"open_start_unix_ms":0,"open_client_tag":0,"open_wall_source":0,"recovered_runs":0,"skipped_bad_entries":0,"recovered_ids":[0,0,0,0,0,0,0,0],"counters":{"seen":0,"empty_filtered":0,"invalid_not_sampled":0,"passed":0,"written":0,"dropped":0,"failed":0,"bytes_written":0,"drain_kbps":0,"first_frame_id":0,"last_frame_id":0}})";
+        return true;
+    }
+    bool runs(std::string& json, std::string*) override {
+        json = R"([{"run_id":1,"open":false,"deleted":false,"incomplete":false,"start_lba":2048,"end_lba":13660,"start_unix_ms":1791530000000,"wall_source":1,"client_tag":1,"filter":0,"sampler_n":1,"rec_sectors":116,"first_frame_id":1,"last_frame_id":100,"first_ticks":0,"last_ticks":1000000,"tick_hz":100000000,"seen":100,"empty_filtered":0,"invalid_not_sampled":0,"passed":100,"written":100,"dropped":0,"failed":0,"recoveries":0,"reason":0,"counts_unknown":false}])";
+        return true;
+    }
+    bool windowSnapshot(std::string& json, std::string*) override { json = R"({"state":"IDLE"})"; return true; }
+    bool readArgv(uint32_t run, uint64_t, uint64_t, std::vector<std::string>& argv) override { argv = {"pzrec", "read", std::to_string(run)}; return true; }
+};
+
+void testRingHeldAfterSsdRun(const mib::test::TempDir& td) {
+    const auto frames = td.path() / "frames_held";
+    MIB_REQUIRE(mib::test::writeFrames(frames, 8, 512, 96), "mock frames");
+    setEnv("MIB_PL_SCIENCE", "1");
+    setEnv("MIB_CAMERA_MODE", "mock");
+    setEnv("MIB_MOCK_CAMERA_DIR", frames.string().c_str());
+    setEnv("MIB_DISABLED_SERVICES", "sqlite,hdf5,autofocus,trigger,playback");
+    setEnv("MIB_EXECUTION_PROVIDER", "none");
+    backend::AppBackend backend;
+    backend::bridge::BackendFacade facade(backend);
+    MIB_REQUIRE(facade.initialize((td.path() / "data_held").string()), "facade initializes");
+    FakeState s;
+    seedCellImage(s);
+    backend.setInstrumentControlForTesting(std::make_unique<FakeControl>(s));
+    auto provider = std::make_unique<FakeProvider>();
+    FakeProvider* fake = provider.get();
+    backend.setExecutionProviderForTesting(std::move(provider));
+    std::string err, why;
+
+    fake->ringFrames = 100;
+    fake->ring.valid = true;
+    fake->ring.records = 100;
+    fake->ring.recordBytes = pz::kRingRecordBytes;
+    fake->ring.head = 99;
+    fake->ring.final = 100;
+    fake->ring.lo = 0;
+    fake->ring.epoch = 7;
+    fake->ring.frozen = true;
+
+    MIB_EXPECT(!backend.holdRingAfterRun(&why) && why.find("not in Run") != std::string::npos, "nothing to hold outside Run: " + why);
+    MIB_REQUIRE(backend.setInstrumentMode(pz::InstrumentMode::Run, 152, 200, &err), "Run: " + err);
+    MIB_EXPECT(fake->running && backend.liveResultsActive() && s.live[S0 + 0] == 1, "Run: the live session runs, the LED is on");
+    MIB_EXPECT(!backend.holdRingAfterRun(&why) && why.find("live session") != std::string::npos && !backend.runFrozen(), "a running live session is not held: " + why);
+
+    // The run's own provider stop froze the ring; the coordinator holds it instead of resuming the live session.
+    backend.stopLiveResults();
+    const int startsBefore = fake->starts;
+    MIB_REQUIRE(backend.holdRingAfterRun(&why), "hold: " + why);
+    MIB_EXPECT(backend.runFrozen() && !fake->running && s.live[S0 + 0] == 0 && !backend.liveResultsActive(), "held: the Run is stopped, the LED is off, no live session");
+    backend.resumeLiveResults();
+    MIB_EXPECT(!backend.liveResultsActive() && fake->starts == startsBefore && backend.runFrozen(), "the end-of-run resume does not re-arm a held ring");
+    MIB_EXPECT(backend.holdRingAfterRun(&why), "holding twice is harmless");
+    {
+        const auto j = nlohmann::json::parse(facade.fetchRingStatusJson());
+        MIB_EXPECT(j["run_frozen"] == true && j["frozen"] == true && j["epoch"] == 7 && j["count"] == 100 && j["first_seq"] == 0 && j["last_seq"] == 99,
+                   "fetch_ring_status: held, one epoch, 100 frames (ABI 37)");
+    }
+
+    // An export of the run's records while the ring is held leaves it as it is.
+    {
+        const auto before = facade.fetchRingStatusJson();
+        std::string frameError;
+        const auto frameBefore = facade.fetchRingFramePacket(42, &frameError);
+        MIB_REQUIRE(frameBefore.size() > 48 && frameError.empty(), "a frame before the export");
+        backend.setSsdStoreForTesting(std::make_unique<pz::SsdStore>(std::make_unique<ScriptedSsdDevice>(), std::chrono::milliseconds(1), false));
+        backend.ssdStore().refresh(true);
+        const auto lease = backend.ssdStore().exportBegin(1, 0, 0);
+        MIB_REQUIRE(lease.ok, "the export lease is granted while the ring is held: " + lease.reason);
+        MIB_EXPECT(lease.records == 100, "the lease covers the run's records");
+        MIB_EXPECT(facade.fetchRingStatusJson() == before && facade.fetchRingFramePacket(42, &frameError) == frameBefore && backend.runFrozen(),
+                   "during the lease the ring status and its frames are unchanged");
+        backend.ssdStore().exportEnd(lease.lease, lease.bytes, "test");
+        MIB_EXPECT(facade.fetchRingStatusJson() == before && facade.fetchRingFramePacket(42, &frameError) == frameBefore && backend.runFrozen(),
+                   "after the lease the ring status and its frames are unchanged");
+    }
+
+    // Resume Run re-arms: a new ring, the LED on.
+    MIB_REQUIRE(facade.resumeRun().ok, "resume");
+    MIB_EXPECT(!backend.runFrozen() && fake->running && fake->starts == startsBefore + 1 && s.live[S0 + 0] == 1 && backend.liveResultsActive(),
+               "Resume Run: armed again, LED on");
+
+    // An experiment start from the held ring: the LED comes on and the stopped Run ends; the run's own provider start arms (not the live session).
+    backend.stopLiveResults();
+    MIB_REQUIRE(backend.holdRingAfterRun(&why), "held again: " + why);
+    const int startsHeld = fake->starts;
+    MIB_REQUIRE(backend.leaveStoppedRun(&err), "leave: " + err);
+    MIB_EXPECT(!backend.runFrozen() && s.live[S0 + 0] == 1 && fake->starts == startsHeld && !backend.liveResultsActive(),
+               "leaving the stopped Run: LED on, no provider start of its own, the run arms the ring");
+    MIB_EXPECT(backend.leaveStoppedRun(&err), "leaving a Run that is not stopped is a no-op");
+
+    // Nothing to hold: an invalid ring, a ring that is not frozen, an empty ring, no ring, a ring that does not fit.
+    const auto refused = [&](const std::string& what, const std::string& expect) {
+        std::string w;
+        MIB_EXPECT(!backend.holdRingAfterRun(&w) && w.find(expect) != std::string::npos && !backend.runFrozen(), what + ": " + w);
+    };
+    fake->ring.frozen = false;
+    refused("a ring that is not frozen", "not frozen");
+    fake->ring.fault = true;
+    fake->ring.invalidReason = "the ring stalled (RING_STALLED): re-arm";
+    refused("an invalid ring", "RING_STALLED");
+    fake->ring.fault = false;
+    fake->ring.frozen = true;
+    fake->ring.final = 0;
+    fake->ring.head = -1;
+    refused("an empty ring", "no frames");
+    fake->ring.final = 100;
+    fake->ring.head = 99;
+    fake->ring.restoreNeeded = true;
+    refused("a ring that never froze", "restore");
+    fake->ring.restoreNeeded = false;
+    fake->placementProblem = "frame ring: boot with a smaller mem=";
+    refused("a ring that does not fit", "mem=");
+    fake->placementProblem.clear();
+    fake->ringFrames = 0;
+    refused("no ring", "no frame ring");
+    // STOP_STUCK is held, flagged: its frames below FINAL stay readable.
+    fake->ringFrames = 100;
+    fake->ring.frozen = false;
+    fake->ring.stopStuck = true;
+    fake->ring.stopIncomplete = true;
+    MIB_EXPECT(backend.holdRingAfterRun(&why) && backend.runFrozen(), "a stop-incomplete ring is held (readable, flagged): " + why);
     facade.shutdown();
     backend.shutdown();
 }
@@ -1051,6 +1186,7 @@ int main() {
     testModeSequence(td);
     testLiveResults(td);
     testRingPlayback(td);
+    testRingHeldAfterSsdRun(td);
     testRunWindowPersists(td);
     testRecordingTarget(td);
     return mib::test::exitCode();

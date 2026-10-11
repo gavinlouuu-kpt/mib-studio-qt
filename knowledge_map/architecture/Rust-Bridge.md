@@ -485,6 +485,13 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
   `stage_motion_is_control_only_but_stop_is_not` in the server;
   `backend.stage_bridge_facade`.
 
+## ABI 37: the ring epoch and the ring an SSD run leaves behind (#693, D3)
+
+`fetch_ring_status` (and the `ring` block of the instrument status) gains `epoch`: the ARM epoch of the ring, read from the PL (`PZ_MIB_REG_EPOCH`), the value the stored frame
+records carry. A frozen ring holds exactly one ARM, so one value covers all its frames; the `MIBR` packet is unchanged (version 1, 48-byte header, no spare field), the per-frame
+epoch of the SSD record is compared with this value. `run_frozen` is now also true after an SSD run: see [[architecture/AppBackend]] ("The ring of an SSD run").
+`ring_resume` ends that stopped Run like any other. Merge coordination: 37 is taken (granted for #693); the next free number is 38.
+
 ## ABI 35: the SATA SSD record store, read only (#667 S1)
 
 `fetch_ssd_status` (JSON: `configured`, `state` ABSENT/INITIALISING/RECOVERING/READY/RECORDING/STOPPING/WEDGED/RUN_TABLE_FULL/RAW_FULL/UNFORMATTED,

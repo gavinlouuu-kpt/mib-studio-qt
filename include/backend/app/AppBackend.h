@@ -154,6 +154,15 @@ namespace backend
         // `noteOut`: what the freeze did not achieve (the ring is not frozen, stop incomplete, restore needed), also on success.
         bool freezeRun(std::string *errorOut, std::string *noteOut = nullptr);
         bool resumeRun(std::string *errorOut);
+        // #649 / #693 (D3): after an SSD run has stopped and closed, the ring it filled is held like a stopped Run (runFrozen, LED off) instead of
+        // being re-armed by the live session, so Stop leads to playback of the buffered frames. False (with `whyNot`) when there is nothing to hold:
+        // no ring, not in Run, a ring that is invalid or not readable. The caller then resumes the live session as before. Takes no lock of its own: the
+        // coordinator calls it while it holds its mutex.
+        bool holdRingAfterRun(std::string *whyNot = nullptr);
+        // An experiment starts from a stopped Run: LED on and the latency cleared, the stopped state ends; the run's own provider start re-arms the
+        // ring (the buffered frames are gone, which the Start said). A no-op when the Run is not stopped. False (the stopped Run is kept) when the
+        // LED or the latency could not be written. Same locking rule as holdRingAfterRun.
+        bool leaveStoppedRun(std::string *errorOut);
         bool runFrozen() const { return runFrozen_.load(); }
         // The ring's registers, one frame as a browser packet ('MIBR', PzFrameRing.h), and the configured size.
         pz::RingStatus ringStatus();

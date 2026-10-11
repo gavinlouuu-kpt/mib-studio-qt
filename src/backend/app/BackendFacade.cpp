@@ -3053,7 +3053,7 @@ nlohmann::json ringStatusJson(backend::AppBackend& backend) {
     nlohmann::json j{{"available", false}, {"reason", ""},          {"frozen", false},   {"invalid", false},
                      {"run_frozen", backend.runFrozen()}, {"capacity_frames", backend.ringFramesWanted()},
                      {"first_seq", 0},      {"last_seq", 0},        {"count", 0},        {"sensor_fps", 0.0},
-                     {"state", 0},          {"head", -1},        {"stop_incomplete", false}, {"restore_needed", false}, {"fault_cleared", 0}, {"fault_cleared_state", 0}};
+                     {"state", 0},          {"head", -1},        {"epoch", 0},        {"stop_incomplete", false}, {"restore_needed", false}, {"fault_cleared", 0}, {"fault_cleared_state", 0}};
     if (backend.ringFramesWanted() == 0) {
         j["reason"] = "This instrument keeps no frame ring (the PL image or the kernel's mem= setting has no room for one).";
         return j;
@@ -3077,6 +3077,7 @@ nlohmann::json ringStatusJson(backend::AppBackend& backend) {
     j["stop_incomplete"] = st.stopIncomplete;
     j["state"] = st.state;
     j["head"] = st.head;
+    j["epoch"] = st.epoch; // the ring's ARM epoch (ABI 37): the value the frame records carry, constant while the ring is frozen
     j["capacity_frames"] = st.records;
     j["count"] = st.count();
     j["first_seq"] = st.lo;

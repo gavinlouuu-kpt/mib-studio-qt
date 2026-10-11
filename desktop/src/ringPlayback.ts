@@ -27,14 +27,24 @@ export interface RingStatus {
   fault_cleared?: number;
   /** The bridge STATE (6 = FAULT) that start cleared, also when the FAULT register read 0. */
   fault_cleared_state?: number;
-  /** Run stopped by the operator (the backend holds it). */
+  /** The Run is stopped and its ring held for playback: by the operator's Stop, or (ABI 37) by the end of an SSD run. Resume Run or an experiment start discards the frames. */
   run_frozen: boolean;
+  /** The ring's ARM epoch (ABI 37): the value its frame records carry, constant while the ring is frozen. Absent on an older server. */
+  epoch?: number;
   capacity_frames: number;
   /** First and last readable sequence (inclusive); count 0 when empty. */
   first_seq: number;
   last_seq: number;
   count: number;
   sensor_fps: number;
+}
+
+/** What starting an experiment costs while a Run is stopped: its buffered frames (the start re-arms the ring). Empty when nothing is held. */
+export function startDiscardNotice(ring: RingStatus | null | undefined): string {
+  if (!ring?.run_frozen) return "";
+  return ring.count > 0
+    ? `Starting an experiment discards the ${ring.count.toLocaleString("en-US")} buffered frames of the stopped Run. Continue?`
+    : "Starting an experiment ends the stopped Run. Continue?";
 }
 
 export interface RingFrame {

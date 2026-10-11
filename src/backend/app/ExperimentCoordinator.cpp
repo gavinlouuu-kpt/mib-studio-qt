@@ -652,10 +652,11 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
                     r.gates.push_back(gate("ring.placement", GateStatus::Fail, why,
                                            "boot the instrument with a smaller mem= (the bundle's bootargs), or run without a ring"));
             }
-            // Run stopped to review the frame ring: resume (a new ring) before an experiment.
+            // Run stopped to review the frame ring (after Stop, or after an SSD run): an experiment may start from it, and its start discards the
+            // buffered frames (a new ring). Said here; the UI asks before it starts.
             if (backend_.runFrozen())
-                r.gates.push_back(gate("run.frozen", GateStatus::Fail, "Run is stopped to review the buffered frames",
-                                       "resume Run first"));
+                r.gates.push_back(gate("run.frozen", GateStatus::Warn, "Run is stopped to review the buffered frames",
+                                       "starting the experiment discards them (a new ring)"));
             // The settings must compile into the PL profile page (S2).
             const auto profile = compilePlProfile(backend_);
             if (profile.ok() && !profile.warnings.empty()) {
@@ -1146,6 +1147,8 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
         const auto profile = compilePlProfile(backend_);
         bool providerOk = profile.ok() && provider->configure(profile, &providerError);
         if (!profile.ok()) providerError = "the settings do not compile into the PL profile";
+        // A stopped Run (its ring held for playback) ends here, right before the arm that discards the ring: LED on, latency cleared.
+        providerOk = providerOk && backend_.leaveStoppedRun(&providerError);
         // Order of an SSD run: RUN_ID and the store mode with the drain bit before ARM (the provider's start), then `pzrec start` after the ARM. ARM under an
         // open run would abort it, so the run cannot be opened first.
         provider->setRecordToSsd(ssdRecord != nullptr);
@@ -1618,8 +1621,16 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
     status_.startWallClockNs = run.startWallClockNs;
     SPDLOG_INFO("ExperimentCoordinator: run {} finalized in {:.3f} ms (state={}, ok={})",
                 run.startGeneration, sinceMs(tBegin), toString(state_), status_.finalizationOk);
+    // An SSD run leaves its ring for playback (#649, #693): Stop leads to the buffered frames, so the live session does not re-arm (a new ring)
+    // until Resume Run or the next Start. Decided before the status goes out, so a client that sees Idle also sees the stopped Run.
+    bool ringHeld = false;
+    if (run.ssdRunId != 0) {
+        std::string heldWhy;
+        ringHeld = backend_.holdRingAfterRun(&heldWhy);
+        if (!ringHeld) SPDLOG_INFO("ExperimentCoordinator: SSD run {}: the frame ring is not held for playback: {}", run.ssdRunId, heldWhy);
+    }
     publishLocked(lk, status_.finalizationOk ? "finalized" : "finalized with errors");
-    backend_.resumeLiveResults(); // live monitoring continues in Run once the run's accounting has settled (G5)
+    if (!ringHeld) backend_.resumeLiveResults(); // live monitoring continues in Run once the run's accounting has settled (G5)
 }
 
 bool ExperimentCoordinator::lastRunAccounting(recording::RecordingAccountingSnapshot& out, uint64_t& startGeneration) const

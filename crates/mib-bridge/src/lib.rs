@@ -1194,7 +1194,7 @@ pub mod ffi {
         fn set_instrument_mode(self: Pin<&mut BackendBridge>, mode: &str, x: i32, y: i32) -> BridgeCommandResult;
         /// The client's wall clock (ms since the epoch): stamps saved files on a board without an RTC (G14).
         fn sync_wall_clock(self: Pin<&mut BackendBridge>, unix_ms: i64) -> BridgeCommandResult;
-        /// #649 v1 (ABI 34): the every-frame ring's status as JSON (also the `ring` block of the instrument status).
+        /// #649 v1 (ABI 34): the every-frame ring's status as JSON (also the `ring` block of the instrument status). ABI 37: `epoch`, the ring's ARM epoch.
         fn fetch_ring_status(self: Pin<&mut BackendBridge>) -> String;
         /// One buffered frame as a 'MIBR' packet; empty on failure (`ring_frame_error` says why).
         fn fetch_ring_frame(self: Pin<&mut BackendBridge>, seq: u64) -> Vec<u8>;

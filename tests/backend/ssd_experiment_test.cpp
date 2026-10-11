@@ -7,6 +7,8 @@
 #include "backend/processing/IExecutionProvider.h"
 #include "backend/processing/ProcessingService.h"
 #include "backend/processing/pz/PzExecutionProviders.h"
+#include "backend/pz/PzFrameRing.h"
+#include "backend/pz/PzInstrumentControl.h"
 #include "backend/pz/PzRecords.h"
 #include "backend/pz/SsdStore.h"
 #include "backend/recording/Hdf5Service.h"
@@ -26,6 +28,9 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <atomic>
+#include <iterator>
+#include <map>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -145,6 +150,57 @@ struct ScriptedSsd final : bpz::ISsdDevice {
         json = recorderStatus(state, open, openId, next);
         return true;
     }
+};
+
+// #693 (D3): the PL registers the instrument control writes (the LED) and a replay provider that reports a ring, frozen once it has stopped.
+constexpr unsigned S0 = 128; // S[i] = P[128 + i]
+struct FakeRegs {
+    std::map<unsigned, uint32_t> live;
+};
+class FakeControl final : public bpz::IPzControlRegisters {
+public:
+    explicit FakeControl(FakeRegs& r) : r_(r) {}
+    uint32_t live(unsigned i) override { auto it = r_.live.find(i); return it == r_.live.end() ? 0 : it->second; }
+    void setLive(unsigned i, uint32_t v) override {
+        r_.live[i] = v;
+        if (i == S0 + 36) r_.live[S0 + 42] = 1;
+    }
+    uint32_t window(unsigned) override { return 0; }
+    void sleepUs(unsigned) override {}
+private:
+    FakeRegs& r_;
+};
+class RingedReplay final : public backend::processing::IExecutionProvider {
+public:
+    explicit RingedReplay(std::vector<uint8_t> records) : inner_(std::move(records), 2000) {}
+    std::string name() const override { return "replay-ring"; }
+    void setSink(Sink sink) override { inner_.setSink(std::move(sink)); }
+    bool configure(const backend::processing::pz::CompiledProfile& profile, std::string* error) override { return inner_.configure(profile, error); }
+    bool start(uint64_t runId, std::string* error) override {
+        ++starts;
+        const bool ok = inner_.start(runId, error);
+        running_ = ok;
+        return ok;
+    }
+    void stop() override { inner_.stop(); running_ = false; }
+    backend::processing::ProviderStatus status() const override { return inner_.status(); }
+    uint32_t ringFramesWanted() const override { return 100; }
+    bpz::RingStatus ringStatus() override {
+        bpz::RingStatus st;
+        st.valid = true;
+        st.records = 100;
+        st.recordBytes = bpz::kRingRecordBytes;
+        st.head = 99;
+        st.final = 100;
+        st.lo = 0;
+        st.epoch = 9;
+        st.frozen = !running_;
+        return st;
+    }
+    std::atomic<int> starts{0};
+private:
+    backend::processing::pz::ReplayExecutionProvider inner_;
+    std::atomic<bool> running_{false};
 };
 
 std::unique_ptr<bpz::SsdStore> scriptedStore(ScriptedSsd*& raw) {
@@ -321,6 +377,72 @@ int main(int argc, char** argv) {
         MIB_EXPECT(!st.finalizationOk && st.faultCode == "experiment.ssdStopFailed" && st.faultMessage.find("SSD run") != std::string::npos, "the failed SSD stop is a named fault: " + st.faultCode + " " + st.faultMessage);
         MIB_EXPECT(dev->stopCalls == 2, "the store retried");
         backend.capture().stop();
+        backend.shutdown();
+    }
+    // #693 (D3): an SSD run leaves its ring held for playback; Resume Run and the next Start end that
+    {
+        setEnv("MIB_PZREC", pzrec.c_str());
+        setEnv("MIB_SSD_IMAGE", img.c_str());
+        backend::AppBackend backend;
+        MIB_REQUIRE(backend.initialize((td.path() / "data5").string()), "backend init");
+        FakeRegs regs;
+        regs.live[S0 + 41] = 0x43454C32u; // 'CEL2'
+        regs.live[S0 + 10] = 100000;
+        regs.live[S0 + 43] = 777;
+        backend.setInstrumentControlForTesting(std::make_unique<FakeControl>(regs));
+        std::vector<uint8_t> bytes;
+        {
+            std::ifstream in(records, std::ios::binary);
+            bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+        }
+        auto ringed = std::make_unique<RingedReplay>(std::move(bytes));
+        RingedReplay* rp = ringed.get();
+        backend.setExecutionProviderForTesting(std::move(ringed));
+        ScriptedSsd* dev = nullptr;
+        backend.setSsdStoreForTesting(scriptedStore(dev));
+        backend.processing().setPixelToMicronFactor(0.4886);
+        std::string err;
+        MIB_REQUIRE(backend.setInstrumentMode(backend::pz::InstrumentMode::Run, 152, 200, &err), "Run: " + err);
+        MIB_EXPECT(backend.liveResultsActive() && !backend.runFrozen(), "Run: the live session runs");
+
+        auto begin = [&](const std::string& name, uint32_t expectRun) {
+            const std::string out = (td.path() / name).string();
+            auto ready = backend.experiment().evaluateReadiness(out, "pl");
+            if (!ready.ready) {
+                for (const auto& g : ready.gates)
+                    std::fprintf(stderr, "  %-26s %-12s %s %s\n", g.id.c_str(), backend::app::toString(g.status), g.reason.c_str(), g.detail.c_str());
+            }
+            MIB_REQUIRE(ready.ready, "ready to start " + name);
+            ExperimentStartRequest req;
+            req.outputPath = out;
+            req.readinessGeneration = ready.generation;
+            req.profileId = "pl";
+            const auto started = backend.experiment().start(req);
+            MIB_REQUIRE(started.outcome == ExperimentStartOutcome::Started, "starts: " + started.message);
+            MIB_EXPECT(started.run.ssdRunId == expectRun, "the SSD run id");
+        };
+        auto finish = [&]() {
+            backend.experiment().requestStop(false);
+            MIB_REQUIRE(waitFor([&] { return backend.experiment().status().terminal; }, std::chrono::seconds(60)), "the run finalizes");
+        };
+        begin("held1.h5", 1);
+        MIB_EXPECT(!backend.liveResultsActive() && regs.live[S0 + 0] == 1, "during the run: no live session, the LED is on");
+        finish();
+        MIB_EXPECT(backend.runFrozen() && !backend.liveResultsActive() && regs.live[S0 + 0] == 0,
+                   "after the SSD run: the ring is held (stopped Run, LED off), the live session did not re-arm");
+        const int startsHeld = rp->starts;
+        // Start from the held ring: a warning, not a block; the start discards the frames
+        const auto readyHeld = backend.experiment().evaluateReadiness((td.path() / "held2.h5").string(), "pl");
+        const auto* frozenGate = readyHeld.gate("run.frozen");
+        MIB_EXPECT(frozenGate && frozenGate->status == backend::app::GateStatus::Warn && readyHeld.ready, "run.frozen warns and does not block");
+        begin("held2.h5", 2);
+        MIB_EXPECT(!backend.runFrozen() && regs.live[S0 + 0] == 1 && rp->starts == startsHeld + 1 && !backend.liveResultsActive(),
+                   "the start left the stopped Run (LED on) and the run's provider start armed the ring once");
+        finish();
+        MIB_EXPECT(backend.runFrozen() && regs.live[S0 + 0] == 0 && !backend.liveResultsActive(), "the second run's ring is held as well");
+        // Resume Run: a new ring and the live session
+        MIB_REQUIRE(backend.resumeRun(&err), "resume: " + err);
+        MIB_EXPECT(!backend.runFrozen() && backend.liveResultsActive() && regs.live[S0 + 0] == 1 && rp->starts == startsHeld + 2, "Resume Run re-arms and lights the LED");
         backend.shutdown();
     }
     // without an SSD configured nothing changes

@@ -29,7 +29,7 @@ import { SsdRunsPanel } from "./components/SsdRunsPanel";
 import { SsdStrip } from "./components/SsdStrip";
 import { stripView, type SsdStatus } from "./ssdView";
 import { RingPlaybackPanel } from "./components/RingPlaybackPanel";
-import { faultClearedNote } from "./ringPlayback";
+import { faultClearedNote, startDiscardNotice } from "./ringPlayback";
 import { downloadUrl } from "./filesView";
 import { serverOrigin, tokenFromLocation } from "./transport/auth";
 import { FilesPanel } from "./components/FilesPanel";
@@ -881,6 +881,9 @@ export default function App() {
     if (experimentPending.current) return;
     experimentPending.current = true; setExperimentRequestBusy(true); setReadinessMessage(""); setStartNotice("");
     try {
+      // A stopped Run (after Stop, or after an SSD run) holds its buffered frames: the start re-arms the ring, so the operator is asked first.
+      const discard = startDiscardNotice(instrumentRef.current?.ring);
+      if (discard && !(await confirm(discard))) return;
       const picked = await save({ title: "Save Experiment Data", filters: H5_FILTER, defaultPath: "experiment.h5" });
       if (!picked) return;
       const readiness = await bridge.fetchExperimentReadiness(picked);

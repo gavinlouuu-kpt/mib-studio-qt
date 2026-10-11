@@ -2464,7 +2464,7 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 36; }
+std::uint32_t bridge_abi_version() { return 37; }
 
 } // namespace mib_bridge
 
