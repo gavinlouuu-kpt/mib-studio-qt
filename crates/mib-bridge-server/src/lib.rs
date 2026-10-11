@@ -177,6 +177,8 @@ const CONTROL_COMMANDS: &[&str] = &[
     "trigger_periodic_stop", "cancel_operation", "review_reanalysis_json", "review_export_json",
     "review_export_csv", "apply_config_document", "profile_command", "restore_startup_configuration",
     "processing_core_command",
+    // Reads and writes files on the instrument (the PZ7035 camera document is confined to <data>/camera/): control only.
+    "camera_document",
     "save_preview_buffer", "set_processed_preview_enabled",
     // PZ7035 (#501 P1): camera modes and the LED drive hardware; service mode unlocks raw LED.
     "set_instrument_mode", "sync_wall_clock", "ring_freeze", "ring_resume", "apply_pz_camera_document", "set_service_mode", "set_instrument_led",
@@ -591,7 +593,7 @@ mod stage_control_tests {
     // status and a buffered frame does not (a viewer may watch the playback).
     #[test]
     fn ring_stop_and_resume_are_control_commands_but_reads_are_not() {
-        for cmd in ["ring_freeze", "ring_resume", "apply_pz_camera_document"] {
+        for cmd in ["ring_freeze", "ring_resume", "apply_pz_camera_document", "camera_document"] {
             assert!(CONTROL_COMMANDS.contains(&cmd), "{cmd} must be a CONTROL command");
         }
         for cmd in ["fetch_ring_status", "fetch_ring_frame", "fetch_ssd_status", "fetch_ssd_runs", "fetch_run_fps", "check_pz_camera_document"] {

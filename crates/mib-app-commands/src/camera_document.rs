@@ -58,6 +58,33 @@ fn transact(action:&str,path:&str,kind:&str,baseline:&str,text:&str)->Result<Cam
     Ok(CameraDocument{path:path.to_string_lossy().into_owned(),revision:revision(&result),text:result})
 }
 pub fn camera_document(action:String,path:String,kind:String,baseline:String,text:String)->Result<CameraDocument,String>{transact(&action,&path,&kind,&baseline,&text)}
+
+/// The instrument's camera documents directory under the data directory.
+pub fn pz7035_directory(data_dir:&Path)->std::path::PathBuf{data_dir.join("camera")}
+
+/// Resolve `requested` (relative to, or inside, `<data>/camera/`) for the PZ7035 camera document: a plain file name directly in that directory, no `..`, no
+/// symbolic link on the path or as the file. `creating` makes the directory. The save itself keeps the revision check and the atomic rename.
+pub fn confine_pz7035(data_dir:&Path,requested:&str,creating:bool)->Result<String,String>{
+    let base=pz7035_directory(data_dir);
+    if creating{fs::create_dir_all(&base).map_err(|e|e.to_string())?;}
+    let base=fs::canonicalize(&base).map_err(|_|"The camera document directory does not exist yet: save a document with Save As first".to_string())?;
+    let requested=Path::new(requested);
+    let joined=if requested.is_absolute(){requested.to_path_buf()}else{base.join(requested)};
+    if joined.components().any(|c|matches!(c,std::path::Component::ParentDir)){return Err("Camera documents live directly in the instrument's camera folder".into());}
+    let name=joined.file_name().ok_or("Missing filename")?.to_owned();
+    let parent=fs::canonicalize(joined.parent().ok_or("Missing parent folder")?).map_err(|e|e.to_string())?;
+    if parent!=base{return Err(format!("Camera documents live directly in {}",base.display()));}
+    let file=parent.join(name);
+    if let Ok(meta)=fs::symlink_metadata(&file){if meta.file_type().is_symlink(){return Err("A camera document may not be a symbolic link".into());}}
+    Ok(file.to_string_lossy().into_owned())
+}
+
+/// The remote entry (the server): the PZ7035 camera document is confined to `<data>/camera/`; the desktop-style kinds keep the path they are given
+/// (the command is control-only on the server, and those kinds do not exist on the PZ7035).
+pub fn camera_document_confined(data_dir:&Path,action:String,path:String,kind:String,baseline:String,text:String)->Result<CameraDocument,String>{
+    let path=if kind=="pz7035"&&action!="default"{confine_pz7035(data_dir,&path,action=="create"||action=="save")?}else{path};
+    transact(&action,&path,&kind,&baseline,&text)
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -74,6 +101,35 @@ mod tests {
         assert_eq!(fs::read_to_string(&copied).unwrap(),"{\"copy\":true}");
         let defaults=transact("default","","json","","").unwrap();assert!(defaults.path.is_empty());assert!(serde_json::from_str::<serde_json::Value>(&defaults.text).unwrap().is_object());
         fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn the_remote_pz7035_document_is_confined_to_the_camera_folder() {
+        let data=tempfile::tempdir().unwrap();let outside=tempfile::tempdir().unwrap();
+        let secret=outside.path().join("secret.json");fs::write(&secret,"{\"secret\":true}").unwrap();
+        let (c,r)=("create".to_string(),"read".to_string());
+        // The folder is made by the first create; a read before that says so.
+        assert!(camera_document_confined(data.path(),r.clone(),"camera.json".into(),"pz7035".into(),String::new(),String::new()).is_err());
+        let made=camera_document_confined(data.path(),c.clone(),"camera.json".into(),"pz7035".into(),String::new(),"{\"run\":{}}".into()).unwrap();
+        assert!(made.path.ends_with("camera/camera.json"),"{}",made.path);
+        // A relative name and the absolute path both reach it.
+        assert_eq!(camera_document_confined(data.path(),r.clone(),"camera.json".into(),"pz7035".into(),String::new(),String::new()).unwrap().text,"{\"run\":{}}");
+        assert!(camera_document_confined(data.path(),r.clone(),made.path.clone(),"pz7035".into(),String::new(),String::new()).is_ok());
+        // Everything else is refused: other folders, parents, absolute paths elsewhere, subfolders, symbolic links (file and folder).
+        for bad in [secret.to_str().unwrap().to_string(),"../secret.json".into(),"../config/aravis-camera.json".into(),"sub/camera.json".into(),"/etc/passwd".into()] {
+            assert!(camera_document_confined(data.path(),r.clone(),bad.clone(),"pz7035".into(),String::new(),String::new()).is_err(),"{bad}");
+            assert!(camera_document_confined(data.path(),c.clone(),bad.clone(),"pz7035".into(),String::new(),"{}".into()).is_err(),"{bad}");
+        }
+        let camera=data.path().join("camera");
+        std::os::unix::fs::symlink(&secret,camera.join("link.json")).unwrap();
+        assert!(camera_document_confined(data.path(),r.clone(),"link.json".into(),"pz7035".into(),String::new(),String::new()).is_err());
+        assert!(camera_document_confined(data.path(),"save".into(),"link.json".into(),"pz7035".into(),String::new(),"{}".into()).is_err());
+        assert_eq!(fs::read_to_string(&secret).unwrap(),"{\"secret\":true}","the file behind the link is untouched");
+        // The default needs no path; the revision check and the .json extension still apply.
+        assert!(camera_document_confined(data.path(),"default".into(),String::new(),"pz7035".into(),String::new(),String::new()).is_ok());
+        let again=camera_document_confined(data.path(),r.clone(),"camera.json".into(),"pz7035".into(),String::new(),String::new()).unwrap();
+        assert!(camera_document_confined(data.path(),"save".into(),"camera.json".into(),"pz7035".into(),"stale".into(),"{}".into()).is_err());
+        assert!(camera_document_confined(data.path(),"save".into(),"camera.json".into(),"pz7035".into(),again.revision,"{\"run\":{\"frame_rate_hz\":1000}}".into()).is_ok());
+        assert!(camera_document_confined(data.path(),c,"camera.txt".into(),"pz7035".into(),String::new(),"{}".into()).is_err());
     }
     #[test]
     fn pz7035_documents_are_json_files_with_a_bundled_default() {

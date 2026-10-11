@@ -816,7 +816,8 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
                 #[serde(rename = "text")] text: String,
             }
             let a: A = args(value)?;
-            crate::camera_document::camera_document(a.action, a.path, a.kind, a.baseline, a.text).and_then(json)
+            // The remote entry: the PZ7035 camera document is confined to <data>/camera/ (the server makes the command control-only).
+            crate::camera_document::camera_document_confined(std::path::Path::new(&host.data_dir()?), a.action, a.path, a.kind, a.baseline, a.text).and_then(json)
         }
         "fetch_ring_status" => crate::fetch_ring_status(state).and_then(json),
         "fetch_ring_frame" => {

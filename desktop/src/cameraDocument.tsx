@@ -4,7 +4,7 @@ import {open,save,confirm} from "./transport/dialogs";
 import {bridge} from "./bridge";
 import {CAMERA_SELECTION_MODES} from "./bridgeContract";
 import type {CameraScriptContext} from "./cameraScript";
-import {QUALIFIED_NOTE,discardQuestion,rateSummary,strobeSummary,type PzCameraCheck,type RunFpsStatus} from "./runFps";
+import {QUALIFIED_NOTE,applyNotice,discardQuestion,rateSummary,strobeSummary,type PzCameraCheck,type RunFpsStatus} from "./runFps";
 type Document={path:string;text:string;revision:string};
 export type CameraDocumentKind="js"|"json"|"pz7035";
 /** The PZ7035 camera document sets the Run rate and exposure: the instrument's current Run status (for the discard question) and the frames a held ring holds. */
@@ -32,7 +32,7 @@ export function useCameraDocument(context:CameraScriptContext,kind:CameraDocumen
    }
    if(action==="default") {const loaded=await invoke<Document>("camera_document",{action:"default",path:"",kind,baseline:"",text:""});setDoc(loaded);setText(loaded.text);setDirty(true);setMessage("Bundled default copied to draft; use Save As before applying.");return;}
    if(action==="saveAs") {
-    const path=await save({defaultPath:`camera.${kind==="pz7035"?"json":kind}`,filters:[{name:"Camera document",extensions:[kind==="pz7035"?"json":kind]}]});if(!path)return;
+    const path=await save({defaultPath:kind==="pz7035"?"camera/camera.json":`camera.${kind}`,filters:[{name:"Camera document",extensions:[kind==="pz7035"?"json":kind]}]});if(!path)return;
     let existing:Document|null=null;
     try {existing=await invoke<Document>("camera_document",{action:"read",path,kind,baseline:"",text:""});}catch{/* Native create rejects collisions or unreadable existing paths. */}
     if(existing&&!await confirm("Replace this camera file with the current draft?"))return;
@@ -68,13 +68,13 @@ export function useCameraDocument(context:CameraScriptContext,kind:CameraDocumen
     if(!result.ok)throw new Error(result.message);
     setMessage(result.message);ctx.append(result.message);await ctx.refresh();return;
    }
-   const path=action==="browse"?await open({multiple:false,filters:[{name:kind==="js"?"EGrabber script":kind==="pz7035"?"PZ7035 camera document":"MindVision configuration",extensions:[kind==="pz7035"?"json":kind]}]}):doc?.path;
+   const path=action==="browse"?await open({multiple:false,...(kind==="pz7035"?{defaultPath:"camera/camera.json"}:{}),filters:[{name:kind==="js"?"EGrabber script":kind==="pz7035"?"PZ7035 camera document":"MindVision configuration",extensions:[kind==="pz7035"?"json":kind]}]}):doc?.path;
    if(typeof path!=="string")return;
    const loaded=await invoke<Document>("camera_document",{action:action==="save"?"save":"read",path,kind,baseline:doc?.revision??"",text:action==="save"?text:""});
    setDoc(loaded);setText(loaded.text);setDirty(false);setMessage(action==="save"?"Saved to disk; not applied to camera.":"Loaded from disk; not applied to camera.");
   }catch(e){setMessage(String(e));current.current.append(`Camera document: ${e}`);}finally{pending.current=false;setBusy(false);}
  };
- return {doc,text,dirty,busy,message,kind,check,run,triggerAllowed:serviceArmed&&context.ready&&context.running&&!context.experimentActive&&context.selection?.mode===CAMERA_SELECTION_MODES.MindVision,edit:(value:string)=>{setText(value);setDirty(true);},applyBlocked:busy||!doc?.path||dirty||!context.ready||context.experimentActive||(kind==="pz7035"?check?.ok!==true:context.running)};
+ return {doc,text,dirty,busy,message,kind,check,run,applyNote:kind==="pz7035"?applyNotice(pz?.status,pz?.ringFrames??0):"",triggerAllowed:serviceArmed&&context.ready&&context.running&&!context.experimentActive&&context.selection?.mode===CAMERA_SELECTION_MODES.MindVision,edit:(value:string)=>{setText(value);setDirty(true);},applyBlocked:busy||!doc?.path||dirty||!context.ready||context.experimentActive||(kind==="pz7035"?check?.ok!==true:context.running)};
 }
 function PzDocumentVerdict({check}:{check:PzCameraCheck|null}) {
  if(!check)return <p role="status">Checking the document…</p>;
@@ -93,8 +93,9 @@ export function CameraDocumentEditor({model:m}:{model:ReturnType<typeof useCamer
  return <section aria-label={label}><h5>{title}</h5>
  <div className="toolbar"><button disabled={m.busy} onClick={()=>void m.run("default")}>Load Bundled Default</button><button disabled={m.busy} onClick={()=>void m.run("browse")}>Browse {m.kind==="pz7035"?"JSON":m.kind.toUpperCase()}…</button><button disabled={m.busy||!m.doc?.path} onClick={()=>void m.run("reload")}>Reset / Reload File</button><button disabled={m.busy||!m.doc?.path||!m.dirty} onClick={()=>void m.run("save")}>Save File</button><button disabled={m.busy||!m.doc} onClick={()=>void m.run("saveAs")}>Save As…</button><button disabled={m.applyBlocked} onClick={()=>void m.run("apply")}>Apply Saved File to {m.kind==="pz7035"?"Instrument":"Camera"}</button><button disabled={m.busy||!m.doc} onClick={()=>void m.run("clear")}>Clear File Selection</button></div>
  {m.kind==="json"&&<button disabled={m.busy||!m.triggerAllowed} onClick={()=>void m.run("trigger")} title="Requires armed Service mode, running MindVision camera and idle experiment">MindVision Soft Trigger</button>}
- {m.kind==="pz7035"&&<p>Run frame rate 1,000 to 5,000 fps (whole number) and exposure: "auto" (SHS 64: 150 µs at 5,000 fps, about 950 µs at 1,000 fps) or a number of microseconds that starts the exposure inside the LED strobe window. The LED strobe itself is Service-only and is not part of this document.</p>}
+ {m.kind==="pz7035"&&<p>Run frame rate 1,000 to 5,000 fps (whole number) and exposure: "auto" (the exposure starts about 50 µs after XVS: 150 µs at 5,000 fps, about 950 µs at 1,000 fps) or a number of microseconds that starts the exposure inside the LED strobe window. The LED strobe itself is Service-only and is not part of this document. Documents live in the instrument's camera folder (&lt;data&gt;/camera/).</p>}
  <p className="mono">{m.doc?.path??"Choose an existing camera file"}</p>{m.doc&&<textarea className="script-editor" aria-label={contents} disabled={m.busy} value={m.text} onChange={e=>m.edit(e.target.value)}/>}
  {m.kind==="pz7035"&&m.doc&&<PzDocumentVerdict check={m.check}/>}
+ {m.kind==="pz7035"&&m.applyNote&&<p data-testid="pz-document-apply-note">{m.applyNote}</p>}
  <p role="status">{m.busy?"Camera document operation pending…":m.message||(m.dirty?"Unsaved edits":"")}</p><p>Browsing, editing and saving never actuate hardware. Apply is explicit{m.kind==="pz7035"?", checks the saved file revision and the document, and re-enters Run when the instrument is in Run.":", requires a stopped matching camera, and verifies the saved file revision."}</p></section>;
 }

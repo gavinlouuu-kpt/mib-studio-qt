@@ -1668,21 +1668,7 @@ namespace backend
         //    exposure and region, so the producer re-applies the mode even if something else
         //    touched the sensor meanwhile.
         if (aravisCameraConfigured_) {
-            AravisProfile next = aravisProfile_;
-            if (mode == pz::InstrumentMode::Align) {
-                next.overviewFps = wholeFrame ? kAlignFps : kAlignBandsFps;
-                next.overviewExposureUs = wholeFrame ? kAlignExposureUs : kAlignBandsExposureUs;
-                next.overviewHmax = wholeFrame ? kAlignHmax : 0;
-            } else {
-                next.hasRoi = true;
-                next.x = x;
-                next.y = y;
-                next.width = kRunWidth;
-                next.height = kRunHeight;
-                // The configured setting: rate and exposure (SHS 64 for auto), HMAX 58 forced so the producer cannot pick 116 (PzRunTiming.h).
-                const auto setting = runSetting();
-                pz::stageRunProfile(next, x, y, kRunWidth, kRunHeight, setting, pz::runTiming(setting));
-            }
+            const AravisProfile next = stagedProfile(mode, x, y, wholeFrame);
             if (!saveAravisProfile(next, &err)) return fail(err);
             aravisProfile_ = next;
             if (!setAravisOverview(mode == pz::InstrumentMode::Align, &err)) return fail(err);
@@ -1811,6 +1797,35 @@ namespace backend
         return true;
     }
 
+    AppBackend::AravisProfile AppBackend::stagedProfile(pz::InstrumentMode mode, int x, int y, bool wholeFrame)
+    {
+        ensureAravisProfileLoaded();
+        AravisProfile next = aravisProfile_;
+        if (mode == pz::InstrumentMode::Align) {
+            next.overviewFps = wholeFrame ? kAlignFps : kAlignBandsFps;
+            next.overviewExposureUs = wholeFrame ? kAlignExposureUs : kAlignBandsExposureUs;
+            next.overviewHmax = wholeFrame ? kAlignHmax : 0;
+        } else {
+            // The configured setting: the rate and the exposure ("auto": starting ~50 µs after XVS), the line period forced so the producer's choice is explicit (PzRunTiming.h).
+            const auto setting = runSetting();
+            pz::stageRunProfile(next, x, y, kRunWidth, kRunHeight, setting, pz::runTiming(setting));
+        }
+        return next;
+    }
+
+    AppBackend::StagedRun AppBackend::stagedRunForTesting(pz::InstrumentMode mode, int x, int y)
+    {
+        const AravisProfile next = stagedProfile(mode, x, y, /*wholeFrame=*/true);
+        StagedRun out;
+        out.pzHmax = pz::producerHmax(next, mode == pz::InstrumentMode::Align);
+        out.fps = next.experimentFps;
+        out.exposureUs = next.experimentExposureUs;
+        out.exposureAuto = next.experimentExposureAuto;
+        out.x = next.x;
+        out.y = next.y;
+        return out;
+    }
+
     void AppBackend::ensureAravisProfileLoaded()
     {
         if (!aravisProfileLoaded_.load()) loadAravisProfile();
@@ -1854,6 +1869,16 @@ namespace backend
         return fmt::format("{} fps (exposure {} µs)", static_cast<int>(t.fps), static_cast<int>(std::lround(t.exposureUs)));
     }
 
+    std::string AppBackend::runSettingRefusal()
+    {
+        if (!pzControl_) return "no PZ7035 control on this platform";
+        const auto run = experimentCoordinator_->state();
+        if (isFrameRecording() || run == app::ExperimentRunState::Starting || run == app::ExperimentRunState::Active ||
+            run == app::ExperimentRunState::Stopping)
+            return "Stop the experiment or recording before changing the Run setting";
+        return {};
+    }
+
     bool AppBackend::applyCameraDocument(const std::string &path, bool acknowledgeDiscardRing, std::string *errorOut, std::string *messageOut)
     {
         auto fail = [&](const std::string &message) {
@@ -1861,16 +1886,29 @@ namespace backend
             SPDLOG_WARN("AppBackend: camera document: {}", message);
             return false;
         };
+        // The refusal states first: nothing is read from disk for a request that cannot be applied.
+        if (const std::string why = runSettingRefusal(); !why.empty()) return fail(why);
+        namespace fs = std::filesystem;
         std::string text;
         try {
-            const auto file = std::filesystem::u8path(path);
+            // The document lives directly in <data>/camera/: a regular .json file, no symlink anywhere on the way, not larger than the limit (stat before the read).
+            const fs::path base = fs::weakly_canonical(fs::u8path(dataDir_) / "camera");
+            const fs::path requested = fs::u8path(path);
             std::error_code ec;
-            if (!std::filesystem::is_regular_file(file, ec)) return fail("not a regular file: " + path);
+            const fs::path parent = fs::weakly_canonical((requested.is_absolute() ? requested : base / requested).parent_path(), ec);
+            if (ec || parent != base) return fail("the camera document must be a file directly in " + base.generic_string());
+            const fs::path file = parent / requested.filename();
+            if (file.extension() != ".json") return fail("the camera document must be a .json file");
+            const auto link = fs::symlink_status(file, ec);
+            if (ec || fs::is_symlink(link) || !fs::is_regular_file(link)) return fail("not a regular file (symbolic links are refused): " + file.generic_string());
+            const auto size = fs::file_size(file, ec);
+            if (ec) return fail("cannot read " + file.generic_string());
+            if (size > pz::kCameraDocumentMaxBytes) return fail("the camera document exceeds 64 KiB");
             std::ifstream in(file, std::ios::binary);
-            if (!in) return fail("cannot read " + path);
+            if (!in) return fail("cannot read " + file.generic_string());
             text.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
         } catch (const std::exception &e) {
-            return fail(std::string("cannot read ") + path + ": " + e.what());
+            return fail(std::string("cannot read the camera document: ") + e.what());
         }
         const auto parsed = pz::parseCameraDocument(text, pz::kRunLed.delayUs, pz::kRunLed.widthUs);
         if (!parsed.ok) return fail(parsed.error);
@@ -1885,12 +1923,20 @@ namespace backend
             SPDLOG_WARN("AppBackend: Run setting: {}", message);
             return false;
         };
-        if (!pzControl_) return fail("no PZ7035 control on this platform");
+        if (const std::string why = runSettingRefusal(); !why.empty()) return fail(why);
         if (const auto bad = pz::checkRunSetting(setting, pz::kRunLed.delayUs, pz::kRunLed.widthUs); !bad.empty()) return fail(bad);
-        const auto run = experimentCoordinator_->state();
-        if (isFrameRecording() || run == app::ExperimentRunState::Starting || run == app::ExperimentRunState::Active ||
-            run == app::ExperimentRunState::Stopping)
-            return fail("Stop the experiment or recording before changing the Run setting");
+        // Nothing to apply: the camera already runs this setting (a held ring is kept, the camera is not restarted).
+        ensureAravisProfileLoaded(); // before the setting lock: loading takes it
+        {
+            std::lock_guard<std::mutex> settingLock(runSettingMutex_);
+            if (instrumentMode() == pz::InstrumentMode::Run && runAppliedValid_ && runApplied_ == setting && runConfigured_ == setting) {
+                const auto t = pz::runTiming(setting);
+                if (messageOut)
+                    *messageOut = fmt::format("Run setting {} fps, exposure {}{} µs is already applied; the camera was not restarted", static_cast<int>(t.fps),
+                                              setting.autoExposure ? "auto " : "", static_cast<int>(std::lround(t.exposureUs)));
+                return true;
+            }
+        }
         // Only a Run that is stopped to review its frames loses something: the re-entry discards the ring. Outside Run nothing is discarded.
         const bool inRun = instrumentMode() == pz::InstrumentMode::Run;
         const bool held = inRun && runFrozen_.load();
@@ -1904,7 +1950,7 @@ namespace backend
         const auto timing = pz::runTiming(setting);
         next.experimentFps = timing.fps;
         next.experimentExposureUs = timing.exposureUs;
-        next.experimentHmax = pz::kRunHmax;
+        next.experimentHmax = timing.hmax;
         next.experimentExposureAuto = setting.autoExposure;
         next.experimentExposureSetting = setting.autoExposure ? 0.0 : setting.exposureUs;
         std::string err;
@@ -2714,7 +2760,7 @@ namespace backend
                     profile.experimentExposureSetting = json["experiment"].value("exposure_setting", 0.0);
                     // Only a profile this feature wrote (it carries the forced line period 58) is a stored Run setting: an env-seeded or older
                     // profile (MIB_ARAVIS_FPS on the board unit, a frame_rate_hz without hmax) never becomes the Run rate.
-                    if (hmax == pz::kRunHmax && pz::checkRunFps(profile.experimentFps).empty()) {
+                    if (pz::checkRunFps(profile.experimentFps).empty() && hmax == pz::runHmaxFor(profile.experimentFps)) {
                         pz::RunSetting stored;
                         stored.fps = profile.experimentFps;
                         stored.autoExposure = profile.experimentExposureAuto;
@@ -2791,7 +2837,7 @@ namespace backend
         options.enableGigEVision = aravisGigE_;
         const auto& profile = aravisProfile_;
         if (profile.previewRateHz > 0) options.previewRateHz = profile.previewRateHz;
-        // PZ7035 line period: forced only for the whole-frame Align overview, otherwise automatic.
+        // PZ7035 line period: the whole-frame Align overview's, or the experiment's (forced in Run: 58 or 116, see PzRunTiming.h; 0 = the producer's rule).
         options.pzHmax = pz::producerHmax(profile, aravisOverview_.load());
         if (aravisOverview_.load()) {
             options.fullSensor = true;

@@ -597,7 +597,8 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
                                        (mode == pz::InstrumentMode::Align ? "Align" : "no camera mode"),
                                    "Choose the window in Camera & Alignment and switch to Run"));
         }
-        // The strobe is referenced to XVS, the exposure is the last 150 us of the frame: at the configured rate they may not overlap (frames unlit).
+        // The strobe is referenced to XVS and the exposure ends at the frame end: a safety check that the configured setting's exposure window overlaps the strobe
+        // pulse (every setting the camera document accepts does; if this ever warns, frames would be unlit).
         const auto timing = backend_.runTiming();
         const auto strobe = pz::strobeCheck(timing, pz::kRunLed.delayUs, pz::kRunLed.widthUs);
         char window[160];
@@ -607,7 +608,7 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
             r.gates.push_back(gate("instrument.strobe", GateStatus::Pass, {}, {}, window));
         else
             r.gates.push_back(gate("instrument.strobe", GateStatus::Warn, pz::strobeWarning(strobe),
-                                   "Use a rate above about 4,600 fps, or ask for the strobe/exposure geometry to be changed for this rate"));
+                                   "This setting should have been refused by the camera document: apply a valid document (auto exposure) and report it"));
     } else if (backend_.isCameraOverview()) {
         r.gates.push_back(gate("camera.mode", GateStatus::Fail,
                                "The camera is showing the full sensor overview",
