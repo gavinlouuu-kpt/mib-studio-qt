@@ -9,7 +9,7 @@ What it does (Studio owns the window: nothing here touches pzrec, the registers 
   3. run for --duration seconds; optional --sample-hz polls fetch_ssd_status into ssd-samples.jsonl (t, seen/written/dropped/bytes_written/drain_kbps)
   4. experiment_stop; wait until the run is closed (SSD READY, experiment terminal) and the ring is held (run_frozen)
   5. fetch_ssd_runs (the closed run), fetch_ring_status (ring-status-1.json), then fetch_ring_frame for EVERY sequence first_seq..last_seq (ring/seq-N.mibr)
-  6. GET /ssd/runs/ID/records (DL/runID.bin, headers saved), fetch_ssd_runs again (post.runs.json)
+  6. GET /ssd/runs/ID/records (DL/runID.bin, headers saved), fetch_ssd_runs again (driver-post.runs.json: post.runs.json belongs to the board owner's evaluator)
   7. fetch_ring_status (ring-status-2.json) and ~--reread spread sequences again (ring2/), wait --idle-s, fetch_ring_status (ring-status-3.json)
   8. ring_vs_ssd.py with all of it -> OUT/ring-vs-ssd/{summary.txt,ring-vs-ssd.json}; exit 0 only when it passes
 --dl DIR writes the export exactly as the board owner's run_export.sh does (DIR/run<N>.bin, run<N>.headers in curl -D style with lowercase names, run<N>.time in seconds, run<N>.md5 written
@@ -432,7 +432,7 @@ def _main():
     if want >= 0 and n != want:
         sys.exit(f"the export is short: {n} of {want} bytes")
     post = st.call("fetch_ssd_runs")
-    save(out / "post.runs.json", post)
+    save(out / "driver-post.runs.json", post)
 
     status2 = st.call("fetch_ring_status")
     save(out / "ring-status-2.json", status2)
@@ -454,7 +454,7 @@ def _main():
     if not a.no_judge:
         cmd = [sys.executable, str(HERE / "ring_vs_ssd.py"), "--ring", str(out / "ring"), "--status", str(out / "ring-status-1.json"), "--ring2", str(out / "ring2"),
                "--status2", str(out / "ring-status-2.json"), "--status3", str(out / "ring-status-3.json"), "--run", str(dl / f"run{rid}.bin"), "--runs",
-               str(out / "post.runs.json"), "--run-id", str(rid), "--out", str(out / "ring-vs-ssd")]
+               str(out / "driver-post.runs.json"), "--run-id", str(rid), "--out", str(out / "ring-vs-ssd")]
         if a.require_content:
             cmd += ["--require-content", a.require_content]
         log("judge: " + " ".join(cmd))

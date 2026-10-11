@@ -720,5 +720,22 @@ class RealRecords(unittest.TestCase):
         self.assertEqual(rep["overlap"], n)
 
 
+class DriverNames(unittest.TestCase):
+    """The slot driver shares its OUT directory with the board owner's scripts, which own every pre.* and post.* file, journal.cursor and install.log."""
+
+    OWNED = ("pre.", "post.")
+    OWNED_EXACT = {"journal.cursor", "install.log"}
+
+    def test_the_driver_never_writes_a_name_the_board_owner_owns(self):
+        import re
+        source = (HERE / "slot_driver.py").read_text()
+        names = set(re.findall(r'\bout\s*/\s*"([^"]+)"', source))
+        self.assertIn("driver-post.runs.json", names, "the run table the driver judges against is its own file")
+        self.assertGreater(len(names), 15, "the scan found the driver's output names")
+        clashes = sorted(n for n in names if n.startswith(self.OWNED) or n in self.OWNED_EXACT)
+        self.assertEqual(clashes, [], "the driver writes names the board owner's scripts own")
+        self.assertNotIn('"post.runs.json"', source.replace("(driver-post.runs.json: post.runs.json belongs", ""), "post.runs.json appears only in the docstring")
+
+
 if __name__ == "__main__":
     unittest.main()
