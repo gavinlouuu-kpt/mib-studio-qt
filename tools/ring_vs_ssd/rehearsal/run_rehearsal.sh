@@ -3,6 +3,8 @@
 # NOT the board. See README.md in this directory.
 #
 #   run_rehearsal.sh OUT FPS[:DURATION_S[:DROP_EVERY]] ...        e.g.  run_rehearsal.sh /tmp/reh 5000:8 1000:12 5000:8:97
+#   BEFORE_DRIVER / AFTER_DRIVER: a command run (sh -c) once Studio is up, before the driver, and after it while Studio still runs, with REH_URL, REH_WORK, REH_DATA,
+#   REH_LABEL and REH_FPS in its environment (camera_document_cycle.py is made for them); a failing hook fails the cycle.
 #   DRIVER_ARGS="--dl DIR --h5-dir DIR" adds options to every slot_driver.py call; REHEARSAL_CORRUPT_ID / REHEARSAL_DROP_UNTIL pass to the fake pzrec.
 #
 # Needs: the host backend built (cmake --preset linux-backend-only; mib_backend), crates/mib-bridge-server built with MIB_BRIDGE_NO_CMAKE=1
@@ -48,7 +50,10 @@ for cycle in "$@"; do
     for _ in $(seq 1 120); do curl -sf "http://127.0.0.1:$port/healthz" >/dev/null && break; sleep 1; done
     curl -sf "http://127.0.0.1:$port/healthz" >/dev/null || { echo "Studio did not come up" >&2; journalctl --user -u "$unit" --no-pager | tail -20 >&2; exit 1; }
     rc=0
-    python3 "$here/../slot_driver.py" "http://127.0.0.1:$port" "$work/out" --label "$label" --duration "$dur" --idle-s 3 --reread 20 --sample-hz 2 --resume-at-end --mode-xy 152,200 --fps "$fps" ${DRIVER_ARGS:-} || rc=$?
+    export REH_URL="http://127.0.0.1:$port" REH_WORK="$work" REH_DATA="$work/data" REH_LABEL="$label" REH_FPS="$fps"
+    if [ -n "${BEFORE_DRIVER:-}" ]; then sh -c "$BEFORE_DRIVER" || rc=$?; fi
+    [ "$rc" != 0 ] || python3 "$here/../slot_driver.py" "http://127.0.0.1:$port" "$work/out" --label "$label" --duration "$dur" --idle-s 3 --reread 20 --sample-hz 2 --resume-at-end --mode-xy 152,200 --fps "$fps" ${DRIVER_ARGS:-} || rc=$?
+    if [ -n "${AFTER_DRIVER:-}" ] && [ "$rc" = 0 ]; then sh -c "$AFTER_DRIVER" || rc=$?; fi
     journalctl --user -u "$unit" --no-pager > "$work/studio.log" 2>&1 || true
     systemctl --user stop "$unit" 2>/dev/null || true
     trap - EXIT

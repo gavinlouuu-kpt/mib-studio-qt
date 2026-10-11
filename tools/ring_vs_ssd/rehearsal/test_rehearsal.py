@@ -121,6 +121,122 @@ class Rehearsal(unittest.TestCase):
             self.assertEqual(diff[0], 2 * F.REC + 4096 + 1000)
 
 
+class CameraDocumentCycle(unittest.TestCase):
+    def test_the_expected_timing_follows_the_producer_rule(self):
+        import camera_document_cycle as C
+        self.assertEqual(C.expected(5000, "auto"), {"hmax": 58, "vmax": 256, "shs": 64})
+        self.assertEqual(C.expected(1000, "auto"), {"hmax": 116, "vmax": 640, "shs": 32})
+        self.assertEqual(C.expected(2655, "auto")["hmax"], 116)
+        self.assertEqual(C.expected(2656, "auto")["hmax"], 58)
+        self.assertIsNone(C.expected(2000, 470.0)["shs"])
+
+
+class FakeBoard:
+    """A Studio's camera_document / run-setting commands, in memory: what camera_document_cycle.py --remote must reach (it may write nothing locally)."""
+    DEFAULT = {"schema": "pz7035-camera/1", "run": {"frame_rate_hz": 5000, "exposure_us": "auto"}}
+    ROOT = "/var/lib/yofo-studio/camera"
+
+    def __init__(self, in_run=False):
+        self.calls, self.files, self.in_run, self.fps, self.applied = [], {}, in_run, 5000.0, None
+
+    def get(self, path, timeout=30):
+        return {"initialized": True}
+
+    def run_fps(self):
+        hmax = 58 if self.fps > 2655.96 else 116
+        return {"available": True, "fps": self.fps, "exposure_mode": "auto", "hmax": hmax, "vmax": int(74.25e6 // (hmax * self.fps)), "exposure_us": 150.0 if self.fps == 5000 else 949.87,
+                "in_run": self.in_run, "applied_fps": self.applied, "pending": False, "qualified": self.fps == 5000}
+
+    def call(self, cmd, args=None, wait=30, binary=False):
+        args = args or {}
+        self.calls.append((cmd, args))
+        if cmd == "take_control":
+            return {"controller_id": 1}
+        if cmd == "fetch_run_fps":
+            return self.run_fps()
+        if cmd == "camera_document":
+            if args["kind"] != "pz7035":
+                return {"error": "Only the PZ7035 camera document is available through the server"}
+            if args["action"] == "default":
+                return {"path": "", "revision": "d", "text": json.dumps(self.DEFAULT)}
+            path = args["path"] if args["path"].startswith("/") else f"{self.ROOT}/{args['path']}"
+            if not path.startswith(self.ROOT + "/"):
+                return {"error": "Camera documents live directly in the instrument's camera folder"}
+            if args["action"] == "read":
+                return {"path": path, "revision": "r%d" % len(self.files[path]), "text": self.files[path]} if path in self.files else {"error": "No such file"}
+            if args["action"] == "create" and path in self.files:
+                return {"error": "exists"}
+            if args["action"] == "save" and args["baseline"] != "r%d" % len(self.files.get(path, "")):
+                return {"error": "Camera file changed"}
+            self.files[path] = args["text"]
+            return {"path": path, "revision": "r%d" % len(args["text"]), "text": args["text"]}
+        if cmd == "check_pz_camera_document":
+            doc = json.loads(args["text"])
+            fps = doc["run"]["frame_rate_hz"]
+            hmax = 58 if fps > 2655.96 else 116
+            return {"ok": True, "hmax": hmax, "vmax": int(74.25e6 // (hmax * fps)), "shs": 64 * 58 // hmax, "exposure_us": 150.0 if fps == 5000 else 949.87}
+        if cmd == "apply_pz_camera_document":
+            if not args["path"].startswith(self.ROOT + "/"):
+                return {"ok": False, "message": "the camera document must be a file directly in the camera folder"}
+            self.fps = float(json.loads(self.files[args["path"]])["run"]["frame_rate_hz"])
+            self.applied = self.fps if self.in_run else None
+            return {"ok": True, "message": f"Run setting {self.fps:.0f} fps"}
+        return {"error": f"unexpected {cmd}"}
+
+
+class CameraDocumentRemote(unittest.TestCase):
+    def run_cycle(self, board, *argv):
+        import camera_document_cycle as C
+        out = tempfile.mkdtemp()
+        cwd = tempfile.mkdtemp()
+        before = os.getcwd()
+        old = (sys.argv, C.D.Studio)
+        sys.argv = ["camera_document_cycle.py", *argv, "--remote", "--url", "http://board", "--out", out]
+        C.D.Studio = lambda url, log: board
+        os.chdir(cwd)
+        try:
+            with self.assertRaises(SystemExit) as r:
+                C.main()
+        finally:
+            os.chdir(before)
+            sys.argv, C.D.Studio = old
+        self.assertEqual(os.listdir(cwd), [], "nothing is written outside the evidence directory")
+        return r.exception.code, out
+
+    def test_remote_apply_makes_the_document_through_the_server_and_restore_leaves_the_standing_setting(self):
+        board = FakeBoard()
+        code, out = self.run_cycle(board, "apply", "--fps", "1000")
+        self.assertEqual(code, 0)
+        self.assertEqual(sorted(os.listdir(out)), ["camera-document-apply.json"], "only the evidence file is written locally")
+        names = [c[0] for c in board.calls]
+        order = [names.index(n) for n in ("camera_document", "check_pz_camera_document", "apply_pz_camera_document")]
+        self.assertEqual(order, sorted(order))
+        actions = [c[1]["action"] for c in board.calls if c[0] == "camera_document" and c[1]["kind"] == "pz7035"]
+        self.assertEqual(actions[:3], ["default", "read", "create"])
+        self.assertEqual(board.fps, 1000.0)
+        saved = board.files[FakeBoard.ROOT + "/camera.json"]
+        self.assertEqual(json.loads(saved), {"schema": "pz7035-camera/1", "run": {"frame_rate_hz": 1000, "exposure_us": "auto"}})
+        # A second apply finds the file and saves it with its revision; restore returns to 5000 / auto.
+        code, _ = self.run_cycle(board, "apply", "--fps", "2000")
+        self.assertEqual(code, 0)
+        self.assertIn("save", [c[1]["action"] for c in board.calls if c[0] == "camera_document" and c[1]["kind"] == "pz7035"])
+        code, out = self.run_cycle(board, "restore")
+        self.assertEqual(code, 0)
+        self.assertEqual(board.fps, 5000.0)
+        self.assertEqual(json.loads(board.files[FakeBoard.ROOT + "/camera.json"])["run"]["frame_rate_hz"], 5000)
+
+    def test_in_run_the_apply_is_checked_as_applied_and_a_failed_apply_fails_the_cycle(self):
+        board = FakeBoard(in_run=True)
+        code, _ = self.run_cycle(board, "apply", "--fps", "1000")
+        self.assertEqual(code, 0)
+        self.assertEqual(board.applied, 1000.0)
+        broken = FakeBoard()
+        broken.call_real = broken.call
+        broken.call = lambda cmd, args=None, **kw: {"ok": False, "message": "refused: an experiment is running"} if cmd == "apply_pz_camera_document" else broken.call_real(cmd, args, **kw)
+        code, _ = self.run_cycle(broken, "apply", "--fps", "1000")
+        self.assertEqual(code, 1)
+
+
 class SlotDriverGuards(unittest.TestCase):
     """The driver's safety helpers (no Studio needed). Skipped where `websockets` is not installed."""
 
