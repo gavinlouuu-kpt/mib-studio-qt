@@ -1,0 +1,5 @@
+## 2026-10-11 — `tools/ring_vs_ssd`: the ring-vs-SSD comparison for M1 gate 5 (#693)
+`tools/ring_vs_ssd/ring_vs_ssd.py` compares the ring frames Studio's playback served (saved `fetch_ring_frame` packets and `fetch_ring_status` with the ABI 37 `epoch`) with the same SSD run's export, by (epoch, frame_id): MONO8 bytes,
+MASK1 bits, the 19 words of every RESULT cell, ticks and frame flags, over the run's final consecutive tail (criteria a-f in the README: tail equality, older frames equal or absent within guard + delta, a complete consecutive ring, the
+overlap bound and the end distance, re-read equality after the export, flagged frames listed and excluded). Exit 1 on any FAIL, 2 on unusable input. It reuses the decoder vendored for `pzrec_to_h5`. 29 tests: synthetic packets and records, a mutant per
+criterion, and a smoke run on the export slot's real run 19. The slot (export bundle from develop, whole ring read after the run closes, export, re-read, 10 min idle) is described in the plan comments on #693.
