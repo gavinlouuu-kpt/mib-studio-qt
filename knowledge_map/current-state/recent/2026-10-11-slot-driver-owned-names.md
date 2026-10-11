@@ -1,0 +1,3 @@
+## 2026-10-11 — The slot driver leaves the board owner's file names alone (#693)
+
+`slot_driver.py` shares its OUT directory with the board owner's scripts (their evaluator owns `post.runs.json` and every `pre.*`/`post.*` file, `journal.cursor`, `install.log`). The driver's own run table is now `driver-post.runs.json` (the file `ring_vs_ssd` judges against), and `DriverNames` in `tools/ring_vs_ssd/test_ring_vs_ssd.py` scans the driver's `out / "..."` names and fails on any `pre.*`, `post.*`, `journal.cursor` or `install.log`. Found at the R2' slot, where the driver would have overwritten the evaluator's `post.runs.json`. See [[current-state/recent/2026-10-11-slot-rehearsal]].
