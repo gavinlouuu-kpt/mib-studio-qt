@@ -6,6 +6,7 @@
 What it does (Studio owns the window: nothing here touches pzrec, the registers or the board other than through Studio's commands):
   1. take_control, read the instrument / SSD / ring status (pre-*.json); require Run (set_instrument_mode run only with an explicit --mode-xy; the operator's Run window is never moved by default)
   2. experiment_start (acknowledgeDiscardRing true: a held ring from an earlier cycle is discarded on purpose), the filter is the unit's (ALL in the export bundle)
+  (read-only throughout: instrument-1hz.csv, 1 Hz fetch_instrument_status link/heal counters; post-instrument.json at the end)
   3. run for --duration seconds; optional --sample-hz polls fetch_ssd_status into ssd-samples.jsonl (t, seen/written/dropped/bytes_written/drain_kbps)
   4. experiment_stop; wait until the run is closed (SSD READY, experiment terminal) and the ring is held (run_frozen)
   5. fetch_ssd_runs (the closed run), fetch_ring_status (ring-status-1.json), then fetch_ring_frame for EVERY sequence first_seq..last_seq (ring/seq-N.mibr)
@@ -110,6 +111,21 @@ def guard_path(label, path):
         if target in ("", "/"):
             sys.exit(f"{label} {p}: /mnt/hdd is not mounted (findmnt -T says {target or 'nothing'!r}): refusing to write to the system drive")
     return p
+
+
+INSTRUMENT_COLUMNS = ["t", "ingress_errors_per_s", "ingress_errors_avg_per_s", "ingress_errors_warn", "rx_heal_auto_resets", "rx_heal_episodes", "rx_heal_failed_episodes",
+                      "rx_heal_flag_clears", "rx_heal_tries", "rx_heal_gave_up", "rx_heal_fs_seen", "rx_heal_nofs_frames", "rx_heal_nofs_lines"]
+
+
+def instrument_sample(t, inst):
+    """One row of instrument-1hz.csv from a fetch_instrument_status reply: Studio's link ingress-error rates and receiver-heal counters (NOT the producer's PzReceiverLineErrors).
+    A reply without the field (or an error reply) leaves its cell empty."""
+    link = (inst or {}).get("link") if isinstance(inst, dict) else None
+    link = link if isinstance(link, dict) else {}
+    heal = link.get("rx_heal") if isinstance(link.get("rx_heal"), dict) else {}
+    src = {"ingress_errors_per_s": link.get("ingress_errors_per_s"), "ingress_errors_avg_per_s": link.get("ingress_errors_avg_per_s"), "ingress_errors_warn": link.get("ingress_errors_warn")}
+    src.update({f"rx_heal_{k}": heal.get(k) for k in ("auto_resets", "episodes", "failed_episodes", "flag_clears", "tries", "gave_up", "fs_seen", "nofs_frames", "nofs_lines")})
+    return [f"{t:.3f}"] + ["" if src[c] is None else str(src[c]) for c in INSTRUMENT_COLUMNS[1:]]
 
 
 def acceptance(rc, report, require, judged=True):
@@ -251,6 +267,7 @@ def _main():
     ap.add_argument("--idle-s", type=float, default=600.0)
     ap.add_argument("--reread", type=int, default=50)
     ap.add_argument("--sample-hz", type=float, default=0.0)
+    ap.add_argument("--instrument-hz", type=float, default=1.0, help="read-only fetch_instrument_status samples (link ingress errors, receiver heal counters) into instrument-1hz.csv from the Run entry to the closed run; 0 turns it off")
     ap.add_argument("--stop-timeout", type=float, default=240.0)
     ap.add_argument("--mode-xy", default=None, help="Run ROI offset x,y: switch the instrument to Run there if it is not in Run (default: refuse and ask for Run in the UI; never moves the operator's window)")
     ap.add_argument("--fps", type=float, default=5000.0, help="the rate Studio's Run is at: only sizes the free-space check of the HDF5 destination")
@@ -328,6 +345,20 @@ def _main():
             stop_sampler.wait(max(0.0, period - (time.time() - t)))
         f.close()
 
+    def instrument_sampler():
+        """1 Hz, read-only (fetch_instrument_status): Studio's link/heal counters from the Run entry to the closed run, in instrument-1hz.csv."""
+        with open(out / "instrument-1hz.csv", "w") as f:
+            f.write(",".join(INSTRUMENT_COLUMNS) + "\n")
+            while not stop_sampler.is_set():
+                t = time.time()
+                f.write(",".join(instrument_sample(t, st.call("fetch_instrument_status", wait=5))) + "\n")
+                f.flush()
+                stop_sampler.wait(max(0.0, 1.0 / a.instrument_hz - (time.time() - t)))
+
+    th_instrument = None
+    if a.instrument_hz > 0:
+        th_instrument = threading.Thread(target=instrument_sampler, daemon=True)
+        th_instrument.start()
     t_start = time.time()
     ACTIVE["running"] = True                     # before the start is sent: a start that times out or is interrupted mid-wait is stopped too (a stop with nothing running is NotActive, harmless)
     start = st.call("experiment_start", {"outputPath": name, "acknowledgeDiscardRing": True}, wait=60)
@@ -374,6 +405,8 @@ def _main():
     stop_sampler.set()
     if th:
         th.join(timeout=5)
+    if th_instrument:
+        th_instrument.join(timeout=10)
     save(out / "post-experiment-status.json", st.call("fetch_experiment_status"))
     log(f"closed after {stop_took:.1f} s: {state}")
     if not all([state.get("experiment_terminal"), state.get("ssd_state") == "READY", state.get("run_frozen")]):
@@ -458,6 +491,7 @@ def _main():
     status3 = st.call("fetch_ring_status")
     save(out / "ring-status-3.json", status3)
     save(out / "post-ssd.json", st.call("fetch_ssd_status"))
+    save(out / "post-instrument.json", st.call("fetch_instrument_status"))
 
     rc = 0
     if not a.no_judge:
