@@ -154,7 +154,21 @@ namespace backend
         // `noteOut`: what the freeze did not achieve (the ring is not frozen, stop incomplete, restore needed), also on success.
         bool freezeRun(std::string *errorOut, std::string *noteOut = nullptr);
         bool resumeRun(std::string *errorOut);
+        // #649 / #693 (D3): after an SSD run has stopped and closed, the ring it filled is held like a stopped Run (runFrozen, LED off) instead of
+        // being re-armed by the live session, so Stop leads to playback of the buffered frames. False (with `whyNot`) when there is nothing to hold:
+        // no ring, not in Run, a ring that is invalid or not readable. The caller then resumes the live session as before. Takes no lock of its own: the
+        // coordinator calls it while it holds its mutex.
+        bool holdRingAfterRun(std::string *whyNot = nullptr);
+        // An experiment starts from a stopped Run: LED on and the latency cleared, the stopped state ends; the run's own provider start re-arms the
+        // ring (the buffered frames are gone, which the Start said). A no-op when the Run is not stopped. False (the stopped Run is kept) when the
+        // LED or the latency could not be written. Same locking rule as holdRingAfterRun.
+        bool leaveStoppedRun(std::string *errorOut);
         bool runFrozen() const { return runFrozen_.load(); }
+        // The PL epoch (the CONFIG_COMMIT epoch Studio commits before every ARM) of the ring as it was when the Run stopped. A Start commits a new
+        // epoch before it leaves the stopped Run, so the live register would no longer describe the held frames; this is what fetch_ring_status reports while held.
+        uint32_t heldRingEpoch() const { return heldEpoch_.load(); }
+        // Why the held ring is not quite what a Stop should leave (the LED could not be switched off); empty when nothing is wrong.
+        std::string holdNote() const;
         // The ring's registers, one frame as a browser packet ('MIBR', PzFrameRing.h), and the configured size.
         pz::RingStatus ringStatus();
         pz::RingRead ringFrame(uint64_t seq, std::vector<uint8_t> &packet, std::string *why);
@@ -439,6 +453,10 @@ namespace backend
         std::atomic<int> instrumentRunX_{0}, instrumentRunY_{0};
         std::atomic<bool> instrumentRunSet_{false};
         std::atomic<bool> runFrozen_{false}; // Run stopped to review the frame ring (#649)
+        std::atomic<uint32_t> heldEpoch_{0}; // the ring's epoch when the Run stopped (#693)
+        mutable std::mutex holdNoteMutex_;
+        std::string holdNote_;
+        void setHoldNote(const std::string &note);
         std::atomic<bool> instrumentIdle_{false};
         // Live results (G5). liveMutex_ is a leaf lock: nothing takes the coordinator or the mode mutex inside it.
         std::mutex liveMutex_;

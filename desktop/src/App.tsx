@@ -30,6 +30,7 @@ import { SsdStrip } from "./components/SsdStrip";
 import { stripView, type SsdStatus } from "./ssdView";
 import { RingPlaybackPanel } from "./components/RingPlaybackPanel";
 import { faultClearedNote } from "./ringPlayback";
+import { startExperiment } from "./experimentStart";
 import { downloadUrl } from "./filesView";
 import { serverOrigin, tokenFromLocation } from "./transport/auth";
 import { FilesPanel } from "./components/FilesPanel";
@@ -57,7 +58,7 @@ import {
   type ReviewMetricsPage,
   type TriggerStatus,
 } from "./bridge";
-import { BRIDGE_ABI_VERSION, EXPERIMENT_STATES, PUMP_IDS, READINESS_GATE_STATUSES } from "./bridgeContract";
+import { BRIDGE_ABI_VERSION, EXPERIMENT_STATES, PUMP_IDS } from "./bridgeContract";
 import { deriveWorkflow, type StageTab, type WorkflowFacts } from "./workflow";
 import { CHECK_STATUS_LABEL, derivePreflight, type PreflightInput } from "./preflight";
 import { capabilitiesOf, isPz7035, PL_IGNORED_SETTINGS_TEXT } from "./platformCapabilities";
@@ -881,21 +882,20 @@ export default function App() {
     if (experimentPending.current) return;
     experimentPending.current = true; setExperimentRequestBusy(true); setReadinessMessage(""); setStartNotice("");
     try {
-      const picked = await save({ title: "Save Experiment Data", filters: H5_FILTER, defaultPath: "experiment.h5" });
-      if (!picked) return;
-      const readiness = await bridge.fetchExperimentReadiness(picked);
-      if (!readiness.valid || !readiness.ready) {
-        const reason = readiness.gates.filter(g => g.status === 2 || g.status === 3)
-          .map(g => `${g.id}: ${g.reason}${g.remediation ? ` — ${g.remediation}` : ""}`).join("; ");
-        setReadinessMessage(`${picked}: ${reason || "Backend readiness unavailable; experiment was not started."}`);
-        return;
+      const outcome = await startExperiment({
+        fetchRingStatus: () => bridge.fetchRingStatus(),
+        confirm,
+        pickFile: () => save({ title: "Save Experiment Data", filters: H5_FILTER, defaultPath: "experiment.h5" }),
+        fetchReadiness: (path) => bridge.fetchExperimentReadiness(path),
+        start: (path, acknowledgeDiscardRing) => bridge.experimentStart(path, acknowledgeDiscardRing),
+      });
+      if (outcome.kind === "not-ready") { setReadinessMessage(outcome.message); return; }
+      if (outcome.kind === "refused") {setReadinessMessage(`${outcome.path}: ${outcome.message}`); setExpStatus(await bridge.fetchExperimentStatus()); return append(`experiment start failed: ${outcome.message}`); }
+      if (outcome.kind === "started") {
+        append(`experiment started → ${outcome.path}`);
+        if (outcome.notice) { setStartNotice(outcome.notice); append(outcome.notice); }
+        setExpStatus(await bridge.fetchExperimentStatus());
       }
-      const notice = readiness.gates.filter(g => g.id === "storage.persistent" && g.status === READINESS_GATE_STATUSES.Warn).map(g => g.reason).join(" ");
-      const res = await bridge.experimentStart(picked);
-      if (!res.ok) {setReadinessMessage(`${picked}: ${res.message}`); setExpStatus(await bridge.fetchExperimentStatus()); return append(`experiment start failed: ${res.message}`); }
-      append(`experiment started → ${picked}`);
-      if (notice) { setStartNotice(notice); append(notice); }
-      setExpStatus(await bridge.fetchExperimentStatus());
     } catch (e) {
       append(`experiment start error: ${e}`);
     } finally { experimentPending.current = false; setExperimentRequestBusy(false); }
@@ -1805,7 +1805,8 @@ export default function App() {
                 {runFrozen && (
                   <p className="pending-note" role="status" data-testid="stopped-banner">
                     Run is stopped to review buffered frames. Resume Run to switch to Align.{" "}
-                    <button onClick={() => void resumeFromBanner()}>Resume Run (discards the buffered frames)</button>{" "}
+                    {ring?.hold_note && <><span className="warn" data-testid="hold-note">{ring.hold_note}</span>{" "}</>}
+                    <button onClick={() => void resumeFromBanner()} disabled={experimentRequestBusy} title={experimentRequestBusy ? "An experiment is starting" : undefined}>Resume Run (discards the buffered frames)</button>{" "}
                     <button onClick={() => setTab("experiment")}>Back to the playback</button>
                   </p>
                 )}
@@ -1975,7 +1976,7 @@ export default function App() {
                 {expTab === "preview" && (
                   <>
                     {runFrozen && ring && (
-                      <RingPlaybackPanel status={ring} fetchFrame={bridge.fetchRingFrame} onResume={onResumeRun} append={append} />
+                      <RingPlaybackPanel status={ring} fetchFrame={bridge.fetchRingFrame} onResume={onResumeRun} append={append} startPending={experimentRequestBusy} />
                     )}
                     <div className="canvas-wrap" hidden={runFrozen}>
                       {!lastMeta && !runPreviewInfo && <span className="canvas-hint">{instrumentModes

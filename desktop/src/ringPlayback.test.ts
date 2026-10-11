@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   advancePlayback, capacityText, cellMetrics, faultClearedNote, frameNotes, metricText, clampSeq, contourPixels, decodeRingFrame, elapsedText, nextOverlay, noMaskNote,
-  playbackAvailability, rangeText, ringFrameRgba, saveClipState, secondsText, stepSeq, type RingFrame, type RingStatus,
+  playbackAvailability, rangeText, ringFrameRgba, saveClipState, secondsText, startDiscardNotice, stepSeq, type RingFrame, type RingStatus,
 } from "./ringPlayback";
 
 function packet(opts: { seq?: number; w?: number; h?: number; cells?: number; mask?: boolean; truncated?: boolean; flags?: number } = {}): ArrayBuffer {
@@ -212,5 +212,19 @@ describe("a fault cleared at Run start", () => {
     expect(faultClearedNote({})).toBe("");
     expect(faultClearedNote({ fault_cleared: 0, fault_cleared_state: 6 })).toBe("PL in FAULT state (FAULT register 0x0) cleared at Run start");
     expect(faultClearedNote(null)).toBe("");
+  });
+});
+
+describe("starting an experiment from a stopped Run", () => {
+  it("names the buffered frames it discards, and says nothing when no Run is stopped", () => {
+    expect(startDiscardNotice(status())).toBe("Starting an experiment discards the 5,000 buffered frames of the stopped Run. Continue?");
+    expect(startDiscardNotice(status({ count: 0 }))).toBe("Starting an experiment ends the stopped Run. Continue?");
+    expect(startDiscardNotice(status({ run_frozen: false }))).toBe("");
+    expect(startDiscardNotice(null)).toBe("");
+    expect(startDiscardNotice(undefined)).toBe("");
+  });
+  it("the ring status carries the epoch of the ARM (ABI 37), absent on an older server", () => {
+    expect(status({ epoch: 7 }).epoch).toBe(7);
+    expect(status().epoch).toBeUndefined();
   });
 });

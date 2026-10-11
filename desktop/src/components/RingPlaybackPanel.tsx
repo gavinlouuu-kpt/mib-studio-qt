@@ -16,9 +16,11 @@ type Props = {
   append: (line: string) => void;
   /** Saving a clip needs the SSD path (#667); false until it exists. */
   ssdPathAvailable?: boolean;
+  /** An experiment start is pending: Resume Run would race its re-arm (the backend refuses it too). */
+  startPending?: boolean;
 };
 
-export function RingPlaybackPanel({ status, fetchFrame, onResume, append, ssdPathAvailable = false }: Props) {
+export function RingPlaybackPanel({ status, fetchFrame, onResume, append, ssdPathAvailable = false, startPending = false }: Props) {
   const availability = playbackAvailability(status);
   const range = { first: status.first_seq, last: status.last_seq };
   const [seq, setSeq] = useState(status.last_seq);
@@ -161,8 +163,9 @@ export function RingPlaybackPanel({ status, fetchFrame, onResume, append, ssdPat
           {frame && frame.cells.length === 0 && <p className="mono" role="status">No cell in this frame.</p>}
         </>
       )}
+      {status.hold_note && <p className="pending-note warn" role="status" data-testid="hold-note">{status.hold_note}</p>}
       <p>
-        <button onClick={resume} disabled={busy} title="Re-arm the ring: these buffered frames are discarded">Resume Run (discards these frames)</button>
+        <button onClick={resume} disabled={busy || startPending} title={startPending ? "An experiment is starting" : "Re-arm the ring: these buffered frames are discarded"}>Resume Run (discards these frames)</button>
         {" "}
         <button disabled={!save.enabled} title={save.reason} aria-describedby="ring-save-reason">Save clip</button>
         {!save.enabled && <span id="ring-save-reason" className="pending-note"> {save.reason}</span>}
