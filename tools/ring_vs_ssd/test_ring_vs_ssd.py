@@ -18,7 +18,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent / "pzrec_to_h5"))
 import ring_vs_ssd as R  # noqa: E402
-import test_pzrec_to_h5 as T  # noqa: E402  (build_record, cell: the synthetic stored records)
+import synthetic_records as T  # noqa: E402  (build_record, cell: the synthetic stored records; numpy only)
 
 RUN, EPOCH, FIRST_ID, N = 19, 5, 2000, 40           # a ring of 40 frames: ids 2000..2039, sequences 0..39
 T0, STEP = 62_000_000_000, 40_000
@@ -50,14 +50,14 @@ def make_packet(seq, frame_id, ticks, img, mask, objs, frame_flags=0, flags=1, e
 class Scenario:
     """A ring of N frames and an SSD run whose tail covers it (from ring frame `tail_from`), plus older records with a hole so they are not part of the tail."""
 
-    def __init__(self, tc: unittest.TestCase, tail_from=4, ssd_epoch=EPOCH, ssd_end=N, older_ids=(1990, 1991, 2000, 2001, 2002), invalid=(), ring_flags=None):
+    def __init__(self, tc: unittest.TestCase, tail_from=4, ssd_epoch=EPOCH, ssd_end=N, older_ids=(1990, 1991, 2000, 2001, 2002), invalid=(), ring_flags=None, ssd_ids=None):
         self.d = Path(tempfile.mkdtemp(prefix="rvs_"))
         tc.addCleanup(shutil.rmtree, self.d, True)
         (self.d / "ring").mkdir()
         (self.d / "ring2").mkdir()
         self.packets, self.records, self.ids = {}, [], []
         self.imgs = {}
-        order = list(older_ids) + [FIRST_ID + k for k in range(tail_from, ssd_end)]
+        order = list(ssd_ids) if ssd_ids is not None else list(older_ids) + [FIRST_ID + k for k in range(tail_from, ssd_end)]
         for fid in order:
             k = fid - FIRST_ID
             objs = objects_of(abs(k))
@@ -79,7 +79,7 @@ class Scenario:
             self.packets[s] = make_packet(s, fid, T0 + STEP * (fid - 1900), img, mask, objs, frame_flags=fl, flags=flags)
         self.status = {"available": True, "frozen": True, "run_frozen": True, "invalid": False, "stop_incomplete": False, "restore_needed": False, "epoch": EPOCH,
                        "capacity_frames": N, "first_seq": 0, "last_seq": N - 1, "count": N, "head": N - 1, "state": 0}
-        self.runs = [{"run_id": RUN, "written": len(self.ids), "last_frame_id": self.ids[-1]}]
+        self.runs = [{"run_id": RUN, "written": len(self.ids), "last_frame_id": self.ids[-1], "filter": 0, "tick_hz": 100_000_000}]
         self.reread = list(range(0, N, 7)) + [N - 1]
         self.status2 = dict(self.status)
         self.status3 = None
@@ -203,7 +203,7 @@ class Cases(unittest.TestCase):
         sc = Scenario(self, older_ids=())
         rc, out = sc.run("--guard", "0", "--delta-max", "1")      # later options win: 4 frames absent against a bound of 1
         self.assertEqual(rc, 1, out)
-        self.failing(out, "older ring frames absent from the SSD stay within guard + delta")
+        self.failing(out, "older ring frames absent from the SSD stay within the guard")
 
     # --- c: the ring --------------------------------------------------------------------------------------------------------------------------
     def test_c_not_consecutive(self):
@@ -248,13 +248,13 @@ class Cases(unittest.TestCase):
         sc = Scenario(self, tail_from=12, older_ids=())           # the SSD tail starts at frame 2012: overlap 28 < 40 - 4 - 2
         rc, out = sc.run()
         self.assertEqual(rc, 1, out)
-        self.failing(out, "the overlap is at least ring frames - guard - delta")
+        self.failing(out, "the overlap is at least ring frames - guard - the measured delta")
 
     def test_d_the_ring_is_far_ahead_of_the_run_end(self):
         sc = Scenario(self, ssd_end=N - 6)                         # the SSD ends 6 frames before the ring: more than delta 2
         rc, out = sc.run()
         self.assertEqual(rc, 1, out)
-        self.failing(out, "the ring's newest frame is within delta")
+        self.failing(out, "the ring's newest frame is within the delta cap")
         self.failing(out, "ring frames beyond the run's end")
 
     def test_d_the_run_table_disagrees_with_the_stream(self):
@@ -270,7 +270,7 @@ class Cases(unittest.TestCase):
         sc.status2 = dict(sc.status, first_seq=3)
         rc, out = sc.run()
         self.assertEqual(rc, 1, out)
-        self.failing(out, "the ring status after the export equals the first")
+        self.failing(out, "the ring-defining status after the export equals the first")
 
     def test_e_a_reread_packet_differs(self):
         sc = Scenario(self)
@@ -296,7 +296,7 @@ class Cases(unittest.TestCase):
         sc.status3 = dict(sc.status, frozen=False)
         rc, out = sc.run()
         self.assertEqual(rc, 1, out)
-        self.failing(out, "the later (idle) ring status equals the first")
+        self.failing(out, "the later (idle) ring-defining status equals the first")
 
     def test_e_a_later_equal_status_passes(self):
         sc = Scenario(self)
@@ -345,6 +345,145 @@ class Cases(unittest.TestCase):
         rc, out = sc.run()
         self.assertEqual(rc, 1, out)
         self.failing(out, "ring frames in the SSD tail are equal")
+
+    # --- the review of #697 --------------------------------------------------------------------------------------------------------------------
+    def test_a_ring_entirely_past_the_run_end_is_not_a_vacuous_pass(self):
+        sc = Scenario(self, ssd_ids=range(1000, 1020))             # the SSD run ended long before the ring's frames: nothing overlaps
+        rc, out = sc.run("--guard", "100")                          # a guard larger than the ring would make the old bound 0
+        self.assertEqual(rc, 1, out)
+        self.failing(out, "at least one ring frame lies in the SSD tail and was compared")
+
+    def test_a_run_longer_than_the_ring_leaves_a_full_ring(self):
+        sc = Scenario(self)
+        sc.status["capacity_frames"] = 30                           # the run has 41 records, more than 30: a ring of 40 frames cannot be the full ring of 30
+        sc.status2 = dict(sc.status)
+        rc, out = sc.run()
+        self.assertEqual(rc, 1, out)
+        self.failing(out, "a run longer than the ring leaves a full ring")
+
+    def test_a_short_run_may_leave_a_ring_with_room_to_spare(self):
+        sc = Scenario(self)
+        sc.status["capacity_frames"] = 5000
+        sc.status2 = dict(sc.status)
+        rc, out = sc.run()
+        self.assertEqual(rc, 0, out)
+
+    def test_e_a_live_reading_that_moves_while_the_ring_idles_is_only_info(self):
+        sc = Scenario(self)
+        sc.status["sensor_fps"] = 5000.750112516877
+        sc.status2 = dict(sc.status, sensor_fps=4999.1, fault_cleared=0, reason="")
+        sc.status3 = dict(sc.status, sensor_fps=0.0)
+        rc, out = sc.run()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("sensor_fps: 5000.750112516877 -> 4999.1", (sc.d / "out" / "summary.txt").read_text())
+
+    def test_e_each_ring_defining_key_is_checked(self):
+        for key, value in (("frozen", False), ("run_frozen", False), ("invalid", True), ("epoch", 6), ("first_seq", 1), ("last_seq", N - 2), ("count", N - 1), ("head", 3), ("state", 2),
+                           ("capacity_frames", 41), ("stop_incomplete", True)):
+            sc = Scenario(self)
+            sc.status2 = dict(sc.status, **{key: value})
+            rc, out = sc.run()
+            self.assertEqual(rc, 1, f"{key}: {out}")
+            self.failing(out, "the ring-defining status after the export equals the first")
+
+    def test_c_the_packets_tick_rate_is_the_run_tables(self):
+        self.mutate(10, lambda b: struct.pack_into("<I", b, 32, 99_000_000), "the packets' tick rate is the run table's")
+
+    def test_filter_not_all_is_unusable_input(self):
+        sc = Scenario(self)
+        sc.runs[0]["filter"] = 2
+        rc, out = sc.run()
+        self.assertEqual(rc, 2, out)
+        self.assertIn("not ALL", out)
+
+    def test_an_empty_or_headerless_export_is_unusable_input_not_a_traceback(self):
+        for blob in (b"", b"\x00" * 100, b"\x00" * R.REC_BYTES):
+            sc = Scenario(self)
+            sc.write()
+            sc.records = [blob]
+            rc, out = sc.run()
+            self.assertEqual(rc, 2, f"{len(blob)} bytes: {out}")
+            self.assertNotIn("Traceback", out)
+
+    def test_d_the_bound_follows_the_measured_delta(self):
+        sc = Scenario(self, ssd_end=N - 1, older_ids=())            # the ring is 1 frame ahead of the run end: minimum 40 - 4 - 1 = 35, the tail 2004..2038 gives exactly 35
+        rc, out = sc.run()
+        self.assertEqual(rc, 0, out)
+        sc = Scenario(self, ssd_end=N - 1, tail_from=5, older_ids=())   # 34 would have passed the old bound (40 - 4 - delta cap 2)
+        rc, out = sc.run()
+        self.assertEqual(rc, 1, out)
+        self.failing(out, "the overlap is at least ring frames - guard - the measured delta")
+
+    def test_f_ticks_and_frame_flags_are_compared_even_for_a_flagged_frame(self):
+        sc = Scenario(self, invalid=(2025,))
+        pk = bytearray(sc.packets[25])
+        pk[24] ^= 1                                                 # ticks
+        sc.packets[25] = bytes(pk)
+        sc.reread = [s for s in sc.reread if s != 25]
+        rc, out = sc.run()
+        self.assertEqual(rc, 1, out)
+        self.failing(out, "ring frames in the SSD tail are equal")
+
+
+GOLDEN = HERE / "testdata"
+
+
+class GoldenPackets(unittest.TestCase):
+    """Four packets that Studio's own readFrame + buildRingPacket made from four consecutive REAL stored records (testdata/, kept equal to the reader by processing.ring_packet_golden).
+    The RESULT mapping is therefore tested against the C++ builder, not against this tool's own reading of the layout."""
+
+    def scenario(self):
+        d = Path(tempfile.mkdtemp(prefix="rvs_golden_"))
+        self.addCleanup(shutil.rmtree, d, True)
+        (d / "ring").mkdir()
+        for s in range(4):
+            shutil.copy(GOLDEN / f"seq-{s}.mibr", d / "ring" / f"seq-{s}.mibr")
+        dec, _ = R.P.load_decoder()
+        recs = [dec.frame_header((GOLDEN / "records.bin").read_bytes()[i * R.REC_BYTES:i * R.REC_BYTES + 64]) for i in range(4)]
+        self.ids = [r["frame_id"] for r in recs]
+        status = {"frozen": True, "run_frozen": True, "invalid": False, "restore_needed": False, "epoch": recs[0]["epoch"], "capacity_frames": 4, "first_seq": 0, "last_seq": 3, "count": 4}
+        (d / "status.json").write_text(json.dumps(status))
+        (d / "runs.json").write_text(json.dumps([{"run_id": recs[0]["run_id"], "written": 4, "last_frame_id": self.ids[-1], "filter": 0, "tick_hz": 100_000_000}]))
+        self.run_id = recs[0]["run_id"]
+        return d
+
+    def run_tool(self, d):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            rc = R.main(["--ring", str(d / "ring"), "--status", str(d / "status.json"), "--run", str(GOLDEN / "records.bin"), "--runs", str(d / "runs.json"), "--run-id", str(self.run_id),
+                         "--out", str(d / "out"), "--no-reread", "--guard", "0", "--delta-max", "0"])
+        return rc, buf.getvalue()
+
+    def test_studios_packets_equal_the_records(self):
+        d = self.scenario()
+        rc, out = self.run_tool(d)
+        self.assertEqual(rc, 0, out)
+        rep = json.loads((d / "out" / "ring-vs-ssd.json").read_text())
+        self.assertEqual((rep["overlap"], rep["compared"]["tail"], rep["tail_flagged"]), (4, 4, 0))
+        # two cells of 19 words per packet, nothing left over
+        self.assertEqual([len(R.parse_packet((d / "ring" / f"seq-{s}.mibr").read_bytes()).cells) for s in range(4)], [2, 2, 2, 2])
+
+    def test_a_changed_word_in_a_golden_cell_fails(self):
+        for word in range(19):
+            d = self.scenario()
+            p = d / "ring" / "seq-2.mibr"
+            b = bytearray(p.read_bytes())
+            off = 48 + 512 * 96 + 512 * 96 // 8 + 19 * 4 + 4 * word          # the second cell
+            b[off] ^= 0x01
+            p.write_bytes(bytes(b))
+            rc, out = self.run_tool(d)
+            self.assertEqual(rc, 1, f"word {word}: {out}")
+            self.assertIn("RESULT 1: words [%d] differ" % word, (d / "out" / "ring-vs-ssd.json").read_text().replace("\\n", " "))
+
+    def test_a_changed_gray_or_mask_byte_in_a_golden_packet_fails(self):
+        for off in (48 + 17, 48 + 512 * 96 + 5):
+            d = self.scenario()
+            p = d / "ring" / "seq-1.mibr"
+            b = bytearray(p.read_bytes())
+            b[off] ^= 0x80
+            p.write_bytes(bytes(b))
+            rc, out = self.run_tool(d)
+            self.assertEqual(rc, 1, out)
 
 
 REAL = Path("/mnt/hdd/shared/exports/export-slot/20261010T201841Z")

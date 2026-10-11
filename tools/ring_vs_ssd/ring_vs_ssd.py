@@ -16,14 +16,14 @@ Host only; nothing here touches the board. Inputs are files saved by the slot:
 Exit 0 only when every check passes; 1 on any FAIL; 2 on unusable input. The comparison key is (epoch, frame_id): the epoch of the ring comes from the status (a frozen ring holds
 one ARM; the MIBR packet carries none), the epoch of the SSD side from each record's FRAME header.
 
-Criteria (the plan on #693, from pzrec_records.md "Frames in both the ring and the SSD"):
-  a  every ring frame inside the SSD run's final consecutive tail exists on the SSD and is equal: MONO8 bytes, MASK1 bits, RESULT words (the 19 words of a MIBR cell), ticks, frame flags
-     (the SSD-only STORED bit aside); every SSD record of the tail inside the ring's range is in the ring
-  b  ring frames older than the tail are equal to the SSD record when it has them, or absent (counted, bounded by --guard + --delta-max)
-  c  the ring is complete and consecutive: a packet for every sequence, header sequence = file sequence, frame_id - seq constant
-  d  the overlap is at least ring frames - guard - delta (default 256 + 32) and the ring's newest frame is within delta of the run's last_frame_id
-  e  re-reads after the export: the status is identical and the re-read packets are byte-equal to the first read; a later status (--status3) too
-  f  frames flagged cut / mask incomplete / invalid are listed by name and excluded from the byte comparison (--strict-flags makes them failures); a flag the two sides disagree on fails
+Criteria (the plan on #693, from pzrec_records.md "Frames in both the ring and the SSD"); the README has the details:
+  a  every ring frame inside the SSD run's final consecutive tail exists on the SSD and is equal (MONO8, MASK1, the 19 RESULT words per cell, ticks, frame flags); every SSD tail record
+     inside the ring's range is in the ring; the stream matches the run table
+  b  ring frames older than the tail are equal to the SSD record when it has them, or absent (counted, at most --guard)
+  c  the ring is complete and consecutive, frozen and held, with the run table's tick rate; a run longer than the ring leaves a full ring
+  d  at least one tail frame compared; overlap >= ring frames - guard - the measured delta; the ring's newest frame is within --delta-max of the run's last_frame_id
+  e  after the export: the ring-defining status is identical and the re-read packets are byte-equal; a later idle status too (other status fields are INFO)
+  f  frames flagged cut / mask incomplete / invalid are listed and excluded from the pixel comparison (--strict-flags: failures); a flag the two sides disagree on fails
 """
 from __future__ import annotations
 
@@ -88,8 +88,20 @@ def parse_packet(buf: bytes) -> RingPacket:
     return RingPacket(seq, frame_id, ticks, tick_hz, fflags, w, h, flags, gray, mask, cells)
 
 
+# The status fields that define the ring; everything else (sensor_fps is a live XVS reading, the fault_cleared note, reasons) may move while the ring idles and is only reported.
+RING_KEYS = ("frozen", "run_frozen", "invalid", "epoch", "first_seq", "last_seq", "count", "head", "state", "capacity_frames", "stop_incomplete")
+
+
+def status_diff(a: dict, b: dict) -> tuple[bool, str, str]:
+    """(ring-defining keys equal, which differ, the other fields that differ)."""
+    core = [f"{k}: {a.get(k)!r} -> {b.get(k)!r}" for k in RING_KEYS if a.get(k) != b.get(k)]
+    other = [f"{k}: {a.get(k)!r} -> {b.get(k)!r}" for k in sorted(set(a) | set(b)) if k not in RING_KEYS and a.get(k) != b.get(k)]
+    return not core, "; ".join(core), "; ".join(other)[:300]
+
+
 class Report:
     def __init__(self):
+        self.info: list[str] = []
         self.checks: list[dict] = []
         self.ok = True
         self.data: dict = {}
@@ -129,6 +141,8 @@ def scan_headers(path: Path, dec) -> tuple[list[int], list[int], list[int]]:
     size = Path(path).stat().st_size
     if size % REC_BYTES:
         raise InputError(f"{path}: {size} bytes is not a whole number of {REC_BYTES} B records")
+    if size == 0:
+        raise InputError(f"{path}: the export is empty (no records)")
     with open(path, "rb") as f:
         for i in range(size // REC_BYTES):
             f.seek(i * REC_BYTES)
@@ -173,7 +187,6 @@ def ssd_flags(rec, abi_bits) -> dict:
         "invalid": bool(fl & (1 << fb["INVALID"] | 1 << fb["PARTIAL"])),
         "cut": any(d["flags"] & (1 << ib["INCOMPLETE"]) for d in mono_blocks),
         "mask_incomplete": mask_incomplete,
-        "overflow": bool(fl & (1 << fb["RESULTS_OVERFLOW"])),
     }
 
 
@@ -183,20 +196,21 @@ def packet_flags(pk: RingPacket) -> dict:
 
 
 def compare_frame(pk: RingPacket, rec, abi_bits) -> tuple[list[str], dict]:
-    """(differences, flags of the ring frame). Empty differences: equal in every part."""
+    """(differences, flags of the ring frame). Empty differences: equal in every part. Ticks, frame flags and the flag agreement are compared for every frame; the pixels, the mask and
+    the cells only for a frame neither side flags as cut / mask incomplete / invalid (those are listed by the caller)."""
     diffs: list[str] = []
     a_flags, s_flags = packet_flags(pk), ssd_flags(rec, abi_bits)
     for k in ("mask_present", "truncated", "invalid", "cut", "mask_incomplete"):
         if a_flags[k] != s_flags[k]:
             diffs.append(f"flag {k}: ring {a_flags[k]}, SSD {s_flags[k]}")
-    flagged = a_flags["cut"] or a_flags["mask_incomplete"] or a_flags["invalid"] or s_flags["cut"] or s_flags["mask_incomplete"] or s_flags["invalid"]
-    if flagged:
-        return diffs, a_flags                              # listed by name and excluded from the byte comparison, only the flag agreement counts
     stored = 1 << abi_bits["frame_flags"]["STORED"]
     if (pk.frame_flags & ~stored) != (rec.header["flags"] & ~stored):
         diffs.append(f"frame flags: ring 0x{pk.frame_flags:x}, SSD 0x{rec.header['flags']:x} (the STORED bit aside)")
     if pk.ticks != rec.header["timestamp"]:
         diffs.append(f"ticks: ring {pk.ticks}, SSD {rec.header['timestamp']}")
+    flagged = a_flags["cut"] or a_flags["mask_incomplete"] or a_flags["invalid"] or s_flags["cut"] or s_flags["mask_incomplete"] or s_flags["invalid"]
+    if flagged:
+        return diffs, a_flags
     if rec.image is None or (pk.height, pk.width) != tuple(rec.image.shape):
         diffs.append(f"geometry: ring {pk.width}x{pk.height}, SSD {None if rec.image is None else rec.image.shape}")
     else:
@@ -208,15 +222,14 @@ def compare_frame(pk: RingPacket, rec, abi_bits) -> tuple[list[str], dict]:
             if pk.mask != ssd_mask:
                 n = int(np.count_nonzero(np.unpackbits(np.frombuffer(pk.mask, np.uint8) ^ np.frombuffer(ssd_mask, np.uint8))))
                 diffs.append(f"MASK1: {n} bits differ")
-    if not s_flags["overflow"]:
-        want = expected_cell_words(rec, abi_bits)
-        if len(want) != len(pk.cells):
-            diffs.append(f"RESULT count: ring {len(pk.cells)}, SSD {len(want)}")
-        else:
-            for i, (g, w) in enumerate(zip(pk.cells, want)):
-                if tuple(g) != w:
-                    bad = [k for k in range(CELL_WORDS) if g[k] != w[k]]
-                    diffs.append(f"RESULT {i}: words {bad} differ")
+    want = expected_cell_words(rec, abi_bits)
+    if len(want) != len(pk.cells):
+        diffs.append(f"RESULT count: ring {len(pk.cells)}, SSD {len(want)}")
+    else:
+        for i, (g, w) in enumerate(zip(pk.cells, want)):
+            if tuple(g) != w:
+                bad = [k for k in range(CELL_WORDS) if g[k] != w[k]]
+                diffs.append(f"RESULT {i}: words {bad} differ")
     return diffs, a_flags
 
 
@@ -256,7 +269,8 @@ def run(args) -> int:
         ring[s] = pk
     rep.check("c", "every packet parses (MIBR v1) and carries its own sequence", not bad, "; ".join(bad[:5]))
     consts = {pk.frame_id - s for s, pk in ring.items()}
-    rep.check("c", "frame_id - sequence is constant: the ring is consecutive", len(consts) <= 1 and bool(ring), f"{len(consts)} distinct offsets" + (f" {sorted(consts)[:5]}" if len(consts) > 1 else ""))
+    rep.check("c", "frame_id - sequence is constant: the ring is consecutive", len(consts) <= 1 and bool(ring), f"{len(consts)} distinct offsets" + (f" {sorted(consts)[:5]}" if len(consts) > 1 else "") +
+              (": a frame id jumps inside the ring window (a dropped sensor frame, FRAMES_LOST, trips this as well as a corrupt packet)" if len(consts) > 1 else ""))
     ring_by_id = {pk.frame_id: pk for pk in ring.values()}
     if not ring:
         rep.data = {"fatal": "no ring packets"}
@@ -265,17 +279,24 @@ def run(args) -> int:
 
     # -- the SSD run
     ids, epochs, ticks = scan_headers(Path(args.run), dec)
-    if args.runs:
+    try:
         data = json.loads(Path(args.runs).read_text())
         rows = data["runs"] if isinstance(data, dict) else data
         row = next((r for r in rows if int(r.get("run_id", r.get("id", -1))) == args.run_id), None)
-        if row is None:
-            raise InputError(f"run {args.run_id} is not in {args.runs}")
-        rep.check("a", "the SSD stream holds the run table's record count", len(ids) == int(row["written"]), f"{len(ids)} records, written {row['written']}")
-        rep.check("a", "the SSD stream ends at the run table's last_frame_id", ids[-1] == int(row["last_frame_id"]), f"{ids[-1]} vs {row['last_frame_id']}")
-        run_last = int(row["last_frame_id"])
-    else:
-        run_last = ids[-1]
+    except (OSError, ValueError, TypeError, AttributeError) as e:
+        raise InputError(f"run table {args.runs}: {e}") from e
+    if row is None:
+        raise InputError(f"run {args.run_id} is not in {args.runs}")
+    if int(row.get("filter", -1)) != 0:
+        raise InputError(f"run {args.run_id} was recorded with filter {row.get('filter')!r}, not ALL (0): the criteria assume that every frame was offered to the SSD")
+    written, run_last = int(row["written"]), int(row["last_frame_id"])
+    rep.check("a", "the SSD stream holds the run table's record count", len(ids) == written, f"{len(ids)} records, written {written}")
+    rep.check("a", "the SSD stream ends at the run table's last_frame_id", ids[-1] == run_last, f"{ids[-1]} vs {run_last}")
+    hz = {pk.tick_hz for pk in ring.values()}
+    rep.check("c", "the packets' tick rate is the run table's", hz == {int(row.get("tick_hz", 0))}, f"packets {sorted(hz)}, run table {row.get('tick_hz')}")
+    full = written > capacity
+    rep.check("c", "a run longer than the ring leaves a full ring (count == capacity_frames)" if full else "the ring holds no more than its capacity",
+              (count == capacity) if full else (count <= capacity), f"count {count}, capacity {capacity}, run records {written}")
     rep.check("a", "frame ids ascend strictly on the SSD side", all(b > a for a, b in zip(ids, ids[1:])))
     tail_idx = dec.consecutive_tail(ids)
     tail_start_id = ids[tail_idx]
@@ -323,16 +344,18 @@ def run(args) -> int:
               f"{compared['tail']} compared, {len(mt)} differ" + (f", first: frame {mt[0]['frame_id']}: {'; '.join(mt[0]['diffs'])}" if mt else ""))
     absent_older = [pk.frame_id for pk in older if (epoch, pk.frame_id) not in key_to_index]
     rep.check("b", "older ring frames that the SSD has are equal", not mo, f"{compared['older']} compared, {len(mo)} differ" + (f", first: frame {mo[0]['frame_id']}: {'; '.join(mo[0]['diffs'])}" if mo else ""))
-    rep.check("b", "older ring frames absent from the SSD stay within guard + delta", len(absent_older) <= args.guard + args.delta_max,
-              f"{len(absent_older)} absent (bound {args.guard} + {args.delta_max}), {len(older)} older than the tail")
+    rep.check("b", "older ring frames absent from the SSD stay within the guard", len(absent_older) <= args.guard,
+              f"{len(absent_older)} absent (bound {args.guard}), {len(older)} older than the tail")
 
     # -- (d) the overlap
     overlap = len(in_range)
-    min_overlap = max(0, len(ring_by_id) - args.guard - args.delta_max)
-    rep.check("d", "the overlap is at least ring frames - guard - delta", overlap >= min_overlap and overlap <= len(ring_by_id),
-              f"overlap {overlap} of {len(ring_by_id)} ring frames (minimum {min_overlap}, SSD tail {len(ids) - tail_idx} records from frame {tail_start_id})")
     ahead = ring_hi_id - run_last
-    rep.check("d", "the ring's newest frame is within delta of the run's last_frame_id", abs(ahead) <= args.delta_max, f"ring newest {ring_hi_id}, run last {run_last}: ring is {ahead:+d} frames ahead")
+    min_overlap = max(1, len(ring_by_id) - args.guard - max(ahead, 0))
+    rep.check("d", "at least one ring frame lies in the SSD tail and was compared", compared["tail"] >= 1, f"{compared['tail']} compared")
+    rep.check("d", "the overlap is at least ring frames - guard - the measured delta", overlap >= min_overlap and overlap <= len(ring_by_id),
+              f"overlap {overlap} of {len(ring_by_id)} ring frames (minimum {min_overlap} = {len(ring_by_id)} - {args.guard} - {max(ahead, 0)}, SSD tail {len(ids) - tail_idx} records from frame {tail_start_id})")
+    rep.check("d", "the ring's newest frame is within the delta cap of the run's last_frame_id", abs(ahead) <= args.delta_max,
+              f"ring newest {ring_hi_id}, run last {run_last}: ring is {ahead:+d} frames ahead (cap {args.delta_max})")
     rep.check("d", "ring frames beyond the run's end are only the few received between the two STOPs", len(newer) <= args.delta_max, f"{len(newer)} frames")
 
     # -- (e) re-reads after the export
@@ -343,16 +366,20 @@ def run(args) -> int:
             rep.check("e", "the re-read status and packets were given (--status2, --ring2)", False, "give them, or --no-reread to skip knowingly")
         else:
             s2 = load_json(Path(args.status2), "ring status 2")
-            rep.check("e", "the ring status after the export equals the first", s2 == status, "" if s2 == status else
-                      "; ".join(f"{k}: {status.get(k)!r} -> {s2.get(k)!r}" for k in sorted(set(status) | set(s2)) if status.get(k) != s2.get(k))[:300])
+            ok2, d2, info2 = status_diff(status, s2)
+            rep.check("e", "the ring-defining status after the export equals the first", ok2, d2)
+            if info2:
+                rep.info.append("status after the export, other fields: " + info2)
             again = load_packets(Path(args.ring2))
             rep.check("e", "re-read packets exist", bool(again), f"{len(again)} packets")
             diff = [s for s, b in again.items() if raw.get(s) != b]
             rep.check("e", "every re-read packet is byte-equal to the first read", not diff, f"{len(again)} re-read, {len(diff)} differ" + (f", first sequences {sorted(diff)[:5]}" if diff else ""))
         if args.status3:
             s3 = load_json(Path(args.status3), "ring status 3")
-            rep.check("e", "the later (idle) ring status equals the first", s3 == status, "" if s3 == status else
-                      "; ".join(f"{k}: {status.get(k)!r} -> {s3.get(k)!r}" for k in sorted(set(status) | set(s3)) if status.get(k) != s3.get(k))[:300])
+            ok3, d3, info3 = status_diff(status, s3)
+            rep.check("e", "the later (idle) ring-defining status equals the first", ok3, d3)
+            if info3:
+                rep.info.append("later status, other fields: " + info3)
 
     # -- (f) flagged frames
     names = [f"frame {x['frame_id']} (seq {x['seq']}, {','.join(sorted(x['flags']))}, {x['group']})" for x in flagged]
@@ -372,9 +399,9 @@ def run(args) -> int:
 def finish(rep: Report, args) -> int:
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    (out / "ring-vs-ssd.json").write_text(json.dumps({"ok": rep.ok, "checks": rep.checks, **rep.data}, indent=2))
+    (out / "ring-vs-ssd.json").write_text(json.dumps({"ok": rep.ok, "checks": rep.checks, "info": rep.info, **rep.data}, indent=2))
     lines = [("PASS" if c["ok"] else "FAIL") + f" [{c['criterion']}] {c['check']}" + (f": {c['detail']}" if c["detail"] else "") for c in rep.checks]
-    summary = "\n".join(lines) + f"\nOVERALL {'PASS' if rep.ok else 'FAIL'}\n"
+    summary = "\n".join(lines + [f"INFO {i}" for i in rep.info]) + f"\nOVERALL {'PASS' if rep.ok else 'FAIL'}\n"
     (out / "summary.txt").write_text(summary)
     print("OVERALL " + ("PASS" if rep.ok else "FAIL"))
     return 0 if rep.ok else 1
@@ -388,7 +415,7 @@ def main(argv=None) -> int:
     ap.add_argument("--ring2", help="directory of seq-<n>.mibr packets re-read after the export")
     ap.add_argument("--status3", help="a later fetch_ring_status JSON (idle for 10 min)")
     ap.add_argument("--run", required=True, help="the exported records of the SSD run (run<N>.bin)")
-    ap.add_argument("--runs", help="the run table JSON (post.runs.json): record count and last_frame_id are checked")
+    ap.add_argument("--runs", required=True, help="the run table JSON (post.runs.json): record count, last_frame_id, tick rate and the ALL filter are checked")
     ap.add_argument("--run-id", type=int, required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--guard", type=int, default=GUARD_DEFAULT, help="the feeder's overwrite guard in frames (default 256)")
