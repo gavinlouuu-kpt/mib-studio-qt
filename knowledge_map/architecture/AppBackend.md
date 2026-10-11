@@ -69,8 +69,8 @@ of a core, 60/s at 8 %, 30/s at 4 %.
   (valid, no fault, not "restore needed", at least one frame; STOP_STUCK counts, flagged) and the instrument is in Run, `runFrozen_` is set and the LED goes
   off, exactly like `freezeRun()`; otherwise the live session resumes as before and the log says why. While held, `resumeLiveResults()` is a no-op and
   a mode switch is refused ("resume Run first"). `resumeRun()` (Resume Run) re-arms a new ring. An experiment Start is allowed (gate `run.frozen` is a
-  Warn: "starting the experiment discards them"; the UI asks first): `leaveStoppedRun()` switches the LED on and clears the stopped state right before the
-  run's own provider start, which arms the new ring. Studio stopping or restarting while held loses the ring (it is RAM). Neither function takes
+  Warn: "starting the experiment discards them"; `start()` refuses without `acknowledgeDiscardRing`, which the UI sets after its confirm; `resumeRun()` is refused while the coordinator is Starting/Active/Stopping, closing the race with a start): `leaveStoppedRun()` switches the LED on and clears the stopped state right before the
+  run's own provider start, which arms the new ring. `holdNote()` carries a failed LED-off. Studio stopping or restarting while held loses the ring (it is RAM). Neither function takes
   `instrumentModeMutex_`: the coordinator calls them under its own mutex, and `setInstrumentMode` takes the two in the other order. Only SSD runs hold
   the ring; an HDF5-only run resumes the live session as before.
 - **LED.** `setServiceMode` latches Service mode; `setInstrumentLed`

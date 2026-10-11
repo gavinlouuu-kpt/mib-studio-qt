@@ -492,6 +492,7 @@ namespace backend::bridge
             request.readinessGeneration = command.readinessGeneration;
             request.profileId = command.profileId;
             request.acknowledgeLatestFrameDrops = command.acknowledgeLatestFrameDrops;
+            request.acknowledgeDiscardRing = command.acknowledgeDiscardRing;
             // Track the operation before Start so a run that fails on the
             // coordinator's worker right after Start (fatal save error) still
             // finds its id in the status callback and gets a terminal
@@ -3053,7 +3054,7 @@ nlohmann::json ringStatusJson(backend::AppBackend& backend) {
     nlohmann::json j{{"available", false}, {"reason", ""},          {"frozen", false},   {"invalid", false},
                      {"run_frozen", backend.runFrozen()}, {"capacity_frames", backend.ringFramesWanted()},
                      {"first_seq", 0},      {"last_seq", 0},        {"count", 0},        {"sensor_fps", 0.0},
-                     {"state", 0},          {"head", -1},        {"epoch", 0},        {"stop_incomplete", false}, {"restore_needed", false}, {"fault_cleared", 0}, {"fault_cleared_state", 0}};
+                     {"state", 0},          {"head", -1},        {"epoch", nullptr},  {"hold_note", ""},   {"stop_incomplete", false}, {"restore_needed", false}, {"fault_cleared", 0}, {"fault_cleared_state", 0}};
     if (backend.ringFramesWanted() == 0) {
         j["reason"] = "This instrument keeps no frame ring (the PL image or the kernel's mem= setting has no room for one).";
         return j;
@@ -3077,7 +3078,10 @@ nlohmann::json ringStatusJson(backend::AppBackend& backend) {
     j["stop_incomplete"] = st.stopIncomplete;
     j["state"] = st.state;
     j["head"] = st.head;
-    j["epoch"] = st.epoch; // the ring's ARM epoch (ABI 37): the value the frame records carry, constant while the ring is frozen
+    // ABI 37: the PL epoch the ring's frames were written under. While a stopped Run is held it is the epoch from the moment the Run stopped: an experiment Start commits a new one
+    // before it leaves the stopped Run, which must not change what the held frames are called. null when the registers do not describe a ring.
+    j["epoch"] = backend.runFrozen() ? backend.heldRingEpoch() : st.epoch;
+    j["hold_note"] = backend.holdNote();
     j["capacity_frames"] = st.records;
     j["count"] = st.count();
     j["first_seq"] = st.lo;

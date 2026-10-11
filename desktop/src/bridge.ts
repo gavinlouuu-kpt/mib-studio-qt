@@ -741,8 +741,9 @@ export const bridge = {
   queueOverflowTotal: async () => wireU64(await invoke<unknown>("queue_overflow_total")),
   // Experiment lifecycle (bridge schema v5, BE-4) — the backend owns
   // preconditions, accumulation, flush, metadata ordering, and recovery.
-  experimentStart: (outputPath: string) =>
-    invokeCommand("experiment_start", { outputPath }),
+  // acknowledgeDiscardRing (ABI 37): the operator accepted that a stopped Run's buffered frames are discarded by this start (the backend refuses without it).
+  experimentStart: (outputPath: string, acknowledgeDiscardRing = false) =>
+    invokeCommand("experiment_start", { outputPath, acknowledgeDiscardRing }),
   experimentStop: () => invokeCommand("experiment_stop"),
   fetchCaptureLifecycle: () => invoke<CaptureLifecycle>("fetch_capture_lifecycle"),
   experimentAcknowledgeFault: (expectedRun: string, faultRevision: string, code: string, message: string, confirmed: boolean) => invokeCommand("experiment_acknowledge_fault", {expectedRun, faultRevision, code, message, confirmed}),

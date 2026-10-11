@@ -976,6 +976,16 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
         return result;
     }
 
+    // A stopped Run's buffered frames (after Stop, or after an SSD run) are discarded by this start: the client must have said so (#693). Enforced here, not only in the UI.
+    if (backend_.runFrozen() && !request.acknowledgeDiscardRing) {
+        const auto ring = backend_.ringStatus();
+        result.outcome = ExperimentStartOutcome::NotReady;
+        result.message = "Run is stopped to review " + std::to_string(ring.count()) +
+                         " buffered frames: starting an experiment discards them; acknowledge the discard to start (acknowledgeDiscardRing)";
+        SPDLOG_WARN("ExperimentCoordinator: start refused — {}", result.message);
+        return result;
+    }
+
     // Writer conflicts must be refused before even changing processing mode.
     // Raw recording acquires its writer under this same coordinator mutex.
     if (backend_.isFrameRecording() || backend_.hdf5().isFileOpen()) {

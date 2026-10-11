@@ -487,9 +487,12 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
 
 ## ABI 37: the ring epoch and the ring an SSD run leaves behind (#693, D3)
 
-`fetch_ring_status` (and the `ring` block of the instrument status) gains `epoch`: the ARM epoch of the ring, read from the PL (`PZ_MIB_REG_EPOCH`), the value the stored frame
-records carry. A frozen ring holds exactly one ARM, so one value covers all its frames; the `MIBR` packet is unchanged (version 1, 48-byte header, no spare field), the per-frame
-epoch of the SSD record is compared with this value. `run_frozen` is now also true after an SSD run: see [[architecture/AppBackend]] ("The ring of an SSD run").
+`fetch_ring_status` (and the `ring` block of the instrument status) gains `epoch`: the CONFIG_COMMIT epoch (`PZ_MIB_REG_EPOCH`, committed before every ARM) the ring's frame records carry. A frozen ring holds one ARM, so one value covers all its
+frames; the `MIBR` packet is unchanged (version 1, 48-byte header, no spare field), the per-frame epoch of the SSD record is compared with this value. While the ring is *held* after a Run
+stopped, `epoch` is the value read when it was held (a Start commits a new epoch before it leaves the stopped Run, so the live register would drift under the held frames); it is `null`, not 0, when
+the status describes no valid ring. `hold_note` carries a reason a held Run needs attention (the LED could not be switched off), empty otherwise. `experiment_start` gains `acknowledge_discard_ring`:
+the server refuses a start from a held ring unless it is set (the UI sets it after its confirm). A live reader that has read frames of the ring should re-read `fetch_ring_status` afterwards and
+compare the keys that define the ring (`ring_vs_ssd` does). `run_frozen` is now also true after an SSD run: see [[architecture/AppBackend]] ("The ring of an SSD run").
 `ring_resume` ends that stopped Run like any other. Merge coordination: 37 is taken (granted for #693); the next free number is 38.
 
 ## ABI 35: the SATA SSD record store, read only (#667 S1)

@@ -405,7 +405,7 @@ int main(int argc, char** argv) {
         MIB_REQUIRE(backend.setInstrumentMode(backend::pz::InstrumentMode::Run, 152, 200, &err), "Run: " + err);
         MIB_EXPECT(backend.liveResultsActive() && !backend.runFrozen(), "Run: the live session runs");
 
-        auto begin = [&](const std::string& name, uint32_t expectRun) {
+        auto begin = [&](const std::string& name, uint32_t expectRun, bool acknowledge = false) {
             const std::string out = (td.path() / name).string();
             auto ready = backend.experiment().evaluateReadiness(out, "pl");
             if (!ready.ready) {
@@ -417,6 +417,7 @@ int main(int argc, char** argv) {
             req.outputPath = out;
             req.readinessGeneration = ready.generation;
             req.profileId = "pl";
+            req.acknowledgeDiscardRing = acknowledge;
             const auto started = backend.experiment().start(req);
             MIB_REQUIRE(started.outcome == ExperimentStartOutcome::Started, "starts: " + started.message);
             MIB_EXPECT(started.run.ssdRunId == expectRun, "the SSD run id");
@@ -435,7 +436,7 @@ int main(int argc, char** argv) {
         const auto readyHeld = backend.experiment().evaluateReadiness((td.path() / "held2.h5").string(), "pl");
         const auto* frozenGate = readyHeld.gate("run.frozen");
         MIB_EXPECT(frozenGate && frozenGate->status == backend::app::GateStatus::Warn && readyHeld.ready, "run.frozen warns and does not block");
-        begin("held2.h5", 2);
+        begin("held2.h5", 2, true);
         MIB_EXPECT(!backend.runFrozen() && regs.live[S0 + 0] == 1 && rp->starts == startsHeld + 1 && !backend.liveResultsActive(),
                    "the start left the stopped Run (LED on) and the run's provider start armed the ring once");
         finish();

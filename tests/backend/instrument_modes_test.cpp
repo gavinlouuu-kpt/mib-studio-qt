@@ -56,6 +56,7 @@ public:
     bool configure(const backend::processing::pz::CompiledProfile& profile, std::string*) override {
         ++configures;
         lastPage = profile.page;
+        if (onConfigure) onConfigure();
         return true;
     }
     bool start(uint64_t, std::string* error) override {
@@ -95,6 +96,7 @@ public:
     std::atomic<uint32_t> ringFrames{0};
     std::atomic<bool> failStart{false};
     std::string placementProblem;
+    std::function<void()> onConfigure; // runs inside configure(), i.e. while an experiment start is in flight
     backend::pz::RingStatus ring;
     std::atomic<int> configures{0}, starts{0}, stops{0};
     std::atomic<bool> running{false};
@@ -1035,6 +1037,14 @@ void testRingHeldAfterSsdRun(const mib::test::TempDir& td) {
     const int startsBefore = fake->starts;
     MIB_REQUIRE(backend.holdRingAfterRun(&why), "hold: " + why);
     MIB_EXPECT(backend.runFrozen() && !fake->running && s.live[S0 + 0] == 0 && !backend.liveResultsActive(), "held: the Run is stopped, the LED is off, no live session");
+    MIB_EXPECT(backend.holdNote().empty() && backend.heldRingEpoch() == 7, "a clean hold has no note and remembers the epoch of the moment");
+    // A Start commits a new epoch before it leaves the stopped Run: the held frames keep the epoch they were written under.
+    fake->ring.epoch = 9;
+    {
+        const auto j = nlohmann::json::parse(facade.fetchRingStatusJson());
+        MIB_EXPECT(j["epoch"] == 7 && j["hold_note"] == "", "while held, fetch_ring_status reports the epoch from when the Run stopped, not the live register");
+    }
+    fake->ring.epoch = 7;
     backend.resumeLiveResults();
     MIB_EXPECT(!backend.liveResultsActive() && fake->starts == startsBefore && backend.runFrozen(), "the end-of-run resume does not re-arm a held ring");
     MIB_EXPECT(backend.holdRingAfterRun(&why), "holding twice is harmless");
@@ -1066,10 +1076,26 @@ void testRingHeldAfterSsdRun(const mib::test::TempDir& td) {
     MIB_REQUIRE(facade.resumeRun().ok, "resume");
     MIB_EXPECT(!backend.runFrozen() && fake->running && fake->starts == startsBefore + 1 && s.live[S0 + 0] == 1 && backend.liveResultsActive(),
                "Resume Run: armed again, LED on");
-
-    // An experiment start from the held ring: the LED comes on and the stopped Run ends; the run's own provider start arms (not the live session).
+    {
+        fake->ring.epoch = 9;
+        const auto j = nlohmann::json::parse(facade.fetchRingStatusJson());
+        MIB_EXPECT(j["epoch"] == 9, "a live ring reports the live epoch");
+    }
+    // A hold whose LED cannot be switched off still holds, and says so (the PL went blank under it).
+    backend.stopLiveResults();
+    s.configured = false;
+    MIB_EXPECT(backend.holdRingAfterRun(&why) && backend.runFrozen() && !backend.holdNote().empty() && backend.holdNote().find("LED could not be switched off") != std::string::npos,
+               "a failed LED-off is a note, not a lost hold: " + backend.holdNote());
+    {
+        const auto j = nlohmann::json::parse(facade.fetchRingStatusJson());
+        MIB_EXPECT(j["hold_note"].get<std::string>().find("LED") != std::string::npos, "the note is in the ring status");
+    }
+    s.configured = true;
+    MIB_REQUIRE(facade.resumeRun().ok && backend.holdNote().empty(), "resume clears the note");
     backend.stopLiveResults();
     MIB_REQUIRE(backend.holdRingAfterRun(&why), "held again: " + why);
+
+    // An experiment start from the held ring: the LED comes on and the stopped Run ends; the run's own provider start arms (not the live session).
     const int startsHeld = fake->starts;
     MIB_REQUIRE(backend.leaveStoppedRun(&err), "leave: " + err);
     MIB_EXPECT(!backend.runFrozen() && s.live[S0 + 0] == 1 && fake->starts == startsHeld && !backend.liveResultsActive(),
@@ -1086,6 +1112,13 @@ void testRingHeldAfterSsdRun(const mib::test::TempDir& td) {
     fake->ring.fault = true;
     fake->ring.invalidReason = "the ring stalled (RING_STALLED): re-arm";
     refused("an invalid ring", "RING_STALLED");
+    fake->ring.valid = false;
+    fake->ring.why = "the registers describe no ring";
+    {
+        const auto j = nlohmann::json::parse(facade.fetchRingStatusJson());
+        MIB_EXPECT(j["epoch"].is_null(), "a status that describes no ring reports no epoch (null, not 0)");
+    }
+    fake->ring.valid = true;
     fake->ring.fault = false;
     fake->ring.frozen = true;
     fake->ring.final = 0;
@@ -1107,6 +1140,137 @@ void testRingHeldAfterSsdRun(const mib::test::TempDir& td) {
     fake->ring.stopStuck = true;
     fake->ring.stopIncomplete = true;
     MIB_EXPECT(backend.holdRingAfterRun(&why) && backend.runFrozen(), "a stop-incomplete ring is held (readable, flagged): " + why);
+    facade.shutdown();
+    backend.shutdown();
+}
+
+// An SSD run through the real coordinator, in CI (no pzrec binary needed): start, finalize, hold, Start from the held ring (needs the acknowledgement), Resume Run, and a Resume that races a start (#693).
+class RecordingSsd final : public backend::pz::ISsdDevice {
+public:
+    std::mutex m;
+    bool open = false;
+    uint32_t openId = 0, next = 1;
+    static std::string statusJson(bool open, uint32_t openId, uint32_t next) {
+        char buf[1400];
+        std::snprintf(buf, sizeof buf,
+                      R"({"state":"%s","state_code":3,"last_error":"OK","raw_sectors":417792,"head_lba":2048,"tail_lba":2048,"free_sectors":415744,"min_run_sectors":131072,"runs":%u,"next_run_id":%u,"table_entries":256,"open_run":%s,"open_run_id":%u,"open_start_unix_ms":1791530000000,"open_client_tag":7,"open_wall_source":1,"recovered_runs":0,"skipped_bad_entries":0,"recovered_ids":[0,0,0,0,0,0,0,0],"counters":{"seen":0,"empty_filtered":0,"invalid_not_sampled":0,"passed":0,"written":0,"dropped":0,"failed":0,"bytes_written":0,"drain_kbps":0,"first_frame_id":0,"last_frame_id":0}})",
+                      open ? "RECORDING" : "READY", next - 1, next, open ? "true" : "false", openId);
+        return buf;
+    }
+    bool status(std::string& json, std::string*) override { std::lock_guard<std::mutex> l(m); json = statusJson(open, openId, next); return true; }
+    bool runs(std::string& json, std::string*) override { json = "[]"; return true; }
+    bool start(const backend::pz::SsdStartArgs&, std::string& json, std::string*) override {
+        std::lock_guard<std::mutex> l(m);
+        open = true; openId = next; next = openId + 1;
+        json = statusJson(open, openId, next);
+        return true;
+    }
+    bool stop(bool, std::string& json, std::string*) override { std::lock_guard<std::mutex> l(m); open = false; json = statusJson(open, openId, next); return true; }
+};
+
+void testSsdRunHoldsRingThroughTheCoordinator(const mib::test::TempDir& td) {
+    const auto frames = td.path() / "frames_coord";
+    MIB_REQUIRE(mib::test::writeFrames(frames, 8, 512, 96), "mock frames");
+    setEnv("MIB_PL_SCIENCE", "1");
+    setEnv("MIB_CAMERA_MODE", "mock");
+    setEnv("MIB_MOCK_CAMERA_DIR", frames.string().c_str());
+    setEnv("MIB_DISABLED_SERVICES", "sqlite,autofocus,trigger,playback");
+    setEnv("MIB_EXECUTION_PROVIDER", "none");
+    backend::AppBackend backend;
+    backend::bridge::BackendFacade facade(backend);
+    MIB_REQUIRE(facade.initialize((td.path() / "data_coord").string()), "facade initializes");
+    FakeState s;
+    seedCellImage(s);
+    backend.setInstrumentControlForTesting(std::make_unique<FakeControl>(s));
+    auto provider = std::make_unique<FakeProvider>();
+    FakeProvider* fake = provider.get();
+    fake->ringFrames = 100;
+    fake->ring.valid = true;
+    fake->ring.records = 100;
+    fake->ring.recordBytes = pz::kRingRecordBytes;
+    fake->ring.head = 99;
+    fake->ring.final = 100;
+    fake->ring.lo = 0;
+    fake->ring.epoch = 4;
+    fake->ring.frozen = true;
+    backend.setExecutionProviderForTesting(std::move(provider));
+    auto device = std::make_unique<RecordingSsd>();
+    auto store = std::make_unique<pz::SsdStore>(std::move(device), std::chrono::milliseconds(1), false);
+    store->setStopRetries(2, std::chrono::milliseconds(5));
+    backend.setSsdStoreForTesting(std::move(store));
+    backend.ssdStore().refresh(true);
+    backend.processing().setPixelToMicronFactor(0.4886);
+    std::string err;
+    MIB_REQUIRE(backend.setInstrumentMode(pz::InstrumentMode::Run, 152, 200, &err), "Run: " + err);
+
+    const auto waitFor = [](const std::function<bool()>& pred, std::chrono::milliseconds timeout) {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        while (std::chrono::steady_clock::now() < deadline) {
+            if (pred()) return true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        return pred();
+    };
+    const auto startRun = [&](const std::string& name, bool acknowledge) {
+        const auto out = (td.path() / name).string();
+        auto ready = backend.experiment().evaluateReadiness(out, "pl");
+        if (!ready.ready) {
+            for (const auto& g : ready.gates) std::fprintf(stderr, "  %-26s %-12s %s\n", g.id.c_str(), backend::app::toString(g.status), g.reason.c_str());
+        }
+        MIB_REQUIRE(ready.ready, "ready to start " + name);
+        backend::app::ExperimentStartRequest req;
+        req.outputPath = out;
+        req.readinessGeneration = ready.generation;
+        req.profileId = "pl";
+        req.acknowledgeDiscardRing = acknowledge;
+        return backend.experiment().start(req);
+    };
+    const auto finish = [&] {
+        backend.experiment().requestStop(false);
+        MIB_REQUIRE(waitFor([&] { return backend.experiment().status().terminal; }, std::chrono::seconds(60)), "the run finalizes");
+    };
+
+    const auto first = startRun("coord1.h5", false);
+    MIB_REQUIRE(first.outcome == backend::app::ExperimentStartOutcome::Started, "run 1 starts: " + first.message);
+    MIB_EXPECT(first.run.ssdRunId == 1 && !backend.liveResultsActive(), "an SSD run, no live session");
+    // A Resume Run that races the run is refused (it would start the live session under the run's provider)
+    MIB_EXPECT(backend.resumeRun(&err) && !backend.liveResultsActive(), "Resume Run during a run is a no-op");
+    finish();
+    MIB_EXPECT(backend.runFrozen() && !backend.liveResultsActive() && s.live[S0 + 0] == 0, "after the SSD run: the ring is held, LED off, the live session did not restart");
+    {
+        const auto j = nlohmann::json::parse(facade.fetchRingStatusJson());
+        MIB_EXPECT(j["run_frozen"] == true && j["epoch"] == 4 && j["count"] == 100, "fetch_ring_status: held, epoch 4, 100 frames");
+    }
+    // Start from the held ring: refused without the acknowledgement (the server enforces it, whatever the UI did), accepted with it
+    fake->ring.epoch = 6; // a Start commits a new epoch before it leaves the stopped Run
+    {
+        const auto j = nlohmann::json::parse(facade.fetchRingStatusJson());
+        MIB_EXPECT(j["epoch"] == 4, "the held ring keeps its epoch");
+    }
+    const auto refused = startRun("coord2.h5", false);
+    MIB_EXPECT(refused.outcome == backend::app::ExperimentStartOutcome::NotReady && refused.message.find("acknowledge") != std::string::npos && refused.message.find("100 buffered frames") != std::string::npos,
+               "a start from a stopped Run without the acknowledgement is refused with the frame count: " + refused.message);
+    MIB_EXPECT(backend.runFrozen() && s.live[S0 + 0] == 0, "the refused start changed nothing");
+    // A Resume Run that reads the stopped Run just before a Start leaves it (the Start is in configure, holding the coordinator) must not win the race
+    bool racedOk = true;
+    std::string racedErr;
+    std::thread racer;
+    fake->onConfigure = [&] {
+        fake->onConfigure = nullptr;
+        racer = std::thread([&] { racedOk = backend.resumeRun(&racedErr); });
+        std::this_thread::sleep_for(std::chrono::milliseconds(150)); // the racer passes its run_frozen check and waits for the coordinator
+    };
+    const auto second = startRun("coord2.h5", true);
+    if (racer.joinable()) racer.join();
+    MIB_EXPECT(!racedOk && racedErr.find("experiment is starting or running") != std::string::npos, "a Resume Run racing the Start is refused: " + racedErr);
+    MIB_REQUIRE(second.outcome == backend::app::ExperimentStartOutcome::Started, "run 2 starts with the acknowledgement: " + second.message);
+    MIB_EXPECT(!backend.runFrozen() && s.live[S0 + 0] == 1 && second.run.ssdRunId == 2, "the start left the stopped Run");
+    MIB_EXPECT(backend.resumeRun(&err) && !backend.liveResultsActive(), "Resume Run during a run is a no-op: the live session does not start under the run's provider");
+    finish();
+    MIB_EXPECT(backend.runFrozen(), "held again after the second run");
+    // Resume Run ends the hold: the live session, a new ring
+    MIB_REQUIRE(backend.resumeRun(&err), "resume: " + err);
+    MIB_EXPECT(!backend.runFrozen() && backend.liveResultsActive() && s.live[S0 + 0] == 1, "Resume Run: live again, LED on");
     facade.shutdown();
     backend.shutdown();
 }
@@ -1187,6 +1351,7 @@ int main() {
     testLiveResults(td);
     testRingPlayback(td);
     testRingHeldAfterSsdRun(td);
+    testSsdRunHoldsRingThroughTheCoordinator(td);
     testRunWindowPersists(td);
     testRecordingTarget(td);
     return mib::test::exitCode();

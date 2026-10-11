@@ -164,6 +164,11 @@ namespace backend
         // LED or the latency could not be written. Same locking rule as holdRingAfterRun.
         bool leaveStoppedRun(std::string *errorOut);
         bool runFrozen() const { return runFrozen_.load(); }
+        // The PL epoch (the CONFIG_COMMIT epoch Studio commits before every ARM) of the ring as it was when the Run stopped. A Start commits a new
+        // epoch before it leaves the stopped Run, so the live register would no longer describe the held frames; this is what fetch_ring_status reports while held.
+        uint32_t heldRingEpoch() const { return heldEpoch_.load(); }
+        // Why the held ring is not quite what a Stop should leave (the LED could not be switched off); empty when nothing is wrong.
+        std::string holdNote() const;
         // The ring's registers, one frame as a browser packet ('MIBR', PzFrameRing.h), and the configured size.
         pz::RingStatus ringStatus();
         pz::RingRead ringFrame(uint64_t seq, std::vector<uint8_t> &packet, std::string *why);
@@ -448,6 +453,10 @@ namespace backend
         std::atomic<int> instrumentRunX_{0}, instrumentRunY_{0};
         std::atomic<bool> instrumentRunSet_{false};
         std::atomic<bool> runFrozen_{false}; // Run stopped to review the frame ring (#649)
+        std::atomic<uint32_t> heldEpoch_{0}; // the ring's epoch when the Run stopped (#693)
+        mutable std::mutex holdNoteMutex_;
+        std::string holdNote_;
+        void setHoldNote(const std::string &note);
         std::atomic<bool> instrumentIdle_{false};
         // Live results (G5). liveMutex_ is a leaf lock: nothing takes the coordinator or the mode mutex inside it.
         std::mutex liveMutex_;

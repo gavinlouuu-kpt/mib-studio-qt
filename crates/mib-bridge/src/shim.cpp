@@ -704,7 +704,7 @@ BridgeCommandResult BackendBridge::cancel_operation(std::uint64_t operation_id) 
     }
 }
 
-BridgeCommandResult BackendBridge::experiment_start(rust::Str output_path) {
+BridgeCommandResult BackendBridge::experiment_start(rust::Str output_path, bool acknowledge_discard_ring) {
     try {
         // Start is authorized by a backend readiness evaluation (issue #369):
         // evaluate with the destination, then present that generation. The
@@ -717,6 +717,7 @@ BridgeCommandResult BackendBridge::experiment_start(rust::Str output_path) {
         cmd.action = backend::bridge::ExperimentCommandAction::Start;
         cmd.outputPath = toStd(output_path);
         cmd.readinessGeneration = readiness.generation;
+        cmd.acknowledgeDiscardRing = acknowledge_discard_ring;
         return toBridgeResult(impl_->facade.dispatch(cmd));
     } catch (const std::exception& e) {
         return errorResult(std::string("experiment_start: ") + e.what());

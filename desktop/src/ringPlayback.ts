@@ -29,8 +29,10 @@ export interface RingStatus {
   fault_cleared_state?: number;
   /** The Run is stopped and its ring held for playback: by the operator's Stop, or (ABI 37) by the end of an SSD run. Resume Run or an experiment start discards the frames. */
   run_frozen: boolean;
-  /** The ring's ARM epoch (ABI 37): the value its frame records carry, constant while the ring is frozen. Absent on an older server. */
-  epoch?: number;
+  /** The PL epoch the ring's frames were written under (ABI 37; the CONFIG_COMMIT epoch Studio commits before every ARM, as the stored records carry it); while a stopped Run is held it is the epoch from the moment the Run stopped. null when the registers describe no ring; absent on an older server. */
+  epoch?: number | null;
+  /** Why a held ring is not quite what a Stop leaves (for example the LED could not be switched off); empty when nothing is wrong (ABI 37). */
+  hold_note?: string;
   capacity_frames: number;
   /** First and last readable sequence (inclusive); count 0 when empty. */
   first_seq: number;

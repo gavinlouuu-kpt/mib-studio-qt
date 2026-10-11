@@ -38,6 +38,7 @@ struct ExperimentStartRequest {
     uint64_t readinessGeneration{0}; // generation the caller preflighted with
     std::string profileId;          // frontend profile identity (provenance only)
     bool acknowledgeLatestFrameDrops{false}; // operator accepted LatestFrame policy
+    bool acknowledgeDiscardRing{false};      // operator accepted that a stopped Run's buffered frames are discarded by this start (#693)
 };
 
 class ExperimentCoordinator {

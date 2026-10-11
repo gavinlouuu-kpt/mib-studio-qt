@@ -107,7 +107,7 @@ fn abi_version_is_stable() {
     // v35 the SATA SSD record store, read only (#667 S1): fetch_ssd_status, fetch_ssd_runs and the `ssd` block of
     // fetch_instrument_status.
     // v36 the SSD run download lease (#667): ssd_export_begin / ssd_export_end for the HTTP export route.
-    // v37 the ring status carries the ARM epoch; an SSD run leaves its ring held for playback (#693, D3).
+    // v37 the ring status carries the CONFIG_COMMIT epoch (null without a ring) and a hold note; an SSD run leaves its ring held for playback (#693, D3).
     assert_eq!(ffi::bridge_abi_version(), 37);
 }
 
@@ -153,7 +153,8 @@ fn instrument_mode_commands_off_the_instrument() {
     let ring: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_ring_status()).unwrap();
     assert_eq!(ring["available"], serde_json::json!(false), "{ring}");
     assert_eq!(ring["run_frozen"], serde_json::json!(false), "{ring}");
-    assert_eq!(ring["epoch"], serde_json::json!(0), "ABI 37: the epoch is in the status, 0 without a ring: {ring}");
+    assert_eq!(ring["epoch"], serde_json::Value::Null, "ABI 37: the epoch is in the status, null when no ring is described: {ring}");
+    assert_eq!(ring["hold_note"], serde_json::json!(""), "{ring}");
     assert!(ring["reason"].as_str().unwrap().contains("no frame ring"), "{ring}");
     assert!(bridge.pin_mut().fetch_ring_frame(0).is_empty());
     assert!(bridge.pin_mut().ring_frame_error().contains("no frame ring"), "{}", bridge.pin_mut().ring_frame_error());
@@ -1040,7 +1041,7 @@ fn experiment_lifecycle_end_to_end() {
         .find(|g| g.id == "camera.session")
         .expect("camera.session gate present");
     assert!(camera_gate.status == 2 || camera_gate.status == 3, "camera.session should Fail/Unavailable");
-    let early = bridge.pin_mut().experiment_start(&out_path.to_string_lossy());
+    let early = bridge.pin_mut().experiment_start(&out_path.to_string_lossy(), false);
     assert!(!early.ok, "experiment started without a running camera");
     assert!(
         early.message.contains("camera.session"),
@@ -1055,12 +1056,12 @@ fn experiment_lifecycle_end_to_end() {
         std::thread::sleep(Duration::from_millis(10));
     }
 
-    let start = bridge.pin_mut().experiment_start(&out_path.to_string_lossy());
+    let start = bridge.pin_mut().experiment_start(&out_path.to_string_lossy(), false);
     assert!(start.ok, "experiment_start failed: {}", start.message);
     assert!(start.operation_id != 0, "experiment has no operation id");
 
     // Duplicate start must fail without desynchronizing state.
-    assert!(!bridge.pin_mut().experiment_start(&out_path.to_string_lossy()).ok);
+    assert!(!bridge.pin_mut().experiment_start(&out_path.to_string_lossy(), false).ok);
 
     // The camera cannot stop underneath an active experiment (Qt parity).
     assert!(!bridge.pin_mut().stop_capture().ok);

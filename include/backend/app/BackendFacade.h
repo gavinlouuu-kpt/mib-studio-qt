@@ -192,6 +192,7 @@ namespace backend::bridge
         std::uint64_t readinessGeneration{0};   // Start
         std::string profileId;                  // Start / EvaluateReadiness
         bool acknowledgeLatestFrameDrops{false}; // Start
+        bool acknowledgeDiscardRing{false};      // Start from a stopped Run: its buffered frames are discarded (#693)
         bool cancelled{false};                  // Stop
     };
 
