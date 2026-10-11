@@ -1,0 +1,8 @@
+## 2026-10-11 — Host rehearsal of the #693 slot: a rehearsal provider, a fake pzrec and the slot driver (no board)
+`MIB_EXECUTION_PROVIDER=rehearsal:<fps>[:<ring frames>]` (with `MIB_REHEARSAL_DIR`) selects `RehearsalProvider` on a development host: a frame ring with no thread (ids from the monotonic clock since the ARM, one epoch per ARM, frozen by STOP, content a pure
+function of the id) and register stubs (`AppBackend` installs `pzControl_` for it), so a host Studio can run Run, an SSD run, Stop with the D3 hold, ring reads and the export. `tools/ring_vs_ssd/rehearsal/fake_pzrec.py` stands in for pzrec
+(run table, matching 59,392 B records, knobs for stop time, drops and a corrupt pixel), `tools/ring_vs_ssd/slot_driver.py` drives one cycle through Studio's WebSocket and the export route and ends in `ring_vs_ssd`, and
+`run_rehearsal.sh` runs cycles at any rate on a private port. Never selected on the board (the unit sets `pz`); the spec is refused without `MIB_REHEARSAL_DIR`.
+- **Result (host, 2026-10-11):** 5 kHz 6 s, 1 kHz 10 s and 5 kHz with early drops all PASS `ring_vs_ssd`; drops to the end of the run FAIL a and d as designed; a flipped pixel in one record FAILs a. The export route's verified reader aborted a short stream during development (the fake overflowed `drops_before`, which is a gap that saturates at 255), as it should.
+- **Tests:** `processing.rehearsal_provider` (content equals the fake's golden `testdata/frames.json`; ring behaviour), `tools.ring_vs_ssd_rehearsal`.
+- **Not shown:** anything about the PL, the drain or the drive; the rate is a number in the clock formula while Studio's Run stays 5 kHz.
