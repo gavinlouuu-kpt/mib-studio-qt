@@ -13,8 +13,8 @@ Object.assign(globalThis,{IS_REACT_ACT_ENVIRONMENT:true});
 
 let root:Root,host:HTMLDivElement,model:ReturnType<typeof useCameraDocument>,pz:PzDocumentContext,experimentActive:boolean;
 const append=vi.fn(),refresh=vi.fn();
-const timing={fps:1000,exposure_mode:"auto" as const,exposure_us:949.87,hmax:58,vmax:1280,shs:64,exposure_lines:1216,actual_fps:1000.135,exposure_start_us:50,exposure_end_us:1000,strobe_start_us:7,strobe_end_us:67,
-  strobe_overlaps:true,strobe_straddles_exposure_start:true,strobe_warning:"",allowed_exposure_min_us:933,allowed_exposure_max_us:993};
+const timing={fps:1000,exposure_mode:"auto" as const,exposure_us:949.87,hmax:116,vmax:640,shs:32,exposure_lines:608,actual_fps:1000.135,exposure_start_us:50,exposure_end_us:1000,strobe_start_us:7,strobe_end_us:67,
+  strobe_overlaps:true,strobe_straddles_exposure_start:true,strobe_warning:"",allowed_exposure_min_us:935,allowed_exposure_max_us:992};
 const good:PzCameraCheck={ok:true,qualified:false,...timing};
 const status=(over:Partial<RunFpsStatus>={}):RunFpsStatus=>({available:true,min_fps:1000,max_fps:5000,default_fps:5000,qualified_fps:5000,in_run:true,held:false,...over});
 function Harness(){
@@ -47,7 +47,7 @@ describe("the PZ7035 camera document (Config → Camera document)",()=>{
   await act(async()=>model.run("browse"));await flush();
   expect(invoke).toHaveBeenCalledWith("camera_document",expect.objectContaining({action:"read",path:"/data/camera.json",kind:"pz7035"}));
   expect(bridge.checkPzCameraDocument).toHaveBeenCalledWith('{"run":{"frame_rate_hz":1000}}');
-  expect(testid("pz-document-timing")!.textContent).toContain("1,000 fps · exposure auto 950 µs (SHS 64)");
+  expect(testid("pz-document-timing")!.textContent).toContain("1,000 fps · exposure auto 950 µs (SHS 32)");
   expect(testid("pz-document-strobe")!.textContent).toContain("exposure 50 to 1000 µs after XVS, LED strobe 7 to 67 µs");
   expect(testid("pz-document-qualification")!.textContent).toContain("5,000 fps is the qualified rate");
   expect(bridge.applyPzCameraDocument).not.toHaveBeenCalled();

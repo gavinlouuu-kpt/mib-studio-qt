@@ -1891,7 +1891,7 @@ namespace backend
         namespace fs = std::filesystem;
         std::string text;
         try {
-            // The document lives directly in <data>/camera/: a regular .json file, no symlink anywhere on the way, not larger than the limit (stat before the read).
+            // The document lives directly in <data>/camera/ (a symlinked camera folder itself is followed: it is the operator's own link): a regular .json file, the file not a symlink, not larger than the limit (stat before the read).
             const fs::path base = fs::weakly_canonical(fs::u8path(dataDir_) / "camera");
             const fs::path requested = fs::u8path(path);
             std::error_code ec;
@@ -1906,7 +1906,11 @@ namespace backend
             if (size > pz::kCameraDocumentMaxBytes) return fail("the camera document exceeds 64 KiB");
             std::ifstream in(file, std::ios::binary);
             if (!in) return fail("cannot read " + file.generic_string());
-            text.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+            // The read itself is bounded too (the file may grow after the stat): one byte more than the limit is enough to refuse it.
+            text.resize(pz::kCameraDocumentMaxBytes + 1);
+            in.read(text.data(), static_cast<std::streamsize>(text.size()));
+            text.resize(static_cast<std::size_t>(in.gcount()));
+            if (text.size() > pz::kCameraDocumentMaxBytes) return fail("the camera document exceeds 64 KiB");
         } catch (const std::exception &e) {
             return fail(std::string("cannot read the camera document: ") + e.what());
         }

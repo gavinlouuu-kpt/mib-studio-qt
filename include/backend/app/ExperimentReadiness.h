@@ -98,11 +98,11 @@ struct RunConfigurationSnapshot {
     std::string wallClockSource;      // client_sync | board_clock_unsynced | system_clock (G14)
     int64_t wallClockOffsetNs{0};
     uint32_t ssdRunId{0};             // the SATA SSD run-table id this run records to (#667 S2; 0: no SSD run). Also the RUN_ID of its store records.
-    // PZ7035 Run timing the camera runs at (bridge ABI 38; zeros outside an instrument Run): the configured frame rate, the exposure that keeps SHS 64,
+    // PZ7035 Run timing the camera runs at (bridge ABI 38; zeros outside an instrument Run): the configured frame rate, the exposure ("auto": ~50 µs after XVS, SHS 64 / 32),
     // the line period and frame length the producer was given. Recorded in the run snapshot (HDF5) beside the run table's tick_hz.
     double runFps{0.0}, runExposureUs{0.0};
     int runHmax{0}, runVmax{0}, runShs{0};
-    bool runExposureAuto{true}, runPending{false}; // exposure "auto" (SHS 64) or a number; the camera runs at another setting than the configured one
+    bool runExposureAuto{true}, runPending{false}; // exposure "auto" or a number; the camera runs at another setting than the configured one
 
     CameraSourceInfo camera;
     bool cameraReady{false};

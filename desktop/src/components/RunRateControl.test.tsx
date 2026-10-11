@@ -39,8 +39,8 @@ describe("the Run setting on the experiment page (read only)", () => {
     expect(testid("run-rate-pending")).toBeNull();
   });
   it("shows a derived exposure at 1 kHz and the pending notice", () => {
-    mount(status({ fps: 1000, exposure_us: 949.87, vmax: 1280, applied_fps: 5000, pending: true, qualified: false, actual_fps: 1000.135 }));
-    expect(testid("run-rate-timing")!.textContent).toContain("1,000 fps · exposure auto 950 µs (SHS 64)");
+    mount(status({ fps: 1000, exposure_us: 949.87, hmax: 116, vmax: 640, shs: 32, exposure_lines: 608, applied_fps: 5000, pending: true, qualified: false, actual_fps: 1000.135 }));
+    expect(testid("run-rate-timing")!.textContent).toContain("1,000 fps · exposure auto 950 µs (SHS 32)");
     expect(testid("run-rate-pending")!.textContent).toContain("The camera runs at 5,000 fps; 1,000 fps is set and applies after Run is entered again.");
   });
   it("shows a strobe warning if the backend reports one", () => {

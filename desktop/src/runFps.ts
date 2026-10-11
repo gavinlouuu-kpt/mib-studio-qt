@@ -3,7 +3,7 @@
 
 export interface RunTimingFields {
   fps: number;
-  /** "auto": SHS 64, the exposure follows the frame length; "manual": a number of µs inside the strobe window. */
+  /** "auto": the exposure starts ~50 µs after XVS (SHS 64 at HMAX 58, 32 at 116), so it follows the frame length; "manual": a number of µs inside the strobe window. */
   exposure_mode: "auto" | "manual";
   exposure_us: number;
   hmax: number;
@@ -55,7 +55,7 @@ export function fpsText(fps: number, digits = 0): string {
   return fps.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
 }
 
-/** "1,000 fps · exposure auto 950 µs (SHS 64) · the sensor runs 1,000.1 fps" */
+/** "1,000 fps · exposure auto 950 µs (SHS 32) · the sensor runs 1,000.1 fps" */
 export function rateSummary(t: Pick<RunTimingFields, "fps" | "exposure_mode" | "exposure_us" | "shs" | "actual_fps">): string {
   const mode = t.exposure_mode === "auto" ? "auto " : "";
   return `${fpsText(t.fps)} fps · exposure ${mode}${exposureText(t.exposure_us)} (SHS ${t.shs}) · the sensor runs ${fpsText(t.actual_fps, 1)} fps`;

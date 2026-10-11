@@ -10,7 +10,7 @@ describe("the texts of the Run setting (the numbers come from the backend)", () 
   it("formats exposures and summaries", () => {
     expect(exposureText(949.87)).toBe("950 µs");
     expect(exposureText(1949.737)).toBe("1.95 ms");
-    expect(rateSummary({ fps: 1000, exposure_mode: "auto", exposure_us: 949.87, shs: 64, actual_fps: 1000.135 })).toBe("1,000 fps · exposure auto 950 µs (SHS 64) · the sensor runs 1,000.1 fps");
+    expect(rateSummary({ fps: 1000, exposure_mode: "auto", exposure_us: 949.87, shs: 32, actual_fps: 1000.135 })).toBe("1,000 fps · exposure auto 950 µs (SHS 32) · the sensor runs 1,000.1 fps");
     expect(rateSummary({ fps: 2000, exposure_mode: "manual", exposure_us: 470.2, shs: 38, actual_fps: 2000.269 })).toBe("2,000 fps · exposure 470 µs (SHS 38) · the sensor runs 2,000.3 fps");
     expect(strobeSummary({ exposure_start_us: 50, exposure_end_us: 200, strobe_start_us: 7, strobe_end_us: 67 })).toBe("exposure 50 to 200 µs after XVS, LED strobe 7 to 67 µs");
   });

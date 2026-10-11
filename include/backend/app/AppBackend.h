@@ -151,11 +151,11 @@ namespace backend
         // Service start: the standing RXH1 v1 CTRL value (persist 250 ms), read back and logged.
         void applyRxHealStandingCtrl();
         bool setInstrumentMode(pz::InstrumentMode mode, int x, int y, std::string *errorOut);
-        // The Run setting (bridge ABI 38): the frame rate (a whole number from 1000 to 5000, default 5000) and the exposure ("auto" = SHS 64, or a number of µs
+        // The Run setting (bridge ABI 38): the frame rate (a whole number from 1000 to 5000, default 5000) and the exposure ("auto" = starts ~50 µs after XVS (SHS 64 / 32), or a number of µs
         // validated against the LED strobe window), set through the PZ7035 camera document (PzCameraDocument.h) the way an EGrabber script sets a MIB camera.
         // They live in the Aravis profile (<data>/config/aravis-camera.json, experiment.*) and a profile counts as a stored Run setting only when it carries
         // the experiment.hmax the rate needs (58 above ~2655 fps, 116 at or below): an env-seeded profile (MIB_ARAVIS_FPS) never becomes the Run rate. The
-        // timing follows (PzRunTiming.h): that HMAX forced, the exposure starting ~50 µs after XVS for "auto" (SHS 64 / 32). A Run entry applies it; applyCameraDocument stores it and, when the instrument is in Run, re-enters Run at the same window so it takes effect
+        // timing follows (PzRunTiming.h): the producer is told that HMAX, the exposure starting ~50 µs after XVS for "auto" (SHS 64 / 32). A Run entry applies it; applyCameraDocument stores it and, when the instrument is in Run, re-enters Run at the same window so it takes effect
         // at once. Refused during an experiment or recording, and, in Run, while a stopped Run's ring is held unless `acknowledgeDiscardRing` (the re-entry
         // discards the buffered frames). The LED strobe is not part of it (Service-only).
         pz::RunSetting runSetting();                       // the configured setting (5000 fps, auto when none valid is stored)

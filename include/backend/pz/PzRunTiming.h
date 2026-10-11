@@ -45,7 +45,7 @@ inline constexpr double lineUs(int hmax) { return hmax / kSensorClockHz * 1e6; }
 // The "auto" exposure start in lines of `hmax`: SHS 64 at HMAX 58, 32 at HMAX 116 (the same 49.99 µs).
 inline constexpr int autoShs(int hmax) { return kRunShs * kRunHmax / hmax; }
 
-// What the camera document sets: the rate and the exposure ("auto" = SHS 64, or a number of µs).
+// What the camera document sets: the rate and the exposure ("auto" = the exposure starts ~50 µs after XVS, SHS 64 at HMAX 58 / 32 at 116, or a number of µs).
 struct RunSetting {
     double fps{kRunFpsDefault};
     bool autoExposure{true};
@@ -161,7 +161,7 @@ inline std::string checkRunSetting(const RunSetting& s, double strobeDelayUs, do
     char buf[260];
     std::snprintf(buf, sizeof buf,
                   "exposure %.1f µs at %.0f fps starts %.1f µs after XVS, outside the LED strobe window (%.0f to %.0f µs): at this rate use \"auto\" or an exposure from %.0f to %.0f µs",
-                  s.exposureUs, s.fps, c.exposureStartUs, c.strobeStartUs, c.strobeEndUs, r.loUs, r.hiUs);
+                  s.exposureUs, s.fps, c.exposureStartUs, c.strobeStartUs, c.strobeEndUs, std::ceil(r.loUs - 1e-6), std::floor(r.hiUs + 1e-6)); // rounded inward: both printed bounds are accepted
     return buf;
 }
 

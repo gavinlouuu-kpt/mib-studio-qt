@@ -5,7 +5,7 @@
 //
 //   { "schema": "pz7035-camera/1", "run": { "frame_rate_hz": 5000, "exposure_us": "auto" } }
 //
-// frame_rate_hz: a whole number from 1000 to 5000 (default 5000). exposure_us: "auto" (SHS 64: 150 us at 5000 fps, about 950 us at 1000 fps) or a number of
+// frame_rate_hz: a whole number from 1000 to 5000 (default 5000). exposure_us: "auto" (starts ~50 us after XVS: 150 us at 5000 fps, about 950 us at 1000 fps) or a number of
 // microseconds that starts the exposure inside the LED strobe window (PzRunTiming.h). The LED strobe is Service-only: no strobe, LED, delay or width key is
 // accepted. Unknown keys are errors, so a typo cannot silently leave a setting unchanged.
 

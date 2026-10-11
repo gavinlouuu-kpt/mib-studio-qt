@@ -1339,12 +1339,26 @@ void testRunTimingAndDocument() {
                    "934.2 us at 1000 fps is accepted, 932.6 us refused");
         pz::RunSetting tooShort{1000.0, false, 150.0}, ok5000{5000.0, false, 150.0}, zero{5000.0, false, 0.0};
         const auto why = pz::checkRunSetting(tooShort, kDelay, kWidth);
-        MIB_EXPECT(why.find("outside the LED strobe window") != std::string::npos && why.find("from 934 to ") != std::string::npos, "150 us at 1000 fps starts at ~850 us: refused, naming the allowed range: " + why);
+        MIB_EXPECT(why.find("outside the LED strobe window") != std::string::npos && why.find("from 935 to 992 ") != std::string::npos, "150 us at 1000 fps starts at ~850 us: refused, naming the allowed range: " + why);
         MIB_EXPECT(pz::checkRunSetting(ok5000, kDelay, kWidth).empty(), "150 us at 5000 fps is the qualified exposure");
         MIB_EXPECT(!pz::checkRunSetting(zero, kDelay, kWidth).empty() && !pz::checkRunSetting(pz::RunSetting{999.0, true, 0.0}, kDelay, kWidth).empty(), "a zero exposure and a rate out of range are refused");
         // Absurd exposures are refused before any float -> int conversion.
         for (const double huge : {1e300, 1e18, 4294967296.0 * 1e6, std::numeric_limits<double>::infinity(), std::nan("")})
             MIB_EXPECT(!pz::checkRunSetting(pz::RunSetting{1000.0, false, huge}, kDelay, kWidth).empty(), "an absurd exposure is refused");
+        {
+            // The range a refusal prints is rounded inward: both printed bounds are themselves accepted, at every rate.
+            int bad = 0;
+            for (int fps = 1000; fps <= 5000; ++fps) {
+                const std::string why = pz::checkRunSetting(pz::RunSetting{static_cast<double>(fps), false, 1.0}, kDelay, kWidth);
+                const auto at = why.rfind("from ");
+                double lo = 0, hi = 0;
+                if (at == std::string::npos || std::sscanf(why.c_str() + at, "from %lf to %lf", &lo, &hi) != 2) { ++bad; continue; }
+                if (!pz::checkRunSetting(pz::RunSetting{static_cast<double>(fps), false, lo}, kDelay, kWidth).empty() ||
+                    !pz::checkRunSetting(pz::RunSetting{static_cast<double>(fps), false, hi}, kDelay, kWidth).empty())
+                    ++bad;
+            }
+            MIB_EXPECT(bad == 0, "the printed exposure bounds are accepted at every rate (" + std::to_string(bad) + " rates print a refused bound)");
+        }
         MIB_EXPECT(pz::checkRunSetting(pz::RunSetting{1000.0, false, 1500.0}, kDelay, kWidth).find("longer than the frame") != std::string::npos, "an exposure longer than the frame is refused by name");
         const auto huge = pz::runTimingForExposure(1000.0, 1e300);   // the conversion itself is safe too (clamped in floating point)
         MIB_EXPECT(huge.shs == pz::kShsMin && huge.lines == huge.vmax - pz::kShsMin, "runTimingForExposure clamps an absurd exposure before it becomes an integer");

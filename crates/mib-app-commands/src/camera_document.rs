@@ -79,10 +79,12 @@ pub fn confine_pz7035(data_dir:&Path,requested:&str,creating:bool)->Result<Strin
     Ok(file.to_string_lossy().into_owned())
 }
 
-/// The remote entry (the server): the PZ7035 camera document is confined to `<data>/camera/`; the desktop-style kinds keep the path they are given
-/// (the command is control-only on the server, and those kinds do not exist on the PZ7035).
+/// The remote entry (the server): only the PZ7035 camera document exists there, confined to `<data>/camera/`. The `js`/`json` kinds take any path and
+/// belong to the desktop (Tauri) command, never to the server (it runs with the instrument's privileges), so they are refused. A symlinked `<data>/camera`
+/// directory itself is followed (an operator's own link); files inside it may not be links.
 pub fn camera_document_confined(data_dir:&Path,action:String,path:String,kind:String,baseline:String,text:String)->Result<CameraDocument,String>{
-    let path=if kind=="pz7035"&&action!="default"{confine_pz7035(data_dir,&path,action=="create"||action=="save")?}else{path};
+    if kind!="pz7035"{return Err("Only the PZ7035 camera document is available through the server".into());}
+    let path=if action!="default"{confine_pz7035(data_dir,&path,action=="create"||action=="save")?}else{path};
     transact(&action,&path,&kind,&baseline,&text)
 }
 #[cfg(test)]
@@ -124,6 +126,13 @@ mod tests {
         assert!(camera_document_confined(data.path(),r.clone(),"link.json".into(),"pz7035".into(),String::new(),String::new()).is_err());
         assert!(camera_document_confined(data.path(),"save".into(),"link.json".into(),"pz7035".into(),String::new(),"{}".into()).is_err());
         assert_eq!(fs::read_to_string(&secret).unwrap(),"{\"secret\":true}","the file behind the link is untouched");
+        // The desktop kinds take any path, so the server refuses them outright (read, create, save and default).
+        for kind in ["json","js"] {
+            for action in ["read","create","save","default"] {
+                assert!(camera_document_confined(data.path(),action.into(),secret.to_str().unwrap().into(),kind.into(),String::new(),"{}".into()).is_err(),"{kind} {action}");
+            }
+        }
+        assert!(!outside.path().join("new.json").exists());
         // The default needs no path; the revision check and the .json extension still apply.
         assert!(camera_document_confined(data.path(),"default".into(),String::new(),"pz7035".into(),String::new(),String::new()).is_ok());
         let again=camera_document_confined(data.path(),r.clone(),"camera.json".into(),"pz7035".into(),String::new(),String::new()).unwrap();
