@@ -37,6 +37,12 @@ Criteria follow `pzrec_records.md` "Frames in both the ring and the SSD" and the
 
 A cell of the `MIBR` packet is `payload[0..14]`, `y<<16|x`, `h<<16|w`, `cells<<24|index<<16|valid`, payload validity mask. A frame with RESULTS_OVERFLOW gets no packet at all (`readFrame` rejects it), so such a frame shows up as a missing packet under **c**.
 
+## Content: what was actually compared
+
+`summary.txt` and `ring-vs-ssd.json` (`content`, `vacuous`) end with a CONTENT block over the frames whose pixels, mask and cells were compared byte for byte (frames flagged cut / mask incomplete / invalid are excluded): MONO8 min / max / mean / per-frame std and the number of distinct values, the fraction of constant frames, the set mask bits and the frames with at least one, the result cells and the frames with at least one.
+Classification: **images NONTRIVIAL** when more than half of the frames have a pixel std above 1.0 grey level (`STD_FLOOR`; quantisation alone is 0.29) and at least two grey values occur, else **TRIVIAL**; **masks NONEMPTY** / EMPTY (any set bit); **results NONEMPTY** / EMPTY (any cell).
+A part that agrees only on TRIVIAL / EMPTY content is **VACUOUS**: the `a` / `b` equality lines say "VACUOUS for ...", and the last line reads `OVERALL PASS (VACUOUS: images, masks, results)` (the exit code is still 0: the bytes agree). `--require-content` turns a vacuous part into a failure. A dark bench with an empty channel is the expected vacuous case for masks and results; it is not evidence about the cell path.
+
 ## Tests
 
 `python3 tools/test_ring_vs_ssd.py` is the CI entry point (qt-ci runs `tools/test_*.py`; CTest registers it as `tools.ring_vs_ssd`; numpy only). The C++ test `processing.ring_packet_golden` keeps `testdata/` honest: `testdata/records.bin` is four consecutive REAL stored records of the export slot's run 19 and `seq-<n>.mibr` the packets Studio's `PzFrameRing::readFrame` + `buildRingPacket` made from them (regenerate on purpose with `mib_backend_tests ring_packet_golden_test tools/ring_vs_ssd/testdata --write`); the Python tests compare those packets with the records, so the RESULT mapping is checked against the C++ builder.
