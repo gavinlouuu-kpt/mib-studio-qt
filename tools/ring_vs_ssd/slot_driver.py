@@ -103,6 +103,82 @@ def guard_path(label, path):
     return p
 
 
+def acceptance(rc, report, require, judged=True):
+    """The slot's verdict per part from ring_vs_ssd's exit code and ring-vs-ssd.json. Returns (dict, text).
+    `judged` False: the comparison was not run (--no-judge). `report` None with rc 0: the comparison ran but its report cannot be read (FAIL).
+    TRANSPORT passes only when the comparison passed AND the images it compared are real: every compared frame had its pixels compared (none flagged cut / mask incomplete /
+    invalid: a cut frame is an image-transport symptom), no frame is constant, and any required part is non-vacuous (by default images NONTRIVIAL).
+    MASKS / RESULTS: COVERED (non-empty and byte-equal: content coverage, not validity; on a bench the background objects make them COVERED), VACUOUS (empty, unproven),
+    NOT ASSESSED when the comparison failed, was not run, or the report lacks the part."""
+    report = report if isinstance(report, dict) else None
+    content = report.get("content") if report else None
+    content = content if isinstance(content, dict) else {}
+    why = []
+    if not judged:
+        transport = "NOT JUDGED (the comparison was not run: --no-judge)"
+        status = "not_judged"
+    elif report is None:
+        transport = "FAIL (report unreadable: ring-vs-ssd.json is missing or not an object)"
+        status = "fail"
+    elif rc != 0 or report.get("ok") is not True:
+        transport = "FAIL (the comparison did not pass)"
+        status = "fail"
+    else:
+        verdicts = {"images": "NONTRIVIAL", "masks": "NONEMPTY", "results": "NONEMPTY"}
+        for part in sorted(require):
+            if content.get(part) != verdicts.get(part):
+                why.append(f"{part} {content.get(part, 'missing from the report')} (required {verdicts.get(part, '?')})")
+        frames, compared, flagged = content.get("frames"), content.get("frames_compared"), content.get("frames_flagged")
+        if not isinstance(frames, int) or not isinstance(compared, int) or not isinstance(flagged, int):
+            why.append("the report lacks frames / frames_compared / frames_flagged")
+        else:
+            if frames == 0 or flagged != 0 or frames != compared:
+                why.append(f"pixels compared on {frames} of {compared} compared frames, {flagged} flagged (cut / mask incomplete / invalid)")
+            if content.get("constant_frames") != 0:
+                why.append(f"{content.get('constant_frames')} constant frames (a real run has none)")
+        status = "fail" if why else "pass"
+        transport = "FAIL (" + "; ".join(why) + ")" if why else ("PASS" if require else "PASS (content not required)")
+
+    def part(name):
+        if status in ("not_judged", "fail") and (not judged or report is None or rc != 0 or report.get("ok") is not True):
+            return "NOT ASSESSED (the comparison " + ("was not run" if not judged else "did not pass or its report is unreadable") + ")"
+        value = content.get(name)
+        if value not in ("NONEMPTY", "EMPTY"):
+            return "NOT ASSESSED (missing from the report)"
+        return "COVERED (non-empty and byte-equal: content coverage, not validity)" if value == "NONEMPTY" else "VACUOUS (empty, unproven: the equality proves nothing about it)"
+
+    res = {
+        "transport": transport,
+        "transport_status": status,
+        "masks": part("masks"),
+        "results": part("results"),
+        "real_cell_optical": "not assessed",
+        "required_content": sorted(require),
+        "images": content.get("images"),
+        "mono8_mean": content.get("mono8_mean"),
+        "mono8_std_mean": content.get("mono8_std_mean"),
+        "mono8_distinct_values": content.get("mono8_distinct_values"),
+        "constant_frames": content.get("constant_frames"),
+        "constant_fraction": content.get("constant_fraction"),
+        "identical_to_predecessor": content.get("identical_to_predecessor"),
+        "frames": content.get("frames"),
+        "frames_compared": content.get("frames_compared"),
+        "frames_flagged": content.get("frames_flagged"),
+    }
+    text = "\n".join([
+        f"TRANSPORT: {transport}",
+        f"  (comparison criteria a-f, byte equality, accounting; required non-vacuous: {', '.join(sorted(require)) or 'nothing'}; images {res['images']}, MONO8 mean {res['mono8_mean']}, std {res['mono8_std_mean']}, "
+        f"{res['mono8_distinct_values']} distinct values, constant frames {res['constant_frames']} ({res['constant_fraction']}), identical to predecessor {res['identical_to_predecessor']}, "
+        f"pixels compared on {res['frames']} of {res['frames_compared']} compared frames, flagged {res['frames_flagged']})",
+        f"MASKS: {res['masks']}",
+        f"RESULTS: {res['results']}",
+        "REAL-CELL / OPTICAL ACCEPTANCE: not assessed",
+        "NOTE: NONTRIVIAL images mean non-constant bytes (sensor noise alone can exceed the std floor): enough to detect corruption, not evidence of a lit image. COVERED means content coverage, not real cells:",
+        "NOTE: a bench without a sample still shows background objects (the no-sample runs 18/19 had about 2 objects per frame with mask bits), so MASKS and RESULTS will likely read COVERED there.",
+    ]) + "\n"
+    return res, text
+
+
 def reconnect(st, log):
     """Studio's WebSocket dropped: connect again and take_control (the server hands control to the oldest client, an operator's browser may hold it)."""
     try:
@@ -173,6 +249,7 @@ def _main():
     ap.add_argument("--dl", help="directory for the export in the board owner's layout (default OUT/DL)")
     ap.add_argument("--h5-dir", default="", help="directory for the experiment's HDF5 file (default: Studio's working directory)")
     ap.add_argument("--dl-timeout", type=float, default=300.0, help="socket timeout of the export download, seconds without a byte")
+    ap.add_argument("--require-content", default="images", help="content parts ring_vs_ssd must find non-vacuous for the transport verdict: images,masks,results (default images; '' for none)")
     ap.add_argument("--no-judge", action="store_true", help="collect only; do not run ring_vs_ssd")
     a = ap.parse_args()
     out = guard_path("OUT", a.out)
@@ -378,11 +455,32 @@ def _main():
         cmd = [sys.executable, str(HERE / "ring_vs_ssd.py"), "--ring", str(out / "ring"), "--status", str(out / "ring-status-1.json"), "--ring2", str(out / "ring2"),
                "--status2", str(out / "ring-status-2.json"), "--status3", str(out / "ring-status-3.json"), "--run", str(dl / f"run{rid}.bin"), "--runs",
                str(out / "post.runs.json"), "--run-id", str(rid), "--out", str(out / "ring-vs-ssd")]
+        if a.require_content:
+            cmd += ["--require-content", a.require_content]
         log("judge: " + " ".join(cmd))
         p = subprocess.run(cmd, capture_output=True, text=True)
         (out / "ring-vs-ssd.stdout").write_text(p.stdout + p.stderr)
         rc = p.returncode
+        for ln in p.stdout.splitlines():
+            if ln.startswith("CONTENT"):
+                log(ln)  # what was actually compared
         log(f"ring_vs_ssd exit {rc}: {p.stdout.strip().splitlines()[-1] if p.stdout.strip() else p.stderr.strip()[-200:]}")
+    require = {t.strip() for t in a.require_content.split(",") if t.strip()}
+    report = None
+    if not a.no_judge:
+        try:
+            loaded = json.loads((out / "ring-vs-ssd" / "ring-vs-ssd.json").read_text())
+            report = loaded if isinstance(loaded, dict) else None
+        except (OSError, ValueError):
+            report = None
+    try:
+        acc, acc_text = acceptance(rc, report, require, judged=not a.no_judge)
+    except Exception as e:  # noqa: BLE001 - the acceptance must never stop the hand-back (ring_resume, summary)
+        acc, acc_text = {"transport": f"FAIL (acceptance could not be computed: {e!r})", "transport_status": "fail"}, f"TRANSPORT: FAIL (acceptance could not be computed: {e!r})\n"
+    save(out / "acceptance.json", {"label": a.label, "run_id": rid, **acc})
+    (out / "acceptance.txt").write_text(f"{a.label} run {rid}\n" + acc_text)
+    for ln in acc_text.splitlines():
+        log(ln)
     if a.resume_at_end:
         log("ring_resume: " + json.dumps(st.call("ring_resume", wait=60))[:300])
     save(out / "summary.json", {"label": a.label, "run_id": rid, "duration_s": a.duration, "stop_s": stop_took, "wall_start": t_start, "ring_vs_ssd_exit": rc, "run_row": row})

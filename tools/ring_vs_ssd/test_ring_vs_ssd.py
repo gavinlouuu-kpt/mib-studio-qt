@@ -129,6 +129,172 @@ class Cases(unittest.TestCase):
         self.assertEqual(rep["compared"]["older"], 3)               # 2000..2002 are on the SSD below the hole
         self.assertTrue((sc.d / "out" / "summary.txt").read_text().rstrip().endswith("OVERALL PASS"))
 
+
+    # --- CONTENT: what was compared ---------------------------------------------------------------------------------------------------------------
+    def flatten(self, sc, gray=None, mask=False):
+        """Make every frame constant (gray) and/or maskless on both sides (the records' payload areas and the packets)."""
+        for i, rec in enumerate(sc.records):
+            b = bytearray(rec)
+            if gray is not None:
+                b[4096:4096 + 49152] = bytes([gray]) * 49152
+            if not mask:
+                b[53248:53248 + 6144] = bytes(6144)
+            sc.records[i] = bytes(b)
+        for s, pkt in list(sc.packets.items()):
+            b = bytearray(pkt)
+            if gray is not None:
+                b[48:48 + 49152] = bytes([gray]) * 49152
+            if not mask:
+                b[48 + 49152:48 + 49152 + 6144] = bytes(6144)
+            sc.packets[s] = bytes(b)
+
+    def test_content_of_the_baseline_is_nontrivial(self):
+        sc = Scenario(self)
+        rc, out = sc.run()
+        self.assertEqual(rc, 0, out)
+        rep = json.loads((sc.d / "out" / "ring-vs-ssd.json").read_text())
+        c = rep["content"]
+        self.assertEqual((c["images"], c["masks"], c["results"]), ("NONTRIVIAL", "NONEMPTY", "NONEMPTY"))
+        self.assertEqual(c["frames"], 39)
+        self.assertEqual(c["mono8_distinct_values"], 256)
+        self.assertEqual(c["constant_frames"], 0)
+        self.assertGreater(c["mask_set_bits"], 0)
+        self.assertGreater(c["cells_total"], 0)
+        self.assertEqual(rep["vacuous"], [])
+        text = (sc.d / "out" / "summary.txt").read_text()
+        self.assertIn("CONTENT   images NONTRIVIAL", text)
+        self.assertNotIn("VACUOUS", text)
+        self.assertTrue(text.rstrip().endswith("OVERALL PASS"))
+
+    def test_content_constant_images_and_no_masks_pass_but_are_called_vacuous(self):
+        global objects_of
+        saved = objects_of
+        objects_of = lambda k: []                            # no cells anywhere
+        try:
+            sc = Scenario(self)
+            self.flatten(sc, gray=17, mask=False)
+            rc, out = sc.run()
+        finally:
+            objects_of = saved
+        self.assertEqual(rc, 0, out)                          # the bytes do agree
+        rep = json.loads((sc.d / "out" / "ring-vs-ssd.json").read_text())
+        c = rep["content"]
+        self.assertEqual((c["images"], c["masks"], c["results"]), ("TRIVIAL", "EMPTY", "EMPTY"))
+        self.assertEqual(c["constant_fraction"], 1.0)
+        self.assertEqual(c["mono8_distinct_values"], 1)
+        self.assertEqual((c["mask_set_bits"], c["cells_total"]), (0, 0))
+        self.assertEqual(rep["vacuous"], ["images", "masks", "results"])
+        text = (sc.d / "out" / "summary.txt").read_text()
+        self.assertTrue(text.rstrip().endswith("OVERALL PASS (VACUOUS: images, masks, results)"), text)
+        eq = [ln for ln in text.splitlines() if ln.startswith("PASS [a] ring frames in the SSD tail are equal")]
+        self.assertTrue(eq and "VACUOUS for images (MONO8), masks (MASK1), results (RESULT words)" in eq[0], text)
+
+    def test_content_only_the_empty_parts_are_called_vacuous(self):
+        global objects_of
+        saved = objects_of
+        objects_of = lambda k: []
+        try:
+            sc = Scenario(self)
+            self.flatten(sc, gray=None, mask=True)            # noisy images, masks kept, no cells
+            rc, out = sc.run()
+        finally:
+            objects_of = saved
+        self.assertEqual(rc, 0, out)
+        rep = json.loads((sc.d / "out" / "ring-vs-ssd.json").read_text())
+        self.assertEqual(rep["vacuous"], ["results"])
+        self.assertTrue((sc.d / "out" / "summary.txt").read_text().rstrip().endswith("OVERALL PASS (VACUOUS: results)"))
+
+    def run_empty(self, *extra, flat=False):
+        global objects_of
+        saved = objects_of
+        objects_of = lambda k: []                            # no cells anywhere
+        try:
+            sc = Scenario(self)
+            if flat:
+                self.flatten(sc, gray=17, mask=False)
+            rc, out = sc.run(*extra)
+        finally:
+            objects_of = saved
+        return sc, rc, out
+
+    def test_content_require_content_bare_flag_means_all_three(self):
+        sc, rc, out = self.run_empty("--require-content")
+        self.assertEqual(rc, 1, out)
+        self.failing(out, "results: NONEMPTY (a cell) (--require-content)")
+
+    def test_content_require_content_is_per_part(self):
+        # noisy images, masks present, no cells: images and masks are non-vacuous, results are
+        sc, rc, out = self.run_empty("--require-content", "images,masks")
+        self.assertEqual(rc, 0, out)
+        self.assertTrue((sc.d / "out" / "summary.txt").read_text().rstrip().endswith("OVERALL PASS (VACUOUS: results)"))
+        sc, rc, out = self.run_empty("--require-content=results")
+        self.assertEqual(rc, 1, out)
+        self.failing(out, "results:")
+        self.assertFalse(any(ln.startswith("FAIL") and "images:" in ln for ln in out.splitlines()))
+        # constant images fail an images requirement alone
+        sc, rc, out = self.run_empty("--require-content", "images", flat=True)
+        self.assertEqual(rc, 1, out)
+        self.failing(out, "images: NONTRIVIAL (non-constant bytes)")
+        # a dark bench (constant images) with masks/results not required still passes, vacuous
+        sc, rc, out = self.run_empty(flat=True)
+        self.assertEqual(rc, 0, out)
+
+    def test_content_require_content_rejects_an_unknown_part(self):
+        sc, rc, out = self.run_empty("--require-content", "image")
+        self.assertEqual(rc, 2, out)
+
+    def test_content_summary_states_what_nontrivial_means(self):
+        sc = Scenario(self)
+        rc, out = sc.run()
+        self.assertIn("NONTRIVIAL means non-constant bytes", (sc.d / "out" / "summary.txt").read_text())
+        self.assertIn("MONO8 min", out)
+
+    def test_content_counts_only_unflagged_frames_and_says_how_many_were_flagged(self):
+        sc = Scenario(self, invalid=(2010, 2011, 2012))
+        rc, out = sc.run()
+        self.assertEqual(rc, 0, out)
+        c = json.loads((sc.d / "out" / "ring-vs-ssd.json").read_text())["content"]
+        self.assertEqual((c["frames_flagged"], c["frames_compared"], c["frames"]), (3, 39, 36))
+        text = (sc.d / "out" / "summary.txt").read_text()
+        self.assertIn("pixels compared on 36 of 39 compared frames, flagged (cut / mask incomplete / invalid, excluded) 3", text)
+
+    def test_content_counts_frames_identical_to_their_predecessor(self):
+        def pk(frame_id, value):
+            return R.RingPacket(0, frame_id, 0, 1, 0, 512, 96, 1, bytes([value]) * (96 * 512), bytes(512 * 96 // 8), [])
+        same = R.content_stats([pk(10, 5), pk(11, 5), pk(12, 5), pk(13, 6)])
+        self.assertEqual(same["identical_to_predecessor"], 2)
+        gap = R.content_stats([pk(10, 5), pk(12, 5)])          # not consecutive ids: not a repeat
+        self.assertEqual(gap["identical_to_predecessor"], 0)
+        self.assertEqual(R.content_stats([pk(11, 1), pk(10, 1)])["identical_to_predecessor"], 1)   # sorted by frame id first
+
+    def test_content_baseline_has_no_identical_neighbours(self):
+        sc = Scenario(self)
+        rc, out = sc.run()
+        c = json.loads((sc.d / "out" / "ring-vs-ssd.json").read_text())["content"]
+        self.assertEqual((c["identical_to_predecessor"], c["frames_flagged"], c["frames_compared"], c["frames"]), (0, 0, 39, 39))
+        self.assertIn("identical to their predecessor 0", out)
+
+    def test_content_require_content_ignores_whitespace(self):
+        sc, rc, out = self.run_empty("--require-content", " images , masks ")
+        self.assertEqual(rc, 0, out)
+
+    def test_content_stats_floor_and_majority(self):
+        def pk(gray_fn, cells=0, mask_bits=0):
+            g = gray_fn()
+            m = np.zeros(512 * 96 // 8, np.uint8)
+            m[:mask_bits] = 1
+            return R.RingPacket(0, 0, 0, 1, 0, 512, 96, 1, g.tobytes(), m.tobytes(), [(0,) * 19] * cells)
+        flat = lambda: np.full(96 * 512, 100, np.uint8)
+        quiet = lambda: (100 + (np.arange(96 * 512) % 2)).astype(np.uint8)       # std 0.5, below the floor
+        noisy = lambda: (np.arange(96 * 512) % 200).astype(np.uint8)
+        self.assertEqual(R.content_stats([pk(flat), pk(flat)])["images"], "TRIVIAL")
+        self.assertEqual(R.content_stats([pk(quiet), pk(quiet)])["images"], "TRIVIAL")     # not constant, but under the noise floor
+        self.assertEqual(R.content_stats([pk(noisy), pk(noisy), pk(flat)])["images"], "NONTRIVIAL")
+        self.assertEqual(R.content_stats([pk(noisy), pk(flat), pk(flat)])["images"], "TRIVIAL")   # a minority of textured frames is not an image
+        c = R.content_stats([pk(noisy, cells=2, mask_bits=3), pk(noisy)])
+        self.assertEqual((c["masks"], c["mask_set_bits"] > 0, c["frames_with_mask_bits"], c["results"], c["cells_total"], c["frames_with_cells"]), ("NONEMPTY", True, 1, "NONEMPTY", 2, 1))
+        self.assertEqual(R.content_stats([])["images"], "TRIVIAL")
+
     # --- a: content ---------------------------------------------------------------------------------------------------------------------------
     def mutate(self, seq, fn, fragment, **kw):
         sc = Scenario(self, **kw)

@@ -24,6 +24,11 @@ Criteria (the plan on #693, from pzrec_records.md "Frames in both the ring and t
   d  at least one tail frame compared; overlap >= ring frames - guard - the measured delta; the ring's newest frame is within --delta-max of the run's last_frame_id
   e  after the export: the ring-defining status is identical and the re-read packets are byte-equal; a later idle status too (other status fields are INFO)
   f  frames flagged cut / mask incomplete / invalid are listed and excluded from the pixel comparison (--strict-flags: failures); a flag the two sides disagree on fails
+
+CONTENT (what was actually compared, summary.txt and ring-vs-ssd.json "content"): over the frames whose pixels, mask and cells were compared byte for byte, the MONO8 min / max / mean / std and number of distinct
+values, the fraction of constant frames, the set mask bits and the cells. The classification is images NONTRIVIAL or TRIVIAL (more than half of the frames have a pixel std above STD_FLOOR grey levels), masks
+NONEMPTY or EMPTY (any set bit), results NONEMPTY or EMPTY (any cell). A part that agrees only on TRIVIAL / EMPTY content is VACUOUS: its a / b check lines and the OVERALL line say so, and the equality
+there proves nothing about that part (--require-content [images,masks,results] turns a vacuous part into a failure).
 """
 from __future__ import annotations
 
@@ -45,6 +50,7 @@ HEADER = struct.Struct("<4sHHQQQIIHHHH")          # MIBR v1: magic, version, hea
 CELL_WORDS = 19
 FLAG_MASK_PRESENT, FLAG_RESULTS_TRUNCATED, FLAG_FRAME_INVALID, FLAG_CUT, FLAG_MASK_INCOMPLETE = 1, 2, 4, 8, 16
 GUARD_DEFAULT, DELTA_DEFAULT = 256, 32
+STD_FLOOR = 1.0  # grey levels: a frame whose pixels vary by no more than this (quantisation alone is 0.29) carries no image
 
 
 class InputError(Exception):
@@ -99,12 +105,93 @@ def status_diff(a: dict, b: dict) -> tuple[bool, str, str]:
     return not core, "; ".join(core), "; ".join(other)[:300]
 
 
+def content_stats(packets: list) -> dict:
+    """What the compared frames actually contain (the ring side; the comparison made the SSD side equal). `packets` are RingPacket objects."""
+    n = len(packets)
+    out: dict = {"frames": n}
+    if n == 0:
+        out.update({"images": "TRIVIAL", "masks": "EMPTY", "results": "EMPTY"})
+        return out
+    stds, means, mins, maxs = [], [], [], []
+    hist = np.zeros(256, np.int64)
+    constant = 0
+    mask_bits_total, mask_frames, cells_total, cell_frames, mask_present = 0, 0, 0, 0, 0
+    for pk in packets:
+        g = np.frombuffer(pk.gray, np.uint8)
+        mn, mx = int(g.min()), int(g.max())
+        mins.append(mn)
+        maxs.append(mx)
+        means.append(float(g.mean()))
+        stds.append(float(g.std()))
+        hist += np.bincount(g, minlength=256)
+        constant += mn == mx
+        if pk.flags & FLAG_MASK_PRESENT:
+            mask_present += 1
+            bits = int(np.unpackbits(np.frombuffer(pk.mask, np.uint8)).sum())
+            mask_bits_total += bits
+            mask_frames += bits > 0
+        cells_total += len(pk.cells)
+        cell_frames += len(pk.cells) > 0
+    # a frame byte-identical to its predecessor (the next frame id): a stale buffer or a frozen sensor serves the same image twice
+    by_id = sorted(packets, key=lambda q: q.frame_id)
+    identical = sum(1 for a, b in zip(by_id, by_id[1:]) if b.frame_id == a.frame_id + 1 and a.gray == b.gray)
+    textured = sum(1 for sd in stds if sd > STD_FLOOR)
+    images = "NONTRIVIAL" if textured * 2 > n and int(np.count_nonzero(hist)) >= 2 else "TRIVIAL"
+    out.update({
+        "images": images, "mono8_min": min(mins), "mono8_max": max(maxs), "mono8_mean": round(float(np.mean(means)), 3), "mono8_std_mean": round(float(np.mean(stds)), 3),
+        "mono8_std_min": round(min(stds), 3), "mono8_distinct_values": int(np.count_nonzero(hist)), "constant_frames": constant, "constant_fraction": round(constant / n, 4),
+        "frames_above_std_floor": textured, "std_floor": STD_FLOOR, "identical_to_predecessor": identical,
+        "masks": "NONEMPTY" if mask_bits_total > 0 else "EMPTY", "mask_frames_present": mask_present, "mask_set_bits": mask_bits_total, "frames_with_mask_bits": mask_frames,
+        "results": "NONEMPTY" if cells_total > 0 else "EMPTY", "cells_total": cells_total, "frames_with_cells": cell_frames,
+    })
+    return out
+
+
+PART_NEEDS = {"images": "NONTRIVIAL (non-constant bytes)", "masks": "NONEMPTY (a set bit)", "results": "NONEMPTY (a cell)"}
+
+
+def parse_require_content(text) -> set:
+    parts = {t.strip() for t in str(text).split(",") if t.strip()}
+    bad = parts - set(PART_NEEDS)
+    if bad:
+        raise InputError(f"--require-content takes images, masks, results (comma separated); not {sorted(bad)}")
+    return parts
+
+
+def vacuous_parts(content: dict) -> list:
+    """The parts whose byte-for-byte agreement says nothing because the content is trivial / empty."""
+    parts = []
+    if content.get("images") == "TRIVIAL":
+        parts.append("images")
+    if content.get("masks") == "EMPTY":
+        parts.append("masks")
+    if content.get("results") == "EMPTY":
+        parts.append("results")
+    return parts
+
+
+def content_lines(content: dict) -> list:
+    if not content.get("frames"):
+        return ["CONTENT no frame was compared byte for byte: images TRIVIAL, masks EMPTY, results EMPTY (all VACUOUS)"]
+    return [
+        f"CONTENT over {content['frames']} compared frames:",
+        "CONTENT   note: NONTRIVIAL means non-constant bytes (sensor noise alone can exceed the std floor): enough to detect corruption, not evidence of a lit image; NONEMPTY is content coverage, not validity",
+        f"CONTENT   images {content['images']}: MONO8 min {content['mono8_min']} max {content['mono8_max']} mean {content['mono8_mean']} std {content['mono8_std_mean']} (per-frame mean; floor {content['std_floor']}), "
+        f"{content['mono8_distinct_values']} distinct values, constant frames {content['constant_frames']} ({content['constant_fraction']:.1%}), frames above the std floor {content['frames_above_std_floor']}, "
+        f"identical to their predecessor {content['identical_to_predecessor']}",
+        f"CONTENT   pixels compared on {content['frames']} of {content.get('frames_compared', content['frames'])} compared frames, flagged (cut / mask incomplete / invalid, excluded) {content.get('frames_flagged', 0)}",
+        f"CONTENT   masks {content['masks']}: {content['mask_set_bits']} set bits, {content['frames_with_mask_bits']} frames with at least one (mask delivered on {content['mask_frames_present']})",
+        f"CONTENT   results {content['results']}: {content['cells_total']} cells, {content['frames_with_cells']} frames with at least one",
+    ]
+
+
 class Report:
     def __init__(self):
         self.info: list[str] = []
         self.checks: list[dict] = []
         self.ok = True
         self.data: dict = {}
+        self.content: dict = {}
 
     def check(self, crit: str, name: str, ok: bool, detail: str = ""):
         self.checks.append({"criterion": crit, "check": name, "ok": bool(ok), "detail": detail})
@@ -324,6 +411,7 @@ def run(args) -> int:
     flagged: list[dict] = []
     mismatches: list[dict] = []
     compared = {"tail": 0, "older": 0}
+    compared_pks: list = []
     with open(args.run, "rb") as f:
         def load(frame_id):
             n = key_to_index[(epoch, frame_id)]
@@ -341,6 +429,8 @@ def run(args) -> int:
                     continue
                 diffs, fl = compare_frame(pk, rec, abi_bits)
                 compared[group] += 1
+                if not (fl["cut"] or fl["mask_incomplete"] or fl["invalid"]):
+                    compared_pks.append(pk)
                 if fl["cut"] or fl["mask_incomplete"] or fl["invalid"]:
                     flagged.append({"group": group, "frame_id": pk.frame_id, "seq": pk.seq, "flags": {k: v for k, v in fl.items() if v and k != "mask_present"}})
                 if diffs:
@@ -393,6 +483,9 @@ def run(args) -> int:
     in_tail_flagged = [x for x in flagged if x["group"] == "tail"]
     rep.check("f", "frames flagged cut / mask incomplete / invalid are listed and excluded from the byte comparison", not (args.strict_flags and flagged),
               f"{len(flagged)} flagged" + (": " + "; ".join(names[:10]) if names else "") + (" (--strict-flags)" if args.strict_flags and flagged else ""))
+    rep.content = content_stats(compared_pks)
+    rep.content["frames_compared"] = compared["tail"] + compared["older"]   # every compared frame, flagged ones included
+    rep.content["frames_flagged"] = len(flagged)
     rep.data = {
         "run_id": args.run_id, "epoch": epoch, "ring": {"first_seq": first_seq, "last_seq": last_seq, "count": count, "capacity": capacity, "first_frame_id": ring_lo_id, "last_frame_id": ring_hi_id},
         "ssd": {"records": len(ids), "tail_start_frame_id": tail_start_id, "tail_records": len(ids) - tail_idx, "last_frame_id": run_last},
@@ -406,11 +499,26 @@ def run(args) -> int:
 def finish(rep: Report, args) -> int:
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    (out / "ring-vs-ssd.json").write_text(json.dumps({"ok": rep.ok, "checks": rep.checks, "info": rep.info, **rep.data}, indent=2))
-    lines = [("PASS" if c["ok"] else "FAIL") + f" [{c['criterion']}] {c['check']}" + (f": {c['detail']}" if c["detail"] else "") for c in rep.checks]
-    summary = "\n".join(lines + [f"INFO {i}" for i in rep.info]) + f"\nOVERALL {'PASS' if rep.ok else 'FAIL'}\n"
+    vac = vacuous_parts(rep.content) if rep.content else []
+    if rep.content:
+        for part in sorted(args.require_content):
+            rep.check("content", f"{part}: {PART_NEEDS[part]} (--require-content)", part not in vac, "vacuous" if part in vac else "")
+    vac_text = {"images": "images (MONO8)", "masks": "masks (MASK1)", "results": "results (RESULT words)"}
+    lines = []
+    for c in rep.checks:
+        line = ("PASS" if c["ok"] else "FAIL") + f" [{c['criterion']}] {c['check']}" + (f": {c['detail']}" if c["detail"] else "")
+        if c["ok"] and c["criterion"] in ("a", "b") and "equal" in c["check"] and vac:
+            line += "  -- VACUOUS for " + ", ".join(vac_text[p] for p in vac) + ": that part agrees only on trivial / empty content"
+        lines.append(line)
+    if rep.content:
+        lines += content_lines(rep.content)
+    overall = "OVERALL " + ("PASS" if rep.ok else "FAIL") + (f" (VACUOUS: {', '.join(vac)})" if rep.ok and vac else "")
+    (out / "ring-vs-ssd.json").write_text(json.dumps({"ok": rep.ok, "vacuous": vac, "checks": rep.checks, "info": rep.info, "content": rep.content, **rep.data}, indent=2))
+    summary = "\n".join(lines + [f"INFO {i}" for i in rep.info]) + f"\n{overall}\n"
     (out / "summary.txt").write_text(summary)
-    print("OVERALL " + ("PASS" if rep.ok else "FAIL"))
+    for ln in content_lines(rep.content) if rep.content else []:
+        print(ln, flush=True)
+    print(overall)
     return 0 if rep.ok else 1
 
 
@@ -428,9 +536,12 @@ def main(argv=None) -> int:
     ap.add_argument("--guard", type=int, default=GUARD_DEFAULT, help="the feeder's overwrite guard in frames (default 256)")
     ap.add_argument("--delta-max", type=int, default=DELTA_DEFAULT, help="frames the ring and the SSD may end apart (the two STOPs), default 32")
     ap.add_argument("--no-reread", action="store_true", help="skip criterion e knowingly")
+    ap.add_argument("--require-content", nargs="?", const="images,masks,results", default="", metavar="PARTS",
+                    help="fail when the named parts are vacuous: images (TRIVIAL), masks (EMPTY), results (EMPTY); comma separated, bare flag = all three")
     ap.add_argument("--strict-flags", action="store_true", help="a cut / mask-incomplete / invalid frame is a failure, not just listed")
     args = ap.parse_args(argv)
     try:
+        args.require_content = parse_require_content(args.require_content)
         return run(args)
     except (InputError, P.ConvertError) as e:
         print(f"error: {e}", file=sys.stderr)

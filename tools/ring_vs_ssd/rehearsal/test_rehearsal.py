@@ -156,6 +156,85 @@ class SlotDriverGuards(unittest.TestCase):
             self.assertEqual(self.D.guard_path("--dl", "/mnt/hdd/shared/x"), Path("/mnt/hdd/shared/x"))
 
 
+    GOOD = {"images": "NONTRIVIAL", "masks": "NONEMPTY", "results": "NONEMPTY", "mono8_mean": 150.0, "mono8_std_mean": 35.0, "mono8_distinct_values": 221, "constant_frames": 0,
+            "constant_fraction": 0.0, "identical_to_predecessor": 0, "frames": 39, "frames_compared": 39, "frames_flagged": 0}
+
+    def ok(self, **c):
+        return {"ok": True, "content": {**self.GOOD, **c}}
+
+    def test_acceptance_is_per_part(self):
+        a = self.D.acceptance
+        r, text = a(0, self.ok(), {"images"})
+        self.assertEqual((r["transport"], r["real_cell_optical"]), ("PASS", "not assessed"))
+        self.assertIn("COVERED", r["masks"])
+        self.assertIn("COVERED", r["results"])
+        self.assertIn("MONO8 mean 150.0, std 35.0", text)
+        self.assertIn("221 distinct values", text)
+        self.assertIn("pixels compared on 39 of 39 compared frames, flagged 0", text)
+        self.assertIn("REAL-CELL / OPTICAL ACCEPTANCE: not assessed", text)
+        self.assertIn("not evidence of a lit image", text)
+        self.assertIn("will likely read COVERED", text)
+        # the dark bench: images carry bytes, masks and results are empty -> transport passes, the two parts are vacuous
+        r, text = a(0, self.ok(masks="EMPTY", results="EMPTY"), {"images"})
+        self.assertEqual(r["transport"], "PASS")
+        self.assertTrue(r["masks"].startswith("VACUOUS") and r["results"].startswith("VACUOUS"))
+        self.assertIn("MASKS: VACUOUS (empty, unproven", text)
+        # trivial images fail the transport verdict even though the bytes agree
+        r, _ = a(0, self.ok(images="TRIVIAL"), {"images"})
+        self.assertTrue(r["transport"].startswith("FAIL") and "images TRIVIAL" in r["transport"], r["transport"])
+        # a requirement on masks makes an empty mask fail the transport verdict
+        r, _ = a(0, self.ok(masks="EMPTY"), {"images", "masks"})
+        self.assertTrue(r["transport"].startswith("FAIL") and "masks EMPTY" in r["transport"])
+
+    def test_acceptance_needs_real_images_on_every_compared_frame(self):
+        a = self.D.acceptance
+        # 37 of 39 frames flagged on both sides: only 2 frames had their pixels compared
+        r, text = a(0, self.ok(frames=2, frames_compared=39, frames_flagged=37), {"images"})
+        self.assertTrue(r["transport"].startswith("FAIL") and "pixels compared on 2 of 39" in r["transport"] and "37 flagged" in r["transport"], r["transport"])
+        self.assertIn("COVERED", r["masks"])  # the comparison itself passed: the parts are still assessed
+        # a single flagged frame is already a failure (a cut frame is an image-transport symptom)
+        r, _ = a(0, self.ok(frames=38, frames_compared=39, frames_flagged=1), {"images"})
+        self.assertTrue(r["transport"].startswith("FAIL"))
+        # constant frames: up to half could be constant for the majority rule; the slot requires none
+        r, _ = a(0, self.ok(constant_frames=18, constant_fraction=0.46), {"images"})
+        self.assertTrue(r["transport"].startswith("FAIL") and "18 constant frames" in r["transport"], r["transport"])
+        # no frame compared at all
+        r, _ = a(0, self.ok(frames=0, frames_compared=0), {"images"})
+        self.assertTrue(r["transport"].startswith("FAIL"))
+
+    def test_acceptance_fails_closed_on_a_missing_or_malformed_report(self):
+        a = self.D.acceptance
+        r, _ = a(0, {"ok": True}, {"images"})
+        self.assertTrue(r["transport"].startswith("FAIL") and "missing from the report" in r["transport"], r["transport"])
+        self.assertTrue(r["masks"].startswith("NOT ASSESSED") and r["results"].startswith("NOT ASSESSED"))
+        r, _ = a(0, None, {"images"})
+        self.assertTrue(r["transport"].startswith("FAIL (report unreadable"), r["transport"])
+        for bad in ([], "x", 3):
+            r, _ = a(0, bad, {"images"})
+            self.assertTrue(r["transport"].startswith("FAIL (report unreadable"), (bad, r["transport"]))
+        r, _ = a(0, {"ok": True, "content": "oops"}, {"images"})
+        self.assertTrue(r["transport"].startswith("FAIL"))
+        # a part missing from an otherwise good report is not assessed, not vacuous
+        good = self.ok()
+        del good["content"]["masks"]
+        r, _ = a(0, good, {"images"})
+        self.assertEqual(r["transport"], "PASS")
+        self.assertTrue(r["masks"].startswith("NOT ASSESSED (missing") and r["results"].startswith("COVERED"))
+        # a failed comparison assesses nothing
+        r, _ = a(1, {"ok": False, "content": self.GOOD}, {"images"})
+        self.assertTrue(r["transport"].startswith("FAIL (the comparison did not pass") and r["masks"].startswith("NOT ASSESSED") and r["results"].startswith("NOT ASSESSED"))
+
+    def test_acceptance_wording_for_no_judge_and_no_requirement(self):
+        a = self.D.acceptance
+        r, text = a(None, None, {"images"}, judged=False)
+        self.assertTrue(r["transport"].startswith("NOT JUDGED (the comparison was not run") and r["masks"].startswith("NOT ASSESSED (the comparison was not run"), r)
+        self.assertEqual(r["transport_status"], "not_judged")
+        r, _ = a(0, self.ok(), set())
+        self.assertEqual(r["transport"], "PASS (content not required)")
+        r, _ = a(0, self.ok(images="TRIVIAL"), set())
+        self.assertEqual(r["transport"], "PASS (content not required)")
+
+
 if __name__ == "__main__":
     if "--write" in sys.argv:
         GOLDEN.write_text(json.dumps(golden(), indent=1, sort_keys=True) + "\n")
