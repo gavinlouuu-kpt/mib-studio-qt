@@ -765,6 +765,28 @@ class GuardPath(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.run_guard("/\n")
 
+class InstrumentSampler(unittest.TestCase):
+    def test_a_row_carries_studios_link_and_heal_counters(self):
+        import slot_driver as D
+        inst = {"link": {"ingress_errors_per_s": 0.27, "ingress_errors_avg_per_s": 0.25, "ingress_errors_warn": False,
+                         "rx_heal": {"auto_resets": 0, "episodes": 2, "failed_episodes": 1, "flag_clears": 3, "tries": 4, "gave_up": False, "fs_seen": 8443564, "nofs_frames": 1, "nofs_lines": 121}}}
+        row = dict(zip(D.INSTRUMENT_COLUMNS, D.instrument_sample(12.5, inst)))
+        self.assertEqual(row["t"], "12.500")
+        self.assertEqual((row["ingress_errors_per_s"], row["ingress_errors_warn"], row["rx_heal_episodes"], row["rx_heal_flag_clears"], row["rx_heal_nofs_lines"]), ("0.27", "False", "2", "3", "121"))
+        self.assertEqual(len(D.instrument_sample(1.0, inst)), len(D.INSTRUMENT_COLUMNS))
+
+    def test_an_error_reply_or_missing_fields_leave_cells_empty(self):
+        import slot_driver as D
+        for bad in ({"error": "no reply to fetch_instrument_status within 5 s"}, None, {"link": {}}, {"link": {"rx_heal": None}}):
+            row = D.instrument_sample(1.0, bad)
+            self.assertEqual(len(row), len(D.INSTRUMENT_COLUMNS))
+            self.assertEqual(set(row[1:]), {""})
+
+    def test_the_sampler_only_asks_for_the_instrument_status(self):
+        source = (HERE / "slot_driver.py").read_text(encoding="utf-8")
+        body = source[source.index("def instrument_sampler"):source.index("th_instrument = None")]
+        self.assertEqual(set(__import__("re").findall(r'st\.call\("([a-z_]+)"', body)), {"fetch_instrument_status"})
+
 
 if __name__ == "__main__":
     unittest.main()
