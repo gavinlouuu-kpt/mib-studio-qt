@@ -41,7 +41,7 @@ A cell of the `MIBR` packet is `payload[0..14]`, `y<<16|x`, `h<<16|w`, `cells<<2
 
 `summary.txt` and `ring-vs-ssd.json` (`content`, `vacuous`) end with a CONTENT block over the frames whose pixels, mask and cells were compared byte for byte (frames flagged cut / mask incomplete / invalid are excluded): MONO8 min / max / mean / per-frame std and the number of distinct values, the fraction of constant frames, the set mask bits and the frames with at least one, the result cells and the frames with at least one.
 Classification: **images NONTRIVIAL** when more than half of the frames have a pixel std above 1.0 grey level (`STD_FLOOR`; quantisation alone is 0.29) and at least two grey values occur, else **TRIVIAL**; **masks NONEMPTY** / EMPTY (any set bit); **results NONEMPTY** / EMPTY (any cell).
-A part that agrees only on TRIVIAL / EMPTY content is **VACUOUS**: the `a` / `b` equality lines say "VACUOUS for ...", and the last line reads `OVERALL PASS (VACUOUS: images, masks, results)` (the exit code is still 0: the bytes agree). `--require-content` turns a vacuous part into a failure. A dark bench with an empty channel is the expected vacuous case for masks and results; it is not evidence about the cell path.
+A part that agrees only on TRIVIAL / EMPTY content is **VACUOUS**: the `a` / `b` equality lines say "VACUOUS for ...", and the last line reads `OVERALL PASS (VACUOUS: images, masks, results)` (the exit code is still 0: the bytes agree). `--require-content [images,masks,results]` (comma separated, bare = all three) turns a vacuous part into a failure per part. NONTRIVIAL means non-constant bytes (sensor noise alone can exceed the std floor): enough to detect corruption, not evidence of a lit image; NONEMPTY is content coverage, not validity. A dark bench with an empty channel is the expected vacuous case for masks and results; it is not evidence about the cell path.
 
 ## Tests
 
@@ -49,3 +49,7 @@ A part that agrees only on TRIVIAL / EMPTY content is **VACUOUS**: the `a` / `b`
 
 
 `python3 -m pytest tools/ring_vs_ssd` (the same): synthetic `MIBR` packets and synthetic stored records (built with the vendored ABI encoder), a passing baseline and a mutant per criterion (a gray byte, a mask bit, a result word, ticks, frame flags, a missing packet, a wrong epoch, an altered older frame, a non-consecutive ring, a truncated packet, a too-small overlap, a ring far ahead of the run end, a changed status, a differing re-read packet, a flag disagreement); plus a smoke run on the export slot's real run 19 when it is on the HDD.
+
+## The slot's verdict (`slot_driver.py` → `acceptance.json` / `acceptance.txt`)
+
+The driver judges with `--require-content images` (its `--require-content` option, default `images`) and writes separate lines: **TRANSPORT** PASS / FAIL (criteria a-f, byte equality, accounting, and the required parts non-vacuous, so TRIVIAL images fail it); **MASKS** and **RESULTS**: COVERED (non-empty and byte-equal: content coverage, not validity), VACUOUS (empty, unproven) or NOT ASSESSED (the comparison failed or was not run); and **REAL-CELL / OPTICAL ACCEPTANCE: not assessed** always. A dark bench is therefore TRANSPORT PASS with MASKS and RESULTS vacuous, never a mask or cell acceptance.

@@ -103,6 +103,39 @@ def guard_path(label, path):
     return p
 
 
+def acceptance(rc, report, require):
+    """The slot's verdict per part from ring_vs_ssd's exit code and ring-vs-ssd.json. Returns (dict, text).
+    TRANSPORT: the comparison passed (criteria a-f, byte equality, accounting) and the required content parts are not vacuous (by default images NONTRIVIAL).
+    MASKS / RESULTS: COVERED (non-empty and byte-equal: content coverage, not validity), VACUOUS (empty: the equality proves nothing), or NOT ASSESSED when the comparison failed or was not run."""
+    content = (report or {}).get("content") or {}
+    judged = report is not None
+    transport = bool(judged and rc == 0 and (report or {}).get("ok") is True and all(content.get(p) not in ("TRIVIAL", "EMPTY") for p in require))
+
+    def part(name, nonempty):
+        if not judged or rc != 0 or (report or {}).get("ok") is not True:
+            return "NOT ASSESSED (the comparison did not pass)"
+        return "COVERED (non-empty and byte-equal: content coverage, not validity)" if content.get(name) == nonempty else "VACUOUS (empty, unproven: the equality proves nothing about it)"
+
+    res = {
+        "transport": "PASS" if transport else ("FAIL" if judged else "NOT JUDGED"),
+        "masks": part("masks", "NONEMPTY"),
+        "results": part("results", "NONEMPTY"),
+        "real_cell_optical": "not assessed",
+        "required_content": sorted(require),
+        "images": content.get("images"),
+        "mono8_mean": content.get("mono8_mean"),
+        "mono8_std_mean": content.get("mono8_std_mean"),
+    }
+    text = "\n".join([
+        f"TRANSPORT: {res['transport']} (comparison criteria a-f, byte equality, accounting; required non-vacuous: {', '.join(sorted(require)) or 'nothing'}; images {res['images']}, MONO8 mean {res['mono8_mean']}, std {res['mono8_std_mean']})",
+        f"MASKS: {res['masks']}",
+        f"RESULTS: {res['results']}",
+        "REAL-CELL / OPTICAL ACCEPTANCE: not assessed",
+        "NOTE: NONTRIVIAL images mean non-constant bytes (sensor noise alone can exceed the std floor): enough to detect corruption, not evidence of a lit image.",
+    ]) + "\n"
+    return res, text
+
+
 def reconnect(st, log):
     """Studio's WebSocket dropped: connect again and take_control (the server hands control to the oldest client, an operator's browser may hold it)."""
     try:
@@ -173,6 +206,7 @@ def _main():
     ap.add_argument("--dl", help="directory for the export in the board owner's layout (default OUT/DL)")
     ap.add_argument("--h5-dir", default="", help="directory for the experiment's HDF5 file (default: Studio's working directory)")
     ap.add_argument("--dl-timeout", type=float, default=300.0, help="socket timeout of the export download, seconds without a byte")
+    ap.add_argument("--require-content", default="images", help="content parts ring_vs_ssd must find non-vacuous for the transport verdict: images,masks,results (default images; '' for none)")
     ap.add_argument("--no-judge", action="store_true", help="collect only; do not run ring_vs_ssd")
     a = ap.parse_args()
     out = guard_path("OUT", a.out)
@@ -378,11 +412,28 @@ def _main():
         cmd = [sys.executable, str(HERE / "ring_vs_ssd.py"), "--ring", str(out / "ring"), "--status", str(out / "ring-status-1.json"), "--ring2", str(out / "ring2"),
                "--status2", str(out / "ring-status-2.json"), "--status3", str(out / "ring-status-3.json"), "--run", str(dl / f"run{rid}.bin"), "--runs",
                str(out / "post.runs.json"), "--run-id", str(rid), "--out", str(out / "ring-vs-ssd")]
+        if a.require_content:
+            cmd += ["--require-content", a.require_content]
         log("judge: " + " ".join(cmd))
         p = subprocess.run(cmd, capture_output=True, text=True)
         (out / "ring-vs-ssd.stdout").write_text(p.stdout + p.stderr)
         rc = p.returncode
+        for ln in p.stdout.splitlines():
+            if ln.startswith("CONTENT"):
+                log(ln)  # what was actually compared
         log(f"ring_vs_ssd exit {rc}: {p.stdout.strip().splitlines()[-1] if p.stdout.strip() else p.stderr.strip()[-200:]}")
+    require = {t for t in a.require_content.split(",") if t}
+    report = None
+    if not a.no_judge:
+        try:
+            report = json.loads((out / "ring-vs-ssd" / "ring-vs-ssd.json").read_text())
+        except (OSError, ValueError):
+            report = None
+    acc, acc_text = acceptance(rc if not a.no_judge else None, report if not a.no_judge else None, require)
+    save(out / "acceptance.json", {"label": a.label, "run_id": rid, **acc})
+    (out / "acceptance.txt").write_text(f"{a.label} run {rid}\n" + acc_text)
+    for ln in acc_text.splitlines():
+        log(ln)
     if a.resume_at_end:
         log("ring_resume: " + json.dumps(st.call("ring_resume", wait=60))[:300])
     save(out / "summary.json", {"label": a.label, "run_id": rid, "duration_s": a.duration, "stop_s": stop_took, "wall_start": t_start, "ring_vs_ssd_exit": rc, "run_row": row})

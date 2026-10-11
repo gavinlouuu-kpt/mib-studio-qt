@@ -28,7 +28,7 @@ Criteria (the plan on #693, from pzrec_records.md "Frames in both the ring and t
 CONTENT (what was actually compared, summary.txt and ring-vs-ssd.json "content"): over the frames whose pixels, mask and cells were compared byte for byte, the MONO8 min / max / mean / std and number of distinct
 values, the fraction of constant frames, the set mask bits and the cells. The classification is images NONTRIVIAL or TRIVIAL (more than half of the frames have a pixel std above STD_FLOOR grey levels), masks
 NONEMPTY or EMPTY (any set bit), results NONEMPTY or EMPTY (any cell). A part that agrees only on TRIVIAL / EMPTY content is VACUOUS: its a / b check lines and the OVERALL line say so, and the equality
-there proves nothing about that part (--require-content turns a vacuous part into a failure).
+there proves nothing about that part (--require-content [images,masks,results] turns a vacuous part into a failure).
 """
 from __future__ import annotations
 
@@ -144,6 +144,17 @@ def content_stats(packets: list) -> dict:
     return out
 
 
+PART_NEEDS = {"images": "NONTRIVIAL (non-constant bytes)", "masks": "NONEMPTY (a set bit)", "results": "NONEMPTY (a cell)"}
+
+
+def parse_require_content(text) -> set:
+    parts = {t.strip() for t in str(text).split(",") if t.strip()}
+    bad = parts - set(PART_NEEDS)
+    if bad:
+        raise InputError(f"--require-content takes images, masks, results (comma separated); not {sorted(bad)}")
+    return parts
+
+
 def vacuous_parts(content: dict) -> list:
     """The parts whose byte-for-byte agreement says nothing because the content is trivial / empty."""
     parts = []
@@ -161,6 +172,7 @@ def content_lines(content: dict) -> list:
         return ["CONTENT no frame was compared byte for byte: images TRIVIAL, masks EMPTY, results EMPTY (all VACUOUS)"]
     return [
         f"CONTENT over {content['frames']} compared frames:",
+        "CONTENT   note: NONTRIVIAL means non-constant bytes (sensor noise alone can exceed the std floor): enough to detect corruption, not evidence of a lit image; NONEMPTY is content coverage, not validity",
         f"CONTENT   images {content['images']}: MONO8 min {content['mono8_min']} max {content['mono8_max']} mean {content['mono8_mean']} std {content['mono8_std_mean']} (per-frame mean; floor {content['std_floor']}), "
         f"{content['mono8_distinct_values']} distinct values, constant frames {content['constant_frames']} ({content['constant_fraction']:.1%}), frames above the std floor {content['frames_above_std_floor']}",
         f"CONTENT   masks {content['masks']}: {content['mask_set_bits']} set bits, {content['frames_with_mask_bits']} frames with at least one (mask delivered on {content['mask_frames_present']})",
@@ -481,8 +493,9 @@ def finish(rep: Report, args) -> int:
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     vac = vacuous_parts(rep.content) if rep.content else []
-    if rep.content and args.require_content and vac:
-        rep.check("content", "images NONTRIVIAL, masks and results NONEMPTY (--require-content)", False, "vacuous: " + ", ".join(vac))
+    if rep.content:
+        for part in sorted(args.require_content):
+            rep.check("content", f"{part}: {PART_NEEDS[part]} (--require-content)", part not in vac, "vacuous" if part in vac else "")
     vac_text = {"images": "images (MONO8)", "masks": "masks (MASK1)", "results": "results (RESULT words)"}
     lines = []
     for c in rep.checks:
@@ -516,10 +529,12 @@ def main(argv=None) -> int:
     ap.add_argument("--guard", type=int, default=GUARD_DEFAULT, help="the feeder's overwrite guard in frames (default 256)")
     ap.add_argument("--delta-max", type=int, default=DELTA_DEFAULT, help="frames the ring and the SSD may end apart (the two STOPs), default 32")
     ap.add_argument("--no-reread", action="store_true", help="skip criterion e knowingly")
-    ap.add_argument("--require-content", action="store_true", help="fail when the compared content is trivial / empty (images TRIVIAL, masks EMPTY or results EMPTY)")
+    ap.add_argument("--require-content", nargs="?", const="images,masks,results", default="", metavar="PARTS",
+                    help="fail when the named parts are vacuous: images (TRIVIAL), masks (EMPTY), results (EMPTY); comma separated, bare flag = all three")
     ap.add_argument("--strict-flags", action="store_true", help="a cut / mask-incomplete / invalid frame is a failure, not just listed")
     args = ap.parse_args(argv)
     try:
+        args.require_content = parse_require_content(args.require_content)
         return run(args)
     except (InputError, P.ConvertError) as e:
         print(f"error: {e}", file=sys.stderr)

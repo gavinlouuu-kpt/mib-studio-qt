@@ -204,17 +204,50 @@ class Cases(unittest.TestCase):
         self.assertEqual(rep["vacuous"], ["results"])
         self.assertTrue((sc.d / "out" / "summary.txt").read_text().rstrip().endswith("OVERALL PASS (VACUOUS: results)"))
 
-    def test_content_require_content_fails_a_vacuous_part(self):
+    def run_empty(self, *extra, flat=False):
         global objects_of
         saved = objects_of
-        objects_of = lambda k: []
+        objects_of = lambda k: []                            # no cells anywhere
         try:
             sc = Scenario(self)
-            rc, out = sc.run("--require-content")
+            if flat:
+                self.flatten(sc, gray=17, mask=False)
+            rc, out = sc.run(*extra)
         finally:
             objects_of = saved
+        return sc, rc, out
+
+    def test_content_require_content_bare_flag_means_all_three(self):
+        sc, rc, out = self.run_empty("--require-content")
         self.assertEqual(rc, 1, out)
-        self.failing(out, "[content]")
+        self.failing(out, "results: NONEMPTY (a cell) (--require-content)")
+
+    def test_content_require_content_is_per_part(self):
+        # noisy images, masks present, no cells: images and masks are non-vacuous, results are
+        sc, rc, out = self.run_empty("--require-content", "images,masks")
+        self.assertEqual(rc, 0, out)
+        self.assertTrue((sc.d / "out" / "summary.txt").read_text().rstrip().endswith("OVERALL PASS (VACUOUS: results)"))
+        sc, rc, out = self.run_empty("--require-content=results")
+        self.assertEqual(rc, 1, out)
+        self.failing(out, "results:")
+        self.assertFalse(any(ln.startswith("FAIL") and "images:" in ln for ln in out.splitlines()))
+        # constant images fail an images requirement alone
+        sc, rc, out = self.run_empty("--require-content", "images", flat=True)
+        self.assertEqual(rc, 1, out)
+        self.failing(out, "images: NONTRIVIAL (non-constant bytes)")
+        # a dark bench (constant images) with masks/results not required still passes, vacuous
+        sc, rc, out = self.run_empty(flat=True)
+        self.assertEqual(rc, 0, out)
+
+    def test_content_require_content_rejects_an_unknown_part(self):
+        sc, rc, out = self.run_empty("--require-content", "image")
+        self.assertEqual(rc, 2, out)
+
+    def test_content_summary_states_what_nontrivial_means(self):
+        sc = Scenario(self)
+        rc, out = sc.run()
+        self.assertIn("NONTRIVIAL means non-constant bytes", (sc.d / "out" / "summary.txt").read_text())
+        self.assertIn("MONO8 min", out)
 
     def test_content_stats_floor_and_majority(self):
         def pk(gray_fn, cells=0, mask_bits=0):

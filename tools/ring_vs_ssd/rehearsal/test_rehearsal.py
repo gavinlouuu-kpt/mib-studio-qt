@@ -156,6 +156,36 @@ class SlotDriverGuards(unittest.TestCase):
             self.assertEqual(self.D.guard_path("--dl", "/mnt/hdd/shared/x"), Path("/mnt/hdd/shared/x"))
 
 
+    def test_acceptance_is_per_part(self):
+        ok = lambda **c: {"ok": True, "content": {"images": "NONTRIVIAL", "masks": "NONEMPTY", "results": "NONEMPTY", "mono8_mean": 120.0, "mono8_std_mean": 9.5, **c}}
+        a = self.D.acceptance
+        r, text = a(0, ok(), {"images"})
+        self.assertEqual((r["transport"], r["real_cell_optical"]), ("PASS", "not assessed"))
+        self.assertIn("COVERED", r["masks"])
+        self.assertIn("COVERED", r["results"])
+        self.assertIn("MONO8 mean 120.0, std 9.5", text)
+        self.assertIn("REAL-CELL / OPTICAL ACCEPTANCE: not assessed", text)
+        self.assertIn("not evidence of a lit image", text)
+        # the dark bench: images carry bytes, masks and results are empty -> transport passes, the two parts are vacuous
+        r, text = a(0, ok(masks="EMPTY", results="EMPTY"), {"images"})
+        self.assertEqual(r["transport"], "PASS")
+        self.assertTrue(r["masks"].startswith("VACUOUS") and r["results"].startswith("VACUOUS"))
+        self.assertIn("MASKS: VACUOUS (empty, unproven", text)
+        # trivial images fail the transport verdict even though the bytes agree
+        r, _ = a(0, ok(images="TRIVIAL"), {"images"})
+        self.assertEqual(r["transport"], "FAIL")
+        # a failed comparison assesses nothing
+        r, _ = a(1, {"ok": False, "content": {"images": "NONTRIVIAL", "masks": "NONEMPTY", "results": "NONEMPTY"}}, {"images"})
+        self.assertEqual(r["transport"], "FAIL")
+        self.assertTrue(r["masks"].startswith("NOT ASSESSED") and r["results"].startswith("NOT ASSESSED"))
+        # --no-judge
+        r, _ = a(None, None, {"images"})
+        self.assertEqual(r["transport"], "NOT JUDGED")
+        # a requirement on masks makes an empty mask fail the transport verdict
+        r, _ = a(0, ok(masks="EMPTY"), {"images", "masks"})
+        self.assertEqual(r["transport"], "FAIL")
+
+
 if __name__ == "__main__":
     if "--write" in sys.argv:
         GOLDEN.write_text(json.dumps(golden(), indent=1, sort_keys=True) + "\n")
