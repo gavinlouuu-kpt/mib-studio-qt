@@ -249,6 +249,35 @@ class Cases(unittest.TestCase):
         self.assertIn("NONTRIVIAL means non-constant bytes", (sc.d / "out" / "summary.txt").read_text())
         self.assertIn("MONO8 min", out)
 
+    def test_content_counts_only_unflagged_frames_and_says_how_many_were_flagged(self):
+        sc = Scenario(self, invalid=(2010, 2011, 2012))
+        rc, out = sc.run()
+        self.assertEqual(rc, 0, out)
+        c = json.loads((sc.d / "out" / "ring-vs-ssd.json").read_text())["content"]
+        self.assertEqual((c["frames_flagged"], c["frames_compared"], c["frames"]), (3, 39, 36))
+        text = (sc.d / "out" / "summary.txt").read_text()
+        self.assertIn("pixels compared on 36 of 39 compared frames, flagged (cut / mask incomplete / invalid, excluded) 3", text)
+
+    def test_content_counts_frames_identical_to_their_predecessor(self):
+        def pk(frame_id, value):
+            return R.RingPacket(0, frame_id, 0, 1, 0, 512, 96, 1, bytes([value]) * (96 * 512), bytes(512 * 96 // 8), [])
+        same = R.content_stats([pk(10, 5), pk(11, 5), pk(12, 5), pk(13, 6)])
+        self.assertEqual(same["identical_to_predecessor"], 2)
+        gap = R.content_stats([pk(10, 5), pk(12, 5)])          # not consecutive ids: not a repeat
+        self.assertEqual(gap["identical_to_predecessor"], 0)
+        self.assertEqual(R.content_stats([pk(11, 1), pk(10, 1)])["identical_to_predecessor"], 1)   # sorted by frame id first
+
+    def test_content_baseline_has_no_identical_neighbours(self):
+        sc = Scenario(self)
+        rc, out = sc.run()
+        c = json.loads((sc.d / "out" / "ring-vs-ssd.json").read_text())["content"]
+        self.assertEqual((c["identical_to_predecessor"], c["frames_flagged"], c["frames_compared"], c["frames"]), (0, 0, 39, 39))
+        self.assertIn("identical to their predecessor 0", out)
+
+    def test_content_require_content_ignores_whitespace(self):
+        sc, rc, out = self.run_empty("--require-content", " images , masks ")
+        self.assertEqual(rc, 0, out)
+
     def test_content_stats_floor_and_majority(self):
         def pk(gray_fn, cells=0, mask_bits=0):
             g = gray_fn()

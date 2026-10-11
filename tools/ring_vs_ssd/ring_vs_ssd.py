@@ -132,12 +132,15 @@ def content_stats(packets: list) -> dict:
             mask_frames += bits > 0
         cells_total += len(pk.cells)
         cell_frames += len(pk.cells) > 0
+    # a frame byte-identical to its predecessor (the next frame id): a stale buffer or a frozen sensor serves the same image twice
+    by_id = sorted(packets, key=lambda q: q.frame_id)
+    identical = sum(1 for a, b in zip(by_id, by_id[1:]) if b.frame_id == a.frame_id + 1 and a.gray == b.gray)
     textured = sum(1 for sd in stds if sd > STD_FLOOR)
     images = "NONTRIVIAL" if textured * 2 > n and int(np.count_nonzero(hist)) >= 2 else "TRIVIAL"
     out.update({
         "images": images, "mono8_min": min(mins), "mono8_max": max(maxs), "mono8_mean": round(float(np.mean(means)), 3), "mono8_std_mean": round(float(np.mean(stds)), 3),
         "mono8_std_min": round(min(stds), 3), "mono8_distinct_values": int(np.count_nonzero(hist)), "constant_frames": constant, "constant_fraction": round(constant / n, 4),
-        "frames_above_std_floor": textured, "std_floor": STD_FLOOR,
+        "frames_above_std_floor": textured, "std_floor": STD_FLOOR, "identical_to_predecessor": identical,
         "masks": "NONEMPTY" if mask_bits_total > 0 else "EMPTY", "mask_frames_present": mask_present, "mask_set_bits": mask_bits_total, "frames_with_mask_bits": mask_frames,
         "results": "NONEMPTY" if cells_total > 0 else "EMPTY", "cells_total": cells_total, "frames_with_cells": cell_frames,
     })
@@ -174,7 +177,9 @@ def content_lines(content: dict) -> list:
         f"CONTENT over {content['frames']} compared frames:",
         "CONTENT   note: NONTRIVIAL means non-constant bytes (sensor noise alone can exceed the std floor): enough to detect corruption, not evidence of a lit image; NONEMPTY is content coverage, not validity",
         f"CONTENT   images {content['images']}: MONO8 min {content['mono8_min']} max {content['mono8_max']} mean {content['mono8_mean']} std {content['mono8_std_mean']} (per-frame mean; floor {content['std_floor']}), "
-        f"{content['mono8_distinct_values']} distinct values, constant frames {content['constant_frames']} ({content['constant_fraction']:.1%}), frames above the std floor {content['frames_above_std_floor']}",
+        f"{content['mono8_distinct_values']} distinct values, constant frames {content['constant_frames']} ({content['constant_fraction']:.1%}), frames above the std floor {content['frames_above_std_floor']}, "
+        f"identical to their predecessor {content['identical_to_predecessor']}",
+        f"CONTENT   pixels compared on {content['frames']} of {content.get('frames_compared', content['frames'])} compared frames, flagged (cut / mask incomplete / invalid, excluded) {content.get('frames_flagged', 0)}",
         f"CONTENT   masks {content['masks']}: {content['mask_set_bits']} set bits, {content['frames_with_mask_bits']} frames with at least one (mask delivered on {content['mask_frames_present']})",
         f"CONTENT   results {content['results']}: {content['cells_total']} cells, {content['frames_with_cells']} frames with at least one",
     ]
@@ -479,6 +484,8 @@ def run(args) -> int:
     rep.check("f", "frames flagged cut / mask incomplete / invalid are listed and excluded from the byte comparison", not (args.strict_flags and flagged),
               f"{len(flagged)} flagged" + (": " + "; ".join(names[:10]) if names else "") + (" (--strict-flags)" if args.strict_flags and flagged else ""))
     rep.content = content_stats(compared_pks)
+    rep.content["frames_compared"] = compared["tail"] + compared["older"]   # every compared frame, flagged ones included
+    rep.content["frames_flagged"] = len(flagged)
     rep.data = {
         "run_id": args.run_id, "epoch": epoch, "ring": {"first_seq": first_seq, "last_seq": last_seq, "count": count, "capacity": capacity, "first_frame_id": ring_lo_id, "last_frame_id": ring_hi_id},
         "ssd": {"records": len(ids), "tail_start_frame_id": tail_start_id, "tail_records": len(ids) - tail_idx, "last_frame_id": run_last},
