@@ -519,6 +519,16 @@ mib_add_backend_test_executable(pz_frame_ring_test processing/pz_frame_ring_test
 add_test(NAME processing.pz_frame_ring COMMAND $<TARGET_FILE:mib_backend_tests> pz_frame_ring_test)
 set_tests_properties(processing.pz_frame_ring PROPERTIES LABELS "processing;backend;pl" TIMEOUT 60)
 
+# #693: the MIBR packets Studio's reader makes from real stored records (tools/ring_vs_ssd/testdata), kept equal to the golden ones the Python comparison tool is tested with.
+mib_add_backend_test_executable(ring_packet_golden_test processing/ring_packet_golden_test.cpp)
+add_test(NAME processing.ring_packet_golden COMMAND $<TARGET_FILE:mib_backend_tests> ring_packet_golden_test ${PROJECT_SOURCE_DIR}/tools/ring_vs_ssd/testdata)
+set_tests_properties(processing.ring_packet_golden PROPERTIES LABELS "processing;backend;pl" TIMEOUT 60)
+if(Python3_Interpreter_FOUND)
+    # #693: the ring-vs-SSD comparison tool (synthetic packets and records, a mutant per criterion, the golden packets above). numpy only; skipped without it.
+    add_test(NAME tools.ring_vs_ssd COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tools/test_ring_vs_ssd.py)
+    set_tests_properties(tools.ring_vs_ssd PROPERTIES LABELS "tools;pl" SKIP_RETURN_CODE 77 TIMEOUT 120)
+endif()
+
 # #667 S1: the SSD record store (pzrec JSON contract, honest failure modes, the bounded child process). POSIX only (shell stand-ins for pzrec).
 # Set MIB_PZREC (a built pz7035 tools/pzrec/build/pzrec) to also run the real CLI on a fake disk image.
 if(UNIX)
