@@ -1422,6 +1422,18 @@ pub fn ring_freeze(state: &AppState) -> Result<CmdResult, String> {
     Ok(guard.pin_mut().ring_freeze().into())
 }
 
+/// The Run frame rate (ABI 38): JSON, the configured rate and its sensor timing, the applied rate, the limits.
+pub fn fetch_run_fps(state: &AppState) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().fetch_run_fps()).map_err(|e| e.to_string())
+}
+
+/// Store a Run rate (ABI 38); in Run the instrument re-enters Run at the same window so it applies at once.
+pub fn set_run_fps(state: &AppState, fps: f64, acknowledge_discard_ring: bool) -> Result<CmdResult, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().set_run_fps(fps, acknowledge_discard_ring).into())
+}
+
 /// Resume Run: a new frame ring.
 pub fn ring_resume(state: &AppState) -> Result<CmdResult, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;

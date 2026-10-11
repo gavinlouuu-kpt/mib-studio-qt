@@ -1312,7 +1312,6 @@ namespace backend
     namespace {
     // Producer settings that give the qualified timings (HMAX/VMAX/SHS from rate and exposure,
     // pz7035_gentl.c choose_hmax): Run 58/256/64, Align 116/1280/64.
-    constexpr double kRunFps = 5000.0, kRunExposureUs = 150.0;
     // Align, whole frames from the bridge (results8 on): HMAX 232 / VMAX 800 / SHS 64, 400 fps;
     // HMAX 116 would overflow the bridge tap. Banded fallback for older images: 116 / 1280 / 64.
     constexpr double kAlignFps = 400.0, kAlignExposureUs = 2299.7;
@@ -1620,6 +1619,11 @@ namespace backend
     bool AppBackend::setInstrumentMode(pz::InstrumentMode mode, int x, int y, std::string *errorOut)
     {
         std::lock_guard<std::mutex> lock(instrumentModeMutex_);
+        return setInstrumentModeLocked(mode, x, y, errorOut);
+    }
+
+    bool AppBackend::setInstrumentModeLocked(pz::InstrumentMode mode, int x, int y, std::string *errorOut)
+    {
         instrumentIdle_.store(false);
         auto fail = [&](const std::string &message) {
             if (errorOut) *errorOut = message;
@@ -1647,6 +1651,7 @@ namespace backend
         //    (its command pulses clear bit 4), and the guard never sees a timing transient lit.
         if (!pzControl_->ledOff(&err) || !pzControl_->setCellPath(false, &err)) return fail(err);
         instrumentMode_.store(static_cast<int>(pz::InstrumentMode::Unknown));
+        runFpsApplied_.store(0.0);
         captureService_->stop(); // also stops Align's bridge previews (bridge STOP)
         alignSource_.store(0);
         // Whole-frame Align needs results8 or later (expected-core.json feature + BUILD_ID match);
@@ -1671,8 +1676,11 @@ namespace backend
                 next.y = y;
                 next.width = kRunWidth;
                 next.height = kRunHeight;
-                next.experimentFps = kRunFps;
-                next.experimentExposureUs = kRunExposureUs;
+                // The configured rate and the exposure that keeps SHS 64 (PzRunTiming.h); HMAX 58 forced so the producer cannot pick 116.
+                const auto timing = runTiming();
+                next.experimentFps = timing.fps;
+                next.experimentExposureUs = timing.exposureUs;
+                next.experimentHmax = pz::kRunHmax;
             }
             if (!saveAravisProfile(next, &err)) return fail(err);
             aravisProfile_ = next;
@@ -1784,6 +1792,7 @@ namespace backend
             saveRunWindow(dataDir_, x, y);
         }
         instrumentMode_.store(static_cast<int>(mode));
+        if (mode == pz::InstrumentMode::Run) runFpsApplied_.store(runFps());
         if (mode == pz::InstrumentMode::Run) (void)startLiveResults(nullptr); // live monitoring in Run without a file (G5)
         // The receiver and the sensor were reset: the link counters jump for about a second.
         if (pzPlatformMonitor_)
@@ -1791,7 +1800,82 @@ namespace backend
                 std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch())
                     .count()));
         SPDLOG_INFO("AppBackend: instrument mode {}{}", pz::instrumentModeName(mode),
-                    mode == pz::InstrumentMode::Run ? fmt::format(" at ({}, {})", x, y) : std::string());
+                    mode == pz::InstrumentMode::Run ? fmt::format(" at ({}, {}), {}", x, y, runRateText()) : std::string());
+        return true;
+    }
+
+    void AppBackend::ensureAravisProfileLoaded()
+    {
+        if (!aravisProfileLoaded_.load()) loadAravisProfile();
+    }
+
+    double AppBackend::runFps()
+    {
+        ensureAravisProfileLoaded();
+        const double configured = runFpsConfigured_.load();
+        return configured > 0.0 ? configured : pz::kRunFpsDefault;
+    }
+
+    pz::RunTiming AppBackend::runTiming() { return pz::runTiming(runFps()); }
+
+    pz::RunTiming AppBackend::appliedRunTiming() const
+    {
+        const double applied = runFpsApplied_.load();
+        return pz::runTiming(applied > 0.0 ? applied : pz::kRunFpsDefault);
+    }
+
+    std::string AppBackend::runRateText()
+    {
+        const auto t = runFpsApplied_.load() > 0.0 ? appliedRunTiming() : runTiming();
+        return fmt::format("{} fps (exposure {} µs)", static_cast<int>(t.fps), static_cast<int>(std::lround(t.exposureUs)));
+    }
+
+    bool AppBackend::setRunFps(double fps, bool acknowledgeDiscardRing, std::string *errorOut, std::string *messageOut)
+    {
+        std::lock_guard<std::mutex> lock(instrumentModeMutex_);
+        auto fail = [&](const std::string &message) {
+            if (errorOut) *errorOut = message;
+            SPDLOG_WARN("AppBackend: Run rate: {}", message);
+            return false;
+        };
+        if (!pzControl_) return fail("no PZ7035 control on this platform");
+        if (const auto bad = pz::checkRunFps(fps); !bad.empty()) return fail(bad);
+        const auto run = experimentCoordinator_->state();
+        if (isFrameRecording() || run == app::ExperimentRunState::Starting || run == app::ExperimentRunState::Active ||
+            run == app::ExperimentRunState::Stopping)
+            return fail("Stop the experiment or recording before changing the Run rate");
+        const bool held = runFrozen_.load();
+        if (held && !acknowledgeDiscardRing) {
+            const auto status = executionProvider_ ? executionProvider_->ringStatus() : backend::pz::RingStatus{};
+            return fail("Run is stopped to review " + std::to_string(status.count()) +
+                        " buffered frames: changing the Run rate discards them; acknowledge the discard to continue");
+        }
+        ensureAravisProfileLoaded();
+        AravisProfile next = aravisProfile_;
+        const auto timing = pz::runTiming(fps);
+        next.experimentFps = timing.fps;
+        next.experimentExposureUs = timing.exposureUs;
+        next.experimentHmax = pz::kRunHmax;
+        std::string err;
+        if (!saveAravisProfile(next, &err)) return fail(err);
+        aravisProfile_ = next;
+        runFpsConfigured_.store(fps);
+        const std::string text = fmt::format("{} fps (exposure {} µs)", static_cast<int>(timing.fps), static_cast<int>(std::lround(timing.exposureUs)));
+        if (instrumentMode() != pz::InstrumentMode::Run) {
+            if (messageOut) *messageOut = "Run rate " + text + "; it applies when the instrument next enters Run";
+            SPDLOG_INFO("AppBackend: Run rate set to {} (applies at the next Run entry)", text);
+            return true;
+        }
+        // In Run: the producer applies timing at AcquisitionStart, so the rate takes effect by entering Run again at the same window.
+        if (held) {
+            runFrozen_.store(false);
+            setHoldNote("");
+            SPDLOG_INFO("AppBackend: a Run rate change ends the stopped Run: its buffered frames are discarded");
+        }
+        if (!setInstrumentModeLocked(pz::InstrumentMode::Run, instrumentRunX_.load(), instrumentRunY_.load(), &err))
+            return fail("the Run rate is stored (" + text + ") but Run could not be re-entered: " + err);
+        if (messageOut) *messageOut = "Run rate " + text + ", applied";
+        SPDLOG_INFO("AppBackend: Run rate {} applied", text);
         return true;
     }
 
@@ -1987,6 +2071,7 @@ namespace backend
         stopLiveResults();
         if (!pzControl_->ledOff(&err) || !pzControl_->setCellPath(false, &err)) return fail(err);
         instrumentMode_.store(static_cast<int>(pz::InstrumentMode::Unknown));
+        runFpsApplied_.store(0.0);
         captureService_->stop();
         alignSource_.store(0);
         instrumentIdle_.store(true);
@@ -2560,6 +2645,7 @@ namespace backend
                 if (json.contains("experiment")) {
                     profile.experimentFps = json["experiment"].value("frame_rate_hz", profile.experimentFps);
                     profile.experimentExposureUs = json["experiment"].value("exposure_us", profile.experimentExposureUs);
+                    profile.experimentHmax = json["experiment"].value("hmax", profile.experimentHmax);
                 }
                 if (json.contains("overview")) {
                     profile.overviewFps = json["overview"].value("frame_rate_hz", profile.overviewFps);
@@ -2571,6 +2657,8 @@ namespace backend
             }
         }
         aravisProfile_ = profile;
+        aravisProfileLoaded_.store(true);
+        runFpsConfigured_.store(pz::checkRunFps(profile.experimentFps).empty() ? profile.experimentFps : 0.0);
         SPDLOG_INFO("AppBackend: Aravis profile {}: window {}, experiment {} Hz / {} us, overview {} Hz / {} us",
                     path,
                     profile.hasRoi ? fmt::format("{}x{}+{}+{}", profile.width, profile.height, profile.x, profile.y)
@@ -2586,7 +2674,7 @@ namespace backend
             nlohmann::json json;
             if (profile.hasRoi)
                 json["roi"] = {{"x", profile.x}, {"y", profile.y}, {"width", profile.width}, {"height", profile.height}};
-            json["experiment"] = {{"frame_rate_hz", profile.experimentFps}, {"exposure_us", profile.experimentExposureUs}};
+            json["experiment"] = {{"frame_rate_hz", profile.experimentFps}, {"exposure_us", profile.experimentExposureUs}, {"hmax", profile.experimentHmax}};
             json["overview"] = {{"frame_rate_hz", profile.overviewFps}, {"exposure_us", profile.overviewExposureUs}};
             json["preview_rate_hz"] = profile.previewRateHz;
             const auto path = std::filesystem::u8path(aravisProfilePath());
@@ -2624,7 +2712,7 @@ namespace backend
         const auto& profile = aravisProfile_;
         if (profile.previewRateHz > 0) options.previewRateHz = profile.previewRateHz;
         // PZ7035 line period: forced only for the whole-frame Align overview, otherwise automatic.
-        options.pzHmax = aravisOverview_.load() ? profile.overviewHmax : 0;
+        options.pzHmax = aravisOverview_.load() ? profile.overviewHmax : profile.experimentHmax;
         if (aravisOverview_.load()) {
             options.fullSensor = true;
             if (profile.overviewFps > 0) options.frameRateHz = profile.overviewFps;

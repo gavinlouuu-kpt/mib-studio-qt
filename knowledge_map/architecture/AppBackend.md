@@ -60,8 +60,14 @@ of a core, 60/s at 8 %, 30/s at 4 %.
 - **Switching.** `setInstrumentMode(Align|Run, x, y)` holds
   `instrumentModeMutex_` and is refused during an experiment or recording.
   It sequences the LED, the cell path and the Aravis profile (Align
-  500 fps / 1899.7 µs; Run 5 kHz / 150 µs at the snapped window) around a
+  500 fps / 1899.7 µs; Run at the configured rate, default 5 kHz / 150 µs, at the snapped window) around a
   capture start; the full sequence is in [[../data-model/PZ7035-Records]].
+- **Run rate (ABI 38).** `runFps()` / `setRunFps()` / `runTiming()`: a whole number of fps from 100 to 5000
+  in the Aravis profile (`experiment.frame_rate_hz`); every Run entry stages `PzRunTiming.h`'s timing (HMAX 58 forced via
+  `options.pzHmax`, SHS 64, exposure = (VMAX - 64) lines, so the XVS-referenced strobe keeps its geometry) and records the applied
+  rate (`appliedRunFps()`, 0 outside Run). `setRunFps` takes `instrumentModeMutex_`, is refused during an experiment/recording and
+  (without `acknowledgeDiscardRing`) while a stopped Run's ring is held, and re-enters Run at the same window when in Run.
+  See [[architecture/Rust-Bridge]] ABI 38.
 - **Run guard.** In Run the Aravis factory returns null, so no capture
   start can reach the producer.
 - **The ring of an SSD run (#649, #693, D3).** Stop leads to playback, also for an SSD run. When the run has stopped and closed,

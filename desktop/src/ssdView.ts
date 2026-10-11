@@ -108,8 +108,8 @@ export function formatDuration(seconds: number): string {
   return h > 0 ? `${h} h ${String(m).padStart(2, "0")} min` : `${m} min ${String(r).padStart(2, "0")} s`;
 }
 
-/** Stopping a run waits for the PL to empty the frame ring onto the drive: up to ring ÷ drain rate, about 8 s for a full ring at 5 kHz on this drive (S2 slot, 2026-10-10). */
-export const STOP_NOTE = "Stopping takes up to about 8 s at 5 kHz (the frame ring is emptied onto the SSD).";
+/** Stopping a run waits for the PL to empty the frame ring onto the drive: up to ring ÷ drain rate, about 8 s for a full ring on this drive (measured at 5 kHz, S2 slot, 2026-10-10; a slower Run rate fills the ring more slowly, so this is the upper bound). */
+export const STOP_NOTE = "Stopping takes up to about 8 s (the frame ring is emptied onto the SSD).";
 
 /** The storage strip: what the SSD is doing and why, in the design's words (#667 section 4). `stoppingSeconds` is how long the state has read STOPPING (the caller times it). */
 export function stripView(s: SsdStatus, stoppingSeconds?: number): { tone: Tone; text: string; detail: string } {

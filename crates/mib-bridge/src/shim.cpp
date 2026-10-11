@@ -2106,6 +2106,21 @@ BridgeCommandResult BackendBridge::ring_freeze() {
     catch (...) { return errorResult("ring_freeze: unknown error"); }
 }
 
+rust::String BackendBridge::fetch_run_fps() {
+    try {
+        return rust::String(impl_->facade.fetchRunFpsJson());
+    } catch (...) {
+        return rust::String("{\"available\":false,\"reason\":\"fetch_run_fps failed\"}");
+    }
+}
+
+BridgeCommandResult BackendBridge::set_run_fps(double fps, bool acknowledge_discard_ring) {
+    try {
+        return toBridgeResult(impl_->facade.setRunFps(fps, acknowledge_discard_ring));
+    } catch (const std::exception& e) { return errorResult(std::string("set_run_fps: ") + e.what()); }
+    catch (...) { return errorResult("set_run_fps: unknown error"); }
+}
+
 BridgeCommandResult BackendBridge::ring_resume() {
     try {
         return toBridgeResult(impl_->facade.resumeRun());
@@ -2465,7 +2480,7 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 37; }
+std::uint32_t bridge_abi_version() { return 38; }
 
 } // namespace mib_bridge
 

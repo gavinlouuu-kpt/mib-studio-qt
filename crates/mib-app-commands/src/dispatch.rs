@@ -166,6 +166,8 @@ pub const COMMANDS: &[&str] = &[
     "fetch_ring_frame",
     "ring_freeze",
     "ring_resume",
+    "fetch_run_fps",
+    "set_run_fps",
     "fetch_ssd_status",
     "fetch_ssd_runs",
     "set_service_mode",
@@ -826,6 +828,17 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
         }
         "ring_freeze" => crate::ring_freeze(state).and_then(json),
         "ring_resume" => crate::ring_resume(state).and_then(json),
+        "fetch_run_fps" => crate::fetch_run_fps(state).and_then(json),
+        "set_run_fps" => {
+            #[derive(Deserialize)]
+            struct A {
+                fps: f64,
+                /// ABI 38: the client accepts that a stopped Run's buffered frames are discarded by the re-entry.
+                #[serde(rename = "acknowledgeDiscardRing", default)] acknowledge_discard_ring: bool,
+            }
+            let a: A = args(value)?;
+            crate::set_run_fps(state, a.fps, a.acknowledge_discard_ring).and_then(json)
+        }
         "fetch_ssd_status" => crate::fetch_ssd_status(state).and_then(json),
         "fetch_ssd_runs" => crate::fetch_ssd_runs(state).and_then(json),
         "sync_wall_clock" => {

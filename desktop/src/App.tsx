@@ -84,6 +84,8 @@ import { rateSummary, RUN_WINDOW, snapRunWindow, type Rect } from "./cameraAlign
 import { runModeBlockReason, useCameraWindow, type CameraModeError } from "./cameraWindow";
 import { latencyReadout, linkReadout, sensorReadout } from "./linkHealth";
 import { RunWindowNotice } from "./components/RunWindowNotice";
+import { RunRateControl } from "./components/RunRateControl";
+import type { RunFpsStatus } from "./runFps";
 import { holdBest, measureImage, sameBox } from "./imageQuality";
 import { formatResultsRates, resultsRates, type ResultsRates, type ResultsSample } from "./resultsRates";
 import { runPreviewRgba, type RunPreview } from "./runPreview";
@@ -1091,6 +1093,27 @@ export default function App() {
   }, [cameraWin.showDefault]);
   refreshCameraGeometryRef.current = refreshCameraGeometry;
 
+  // The Run frame rate (ABI 38): polled while the instrument has Run, applied through set_run_fps (which re-enters Run when the instrument is in it).
+  const [runFpsStatus, setRunFpsStatus] = useState<RunFpsStatus | null>(null);
+  const refreshRunFps = useCallback(async () => {
+    if (!instrumentModes) return;
+    try { setRunFpsStatus(await bridge.fetchRunFps()); } catch { /* the next poll tries again */ }
+  }, [instrumentModes]);
+  useEffect(() => {
+    if (!ready || !instrumentModes) return;
+    void refreshRunFps();
+    const id = window.setInterval(() => void refreshRunFps(), 3000);
+    return () => window.clearInterval(id);
+  }, [ready, instrumentModes, refreshRunFps]);
+  const onApplyRunFps = useCallback(async (fps: number, acknowledgeDiscardRing: boolean) => {
+    append(`setting the Run rate to ${fps} fps…`);
+    const result = await bridge.setRunFps(fps, acknowledgeDiscardRing);
+    append(result.ok ? result.message : `Run rate: ${result.message}`);
+    await refreshRunFps();
+    await refreshCameraGeometry();
+    return { ok: result.ok, message: result.message };
+  }, [append, refreshRunFps, refreshCameraGeometry]);
+
   // After a page reload the backend still holds the Run window it applied: take it back.
   const instrumentMode = instrument?.mode;
   // Relative default save paths in the browser start under the instrument's data directory (G8).
@@ -1961,6 +1984,8 @@ export default function App() {
                   </div>
                 </div>
 
+                {instrumentModes && <RunRateControl status={runFpsStatus} ringFrames={instrument?.ring?.count ?? 0}
+                  disabledReason={expActive ? "An experiment is running: stop it to change the Run rate." : ""} onApply={onApplyRunFps} confirm={confirm} />}
                 {instrumentModes && <RunWindowNotice tab="experiment" windowPlaced={cameraWin.placed} modeError={modeError}
                   onPlaceWindow={() => setTab("overview")} onRetry={() => setModeRetry((n) => n + 1)} />}
                 {readinessMessage && <p role="alert">Experiment readiness: {readinessMessage}</p>}

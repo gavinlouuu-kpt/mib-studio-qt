@@ -16,6 +16,7 @@
 #include "backend/pz/AlignLock.h"
 #include "backend/processing/IExecutionProvider.h"
 #include "backend/pz/PzInstrumentControl.h"
+#include "backend/pz/PzRunTiming.h"
 #include "backend/pz/SsdStore.h"
 #include "backend/services/CaptureService.h"
 
@@ -30,6 +31,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <thread>
 #include <cstdlib>
 #include <filesystem>
@@ -1294,6 +1296,169 @@ void testSsdRunHoldsRingThroughTheCoordinator(const mib::test::TempDir& td) {
     backend.shutdown();
 }
 
+// The adjustable Run rate (bridge ABI 38): range, the sensor timing it implies (HMAX 58 forced, SHS 64, exposure follows VMAX), persistence in the
+// Aravis profile, the refusals (experiment, held ring), re-entry applying the rate, and the run snapshot.
+void testRunFps(const mib::test::TempDir& td) {
+    const auto frames = td.path() / "frames_fps";
+    MIB_REQUIRE(mib::test::writeFrames(frames, 8, 512, 96), "mock frames");
+    setEnv("MIB_PL_SCIENCE", "1");
+    setEnv("MIB_CAMERA_MODE", "mock");
+    setEnv("MIB_MOCK_CAMERA_DIR", frames.string().c_str());
+    setEnv("MIB_DISABLED_SERVICES", "sqlite,autofocus,trigger,playback");
+    setEnv("MIB_EXECUTION_PROVIDER", "none");
+
+    MIB_EXPECT(pz::checkRunFps(5000).empty() && pz::checkRunFps(100).empty() && pz::checkRunFps(1000).empty(), "5000, 1000 and 100 are Run rates");
+    MIB_EXPECT(!pz::checkRunFps(99).empty() && !pz::checkRunFps(5001).empty() && !pz::checkRunFps(1000.5).empty() && !pz::checkRunFps(0).empty() &&
+                   !pz::checkRunFps(std::nan("")).empty() && !pz::checkRunFps(-1000).empty(),
+               "below 100, above 5000, fractions, zero, NaN and negatives are not");
+    {
+        const auto t5 = pz::runTiming(5000), t1 = pz::runTiming(1000), t100 = pz::runTiming(100);
+        MIB_EXPECT(t5.vmax == 256 && t5.lines == 192 && t5.exposureUs == 150.0 && t5.hmax == 58 && t5.shs == 64, "5000 fps: VMAX 256, 192 lines, 150 us");
+        MIB_EXPECT(t1.vmax == 1280 && t1.lines == 1216 && std::fabs(t1.exposureUs - 949.9) < 0.5, "1000 fps: VMAX 1280, 1216 lines, 950 us");
+        MIB_EXPECT(t100.vmax == 12801 && t100.shs == 64 && t100.lines == 12737, "100 fps: VMAX 12801, SHS stays 64");
+    }
+
+    const auto data = td.path() / "data_fps";
+    const auto profile = data / "config" / "aravis-camera.json";
+    {
+        backend::AppBackend backend;
+        backend::bridge::BackendFacade facade(backend);
+        MIB_REQUIRE(facade.initialize(data.string()), "facade initializes");
+        {
+            const auto j = nlohmann::json::parse(facade.fetchRunFpsJson());
+            MIB_EXPECT(j["available"] == false, "no PZ7035 control: no Run rate");
+            const auto r = facade.setRunFps(1000, false);
+            MIB_EXPECT(!r.ok && r.message.find("no PZ7035 control") != std::string::npos, "and setting one is refused: " + r.message);
+        }
+        FakeState s;
+        seedCellImage(s);
+        backend.setInstrumentControlForTesting(std::make_unique<FakeControl>(s));
+        auto provider = std::make_unique<FakeProvider>();
+        FakeProvider* fake = provider.get();
+        fake->ringFrames = 100;
+        backend.setExecutionProviderForTesting(std::move(provider));
+        std::string err;
+        {
+            const auto j = nlohmann::json::parse(facade.fetchRunFpsJson());
+            MIB_EXPECT(j["available"] == true && j["fps"] == 5000.0 && j["exposure_us"] == 150.0 && j["qualified"] == true && j["pending"] == false &&
+                           j["applied_fps"].is_null() && j["min_fps"] == 100.0 && j["max_fps"] == 5000.0,
+                       "default: 5000 fps, 150 us, qualified, nothing applied");
+        }
+        for (const double bad : {50.0, 5001.0, 1234.5, 0.0}) {
+            const auto r = facade.setRunFps(bad, false);
+            MIB_EXPECT(!r.ok && r.message.find("whole number") != std::string::npos, "a rate outside 100 to 5000 whole fps is refused: " + r.message);
+        }
+        MIB_EXPECT(!std::filesystem::exists(profile) || nlohmann::json::parse(std::ifstream(profile))["experiment"]["frame_rate_hz"] == 5000.0, "a refused rate stores nothing");
+
+        // Outside Run: stored, applies at the next Run entry.
+        auto r = facade.setRunFps(1000, false);
+        MIB_REQUIRE(r.ok, "set 1000 outside Run: " + r.message);
+        MIB_EXPECT(r.message.find("next enters Run") != std::string::npos && !fake->running && backend.appliedRunFps() == 0.0, "outside Run it only stores: " + r.message);
+        {
+            const auto file = nlohmann::json::parse(std::ifstream(profile));
+            MIB_EXPECT(file["experiment"]["frame_rate_hz"] == 1000.0 && file["experiment"]["hmax"] == 58 &&
+                           std::fabs(file["experiment"]["exposure_us"].get<double>() - pz::runTiming(1000).exposureUs) < 1e-9,
+                       "the profile holds 1000 fps, HMAX 58 and the exposure that keeps SHS 64");
+        }
+        MIB_REQUIRE(backend.setInstrumentMode(pz::InstrumentMode::Run, 152, 200, &err), "Run: " + err);
+        MIB_EXPECT(backend.appliedRunFps() == 1000.0 && backend.runRateText().find("1000 fps") != std::string::npos &&
+                       backend.runRateText().find("950 \xC2\xB5s") != std::string::npos,
+                   "Run applies the configured rate: " + backend.runRateText());
+        {
+            const auto j = nlohmann::json::parse(facade.fetchRunFpsJson());
+            MIB_EXPECT(j["applied_fps"] == 1000.0 && j["in_run"] == true && j["pending"] == false && j["qualified"] == false && j["vmax"] == 1280,
+                       "fetch_run_fps in Run at 1000: applied, not pending, not the qualified rate");
+        }
+
+        // Re-entry: the rate changes in Run, at the same window, and the live session restarts.
+        const int configuresBefore = fake->configures;
+        r = facade.setRunFps(2000, false);
+        MIB_REQUIRE(r.ok, "set 2000 in Run: " + r.message);
+        MIB_EXPECT(backend.appliedRunFps() == 2000.0 && backend.instrumentMode() == pz::InstrumentMode::Run && backend.instrumentRunOffset() == std::make_pair(152, 200) &&
+                       fake->configures > configuresBefore && fake->running && s.live[S0 + 0] == 1,
+                   "in Run the rate re-enters Run at the same window");
+        {
+            const auto snap = backend.experiment().evaluateReadiness((td.path() / "fps.h5").string(), "pl");
+            const auto j = nlohmann::json::parse(backend::app::runSnapshotToJson(snap.candidate));
+            MIB_EXPECT(j["run_timing"]["fps"] == 2000.0 && j["run_timing"]["hmax"] == 58 && j["run_timing"]["vmax"] == 640 &&
+                           std::fabs(j["run_timing"]["exposure_us"].get<double>() - pz::runTiming(2000).exposureUs) < 1e-6,
+                       "the run snapshot records the fps, the exposure and the line timing: " + j["run_timing"].dump());
+        }
+
+        // A held ring: refused without the acknowledgement, discarded with it.
+        fake->ring.valid = true;
+        fake->ring.records = 100;
+        fake->ring.recordBytes = pz::kRingRecordBytes;
+        fake->ring.head = 99;
+        fake->ring.final = 100;
+        fake->ring.lo = 0;
+        fake->ring.frozen = true;
+        MIB_REQUIRE(backend.freezeRun(&err), "freeze: " + err);
+        r = facade.setRunFps(3000, false);
+        MIB_EXPECT(!r.ok && r.message.find("acknowledge") != std::string::npos && r.message.find("100 buffered frames") != std::string::npos &&
+                       backend.runFrozen() && backend.runFps() == 2000.0 && s.live[S0 + 0] == 0,
+                   "a held ring: refused with the frame count, nothing changed: " + r.message);
+        r = facade.setRunFps(3000, true);
+        MIB_REQUIRE(r.ok, "set 3000 with the acknowledgement: " + r.message);
+        MIB_EXPECT(!backend.runFrozen() && backend.appliedRunFps() == 3000.0 && fake->running && s.live[S0 + 0] == 1, "with the acknowledgement the ring is discarded and Run restarts at 3000");
+
+        // An experiment in flight: refused until it ends.
+        const auto out = (td.path() / "fps_run.h5").string();
+        auto ready = backend.experiment().evaluateReadiness(out, "pl");
+        MIB_REQUIRE(ready.ready, "ready to start");
+        backend::app::ExperimentStartRequest req;
+        req.outputPath = out;
+        req.readinessGeneration = ready.generation;
+        req.profileId = "pl";
+        req.acknowledgeDiscardRing = true;
+        const auto started = backend.experiment().start(req);
+        MIB_REQUIRE(started.outcome == backend::app::ExperimentStartOutcome::Started, "the run starts: " + started.message);
+        r = facade.setRunFps(1000, true);
+        MIB_EXPECT(!r.ok && r.message.find("Stop the experiment") != std::string::npos && backend.runFps() == 3000.0, "refused during an experiment: " + r.message);
+        backend.experiment().requestStop(false);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+        while (!backend.experiment().status().terminal && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        MIB_REQUIRE(backend.experiment().status().terminal, "the run finalizes");
+        // The run ended (a held ring or a live session again); the rate can be changed once more.
+        r = facade.setRunFps(5000, true);
+        MIB_EXPECT(r.ok && backend.runFps() == 5000.0 && backend.appliedRunFps() == 5000.0, "after the run the rate can be changed: " + r.message);
+        facade.shutdown();
+        backend.shutdown();
+    }
+    {
+        // The configured rate survives a restart; a stored rate outside the range falls back to 5000.
+        backend::AppBackend backend;
+        backend::bridge::BackendFacade facade(backend);
+        MIB_REQUIRE(facade.initialize(data.string()), "facade initializes");
+        FakeState s;
+        seedCellImage(s);
+        backend.setInstrumentControlForTesting(std::make_unique<FakeControl>(s));
+        MIB_EXPECT(backend.runFps() == 5000.0, "the last rate (5000) is restored");
+        MIB_REQUIRE(facade.setRunFps(750, false).ok, "set 750");
+        facade.shutdown();
+        backend.shutdown();
+    }
+    {
+        backend::AppBackend backend;
+        backend::bridge::BackendFacade facade(backend);
+        MIB_REQUIRE(facade.initialize(data.string()), "facade initializes");
+        MIB_EXPECT(backend.runFps() == 750.0, "a restart restores the configured rate");
+        facade.shutdown();
+        backend.shutdown();
+    }
+    {
+        auto file = nlohmann::json::parse(std::ifstream(profile));
+        file["experiment"]["frame_rate_hz"] = 12.5;
+        std::ofstream(profile, std::ios::trunc) << file.dump();
+        backend::AppBackend backend;
+        backend::bridge::BackendFacade facade(backend);
+        MIB_REQUIRE(facade.initialize(data.string()), "facade initializes");
+        MIB_EXPECT(backend.runFps() == 5000.0, "a stored rate outside the range is not used");
+        facade.shutdown();
+        backend.shutdown();
+    }
+}
+
 // The Run window survives a restart (#501): a Run switch writes <data>/instrument_run_window.json,
 // the next initialize() reads it; a file that is not a window the switch could have applied is
 // ignored. testModeSequence left (152, 200) there.
@@ -1371,6 +1536,7 @@ int main() {
     testRingPlayback(td);
     testRingHeldAfterSsdRun(td);
     testSsdRunHoldsRingThroughTheCoordinator(td);
+    testRunFps(td);
     testRunWindowPersists(td);
     testRecordingTarget(td);
     return mib::test::exitCode();

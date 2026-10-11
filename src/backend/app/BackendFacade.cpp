@@ -3200,6 +3200,43 @@ BackendCommandResult BackendFacade::freezeRun() {
             "Run stopped: the buffered frames are held for playback, LED off" + (note.empty() ? std::string() : " (" + note + ")")};
 }
 
+std::string BackendFacade::fetchRunFpsJson() {
+    namespace pz = backend::pz;
+    nlohmann::json j;
+    const bool available = initialized_ && backend_.instrumentControlAvailable();
+    j["available"] = available;
+    j["min_fps"] = pz::kRunFpsMin;
+    j["max_fps"] = pz::kRunFpsMax;
+    j["default_fps"] = pz::kRunFpsDefault;
+    j["qualified_fps"] = pz::kRunFpsQualified;
+    if (!available) {
+        j["reason"] = initialized_ ? "this platform has no Run rate (no PZ7035 control)" : "backend is not initialized";
+        return j.dump();
+    }
+    const auto t = backend_.runTiming();
+    const double applied = backend_.appliedRunFps();
+    j["fps"] = t.fps;
+    j["exposure_us"] = t.exposureUs;
+    j["hmax"] = t.hmax;
+    j["vmax"] = t.vmax;
+    j["shs"] = t.shs;
+    j["exposure_lines"] = t.lines;
+    j["actual_fps"] = t.actualFps;
+    j["qualified"] = t.fps == pz::kRunFpsQualified;
+    j["in_run"] = backend_.instrumentMode() == pz::InstrumentMode::Run;
+    j["applied_fps"] = applied > 0.0 ? nlohmann::json(applied) : nlohmann::json(nullptr);
+    j["pending"] = applied > 0.0 && applied != t.fps; // the camera runs at another rate than the configured one: enter Run again
+    j["held"] = backend_.runFrozen();
+    return j.dump();
+}
+
+BackendCommandResult BackendFacade::setRunFps(double fps, bool acknowledgeDiscardRing) {
+    if (!initialized_) return {false, BackendCommandType::Camera, "backend is not initialized"};
+    std::string error, message;
+    if (!backend_.setRunFps(fps, acknowledgeDiscardRing, &error, &message)) return {false, BackendCommandType::Camera, error};
+    return {true, BackendCommandType::Camera, message};
+}
+
 BackendCommandResult BackendFacade::resumeRun() {
     if (!initialized_) return {false, BackendCommandType::Camera, "backend is not initialized"};
     std::string error;
@@ -3242,7 +3279,7 @@ BackendCommandResult BackendFacade::setInstrumentMode(const std::string& mode, i
                 ? (backend_.alignSource() == "bridge" ? std::string("Align: full sensor, whole frames, LED 100/135 µs")
                                                      : std::string("Align: full sensor (banded preview), LED 0/125 µs"))
                                            : "Run: 512x96 at (" + std::to_string(rx) + ", " + std::to_string(ry) +
-                                                 "), 5 kHz, U-Net on, LED 7/60 µs"};
+                                                 "), " + backend_.runRateText() + ", U-Net on, LED 7/60 µs"};
 }
 
 BackendCommandResult BackendFacade::setServiceMode(bool on) {

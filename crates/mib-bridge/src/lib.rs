@@ -1207,6 +1207,11 @@ pub mod ffi {
         fn ring_freeze(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
         /// Resume Run: re-arm, a new ring (controller only).
         fn ring_resume(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
+        /// ABI 38: the Run frame rate. `fetch_run_fps` is JSON (the configured rate and its sensor timing, the applied rate, the limits).
+        fn fetch_run_fps(self: Pin<&mut BackendBridge>) -> String;
+        /// ABI 38: store a Run rate (whole fps, 100 to 5000) and, in Run, re-enter Run at the same window (controller only). `acknowledge_discard_ring`
+        /// accepts that a stopped Run's buffered frames are discarded by the re-entry.
+        fn set_run_fps(self: Pin<&mut BackendBridge>, fps: f64, acknowledge_discard_ring: bool) -> BridgeCommandResult;
         /// #667 S1 (ABI 35): the SATA SSD record store, read only. `fetch_ssd_status` is JSON (state, reason, log room, the open run and its
         /// counters, what the last mount-time recovery closed; also a short `ssd` block of the instrument status), `fetch_ssd_runs` the run table.
         fn fetch_ssd_status(self: Pin<&mut BackendBridge>) -> String;

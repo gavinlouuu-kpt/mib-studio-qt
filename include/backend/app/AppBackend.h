@@ -18,6 +18,7 @@
 #include "backend/diagnostics/MemoryBudget.h"
 #include "backend/processing/pz/PzProfileCompiler.h"
 #include "backend/pz/PzFrameRing.h"
+#include "backend/pz/PzRunTiming.h"
 #include "backend/pz/SsdStore.h"
 #include "backend/profiles/InstrumentIdentity.h"
 #include "backend/profiles/ProfileCache.h" // MethodDraft
@@ -149,6 +150,18 @@ namespace backend
         // Service start: the standing RXH1 v1 CTRL value (persist 250 ms), read back and logged.
         void applyRxHealStandingCtrl();
         bool setInstrumentMode(pz::InstrumentMode mode, int x, int y, std::string *errorOut);
+        // The Run frame rate (bridge ABI 38). The configured rate lives in the Aravis profile (<data>/config/aravis-camera.json, experiment.frame_rate_hz) and
+        // is a whole number of frames per second from 100 to 5000, default 5000. The sensor timing follows it (PzRunTiming.h): HMAX 58 forced, SHS 64, so the
+        // exposure is 150 µs at 5000 fps and grows as the rate falls. A Run entry applies it; setRunFps stores it and, when the instrument is in Run, re-enters Run
+        // at the same window so it takes effect at once. Refused during an experiment or recording, and while a stopped Run's ring is held unless
+        // `acknowledgeDiscardRing` (the re-entry discards the buffered frames).
+        double runFps();                                   // the configured rate (5000 when none valid is stored)
+        double appliedRunFps() const { return runFpsApplied_.load(); } // the rate of the last Run entry; 0 outside Run
+        pz::RunTiming runTiming();                         // the configured rate's sensor timing
+        pz::RunTiming appliedRunTiming() const;            // the applied rate's (the default timing when not in Run)
+        bool setRunFps(double fps, bool acknowledgeDiscardRing, std::string *errorOut, std::string *messageOut = nullptr);
+        // "1000 fps, exposure 949 µs": the applied rate when in Run, else the configured one.
+        std::string runRateText();
         // #649 v1: Stop in Run freezes the every-frame ring (provider STOP, wait for the device's frozen state, LED off)
         // so the buffered frames can be played back; resume re-arms (a new ring, the old frames are gone), LED on.
         // `noteOut`: what the freeze did not achieve (the ring is not frozen, stop incomplete, restore needed), also on success.
@@ -453,6 +466,11 @@ namespace backend
         std::atomic<int> instrumentRunX_{0}, instrumentRunY_{0};
         std::atomic<bool> instrumentRunSet_{false};
         std::atomic<bool> runFrozen_{false}; // Run stopped to review the frame ring (#649)
+        std::atomic<double> runFpsConfigured_{0.0}; // mirrors aravisProfile_.experimentFps (validated); 0 = not loaded yet
+        std::atomic<double> runFpsApplied_{0.0};    // the rate of the last Run entry, 0 outside Run
+        std::atomic<bool> aravisProfileLoaded_{false};
+        void ensureAravisProfileLoaded();
+        bool setInstrumentModeLocked(pz::InstrumentMode mode, int x, int y, std::string *errorOut); // instrumentModeMutex_ held
         std::atomic<uint32_t> heldEpoch_{0}; // the ring's epoch when the Run stopped (#693)
         mutable std::mutex holdNoteMutex_;
         std::string holdNote_;
@@ -530,6 +548,8 @@ namespace backend
             // PZ7035 line period for the overview (PzHmax): 0 = the producer's rule; 232 for the
             // whole-frame Align on results8 on. Experiment windows always use 0.
             int overviewHmax{0};
+            // PZ7035 Run: the forced line period (58, written at every Run entry) so the producer never picks 116 below ~2.66 kfps.
+            int experimentHmax{0};
             // Previews the PS asks for per second (PzPreviewRate); the PL sees every frame.
             // 60 keeps a 30 fps display fresh with margin; 0 = every delivered frame.
             double previewRateHz{60.0};

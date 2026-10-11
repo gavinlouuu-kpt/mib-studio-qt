@@ -1,5 +1,6 @@
 import { decodeRunPreview } from "./runPreview";
 import { decodeRingFrame, type RingStatus } from "./ringPlayback";
+import type { RunFpsStatus } from "./runFps";
 import type { SsdBrief, SsdRuns, SsdStatus } from "./ssdView";
 import type { StartupPreference } from './startupPreference';
 import type { ReviewExportRequest, ReviewExportStatus } from "./reviewExport";
@@ -869,6 +870,9 @@ export const bridge = {
   fetchRingFrame: async (seq: number) => decodeRingFrame(await invoke<ArrayBuffer>("fetch_ring_frame", { seq })),
   ringFreeze: () => invokeCommand("ring_freeze"),
   ringResume: () => invokeCommand("ring_resume"),
+  // The Run frame rate (ABI 38): a change re-enters Run (the camera restarts), so it is a source mutation like a mode switch.
+  fetchRunFps: () => invoke<RunFpsStatus>("fetch_run_fps"),
+  setRunFps: (fps: number, acknowledgeDiscardRing = false) => sourceMutation("set_run_fps", {fps, acknowledgeDiscardRing}),
   // The SATA SSD record store, read only (ABI 35, #667 S1).
   fetchSsdStatus: () => invoke<SsdStatus>("fetch_ssd_status"),
   fetchSsdRuns: () => invoke<SsdRuns>("fetch_ssd_runs"),

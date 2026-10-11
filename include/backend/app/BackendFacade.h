@@ -1061,6 +1061,10 @@ namespace backend::bridge
         // instrument status).
         BackendCommandResult freezeRun();
         BackendCommandResult resumeRun();
+        // Bridge ABI 38: the Run frame rate. fetch_run_fps is JSON (configured fps and its sensor timing, the applied rate, limits);
+        // set_run_fps stores a rate (100 to 5000, whole fps) and re-enters Run at the same window when the instrument is in Run.
+        std::string fetchRunFpsJson();
+        BackendCommandResult setRunFps(double fps, bool acknowledgeDiscardRing);
         std::vector<std::uint8_t> fetchRingFramePacket(std::uint64_t seq, std::string *error);
         std::string fetchRingStatusJson();
         // #667 S1 (ABI 35): the SATA SSD record store, read only.

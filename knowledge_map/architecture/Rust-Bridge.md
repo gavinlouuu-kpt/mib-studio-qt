@@ -485,6 +485,16 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
   `stage_motion_is_control_only_but_stop_is_not` in the server;
   `backend.stage_bridge_facade`.
 
+## ABI 38: the adjustable Run frame rate (Gavin: "The FPS should be adjustable.")
+
+`fetch_run_fps` (a read, open to every client) returns JSON: `available`, the limits (`min_fps` 100, `max_fps` 5000, `default_fps` 5000, `qualified_fps` 5000), the configured `fps` with its sensor timing (`hmax` 58, `vmax`, `shs` 64, `exposure_lines`, `exposure_us`, `actual_fps` = clock / (hmax x vmax)), `qualified`
+(true only at 5000 fps: no other rate has been validated on the board yet, and the UI says so until the 1 kHz slot passes), `in_run`, `applied_fps` (the rate of the last Run entry, `null` outside Run), `pending` (applied differs from configured: the camera is not at the configured rate) and `held` (a stopped Run's ring is held).
+`set_run_fps {fps, acknowledgeDiscardRing?}` (a control command) stores a whole number of frames per second from 100 to 5000 in the Aravis profile (`<data>/config/aravis-camera.json`, `experiment.frame_rate_hz`, with `exposure_us` and `hmax`). Outside Run it only stores ("applies when the instrument next enters Run"); in Run it re-enters Run at the same window so the rate takes effect at once
+(the producer applies timing at AcquisitionStart). It is refused while an experiment is Starting/Active/Stopping or a recording runs, and while a stopped Run's ring is held unless `acknowledgeDiscardRing` (the server enforces it like `experiment_start`; the re-entry discards the buffered frames).
+**Timing (option B, `include/backend/pz/PzRunTiming.h`):** Run forces the producer's line period to HMAX 58 (`options.pzHmax`; the producer would otherwise pick 116 below about 2.66 kfps) and keeps SHS at 64, so only VMAX grows when the rate falls and the exposure follows it
+(lines = VMAX - 64): 5000 fps = VMAX 256, 192 lines, 150 us (exactly what every earlier Run used); 1000 fps = VMAX 1280, 1216 lines, 950 us; 100 fps = VMAX 12801. SHS stays 64 because the LED strobe is XVS-referenced (delay <= 100 us, width <= 80 us in Run, kRunLed 7/60 us): the pulse straddles the exposure start only for that geometry.
+No PL, firmware or producer change. The readiness `instrument.mode` gate fails when the applied rate differs from the configured one ("Switch to Run again to apply the rate") and passes with the rate in its text; the run snapshot (HDF5 `snapshot_json`) records `run_timing` {fps, exposure_us, hmax, vmax}. Merge coordination: 38 is taken; the next free number is 39.
+
 ## ABI 37: the ring epoch and the ring an SSD run leaves behind (#693, D3)
 
 `fetch_ring_status` (and the `ring` block of the instrument status) gains `epoch`: the CONFIG_COMMIT epoch (`PZ_MIB_REG_EPOCH`, committed before every ARM) the ring's frame records carry. A frozen ring holds one ARM, so one value covers all its

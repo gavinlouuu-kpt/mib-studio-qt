@@ -269,6 +269,8 @@ std::string runSnapshotToJson(const RunConfigurationSnapshot& s)
       << ",\"identity\":" << q(s.rfGeneratorIdentity) << ",\"trigger_mode\":" << q(s.rfGeneratorTriggerMode)
       << ",\"trigger_delay_s\":" << s.rfGeneratorTriggerDelayS << ",\"pulse_width_s\":" << s.rfGeneratorPulseWidthS
       << ",\"error\":" << q(s.rfGeneratorError) << ",\"issues\":" << s.rfGeneratorIssues.size() << "}"
+      << ",\"run_timing\":{\"fps\":" << s.runFps << ",\"exposure_us\":" << s.runExposureUs << ",\"hmax\":" << s.runHmax
+      << ",\"vmax\":" << s.runVmax << "}"
       << ",\"output_path\":" << q(s.outputPath)
       << ",\"realtime_mode\":" << q(s.realtimeMode)
       << ",\"science_placement\":" << q(s.sciencePlacement)
@@ -303,7 +305,7 @@ std::string readinessToJson(const ExperimentReadinessSnapshot& r)
 
 bool ExperimentCoordinator::InvalidationKey::operator==(const InvalidationKey& o) const
 {
-    return captureGeneration == o.captureGeneration && cameraReady == o.cameraReady &&
+    return captureGeneration == o.captureGeneration && runFps == o.runFps && cameraReady == o.cameraReady &&
            cameraSource == o.cameraSource && cameraFallback == o.cameraFallback &&
            deliveryMode == o.deliveryMode && processingConfigVersion == o.processingConfigVersion &&
            configJsonSha256 == o.configJsonSha256 && coreVersion == o.coreVersion &&
@@ -411,6 +413,13 @@ RunConfigurationSnapshot ExperimentCoordinator::candidateLocked(const std::strin
     s.roiPending = proc.realtimeRoiPending();
     s.roiNotice = proc.pendingRoiNotice();
     s.sciencePlacement = app::sciencePlacement();
+    if (backend_.instrumentControlAvailable() && backend_.instrumentMode() == pz::InstrumentMode::Run) {
+        const auto t = backend_.appliedRunTiming();
+        s.runFps = t.fps;
+        s.runExposureUs = t.exposureUs;
+        s.runHmax = t.hmax;
+        s.runVmax = t.vmax;
+    }
     if (auto* provider = backend_.executionProvider()) {
         s.executionProvider = provider->name();
         const auto core = provider->identity();
@@ -512,6 +521,7 @@ ExperimentCoordinator::currentKeyLocked(const std::string& outputPath, const std
     const auto c = candidateLocked(outputPath, profileId);
     InvalidationKey k;
     k.captureGeneration = c.captureGeneration;
+    k.runFps = c.runFps;
     k.cameraReady = c.cameraReady;
     k.cameraSource = c.camera.effective;
     k.cameraFallback = c.camera.fallback;
@@ -560,11 +570,17 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
     const bool instrumentModes = backend_.instrumentControlAvailable();
     if (instrumentModes) {
         const auto mode = backend_.instrumentMode();
-        if (mode == pz::InstrumentMode::Run) {
+        if (mode == pz::InstrumentMode::Run && backend_.appliedRunFps() != backend_.runFps()) {
+            // The rate is set in the profile but the camera still runs at the rate of the last Run entry: never start on the old one silently.
+            r.gates.push_back(gate("instrument.mode", GateStatus::Fail,
+                                   "the camera runs at " + std::to_string(static_cast<int>(backend_.appliedRunFps())) + " fps but the Run rate is set to " +
+                                       std::to_string(static_cast<int>(backend_.runFps())) + " fps",
+                                   "Switch to Run again to apply the rate"));
+        } else if (mode == pz::InstrumentMode::Run) {
             const auto [x, y] = backend_.instrumentRunOffset();
             r.gates.push_back(gate("instrument.mode", GateStatus::Pass, {}, {},
-                                   "Run: 512x96 at (" + std::to_string(x) + ", " + std::to_string(y) +
-                                       "), 5 kHz, U-Net cell path on"));
+                                   "Run: 512x96 at (" + std::to_string(x) + ", " + std::to_string(y) + "), " + backend_.runRateText() +
+                                       ", U-Net cell path on"));
         } else {
             r.gates.push_back(gate("instrument.mode", GateStatus::Fail,
                                    std::string("the instrument is in ") +
