@@ -375,6 +375,23 @@ class Cases(unittest.TestCase):
         self.assertEqual(rc, 1, out)
         self.failing(out, "a run longer than the ring leaves a full ring")
 
+    def test_a_drain_drop_cannot_hide_a_ring_that_should_be_full(self):
+        sc = Scenario(self)
+        sc.status["capacity_frames"] = 30
+        sc.status2 = dict(sc.status)
+        sc.runs[0]["written"] = 20                                   # fewer records than the capacity, but the run offered 41 frames
+        sc.runs[0]["seen"] = 41
+        rc, out = sc.run()
+        self.assertEqual(rc, 1, out)
+        self.failing(out, "a run longer than the ring leaves a full ring")
+
+    def test_restore_needed_is_a_ring_defining_key(self):
+        sc = Scenario(self)
+        sc.status2 = dict(sc.status, restore_needed=True)
+        rc, out = sc.run()
+        self.assertEqual(rc, 1, out)
+        self.failing(out, "the ring-defining status after the export equals the first")
+
     def test_a_short_run_may_leave_a_ring_with_room_to_spare(self):
         sc = Scenario(self)
         sc.status["capacity_frames"] = 5000

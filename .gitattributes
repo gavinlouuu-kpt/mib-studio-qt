@@ -2,3 +2,8 @@
 # --check), so it must stay byte-identical to the pz7035-imx426 release.
 # Never convert line endings (a Windows checkout would otherwise get CRLF).
 third_party/pz7035-abi/** -text
+
+# Vendored pz7035 decoder and the ring_vs_ssd fixtures: hashed (third_party/pz7035-decoder/PROVENANCE.json) or compared byte for byte,
+# so a Windows checkout must not turn their line endings into CRLF.
+third_party/pz7035-decoder/** -text
+tools/ring_vs_ssd/testdata/** -text

@@ -89,7 +89,7 @@ def parse_packet(buf: bytes) -> RingPacket:
 
 
 # The status fields that define the ring; everything else (sensor_fps is a live XVS reading, the fault_cleared note, reasons) may move while the ring idles and is only reported.
-RING_KEYS = ("frozen", "run_frozen", "invalid", "epoch", "first_seq", "last_seq", "count", "head", "state", "capacity_frames", "stop_incomplete")
+RING_KEYS = ("frozen", "run_frozen", "invalid", "restore_needed", "epoch", "first_seq", "last_seq", "count", "head", "state", "capacity_frames", "stop_incomplete")
 
 
 def status_diff(a: dict, b: dict) -> tuple[bool, str, str]:
@@ -298,9 +298,12 @@ def run(args) -> int:
     rep.check("a", "the SSD stream ends at the run table's last_frame_id", ids[-1] == run_last, f"{ids[-1]} vs {run_last}")
     hz = {pk.tick_hz for pk in ring.values()}
     rep.check("c", "the packets' tick rate is the run table's", hz == {int(row.get("tick_hz", 0))}, f"packets {sorted(hz)}, run table {row.get('tick_hz')}")
-    full = written > capacity
+    # frames offered to the SSD (the id span), not the ones written: drain drops must not hide a ring that ought to be full
+    first_id = int(row.get("first_frame_id", ids[0]))
+    offered = max(int(row.get("seen", 0)), run_last - first_id + 1)
+    full = offered > capacity
     rep.check("c", "a run longer than the ring leaves a full ring (count == capacity_frames)" if full else "the ring holds no more than its capacity",
-              (count == capacity) if full else (count <= capacity), f"count {count}, capacity {capacity}, run records {written}")
+              (count == capacity) if full else (count <= capacity), f"count {count}, capacity {capacity}, frames offered {offered} (written {written})")
     rep.check("a", "frame ids ascend strictly on the SSD side", all(b > a for a, b in zip(ids, ids[1:])))
     tail_idx = dec.consecutive_tail(ids)
     tail_start_id = ids[tail_idx]
