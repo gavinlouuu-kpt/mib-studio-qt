@@ -1395,6 +1395,9 @@ namespace backend
             return false;
         };
         if (liveResultsActive_.load()) return true;
+        // An experiment owns the provider from its Start until it has finalized: a live session must not arm it in between.
+        if (const auto run = experimentCoordinator_->stateNow(); run != app::ExperimentRunState::Idle && run != app::ExperimentRunState::Failed)
+            return fail(std::string("an experiment is ") + app::toString(run));
         if (!executionProvider_ || !pzControl_) return fail("no PL execution provider");
         if (instrumentMode() != pz::InstrumentMode::Run) return fail("the instrument is not in Run");
         auto profile = compilePlProfile();
@@ -1433,6 +1436,7 @@ namespace backend
 
     void AppBackend::resumeLiveResults()
     {
+        if (runFrozen_.load()) return; // a stopped Run holds its ring for playback: only Resume Run or an experiment start ends that
         if (instrumentMode() == pz::InstrumentMode::Run) (void)startLiveResults(nullptr);
     }
 
@@ -1814,13 +1818,18 @@ namespace backend
         // What the freeze achieved, said plainly: not frozen (restore the PL), stop incomplete, or a ring fault.
         std::string note;
         const auto st = executionProvider_->ringStatus();
+        heldEpoch_.store(st.epoch);
+        setHoldNote("");
         if (st.restoreNeeded) note = "the ring did not freeze: restore the PL";
         else if (st.valid && st.fault) note = st.invalidReason;
         else if (st.valid && st.stopIncomplete) note = "stop incomplete (STOP_STUCK): the frames below the newest are readable";
         else if (st.valid && !st.frozen) note = "the ring is not frozen yet";
         if (noteOut) *noteOut = note;
         std::string err;
-        if (!pzControl_->ledOff(&err)) return fail("Run is stopped, but the LED could not be switched off: " + err);
+        if (!pzControl_->ledOff(&err)) {
+            setHoldNote("The Run is stopped and its frames are held, but the LED could not be switched off: " + err);
+            return fail("Run is stopped, but the LED could not be switched off: " + err);
+        }
         SPDLOG_INFO("AppBackend: Run stopped: the frame ring is held for playback (LED off){}", note.empty() ? std::string() : "; " + note);
         return true;
     }
@@ -1835,6 +1844,10 @@ namespace backend
         };
         if (!pzControl_) return fail("no PZ7035 control on this platform");
         if (!runFrozen_.load()) return true;
+        // An experiment start leaves the stopped Run itself (and arms its own provider): a Resume racing it would start the live session under the run's configure/start.
+        const auto run = experimentCoordinator_->state();
+        if (isFrameRecording() || run == app::ExperimentRunState::Starting || run == app::ExperimentRunState::Active || run == app::ExperimentRunState::Stopping)
+            return fail("an experiment is starting or running: Resume Run applies to a stopped Run only");
         if (instrumentMode() != pz::InstrumentMode::Run) {
             runFrozen_.store(false);
             return fail("the instrument is not in Run");
@@ -1847,13 +1860,77 @@ namespace backend
         if (!pzControl_->setLed(pz::kRunLed, &err)) {
             stopLiveResults();
             (void)pzControl_->ledOff(nullptr);
+            // The live start re-armed the provider: the buffered frames are gone and runFrozen_ now describes the new, empty ring.
+            if (executionProvider_) heldEpoch_.store(executionProvider_->ringStatus().epoch);
+            setHoldNote("Resume Run armed a new ring, but the LED could not be switched on: " + err);
             return fail("the LED could not be switched on: " + err);
         }
         runFrozen_.store(false);
+        setHoldNote("");
         if (pzPlatformMonitor_)
             pzPlatformMonitor_->settle(static_cast<uint64_t>(
                 std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count()));
         SPDLOG_INFO("AppBackend: Run resumed: a new frame ring");
+        return true;
+    }
+
+    std::string AppBackend::holdNote() const
+    {
+        std::lock_guard<std::mutex> lock(holdNoteMutex_);
+        return holdNote_;
+    }
+
+    void AppBackend::setHoldNote(const std::string &note)
+    {
+        std::lock_guard<std::mutex> lock(holdNoteMutex_);
+        holdNote_ = note;
+    }
+
+    bool AppBackend::holdRingAfterRun(std::string *whyNot)
+    {
+        auto no = [&](const std::string &why) {
+            if (whyNot) *whyNot = why;
+            return false;
+        };
+        if (!pzControl_ || !executionProvider_) return no("no PZ7035 control on this platform");
+        if (executionProvider_->ringFramesWanted() == 0) return no("this instrument keeps no frame ring");
+        if (const std::string problem = executionProvider_->ringPlacementProblem(); !problem.empty()) return no(problem);
+        if (instrumentMode() != pz::InstrumentMode::Run) return no("the instrument is not in Run");
+        if (liveResultsActive_.load()) return no("a live session is running");
+        if (runFrozen_.load()) return true;
+        const auto st = executionProvider_->ringStatus();
+        if (st.restoreNeeded) return no("the ring did not freeze: restore the PL");
+        if (!st.valid) return no(st.why.empty() ? std::string("the ring is not valid") : st.why);
+        if (st.fault) return no(st.invalidReason.empty() ? std::string("the ring is invalid: re-arm") : st.invalidReason);
+        if (!st.frozen && !st.stopIncomplete) return no("the ring is not frozen");
+        if (st.count() == 0) return no("the ring holds no frames");
+        heldEpoch_.store(st.epoch);
+        setHoldNote("");
+        runFrozen_.store(true); // held from here on, whatever follows: the buffered frames stay until Resume Run or the next Start
+        std::string err;
+        if (!pzControl_->ledOff(&err)) {
+            setHoldNote("The Run is stopped and its frames are held, but the LED could not be switched off: " + err);
+            SPDLOG_WARN("AppBackend: the run's ring is held, but the LED could not be switched off: {}", err);
+        }
+        SPDLOG_INFO("AppBackend: the run's frame ring is held for playback: {} frames (sequences {} to {}), epoch {}; Resume Run or the next Start discards them",
+                    st.count(), st.lo, st.final ? st.final - 1 : 0, st.epoch);
+        return true;
+    }
+
+    bool AppBackend::leaveStoppedRun(std::string *errorOut)
+    {
+        if (!runFrozen_.load()) return true;
+        std::string err;
+        if (pzControl_) {
+            if (!pzControl_->clearLatency(&err) || !pzControl_->setLed(pz::kRunLed, &err)) {
+                if (errorOut) *errorOut = "the stopped Run could not be left (the buffered frames are kept): " + err;
+                SPDLOG_WARN("AppBackend: leave stopped Run: {}", err);
+                return false;
+            }
+        }
+        runFrozen_.store(false);
+        setHoldNote("");
+        SPDLOG_INFO("AppBackend: the stopped Run is left for an experiment: the buffered frames are discarded when the provider arms");
         return true;
     }
 
@@ -1903,7 +1980,10 @@ namespace backend
             return fail("an experiment or recording is still running");
         std::string err;
         // The same order as a mode switch: nothing lit while the cell path or the camera changes.
-        runFrozen_.store(false);
+        if (runFrozen_.exchange(false)) {
+            setHoldNote("");
+            SPDLOG_INFO("AppBackend: instrument idle ends the stopped Run: its buffered frames are discarded");
+        }
         stopLiveResults();
         if (!pzControl_->ledOff(&err) || !pzControl_->setCellPath(false, &err)) return fail(err);
         instrumentMode_.store(static_cast<int>(pz::InstrumentMode::Unknown));

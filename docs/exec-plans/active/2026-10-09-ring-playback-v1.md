@@ -65,6 +65,9 @@ overlay is record-based because the PL does the science.
 | `fetch_ring_status`, `fetch_ring_frame {seq}` (binary `MIBR`), `ring_freeze`, `ring_resume`, the `ring` block of the instrument status (bridge ABI 34) | bridge, contract, dispatch, TS | **done** (part 3), tested (facade view, off-PZ contract, dispatch lists) |
 | Playback panel: capacity in frames and seconds, scrub, step, play at a display fps, overlays Off / Mask / Contours / Both, the frame's cells; Save clip disabled with the reason; Stop button in Run | `desktop/src` (`ringPlayback.ts`, `RingPlaybackPanel.tsx`, `App.tsx`) | **done** (part 3), jsdom and unit tests; not clicked through on a board |
 
+**After an SSD run (#693, D3).** The same stopped-Run state follows an SSD run: when the run has closed, the ring is held (`AppBackend::holdRingAfterRun`), the
+panel shows it, Resume Run or the next experiment Start discards it (the Start asks first and the server requires `acknowledgeDiscardRing`; gate `run.frozen` is a Warn). `fetch_ring_status` carries `epoch` (CONFIG_COMMIT epoch; the value from the hold; null without a ring) and `hold_note` (ABI 37).
+
 **Capacity.** Frames = ring bytes / 59,392; seconds = frames / the sensor fps (`fetch_instrument_status.sensor.fps`, 5000.8 in Run).
 5000 frames (the PC default) need 283 MiB, 1.0 s at 5 kHz, and `mem=` of about 720M in the bundle's `bootargs` (the board owner's
 bundle change); with today's `mem=1008M` the gate says so and names the remedy.

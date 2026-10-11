@@ -75,7 +75,7 @@ public:
     BridgeCommandResult playback_seek_index(std::uint64_t frame_index);
     BridgeCommandResult apply_processing(bool realtime_enabled, double pixel_to_micron);
     BridgeCommandResult cancel_operation(std::uint64_t operation_id);
-    BridgeCommandResult experiment_start(rust::Str output_path);
+    BridgeCommandResult experiment_start(rust::Str output_path, bool acknowledge_discard_ring);
     BridgeCommandResult experiment_stop();
     rust::String fetch_capture_lifecycle();
     BridgeCommandResult experiment_acknowledge_fault(std::uint64_t expected_run,

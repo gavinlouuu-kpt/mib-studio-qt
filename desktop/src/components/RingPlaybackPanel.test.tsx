@@ -125,6 +125,22 @@ describe("ring playback panel (#649 v1)", () => {
     expect(host.textContent).toContain("The mask of this frame is incomplete");
   });
 
+  it("says why a held ring is not quite right, and keeps Resume off while an experiment start is pending", async () => {
+    const onResume = vi.fn(async () => ok);
+    await act(async () => root.render(<RingPlaybackPanel status={status({ hold_note: "The Run is stopped and its frames are held, but the LED could not be switched off: busy" })}
+      fetchFrame={async (s) => frameAt(s)} onResume={onResume} append={() => {}} startPending />));
+    await flush();
+    expect(host.querySelector("[data-testid=hold-note]")?.textContent).toMatch(/LED could not be switched off/);
+    const resume = button("Resume Run (discards these frames)") as HTMLButtonElement;
+    expect(resume.disabled).toBe(true);
+    await act(async () => resume.click());
+    expect(onResume).not.toHaveBeenCalled();
+    await act(async () => root.render(<RingPlaybackPanel status={status()} fetchFrame={async (s) => frameAt(s)} onResume={onResume} append={() => {}} />));
+    await flush();
+    expect(host.querySelector("[data-testid=hold-note]")).toBeNull();
+    expect((button("Resume Run (discards these frames)") as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it("says restore needed instead of offering playback", async () => {
     const fetchFrame = vi.fn();
     await act(async () => root.render(<RingPlaybackPanel status={status({ frozen: false, restore_needed: true })} fetchFrame={fetchFrame} onResume={async () => ok} append={() => {}} />));
