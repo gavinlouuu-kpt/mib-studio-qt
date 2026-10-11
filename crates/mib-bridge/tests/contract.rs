@@ -108,7 +108,8 @@ fn abi_version_is_stable() {
     // fetch_instrument_status.
     // v36 the SSD run download lease (#667): ssd_export_begin / ssd_export_end for the HTTP export route.
     // v37 the ring status carries the CONFIG_COMMIT epoch (null without a ring) and a hold note; an SSD run leaves its ring held for playback (#693, D3).
-    assert_eq!(ffi::bridge_abi_version(), 37);
+    // v38 the Run frame rate (fetch_run_fps / check_pz_camera_document / apply_pz_camera_document).
+    assert_eq!(ffi::bridge_abi_version(), 38);
 }
 
 // ABI 31 (#549): with nothing loaded and no run finished, the accounting says so and why.
@@ -162,6 +163,17 @@ fn instrument_mode_commands_off_the_instrument() {
     assert!(!frozen.ok && frozen.message.contains("no PZ7035 control"), "{}", frozen.message);
     let resumed = bridge.pin_mut().ring_resume();
     assert!(!resumed.ok && resumed.message.contains("no PZ7035 control"), "{}", resumed.message);
+    // ABI 38: the Run rate exists only with PZ7035 control; the limits are always reported.
+    let rate: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_run_fps()).unwrap();
+    assert_eq!(rate["available"], serde_json::json!(false), "{rate}");
+    assert_eq!((rate["min_fps"].as_f64(), rate["max_fps"].as_f64(), rate["default_fps"].as_f64(), rate["qualified_fps"].as_f64()), (Some(1000.0), Some(5000.0), Some(5000.0), Some(5000.0)), "{rate}");
+    let set_rate = bridge.pin_mut().apply_pz_camera_document("/nonexistent/camera.json", false);
+    assert!(!set_rate.ok, "{}", set_rate.message);
+    let doc: serde_json::Value = serde_json::from_str(&bridge.pin_mut().check_pz_camera_document(r#"{"schema":"pz7035-camera/1","run":{"frame_rate_hz":1000,"exposure_us":"auto"}}"#)).unwrap();
+    assert_eq!(doc["ok"], serde_json::json!(true), "{doc}");
+    assert_eq!((doc["vmax"].as_i64(), doc["shs"].as_i64(), doc["exposure_mode"].as_str()), (Some(640), Some(32), Some("auto")), "{doc}");
+    let bad: serde_json::Value = serde_json::from_str(&bridge.pin_mut().check_pz_camera_document(r#"{"schema":"pz7035-camera/1","run":{"frame_rate_hz":500}}"#)).unwrap();
+    assert_eq!(bad["ok"], serde_json::json!(false), "{bad}");
     // The SSD record store (ABI 35): nothing configured is ABSENT, said plainly; the run table is empty with the same reason.
     let ssd: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_ssd_status()).unwrap();
     assert_eq!(ssd["configured"], serde_json::json!(false), "{ssd}");

@@ -60,8 +60,14 @@ of a core, 60/s at 8 %, 30/s at 4 %.
 - **Switching.** `setInstrumentMode(Align|Run, x, y)` holds
   `instrumentModeMutex_` and is refused during an experiment or recording.
   It sequences the LED, the cell path and the Aravis profile (Align
-  500 fps / 1899.7 µs; Run 5 kHz / 150 µs at the snapped window) around a
+  500 fps / 1899.7 µs; Run at the configured rate, default 5 kHz / 150 µs, at the snapped window) around a
   capture start; the full sequence is in [[../data-model/PZ7035-Records]].
+- **Run setting (ABI 38).** `runSetting()` / `setRunSetting()` / `applyCameraDocument()` / `runTiming()`: the rate (whole fps, 1000 to 5000) and the exposure
+  ("auto" = starts ~50 µs after XVS, SHS 64 / 32, or µs validated against the LED strobe window) come from the PZ7035 camera document ([[frontend/ConfigTabs]]) and live in the Aravis profile
+  (`experiment.*`; only a profile whose `experiment.hmax` equals `pz::runHmaxFor(fps)` (58 above 2655 fps, else 116) is a stored Run setting, the env seed never is). Every Run entry stages it through
+  `pz::stageRunProfile` (`options.pzHmax` = `pz::producerHmax`, the producer's rule HMAX 58 or 116, the derived or requested exposure; `stagedRunForTesting` exposes it) and records the applied setting
+  (`appliedRunTiming()`) *before* the mode becomes Run. `applyCameraDocument` confines the path to `<dataDir_>/camera/` (.json, no symlink, <= 64 KiB), takes `instrumentModeMutex_`, skips the restart when nothing changed, is refused during an experiment/recording and, in a
+  stopped Run, without `acknowledgeDiscardRing`, and re-enters Run at the same window when in Run. See [[architecture/Rust-Bridge]] ABI 38.
 - **Run guard.** In Run the Aravis factory returns null, so no capture
   start can reach the producer.
 - **The ring of an SSD run (#649, #693, D3).** Stop leads to playback, also for an SSD run. When the run has stopped and closed,

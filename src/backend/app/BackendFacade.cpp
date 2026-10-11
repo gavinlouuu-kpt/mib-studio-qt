@@ -3200,6 +3200,80 @@ BackendCommandResult BackendFacade::freezeRun() {
             "Run stopped: the buffered frames are held for playback, LED off" + (note.empty() ? std::string() : " (" + note + ")")};
 }
 
+namespace {
+// The fields describing a Run timing and where its exposure and the LED strobe fall (shared by the status and the document check).
+void putRunTiming(nlohmann::json& j, const backend::pz::RunTiming& t) {
+    namespace pz = backend::pz;
+    j["fps"] = t.fps;
+    j["exposure_mode"] = t.autoExposure ? "auto" : "manual";
+    j["exposure_us"] = t.exposureUs;
+    j["hmax"] = t.hmax;
+    j["vmax"] = t.vmax;
+    j["shs"] = t.shs;
+    j["exposure_lines"] = t.lines;
+    j["actual_fps"] = t.actualFps;
+    // Where the exposure (the last VMAX - SHS lines of the frame) and the LED strobe (XVS-referenced, Service-only) fall: the strobe must straddle the exposure start.
+    const auto strobe = pz::strobeCheck(t, pz::kRunLed.delayUs, pz::kRunLed.widthUs);
+    const auto allowed = pz::allowedExposure(t.fps, pz::kRunLed.delayUs, pz::kRunLed.widthUs);
+    j["exposure_start_us"] = strobe.exposureStartUs;
+    j["exposure_end_us"] = strobe.exposureEndUs;
+    j["strobe_start_us"] = strobe.strobeStartUs;
+    j["strobe_end_us"] = strobe.strobeEndUs;
+    j["strobe_overlaps"] = strobe.overlaps;
+    j["strobe_straddles_exposure_start"] = strobe.straddlesStart;
+    j["strobe_warning"] = pz::strobeWarning(strobe);
+    j["allowed_exposure_min_us"] = allowed.loUs;
+    j["allowed_exposure_max_us"] = allowed.hiUs;
+}
+} // namespace
+
+std::string BackendFacade::fetchRunFpsJson() {
+    namespace pz = backend::pz;
+    nlohmann::json j;
+    const bool available = initialized_ && backend_.instrumentControlAvailable();
+    j["available"] = available;
+    j["min_fps"] = pz::kRunFpsMin;
+    j["max_fps"] = pz::kRunFpsMax;
+    j["default_fps"] = pz::kRunFpsDefault;
+    j["qualified_fps"] = pz::kRunFpsQualified;
+    if (!available) {
+        j["reason"] = initialized_ ? "this platform has no Run rate (no PZ7035 control)" : "backend is not initialized";
+        return j.dump();
+    }
+    const auto setting = backend_.runSetting();
+    const auto t = pz::runTiming(setting);
+    putRunTiming(j, t);
+    const double applied = backend_.appliedRunFps();
+    j["qualified"] = t.fps == pz::kRunFpsQualified && t.autoExposure; // only 5000 fps with the automatic exposure is the qualified setting
+    j["in_run"] = backend_.instrumentMode() == pz::InstrumentMode::Run;
+    j["applied_fps"] = applied > 0.0 ? nlohmann::json(applied) : nlohmann::json(nullptr);
+    j["applied_exposure_us"] = applied > 0.0 ? nlohmann::json(backend_.appliedRunTiming().exposureUs) : nlohmann::json(nullptr);
+    j["pending"] = backend_.runPending(); // the camera runs at another setting than the configured one: enter Run again
+    j["held"] = backend_.runFrozen();
+    return j.dump();
+}
+
+std::string BackendFacade::checkCameraDocumentJson(const std::string& text) {
+    namespace pz = backend::pz;
+    nlohmann::json j;
+    const auto parsed = pz::parseCameraDocument(text, pz::kRunLed.delayUs, pz::kRunLed.widthUs);
+    j["ok"] = parsed.ok;
+    if (!parsed.ok) {
+        j["error"] = parsed.error;
+        return j.dump();
+    }
+    putRunTiming(j, pz::runTiming(parsed.setting));
+    j["qualified"] = parsed.setting.fps == pz::kRunFpsQualified && parsed.setting.autoExposure;
+    return j.dump();
+}
+
+BackendCommandResult BackendFacade::applyCameraDocument(const std::string& path, bool acknowledgeDiscardRing) {
+    if (!initialized_) return {false, BackendCommandType::Camera, "backend is not initialized"};
+    std::string error, message;
+    if (!backend_.applyCameraDocument(path, acknowledgeDiscardRing, &error, &message)) return {false, BackendCommandType::Camera, error};
+    return {true, BackendCommandType::Camera, message};
+}
+
 BackendCommandResult BackendFacade::resumeRun() {
     if (!initialized_) return {false, BackendCommandType::Camera, "backend is not initialized"};
     std::string error;
@@ -3242,7 +3316,7 @@ BackendCommandResult BackendFacade::setInstrumentMode(const std::string& mode, i
                 ? (backend_.alignSource() == "bridge" ? std::string("Align: full sensor, whole frames, LED 100/135 µs")
                                                      : std::string("Align: full sensor (banded preview), LED 0/125 µs"))
                                            : "Run: 512x96 at (" + std::to_string(rx) + ", " + std::to_string(ry) +
-                                                 "), 5 kHz, U-Net on, LED 7/60 µs"};
+                                                 "), " + backend_.runRateText() + ", U-Net on, LED 7/60 µs"};
 }
 
 BackendCommandResult BackendFacade::setServiceMode(bool on) {

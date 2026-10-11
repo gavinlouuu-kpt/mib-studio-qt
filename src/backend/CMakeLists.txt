@@ -64,6 +64,7 @@ add_library(mib_processing STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/processing/DotGridRegistry.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/DotGridCodec.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/pz/PzRecords.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/pz/PzCameraDocument.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/pz/PzFrameRing.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/pz/SsdStore.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/pz/PzPlatformMonitor.cpp

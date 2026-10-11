@@ -166,6 +166,9 @@ pub const COMMANDS: &[&str] = &[
     "fetch_ring_frame",
     "ring_freeze",
     "ring_resume",
+    "fetch_run_fps",
+    "apply_pz_camera_document",
+    "check_pz_camera_document",
     "fetch_ssd_status",
     "fetch_ssd_runs",
     "set_service_mode",
@@ -813,7 +816,8 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
                 #[serde(rename = "text")] text: String,
             }
             let a: A = args(value)?;
-            crate::camera_document::camera_document(a.action, a.path, a.kind, a.baseline, a.text).and_then(json)
+            // The remote entry: the PZ7035 camera document is confined to <data>/camera/ (the server makes the command control-only).
+            crate::camera_document::camera_document_confined(std::path::Path::new(&host.data_dir()?), a.action, a.path, a.kind, a.baseline, a.text).and_then(json)
         }
         "fetch_ring_status" => crate::fetch_ring_status(state).and_then(json),
         "fetch_ring_frame" => {
@@ -826,6 +830,25 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
         }
         "ring_freeze" => crate::ring_freeze(state).and_then(json),
         "ring_resume" => crate::ring_resume(state).and_then(json),
+        "fetch_run_fps" => crate::fetch_run_fps(state).and_then(json),
+        "check_pz_camera_document" => {
+            #[derive(Deserialize)]
+            struct A {
+                text: String,
+            }
+            let a: A = args(value)?;
+            crate::check_pz_camera_document(state, &a.text).and_then(json)
+        }
+        "apply_pz_camera_document" => {
+            #[derive(Deserialize)]
+            struct A {
+                path: String,
+                /// ABI 38: the client accepts that a stopped Run's buffered frames are discarded by the re-entry.
+                #[serde(rename = "acknowledgeDiscardRing", default)] acknowledge_discard_ring: bool,
+            }
+            let a: A = args(value)?;
+            crate::apply_pz_camera_document(state, &a.path, a.acknowledge_discard_ring).and_then(json)
+        }
         "fetch_ssd_status" => crate::fetch_ssd_status(state).and_then(json),
         "fetch_ssd_runs" => crate::fetch_ssd_runs(state).and_then(json),
         "sync_wall_clock" => {

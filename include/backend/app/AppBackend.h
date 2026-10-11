@@ -18,6 +18,8 @@
 #include "backend/diagnostics/MemoryBudget.h"
 #include "backend/processing/pz/PzProfileCompiler.h"
 #include "backend/pz/PzFrameRing.h"
+#include "backend/pz/PzCameraDocument.h"
+#include "backend/pz/PzRunTiming.h"
 #include "backend/pz/SsdStore.h"
 #include "backend/profiles/InstrumentIdentity.h"
 #include "backend/profiles/ProfileCache.h" // MethodDraft
@@ -149,6 +151,29 @@ namespace backend
         // Service start: the standing RXH1 v1 CTRL value (persist 250 ms), read back and logged.
         void applyRxHealStandingCtrl();
         bool setInstrumentMode(pz::InstrumentMode mode, int x, int y, std::string *errorOut);
+        // The Run setting (bridge ABI 38): the frame rate (a whole number from 1000 to 5000, default 5000) and the exposure ("auto" = starts ~50 µs after XVS (SHS 64 / 32), or a number of µs
+        // validated against the LED strobe window), set through the PZ7035 camera document (PzCameraDocument.h) the way an EGrabber script sets a MIB camera.
+        // They live in the Aravis profile (<data>/config/aravis-camera.json, experiment.*) and a profile counts as a stored Run setting only when it carries
+        // the experiment.hmax the rate needs (58 above ~2655 fps, 116 at or below): an env-seeded profile (MIB_ARAVIS_FPS) never becomes the Run rate. The
+        // timing follows (PzRunTiming.h): the producer is told that HMAX, the exposure starting ~50 µs after XVS for "auto" (SHS 64 / 32). A Run entry applies it; applyCameraDocument stores it and, when the instrument is in Run, re-enters Run at the same window so it takes effect
+        // at once. Refused during an experiment or recording, and, in Run, while a stopped Run's ring is held unless `acknowledgeDiscardRing` (the re-entry
+        // discards the buffered frames). The LED strobe is not part of it (Service-only).
+        pz::RunSetting runSetting();                       // the configured setting (5000 fps, auto when none valid is stored)
+        pz::RunTiming runTiming();                         // its sensor timing
+        double runFps() { return runSetting().fps; }
+        double appliedRunFps() const;                      // the rate of the last Run entry; 0 outside Run
+        pz::RunTiming appliedRunTiming() const;            // the applied setting's (the default timing when not in Run)
+        bool runPending() const;                           // in Run, and the camera runs at another setting than the configured one
+        bool setRunSetting(const pz::RunSetting &setting, bool acknowledgeDiscardRing, std::string *errorOut, std::string *messageOut = nullptr);
+        // What a Run entry stages for the producer at the configured setting (the same code as the entry: AravisProfile staging and pz::producerHmax), for tests:
+        // the Aravis camera factory itself is compiled out of host builds.
+        struct StagedRun { int pzHmax{0}; double fps{0}, exposureUs{0}; bool exposureAuto{true}; int x{0}, y{0}; };
+        StagedRun stagedRunForTesting(pz::InstrumentMode mode, int x, int y);
+        // Reads the camera document file `path` (a regular .json file under 64 KiB directly in <data>/camera/, no symlinks), validates it against the Run strobe
+        // window and applies it with setRunSetting. The refusal states are checked before the file is read.
+        bool applyCameraDocument(const std::string &path, bool acknowledgeDiscardRing, std::string *errorOut, std::string *messageOut = nullptr);
+        // "1000 fps (exposure 950 µs)": the applied setting when in Run, else the configured one.
+        std::string runRateText();
         // #649 v1: Stop in Run freezes the every-frame ring (provider STOP, wait for the device's frozen state, LED off)
         // so the buffered frames can be played back; resume re-arms (a new ring, the old frames are gone), LED on.
         // `noteOut`: what the freeze did not achieve (the ring is not frozen, stop incomplete, restore needed), also on success.
@@ -453,6 +478,15 @@ namespace backend
         std::atomic<int> instrumentRunX_{0}, instrumentRunY_{0};
         std::atomic<bool> instrumentRunSet_{false};
         std::atomic<bool> runFrozen_{false}; // Run stopped to review the frame ring (#649)
+        mutable std::mutex runSettingMutex_;       // guards the two below (leaf lock)
+        pz::RunSetting runConfigured_;             // loaded from the Aravis profile; the default until a Run setting was stored
+        pz::RunSetting runApplied_;                // the setting of the last Run entry; valid only while runAppliedValid_
+        bool runAppliedValid_{false};
+        std::atomic<bool> aravisProfileLoaded_{false};
+        void ensureAravisProfileLoaded();
+        // Empty when the Run setting may change now; else why not (no PZ7035 control, an experiment or recording). instrumentModeMutex_ not required.
+        std::string runSettingRefusal();
+        bool setInstrumentModeLocked(pz::InstrumentMode mode, int x, int y, std::string *errorOut); // instrumentModeMutex_ held
         std::atomic<uint32_t> heldEpoch_{0}; // the ring's epoch when the Run stopped (#693)
         mutable std::mutex holdNoteMutex_;
         std::string holdNote_;
@@ -530,11 +564,18 @@ namespace backend
             // PZ7035 line period for the overview (PzHmax): 0 = the producer's rule; 232 for the
             // whole-frame Align on results8 on. Experiment windows always use 0.
             int overviewHmax{0};
+            // PZ7035 Run: the forced line period (written at every Run entry: 58 above ~2655 fps, 116 at or below, the producer's own rule made explicit); 0 = the producer's rule.
+            int experimentHmax{0};
+            // PZ7035 Run: "auto" exposure (the exposure starts ~50 µs after XVS: SHS 64 at HMAX 58, 32 at 116) or the requested exposure in µs (experimentExposureUs holds what the producer is told).
+            bool experimentExposureAuto{true};
+            double experimentExposureSetting{0.0};
             // Previews the PS asks for per second (PzPreviewRate); the PL sees every frame.
             // 60 keeps a 30 fps display fresh with margin; 0 = every delivered frame.
             double previewRateHz{60.0};
         };
         AravisProfile aravisProfile_;
+        // The Aravis profile a mode entry stages (Align's overview timing, or the Run window with the configured setting); no side effects.
+        AravisProfile stagedProfile(pz::InstrumentMode mode, int x, int y, bool wholeFrame);
         std::atomic<bool> aravisOverview_{false};
         size_t aravisExperimentCapacity_{0};
         bool aravisRealtimeBeforeOverview_{false};

@@ -23,6 +23,7 @@
 #include <spdlog/spdlog.h>
 
 #include <chrono>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <opencv2/core.hpp>
@@ -269,6 +270,8 @@ std::string runSnapshotToJson(const RunConfigurationSnapshot& s)
       << ",\"identity\":" << q(s.rfGeneratorIdentity) << ",\"trigger_mode\":" << q(s.rfGeneratorTriggerMode)
       << ",\"trigger_delay_s\":" << s.rfGeneratorTriggerDelayS << ",\"pulse_width_s\":" << s.rfGeneratorPulseWidthS
       << ",\"error\":" << q(s.rfGeneratorError) << ",\"issues\":" << s.rfGeneratorIssues.size() << "}"
+      << ",\"run_timing\":{\"fps\":" << s.runFps << ",\"exposure_us\":" << s.runExposureUs << ",\"hmax\":" << s.runHmax
+      << ",\"vmax\":" << s.runVmax << ",\"shs\":" << s.runShs << ",\"exposure_mode\":\"" << (s.runExposureAuto ? "auto" : "manual") << "\"}"
       << ",\"output_path\":" << q(s.outputPath)
       << ",\"realtime_mode\":" << q(s.realtimeMode)
       << ",\"science_placement\":" << q(s.sciencePlacement)
@@ -303,7 +306,7 @@ std::string readinessToJson(const ExperimentReadinessSnapshot& r)
 
 bool ExperimentCoordinator::InvalidationKey::operator==(const InvalidationKey& o) const
 {
-    return captureGeneration == o.captureGeneration && cameraReady == o.cameraReady &&
+    return captureGeneration == o.captureGeneration && runFps == o.runFps && runExposureUs == o.runExposureUs && runPending == o.runPending && cameraReady == o.cameraReady &&
            cameraSource == o.cameraSource && cameraFallback == o.cameraFallback &&
            deliveryMode == o.deliveryMode && processingConfigVersion == o.processingConfigVersion &&
            configJsonSha256 == o.configJsonSha256 && coreVersion == o.coreVersion &&
@@ -411,6 +414,16 @@ RunConfigurationSnapshot ExperimentCoordinator::candidateLocked(const std::strin
     s.roiPending = proc.realtimeRoiPending();
     s.roiNotice = proc.pendingRoiNotice();
     s.sciencePlacement = app::sciencePlacement();
+    if (backend_.instrumentControlAvailable() && backend_.instrumentMode() == pz::InstrumentMode::Run) {
+        const auto t = backend_.appliedRunTiming();
+        s.runFps = t.fps;
+        s.runExposureUs = t.exposureUs;
+        s.runHmax = t.hmax;
+        s.runVmax = t.vmax;
+        s.runShs = t.shs;
+        s.runExposureAuto = t.autoExposure;
+        s.runPending = backend_.runPending();
+    }
     if (auto* provider = backend_.executionProvider()) {
         s.executionProvider = provider->name();
         const auto core = provider->identity();
@@ -512,6 +525,9 @@ ExperimentCoordinator::currentKeyLocked(const std::string& outputPath, const std
     const auto c = candidateLocked(outputPath, profileId);
     InvalidationKey k;
     k.captureGeneration = c.captureGeneration;
+    k.runFps = c.runFps;
+    k.runExposureUs = c.runExposureUs;
+    k.runPending = c.runPending;
     k.cameraReady = c.cameraReady;
     k.cameraSource = c.camera.effective;
     k.cameraFallback = c.camera.fallback;
@@ -560,17 +576,39 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
     const bool instrumentModes = backend_.instrumentControlAvailable();
     if (instrumentModes) {
         const auto mode = backend_.instrumentMode();
-        if (mode == pz::InstrumentMode::Run) {
+        if (mode == pz::InstrumentMode::Run && backend_.runPending()) {
+            // The setting is stored but the camera still runs at the setting of the last Run entry: never start on the old one silently.
+            const auto applied = backend_.appliedRunTiming();
+            const auto configured = backend_.runTiming();
+            auto text = [](const pz::RunTiming& t) {
+                return std::to_string(static_cast<int>(t.fps)) + " fps, exposure " + std::to_string(static_cast<int>(std::lround(t.exposureUs))) + " us";
+            };
+            r.gates.push_back(gate("instrument.mode", GateStatus::Fail,
+                                   "the camera runs at " + text(applied) + " but the Run setting is " + text(configured),
+                                   "Switch to Run again to apply the setting"));
+        } else if (mode == pz::InstrumentMode::Run) {
             const auto [x, y] = backend_.instrumentRunOffset();
             r.gates.push_back(gate("instrument.mode", GateStatus::Pass, {}, {},
-                                   "Run: 512x96 at (" + std::to_string(x) + ", " + std::to_string(y) +
-                                       "), 5 kHz, U-Net cell path on"));
+                                   "Run: 512x96 at (" + std::to_string(x) + ", " + std::to_string(y) + "), " + backend_.runRateText() +
+                                       ", U-Net cell path on"));
         } else {
             r.gates.push_back(gate("instrument.mode", GateStatus::Fail,
                                    std::string("the instrument is in ") +
                                        (mode == pz::InstrumentMode::Align ? "Align" : "no camera mode"),
                                    "Choose the window in Camera & Alignment and switch to Run"));
         }
+        // The strobe is referenced to XVS and the exposure ends at the frame end: a safety check that the configured setting's exposure window overlaps the strobe
+        // pulse (every setting the camera document accepts does; if this ever warns, frames would be unlit).
+        const auto timing = backend_.runTiming();
+        const auto strobe = pz::strobeCheck(timing, pz::kRunLed.delayUs, pz::kRunLed.widthUs);
+        char window[160];
+        std::snprintf(window, sizeof window, "%.0f fps: exposure %.0f to %.0f us after XVS, strobe %.0f to %.0f us", timing.fps, strobe.exposureStartUs,
+                      strobe.exposureEndUs, strobe.strobeStartUs, strobe.strobeEndUs);
+        if (strobe.overlaps)
+            r.gates.push_back(gate("instrument.strobe", GateStatus::Pass, {}, {}, window));
+        else
+            r.gates.push_back(gate("instrument.strobe", GateStatus::Warn, pz::strobeWarning(strobe),
+                                   "This setting should have been refused by the camera document: apply a valid document (auto exposure) and report it"));
     } else if (backend_.isCameraOverview()) {
         r.gates.push_back(gate("camera.mode", GateStatus::Fail,
                                "The camera is showing the full sensor overview",

@@ -16,7 +16,7 @@ function useStoppingSeconds(stopping: boolean): number | undefined {
 }
 
 // The storage strip (#667 S1): what the SATA SSD is doing and why, in one line, with the recovery note kept below it.
-// While a run stops it also shows the elapsed time: the stop waits for the frame ring to drain (about 8 s at 5 kHz).
+// While a run stops it also shows the elapsed time: the stop waits for the frame ring to drain (up to about 8 s).
 export function SsdStrip({ status }: { status: SsdStatus | null }) {
   const stoppingSeconds = useStoppingSeconds(status?.state === "STOPPING");
   if (!status) return null;

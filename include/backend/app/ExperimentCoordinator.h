@@ -133,6 +133,8 @@ private:
     // Everything readiness depends on, in one comparable value.
     struct InvalidationKey {
         uint64_t captureGeneration{0};
+        double runFps{0.0}, runExposureUs{0.0}; // the Run setting the camera runs at (PZ7035), so a change refreshes the readiness
+        bool runPending{false};
         bool cameraReady{false};
         std::string cameraSource;
         bool cameraFallback{false};

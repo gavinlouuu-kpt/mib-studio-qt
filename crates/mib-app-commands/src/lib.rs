@@ -1422,6 +1422,25 @@ pub fn ring_freeze(state: &AppState) -> Result<CmdResult, String> {
     Ok(guard.pin_mut().ring_freeze().into())
 }
 
+/// The Run frame rate (ABI 38): JSON, the configured rate and its sensor timing, the applied rate, the limits.
+pub fn fetch_run_fps(state: &AppState) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().fetch_run_fps()).map_err(|e| e.to_string())
+}
+
+/// Validate a PZ7035 camera document without side effects (ABI 38): JSON {ok, error?, fps, exposure_mode, exposure_us, ...}.
+pub fn check_pz_camera_document(state: &AppState, text: &str) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().check_pz_camera_document(text)).map_err(|e| e.to_string())
+}
+
+/// Apply the PZ7035 camera document file `path` (ABI 38): validates it, stores the Run rate and exposure; in Run the instrument re-enters Run at the
+/// same window so it applies at once.
+pub fn apply_pz_camera_document(state: &AppState, path: &str, acknowledge_discard_ring: bool) -> Result<CmdResult, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().apply_pz_camera_document(path, acknowledge_discard_ring).into())
+}
+
 /// Resume Run: a new frame ring.
 pub fn ring_resume(state: &AppState) -> Result<CmdResult, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;

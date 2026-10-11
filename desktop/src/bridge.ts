@@ -1,5 +1,6 @@
 import { decodeRunPreview } from "./runPreview";
 import { decodeRingFrame, type RingStatus } from "./ringPlayback";
+import type { PzCameraCheck, RunFpsStatus } from "./runFps";
 import type { SsdBrief, SsdRuns, SsdStatus } from "./ssdView";
 import type { StartupPreference } from './startupPreference';
 import type { ReviewExportRequest, ReviewExportStatus } from "./reviewExport";
@@ -869,6 +870,11 @@ export const bridge = {
   fetchRingFrame: async (seq: number) => decodeRingFrame(await invoke<ArrayBuffer>("fetch_ring_frame", { seq })),
   ringFreeze: () => invokeCommand("ring_freeze"),
   ringResume: () => invokeCommand("ring_resume"),
+  // The Run frame rate and exposure (ABI 38) are set by the PZ7035 camera document. Applying it re-enters Run (the camera restarts), so it is a source
+  // mutation like a mode switch; the check has no side effects.
+  fetchRunFps: () => invoke<RunFpsStatus>("fetch_run_fps"),
+  checkPzCameraDocument: (text: string) => invoke<PzCameraCheck>("check_pz_camera_document", {text}),
+  applyPzCameraDocument: (path: string, acknowledgeDiscardRing = false) => sourceMutation("apply_pz_camera_document", {path, acknowledgeDiscardRing}),
   // The SATA SSD record store, read only (ABI 35, #667 S1).
   fetchSsdStatus: () => invoke<SsdStatus>("fetch_ssd_status"),
   fetchSsdRuns: () => invoke<SsdRuns>("fetch_ssd_runs"),
