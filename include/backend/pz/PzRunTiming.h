@@ -1,59 +1,59 @@
 #pragma once
 
-// The sensor timing of the PZ7035 Run mode at an adjustable frame rate (bridge ABI 38).
+// The sensor timing of the PZ7035 Run mode at an adjustable frame rate and exposure (bridge ABI 38).
 //
-// Only the frame rate changes. Run keeps the qualified line period HMAX 58 (the producer's PzHmax, forced so that it never falls back to 116
-// below ~2.66 kfps) and the qualified exposure of 150 µs (192 lines) at every rate. The producer computes VMAX = floor(clock / (HMAX * fps)) and
-// SHS = VMAX - exposure lines (pz7035-imx426 gentl/pz7035_gentl.c mode_from_registers), which this mirrors: the exposure occupies the last 150 µs of
-// the frame, [frame period - 150 µs, frame period], relative to XVS. At 5000 fps that is VMAX 256, SHS 64: the timing every earlier Run used.
+// Run keeps the qualified line period HMAX 58 (the producer's PzHmax, forced so that it never falls back to 116 below ~2.66 kfps), the qualified
+// exposure position SHS 64 and the qualified LED strobe (7 µs delay, 60 µs width, XVS-referenced; the strobe is Service-only and never part of
+// the camera document). The sensor exposes the last (VMAX - SHS) lines of a frame, so the strobe straddles the exposure start only while SHS stays
+// inside the strobe window. Hence "auto" exposure keeps SHS 64: only VMAX grows when the rate falls and the exposure follows it
+// (lines = VMAX - 64, exposure = lines * HMAX / clock). At 5000 fps that is VMAX 256, 192 lines, 150 µs: the timing every earlier Run used; at
+// 1000 fps VMAX 1280, 1216 lines, 949.9 µs. A numeric exposure is validated against the strobe window: its exposure start (SHS lines after XVS) must
+// lie inside the strobe pulse [delay, delay + width], i.e. the pulse straddles the exposure start as in the qualified setting.
+// The producer computes VMAX = floor(clock / (HMAX * fps)), lines = round(exposure * clock / HMAX) and SHS = VMAX - lines
+// (pz7035-imx426 gentl/pz7035_gentl.c mode_from_registers, SHS_MIN 4), which this mirrors.
 //
-// The LED strobe is referenced to XVS (frame start): delay 7 µs, width 60 µs in Run. It overlaps the exposure only while the exposure starts
-// before the strobe ends, i.e. up to a frame period of about 217 µs (above ~4.6 kfps). Below that the frames are unlit: strobeCheck() says so and
-// the readiness gate and the UI warn. Nothing here changes the LED; whether a lower rate may move the exposure or the strobe is Gavin's decision.
+// The range starts at 1000 fps: the LED driver strobes reliably only when pulsed at about 1 kHz or faster (a 2 ms gap gives 54% of the light,
+// 4 to 8 ms none; pz7035 docs/LED_STROBE.md).
 
 #include <cmath>
-#include <cstdio>
 #include <cstdint>
+#include <cstdio>
 #include <string>
 
 namespace backend::pz {
 
 inline constexpr double kSensorClockHz = 74.25e6;
 inline constexpr int kRunHmax = 58;
+inline constexpr int kRunShs = 64;
+inline constexpr int kShsMin = 4;                   // the producer's SHS_MIN
 inline constexpr double kRunFpsDefault = 5000.0;
-inline constexpr double kRunFpsMin = 100.0;
-inline constexpr double kRunFpsMax = 5000.0;       // the PL profile's cap (dual U-Net engines, one frame per ~200 µs)
-inline constexpr double kRunFpsQualified = 5000.0; // the only rate qualified on the board
+inline constexpr double kRunFpsMin = 1000.0;
+inline constexpr double kRunFpsMax = 5000.0;        // the PL profile's cap (dual U-Net engines, one frame per ~200 µs)
+inline constexpr double kRunFpsQualified = 5000.0;  // the only rate qualified on the board
 inline constexpr double kRunExposureDefaultUs = 150.0;
+inline constexpr double kRunLineUs = kRunHmax / kSensorClockHz * 1e6;
+
+// What the camera document sets: the rate and the exposure ("auto" = SHS 64, or a number of µs).
+struct RunSetting {
+    double fps{kRunFpsDefault};
+    bool autoExposure{true};
+    double exposureUs{0.0}; // the requested exposure when !autoExposure
+    bool operator==(const RunSetting& o) const {
+        return fps == o.fps && autoExposure == o.autoExposure && (autoExposure || exposureUs == o.exposureUs);
+    }
+    bool operator!=(const RunSetting& o) const { return !(*this == o); }
+};
 
 struct RunTiming {
     double fps{kRunFpsDefault};   // the configured (nominal) rate
     int hmax{kRunHmax};
     int vmax{256};
-    int shs{64};                  // vmax - lines
-    int lines{192};               // exposure lines
-    double exposureUs{kRunExposureDefaultUs};
+    int shs{kRunShs};
+    int lines{192};               // exposure lines = vmax - shs
+    double exposureUs{kRunExposureDefaultUs}; // lines x line period (150 exactly at the default setting)
     double actualFps{kRunFpsDefault}; // clock / (hmax * vmax): the rate the sensor really runs
+    bool autoExposure{true};
 };
-
-// Empty when `fps` is a Run rate: a whole number of frames per second from 100 to 5000.
-inline std::string checkRunFps(double fps) {
-    if (!std::isfinite(fps) || fps != std::floor(fps) || fps < kRunFpsMin || fps > kRunFpsMax)
-        return "the Run rate must be a whole number of frames per second from 100 to 5000";
-    return {};
-}
-
-// The timing for a valid rate (checkRunFps is empty): the exposure stays 150 µs, SHS follows the frame length.
-inline RunTiming runTiming(double fps) {
-    RunTiming t;
-    t.fps = fps;
-    t.vmax = static_cast<int>(std::floor(kSensorClockHz / (static_cast<double>(kRunHmax) * fps)));
-    t.lines = static_cast<int>(std::lround(kRunExposureDefaultUs * 1e-6 * kSensorClockHz / kRunHmax)); // 192
-    t.shs = t.vmax - t.lines;
-    t.exposureUs = kRunExposureDefaultUs;
-    t.actualFps = kSensorClockHz / (static_cast<double>(kRunHmax) * t.vmax);
-    return t;
-}
 
 // Where the exposure and the LED strobe fall in a frame, relative to XVS (frame start), in µs.
 struct StrobeCheck {
@@ -61,27 +61,124 @@ struct StrobeCheck {
     double strobeStartUs{0}, strobeEndUs{0};
     double overlapUs{0};
     bool overlaps{false};
+    bool straddlesStart{false}; // the exposure start lies inside the strobe pulse: the qualified geometry
 };
+
+inline int vmaxFor(double fps) { return static_cast<int>(std::floor(kSensorClockHz / (static_cast<double>(kRunHmax) * fps))); }
+
+// Empty when `fps` is a Run rate: a whole number of frames per second from 1000 to 5000.
+inline std::string checkRunFps(double fps) {
+    if (!std::isfinite(fps) || fps != std::floor(fps) || fps < kRunFpsMin || fps > kRunFpsMax)
+        return "the Run rate must be a whole number of frames per second from 1000 to 5000";
+    return {};
+}
+
+// The timing for a valid rate with "auto" exposure: SHS stays 64, the exposure follows the frame length.
+inline RunTiming runTiming(double fps) {
+    RunTiming t;
+    t.fps = fps;
+    t.vmax = vmaxFor(fps);
+    t.shs = kRunShs;
+    t.lines = t.vmax - t.shs;
+    // 150 µs exactly at the default rate: the producer rounds it to the same 192 lines, and every earlier profile and text says 150.
+    t.exposureUs = fps == kRunFpsDefault ? kRunExposureDefaultUs : t.lines * kRunLineUs;
+    t.actualFps = kSensorClockHz / (static_cast<double>(kRunHmax) * t.vmax);
+    t.autoExposure = true;
+    return t;
+}
+
+// The timing for a numeric exposure (whole lines, as the producer rounds): the exposure start is SHS lines after XVS.
+inline RunTiming runTimingForExposure(double fps, double exposureUs) {
+    RunTiming t = runTiming(fps);
+    int lines = static_cast<int>(std::floor(exposureUs * kSensorClockHz / 1e6 / kRunHmax + 0.5));
+    if (lines < 1) lines = 1;
+    if (lines > t.vmax - kShsMin) lines = t.vmax - kShsMin;
+    t.lines = lines;
+    t.shs = t.vmax - lines;
+    t.exposureUs = lines * kRunLineUs;
+    t.autoExposure = false;
+    return t;
+}
+
+inline RunTiming runTiming(const RunSetting& s) { return s.autoExposure ? runTiming(s.fps) : runTimingForExposure(s.fps, s.exposureUs); }
 
 inline StrobeCheck strobeCheck(const RunTiming& t, double strobeDelayUs, double strobeWidthUs) {
     StrobeCheck c;
-    const double lineUs = static_cast<double>(t.hmax) / kSensorClockHz * 1e6;
-    c.exposureStartUs = t.shs * lineUs;
-    c.exposureEndUs = t.vmax * lineUs;
+    c.exposureStartUs = t.shs * kRunLineUs;
+    c.exposureEndUs = t.vmax * kRunLineUs;
     c.strobeStartUs = strobeDelayUs;
     c.strobeEndUs = strobeDelayUs + strobeWidthUs;
     c.overlapUs = std::fmax(0.0, std::fmin(c.exposureEndUs, c.strobeEndUs) - std::fmax(c.exposureStartUs, c.strobeStartUs));
     c.overlaps = c.overlapUs > 0.0;
+    c.straddlesStart = c.exposureStartUs >= c.strobeStartUs && c.exposureStartUs <= c.strobeEndUs;
     return c;
 }
 
-// The warning for a rate whose strobe misses the exposure; empty when they overlap.
+// The exposures (µs) a rate allows against the strobe window: the exposure start must lie in [delay, delay + width], i.e. SHS in
+// [ceil(delay / line), floor((delay + width) / line)] (and at least the producer's SHS_MIN). lo <= hi unless the window is empty.
+struct ExposureRange {
+    double loUs{0}, hiUs{0};
+    int shsMin{0}, shsMax{0};
+    bool empty{false};
+};
+
+inline ExposureRange allowedExposure(double fps, double strobeDelayUs, double strobeWidthUs) {
+    ExposureRange r;
+    const int vmax = vmaxFor(fps);
+    r.shsMin = static_cast<int>(std::ceil(strobeDelayUs / kRunLineUs - 1e-9));
+    if (r.shsMin < kShsMin) r.shsMin = kShsMin;
+    r.shsMax = static_cast<int>(std::floor((strobeDelayUs + strobeWidthUs) / kRunLineUs + 1e-9));
+    r.empty = r.shsMin > r.shsMax || r.shsMax >= vmax;
+    r.loUs = (vmax - r.shsMax) * kRunLineUs;
+    r.hiUs = (vmax - r.shsMin) * kRunLineUs;
+    return r;
+}
+
+// Empty when the setting is a valid Run setting against the strobe window (the Run preset's delay and width).
+inline std::string checkRunSetting(const RunSetting& s, double strobeDelayUs, double strobeWidthUs) {
+    if (auto bad = checkRunFps(s.fps); !bad.empty()) return bad;
+    if (s.autoExposure) return {};
+    if (!std::isfinite(s.exposureUs) || s.exposureUs <= 0.0) return "the exposure must be \"auto\" or a number of microseconds above 0";
+    const auto t = runTimingForExposure(s.fps, s.exposureUs);
+    const auto c = strobeCheck(t, strobeDelayUs, strobeWidthUs);
+    if (c.straddlesStart) return {};
+    const auto r = allowedExposure(s.fps, strobeDelayUs, strobeWidthUs);
+    char buf[260];
+    std::snprintf(buf, sizeof buf,
+                  "exposure %.1f µs at %.0f fps starts %.1f µs after XVS, outside the LED strobe window (%.0f to %.0f µs): at this rate use \"auto\" or an exposure from %.0f to %.0f µs",
+                  s.exposureUs, s.fps, c.exposureStartUs, c.strobeStartUs, c.strobeEndUs, r.loUs, r.hiUs);
+    return buf;
+}
+
+// The warning for a rate whose strobe misses the exposure; empty when they overlap. (Never shown for a validated setting: a safety check.)
 inline std::string strobeWarning(const StrobeCheck& c) {
     if (c.overlaps) return {};
     char buf[200];
     std::snprintf(buf, sizeof buf, "strobe outside the exposure at this rate: frames will be unlit (exposure %.0f to %.0f µs after XVS, strobe %.0f to %.0f µs)",
                   c.exposureStartUs, c.exposureEndUs, c.strobeStartUs, c.strobeEndUs);
     return buf;
+}
+
+// What a Run entry stages in the Aravis profile (templated on AppBackend's private AravisProfile so a test can use a stand-in): the window, the rate
+// with its exposure, the forced line period and the exposure setting. Every field here is observable by the tests.
+template <class Profile>
+void stageRunProfile(Profile& p, int x, int y, int width, int height, const RunSetting& s, const RunTiming& t) {
+    p.hasRoi = true;
+    p.x = x;
+    p.y = y;
+    p.width = width;
+    p.height = height;
+    p.experimentFps = t.fps;
+    p.experimentExposureUs = t.exposureUs;
+    p.experimentHmax = t.hmax;
+    p.experimentExposureAuto = s.autoExposure;
+    p.experimentExposureSetting = s.autoExposure ? 0.0 : s.exposureUs;
+}
+
+// The line period the producer is told: the overview's in Align, the experiment's (58 in Run) otherwise.
+template <class Profile>
+int producerHmax(const Profile& p, bool overview) {
+    return overview ? p.overviewHmax : p.experimentHmax;
 }
 
 } // namespace backend::pz

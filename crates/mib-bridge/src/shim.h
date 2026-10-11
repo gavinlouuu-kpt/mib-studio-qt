@@ -211,7 +211,8 @@ public:
     BridgeCommandResult ring_freeze();
     BridgeCommandResult ring_resume();
     rust::String fetch_run_fps();
-    BridgeCommandResult set_run_fps(double fps, bool acknowledge_discard_ring);
+    rust::String check_pz_camera_document(rust::Str text);
+    BridgeCommandResult apply_pz_camera_document(rust::Str path, bool acknowledge_discard_ring);
     rust::String fetch_ssd_status();
     rust::String fetch_ssd_runs();
     rust::String ssd_export_begin(std::uint32_t run, std::uint64_t from, std::uint64_t count);

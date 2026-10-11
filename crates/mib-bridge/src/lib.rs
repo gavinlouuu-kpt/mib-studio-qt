@@ -1209,9 +1209,12 @@ pub mod ffi {
         fn ring_resume(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
         /// ABI 38: the Run frame rate. `fetch_run_fps` is JSON (the configured rate and its sensor timing, the applied rate, the limits).
         fn fetch_run_fps(self: Pin<&mut BackendBridge>) -> String;
-        /// ABI 38: store a Run rate (whole fps, 100 to 5000) and, in Run, re-enter Run at the same window (controller only). `acknowledge_discard_ring`
-        /// accepts that a stopped Run's buffered frames are discarded by the re-entry.
-        fn set_run_fps(self: Pin<&mut BackendBridge>, fps: f64, acknowledge_discard_ring: bool) -> BridgeCommandResult;
+        /// ABI 38: validate a PZ7035 camera document (JSON text) against the Run limits and the LED strobe window, without side effects; JSON
+        /// {ok, error?, fps, exposure_mode, exposure_us, hmax, vmax, shs, ...}.
+        fn check_pz_camera_document(self: Pin<&mut BackendBridge>, text: &str) -> String;
+        /// ABI 38: apply the PZ7035 camera document file `path` on the instrument: validates it, stores the Run rate and exposure and, in Run,
+        /// re-enters Run at the same window (controller only). `acknowledge_discard_ring` accepts that a stopped Run's buffered frames are discarded.
+        fn apply_pz_camera_document(self: Pin<&mut BackendBridge>, path: &str, acknowledge_discard_ring: bool) -> BridgeCommandResult;
         /// #667 S1 (ABI 35): the SATA SSD record store, read only. `fetch_ssd_status` is JSON (state, reason, log room, the open run and its
         /// counters, what the last mount-time recovery closed; also a short `ssd` block of the instrument status), `fetch_ssd_runs` the run table.
         fn fetch_ssd_status(self: Pin<&mut BackendBridge>) -> String;

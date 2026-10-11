@@ -18,6 +18,7 @@
 #include "backend/diagnostics/MemoryBudget.h"
 #include "backend/processing/pz/PzProfileCompiler.h"
 #include "backend/pz/PzFrameRing.h"
+#include "backend/pz/PzCameraDocument.h"
 #include "backend/pz/PzRunTiming.h"
 #include "backend/pz/SsdStore.h"
 #include "backend/profiles/InstrumentIdentity.h"
@@ -150,17 +151,23 @@ namespace backend
         // Service start: the standing RXH1 v1 CTRL value (persist 250 ms), read back and logged.
         void applyRxHealStandingCtrl();
         bool setInstrumentMode(pz::InstrumentMode mode, int x, int y, std::string *errorOut);
-        // The Run frame rate (bridge ABI 38). The configured rate lives in the Aravis profile (<data>/config/aravis-camera.json, experiment.frame_rate_hz) and
-        // is a whole number of frames per second from 100 to 5000, default 5000. The sensor timing follows it (PzRunTiming.h): HMAX 58 forced and the exposure
-        // stays 150 µs at every rate (SHS = VMAX - 192 lines); below ~4.6 kfps the XVS-referenced strobe misses it (readiness warns). A Run entry applies it; setRunFps stores it and, when the instrument is in Run, re-enters Run
-        // at the same window so it takes effect at once. Refused during an experiment or recording, and while a stopped Run's ring is held unless
-        // `acknowledgeDiscardRing` (the re-entry discards the buffered frames).
-        double runFps();                                   // the configured rate (5000 when none valid is stored)
-        double appliedRunFps() const { return runFpsApplied_.load(); } // the rate of the last Run entry; 0 outside Run
-        pz::RunTiming runTiming();                         // the configured rate's sensor timing
-        pz::RunTiming appliedRunTiming() const;            // the applied rate's (the default timing when not in Run)
-        bool setRunFps(double fps, bool acknowledgeDiscardRing, std::string *errorOut, std::string *messageOut = nullptr);
-        // "1000 fps (exposure 150 µs)": the applied rate when in Run, else the configured one.
+        // The Run setting (bridge ABI 38): the frame rate (a whole number from 1000 to 5000, default 5000) and the exposure ("auto" = SHS 64, or a number of µs
+        // validated against the LED strobe window), set through the PZ7035 camera document (PzCameraDocument.h) the way an EGrabber script sets a MIB camera.
+        // They live in the Aravis profile (<data>/config/aravis-camera.json, experiment.*) and a profile counts as a stored Run setting only when it carries
+        // experiment.hmax 58: an env-seeded profile (MIB_ARAVIS_FPS) never becomes the Run rate. The timing follows (PzRunTiming.h): HMAX 58 forced, SHS 64
+        // for "auto". A Run entry applies it; applyCameraDocument stores it and, when the instrument is in Run, re-enters Run at the same window so it takes effect
+        // at once. Refused during an experiment or recording, and, in Run, while a stopped Run's ring is held unless `acknowledgeDiscardRing` (the re-entry
+        // discards the buffered frames). The LED strobe is not part of it (Service-only).
+        pz::RunSetting runSetting();                       // the configured setting (5000 fps, auto when none valid is stored)
+        pz::RunTiming runTiming();                         // its sensor timing
+        double runFps() { return runSetting().fps; }
+        double appliedRunFps() const;                      // the rate of the last Run entry; 0 outside Run
+        pz::RunTiming appliedRunTiming() const;            // the applied setting's (the default timing when not in Run)
+        bool runPending() const;                           // in Run, and the camera runs at another setting than the configured one
+        bool setRunSetting(const pz::RunSetting &setting, bool acknowledgeDiscardRing, std::string *errorOut, std::string *messageOut = nullptr);
+        // Reads the camera document file `path` (a regular file under 64 KiB), validates it against the Run strobe window and applies it with setRunSetting.
+        bool applyCameraDocument(const std::string &path, bool acknowledgeDiscardRing, std::string *errorOut, std::string *messageOut = nullptr);
+        // "1000 fps (exposure 950 µs)": the applied setting when in Run, else the configured one.
         std::string runRateText();
         // #649 v1: Stop in Run freezes the every-frame ring (provider STOP, wait for the device's frozen state, LED off)
         // so the buffered frames can be played back; resume re-arms (a new ring, the old frames are gone), LED on.
@@ -466,8 +473,10 @@ namespace backend
         std::atomic<int> instrumentRunX_{0}, instrumentRunY_{0};
         std::atomic<bool> instrumentRunSet_{false};
         std::atomic<bool> runFrozen_{false}; // Run stopped to review the frame ring (#649)
-        std::atomic<double> runFpsConfigured_{0.0}; // mirrors aravisProfile_.experimentFps (validated); 0 = not loaded yet
-        std::atomic<double> runFpsApplied_{0.0};    // the rate of the last Run entry, 0 outside Run
+        mutable std::mutex runSettingMutex_;       // guards the two below (leaf lock)
+        pz::RunSetting runConfigured_;             // loaded from the Aravis profile; the default until a Run setting was stored
+        pz::RunSetting runApplied_;                // the setting of the last Run entry; valid only while runAppliedValid_
+        bool runAppliedValid_{false};
         std::atomic<bool> aravisProfileLoaded_{false};
         void ensureAravisProfileLoaded();
         bool setInstrumentModeLocked(pz::InstrumentMode mode, int x, int y, std::string *errorOut); // instrumentModeMutex_ held
@@ -550,6 +559,9 @@ namespace backend
             int overviewHmax{0};
             // PZ7035 Run: the forced line period (58, written at every Run entry) so the producer never picks 116 below ~2.66 kfps.
             int experimentHmax{0};
+            // PZ7035 Run: "auto" exposure (SHS 64) or the requested exposure in µs (experimentExposureUs holds what the producer is told).
+            bool experimentExposureAuto{true};
+            double experimentExposureSetting{0.0};
             // Previews the PS asks for per second (PzPreviewRate); the PL sees every frame.
             // 60 keeps a 30 fps display fresh with margin; 0 = every delivered frame.
             double previewRateHz{60.0};

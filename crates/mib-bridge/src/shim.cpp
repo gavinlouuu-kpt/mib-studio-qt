@@ -2114,11 +2114,19 @@ rust::String BackendBridge::fetch_run_fps() {
     }
 }
 
-BridgeCommandResult BackendBridge::set_run_fps(double fps, bool acknowledge_discard_ring) {
+rust::String BackendBridge::check_pz_camera_document(rust::Str text) {
     try {
-        return toBridgeResult(impl_->facade.setRunFps(fps, acknowledge_discard_ring));
-    } catch (const std::exception& e) { return errorResult(std::string("set_run_fps: ") + e.what()); }
-    catch (...) { return errorResult("set_run_fps: unknown error"); }
+        return rust::String(impl_->facade.checkCameraDocumentJson(std::string(text)));
+    } catch (...) {
+        return rust::String("{\"ok\":false,\"error\":\"check_pz_camera_document failed\"}");
+    }
+}
+
+BridgeCommandResult BackendBridge::apply_pz_camera_document(rust::Str path, bool acknowledge_discard_ring) {
+    try {
+        return toBridgeResult(impl_->facade.applyCameraDocument(std::string(path), acknowledge_discard_ring));
+    } catch (const std::exception& e) { return errorResult(std::string("apply_pz_camera_document: ") + e.what()); }
+    catch (...) { return errorResult("apply_pz_camera_document: unknown error"); }
 }
 
 BridgeCommandResult BackendBridge::ring_resume() {

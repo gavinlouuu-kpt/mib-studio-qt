@@ -1,0 +1,7 @@
+{
+  "schema": "pz7035-camera/1",
+  "run": {
+    "frame_rate_hz": 5000,
+    "exposure_us": "auto"
+  }
+}

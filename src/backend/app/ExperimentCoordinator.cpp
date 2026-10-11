@@ -271,7 +271,7 @@ std::string runSnapshotToJson(const RunConfigurationSnapshot& s)
       << ",\"trigger_delay_s\":" << s.rfGeneratorTriggerDelayS << ",\"pulse_width_s\":" << s.rfGeneratorPulseWidthS
       << ",\"error\":" << q(s.rfGeneratorError) << ",\"issues\":" << s.rfGeneratorIssues.size() << "}"
       << ",\"run_timing\":{\"fps\":" << s.runFps << ",\"exposure_us\":" << s.runExposureUs << ",\"hmax\":" << s.runHmax
-      << ",\"vmax\":" << s.runVmax << "}"
+      << ",\"vmax\":" << s.runVmax << ",\"shs\":" << s.runShs << ",\"exposure_mode\":\"" << (s.runExposureAuto ? "auto" : "manual") << "\"}"
       << ",\"output_path\":" << q(s.outputPath)
       << ",\"realtime_mode\":" << q(s.realtimeMode)
       << ",\"science_placement\":" << q(s.sciencePlacement)
@@ -306,7 +306,7 @@ std::string readinessToJson(const ExperimentReadinessSnapshot& r)
 
 bool ExperimentCoordinator::InvalidationKey::operator==(const InvalidationKey& o) const
 {
-    return captureGeneration == o.captureGeneration && runFps == o.runFps && cameraReady == o.cameraReady &&
+    return captureGeneration == o.captureGeneration && runFps == o.runFps && runExposureUs == o.runExposureUs && runPending == o.runPending && cameraReady == o.cameraReady &&
            cameraSource == o.cameraSource && cameraFallback == o.cameraFallback &&
            deliveryMode == o.deliveryMode && processingConfigVersion == o.processingConfigVersion &&
            configJsonSha256 == o.configJsonSha256 && coreVersion == o.coreVersion &&
@@ -420,6 +420,9 @@ RunConfigurationSnapshot ExperimentCoordinator::candidateLocked(const std::strin
         s.runExposureUs = t.exposureUs;
         s.runHmax = t.hmax;
         s.runVmax = t.vmax;
+        s.runShs = t.shs;
+        s.runExposureAuto = t.autoExposure;
+        s.runPending = backend_.runPending();
     }
     if (auto* provider = backend_.executionProvider()) {
         s.executionProvider = provider->name();
@@ -523,6 +526,8 @@ ExperimentCoordinator::currentKeyLocked(const std::string& outputPath, const std
     InvalidationKey k;
     k.captureGeneration = c.captureGeneration;
     k.runFps = c.runFps;
+    k.runExposureUs = c.runExposureUs;
+    k.runPending = c.runPending;
     k.cameraReady = c.cameraReady;
     k.cameraSource = c.camera.effective;
     k.cameraFallback = c.camera.fallback;
@@ -571,12 +576,16 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
     const bool instrumentModes = backend_.instrumentControlAvailable();
     if (instrumentModes) {
         const auto mode = backend_.instrumentMode();
-        if (mode == pz::InstrumentMode::Run && backend_.appliedRunFps() != backend_.runFps()) {
-            // The rate is set in the profile but the camera still runs at the rate of the last Run entry: never start on the old one silently.
+        if (mode == pz::InstrumentMode::Run && backend_.runPending()) {
+            // The setting is stored but the camera still runs at the setting of the last Run entry: never start on the old one silently.
+            const auto applied = backend_.appliedRunTiming();
+            const auto configured = backend_.runTiming();
+            auto text = [](const pz::RunTiming& t) {
+                return std::to_string(static_cast<int>(t.fps)) + " fps, exposure " + std::to_string(static_cast<int>(std::lround(t.exposureUs))) + " us";
+            };
             r.gates.push_back(gate("instrument.mode", GateStatus::Fail,
-                                   "the camera runs at " + std::to_string(static_cast<int>(backend_.appliedRunFps())) + " fps but the Run rate is set to " +
-                                       std::to_string(static_cast<int>(backend_.runFps())) + " fps",
-                                   "Switch to Run again to apply the rate"));
+                                   "the camera runs at " + text(applied) + " but the Run setting is " + text(configured),
+                                   "Switch to Run again to apply the setting"));
         } else if (mode == pz::InstrumentMode::Run) {
             const auto [x, y] = backend_.instrumentRunOffset();
             r.gates.push_back(gate("instrument.mode", GateStatus::Pass, {}, {},
@@ -589,7 +598,7 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
                                    "Choose the window in Camera & Alignment and switch to Run"));
         }
         // The strobe is referenced to XVS, the exposure is the last 150 us of the frame: at the configured rate they may not overlap (frames unlit).
-        const auto timing = pz::runTiming(backend_.runFps());
+        const auto timing = backend_.runTiming();
         const auto strobe = pz::strobeCheck(timing, pz::kRunLed.delayUs, pz::kRunLed.widthUs);
         char window[160];
         std::snprintf(window, sizeof window, "%.0f fps: exposure %.0f to %.0f us after XVS, strobe %.0f to %.0f us", timing.fps, strobe.exposureStartUs,

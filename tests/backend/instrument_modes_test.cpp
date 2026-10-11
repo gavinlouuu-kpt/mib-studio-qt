@@ -1296,9 +1296,94 @@ void testSsdRunHoldsRingThroughTheCoordinator(const mib::test::TempDir& td) {
     backend.shutdown();
 }
 
-// The adjustable Run rate (bridge ABI 38): range, the sensor timing it implies (HMAX 58 forced, 150 us exposure at every rate), persistence in the
-// Aravis profile, the refusals (experiment, held ring), re-entry applying the rate, and the run snapshot.
+// The Run timing arithmetic and the camera document (bridge ABI 38), without a backend.
+void testRunTimingAndDocument() {
+    constexpr double kDelay = 7.0, kWidth = 60.0; // the Run strobe preset (Service-only; never part of the document)
+    MIB_EXPECT(pz::checkRunFps(5000).empty() && pz::checkRunFps(1000).empty() && pz::checkRunFps(2500).empty(), "1000, 2500 and 5000 are Run rates");
+    MIB_EXPECT(!pz::checkRunFps(999).empty() && !pz::checkRunFps(100).empty() && !pz::checkRunFps(5001).empty() && !pz::checkRunFps(1500.5).empty() && !pz::checkRunFps(0).empty() &&
+                   !pz::checkRunFps(std::nan("")).empty() && !pz::checkRunFps(-1000).empty(),
+               "below 1000, above 5000, fractions, zero, NaN and negatives are not");
+    {
+        // "auto": HMAX 58 and SHS 64, the exposure follows the frame length.
+        const auto t5 = pz::runTiming(5000.0), t1 = pz::runTiming(1000.0), t2 = pz::runTiming(2000.0);
+        MIB_EXPECT(t5.vmax == 256 && t5.lines == 192 && t5.shs == 64 && t5.exposureUs == 150.0 && t5.hmax == 58 && t5.autoExposure, "5000 fps: VMAX 256, SHS 64, 192 lines, 150 us");
+        MIB_EXPECT(t1.vmax == 1280 && t1.lines == 1216 && t1.shs == 64 && std::fabs(t1.exposureUs - 949.87) < 0.01, "1000 fps: VMAX 1280, SHS 64, 1216 lines, 949.87 us");
+        MIB_EXPECT(t2.vmax == 640 && t2.lines == 576 && t2.shs == 64 && std::fabs(t2.exposureUs - 449.94) < 0.01, "2000 fps: VMAX 640, SHS 64, 576 lines");
+    }
+    // The strobe straddles the exposure start and overlaps the exposure at EVERY Run rate with "auto": the safety check the readiness gate relies on.
+    for (int fps = 1000; fps <= 5000; ++fps) {
+        const auto c = pz::strobeCheck(pz::runTiming(static_cast<double>(fps)), kDelay, kWidth);
+        if (!c.overlaps || !c.straddlesStart || !pz::strobeWarning(c).empty()) {
+            MIB_EXPECT(false, "auto exposure: the strobe misses the exposure at " + std::to_string(fps) + " fps");
+            break;
+        }
+    }
+    {
+        // A numeric exposure is validated against the strobe window: its start (SHS lines after XVS) must lie inside the pulse [7, 67] us, SHS 9 to 85.
+        const auto r5 = pz::allowedExposure(5000.0, kDelay, kWidth), r1 = pz::allowedExposure(1000.0, kDelay, kWidth);
+        MIB_EXPECT(!r5.empty && r5.shsMin == 9 && r5.shsMax == 85 && std::fabs(r5.loUs - (256 - 85) * pz::kRunLineUs) < 1e-9 && std::fabs(r5.hiUs - (256 - 9) * pz::kRunLineUs) < 1e-9,
+                   "5000 fps allows SHS 9 to 85 (exposure 133.6 to 192.9 us)");
+        MIB_EXPECT(r1.shsMin == 9 && r1.shsMax == 85 && r1.loUs > 930.0 && r1.hiUs < 1000.0, "1000 fps allows an exposure of about 933 to 992 us");
+        pz::RunSetting ok1000{1000.0, false, 940.0}, tooShort{1000.0, false, 150.0}, tooLong{1000.0, false, 999.9}, ok5000{5000.0, false, 150.0}, zero{5000.0, false, 0.0};
+        MIB_EXPECT(pz::checkRunSetting(ok1000, kDelay, kWidth).empty(), "940 us at 1000 fps starts 60 us after XVS: inside the strobe window");
+        const auto why = pz::checkRunSetting(tooShort, kDelay, kWidth);
+        MIB_EXPECT(why.find("outside the LED strobe window") != std::string::npos && why.find("from 933 to ") != std::string::npos, "150 us at 1000 fps starts at ~850 us: refused, naming the allowed range: " + why);
+        MIB_EXPECT(!pz::checkRunSetting(tooLong, kDelay, kWidth).empty(), "999.9 us at 1000 fps leaves SHS 4 or less: outside the window");
+        MIB_EXPECT(pz::checkRunSetting(ok5000, kDelay, kWidth).empty(), "150 us at 5000 fps is the qualified exposure");
+        MIB_EXPECT(!pz::checkRunSetting(zero, kDelay, kWidth).empty() && !pz::checkRunSetting(pz::RunSetting{999.0, true, 0.0}, kDelay, kWidth).empty(), "a zero exposure and a rate out of range are refused");
+        const auto m = pz::runTimingForExposure(1000.0, 940.0);
+        MIB_EXPECT(!m.autoExposure && m.vmax == 1280 && m.lines == 1203 && m.shs == 77 && std::fabs(m.exposureUs - 1203 * pz::kRunLineUs) < 1e-9, "a numeric exposure is rounded to whole lines, as the producer does");
+    }
+    {
+        // What a Run entry stages (a stand-in for the private AravisProfile) and what the producer is told.
+        struct P { bool hasRoi{false}; int x{0}, y{0}, width{0}, height{0}; double experimentFps{0}, experimentExposureUs{0}; int overviewHmax{232}, experimentHmax{0}; bool experimentExposureAuto{false}; double experimentExposureSetting{1}; } p;
+        const pz::RunSetting s{1000.0, true, 0.0};
+        pz::stageRunProfile(p, 152, 200, 512, 96, s, pz::runTiming(s));
+        MIB_EXPECT(p.hasRoi && p.x == 152 && p.y == 200 && p.width == 512 && p.height == 96 && p.experimentFps == 1000.0 && std::fabs(p.experimentExposureUs - 949.87) < 0.01 &&
+                       p.experimentHmax == 58 && p.experimentExposureAuto && p.experimentExposureSetting == 0.0,
+                   "a Run entry stages the window, the rate, the derived exposure and HMAX 58");
+        MIB_EXPECT(pz::producerHmax(p, false) == 58 && pz::producerHmax(p, true) == 232, "the producer is told 58 in Run and the overview's line period in Align");
+        const pz::RunSetting m{2000.0, false, 470.0};
+        pz::stageRunProfile(p, 0, 0, 512, 96, m, pz::runTiming(m));
+        MIB_EXPECT(!p.experimentExposureAuto && p.experimentExposureSetting == 470.0, "a numeric exposure is staged as the setting");
+    }
+    {
+        // The camera document.
+        const auto parse = [&](const std::string& text) { return pz::parseCameraDocument(text, kDelay, kWidth); };
+        const auto def = parse(R"({"schema":"pz7035-camera/1","run":{"frame_rate_hz":5000,"exposure_us":"auto"}})");
+        MIB_EXPECT(def.ok && def.setting.fps == 5000.0 && def.setting.autoExposure, "the bundled default document is valid");
+        const auto one = parse(R"({"run":{"frame_rate_hz":1000}})");
+        MIB_EXPECT(one.ok && one.setting.fps == 1000.0 && one.setting.autoExposure, "the exposure defaults to auto");
+        const auto num = parse(R"({"run":{"frame_rate_hz":1000,"exposure_us":940}})");
+        MIB_EXPECT(num.ok && !num.setting.autoExposure && num.setting.exposureUs == 940.0, "a numeric exposure inside the strobe window is accepted");
+        const auto expect = [&](const std::string& text, const std::string& fragment) {
+            const auto r = parse(text);
+            MIB_EXPECT(!r.ok && r.error.find(fragment) != std::string::npos, "refused with '" + fragment + "': " + text + " -> " + r.error);
+        };
+        expect("not json", "not valid JSON");
+        expect("[]", "must be a JSON object");
+        expect(R"({"run":{"frame_rate_hz":500}})", "from 1000 to 5000");
+        expect(R"({"run":{"frame_rate_hz":6000}})", "from 1000 to 5000");
+        expect(R"({"run":{"frame_rate_hz":1000.5}})", "whole number");
+        expect(R"({"run":{"frame_rate_hz":"fast"}})", "run.frame_rate_hz");
+        expect(R"({"run":{"exposure_us":"long"}})", "run.exposure_us");
+        expect(R"({"run":{"exposure_us":true}})", "run.exposure_us");
+        expect(R"({"run":{"frame_rate_hz":1000,"exposure_us":150}})", "outside the LED strobe window");
+        expect(R"({"run":{"exposure":150}})", "unknown key \"exposure\"");
+        expect(R"({"run":{"strobe_delay_us":7}})", "Service-only");
+        expect(R"({"run":{"led_width_us":60}})", "Service-only");
+        expect(R"({"strobe":{"delay_us":7}})", "Service-only");
+        expect(R"({"mode":"run"})", "unknown key \"mode\"");
+        expect(R"({"schema":"pz7035-camera/2"})", "schema");
+        expect(R"({"run":5000})", "run: expected an object");
+        expect(std::string(R"({"run":{"frame_rate_hz":5000},"pad":")") + std::string(70000, 'x') + "\"}", "64 KiB");
+    }
+}
+
+// The adjustable Run setting (bridge ABI 38) on a backend: the camera document applies it (rate and exposure), persistence in the Aravis profile, the env seed
+// never becoming the rate, refusals (experiment, a held ring), re-entry applying it, and the run snapshot.
 void testRunFps(const mib::test::TempDir& td) {
+    namespace fs = std::filesystem;
     const auto frames = td.path() / "frames_fps";
     MIB_REQUIRE(mib::test::writeFrames(frames, 8, 512, 96), "mock frames");
     setEnv("MIB_PL_SCIENCE", "1");
@@ -1307,37 +1392,29 @@ void testRunFps(const mib::test::TempDir& td) {
     setEnv("MIB_DISABLED_SERVICES", "sqlite,autofocus,trigger,playback");
     setEnv("MIB_EXECUTION_PROVIDER", "none");
 
-    MIB_EXPECT(pz::checkRunFps(5000).empty() && pz::checkRunFps(100).empty() && pz::checkRunFps(1000).empty(), "5000, 1000 and 100 are Run rates");
-    MIB_EXPECT(!pz::checkRunFps(99).empty() && !pz::checkRunFps(5001).empty() && !pz::checkRunFps(1000.5).empty() && !pz::checkRunFps(0).empty() &&
-                   !pz::checkRunFps(std::nan("")).empty() && !pz::checkRunFps(-1000).empty(),
-               "below 100, above 5000, fractions, zero, NaN and negatives are not");
-    {
-        // Only the rate changes: HMAX 58 and the 150 us exposure (192 lines) at every rate, SHS = VMAX - 192.
-        const auto t5 = pz::runTiming(5000), t1 = pz::runTiming(1000), t100 = pz::runTiming(100);
-        MIB_EXPECT(t5.vmax == 256 && t5.lines == 192 && t5.shs == 64 && t5.exposureUs == 150.0 && t5.hmax == 58, "5000 fps: VMAX 256, SHS 64, 192 lines, 150 us");
-        MIB_EXPECT(t1.vmax == 1280 && t1.lines == 192 && t1.shs == 1088 && t1.exposureUs == 150.0, "1000 fps: VMAX 1280, SHS 1088, still 192 lines and 150 us");
-        MIB_EXPECT(t100.vmax == 12801 && t100.shs == 12609 && t100.lines == 192, "100 fps: VMAX 12801, SHS 12609");
-        // The XVS-referenced strobe (7 us delay, 60 us width) against the exposure window [SHS, VMAX] lines.
-        const auto c5 = pz::strobeCheck(t5, pz::kRunLed.delayUs, pz::kRunLed.widthUs), c1 = pz::strobeCheck(t1, pz::kRunLed.delayUs, pz::kRunLed.widthUs);
-        MIB_EXPECT(c5.overlaps && std::fabs(c5.exposureStartUs - 50.0) < 0.1 && std::fabs(c5.exposureEndUs - 200.0) < 0.1 && pz::strobeWarning(c5).empty(),
-                   "5000 fps: exposure 50 to 200 us, strobe 7 to 67 us: they overlap");
-        MIB_EXPECT(!c1.overlaps && std::fabs(c1.exposureStartUs - 850.0) < 0.5 && std::fabs(c1.exposureEndUs - 1000.0) < 0.5 &&
-                       pz::strobeWarning(c1).find("strobe outside the exposure at this rate: frames will be unlit") == 0,
-                   "1000 fps: exposure ~850 to 1000 us, strobe 7 to 67 us: unlit, warned: " + pz::strobeWarning(c1));
-        MIB_EXPECT(pz::strobeCheck(pz::runTiming(4700), 7, 60).overlaps && !pz::strobeCheck(pz::runTiming(4500), 7, 60).overlaps, "the strobe reaches the exposure above about 4.6 kfps");
-    }
-
     const auto data = td.path() / "data_fps";
     const auto profile = data / "config" / "aravis-camera.json";
+    const auto docDir = td.path() / "docs_fps";
+    fs::create_directories(docDir);
+    const auto writeDoc = [&](const std::string& name, const std::string& text) {
+        const auto path = docDir / name;
+        std::ofstream(path, std::ios::trunc) << text;
+        return path.string();
+    };
+    const auto doc = [&](const std::string& name, const std::string& run) { return writeDoc(name, "{\"schema\":\"pz7035-camera/1\",\"run\":" + run + "}"); };
+    const auto readProfile = [&] { return nlohmann::json::parse(std::ifstream(profile)); };
     {
+        // A deployment variable seeds the profile of a board with none (the board unit sets MIB_ARAVIS_FPS=1000): it is never the Run rate.
+        setEnv("MIB_ARAVIS_FPS", "1000");
+        setEnv("MIB_ARAVIS_EXPOSURE_US", "900");
         backend::AppBackend backend;
         backend::bridge::BackendFacade facade(backend);
         MIB_REQUIRE(facade.initialize(data.string()), "facade initializes");
         {
             const auto j = nlohmann::json::parse(facade.fetchRunFpsJson());
             MIB_EXPECT(j["available"] == false, "no PZ7035 control: no Run rate");
-            const auto r = facade.setRunFps(1000, false);
-            MIB_EXPECT(!r.ok && r.message.find("no PZ7035 control") != std::string::npos, "and setting one is refused: " + r.message);
+            const auto r = facade.applyCameraDocument(doc("none.json", R"({"frame_rate_hz":1000})"), false);
+            MIB_EXPECT(!r.ok && r.message.find("no PZ7035 control") != std::string::npos, "and applying one is refused: " + r.message);
         }
         FakeState s;
         seedCellImage(s);
@@ -1347,59 +1424,75 @@ void testRunFps(const mib::test::TempDir& td) {
         fake->ringFrames = 100;
         backend.setExecutionProviderForTesting(std::move(provider));
         std::string err;
+        MIB_EXPECT(backend.runFps() == 5000.0 && backend.runSetting().autoExposure, "the env-seeded 1000 fps is not the Run rate: the default is 5000 fps, auto");
         {
             const auto j = nlohmann::json::parse(facade.fetchRunFpsJson());
-            MIB_EXPECT(j["available"] == true && j["fps"] == 5000.0 && j["exposure_us"] == 150.0 && j["qualified"] == true && j["pending"] == false &&
-                           j["applied_fps"].is_null() && j["min_fps"] == 100.0 && j["max_fps"] == 5000.0,
-                       "default: 5000 fps, 150 us, qualified, nothing applied");
+            MIB_EXPECT(j["available"] == true && j["fps"] == 5000.0 && j["exposure_us"] == 150.0 && j["exposure_mode"] == "auto" && j["qualified"] == true && j["pending"] == false &&
+                           j["applied_fps"].is_null() && j["min_fps"] == 1000.0 && j["max_fps"] == 5000.0 && j["strobe_overlaps"] == true && j["strobe_warning"] == "",
+                       "default: 5000 fps, 150 us, auto, qualified, nothing applied");
         }
-        for (const double bad : {50.0, 5001.0, 1234.5, 0.0}) {
-            const auto r = facade.setRunFps(bad, false);
-            MIB_EXPECT(!r.ok && r.message.find("whole number") != std::string::npos, "a rate outside 100 to 5000 whole fps is refused: " + r.message);
-        }
-        MIB_EXPECT(!std::filesystem::exists(profile) || nlohmann::json::parse(std::ifstream(profile))["experiment"]["frame_rate_hz"] == 5000.0, "a refused rate stores nothing");
-
-        // Outside Run: stored, applies at the next Run entry.
-        auto r = facade.setRunFps(1000, false);
-        MIB_REQUIRE(r.ok, "set 1000 outside Run: " + r.message);
-        MIB_EXPECT(r.message.find("next enters Run") != std::string::npos && !fake->running && backend.appliedRunFps() == 0.0, "outside Run it only stores: " + r.message);
-        {
-            const auto file = nlohmann::json::parse(std::ifstream(profile));
-            MIB_EXPECT(file["experiment"]["frame_rate_hz"] == 1000.0 && file["experiment"]["hmax"] == 58 &&
-                           file["experiment"]["exposure_us"] == 150.0,
-                       "the profile holds 1000 fps, HMAX 58 and the 150 us exposure");
-        }
+        // An Align entry saves the profile with the seeded rate; a Run entry afterwards still runs the default.
+        MIB_REQUIRE(backend.setInstrumentMode(pz::InstrumentMode::Align, 0, 0, &err), "Align: " + err);
         MIB_REQUIRE(backend.setInstrumentMode(pz::InstrumentMode::Run, 152, 200, &err), "Run: " + err);
-        MIB_EXPECT(backend.appliedRunFps() == 1000.0 && backend.runRateText().find("1000 fps") != std::string::npos &&
-                       backend.runRateText().find("150 \xC2\xB5s") != std::string::npos,
-                   "Run applies the configured rate: " + backend.runRateText());
+        MIB_EXPECT(backend.appliedRunFps() == 5000.0, "a Run entry after an Align entry runs 5000 fps, not the seed");
         {
-            const auto j = nlohmann::json::parse(facade.fetchRunFpsJson());
-            MIB_EXPECT(j["applied_fps"] == 1000.0 && j["in_run"] == true && j["pending"] == false && j["qualified"] == false && j["vmax"] == 1280 && j["shs"] == 1088 && j["exposure_us"] == 150.0 && j["strobe_overlaps"] == false &&
-                           j["strobe_warning"].get<std::string>().find("frames will be unlit") != std::string::npos,
-                       "fetch_run_fps in Run at 1000: applied, not pending, not the qualified rate, 150 us, the strobe misses the exposure");
+            // The document check has no side effects.
+            const auto ok = nlohmann::json::parse(facade.checkCameraDocumentJson(R"({"run":{"frame_rate_hz":1000}})"));
+            MIB_EXPECT(ok["ok"] == true && ok["vmax"] == 1280 && ok["shs"] == 64 && std::fabs(ok["exposure_us"].get<double>() - 949.87) < 0.01 && ok["strobe_overlaps"] == true &&
+                           backend.runFps() == 5000.0,
+                       "check_pz_camera_document at 1000 fps: VMAX 1280, SHS 64, 949.87 us, changes nothing");
+            const auto bad = nlohmann::json::parse(facade.checkCameraDocumentJson(R"({"run":{"frame_rate_hz":900}})"));
+            MIB_EXPECT(bad["ok"] == false && bad["error"].get<std::string>().find("from 1000 to 5000") != std::string::npos, "and a bad one says why");
         }
+        // Invalid documents change nothing.
+        for (const auto& text : {std::string(R"({"frame_rate_hz":999})"), std::string(R"({"frame_rate_hz":1000,"exposure_us":150})"), std::string(R"({"strobe_delay_us":9})")}) {
+            const auto r = facade.applyCameraDocument(doc("bad.json", text), false);
+            MIB_EXPECT(!r.ok && backend.runFps() == 5000.0 && backend.appliedRunFps() == 5000.0, "an invalid document is refused and changes nothing: " + r.message);
+        }
+        MIB_EXPECT(!facade.applyCameraDocument((docDir / "missing.json").string(), false).ok && !facade.applyCameraDocument(docDir.string(), false).ok, "a missing file and a directory are refused");
 
-        // Re-entry: the rate changes in Run, at the same window, and the live session restarts.
+        // In Run: the document re-enters Run at the same window, the auto exposure follows the frame length.
         const int configuresBefore = fake->configures;
-        r = facade.setRunFps(2000, false);
-        MIB_REQUIRE(r.ok, "set 2000 in Run: " + r.message);
-        MIB_EXPECT(backend.appliedRunFps() == 2000.0 && backend.instrumentMode() == pz::InstrumentMode::Run && backend.instrumentRunOffset() == std::make_pair(152, 200) &&
-                       fake->configures > configuresBefore && fake->running && s.live[S0 + 0] == 1,
-                   "in Run the rate re-enters Run at the same window");
+        auto r = facade.applyCameraDocument(doc("1k.json", R"({"frame_rate_hz":1000,"exposure_us":"auto"})"), false);
+        MIB_REQUIRE(r.ok, "apply 1000 fps auto in Run: " + r.message);
+        MIB_EXPECT(backend.appliedRunFps() == 1000.0 && backend.instrumentMode() == pz::InstrumentMode::Run && backend.instrumentRunOffset() == std::make_pair(152, 200) &&
+                       fake->configures > configuresBefore && fake->running && s.live[S0 + 0] == 1 && backend.runRateText() == "1000 fps (exposure 950 \xC2\xB5s)",
+                   "in Run the document re-enters Run at the same window: " + backend.runRateText());
         {
+            const auto file = readProfile();
+            MIB_EXPECT(file["experiment"]["frame_rate_hz"] == 1000.0 && file["experiment"]["hmax"] == 58 && file["experiment"]["exposure_auto"] == true &&
+                           std::fabs(file["experiment"]["exposure_us"].get<double>() - 949.87) < 0.01,
+                       "the profile holds 1000 fps, HMAX 58 and the derived exposure");
+            const auto j = nlohmann::json::parse(facade.fetchRunFpsJson());
+            MIB_EXPECT(j["applied_fps"] == 1000.0 && j["in_run"] == true && j["pending"] == false && j["qualified"] == false && j["vmax"] == 1280 && j["shs"] == 64 && j["exposure_mode"] == "auto" &&
+                           j["strobe_straddles_exposure_start"] == true,
+                       "fetch_run_fps in Run at 1000: applied, not pending, not the qualified rate, SHS 64, the strobe straddles the exposure start");
             const auto snap = backend.experiment().evaluateReadiness((td.path() / "fps.h5").string(), "pl");
-            const auto j = nlohmann::json::parse(backend::app::runSnapshotToJson(snap.candidate));
-            MIB_EXPECT(j["run_timing"]["fps"] == 2000.0 && j["run_timing"]["hmax"] == 58 && j["run_timing"]["vmax"] == 640 &&
-                           j["run_timing"]["exposure_us"] == 150.0,
-                       "the run snapshot records the fps, the exposure and the line timing: " + j["run_timing"].dump());
+            const auto js = nlohmann::json::parse(backend::app::runSnapshotToJson(snap.candidate));
+            MIB_EXPECT(js["run_timing"]["fps"] == 1000.0 && js["run_timing"]["hmax"] == 58 && js["run_timing"]["vmax"] == 1280 && js["run_timing"]["shs"] == 64 &&
+                           js["run_timing"]["exposure_mode"] == "auto" && std::fabs(js["run_timing"]["exposure_us"].get<double>() - 949.87) < 0.01,
+                       "the run snapshot records the fps, the exposure and the line timing: " + js["run_timing"].dump());
             const auto strobe = std::find_if(snap.gates.begin(), snap.gates.end(), [](const auto& g) { return g.id == "instrument.strobe"; });
-            MIB_REQUIRE(strobe != snap.gates.end(), "the readiness has a strobe gate");
-            MIB_EXPECT(strobe->status == backend::app::GateStatus::Warn && strobe->reason.find("strobe outside the exposure at this rate: frames will be unlit") == 0 && snap.ready,
-                       "at 2000 fps the strobe gate warns (and does not block the start): " + strobe->reason);
+            MIB_EXPECT(strobe != snap.gates.end() && strobe->status == backend::app::GateStatus::Pass && snap.ready, "the strobe gate passes in Run at 1000 fps");
         }
+        // A numeric exposure: accepted inside the strobe window (2000 fps: 434 to 493 us), rounded to whole lines, stored as manual.
+        r = facade.applyCameraDocument(doc("manual.json", R"({"frame_rate_hz":2000,"exposure_us":470})"), false);
+        MIB_REQUIRE(r.ok, "apply 2000 fps / 470 us: " + r.message);
+        {
+            const auto t = backend.appliedRunTiming();
+            const auto file = readProfile();
+            MIB_EXPECT(!t.autoExposure && t.vmax == 640 && t.lines == 602 && t.shs == 38 && file["experiment"]["exposure_auto"] == false && file["experiment"]["exposure_setting"] == 470.0 &&
+                           std::fabs(file["experiment"]["exposure_us"].get<double>() - 602 * pz::kRunLineUs) < 1e-6,
+                       "a numeric exposure is applied as 602 lines (SHS 38) and stored as the setting");
+            const auto j = nlohmann::json::parse(facade.fetchRunFpsJson());
+            MIB_EXPECT(j["exposure_mode"] == "manual" && j["qualified"] == false && j["shs"] == 38, "fetch_run_fps reports a manual exposure, not qualified");
+            r = facade.applyCameraDocument(doc("outside.json", R"({"frame_rate_hz":2000,"exposure_us":150})"), false);
+            MIB_EXPECT(!r.ok && r.message.find("outside the LED strobe window") != std::string::npos && backend.appliedRunTiming().shs == 38, "an exposure outside the strobe window is refused, nothing changes: " + r.message);
+        }
+        r = facade.applyCameraDocument(doc("3k.json", R"({"frame_rate_hz":3000})"), false);
+        MIB_REQUIRE(r.ok && backend.appliedRunFps() == 3000.0 && backend.runSetting().autoExposure, "a document without an exposure goes back to auto: " + r.message);
 
-        // A held ring: refused without the acknowledgement, discarded with it.
+        // A held ring: refused without the acknowledgement, discarded with it. (Outside Run nothing is held.)
         fake->ring.valid = true;
         fake->ring.records = 100;
         fake->ring.recordBytes = pz::kRingRecordBytes;
@@ -1408,15 +1501,15 @@ void testRunFps(const mib::test::TempDir& td) {
         fake->ring.lo = 0;
         fake->ring.frozen = true;
         MIB_REQUIRE(backend.freezeRun(&err), "freeze: " + err);
-        r = facade.setRunFps(3000, false);
-        MIB_EXPECT(!r.ok && r.message.find("acknowledge") != std::string::npos && r.message.find("100 buffered frames") != std::string::npos &&
-                       backend.runFrozen() && backend.runFps() == 2000.0 && s.live[S0 + 0] == 0,
+        r = facade.applyCameraDocument(doc("held.json", R"({"frame_rate_hz":4000})"), false);
+        MIB_EXPECT(!r.ok && r.message.find("acknowledge") != std::string::npos && r.message.find("100 buffered frames") != std::string::npos && backend.runFrozen() &&
+                       backend.runFps() == 3000.0 && s.live[S0 + 0] == 0,
                    "a held ring: refused with the frame count, nothing changed: " + r.message);
-        r = facade.setRunFps(3000, true);
-        MIB_REQUIRE(r.ok, "set 3000 with the acknowledgement: " + r.message);
-        MIB_EXPECT(!backend.runFrozen() && backend.appliedRunFps() == 3000.0 && fake->running && s.live[S0 + 0] == 1, "with the acknowledgement the ring is discarded and Run restarts at 3000");
+        r = facade.applyCameraDocument(doc("held.json", R"({"frame_rate_hz":4000})"), true);
+        MIB_REQUIRE(r.ok, "apply 4000 fps with the acknowledgement: " + r.message);
+        MIB_EXPECT(!backend.runFrozen() && backend.appliedRunFps() == 4000.0 && fake->running && s.live[S0 + 0] == 1, "with the acknowledgement the ring is discarded and Run restarts at 4000");
 
-        // An experiment in flight: refused until it ends.
+        // An experiment in flight: refused until it ends; the pending readiness gate cannot be reached because a change in Run re-enters Run.
         const auto out = (td.path() / "fps_run.h5").string();
         auto ready = backend.experiment().evaluateReadiness(out, "pl");
         MIB_REQUIRE(ready.ready, "ready to start");
@@ -1427,33 +1520,30 @@ void testRunFps(const mib::test::TempDir& td) {
         req.acknowledgeDiscardRing = true;
         const auto started = backend.experiment().start(req);
         MIB_REQUIRE(started.outcome == backend::app::ExperimentStartOutcome::Started, "the run starts: " + started.message);
-        r = facade.setRunFps(1000, true);
-        MIB_EXPECT(!r.ok && r.message.find("Stop the experiment") != std::string::npos && backend.runFps() == 3000.0, "refused during an experiment: " + r.message);
+        r = facade.applyCameraDocument(doc("during.json", R"({"frame_rate_hz":1000})"), true);
+        MIB_EXPECT(!r.ok && r.message.find("Stop the experiment") != std::string::npos && backend.runFps() == 4000.0, "refused during an experiment: " + r.message);
         backend.experiment().requestStop(false);
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
         while (!backend.experiment().status().terminal && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(5));
         MIB_REQUIRE(backend.experiment().status().terminal, "the run finalizes");
-        // The run ended (a held ring or a live session again); the rate can be changed once more.
-        r = facade.setRunFps(5000, true);
-        MIB_EXPECT(r.ok && backend.runFps() == 5000.0 && backend.appliedRunFps() == 5000.0, "after the run the rate can be changed: " + r.message);
-        {
-            const auto snap = backend.experiment().evaluateReadiness((td.path() / "fps5.h5").string(), "pl");
-            const auto strobe = std::find_if(snap.gates.begin(), snap.gates.end(), [](const auto& g) { return g.id == "instrument.strobe"; });
-            MIB_EXPECT(strobe != snap.gates.end() && strobe->status == backend::app::GateStatus::Pass, "at 5000 fps the strobe gate passes");
-        }
+        r = facade.applyCameraDocument(doc("after.json", R"({"frame_rate_hz":1000,"exposure_us":"auto"})"), true);
+        MIB_EXPECT(r.ok && backend.runFps() == 1000.0 && backend.appliedRunFps() == 1000.0, "after the run the setting can be changed: " + r.message);
         facade.shutdown();
         backend.shutdown();
     }
+    setEnv("MIB_ARAVIS_FPS", "");
+    setEnv("MIB_ARAVIS_EXPOSURE_US", "");
     {
-        // The configured rate survives a restart; a stored rate outside the range falls back to 5000.
+        // The setting survives a restart, with the exposure mode.
         backend::AppBackend backend;
         backend::bridge::BackendFacade facade(backend);
         MIB_REQUIRE(facade.initialize(data.string()), "facade initializes");
+        MIB_EXPECT(backend.runFps() == 1000.0 && backend.runSetting().autoExposure, "a restart restores 1000 fps, auto");
         FakeState s;
         seedCellImage(s);
         backend.setInstrumentControlForTesting(std::make_unique<FakeControl>(s));
-        MIB_EXPECT(backend.runFps() == 5000.0, "the last rate (5000) is restored");
-        MIB_REQUIRE(facade.setRunFps(750, false).ok, "set 750");
+        MIB_REQUIRE(facade.applyCameraDocument(doc("persist.json", R"({"frame_rate_hz":2000,"exposure_us":470})"), false).ok, "apply a manual exposure outside Run");
+        MIB_EXPECT(backend.appliedRunFps() == 0.0, "outside Run it only stores");
         facade.shutdown();
         backend.shutdown();
     }
@@ -1461,20 +1551,38 @@ void testRunFps(const mib::test::TempDir& td) {
         backend::AppBackend backend;
         backend::bridge::BackendFacade facade(backend);
         MIB_REQUIRE(facade.initialize(data.string()), "facade initializes");
-        MIB_EXPECT(backend.runFps() == 750.0, "a restart restores the configured rate");
+        const auto set = backend.runSetting();
+        MIB_EXPECT(set.fps == 2000.0 && !set.autoExposure && set.exposureUs == 470.0, "a restart restores 2000 fps with the 470 us exposure");
         facade.shutdown();
         backend.shutdown();
     }
-    {
-        auto file = nlohmann::json::parse(std::ifstream(profile));
-        file["experiment"]["frame_rate_hz"] = 12.5;
+    // Profiles that are not a stored Run setting: no hmax (older or env-seeded), a stored rate out of range, an exposure outside the strobe window, an hmax
+    // the producer would reject. Each runs the default and none touches the staged line period.
+    const auto withProfile = [&](nlohmann::json experiment) {
+        auto file = readProfile();
+        file["experiment"] = experiment;
         std::ofstream(profile, std::ios::trunc) << file.dump();
         backend::AppBackend backend;
         backend::bridge::BackendFacade facade(backend);
         MIB_REQUIRE(facade.initialize(data.string()), "facade initializes");
-        MIB_EXPECT(backend.runFps() == 5000.0, "a stored rate outside the range is not used");
+        const auto set = backend.runSetting();
         facade.shutdown();
         backend.shutdown();
+        return set;
+    };
+    {
+        const auto s0 = withProfile({{"frame_rate_hz", 2000.0}, {"exposure_us", 450.0}});
+        MIB_EXPECT(s0.fps == 5000.0 && s0.autoExposure, "a profile without hmax (older or env-seeded) is not a stored Run setting");
+        const auto s1 = withProfile({{"frame_rate_hz", 2000.0}, {"exposure_us", 450.0}, {"hmax", 7}});
+        MIB_EXPECT(s1.fps == 5000.0, "experiment.hmax 7 (the producer takes 58 to 65535) is ignored, so it is not a Run setting either");
+        const auto s2 = withProfile({{"frame_rate_hz", 2000.0}, {"exposure_us", 450.0}, {"hmax", 100000}});
+        MIB_EXPECT(s2.fps == 5000.0, "experiment.hmax 100000 is ignored too");
+        const auto s3 = withProfile({{"frame_rate_hz", 12.0}, {"exposure_us", 450.0}, {"hmax", 58}});
+        MIB_EXPECT(s3.fps == 5000.0, "a stored rate out of range falls back to the default");
+        const auto s4 = withProfile({{"frame_rate_hz", 2000.0}, {"exposure_us", 150.0}, {"hmax", 58}, {"exposure_auto", false}, {"exposure_setting", 150.0}});
+        MIB_EXPECT(s4.fps == 5000.0 && s4.autoExposure, "a stored exposure outside the strobe window falls back to the default");
+        const auto s5 = withProfile({{"frame_rate_hz", 2000.0}, {"exposure_us", 449.94}, {"hmax", 58}});
+        MIB_EXPECT(s5.fps == 2000.0 && s5.autoExposure, "a profile with hmax 58 and a valid rate is the stored Run setting (exposure auto by default)");
     }
 }
 
@@ -1555,6 +1663,7 @@ int main() {
     testRingPlayback(td);
     testRingHeldAfterSsdRun(td);
     testSsdRunHoldsRingThroughTheCoordinator(td);
+    testRunTimingAndDocument();
     testRunFps(td);
     testRunWindowPersists(td);
     testRecordingTarget(td);

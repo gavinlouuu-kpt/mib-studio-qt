@@ -62,12 +62,12 @@ of a core, 60/s at 8 %, 30/s at 4 %.
   It sequences the LED, the cell path and the Aravis profile (Align
   500 fps / 1899.7 µs; Run at the configured rate, default 5 kHz / 150 µs, at the snapped window) around a
   capture start; the full sequence is in [[../data-model/PZ7035-Records]].
-- **Run rate (ABI 38).** `runFps()` / `setRunFps()` / `runTiming()`: a whole number of fps from 100 to 5000
-  in the Aravis profile (`experiment.frame_rate_hz`); every Run entry stages `PzRunTiming.h`'s timing (HMAX 58 forced via
-  `options.pzHmax`, the 150 µs exposure at every rate, SHS = VMAX - 192; the XVS-referenced strobe misses it below ~4.6 kfps: readiness `instrument.strobe` warns) and records the applied
-  rate (`appliedRunFps()`, 0 outside Run). `setRunFps` takes `instrumentModeMutex_`, is refused during an experiment/recording and
-  (without `acknowledgeDiscardRing`) while a stopped Run's ring is held, and re-enters Run at the same window when in Run.
-  See [[architecture/Rust-Bridge]] ABI 38.
+- **Run setting (ABI 38).** `runSetting()` / `setRunSetting()` / `applyCameraDocument()` / `runTiming()`: the rate (whole fps, 1000 to 5000) and the exposure
+  ("auto" = SHS 64, or µs validated against the LED strobe window) come from the PZ7035 camera document ([[frontend/ConfigTabs]]) and live in the Aravis profile
+  (`experiment.*`; only a profile with `experiment.hmax` 58 is a stored Run setting, the env seed never is). Every Run entry stages it through
+  `pz::stageRunProfile` (HMAX 58 forced via `options.pzHmax` = `pz::producerHmax`, the derived or requested exposure) and records the applied setting
+  (`appliedRunTiming()`) *before* the mode becomes Run. `applyCameraDocument` takes `instrumentModeMutex_`, is refused during an experiment/recording and, in a
+  stopped Run, without `acknowledgeDiscardRing`, and re-enters Run at the same window when in Run. See [[architecture/Rust-Bridge]] ABI 38.
 - **Run guard.** In Run the Aravis factory returns null, so no capture
   start can reach the producer.
 - **The ring of an SSD run (#649, #693, D3).** Stop leads to playback, also for an SSD run. When the run has stopped and closed,

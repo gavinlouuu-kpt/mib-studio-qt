@@ -1093,7 +1093,7 @@ export default function App() {
   }, [cameraWin.showDefault]);
   refreshCameraGeometryRef.current = refreshCameraGeometry;
 
-  // The Run frame rate (ABI 38): polled while the instrument has Run, applied through set_run_fps (which re-enters Run when the instrument is in it).
+  // The Run frame rate and exposure (ABI 38): polled on a PZ7035; set by the PZ7035 camera document (Config → Camera document), which re-enters Run when the instrument is in it.
   const [runFpsStatus, setRunFpsStatus] = useState<RunFpsStatus | null>(null);
   const refreshRunFps = useCallback(async () => {
     if (!instrumentModes) return;
@@ -1105,14 +1105,6 @@ export default function App() {
     const id = window.setInterval(() => void refreshRunFps(), 3000);
     return () => window.clearInterval(id);
   }, [ready, instrumentModes, refreshRunFps]);
-  const onApplyRunFps = useCallback(async (fps: number, acknowledgeDiscardRing: boolean) => {
-    append(`setting the Run rate to ${fps} fps…`);
-    const result = await bridge.setRunFps(fps, acknowledgeDiscardRing);
-    append(result.ok ? result.message : `Run rate: ${result.message}`);
-    await refreshRunFps();
-    await refreshCameraGeometry();
-    return { ok: result.ok, message: result.message };
-  }, [append, refreshRunFps, refreshCameraGeometry]);
 
   // After a page reload the backend still holds the Run window it applied: take it back.
   const instrumentMode = instrument?.mode;
@@ -1181,6 +1173,7 @@ export default function App() {
   const cameraDocumentContext={ready,running,experimentActive:expActive,selection:camSelection,append,refresh:refreshCameraState};
   const scriptDocument=useCameraDocument(cameraDocumentContext,"js");
   const mindvisionDocument=useCameraDocument(cameraDocumentContext,"json",operatingMode==="service"&&triggerArmed);
+  const pzCameraDocument=useCameraDocument(cameraDocumentContext,"pz7035",false,{status:runFpsStatus,ringFrames:instrument?.ring?.count??0});
   const previewBuffer = usePreviewBuffer(ready, expActive, seekPreview, refreshConfig);
   const cores = useCoreManagement({ready,resume:resumedNative,active:expActive,append,onChanged:refreshConfig});
   // PZ7035: the PL runs the experiment, so what matters is the backend's Run mode, not a live
@@ -1984,8 +1977,7 @@ export default function App() {
                   </div>
                 </div>
 
-                {instrumentModes && <RunRateControl status={runFpsStatus} ringFrames={instrument?.ring?.count ?? 0}
-                  disabledReason={expActive ? "An experiment is running: stop it to change the Run rate." : ""} onApply={onApplyRunFps} confirm={confirm} />}
+                {instrumentModes && <RunRateControl status={runFpsStatus} />}
                 {instrumentModes && <RunWindowNotice tab="experiment" windowPlaced={cameraWin.placed} modeError={modeError}
                   onPlaceWindow={() => setTab("overview")} onRetry={() => setModeRetry((n) => n + 1)} />}
                 {readinessMessage && <p role="alert">Experiment readiness: {readinessMessage}</p>}
@@ -2073,6 +2065,9 @@ export default function App() {
                       {caps.egrabber_script && <button className={configTab === "script" ? "active" : ""} onClick={() => setConfigTab("script")}>
                         Camera script
                       </button>}
+                      {instrumentModes && <button className={configTab === "script" ? "active" : ""} onClick={() => setConfigTab("script")}>
+                        Camera document
+                      </button>}
                     </div>
                     <div className="subtab-body">
                       {configTab === "app" && (
@@ -2152,6 +2147,7 @@ export default function App() {
                           </div>
                         </>
                       )}
+                      {configTab === "script" && instrumentModes && <CameraDocumentEditor model={pzCameraDocument}/>}
                       {configTab === "script" && caps.egrabber_script && <><CameraScriptControls model={cameraScript} /><CameraDocumentEditor model={scriptDocument}/><CameraDocumentEditor model={mindvisionDocument}/></>}
                     </div>
                   </>

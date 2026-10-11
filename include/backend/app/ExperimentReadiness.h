@@ -101,7 +101,8 @@ struct RunConfigurationSnapshot {
     // PZ7035 Run timing the camera runs at (bridge ABI 38; zeros outside an instrument Run): the configured frame rate, the exposure that keeps SHS 64,
     // the line period and frame length the producer was given. Recorded in the run snapshot (HDF5) beside the run table's tick_hz.
     double runFps{0.0}, runExposureUs{0.0};
-    int runHmax{0}, runVmax{0};
+    int runHmax{0}, runVmax{0}, runShs{0};
+    bool runExposureAuto{true}, runPending{false}; // exposure "auto" (SHS 64) or a number; the camera runs at another setting than the configured one
 
     CameraSourceInfo camera;
     bool cameraReady{false};

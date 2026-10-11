@@ -1061,10 +1061,12 @@ namespace backend::bridge
         // instrument status).
         BackendCommandResult freezeRun();
         BackendCommandResult resumeRun();
-        // Bridge ABI 38: the Run frame rate. fetch_run_fps is JSON (configured fps and its sensor timing, the applied rate, limits);
-        // set_run_fps stores a rate (100 to 5000, whole fps) and re-enters Run at the same window when the instrument is in Run.
+        // Bridge ABI 38: the Run frame rate and exposure. fetch_run_fps is JSON (the configured setting and its sensor timing, the applied one, the limits, where
+        // the exposure and the LED strobe fall). The PZ7035 camera document sets it: check_pz_camera_document validates a text without side effects;
+        // apply_pz_camera_document reads the file, validates it, stores the setting and, when the instrument is in Run, re-enters Run at the same window.
         std::string fetchRunFpsJson();
-        BackendCommandResult setRunFps(double fps, bool acknowledgeDiscardRing);
+        std::string checkCameraDocumentJson(const std::string& text);
+        BackendCommandResult applyCameraDocument(const std::string& path, bool acknowledgeDiscardRing);
         std::vector<std::uint8_t> fetchRingFramePacket(std::uint64_t seq, std::string *error);
         std::string fetchRingStatusJson();
         // #667 S1 (ABI 35): the SATA SSD record store, read only.

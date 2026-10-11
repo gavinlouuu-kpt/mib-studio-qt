@@ -16,9 +16,11 @@ fn read(path:&Path)->Result<String,String>{
 fn revision(text:&str)->String{hex::encode(Sha256::digest(text.as_bytes()))}
 fn transact(action:&str,path:&str,kind:&str,baseline:&str,text:&str)->Result<CameraDocument,String>{
     let _lock=WRITER.lock().map_err(|e|e.to_string())?;
-    if !["js","json"].contains(&kind){return Err("Unsupported camera document kind".into());}
+    if !["js","json","pz7035"].contains(&kind){return Err("Unsupported camera document kind".into());}
+    // The PZ7035 camera document is a .json file; the backend validates its content when it is checked and applied.
+    let extension=if kind=="pz7035"{"json"}else{kind};
     if action=="default" {
-        let text=if kind=="js"{include_str!("../../../resources/defaults/egrabberConfig.js")}else{include_str!("../../../resources/defaults/mindvisionConfig.json")};
+        let text=match kind {"js"=>include_str!("../../../resources/defaults/egrabberConfig.js"),"pz7035"=>include_str!("../../../resources/defaults/pz7035Camera.json"),_=>include_str!("../../../resources/defaults/mindvisionConfig.json")};
         return Ok(CameraDocument{path:String::new(),text:text.into(),revision:String::new()});
     }
     let requested=Path::new(path);
@@ -27,14 +29,14 @@ fn transact(action:&str,path:&str,kind:&str,baseline:&str,text:&str)->Result<Cam
         let parent=fs::canonicalize(requested.parent().ok_or("Missing parent folder")?).map_err(|e|e.to_string())?;
         parent.join(requested.file_name().ok_or("Missing filename")?)
     } else {fs::canonicalize(path).map_err(|e|e.to_string())?};
-    if path.extension().and_then(|x|x.to_str()).map(|x|x.eq_ignore_ascii_case(kind))!=Some(true){return Err("Camera document extension does not match editor".into());}
+    if path.extension().and_then(|x|x.to_str()).map(|x|x.eq_ignore_ascii_case(extension))!=Some(true){return Err("Camera document extension does not match editor".into());}
     let old=if creating{String::new()}else{read(&path)?};
     let result=match action {
         "read"=>old,
         "save"|"create"=>{
             if !creating && revision(&old)!=baseline{return Err("Camera file changed on disk; reload and reconcile your draft".into());}
             if text.len()>LIMIT{return Err("Camera document exceeds 4 MiB".into());}
-            if kind=="json" && !serde_json::from_str::<serde_json::Value>(text).map_err(|e|e.to_string())?.is_object(){return Err("MindVision JSON must be an object".into());}
+            if kind!="js" && !serde_json::from_str::<serde_json::Value>(text).map_err(|e|e.to_string())?.is_object(){return Err("Camera JSON must be an object".into());}
             // Staging and destination share a filesystem. RAII removes the staging
             // file on write/sync, revision-check or publication failure.
             let mut temporary=tempfile::NamedTempFile::new_in(path.parent().ok_or("Missing parent folder")?).map_err(|e|e.to_string())?;
@@ -72,6 +74,24 @@ mod tests {
         assert_eq!(fs::read_to_string(&copied).unwrap(),"{\"copy\":true}");
         let defaults=transact("default","","json","","").unwrap();assert!(defaults.path.is_empty());assert!(serde_json::from_str::<serde_json::Value>(&defaults.text).unwrap().is_object());
         fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn pz7035_documents_are_json_files_with_a_bundled_default() {
+        let dir=tempfile::tempdir().unwrap();
+        let defaults=transact("default","","pz7035","","").unwrap();
+        assert!(defaults.path.is_empty());
+        let parsed:serde_json::Value=serde_json::from_str(&defaults.text).unwrap();
+        assert_eq!(parsed["schema"],"pz7035-camera/1");assert_eq!(parsed["run"]["frame_rate_hz"],5000);assert_eq!(parsed["run"]["exposure_us"],"auto");
+        let path=dir.path().join("camera.json");let target=path.to_str().unwrap();
+        transact("create",target,"pz7035","",&defaults.text).unwrap();
+        let read=transact("read",target,"pz7035","","").unwrap();assert_eq!(read.text,defaults.text);
+        transact("save",target,"pz7035",&read.revision,"{\"run\":{\"frame_rate_hz\":1000}}").unwrap();
+        assert!(transact("save",target,"pz7035",&read.revision,"{}").is_err(), "a stale revision is refused");
+        let now=transact("read",target,"pz7035","","").unwrap();
+        assert!(transact("save",target,"pz7035",&now.revision,"[]").is_err(), "a document must be a JSON object");
+        assert!(transact("read",dir.path().join("camera.js").to_str().unwrap(),"pz7035","","").is_err());
+        let wrong=dir.path().join("camera.txt");std::fs::write(&wrong,"{}").unwrap();
+        assert!(transact("read",wrong.to_str().unwrap(),"pz7035","","").is_err(), "the extension must be .json");
     }
     #[test]
     fn save_as_roundtrips_and_failed_publication_removes_staging() {
