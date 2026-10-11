@@ -121,6 +121,16 @@ class Rehearsal(unittest.TestCase):
             self.assertEqual(diff[0], 2 * F.REC + 4096 + 1000)
 
 
+class CameraDocumentCycle(unittest.TestCase):
+    def test_the_expected_timing_follows_the_producer_rule(self):
+        import camera_document_cycle as C
+        self.assertEqual(C.expected(5000, "auto"), {"hmax": 58, "vmax": 256, "shs": 64})
+        self.assertEqual(C.expected(1000, "auto"), {"hmax": 116, "vmax": 640, "shs": 32})
+        self.assertEqual(C.expected(2655, "auto")["hmax"], 116)
+        self.assertEqual(C.expected(2656, "auto")["hmax"], 58)
+        self.assertIsNone(C.expected(2000, 470.0)["shs"])
+
+
 class SlotDriverGuards(unittest.TestCase):
     """The driver's safety helpers (no Studio needed). Skipped where `websockets` is not installed."""
 

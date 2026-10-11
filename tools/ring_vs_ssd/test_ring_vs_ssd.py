@@ -737,5 +737,32 @@ class DriverNames(unittest.TestCase):
         self.assertNotIn('"post.runs.json"', source.replace("(driver-post.runs.json: post.runs.json belongs", ""), "post.runs.json appears only in the docstring")
 
 
+class GuardPath(unittest.TestCase):
+    """slot_driver.guard_path asks findmnt about the nearest existing parent, so a fresh OUT directory on the HDD is accepted and an unmounted /mnt/hdd still is not."""
+
+    def run_guard(self, stdout):
+        import slot_driver as D
+        asked = []
+
+        def fake(cmd, **kw):
+            asked.append(cmd[-1])
+            return type("R", (), {"stdout": stdout})()
+        real = D.subprocess.run
+        D.subprocess.run = fake
+        try:
+            return D, asked, D.guard_path("OUT", "/mnt/hdd/definitely/not/there/yet")
+        finally:
+            D.subprocess.run = real
+
+    def test_a_new_directory_is_judged_by_its_nearest_existing_parent(self):
+        D, asked, p = self.run_guard("/mnt/hdd\n")
+        self.assertEqual(str(p), "/mnt/hdd/definitely/not/there/yet")
+        self.assertTrue(asked[0] == "/mnt/hdd" or Path(asked[0]).exists(), asked)
+
+    def test_an_unmounted_hdd_is_still_refused(self):
+        with self.assertRaises(SystemExit):
+            self.run_guard("/\n")
+
+
 if __name__ == "__main__":
     unittest.main()

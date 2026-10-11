@@ -94,8 +94,11 @@ def guard_path(label, path):
     """A path under /mnt/hdd must really be on the HDD: an unmounted /mnt/hdd is a directory on the system SSD (findmnt -T)."""
     p = Path(path).expanduser().resolve()
     if str(p) == "/mnt/hdd" or str(p).startswith("/mnt/hdd/"):
+        probe = p
+        while not probe.exists() and probe != probe.parent:  # findmnt -T says nothing for a path that does not exist yet: ask about its nearest existing parent
+            probe = probe.parent
         try:
-            target = subprocess.run(["findmnt", "-n", "-o", "TARGET", "-T", str(p)], capture_output=True, text=True, timeout=10).stdout.strip()
+            target = subprocess.run(["findmnt", "-n", "-o", "TARGET", "-T", str(probe)], capture_output=True, text=True, timeout=10).stdout.strip()
         except (OSError, subprocess.SubprocessError) as e:
             sys.exit(f"{label} {p}: cannot verify the mount with findmnt: {e}")
         if target in ("", "/"):
