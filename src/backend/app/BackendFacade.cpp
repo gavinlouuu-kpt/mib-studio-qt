@@ -3227,6 +3227,14 @@ std::string BackendFacade::fetchRunFpsJson() {
     j["applied_fps"] = applied > 0.0 ? nlohmann::json(applied) : nlohmann::json(nullptr);
     j["pending"] = applied > 0.0 && applied != t.fps; // the camera runs at another rate than the configured one: enter Run again
     j["held"] = backend_.runFrozen();
+    // Where the exposure (the last 150 us of the frame) and the LED strobe (XVS-referenced) fall: they must overlap or the frames are unlit.
+    const auto strobe = pz::strobeCheck(t, pz::kRunLed.delayUs, pz::kRunLed.widthUs);
+    j["exposure_start_us"] = strobe.exposureStartUs;
+    j["exposure_end_us"] = strobe.exposureEndUs;
+    j["strobe_start_us"] = strobe.strobeStartUs;
+    j["strobe_end_us"] = strobe.strobeEndUs;
+    j["strobe_overlaps"] = strobe.overlaps;
+    j["strobe_warning"] = pz::strobeWarning(strobe);
     return j.dump();
 }
 

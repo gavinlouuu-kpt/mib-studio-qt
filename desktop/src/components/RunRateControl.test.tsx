@@ -22,7 +22,7 @@ async function type(text: string) {
   });
 }
 function mount(props: Partial<Parameters<typeof RunRateControl>[0]> = {}) {
-  const onApply = vi.fn(async () => ({ ok: true, message: "Run rate 1000 fps (exposure 950 µs), applied" }));
+  const onApply = vi.fn(async () => ({ ok: true, message: "Run rate 1000 fps (exposure 150 µs), applied" }));
   const confirm = vi.fn(async () => true);
   act(() => root.render(<RunRateControl status={status()} ringFrames={0} disabledReason="" onApply={onApply} confirm={confirm} {...props} />));
   return { onApply, confirm };
@@ -41,17 +41,19 @@ describe("Run rate control (ABI 38)", () => {
     mount({ status: null });
     expect(host.textContent).toBe("");
   });
-  it("shows the configured rate, the derived exposure and the qualification note", async () => {
+  it("shows the configured rate, the 150 µs exposure and the qualification note", async () => {
     mount();
     expect(input().value).toBe("5000");
     expect(testid("run-rate-timing")!.textContent).toContain("exposure 150 µs");
     expect(testid("run-rate-qualification")!.textContent).toContain("5,000 fps is the qualified rate; others are not yet validated on the board.");
+    expect(testid("run-rate-strobe")).toBeNull(); // the strobe falls in the exposure at 5000 fps
     expect(apply().hasAttribute("disabled")).toBe(true); // nothing changed
   });
-  it("derives the exposure of the typed rate and applies it through the backend", async () => {
+  it("keeps the 150 µs exposure at the typed rate, warns that the strobe misses it, and applies through the backend", async () => {
     const { onApply, confirm } = mount();
     await type("1000");
-    expect(testid("run-rate-timing")!.textContent).toContain("exposure 950 µs");
+    expect(testid("run-rate-timing")!.textContent).toContain("exposure 150 µs");
+    expect(testid("run-rate-strobe")!.textContent).toContain("frames will be unlit");
     expect(testid("run-rate-note")!.textContent).toContain("re-enters Run");
     await act(async () => { apply().dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     await flush();
@@ -90,7 +92,7 @@ describe("Run rate control (ABI 38)", () => {
     expect(testid("run-rate-disabled")!.textContent).toContain("An experiment is running");
   });
   it("says so when the camera runs at another rate than the one set, and offers to apply again", async () => {
-    mount({ status: status({ fps: 1000, exposure_us: 949.872, vmax: 1280, applied_fps: 5000, pending: true, qualified: false }) });
+    mount({ status: status({ fps: 1000, exposure_us: 150, vmax: 1280, applied_fps: 5000, pending: true, qualified: false }) });
     expect(testid("run-rate-pending")!.textContent).toContain("The camera runs at 5,000 fps; 1,000 fps is set");
     expect(apply().hasAttribute("disabled")).toBe(false); // unchanged text, but pending: Apply re-enters Run
   });

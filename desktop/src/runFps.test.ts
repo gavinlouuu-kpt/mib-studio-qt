@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyNotice, discardQuestion, draftTiming, exposureText, parseRunFps, pendingNotice, rateSummary, type RunFpsStatus } from "./runFps";
+import { applyNotice, discardQuestion, draftTiming, exposureText, parseRunFps, pendingNotice, rateSummary, strobeNotice, type RunFpsStatus } from "./runFps";
 
 const status = (over: Partial<RunFpsStatus> = {}): RunFpsStatus => ({
   available: true, min_fps: 100, max_fps: 5000, default_fps: 5000, qualified_fps: 5000, fps: 5000, exposure_us: 150, hmax: 58, vmax: 256, shs: 64, exposure_lines: 192,
@@ -7,25 +7,28 @@ const status = (over: Partial<RunFpsStatus> = {}): RunFpsStatus => ({
 });
 
 describe("the Run rate arithmetic mirrors pz::runTiming (PzRunTiming.h)", () => {
-  // The same vectors as tests/backend/run_fps_test.cpp: HMAX 58, SHS 64, VMAX = floor(74.25 MHz / (58 x fps)), exposure = (VMAX - 64) lines.
+  // The same vectors as tests/backend/instrument_modes_test.cpp: HMAX 58, exposure 150 µs = 192 lines at every rate, VMAX = floor(74.25 MHz / (58 x fps)), SHS = VMAX - 192.
   it.each([
-    [5000, 256, 192, 150.0, 5000.673],
-    [2000, 640, 576, 449.939, 2000.269],
-    [1000, 1280, 1216, 949.872, 1000.135],
-    [500, 2560, 2496, 1949.737, 500.067],
-    [100, 12801, 12737, 9949.441, 100.006],
-  ])("%i fps", (fps, vmax, lines, exposureUs, actual) => {
+    [5000, 256, 64, 5000.673],
+    [2000, 640, 448, 2000.269],
+    [1000, 1280, 1088, 1000.135],
+    [500, 2560, 2368, 500.067],
+    [100, 12801, 12609, 100.006],
+  ])("%i fps", (fps, vmax, shs, actual) => {
     const t = draftTiming(fps);
-    expect([t.vmax, t.lines]).toEqual([vmax, lines]);
-    expect(t.exposureUs).toBeCloseTo(exposureUs, 3);
+    expect([t.vmax, t.shs, t.lines, t.exposureUs]).toEqual([vmax, shs, 192, 150]);
     expect(t.actualFps).toBeCloseTo(actual, 3);
   });
-  it("keeps the strobe on the exposure start: the shutter always opens 64 lines after the frame start", () => {
-    for (const fps of [100, 250, 1000, 2500, 4999, 5000]) {
-      const t = draftTiming(fps);
-      expect(t.vmax - t.lines).toBe(64); // SHS
-      expect(t.exposureUs).toBeLessThan(1e6 / fps); // the exposure fits in the frame
-    }
+  it("the strobe (XVS + 7 to 67 µs) overlaps the exposure (the last 150 µs of the frame) only above ~4.6 kfps", () => {
+    const five = draftTiming(5000);
+    expect([five.exposureStartUs, five.exposureEndUs]).toEqual([expect.closeTo(50, 0), expect.closeTo(200, 0)]);
+    expect(five.strobeOverlaps).toBe(true);
+    expect(strobeNotice(five)).toBe("");
+    expect(draftTiming(4700).strobeOverlaps).toBe(true);
+    expect(draftTiming(4500).strobeOverlaps).toBe(false);
+    const one = draftTiming(1000);
+    expect(one.strobeOverlaps).toBe(false);
+    expect(strobeNotice(one)).toMatch(/^Strobe outside the exposure at this rate: frames will be unlit \(exposure 850 to 1000 µs after XVS, strobe 7 to 67 µs\)/);
   });
 });
 
@@ -50,7 +53,7 @@ describe("texts", () => {
     expect(exposureText(1949.737)).toBe("1.95 ms");
   });
   it("summarises the rate with the exposure and the real sensor rate", () => {
-    expect(rateSummary({ fps: 1000, exposure_us: 949.872, actual_fps: 1000.135 })).toBe("1,000 fps · exposure 950 µs · the sensor runs 1,000.1 fps");
+    expect(rateSummary({ fps: 1000, exposure_us: 150, actual_fps: 1000.135 })).toBe("1,000 fps · exposure 150 µs · the sensor runs 1,000.1 fps");
   });
   it("tells whether applying restarts the camera and what a held ring loses", () => {
     expect(applyNotice(status({ in_run: true }), 0)).toContain("re-enters Run");

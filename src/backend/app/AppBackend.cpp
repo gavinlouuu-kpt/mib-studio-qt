@@ -1676,7 +1676,7 @@ namespace backend
                 next.y = y;
                 next.width = kRunWidth;
                 next.height = kRunHeight;
-                // The configured rate and the exposure that keeps SHS 64 (PzRunTiming.h); HMAX 58 forced so the producer cannot pick 116.
+                // The configured rate with the qualified 150 µs exposure (PzRunTiming.h); HMAX 58 forced so the producer cannot pick 116.
                 const auto timing = runTiming();
                 next.experimentFps = timing.fps;
                 next.experimentExposureUs = timing.exposureUs;

@@ -151,8 +151,8 @@ namespace backend
         void applyRxHealStandingCtrl();
         bool setInstrumentMode(pz::InstrumentMode mode, int x, int y, std::string *errorOut);
         // The Run frame rate (bridge ABI 38). The configured rate lives in the Aravis profile (<data>/config/aravis-camera.json, experiment.frame_rate_hz) and
-        // is a whole number of frames per second from 100 to 5000, default 5000. The sensor timing follows it (PzRunTiming.h): HMAX 58 forced, SHS 64, so the
-        // exposure is 150 µs at 5000 fps and grows as the rate falls. A Run entry applies it; setRunFps stores it and, when the instrument is in Run, re-enters Run
+        // is a whole number of frames per second from 100 to 5000, default 5000. The sensor timing follows it (PzRunTiming.h): HMAX 58 forced and the exposure
+        // stays 150 µs at every rate (SHS = VMAX - 192 lines); below ~4.6 kfps the XVS-referenced strobe misses it (readiness warns). A Run entry applies it; setRunFps stores it and, when the instrument is in Run, re-enters Run
         // at the same window so it takes effect at once. Refused during an experiment or recording, and while a stopped Run's ring is held unless
         // `acknowledgeDiscardRing` (the re-entry discards the buffered frames).
         double runFps();                                   // the configured rate (5000 when none valid is stored)
@@ -160,7 +160,7 @@ namespace backend
         pz::RunTiming runTiming();                         // the configured rate's sensor timing
         pz::RunTiming appliedRunTiming() const;            // the applied rate's (the default timing when not in Run)
         bool setRunFps(double fps, bool acknowledgeDiscardRing, std::string *errorOut, std::string *messageOut = nullptr);
-        // "1000 fps, exposure 949 µs": the applied rate when in Run, else the configured one.
+        // "1000 fps (exposure 150 µs)": the applied rate when in Run, else the configured one.
         std::string runRateText();
         // #649 v1: Stop in Run freezes the every-frame ring (provider STOP, wait for the device's frozen state, LED off)
         // so the buffered frames can be played back; resume re-arms (a new ring, the old frames are gone), LED on.

@@ -23,6 +23,7 @@
 #include <spdlog/spdlog.h>
 
 #include <chrono>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <opencv2/core.hpp>
@@ -587,6 +588,17 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
                                        (mode == pz::InstrumentMode::Align ? "Align" : "no camera mode"),
                                    "Choose the window in Camera & Alignment and switch to Run"));
         }
+        // The strobe is referenced to XVS, the exposure is the last 150 us of the frame: at the configured rate they may not overlap (frames unlit).
+        const auto timing = pz::runTiming(backend_.runFps());
+        const auto strobe = pz::strobeCheck(timing, pz::kRunLed.delayUs, pz::kRunLed.widthUs);
+        char window[160];
+        std::snprintf(window, sizeof window, "%.0f fps: exposure %.0f to %.0f us after XVS, strobe %.0f to %.0f us", timing.fps, strobe.exposureStartUs,
+                      strobe.exposureEndUs, strobe.strobeStartUs, strobe.strobeEndUs);
+        if (strobe.overlaps)
+            r.gates.push_back(gate("instrument.strobe", GateStatus::Pass, {}, {}, window));
+        else
+            r.gates.push_back(gate("instrument.strobe", GateStatus::Warn, pz::strobeWarning(strobe),
+                                   "Use a rate above about 4,600 fps, or ask for the strobe/exposure geometry to be changed for this rate"));
     } else if (backend_.isCameraOverview()) {
         r.gates.push_back(gate("camera.mode", GateStatus::Fail,
                                "The camera is showing the full sensor overview",

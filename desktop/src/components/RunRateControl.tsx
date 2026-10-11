@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { QUALIFIED_NOTE, applyNotice, discardQuestion, draftTiming, exposureText, fpsText, parseRunFps, pendingNotice, type RunFpsStatus } from "../runFps";
+import { QUALIFIED_NOTE, applyNotice, discardQuestion, draftTiming, exposureText, fpsText, parseRunFps, pendingNotice, strobeNotice, type RunFpsStatus } from "../runFps";
 
-// The Run frame rate of the PZ7035 (bridge ABI 38): the rate, the exposure the backend derives from it, the 5,000 fps qualification note, and what applying does.
+// The Run frame rate of the PZ7035 (bridge ABI 38): the rate, its exposure (150 µs at every rate) and whether the LED strobe still falls in it, the 5,000 fps qualification note, and what applying does.
 // The backend refuses a change during an experiment or recording and while a stopped Run's ring is held unless the operator agreed (the question below).
 export function RunRateControl({ status, ringFrames, disabledReason, onApply, confirm }: {
   status: RunFpsStatus | null | undefined;
@@ -50,6 +50,7 @@ export function RunRateControl({ status, ringFrames, disabledReason, onApply, co
           {" "}exposure {exposureText(timing.exposureUs)} · sensor {fpsText(timing.actualFps, 1)} fps
         </span>
       )}
+      {timing && strobeNotice(timing) && <p role="alert" data-testid="run-rate-strobe">{strobeNotice(timing)}</p>}
       {!parsed.ok && draft.trim() !== "" && <p role="alert" data-testid="run-rate-invalid">{parsed.reason}</p>}
       {disabledReason && <p data-testid="run-rate-disabled">{disabledReason}</p>}
       {note && !disabledReason && <p data-testid="run-rate-note">{note}</p>}

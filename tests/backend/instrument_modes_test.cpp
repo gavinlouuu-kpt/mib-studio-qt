@@ -1296,7 +1296,7 @@ void testSsdRunHoldsRingThroughTheCoordinator(const mib::test::TempDir& td) {
     backend.shutdown();
 }
 
-// The adjustable Run rate (bridge ABI 38): range, the sensor timing it implies (HMAX 58 forced, SHS 64, exposure follows VMAX), persistence in the
+// The adjustable Run rate (bridge ABI 38): range, the sensor timing it implies (HMAX 58 forced, 150 us exposure at every rate), persistence in the
 // Aravis profile, the refusals (experiment, held ring), re-entry applying the rate, and the run snapshot.
 void testRunFps(const mib::test::TempDir& td) {
     const auto frames = td.path() / "frames_fps";
@@ -1312,10 +1312,19 @@ void testRunFps(const mib::test::TempDir& td) {
                    !pz::checkRunFps(std::nan("")).empty() && !pz::checkRunFps(-1000).empty(),
                "below 100, above 5000, fractions, zero, NaN and negatives are not");
     {
+        // Only the rate changes: HMAX 58 and the 150 us exposure (192 lines) at every rate, SHS = VMAX - 192.
         const auto t5 = pz::runTiming(5000), t1 = pz::runTiming(1000), t100 = pz::runTiming(100);
-        MIB_EXPECT(t5.vmax == 256 && t5.lines == 192 && t5.exposureUs == 150.0 && t5.hmax == 58 && t5.shs == 64, "5000 fps: VMAX 256, 192 lines, 150 us");
-        MIB_EXPECT(t1.vmax == 1280 && t1.lines == 1216 && std::fabs(t1.exposureUs - 949.9) < 0.5, "1000 fps: VMAX 1280, 1216 lines, 950 us");
-        MIB_EXPECT(t100.vmax == 12801 && t100.shs == 64 && t100.lines == 12737, "100 fps: VMAX 12801, SHS stays 64");
+        MIB_EXPECT(t5.vmax == 256 && t5.lines == 192 && t5.shs == 64 && t5.exposureUs == 150.0 && t5.hmax == 58, "5000 fps: VMAX 256, SHS 64, 192 lines, 150 us");
+        MIB_EXPECT(t1.vmax == 1280 && t1.lines == 192 && t1.shs == 1088 && t1.exposureUs == 150.0, "1000 fps: VMAX 1280, SHS 1088, still 192 lines and 150 us");
+        MIB_EXPECT(t100.vmax == 12801 && t100.shs == 12609 && t100.lines == 192, "100 fps: VMAX 12801, SHS 12609");
+        // The XVS-referenced strobe (7 us delay, 60 us width) against the exposure window [SHS, VMAX] lines.
+        const auto c5 = pz::strobeCheck(t5, pz::kRunLed.delayUs, pz::kRunLed.widthUs), c1 = pz::strobeCheck(t1, pz::kRunLed.delayUs, pz::kRunLed.widthUs);
+        MIB_EXPECT(c5.overlaps && std::fabs(c5.exposureStartUs - 50.0) < 0.1 && std::fabs(c5.exposureEndUs - 200.0) < 0.1 && pz::strobeWarning(c5).empty(),
+                   "5000 fps: exposure 50 to 200 us, strobe 7 to 67 us: they overlap");
+        MIB_EXPECT(!c1.overlaps && std::fabs(c1.exposureStartUs - 850.0) < 0.5 && std::fabs(c1.exposureEndUs - 1000.0) < 0.5 &&
+                       pz::strobeWarning(c1).find("strobe outside the exposure at this rate: frames will be unlit") == 0,
+                   "1000 fps: exposure ~850 to 1000 us, strobe 7 to 67 us: unlit, warned: " + pz::strobeWarning(c1));
+        MIB_EXPECT(pz::strobeCheck(pz::runTiming(4700), 7, 60).overlaps && !pz::strobeCheck(pz::runTiming(4500), 7, 60).overlaps, "the strobe reaches the exposure above about 4.6 kfps");
     }
 
     const auto data = td.path() / "data_fps";
@@ -1357,17 +1366,18 @@ void testRunFps(const mib::test::TempDir& td) {
         {
             const auto file = nlohmann::json::parse(std::ifstream(profile));
             MIB_EXPECT(file["experiment"]["frame_rate_hz"] == 1000.0 && file["experiment"]["hmax"] == 58 &&
-                           std::fabs(file["experiment"]["exposure_us"].get<double>() - pz::runTiming(1000).exposureUs) < 1e-9,
-                       "the profile holds 1000 fps, HMAX 58 and the exposure that keeps SHS 64");
+                           file["experiment"]["exposure_us"] == 150.0,
+                       "the profile holds 1000 fps, HMAX 58 and the 150 us exposure");
         }
         MIB_REQUIRE(backend.setInstrumentMode(pz::InstrumentMode::Run, 152, 200, &err), "Run: " + err);
         MIB_EXPECT(backend.appliedRunFps() == 1000.0 && backend.runRateText().find("1000 fps") != std::string::npos &&
-                       backend.runRateText().find("950 \xC2\xB5s") != std::string::npos,
+                       backend.runRateText().find("150 \xC2\xB5s") != std::string::npos,
                    "Run applies the configured rate: " + backend.runRateText());
         {
             const auto j = nlohmann::json::parse(facade.fetchRunFpsJson());
-            MIB_EXPECT(j["applied_fps"] == 1000.0 && j["in_run"] == true && j["pending"] == false && j["qualified"] == false && j["vmax"] == 1280,
-                       "fetch_run_fps in Run at 1000: applied, not pending, not the qualified rate");
+            MIB_EXPECT(j["applied_fps"] == 1000.0 && j["in_run"] == true && j["pending"] == false && j["qualified"] == false && j["vmax"] == 1280 && j["shs"] == 1088 && j["exposure_us"] == 150.0 && j["strobe_overlaps"] == false &&
+                           j["strobe_warning"].get<std::string>().find("frames will be unlit") != std::string::npos,
+                       "fetch_run_fps in Run at 1000: applied, not pending, not the qualified rate, 150 us, the strobe misses the exposure");
         }
 
         // Re-entry: the rate changes in Run, at the same window, and the live session restarts.
@@ -1381,8 +1391,12 @@ void testRunFps(const mib::test::TempDir& td) {
             const auto snap = backend.experiment().evaluateReadiness((td.path() / "fps.h5").string(), "pl");
             const auto j = nlohmann::json::parse(backend::app::runSnapshotToJson(snap.candidate));
             MIB_EXPECT(j["run_timing"]["fps"] == 2000.0 && j["run_timing"]["hmax"] == 58 && j["run_timing"]["vmax"] == 640 &&
-                           std::fabs(j["run_timing"]["exposure_us"].get<double>() - pz::runTiming(2000).exposureUs) < 1e-6,
+                           j["run_timing"]["exposure_us"] == 150.0,
                        "the run snapshot records the fps, the exposure and the line timing: " + j["run_timing"].dump());
+            const auto strobe = std::find_if(snap.gates.begin(), snap.gates.end(), [](const auto& g) { return g.id == "instrument.strobe"; });
+            MIB_REQUIRE(strobe != snap.gates.end(), "the readiness has a strobe gate");
+            MIB_EXPECT(strobe->status == backend::app::GateStatus::Warn && strobe->reason.find("strobe outside the exposure at this rate: frames will be unlit") == 0 && snap.ready,
+                       "at 2000 fps the strobe gate warns (and does not block the start): " + strobe->reason);
         }
 
         // A held ring: refused without the acknowledgement, discarded with it.
@@ -1422,6 +1436,11 @@ void testRunFps(const mib::test::TempDir& td) {
         // The run ended (a held ring or a live session again); the rate can be changed once more.
         r = facade.setRunFps(5000, true);
         MIB_EXPECT(r.ok && backend.runFps() == 5000.0 && backend.appliedRunFps() == 5000.0, "after the run the rate can be changed: " + r.message);
+        {
+            const auto snap = backend.experiment().evaluateReadiness((td.path() / "fps5.h5").string(), "pl");
+            const auto strobe = std::find_if(snap.gates.begin(), snap.gates.end(), [](const auto& g) { return g.id == "instrument.strobe"; });
+            MIB_EXPECT(strobe != snap.gates.end() && strobe->status == backend::app::GateStatus::Pass, "at 5000 fps the strobe gate passes");
+        }
         facade.shutdown();
         backend.shutdown();
     }

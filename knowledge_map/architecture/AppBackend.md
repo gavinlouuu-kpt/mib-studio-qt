@@ -64,7 +64,7 @@ of a core, 60/s at 8 %, 30/s at 4 %.
   capture start; the full sequence is in [[../data-model/PZ7035-Records]].
 - **Run rate (ABI 38).** `runFps()` / `setRunFps()` / `runTiming()`: a whole number of fps from 100 to 5000
   in the Aravis profile (`experiment.frame_rate_hz`); every Run entry stages `PzRunTiming.h`'s timing (HMAX 58 forced via
-  `options.pzHmax`, SHS 64, exposure = (VMAX - 64) lines, so the XVS-referenced strobe keeps its geometry) and records the applied
+  `options.pzHmax`, the 150 µs exposure at every rate, SHS = VMAX - 192; the XVS-referenced strobe misses it below ~4.6 kfps: readiness `instrument.strobe` warns) and records the applied
   rate (`appliedRunFps()`, 0 outside Run). `setRunFps` takes `instrumentModeMutex_`, is refused during an experiment/recording and
   (without `acknowledgeDiscardRing`) while a stopped Run's ring is held, and re-enters Run at the same window when in Run.
   See [[architecture/Rust-Bridge]] ABI 38.

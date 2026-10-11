@@ -1,5 +1,5 @@
 // The Run frame rate (bridge ABI 38): types, the sensor timing the backend derives from a rate, and the texts. PzRunTiming.h is the source of the
-// numbers; the tests pin both sides to the same vectors (HMAX 58 forced, SHS 64, so the exposure follows the frame length).
+// numbers; the tests pin both sides to the same vectors (HMAX 58 forced, exposure 150 µs at every rate, SHS = VMAX - 192 lines).
 
 export interface RunFpsStatus {
   available: boolean;
@@ -23,18 +23,39 @@ export interface RunFpsStatus {
   pending?: boolean;
   /** A stopped Run's ring is held: changing the rate discards its buffered frames. */
   held?: boolean;
+  /** Where the exposure and the XVS-referenced LED strobe fall in a frame (µs after XVS), and whether they overlap. */
+  exposure_start_us?: number;
+  exposure_end_us?: number;
+  strobe_start_us?: number;
+  strobe_end_us?: number;
+  strobe_overlaps?: boolean;
+  strobe_warning?: string;
 }
 
 export const QUALIFIED_NOTE = "5,000 fps is the qualified rate; others are not yet validated on the board.";
-const SENSOR_CLOCK_HZ = 74.25e6, HMAX = 58, SHS = 64;
+const SENSOR_CLOCK_HZ = 74.25e6, HMAX = 58, EXPOSURE_US = 150, STROBE_DELAY_US = 7, STROBE_WIDTH_US = 60;
 
-export interface DraftTiming { vmax: number; lines: number; exposureUs: number; actualFps: number }
+export interface DraftTiming {
+  vmax: number; shs: number; lines: number; exposureUs: number; actualFps: number;
+  exposureStartUs: number; exposureEndUs: number; strobeStartUs: number; strobeEndUs: number; strobeOverlaps: boolean;
+}
 
-/** The sensor timing for a rate (the same arithmetic as pz::runTiming). */
+/** The sensor timing for a rate (the same arithmetic as pz::runTiming and pz::strobeCheck): the exposure stays 150 µs, SHS follows the frame length. */
 export function draftTiming(fps: number): DraftTiming {
   const vmax = Math.floor(SENSOR_CLOCK_HZ / (HMAX * fps));
-  const lines = vmax - SHS;
-  return { vmax, lines, exposureUs: fps === 5000 ? 150 : (lines * HMAX) / SENSOR_CLOCK_HZ * 1e6, actualFps: SENSOR_CLOCK_HZ / (HMAX * vmax) };
+  const lines = Math.round((EXPOSURE_US * 1e-6 * SENSOR_CLOCK_HZ) / HMAX);
+  const shs = vmax - lines;
+  const lineUs = (HMAX / SENSOR_CLOCK_HZ) * 1e6;
+  const exposureStartUs = shs * lineUs, exposureEndUs = vmax * lineUs;
+  const strobeStartUs = STROBE_DELAY_US, strobeEndUs = STROBE_DELAY_US + STROBE_WIDTH_US;
+  const overlap = Math.min(exposureEndUs, strobeEndUs) - Math.max(exposureStartUs, strobeStartUs);
+  return { vmax, shs, lines, exposureUs: EXPOSURE_US, actualFps: SENSOR_CLOCK_HZ / (HMAX * vmax), exposureStartUs, exposureEndUs, strobeStartUs, strobeEndUs, strobeOverlaps: overlap > 0 };
+}
+
+/** The warning when the strobe misses the exposure at a rate (empty when they overlap). */
+export function strobeNotice(t: DraftTiming): string {
+  if (t.strobeOverlaps) return "";
+  return `Strobe outside the exposure at this rate: frames will be unlit (exposure ${Math.round(t.exposureStartUs)} to ${Math.round(t.exposureEndUs)} µs after XVS, strobe ${Math.round(t.strobeStartUs)} to ${Math.round(t.strobeEndUs)} µs).`;
 }
 
 export type RateInput = { ok: true; fps: number } | { ok: false; reason: string };
@@ -56,7 +77,7 @@ export function fpsText(fps: number, digits = 0): string {
   return fps.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
 }
 
-/** "1,000 fps · exposure 950 µs · the sensor runs 1,000.1 fps" */
+/** "1,000 fps · exposure 150 µs · the sensor runs 1,000.1 fps" */
 export function rateSummary(t: { fps: number; exposure_us: number; actual_fps: number }): string {
   return `${fpsText(t.fps)} fps · exposure ${exposureText(t.exposure_us)} · the sensor runs ${fpsText(t.actual_fps, 1)} fps`;
 }
