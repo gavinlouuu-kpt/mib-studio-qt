@@ -243,6 +243,20 @@ class Cases(unittest.TestCase):
         self.assertEqual(rc, 2, out)
         self.assertIn("ABI 37", out)
 
+    def test_status_with_null_epoch_is_unusable_input(self):
+        sc = Scenario(self)
+        sc.status["epoch"] = None
+        rc, out = sc.run()
+        self.assertEqual(rc, 2, out)
+        self.assertIn("null `epoch`", out)
+
+    def test_hold_note_is_reported_as_info(self):
+        sc = Scenario(self)
+        sc.status["hold_note"] = "The Run is stopped and its frames are held, but the LED could not be switched off: x"
+        rc, out = sc.run()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("INFO hold_note on the first status", (sc.d / "out" / "summary.txt").read_text())
+
     # --- d: the overlap -----------------------------------------------------------------------------------------------------------------------
     def test_d_the_overlap_is_too_small(self):
         sc = Scenario(self, tail_from=12, older_ids=())           # the SSD tail starts at frame 2012: overlap 28 < 40 - 4 - 2

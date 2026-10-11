@@ -242,7 +242,11 @@ def run(args) -> int:
     status = load_json(Path(args.status), "ring status")
     if "epoch" not in status:
         raise InputError("the ring status has no `epoch` (bridge ABI 37): this build cannot be compared by (epoch, frame_id)")
+    if status["epoch"] is None:
+        raise InputError("the ring status has a null `epoch`: the registers described no valid ring when it was read (bridge ABI 37)")
     epoch = int(status["epoch"])
+    if status.get("hold_note"):
+        rep.info.append("hold_note on the first status: " + str(status["hold_note"]))
     first_seq, last_seq = int(status["first_seq"]), int(status["last_seq"])
     count = int(status.get("count", last_seq - first_seq + 1))
     capacity = int(status.get("capacity_frames", count))
