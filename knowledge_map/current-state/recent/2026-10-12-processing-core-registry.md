@@ -11,3 +11,5 @@ public registry path. The manifest verifier accepts native-only Contract-2
 manifests and checks their v2 ABI/entrypoint without requiring a Python wheel.
 New signed releases of both lines are needed; immutable
 historical descriptors must not be widened without validating their binaries.
+The Windows native-core job allows 60 minutes because cold Conan dependency
+builds exhausted its previous 30-minute limit during the release repair.
