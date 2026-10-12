@@ -227,7 +227,7 @@ int main(int argc, char* argv[]) {
         MIB_EXPECT(!tab.selectedFrameIndex(), "close clears the selection");
         MIB_EXPECT(!tab.framePaneForTests()->isVisible(), "close hides the pane");
         MIB_EXPECT(!highlight->isVisible(), "close removes the highlight");
-        MIB_EXPECT(tab.frameWindowForTests() == nullptr, "close closes the viewer window");
+        MIB_EXPECT(!tab.frameWindowForTests() || !tab.frameWindowForTests()->isVisible(), "close hides the viewer window");
 
         // ---- 6. KDE on: points sit in level series, a click still selects ------
         wd.mark("kde");

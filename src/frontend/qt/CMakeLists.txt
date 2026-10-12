@@ -299,6 +299,14 @@ if(BUILD_TESTING)
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(integration.review_scatter_e2e PROPERTIES LABELS "integration;e2e;frontend;recording" TIMEOUT 300 SKIP_RETURN_CODE 77)
 
+    # End-to-end: real MainWindow capture on the 512x96 stream, Monitoring tab
+    # click -> cell pane, live updates, step, cell window, close. Screenshots to
+    # MIB_MONITORING_E2E_OUT. Skips (77) without the asset.
+    mib_test_runner_add(mib_frontend_tests monitoring_scatter_e2e_test ${PROJECT_SOURCE_DIR}/tests/frontend/monitoring_scatter_e2e_test.cpp)
+    add_test(NAME integration.monitoring_scatter_e2e COMMAND $<TARGET_FILE:mib_frontend_tests> monitoring_scatter_e2e_test
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(integration.monitoring_scatter_e2e PROPERTIES LABELS "integration;e2e;frontend;monitoring" TIMEOUT 300 SKIP_RETURN_CODE 77)
+
     # YOFO Review parity sign-off, Qt half (tools/review_parity/run.sh): dumps
     # what the tab shows/exports for MIB_REVIEW_PARITY_FILE. Skips (77) without it.
     mib_test_runner_add(mib_frontend_tests review_parity_qt_dump ${PROJECT_SOURCE_DIR}/tests/frontend/review_parity_qt_dump.cpp)

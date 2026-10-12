@@ -74,7 +74,7 @@ calls `clearSelection()` (also on Clear Buffer).
 - **Prev/Next** walk the plotted points in buffer order (oldest → newest),
   wrapping; from a vanished selection they start at an end.
 - **Open in window…** opens a **non-modal** `FrameViewerDialog`
-  (`frameWindow_`, `WA_DeleteOnClose`) — never `exec()`, the run and the
+  (`frameWindow_`, a child of the tab, hidden not deleted on close, reused by the next open) — never `exec()`, so the run and the
   charts keep updating; its Prev/Next step the same selection and it
   follows every new selection until closed.
 - **Highlight** — `scatterHighlight_` (orange, 13 px, legend marker
@@ -86,7 +86,7 @@ calls `clearSelection()` (also on Clear Buffer).
   `framePaneForTests`, `framePaneViewerForTests`, `frameWindowForTests`,
   `framePaneTitleForTests`, `selectedFrameIndex`,
   `scatterPointFramesForTests`, `scatterPointViewPosForTests`,
-  `stepScatterSelectionForTests`. Guard: `frontend.monitoring_scatter_select`.
+  `stepScatterSelectionForTests`. Guards: `frontend.monitoring_scatter_select` (offscreen, injected frames) and `integration.monitoring_scatter_e2e` (real MainWindow capture on the 512x96 stream; screenshots to `MIB_MONITORING_E2E_OUT`).
 
 ## Chart snapshots
 

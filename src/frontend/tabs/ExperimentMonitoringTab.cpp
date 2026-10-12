@@ -2354,6 +2354,7 @@ namespace frontend
         selectedFrame_.reset();
         if (framePaneContainer_) framePaneContainer_->hide();
         if (framePane_) framePane_->setFrame(backend::services::ProcessedFrame{});
+        // Hidden, not deleted: the window is reused by the next "Open in window…".
         if (frameWindow_) frameWindow_->close();
         refreshScatterHighlight();
     }
@@ -2395,7 +2396,6 @@ namespace frontend
             frameWindow_ = new FrameViewerDialog(*selectedFrame_, backend_.processing().getRealtimeRoi(),
                                                  paneOverlayMode(), false, this);
             frameWindow_->setObjectName(QStringLiteral("monitoringFrameWindow"));
-            frameWindow_->setAttribute(Qt::WA_DeleteOnClose);
             frameWindow_->setModal(false);
             connect(frameWindow_, &FrameViewerDialog::requestPreviousFrame, this, [this]() { stepScatterSelection(-1); });
             connect(frameWindow_, &FrameViewerDialog::requestNextFrame, this, [this]() { stepScatterSelection(+1); });
