@@ -255,6 +255,13 @@ if(BUILD_TESTING)
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(frontend.monitoring_kde_density PROPERTIES LABELS "frontend;monitoring;concurrency;safety" TIMEOUT 240)
 
+    # Monitoring scatter click-to-view during a run (Review tab rule, issue
+    # #467): frame pane, highlight, prev/next, eviction, KDE, snapshots, window.
+    mib_test_runner_add(mib_frontend_tests monitoring_scatter_select_test ${PROJECT_SOURCE_DIR}/tests/frontend/monitoring_scatter_select_test.cpp)
+    add_test(NAME frontend.monitoring_scatter_select COMMAND $<TARGET_FILE:mib_frontend_tests> monitoring_scatter_select_test
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(frontend.monitoring_scatter_select PROPERTIES LABELS "frontend;monitoring;safety" TIMEOUT 120)
+
     # Issue #466: ZoomableChartView tells a click from a drag (startDragDistance),
     # optional double-click reset, lost-release recovery.
     mib_test_runner_add(mib_frontend_tests zoomable_chart_view_test ${PROJECT_SOURCE_DIR}/tests/frontend/zoomable_chart_view_test.cpp)

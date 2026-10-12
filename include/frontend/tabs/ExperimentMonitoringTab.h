@@ -3,12 +3,18 @@
 #include "frontend/models/ProcessingConfigDraft.h"
 #include "backend/processing/MonitoringDensity.h"
 #include "backend/services/MonitoringDensityService.h"
+#include "frontend/utils/OverlayRenderer.h"
+#include "frontend/utils/ScatterHitTest.h"
 
 #include <QWidget>
 #include <QImage>
+#include <QPointer>
+#include <QPointF>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -18,7 +24,7 @@ namespace backend::services { struct ProcessedFrame; struct FilterResult; }
 
 class QTimer;
 class QChartView;
-namespace frontend { class ZoomableChartView; }
+namespace frontend { class ZoomableChartView; class FrameViewerDialog; }
 class QScatterSeries;
 class QLineSeries;
 class QBarSeries;
@@ -41,6 +47,7 @@ class QSpinBox;
 class QDoubleSpinBox;
 class QGroupBox;
 class QFormLayout;
+class QSplitter;
 
 namespace Ui { class ExperimentMonitoringTab; }
 
@@ -147,6 +154,24 @@ public:
     /** Redraw scatter and histogram with current data and axis ranges (e.g. after settings change). */
     void refreshCharts();
 
+    // Scatter interaction during a run (same rule as the Review tab, issue
+    // #467): a click on a point shows that cell in the frame pane docked over
+    // the histogram. The pane keeps its own copy of the frame, so the image
+    // stays when the point later leaves the rolling buffer.
+    ZoomableChartView* scatterViewForTests() const { return scatterplotView_; }
+    QScatterSeries* scatterHighlightForTests() const { return scatterHighlight_; }
+    QWidget* framePaneForTests() const { return framePaneContainer_; }
+    FrameViewerDialog* framePaneViewerForTests() const { return framePane_; }
+    FrameViewerDialog* frameWindowForTests() const { return frameWindow_; }
+    QString framePaneTitleForTests() const;
+    // Frame index (ProcessedFrame::index) of the selected cell, if any.
+    std::optional<uint64_t> selectedFrameIndex() const;
+    // Frame index behind every scatter point, in point order (oldest first).
+    const std::vector<uint64_t>& scatterPointFramesForTests() const { return scatterPointFrames_; }
+    // Pixel position of scatter point `point` in scatter-view coordinates.
+    QPointF scatterPointViewPosForTests(std::size_t point) const;
+    void stepScatterSelectionForTests(int delta) { stepScatterSelection(delta); }
+
 public slots:
     void updateRoiDisplay(int offsetX, int offsetY, int width, int height);
 
@@ -226,6 +251,21 @@ private:
     void setKdeModeVisuals(bool on);
     void loadKdePreferences();
     void saveKdePreferences();
+    // Scatter click -> frame pane (see the public block above).
+    void setupFramePane();
+    void onScatterClicked(QPointF viewPos, Qt::MouseButton button);
+    void onScatterDoubleClicked(QPointF viewPos);
+    void onScatterHover(QPointF viewPos);
+    std::optional<std::size_t> scatterPointAt(QPointF viewPos) const;
+    scatterhit::Viewport scatterViewport() const;
+    const backend::services::ProcessedFrame* recentValidFrame(uint64_t frameIndex) const;
+    void selectFrame(const backend::services::ProcessedFrame& frame);
+    void stepScatterSelection(int delta);
+    void clearSelection();
+    void refreshScatterHighlight();
+    void openSelectedFrameInWindow();
+    backend::services::ProcessedFrame frameForDisplay(const backend::services::ProcessedFrame& frame) const;
+    OverlayMode paneOverlayMode() const;
 
     Ui::ExperimentMonitoringTab* ui;
     backend::AppBackend& backend_;
@@ -242,6 +282,20 @@ private:
     QValueAxis* scatterXAxis_ = nullptr;
     QValueAxis* scatterYAxis_ = nullptr;
     std::vector<QLineSeries*> isoelasticCurves_;
+    // Plotted points (µm², deformability) and the frame index each stands
+    // for, rebuilt with the series on every refresh; hit testing uses these,
+    // so it works the same with KDE level series or the plain ones.
+    std::vector<scatterhit::Point> scatterPoints_;
+    std::vector<uint64_t> scatterPointFrames_;
+    QScatterSeries* scatterHighlight_ = nullptr; // the selected cell, drawn on top
+
+    // Frame pane (over the histogram) showing the selected cell.
+    QSplitter* chartsRightSplitter_ = nullptr;
+    QWidget* framePaneContainer_ = nullptr;
+    QLabel* framePaneTitle_ = nullptr;
+    FrameViewerDialog* framePane_ = nullptr;
+    QPointer<FrameViewerDialog> frameWindow_; // "Open in window…", non-modal
+    std::unique_ptr<backend::services::ProcessedFrame> selectedFrame_; // copy as clicked
 
     // Panel 2: Histogram
     ZoomableChartView* histogramView_ = nullptr;

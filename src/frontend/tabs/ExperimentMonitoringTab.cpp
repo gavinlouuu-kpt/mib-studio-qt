@@ -50,6 +50,10 @@
 #include <QMessageBox>
 #include <QShowEvent>
 #include <QHideEvent>
+#include <QHBoxLayout>
+#include <QSplitter>
+#include <QToolButton>
+#include <QToolTip>
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -64,6 +68,7 @@
 #include <QFileDialog>
 
 #include "frontend/widgets/ZoomableChartView.h"
+#include "frontend/dialogs/FrameViewerDialog.h"
 #include "backend/app/AppBackend.h"
 #include "backend/app/ExperimentCoordinator.h"
 #include "backend/recording/Hdf5Service.h"
@@ -166,6 +171,26 @@ QColor kdeLevelColor(int level, int levels)
     const auto rgb = backend::monitoring::densityRampColor(t);
     return QColor(rgb.r, rgb.g, rgb.b);
 }
+
+// Hides the selected-cell marker while a chart is grabbed: stored snapshots
+// and exports show the data, not the operator's current selection.
+class HiddenWhileGrabbing {
+public:
+    explicit HiddenWhileGrabbing(QScatterSeries* series) : series_(series), wasVisible_(series && series->isVisible())
+    {
+        if (wasVisible_) series_->setVisible(false);
+    }
+    ~HiddenWhileGrabbing()
+    {
+        if (wasVisible_) series_->setVisible(true);
+    }
+    HiddenWhileGrabbing(const HiddenWhileGrabbing&) = delete;
+    HiddenWhileGrabbing& operator=(const HiddenWhileGrabbing&) = delete;
+
+private:
+    QScatterSeries* series_;
+    bool wasVisible_;
+};
 
 } // anonymous namespace
 
@@ -711,6 +736,27 @@ namespace frontend
         // Load isoelastic curves overlay
         loadIsoelasticCurves();
 
+        // Selected cell: one point drawn after the data series (Review tab look).
+        scatterHighlight_ = new QScatterSeries();
+        scatterHighlight_->setObjectName(QStringLiteral("monitoringScatterHighlight"));
+        scatterHighlight_->setName(tr("Selected cell"));
+        scatterHighlight_->setMarkerSize(13.0);
+        scatterHighlight_->setColor(QColor(0xf2, 0x8e, 0x2b));
+        scatterHighlight_->setBorderColor(Qt::white);
+        scatterplotChart_->addSeries(scatterHighlight_);
+        scatterHighlight_->attachAxis(scatterXAxis_);
+        scatterHighlight_->attachAxis(scatterYAxis_);
+        scatterHighlight_->setVisible(false);
+        for (auto* marker : scatterplotChart_->legend()->markers(scatterHighlight_)) marker->setVisible(false);
+
+        // Click a point to see the cell; double-click resets the zoom only on
+        // empty space, so a quick second click on a point never zooms out.
+        scatterplotView_->setResetOnDoubleClick(false);
+        connect(scatterplotView_, &ZoomableChartView::plotClicked, this, &ExperimentMonitoringTab::onScatterClicked);
+        connect(scatterplotView_, &ZoomableChartView::plotDoubleClicked, this,
+                &ExperimentMonitoringTab::onScatterDoubleClicked);
+        connect(scatterplotView_, &ZoomableChartView::hoverMoved, this, &ExperimentMonitoringTab::onScatterHover);
+
         // Panel 2: Histogram (top-right)
         histogramChart_ = new QChart();
         histogramChart_->setTitle("Ring Width Distribution");
@@ -758,10 +804,10 @@ namespace frontend
         if (histogramXAxis_)
             histogramView_->setDefaultRange(histogramXAxis_, histogramXMin_, histogramXMax_);
         histogramView_->setDefaultRange(histogramYAxis_, 0, std::max(1.0, histogramYMax_));
-        // Replace placeholder with actual chart view
+        // Replace placeholder with the frame pane over the histogram
         ui->gridLayout->removeWidget(ui->histogramViewPlaceholder);
         delete ui->histogramViewPlaceholder;
-        ui->gridLayout->addWidget(histogramView_, 1, 1);
+        setupFramePane();
     }
 
     void ExperimentMonitoringTab::onUpdate()
@@ -877,6 +923,10 @@ namespace frontend
         // Batch the points: one append per series instead of one signal per
         // point. With KDE on, each point goes to the series of its density
         // level (unknown density = sparsest level until the next estimate).
+        scatterPoints_.clear();
+        scatterPointFrames_.clear();
+        scatterPoints_.reserve(validFrames.size());
+        scatterPointFrames_.reserve(validFrames.size());
         QList<QPointF> scatterPoints;
         QList<QPointF> targetPoints;
         std::vector<QList<QPointF>> levelPoints(kdeEnabled_ ? kKdeLevels : 0);
@@ -890,6 +940,8 @@ namespace frontend
             const double factor = frame.validation.analysisPixelToMicronFactor;
             if (!std::isfinite(factor) || factor <= 0) continue;
             const QPointF point(frame.validation.area * factor * factor, frame.validation.deformability);
+            scatterPoints_.push_back({point.x(), point.y(), static_cast<int>(scatterPoints_.size())});
+            scatterPointFrames_.push_back(frame.index);
             if (kdeEnabled_)
             {
                 double density = 0.0;
@@ -915,6 +967,7 @@ namespace frontend
             scatterXAxis_->setRange(scatterXMin_, scatterXMax_);
             scatterYAxis_->setRange(scatterYMin_, scatterYMax_);
         }
+        refreshScatterHighlight();
     }
 
     void ExperimentMonitoringTab::updateHistogram(const std::vector<backend::services::ProcessedFrame> &validFrames)
@@ -1297,6 +1350,7 @@ namespace frontend
             showValidOverlay_ = enabled;
             // Trigger update to refresh grid with overlay
             updateValidFramesGrid(recentValidFrames_);
+            if (framePane_) framePane_->setOverlayMode(paneOverlayMode());
         }
         else if (sender == ui->invalidOverlayCheck)
         {
@@ -1320,6 +1374,7 @@ namespace frontend
             lastValidFrameIndex_ = 0;
             lastInvalidFrameIndex_ = 0;
             kdeDensityByIndex_.clear();
+            clearSelection();
             requestKdeUpdate(); // the service drops its result for the empty ring
             // Update displays
             updateScatterplot(recentValidFrames_);
@@ -2027,7 +2082,11 @@ namespace frontend
         }
 
         // Capture scatter plot chart
-        QPixmap scatterPlotPixmap = scatterplotView_->grab();
+        QPixmap scatterPlotPixmap;
+        {
+            HiddenWhileGrabbing hide(scatterHighlight_);
+            scatterPlotPixmap = scatterplotView_->grab();
+        }
         if (scatterPlotPixmap.isNull())
         {
             SPDLOG_WARN("Failed to grab scatter plot chart");
@@ -2073,7 +2132,11 @@ namespace frontend
         }
 
         // Grab chart as pixmap
-        QPixmap pixmap = chartView->grab();
+        QPixmap pixmap;
+        {
+            HiddenWhileGrabbing hide(chartView == scatterplotView_ ? scatterHighlight_ : nullptr);
+            pixmap = chartView->grab();
+        }
         if (pixmap.isNull())
         {
             SPDLOG_ERROR("Failed to grab chart view");
@@ -2116,6 +2179,250 @@ namespace frontend
     bool ExperimentMonitoringTab::exportScatterPlotAsTiff(const QString& filePath) const
     {
         return exportChartAsTiff(scatterplotView_, filePath);
+    }
+
+    // ---- Scatter click -> frame pane (the Review tab's interaction, live) ----
+
+    void ExperimentMonitoringTab::setupFramePane()
+    {
+        framePaneContainer_ = new QWidget(this);
+        framePaneContainer_->setObjectName(QStringLiteral("monitoringFramePane"));
+        auto* paneLayout = new QVBoxLayout(framePaneContainer_);
+        paneLayout->setContentsMargins(0, 0, 0, 0);
+        paneLayout->setSpacing(2);
+
+        auto* titleRow = new QHBoxLayout();
+        titleRow->setContentsMargins(0, 0, 0, 0);
+        framePaneTitle_ = new QLabel(framePaneContainer_);
+        framePaneTitle_->setObjectName(QStringLiteral("monitoringFramePaneTitle"));
+        framePaneTitle_->setWordWrap(true);
+        titleRow->addWidget(framePaneTitle_, 1);
+        auto* closeBtn = new QToolButton(framePaneContainer_);
+        closeBtn->setObjectName(QStringLiteral("monitoringFramePaneClose"));
+        closeBtn->setText(QStringLiteral("\u2715"));
+        closeBtn->setToolTip(tr("Close the cell view"));
+        closeBtn->setAccessibleName(tr("Close the cell view"));
+        closeBtn->setAutoRaise(true);
+        connect(closeBtn, &QToolButton::clicked, this, &ExperimentMonitoringTab::clearSelection);
+        titleRow->addWidget(closeBtn, 0, Qt::AlignTop);
+        paneLayout->addLayout(titleRow);
+
+        framePane_ = new FrameViewerDialog(backend::services::ProcessedFrame{}, backend_.processing().getRealtimeRoi(),
+                                           paneOverlayMode(), false, framePaneContainer_);
+        framePane_->setEmbedded(true);
+        framePane_->setObjectName(QStringLiteral("monitoringFramePaneViewer"));
+        paneLayout->addWidget(framePane_, 1);
+        connect(framePane_, &FrameViewerDialog::requestPreviousFrame, this, [this]() { stepScatterSelection(-1); });
+        connect(framePane_, &FrameViewerDialog::requestNextFrame, this, [this]() { stepScatterSelection(+1); });
+        connect(framePane_, &FrameViewerDialog::requestOpenInWindow, this,
+                &ExperimentMonitoringTab::openSelectedFrameInWindow);
+
+        // (frame pane over histogram); the pane appears with the first click,
+        // so the histogram keeps the whole cell until someone asks for a cell.
+        chartsRightSplitter_ = new QSplitter(Qt::Vertical, this);
+        chartsRightSplitter_->setObjectName(QStringLiteral("monitoringChartsRightSplitter"));
+        chartsRightSplitter_->addWidget(framePaneContainer_);
+        chartsRightSplitter_->addWidget(histogramView_);
+        chartsRightSplitter_->setStretchFactor(0, 3);
+        chartsRightSplitter_->setStretchFactor(1, 2);
+        chartsRightSplitter_->setChildrenCollapsible(false);
+        framePaneContainer_->setMinimumHeight(160);
+        framePaneContainer_->hide();
+        ui->gridLayout->addWidget(chartsRightSplitter_, 1, 1);
+    }
+
+    OverlayMode ExperimentMonitoringTab::paneOverlayMode() const
+    {
+        // The valid-frames "overlay" checkbox drives the pane like the thumbnails.
+        return showValidOverlay_ ? OverlayMode::OuterInnerColorCoded : OverlayMode::None;
+    }
+
+    scatterhit::Viewport ExperimentMonitoringTab::scatterViewport() const
+    {
+        scatterhit::Viewport v;
+        const QRectF plot = scatterplotChart_->plotArea();
+        v.x0 = scatterXAxis_->min();
+        v.x1 = scatterXAxis_->max();
+        v.y0 = scatterYAxis_->min();
+        v.y1 = scatterYAxis_->max();
+        v.left = plot.left();
+        v.top = plot.top();
+        v.width = plot.width();
+        v.height = plot.height();
+        return v;
+    }
+
+    std::optional<std::size_t> ExperimentMonitoringTab::scatterPointAt(QPointF viewPos) const
+    {
+        if (scatterPoints_.empty() || !scatterplotView_) return std::nullopt;
+        // View (viewport) -> scene -> chart item coordinates, where plotArea() lives.
+        const QPointF chartPos = scatterplotChart_->mapFromScene(scatterplotView_->mapToScene(viewPos.toPoint()));
+        const double tolerance = std::max(scatterSeries_->markerSize(), 8.0);
+        return scatterhit::nearest(scatterPoints_, scatterViewport(), chartPos.x(), chartPos.y(), tolerance);
+    }
+
+    void ExperimentMonitoringTab::onScatterClicked(QPointF viewPos, Qt::MouseButton button)
+    {
+        if (button != Qt::LeftButton) return;
+        const auto hit = scatterPointAt(viewPos);
+        if (!hit) return; // empty space: the selection only changes on a point
+        const auto* frame = recentValidFrame(scatterPointFrames_[*hit]);
+        if (!frame) return;
+        SPDLOG_DEBUG("Monitoring: scatter point {} -> frame {}", *hit, frame->index);
+        selectFrame(*frame);
+    }
+
+    void ExperimentMonitoringTab::onScatterDoubleClicked(QPointF viewPos)
+    {
+        // Its first click already selected; a double-click on a point never
+        // zooms out from under the user.
+        if (scatterPointAt(viewPos)) return;
+        scatterplotView_->resetZoom();
+    }
+
+    void ExperimentMonitoringTab::onScatterHover(QPointF viewPos)
+    {
+        const auto hit = scatterPointAt(viewPos);
+        if (!hit) {
+            scatterplotView_->unsetCursor();
+            QToolTip::hideText();
+            return;
+        }
+        scatterplotView_->setCursor(Qt::PointingHandCursor);
+        const auto& p = scatterPoints_[*hit];
+        QToolTip::showText(scatterplotView_->mapToGlobal(viewPos.toPoint()),
+                           tr("Frame %1 · %2 µm² · deformability %3 · click to view")
+                               .arg(static_cast<qulonglong>(scatterPointFrames_[*hit]))
+                               .arg(p.x, 0, 'f', 1)
+                               .arg(p.y, 0, 'f', 4),
+                           scatterplotView_);
+    }
+
+    const backend::services::ProcessedFrame* ExperimentMonitoringTab::recentValidFrame(uint64_t frameIndex) const
+    {
+        // Newest first: a click almost always lands on a recent cell.
+        for (auto it = recentValidFrames_.rbegin(); it != recentValidFrames_.rend(); ++it)
+            if (it->index == frameIndex) return &*it;
+        return nullptr;
+    }
+
+    backend::services::ProcessedFrame ExperimentMonitoringTab::frameForDisplay(
+        const backend::services::ProcessedFrame& frame) const
+    {
+        // Same crop as the thumbnails (and the ROI-sized images the Review tab
+        // reads back from the file); clamped, since the frame may predate the
+        // current ROI (crash review 2026-09-08). The crops share pixels.
+        backend::services::ProcessedFrame shown = frame;
+        const auto roi = backend_.processing().getRealtimeRoi();
+        if (roi.w <= 0 || roi.h <= 0) return shown;
+        shown.originalImage = frontend::monitoring::cropToRoi(frame.originalImage, roi.x, roi.y, roi.w, roi.h);
+        shown.processedImage = frontend::monitoring::cropToRoi(frame.processedImage, roi.x, roi.y, roi.w, roi.h);
+        for (auto& image : shown.seriesImages)
+            image = frontend::monitoring::cropToRoi(image, roi.x, roi.y, roi.w, roi.h);
+        return shown;
+    }
+
+    void ExperimentMonitoringTab::selectFrame(const backend::services::ProcessedFrame& frame)
+    {
+        // A copy: the rolling buffer drops the frame after MAX_RECENT_FRAMES
+        // newer cells, the operator may still be looking at it.
+        selectedFrame_ = std::make_unique<backend::services::ProcessedFrame>(frameForDisplay(frame));
+        framePane_->setOverlayMode(paneOverlayMode());
+        framePane_->setFrame(*selectedFrame_);
+        if (frameWindow_) {
+            frameWindow_->setFrame(*selectedFrame_);
+        }
+        framePaneContainer_->show();
+        refreshScatterHighlight();
+    }
+
+    void ExperimentMonitoringTab::stepScatterSelection(int delta)
+    {
+        if (scatterPointFrames_.empty()) return;
+        const int n = static_cast<int>(scatterPointFrames_.size());
+        int from = delta > 0 ? -1 : 0; // nothing selected (or gone): start at an end
+        if (selectedFrame_) {
+            const auto it = std::find(scatterPointFrames_.begin(), scatterPointFrames_.end(), selectedFrame_->index);
+            if (it != scatterPointFrames_.end()) from = static_cast<int>(it - scatterPointFrames_.begin());
+        }
+        const int to = ((from + delta) % n + n) % n;
+        if (const auto* frame = recentValidFrame(scatterPointFrames_[static_cast<std::size_t>(to)])) selectFrame(*frame);
+    }
+
+    void ExperimentMonitoringTab::clearSelection()
+    {
+        selectedFrame_.reset();
+        if (framePaneContainer_) framePaneContainer_->hide();
+        if (framePane_) framePane_->setFrame(backend::services::ProcessedFrame{});
+        if (frameWindow_) frameWindow_->close();
+        refreshScatterHighlight();
+    }
+
+    void ExperimentMonitoringTab::refreshScatterHighlight()
+    {
+        if (!scatterHighlight_) return;
+        scatterHighlight_->clear();
+        std::optional<std::size_t> point;
+        if (selectedFrame_) {
+            for (std::size_t i = scatterPointFrames_.size(); i-- > 0;) {
+                if (scatterPointFrames_[i] == selectedFrame_->index) {
+                    point = i;
+                    break;
+                }
+            }
+        }
+        if (point) {
+            scatterHighlight_->append(scatterPoints_[*point].x, scatterPoints_[*point].y);
+        }
+        scatterHighlight_->setVisible(point.has_value());
+
+        if (!framePaneTitle_ || !selectedFrame_) return;
+        const double factor = selectedFrame_->validation.analysisPixelToMicronFactor;
+        QString title = tr("Frame %1 · %2 µm² · deformability %3")
+                            .arg(static_cast<qulonglong>(selectedFrame_->index))
+                            .arg(selectedFrame_->validation.area * factor * factor, 0, 'f', 1)
+                            .arg(selectedFrame_->validation.deformability, 0, 'f', 4);
+        if (selectedFrame_->validation.isTargetGroup) title += tr(" · target group");
+        if (!point) title += tr(" · no longer on the scatter (left the monitoring buffer)");
+        framePaneTitle_->setText(title);
+    }
+
+    void ExperimentMonitoringTab::openSelectedFrameInWindow()
+    {
+        if (!selectedFrame_) return;
+        if (!frameWindow_) {
+            // Non-modal: the run and the charts keep updating behind it.
+            frameWindow_ = new FrameViewerDialog(*selectedFrame_, backend_.processing().getRealtimeRoi(),
+                                                 paneOverlayMode(), false, this);
+            frameWindow_->setObjectName(QStringLiteral("monitoringFrameWindow"));
+            frameWindow_->setAttribute(Qt::WA_DeleteOnClose);
+            frameWindow_->setModal(false);
+            connect(frameWindow_, &FrameViewerDialog::requestPreviousFrame, this, [this]() { stepScatterSelection(-1); });
+            connect(frameWindow_, &FrameViewerDialog::requestNextFrame, this, [this]() { stepScatterSelection(+1); });
+        } else {
+            frameWindow_->setFrame(*selectedFrame_);
+        }
+        frameWindow_->show();
+        frameWindow_->raise();
+        frameWindow_->activateWindow();
+    }
+
+    QString ExperimentMonitoringTab::framePaneTitleForTests() const
+    {
+        return framePaneTitle_ ? framePaneTitle_->text() : QString();
+    }
+
+    std::optional<uint64_t> ExperimentMonitoringTab::selectedFrameIndex() const
+    {
+        if (!selectedFrame_) return std::nullopt;
+        return selectedFrame_->index;
+    }
+
+    QPointF ExperimentMonitoringTab::scatterPointViewPosForTests(std::size_t point) const
+    {
+        const auto& p = scatterPoints_.at(point);
+        const QPointF chartPos = scatterplotChart_->mapToPosition(QPointF(p.x, p.y), scatterSeries_);
+        return QPointF(scatterplotView_->mapFromScene(scatterplotChart_->mapToScene(chartPos)));
     }
 
 } // namespace frontend
