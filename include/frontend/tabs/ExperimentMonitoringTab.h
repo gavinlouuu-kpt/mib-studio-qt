@@ -162,7 +162,7 @@ public:
     QScatterSeries* scatterHighlightForTests() const { return scatterHighlight_; }
     QWidget* framePaneForTests() const { return framePaneContainer_; }
     FrameViewerDialog* framePaneViewerForTests() const { return framePane_; }
-    FrameViewerDialog* frameWindowForTests() const { return frameWindow_; }
+    FrameViewerDialog* frameWindowForTests() const;
     QString framePaneTitleForTests() const;
     // Frame index (ProcessedFrame::index) of the selected cell, if any.
     std::optional<uint64_t> selectedFrameIndex() const;

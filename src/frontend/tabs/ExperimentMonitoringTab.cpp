@@ -2407,6 +2407,11 @@ namespace frontend
         frameWindow_->activateWindow();
     }
 
+    FrameViewerDialog* ExperimentMonitoringTab::frameWindowForTests() const
+    {
+        return frameWindow_.data();
+    }
+
     QString ExperimentMonitoringTab::framePaneTitleForTests() const
     {
         return framePaneTitle_ ? framePaneTitle_->text() : QString();
