@@ -1,0 +1,5 @@
+## 2026-10-12 — Monitoring: click a scatter point to see the cell during a run
+
+Operators expected the Monitoring tab's deformability-vs-area scatter to work like the Review tab's Charts view while an experiment runs. A click on a point now shows that cell in a frame pane over the histogram (hidden until the first click, ✕ closes it): orange highlight on the point, Prev/Next through the plotted cells, and a non-modal **Open in window…** viewer that follows the selection. Same hit rule (`frontend/utils/ScatterHitTest.h`) and the same embedded `FrameViewerDialog` as the Review tab; works with KDE on. The pane keeps a copy of the frame, so the image stays after the cell leaves the 1000-frame rolling buffer. The highlight is hidden while the scatter is grabbed for the snapshot stored at Stop and for the TIFF export.
+
+Qt Widgets shell only; the React + Tauri Monitoring view has no per-row image command yet. See [[frontend/ExperimentMonitoringTab]]. Guards: `frontend.monitoring_scatter_select`, `integration.monitoring_scatter_e2e`.

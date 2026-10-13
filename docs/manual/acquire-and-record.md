@@ -225,6 +225,18 @@ strobe width/delay. The FPS control is disabled for manual profiles.
   saved into the experiment file as a *provisional* core contour. It covers
   the most recent cells shown on the chart, not the whole run; the Review
   tab draws it dashed on that experiment's scatter.
+- **Find a cell from the scatter while the run goes on.** Click a point on
+  the deformability-vs-area scatter to see that cell above the histogram,
+  as on the Review tab's Charts view: an orange ring marks the point, the
+  title names the frame, area and deformability, **Prev**/**Next** step
+  through the plotted cells (oldest to newest, wrapping) and **Open in
+  window…** opens a separate viewer that keeps following the selection
+  while the charts update. Hover a point to see its numbers first; a click
+  on empty space keeps the current cell. The view keeps the image even
+  after the cell scrolls out of the recent-cells buffer (the title then
+  says so); **✕** closes it, and *Overlay* under the valid thumbnails also
+  draws the contours in it. Works with Density on, and the selection is
+  never part of the chart saved at Stop.
 - Live totals: valid count, invalid count, algorithm FPS, valid FPS.
 - Charts accumulate only while the tab is visible, and they are a live
   preview — they are not saved with the experiment.

@@ -255,6 +255,13 @@ if(BUILD_TESTING)
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(frontend.monitoring_kde_density PROPERTIES LABELS "frontend;monitoring;concurrency;safety" TIMEOUT 240)
 
+    # Monitoring scatter click-to-view during a run (Review tab rule, issue
+    # #467): frame pane, highlight, prev/next, eviction, KDE, snapshots, window.
+    mib_test_runner_add(mib_frontend_tests monitoring_scatter_select_test ${PROJECT_SOURCE_DIR}/tests/frontend/monitoring_scatter_select_test.cpp)
+    add_test(NAME frontend.monitoring_scatter_select COMMAND $<TARGET_FILE:mib_frontend_tests> monitoring_scatter_select_test
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(frontend.monitoring_scatter_select PROPERTIES LABELS "frontend;monitoring;safety" TIMEOUT 120)
+
     # Issue #466: ZoomableChartView tells a click from a drag (startDragDistance),
     # optional double-click reset, lost-release recovery.
     mib_test_runner_add(mib_frontend_tests zoomable_chart_view_test ${PROJECT_SOURCE_DIR}/tests/frontend/zoomable_chart_view_test.cpp)
@@ -291,6 +298,14 @@ if(BUILD_TESTING)
     add_test(NAME integration.review_scatter_e2e COMMAND $<TARGET_FILE:mib_frontend_tests> review_scatter_e2e_test
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
     set_tests_properties(integration.review_scatter_e2e PROPERTIES LABELS "integration;e2e;frontend;recording" TIMEOUT 300 SKIP_RETURN_CODE 77)
+
+    # End-to-end: real MainWindow capture on the 512x96 stream, Monitoring tab
+    # click -> cell pane, live updates, step, cell window, close. Screenshots to
+    # MIB_MONITORING_E2E_OUT. Skips (77) without the asset.
+    mib_test_runner_add(mib_frontend_tests monitoring_scatter_e2e_test ${PROJECT_SOURCE_DIR}/tests/frontend/monitoring_scatter_e2e_test.cpp)
+    add_test(NAME integration.monitoring_scatter_e2e COMMAND $<TARGET_FILE:mib_frontend_tests> monitoring_scatter_e2e_test
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_tests_properties(integration.monitoring_scatter_e2e PROPERTIES LABELS "integration;e2e;frontend;monitoring" TIMEOUT 300 SKIP_RETURN_CODE 77)
 
     # YOFO Review parity sign-off, Qt half (tools/review_parity/run.sh): dumps
     # what the tab shows/exports for MIB_REVIEW_PARITY_FILE. Skips (77) without it.

@@ -21,7 +21,8 @@
   `QBarSeries`, etc. `frontend::ZoomableChartView` adds scroll/zoom. Since
   issue #466 its closed-hand cursor appears once the drag passes
   `startDragDistance()` rather than on press, and middle-drag also pans;
-  the tab ignores the new click signals.
+  the scatter's click signals select a cell (see "Scatter click → frame
+  pane" below).
 - Live totals: valid count, invalid count, algo FPS, valid FPS.
 - `showEvent` / `hideEvent` pause rendering when the tab isn't visible **and**
   gate the backend accumulation: `showEvent` calls
@@ -42,6 +43,50 @@
     `hideEvent`. Intended for oscilloscope/sorter bring-up without
     needing live target-group classifications. See
     [[../services/TriggerService]].
+
+## Scatter click → frame pane (cell view during a run)
+
+The Review tab's Charts interaction ([[HdfReviewTab]], issue #467) on the
+live buffer: a left click on a Deformability-vs-Area point shows that cell
+in a frame pane docked **over the histogram** (`chartsRightSplitter_`:
+`framePaneContainer_` over `histogramView_`, column 1 of the grid). The
+pane is hidden until the first click, so the histogram keeps the whole cell
+until someone asks for a cell; the **✕** button (`monitoringFramePaneClose`)
+calls `clearSelection()` (also on Clear Buffer).
+
+- **Hit test** — the shared Qt-free rule `frontend/utils/ScatterHitTest.h`
+  (nearest point inside the visible ranges, tolerance `max(marker, 8 px)`)
+  over `scatterPoints_` / `scatterPointFrames_`, which `updateScatterplot`
+  rebuilds with the series every 500 ms. They are independent of which
+  series draws the point, so clicks work the same with KDE on (level
+  series) or off. Point k is **not** frame k: uncalibrated results are not
+  plotted. Hover (`hoverMoved`) shows a pointing cursor and the frame's
+  numbers; a click on empty space keeps the selection; double-click resets
+  the zoom only on empty space (`setResetOnDoubleClick(false)`).
+- **Viewer** — the embedded `FrameViewerDialog` (`setEmbedded(true)`), the
+  same widget the Review pane uses. Its frame is a **copy** of the clicked
+  `ProcessedFrame` (`selectedFrame_`), cropped to the clamped realtime ROI
+  like the thumbnails (`frameForDisplay` → `cropToRoi`, Mats share
+  pixels), so it stays on screen after the frame leaves the
+  `MAX_RECENT_FRAMES` rolling buffer; the highlight then hides and the
+  title adds "no longer on the scatter". Overlay mode follows the valid
+  thumbnails' *Overlay* checkbox (`OuterInnerColorCoded` / `None`).
+- **Prev/Next** walk the plotted points in buffer order (oldest → newest),
+  wrapping; from a vanished selection they start at an end.
+- **Open in window…** opens a **non-modal** `FrameViewerDialog`
+  (`frameWindow_`, a child of the tab, hidden not deleted on close, reused by the next open) — never `exec()`, so the run and the
+  charts keep updating; its Prev/Next step the same selection and it
+  follows every new selection until closed.
+- **Highlight** — `scatterHighlight_` (orange, 13 px, legend marker
+  hidden), re-placed by `refreshScatterHighlight()` on every refresh. It is
+  hidden while `captureChartSnapshots` / `exportChartAsTiff` grab the
+  scatter (`HiddenWhileGrabbing`), so stored snapshots never carry the
+  operator's selection.
+- Test hooks: `scatterViewForTests`, `scatterHighlightForTests`,
+  `framePaneForTests`, `framePaneViewerForTests`, `frameWindowForTests`,
+  `framePaneTitleForTests`, `selectedFrameIndex`,
+  `scatterPointFramesForTests`, `scatterPointViewPosForTests`,
+  `stepScatterSelectionForTests`. Guards: `frontend.monitoring_scatter_select` (offscreen, injected frames) and `integration.monitoring_scatter_e2e` (real MainWindow capture on the 512x96 stream; screenshots to `MIB_MONITORING_E2E_OUT`).
 
 ## Chart snapshots
 
