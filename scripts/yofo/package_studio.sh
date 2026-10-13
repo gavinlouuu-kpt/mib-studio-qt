@@ -23,18 +23,25 @@ for arg in "$@"; do
 done
 pkg=${pkg:-/mnt/hdd/developer-data/IMX426/yofo-studio-pkg/$commit}
 sdk=${YOFO_SDK:?set YOFO_SDK to the installed YOFO Yocto SDK}
+# Reproducible identity (#706): the same commit gives the same server and dist.tar. The version the binary reports comes from the commit, not from whichever
+# git tags the machine has fetched at configure time (cmake/MIBVersion.cmake runs `git describe` then), and every timestamp is the commit's.
+numeric=$(sed -n 's/^set(DEFAULT_VERSION "\([0-9]*\.[0-9]*\.[0-9]*\)")/\1/p' cmake/MIBVersion.cmake)
+[ -n "$numeric" ] || { echo "package: cannot read DEFAULT_VERSION from cmake/MIBVersion.cmake" >&2; exit 1; }
+export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
+version_args=("-DMIB_RELEASE_VERSION_OVERRIDE=$numeric" "-DMIB_RELEASE_VERSION_FULL_OVERRIDE=$numeric-beta.$commit")
 mkdir -p "$(dirname "$pkg")"
 findmnt -T "$(dirname "$pkg")" >/dev/null || { echo "package: $pkg is not on a mounted filesystem" >&2; exit 1; }
 if [ "$build" = 1 ]; then
     (unset PKG_CONFIG_PATH LD_LIBRARY_PATH; . "$sdk"/environment-setup-*;
-     cmake --preset linux-armv7-yocto >/dev/null && cmake --build --preset linux-armv7-yocto-build -j"$(nproc)" --target mib_backend mib_review_core mib_processing oeabt_serial oeabt_core stage_zc300 stage_zc300_protocol)
+     cmake --preset linux-armv7-yocto "${version_args[@]}" >/dev/null && cmake --build --preset linux-armv7-yocto-build -j"$(nproc)" --target mib_backend mib_review_core mib_processing oeabt_serial oeabt_core stage_zc300 stage_zc300_protocol)
     scripts/yofo/cargo-armv7.sh build --release --manifest-path crates/mib-bridge-server/Cargo.toml
     (cd desktop && npm run build >/dev/null)
 fi
 mkdir -p "$pkg"
 cp crates/mib-bridge-server/target/armv7-unknown-linux-gnueabihf/release/yofo-studio-server "$pkg/yofo-studio-server"
 (unset PKG_CONFIG_PATH LD_LIBRARY_PATH; . "$sdk"/environment-setup-*; $STRIP "$pkg/yofo-studio-server")
-tar -C desktop -cf "$pkg/dist.tar" dist
+# Deterministic archive: sorted names, the commit time, no owner (#706). GNU tar format, as before.
+tar --sort=name --mtime="@$SOURCE_DATE_EPOCH" --owner=0 --group=0 --numeric-owner --format=gnu -C desktop -cf "$pkg/dist.tar" dist
 cp deploy/yofo-studio/yofo-studio.service deploy/yofo-studio/install.sh deploy/yofo-studio/mount-data.sh "$pkg/"
 # The E-modulus LUT (G6): the server reads resources/isoelastic_curve/ under its --resource-dir.
 rm -rf "$pkg/resources"; install -d "$pkg/resources/isoelastic_curve"
