@@ -140,7 +140,7 @@ fn compile_bridges(configure: impl FnOnce(&mut cc::Build)) {
             let mut flag = std::ffi::OsString::from("-ffile-prefix-map=");
             flag.push(out);
             flag.push("=/out");
-            bridge_build.flag_if_supported(&flag.to_string_lossy());
+            bridge_build.flag_if_supported(&flag);
         }
     }
     bridge_build.compile("mib_bridge_shim");
