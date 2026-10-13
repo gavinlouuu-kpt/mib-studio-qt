@@ -239,8 +239,12 @@ in `cmake/MIBVersion.cmake`, `…_FULL_OVERRIDE` = `<numeric>-beta.<commit>`, no
 tags), exports `SOURCE_DATE_EPOCH` (the commit time), and packs `dist.tar` with sorted names, fixed mtime and
 owner. The compilers and rustc remap the checkout, `$CARGO_HOME` and `$RUSTUP_HOME` to `/build`, `/cargo`
 and `/rustup` (`-ffile-prefix-map` in `cmake/toolchains/yocto-armv7.cmake` and `cargo-armv7.sh`,
-`--remap-path-prefix` in `RUSTFLAGS`), and cargo runs `--locked`. Check a change with two clean builds
-(also from two checkout paths) and compare `MD5SUMS`.
+`--remap-path-prefix` in `RUSTFLAGS`, `OUT_DIR` mapped in `crates/mib-bridge/build.rs`), and cargo runs
+`--locked`. Two clean builds from the same checkout path give byte-identical `yofo-studio-server` and
+`dist.tar` (only `BUILD_INFO`, which carries the build time, differs). A different checkout path still
+changes the server by a few bytes of code layout (cargo hashes the path into its crate metadata), with
+no path left in the binary; build a bundle you intend to compare from the same worktree path. Compare
+`MD5SUMS` to check a change.
 
 `cmake/toolchains/yocto-armv7.cmake` keeps every package search in the sysroot.
 HDF5 needs care: the SDK's HDF5 package config is unusable (absolute install

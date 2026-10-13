@@ -4,5 +4,5 @@ Two clean `package_studio.sh` builds of one commit differed in `dist.tar` (tar m
 `yofo-studio-server` (a version string from `git describe --tags`, absolute `__FILE__` paths). The
 version now comes from the commit, `SOURCE_DATE_EPOCH` is the commit time, `dist.tar` is packed
 deterministically, the compilers remap the checkout and cargo/rustup homes, and cargo uses `--locked`.
-A bundle can therefore reuse the previous bundle's `yofo-studio-server` and `dist.tar` after a
+Rebuilds from the same checkout path are byte-identical (server and `dist.tar`); a different checkout path still moves the server by 16 bytes of code layout, with no path left in the binary. A bundle can therefore reuse the previous bundle's `yofo-studio-server` and `dist.tar` after a
 rebuild. See [[Build]].
