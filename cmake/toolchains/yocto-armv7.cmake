@@ -7,6 +7,10 @@ if(NOT DEFINED ENV{OECORE_TARGET_SYSROOT})
 endif()
 
 set(CMAKE_SYSTEM_NAME Linux)
+
+# Reproducible bundles (#706): __FILE__ and the debug info must not carry the checkout path (spdlog's source locations are in the binary).
+set(CMAKE_C_FLAGS_INIT "${CMAKE_C_FLAGS_INIT} -ffile-prefix-map=${CMAKE_SOURCE_DIR}=/build")
+set(CMAKE_CXX_FLAGS_INIT "${CMAKE_CXX_FLAGS_INIT} -ffile-prefix-map=${CMAKE_SOURCE_DIR}=/build")
 set(CMAKE_SYSTEM_PROCESSOR armv7l)
 set(CMAKE_SYSROOT "$ENV{OECORE_TARGET_SYSROOT}")
 set(CMAKE_FIND_ROOT_PATH "$ENV{OECORE_TARGET_SYSROOT}")
