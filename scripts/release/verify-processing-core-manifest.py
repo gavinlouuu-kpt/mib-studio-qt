@@ -103,7 +103,6 @@ def main(argv: list[str] | None = None) -> int:
         "processing_core_manifest_schema_version",
         "channel",
         "contract_version",
-        "wheel",
         "profile_catalog_url",
         "emodulus_lut_manifest_url",
     ):
@@ -111,13 +110,27 @@ def main(argv: list[str] | None = None) -> int:
             print(f"ERROR: manifest is missing required field: {field}", file=sys.stderr)
             return 1
 
-    wheel = manifest["wheel"]
+    native_only = manifest.get("line") == "absdiff-laplacian"
+    if manifest.get("line") not in (None, "subtract-ring", "absdiff-laplacian"):
+        print("ERROR: unknown processing-core line", file=sys.stderr)
+        return 1
+    if native_only:
+        if (manifest.get("processing_core_manifest_schema_version") != 2
+                or manifest.get("contract_version") != 2
+                or "wheel" in manifest or not manifest.get("native_plugins")
+                or manifest.get("release_tag") != f"mib-processing-absdiff-laplacian-v{manifest.get('version')}"):
+            print("ERROR: invalid native-only Contract-2 manifest", file=sys.stderr)
+            return 1
+        wheel = {"package": "", "version": manifest.get("version"),
+                 "release_tag": manifest["release_tag"], "wheels": []}
+    else:
+        wheel = manifest.get("wheel", {})
     for field in ("package", "version", "release_tag", "wheels"):
         if field not in wheel:
             print(f"ERROR: manifest.wheel is missing required field: {field}", file=sys.stderr)
             return 1
 
-    if not isinstance(wheel["wheels"], list) or not wheel["wheels"]:
+    if not isinstance(wheel["wheels"], list) or (not native_only and not wheel["wheels"]):
         print("ERROR: manifest.wheel.wheels must be a non-empty list", file=sys.stderr)
         return 1
 
@@ -173,6 +186,10 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         if entry["contract_version"] != manifest["contract_version"]:
             print("ERROR: native plugin contract_version does not match manifest", file=sys.stderr)
+            return 1
+        if native_only and (entry["engine_abi_version"] != 2
+                            or entry["entrypoint"] != "mib_processing_get_api_v2"):
+            print("ERROR: Contract-2 plugin must use engine ABI 2 and its v2 entrypoint", file=sys.stderr)
             return 1
         if not SHA256_RE.fullmatch(str(entry["sha256"])):
             print(f"ERROR: native plugin sha256 is invalid: {entry['filename']}", file=sys.stderr)
@@ -230,7 +247,10 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"Channel: {manifest['channel']}")
     print(f"Contract version: {manifest['contract_version']}")
-    print(f"Wheel: {wheel['package']} {wheel['version']} ({wheel['release_tag']}, {len(wheel['wheels'])} platform(s))")
+    if native_only:
+        print(f"Native-only line: absdiff-laplacian {manifest['version']}")
+    else:
+        print(f"Wheel: {wheel['package']} {wheel['version']} ({wheel['release_tag']}, {len(wheel['wheels'])} platform(s))")
     if schema_version >= 2:
         print(f"Native plugins: {len(manifest['native_plugins'])}")
     print(f"Profile catalog: {manifest['profile_catalog_url']}")
