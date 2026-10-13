@@ -232,6 +232,16 @@ commits, the PL BUILD_ID and the ABI. `install.sh` installs the bundle's produce
 `core.json` as `/etc/yofo/expected-core.json`, so the preflight identity check compares against the
 bundle's own PL. Plan: `docs/exec-plans/active/2026-10-08-yofo-studio-bundle.md`.
 
+**Reproducible bundles (#706).** Rebuilding one commit gives the same `yofo-studio-server` and `dist.tar`,
+so a new bundle can reuse the previous bundle's binaries without a "what changed" question.
+`package_studio.sh` takes the version from the commit (`MIB_RELEASE_VERSION_OVERRIDE` = `DEFAULT_VERSION`
+in `cmake/MIBVersion.cmake`, `…_FULL_OVERRIDE` = `<numeric>-beta.<commit>`, not `git describe`, which moves with
+tags), exports `SOURCE_DATE_EPOCH` (the commit time), and packs `dist.tar` with sorted names, fixed mtime and
+owner. The compilers and rustc remap the checkout, `$CARGO_HOME` and `$RUSTUP_HOME` to `/build`, `/cargo`
+and `/rustup` (`-ffile-prefix-map` in `cmake/toolchains/yocto-armv7.cmake` and `cargo-armv7.sh`,
+`--remap-path-prefix` in `RUSTFLAGS`), and cargo runs `--locked`. Check a change with two clean builds
+(also from two checkout paths) and compare `MD5SUMS`.
+
 `cmake/toolchains/yocto-armv7.cmake` keeps every package search in the sysroot.
 HDF5 needs care: the SDK's HDF5 package config is unusable (absolute install
 dir, imported targets at `/usr/lib`) and FindHDF5 would otherwise ask the

@@ -132,6 +132,17 @@ fn compile_bridges(configure: impl FnOnce(&mut cc::Build)) {
         bridge_build.file(src);
     }
     configure(&mut bridge_build);
+    // cargo's OUT_DIR name carries a hash of the checkout path, and cxx.h's
+    // __FILE__ lands in the binary; map it to a fixed name so a bundle does
+    // not depend on where it was built (#706).
+    if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() != Ok("msvc") {
+        if let Some(out) = std::env::var_os("OUT_DIR") {
+            let mut flag = std::ffi::OsString::from("-ffile-prefix-map=");
+            flag.push(out);
+            flag.push("=/out");
+            bridge_build.flag_if_supported(&flag.to_string_lossy());
+        }
+    }
     bridge_build.compile("mib_bridge_shim");
 }
 
