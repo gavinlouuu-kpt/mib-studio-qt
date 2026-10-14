@@ -77,16 +77,16 @@ Access follows the same private-origin rule as PENPOT.md.
 
 ## Audit findings to fix independently
 
-A code audit at `ac2ffba7` found these, independent of the workspace redesign:
+A code audit at `ac2ffba7` found these, independent of the workspace redesign. Findings 5–7 are tracked under #713, finding 10 under #393 and #712:
 
-1. **When the last remote client disconnects, pumps keep running.**
+1. **When the last remote client disconnects, pumps keep running** (#711).
    - The server stops the experiment, stage and recording and idles the instrument, but not the
      pumps (`crates/mib-bridge-server/src/lib.rs`, `stop_and_save`).
    - This must be fixed before unattended queues.
-2. **The E-modulus LUT identity is not recorded with runs.** Fixed by snapshot v3 (ADR 0015).
-3. **MIB Studio's Review tab does not mount `review/ReviewPanel.tsx`.** The panel's header comment
+2. **The E-modulus LUT identity is not recorded with runs.** Fixed by snapshot v3 (ADR 0015, #712).
+3. **MIB Studio's Review tab does not mount `review/ReviewPanel.tsx`** (noted on #512). The panel's header comment
    says it does. Resolve via #512 before adding review features.
-4. **React Prepare does not show the authoritative backend readiness gates.** They are evaluated
+4. **React Prepare does not show the authoritative backend readiness gates** (#713). They are evaluated
    only inside Start, after the file is picked.
 5. **Readiness evaluation with a path writes a probe file every time**, and an HDF5 round trip
    every 30 s. It should be cached; any benchmark should be explicit and idle-only.
@@ -94,6 +94,6 @@ A code audit at `ac2ffba7` found these, independent of the workspace redesign:
    id and storage path.
 7. **The frontend checklist has no Unknown/Unsupported state.** "Not read yet" shows as failed,
    and a required warning blocks.
-8. **The PZ7035 ingest drops PL `runId`/`epoch`.** Fixed by ADR 0015.
-9. **FCS export never fills `$MIB_RUN_ID`.**
+8. **The PZ7035 ingest drops PL `runId`/`epoch`.** Fixed by ADR 0015 (#712).
+9. **FCS export never fills `$MIB_RUN_ID`** (#712).
 10. **The operator is always empty in run provenance.** To be fixed with #393 selected operator.
