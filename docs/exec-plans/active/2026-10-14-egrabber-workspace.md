@@ -103,9 +103,17 @@ seven later interaction refinements, not a replacement seven-tab production app.
     objective, camera or ROI identity changes.
   - A history view of records with spec lines and reversible exclusions.
 
-  Open: reference materials (rigid size beads, beads of known stiffness), which
-  quantities may be *applied* rather than only checked, expiry, and whether derivation
-  lives in the backend or the Cytoflow worker.
+  Decided 2026-10-14 (owner delegated):
+  - Reference material: rigid size beads of known diameter are the standard
+    calibration sample. Stiffness references are optional and check-only.
+  - Only pixel-to-micron may be *applied*, as a proposal the operator confirms.
+    Deformation offset and E-vs-nominal are reported, never subtracted or corrected;
+    a science correction belongs in a processing contract (ADR 0007).
+  - Expiry: hard invalidation on chip / objective / camera / ROI identity change; soft
+    age warning, default 24 h, policy per method (none / warn / required).
+  - Derivation runs in the C++ backend. Measurements come from the normal processing
+    core; the record feeds a readiness gate and a processing input, so it stays out of
+    the review worker.
 - Run plan card: stop condition × rate × payload → estimated duration and size. Use
   measured SSD fresh vs sustained rates on the PZ7035. Sample volume is shown as an
   estimate, never as a level.

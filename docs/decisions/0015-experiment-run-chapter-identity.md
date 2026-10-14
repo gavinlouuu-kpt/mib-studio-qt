@@ -103,8 +103,9 @@ it does not need to infer anything.
    - Its results become an instrument-scoped **calibration record** (#393). The record is a
      proposal until an operator explicitly applies it.
    - Later runs reference the applied record's id in snapshot v3.
-   - The reference materials, derived quantities, readiness policy and expiry rules are specified
-     in the execution plan (P2). If the record format changes processing inputs, it needs its own ADR.
+   - Rigid size beads are the standard reference. Only pixel-to-micron may be applied from a
+     record; deformation offset and E-vs-nominal are checked and reported, never corrected.
+     Derivation runs in the backend. Details and expiry policy are in the execution plan (P2).
 
 8. **Out of scope:**
    - sample identity in the processing-core C ABI or the PL record format;
