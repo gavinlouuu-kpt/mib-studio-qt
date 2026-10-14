@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "status": "design-baseline-not-production-integration",
+  "branch": "feat/egrabber-workspace",
+  "base_branch": "develop",
+  "base_commit": "2a4e0a4f38055df5464400048ab9948d949319e2",
+  "review_date": "2026-10-14",
+  "workspace_stages": ["Prepare", "Align", "Experiment", "Review"],
+  "reference_view_count": 37,
+  "interactive_refinement_view_count": 7,
+  "prototype": {
+    "path": "prototype.html",
+    "source_name": "mib_egrabber_refinement_v2.html",
+    "source_sha256": "42ee3ce9efd1899ec53fa0639ba22e62c82c37eb5b1741abb8b3bfd30570d4e6",
+    "published_sha256": "0daffad8a9533c2a7f804c206bf82a5eeff5757f4dc1d543749b99c1d699c9cc",
+    "publication_changes": [
+      "Replace private Penpot URLs with the relative README.md link",
+      "Replace private live-Penpot status copy with repository integration status",
+      "Rename the reference-link constants; retain reviewed interaction behavior"
+    ],
+    "hardware_access": false,
+    "production_route": false,
+    "vendor_assets_included": false
+  },
+  "references": [
+    {
+      "kind": "public-user-guide",
+      "version": "23.04.1.2177",
+      "url": "https://documentation.euresys.com/Products/COAXLINK/COAXLINK_23_04/en-us/Content/11_Pdf/D805ET-eGrabber_Studio_User_Guide-eGrabber-23.04.1.2177.pdf"
+    },
+    {
+      "kind": "supplied-static-analysis",
+      "version": "26.09.0.5",
+      "source": "MIB-eGrabber-design-handoff-26.09.0.5.md",
+      "limitation": "Resources, SDK documentation and partial decompilation inform the original design; no hardware runtime guarantee and no vendor implementation is included"
+    }
+  ],
+  "native_penpot_navigation": "Not verified; not installed by this branch",
+  "validation": {
+    "reference_node_smoke": {
+      "command": "node --test docs/design/egrabber-workspace/prototype.test.mjs",
+      "passed": 14,
+      "failed": 0,
+      "scope": "Node VM behavior checks; not browser or hardware"
+    },
+    "reference_browser_regression": {
+      "passed": 33,
+      "failed": 0,
+      "browser": "Chromium 144.0.7559.96",
+      "viewports": [1440, 1200, 390],
+      "scope": "Sanitized HTML exercised with the supplied reviewed-v2 Playwright harness; not React, Penpot-native or hardware"
+    },
+    "native_application_build": "not run; no application changes in this baseline",
+    "repository_wide_checks": "not run; full checkout unavailable in execution environment"
+  },
+  "excluded": [
+    "Private host URLs",
+    "Penpot object/operation identifiers and recovery tools",
+    "Credentials",
+    "Real experiment images/data",
+    "Font binaries",
+    "Decompiled vendor implementation"
+  ]
+}
