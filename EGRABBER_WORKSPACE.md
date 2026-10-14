@@ -11,12 +11,15 @@ No hardware commands, bridge ABI, dependencies or production routes are changed.
 ## Start here
 
 - [Design brief and full-workspace scope](docs/design/egrabber-workspace/README.md)
+- [Penpot sources, screen IDs and developer handoff](docs/design/egrabber-workspace/PENPOT.md)
 - [Reviewed v2 interaction reference](docs/design/egrabber-workspace/prototype.html)
 - [Staged execution plan](docs/exec-plans/active/2026-10-14-egrabber-workspace.md)
-- [Reference provenance](docs/design/egrabber-workspace/reference.json)
+- [Reference provenance and machine-readable Penpot registry](docs/design/egrabber-workspace/reference.json)
 
 The seven-view interaction reference covers the later engineering refinements. It
 does not replace the full Prepare / Align / Experiment / Review workspace specification.
+Use the Penpot handoff to find the original layout, preparation screens and
+scatter flows; native route completion is tracked separately from the HTML demo.
 
 ## Preview the reference
 
