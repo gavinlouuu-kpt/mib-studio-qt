@@ -14,6 +14,7 @@ import argparse
 from dataclasses import dataclass
 import importlib.util
 import json
+import math
 from pathlib import Path
 import signal
 import sys
@@ -107,6 +108,59 @@ def _reported_fault(status: Mapping[str, Any]) -> str | None:
     return _reported_warning(status)
 
 
+def _valid_bool(mapping: Mapping[str, Any], key: str) -> bool:
+    """Validate a boolean leaf when it is part of the current DTO."""
+    return key not in mapping or type(mapping[key]) is bool
+
+
+def _validate_status_shape(status: Mapping[str, Any]) -> str | None:
+    """Validate the fields needed to make a no-fault decision.
+
+    The bridge DTO has optional blocks, but a status display cannot safely
+    infer health from an available object missing its identity/fault blocks.
+    Unknown identity is therefore blue.  Unknown future fields are ignored;
+    known boolean leaves may not be stringly typed.
+    """
+    for field in ("mode", "core", "led", "link"):
+        if not isinstance(status.get(field), Mapping):
+            return f"malformed.{field}"
+    mode = status["mode"]
+    if mode.get("name") not in {"align", "run", "unknown"}:
+        return "unknown.mode"
+    if mode.get("name") == "unknown":
+        return "unknown.mode"
+    for key in ("run_set", "idle", "service"):
+        if not _valid_bool(mode, key):
+            return f"malformed.mode.{key}"
+    core = status["core"]
+    for key in ("build_match", "profile_match"):
+        if core.get(key) not in {"match", "mismatch", "unknown"}:
+            return f"malformed.core.{key}"
+        if core[key] == "unknown":
+            return f"unknown.core.{key}"
+    led = status["led"]
+    if type(led.get("guard_fault")) is not bool:
+        return "malformed.led.guard_fault"
+    for key in ("on",):
+        if not _valid_bool(led, key):
+            return f"malformed.led.{key}"
+    link = status["link"]
+    for key in ("rates_valid", "ingress_errors_warn", "bad_frames_warn", "dropped_warn", "bridge_active"):
+        if not _valid_bool(link, key):
+            return f"malformed.link.{key}"
+    heal = link.get("rx_heal")
+    if not isinstance(heal, Mapping):
+        return "malformed.link.rx_heal"
+    for key in ("present", "gave_up", "v2", "fs_present"):
+        if not _valid_bool(heal, key):
+            return f"malformed.link.rx_heal.{key}"
+    if type(heal.get("gave_up")) is not bool:
+        return "malformed.link.rx_heal.gave_up"
+    if "error" in status and not isinstance(status["error"], str):
+        return "malformed.error"
+    return None
+
+
 def classify_status(status: Any, *, age_s: float | None, stale_after_s: float) -> ClassifiedStatus:
     """Classify one status sample using the display contract.
 
@@ -122,12 +176,15 @@ def classify_status(status: Any, *, age_s: float | None, stale_after_s: float) -
         return ClassifiedStatus("blue", 8, BLUE["label"], "malformed.available", False, None)
     if not available:
         return ClassifiedStatus("blue", 8, BLUE["label"], "unavailable", False, False)
-    mode = status.get("mode")
-    if isinstance(mode, Mapping) and mode.get("connected") is False:
-        return ClassifiedStatus("blue", 8, BLUE["label"], "disconnected", False, True)
     if status.get("stale") is True:
         return ClassifiedStatus("blue", 8, BLUE["label"], "stale", False, True)
-    if age_s is None or age_s > stale_after_s:
+    for field in ("mode", "core", "led", "link", "results", "storage"):
+        if field in status and not isinstance(status[field], Mapping):
+            return ClassifiedStatus("blue", 8, BLUE["label"], f"malformed.{field}", False, available)
+    shape_error = _validate_status_shape(status)
+    if shape_error:
+        return ClassifiedStatus("blue", 8, BLUE["label"], shape_error, False, available)
+    if age_s is None or not isinstance(age_s, (int, float)) or not math.isfinite(age_s) or age_s < 0 or age_s > stale_after_s:
         return ClassifiedStatus("blue", 8, BLUE["label"], "stale", False, True)
     fault = _reported_fault(status)
     if fault:
@@ -175,7 +232,7 @@ def connect_studio(base_url: str, timeout_s: float) -> Any:
     if not base_url.startswith(("http://", "https://")):
         raise ValueError("Studio URL must use http:// or https://")
     ws_url = "ws" + base_url[4:].rstrip("/") + "/ws"
-    return connect(ws_url, open_timeout=timeout_s, close_timeout=timeout_s, max_size=None)
+    return connect(ws_url, open_timeout=timeout_s, close_timeout=timeout_s, max_size=1024 * 1024)
 
 
 def load_display_tool(path: Path) -> Any:
@@ -185,7 +242,12 @@ def load_display_tool(path: Path) -> Any:
     if spec is None or spec.loader is None:
         raise ImportError(f"cannot import display tool {path}")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop(spec.name, None)
+        raise
     return module
 
 
@@ -250,13 +312,25 @@ class DisplayPainter:
     def close(self) -> None:
         errors: list[str] = []
         if self.display is not None:
-            try:
-                if self.original_page is not None:
-                    self.repaint(self.original_page)
-                if self.original_brightness is not None:
+            if self.original_page is not None:
+                try:
+                    # Always issue and verify the restore, even when the
+                    # cached page says it is already selected: a failed
+                    # readback may have left the display in an unknown page.
+                    self.display.write_register(self.module.PAGE_REGISTER, self.original_page)
+                    actual = int.from_bytes(self.display.read_register(self.module.PAGE_REGISTER), "big")
+                    if actual != self.original_page:
+                        raise StatusProtocolError(f"display page restore {actual} != {self.original_page}")
+                    self.current_page = self.original_page
+                except Exception as exc:
+                    errors.append(f"page restore: {exc}")
+            if self.original_brightness is not None:
+                try:
+                    # Independent from page restoration so a page readback
+                    # failure cannot skip the brightness restore.
                     self.module_value_restore(self.module.BACKLIGHT_REGISTER, self.original_brightness, "brightness")
-            except Exception as exc:  # best effort, preserve TX-off cleanup
-                errors.append(str(exc))
+                except Exception as exc:
+                    errors.append(f"brightness restore: {exc}")
             try:
                 self.display.cleanup()  # Explicitly leaves UART TX disabled.
             except Exception as exc:
@@ -290,29 +364,43 @@ def _status_from_reply(reply: Any) -> Any:
 
 
 def _status_age(sampled_at: float, status: Mapping[str, Any]) -> float | None:
-    """Extract the few supported freshness representations without guessing units."""
+    """Extract explicit freshness fields; invalid/future values fail closed."""
     if status.get("stale") is True:
         return float("inf")
-    age_ms = status.get("age_ms")
-    if isinstance(age_ms, (int, float)):
-        return max(0.0, float(age_ms) / 1000.0)
+    if "age_ms" in status:
+        age_ms = status.get("age_ms")
+        if type(age_ms) not in (int, float):
+            return float("inf")
+        value = float(age_ms)
+        return value / 1000.0 if math.isfinite(value) and value >= 0 else float("inf")
     for key in ("sampled_at", "timestamp"):
+        if key not in status:
+            continue
         value = status.get(key)
-        if isinstance(value, (int, float)):
-            # Unix timestamps are normally seconds; tolerate millisecond
-            # timestamps from a bridge DTO without accepting other units.
-            seconds = float(value) / 1000.0 if value > 10_000_000_000 else float(value)
-            return max(0.0, sampled_at - seconds)
+        if type(value) not in (int, float):
+            return float("inf")
+        seconds = float(value)
+        if not math.isfinite(seconds) or seconds > sampled_at:
+            return float("inf")
+        return max(0.0, sampled_at - seconds)
     return 0.0
 
 
-def run(args: argparse.Namespace, *, ws_factory: Callable[[str, float], Any] = connect_studio) -> int:
+def run(
+    args: argparse.Namespace,
+    *,
+    ws_factory: Callable[[str, float], Any] = connect_studio,
+    clock: Callable[[], float] | None = None,
+    sleep_fn: Callable[[float], None] | None = None,
+) -> int:
     if args.duration < 0 or args.duration > 3600:
         raise ValueError("--duration must be between 0 and 3600 seconds")
     if args.poll <= 0 or args.poll > args.stale_after:
         raise ValueError("--poll must be positive and no greater than --stale-after")
     if args.request_timeout <= 0 or args.request_timeout > args.stale_after:
         raise ValueError("--request-timeout must be positive and no greater than --stale-after")
+    clock = clock or time.monotonic
+    sleep_fn = sleep_fn or time.sleep
     painter: DisplayPainter | None = None
     ws = None
     status_client: StudioStatusClient | None = None
@@ -328,19 +416,38 @@ def run(args: argparse.Namespace, *, ws_factory: Callable[[str, float], Any] = c
         if args.display_tool:
             painter = DisplayPainter(load_display_tool(Path(args.display_tool)), args)
             painter.start()
-        started = time.monotonic()
+        started = clock()
         last: ClassifiedStatus | None = None
-        while not stop and (args.duration == 0 or time.monotonic() - started <= args.duration):
+        last_valid_at: float | None = None
+        while not stop and (args.duration == 0 or clock() - started < args.duration):
             sampled_at = time.time()
+            now = clock()
+            if last_valid_at is not None and now - last_valid_at >= args.stale_after:
+                stale_status = {"available": True, "stale": True, "error": "local freshness deadline expired"}
+                stale = classify_status(stale_status, age_s=float("inf"), stale_after_s=args.stale_after)
+                if painter is not None and (last is None or stale.page != last.page):
+                    painter.update(stale.page)
+                print(json.dumps(stale.as_dict(stale_status, sampled_at), sort_keys=True), flush=True)
+                last = stale
+                last_valid_at = None
             status: Any
             age_s: float | None = 0.0
             try:
+                duration_remaining = args.duration - (now - started) if args.duration else args.request_timeout
+                freshness_remaining = args.stale_after if last_valid_at is None else args.stale_after - (now - last_valid_at)
+                request_budget = min(args.request_timeout, duration_remaining, freshness_remaining)
+                if request_budget <= 0:
+                    break
+                operation_deadline = now + request_budget
                 if ws is None:
-                    ws = ws_factory(args.studio_url, args.request_timeout)
+                    ws = ws_factory(args.studio_url, request_budget)
                     status_client = StudioStatusClient(ws)
                 if status_client is None:
                     raise StatusProtocolError("status client is not connected")
-                status = _status_from_reply(status_client.fetch(timeout_s=args.request_timeout))
+                fetch_budget = min(request_budget, max(0.0, operation_deadline - clock()))
+                if fetch_budget <= 0:
+                    raise TimeoutError("status freshness deadline expired before fetch")
+                status = _status_from_reply(status_client.fetch(timeout_s=fetch_budget))
                 if isinstance(status, Mapping):
                     age_s = _status_age(sampled_at, status)
             except Exception as exc:  # transport failure is fail-closed blue
@@ -354,13 +461,23 @@ def run(args: argparse.Namespace, *, ws_factory: Callable[[str, float], Any] = c
                     ws = None
                     status_client = None
             classified = classify_status(status, age_s=age_s, stale_after_s=args.stale_after)
+            after_fetch = clock()
+            if classified.fresh and classified.available is True:
+                last_valid_at = after_fetch
+            elif classified.color == "blue":
+                last_valid_at = None
             if painter is not None and (last is None or classified.page != last.page):
                 painter.update(classified.page)
             print(json.dumps(classified.as_dict(status, sampled_at), sort_keys=True), flush=True)
             last = classified
             if args.duration == 0:
                 break
-            time.sleep(min(args.poll, max(0.0, args.duration - (time.monotonic() - started))))
+            now = clock()
+            duration_remaining = args.duration - (now - started)
+            freshness_remaining = args.stale_after if last_valid_at is None else args.stale_after - (now - last_valid_at)
+            sleep_budget = min(args.poll, max(0.0, duration_remaining), max(0.0, freshness_remaining))
+            if sleep_budget > 0:
+                sleep_fn(sleep_budget)
         return 0
     finally:
         if ws is not None:

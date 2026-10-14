@@ -15,6 +15,9 @@ from tools.display_status.yofo_status_display import (  # noqa: E402
     StudioStatusClient,
     classify_status,
     run,
+    load_display_tool,
+    StatusProtocolError,
+    _status_age,
 )
 
 
@@ -74,11 +77,14 @@ class FakeDisplay:
         self.pages = []
         self.brightness = 42
         self.cleaned = False
+        self.fail_page_read = False
 
     def configure(self):
         pass
 
     def read_register(self, address):
+        if address == 0x7000 and self.fail_page_read:
+            raise RuntimeError("simulated page readback failure")
         return (self.pages[-1] if address == 0x7000 and self.pages else 0).to_bytes(2, "big") if address == 0x7000 else self.brightness.to_bytes(2, "big")
 
     def write_register(self, address, value):
@@ -123,6 +129,33 @@ class FakeDisplayModule:
 
 
 class DisplayStatusTests(unittest.TestCase):
+    def test_dynamic_adapter_with_dataclass_loads(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "adapter.py"
+            path.write_text("from __future__ import annotations\nfrom dataclasses import dataclass\n@dataclass\nclass Frame:\n    body: bytes\n", encoding="utf-8")
+            module = load_display_tool(path)
+            self.assertEqual(module.Frame(b"ok").body, b"ok")
+
+    def test_mismatched_replies_ignored_and_error_not_green(self):
+        ws = FakeWebSocket(["not json", json.dumps({"request_id": 7, "ok": good_status()}),
+                            json.dumps({"request_id": 1, "error": "unavailable"})])
+        with self.assertRaises(StatusProtocolError):
+            StudioStatusClient(ws).fetch(timeout_s=1)
+        self.assertEqual(len(ws.sent), 1)
+
+    def test_malformed_nested_status_is_blue(self):
+        self.assertEqual(classify_status({"available": True, "led": "broken"}, age_s=0, stale_after_s=3).page, 8)
+        self.assertEqual(classify_status({**good_status(), "led": {"guard_fault": "false"}}, age_s=0, stale_after_s=3).page, 8)
+        self.assertEqual(classify_status({**good_status(), "link": {"rx_heal": "broken"}}, age_s=0, stale_after_s=3).page, 8)
+        self.assertEqual(classify_status({**good_status(), "core": {"build_match": "unknown", "profile_match": "match"}}, age_s=0, stale_after_s=3).page, 8)
+        # `mode.connected` is not a current InstrumentStatus field and must
+        # not be invented as a second disconnected-state contract.
+        self.assertEqual(classify_status({**good_status(), "mode": {"name": "run", "connected": False}}, age_s=0, stale_after_s=3).page, 7)
+        for timestamp in (float("nan"), float("inf"), 11.0, "bad"):
+            age = _status_age(10.0, {"timestamp": timestamp})
+            self.assertEqual(classify_status(good_status(), age_s=age, stale_after_s=3).page, 8)
+
     def test_classifier_contract(self):
         self.assertEqual(classify_status(None, age_s=None, stale_after_s=3).page, 8)
         self.assertEqual(classify_status({"available": "yes"}, age_s=0, stale_after_s=3).page, 8)
@@ -154,6 +187,18 @@ class DisplayStatusTests(unittest.TestCase):
         painter.close()
         self.assertTrue(display.cleaned)
 
+    def test_cleanup_restores_page_and_brightness_independently(self):
+        args = type("Args", (), {"display_lock": "/tmp/test-display.lock", "fpga": "fpga", "host": "host", "display_timeout": 1.0})()
+        painter = DisplayPainter(FakeDisplayModule, args)
+        painter.start()
+        display = painter.display
+        display.fail_page_read = True
+        with self.assertRaises(StatusProtocolError):
+            painter.close()
+        self.assertEqual(display.pages[-1], 0)
+        self.assertEqual(display.brightness, 42)
+        self.assertTrue(display.cleaned)
+
     def test_run_prints_json_and_reconnects_as_blue_on_transport_failure(self):
         sockets = []
 
@@ -173,6 +218,33 @@ class DisplayStatusTests(unittest.TestCase):
         report = json.loads(output.getvalue())
         self.assertEqual(report["page"], 7)
         self.assertEqual(sockets[0].sent[0]["cmd"], "fetch_instrument_status")
+
+    def test_monotonic_freshness_expiry_paints_blue(self):
+        clock_value = [0.0]
+        ws = FakeWebSocket([json.dumps({"request_id": 1, "ok": good_status()})])
+
+        def factory(_url, _timeout):
+            return ws
+
+        def clock():
+            return clock_value[0]
+
+        def sleep(seconds):
+            clock_value[0] += seconds
+
+        args = type("Args", (), {
+            "duration": 6, "poll": 3.0, "stale_after": 3.0, "request_timeout": 3.0,
+            "display_tool": None, "display_lock": "/tmp/test-display.lock", "display_timeout": 1.0,
+            "fpga": "fpga", "host": "host", "studio_url": "http://studio",
+        })()
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(run(args, ws_factory=factory, clock=clock, sleep_fn=sleep), 0)
+        reports = [json.loads(line) for line in output.getvalue().splitlines()]
+        self.assertEqual(reports[0]["page"], 7)
+        self.assertEqual(reports[1]["reason"], "stale")
+        self.assertEqual(reports[1]["page"], 8)
+        self.assertNotEqual(reports[-1]["page"], 7)
 
 
 if __name__ == "__main__":
