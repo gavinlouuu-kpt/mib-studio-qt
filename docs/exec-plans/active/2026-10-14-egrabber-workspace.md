@@ -26,6 +26,23 @@ seven later interaction refinements, not a replacement seven-tab production app.
   its fabricated telemetry, E function, update versions or success toggles into live code.
 - 2026-10-14: Native Penpot navigation remains unverified. This does not block code
   implementation against the checked-in design contract, and is not reported as fixed.
+- 2026-10-14: Fold in lessons from plate-based high-throughput cytometry software
+  ([design note](../../design/egrabber-workspace/FORECYT.md)) as content for the existing
+  four stages, not as a parallel navigation. Owner decisions, recorded in
+  [ADR 0015](../../decisions/0015-experiment-run-chapter-identity.md):
+  - An experiment is a set of runs. A manual-swap sample queue records **one file per
+    sample**. Chapters mark sample changes inside one run and are recorded at
+    acquisition, never inferred.
+  - The planned sample annotation is written immutably into each run at Start.
+    Corrections live in the workspace store (#397/#523) and never rewrite the recording.
+  - Auto-stop is a per-run option: manual (default), target valid-object count, duration,
+    or both (whichever first). The backend owns it.
+  - Per-population statistics, multi-run comparison and fits run in the #523 Cytoflow
+    worker. The GPL licence gate remains #523's.
+  - Add **P7 Compare** (multi-run workspace) to this plan.
+  - Not adopted: bead-based instrument QC (existing calibration and method-validation
+    gates cover readiness), electronic signatures / 21 CFR Part 11, and plate/rack
+    formats until an autosampler device class exists.
 
 ## Work packages and completion gates
 
@@ -61,6 +78,14 @@ seven later interaction refinements, not a replacement seven-tab production app.
   integrity checks, platform restrictions, consent and restart/requalification handling.
 - Required checks gate only the appropriate operations, and invalidate on changed
   device/profile/configuration identity or stale readings. Show cause and recovery.
+- Show the authoritative backend readiness gates in Prepare (today they run only inside
+  Start, after the file pick). Add Unknown/Unsupported to the frontend checklist.
+  Extend the confirmation signature with PL build/weights, pump/stage identity, profile
+  id and storage path. Cache the path writability probe instead of writing a file on
+  every evaluation.
+- Run plan card: stop condition × rate × payload → estimated duration and size. Use
+  measured SSD fresh vs sustained rates on the PZ7035. Sample volume is shown as an
+  estimate, never as a level.
 - Gate: pure derivation tests, mocked transport UI tests, backend faults, no-actuation
   startup/navigation test; Windows/Linux and remote viewer restrictions.
 
@@ -84,6 +109,16 @@ seven later interaction refinements, not a replacement seven-tab production app.
 - Independent supported recording modes with truthful mutual exclusions; stop,
   drain, finalize/close/error/retry; reconciled accepted/written/dropped/pending counts.
 - Exact export range, progress, verify, cancel/failure and source preservation.
+- Experiment → Plan sub-view (ADR 0015): sample format (single sample, sample queue,
+  time segments; rack/plate hidden unless an autosampler capability is reported),
+  sample sheet with typed annotation layers and one colour registry, per-run auto-stop
+  option, and the method + analysis-plan pairing.
+- Sample queue: Next sample = stop → drain → finalize → confirmed close, then Start
+  of the next entry after its readiness. Time segments: `mark_chapter` with boundary
+  accounting. Lifecycle stepper. Non-default-settings banner (requested vs readback).
+- Run snapshot v3: experiment/run/sample identity, planned annotation, E-LUT id/sha,
+  pump/LED/stage readbacks, selected operator, declared or unknown channel, medium and
+  temperature. Persist PZ `runId`/`epoch`.
 - Gate: storage round-trip + fault-injection, lifecycle e2e + concurrency stress,
   latency/invariant tests, TSan if threads/shared state change, slow/full/disconnected disk.
 
@@ -95,6 +130,14 @@ seven later interaction refinements, not a replacement seven-tab production app.
 - Polygon AND optional E interval using validated method/calibration LUT; preserve
   Area-Deformability axes; distinguish inspecting, drawing and editing.
 - Separate stored results from explicit reprocessing; do not invent tracking.
+- Precondition: one review implementation in Studio and YOFO Review (#512). Studio's
+  Review tab does not mount `review/ReviewPanel.tsx` today.
+- Populations: polygon AND E interval AND optional feature-range criteria, with a live
+  "N of M (x %)" and the inspected record's values marked. Analysis-only unless
+  explicitly deployed to a sort.
+- Per-run / per-chapter / per-population statistics (Cytoflow worker) with inline
+  flags (low n, loss in chapter, E outside the LUT domain, legacy file). Small multiples
+  per run, chapter or annotation group. Chapter review flags but never moves boundaries.
 - Gate: rapid/out-of-order selection, u64 IDs, multiple objects and parts, per-record
   availability, LUT validity/out-of-domain, unchanged gating on inspect, reopen/export round-trip.
 
@@ -107,6 +150,20 @@ seven later interaction refinements, not a replacement seven-tab production app.
 - Update manual screenshots, vault notes and acceptance evidence in each slice.
 - Submit focused PRs against this integration branch where useful; promotion into
   develop requires the repository's normal review, CI and hardware acceptance.
+
+### P7 — Compare (multi-run workspace)
+
+- Open several runs grouped by experiment and annotation. Incompatible runs are listed
+  with the reason (chip, LUT, processing contract, metric definition), following #314
+  ComparisonSpec.
+- Live by default; a frozen snapshot only for reports.
+- Dose-response and summary statistics on per-experimental-unit summaries, with declared
+  unit, pairing and weighting (#314, #523 FJ09). Suspect-fit reasons inline; no
+  automatic interpretation.
+- PC-side for the PZ7035 (instrument shows a run summary only, #501).
+- Gate: compatibility-rule tests, legacy-file (unchaptered, no annotation) handling,
+  reproducible fits from exported summaries, worker cancellation and stale-result
+  rejection.
 
 ## Acceptance criteria
 

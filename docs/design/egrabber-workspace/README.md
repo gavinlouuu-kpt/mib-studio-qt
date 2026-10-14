@@ -33,6 +33,8 @@ be documented in the [execution plan](../../exec-plans/active/2026-10-14-egrabbe
 | Scatter inspector (19-22, 36) | Click a point or row to inspect the exact event, frame and object; raw/contour/mask modes; live pinned selection; per-record pending/saved/missing image states |
 | Maintenance (17-18, 27) | Firmware and driver compatibility, power-cycle status, preferences/help, diagnostics; no automatic firmware or software install during a run |
 | Engineering refinements (30-36) | Source recovery; independent stream/preview/writer status; selector-scoped access; buffer ownership; finalization; provenance |
+| Experiment plan (no reference view yet; ADR 0015) | Sample format (single, queue = one file per sample, time segments = chapters); typed sample sheet; per-run auto-stop option; method + analysis-plan pairing |
+| Compare (no reference view yet; P7) | Multi-run workspace with compatibility reasons, per-unit statistics and fits; see [FORECYT.md](FORECYT.md) |
 
 Keep reference views 00-29 accessible in the planned information architecture.
 The seven views in prototype.html are not the final application navigation.
