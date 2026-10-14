@@ -52,6 +52,9 @@
   later corrections are versioned annotations in the workspace store.
 - **Analysis plan** — gates and metrics for review, kept separate from the acquisition
   method; a recipe pairs the two by reference.
+- **Calibration run** — a run of a reference sample (method purpose *calibration*) whose
+  results become a versioned, instrument-scoped calibration record. The record is applied
+  explicitly by an operator and referenced by later runs.
 - **Auto-stop** — optional per-run stop condition: target valid-object count, duration,
   or both (whichever first); owned by the backend.
 

@@ -49,7 +49,7 @@ MIB adopts the three, within its own rules:
 | Multi-plate comparison (later given refresh) | **Compare**: a multi-run workspace, live by default. Incompatible runs are greyed out with the reason (chip, LUT, contract, metric definition). | P7 |
 | Dose-response with "suspect fit" flags | Fits on per-unit summaries only, with declared unit, pairing and weighting. Suspect-fit reasons shown inline. | P7 |
 | Audit trail, lock, e-signatures | Journal, lock and change reasons continue under #393/#310. **E-signatures / Part 11 are out of scope.** | — |
-| Bead QC with trend charts | **Not adopted.** That instrument needs bead runs to check optics and fluidics. MIB readiness is already covered by calibration (pixel-to-micron, background) and method-validation gates. | — |
+| Bead QC with trend charts | **Adapted as a calibration run.** Pass/fail-only QC is not adopted. A run of a reference sample produces a versioned, instrument-scoped calibration record: size → pixel-to-micron check/proposal, rigid-bead deformation offset, rate/focus stability, E vs nominal where known. The operator applies it explicitly, with previous vs new values. Readiness checks its age per method policy. A history view keeps the trend-chart idea. | Prepare (P2), ADR 0015 item 7 |
 | Editions (instrument / offline / server) | Already equivalent: Studio on the instrument, YOFO Review offline ([0014](../../decisions/0014-yofo-review-on-react-tauri.md)), central registry and remote viewer. No licence split. | — |
 
 Avoid also:

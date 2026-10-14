@@ -40,9 +40,11 @@ seven later interaction refinements, not a replacement seven-tab production app.
   - Per-population statistics, multi-run comparison and fits run in the #523 Cytoflow
     worker. The GPL licence gate remains #523's.
   - Add **P7 Compare** (multi-run workspace) to this plan.
-  - Not adopted: bead-based instrument QC (existing calibration and method-validation
-    gates cover readiness), electronic signatures / 21 CFR Part 11, and plate/rack
-    formats until an autosampler device class exists.
+  - Not adopted: electronic signatures / 21 CFR Part 11, and plate/rack formats until
+    an autosampler device class exists.
+  - Amended the same day: pass/fail-only bead QC is not adopted, but a **calibration
+    run** is. It is a run of a reference sample whose results become an applied,
+    instrument-scoped calibration record (see P2 and ADR 0015 item 7).
 
 ## Work packages and completion gates
 
@@ -83,6 +85,27 @@ seven later interaction refinements, not a replacement seven-tab production app.
   Extend the confirmation signature with PL build/weights, pump/stage identity, profile
   id and storage path. Cache the path writability probe instead of writing a file on
   every evaluation.
+- Calibration run (ADR 0015 item 7). A method with purpose *calibration* records a
+  reference sample through the normal run path. The backend derives a calibration
+  record:
+  - measured size against the reference's nominal value, to check or propose
+    pixel-to-micron;
+  - the deformation offset of rigid references;
+  - event-rate stability and focus;
+  - E against the nominal value where the reference has one.
+
+  The record is versioned and instrument-scoped (#393). It references its source run
+  and the background / dot-grid results. Operation rules:
+  - It is a proposal until an operator applies it, with previous vs new values shown.
+    It never silently changes a method.
+  - A readiness gate checks the age and validity of the applied record. Each method
+    sets the policy: none, warn or required. The record is invalidated by chip,
+    objective, camera or ROI identity changes.
+  - A history view of records with spec lines and reversible exclusions.
+
+  Open: reference materials (rigid size beads, beads of known stiffness), which
+  quantities may be *applied* rather than only checked, expiry, and whether derivation
+  lives in the backend or the Cytoflow worker.
 - Run plan card: stop condition × rate × payload → estimated duration and size. Use
   measured SSD fresh vs sustained rates on the PZ7035. Sample volume is shown as an
   estimate, never as a level.

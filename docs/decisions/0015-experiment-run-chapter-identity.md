@@ -82,6 +82,7 @@ it does not need to infer anything.
    - pump configuration and readbacks;
    - LED and stage/piezo readbacks where the device reports them;
    - the *selected* operator, per #393 (not authentication);
+   - the applied calibration record id (item 7);
    - declared channel, medium and temperature, recorded as unknown when not declared.
 
    The PZ7035 ingest stops dropping `runId` and `epoch`.
@@ -96,13 +97,22 @@ it does not need to infer anything.
    - The stop reason is recorded in the run. A queue advances only after the stopped run is
      confirmed closed.
 
-7. **Out of scope:**
+7. **Calibration runs use the same run model.**
+   - A calibration run is a run whose method has the purpose *calibration*. It records a reference
+     sample through the normal one-file-per-sample path; there is no separate acquisition path.
+   - Its results become an instrument-scoped **calibration record** (#393). The record is a
+     proposal until an operator explicitly applies it.
+   - Later runs reference the applied record's id in snapshot v3.
+   - The reference materials, derived quantities, readiness policy and expiry rules are specified
+     in the execution plan (P2). If the record format changes processing inputs, it needs its own ADR.
+
+8. **Out of scope:**
    - sample identity in the processing-core C ABI or the PL record format;
    - plate, rack and carousel formats until an autosampler exists. It would be a separate device
      class behind an interface, like `IMotionStage` ([0013](0013-motion-stage-device-class.md)),
      never actuated by discovery;
    - electronic signatures and 21 CFR Part 11;
-   - bead-based instrument QC.
+   - pass/fail-only QC runs that produce nothing the instrument uses (item 7 covers calibration).
 
 ## Consequences
 
@@ -125,4 +135,4 @@ it does not need to infer anything.
 - **Sample queue, the first bounded worklist.** Every new mutating command joins the bridge
   server's `CONTROL_COMMANDS` allowlist. Losing the controlling client must leave fluidics safe
   before unattended queues are offered.
-- **Out-of-scope features need their own ADR** if they are ever wanted (see item 7).
+- **Out-of-scope features need their own ADR** if they are ever wanted (see item 8).

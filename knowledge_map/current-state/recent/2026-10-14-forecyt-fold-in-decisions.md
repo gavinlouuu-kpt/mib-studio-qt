@@ -12,7 +12,9 @@ Owner decisions are recorded in ADR 0015 (`docs/decisions/0015-experiment-run-ch
 - Auto-stop is a per-run option: valid-object count, duration, or both.
 - The Cytoflow worker (#523) computes statistics, comparisons and fits.
 - A new P7 Compare work package was added.
-- Not adopted: bead QC, e-signatures / Part 11, and plate formats until an autosampler device class exists.
+- Calibration runs (amended the same day): a reference-sample run produces an instrument-scoped
+  calibration record that the operator applies explicitly. Pass/fail-only bead QC is still not adopted.
+- Not adopted: e-signatures / Part 11, and plate formats until an autosampler device class exists.
 
 Schema plans are noted in [[data-model/HDF5-Storage]], and the terms in [[domain/Glossary]].
 The design note also lists ten independent audit findings. The most important are that pumps
