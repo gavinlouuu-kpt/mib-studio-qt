@@ -12,3 +12,6 @@ This is bench-only. The current bench UART register window collides with the
 PZ main receiver/self-heal MMIO window, so native Linux YOFO Studio ownership
 remains deferred until a new capability and non-colliding address map are
 reviewed and accepted; green is not a safety or permission indication.
+
+Verified with 11 passing tests and an actual display/WebSocket fixture test;
+webcam confirmed green/red/blue. Not connected to live Studio. RGB demo restored.

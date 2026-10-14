@@ -125,7 +125,7 @@ def _validate_status_shape(status: Mapping[str, Any]) -> str | None:
         if not isinstance(status.get(field), Mapping):
             return f"malformed.{field}"
     mode = status["mode"]
-    if mode.get("name") not in {"align", "run", "unknown"}:
+    if not isinstance(mode.get("name"), str) or mode.get("name") not in {"align", "run", "unknown"}:
         return "unknown.mode"
     if mode.get("name") == "unknown":
         return "unknown.mode"
@@ -134,7 +134,7 @@ def _validate_status_shape(status: Mapping[str, Any]) -> str | None:
             return f"malformed.mode.{key}"
     core = status["core"]
     for key in ("build_match", "profile_match"):
-        if core.get(key) not in {"match", "mismatch", "unknown"}:
+        if not isinstance(core.get(key), str) or core.get(key) not in {"match", "mismatch", "unknown"}:
             return f"malformed.core.{key}"
         if core[key] == "unknown":
             return f"unknown.core.{key}"
@@ -449,7 +449,7 @@ def run(
                     raise TimeoutError("status freshness deadline expired before fetch")
                 status = _status_from_reply(status_client.fetch(timeout_s=fetch_budget))
                 if isinstance(status, Mapping):
-                    age_s = _status_age(sampled_at, status)
+                    age_s = _status_age(time.time(), status)
             except Exception as exc:  # transport failure is fail-closed blue
                 status = {"available": False, "error": f"transport: {exc}"}
                 age_s = None
@@ -463,7 +463,7 @@ def run(
             classified = classify_status(status, age_s=age_s, stale_after_s=args.stale_after)
             after_fetch = clock()
             if classified.fresh and classified.available is True:
-                last_valid_at = after_fetch
+                last_valid_at = after_fetch - age_s
             elif classified.color == "blue":
                 last_valid_at = None
             if painter is not None and (last is None or classified.page != last.page):

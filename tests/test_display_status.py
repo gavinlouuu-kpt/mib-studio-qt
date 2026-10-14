@@ -24,7 +24,7 @@ from tools.display_status.yofo_status_display import (  # noqa: E402
 def good_status() -> dict:
     return {
         "available": True,
-        "mode": {"name": "run", "connected": True},
+        "mode": {"name": "run"},
         "core": {"build_match": "match", "profile_match": "match"},
         "led": {"guard_fault": False},
         "link": {"ingress_errors_warn": False, "bad_frames_warn": False, "dropped_warn": False,
@@ -218,6 +218,31 @@ class DisplayStatusTests(unittest.TestCase):
         report = json.loads(output.getvalue())
         self.assertEqual(report["page"], 7)
         self.assertEqual(sockets[0].sent[0]["cmd"], "fetch_instrument_status")
+
+    def test_unhashable_identity_is_blue(self):
+        for field, key in (("mode", "name"), ("core", "build_match"), ("core", "profile_match")):
+            for value in ([], {}):
+                status = good_status()
+                status[field][key] = value
+                self.assertEqual(classify_status(status, age_s=0, stale_after_s=3).page, 8)
+
+    def test_existing_age_shortens_freshness_lease(self):
+        from tools.display_status.yofo_status_display import build_parser
+        now = [0.0]
+        sleeps = []
+        status = good_status()
+        status["age_ms"] = 2900
+        ws = FakeWebSocket([json.dumps({"request_id": 1, "ok": status})])
+        def sleep(seconds):
+            sleeps.append(seconds)
+            now[0] += seconds
+        args = build_parser().parse_args(["--duration", "1", "--poll", "3", "--request-timeout", "3"])
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            run(args, ws_factory=lambda *_: ws, clock=lambda: now[0], sleep_fn=sleep)
+        self.assertAlmostEqual(sleeps[0], 0.1)
+        reports = [json.loads(line) for line in output.getvalue().splitlines()]
+        self.assertEqual(reports[1]["page"], 8)
 
     def test_monotonic_freshness_expiry_paints_blue(self):
         clock_value = [0.0]

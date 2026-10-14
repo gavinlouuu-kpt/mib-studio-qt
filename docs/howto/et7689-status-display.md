@@ -22,6 +22,14 @@ fail-closed blue.
 
 ## Dry-run validation
 
+Install the isolated runtime dependency first:
+
+```bash
+python3 -m venv .venv-display
+.venv-display/bin/pip install -r tools/display_status/requirements.txt
+source .venv-display/bin/activate
+```
+
 From the MIB Studio repository root, one bounded sample is printed as JSON and
 does not touch the display:
 
@@ -77,9 +85,8 @@ code. Production integration needs a new capability and non-colliding address
 map, reviewed with the FPGA owner. Do not advertise this as deployed Studio
 integration until that ownership boundary is implemented and accepted.
 
-This records the follow-up decision: Gavin authorized a new status screen, but
-the previous defer boundary for native integration remains in force until the
-integration is reviewed and accepted. The hardware proof and wiring reference
+Gavin authorized the Studio screen integration. The remaining boundary is
+technical, not a pending permission request. The hardware proof and wiring reference
 are tracked in [PR #82](https://github.com/gavinlouuu-kpt/pz7035-imx426/pull/82).
 
 ## Checks
@@ -90,3 +97,19 @@ Offline tests (no Studio, FPGA, or display required):
 python3 -m unittest -v tests/test_display_status.py
 python3 scripts/check_docs.py
 ```
+
+## Verified bench proof — 2026-10-14
+
+All 11 offline contract tests and `scripts/check_docs.py` passed. Independent
+review found no remaining material issues after stale-age and malformed-identity
+fixes. A local WebSocket fixture exercised the actual companion and FPGA/display
+path for 16 seconds: fresh report → green, simulated guard fault → red,
+unavailable → blue. Each page write was read back and all three colours were
+visually confirmed with webcam snapshots. This was **fixture status, not a live
+Studio deployment**. Cleanup completed successfully and the prior RGB demo was
+restarted. No MCU or flash contents changed during this test.
+
+Local evidence: `/mnt/hdd/shared/projects/et7689-audit-20261013/studio-fixture-20261014/`
+and the adjacent `studio-fixture-20261014.log`. The existing local Studio route
+at port 8427 was not listening. Production Linux transport and a labelled/touch
+UI remain outstanding.
