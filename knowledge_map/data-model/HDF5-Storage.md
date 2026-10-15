@@ -232,6 +232,19 @@
   `HdfMetricsModel`) still show the quartile columns, which read `nan` for a
   Contract-3 file.
 
+## Planned: experiment, run and chapter identity (ADR 0015)
+
+Not implemented yet. All additions are additive and versioned:
+
+- `/run_provenance` snapshot v3: `experiment_id`, `run_index`, `sample_ref`, E-LUT id/sha,
+  pump/LED/stage readbacks, selected operator, declared or unknown channel/medium/temperature.
+- `/experiment_annotation`: immutable planned annotation written at Start.
+- `/chapters`: one row per chapter with index/wall-time bounds and boundary
+  accounting/telemetry snapshots (`chapters_schema_version`).
+- `chapterId` (u32) appended to `ProcessedFrameMetadataRecord`, `/recorded_frames/metadata`
+  and `/trigger_events`; legacy files read as unchaptered (0).
+- One file per sample in a sample queue; the TRUNC / single-open-file rules are unchanged.
+
 ## Gotchas
 
 - `writeConfigJson` **must** be called after `writeExperimentInfo` — see

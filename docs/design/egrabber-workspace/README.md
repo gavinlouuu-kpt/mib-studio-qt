@@ -33,9 +33,31 @@ be documented in the [execution plan](../../exec-plans/active/2026-10-14-egrabbe
 | Scatter inspector (19-22, 36) | Click a point or row to inspect the exact event, frame and object; raw/contour/mask modes; live pinned selection; per-record pending/saved/missing image states |
 | Maintenance (17-18, 27) | Firmware and driver compatibility, power-cycle status, preferences/help, diagnostics; no automatic firmware or software install during a run |
 | Engineering refinements (30-36) | Source recovery; independent stream/preview/writer status; selector-scoped access; buffer ownership; finalization; provenance |
+| Experiment plan (no reference view yet; ADR 0015) | Sample format (single, queue = one file per sample, time segments = chapters); typed sample sheet; per-run auto-stop option; method + analysis-plan pairing |
+| Compare (no reference view yet; P7) | Multi-run workspace with compatibility reasons, per-unit statistics and fits; see [FORECYT.md](FORECYT.md) |
 
 Keep reference views 00-29 accessible in the planned information architecture.
 The seven views in prototype.html are not the final application navigation.
+
+## One UI language, two products
+
+The operation app (MIB Studio / YOFO Studio on the instrument) and the Review app
+(YOFO Review on a PC, [ADR 0014](../../decisions/0014-yofo-review-on-react-tauri.md))
+share one design system, not just a palette:
+
+- the same shell: status band, header with product name and context, numbered stage
+  tabs, a toolbar row of actions, a card grid, chips for state, a footer of facts;
+- the same vocabulary: experiment, run, sample, record, population, flag, method,
+  calibration record; the same meaning on both sides;
+- the same condition colours from the sample sheet; the same Area–Deformability chart
+  with E curves; the same record-identity display (record, frame, object as strings);
+- the same chip semantics: teal = confirmed by the backend, amber = warn, red = blocked
+  or loss, grey = unknown / unsupported / reference-only.
+
+The operation app shows a **Quick look** — descriptive numbers and a reference-run
+overlay so a researcher can refine the experiment while it is still running; the
+Review app owns gates beyond polygon-AND-E, statistics with declared units,
+comparison and fits. Only the brand and the stage list differ.
 
 ## Prepare means instrument readiness
 

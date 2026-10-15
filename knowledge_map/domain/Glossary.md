@@ -34,6 +34,34 @@
   ROI is not cropped. Gated by `auto_roi_from_background`; see
   [[../services/ProcessingService]].
 
+## Experiments and runs
+
+> Decided in ADR 0015 (`docs/decisions/0015-experiment-run-chapter-identity.md`);
+> not yet implemented.
+
+- **Experiment** — a set of runs planned together from one sample sheet; identified by
+  `experiment_id` in each run's snapshot.
+- **Run** — one acquisition = one HDF5 file. In a manual-swap sample queue each sample
+  is its own run.
+- **Chapter** — a declared interval inside one run (the #314 "run segment"), opened by
+  `mark_chapter` when the sample changes without stopping. Recorded at acquisition with
+  boundary accounting; never inferred from the data. `chapterId` 0 = unchaptered.
+  Deferred (ADR 0015 Amendment 1): a sample change is a new run until chapters ship.
+- **Sample sheet** — the planned samples of an experiment with typed annotation layers
+  (condition, experimental unit, concentration + unit).
+- **Planned annotation** — the sample sheet entry written immutably into a run at Start;
+  later corrections are versioned annotations in the workspace store.
+- **Analysis plan** — gates and metrics for review, kept separate from the acquisition
+  method; a recipe pairs the two by reference.
+- **Calibration run** — a run of a reference sample (method purpose *calibration*) whose
+  results become a versioned, instrument-scoped calibration record. The record is applied
+  explicitly by an operator and referenced by later runs.
+- **Quick look** — the operation app's instant, descriptive per-run numbers (n, medians,
+  % in population, loss) and reference-run overlay, computed by the backend; never a test
+  or a fit. The Review app recomputes authoritatively.
+- **Auto-stop** — optional per-run stop condition: target valid-object count, duration,
+  or both (whichever first); owned by the backend.
+
 ## Portability
 
 - **Portable processing contract** — the frozen combination of the
