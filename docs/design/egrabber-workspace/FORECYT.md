@@ -75,6 +75,34 @@ workspace wins. In particular:
 
 Access follows the same private-origin rule as PENPOT.md.
 
+## Proposed views in the workspace visual language
+
+After the owner decisions, the concept boards were redrawn in the same visual language as
+boards 00–36 of the sandbox source (header, 01–04 stage tabs, toolbar row, card grid, teal/grey
+palette, "proposed wireframe / illustrative data" band). They live in a **separate sandbox
+file** so the reviewed source file (see [PENPOT.md](PENPOT.md)) is untouched:
+
+| Reference | Value |
+|---|---|
+| File | **PROPOSED · MIB Studio fold-in (eGrabber + iQue lessons) · 2026-10-14** · `2c3c14b3-8959-40f7-a29c-2e6202e341b6` |
+| Page | `202e7953-c6e1-8109-8008-ca01abeab5bf` (revision 54 at 2026-10-15) |
+| Access | same private-origin rule as PENPOT.md |
+
+| View | Board UUID |
+|---|---|
+| 00 · Fold-in map | `8b742b76-d59d-4cf7-ae47-de4f40f3d46f` |
+| 01 · Prepare · readiness, run plan, calibration record (P2) | `14a7d154-9465-4525-b781-ec51ed7edc3d` |
+| 03 · Experiment · Plan — sample sheet, one file per sample (P4) | `d6bbb202-e10c-4a77-ad10-b49b8ded7c0b` |
+| 03 · Experiment · Live — queue run, lifecycle stepper (P4) | `bfba229d-ee75-4fd9-af76-3cf47a3215ce` |
+| 04 · Review · Run overview — recorded chapters, per-sample statistics (P5) | `2b5022ad-4791-4710-a352-f3bb4cbb8545` |
+| 04 · Review · Scatter inspector + population criteria (P5) | `be010d21-d507-4422-8f1a-61b0e48b6ecc` |
+| 04 · Review · Compare — multi-run workspace (P7) | `5cd0129c-264a-4861-bd23-21b7cff7b280` |
+
+All values are illustrative. Where these views and the README/PENPOT.md disagree, the
+README wins; the views add the Plan sub-view, the queue/lifecycle elements, the chapter
+overview, population criteria and the Compare workspace that ADR 0015 and P7 introduce.
+Rendering was checked with `penpot_render`; native prototype links are not installed.
+
 ## Audit findings to fix independently
 
 A code audit at `ac2ffba7` found these, independent of the workspace redesign. Findings 5–7 are tracked under #713, finding 10 under #393 and #712:
