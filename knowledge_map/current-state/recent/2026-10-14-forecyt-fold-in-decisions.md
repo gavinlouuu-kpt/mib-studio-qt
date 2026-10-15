@@ -32,3 +32,8 @@ Scope trim 2026-10-15: Compare/dose-response, criteria sliders and statistics st
 analysis tool (#314, #523); chapters deferred (ADR 0015 Amendment 1); sample sheet is a
 fixed schema, the queue a guided UI flow, no hardware auto-revert, calibration history is
 a list. Delivery sequence is now S0–S7.
+
+2026-10-15 (owner): the operation app gets a descriptive **Quick look** (backend-computed per-run
+numbers + reference-run overlay) so researchers can refine an experiment while it runs; FlowJo-depth
+analysis stays in the Review app. Both apps share one UI language (README "One UI language, two
+products"). Operation-app and Review-app proposed views are drawn as two pages of the fold-in file.

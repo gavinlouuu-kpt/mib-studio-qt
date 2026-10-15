@@ -39,6 +39,7 @@ MIB adopts the three, within its own rules:
 | Worklist with time estimate | Run plan: stop condition × rate × payload → duration and size. SSD estimates use measured fresh vs sustained rates (#667). | Prepare (P2) |
 | Resources sized to the run | Storage budget gate. Sample volume as a labelled *estimate* (no level sensors are fitted). | P2 |
 | (MIB, not iQue) live detected-cell strip + click-to-see-cell during a run | **Kept.** Already in Qt Monitoring; React port is a P4 item. Drawn on the Live view. | Experiment (P4), views 02/21 |
+| Plate-level "instant answer" during the experiment | **Adopted as Quick look** in the operation app: backend-computed descriptive per-run numbers and a reference-run overlay with deltas on medians, feeding Repeat / Adjust / Continue decisions. No tests or fits; the Review app recomputes. | Experiment (P4, S5) |
 | Run dialog with step checklist | Lifecycle stepper Starting → Active → Stopping → Drain → Finalizing → Closed/Error. Separate Stop-acquisition / Freeze / Stop-&-finalize. Next sample. | Experiment (P4) |
 | Protocol-scoped overrides | "N settings differ from method X" banner. Requested vs readback. Recorded in snapshot v3. No auto-revert (draft-vs-applied already covers it). | P3 / P4 |
 | Automatic gates frozen during acquisition | Adaptive gates are frozen while a run is active and re-evaluated in review, with old → new shown. | P5 |

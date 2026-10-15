@@ -56,6 +56,9 @@
 - **Calibration run** — a run of a reference sample (method purpose *calibration*) whose
   results become a versioned, instrument-scoped calibration record. The record is applied
   explicitly by an operator and referenced by later runs.
+- **Quick look** — the operation app's instant, descriptive per-run numbers (n, medians,
+  % in population, loss) and reference-run overlay, computed by the backend; never a test
+  or a fit. The Review app recomputes authoritatively.
 - **Auto-stop** — optional per-run stop condition: target valid-object count, duration,
   or both (whichever first); owned by the backend.
 

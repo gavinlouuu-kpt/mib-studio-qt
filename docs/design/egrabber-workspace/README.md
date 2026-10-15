@@ -39,6 +39,26 @@ be documented in the [execution plan](../../exec-plans/active/2026-10-14-egrabbe
 Keep reference views 00-29 accessible in the planned information architecture.
 The seven views in prototype.html are not the final application navigation.
 
+## One UI language, two products
+
+The operation app (MIB Studio / YOFO Studio on the instrument) and the Review app
+(YOFO Review on a PC, [ADR 0014](../../decisions/0014-yofo-review-on-react-tauri.md))
+share one design system, not just a palette:
+
+- the same shell: status band, header with product name and context, numbered stage
+  tabs, a toolbar row of actions, a card grid, chips for state, a footer of facts;
+- the same vocabulary: experiment, run, sample, record, population, flag, method,
+  calibration record; the same meaning on both sides;
+- the same condition colours from the sample sheet; the same Area–Deformability chart
+  with E curves; the same record-identity display (record, frame, object as strings);
+- the same chip semantics: teal = confirmed by the backend, amber = warn, red = blocked
+  or loss, grey = unknown / unsupported / reference-only.
+
+The operation app shows a **Quick look** — descriptive numbers and a reference-run
+overlay so a researcher can refine the experiment while it is still running; the
+Review app owns gates beyond polygon-AND-E, statistics with declared units,
+comparison and fits. Only the brand and the stage list differ.
+
 ## Prepare means instrument readiness
 
 **LED driver:** identify the physical controller/channel, supported interface and

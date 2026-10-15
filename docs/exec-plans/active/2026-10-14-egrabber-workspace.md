@@ -66,6 +66,19 @@ seven later interaction refinements, not a replacement seven-tab production app.
     `sample_ref` in the start request, not a backend queue; snapshot v3 drops the
     free-text channel/medium/temperature fields (they are annotation).
 
+- 2026-10-15 (owner): the operation app needs **simple, instant analysis** so a
+  researcher can compare runs and refine the experiment while it is still running —
+  the iQue-style loop — but not FlowJo-depth analysis, which stays in the Review app.
+  Scope, called **Quick look**: descriptive per-run numbers (n, median area /
+  deformability / E, % in the polygon-AND-E population, event rate, loss flags) computed
+  by the backend from accounting plus a bounded pass at close, overlaid against an
+  operator-chosen reference run with the delta on medians; no tests, fits or replicate
+  claims; it leads to *Repeat sample / Adjust next / Continue / Open in Review*. The
+  Review app recomputes authoritatively. Both apps share **one UI language**: shell,
+  numbered stage tabs, toolbar, card grid, chips, vocabulary, condition colours, the
+  Area–Deformability chart with E curves and the record-identity display; only the
+  brand differs.
+
 ## Delivery sequence
 
 Work packages P0–P7 describe *scope*. This table is the *order*: each slice is one or a
@@ -81,7 +94,7 @@ as missing data stays Unavailable.
 | S2 | Run snapshot v3 | P4 (backend) | ADR 0015; ABI number reserved with the coordinator | #712: `experiment_id` / `run_index` / `sample_ref`, `/experiment_annotation` (fixed schema + free key/values), E-LUT id/sha, pump/LED/stage readbacks, selected operator, calibration record id; PZ `runId`/`epoch` persisted; start request carries annotation and stop condition (objects / duration / both, backend-owned, reason recorded) | round-trip, legacy read (absent ≠ fabricated), fault injection |
 | S3 | Shell and Prepare | P1, P2 | S0 | opt-in four-stage workspace; backend gates shown in Prepare with Unknown/Unsupported (#713); extended confirmation signature; storage budget gate and run-plan card; fluidics shown as estimates; non-default-settings banner (no auto-revert) | P1 and P2 gates |
 | S4 | Calibration run | P2 (backend + UI) | S2, S3 | calibration method purpose; record derivation in the backend (size → pixel→µm proposal; offset and E-vs-nominal check-only); apply with previous vs new; age/identity readiness gate per method policy; record list | derivation tests on synthetic bead runs; gate invalidation; no silent method change |
-| S5 | Experiment Plan and Live | P4 (UI) | S2, S3 | Plan sub-view (format: single / queue; sample sheet, fixed schema); guided queue flow over existing commands (stop → drain → finalize → close → prompt → readiness → Start); lifecycle stepper; separate stop actions; detected-cell strip and scatter click-to-pin in React | P4 gate; a lost controlling client pauses the flow and never resumes it (S0) |
+| S5 | Experiment Plan, Live and Quick look | P4 (UI + backend quick-look pass) | S2, S3 | Plan sub-view (format: single / queue; sample sheet, fixed schema); guided queue flow over existing commands (stop → drain → finalize → close → prompt → readiness → Start); lifecycle stepper; separate stop actions; detected-cell strip and scatter click-to-pin in React; **Quick look**: backend-computed descriptive per-run numbers and a reference-run overlay in the run summary and the experiment board | P4 gate; quick-look numbers reconcile with the Review app on the same file; a lost controlling client pauses the flow and never resumes it (S0) |
 | S6 | Single review | P5 | #512 merged; S2 | Studio mounts the shared review; full u64 event identity; polygon AND E; per-run statistics and small multiples **consumed from** the #523 worker (FJ05/FJ08), not re-implemented in the shell | P5 gate |
 | S7 | Parity and promotion | P6 | S3–S6 | all 37 + 5 views reviewed; host and PZ7035 runs measured; manual, release notes, screenshots | P6 gate; promotion by normal review, CI and hardware acceptance |
 
@@ -211,6 +224,14 @@ Rules that apply to every slice:
   Non-default-settings banner (requested vs readback; recorded, never auto-reverted).
 - Run snapshot v3: experiment/run/sample identity, planned annotation, E-LUT id/sha,
   pump/LED/stage readbacks, selected operator. Persist PZ `runId`/`epoch`.
+- Quick look (instant, descriptive): per run n, median area / deformability / E, % in
+  the polygon-AND-E population, event rate and loss flags, computed by the backend
+  (monitoring accumulators live; a bounded full-file pass at close, cached with the
+  run) — never in the shell or the worker. The experiment board shows the queue's runs
+  side by side with these numbers and an overlay of contours against an
+  operator-chosen reference run, with the delta on medians. No tests, fits or
+  replicate statements; the Review app recomputes authoritatively on the same file.
+  Decisions it feeds: Repeat sample · Adjust next sample · Continue · Open in Review.
 - Gate: storage round-trip + fault-injection, lifecycle e2e + concurrency stress,
   latency/invariant tests, TSan if threads/shared state change, slow/full/disconnected disk.
 
