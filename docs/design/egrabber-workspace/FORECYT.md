@@ -34,23 +34,23 @@ MIB adopts the three, within its own rules:
 
 | Idea | MIB form | Stage / package |
 |---|---|---|
-| Plate map with annotation layers | **Sample sheet**: single sample, manual-swap queue (one file per sample), or time segments (chapters). Typed layers: condition, experimental unit, concentration + unit. One colour registry. Plate/rack formats wait for an autosampler device class. | Experiment → Plan (P4), ADR 0015 |
-| Template = acquisition + analysis | Method (acquisition, approved via #398) and analysis plan (gates/metrics, #523) stay separate. A recipe pairs them by reference. Add "new draft from this run's recorded configuration". | P4 / P7 |
+| Plate map with annotation layers | **Sample sheet** with a fixed small schema (sample, condition, experimental unit, concentration + unit, notes, free key/values), not a layer system. Single sample or manual-swap queue (one file per sample); time segments deferred with chapters. Plate/rack formats wait for an autosampler device class. | Experiment → Plan (P4), ADR 0015 |
+| Template = acquisition + analysis | Method (acquisition, approved via #398) and analysis plan (gates/metrics, #523) stay separate. "Base on previous experiment" copies the sheet and method reference. Recipe pairing deferred. | P4 |
 | Worklist with time estimate | Run plan: stop condition × rate × payload → duration and size. SSD estimates use measured fresh vs sustained rates (#667). | Prepare (P2) |
 | Resources sized to the run | Storage budget gate. Sample volume as a labelled *estimate* (no level sensors are fitted). | P2 |
 | (MIB, not iQue) live detected-cell strip + click-to-see-cell during a run | **Kept.** Already in Qt Monitoring; React port is a P4 item. Drawn on the Live view. | Experiment (P4), views 02/21 |
 | Run dialog with step checklist | Lifecycle stepper Starting → Active → Stopping → Drain → Finalizing → Closed/Error. Separate Stop-acquisition / Freeze / Stop-&-finalize. Next sample. | Experiment (P4) |
-| Protocol-scoped overrides | "N settings differ from method X" banner. Requested vs readback. Recorded in snapshot v3. Reverted only after the run ends. | P3 / P4 |
+| Protocol-scoped overrides | "N settings differ from method X" banner. Requested vs readback. Recorded in snapshot v3. No auto-revert (draft-vs-applied already covers it). | P3 / P4 |
 | Automatic gates frozen during acquisition | Adaptive gates are frozen while a run is active and re-evaluated in review, with old → new shown. | P5 |
-| Inferred well boundaries | **Rejected.** Chapters are recorded at acquisition. Review flags them (loss, low n) but never moves them. | ADR 0015 |
+| Inferred well boundaries | **Rejected.** A sample change is a new run; chapters (recorded, never inferred) are deferred until a mid-run change is actually needed. | ADR 0015 Amendment 1 |
 | Linked selection across plots | Full event identity (run, frame, object, revisions) as u64 strings, linking scatter, table, image and mask. Requires the single review implementation (#512). | P5 |
-| Small multiples per well | Small multiples per run, chapter or annotation group. | P5 |
-| Multi-criteria hit finding with live hit rate | Extra AND terms in the population rule: polygon AND E interval AND feature ranges, with a live "N of M (x %)". Analysis-only unless explicitly deployed to a sort. | P5 |
-| Metrics builder with inline quality flags | Per-population / per-chapter n, median, mean, CV of area, deformability and E, computed by the #523 Cytoflow worker. Inline flags: low n, loss in chapter, E outside LUT domain, legacy file. | P5 |
-| Multi-plate comparison (later given refresh) | **Compare**: a multi-run workspace, live by default. Incompatible runs are greyed out with the reason (chip, LUT, contract, metric definition). | P7 |
-| Dose-response with "suspect fit" flags | Fits on per-unit summaries only, with declared unit, pairing and weighting. Suspect-fit reasons shown inline. | P7 |
+| Small multiples per well | Small multiples per run or annotation group, consumed from the #523 worker. | P5 → #523 FJ05 |
+| Multi-criteria hit finding with live hit rate | **Not built in the shell.** The shell keeps polygon AND E with a live "N of M (x %)"; multi-criteria gating is the analysis tool's job. View 05 is reference-only. | #523 FJ04 |
+| Metrics builder with inline quality flags | Per-run / per-population n, median, CV from the #523 worker, shown with inline flags (low n, loss, E outside LUT domain, legacy file). The shell computes nothing. | P5 → #523 FJ08 |
+| Multi-plate comparison (later given refresh) | **Not in the workspace plan.** Owned by #314 ComparisonSpec / #523 FJ09. The workspace only records the identities that make comparison possible (snapshot v3). View 06 is reference-only. | #314 / #523 |
+| Dose-response with "suspect fit" flags | Analysis-tool feature; per-unit fits with declared unit/pairing/weighting and inline suspect-fit reasons when #523 FJ09 is built. | #523 FJ09 |
 | Audit trail, lock, e-signatures | Journal, lock and change reasons continue under #393/#310. **E-signatures / Part 11 are out of scope.** | — |
-| Bead QC with trend charts | **Adapted as a calibration run.** Pass/fail-only QC is not adopted. A run of a reference sample produces a versioned, instrument-scoped calibration record: size → pixel-to-micron check/proposal, rigid-bead deformation offset, rate/focus stability, E vs nominal where known. The operator applies it explicitly, with previous vs new values. Readiness checks its age per method policy. A history view keeps the trend-chart idea. | Prepare (P2), ADR 0015 item 7 |
+| Bead QC with trend charts | **Adapted as a calibration run**, trimmed. A run of rigid beads produces an instrument-scoped calibration record (size → pixel→µm proposal; offset and E-vs-nominal check-only). The operator applies it explicitly, previous vs new shown; readiness checks its age per method policy. Past records are a plain list — no trend chart. | Prepare (P2), ADR 0015 item 7 |
 | Editions (instrument / offline / server) | Already equivalent: Studio on the instrument, YOFO Review offline ([0014](../../decisions/0014-yofo-review-on-react-tauri.md)), central registry and remote viewer. No licence split. | — |
 
 Avoid also:

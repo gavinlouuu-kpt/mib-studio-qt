@@ -124,12 +124,12 @@ language after the 2026-10-14 decisions; `reference.json` carries them under
 | View | Board UUID | Slice |
 |---|---|---|
 | 00 · Fold-in map | `8b742b76-d59d-4cf7-ae47-de4f40f3d46f` | S1 |
-| 01 · Prepare: readiness, run plan, calibration record | `14a7d154-9465-4525-b781-ec51ed7edc3d` | S4, S5 |
-| 03 · Experiment · Plan | `d6bbb202-e10c-4a77-ad10-b49b8ded7c0b` | S6 |
-| 03 · Experiment · Live (queue, stepper, pinned cell) | `368c693c-68ea-42be-92a0-2553f704b158` | S6 |
-| 04 · Review · Run overview (chapters, per-sample statistics) | `2b5022ad-4791-4710-a352-f3bb4cbb8545` | S7 |
-| 04 · Review · Inspector + population criteria | `be010d21-d507-4422-8f1a-61b0e48b6ecc` | S7 |
-| 04 · Review · Compare | `5cd0129c-264a-4861-bd23-21b7cff7b280` | S8 |
+| 01 · Prepare: readiness, run plan, calibration record | `14a7d154-9465-4525-b781-ec51ed7edc3d` | S3, S4 |
+| 03 · Experiment · Plan | `d6bbb202-e10c-4a77-ad10-b49b8ded7c0b` | S5 |
+| 03 · Experiment · Live (queue, stepper, pinned cell) | `368c693c-68ea-42be-92a0-2553f704b158` | S5 |
+| 04 · Review · Run overview (per-sample statistics; chapter marks deferred) | `2b5022ad-4791-4710-a352-f3bb4cbb8545` | S6 |
+| 04 · Review · Inspector + population criteria | `be010d21-d507-4422-8f1a-61b0e48b6ecc` | reference only (criteria → #523 FJ04) |
+| 04 · Review · Compare | `5cd0129c-264a-4861-bd23-21b7cff7b280` | reference only (→ #314 / #523 FJ09) |
 
 The `penpot.entry_points` registry contains selected UUID anchors, not an export
 of every board or hotspot. All 37 views remain in the proposed page; use the map

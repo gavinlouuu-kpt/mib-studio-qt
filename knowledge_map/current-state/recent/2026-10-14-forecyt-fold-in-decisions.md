@@ -27,3 +27,8 @@ Update 2026-10-15: the plan now has a single **Delivery sequence** (S0–S9) tha
 eGrabber workspace packages and the experiment revamp together, with needs and gates per
 slice; seven eGrabber-styled fold-in views are registered in `PENPOT.md` and
 `reference.json` (`penpot.fold_in`).
+
+Scope trim 2026-10-15: Compare/dose-response, criteria sliders and statistics stay in the
+analysis tool (#314, #523); chapters deferred (ADR 0015 Amendment 1); sample sheet is a
+fixed schema, the queue a guided UI flow, no hardware auto-revert, calibration history is
+a list. Delivery sequence is now S0–S7.

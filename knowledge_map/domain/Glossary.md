@@ -46,6 +46,7 @@
 - **Chapter** — a declared interval inside one run (the #314 "run segment"), opened by
   `mark_chapter` when the sample changes without stopping. Recorded at acquisition with
   boundary accounting; never inferred from the data. `chapterId` 0 = unchaptered.
+  Deferred (ADR 0015 Amendment 1): a sample change is a new run until chapters ship.
 - **Sample sheet** — the planned samples of an experiment with typed annotation layers
   (condition, experimental unit, concentration + unit).
 - **Planned annotation** — the sample sheet entry written immutably into a run at Start;

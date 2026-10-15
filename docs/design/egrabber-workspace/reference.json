@@ -341,37 +341,37 @@
           "view": 1,
           "purpose": "01 · Prepare: readiness, run plan, calibration record",
           "board_id": "14a7d154-9465-4525-b781-ec51ed7edc3d",
-          "slice": "S4, S5"
+          "slice": "S3, S4"
         },
         {
           "view": 2,
           "purpose": "03 · Experiment · Plan",
           "board_id": "d6bbb202-e10c-4a77-ad10-b49b8ded7c0b",
-          "slice": "S6"
+          "slice": "S5"
         },
         {
           "view": 3,
           "purpose": "03 · Experiment · Live (queue, stepper, pinned cell)",
           "board_id": "368c693c-68ea-42be-92a0-2553f704b158",
-          "slice": "S6"
+          "slice": "S5"
         },
         {
           "view": 4,
           "purpose": "04 · Review · Run overview (chapters, per-sample statistics)",
           "board_id": "2b5022ad-4791-4710-a352-f3bb4cbb8545",
-          "slice": "S7"
+          "slice": "S6"
         },
         {
           "view": 5,
           "purpose": "04 · Review · Inspector + population criteria",
           "board_id": "be010d21-d507-4422-8f1a-61b0e48b6ecc",
-          "slice": "S7"
+          "slice": "reference only (#523 FJ04)"
         },
         {
           "view": 6,
           "purpose": "04 · Review · Compare",
           "board_id": "5cd0129c-264a-4861-bd23-21b7cff7b280",
-          "slice": "S8"
+          "slice": "reference only (#314, #523 FJ09)"
         }
       ]
     }
