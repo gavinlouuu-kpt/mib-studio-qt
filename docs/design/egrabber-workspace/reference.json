@@ -322,6 +322,58 @@
         18,
         27
       ]
+    },
+    "fold_in": {
+      "file_id": "2c3c14b3-8959-40f7-a29c-2e6202e341b6",
+      "page_id": "202e7953-c6e1-8109-8008-ca01abeab5bf",
+      "name": "PROPOSED · MIB Studio fold-in (eGrabber + iQue lessons) · 2026-10-14",
+      "revn_checked": 54,
+      "decisions": "docs/decisions/0015-experiment-run-chapter-identity.md",
+      "note": "docs/design/egrabber-workspace/FORECYT.md",
+      "views": [
+        {
+          "view": 0,
+          "purpose": "00 · Fold-in map",
+          "board_id": "8b742b76-d59d-4cf7-ae47-de4f40f3d46f",
+          "slice": "S1"
+        },
+        {
+          "view": 1,
+          "purpose": "01 · Prepare: readiness, run plan, calibration record",
+          "board_id": "14a7d154-9465-4525-b781-ec51ed7edc3d",
+          "slice": "S4, S5"
+        },
+        {
+          "view": 2,
+          "purpose": "03 · Experiment · Plan",
+          "board_id": "d6bbb202-e10c-4a77-ad10-b49b8ded7c0b",
+          "slice": "S6"
+        },
+        {
+          "view": 3,
+          "purpose": "03 · Experiment · Live (queue, stepper, pinned cell)",
+          "board_id": "368c693c-68ea-42be-92a0-2553f704b158",
+          "slice": "S6"
+        },
+        {
+          "view": 4,
+          "purpose": "04 · Review · Run overview (chapters, per-sample statistics)",
+          "board_id": "2b5022ad-4791-4710-a352-f3bb4cbb8545",
+          "slice": "S7"
+        },
+        {
+          "view": 5,
+          "purpose": "04 · Review · Inspector + population criteria",
+          "board_id": "be010d21-d507-4422-8f1a-61b0e48b6ecc",
+          "slice": "S7"
+        },
+        {
+          "view": 6,
+          "purpose": "04 · Review · Compare",
+          "board_id": "5cd0129c-264a-4861-bd23-21b7cff7b280",
+          "slice": "S8"
+        }
+      ]
     }
   }
 }

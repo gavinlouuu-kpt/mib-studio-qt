@@ -9,7 +9,12 @@ Base: `develop` / `2a4e0a4f38055df5464400048ab9948d949319e2`
 
 Deliver the full Prepare / Align / Experiment / Review workflow with direct
 eGrabber-style controls and linked cytometry evidence, while retaining the existing
-backend, transport permissions and scientific storage semantics. The complete
+backend, transport permissions and scientific storage semantics. Since 2026-10-14 the
+same plan also carries the **experiment revamp**: experiments made of several samples
+(one file per sample, recorded chapters), a calibration run, a run plan, per-sample
+review and a multi-run Compare workspace ([ADR 0015](../../decisions/0015-experiment-run-chapter-identity.md),
+[FORECYT.md](../../design/egrabber-workspace/FORECYT.md)). Both strands are delivered
+through the single sequence in **Delivery sequence** below. The complete
 [design brief](../../design/egrabber-workspace/README.md) is normative; the
 [reviewed v2 prototype](../../design/egrabber-workspace/prototype.html) specifies the
 seven later interaction refinements, not a replacement seven-tab production app.
@@ -45,6 +50,37 @@ seven later interaction refinements, not a replacement seven-tab production app.
   - Amended the same day: pass/fail-only bead QC is not adopted, but a **calibration
     run** is. It is a run of a reference sample whose results become an applied,
     instrument-scoped calibration record (see P2 and ADR 0015 item 7).
+
+## Delivery sequence
+
+Work packages P0–P7 describe *scope*. This table is the *order*: each slice is one or a
+few PRs against this branch, with its own tests, vault and manual updates. A slice may
+start when its "needs" are merged. Backend-first slices (S2, S3) unblock the UI slices;
+the UI slices are safe to build against the checked-in contract before then as long
+as missing data stays Unavailable.
+
+| # | Slice | Package | Needs | Delivers | Gate |
+|---|---|---|---|---|---|
+| S0 | Hygiene fixes | — | nothing | #711 pumps stop on last-client loss; `ReviewPanel` header comment; readiness probe caching (#713 part); FCS `$MIB_RUN_ID`; `WORKFLOW.md` recent-work rule | unit tests beside each fix |
+| S1 | Decisions and views | P0 | nothing | ADR 0015; this plan; FORECYT.md; proposed views 00–06 in the fold-in sandbox file (**done 2026-10-15**, PR #710) | `check_docs.py` |
+| S2 | Run snapshot v3 | P4 (backend) | ADR 0015; ABI number reserved with the coordinator | #712: `experiment_id` / `run_index` / `sample_ref`, `/experiment_annotation`, E-LUT id/sha, pump/LED/stage readbacks, selected operator, calibration record id, declared-or-unknown channel/medium/temperature; PZ `runId`/`epoch` persisted; start request with annotation and stop condition | round-trip, legacy read (absent ≠ fabricated), fault injection |
+| S3 | Chapters and auto-stop | P4 (backend) | S2 | `mark_chapter` command, `/chapters` table with boundary accounting, `chapterId` stamped at ingest; backend-owned auto-stop (objects / duration / both) with stop reason recorded; review contract gains chapter columns (review ABI 2) | lifecycle e2e, concurrency stress, TSan, PZ path via `pzrec_to_h5` sibling dataset |
+| S4 | Shell and Prepare | P1, P2 | S0 | opt-in four-stage workspace; backend gates shown in Prepare with Unknown/Unsupported (#713); extended confirmation signature; storage budget gate and run-plan card; fluidics shown as estimates | P1 and P2 gates |
+| S5 | Calibration run | P2 (backend + UI) | S2, S4 | calibration method purpose; record derivation in the backend (size → pixel→µm proposal, offset and E-vs-nominal check-only); apply with previous vs new; age/identity readiness gate per method policy; history view | derivation tests against synthetic bead runs; gate invalidation tests; no silent method change |
+| S6 | Experiment Plan and Live | P4 (UI) | S3, S4 | Plan sub-view (format picker, sample sheet, per-run auto-stop, method + analysis-plan pairing); queue driver (stop → drain → finalize → close → prompt → readiness → Start); lifecycle stepper; separate stop actions; detected-cell strip and scatter click-to-pin in React; non-default banner | P4 gate; queue pause on client loss (S0) proven by test |
+| S7 | Single review + populations + statistics | P5 | #512 merged; S3 | Studio mounts the shared review; full u64 event identity; polygon AND E AND criteria populations with live hit rate; per-run/chapter/population statistics from the Cytoflow worker with inline flags; small multiples; chapter overview (flags, never moves boundaries) | P5 gate |
+| S8 | Compare | P7 | S7; #314 ComparisonSpec; #523 worker | multi-run workspace, compatibility reasons, per-unit fits with Suspect-fit, live with freeze-for-report | P7 gate |
+| S9 | Parity and promotion | P6 | S4–S8 | all 37 + 7 views reviewed; host and PZ7035 runs measured; manual, release notes, screenshots | P6 gate; promotion by normal review, CI and hardware acceptance |
+
+Rules that apply to every slice:
+
+- Contracts are additive; ABI numbers are reserved before the PR opens (ADR 0004).
+- Nothing per-sample is shown as real until S2/S3 have landed; before that the UI shows
+  Unavailable, not an inferred value.
+- New mutating commands (`mark_chapter`, calibration apply, queue control) join the
+  bridge server allowlist with tests.
+- PZ7035: S4–S6 run on the instrument UI; S7–S8 are PC-side (YOFO Review / desktop),
+  the instrument shows a run summary only (#501).
 
 ## Work packages and completion gates
 
@@ -207,6 +243,13 @@ seven later interaction refinements, not a replacement seven-tab production app.
 
 - [ ] Operator can Prepare hardware/software/storage, Align, inspect live cells,
   select a population, record, finalize, reopen and export without ambiguous state.
+- [ ] Operator can plan an experiment of several samples, run them as a queue (one file
+  per sample) or as recorded chapters, with per-run auto-stop, and see per-sample
+  statistics and a multi-run comparison that cite the recorded identities (ADR 0015).
+- [ ] A calibration run produces a record that is applied only by explicit operator
+  action, is referenced by later runs, and gates readiness per the method's policy.
+- [ ] Losing the controlling client leaves fluidics, stage, recording and the queue in a
+  safe, non-resuming state (#711).
 - [ ] No unbridged capability is presented as verified; no simulated hardware data
   enters production code; permissions are enforced by backend as well as UI.
 - [ ] Existing working shell and backend regressions stay green during migration.

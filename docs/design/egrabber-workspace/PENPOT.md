@@ -116,6 +116,21 @@ omits text. A valid PNG alone is not visual acceptance.
 | Linked scientific review (P5) | 04, 19–22, 36 | Recorded-point inspector, alternate selection, live pin, unavailable image |
 | Maintenance and final parity (P6) | 17–18, 27, all 00–36 | Firmware, preferences/help and compatibility; full-workspace regression |
 
+**Fold-in views (experiment revamp).** Seven further proposed views live in a separate
+sandbox file, `2c3c14b3-8959-40f7-a29c-2e6202e341b6` (page `202e7953-c6e1-8109-8008-ca01abeab5bf`), drawn in the same visual
+language after the 2026-10-14 decisions; `reference.json` carries them under
+`penpot.fold_in`. They extend, and never replace, views 00–36:
+
+| View | Board UUID | Slice |
+|---|---|---|
+| 00 · Fold-in map | `8b742b76-d59d-4cf7-ae47-de4f40f3d46f` | S1 |
+| 01 · Prepare: readiness, run plan, calibration record | `14a7d154-9465-4525-b781-ec51ed7edc3d` | S4, S5 |
+| 03 · Experiment · Plan | `d6bbb202-e10c-4a77-ad10-b49b8ded7c0b` | S6 |
+| 03 · Experiment · Live (queue, stepper, pinned cell) | `368c693c-68ea-42be-92a0-2553f704b158` | S6 |
+| 04 · Review · Run overview (chapters, per-sample statistics) | `2b5022ad-4791-4710-a352-f3bb4cbb8545` | S7 |
+| 04 · Review · Inspector + population criteria | `be010d21-d507-4422-8f1a-61b0e48b6ecc` | S7 |
+| 04 · Review · Compare | `5cd0129c-264a-4861-bd23-21b7cff7b280` | S8 |
+
 The `penpot.entry_points` registry contains selected UUID anchors, not an export
 of every board or hotspot. All 37 views remain in the proposed page; use the map
 above and the named screen list for the rest. The other six pages are reference

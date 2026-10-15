@@ -22,3 +22,8 @@ are not stopped when the last remote client disconnects, and that the E-LUT iden
 missing from run provenance.
 
 Documentation only: no code, ABI or schema changes yet.
+
+Update 2026-10-15: the plan now has a single **Delivery sequence** (S0–S9) that orders the
+eGrabber workspace packages and the experiment revamp together, with needs and gates per
+slice; seven eGrabber-styled fold-in views are registered in `PENPOT.md` and
+`reference.json` (`penpot.fold_in`).
