@@ -1,7 +1,7 @@
 # 0015. Experiments group runs; one file per sample; chapters are recorded, never inferred
 
 Date: 2026-10-14
-Status: accepted (owner decisions 2026-10-14; not yet implemented)
+Status: accepted (owner decisions 2026-10-14; not yet implemented; item 3 deferred 2026-10-15 — see Amendment 1)
 
 Plan: [eGrabber workspace](../exec-plans/active/2026-10-14-egrabber-workspace.md) ·
 Design note: [Forecyt fold-in](../design/egrabber-workspace/FORECYT.md) ·
@@ -114,6 +114,14 @@ it does not need to infer anything.
      never actuated by discovery;
    - electronic signatures and 21 CFR Part 11;
    - pass/fail-only QC runs that produce nothing the instrument uses (item 7 covers calibration).
+
+## Amendment 1 (2026-10-15): chapters deferred
+
+Item 3 stays decided but is not scheduled. The sample queue ships as one file per sample
+only; `mark_chapter`, `/chapters` and `chapterId` are implemented when a mid-run
+sample-change experiment is actually planned. Until then a sample change means a new run.
+Rationale: the chapter path touches the HDF5 compound, ingest, accounting, the bridge and
+the review contract for a secondary use case.
 
 ## Consequences
 

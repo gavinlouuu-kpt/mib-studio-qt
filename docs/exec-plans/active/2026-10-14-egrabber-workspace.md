@@ -44,12 +44,27 @@ seven later interaction refinements, not a replacement seven-tab production app.
     or both (whichever first). The backend owns it.
   - Per-population statistics, multi-run comparison and fits run in the #523 Cytoflow
     worker. The GPL licence gate remains #523's.
-  - Add **P7 Compare** (multi-run workspace) to this plan.
+  - Add **P7 Compare** (multi-run workspace) to this plan. *(Withdrawn 2026-10-15, see below.)*
   - Not adopted: electronic signatures / 21 CFR Part 11, and plate/rack formats until
     an autosampler device class exists.
   - Amended the same day: pass/fail-only bead QC is not adopted, but a **calibration
     run** is. It is a run of a reference sample whose results become an applied,
     instrument-scoped calibration record (see P2 and ADR 0015 item 7).
+- 2026-10-15: Scope trim after review ("follow good software's logic"). The workspace
+  records and shows truthfully; analysis belongs to the analysis tool. Therefore:
+  - **Removed from this plan:** P7 Compare (owned by #314 ComparisonSpec and #523 FJ09),
+    feature-range "criteria sliders" (multi-criteria gating is #523 FJ04; the shell keeps
+    polygon AND E), the calibration history chart (a plain list suffices), auto-revert
+    of hardware overrides (keep the banner and the snapshot record), and the
+    method + analysis-plan "recipe" pairing.
+  - **Deferred:** chapters (`mark_chapter`, `/chapters`, `chapterId`) until a mid-run
+    sample-change experiment is actually scheduled; ADR 0015 item 3 stays decided but
+    unimplemented. The sample queue ships as one file per sample only.
+  - **Simplified:** the sample sheet is a fixed small schema (sample, condition, unit,
+    concentration + unit, notes, free key/values), not a layer system; the queue is a
+    guided UI flow over existing stop/finalize/start commands plus `experiment_id` /
+    `sample_ref` in the start request, not a backend queue; snapshot v3 drops the
+    free-text channel/medium/temperature fields (they are annotation).
 
 ## Delivery sequence
 
@@ -62,15 +77,17 @@ as missing data stays Unavailable.
 | # | Slice | Package | Needs | Delivers | Gate |
 |---|---|---|---|---|---|
 | S0 | Hygiene fixes | — | nothing | #711 pumps stop on last-client loss; `ReviewPanel` header comment; readiness probe caching (#713 part); FCS `$MIB_RUN_ID`; `WORKFLOW.md` recent-work rule | unit tests beside each fix |
-| S1 | Decisions and views | P0 | nothing | ADR 0015; this plan; FORECYT.md; proposed views 00–06 in the fold-in sandbox file (**done 2026-10-15**, PR #710) | `check_docs.py` |
-| S2 | Run snapshot v3 | P4 (backend) | ADR 0015; ABI number reserved with the coordinator | #712: `experiment_id` / `run_index` / `sample_ref`, `/experiment_annotation`, E-LUT id/sha, pump/LED/stage readbacks, selected operator, calibration record id, declared-or-unknown channel/medium/temperature; PZ `runId`/`epoch` persisted; start request with annotation and stop condition | round-trip, legacy read (absent ≠ fabricated), fault injection |
-| S3 | Chapters and auto-stop | P4 (backend) | S2 | `mark_chapter` command, `/chapters` table with boundary accounting, `chapterId` stamped at ingest; backend-owned auto-stop (objects / duration / both) with stop reason recorded; review contract gains chapter columns (review ABI 2) | lifecycle e2e, concurrency stress, TSan, PZ path via `pzrec_to_h5` sibling dataset |
-| S4 | Shell and Prepare | P1, P2 | S0 | opt-in four-stage workspace; backend gates shown in Prepare with Unknown/Unsupported (#713); extended confirmation signature; storage budget gate and run-plan card; fluidics shown as estimates | P1 and P2 gates |
-| S5 | Calibration run | P2 (backend + UI) | S2, S4 | calibration method purpose; record derivation in the backend (size → pixel→µm proposal, offset and E-vs-nominal check-only); apply with previous vs new; age/identity readiness gate per method policy; history view | derivation tests against synthetic bead runs; gate invalidation tests; no silent method change |
-| S6 | Experiment Plan and Live | P4 (UI) | S3, S4 | Plan sub-view (format picker, sample sheet, per-run auto-stop, method + analysis-plan pairing); queue driver (stop → drain → finalize → close → prompt → readiness → Start); lifecycle stepper; separate stop actions; detected-cell strip and scatter click-to-pin in React; non-default banner | P4 gate; queue pause on client loss (S0) proven by test |
-| S7 | Single review + populations + statistics | P5 | #512 merged; S3 | Studio mounts the shared review; full u64 event identity; polygon AND E AND criteria populations with live hit rate; per-run/chapter/population statistics from the Cytoflow worker with inline flags; small multiples; chapter overview (flags, never moves boundaries) | P5 gate |
-| S8 | Compare | P7 | S7; #314 ComparisonSpec; #523 worker | multi-run workspace, compatibility reasons, per-unit fits with Suspect-fit, live with freeze-for-report | P7 gate |
-| S9 | Parity and promotion | P6 | S4–S8 | all 37 + 7 views reviewed; host and PZ7035 runs measured; manual, release notes, screenshots | P6 gate; promotion by normal review, CI and hardware acceptance |
+| S1 | Decisions and views | P0 | nothing | ADR 0015; this plan; FORECYT.md; proposed views 00–06 in the fold-in sandbox file (**done 2026-10-15**, PR #710; views 05-criteria and 06-Compare are now reference-only) | `check_docs.py` |
+| S2 | Run snapshot v3 | P4 (backend) | ADR 0015; ABI number reserved with the coordinator | #712: `experiment_id` / `run_index` / `sample_ref`, `/experiment_annotation` (fixed schema + free key/values), E-LUT id/sha, pump/LED/stage readbacks, selected operator, calibration record id; PZ `runId`/`epoch` persisted; start request carries annotation and stop condition (objects / duration / both, backend-owned, reason recorded) | round-trip, legacy read (absent ≠ fabricated), fault injection |
+| S3 | Shell and Prepare | P1, P2 | S0 | opt-in four-stage workspace; backend gates shown in Prepare with Unknown/Unsupported (#713); extended confirmation signature; storage budget gate and run-plan card; fluidics shown as estimates; non-default-settings banner (no auto-revert) | P1 and P2 gates |
+| S4 | Calibration run | P2 (backend + UI) | S2, S3 | calibration method purpose; record derivation in the backend (size → pixel→µm proposal; offset and E-vs-nominal check-only); apply with previous vs new; age/identity readiness gate per method policy; record list | derivation tests on synthetic bead runs; gate invalidation; no silent method change |
+| S5 | Experiment Plan and Live | P4 (UI) | S2, S3 | Plan sub-view (format: single / queue; sample sheet, fixed schema); guided queue flow over existing commands (stop → drain → finalize → close → prompt → readiness → Start); lifecycle stepper; separate stop actions; detected-cell strip and scatter click-to-pin in React | P4 gate; a lost controlling client pauses the flow and never resumes it (S0) |
+| S6 | Single review | P5 | #512 merged; S2 | Studio mounts the shared review; full u64 event identity; polygon AND E; per-run statistics and small multiples **consumed from** the #523 worker (FJ05/FJ08), not re-implemented in the shell | P5 gate |
+| S7 | Parity and promotion | P6 | S3–S6 | all 37 + 5 views reviewed; host and PZ7035 runs measured; manual, release notes, screenshots | P6 gate; promotion by normal review, CI and hardware acceptance |
+
+Deferred (not scheduled here): chapters (ADR 0015 item 3; needs `mark_chapter`, `/chapters`,
+`chapterId`, review ABI 2); multi-run Compare and dose-response (#314, #523 FJ09);
+feature-range criteria (#523 FJ04); recipe pairing.
 
 Rules that apply to every slice:
 
@@ -137,7 +154,7 @@ Rules that apply to every slice:
   - A readiness gate checks the age and validity of the applied record. Each method
     sets the policy: none, warn or required. The record is invalidated by chip,
     objective, camera or ROI identity changes.
-  - A history view of records with spec lines and reversible exclusions.
+  - A plain list of past records (applied / superseded / invalidated); no trend chart.
 
   Decided 2026-10-14 (owner delegated):
   - Reference material: rigid size beads of known diameter are the standard
@@ -176,10 +193,11 @@ Rules that apply to every slice:
 - Independent supported recording modes with truthful mutual exclusions; stop,
   drain, finalize/close/error/retry; reconciled accepted/written/dropped/pending counts.
 - Exact export range, progress, verify, cancel/failure and source preservation.
-- Experiment → Plan sub-view (ADR 0015): sample format (single sample, sample queue,
-  time segments; rack/plate hidden unless an autosampler capability is reported),
-  sample sheet with typed annotation layers and one colour registry, per-run auto-stop
-  option, and the method + analysis-plan pairing.
+- Experiment → Plan sub-view (ADR 0015): sample format (single sample or sample queue;
+  time segments deferred with chapters; rack/plate hidden unless an autosampler
+  capability is reported), a sample sheet with a fixed small schema (sample, condition,
+  experimental unit, concentration + unit, notes, free key/values), one colour per
+  condition, per-run auto-stop option, and "base on previous experiment".
 - Keep the live inspection features operators already rely on, in the React shell:
   a strip of the most recently detected cells (bounded owned copies, explicit
   eviction, click to pin) and click-a-scatter-point-to-see-the-cell during a run
@@ -187,12 +205,12 @@ Rules that apply to every slice:
   eviction; no image → metadata only with the reason). Today this exists only in the
   Qt Monitoring tab (2026-10-12); the React Monitoring view has no per-row image
   command yet. Reference views 02 and 21.
-- Sample queue: Next sample = stop → drain → finalize → confirmed close, then Start
-  of the next entry after its readiness. Time segments: `mark_chapter` with boundary
-  accounting. Lifecycle stepper. Non-default-settings banner (requested vs readback).
+- Sample queue as a guided flow over existing commands: Next sample = stop → drain →
+  finalize → confirmed close, prompt, readiness, then Start of the next entry. No
+  backend queue state; nothing resumes on its own. Lifecycle stepper.
+  Non-default-settings banner (requested vs readback; recorded, never auto-reverted).
 - Run snapshot v3: experiment/run/sample identity, planned annotation, E-LUT id/sha,
-  pump/LED/stage readbacks, selected operator, declared or unknown channel, medium and
-  temperature. Persist PZ `runId`/`epoch`.
+  pump/LED/stage readbacks, selected operator. Persist PZ `runId`/`epoch`.
 - Gate: storage round-trip + fault-injection, lifecycle e2e + concurrency stress,
   latency/invariant tests, TSan if threads/shared state change, slow/full/disconnected disk.
 
@@ -206,12 +224,11 @@ Rules that apply to every slice:
 - Separate stored results from explicit reprocessing; do not invent tracking.
 - Precondition: one review implementation in Studio and YOFO Review (#512). Studio's
   Review tab does not mount `review/ReviewPanel.tsx` today.
-- Populations: polygon AND E interval AND optional feature-range criteria, with a live
-  "N of M (x %)" and the inspected record's values marked. Analysis-only unless
-  explicitly deployed to a sort.
-- Per-run / per-chapter / per-population statistics (Cytoflow worker) with inline
-  flags (low n, loss in chapter, E outside the LUT domain, legacy file). Small multiples
-  per run, chapter or annotation group. Chapter review flags but never moves boundaries.
+- Population = polygon AND E interval, with a live "N of M (x %)". Multi-criteria
+  gating is the analysis tool's job (#523 FJ04) and is not built in the shell.
+- Per-run / per-population statistics and small multiples are consumed from the #523
+  worker (FJ05/FJ08) with inline flags (low n, loss in run, E outside the LUT domain,
+  legacy file); the shell does not compute statistics.
 - Gate: rapid/out-of-order selection, u64 IDs, multiple objects and parts, per-record
   availability, LUT validity/out-of-domain, unchanged gating on inspect, reopen/export round-trip.
 
@@ -225,27 +242,13 @@ Rules that apply to every slice:
 - Submit focused PRs against this integration branch where useful; promotion into
   develop requires the repository's normal review, CI and hardware acceptance.
 
-### P7 — Compare (multi-run workspace)
-
-- Open several runs grouped by experiment and annotation. Incompatible runs are listed
-  with the reason (chip, LUT, processing contract, metric definition), following #314
-  ComparisonSpec.
-- Live by default; a frozen snapshot only for reports.
-- Dose-response and summary statistics on per-experimental-unit summaries, with declared
-  unit, pairing and weighting (#314, #523 FJ09). Suspect-fit reasons inline; no
-  automatic interpretation.
-- PC-side for the PZ7035 (instrument shows a run summary only, #501).
-- Gate: compatibility-rule tests, legacy-file (unchaptered, no annotation) handling,
-  reproducible fits from exported summaries, worker cancellation and stale-result
-  rejection.
-
 ## Acceptance criteria
 
 - [ ] Operator can Prepare hardware/software/storage, Align, inspect live cells,
   select a population, record, finalize, reopen and export without ambiguous state.
-- [ ] Operator can plan an experiment of several samples, run them as a queue (one file
-  per sample) or as recorded chapters, with per-run auto-stop, and see per-sample
-  statistics and a multi-run comparison that cite the recorded identities (ADR 0015).
+- [ ] Operator can plan an experiment of several samples and run them as a queue (one
+  file per sample) with per-run auto-stop; every file carries the identities and
+  annotation that let the analysis tool group and compare them (ADR 0015).
 - [ ] A calibration run produces a record that is applied only by explicit operator
   action, is referenced by later runs, and gates readiness per the method's policy.
 - [ ] Losing the controlling client leaves fluidics, stage, recording and the queue in a
