@@ -38,6 +38,7 @@ MIB adopts the three, within its own rules:
 | Template = acquisition + analysis | Method (acquisition, approved via #398) and analysis plan (gates/metrics, #523) stay separate. A recipe pairs them by reference. Add "new draft from this run's recorded configuration". | P4 / P7 |
 | Worklist with time estimate | Run plan: stop condition × rate × payload → duration and size. SSD estimates use measured fresh vs sustained rates (#667). | Prepare (P2) |
 | Resources sized to the run | Storage budget gate. Sample volume as a labelled *estimate* (no level sensors are fitted). | P2 |
+| (MIB, not iQue) live detected-cell strip + click-to-see-cell during a run | **Kept.** Already in Qt Monitoring; React port is a P4 item. Drawn on the Live view. | Experiment (P4), views 02/21 |
 | Run dialog with step checklist | Lifecycle stepper Starting → Active → Stopping → Drain → Finalizing → Closed/Error. Separate Stop-acquisition / Freeze / Stop-&-finalize. Next sample. | Experiment (P4) |
 | Protocol-scoped overrides | "N settings differ from method X" banner. Requested vs readback. Recorded in snapshot v3. Reverted only after the run ends. | P3 / P4 |
 | Automatic gates frozen during acquisition | Adaptive gates are frozen while a run is active and re-evaluated in review, with old → new shown. | P5 |

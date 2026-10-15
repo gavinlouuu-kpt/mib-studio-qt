@@ -144,6 +144,13 @@ seven later interaction refinements, not a replacement seven-tab production app.
   time segments; rack/plate hidden unless an autosampler capability is reported),
   sample sheet with typed annotation layers and one colour registry, per-run auto-stop
   option, and the method + analysis-plan pairing.
+- Keep the live inspection features operators already rely on, in the React shell:
+  a strip of the most recently detected cells (bounded owned copies, explicit
+  eviction, click to pin) and click-a-scatter-point-to-see-the-cell during a run
+  (pinned selection with prev/next and an open-in-window viewer; the copy survives ring
+  eviction; no image → metadata only with the reason). Today this exists only in the
+  Qt Monitoring tab (2026-10-12); the React Monitoring view has no per-row image
+  command yet. Reference views 02 and 21.
 - Sample queue: Next sample = stop → drain → finalize → confirmed close, then Start
   of the next entry after its readiness. Time segments: `mark_chapter` with boundary
   accounting. Lifecycle stepper. Non-default-settings banner (requested vs readback).
