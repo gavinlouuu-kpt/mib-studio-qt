@@ -9,6 +9,10 @@
 - **Playwright:** 1.62.1 is installed in `.ds-sync/` to match the cached chromium-1234. Install it with `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`.
 - **Penpot wiring:** `penpot.json` maps every component to its Penpot boards, and each `docs/<Name>.md` ends with a "Penpot reference" section.
 
+## Uploads
+
+- 2026-10-16: first sync into the new project "MIB · YOFO UI language" (`14e57f39-…`). 78 files plus the anchor; render 13/13, 0 bad.
+
 ## Known render warns
 
 - None after the authored previews.

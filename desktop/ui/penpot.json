@@ -199,5 +199,11 @@
         }
       ]
     }
+  },
+  "claude_design": {
+    "project": "MIB · YOFO UI language",
+    "project_id": "14e57f39-1852-4a03-a868-550dc43f27b1",
+    "synced": "2026-10-16",
+    "sync_config": "desktop/ui/.design-sync/config.json"
   }
 }
