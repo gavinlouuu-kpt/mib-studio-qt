@@ -1,0 +1,32 @@
+{
+  "name": "@mib/ui",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Shared UI language of MIB Studio, YOFO Studio and YOFO Review (tokens, chips, cards, shell, chart)",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "style": "./dist/style.css",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./style.css": "./dist/style.css",
+    "./fonts.css": "./dist/fonts.css"
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": [
+    "*.css"
+  ],
+  "scripts": {
+    "build": "vite build --config vite.config.ts && node scripts/copy-fonts.mjs && tsc -p tsconfig.build.json"
+  },
+  "peerDependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  }
+}

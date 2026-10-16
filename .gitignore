@@ -52,3 +52,10 @@ site/
 # (evidence bundles under docs/evidence/ keep their logs deliberately)
 /*.log
 data/logs/
+
+# design-sync (desktop/ui → Claude Design): staged scripts, build output, machine state
+desktop/ui/.ds-sync/
+desktop/ui/ds-bundle/
+desktop/ui/.design-sync/.cache/
+desktop/ui/.design-sync/learnings/
+desktop/ui/.design-sync/node_modules
