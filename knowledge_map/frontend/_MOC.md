@@ -19,6 +19,8 @@
 - [[SyringePumpTab]] — [[../services/SyringePumpService]] UI
 
 ## React + Tauri (shared with the standalone product)
+- [[UI-Language-Kit]] — `@mib/ui` (`desktop/ui/`): shared tokens, chips, cards,
+  shell and chart for MIB Studio, YOFO Studio and YOFO Review
 - [[YofoReview]] — YOFO Review: the Review tab as its own React + Tauri
   product; `desktop/src/review/` is also MIB Studio's Tauri Review tab
 

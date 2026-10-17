@@ -1,0 +1,270 @@
+{
+  "note": "Penpot source of each @mib/ui component. Sandbox file in the Agent Sandbox project; board ids change when a board is redrawn (re-run the registry sync).",
+  "penpot_file_id": "2c3c14b3-8959-40f7-a29c-2e6202e341b6",
+  "pages": {
+    "Operation app": "abaacf41-dfaf-500a-bc29-e6aa946d3273",
+    "Review app": "6dcbad3e-bdc3-5c94-9a59-1307866b24c8",
+    "UI language": "1e1b66e2-283d-5c13-8083-7bc37a320cfd",
+    "Components (@mib/ui)": "b64e9247-17fe-514c-be52-6d82bead2b2c"
+  },
+  "components": {
+    "StateChip": {
+      "group": "States",
+      "section": "State chips",
+      "boards": [
+        {
+          "page": "b64e9247-17fe-514c-be52-6d82bead2b2c",
+          "board": "9b91ee6f-72fc-4957-aca5-cc30f19aef3e",
+          "name": "C · StateChip"
+        },
+        {
+          "page": "1e1b66e2-283d-5c13-8083-7bc37a320cfd",
+          "board": "80ae0c94-466d-4f46-babd-b131d5fef13b",
+          "name": "U0 · UI language"
+        },
+        {
+          "page": "abaacf41-dfaf-500a-bc29-e6aa946d3273",
+          "board": "e4c8fe07-f21c-45cb-9f8d-0045e350da41",
+          "name": "O1 · Prepare · readiness"
+        }
+      ]
+    },
+    "ConditionSwatch": {
+      "group": "States",
+      "section": "Colour",
+      "boards": [
+        {
+          "page": "b64e9247-17fe-514c-be52-6d82bead2b2c",
+          "board": "dc97d71b-0eca-47de-aaf9-a7a99cea5b45",
+          "name": "C · ConditionSwatch"
+        },
+        {
+          "page": "1e1b66e2-283d-5c13-8083-7bc37a320cfd",
+          "board": "80ae0c94-466d-4f46-babd-b131d5fef13b",
+          "name": "U0 · UI language"
+        },
+        {
+          "page": "abaacf41-dfaf-500a-bc29-e6aa946d3273",
+          "board": "d8579b82-5140-4ee0-8205-d9f19862d237",
+          "name": "O6 · Quick look"
+        }
+      ]
+    },
+    "Button": {
+      "group": "Actions",
+      "section": "Toolbar row (primary / secondary / selected / destructive / unavailable)",
+      "boards": [
+        {
+          "page": "b64e9247-17fe-514c-be52-6d82bead2b2c",
+          "board": "8ec89520-b6ba-4d9b-9c32-5fbc3cf7b8d2",
+          "name": "C · Button"
+        },
+        {
+          "page": "1e1b66e2-283d-5c13-8083-7bc37a320cfd",
+          "board": "80ae0c94-466d-4f46-babd-b131d5fef13b",
+          "name": "U0 · UI language"
+        }
+      ]
+    },
+    "Toolbar": {
+      "group": "Actions",
+      "section": "Toolbar row",
+      "boards": [
+        {
+          "page": "b64e9247-17fe-514c-be52-6d82bead2b2c",
+          "board": "cdec669d-756f-44ce-bef8-617ffc55402b",
+          "name": "C · Toolbar"
+        },
+        {
+          "page": "1e1b66e2-283d-5c13-8083-7bc37a320cfd",
+          "board": "80ae0c94-466d-4f46-babd-b131d5fef13b",
+          "name": "U0 · UI language"
+        },
+        {
+          "page": "abaacf41-dfaf-500a-bc29-e6aa946d3273",
+          "board": "eb7b196d-6e3e-47c2-bb65-183b19329704",
+          "name": "O5 · Run summary"
+        }
+      ]
+    },
+    "AppShell": {
+      "group": "Layout",
+      "section": "Shared shell",
+      "boards": [
+        {
+          "page": "b64e9247-17fe-514c-be52-6d82bead2b2c",
+          "board": "14277a26-6172-4921-84c3-513b5659ccfd",
+          "name": "C · AppShell"
+        },
+        {
+          "page": "abaacf41-dfaf-500a-bc29-e6aa946d3273",
+          "board": "7ad763ec-7b0a-408f-bef9-ef9f3d25dcf1",
+          "name": "O0 · Operation app map"
+        },
+        {
+          "page": "6dcbad3e-bdc3-5c94-9a59-1307866b24c8",
+          "board": "643f5337-5992-46b6-9854-4b5ccf638c76",
+          "name": "R0 · Review app map"
+        }
+      ]
+    },
+    "StageTabs": {
+      "group": "Layout",
+      "section": "Stage tabs",
+      "boards": [
+        {
+          "page": "b64e9247-17fe-514c-be52-6d82bead2b2c",
+          "board": "14277a26-6172-4921-84c3-513b5659ccfd",
+          "name": "C · AppShell"
+        },
+        {
+          "page": "abaacf41-dfaf-500a-bc29-e6aa946d3273",
+          "board": "7ad763ec-7b0a-408f-bef9-ef9f3d25dcf1",
+          "name": "O0 · Operation app map"
+        },
+        {
+          "page": "6dcbad3e-bdc3-5c94-9a59-1307866b24c8",
+          "board": "643f5337-5992-46b6-9854-4b5ccf638c76",
+          "name": "R0 · Review app map"
+        }
+      ]
+    },
+    "Card": {
+      "group": "Layout",
+      "section": "Card anatomy",
+      "boards": [
+        {
+          "page": "b64e9247-17fe-514c-be52-6d82bead2b2c",
+          "board": "1855516d-d1b2-43d0-81d6-e6908581cab8",
+          "name": "C · Card"
+        },
+        {
+          "page": "1e1b66e2-283d-5c13-8083-7bc37a320cfd",
+          "board": "80ae0c94-466d-4f46-babd-b131d5fef13b",
+          "name": "U0 · UI language"
+        },
+        {
+          "page": "abaacf41-dfaf-500a-bc29-e6aa946d3273",
+          "board": "e4c8fe07-f21c-45cb-9f8d-0045e350da41",
+          "name": "O1 · Prepare · readiness"
+        }
+      ]
+    },
+    "FactList": {
+      "group": "Layout",
+      "section": "Card anatomy (facts)",
+      "boards": [
+        {
+          "page": "b64e9247-17fe-514c-be52-6d82bead2b2c",
+          "board": "e1be673c-9e1a-45d6-aa06-b1f8648c0be6",
+          "name": "C · FactList"
+        },
+        {
+          "page": "1e1b66e2-283d-5c13-8083-7bc37a320cfd",
+          "board": "80ae0c94-466d-4f46-babd-b131d5fef13b",
+          "name": "U0 · UI language"
+        },
+        {
+          "page": "abaacf41-dfaf-500a-bc29-e6aa946d3273",
+          "board": "7832aa3b-faed-4e2c-ae5c-0b72f1e4fecb",
+          "name": "O2 · Align"
+        }
+      ]
+    },
+    "StatTile": {
+      "group": "Data",
+      "section": "Counts and Quick look numbers",
+      "boards": [
+        {
+          "page": "b64e9247-17fe-514c-be52-6d82bead2b2c",
+          "board": "846e096c-0cc7-450d-82be-d4380b31719d",
+          "name": "C · StatTile"
+        },
+        {
+          "page": "abaacf41-dfaf-500a-bc29-e6aa946d3273",
+          "board": "eb7b196d-6e3e-47c2-bb65-183b19329704",
+          "name": "O5 · Run summary"
+        },
+        {
+          "page": "abaacf41-dfaf-500a-bc29-e6aa946d3273",
+          "board": "d8579b82-5140-4ee0-8205-d9f19862d237",
+          "name": "O6 · Quick look"
+        }
+      ]
+    },
+    "Stepper": {
+      "group": "Data",
+      "section": "Lifecycle steppers",
+      "boards": [
+        {
+          "page": "b64e9247-17fe-514c-be52-6d82bead2b2c",
+          "board": "000889c1-8ddb-4cca-bfa3-a7da06dbc598",
+          "name": "C · Stepper"
+        },
+        {
+          "page": "abaacf41-dfaf-500a-bc29-e6aa946d3273",
+          "board": "eb7b196d-6e3e-47c2-bb65-183b19329704",
+          "name": "O5 · Run summary"
+        },
+        {
+          "page": "6dcbad3e-bdc3-5c94-9a59-1307866b24c8",
+          "board": "1f19ee2f-b36b-481a-afad-b110567072cf",
+          "name": "R6 · Export"
+        }
+      ]
+    },
+    "RecordIdentity": {
+      "group": "Data",
+      "section": "Record identity",
+      "boards": [
+        {
+          "page": "b64e9247-17fe-514c-be52-6d82bead2b2c",
+          "board": "7431ea12-2873-4f29-97ce-9649334d2691",
+          "name": "C · RecordIdentity"
+        },
+        {
+          "page": "1e1b66e2-283d-5c13-8083-7bc37a320cfd",
+          "board": "80ae0c94-466d-4f46-babd-b131d5fef13b",
+          "name": "U0 · UI language"
+        },
+        {
+          "page": "6dcbad3e-bdc3-5c94-9a59-1307866b24c8",
+          "board": "dcdbaa6b-9790-4e69-bea4-936747f588b1",
+          "name": "R3 · Inspect"
+        }
+      ]
+    },
+    "AreaDeformChart": {
+      "group": "Data",
+      "section": "The chart",
+      "boards": [
+        {
+          "page": "b64e9247-17fe-514c-be52-6d82bead2b2c",
+          "board": "c78afa89-5643-4e25-b9ed-7d845eb6e483",
+          "name": "C · AreaDeformChart"
+        },
+        {
+          "page": "1e1b66e2-283d-5c13-8083-7bc37a320cfd",
+          "board": "80ae0c94-466d-4f46-babd-b131d5fef13b",
+          "name": "U0 · UI language"
+        },
+        {
+          "page": "6dcbad3e-bdc3-5c94-9a59-1307866b24c8",
+          "board": "dcdbaa6b-9790-4e69-bea4-936747f588b1",
+          "name": "R3 · Inspect"
+        },
+        {
+          "page": "abaacf41-dfaf-500a-bc29-e6aa946d3273",
+          "board": "d8579b82-5140-4ee0-8205-d9f19862d237",
+          "name": "O6 · Quick look"
+        }
+      ]
+    }
+  },
+  "claude_design": {
+    "project": "MIB · YOFO UI language",
+    "project_id": "14e57f39-1852-4a03-a868-550dc43f27b1",
+    "synced": "2026-10-16",
+    "sync_config": "desktop/ui/.design-sync/config.json"
+  }
+}
