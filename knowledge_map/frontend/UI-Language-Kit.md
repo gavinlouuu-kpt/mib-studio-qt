@@ -19,7 +19,7 @@ Tokens are CSS custom properties named `--mib-*` (`desktop/ui/src/styles/tokens.
 
 ## Penpot and Claude Design
 
-- **Penpot:** the visual source is the Penpot sandbox file holding the "UI language" (U0), "Operation app" (O0–O6) and "Review app" (R0–R6) pages. `desktop/ui/penpot.json` maps each component to its boards, and each `desktop/ui/docs/<Name>.md` ends with a "Penpot reference".
+- **Penpot:** the visual source is the Penpot sandbox file holding the "UI language" (U0), "Operation app" (O0–O6) and "Review app" (R0–R6) pages, plus a "Components (@mib/ui)" page with one board per component ("C · <Name>"; StageTabs and UiRoot share "C · AppShell"). Each component lists its own board first. `desktop/ui/penpot.json` maps each component to its boards, and each `desktop/ui/docs/<Name>.md` ends with a "Penpot reference".
 - **Claude Design:** `desktop/ui/.design-sync/` (config, notes, conventions, authored previews) syncs the kit to the Claude Design design-system project "MIB · YOFO UI language" (`14e57f39-1852-4a03-a868-550dc43f27b1`, first synced 2026-10-16), so designs made there use these components. Re-sync with `/design-sync` after kit changes.
 
 ## Status

@@ -23,5 +23,6 @@ The card anatomy every view uses: title, one-line subtitle (what, from where, ho
 
 Drawn in the Penpot sandbox file `2c3c14b3-8959-40f7-a29c-2e6202e341b6` (Card anatomy):
 
+- C · Card: page `b64e9247-17fe-514c-be52-6d82bead2b2c`, board `1855516d-d1b2-43d0-81d6-e6908581cab8`
 - U0 · UI language: page `1e1b66e2-283d-5c13-8083-7bc37a320cfd`, board `80ae0c94-466d-4f46-babd-b131d5fef13b`
 - O1 · Prepare · readiness: page `abaacf41-dfaf-500a-bc29-e6aa946d3273`, board `e4c8fe07-f21c-45cb-9f8d-0045e350da41`

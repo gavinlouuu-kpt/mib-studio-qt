@@ -7,3 +7,4 @@ New package `desktop/ui/` (`@mib/ui`) turns the Penpot "UI language" board into 
 - The kit is not yet used by `desktop/src`; adopting it is the P1 shell work.
 
 See [[frontend/UI-Language-Kit]].
+- 2026-10-17: Penpot page "Components (@mib/ui)" added, with one board per component, registered first in `desktop/ui/penpot.json` and the docs.
