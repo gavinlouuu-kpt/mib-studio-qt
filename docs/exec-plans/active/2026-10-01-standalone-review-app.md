@@ -255,6 +255,14 @@ What is missing or wrong today (evidence in the agent survey of
   binary (`--no-default-features --features review-only`,
   `scripts/tauri-review.mjs`). This plan's ADR is renumbered 0008 → 0014.
   Convergence: #512, after the ABI renumber.
+- 2026-10-18: **#512 has its own execution plan,**
+  [`2026-10-18-one-review-implementation.md`](2026-10-18-one-review-implementation.md)
+  (track B, step B0): the ordered slices that move MIB Studio's review
+  features (export JSON and batches, reanalysis, overlay rendering, charts
+  JSON, the source guards) onto `ReviewSession` / `ReviewJobs`, the exact
+  bridge and review contract changes they need (ABI numbers reserved by the
+  coordinator), and step B5, MIB Studio's Review stage mounting
+  `desktop/src/review/` through one entry point.
 
 ## Design
 

@@ -180,9 +180,11 @@ private:
     std::atomic<uint64_t> readinessGeneration_{0};
     InvalidationKey lastKey_;
     bool haveLastKey_{false};
+    // Destination probes that passed for (output path, readiness generation) (#713).
+    std::string storageProbePath_;
     uint64_t storageProbeGeneration_{0};
-    uint64_t storageProbeTimeUs_{0};
-    bool storageProbeOk_{false};
+    bool storageWriteVerified_{false}; // the temp file of storage.output
+    bool storageProbeOk_{false};       // the HDF5 round trip of storage.roundtrip
     std::string storageProbeReason_;
 
     // Written under mutex_; atomic so start() can answer AlreadyActive without the lock (#595).

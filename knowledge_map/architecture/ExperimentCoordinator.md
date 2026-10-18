@@ -293,8 +293,18 @@ lock are restored. Fatal accounting is reconciled before writing the file,
 aligned with #589's failed-outcome persistence.
 
 Readiness includes `storage.roundtrip`: a small HDF5 write/close/reopen and
-pixel comparison cached by readiness generation for 30 seconds. It verifies
-access and format, not sustained throughput. `storage.buffer` rejects a host
+pixel comparison. It verifies access and format, not sustained throughput.
+The destination probes that write to the disk (this round trip and the
+`.mib_write_probe_*` temp file of `storage.output`) run once per (output
+path, readiness generation), not on every evaluation, so a UI polling
+readiness does not churn the SSD (#713). A path change, or anything else
+that bumps the generation, probes again. Only a pass is kept: a failed probe
+runs again at the next evaluation, so a destination the operator fixes
+(permissions, antivirus, a mount) passes without a path change, and a
+failing destination blocks Start anyway. The metadata checks of
+`storage.output` (parent a directory, path not a directory, 64 MiB free)
+write nothing and run on every evaluation. Test:
+`backend.readiness_probe_cache`. `storage.buffer` rejects a host
 image/mask series larger than the byte budget and warns when byte pressure
 will precede the count threshold. Geometry/format, budget and flush interval
 changes invalidate preflight. Metadata-only provider recordings do not use

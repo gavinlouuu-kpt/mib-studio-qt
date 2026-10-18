@@ -42,8 +42,9 @@
 //! Client loss: the server pings every `ping_interval` and drops a connection that is silent
 //! for `ping_timeout`. When the last client has been gone for `client_grace`, it stops and
 //! saves: an active experiment gets `experiment_stop` (final flush and finalisation) and a raw
-//! recording `stop_recording`; a PZ7035 in Align or Run goes to its safe state (LED off, cell path
-//! off, camera released). On other instruments capture keeps running. This differs on purpose from the desktop
+//! recording `stop_recording`; a busy Z stage `stage_stop`; a PZ7035 in Align or Run goes to its safe
+//! state (LED off, cell path off, camera released); last, every connected pump gets `pump_stop` and
+//! `pump_stop_purge` (a failed stop is reported). On other instruments capture keeps running. This differs on purpose from the desktop
 //! close guard, which refuses to close instead: a remote operator who lost the link can no
 //! longer see the run (ADR 0008).
 
@@ -428,6 +429,51 @@ pub fn stop_and_save(state: &AppState) -> Vec<String> {
             }
         }
     }
+    // Every connected sample or sheath pump is stopped, run and purge (#711). This runs last: pump
+    // commands do serial I/O under the bridge lock, and a stalled adapter must not hold back the
+    // recording stop or the PZ7035 safe state above (serial I/O is not yet bounded, #720).
+    actions.extend(stop_pumps(
+        |pump| mib_app_commands::fetch_pump_status(state, pump).map(|s| serde_json::to_value(s).unwrap_or_default()),
+        |cmd, pump| {
+            match cmd {
+                "pump_stop" => mib_app_commands::pump_stop(state, pump),
+                _ => mib_app_commands::pump_stop_purge(state, pump),
+            }
+            .map(|r| serde_json::to_value(r).unwrap_or_default())
+        },
+    ));
+    actions
+}
+
+/// The pump slots (contract `pump_ids`) and the stops each connected one gets on client loss.
+const PUMPS: [(u32, &str); 2] = [(0, "sample"), (1, "sheath")];
+const PUMP_STOPS: [&str; 2] = ["pump_stop", "pump_stop_purge"];
+
+/// Stop every connected pump and any purge (#711), DLSP syringe and Tushui peristaltic alike.
+/// `status` reads a slot's `fetch_pump_status`, `stop` sends a `PUMP_STOPS` command; both return the
+/// JSON the client would see. A connected pump gets both stops whatever it reports: the snapshot is
+/// only as fresh as the last poll, and the DLSP purges through another register than it runs (the
+/// Tushui stops its head either way). A stop that fails is reported, and so is a status that cannot
+/// be read (the pump is then stopped anyway).
+fn stop_pumps(
+    status: impl Fn(u32) -> Result<Value, String>,
+    stop: impl Fn(&str, u32) -> Result<Value, String>,
+) -> Vec<String> {
+    let mut actions = Vec::new();
+    for (pump, name) in PUMPS {
+        match status(pump) {
+            Ok(s) if s["connected"] != json!(true) => continue,
+            Ok(_) => {}
+            Err(e) => actions.push(format!("pump status {name} failed: {e}")),
+        }
+        for cmd in PUMP_STOPS {
+            match stop(cmd, pump) {
+                Ok(r) if r["ok"] == json!(true) => actions.push(format!("{cmd} {name}: {r}")),
+                Ok(r) => actions.push(format!("{cmd} {name} failed: {r}")),
+                Err(e) => actions.push(format!("{cmd} {name} failed: {e}")),
+            }
+        }
+    }
     actions
 }
 
@@ -611,5 +657,72 @@ mod stage_control_tests {
         }
         assert!(!CONTROL_COMMANDS.contains(&"stage_stop"), "any client may stop the stage");
         assert!(!CONTROL_COMMANDS.contains(&"fetch_stage_status"), "viewers may read the status");
+    }
+}
+
+#[cfg(test)]
+mod pump_stop_tests {
+    use super::stop_pumps;
+    use serde_json::{json, Value};
+    use std::cell::RefCell;
+
+    fn status(connected: &[u32]) -> impl Fn(u32) -> Result<Value, String> + '_ {
+        // run_status 0 (Stop) on purpose: a stale snapshot must not spare a pump.
+        move |pump| Ok(json!({ "valid": true, "connected": connected.contains(&pump), "run_status": 0 }))
+    }
+
+    // #711: the last client leaving stops every connected pump, run and purge, and says so.
+    #[test]
+    fn client_loss_stops_every_connected_pump_and_its_purge() {
+        let sent = RefCell::new(Vec::new());
+        let stop = |cmd: &str, pump: u32| {
+            sent.borrow_mut().push((cmd.to_string(), pump));
+            Ok(json!({ "ok": true, "message": "Pump stopped" }))
+        };
+        let actions = stop_pumps(status(&[0, 1]), stop);
+        assert_eq!(
+            *sent.borrow(),
+            [("pump_stop".to_string(), 0), ("pump_stop_purge".to_string(), 0), ("pump_stop".to_string(), 1), ("pump_stop_purge".to_string(), 1)]
+        );
+        assert_eq!(actions.len(), 4, "{actions:?}");
+        for expected in ["pump_stop sample: ", "pump_stop_purge sample: ", "pump_stop sheath: ", "pump_stop_purge sheath: "] {
+            assert!(actions.iter().any(|a| a.starts_with(expected)), "{expected} in {actions:?}");
+        }
+
+        // A slot with no pump connected is left alone.
+        sent.borrow_mut().clear();
+        let actions = stop_pumps(status(&[1]), stop);
+        assert_eq!(*sent.borrow(), [("pump_stop".to_string(), 1), ("pump_stop_purge".to_string(), 1)]);
+        assert!(actions.iter().all(|a| a.contains("sheath")), "{actions:?}");
+        assert!(stop_pumps(status(&[]), stop).is_empty());
+    }
+
+    // #711: a pump that does not stop is reported, never dropped, and does not spare the other pump.
+    #[test]
+    fn client_loss_reports_a_pump_that_fails_to_stop() {
+        let sent = RefCell::new(Vec::new());
+        let stop = |cmd: &str, pump: u32| {
+            sent.borrow_mut().push((cmd.to_string(), pump));
+            match (cmd, pump) {
+                ("pump_stop", 0) => Ok(json!({ "ok": false, "message": "Pump stop failed" })),
+                ("pump_stop_purge", 0) => Err("bridge lock poisoned".to_string()),
+                _ => Ok(json!({ "ok": true, "message": "Pump stopped" })),
+            }
+        };
+        let actions = stop_pumps(status(&[0, 1]), stop);
+        assert_eq!(sent.borrow().len(), 4, "the sheath pump is still stopped: {:?}", sent.borrow());
+        assert!(
+            actions.iter().any(|a| a.starts_with("pump_stop sample failed: ") && a.contains("Pump stop failed")),
+            "{actions:?}"
+        );
+        assert!(actions.iter().any(|a| a == "pump_stop_purge sample failed: bridge lock poisoned"), "{actions:?}");
+        assert!(actions.iter().any(|a| a.starts_with("pump_stop sheath: ")), "{actions:?}");
+
+        // A status that cannot be read is reported, and the pump is stopped anyway.
+        sent.borrow_mut().clear();
+        let unreadable = |pump: u32| if pump == 0 { Err("bridge lock poisoned".to_string()) } else { Ok(json!({ "connected": false })) };
+        let actions = stop_pumps(unreadable, stop);
+        assert_eq!(actions[0], "pump status sample failed: bridge lock poisoned");
+        assert_eq!(*sent.borrow(), [("pump_stop".to_string(), 0), ("pump_stop_purge".to_string(), 0)]);
     }
 }
