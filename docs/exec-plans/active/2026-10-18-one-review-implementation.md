@@ -202,7 +202,7 @@ the coordinator (ADR 0004/0011).
 | S6 | Parity harness: a MIB Studio half | none | none | planned |
 | S7 | Facade jobs on ReviewJobs lanes | none | none | planned |
 | S8 | YOFO regenerate on the reanalysis engine | none | none (behaviour D6) | planned |
-| S9 | Transport-neutral review module | none | none | in review |
+| S9 | Transport-neutral review module | none | none | in review (#731) |
 | S10 | Attachable review bridge | **additive, ABI bump** | none | proposed, not implemented |
 | S11 | Review commands in the studio command layer | **additive command surface, ABI bump** | none | proposed, not implemented |
 | S12 | MIB Studio's options in the review contract | none | **additive, ABI bump** | proposed, not implemented |
@@ -429,7 +429,7 @@ the coordinator (ADR 0004/0011).
 - **Risks:** the no-clobber change for YOFO (D6) needs the YOFO save dialog to
   stop offering "replace".
 
-### S9 — Transport-neutral review module (in review)
+### S9 — Transport-neutral review module (in review, #731)
 
 - **Moves:** `desktop/src/review/` calls `invoke` and the dialogs through
   `desktop/src/transport/` (and the opener only when not remote), and chart
@@ -614,7 +614,7 @@ bridge contract):
 - [ ] S6 parity harness MIB Studio half
 - [ ] S7 facade jobs on ReviewJobs lanes (D7)
 - [ ] S8 YOFO regenerate on the engine (D6)
-- [x] 2026-10-19 — S9 transport-neutral review module (`reviewIpc` golden unchanged; import guard; `Transport.upload`).
+- [x] 2026-10-19 — S9 transport-neutral review module (`reviewIpc` golden unchanged; import guard; `Transport.upload`; #731).
 - [ ] S10 attachable review bridge (ABI)
 - [ ] S11 review commands in the studio command layer (ABI)
 - [ ] S12 MIB Studio's options in the review contract (review ABI)

@@ -1,4 +1,4 @@
-## 2026-10-19 — Review module on the frontend transport (#512 S9)
+## 2026-10-19 — Review module on the frontend transport (#512 S9, #731)
 
 Track B (#717), plan [`2026-10-18-one-review-implementation.md`](../../../docs/exec-plans/active/2026-10-18-one-review-implementation.md)
 slice S9. `desktop/src/review/` no longer imports `@tauri-apps/api/core`,
