@@ -1,14 +1,20 @@
 import { describe, expect, it } from "vitest";
+import { READINESS_GATE_STATUSES as G } from "./bridgeContract";
 import {
+  CHECK_GATES,
+  CHECK_STATUS_LABEL,
   DEFAULT_REQUIREMENTS,
+  checkGateStatus,
   derivePreflight,
   type CheckStatus,
   type DeviceSnapshot,
   type PreflightInput,
 } from "./preflight";
+import { DESKTOP_CAPABILITIES } from "./platformCapabilities";
 
 const OFF: DeviceSnapshot = { valid: true, connected: false, identity: "" };
 const ON: DeviceSnapshot = { valid: true, connected: true, identity: "COM3" };
+const UNREAD: DeviceSnapshot = { valid: false, connected: false, identity: "" };
 
 // A healthy baseline: backend up, camera configured, trusted core, no optional
 // hardware connected.
@@ -37,10 +43,18 @@ function statusOf(input: PreflightInput, id: string, reqs = DEFAULT_REQUIREMENTS
 }
 
 describe("derivePreflight — required checks", () => {
-  it("camera fails when the backend is not initialized", () => {
+  it("camera is unknown, not failed, while the backend is not initialized, and still blocks (#713)", () => {
     const r = derivePreflight({ ...READY, backendReady: false });
-    expect(r.checks.find((c) => c.id === "camera")!.status).toBe("failed");
+    const camera = r.checks.find((c) => c.id === "camera")!;
+    expect(camera.status).toBe("unknown");
+    expect(camera.blocks).toBe(true);
     expect(r.criticalPassed).toBe(false);
+  });
+
+  it("the core is unknown until its status is read, and blocks (#713)", () => {
+    const r = derivePreflight({ ...READY, coreKnown: false, coreValid: false });
+    expect(r.checks.find((c) => c.id === "core")).toMatchObject({ status: "unknown", blocks: true });
+    expect(statusOf({ ...READY, coreKnown: true, coreValid: false }, "core")).toBe("failed");
   });
 
   it("camera fails and criticalPassed is false with no camera configured", () => {
@@ -62,6 +76,19 @@ describe("derivePreflight — required checks", () => {
     expect(cam.detail).toContain("EG-Cam SN9");
   });
 
+  it("a required warning does not block unless a backend gate for it says Fail (#713)", () => {
+    const warned = { ...READY, cameraExpected: "EG-Cam SN9" };
+    expect(derivePreflight(warned).criticalPassed).toBe(true);
+    const warn = [{ id: "camera.source", status: G.Warn }];
+    expect(derivePreflight(warned, undefined, warn).criticalPassed).toBe(true);
+    const unrelatedFail = [{ id: "processing.background", status: G.Fail }];
+    expect(derivePreflight(warned, undefined, unrelatedFail).criticalPassed).toBe(true);
+    const fail = [{ id: "camera.source", status: G.Fail }];
+    const r = derivePreflight(warned, undefined, fail);
+    expect(r.checks.find((c) => c.id === "camera")).toMatchObject({ status: "warning", blocks: true });
+    expect(r.criticalPassed).toBe(false);
+  });
+
   it("core fails and blocks criticality when the pin is not satisfied", () => {
     const r = derivePreflight({ ...READY, corePinSatisfied: false });
     const core = r.checks.find((c) => c.id === "core")!;
@@ -75,6 +102,28 @@ describe("derivePreflight — optional vs required devices", () => {
   it("an optional disconnected device is Not required and does not block", () => {
     expect(statusOf(READY, "autofocus")).toBe("not-required");
     expect(derivePreflight(READY).criticalPassed).toBe(true);
+  });
+
+  it("an optional device not read yet is Unknown, never Not required, and does not block (#713)", () => {
+    const r = derivePreflight({ ...READY, autofocus: UNREAD, samplePump: UNREAD, trigger: { valid: false, cameraAttached: false } });
+    for (const id of ["autofocus", "samplePump", "trigger"]) expect(r.checks.find((c) => c.id === id)).toMatchObject({ status: "unknown", blocks: false });
+    expect(r.criticalPassed).toBe(true);
+  });
+
+  it("a required device not read yet is Unknown and blocks: Unknown is never Pass (#713)", () => {
+    const reqs = { ...DEFAULT_REQUIREMENTS, sheathPump: "required" as const };
+    const r = derivePreflight({ ...READY, sheathPump: UNREAD }, reqs);
+    expect(r.checks.find((c) => c.id === "sheathPump")).toMatchObject({ status: "unknown", blocks: true });
+    expect(r.criticalPassed).toBe(false);
+  });
+
+  it("a capability the instrument lacks is Unsupported and never blocks", () => {
+    const caps = { ...DESKTOP_CAPABILITIES, autofocus: false, trigger: false };
+    const r = derivePreflight({ ...READY, capabilities: caps });
+    expect(r.checks.find((c) => c.id === "autofocus")).toMatchObject({ status: "unsupported", blocks: false });
+    expect(r.checks.find((c) => c.id === "trigger")).toMatchObject({ status: "unsupported", blocks: false });
+    expect(r.unsupported).toBe(2);
+    expect(r.criticalPassed).toBe(true);
   });
 
   it("a connected optional device shows Passed", () => {
@@ -101,10 +150,11 @@ describe("derivePreflight — trigger, storage, capture", () => {
     expect(statusOf({ ...READY, trigger: { valid: true, cameraAttached: true } }, "trigger")).toBe("passed");
   });
 
-  it("storage is an informational Not-required until the backend contract exists", () => {
+  it("unreported storage is Unknown, never Not required, and does not block (#713)", () => {
     const s = derivePreflight(READY).checks.find((c) => c.id === "storage")!;
-    expect(s.status).toBe("not-required");
-    expect(s.detail).toContain("pending");
+    expect(s).toMatchObject({ status: "unknown", requirement: "optional", blocks: false });
+    expect(s.detail).toContain("Start");
+    expect(statusOf(READY, "storage", { ...DEFAULT_REQUIREMENTS, storage: "not-applicable" })).toBe("not-required");
   });
 
   it("a known, unwritable storage location Fails", () => {
@@ -122,7 +172,23 @@ describe("derivePreflight — trigger, storage, capture", () => {
 describe("derivePreflight — accounting", () => {
   it("status counts sum to the total number of checks", () => {
     const r = derivePreflight(READY);
-    expect(r.passed + r.warning + r.failed + r.notRequired).toBe(r.total);
+    expect(r.passed + r.warning + r.failed + r.unknown + r.unsupported + r.notRequired).toBe(r.total);
     expect(r.total).toBe(8);
+    expect(r.unknown).toBe(1); // storage, not reported before Start
+  });
+});
+
+describe("checklist states in the backend's readiness vocabulary (#713)", () => {
+  it("maps every state to Pass / Warn / Fail / Unavailable / NotRequired, and Unknown is never Pass", () => {
+    const states: CheckStatus[] = ["passed", "warning", "failed", "unknown", "unsupported", "not-required"];
+    expect(states.map(checkGateStatus)).toEqual([G.Pass, G.Warn, G.Fail, G.Unavailable, G.NotRequired, G.NotRequired]);
+    expect(checkGateStatus("unknown")).not.toBe(G.Pass);
+    expect(states.map((s) => CHECK_STATUS_LABEL[s])).toEqual(["Passed", "Warning", "Failed", "Unknown", "Unsupported", "Not required"]);
+  });
+
+  it("names backend gates only for rows the backend also judges", () => {
+    const ids = derivePreflight(READY).checks.map((c) => c.id);
+    for (const id of Object.keys(CHECK_GATES)) expect([...ids, "plCore", "led"]).toContain(id);
+    expect(CHECK_GATES.samplePump).toBeUndefined(); // no backend gate: a pump warning never blocks
   });
 });
