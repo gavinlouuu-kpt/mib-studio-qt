@@ -192,7 +192,7 @@ the coordinator (ADR 0004/0011).
 | S1 | One overlay kernel | none | none | done on this branch |
 | S2 | Reanalysis engine in `mib_review_core` | none | none | done on this branch |
 | S3 | Export engine in `mib_review_core` | none | none | planned |
-| S4 | Charts JSON and saved-overlay builders | none (text only, D3) | none | in review |
+| S4 | Charts JSON and saved-overlay builders | none (text only, D3) | none | in review (#726) |
 | S5 | The facade owns the ReviewSession | none (behaviour D1) | none | planned |
 | S6 | Parity harness: a MIB Studio half | none | none | planned |
 | S7 | Facade jobs on ReviewJobs lanes | none | none | planned |
@@ -288,7 +288,7 @@ the coordinator (ADR 0004/0011).
 - **Risks:** progress phase strings and the `results` array are consumed by
   `exportControls.tsx`; the `keep_partial_on_failure` manifest path.
 
-### S4 — Charts JSON and saved-overlay builders (in review)
+### S4 — Charts JSON and saved-overlay builders (in review, #726)
 
 - **Moves:** `fetch_review_charts_json`'s body (`makeReviewChartData`, the
   128 × 128 density, bins, curves, the JSON) and `render_review_overlay`'s
@@ -318,7 +318,7 @@ the coordinator (ADR 0004/0011).
   empty or reversed ring range, which the facade has always reported as
   `{"valid":false,"error":"Invalid chart calibration or histogram range"}`
   (kept).
-- **Proof (this PR):** `review.charts_json` (new) keeps the pre-slice facade
+- **Proof (#726):** `review.charts_json` (new) keeps the pre-slice facade
   code as the oracle: 20 chart cases (5 row sets incl. NaN / Inf / extremes
   and bin edges × 4 factor / range settings, 5 of them refused) and 852
   overlay requests (5 files × valid / invalid × 6 indices × modes −1..5 × ROI,
@@ -583,7 +583,7 @@ bridge contract):
 - [x] 2026-10-18 — S1 one overlay kernel (`review.overlay_kernel`).
 - [x] 2026-10-18 — S2 reanalysis engine (`review.reanalysis`).
 - [ ] S3 export engine
-- [x] 2026-10-19 — S4 charts JSON and saved-overlay builders (`review.charts_json`).
+- [x] 2026-10-19 — S4 charts JSON and saved-overlay builders (`review.charts_json`, #726).
 - [ ] S5 facade owns the ReviewSession (D1)
 - [ ] S6 parity harness MIB Studio half
 - [ ] S7 facade jobs on ReviewJobs lanes (D7)
