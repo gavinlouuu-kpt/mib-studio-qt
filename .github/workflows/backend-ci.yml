@@ -4,7 +4,7 @@ on:
   push:
     branches: [main, master, develop, dev/react-tauri]
   pull_request:
-    branches: [main, master, develop, dev/react-tauri]
+    branches: [main, master, develop, dev/react-tauri, feat/egrabber-workspace]
 
 permissions:
   contents: read
