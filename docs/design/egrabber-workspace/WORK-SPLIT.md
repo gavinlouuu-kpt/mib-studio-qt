@@ -1,6 +1,11 @@
 # Two tracks: Operation app and Review app
 
-Status: active, 2026-10-18.
+Status: active, 2026-10-18. Progress, 2026-10-19:
+
+- **A0:** done. #711 merged in #718, and #713's probe caching in #719. The rest of #713 is A1.
+- **B0:** #512 S1 and S2 merged in #721. All nine #512 decisions are ruled on #717; D1 keeps
+  Start refused while a review file is open (HDF5 thread safety, #722).
+- **Kit:** DataTable, CellImage, OptionGroup and Notice are in #714.
 
 The workspace delivers two products from one UI language
 ([README](README.md), "One UI language, two products"). Their work is split into
