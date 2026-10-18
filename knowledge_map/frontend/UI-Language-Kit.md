@@ -14,6 +14,7 @@
 | `Button` | primary / secondary / selected / destructive / disabled |
 | `StatTile`, `Stepper`, `RecordIdentity` | Counts and Quick look deltas, lifecycle steps, record identity with evidence |
 | `DataTable` | Rows of recorded facts: statistics, linked records, sample sheet, library, export preview. Numbers align right, a missing value shows as missing, the selected row is the inspected record |
+| `CellImage`, `CellStrip` | A recorded cell crop with its recorded contour or mask, by record id; the live detected-cell strip with click-to-pin. A missing image or overlay is stated, never drawn |
 | `AreaDeformChart` | Area vs deformability with LUT isoelastics, population polygon and inspected record. It never computes E |
 
 Tokens are CSS custom properties named `--mib-*` (`desktop/ui/src/styles/tokens.css`). The rules (truth, vocabulary, colour) are in `desktop/ui/guides/ui-language.md`.

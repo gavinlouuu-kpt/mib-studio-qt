@@ -42,6 +42,9 @@
     },
     "DataTable": {
       "cardMode": "column"
+    },
+    "CellStrip": {
+      "cardMode": "column"
     }
   },
   "readmeHeader": ".design-sync/conventions.md"

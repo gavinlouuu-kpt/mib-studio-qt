@@ -7,6 +7,8 @@ import {
   AreaDeformChart,
   Button,
   Card,
+  CellImage,
+  CellStrip,
   ConditionSwatch,
   DataTable,
   FactList,
@@ -164,6 +166,47 @@ describe("UI language kit", () => {
       const tr = host.querySelector("tbody tr")!;
       expect(tr.hasAttribute("tabindex")).toBe(false);
       expect(tr.hasAttribute("aria-selected")).toBe(false);
+    });
+  });
+
+  describe("CellImage", () => {
+    const contour: Array<[number, number]> = [[10, 10], [50, 12], [52, 50], [12, 48]];
+
+    it("says the image was not recorded instead of drawing a stand-in", () => {
+      render(<CellImage recordId="R-1" imageWidth={64} imageHeight={64} contour={contour} />);
+      expect(host.querySelector("img")).toBeNull();
+      expect(host.querySelector("svg")).toBeNull();
+      expect(host.querySelector(".mib-cell__missing")!.textContent).toBe("Image not recorded");
+    });
+
+    it("draws the recorded contour in image pixels", () => {
+      render(<CellImage recordId="R-2" src="data:image/png;base64,AA==" imageWidth={64} imageHeight={48} contour={contour} />);
+      const svg = host.querySelector("svg")!;
+      expect(svg.getAttribute("viewBox")).toBe("0 0 64 48");
+      expect(host.querySelector("polygon")!.getAttribute("points")).toBe("10,10 50,12 52,50 12,48");
+      expect(host.querySelector(".mib-cell__overlay-missing")).toBeNull();
+    });
+
+    it("states a missing overlay with an unknown chip", () => {
+      render(<CellImage recordId="R-3" src="data:image/png;base64,AA==" imageWidth={64} imageHeight={64} overlay="mask" />);
+      const chip = host.querySelector(".mib-cell__overlay-missing")!;
+      expect(chip.textContent).toBe("Mask not recorded");
+      expect(chip.getAttribute("data-tone")).toBe("unknown");
+    });
+
+    it("pins a crop from the strip by its string id", () => {
+      const onPin = vi.fn();
+      const cells = ["18446744073709551615", "R-063002"].map((recordId) => ({ recordId, src: "data:image/png;base64,AA==", imageWidth: 64, imageHeight: 64 }));
+      render(<CellStrip cells={cells} pinnedId="R-063002" onPin={onPin} />);
+      const buttons = [...host.querySelectorAll<HTMLButtonElement>("button.mib-cell")];
+      expect(buttons.map((b) => b.getAttribute("aria-pressed"))).toEqual(["false", "true"]);
+      act(() => buttons[0].click());
+      expect(onPin).toHaveBeenCalledWith("18446744073709551615");
+    });
+
+    it("says why an empty strip is empty", () => {
+      render(<CellStrip cells={[]} empty="No cells detected yet in this run." />);
+      expect(host.querySelector(".mib-cellstrip__empty")!.textContent).toBe("No cells detected yet in this run.");
     });
   });
 });

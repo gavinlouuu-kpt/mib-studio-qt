@@ -39,3 +39,5 @@ export { AreaDeformChart } from "./components/AreaDeformChart";
 export type { AreaDeformChartProps, AreaDeformPoint, Isoelastic } from "./components/AreaDeformChart";
 export { DataTable } from "./components/DataTable";
 export type { DataTableProps, DataTableColumn } from "./components/DataTable";
+export { CellImage, CellStrip } from "./components/CellImage";
+export type { CellImageProps, CellOverlay, CellStripItem, CellStripProps } from "./components/CellImage";

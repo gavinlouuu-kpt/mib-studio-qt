@@ -201,3 +201,30 @@
 .mib-table__row--selected,
 .mib-table--selectable .mib-table__row--selected:hover { background: var(--mib-color-inspect-bg); color: var(--mib-color-inspect); }
 .mib-table__empty { padding: 20px var(--mib-space-4); border: 1px solid var(--mib-color-line); color: var(--mib-color-sub); }
+
+/* ---- CellImage / CellStrip ------------------------------------------- */
+.mib-cell { display: inline-flex; flex-direction: column; gap: 6px; margin: 0; font-family: var(--mib-font-family); }
+.mib-cell--button { padding: 0; border: 0; background: none; cursor: pointer; text-align: left; color: inherit; }
+.mib-cell--button:focus-visible { outline: none; }
+.mib-cell--button:focus-visible .mib-cell__box { outline: 2px solid var(--mib-color-inspect); outline-offset: 2px; }
+.mib-cell__box { position: relative; display: block; overflow: hidden; border-radius: var(--mib-radius-sm); background: #dce3e3; }
+/* The frame sits above the image so a selected (pinned, inspected) crop always shows its border. */
+.mib-cell__box::after { content: ""; position: absolute; inset: 0; z-index: 2; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--mib-color-line); pointer-events: none; }
+.mib-cell--selected .mib-cell__box::after { box-shadow: inset 0 0 0 2px var(--mib-color-inspect); }
+.mib-cell__box--missing { display: flex; align-items: center; justify-content: center; background: var(--mib-color-tile); }
+.mib-cell__missing { padding: 0 var(--mib-space-2); text-align: center; font-size: var(--mib-font-size-sm); color: var(--mib-color-sub); }
+.mib-cell--small .mib-cell__missing { font-size: var(--mib-font-size-xs); }
+.mib-cell__img, .mib-cell__mask, .mib-cell__overlay { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
+.mib-cell__mask { opacity: 0.45; mix-blend-mode: multiply; }
+.mib-cell__contour { fill: none; stroke: var(--mib-color-accent); stroke-width: 2; stroke-linejoin: round; }
+.mib-cell--small .mib-cell__contour { stroke-width: 1.5; }
+.mib-cell__label { position: absolute; z-index: 1; top: 6px; left: 6px; padding: 2px 6px; border-radius: 3px; background: var(--mib-color-card); font-size: 8px; font-weight: var(--mib-font-weight-bold); letter-spacing: 0.02em; color: var(--mib-color-sub); }
+.mib-cell__overlay-missing { position: absolute; z-index: 1; left: 6px; bottom: 6px; }
+.mib-cell__caption { display: flex; flex-direction: column; gap: 2px; }
+.mib-cell__id { font-size: var(--mib-font-size-md); font-weight: var(--mib-font-weight-semibold); color: var(--mib-color-inspect); font-variant-numeric: tabular-nums; }
+.mib-cell__detail { font-size: var(--mib-font-size-xs); color: var(--mib-color-sub); }
+.mib-cell--small .mib-cell__id { font-size: 9px; font-weight: var(--mib-font-weight-regular); color: var(--mib-color-mute); }
+.mib-cell--small.mib-cell--selected .mib-cell__id { font-weight: var(--mib-font-weight-semibold); color: var(--mib-color-inspect); }
+.mib-cellstrip { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 2px; }
+.mib-cellstrip__item { flex: none; }
+.mib-cellstrip__empty { flex: 1; padding: 22px var(--mib-space-5); border: 1px solid var(--mib-color-line); border-radius: var(--mib-radius-sm); background: var(--mib-color-tile); font-size: var(--mib-font-size-md); color: var(--mib-color-sub); }

@@ -5,7 +5,7 @@
 - **Fonts:** Inter (OFL) is subset to Latin woff2 in `src/fonts/` with `pyftsubset` plus brotli. Vite library mode inlines fonts as base64, so `scripts/copy-fonts.mjs` copies them to `dist/fonts/` and writes `dist/fonts.css`. design-sync picks them up through `extraFonts: ["dist/fonts.css"]`.
 - **Provider:** `UiRoot` (div.mib-root) applies the font. Tokens sit on `:root`, so components still get their colours without it.
 - **Guidelines:** `guidelinesGlob` is set to `guides/*.md`. The default (`docs/*.md`) would duplicate the per-component docs as guidelines.
-- **Card modes:** Toolbar, AreaDeformChart, RecordIdentity, StatTile, AppShell, Card, StageTabs and DataTable use `cardMode: column` because they are wider than a grid cell (`[GRID_OVERFLOW]`).
+- **Card modes:** Toolbar, AreaDeformChart, RecordIdentity, StatTile, AppShell, Card, StageTabs, DataTable and CellStrip use `cardMode: column` because they are wider than a grid cell (`[GRID_OVERFLOW]`).
 - **Playwright:** 1.62.1 is installed in `.ds-sync/` to match the cached chromium-1234. Install it with `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`.
 - **Penpot wiring:** `penpot.json` maps every component to its Penpot boards, and each `docs/<Name>.md` ends with a "Penpot reference" section.
 
@@ -22,3 +22,4 @@
 - **Penpot board ids** in `penpot.json` and `docs/*.md` change whenever a board is redrawn (the `replace()` helper mints a new id). Re-sync them from the drawing-state file before re-uploading.
 - **Illustrative data:** the isoelastic curves in the `AreaDeformChart` preview are hand-made shapes, not the E-LUT. The component itself takes curves as data.
 - **Toolchain:** the build was verified with Node 26 and npm 11. npm 11 blocks install scripts, but esbuild works without its postinstall.
+- **Shared preview helper:** `previews/illustrativeCrop.ts` makes the illustrative cell crops for the CellImage and CellStrip previews. It is bundled into each preview but is not part of their grade key, so after editing it, re-grade both with `--force`-equivalent capture.

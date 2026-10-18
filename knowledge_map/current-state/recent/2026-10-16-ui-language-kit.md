@@ -9,3 +9,4 @@ New package `desktop/ui/` (`@mib/ui`) turns the Penpot "UI language" board into 
 See [[frontend/UI-Language-Kit]].
 - 2026-10-17: Penpot page "Components (@mib/ui)" added, with one board per component, registered first in `desktop/ui/penpot.json` and the docs.
 - 2026-10-18: `DataTable` added (#715): Penpot board "C · DataTable", component, tests, doc and design-sync preview.
+- 2026-10-18: `CellImage` and `CellStrip` added (#715): Penpot board "C · CellImage", components, tests, docs and design-sync previews.
