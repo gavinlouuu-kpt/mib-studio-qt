@@ -114,6 +114,7 @@ namespace backend::review
         bool recording{false};
         std::vector<services::ProcessedFrame> validMeta;
         std::vector<services::ProcessedFrame> invalidMeta;
+        bool validMetaReadable{false};
         ReviewMetadata meta;
         double fallbackFactor{0.4886};
 
@@ -131,6 +132,7 @@ namespace backend::review
             meta.recordingFile = recording;
             validMeta.clear();
             invalidMeta.clear();
+            validMetaReadable = true;
             if (recording)
             {
                 std::uint64_t total = 0;
@@ -147,7 +149,11 @@ namespace backend::review
                 reader.readExperimentInfo(meta.startTimeNs, meta.endTimeNs, totalValid, totalInvalid, &meta.roi);
                 meta.totalValid = totalValid;
                 meta.totalInvalid = totalInvalid;
-                reader.readValidMetadata(validMeta);
+                const bool validRead = reader.readValidMetadata(validMeta);
+                // An absent valid set is empty, not unreadable (the facade's
+                // charts rule before #512 S5, when they opened their own reader).
+                const auto validPresent = reader.metadataDatasetPresent(true);
+                validMetaReadable = validPresent.has_value() && (!*validPresent || validRead);
                 reader.readInvalidMetadata(invalidMeta);
                 std::size_t seriesFrames = 0;
                 std::size_t seriesCount = 0;
@@ -394,6 +400,30 @@ namespace backend::review
         const double f = impl_->factor();
         for (std::uint64_t i = offset; i < end; ++i) rows.push_back(rowFromFrame(source[i], i, f));
         return true;
+    }
+
+    bool ReviewSession::framesPage(bool valid, std::uint64_t offset, std::uint64_t count,
+                                   std::vector<services::ProcessedFrame> &frames, std::uint64_t &totalOut) const
+    {
+        std::scoped_lock lock(impl_->mutex);
+        frames.clear();
+        totalOut = 0;
+        if (!impl_->open) return false;
+        const auto &source = impl_->set(valid);
+        totalOut = source.size();
+        if (offset >= source.size()) return true;
+        // Overflow-safe end (offset + count may wrap for a huge count).
+        const std::uint64_t remaining = source.size() - offset;
+        const std::uint64_t end = offset + std::min<std::uint64_t>(remaining, count);
+        frames.assign(source.begin() + static_cast<std::ptrdiff_t>(offset),
+                      source.begin() + static_cast<std::ptrdiff_t>(end));
+        return true;
+    }
+
+    bool ReviewSession::validMetadataReadable() const
+    {
+        std::scoped_lock lock(impl_->mutex);
+        return impl_->open && impl_->validMetaReadable;
     }
 
     bool ReviewSession::frameMeta(bool valid, std::uint64_t index, services::ProcessedFrame &out) const

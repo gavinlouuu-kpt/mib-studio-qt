@@ -2,14 +2,16 @@
 // `fetch_review_charts_json`, `render_review_overlay`). The JSON, the
 // density, the reader-side overlay and the PNG live in mib_review_core
 // (backend/review/ReviewCharts.h, #512 slice 4); the facade keeps the policy:
-// the loaded file, the live factor and ring-ratio range, and the facade's
-// ROI style (RoiStyle::Facade until decision D2 switches it).
+// the loaded file (the valid rows its ReviewSession read at open, #512 S5),
+// the live factor and ring-ratio range, and the facade's ROI style
+// (RoiStyle::Facade until decision D2 switches it).
 #include "backend/app/BackendFacade.h"
 #include "backend/app/AppBackend.h"
 #include "backend/recording/ReviewChartData.h"
-#include "backend/recording/Hdf5Service.h"
 #include "backend/review/ReviewCharts.h"
+#include "backend/review/ReviewSession.h"
 #include <nlohmann/json.hpp>
+#include <limits>
 #include <stdexcept>
 namespace backend::bridge {
 std::vector<uint8_t> BackendFacade::renderReviewOverlayJson(const std::string& text) const {
@@ -28,14 +30,15 @@ std::string BackendFacade::fetchMonitoringChartReferenceJson() const {
 }
 std::string BackendFacade::fetchReviewChartsJson() const {
     try {
-        std::string source;
-        {std::scoped_lock lock(reviewMutex_);source=loadedRecordingPath_;}
+        // The session's rows replace a second reader per fetch; the messages are the ones it gave.
+        const std::string source=review_->filePath();
         if(source.empty())throw std::runtime_error("No HDF file open");
-        services::Hdf5Service reader;
-        if(!reader.loadFile(source) || reader.isRecordingFile())throw std::runtime_error("Charts require an experiment HDF file");
+        if(review_->isRecordingFile())throw std::runtime_error("Charts require an experiment HDF file");
         std::vector<services::ProcessedFrame> rows;
-        const auto present=reader.metadataDatasetPresent(true);
-        if(!present || (*present && !reader.readValidMetadata(rows)))throw std::runtime_error("Cannot read valid-frame metrics");
+        std::uint64_t total=0;
+        if(!review_->validMetadataReadable() ||
+           !review_->framesPage(true,0,std::numeric_limits<std::uint64_t>::max(),rows,total))
+            throw std::runtime_error("Cannot read valid-frame metrics");
         const auto cfg=backend_.processing().getProcessingConfig();
         const auto factor=backend_.processing().getPixelToMicronFactor();
         return review::reviewChartsJson(rows,source,factor,cfg.ring_ratio_min,cfg.ring_ratio_max);

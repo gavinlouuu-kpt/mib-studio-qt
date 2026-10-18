@@ -3189,11 +3189,14 @@ namespace backend
 
         // Open HDF5 file for recording
         auto& hdf5 = *hdf5Service_;
-        if (hdf5.isFileOpen()) {
+        // A review file in the facade's own reader counts as an open file
+        // (D1 (a), #512 S5): same message, so nothing changes for the operator.
+        if (hdf5.isFileOpen() || reviewSourceOpen()) {
             if (error)
                 *error = "Close the existing HDF5 file before starting raw recording; its writer "
                          "will not be replaced";
-            SPDLOG_WARN("Frame recording refused: shared HDF5 file already open");
+            SPDLOG_WARN("Frame recording refused: {}", hdf5.isFileOpen() ? "shared HDF5 file already open"
+                                                                         : "a review file is open (HDF5 is not thread-safe, #722)");
             return false;
         }
 

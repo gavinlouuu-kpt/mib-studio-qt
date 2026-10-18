@@ -62,6 +62,18 @@ namespace backend::review
         std::uint64_t frameCount(bool valid) const;
         bool metricsPage(bool valid, std::uint64_t offset, std::uint64_t count,
                          std::vector<MetricRow> &rows, std::uint64_t &totalOut) const;
+        // The same page as metadata-only ProcessedFrames (the rows as read,
+        // no pixels), for hosts that map them to their own row type (the
+        // facade's MonitoringObjectRow, #512 S5). Same bounds and totals as
+        // metricsPage; false only when no file is open.
+        bool framesPage(bool valid, std::uint64_t offset, std::uint64_t count,
+                        std::vector<services::ProcessedFrame> &frames, std::uint64_t &totalOut) const;
+        // Experiment files: false when `/valid_frames/metadata` exists but
+        // could not be read at open, or its presence could not be determined
+        // (an absent dataset is an empty, readable set). The facade's charts
+        // report "Cannot read valid-frame metrics" for it (#512 S5). False
+        // when no file is open; true for recording files.
+        bool validMetadataReadable() const;
         // Copy of one metadata row (no pixels).
         bool frameMeta(bool valid, std::uint64_t index, services::ProcessedFrame &out) const;
 
