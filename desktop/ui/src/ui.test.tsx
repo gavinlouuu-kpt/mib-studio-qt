@@ -8,6 +8,7 @@ import {
   Button,
   Card,
   ConditionSwatch,
+  DataTable,
   FactList,
   RecordIdentity,
   StateChip,
@@ -105,5 +106,64 @@ describe("UI language kit", () => {
     expect(host.querySelectorAll(".mib-chart__handle")).toHaveLength(3);
     expect(host.querySelector(".mib-chart__inspected-label")!.textContent).toBe("R-024210");
     expect(host.querySelector(".mib-chart__iso-label")!.textContent).toBe("1.0");
+  });
+
+  describe("DataTable", () => {
+    type Run = { id: string; n?: number; flag?: string };
+    const columns = [
+      { key: "id", header: "Run", emphasis: true },
+      { key: "n", header: "n valid", numeric: true },
+      { key: "flag", header: "Flags", cell: (r: Run) => (r.flag ? <StateChip tone="blocked" size="small">{r.flag}</StateChip> : null) },
+    ];
+
+    it("shows a value that was not recorded as missing, never as a number", () => {
+      render(<DataTable columns={columns} rows={[{ id: "07" }]} rowKey={(r) => r.id} />);
+      const cells = [...host.querySelectorAll<HTMLTableCellElement>("tbody td")];
+      expect(cells.map((c) => c.textContent)).toEqual(["07", "–", "–"]);
+      expect(cells[1].className).toContain("mib-table__cell--missing");
+      expect(cells[1].className).toContain("mib-table__cell--numeric");
+      expect(cells[1].title).toBe("Not recorded");
+      expect(cells[0].className).toContain("mib-table__cell--emphasis");
+    });
+
+    it("renders an empty list as an empty cell, not as missing", () => {
+      const listColumns = [{ key: "id", header: "Run" }, { key: "flags", header: "Flags", cell: () => [] as React.ReactNode[] }];
+      render(<DataTable columns={listColumns} rows={[{ id: "01" }]} rowKey={(r) => r.id} />);
+      const cell = host.querySelectorAll<HTMLTableCellElement>("tbody td")[1];
+      expect(cell.textContent).toBe("");
+      expect(cell.className).not.toContain("mib-table__cell--missing");
+    });
+
+    it("keeps a recorded zero as zero", () => {
+      render(<DataTable columns={columns} rows={[{ id: "01", n: 0 }]} rowKey={(r) => r.id} />);
+      expect(host.querySelectorAll("tbody td")[1].textContent).toBe("0");
+    });
+
+    it("says why when there are no rows", () => {
+      render(<DataTable columns={columns} rows={[]} rowKey={(r: Run) => r.id} empty="No runs recorded yet." />);
+      const cell = host.querySelector<HTMLTableCellElement>(".mib-table__empty")!;
+      expect(cell.textContent).toBe("No runs recorded yet.");
+      expect(cell.colSpan).toBe(3);
+    });
+
+    it("reports selection by click and keyboard with the string id", () => {
+      const onSelect = vi.fn();
+      const rows: Run[] = [{ id: "18446744073709551615", n: 1 }, { id: "2", n: 2 }];
+      render(<DataTable columns={columns} rows={rows} rowKey={(r) => r.id} selectedKey="2" onSelect={onSelect} />);
+      const trs = [...host.querySelectorAll<HTMLTableRowElement>("tbody tr")];
+      expect(trs.map((tr) => tr.getAttribute("aria-selected"))).toEqual(["false", "true"]);
+      expect(trs[1].className).toContain("mib-table__row--selected");
+      act(() => trs[0].click());
+      expect(onSelect).toHaveBeenLastCalledWith("18446744073709551615", rows[0]);
+      act(() => trs[1].dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+      expect(onSelect).toHaveBeenLastCalledWith("2", rows[1]);
+    });
+
+    it("is not interactive without onSelect", () => {
+      render(<DataTable columns={columns} rows={[{ id: "1" }]} rowKey={(r) => r.id} />);
+      const tr = host.querySelector("tbody tr")!;
+      expect(tr.hasAttribute("tabindex")).toBe(false);
+      expect(tr.hasAttribute("aria-selected")).toBe(false);
+    });
   });
 });

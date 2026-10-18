@@ -37,3 +37,5 @@ export { RecordIdentity } from "./components/RecordIdentity";
 export type { RecordIdentityProps } from "./components/RecordIdentity";
 export { AreaDeformChart } from "./components/AreaDeformChart";
 export type { AreaDeformChartProps, AreaDeformPoint, Isoelastic } from "./components/AreaDeformChart";
+export { DataTable } from "./components/DataTable";
+export type { DataTableProps, DataTableColumn } from "./components/DataTable";

@@ -184,3 +184,20 @@
 .mib-chart__inspected-label { font-size: var(--mib-font-size-sm); fill: var(--mib-color-inspect); }
 .mib-chart__legend { font-size: var(--mib-font-size-sm); fill: var(--mib-color-ink); }
 .mib-chart__caption { font-size: var(--mib-font-size-sm); fill: var(--mib-color-accent); font-weight: var(--mib-font-weight-semibold); }
+
+/* ---- DataTable ------------------------------------------------------- */
+.mib-table { width: 100%; border-collapse: collapse; font-family: var(--mib-font-family); font-size: var(--mib-font-size-md); color: var(--mib-color-ink); }
+.mib-table__caption { caption-side: top; text-align: left; padding-bottom: var(--mib-space-2); font-size: var(--mib-font-size-sm); font-weight: var(--mib-font-weight-semibold); color: var(--mib-color-sub); }
+.mib-table__head { padding: 7px var(--mib-space-3); background: var(--mib-color-tile); text-align: left; font-size: var(--mib-font-size-xs); font-weight: var(--mib-font-weight-semibold); color: var(--mib-color-sub); white-space: nowrap; }
+.mib-table__cell { padding: 12px var(--mib-space-3); border-bottom: 1px solid var(--mib-color-line); vertical-align: middle; }
+.mib-table--compact .mib-table__cell { padding-top: 7px; padding-bottom: 7px; }
+.mib-table__cell--numeric { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mib-table__cell--emphasis { font-weight: var(--mib-font-weight-semibold); }
+.mib-table__cell--missing { color: var(--mib-color-mute); }
+.mib-table__cell .mib-chip + .mib-chip { margin-left: 6px; }
+.mib-table--selectable .mib-table__row { cursor: pointer; }
+.mib-table--selectable .mib-table__row:hover { background: var(--mib-color-tile); }
+.mib-table--selectable .mib-table__row:focus-visible { outline: 2px solid var(--mib-color-inspect); outline-offset: -2px; }
+.mib-table__row--selected,
+.mib-table--selectable .mib-table__row--selected:hover { background: var(--mib-color-inspect-bg); color: var(--mib-color-inspect); }
+.mib-table__empty { padding: 20px var(--mib-space-4); border: 1px solid var(--mib-color-line); color: var(--mib-color-sub); }

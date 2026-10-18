@@ -5,7 +5,7 @@
 - **Fonts:** Inter (OFL) is subset to Latin woff2 in `src/fonts/` with `pyftsubset` plus brotli. Vite library mode inlines fonts as base64, so `scripts/copy-fonts.mjs` copies them to `dist/fonts/` and writes `dist/fonts.css`. design-sync picks them up through `extraFonts: ["dist/fonts.css"]`.
 - **Provider:** `UiRoot` (div.mib-root) applies the font. Tokens sit on `:root`, so components still get their colours without it.
 - **Guidelines:** `guidelinesGlob` is set to `guides/*.md`. The default (`docs/*.md`) would duplicate the per-component docs as guidelines.
-- **Card modes:** Toolbar, AreaDeformChart, RecordIdentity, StatTile, AppShell, Card and StageTabs use `cardMode: column` because they are wider than a grid cell (`[GRID_OVERFLOW]`).
+- **Card modes:** Toolbar, AreaDeformChart, RecordIdentity, StatTile, AppShell, Card, StageTabs and DataTable use `cardMode: column` because they are wider than a grid cell (`[GRID_OVERFLOW]`).
 - **Playwright:** 1.62.1 is installed in `.ds-sync/` to match the cached chromium-1234. Install it with `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`.
 - **Penpot wiring:** `penpot.json` maps every component to its Penpot boards, and each `docs/<Name>.md` ends with a "Penpot reference" section.
 

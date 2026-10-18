@@ -48,6 +48,7 @@ Components carry their own styles. There are no utility classes. For your own la
 - Use one `primary` Button per view. Clicking a stage only navigates.
 - Condition colours never stand for states, and state colours never stand for conditions.
 - Show ids (record, frame, run) as strings, and identify a record with `RecordIdentity`.
+- Show rows of facts (statistics, records, sample sheets) in a `DataTable`. Pass missing values as `null`; the table shows them as missing.
 - Use `AreaDeformChart` for every area-vs-deformability plot. Pass E curves and records as data; the UI never computes E or statistics.
 
 ## Where the truth lives
