@@ -843,6 +843,12 @@ set_tests_properties(review.overlay_kernel PROPERTIES LABELS "review;backend;inv
 mib_add_backend_test_executable(review_reanalysis_test review/review_reanalysis_test.cpp)
 add_test(NAME review.reanalysis COMMAND $<TARGET_FILE:mib_backend_tests> review_reanalysis_test)
 set_tests_properties(review.reanalysis PROPERTIES LABELS "review;recording;backend;hdf5;safety" TIMEOUT 120)
+# Export engine in mib_review_core (#512 slice 3): parse, single + batch round
+# trips, continue-on-failure / stop-on-cancel, write faults with and without
+# keep_partial_on_failure, both cancel polling modes, status JSON byte for byte.
+mib_add_backend_test_executable(review_export_engine_test review/review_export_engine_test.cpp)
+add_test(NAME review.export_engine COMMAND $<TARGET_FILE:mib_backend_tests> review_export_engine_test)
+set_tests_properties(review.export_engine PROPERTIES LABELS "review;recording;backend;hdf5;safety" TIMEOUT 120)
 # ReviewJobs: exports (= direct HdfExportService output), cancel, batch,
 # regenerate masks, core contour, density (grid ≈ direct), single flight.
 mib_add_backend_test_executable(review_jobs_test review/review_jobs_test.cpp)
