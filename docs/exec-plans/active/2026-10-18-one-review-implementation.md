@@ -533,8 +533,8 @@ bridge contract):
 
 ## Progress
 
-- [x] 2026-10-18 — plan.
-- [ ] Stale ReviewPanel / ReviewApp / reviewBridge header comments (F12).
+- [x] 2026-10-18 — plan; stale ReviewPanel / ReviewApp / reviewBridge header
+      comments fixed (F12).
 - [ ] S1 one overlay kernel
 - [ ] S2 reanalysis engine
 - [ ] S3 export engine
