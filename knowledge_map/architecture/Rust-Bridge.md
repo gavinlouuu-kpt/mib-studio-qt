@@ -502,9 +502,13 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
 ## ABI 39: what the client declares when it starts a run (#712 PR 2, ADR 0015 items 1, 4, 5, 7)
 
 `experiment_start(output_path, acknowledge_discard_ring, start_request_json)` gains the client's
-**startRequest** document; the transports take it as an optional `startRequest` object
-(`dispatch.rs`, the Tauri command, `bridge.experimentStart(path, ack, startRequest?)` in
-`desktop/src/bridge.ts`), absent or null = nothing declared (old clients are unchanged):
+**startRequest** document as **JSON text**: the transports take an optional string
+`startRequestJson` (`dispatch.rs`, so also the WebSocket server; the Tauri command
+`start_request_json`; `bridge.experimentStart(path, ack, startRequestJson?)` in
+`desktop/src/bridge.ts`, the shell does the `JSON.stringify`) and pass it on byte for byte; none of
+them decodes it. Only the backend parser does, so a duplicate key reaches it (a serde `Value` would
+keep the last one silently) and the 16 KiB bound measures the client's own bytes, whitespace
+included. Absent or null = nothing declared (old clients are unchanged). The document:
 `{experiment_id, run_index, sample_ref, operator{id, name}, calibration_record_id,
 annotation{sample, condition, experimental_unit, concentration{value, unit}, channel, medium,
 temperature_c, notes, free{}}}`. It is parsed and checked only in the backend
@@ -524,7 +528,10 @@ message `invalid start request: <key>: <why>`, nothing opened. The bounds are th
 (`assurance: "selected"`, #393 phase 1, not authentication) in the run snapshot v3, the annotation
 once in `/experiment_annotation` ([[../data-model/HDF5-Storage]]). The stop condition (objects /
 duration) is not part of ABI 39. Tests: `contract.rs` `experiment_lifecycle_end_to_end` (four refusals
-naming their key, then a declared start), `recording.run_start_identity`, `backend.experiment_readiness`.
+naming their key, then a declared start), `dispatch.rs` `start_request_json_reaches_the_backend_unparsed`
+and `ws.rs` `start_request_json_is_passed_through_the_server_unparsed` (a duplicate key and a request
+over 16 KiB only through whitespace padding are refused on the app-commands/Tauri and the raw
+WebSocket paths), `recording.run_start_identity`, `backend.experiment_readiness`.
 
 ## ABI 38: the Run frame rate and exposure, set by the PZ7035 camera document (Gavin: "The FPS should be adjustable.")
 

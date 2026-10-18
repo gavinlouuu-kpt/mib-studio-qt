@@ -1,6 +1,8 @@
 ## 2026-10-19 — Start request declares experiment, run, sample, operator, calibration and annotation (#712, ABI 39)
 
-`experiment_start` takes an optional `startRequest` (bridge ABI 39): the experiment id (UUID), the run's index in
+`experiment_start` takes an optional `startRequestJson` (bridge ABI 39), the client's JSON text, which Tauri,
+`mib-app-commands`, the WebSocket server and cxx pass on byte for byte so that only the backend parser decodes it
+(a duplicate key is refused, the 16 KiB bound counts the client's bytes). It declares: the experiment id (UUID), the run's index in
 it, the sample-sheet entry, the operator the client selected (#393 phase 1, recorded with `assurance: "selected"`,
 not authentication), the applied calibration record id (ADR 0015 item 7) and the planned annotation (condition,
 experimental unit, concentration with unit, sample, notes, the declared channel / medium / temperature, and free
@@ -8,7 +10,8 @@ string key/values). The backend checks it strictly (`recording::parseStartReques
 `validateStartRequest` in the coordinator): unknown or duplicate keys, wrong types, `""`, control characters,
 invalid UTF-8 and anything over a contract bound (`experiment_start_request`) are refused with the key named and
 start outcome `InvalidRequest` (7), never truncated, and nothing is opened. The identity goes into the run snapshot
-v3, the annotation once into `/experiment_annotation` (a failed write is `ProvenanceFailed`, the file removed).
+v3, the annotation once into `/experiment_annotation` (a failed write, or a failed flush after it, is
+`ProvenanceFailed` and the file is removed).
 Not declared is `null` and reads back as unknown; older files and runs started without an annotation have no
 block. No stop-condition change (that is a later ABI). See [[architecture/Rust-Bridge]],
 [[data-model/HDF5-Storage]], [[services/Hdf5Service]], [[architecture/ExperimentCoordinator]]. Guards:

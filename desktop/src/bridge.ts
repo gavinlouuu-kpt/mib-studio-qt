@@ -16,8 +16,10 @@ export type { BridgeEvent, CmdResult, ExperimentReadiness, ExperimentStatus, Pro
 /** Autofocus/nanopositioner status (schema v11, BE-8). `ring_ratio_age_us`
  *  makes focus-metric staleness explicit (0 = never updated). */
 // What the client declares when it starts a run (bridge ABI 39, #712). Every member is optional;
-// null or a missing key = not declared. The backend checks it strictly against the contract's
-// EXPERIMENT_START_REQUEST bounds and refuses (never truncates) anything over them; "" is refused.
+// null or a missing key = not declared. The shell sends it as JSON text (JSON.stringify of this
+// shape), which every transport passes on byte for byte: the backend alone parses it, refuses
+// duplicate keys, applies the EXPERIMENT_START_REQUEST bounds to those exact bytes (never
+// truncating) and refuses "".
 export interface ExperimentStartRequestDoc {
   experiment_id?: string | null;
   run_index?: number | null;
@@ -765,11 +767,14 @@ export const bridge = {
   // Experiment lifecycle (bridge schema v5, BE-4) — the backend owns
   // preconditions, accumulation, flush, metadata ordering, and recovery.
   // acknowledgeDiscardRing (ABI 37): the operator accepted that a stopped Run's buffered frames are discarded by this start (the backend refuses without it).
-  // startRequest (ABI 39, #712): the run's declared identity and planned annotation (optional).
-  experimentStart: (outputPath: string, acknowledgeDiscardRing = false, startRequest?: ExperimentStartRequestDoc) =>
+  // startRequestJson (ABI 39, #712): the run's declared identity and planned annotation as JSON text,
+  // e.g. JSON.stringify(doc) for an ExperimentStartRequestDoc (optional; omitted = nothing declared).
+  experimentStart: (outputPath: string, acknowledgeDiscardRing = false, startRequestJson?: string) =>
     invokeCommand(
       "experiment_start",
-      startRequest ? { outputPath, acknowledgeDiscardRing, startRequest } : { outputPath, acknowledgeDiscardRing },
+      startRequestJson === undefined
+        ? { outputPath, acknowledgeDiscardRing }
+        : { outputPath, acknowledgeDiscardRing, startRequestJson },
     ),
   experimentStop: () => invokeCommand("experiment_stop"),
   fetchCaptureLifecycle: () => invoke<CaptureLifecycle>("fetch_capture_lifecycle"),

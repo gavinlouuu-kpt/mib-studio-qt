@@ -67,6 +67,7 @@ namespace backend::services
         // Fault injection (tests): the run-provenance writers fail as a full disk would.
         std::atomic<bool> runProvenanceWriteFault_{false};
         std::atomic<bool> annotationWriteFault_{false};
+        std::atomic<bool> annotationFlushFault_{false};
         bool datasetsInitialized_{false};
         hsize_t validFramesWritten_{0};
         hsize_t invalidFramesWritten_{0};
@@ -4962,7 +4963,17 @@ namespace backend::services {
         }
         H5Sclose(scalar);
         H5Gclose(group);
-        if (ok && !flush()) SPDLOG_WARN("writeExperimentAnnotationJson: flush after annotation write failed");
+        // The annotation counts as written only once it is on disk: a failed flush (a full disk) fails
+        // the write, so the Start is refused (ProvenanceFailed) instead of running without it.
+        if (ok) {
+            if (impl_->annotationFlushFault_.load()) {
+                SPDLOG_ERROR("writeExperimentAnnotationJson: injected flush fault; annotation not durable");
+                ok = false;
+            } else if (!flush()) {
+                SPDLOG_ERROR("writeExperimentAnnotationJson: flush after the annotation write failed");
+                ok = false;
+            }
+        }
         return ok;
     }
 
@@ -5006,6 +5017,11 @@ namespace backend::services {
     void Hdf5Service::setExperimentAnnotationWriteFaultForTesting(bool fail)
     {
         impl_->annotationWriteFault_.store(fail);
+    }
+
+    void Hdf5Service::setExperimentAnnotationFlushFaultForTesting(bool fail)
+    {
+        impl_->annotationFlushFault_.store(fail);
     }
 
     // ---- KDE core contour records (kde_core_schema_version = 1) -----------------

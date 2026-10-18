@@ -817,6 +817,17 @@ int main()
             MIB_EXPECT(!std::filesystem::exists(faultPath) && !backend.hdf5().isFileOpen() &&
                            coordinator.state() == backend::app::ExperimentRunState::Idle,
                        "the failed Start leaves no file and no run");
+
+            // The attributes are written but the flush fails (a full disk): the Start must not go Active.
+            backend.hdf5().setExperimentAnnotationFlushFaultForTesting(true);
+            const auto [flushPath, flushStart] = startWith("annotation_flush_fault.h5", declared);
+            backend.hdf5().setExperimentAnnotationFlushFaultForTesting(false);
+            MIB_EXPECT(flushStart.outcome == ExperimentStartOutcome::ProvenanceFailed,
+                       std::string("annotation flush failure -> ProvenanceFailed, got ") +
+                           backend::app::toString(flushStart.outcome));
+            MIB_EXPECT(!std::filesystem::exists(flushPath) && !backend.hdf5().isFileOpen() &&
+                           coordinator.state() == backend::app::ExperimentRunState::Idle && !coordinator.activeRun(),
+                       "a failed annotation flush removes the file and leaves no run");
         }
     }
 

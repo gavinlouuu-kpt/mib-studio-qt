@@ -235,13 +235,16 @@ public:
     // /experiment_annotation group with @annotation_json
     // (recording::experimentAnnotationToJson) and @annotation_schema_version,
     // written once at Start. Refused with no file open, a read-only file, or
-    // when the file already has the group (the block is immutable). The
+    // when the file already has the group (the block is immutable); false
+    // also when the flush after the attribute writes fails. The
     // reader returns false when the group or its JSON is absent;
     // `schemaVersion` is 0 when the version attribute is missing.
     bool writeExperimentAnnotationJson(const std::string& annotationJson);
     bool readExperimentAnnotationJson(std::string& annotationJson, uint64_t* schemaVersion = nullptr) const;
     // Fault injection for tests: while set, writeExperimentAnnotationJson fails without writing.
     void setExperimentAnnotationWriteFaultForTesting(bool fail);
+    // Fault injection for tests: the attributes are written, then the flush fails (a full disk).
+    void setExperimentAnnotationFlushFaultForTesting(bool fail);
 
     // KDE core contour records (`kde_core_schema_version` = 1). The JSON
     // documents are produced and parsed by the frontend codec

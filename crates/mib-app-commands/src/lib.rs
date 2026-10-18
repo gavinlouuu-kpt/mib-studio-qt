@@ -296,20 +296,19 @@ pub fn fetch_experiment_readiness(state: &AppState, output_path: String) -> Resu
 
 /// Start an experiment (backend-owned lifecycle; schema v5).
 ///
-/// `start_request` (ABI 39, #712): the client's declarations (experiment/run/sample identity, the
-/// selected operator, the applied calibration record, the planned annotation), passed through as
-/// JSON; the backend checks it strictly (contract `experiment_start_request`). `None` (or JSON
-/// null) declares nothing.
+/// `start_request_json` (ABI 39, #712): the client's startRequest document (experiment/run/sample
+/// identity, the selected operator, the applied calibration record, the planned annotation) as the
+/// JSON text the client wrote. It is passed to the backend byte for byte and never decoded here:
+/// only the backend parser sees it, so a duplicate key is refused instead of being collapsed and
+/// the 16 KiB bound applies to the client's own bytes (contract `experiment_start_request`).
+/// `None` declares nothing.
 pub fn experiment_start(
     state: &AppState,
     output_path: String,
     acknowledge_discard_ring: bool,
-    start_request: Option<serde_json::Value>,
+    start_request_json: Option<String>,
 ) -> Result<CmdResult, String> {
-    let request = match start_request {
-        Some(serde_json::Value::Null) | None => String::new(),
-        Some(v) => v.to_string(),
-    };
+    let request = start_request_json.unwrap_or_default();
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     Ok(guard.pin_mut().experiment_start(&output_path, acknowledge_discard_ring, &request).into())
 }

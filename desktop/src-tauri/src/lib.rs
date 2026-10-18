@@ -147,9 +147,10 @@ fn experiment_start(
     state: State<AppState>,
     output_path: String,
     acknowledge_discard_ring: Option<bool>,
-    start_request: Option<serde_json::Value>,
+    start_request_json: Option<String>,
 ) -> Result<cmds::CmdResult, String> {
-    cmds::experiment_start(&state, output_path, acknowledge_discard_ring.unwrap_or(false), start_request)
+    // ABI 39: the client's JSON text, byte for byte; only the backend parses it.
+    cmds::experiment_start(&state, output_path, acknowledge_discard_ring.unwrap_or(false), start_request_json)
 }
 
 #[tauri::command]

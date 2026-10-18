@@ -16,7 +16,8 @@
 //    has no annotation (schema 0).
 //  Fault injection:
 //  - the annotation write is refused with no file, on a read-only file, when the block exists, and
-//    under the injected fault (nothing is left behind).
+//    under the injected fault (nothing is left behind); a flush that fails after the attribute writes
+//    fails the write.
 
 #include "backend/recording/Hdf5Service.h"
 #include "backend/recording/RunProvenanceRecord.h"
@@ -321,6 +322,16 @@ int main()
         w.setExperimentAnnotationWriteFaultForTesting(true);
         MIB_EXPECT(!w.writeExperimentAnnotationJson("{\"schema_version\":1}"), "injected fault refuses the write");
         w.setExperimentAnnotationWriteFaultForTesting(false);
+
+        // The attributes are written but the flush fails: the write must report failure.
+        const std::string flushPath = (td / "flush_fault.h5").string();
+        Hdf5Service f;
+        MIB_REQUIRE(f.openFile(flushPath) && f.initializeDatasets(), "create flush-fault file");
+        f.setExperimentAnnotationFlushFaultForTesting(true);
+        MIB_EXPECT(!f.writeExperimentAnnotationJson("{\"schema_version\":1}"),
+                   "a failed flush after the attribute writes fails the annotation write");
+        f.setExperimentAnnotationFlushFaultForTesting(false);
+        f.closeFile();
         w.closeFile();
         Hdf5Service r;
         MIB_REQUIRE(r.loadFile(plain), "reload");

@@ -218,7 +218,9 @@ unknown, and only an unparseable document fails. See the v3 table in
 the `/experiment_annotation` group (`@annotation_json`, `@annotation_schema_version` =
 `recording::kExperimentAnnotationSchemaVersion`, 1), the JSON before the version. The write is
 refused with no file open, on a read-only file, when the group already exists (written once) and
-while `setExperimentAnnotationWriteFaultForTesting(true)`. The reader returns false (version 0) when
+while `setExperimentAnnotationWriteFaultForTesting(true)`; it also fails when the flush after the
+attribute writes fails (a full disk), so the Start is `ProvenanceFailed` rather than Active
+(`setExperimentAnnotationFlushFaultForTesting` injects that). The reader returns false (version 0) when
 the group or its JSON is absent. The document codec is `recording::experimentAnnotationToJson` /
 `parseExperimentAnnotation` (`RunStartIdentity.h`). See [[../data-model/HDF5-Storage]].
 
