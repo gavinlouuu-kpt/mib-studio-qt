@@ -9,7 +9,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { OPERATION_STATES } from "../../bridgeContract";
 import { REVIEW_OPERATION_KINDS } from "../reviewContract";
-import { reviewBridge, type ReviewCmdResult, type ReviewEvent } from "../reviewBridge";
+import { isTransportUnsupported } from "../../transport";
+import { reviewBridge, unsupportedText, type ReviewCmdResult, type ReviewEvent } from "../reviewBridge";
 
 const POLL_MS = 200;
 const BUFFERED_IDS = 64;
@@ -52,6 +53,13 @@ export function applyJobEvent(job: TrackedJob, e: ReviewEvent): TrackedJob {
     default:
       return job;
   }
+}
+
+/** The dialog text for a preparation that failed: plain words when the
+ * transport cannot carry it (chart snapshots over the WebSocket), else the
+ * label and the error. */
+export function prepareFailureText(label: string, e: unknown): string {
+  return isTransportUnsupported(e) ? unsupportedText(e) : `${label} failed: ${e}`;
 }
 
 export interface ReviewJobs {
@@ -135,8 +143,9 @@ export function useReviewJobs(ready: boolean, log: (line: string) => void): Revi
         try {
           await prepare.work();
         } catch (e) {
-          log(`${title}: ${prepare.label} failed: ${e}`);
-          update({ id: "0", kind, title, phase: "failed", progress: 0, total: 0, message: `${prepare.label} failed: ${e}`, cancelling: false });
+          const message = prepareFailureText(prepare.label, e);
+          log(`${title}: ${message}`);
+          update({ id: "0", kind, title, phase: "failed", progress: 0, total: 0, message, cancelling: false });
           return null;
         }
       }

@@ -3,10 +3,15 @@
 // "Show in folder") and the Export All series-range prompt — the Qt tab's
 // QProgressDialog and series QMessageBox.
 import { useState } from "react";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { isRemote } from "../../transport";
+import { revealItemInDir } from "../../transport/dialogs";
 import { REVIEW_OPERATION_KINDS } from "../reviewContract";
 import { batchSummaryText, parseBatchSummary, parseSeriesRange, type SeriesChoice } from "./exportHelpers";
 import type { TrackedJob } from "./useReviewJobs";
+
+/** Why "Show in folder" is unavailable in a browser: the output is on the
+ * instrument, which this computer's file manager cannot open. */
+export const REMOTE_REVEAL_REASON = "The output is on the instrument, so this browser cannot open its folder.";
 
 /** Path a completed job produced (the job's terminal message), or "". */
 export function outputPathOf(job: TrackedJob): string {
@@ -77,11 +82,16 @@ export function JobDialog(props: { job: TrackedJob; onCancel: () => void; onClos
             </button>
           ) : (
             <>
-              {path && (
-                <button className="btn" onClick={() => void revealItemInDir(path).catch(() => {})}>
-                  Show in folder
-                </button>
-              )}
+              {path &&
+                (isRemote ? (
+                  <button className="btn" disabled title={REMOTE_REVEAL_REASON}>
+                    Show in folder
+                  </button>
+                ) : (
+                  <button className="btn" onClick={() => void revealItemInDir(path).catch(() => {})}>
+                    Show in folder
+                  </button>
+                ))}
               {extraAction && (
                 <button className="btn" onClick={extraAction.onClick}>
                   {extraAction.label}

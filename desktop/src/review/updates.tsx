@@ -5,7 +5,7 @@
 // minisign signature and pinned SHA-256, installs and restarts. Builds without
 // the public key report `configured: false` and the dialog says so.
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../transport";
 
 export type UpdateChannel = "stable" | "beta";
 export const UPDATE_CHANNEL_KEY = "yofo.review.updateChannel";

@@ -707,4 +707,5 @@ separate from `ffi::BackendBridge`; MIB Studio's Review tab does not use it
   `desktop/src/review/reviewPacket.ts` encode and decode its packets (RGB8
   allowed, stride = width × bytes/pixel), leaving MIB Studio's
   `frame_packet.rs` / `framePacket.ts` as develop has them.
-  `desktop/src/review/reviewBridge.ts` is the TypeScript client.
+  `desktop/src/review/reviewBridge.ts` is the TypeScript client, over
+  `desktop/src/transport` (`invoke`; `upload` for the raw chart body, #512 S9).

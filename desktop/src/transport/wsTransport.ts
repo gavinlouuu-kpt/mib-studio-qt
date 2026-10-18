@@ -1,4 +1,4 @@
-import type {SessionSource, SessionState, Transport} from "./Transport";
+import {TransportUnsupportedError, type SessionSource, type SessionState, type Transport} from "./Transport";
 import {tokenFromLocation} from "./auth";
 
 // A browser talking to yofo-studio-server (crates/mib-bridge-server):
@@ -132,9 +132,16 @@ export function createWsTransport(url: string | (() => string), options: WsTrans
     });
   }
 
+  // The server reads text requests only (a binary client frame is proof of life), so a raw-body
+  // request has no path over the socket: refuse it here instead of sending what the server drops.
+  async function upload<T>(cmd: string): Promise<T> {
+    throw new TransportUnsupportedError("ws", cmd);
+  }
+
   return {
     kind: "ws",
     invoke,
+    upload,
     session: sessionSource,
     close() { closed = true; socket?.close(); fail("TRANSPORT_CLOSED"); },
   };

@@ -202,7 +202,7 @@ the coordinator (ADR 0004/0011).
 | S6 | Parity harness: a MIB Studio half | none | none | planned |
 | S7 | Facade jobs on ReviewJobs lanes | none | none | planned |
 | S8 | YOFO regenerate on the reanalysis engine | none | none (behaviour D6) | planned |
-| S9 | Transport-neutral review module | none | none | planned |
+| S9 | Transport-neutral review module | none | none | in review (#731) |
 | S10 | Attachable review bridge | **additive, ABI bump** | none | proposed, not implemented |
 | S11 | Review commands in the studio command layer | **additive command surface, ABI bump** | none | proposed, not implemented |
 | S12 | MIB Studio's options in the review contract | none | **additive, ABI bump** | proposed, not implemented |
@@ -458,7 +458,7 @@ the coordinator (ADR 0004/0011).
 - **Risks:** the no-clobber change for YOFO (D6) needs the YOFO save dialog to
   stop offering "replace".
 
-### S9 — Transport-neutral review module
+### S9 — Transport-neutral review module (in review, #731)
 
 - **Moves:** `desktop/src/review/` calls `invoke` and the dialogs through
   `desktop/src/transport/` (and the opener only when not remote), and chart
@@ -470,6 +470,19 @@ the coordinator (ADR 0004/0011).
 - **Contract:** none (same Tauri commands).
 - **Proof:** `npx vitest run`, `npx tsc --noEmit`, the review build under Xvfb.
 - **Risks:** `transport/` is shared with the operation app (track A).
+- **Landed (2026-10-19):** every `invoke`, dialog and opener call under
+  `desktop/src/review/` goes through `desktop/src/transport/` (`updates.tsx`
+  too); `reviewBridge` gained `clearCharts` / `stageChart`. Transport,
+  additive only: `Transport.upload(cmd, bytes, headers)` (Tauri:
+  `invoke(cmd, bytes, {headers})`; WebSocket: rejects with
+  `TransportUnsupportedError`, since the server reads no binary requests),
+  `transport/dialogs` `ask`. Over the WebSocket, Show in folder is disabled
+  with its reason and a refused chart upload is shown in plain words. Proof:
+  `reviewIpc.test.tsx` compares every call at the Tauri boundary with a golden
+  file recorded before the move, unchanged after it;
+  `transportBoundary.test.ts` is the import guard; `remoteTransport.test.tsx`
+  checks the browser behaviour. The Xvfb boot smoke was not run locally; it
+  runs in `review-ci.yml`. No contract change.
 
 ### S10 — Attachable review bridge (proposed; not implemented)
 
@@ -528,7 +541,10 @@ Same ABI bump as S10 if they land together. Exact proposed change:
   review-contract.json command set, also served by MIB Studio and the
   WebSocket server over attach_review_bridge"`; the ABI number as S10.
 - Risks: `review_list_dir` and the dialogs on a remote instrument browse the
-  board's file system; `review_stage_chart` needs the S9 upload over WS.
+  board's file system. `review_stage_chart` needs a binary request path in
+  `mib-bridge-server`, because client binary frames are only proof of life
+  today. Once that exists, `wsTransport.upload` replaces its
+  `TransportUnsupportedError` with a real send (the client side is S9's).
 
 ### S12 — MIB Studio's options in the review contract (proposed; not implemented)
 
@@ -627,7 +643,7 @@ bridge contract):
 - [ ] S6 parity harness MIB Studio half
 - [ ] S7 facade jobs on ReviewJobs lanes (D7)
 - [ ] S8 YOFO regenerate on the engine (D6)
-- [ ] S9 transport-neutral review module
+- [x] 2026-10-19 — S9 transport-neutral review module (`reviewIpc` golden unchanged; import guard; `Transport.upload`; #731).
 - [ ] S10 attachable review bridge (ABI)
 - [ ] S11 review commands in the studio command layer (ABI)
 - [ ] S12 MIB Studio's options in the review contract (review ABI)
