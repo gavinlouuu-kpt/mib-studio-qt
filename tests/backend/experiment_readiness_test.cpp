@@ -10,6 +10,9 @@
 //  - A hardware selection that falls back to the mock camera is reported as
 //    a fallback (camera.source Fail); an explicit mock selection is a Warn.
 //  - Unwritable output storage blocks Start.
+//  - A file open for review (#512 S5, decision D1 (a)) fails storage.hdf5
+//    exactly as a file in the shared handle does; Start and raw recording are
+//    refused with unchanged messages, and allowed again once it closes.
 //  - Concurrent Start requests: exactly one Started, the rest typed.
 //  - The frozen RunConfigurationSnapshot is immutable for the run's duration
 //    and is persisted to HDF5 (readable after close).
@@ -393,6 +396,79 @@ int main()
         const auto none = coord.evaluateReadiness("");
         MIB_EXPECT(!none.ready && statusOf(none, "storage.output") == GateStatus::Unavailable,
                    "no destination -> Unavailable (not Pass)");
+    }
+
+    // ---- 5b. A file open for review (#512 S5, decision D1 (a)) ---------------
+    // The facade's ReviewSession reads a review file with its own reader, not
+    // the shared handle. AppBackend::setReviewSourceOpen keeps the pre-S5
+    // refusals byte for byte: the storage.hdf5 gate a file in the shared
+    // handle fails, the same Start message and the same raw-recording error
+    // (HDF5 is built without thread safety, #722). Lifting it makes the
+    // instrument ready again (section 6 then starts a run).
+    {
+        wd.mark("review source");
+        const auto ready = coord.evaluateReadiness(out1);
+        MIB_REQUIRE(ready.ready, "ready before a review source opens");
+        ExperimentStartRequest req;
+        req.outputPath = out1;
+
+        // Reference: a file in the shared handle (where review files lived before S5).
+        MIB_REQUIRE(backend.hdf5().openFile((td.path() / "shared_handle.h5").string()), "open the shared handle");
+        const auto shared = coord.evaluateReadiness(out1);
+        req.readinessGeneration = shared.generation;
+        const auto sharedStart = coord.start(req);
+        std::string sharedRawError;
+        MIB_EXPECT(!backend.startFrameRecording((td.path() / "raw_probe.h5").string(), &sharedRawError),
+                   "raw recording refused beside the shared handle");
+        backend.hdf5().closeFile();
+        const auto *sharedGate = shared.gate("storage.hdf5");
+        MIB_REQUIRE(sharedGate && sharedGate->status == GateStatus::Fail, "the shared handle fails storage.hdf5");
+
+        backend.setReviewSourceOpen(true);
+        const auto review = coord.evaluateReadiness(out1);
+        dumpGates(review);
+        const auto *reviewGate = review.gate("storage.hdf5");
+        MIB_EXPECT(!review.ready, "a review source blocks readiness");
+        MIB_EXPECT(reviewGate && reviewGate->id == "storage.hdf5" && reviewGate->status == GateStatus::Fail &&
+                       reviewGate->reason == "an HDF5 file is already open" &&
+                       reviewGate->remediation == "finish or close the current file first" && reviewGate->detail.empty(),
+                   "review source: the storage.hdf5 gate text is unchanged");
+        MIB_EXPECT(reviewGate && reviewGate->id == sharedGate->id && reviewGate->status == sharedGate->status &&
+                       reviewGate->reason == sharedGate->reason && reviewGate->remediation == sharedGate->remediation &&
+                       reviewGate->detail == sharedGate->detail,
+                   "review source: the gate equals the shared handle's");
+        for (const auto &g : ready.gates)
+        {
+            if (g.id == "storage.hdf5") continue;
+            MIB_EXPECT(statusOf(review, g.id.c_str()) == g.status, "only storage.hdf5 changes: " + g.id);
+        }
+        MIB_EXPECT(review.generation == ready.generation, "a review source does not invalidate (as the shared handle)");
+        req.readinessGeneration = review.generation;
+        const auto refused = coord.start(req);
+        MIB_EXPECT(refused.outcome == ExperimentStartOutcome::NotReady && sharedStart.outcome == refused.outcome &&
+                       refused.message == sharedStart.message &&
+                       refused.message ==
+                           "stop raw recording and close the existing HDF5 file before starting an experiment",
+                   "review source: Start refused with the pre-S5 message: " + refused.message);
+        MIB_EXPECT(!backend.hdf5().isFileOpen() && coord.state() == backend::app::ExperimentRunState::Idle,
+                   "the refused Start has no side effects");
+        std::string reviewRawError;
+        MIB_EXPECT(!backend.startFrameRecording((td.path() / "raw_probe.h5").string(), &reviewRawError) &&
+                       !backend.isFrameRecording(),
+                   "review source: raw recording refused");
+        MIB_EXPECT(reviewRawError == sharedRawError &&
+                       reviewRawError == "Close the existing HDF5 file before starting raw recording; its writer "
+                                         "will not be replaced",
+                   "review source: the raw-recording error is unchanged: " + reviewRawError);
+
+        backend.setReviewSourceOpen(false);
+        const auto again = coord.evaluateReadiness(out1);
+        MIB_EXPECT(again.ready && statusOf(again, "storage.hdf5") == GateStatus::Pass, "ready again once it closed");
+        std::string rawError;
+        MIB_EXPECT(backend.startFrameRecording((td.path() / "raw_after_review.h5").string(), &rawError),
+                   "raw recording allowed again: " + rawError);
+        backend.stopFrameRecording();
+        MIB_EXPECT(!backend.hdf5().isFileOpen() && !backend.isFrameRecording(), "raw recording stopped");
     }
 
     // ---- 6. Concurrent start: exactly one Started; frozen snapshot ------------

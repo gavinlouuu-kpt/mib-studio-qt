@@ -10,7 +10,10 @@
 //    factor — TD-17), accounting text, core-record save/overwrite refusal;
 //  - recording fixture (multi-image window): recording-mode semantics;
 //  - faults: missing file, bad dataset/index, closed session, legacy file
-//    without snapshot/accounting falls back to the host factor.
+//    without snapshot/accounting falls back to the host factor;
+//  - framesPage / validMetadataReadable (#512 S5, the facade's rows and its
+//    charts' refusal): the page as ProcessedFrames equals metricsPage and the
+//    reader's own metadata read; absent vs unreadable valid sets.
 // Watchdog guarded.
 
 #include "backend/review/ReviewSession.h"
@@ -30,6 +33,7 @@
 
 #include <cmath>
 #include <filesystem>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -185,6 +189,10 @@ int main()
         std::vector<backend::review::MetricRow> rows;
         uint64_t total = 1;
         MIB_EXPECT(!s.metricsPage(true, 0, 5, rows, total), "page served when closed");
+        std::vector<ProcessedFrame> frames(2);
+        total = 1;
+        MIB_EXPECT(!s.framesPage(true, 0, 5, frames, total) && frames.empty() && total == 0, "frames page when closed");
+        MIB_EXPECT(!s.validMetadataReadable(), "valid metadata readable when closed");
         ReviewImage img;
         MIB_EXPECT(!s.fetchImage(ReviewDataset::ValidImage, 0, OverlayMode::None, false, img), "image when closed");
         MIB_EXPECT(s.scatter().frameIndex.empty(), "scatter when closed");
@@ -226,6 +234,57 @@ int main()
         MIB_EXPECT(total == 4 && rows.size() == 4 && !rows[0].valid, "invalid page");
         MIB_REQUIRE(s.metricsPage(true, 50, 5, rows, total), "beyond page");
         MIB_EXPECT(rows.empty() && total == 10, "beyond page empty");
+
+        // framesPage (#512 S5): the same page as metadata-only ProcessedFrames,
+        // row for row the reader's own metadata read (the facade's source
+        // before S5) and metricsPage's rows.
+        {
+            std::vector<ProcessedFrame> direct, directInvalid;
+            Hdf5Service reader;
+            MIB_REQUIRE(reader.loadFile(experiment.string()), "direct reader");
+            MIB_REQUIRE(reader.readValidMetadata(direct) && reader.readInvalidMetadata(directInvalid), "direct metadata");
+            reader.closeFile();
+            auto same = [](const ProcessedFrame &a, const ProcessedFrame &b) {
+                const auto &x = a.validation;
+                const auto &y = b.validation;
+                return a.index == b.index && a.timestampNs == b.timestampNs && x.isValid == y.isValid &&
+                       x.isTargetGroup == y.isTargetGroup && x.objectId == y.objectId && x.objectCount == y.objectCount &&
+                       x.trackId == y.trackId && x.centroidX == y.centroidX && x.centroidY == y.centroidY &&
+                       x.area == y.area && x.deformability == y.deformability && x.areaRatio == y.areaRatio &&
+                       x.ringRatio == y.ringRatio && x.youngsModulus == y.youngsModulus &&
+                       x.analysisPixelToMicronFactor == y.analysisPixelToMicronFactor &&
+                       x.brightness.q4 == y.brightness.q4 && a.originalImage.empty() && a.processedImage.empty() &&
+                       a.seriesImages.empty();
+            };
+            std::vector<ProcessedFrame> frames;
+            uint64_t ftotal = 0;
+            MIB_REQUIRE(s.framesPage(true, 2, 3, frames, ftotal), "frames page");
+            MIB_REQUIRE(s.metricsPage(true, 2, 3, rows, total), "metrics page beside frames page");
+            MIB_EXPECT(ftotal == 10 && frames.size() == 3, "frames page bounds");
+            for (std::size_t i = 0; i < frames.size(); ++i)
+            {
+                MIB_EXPECT(same(frames[i], direct[2 + i]), "frames page row " + std::to_string(i) + " = reader metadata");
+                MIB_EXPECT(frames[i].index == rows[i].frameIndex && frames[i].validation.objectId == rows[i].objectId &&
+                               frames[i].validation.area == rows[i].area,
+                           "frames page row = metrics page row");
+            }
+            MIB_REQUIRE(s.framesPage(true, 0, 1000, frames, ftotal), "whole valid set");
+            MIB_EXPECT(ftotal == 10 && frames.size() == direct.size(), "whole valid set size");
+            bool all = frames.size() == direct.size();
+            for (std::size_t i = 0; all && i < frames.size(); ++i) all = same(frames[i], direct[i]);
+            MIB_EXPECT(all, "whole valid set = reader metadata");
+            MIB_REQUIRE(s.framesPage(false, 0, 50, frames, ftotal), "invalid frames page");
+            MIB_EXPECT(ftotal == 4 && frames.size() == 4 && same(frames[3], directInvalid[3]), "invalid frames page");
+            MIB_REQUIRE(s.framesPage(true, 50, 5, frames, ftotal), "frames beyond");
+            MIB_EXPECT(frames.empty() && ftotal == 10, "frames beyond empty");
+            MIB_REQUIRE(s.framesPage(true, 10, 5, frames, ftotal), "frames at end");
+            MIB_EXPECT(frames.empty() && ftotal == 10, "frames at end empty");
+            MIB_REQUIRE(s.framesPage(true, 1, 0, frames, ftotal), "zero count");
+            MIB_EXPECT(frames.empty() && ftotal == 10, "zero count empty");
+            MIB_REQUIRE(s.framesPage(true, 3, std::numeric_limits<uint64_t>::max(), frames, ftotal), "huge count");
+            MIB_EXPECT(frames.size() == 7 && frames[0].index == direct[3].index, "huge count is the rest, no wrap");
+            MIB_EXPECT(s.validMetadataReadable(), "valid metadata readable");
+        }
 
         // Images: raw Mono8, overlays RGB and different, masks raw, ROI red.
         ReviewImage plain, contour, inner, allMask, filtered, roi, mask;
@@ -369,6 +428,16 @@ int main()
         MIB_EXPECT(meta.recordedImages.present && meta.recordedImages.count == 9, "recorded dataset");
         MIB_EXPECT(!meta.validMasks.present, "no masks in recording");
         MIB_EXPECT(s.frameCount(true) == 9 && s.frameCount(false) == 0, "recording sets");
+        {
+            std::vector<ProcessedFrame> frames;
+            uint64_t ftotal = 0;
+            MIB_REQUIRE(s.framesPage(true, 7, 5, frames, ftotal), "recording frames page");
+            MIB_EXPECT(ftotal == 9 && frames.size() == 2 && frames[0].index == 7 && frames[1].timestampNs == 800,
+                       "recording frames page rows");
+            MIB_REQUIRE(s.framesPage(false, 0, 5, frames, ftotal), "recording invalid frames page");
+            MIB_EXPECT(ftotal == 0 && frames.empty(), "recording has no invalid set");
+            MIB_EXPECT(s.validMetadataReadable(), "recording valid set readable");
+        }
         ReviewImage img;
         MIB_REQUIRE(s.fetchImage(ReviewDataset::RecordedImage, 4, OverlayMode::AllContour, true, img), "recorded image");
         MIB_EXPECT(img.channels == 1 && img.data[0] == pattern(4).at<uint8_t>(0, 0), "recorded: overlay/roi ignored");
@@ -390,6 +459,50 @@ int main()
         MIB_EXPECT(strip.count == 9 && strip.channels == 1, "recording thumbnails mono");
     }
     wd.mark("recording");
+
+    // ---- absent vs unreadable valid set (#512 S5) -----------------------------
+    // An absent /valid_frames group is an empty, readable set; a metadata
+    // dataset that exists but cannot be read is not (the facade's charts
+    // refuse it with "Cannot read valid-frame metrics", as they did with a
+    // reader of their own before S5). The invalid set is served either way.
+    for (const bool unreadable : {false, true})
+    {
+        const auto path = td.path() / (unreadable ? "unreadable_valid.h5" : "no_valid_group.h5");
+        writeExperiment(path, false, false, false);
+        const hid_t file = H5Fopen(path.string().c_str(), H5F_ACC_RDWR, H5P_DEFAULT);
+        MIB_REQUIRE(file >= 0, "open valid-set fault fixture");
+        if (unreadable)
+        {
+            MIB_REQUIRE(H5Ldelete(file, "/valid_frames/metadata", H5P_DEFAULT) >= 0, "delete valid metadata");
+            hsize_t dims[1] = {3};
+            const hid_t space = H5Screate_simple(1, dims, nullptr);
+            const hid_t ds = H5Dcreate2(file, "/valid_frames/metadata", H5T_NATIVE_INT, space, H5P_DEFAULT,
+                                        H5P_DEFAULT, H5P_DEFAULT);
+            MIB_REQUIRE(ds >= 0, "replace valid metadata with an int dataset");
+            const int data[3] = {1, 2, 3};
+            H5Dwrite(ds, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, data);
+            H5Dclose(ds);
+            H5Sclose(space);
+        }
+        else
+        {
+            MIB_REQUIRE(H5Ldelete(file, "/valid_frames", H5P_DEFAULT) >= 0, "delete valid group");
+        }
+        H5Fclose(file);
+        ReviewSession s;
+        MIB_REQUIRE(s.open(path.string()), "open valid-set fault fixture");
+        MIB_EXPECT(s.validMetadataReadable() == !unreadable,
+                   unreadable ? "unreadable valid metadata reported readable" : "absent valid set reported unreadable");
+        std::vector<ProcessedFrame> frames;
+        uint64_t ftotal = 9;
+        MIB_REQUIRE(s.framesPage(true, 0, 5, frames, ftotal), "valid page of a faulty set");
+        MIB_EXPECT(frames.empty() && ftotal == 0, "faulty valid set serves no rows");
+        MIB_REQUIRE(s.framesPage(false, 0, 5, frames, ftotal), "invalid page beside a faulty valid set");
+        MIB_EXPECT(ftotal == 4 && frames.size() == 4, "invalid set still served");
+        s.close();
+        MIB_EXPECT(!s.validMetadataReadable(), "closed session not readable");
+    }
+    wd.mark("valid set faults");
 
     // ---- overlay compose is a pure function of its inputs ---------------------
     {
