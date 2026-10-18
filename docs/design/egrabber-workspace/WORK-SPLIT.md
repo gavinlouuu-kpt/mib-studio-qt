@@ -22,7 +22,9 @@ this note says who does each slice.
 
 Workspace slices target `feat/egrabber-workspace`, where the docs, desktop, bridge and
 backend checks run on every pull request. Fixes that every build needs
-(S0, #512) target `develop`, which the workspace branch then merges. A track never
+(S0, #512) and contract changes that bump an ABI (#712, #512 S10–S12) target `develop`, which
+the workspace branch then merges: ABI numbers are assigned in order on the trunk, and the
+coordinator reserves each one before its PR opens. A track never
 edits another track's directories. Files both tracks touch (`desktop/package.json`, `desktop/vite.config.ts`,
 `desktop/src-tauri/`, `desktop/src/bridgeContract.ts`) change in small separate PRs,
 merged one at a time.
@@ -53,7 +55,7 @@ app-local markup until they land.
 |---|---|---|---|---|
 | A0 | none | S0 hygiene (#711, #713 probe caching) | nothing | none |
 | A1 | O1 Prepare | S3 shell and Prepare (#713) | A0 | Notice |
-| A2 | none (contract) | S2 run snapshot v3 (#712) | ABI number reserved | none |
+| A2 | none (contract) | S2 run snapshot v3 (#712), on `develop` | ABI 39 reserved | none |
 | A3 | O2 Align | P3; overrides recorded by S2 | A1 | Notice |
 | A4 | O1 calibration card | S4 calibration run | A1, A2 | none |
 | A5 | O3 Plan | S5 | A1, A2 | DataTable, OptionGroup |
