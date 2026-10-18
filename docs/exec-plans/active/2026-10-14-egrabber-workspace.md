@@ -138,6 +138,9 @@ Rules that apply to every slice:
   must not start capture, home a motor, enable light or install an update.
 - Gate: React tests + TypeScript/Vite build; resize/keyboard review; identical backend
   command log before and after pure navigation; normal shell remains available.
+- **Status 2026-10-19:** the opt-in workspace shell is merged (#727, on `@mib/ui` via #723) with
+  the no-actuation navigation gate; the classic route stays the default. The capability
+  inventory is not written yet.
 
 ### P2 — Instrument preparation and failure recovery
 
@@ -189,6 +192,10 @@ Rules that apply to every slice:
   estimate, never as a level.
 - Gate: pure derivation tests, mocked transport UI tests, backend faults, no-actuation
   startup/navigation test; Windows/Linux and remote viewer restrictions.
+- **Status 2026-10-19:** Prepare shows the backend gates without a path, with Unknown/Unsupported
+  and the extended confirmation signature (#727, #713); the probe is cached (#719). Storage
+  budget, run-plan card, fluidics estimates, the non-default banner and the calibration run are
+  not started.
 
 ### P3 — Align and direct device controls
 
@@ -200,6 +207,9 @@ Rules that apply to every slice:
   tools. Provider-specific features are capability-gated.
 - Gate: scoped readback races, reject/timeout cases, selector restoration, image
   inspection does not block capture, parity with existing configuration scripts.
+- **Status 2026-10-19:** fit/1:1/zoom/pan, pixel probe, histogram, line profile and the ROI quick
+  control (requested → readback) are merged (#729). Writable exposure/gain/frame rate, selector
+  enumeration and restoration, and S2 overrides are not started.
 
 ### P4 — Acquisition, retained history and recording
 

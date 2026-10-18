@@ -2,10 +2,19 @@
 
 Status: active, 2026-10-18. Progress, 2026-10-19:
 
-- **A0:** done. #711 merged in #718, and #713's probe caching in #719. The rest of #713 is A1.
-- **B0:** #512 S1 and S2 merged in #721. All nine #512 decisions are ruled on #717; D1 keeps
-  Start refused while a review file is open (HDF5 thread safety, #722).
-- **Kit:** DataTable, CellImage, OptionGroup and Notice are in #714.
+- **A0:** done. #711 merged in #718, and #713's probe caching in #719.
+- **A1:** done. #723 wires `@mib/ui` into the app; #727 adds the opt-in workspace and Prepare
+  (backend gates read without a path, Unknown/Unsupported, required warnings still block per
+  #548, one verdict, extended confirmation signature). One backend test remains on #713.
+- **A2:** in review: #725 (snapshot v3 file schema) and #728 (start-request identity and
+  `/experiment_annotation`, ABI 39), both on `develop`.
+- **A3:** first PR merged (#729): Align's live image tools and ROI quick controls; navigation and
+  leaving the workspace never switch the camera mode. Writable exposure, gain and frame rate need
+  a backend feature service (a later P3 step); the kit NumberField is #730.
+- **B0:** #512 S1–S4 and S9 merged (#721, #724, #726, #731). All nine #512 decisions are ruled on
+  #717; D1 keeps Start refused while a review file is open (HDF5 thread safety, #722). S5 is in
+  progress.
+- **Kit:** DataTable, CellImage, OptionGroup and Notice are in #714; NumberField is requested (#730).
 
 The workspace delivers two products from one UI language
 ([README](README.md), "One UI language, two products"). Their work is split into
