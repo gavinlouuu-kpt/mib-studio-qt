@@ -52,6 +52,9 @@ renders a kit shell from `desktop/src` through the aliases.
 New on `feat/ui-language-kit` (2026-10-16). Wired into the desktop app on 2026-10-19 (source
 alias, above). First consumer: the opt-in workspace in `desktop/src/workspace/` (P1/P2, #713;
 see [[../architecture/Desktop-Shell]], "Opt-in workspace"), which imports the stylesheets once
-at its entry.
+at its entry. O2 Align (#716 A3) uses `DataTable` (compact) for the quick controls, `Notice` for
+the explicit mode switch and `StateChip` tones for write states. The kit has no number field yet:
+the quick controls' X / Y / W / H inputs are app-local markup in `workspace.css` until one lands
+(#715).
 
 Related: [[YofoReview]], [[../architecture/Desktop-Shell]].

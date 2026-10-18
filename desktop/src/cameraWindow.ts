@@ -31,8 +31,13 @@ interface Options {
   /** Shared with callers that read the window outside React (the canvas draw loop). */
   windowRef?: {current: Rect | null};
   append: (line: string) => void;
-  refreshGeometry: () => Promise<unknown>;
+  /** Reads the geometry again; its answer is the readback after a save. */
+  refreshGeometry: () => Promise<CameraGeometry | null | void>;
 }
+
+/** What a save did: the window it placed or saved, the backend's answer, and the geometry read
+ *  after it (null on the PZ7035, where the Run window is applied later, by the switch to Run). */
+export interface WindowSave {ok: boolean; message: string; window: Rect; geometry: CameraGeometry | null}
 
 export function useCameraWindow({instrumentModes, geometryRef, expActive, append, refreshGeometry, windowRef: sharedWindowRef}: Options) {
   const [window, setWindow] = useState<Rect | null>(null);
@@ -61,22 +66,24 @@ export function useCameraWindow({instrumentModes, geometryRef, expActive, append
     setPlaced(true);
   }, []);
 
-  const save = useCallback(async (rect: Rect) => {
+  const save = useCallback(async (rect: Rect): Promise<WindowSave | null> => {
     if (instrumentModes) {
       // The Run window is applied (and saved) by the switch to Run when Experiment opens.
       const snapped = snapRunWindow(rect);
       setWindow(snapped);
       setPlaced(true);
-      append(`Run window (${snapped.x}, ${snapped.y}) 512×96: applied when Experiment opens`);
-      return;
+      const message = `Run window (${snapped.x}, ${snapped.y}) 512×96: applied when Experiment opens`;
+      append(message);
+      return {ok: true, message, window: snapped, geometry: null};
     }
     const geometry = geometryRef.current;
-    if (!geometry?.supported) return;
+    if (!geometry?.supported) return null;
     const snapped = snapWindow(rect, geometry);
     setWindow(snapped);
     const result = await bridge.saveCameraRoi(snapped.x, snapped.y, snapped.width, snapped.height);
     append(result.ok ? result.message : `Camera ROI not saved: ${result.message}`);
-    await refreshGeometry();
+    const after = await refreshGeometry();
+    return {ok: result.ok, message: result.message, window: snapped, geometry: after ?? null};
   }, [append, refreshGeometry, instrumentModes, geometryRef]);
 
   const canvasPoint = (e: ReactPointerEvent<HTMLCanvasElement>) => {
@@ -109,4 +116,48 @@ export function useCameraWindow({instrumentModes, geometryRef, expActive, append
   };
 
   return {window, setWindow, placed, windowRef, placedRef, showDefault, restore, save, onPointerDown, onPointerMove, onPointerUp};
+}
+
+/** The classic tab's camera mode after the workspace changed it (#716 A3): the mode the camera is
+ *  in, the one this tab uses, and the explicit switch. Leaving the workspace never switches by
+ *  itself; this notice offers it. */
+export interface ClassicModeNotice {
+  actual: string;
+  expected: string;
+  action: string;
+  /** Why the switch cannot be pressed now; "" when it can. */
+  blocked: string;
+}
+
+export function classicModeNotice(s: {
+  /** The workspace switched the mode, or a classic switch was skipped while it was open. */
+  stale: boolean;
+  tab: string;
+  instrumentModes: boolean;
+  instrumentMode: string | null | undefined;
+  geometry: CameraGeometry | null;
+  windowPlaced: boolean;
+  expActive: boolean;
+  runFrozen: boolean;
+}): ClassicModeNotice | null {
+  if (!s.stale || (s.tab !== "overview" && s.tab !== "experiment")) return null;
+  const blocked = s.expActive ? "a run is active" : "";
+  if (s.instrumentModes) {
+    const want = s.tab === "overview" ? "align" : "run";
+    const actual = s.instrumentMode;
+    if (!actual || actual === want) return null;
+    // Without a placed window the Experiment tab already says to place it (RunWindowNotice).
+    if (want === "run" && !s.windowPlaced) return null;
+    const name = (m: string) => (m === "align" ? "Align" : m === "run" ? "Run" : m);
+    return {
+      actual: name(actual), expected: name(want), action: want === "run" ? "Switch to Run" : "Switch to Align",
+      blocked: blocked || (s.runFrozen ? "Run is stopped to review the buffered frames: Resume Run first" : ""),
+    };
+  }
+  const g = s.geometry;
+  if (!g?.supported) return null;
+  const want = s.tab === "overview";
+  if (g.overview === want) return null;
+  const name = (overview: boolean) => (overview ? "the full sensor" : "the experiment window");
+  return { actual: name(g.overview), expected: name(want), action: want ? "Show the full sensor" : "Show the experiment window", blocked };
 }
