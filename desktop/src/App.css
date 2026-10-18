@@ -107,6 +107,15 @@ body {
   min-height: 0;
 }
 
+/* Opt-in workspace (#713): takes the place of the menu row, body and context bar. */
+.workspace-host {
+  flex: 1;
+  min-height: 0;
+}
+.workspace-toggle {
+  margin-right: 6px;
+}
+
 .sidebar {
   width: 250px;
   min-width: 250px;
@@ -382,6 +391,14 @@ body {
 .check-dot.not-required {
   background: transparent;
 }
+/* Not read yet (#713): grey, never the failed red. Unsupported: absent capability. */
+.check-dot.unknown {
+  background: var(--border);
+}
+.check-dot.unsupported {
+  background: transparent;
+  border-style: dashed;
+}
 
 .check-main {
   flex: 1;
@@ -434,7 +451,9 @@ body {
 .preflight-check.failed .check-status {
   color: var(--err);
 }
-.preflight-check.not-required .check-status {
+.preflight-check.not-required .check-status,
+.preflight-check.unknown .check-status,
+.preflight-check.unsupported .check-status {
   color: var(--muted);
 }
 

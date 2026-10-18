@@ -1,0 +1,42 @@
+/* Layout of the opt-in workspace (#713). Components and colours come from @mib/ui; this file
+   only places them, with the kit's spacing tokens. Every selector is under .ws-shell. */
+.ws-shell {
+  height: 100%;
+  overflow: auto;
+}
+.ws-shell .ws-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mib-space-4);
+  padding: 0 var(--mib-space-6) var(--mib-space-6);
+}
+.ws-shell .ws-body--banner {
+  padding-top: var(--mib-space-4);
+  padding-bottom: 0;
+}
+.ws-shell .ws-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: var(--mib-space-4);
+}
+.ws-shell .ws-note {
+  margin: 0;
+  font-size: var(--mib-font-size-sm);
+  color: var(--mib-color-sub);
+}
+.ws-shell .ws-gate {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--mib-space-1) var(--mib-space-2);
+}
+/* The raw gate id under its plain label, for matching the logs. */
+.ws-shell .ws-gate-id {
+  display: block;
+  font-size: var(--mib-font-size-xs);
+  color: var(--mib-color-mute);
+}
+.ws-shell .ws-gate-fix {
+  font-size: var(--mib-font-size-sm);
+  color: var(--mib-color-sub);
+}

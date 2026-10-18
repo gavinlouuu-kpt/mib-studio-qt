@@ -16,13 +16,23 @@
 // the LED strobe are required, and MIB-only gear reads "not on this
 // instrument" instead of a warning.
 //
+// States follow the backend's readiness vocabulary (#713, `ExperimentReadiness.h`): a value that
+// has not been read yet is `unknown` (never `failed`, never `not-required`, never a pass), and a
+// capability the instrument does not have is `unsupported` (never blocks). `checkGateStatus` maps
+// each state to the backend's Pass / Warn / Fail / Unavailable / NotRequired. Blocking is #548's
+// rule, failing closed: a required check that is not passed (failed, unknown or warning) blocks
+// the Preflight confirmation; unsupported and not-required rows never block. Relaxing a specific
+// warning needs an explicit, audited per-warning acknowledgement (#310), not a backend gate: the
+// backend's `science.pl` gate, for one, never checks the PL build identity.
+//
 // Pure module: no React/Tauri imports so it is unit-testable in plain Node.
 
 import type { InstrumentStatus, PlatformCapabilities } from "./bridge";
+import { READINESS_GATE_STATUSES } from "./bridgeContract";
 import { linkReadout, sensorReadout } from "./linkHealth";
 import { DESKTOP_CAPABILITIES, isPz7035 } from "./platformCapabilities";
 
-export type CheckStatus = "passed" | "warning" | "failed" | "not-required";
+export type CheckStatus = "passed" | "warning" | "failed" | "unknown" | "unsupported" | "not-required";
 export type Requirement = "required" | "optional" | "not-applicable";
 export type RecoveryKind = "refresh" | "retry";
 
@@ -43,10 +53,13 @@ export interface PreflightCheck {
   /** Human-readable cause and/or recommended next step. */
   detail: string;
   recovery: RecoveryAction[];
+  /** True when this check blocks the Preflight confirmation (see the module comment). */
+  blocks: boolean;
 }
 
 /** A serial/USB device snapshot reduced to the fields preflight cares about. */
 export interface DeviceSnapshot {
+  /** False until the backend reported the device (not read yet, or not reported). */
   valid: boolean;
   connected: boolean;
   identity: string;
@@ -59,6 +72,8 @@ export interface PreflightInput {
   cameraIdentity: string;
   /** Expected camera identity declared by the profile, or "" if none. */
   cameraExpected: string;
+  /** False while the processing-core status has not been read yet (undefined = read). */
+  coreKnown?: boolean;
   coreValid: boolean;
   corePinSatisfied: boolean;
   coreVersion: string;
@@ -67,7 +82,8 @@ export interface PreflightInput {
   samplePump: DeviceSnapshot;
   sheathPump: DeviceSnapshot;
   trigger: { valid: boolean; cameraAttached: boolean };
-  /** Storage status is not bridged yet; when false the check is informational. */
+  /** False when nothing reported the recording destination (the desktop before Start): the check
+   *  is then `unknown`, and Start checks the chosen file. */
   storageKnown: boolean;
   storageWritable: boolean;
   storageFreeOk: boolean;
@@ -111,24 +127,41 @@ export interface PreflightReport {
   passed: number;
   warning: number;
   failed: number;
+  unknown: number;
+  unsupported: number;
   notRequired: number;
   total: number;
-  /** True when every `required` check passed — the gate for readiness. */
+  /** True when no check blocks (`blocks`): the gate for the Preflight confirmation. */
   criticalPassed: boolean;
 }
+
+/** The backend readiness status a checklist state corresponds to. Unknown is never Pass. */
+export function checkGateStatus(status: CheckStatus): number {
+  switch (status) {
+    case "passed": return READINESS_GATE_STATUSES.Pass;
+    case "warning": return READINESS_GATE_STATUSES.Warn;
+    case "failed": return READINESS_GATE_STATUSES.Fail;
+    case "unknown": return READINESS_GATE_STATUSES.Unavailable;
+    case "unsupported":
+    case "not-required": return READINESS_GATE_STATUSES.NotRequired;
+  }
+}
+
+type Draft = Omit<PreflightCheck, "blocks">;
 
 const REFRESH: RecoveryAction = { kind: "refresh", label: "Refresh" };
 const RETRY: RecoveryAction = { kind: "retry", label: "Retry check" };
 
-function cameraCheck(i: PreflightInput): PreflightCheck {
+function cameraCheck(i: PreflightInput): Draft {
   let status: CheckStatus;
   let detail: string;
   let recovery: RecoveryAction[] = [];
   const detected = i.cameraConfigured ? i.cameraIdentity || "configured camera" : "—";
 
   if (!i.backendReady) {
-    status = "failed";
-    detail = "Backend is not initialized.";
+    // Nothing has been read yet: unknown, not a failure (#713).
+    status = "unknown";
+    detail = "Not read yet: the backend is not initialized.";
     recovery = [RETRY];
   } else if (!i.cameraConfigured) {
     status = "failed";
@@ -155,12 +188,16 @@ function cameraCheck(i: PreflightInput): PreflightCheck {
   };
 }
 
-function coreCheck(i: PreflightInput): PreflightCheck {
+function coreCheck(i: PreflightInput): Draft {
   let status: CheckStatus;
   let detail: string;
   let recovery: RecoveryAction[] = [];
 
-  if (!i.coreValid) {
+  if (i.coreKnown === false) {
+    status = "unknown";
+    detail = "Processing-core status not read yet.";
+    recovery = [RETRY];
+  } else if (!i.coreValid) {
     status = "failed";
     detail = "Processing-core identity is unavailable.";
     recovery = [RETRY];
@@ -188,16 +225,20 @@ function coreCheck(i: PreflightInput): PreflightCheck {
 const shortId = (id: string) => (id ? id.slice(0, 8) : "—");
 
 /** PZ7035: the PL build and its weights are the core (ADR 0011 §12). */
-function plCoreCheck(i: PreflightInput): PreflightCheck {
+function plCoreCheck(i: PreflightInput): Draft {
   const s = i.instrument;
   const base = { id: "plCore", label: "PL core (build + weights)", requirement: "required" as Requirement };
-  if (!s || !s.available || !s.core) {
+  if (!s || (s.available && !s.core)) {
+    // Not polled yet, or polled without a core block: unknown, not a failure (#713).
+    return { ...base, status: "unknown", expected: "", detected: "—", detail: s ? "PL core identity not reported." : "PL core identity not read yet.", recovery: [RETRY] };
+  }
+  if (!s.available || !s.core) {
     return {
       ...base,
       status: "failed",
       expected: "",
       detected: "—",
-      detail: s?.error ? `PL core unavailable: ${s.error}.` : "PL core identity not read yet.",
+      detail: s.error ? `PL core unavailable: ${s.error}.` : "PL core unavailable.",
       recovery: [RETRY],
     };
   }
@@ -216,12 +257,14 @@ function plCoreCheck(i: PreflightInput): PreflightCheck {
     detail = `The PL build ${shortId(c.build_id)} is not the expected image ${shortId(c.expected?.build_id ?? "")}: reload the image or install its core.json.`;
     recovery = [RETRY];
   } else if (c.profile_match === "unknown") {
-    status = "warning";
+    // The weights cannot be verified: unknown, never a pass, and it blocks (#548, #713).
+    status = "unknown";
     detail = "No pinned weights in this build: the PL weights are not checked.";
   } else if (c.build_match === "unknown") {
-    status = "warning";
-    // This blocks Preflight (a required check that is not passed fails closed), so the text is the
-    // fix: the file is what lets the shell verify the PL build that is loaded (#548).
+    // The build cannot be verified: unknown, never a pass. This blocks Preflight (a required
+    // check that is not passed fails closed), so the text is the fix: the file is what lets the
+    // shell verify the PL build that is loaded (#548).
+    status = "unknown";
     detail = "The PL build is not verified: /etc/yofo/expected-core.json is missing. On the instrument run " +
       "scripts/pz_install_core.sh <build dir> (it writes that file from the build's core.json), then press Retry check.";
     recovery = [RETRY];
@@ -230,15 +273,19 @@ function plCoreCheck(i: PreflightInput): PreflightCheck {
 }
 
 /** PZ7035: sensor link health from the PL's cumulative counters. */
-function sensorLinkCheck(i: PreflightInput): PreflightCheck {
+function sensorLinkCheck(i: PreflightInput): Draft {
   const s = i.instrument;
   const base = { id: "sensorLink", label: "Sensor link", requirement: "required" as Requirement, expected: "" };
-  if (!s || !s.available || !s.link) {
-    return { ...base, status: "failed", detected: "—", detail: s?.error ? `Unavailable: ${s.error}.` : "Not read yet.", recovery: [RETRY] };
+  if (!s || (s.available && !s.link)) {
+    return { ...base, status: "unknown", detected: "—", detail: s ? "Not reported." : "Not read yet.", recovery: [RETRY] };
+  }
+  if (!s.available || !s.link) {
+    return { ...base, status: "failed", detected: "—", detail: s.error ? `Unavailable: ${s.error}.` : "Unavailable.", recovery: [RETRY] };
   }
   const l = s.link;
   if (!l.rates_valid) {
-    return { ...base, status: "warning", detected: "measuring", detail: "Measuring link error rates…", recovery: [] };
+    // No rate measured yet: unknown until the first window completes (#713).
+    return { ...base, status: "unknown", detected: "measuring", detail: "Measuring link error rates…", recovery: [] };
   }
   const detected = linkReadout(s).text;
   const sensor = sensorReadout(s);
@@ -253,11 +300,14 @@ function sensorLinkCheck(i: PreflightInput): PreflightCheck {
 }
 
 /** PZ7035: LED strobe; the PL guards are authoritative, a trip fails preflight. */
-function ledCheck(i: PreflightInput): PreflightCheck {
+function ledCheck(i: PreflightInput): Draft {
   const s = i.instrument;
   const base = { id: "led", label: "LED strobe", requirement: "required" as Requirement, expected: "Run 7/60 µs · Align 100/135 µs" };
-  if (!s || !s.available || !s.led) {
-    return { ...base, status: "failed", detected: "—", detail: s?.error ? `Unavailable: ${s.error}.` : "Not read yet.", recovery: [RETRY] };
+  if (!s || (s.available && !s.led)) {
+    return { ...base, status: "unknown", detected: "—", detail: s ? "Not reported." : "Not read yet.", recovery: [RETRY] };
+  }
+  if (!s.available || !s.led) {
+    return { ...base, status: "failed", detected: "—", detail: s.error ? `Unavailable: ${s.error}.` : "Unavailable.", recovery: [RETRY] };
   }
   const led = s.led;
   const detected = led.on ? `${led.preset} ${led.delay_us}/${led.width_us} µs` : "off";
@@ -270,7 +320,7 @@ function ledCheck(i: PreflightInput): PreflightCheck {
   return { ...base, status: "passed", detected, detail: led.on ? `${led.preset === "run" ? "Run" : "Align"} preset.` : "Off; Align and Run switch it on.", recovery: [] };
 }
 
-function captureCheck(i: PreflightInput): PreflightCheck {
+function captureCheck(i: PreflightInput): Draft {
   // Capture stability can only be judged once the stream is running; before
   // that it is simply pending rather than a failure.
   const running = i.cameraConfigured && i.cameraRunning;
@@ -288,21 +338,34 @@ function captureCheck(i: PreflightInput): PreflightCheck {
   };
 }
 
+/** How a row reads when the profile or the instrument leaves it out. */
+interface NotApplicable {
+  /** False when the instrument does not have the capability: the row is `unsupported`. */
+  supported: boolean;
+  detail: string;
+}
+const PROFILE_NA: NotApplicable = { supported: true, detail: "Not used by this profile." };
+
 function deviceCheck(
   id: string,
   label: string,
   requirement: Requirement,
   dev: DeviceSnapshot,
-  notApplicableDetail = "Not used by this profile.",
-): PreflightCheck {
+  na: NotApplicable = PROFILE_NA,
+): Draft {
   let status: CheckStatus;
   let detail: string;
   let recovery: RecoveryAction[] = [];
   const detected = dev.connected ? dev.identity || "connected" : "—";
 
   if (requirement === "not-applicable") {
-    status = "not-required";
-    detail = notApplicableDetail;
+    status = na.supported ? "not-required" : "unsupported";
+    detail = na.detail;
+  } else if (!dev.valid) {
+    // Not read yet (or not reported): unknown, never "not connected" (#713).
+    status = "unknown";
+    detail = "Not reported yet.";
+    recovery = [RETRY];
   } else if (dev.connected) {
     status = "passed";
     detail = "Connected and responding.";
@@ -318,15 +381,19 @@ function deviceCheck(
   return { id, label, requirement, status, expected: "", detected, detail, recovery };
 }
 
-function triggerCheck(i: PreflightInput, requirement: Requirement, notApplicableDetail = "Not used by this profile."): PreflightCheck {
+function triggerCheck(i: PreflightInput, requirement: Requirement, na: NotApplicable = PROFILE_NA): Draft {
   const attached = i.trigger.valid && i.trigger.cameraAttached;
   let status: CheckStatus;
   let detail: string;
   let recovery: RecoveryAction[] = [];
 
   if (requirement === "not-applicable") {
-    status = "not-required";
-    detail = notApplicableDetail;
+    status = na.supported ? "not-required" : "unsupported";
+    detail = na.detail;
+  } else if (!i.trigger.valid) {
+    status = "unknown";
+    detail = "Not reported yet.";
+    recovery = [RETRY];
   } else if (attached) {
     status = "passed";
     detail = "Sorter trigger is attached to the camera.";
@@ -351,18 +418,19 @@ function triggerCheck(i: PreflightInput, requirement: Requirement, notApplicable
   };
 }
 
-function storageCheck(i: PreflightInput, requirement: Requirement): PreflightCheck {
+function storageCheck(i: PreflightInput, requirement: Requirement): Draft {
   let status: CheckStatus;
   let detail: string;
   let recovery: RecoveryAction[] = [];
 
-  if (!i.storageKnown) {
-    // An authoritative storage/free-space contract is not bridged yet.
-    status = "not-required";
-    detail = "Storage readiness check is pending a backend status contract.";
-  } else if (requirement === "not-applicable") {
+  if (requirement === "not-applicable") {
     status = "not-required";
     detail = "Not used by this profile.";
+  } else if (!i.storageKnown) {
+    // Nothing reported the destination (the desktop picks it at Start): unknown, never
+    // "not required" (#713). Start evaluates the backend storage gates with the chosen file.
+    status = "unknown";
+    detail = "Not reported before Start: the backend checks the chosen file when Start is pressed.";
   } else if (!i.storageWritable) {
     status = "failed";
     detail = "Output location is not writable.";
@@ -392,6 +460,12 @@ function storageCheck(i: PreflightInput, requirement: Requirement): PreflightChe
   };
 }
 
+/** Whether a check blocks the Preflight confirmation (#548, failing closed): a required check
+ *  that failed, is unknown or warns. Unsupported and not-required rows never block. */
+function blocks(c: Draft): boolean {
+  return c.requirement === "required" && (c.status === "failed" || c.status === "unknown" || c.status === "warning");
+}
+
 /** Build the full preflight report from device snapshots and the profile's
  *  device requirements. */
 export function derivePreflight(
@@ -401,40 +475,32 @@ export function derivePreflight(
   const caps = input.capabilities ?? DESKTOP_CAPABILITIES;
   const req = requirements ?? requirementsFor(caps);
   const pz = isPz7035(caps);
-  const notHere = pz ? "Not on this instrument." : "Not used by this profile.";
-  const checks: PreflightCheck[] = [
+  // A capability the instrument does not have is unsupported, not "not used by this profile".
+  const naFor = (supported: boolean, detail: string): NotApplicable => (supported ? PROFILE_NA : { supported: false, detail });
+  const drafts: Draft[] = [
     cameraCheck(input),
     ...(pz ? [plCoreCheck(input), sensorLinkCheck(input), ledCheck(input)] : [coreCheck(input)]),
     captureCheck(input),
     // No nanopositioner on the PZ7035: the row would only say "Not on this instrument."
-    ...(pz ? [] : [deviceCheck("autofocus", "Autofocus / nanopositioner", req.autofocus, input.autofocus, notHere)]),
+    ...(pz ? [] : [deviceCheck("autofocus", "Autofocus / nanopositioner", req.autofocus, input.autofocus, naFor(caps.autofocus, "Not on this instrument."))]),
     deviceCheck("samplePump", "Sample pump", req.samplePump, input.samplePump),
     deviceCheck("sheathPump", "Sheath pump", req.sheathPump, input.sheathPump),
-    triggerCheck(input, req.trigger, pz ? "The PL times the sort output." : notHere),
+    triggerCheck(input, req.trigger, naFor(caps.trigger, pz ? "The PL times the sort output." : "Not on this instrument.")),
     storageCheck(input, req.storage),
   ];
+  const checks: PreflightCheck[] = drafts.map((c) => ({ ...c, blocks: blocks(c) }));
 
-  let passed = 0;
-  let warning = 0;
-  let failed = 0;
-  let notRequired = 0;
-  let criticalPassed = true;
-  for (const c of checks) {
-    if (c.status === "passed") passed++;
-    else if (c.status === "warning") warning++;
-    else if (c.status === "failed") failed++;
-    else notRequired++;
-    if (c.requirement === "required" && c.status !== "passed") criticalPassed = false;
-  }
-
+  const count = (status: CheckStatus) => checks.filter((c) => c.status === status).length;
   return {
     checks,
-    passed,
-    warning,
-    failed,
-    notRequired,
+    passed: count("passed"),
+    warning: count("warning"),
+    failed: count("failed"),
+    unknown: count("unknown"),
+    unsupported: count("unsupported"),
+    notRequired: count("not-required"),
     total: checks.length,
-    criticalPassed,
+    criticalPassed: checks.every((c) => !c.blocks),
   };
 }
 
@@ -442,5 +508,7 @@ export const CHECK_STATUS_LABEL: Readonly<Record<CheckStatus, string>> = {
   passed: "Passed",
   warning: "Warning",
   failed: "Failed",
+  unknown: "Unknown",
+  unsupported: "Unsupported",
   "not-required": "Not required",
 };

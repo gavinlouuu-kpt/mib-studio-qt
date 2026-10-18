@@ -88,30 +88,44 @@ describe("PZ7035 preflight (#501)", () => {
   it("MIB-only gear reads as not on this instrument", () => {
     expect(check(IDLE, "autofocus")).toBeUndefined(); // no nanopositioner row on the PZ7035
     expect(check({ ...IDLE, capabilities: DESKTOP_CAPABILITIES }, "autofocus")).toBeDefined(); // the desktop keeps it
-    expect(check(IDLE, "trigger")).toMatchObject({ requirement: "not-applicable", status: "not-required" });
+    expect(check(IDLE, "trigger")).toMatchObject({ requirement: "not-applicable", status: "unsupported", blocks: false });
   });
 
-  it("other weights or another build fail; a missing expected core warns", () => {
+  it("other weights or another build fail; a build or weights that cannot be verified is unknown and blocks (#548, #713)", () => {
     const core = HEALTHY.core!;
     expect(check({ ...IDLE, instrument: { ...HEALTHY, core: { ...core, profile_id: "00000000", profile_match: "mismatch" } } }, "plCore")!.status).toBe("failed");
     expect(check({ ...IDLE, instrument: { ...HEALTHY, core: { ...core, build_match: "mismatch" } } }, "plCore")!.status).toBe("failed");
-    const unknown = check({ ...IDLE, instrument: { ...HEALTHY, core: { ...core, expected: null, build_match: "unknown" } } }, "plCore")!;
-    expect(unknown.status).toBe("warning");
+    // #548 case 1: an unverified PL build (/etc/yofo/expected-core.json missing) blocks.
+    const unverified = { ...IDLE, instrument: { ...HEALTHY, core: { ...core, expected: null, build_match: "unknown" as const } } };
+    const unknown = check(unverified, "plCore")!;
+    expect(unknown).toMatchObject({ status: "unknown", blocks: true });
     expect(unknown.detail).toContain("expected-core.json");
     expect(unknown.detail).toContain("scripts/pz_install_core.sh");
     expect(unknown.detail).toContain("Retry check");
+    expect(derivePreflight(unverified).criticalPassed).toBe(false);
+    // No pinned weights: the weights cannot be verified either.
+    const unpinned = check({ ...IDLE, instrument: { ...HEALTHY, core: { ...core, profile_match: "unknown" } } }, "plCore")!;
+    expect(unpinned).toMatchObject({ status: "unknown", blocks: true });
+    expect(unpinned.detail).toContain("not checked");
   });
 
-  it("an unloaded PL or unread status fails preflight", () => {
+  it("an unloaded PL fails preflight; an unread status is unknown and blocks it too (#713)", () => {
     const r = derivePreflight({ ...IDLE, instrument: { available: false, error: "no PZ-MIB platform bridge loaded (identity)" } });
     expect(r.criticalPassed).toBe(false);
-    expect(check({ ...IDLE, instrument: null }, "plCore")!.status).toBe("failed");
+    expect(check({ ...IDLE, instrument: { available: false, error: "x" } }, "plCore")!.status).toBe("failed");
+    const unread = derivePreflight({ ...IDLE, instrument: null });
+    for (const id of ["plCore", "sensorLink", "led"]) expect(unread.checks.find((c) => c.id === id)).toMatchObject({ status: "unknown", blocks: true });
+    expect(unread.failed).toBe(0);
+    expect(unread.criticalPassed).toBe(false);
   });
 
-  it("a strobe guard trip fails; a service LED setting warns; presets pass", () => {
+  it("a strobe guard trip fails; a service LED setting warns and blocks (#548); presets pass", () => {
     const led = HEALTHY.led!;
     expect(check({ ...IDLE, instrument: { ...HEALTHY, led: { ...led, on: true, preset: "run", guard_fault: true, guard_trips: 2 } } }, "led")!.status).toBe("failed");
-    expect(check({ ...IDLE, instrument: { ...HEALTHY, led: { ...led, on: true, preset: "custom", delay_us: 200, width_us: 90 } } }, "led")!.status).toBe("warning");
+    // #548 case 3: the LED on a service setting.
+    const service = { ...IDLE, instrument: { ...HEALTHY, led: { ...led, on: true, preset: "custom" as const, delay_us: 200, width_us: 90 } } };
+    expect(check(service, "led")).toMatchObject({ status: "warning", blocks: true });
+    expect(derivePreflight(service).criticalPassed).toBe(false);
     expect(check({ ...IDLE, instrument: { ...HEALTHY, led: { ...led, on: true, preset: "run" } } }, "led")!.status).toBe("passed");
   });
 
@@ -121,7 +135,11 @@ describe("PZ7035 preflight (#501)", () => {
     expect(check({ ...IDLE, instrument: { ...HEALTHY, link: { ...link, ingress_errors_per_s: 25 } } }, "sensorLink")!.status).toBe("passed"); // one second of burst is not a warning
     expect(check({ ...IDLE, instrument: { ...HEALTHY, link: { ...link, ingress_errors_avg_per_s: 12, ingress_errors_warn: true } } }, "sensorLink")!.status).toBe("warning");
     expect(check({ ...IDLE, instrument: { ...HEALTHY, link: { ...link, resyncs_per_s: 3 } } }, "sensorLink")!.status).toBe("warning");
-    expect(check({ ...IDLE, instrument: { ...HEALTHY, link: { ...link, rates_valid: false } } }, "sensorLink")!.status).toBe("warning");
+    expect(check({ ...IDLE, instrument: { ...HEALTHY, link: { ...link, rates_valid: false } } }, "sensorLink")!.status).toBe("unknown"); // still measuring
+    // #548 case 2: sustained sensor-link errors warn and block.
+    const sustained = { ...IDLE, instrument: { ...HEALTHY, link: { ...link, ingress_errors_avg_per_s: 12, ingress_errors_warn: true } } };
+    expect(check(sustained, "sensorLink")).toMatchObject({ status: "warning", blocks: true });
+    expect(derivePreflight(sustained).criticalPassed).toBe(false);
   });
 });
 

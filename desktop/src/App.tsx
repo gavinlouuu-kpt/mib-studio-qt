@@ -56,8 +56,10 @@ import {
   type PumpStatus,
   type ReviewMetadata,
   type ReviewMetricsPage,
+  type StageStatus,
   type TriggerStatus,
 } from "./bridge";
+import { deviceIdentity as cameraIdentity, preflightSignature as signPreflight, type SignatureDevice } from "./confirmationSignature";
 import { BRIDGE_ABI_VERSION, EXPERIMENT_STATES, PUMP_IDS } from "./bridgeContract";
 import { deriveWorkflow, type StageTab, type WorkflowFacts } from "./workflow";
 import { CHECK_STATUS_LABEL, derivePreflight, type PreflightInput } from "./preflight";
@@ -96,6 +98,7 @@ import { ReanalysisControls, ReanalysisStatus, useReanalysis } from "./reanalysi
 import { SavedReviewImage } from "./components/SavedReviewImage";
 import { ReviewCharts } from "./components/ReviewCharts";
 import { ExportStatus, ReviewExportOptions, useReviewExport } from "./exportControls";
+import { Workspace } from "./workspace/Workspace";
 import "./App.css";
 
 const H5_FILTER = [{ name: "HDF5", extensions: ["h5"] }];
@@ -188,6 +191,11 @@ export default function App() {
   const [preflightConfirmedFor, setPreflightConfirmedFor] = usePersistedState("yofo.preflightConfirmedFor", "", isString);
   const [alignmentConfirmedFor, setAlignmentConfirmedFor] = usePersistedState("yofo.alignmentConfirmedFor", "", isString);
   const didInitStage = useRef(false);
+  // Opt-in workspace (P1, #713): the stage shown, or null for the classic view. Session state
+  // only: every start and every reload opens the classic view, so startup does not change.
+  const [workspaceStage, setWorkspaceStage] = useState<number | null>(null);
+  const workspaceStageRef = useRef<number | null>(null);
+  workspaceStageRef.current = workspaceStage;
   const [connectTab, setConnectTab] = useState<"cameras" | "mindvision" | "framegrabbers">("cameras");
   const [expTab, setExpTab] = useState<"preview" | "monitoring" | "files" | "recordings">("preview");
   const [configTab, setConfigTab] = useState<"app" | "script">("app");
@@ -256,6 +264,8 @@ export default function App() {
   const {text:configText,dirty:configDirty,acceptRemote:acceptConfig,applied:configApplied,generation:configGeneration}=liveDraft;
   const [previewFpsLimit,setPreviewFpsLimit]=useState(30);
   const [coreStatus, setCoreStatus] = useState<ProcessingCoreStatus | null>(null);
+  // Coarse Z stage identity, read with the preflight snapshot for the confirmation signature (#713).
+  const [zStage, setZStage] = useState<StageStatus | null>(null);
   const [backgroundSet, setBackgroundSet] = useState(false);
   const [roiFields, setRoiFields] = useState({ x: "0", y: "0", w: "0", h: "0" });
 
@@ -293,6 +303,8 @@ export default function App() {
   const instrumentModes = caps.align_mode && caps.run_mode;
   const instrumentModesRef = useRef(false);
   instrumentModesRef.current = instrumentModes;
+  const pz7035Ref = useRef(false);
+  pz7035Ref.current = pz7035;
   // PZ7035 Align (#501): the live frame's focus and brightness in the Run window, with the best
   // focus seen since the window last moved. draw() measures every displayed frame (about 50 k
   // pixels) and publishes at most every 200 ms.
@@ -669,14 +681,19 @@ export default function App() {
     } catch {
       /* backend gone — the capture loop / next poll surfaces it */
     }
+    // Separate from the batch above so a backend without a Z stage cannot fail it. No Z stage on
+    // the PZ7035 (#464), so the instrument is not asked.
+    if (!pz7035Ref.current) void bridge.fetchStageStatus().then(setZStage).catch(() => setZStage(null));
   }, []);
 
+  // The checklist is shown on the classic Connect tab and in the workspace's Prepare stage.
+  const checklistShown = tab === "connect" || workspaceStage === 0;
   useEffect(() => {
-    if (!ready || tab !== "connect") return;
+    if (!ready || !checklistShown) return;
     void refreshPreflight();
     const id = window.setInterval(() => void refreshPreflight(), 1500);
     return () => window.clearInterval(id);
-  }, [ready, tab, refreshPreflight]);
+  }, [ready, checklistShown, refreshPreflight]);
 
   const onConfigureMock = useCallback(async () => {
     try {
@@ -1206,15 +1223,26 @@ export default function App() {
         : undefined;
 
   // ---- UX-1 guided four-stage workflow (issue #305) ----
-  // Signatures the operator confirms against: change the device or the pinned
-  // processing core and the prior confirmation no longer matches.
-  const deviceIdentity = cameraConfigured
-    ? `${camSelection?.mode ?? ""}|${camSelection?.label ?? ""}`
-    : "";
-  const preflightSignature = cameraConfigured
-    ? `${deviceIdentity}|core:${coreStatus?.valid ? coreStatus.active_version : ""}`
-    : "";
-  const alignmentSignature = deviceIdentity;
+  // Signatures the operator confirms against: change the camera, the host core, the PL build or
+  // weights, a pump or stage, the applied profile or the reported destination and the prior
+  // Preflight confirmation no longer matches (#713, confirmationSignature.ts).
+  const cameraFacts = { configured: cameraConfigured, mode: camSelection?.mode ?? 0, label: camSelection?.label ?? "" };
+  const pumpIdentity = (p: PumpStatus | null): SignatureDevice | null =>
+    p && p.valid ? { connected: p.connected, identity: `${p.model ?? ""}@${p.port_name || `COM${p.com_port}`}#${p.modbus_address}` } : null;
+  const preflightSignature = signPreflight({
+    camera: cameraFacts,
+    coreVersion: coreStatus ? (coreStatus.valid ? coreStatus.active_version : "") : null,
+    plCore: instrument?.core ? { buildId: instrument.core.build_id, weightsId: instrument.core.profile_id } : null,
+    samplePump: pumpIdentity(samplePump),
+    sheathPump: pumpIdentity(sheathPump),
+    zStage: zStage && zStage.valid ? { connected: zStage.connected, identity: `${zStage.model} ${zStage.serial} @ ${zStage.port_name}` } : null,
+    nanopositioner: afStatus && afStatus.valid
+      ? { connected: afStatus.connected, identity: afStatus.endpoint_id || `${afStatus.backend_name || "Controller"} COM${afStatus.com_port}` }
+      : null,
+    profile: profiles.activeProfile ? { id: profiles.activeProfile.profile_id ?? profiles.activeProfile.name, revision: profiles.activeProfile.revision } : null,
+    storagePath: instrument?.storage ? instrument.storage.path : null,
+  });
+  const alignmentSignature = cameraIdentity(cameraFacts);
   // Saved rows plus Idle do not prove successful finalization. The accepted
   // backend must supply a retained exact terminal outcome before showing Complete.
   const experimentCompleted = false;
@@ -1230,6 +1258,7 @@ export default function App() {
     corePinSatisfied: coreStatus?.pin_satisfied ?? false,
     coreVersion: coreStatus?.active_version ?? "",
     requiredCoreVersion: coreStatus?.required_version ?? "",
+    coreKnown: coreStatus !== null,
     autofocus: {
       valid: afStatus?.valid ?? false,
       connected: afStatus?.connected ?? false,
@@ -1268,10 +1297,10 @@ export default function App() {
     coreValid: coreStatus?.valid ?? false,
     corePinSatisfied: coreStatus?.pin_satisfied ?? false,
     requiredCoreVersion: coreStatus?.required_version ?? "",
-    // The checklist's own rule ("Required checks must pass before Preflight can be confirmed"),
-    // so a failing required check (PL core, sensor link, LED strobe) cannot be confirmed (#548).
+    // The checklist's own rule: a required check that is not passed (failed, unknown or warning)
+    // cannot be confirmed (#548); unsupported and not-required rows never block (#713).
     requiredFailures: preflight.checks
-      .filter((c) => c.requirement === "required" && c.status !== "passed")
+      .filter((c) => c.blocks)
       .map((c) => `${c.label}: ${c.detail}`),
     experimentState: expState,
     experimentCompleted,
@@ -1318,7 +1347,9 @@ export default function App() {
 
   // ---- UX-8 persistent active-context bar (issue #312) ----
   // Warnings = unresolved attention items surfaced by preflight + quality.
-  const warningsCount = preflight.failed + preflight.warning + quality.warn + quality.fail;
+  // A required check that is not read yet needs attention as well (#713); optional unknowns do not.
+  const requiredUnknown = preflight.checks.filter((c) => c.status === "unknown" && c.requirement === "required").length;
+  const warningsCount = preflight.failed + preflight.warning + requiredUnknown + quality.warn + quality.fail;
   const contextFacts: ContextBarFacts = {
     profileName: profiles.activeProfile?.profile_id || profiles.activeProfile?.name || "",
     cameraConfigured,
@@ -1393,6 +1424,9 @@ export default function App() {
   useEffect(() => {
     if (didInitStage.current || !ready || camSelection === null) return;
     didInitStage.current = true;
+    // In the workspace the classic tab stays where it is: a landing on Camera & Alignment or
+    // Experiment would switch camera modes (and the PZ7035 LED) behind the operator's back.
+    if (workspaceStageRef.current !== null) return;
     if (expActive || expState === EXPERIMENT_STATES.Failed) {
       setTab("experiment");
       return;
@@ -1402,10 +1436,13 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, camSelection, expActive, expState]);
 
+  // Hidden, not unmounted, while the workspace is shown: the classic view keeps its state and
+  // nothing in it mounts, unmounts or changes tab because of the workspace.
+  const classicHidden = workspaceStage !== null ? { display: "none" } : undefined;
   return (
     <div className="app">
       {/* ---- Menu row ---- */}
-      <nav className="menubar" aria-label="Main menu">
+      <nav className="menubar" aria-label="Main menu" style={classicHidden}>
         <Menu
           label="File"
           items={[
@@ -1458,6 +1495,14 @@ export default function App() {
         <div className="menubar-spacer" />
         <button
           type="button"
+          className="workspace-toggle"
+          onClick={() => setWorkspaceStage(0)}
+          title="Open the opt-in Prepare / Align / Experiment / Review workspace. It reads the backend only; the classic view stays the default."
+        >
+          Workspace preview
+        </button>
+        <button
+          type="button"
           className={`mode-toggle ${operatingMode}`}
           onClick={() => enterMode(operatingMode === "service" ? "operator" : "service")}
           title="Switch between routine Operator mode and Service / Commissioning mode"
@@ -1468,7 +1513,7 @@ export default function App() {
       </nav>
 
       {operatingMode === "service" && (
-        <div className="service-banner" role="alert">
+        <div className="service-banner" role="alert" style={classicHidden}>
           <span>
             <strong>Service / Commissioning mode</strong> — hardware-actuating controls are enabled.
             Not for routine operation.
@@ -1480,7 +1525,31 @@ export default function App() {
         </div>
       )}
 
-      <div className="body">
+      {workspaceStage !== null && (
+        <div className="workspace-host">
+          <Workspace
+            brand={brand}
+            source={cameraConfigured ? camSelection?.label || (camSelection?.mode === 1 ? "Mock camera" : "Camera") : ""}
+            method={profiles.activeProfile ? profiles.activeProfile.profile_id || profiles.activeProfile.name : ""}
+            stage={workspaceStage}
+            onStage={setWorkspaceStage}
+            onExit={() => setWorkspaceStage(null)}
+            serviceMode={operatingMode === "service"}
+            preflightInput={preflightInput}
+            zStage={zStage}
+            signature={preflightSignature}
+            confirmedFor={preflightConfirmedFor}
+            onConfirm={() => { if (!expActive) setPreflightConfirmedFor(preflightSignature); }}
+            confirmLockedReason={!ready ? "Backend is not initialized" : expActive ? "Setup is locked while an experiment is active" : ""}
+            experimentActive={expActive}
+            onRefreshChecks={() => void refreshPreflight()}
+            // The classic Connect tab only reads (it never switches camera modes).
+            onOpenSetup={() => { setTab("connect"); setWorkspaceStage(null); }}
+          />
+        </div>
+      )}
+
+      <div className="body" style={classicHidden}>
         {/* ---- Telemetry sidebar ---- */}
         <aside className={`sidebar ${sidebarCollapsed ? "collapsed" : ""}`} aria-label="Telemetry sidebar">
           {caps.host_background && <div className="side-section">
@@ -1758,6 +1827,8 @@ export default function App() {
                     <h4>Hardware preflight</h4>
                     <span className="preflight-summary">
                       {preflight.passed} passed · {preflight.warning} warning · {preflight.failed} failed
+                      {preflight.unknown ? ` · ${preflight.unknown} unknown` : ""}
+                      {preflight.unsupported ? ` · ${preflight.unsupported} unsupported` : ""}
                       {preflight.notRequired ? ` · ${preflight.notRequired} n/a` : ""}
                     </span>
                     <button className="btn" onClick={() => void refreshPreflight()} disabled={!ready}>
@@ -1807,7 +1878,7 @@ export default function App() {
                   <p className={`preflight-foot ${preflight.criticalPassed ? "ok" : "warn"}`}>
                     {preflight.criticalPassed
                       ? "Required checks pass — confirm readiness in the workflow bar to complete Preflight."
-                      : "Required checks must pass before Preflight can be confirmed."}
+                      : "Required checks must pass (an unknown check is not a pass) before Preflight can be confirmed."}
                   </p>
                 </div>
               </>
@@ -2526,7 +2597,7 @@ export default function App() {
 
       {/* ---- Status bar ---- */}
       {/* ---- UX-8 persistent active-context bar (all stages) ---- */}
-      <div className="context-bar" role="region" aria-label="Active context">
+      <div className="context-bar" role="region" aria-label="Active context" style={classicHidden}>
         {contextBar.segments.map((s) => {
           const label = `${s.label}: ${s.value} (${SEG_STATUS_LABEL[s.status]})`;
           const clickable = !!s.tab;

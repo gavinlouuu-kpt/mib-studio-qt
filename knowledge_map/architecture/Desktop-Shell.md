@@ -53,6 +53,12 @@ The repo root `src/` is the C++ tree, so the whole Tauri app lives under
   with `desktop/src/workflow.test.ts` vitest coverage.
 - `desktop/src/preflight.ts` — pure hardware-preflight checklist derivation
   (UX-3), with `desktop/src/preflight.test.ts` vitest coverage.
+- `desktop/src/confirmationSignature.ts` — pure Preflight confirmation
+  signature (#713), with `confirmationSignature.test.ts`.
+- `desktop/src/workspace/` — the opt-in four-stage workspace on the `@mib/ui`
+  kit (P1/P2, #713): `Workspace.tsx` (shell, stages), `PrepareView.tsx` (O1),
+  `prepareModel.ts` (pure tones and summaries), `usePrepareReadiness.ts`
+  (path-less readiness poll). See "Opt-in workspace" below.
 - `desktop/src/experimentCounters.ts` — operator saved counts by class, pending
   saves derived with exact u64 arithmetic, policy drops and writer failures
   from the existing experiment status fields (#546); Vitest covers labels.
@@ -71,8 +77,16 @@ plus explicit operator confirmations, returning each stage's status
 (`not-started` / `needs-attention` / `ready` / `running` / `complete`), its
 blocking checks, and the single recommended next action. Preflight and
 Alignment reach `complete` only via an explicit confirmation whose stored
-device+core *signature* still matches — detection alone never completes a
-stage, and changing the device invalidates the confirmation. The shell renders
+*signature* still matches — detection alone never completes a
+stage, and changing the device invalidates the confirmation. Since #713 the
+Preflight signature (`confirmationSignature.ts`, JSON) binds the camera (mode,
+label), the host core version, the PZ7035 PL build and weights ids, the pump
+identities (model, port, Modbus address), the coarse Z stage and nanopositioner
+identities, the applied profile id and revision, and the recording destination
+the backend reports (PZ7035 `instrument.storage.path`; none on the desktop before
+Start). A value not read yet is `null`, distinct from a device read as absent, and
+only identities are bound (never flow rate or position), so polling does not
+invalidate a confirmation. The Alignment signature is still the camera identity. The shell renders
 status on each tab (text + dot, never colour alone) and a "Next" action banner,
 and lands startup on the earliest incomplete stage. Unit-tested in
 `workflow.test.ts` (`npm test`, gated in Desktop CI). Detailed per-stage content
@@ -82,24 +96,104 @@ is the rest of epic #304 (UX-2…UX-11). Details:
 **Hardware preflight (UX-3, issue #307):** `desktop/src/preflight.ts` —
 `derivePreflight(input, requirements)` builds the Preflight stage's checklist
 (camera, processing-core/trust, capture stream, autofocus, sample/sheath pumps,
-trigger, storage), each a `passed`/`warning`/`failed`/`not-required` status with
-requirement, expected-vs-detected identity, cause, and recovery actions;
-`criticalPassed` gates on all `required` checks. Required/optional/n-a per device
+trigger, storage), each a `passed`/`warning`/`failed`/`unknown`/`unsupported`/`not-required`
+status with requirement, expected-vs-detected identity, cause, recovery actions and
+`blocks`; `criticalPassed` is true when no check blocks. Since #713: a value not read
+yet (backend not initialized, core status, PL core / sensor link / LED before the first
+instrument poll or while the link rates are still measured, a device snapshot with
+`valid: false`) is `unknown`, never `failed` or `not-required`; a PL build or weights that
+cannot be verified (`build_match` / `profile_match` "unknown": no
+`/etc/yofo/expected-core.json`, no pinned weights) is `unknown` too, with the same fix-it
+text; a capability the instrument lacks (`capabilities.autofocus`/`trigger` false) is
+`unsupported`; storage nothing reported is `unknown` (the desktop checks the file at Start).
+`checkGateStatus` maps the states to the backend's Pass / Warn / Fail / Unavailable /
+NotRequired (unknown → Unavailable, never Pass). Blocking is unchanged from #548, failing
+closed: a required check that failed, is unknown or warns blocks; unsupported and
+not-required rows never block. Backend gates never unblock a row (the `science.pl` gate,
+for one, never checks the PL build identity); relaxing a specific warning would need an
+audited per-warning acknowledgement (#310). Required/optional/n-a per device
 is meant to come from the selected profile (not bridged yet → `DEFAULT_REQUIREMENTS`
 until UX-2 #306). The shell polls camera/core/autofocus/pumps/trigger every 1.5 s
-while the Preflight tab is shown (off the capture loop) and renders the checklist
-in the Connect tab. Storage writability/free-space stays informational until a
-backend status contract exists. Details:
+while the Preflight tab (or the workspace's Prepare stage) is shown, off the capture
+loop, plus the Z stage status on the desktop for the signature, and renders the checklist
+in the Connect tab. Storage reads `unknown` until a backend reports the destination
+(the PZ7035 does). Details:
 `knowledge_map/task/2026-07-21-ux3-hardware-preflight.md`.
 
 **Required checks gate the workflow (#548).** `WorkflowFacts.requiredFailures` carries the
-checklist's `required` checks that are not `passed` ("Label: detail"). When present it is the
+checklist's blocking checks (`blocks`, "Label: detail"). When present it is the
 authority for the Preflight stage and replaces the host core pin test, because the checklist
 already holds the host core check on the desktop and the PL core check on the PZ7035. Each such
 check is a blocking reason, so the stage is "needs attention", the recommended action navigates
 instead of offering the confirmation, and a stage confirmed earlier goes back to "needs
-attention" if one starts failing. A required check in `warning` blocks as well (the checklist's
-`criticalPassed` rule). Tests: `workflow.test.ts` (#548).
+attention" if one starts failing. A required check in `warning` blocks as well, and since #713
+so does a required `unknown` (formerly rendered `failed`). The three #548 cases stay pinned as
+blocking in `preflightPz7035.test.ts`: an unverified PL build, sustained sensor-link errors, the
+LED on a service setting. Tests: `workflow.test.ts` (#548), `preflight.test.ts` and
+`preflightPz7035.test.ts` (#713).
+
+## Opt-in workspace (P1/P2, #713)
+
+`desktop/src/workspace/Workspace.tsx` is the four-stage Prepare / Align / Experiment /
+Review shell on the `@mib/ui` kit (`AppShell`, `StageTabs`, `Toolbar`, `Card`, `FactList`,
+`StateChip`, `Button`, `Notice`), the Operation app's step A1 (#716). The kit stylesheets are
+imported once, there; `workspace.css` only places cards with the kit's spacing tokens.
+
+- **Opt-in, session only.** The menu row's "Workspace preview" button opens it; "Classic
+  view" closes it. The flag is plain React state: every start and every reload opens the
+  classic view, so startup is unchanged. While the workspace is shown, the classic menu row,
+  body and context bar are hidden with `display: none`, not unmounted, so nothing in the
+  classic tree mounts, unmounts or changes tab because of it; the status bar and log stay.
+- **Navigation never actuates.** The workspace never changes the classic `tab`: a classic tab
+  change can act (Camera & Alignment switches the camera to the full sensor, and the PZ7035 to
+  Align with its LED; Experiment to Run). Stages only change what is shown. Align,
+  Experiment and Review say "Not yet in the workspace" and offer "Back to the classic view".
+  Prepare's "Camera / Focus / Pump setup" leave for the classic Connect tab, which only reads.
+  The classic startup landing is skipped when the workspace is already open.
+- **Prepare (O1)** shows the checklist by subsystem (camera and acquisition, focus, fluidics,
+  data destination) and the authoritative backend gates read **without a path**:
+  `bridge.fetchExperimentReadiness("")` (`PREPARE_OUTPUT_PATH`), every 2 s
+  (`PREPARE_READINESS_POLL_MS`) while Prepare is shown and no run is active, one request at a
+  time. The backend then reports `storage.output` Unavailable ("no output path chosen yet") and
+  creates no probe file (`ExperimentCoordinator`, the `outputPath.empty()` branch); Start
+  re-evaluates every gate with the chosen file. A failed read clears the gates (never stale
+  gates as current). Gate rows show a plain label (`GATE_LABELS`, one table for every backend
+  gate id; an unmapped id is shown as itself) with the raw id as secondary text and title, the
+  state and reason as a chip, and the remediation ("Fix: …"). Tones: Pass → confirmed,
+  Warn → warn, Fail → blocked, Unavailable → unknown, NotRequired → neutral.
+- **One verdict** (`prepareVerdict`), the same words in the header chip and the "Ready to
+  operate?" card, combining the checklist and the gates. It never contradicts the Confirm
+  button, which the checklist alone drives:
+  - **Not ready**: a required check blocks. The counts and plain names follow ("Not ready ·
+    3 unknown, 1 warning").
+  - **Readiness paused · a run is active**: the gates are not read and Confirm is locked.
+  - **Ready to confirm · Start blocked: <labels>** (warn tone): the checklist passes, but a gate
+    other than the pending destination is Fail or Unavailable. Start refuses both. With the
+    gates not read: "Ready to confirm · gates not read yet" (unknown tone).
+  - **Ready with warnings**: nothing blocks, but a check or gate warns.
+  - **Ready**.
+  
+  The destination gate is never counted: "Ready · destination checked at Start".
+- **Confirmation.** "Confirm readiness" (the one primary action) stores the current Preflight
+  signature, the same state the classic workflow bar sets. It sends nothing to the backend.
+  - It is disabled while a required check blocks, with no camera, or during a run.
+  - It is not gated on the backend gates, as in the classic Preflight. Some gates can only pass
+    in a later stage: `processing.roi` needs live view (Align), and the destination comes at
+    Start.
+  - When disabled, a Notice next to it says why in plain words ("3 required checks not read
+    yet or not verified: PL core (build + weights), Sensor link, LED strobe";
+    `confirmBlockers`).
+  - When it is available but a gate refuses Start, a warn Notice says so ("Start will be
+    refused until: Processing core — activate the pinned core"; `startRefusalText`).
+- **Gate (P1).** `workspace/navigation.test.tsx` runs the whole App over a mocked transport,
+  desktop and PZ7035: opening the workspace, visiting every stage, leaving, coming back and
+  Camera setup add no command to the idle app's steady state except
+  `fetch_experiment_readiness` with `outputPath: ""`, and nothing that acts; a control shows the
+  classic Camera & Alignment tab does send `set_camera_overview` / `set_instrument_mode`.
+  `Workspace.test.tsx` proves Prepare polling never passes a path; `prepareModel.test.ts`
+  covers the derivations.
+- **Not yet (later A-steps):** the other Prepare sub-views, storage budget and run plan,
+  fluidics estimates, the non-default-settings banner, the calibration card.
 
 **Quality gates (UX-4 slice, issue #308):** `desktop/src/quality.ts` —
 `deriveQualityGates(input)` turns the Camera & Alignment stage's
