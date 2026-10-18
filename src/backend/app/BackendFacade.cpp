@@ -493,6 +493,20 @@ namespace backend::bridge
             request.profileId = command.profileId;
             request.acknowledgeLatestFrameDrops = command.acknowledgeLatestFrameDrops;
             request.acknowledgeDiscardRing = command.acknowledgeDiscardRing;
+            // The client's declarations (#712, ABI 39): parsed strictly before an operation is opened, so a
+            // refused request leaves no trace but the refusal.
+            {
+                std::string why;
+                if (!recording::parseStartRequestJson(command.startRequestJson, request.declared, &why))
+                {
+                    result.experimentStartOutcome = app::ExperimentStartOutcome::InvalidRequest;
+                    result.ok = false;
+                    result.message = "invalid start request: " + why;
+                    emitEvent(BackendErrorEvent{BackendErrorSource::Experiment, BackendCommandType::Experiment,
+                                                result.message});
+                    return result;
+                }
+            }
             // Track the operation before Start so a run that fails on the
             // coordinator's worker right after Start (fatal save error) still
             // finds its id in the status callback and gets a terminal
