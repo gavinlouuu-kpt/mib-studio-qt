@@ -50,7 +50,8 @@ renders a kit shell from `desktop/src` through the aliases.
 ## Status
 
 New on `feat/ui-language-kit` (2026-10-16). Wired into the desktop app on 2026-10-19 (source
-alias, above); the opt-in workspace shell of the eGrabber workspace plan (P1, #713) is its first
-consumer.
+alias, above). First consumer: the opt-in workspace in `desktop/src/workspace/` (P1/P2, #713;
+see [[../architecture/Desktop-Shell]], "Opt-in workspace"), which imports the stylesheets once
+at its entry.
 
 Related: [[YofoReview]], [[../architecture/Desktop-Shell]].
