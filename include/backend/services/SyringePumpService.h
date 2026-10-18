@@ -81,10 +81,22 @@ public:
         std::optional<bool> stalled;                // dLSP: error status bit 3
     };
 
-    // What a run records about a pump slot: connected, its configuration, the last readback.
+    // The settings the pump is known to hold (#712): each is set only when it was written to the pump
+    // successfully, or read back from it, in the current connection, and cleared on connect, on
+    // disconnect and when a write of it failed (the pump may hold either value). PumpConfig keeps the
+    // operator's request for the UI and is no evidence that the pump got it.
+    struct AppliedSettings {
+        std::optional<double> flowRate;          // as written (dLSP: the clamped, truncated register value)
+        std::optional<uint16_t> flowRateUnit;    // 100 = µL/min, 103 = mL/min
+        std::optional<Direction> direction;
+    };
+
+    // What a run records about a pump slot: connected, its configuration, the settings the pump is
+    // known to hold, the last readback.
     struct RunFacts {
         bool connected{false};
         PumpConfig config;
+        AppliedSettings applied;
         PumpReadback readback;
     };
 
@@ -170,6 +182,7 @@ private:
         PumpConfig config;
         PumpStatus status;
         PumpReadback readback;
+        AppliedSettings applied;
         bool purging{false};
         std::chrono::steady_clock::time_point lastPoll{};
         // Timed so runFacts() can give up instead of waiting out a serial timeout.

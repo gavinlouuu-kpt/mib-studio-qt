@@ -154,6 +154,11 @@ int main()
         MIB_EXPECT(f.config.model == PumpModel::TushuiPeristaltic && near(f.config.microlitersPerRev, 25.0) &&
                        near(f.config.flowRate, 10.0),
                    "setpoint and calibration in the facts");
+        MIB_EXPECT(f.applied.flowRate && near(*f.applied.flowRate, 10.0) &&
+                       f.applied.flowRateUnit == std::optional<uint16_t>(100) &&
+                       f.applied.direction == std::optional<SyringePumpService::Direction>(
+                                                  SyringePumpService::Direction::Infuse),
+                   "peristaltic settings are known: read back at connect, then written");
         const auto at = f.readback.at;
         wire.exceptionOnRead = true;
         svc.pollStatus(PumpId::Sample);
@@ -174,7 +179,21 @@ int main()
     MIB_EXPECT(svc.getStatus(PumpId::Sample).runStatus == SyringePumpService::RunStatus::Backward,
                "purge withdraw reads as Backward");
     MIB_EXPECT(near(svc.getStatus(PumpId::Sample).speedRpm, 0.4), "purge keeps the flow setpoint");
+    {
+        SyringePumpService::RunFacts f;
+        MIB_EXPECT(svc.runFacts(PumpId::Sample, std::chrono::milliseconds(10), f) && !f.applied.flowRate &&
+                       !f.applied.direction,
+                   "during a purge the speed and direction registers hold the purge: unknown");
+    }
     MIB_EXPECT(svc.stop(PumpId::Sample), "stop during purge accepted");
+    {
+        SyringePumpService::RunFacts f;
+        MIB_EXPECT(svc.runFacts(PumpId::Sample, std::chrono::milliseconds(10), f) && f.applied.flowRate &&
+                       near(*f.applied.flowRate, 10.0) &&
+                       f.applied.direction == std::optional<SyringePumpService::Direction>(
+                                                  SyringePumpService::Direction::Infuse),
+                   "the restore after the purge makes them known again");
+    }
     MIB_EXPECT(wire.read(104) == 0, "purge stopped");
     MIB_EXPECT(wire.read(100) == 40, "flow speed restored after purge");
     MIB_EXPECT(wire.read(101) == tushui::kCounterClockwise, "direction restored after purge");

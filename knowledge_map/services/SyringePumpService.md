@@ -38,7 +38,16 @@
   Connect and disconnect clear it. Peristaltic readbacks carry `runStatus` and
   `speedRpm` only (its `accumulatedVolume` is integrated by the host, not
   reported); dLSP readbacks carry the raw flow/volume registers, whose units
-  the protocol PDF does not state. The coordinator records them in snapshot v3
+  the protocol PDF does not state. `RunFacts::applied` (`AppliedSettings`:
+  optional flow rate, unit, direction) holds only what the pump is known to
+  hold: set by a successful write (`setFlowRate`, the dLSP value as written;
+  `setDirection`; a peristaltic `start` writes the direction) or a read-back
+  (the peristaltic connect reads speed and direction), cleared on connect,
+  disconnect and before each write (a failed write leaves it unknown); a
+  peristaltic purge clears it and the restore at stop sets it again. A dLSP
+  connect reads neither, so a pump connected but not configured has none:
+  `PumpConfig` is the operator's request (and may be left from another
+  device), not evidence. The coordinator records these in snapshot v3
   ([[../data-model/HDF5-Storage]]).
 - Expose config/status structs (`PumpConfig`, `PumpStatus`).
 - Provide `scanModbusAddresses(comPort, baudRate, start, end, timeoutMs)` for
@@ -111,7 +120,7 @@ is invoked from the Qt timer in [[../frontend/SyringePumpTab]].
 - Dialog-provided `baudRate` and `modbusAddress` must match the hardware.
 - dLSP `setFlowRate` writes `clamp(rate, 1, 9999)` truncated to an integer
   but keeps the unclamped rate in `PumpConfig`; the snapshot's setpoint is
-  that config value.
+  the written value (`AppliedSettings`).
 - See `docs/dLSP_pump.pdf` for pump protocol reference (shipped in repo).
 - Peristaltic: which way Infuse pushes liquid depends on how the tubing is
   loaded in the head; swap the tubing ends rather than the mapping.

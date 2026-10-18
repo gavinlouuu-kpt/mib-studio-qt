@@ -15,6 +15,8 @@
 //  - a member of the wrong type reads as absent; a non-string attribute reads as absent;
 //  - a snapshot the file cannot hold fails the write and leaves no version attribute behind.
 
+#include "backend/processing/ProcessingCoreSha256.h"
+#include "backend/processing/ProcessingService.h"
 #include "backend/recording/Hdf5Service.h"
 #include "backend/recording/RunProvenanceRecord.h"
 
@@ -24,6 +26,7 @@
 #include <hdf5.h>
 
 #include <cmath>
+#include <fstream>
 #include <limits>
 #include <string>
 #include <vector>
@@ -77,6 +80,7 @@ rec::RunProvenanceV3 fullRecord()
     v.pumps = std::vector<rec::PumpRecord>{sample, sheath, busy};
 
     rec::LedRecord led;
+    led.source = "pz7035_strobe";
     led.control = 1;
     led.delayUs = 7.0;
     led.widthUs = 60.0;
@@ -266,6 +270,133 @@ int main()
         MIB_EXPECT(back.v3.piezo && back.v3.piezo->connected && !back.v3.piezo->voltageV, "NaN voltage reads as unknown");
         MIB_EXPECT(back.v3.stage && !back.v3.stage->connected && !back.v3.stage->readback, "absent stage");
         MIB_EXPECT(!back.v3.pumps && !back.v3.plRunId, "null members read as unknown");
+    }
+
+    // ---- a partial stage readback: a missing flag is unknown, not "no alarm" (#712 review) ----
+    {
+        rec::RunProvenanceV3 v;
+        rec::StageRecord stage;
+        stage.connected = true;
+        rec::StageReadbackRecord rb;
+        rb.ageUs = 12;
+        rb.limitPositive = true;          // the only flag this readback carries
+        stage.readback = rb;
+        v.stage = stage;
+        const std::string members = rec::runProvenanceV3Members(v);
+        MIB_EXPECT(members.find("\"emergency_stop\":null") != std::string::npos &&
+                       members.find("\"driver_alarm\":null") != std::string::npos &&
+                       members.find("\"position_um\":null") != std::string::npos &&
+                       members.find("\"state\":null") != std::string::npos &&
+                       members.find("\"limit_positive\":true") != std::string::npos,
+                   "flags the readback did not carry are written as null: " + members);
+        rec::RecordedRunProvenance back;
+        MIB_REQUIRE(rec::parseRunProvenance("{\"schema_version\":3," + members + "}", back), "parse partial stage");
+        MIB_REQUIRE(back.v3.stage && back.v3.stage->readback, "the partial readback is kept");
+        const auto& r = *back.v3.stage->readback;
+        MIB_EXPECT(r.ageUs == 12 && r.limitPositive == std::optional<bool>(true) && !r.limitNegative && !r.home &&
+                       !r.emergencyStop && !r.driverAlarm && !r.state && !r.positionUm,
+                   "missing flags read back as unknown, never false");
+        // A foreign document that omits the flags altogether.
+        MIB_REQUIRE(rec::parseRunProvenance("{\"schema_version\":3,\"stage\":{\"connected\":true,"
+                                            "\"readback\":{\"age_us\":3,\"state\":\"idle\"}}}",
+                                            back),
+                    "parse a flagless readback");
+        MIB_EXPECT(back.v3.stage && back.v3.stage->readback && !back.v3.stage->readback->emergencyStop &&
+                       !back.v3.stage->readback->driverAlarm && !back.v3.stage->readback->positionUm &&
+                       back.v3.stage->readback->state == std::optional<std::string>("idle"),
+                   "a readback without alarm flags does not report \"no alarm\"");
+    }
+
+    // ---- an empty string is never a value (#712 review) --------------------------------
+    {
+        rec::RunProvenanceV3 v;
+        v.runId = "";
+        rec::EModulusLutRecord lut;
+        lut.loaded = true;
+        lut.lutId = "";
+        lut.sha256 = "";
+        lut.source = "";
+        v.eModulusLut = lut;
+        rec::PumpRecord pump;
+        pump.slot = "sample";
+        pump.connected = true;
+        pump.model = "";
+        pump.port = "";
+        pump.direction = "";
+        v.pumps = std::vector<rec::PumpRecord>{pump};
+        rec::LedRecord led;
+        led.source = "";
+        led.error = "";
+        v.led = led;
+        rec::StageRecord stage;
+        stage.connected = true;
+        stage.model = "";
+        stage.serial = "";
+        stage.firmware = "";
+        v.stage = stage;
+        const std::string members = rec::runProvenanceV3Members(v);
+        MIB_EXPECT(members.find("\"\"") == std::string::npos, "no empty string is written: " + members);
+        MIB_EXPECT(members.find("\"run_id\":null") != std::string::npos &&
+                       members.find("\"lut_id\":null") != std::string::npos &&
+                       members.find("\"port\":null") != std::string::npos &&
+                       members.find("\"serial\":null") != std::string::npos,
+                   "empty identities are written as null");
+        rec::RecordedRunProvenance back;
+        MIB_REQUIRE(rec::parseRunProvenance("{\"schema_version\":3," + members + "}", back), "parse");
+        MIB_EXPECT(!back.v3.runId && back.v3.eModulusLut && !back.v3.eModulusLut->lutId &&
+                       !back.v3.eModulusLut->sha256 && !back.v3.eModulusLut->source && back.v3.pumps &&
+                       !(*back.v3.pumps)[0].model && !(*back.v3.pumps)[0].port && !(*back.v3.pumps)[0].direction &&
+                       back.v3.led && !back.v3.led->source && !back.v3.led->error && back.v3.stage &&
+                       !back.v3.stage->model && !back.v3.stage->serial && !back.v3.stage->firmware,
+                   "empty strings round-trip as unknown");
+        // A foreign writer's empty strings read as unknown too.
+        MIB_REQUIRE(rec::parseRunProvenance("{\"schema_version\":3,\"run_id\":\"\",\"emodulus_lut\":{\"loaded\":true,"
+                                            "\"sha256\":\"\",\"lut_id\":\"\"},\"pumps\":[{\"slot\":\"\","
+                                            "\"connected\":true},{\"slot\":\"sheath\",\"connected\":true,"
+                                            "\"model\":\"\",\"readback\":{\"age_us\":1,\"run_status\":\"\"}}]}",
+                                            back),
+                    "parse foreign empty strings");
+        MIB_EXPECT(!back.v3.runId && back.v3.eModulusLut && !back.v3.eModulusLut->sha256 &&
+                       !back.v3.eModulusLut->lutId && back.v3.pumps && back.v3.pumps->size() == 1 &&
+                       (*back.v3.pumps)[0].slot == "sheath" && !(*back.v3.pumps)[0].model &&
+                       !(*back.v3.pumps)[0].readback,
+                   "\"\" reads as unknown; a pump entry naming no slot and a readback with no run status are dropped");
+        const auto noMessage = rec::parseRunStop(rec::runStopToJson({"stop_requested", std::string{}}));
+        MIB_EXPECT(noMessage && noMessage->reason == "stop_requested" && !noMessage->message &&
+                       rec::runStopToJson({"stop_requested", std::string{}}).find("\"message\":null") != std::string::npos,
+                   "an empty stop message is absent");
+    }
+
+    // ---- the LUT hash is of the bytes the table was built from (#712 review) -------------
+    // The file is replaced right after the load: the recorded identity must still describe the
+    // table in use, not the new file.
+    {
+        const auto lutPath = td / "lut.txt";
+        const std::string tableA = "100.0\t0.01\t1.0\n100.0\t0.05\t2.0\n300.0\t0.01\t3.0\n300.0\t0.05\t4.0\n";
+        const std::string tableB = "100.0\t0.01\t10.0\n100.0\t0.05\t20.0\n300.0\t0.01\t30.0\n300.0\t0.05\t40.0\n";
+        auto writeTable = [&](const std::string& text) {
+            std::ofstream out(lutPath, std::ios::binary | std::ios::trunc);
+            out << text;
+        };
+        auto sha = [](const std::string& text) {
+            return backend::processing::processingCoreBytesSha256(reinterpret_cast<const uint8_t*>(text.data()),
+                                                                  text.size());
+        };
+        writeTable(tableA);
+        backend::services::ProcessingService proc;
+        MIB_REQUIRE(proc.loadEModulusLut(lutPath.string()), "table A loads");
+        writeTable(tableB); // replaced after the load
+        const auto identity = proc.eModulusLutIdentity();
+        MIB_EXPECT(identity.loaded && identity.sha256 == sha(tableA) && identity.sha256 != sha(tableB),
+                   "the recorded hash is table A's, the table in use");
+        MIB_EXPECT(std::fabs(proc.eModulusLut().lookup(100.0, 0.01) - 1.0) < 1e-6, "table A is the one in use");
+        MIB_EXPECT(identity.path == lutPath.string(), "the path the bytes came from");
+        // EModulusLut hands back exactly the bytes it parsed.
+        backend::EModulusLut lut;
+        std::string bytes, from;
+        MIB_REQUIRE(lut.loadFromFile(lutPath.string(), &bytes, &from), "table B loads");
+        MIB_EXPECT(bytes == tableB && from == lutPath.string() && std::fabs(lut.lookup(100.0, 0.01) - 10.0) < 1e-6,
+                   "loadFromFile returns the bytes its grid was built from");
     }
 
     // ---- legacy documents --------------------------------------------------------------

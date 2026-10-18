@@ -292,11 +292,16 @@ recording::PumpRecord pumpRecord(const services::SyringePumpService& pumps, serv
     if (!f.config.portName.empty()) r.port = f.config.portName;
     else if (f.config.comPort > 0) r.port = "COM" + std::to_string(f.config.comPort);
     r.modbusAddress = f.config.modbusAddress;
-    r.flowRate = f.config.flowRate;
-    r.flowRateUnitCode = f.config.flowRateUnit;
-    r.flowRateUnit = flowUnitName(f.config.flowRateUnit);
-    r.direction = f.config.direction == Pump::Direction::Withdraw ? "withdraw" : "infuse";
-    if (peristaltic) r.microlitersPerRev = f.config.microlitersPerRev;
+    // Only the settings the pump is known to hold (written or read back in this connection); the
+    // configuration's defaults are never recorded as facts (#712).
+    if (f.applied.flowRate && f.applied.flowRateUnit) {
+        r.flowRate = f.applied.flowRate;
+        r.flowRateUnitCode = static_cast<int>(*f.applied.flowRateUnit);
+        r.flowRateUnit = flowUnitName(*f.applied.flowRateUnit);
+    }
+    if (f.applied.direction)
+        r.direction = *f.applied.direction == Pump::Direction::Withdraw ? "withdraw" : "infuse";
+    if (peristaltic) r.microlitersPerRev = f.config.microlitersPerRev;   // the connect calibration
     if (f.readback.valid) {
         recording::PumpReadbackRecord rb;
         rb.ageUs = ageUs(now, f.readback.at);
@@ -364,6 +369,7 @@ static void captureRunFacts(AppBackend& backend, recording::RunProvenanceV3& v3)
     // LED: the PZ7035 strobe registers. Other instruments have no LED readback (left unknown).
     if (backend.instrumentControlAvailable()) {
         recording::LedRecord l;
+        l.source = "pz7035_strobe";
         pz::LedReadback rb;
         std::string error;
         if (backend.readInstrumentLed(rb, &error)) {
@@ -1819,7 +1825,7 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
         {
             recording::RunStopRecord stop;
             stop.reason = stopReason ? stopReason : "stop_requested";
-            stop.message = failed ? failMessage : std::string{};
+            if (failed && !failMessage.empty()) stop.message = failMessage;
             if (!hdf5.writeRunStopJson(recording::runStopToJson(stop)))
                 SPDLOG_ERROR("ExperimentCoordinator: the run's stop record could not be persisted");
         }

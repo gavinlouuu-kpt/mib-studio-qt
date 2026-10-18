@@ -28,6 +28,17 @@ OJson opt(const std::optional<double>& v)
     return v && std::isfinite(*v) ? OJson(*v) : OJson(nullptr);
 }
 
+// An empty string is never a value: written as null.
+OJson opt(const std::optional<std::string>& v)
+{
+    return v && !v->empty() ? OJson(*v) : OJson(nullptr);
+}
+
+OJson text(const std::string& v)
+{
+    return v.empty() ? OJson(nullptr) : OJson(v);
+}
+
 OJson lutJson(const EModulusLutRecord& l)
 {
     OJson j;
@@ -45,7 +56,7 @@ OJson lutJson(const EModulusLutRecord& l)
 OJson pumpJson(const PumpRecord& p)
 {
     OJson j;
-    j["slot"] = p.slot;
+    j["slot"] = text(p.slot);
     j["connected"] = opt(p.connected);
     if (!p.connected.value_or(false)) return j; // no setpoint or readback for an absent pump
     j["model"] = opt(p.model);
@@ -62,8 +73,8 @@ OJson pumpJson(const PumpRecord& p)
         const auto& r = *p.readback;
         OJson rb;
         rb["age_us"] = r.ageUs;
-        rb["last_poll_ok"] = r.lastPollOk;
-        rb["run_status"] = r.runStatus;
+        rb["last_poll_ok"] = opt(r.lastPollOk);
+        rb["run_status"] = text(r.runStatus);
         rb["speed_rpm"] = opt(r.speedRpm);
         rb["realtime_flow_raw"] = opt(r.realtimeFlowRaw);
         rb["accumulated_volume_raw"] = opt(r.accumulatedVolumeRaw);
@@ -78,14 +89,14 @@ OJson pumpJson(const PumpRecord& p)
 OJson ledJson(const LedRecord& l)
 {
     OJson j;
-    j["source"] = l.source;
+    j["source"] = opt(l.source);
     j["error"] = opt(l.error);
     j["enabled"] = opt(l.enabled());
     j["control"] = opt(l.control);
     j["delay_us"] = opt(l.delayUs);
     j["width_us"] = opt(l.widthUs);
     j["clock_khz"] = opt(l.clockKhz);
-    j["stopped_run_at_start"] = l.stoppedRunAtStart;
+    j["stopped_run_at_start"] = opt(l.stoppedRunAtStart);
     return j;
 }
 
@@ -102,13 +113,13 @@ OJson stageJson(const StageRecord& s)
         const auto& r = *s.readback;
         OJson rb;
         rb["age_us"] = r.ageUs;
-        rb["state"] = r.state;
-        rb["position_um"] = std::isfinite(r.positionUm) ? OJson(r.positionUm) : OJson(nullptr);
-        rb["limit_positive"] = r.limitPositive;
-        rb["limit_negative"] = r.limitNegative;
-        rb["home"] = r.home;
-        rb["emergency_stop"] = r.emergencyStop;
-        rb["driver_alarm"] = r.driverAlarm;
+        rb["state"] = opt(r.state);
+        rb["position_um"] = opt(r.positionUm);
+        rb["limit_positive"] = opt(r.limitPositive);
+        rb["limit_negative"] = opt(r.limitNegative);
+        rb["home"] = opt(r.home);
+        rb["emergency_stop"] = opt(r.emergencyStop);
+        rb["driver_alarm"] = opt(r.driverAlarm);
         j["readback"] = std::move(rb);
     } else {
         j["readback"] = nullptr;
@@ -137,11 +148,14 @@ const Json* member(const Json& j, const char* key)
     return &*it;
 }
 
+// An empty string reads as unknown, like a missing one.
 std::optional<std::string> str(const Json& j, const char* key)
 {
     const Json* m = member(j, key);
     if (!m || !m->is_string()) return std::nullopt;
-    return m->get<std::string>();
+    std::string v = m->get<std::string>();
+    if (v.empty()) return std::nullopt;
+    return v;
 }
 
 std::optional<double> num(const Json& j, const char* key)
@@ -200,7 +214,9 @@ std::optional<std::vector<PumpRecord>> parsePumps(const Json& root)
     for (const auto& e : *j) {
         if (!e.is_object()) continue;
         PumpRecord p;
-        p.slot = str(e, "slot").value_or(std::string{});
+        const auto slot = str(e, "slot");
+        if (!slot) continue;   // an entry that names no slot describes no pump
+        p.slot = *slot;
         p.connected = flag(e, "connected");
         p.model = str(e, "model");
         p.port = str(e, "port");
@@ -219,7 +235,7 @@ std::optional<std::vector<PumpRecord>> parsePumps(const Json& root)
                 PumpReadbackRecord rb;
                 rb.ageUs = *age;
                 rb.runStatus = *status;
-                rb.lastPollOk = flag(*r, "last_poll_ok").value_or(false);
+                rb.lastPollOk = flag(*r, "last_poll_ok");
                 rb.speedRpm = num(*r, "speed_rpm");
                 rb.realtimeFlowRaw = num(*r, "realtime_flow_raw");
                 rb.accumulatedVolumeRaw = num(*r, "accumulated_volume_raw");
@@ -237,13 +253,13 @@ std::optional<LedRecord> parseLed(const Json& root)
     const Json* j = member(root, "led");
     if (!j || !j->is_object()) return std::nullopt;
     LedRecord l;
-    l.source = str(*j, "source").value_or(std::string{});
+    l.source = str(*j, "source");
     l.error = str(*j, "error");
     if (const auto c = u64(*j, "control")) l.control = static_cast<uint32_t>(*c);
     l.delayUs = num(*j, "delay_us");
     l.widthUs = num(*j, "width_us");
     if (const auto k = u64(*j, "clock_khz")) l.clockKhz = static_cast<uint32_t>(*k);
-    l.stoppedRunAtStart = flag(*j, "stopped_run_at_start").value_or(false);
+    l.stoppedRunAtStart = flag(*j, "stopped_run_at_start");
     return l;
 }
 
@@ -260,19 +276,16 @@ std::optional<StageRecord> parseStage(const Json& root)
     s.firmware = str(*j, "firmware");
     s.zeroSet = flag(*j, "zero_set");
     if (const Json* r = member(*j, "readback"); r && r->is_object()) {
-        const auto age = u64(*r, "age_us");
-        const auto state = str(*r, "state");
-        const auto position = num(*r, "position_um");
-        if (age && state && position) {
+        if (const auto age = u64(*r, "age_us")) {
             StageReadbackRecord rb;
             rb.ageUs = *age;
-            rb.state = *state;
-            rb.positionUm = *position;
-            rb.limitPositive = flag(*r, "limit_positive").value_or(false);
-            rb.limitNegative = flag(*r, "limit_negative").value_or(false);
-            rb.home = flag(*r, "home").value_or(false);
-            rb.emergencyStop = flag(*r, "emergency_stop").value_or(false);
-            rb.driverAlarm = flag(*r, "driver_alarm").value_or(false);
+            rb.state = str(*r, "state");
+            rb.positionUm = num(*r, "position_um");
+            rb.limitPositive = flag(*r, "limit_positive");
+            rb.limitNegative = flag(*r, "limit_negative");
+            rb.home = flag(*r, "home");
+            rb.emergencyStop = flag(*r, "emergency_stop");
+            rb.driverAlarm = flag(*r, "driver_alarm");
             s.readback = rb;
         }
     }
@@ -360,7 +373,7 @@ std::string runStopToJson(const RunStopRecord& stop)
 {
     OJson j;
     j["reason"] = stop.reason;
-    j["message"] = stop.message;
+    j["message"] = opt(stop.message);
     return j.dump();
 }
 
@@ -378,7 +391,7 @@ std::optional<RunStopRecord> parseRunStop(const std::string& json, std::string* 
     }
     RunStopRecord stop;
     stop.reason = *reason;
-    stop.message = str(root, "message").value_or(std::string{});
+    stop.message = str(root, "message");
     return stop;
 }
 

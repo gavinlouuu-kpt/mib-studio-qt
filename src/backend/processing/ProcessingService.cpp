@@ -920,17 +920,16 @@ double ProcessingService::getPixelToMicronFactor() const {
 }
 
 bool ProcessingService::loadEModulusLut(const std::string& path) {
-    const bool ok = eModulusLut_.loadFromFile(path);
+    // The hash is of the very bytes the table was built from (EModulusLut reads the file once), so
+    // a file replaced after the load cannot be recorded as the table in use (#712).
+    std::string bytes, loadedPath;
+    const bool ok = eModulusLut_.loadFromFile(path, &bytes, &loadedPath);
     EModulusLutIdentity identity;
     identity.loaded = ok;
-    std::error_code ec;
-    if (ok && std::filesystem::is_regular_file(path, ec)) {
-        // EModulusLut reads `path` itself when it names a file (its fallback candidates are only
-        // tried when it does not), so these are the bytes that were loaded.
-        identity.path = path;
-        std::string hashError;
-        identity.sha256 = backend::processing::processingCoreFileSha256(path, &hashError);
-        if (identity.sha256.empty()) SPDLOG_WARN("ProcessingService: the loaded E-modulus LUT {} could not be hashed: {}", path, hashError);
+    if (ok) {
+        identity.path = loadedPath;
+        identity.sha256 = backend::processing::processingCoreBytesSha256(
+            reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size());
     }
     std::scoped_lock lk(eModulusLutIdentityMutex_);
     eModulusLutIdentity_ = std::move(identity);

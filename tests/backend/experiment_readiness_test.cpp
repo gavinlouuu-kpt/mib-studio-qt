@@ -26,10 +26,13 @@
 #include "backend/recording/Hdf5Service.h"
 #include "backend/recording/RunProvenanceRecord.h"
 #include "backend/services/CaptureService.h"
+#include "backend/services/SerialBus.h"
+#include "backend/services/SyringePumpService.h"
 #include "backend/services/RfGeneratorService.h"
 #include "backend/camera/mock/MockCamera.h"
 
 #include "support/assert.h"
+#include "support/fake_modbus_bench.h"
 #include "support/fake_ssg.h"
 #include "support/frames.h"
 #include "support/faultinject.h"
@@ -543,7 +546,7 @@ int main()
         MIB_EXPECT(runJson.find("\"led\":null") != std::string::npos &&
                        runJson.find("\"pl_run_id\":null") != std::string::npos,
                    "absent facts are written as null, not zero");
-        MIB_EXPECT(prov.stop && prov.stop->reason == "stop_requested" && prov.stop->message.empty(),
+        MIB_EXPECT(prov.stop && prov.stop->reason == "stop_requested" && !prov.stop->message,
                    "stop record: the coordinator's Stop");
         reader.closeFile();
     }
@@ -656,6 +659,80 @@ int main()
                        cancelProv.stop && cancelProv.stop->reason == "cancel_requested",
                    "stop record: cancel");
         reader.closeFile();
+
+        // Pump settings are recorded only once the pump is known to hold them (#712 review): a dLSP
+        // connect neither reads nor writes the flow rate or direction, so a run started right after
+        // it records them as unknown, not as the configuration's defaults.
+        {
+            using Pump = backend::services::SyringePumpService;
+            static mib::test::FakeModbusBench pumpBench;   // outlives the bus factory below
+            static mib::test::FakeModbusWire pumpWire;
+            pumpWire.address = 1;
+            pumpBench.attach("fake-pump", &pumpWire);
+            backend.serialBus().setSerialPortFactory(
+                [] { return std::make_unique<mib::test::FakeModbusPort>(pumpBench); });
+            auto& pumps = backend.syringePump();
+            // A configuration left by an earlier device must not leak into the record either.
+            auto stale = pumps.getConfig(Pump::PumpId::Sample);
+            stale.flowRate = 55.0;
+            stale.direction = Pump::Direction::Withdraw;
+            pumps.setConfig(Pump::PumpId::Sample, stale);
+            MIB_REQUIRE(pumps.connect(Pump::PumpId::Sample, "fake-pump", 9600, 1), "dLSP pump connects (fake)");
+
+            auto runAndRead = [&](const std::string& name) {
+                const auto path = (td.path() / name).string();
+                const auto ready = coordinator.evaluateReadiness(path);
+                MIB_REQUIRE(ready.ready, "ready for " + name);
+                ExperimentStartRequest request;
+                request.outputPath = path;
+                request.readinessGeneration = ready.generation;
+                MIB_REQUIRE(coordinator.start(request).started(), name + " starts");
+                MIB_EXPECT(coordinator.requestStop(false) == backend::app::ExperimentStopOutcome::Accepted, "stop");
+                MIB_REQUIRE(waitFor([&] { return coordinator.status().terminal; }, std::chrono::seconds(20)),
+                            name + " finalizes");
+                backend::services::Hdf5Service file;
+                backend::recording::RecordedRunProvenance recorded;
+                MIB_REQUIRE(file.loadFile(path) && backend::recording::readRecordedRunProvenance(file, recorded),
+                            "read " + name);
+                file.closeFile();
+                MIB_REQUIRE(recorded.v3.pumps && recorded.v3.pumps->size() == 2, "pump slots in " + name);
+                return (*recorded.v3.pumps)[0];
+            };
+
+            const auto connectedOnly = runAndRead("pump_connected_only.h5");
+            MIB_EXPECT(connectedOnly.connected == std::optional<bool>(true) &&
+                           connectedOnly.model == std::optional<std::string>("dlsp_syringe") &&
+                           connectedOnly.port == std::optional<std::string>("fake-pump") &&
+                           connectedOnly.modbusAddress == std::optional<int>(1),
+                       "connected pump identity recorded");
+            MIB_EXPECT(!connectedOnly.flowRate && !connectedOnly.flowRateUnit && !connectedOnly.flowRateUnitCode &&
+                           !connectedOnly.direction && !connectedOnly.microlitersPerRev,
+                       "connect then start: the never-applied settings are absent, not 0 / uL/min / infuse");
+
+            MIB_REQUIRE(pumps.setFlowRate(Pump::PumpId::Sample, 12.7, 100), "flow rate applied");
+            MIB_REQUIRE(pumps.setDirection(Pump::PumpId::Sample, Pump::Direction::Withdraw), "direction applied");
+            const auto configured = runAndRead("pump_configured.h5");
+            MIB_EXPECT(configured.flowRate == std::optional<double>(12.0) &&
+                           configured.flowRateUnitCode == std::optional<int>(100) &&
+                           configured.flowRateUnit == std::optional<std::string>("uL/min") &&
+                           configured.direction == std::optional<std::string>("withdraw"),
+                       "configure then start: the applied settings (the rate as written: truncated to 12)");
+
+            pumpWire.failWrites = true;
+            MIB_EXPECT(!pumps.setFlowRate(Pump::PumpId::Sample, 30.0, 100), "the flow-rate write fails");
+            pumpWire.failWrites = false;
+            const auto failedWrite = runAndRead("pump_failed_write.h5");
+            MIB_EXPECT(!failedWrite.flowRate && !failedWrite.flowRateUnit &&
+                           failedWrite.direction == std::optional<std::string>("withdraw"),
+                       "a failed flow-rate write leaves the rate unknown; the direction stays known");
+
+            pumps.disconnect(Pump::PumpId::Sample);
+            MIB_REQUIRE(pumps.connect(Pump::PumpId::Sample, "fake-pump", 9600, 1), "reconnect");
+            const auto reconnected = runAndRead("pump_reconnected.h5");
+            MIB_EXPECT(!reconnected.flowRate && !reconnected.direction,
+                       "a reconnect starts from unknown (the settings may belong to another device)");
+            pumps.disconnect(Pump::PumpId::Sample);
+        }
     }
 
     // ---- 6c. Backend-owned finalization -----------------------------------------
