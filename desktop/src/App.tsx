@@ -1196,6 +1196,7 @@ export default function App() {
         append("Run is stopped to review the buffered frames: Resume Run before changing the camera mode");
         return false;
       }
+      if (cancelled()) return false; // checked again right before acting
       append(want === "align" ? "switching to Align (full sensor)…" : `switching to Run at (${win!.x}, ${win!.y})…`);
       const result = await bridge.setInstrumentMode(want, win?.x ?? 0, win?.y ?? 0);
       append(result.ok ? result.message : `Camera mode: ${result.message}`);
@@ -1208,6 +1209,7 @@ export default function App() {
     if (!geometry?.supported) return false;
     const overview = target === "overview";
     if (geometry.overview === overview) return true;
+    if (cancelled()) return false; // checked again right before acting
     const result = await bridge.setCameraOverview(overview);
     append(result.ok ? result.message : `Camera mode: ${result.message}`);
     setModeError(result.ok ? null : {mode: overview ? "align" : "run", message: result.message});
@@ -1222,7 +1224,10 @@ export default function App() {
     if (workspaceStageRef.current !== null) { setClassicModeStale(true); return; }
     setClassicModeStale(false);
     let cancelled = false;
-    void applyCameraMode(tab, () => cancelled);
+    // A classic switch is cancelled by the workspace opening while it awaits a read: it then acts
+    // on nothing, and the classic tab shows the mismatch when it is shown again.
+    const stop = () => cancelled || workspaceStageRef.current !== null;
+    void applyCameraMode(tab, stop).then(() => { if (!cancelled && workspaceStageRef.current !== null) setClassicModeStale(true); });
     return () => { cancelled = true; };
   }, [tab, ready, expActive, refreshCameraGeometry, append, instrumentModes, cameraWin.placed, modeRetry, instrumentMode?.idle, instrument?.ring?.run_frozen, applyCameraMode]);
 
@@ -1245,6 +1250,9 @@ export default function App() {
     setClassicModeStale(true);
     await applyCameraMode("overview");
   }, [applyCameraMode]);
+  // Opening the workspace cancels a pending classic switch at once (the ref, before the render):
+  // a classic tab change that is still awaiting its read then sends nothing.
+  const openWorkspace = useCallback(() => { workspaceStageRef.current = 0; setWorkspaceStage(0); }, []);
   // Leaving the workspace never acts: a mode the workspace changed is shown, not reverted.
   const exitWorkspace = useCallback(() => setWorkspaceStage(null), []);
   const modeNotice = workspaceStage === null ? classicModeNotice({
@@ -1254,7 +1262,8 @@ export default function App() {
   const applyClassicMode = useCallback(async () => {
     if (tab !== "overview" && tab !== "experiment") return;
     setClassicModeBusy(true);
-    try { if (await applyCameraMode(tab)) setClassicModeStale(false); } finally { setClassicModeBusy(false); }
+    // Like a tab change: opening the workspace while this awaits its read cancels it.
+    try { if (await applyCameraMode(tab, () => workspaceStageRef.current !== null)) setClassicModeStale(false); } finally { setClassicModeBusy(false); }
   }, [tab, applyCameraMode]);
   // The workspace's ROI quick control writes through the classic tab's commands, and answers with
   // the readback read after the write.
@@ -1588,7 +1597,7 @@ export default function App() {
         <button
           type="button"
           className="workspace-toggle"
-          onClick={() => setWorkspaceStage(0)}
+          onClick={openWorkspace}
           title="Open the opt-in Prepare / Align / Experiment / Review workspace. It reads the backend only; the classic view stays the default."
         >
           Workspace preview

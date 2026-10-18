@@ -23,7 +23,9 @@ Step A3 of track A (#716), work package P3 (exec plan), on the reviewed Penpot b
 - **Leaving the workspace never acts.** The hidden classic tab switches nothing while the workspace
   is shown; afterwards a classic Notice shows the camera's mode against the one the tab uses and
   offers the switch as a button (same `applyCameraMode`). The next classic tab change switches
-  as before.
+  as before. Opening the workspace cancels a classic switch still awaiting its geometry read:
+  `applyCameraMode` rechecks after every await and right before acting, and the cancelled
+  switch leaves the classic notice's mismatch (gate test with the read held).
 - **Classic fixes on the way:** geometry and processing-config reads that answer out of order are
   dropped, so a readback read after a write is never replaced by an older one; the classic Apply
   ROI and the quick control share `applyProcessingRoi`; `useCameraWindow.save` returns its

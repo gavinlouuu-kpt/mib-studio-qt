@@ -240,6 +240,12 @@ tokens (and styles the app-local number fields of the quick controls, until the 
     the mode the camera is in, the one the tab uses, and an explicit button ("Switch to Run",
     "Show the experiment window", …) that calls the same `applyCameraMode`. The next classic
     tab change switches as it always did.
+  - **Opening the workspace cancels a pending classic switch.** A classic tab change (or the
+    notice's button) first awaits a geometry read; "Workspace preview" sets the stage ref at
+    once, and `applyCameraMode` rechecks "cancelled or workspace shown" after every await and
+    again right before `set_camera_overview` / `set_instrument_mode`. A switch cancelled this
+    way sends nothing and leaves the classic tab showing the notice's mismatch, not a silently
+    wrong mode.
   - While Align is shown, App polls `fetch_camera_geometry` every 2 s, as the classic tab does.
 - **Gate (P1, extended for P3).** `workspace/navigation.test.tsx` runs the whole App over a
   mocked transport, desktop and PZ7035: opening the workspace, visiting every stage, leaving,
@@ -250,7 +256,10 @@ tokens (and styles the app-local number fields of the quick controls, until the 
   typing in a quick control writes nothing and Write sends `save_camera_roi` (desktop) or
   nothing (the PZ7035 Run window); from the classic Experiment tab, Align's switch then
   "Classic view" sends nothing that acts (desktop and PZ7035, the PZ7035 with a Run window
-  placed in Align), and only the classic notice's button switches back. A control shows the classic Camera & Alignment tab does send
+  placed in Align), and only the classic notice's button switches back; a classic tab change whose
+  geometry read is held until after "Workspace preview" sends nothing that acts once the read
+  answers, and the classic view then shows the notice (this case failed before the cancellation).
+  A control shows the classic Camera & Alignment tab does send
   `set_camera_overview` / `set_instrument_mode`. `Workspace.test.tsx` proves Prepare polling
   never passes a path and Align opens without a command; `AlignView.test.tsx` (StrictMode)
   covers the image tools on delivered frames and the write states; `prepareModel.test.ts`,

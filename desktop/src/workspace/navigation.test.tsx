@@ -45,6 +45,9 @@ const cmdResult = (command: number) => ({ transport_version: JSON_TRANSPORT.vers
 
 /** The camera as the mock backend holds it: the mode switches change it, the reads report it. */
 let device = { overview: false, mode: "unknown", runX: 0, runY: 0, runSet: false };
+/** Set to hold the next camera geometry read back until the test releases it. */
+let holdNextGeometry = false;
+const heldGeometry: (() => void)[] = [];
 
 function respond(variant: Variant, cmd: string, args?: unknown): unknown {
   const pz = variant === "pz7035";
@@ -59,7 +62,11 @@ function respond(variant: Variant, cmd: string, args?: unknown): unknown {
     case "fetch_camera_selection": return { valid: true, configured: true, mode: 0, label: pz ? "PZ7035 IMX426" : "Camera 01", interface_index: 0, device_index: 0, mindvision_index: 0,
       mindvision_config_path: "", camera_script_path: "", mock_frame_dir: "", mock_interval_ms: 33, mock_loop: true };
     case "discover_cameras": return { cameras: [], framegrabbers: [] };
-    case "fetch_camera_geometry": return { supported: true, overview: device.overview, camera: "cam", sensor_width: 2048, sensor_height: 512, roi: { x: 0, y: 0, width: 512, height: 96 },
+    case "fetch_camera_geometry": if (holdNextGeometry) {
+      holdNextGeometry = false;
+      const reply = respond(variant, cmd, args);
+      return new Promise((resolve) => heldGeometry.push(() => resolve(reply)));
+    } return { supported: true, overview: device.overview, camera: "cam", sensor_width: 2048, sensor_height: 512, roi: { x: 0, y: 0, width: 512, height: 96 },
       width_increment: 16, height_increment: 4, offset_x_increment: 16, offset_y_increment: 4, min_width: 64, min_height: 4, session: {} };
     case "fetch_instrument_status": return pz ? { available: true, mode: { name: device.mode, run_x: device.runX, run_y: device.runY, run_set: device.runSet, service: false } }
       : { available: false, error: "not a PZ7035" };
@@ -102,6 +109,8 @@ async function boot(variant: Variant) {
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   device = { overview: false, mode: "unknown", runX: 0, runY: 0, runSet: false };
+  holdNextGeometry = false;
+  heldGeometry.length = 0;
   const saved = new Map<string, string>();
   const store = { getItem: (k: string) => saved.get(k) ?? null, setItem: (k: string, v: string) => void saved.set(k, v), removeItem: (k: string) => void saved.delete(k) };
   vi.stubGlobal("localStorage", store);
@@ -259,6 +268,31 @@ describe.each<Variant>(["desktop", "pz7035"])("workspace navigation never actuat
       ? [{ cmd: "set_instrument_mode", args: { mode: "run", x: 40, y: expect.any(Number) } }]
       : [{ cmd: "set_camera_overview", args: { overview: false } }]);
     expect(host.querySelector("[data-testid=classic-mode-notice]")).toBeNull();
+  });
+
+  it("a classic tab change still awaiting its read is cancelled by opening the workspace: nothing acts, the classic tab shows the mismatch", async () => {
+    await boot(variant);
+    log.splice(0);
+    // The classic Camera & Alignment tab starts its switch, which first reads the geometry: held.
+    holdNextGeometry = true;
+    await act(async () => (host.querySelector('button[aria-label^="Camera & Alignment:"]') as HTMLElement).click());
+    expect(heldGeometry).toHaveLength(1);
+    // The operator opens the workspace before the read answers; then it answers.
+    await act(async () => buttonByText("Workspace preview")!.click());
+    await act(async () => heldGeometry.shift()!());
+    await advance(6000);
+    await click(host.querySelectorAll(".mib-stages__tab")[1], "Align");
+    await advance(3000);
+    expect(log.filter((e) => ACTUATING.includes(e.cmd))).toEqual([]);
+    // Back in the classic view: still nothing acts, and the tab says the camera is not in its mode.
+    await click(buttonByText("Classic view"), "Classic view");
+    await advance(6000);
+    expect(log.splice(0).filter((e) => ACTUATING.includes(e.cmd))).toEqual([]);
+    const action = variant === "pz7035" ? "Switch to Align" : "Show the full sensor";
+    expect(host.querySelector("[data-testid=classic-mode-notice]")!.textContent).toContain(action);
+    await click(buttonByText(action), action);
+    await advance(3000);
+    expect(log.filter((e) => ACTUATING.includes(e.cmd)).map((e) => e.cmd)).toEqual([variant === "pz7035" ? "set_instrument_mode" : "set_camera_overview"]);
   });
 
   it("control: the classic Camera & Alignment tab does switch the camera mode, so the harness sees actuation", async () => {
