@@ -228,7 +228,7 @@
   quartiles (schema `$defs/unet_cell_frame`). The CSV swaps the quartile
   columns for `Bright Mean,Bright Var,Pixels,Blemishes`. Test:
   `scripts.contract3_export_review`.
-- The C++ CSV/table views (`HdfExportService`, `ReviewExport`,
+- The C++ CSV/table views (`HdfExportService`,
   `HdfMetricsModel`) still show the quartile columns, which read `nan` for a
   Contract-3 file.
 

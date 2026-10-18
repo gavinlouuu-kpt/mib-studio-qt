@@ -196,7 +196,7 @@ the coordinator (ADR 0004/0011).
 |---|---|---|---|---|
 | S1 | One overlay kernel | none | none | merged (#721) |
 | S2 | Reanalysis engine in `mib_review_core` | none | none | merged (#721) |
-| S3 | Export engine in `mib_review_core` | none | none | planned |
+| S3 | Export engine in `mib_review_core` | none | none | in review |
 | S4 | Charts JSON and saved-overlay builders | none | none | planned |
 | S5 | The facade owns the ReviewSession | none (D1 (a): unchanged) | none | planned |
 | S6 | Parity harness: a MIB Studio half | none | none | planned |
@@ -266,7 +266,7 @@ the coordinator (ADR 0004/0011).
   fallback) now compiles in the review core on macOS and Windows; the review
   CI lanes (`review-ci.yml`) must stay green there.
 
-### S3 — Export engine in `mib_review_core`
+### S3 — Export engine in `mib_review_core` (in review)
 
 - **Moves:** the facade's `submitReviewExportJson` worker (one
   `HdfExportService` run per source, per-file results, the batch rule
@@ -292,6 +292,35 @@ the coordinator (ADR 0004/0011).
   `tools/review_parity/run.sh` on the review fixtures (Qt ↔ YOFO) unchanged.
 - **Risks:** progress phase strings and the `results` array are consumed by
   `exportControls.tsx`; the `keep_partial_on_failure` manifest path.
+- **As built (2026-10-19):** `exportStatusJson(…)` is four formatters,
+  `export{Validating,Progress,Terminal,StartFailed}StatusJson`, as S2's.
+  `runExportBatch` takes `ExportRunOptions`: `prepare` (per-source request,
+  or skip) carries ReviewJobs' batch rules, which must run just before each
+  source (the `_metrics_N.csv` name depends on the files already written);
+  `runExportFile` is the single run ReviewJobs' Export Metrics / All use.
+  Not anticipated: the two hosts cancel differently. The facade hands the
+  operation's flag to the service as its token (polled at every check);
+  ReviewJobs copies its flag into a private token at each progress report, so
+  a cancel lands one report later and its event sequence differs
+  (`ExportCancelPolling::Direct` / `AtProgress`, both kept; S7 can unify
+  them). A single-source export cancelled before it started reports
+  `"error":""` (kept).
+- **Proof (this PR):** `review.export_engine` (new): parse defaults / every
+  field / 12 exact refusal messages; single All and metrics-batch round trips;
+  status snapshots byte for byte (validating, progress, terminal of single,
+  batch, cancelled, failed, cancel-before-start, start failure); continue on
+  failure, stop on cancel, `prepare` skips; image write fault with and without
+  `keep_partial_on_failure` (manifest), a kept cancel; both polling modes and
+  ReviewJobs keeping `AtProgress`. Mutations (`file_index` off by one, the
+  before-source cancel check removed; ReviewJobs switched to `Direct`) fail
+  it. `backend.export_bridge_facade`, `review.jobs`, `review.session`,
+  `review.reanalysis`, `review.overlay_kernel`, `backend.facade_boundary`
+  pass unchanged. A temporary characterization (not committed) of the facade
+  (20 refusals, 19 export runs incl. batch, cancel, keep-partial, faults, the
+  legacy `ExportMetricsCsv` command) and of ReviewJobs (12 export jobs incl.
+  batch skips and cancels): every status snapshot, operation / job event and
+  the output tree (paths, sizes, content hashes) was identical before and
+  after, normalized only for temp paths and job ids.
 
 ### S4 — Charts JSON and saved-overlay builders
 
@@ -563,7 +592,7 @@ bridge contract):
 - [x] 2026-10-18 — S1 one overlay kernel (`review.overlay_kernel`).
 - [x] 2026-10-18 — S2 reanalysis engine (`review.reanalysis`).
 - [x] 2026-10-19 — S1 and S2 merged (#721); D1, D3, D4 and D6 ruled, D7 amended (#717, #722).
-- [ ] S3 export engine
+- [x] 2026-10-19 — S3 export engine (`review.export_engine`); `review::writeMetricsCsv` deleted (F14).
 - [ ] S4 charts JSON and saved-overlay builders
 - [ ] S5 facade owns the ReviewSession (D1)
 - [ ] S6 parity harness MIB Studio half
