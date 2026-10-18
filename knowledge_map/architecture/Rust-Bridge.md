@@ -481,7 +481,9 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
   a busy stage when the last client leaves, and puts a PZ7035 left in Align
   or Run into its safe state (`set_instrument_mode idle`: LED off, cell path
   off, camera released; `mode.idle` reads true until the next switch).
-- **Pumps on client loss (#711):** in the same pass, every connected pump
+- **Pumps on client loss (#711):** as the last step of the pass, after the
+  recording stop and the PZ7035 safe state (pump commands do serial I/O under
+  the bridge lock, and serial I/O is not yet bounded, #720), every connected pump
   (Sample and Sheath slots, DLSP syringe or Tushui peristaltic) gets
   `pump_stop` and then `pump_stop_purge`, whatever its `run_status` says: the
   snapshot is only as fresh as the last poll, and the DLSP purges through

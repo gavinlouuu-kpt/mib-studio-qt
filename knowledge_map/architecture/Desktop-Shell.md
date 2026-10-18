@@ -188,8 +188,8 @@ and a Chromium run that stops and restarts a real server under an open page.
 - client loss: pings every 2 s, a connection silent for 5 s is dropped; when
   the last client has been gone for 5 s the server stops and saves (active
   experiment -> `experiment_stop`, raw recording -> `stop_recording`, busy Z
-  stage -> `stage_stop`, every connected pump -> `pump_stop` +
-  `pump_stop_purge` (#711), PZ7035 in Align/Run -> idle; capture keeps
+  stage -> `stage_stop`, PZ7035 in Align/Run -> idle, and last every
+  connected pump -> `pump_stop` + `pump_stop_purge` (#711); capture keeps
   running). The desktop close guard refuses to close instead; a remote
   operator who lost the link cannot see the run. SIGTERM does the same, then
   shuts the backend down. `/healthz` reports clients and passes.

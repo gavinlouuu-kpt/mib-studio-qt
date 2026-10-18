@@ -42,9 +42,9 @@
 //! Client loss: the server pings every `ping_interval` and drops a connection that is silent
 //! for `ping_timeout`. When the last client has been gone for `client_grace`, it stops and
 //! saves: an active experiment gets `experiment_stop` (final flush and finalisation) and a raw
-//! recording `stop_recording`; a busy Z stage `stage_stop`; every connected pump `pump_stop` and
-//! `pump_stop_purge` (a failed stop is reported); a PZ7035 in Align or Run goes to its safe state
-//! (LED off, cell path off, camera released). On other instruments capture keeps running. This differs on purpose from the desktop
+//! recording `stop_recording`; a busy Z stage `stage_stop`; a PZ7035 in Align or Run goes to its safe
+//! state (LED off, cell path off, camera released); last, every connected pump gets `pump_stop` and
+//! `pump_stop_purge` (a failed stop is reported). On other instruments capture keeps running. This differs on purpose from the desktop
 //! close guard, which refuses to close instead: a remote operator who lost the link can no
 //! longer see the run (ADR 0008).
 
@@ -410,17 +410,6 @@ pub fn stop_and_save(state: &AppState) -> Vec<String> {
             }
         }
     }
-    // So is a sample or sheath pump left pumping or purging (#711).
-    actions.extend(stop_pumps(
-        |pump| mib_app_commands::fetch_pump_status(state, pump).map(|s| serde_json::to_value(s).unwrap_or_default()),
-        |cmd, pump| {
-            match cmd {
-                "pump_stop" => mib_app_commands::pump_stop(state, pump),
-                _ => mib_app_commands::pump_stop_purge(state, pump),
-            }
-            .map(|r| serde_json::to_value(r).unwrap_or_default())
-        },
-    ));
     if let Ok(preview) = mib_app_commands::preview_buffer::fetch_preview_buffer(state) {
         if preview["recording"] == json!(true) {
             match mib_app_commands::stop_recording(state) {
@@ -440,6 +429,19 @@ pub fn stop_and_save(state: &AppState) -> Vec<String> {
             }
         }
     }
+    // Every connected sample or sheath pump is stopped, run and purge (#711). This runs last: pump
+    // commands do serial I/O under the bridge lock, and a stalled adapter must not hold back the
+    // recording stop or the PZ7035 safe state above (serial I/O is not yet bounded, #720).
+    actions.extend(stop_pumps(
+        |pump| mib_app_commands::fetch_pump_status(state, pump).map(|s| serde_json::to_value(s).unwrap_or_default()),
+        |cmd, pump| {
+            match cmd {
+                "pump_stop" => mib_app_commands::pump_stop(state, pump),
+                _ => mib_app_commands::pump_stop_purge(state, pump),
+            }
+            .map(|r| serde_json::to_value(r).unwrap_or_default())
+        },
+    ));
     actions
 }
 
