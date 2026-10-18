@@ -481,6 +481,18 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
   a busy stage when the last client leaves, and puts a PZ7035 left in Align
   or Run into its safe state (`set_instrument_mode idle`: LED off, cell path
   off, camera released; `mode.idle` reads true until the next switch).
+- **Pumps on client loss (#711):** in the same pass, every connected pump
+  (Sample and Sheath slots, DLSP syringe or Tushui peristaltic) gets
+  `pump_stop` and then `pump_stop_purge`, whatever its `run_status` says: the
+  snapshot is only as fresh as the last poll, and the DLSP purges through
+  another register than it runs. Each stop is one line in the returned
+  `actions`; a stop that returns `ok: false` or an error is reported as
+  `<cmd> <slot> failed: ...` and the pass goes on to the other pump. A status
+  that cannot be read is reported and the pump is stopped anyway. SIGTERM runs
+  the same pass. Tests: `client_loss_stops_every_connected_pump_and_its_purge`
+  and `client_loss_reports_a_pump_that_fails_to_stop` (`stop_pumps` with fake
+  status and stop calls), `client_loss_stops_and_saves` (`ws.rs`, real
+  backend, no pump connected: nothing sent).
 - **Tests:** `contract.rs` `stage_commands_fail_safely_without_hardware`;
   `stage_motion_is_control_only_but_stop_is_not` in the server;
   `backend.stage_bridge_facade`.
