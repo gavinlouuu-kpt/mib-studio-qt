@@ -213,7 +213,8 @@ describe("FrameInspector keeps inspection off the delivery path", () => {
     h.inspector.deliver(frame(8, 4, (_x, y) => y, 0, "1"));
     h.advance(0);
     h.inspector.setFrozen(true);
-    h.inspector.deliver(frame(8, 4, () => 9, 0, "2"));
+    expect(h.inspector.deliver(frame(16, 2, () => 9, 0, "2"))).toBe(false); // not taken: neither its pixels nor its size
+    expect(h.inspector.latest()!.width).toBe(8);
     h.advance(1000);
     expect(h.inspector.latest()!.frame_index).toBe("1");
     expect(last(h.published).profile).toMatchObject({ axis: "row", index: 2 }); // the middle row by default

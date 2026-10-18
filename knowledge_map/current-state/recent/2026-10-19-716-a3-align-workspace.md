@@ -20,8 +20,14 @@ Step A3 of track A (#716), work package P3 (exec plan), on the reviewed Penpot b
   same function (`applyCameraMode`). The navigation gate now allows exactly two added reads
   (Prepare's path-less readiness, Align's geometry read-back), lists ROI/config/script writes as
   forbidden, and proves the button and Write send exactly the classic commands.
-- **Classic fixes on the way:** geometry reads that answer out of order are dropped, so a readback
-  read after a save is never replaced by an older one; the classic Apply ROI and the quick
-  control share `applyProcessingRoi`; `useCameraWindow.save` returns its outcome.
+- **Leaving the workspace never acts.** The hidden classic tab switches nothing while the workspace
+  is shown; afterwards a classic Notice shows the camera's mode against the one the tab uses and
+  offers the switch as a button (same `applyCameraMode`). The next classic tab change switches
+  as before.
+- **Classic fixes on the way:** geometry and processing-config reads that answer out of order are
+  dropped, so a readback read after a write is never replaced by an older one; the classic Apply
+  ROI and the quick control share `applyProcessingRoi`; `useCameraWindow.save` returns its
+  outcome; the status bar's display rate counts frames only the workspace shows; a frozen Align
+  image keeps its size when the camera's frames change size.
 
 See [[architecture/Desktop-Shell]] ("Opt-in workspace", Align) and [[frontend/UI-Language-Kit]].

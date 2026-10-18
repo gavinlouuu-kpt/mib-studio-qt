@@ -144,6 +144,26 @@ describe("image tools on the classic preview's frames", () => {
     expect(subtitle()).toBe("Frame 7 · 64 × 32 · Mono8 · fit 938 %");
   });
 
+  it("a frozen image keeps its size when the camera's frames change size (e.g. Show the full sensor)", async () => {
+    await render();
+    await deliver(packet("5"));
+    await advance(INSPECT_INTERVAL_MS);
+    await press("Freeze display");
+    const accepted = await act(async () => sink!(packet("6", 256, 8)));
+    expect(accepted).toBe(false);
+    await advance(INSPECT_INTERVAL_MS * 4);
+    // The view still fits 64 × 32 (9.375×, offset 20) and the probe still maps onto its pixels.
+    expect(subtitle()).toBe("Frame 5 · 64 × 32 · Mono8 · fit 938 % · display frozen");
+    await pointer("pointermove", 20 + 9.375 * 10 + 1, 9.375 * 5 + 1);
+    expect($("align-probe").textContent).toBe("Pixel probe · x 10 · y 5 · value 40");
+    await press("Fit");
+    expect(subtitle()).toBe("Frame 5 · 64 × 32 · Mono8 · fit 938 % · display frozen");
+    await press("Resume display");
+    expect(await act(async () => sink!(packet("7", 256, 8)))).toBe(true);
+    await advance(INSPECT_INTERVAL_MS);
+    expect(subtitle()).toBe("Frame 7 · 256 × 8 · Mono8 · fit 250 %");
+  });
+
   it("a burst of frames is inspected at most once per interval", async () => {
     await render();
     for (let i = 0; i < 50; i++) await deliver(packet(String(i)));

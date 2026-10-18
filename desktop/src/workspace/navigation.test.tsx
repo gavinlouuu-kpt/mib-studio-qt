@@ -43,8 +43,12 @@ const status = { transport_version: JSON_TRANSPORT.version, valid: true, state: 
   persistence_failed: "0", terminal: false, finalization_ok: false, completion: RUN_COMPLETION_STATES.Complete, completion_reason: "", fault_revision: "0", fault_code: "", fault_message: "" };
 const cmdResult = (command: number) => ({ transport_version: JSON_TRANSPORT.version, ok: true, command, message: "ok", operation_id: "0" });
 
-function respond(variant: Variant, cmd: string): unknown {
+/** The camera as the mock backend holds it: the mode switches change it, the reads report it. */
+let device = { overview: false, mode: "unknown", runX: 0, runY: 0, runSet: false };
+
+function respond(variant: Variant, cmd: string, args?: unknown): unknown {
   const pz = variant === "pz7035";
+  const a = (args ?? {}) as Record<string, unknown>;
   switch (cmd) {
     case "abi_version": return BRIDGE_ABI_VERSION;
     case "is_initialized": return true;
@@ -55,15 +59,19 @@ function respond(variant: Variant, cmd: string): unknown {
     case "fetch_camera_selection": return { valid: true, configured: true, mode: 0, label: pz ? "PZ7035 IMX426" : "Camera 01", interface_index: 0, device_index: 0, mindvision_index: 0,
       mindvision_config_path: "", camera_script_path: "", mock_frame_dir: "", mock_interval_ms: 33, mock_loop: true };
     case "discover_cameras": return { cameras: [], framegrabbers: [] };
-    case "fetch_camera_geometry": return { supported: true, overview: false, camera: "cam", sensor_width: 2048, sensor_height: 512, roi: { x: 0, y: 0, width: 512, height: 96 },
+    case "fetch_camera_geometry": return { supported: true, overview: device.overview, camera: "cam", sensor_width: 2048, sensor_height: 512, roi: { x: 0, y: 0, width: 512, height: 96 },
       width_increment: 16, height_increment: 4, offset_x_increment: 16, offset_y_increment: 4, min_width: 64, min_height: 4, session: {} };
-    case "fetch_instrument_status": return pz ? { available: true, mode: { name: "unknown", run_x: 0, run_y: 0, service: false } } : { available: false, error: "not a PZ7035" };
+    case "fetch_instrument_status": return pz ? { available: true, mode: { name: device.mode, run_x: device.runX, run_y: device.runY, run_set: device.runSet, service: false } }
+      : { available: false, error: "not a PZ7035" };
     case "fetch_experiment_readiness": return { transport_version: JSON_TRANSPORT.version, valid: true, ready: false, generation: "1",
       gates: [{ id: "storage.output", status: G.Unavailable, reason: "no output path chosen yet", remediation: "choose an HDF5 destination" }] };
     case "poll_events_exact": return { transport_version: JSON_TRANSPORT.version, events: [] };
-    case "set_camera_overview": return cmdResult(COMMAND_TYPES.Camera);
+    case "set_camera_overview": device.overview = !!a.overview; return cmdResult(COMMAND_TYPES.Camera);
     case "save_camera_roi": return cmdResult(COMMAND_TYPES.Camera);
-    case "set_instrument_mode": return cmdResult(COMMAND_TYPES.Camera);
+    case "set_instrument_mode":
+      device.mode = String(a.mode);
+      if (a.mode === "run") Object.assign(device, { runX: a.x, runY: a.y, runSet: true });
+      return cmdResult(COMMAND_TYPES.Camera);
     case "review_export_status_json":
     case "review_reanalysis_status_json": return JSON.stringify({ state: "idle" });
     default: return null; // reads the shell tolerates as "not reported"
@@ -84,7 +92,7 @@ const namesIn = (entries: { cmd: string }[]) => new Set(entries.map((e) => e.cmd
 async function boot(variant: Variant) {
   vi.mocked(invoke).mockImplementation(async (cmd: string, args?: unknown) => {
     log.push({ cmd, args });
-    return respond(variant, cmd);
+    return respond(variant, cmd, args);
   });
   await act(async () => root.render(<App />));
   await advance(6000); // init, the startup landing, the first polls
@@ -93,6 +101,7 @@ async function boot(variant: Variant) {
 
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  device = { overview: false, mode: "unknown", runX: 0, runY: 0, runSet: false };
   const saved = new Map<string, string>();
   const store = { getItem: (k: string) => saved.get(k) ?? null, setItem: (k: string, v: string) => void saved.set(k, v), removeItem: (k: string) => void saved.delete(k) };
   vi.stubGlobal("localStorage", store);
@@ -208,6 +217,48 @@ describe.each<Variant>(["desktop", "pz7035"])("workspace navigation never actuat
     } else {
       expect(writes).toEqual([{ cmd: "save_camera_roi", args: { x: 48, y: 0, w: 512, h: 96 } }]); // 40 snapped to the x step of 16
     }
+  });
+
+  it("leaving the workspace after Align's switch acts on nothing; the classic tab shows the mismatch with an explicit switch", async () => {
+    await boot(variant);
+    // The classic Experiment tab, then the workspace (the reviewed repro).
+    await click(host.querySelector('button[aria-label^="Experiment:"]'), "classic Experiment tab");
+    await advance(3000);
+    log.splice(0);
+    await click(buttonByText("Workspace preview"), "workspace toggle");
+    await click(host.querySelectorAll(".mib-stages__tab")[1], "Align");
+    await advance(3000);
+    if (variant === "pz7035") {
+      // Placing the Run window while the classic Experiment tab is hidden must not switch to Run.
+      const x = host.querySelector<HTMLInputElement>('input[aria-label$=" X"]')!;
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(x, "40");
+        x.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await click(buttonByText("Write Run window"), "Write Run window");
+      await advance(3000);
+    }
+    expect(log.filter((e) => ACTUATING.includes(e.cmd))).toEqual([]);
+    await click(buttonByText(variant === "pz7035" ? "Switch to Align" : "Show the full sensor"), "Align switch");
+    await advance(3000);
+    expect(log.splice(0).filter((e) => ACTUATING.includes(e.cmd)).map((e) => e.cmd)).toEqual([variant === "pz7035" ? "set_instrument_mode" : "set_camera_overview"]);
+    // Leave: nothing acts, now or in the steady state after.
+    await click(buttonByText("Classic view"), "Classic view");
+    await advance(6000);
+    expect(host.querySelector("[data-testid=workspace]")).toBeNull();
+    expect(log.splice(0).filter((e) => ACTUATING.includes(e.cmd))).toEqual([]);
+    // The classic Experiment tab says what changed and offers its own mode as a button.
+    const notice = host.querySelector("[data-testid=classic-mode-notice]")!;
+    expect(notice.textContent).toContain(variant === "pz7035" ? "Camera mode · Align, this tab uses Run" : "Camera mode · the full sensor, this tab uses the experiment window");
+    const action = variant === "pz7035" ? "Switch to Run" : "Show the experiment window";
+    await advance(6000);
+    expect(log.splice(0).filter((e) => ACTUATING.includes(e.cmd))).toEqual([]);
+    await click(buttonByText(action), action);
+    await advance(3000);
+    expect(log.filter((e) => ACTUATING.includes(e.cmd))).toEqual(variant === "pz7035"
+      ? [{ cmd: "set_instrument_mode", args: { mode: "run", x: 40, y: expect.any(Number) } }]
+      : [{ cmd: "set_camera_overview", args: { overview: false } }]);
+    expect(host.querySelector("[data-testid=classic-mode-notice]")).toBeNull();
   });
 
   it("control: the classic Camera & Alignment tab does switch the camera mode, so the harness sees actuation", async () => {

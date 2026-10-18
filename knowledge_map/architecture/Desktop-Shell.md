@@ -198,13 +198,16 @@ tokens (and styles the app-local number fields of the quick controls, until the 
     reference. `FrameInspector` computes the histogram (at most 65,536 pixels on a regular grid)
     and the line profile (at most 1,024 points) from the newest frame at most every 250 ms, on a
     timer, never in the delivery callback; frames in between are skipped, not queued. Painting
-    is one `requestAnimationFrame` per delivery at most.
+    is one `requestAnimationFrame` per delivery at most. A frame only the workspace shows counts
+    in the status bar's display rate (`countDisplayed`).
   - **Image tools:** fit, 1:1, zoom (+ / −, wheel, keys) about the cursor, pan by drag or arrow
     keys (`alignImageModel.ts`: one transform, clamped so the image never leaves the view), a
     pixel probe (coordinates and the raw Mono8 value through the row stride), a click pins the
     point the row or column profile runs through, the ROI outlined when the frame is the area it
     is placed on, and "Freeze display", which holds the shown frame while capture and polling go
-    on.
+    on. A frozen display keeps its frame's size too (the inspector refuses the packet, and only an
+    accepted packet changes the view's image size), so a camera that starts sending other
+    dimensions meanwhile (e.g. after "Show the full sensor") cannot skew fit, zoom or the probe.
   - **Quick controls (requested → readback).** Only what the classic tab can write, through its
     commands: the camera ROI (`save_camera_roi` via `useCameraWindow.save`, readback the
     geometry read after the save), the PZ7035 Run window (placed, applied by the switch to Run;
@@ -219,15 +222,24 @@ tokens (and styles the app-local number fields of the quick controls, until the 
     pending until its own reply, whose readback is read after the write; a readback seen
     meanwhile never settles it; a refusal shows the reason and restores the readback; no reply
     in 5 s (`WRITE_TIMEOUT_MS`) shows "Timed out" and the readback, and the late reply is
-    ignored (stale token). Geometry reads that answer out of order are dropped
-    (`geometryReads` in App), so a readback from before a write never replaces one from after.
+    ignored (stale token). Geometry and processing-config reads that answer out of order are
+    dropped (`geometryReads`, `configReads` in App), so a readback from before a write never
+    replaces one from after (`alignReadback.test.tsx`: a late config readback of a timed-out
+    write after a newer write completed).
     Locked while a run is active. All features, the XML and scripts stay in the classic view.
   - **The mode switch is a button.** `alignMode` offers the classic tab's entry switch when the
     image is not the full sensor (desktop camera with geometry: "Show the full sensor",
     `set_camera_overview(true)`; PZ7035 outside Align: "Switch to Align", `set_instrument_mode`),
     disabled during a run or while a stopped Run holds its frames. App's `applyCameraMode` is
-    the one function behind the classic tab change and this button. If the workspace switched
-    the mode, leaving it lets the classic tab apply its own mode again (`modeRetry`).
+    the one function behind the classic tab change and this button.
+  - **Leaving the workspace never acts.** While the workspace is shown the hidden classic tab
+    switches nothing (its mode effect returns early, so a Run window placed in Align does not
+    send the hidden Experiment tab to Run). If the workspace switched the mode, or a classic
+    switch was skipped meanwhile, the classic Camera & Alignment or Experiment tab shows a kit
+    `Notice` (`components/ClassicModeNotice`, `classicModeNotice` in `cameraWindow.ts`) with
+    the mode the camera is in, the one the tab uses, and an explicit button ("Switch to Run",
+    "Show the experiment window", …) that calls the same `applyCameraMode`. The next classic
+    tab change switches as it always did.
   - While Align is shown, App polls `fetch_camera_geometry` every 2 s, as the classic tab does.
 - **Gate (P1, extended for P3).** `workspace/navigation.test.tsx` runs the whole App over a
   mocked transport, desktop and PZ7035: opening the workspace, visiting every stage, leaving,
@@ -236,7 +248,9 @@ tokens (and styles the app-local number fields of the quick controls, until the 
   nothing that acts or writes (ROI, config, script, camera selection writes are on the list);
   visiting Align sends no mode switch, pressing its button sends exactly the classic command,
   typing in a quick control writes nothing and Write sends `save_camera_roi` (desktop) or
-  nothing (the PZ7035 Run window). A control shows the classic Camera & Alignment tab does send
+  nothing (the PZ7035 Run window); from the classic Experiment tab, Align's switch then
+  "Classic view" sends nothing that acts (desktop and PZ7035, the PZ7035 with a Run window
+  placed in Align), and only the classic notice's button switches back. A control shows the classic Camera & Alignment tab does send
   `set_camera_overview` / `set_instrument_mode`. `Workspace.test.tsx` proves Prepare polling
   never passes a path and Align opens without a command; `AlignView.test.tsx` (StrictMode)
   covers the image tools on delivered frames and the write states; `prepareModel.test.ts`,

@@ -178,11 +178,13 @@ export class FrameInspector {
     private readonly intervalMs = INSPECT_INTERVAL_MS,
   ) {}
 
-  /** The newest frame from the preview (ignored while the display is frozen). */
-  deliver(frame: InspectFrame): void {
-    if (this.frozen) return;
+  /** The newest frame from the preview. False while the display is frozen: the frame is not
+   *  taken, so nothing derived from it (its size included) may change either. */
+  deliver(frame: InspectFrame): boolean {
+    if (this.frozen) return false;
     this.frame = frame;
     this.schedule();
+    return true;
   }
 
   latest(): InspectFrame | null { return this.frame; }

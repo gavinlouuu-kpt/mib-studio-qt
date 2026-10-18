@@ -117,3 +117,47 @@ export function useCameraWindow({instrumentModes, geometryRef, expActive, append
 
   return {window, setWindow, placed, windowRef, placedRef, showDefault, restore, save, onPointerDown, onPointerMove, onPointerUp};
 }
+
+/** The classic tab's camera mode after the workspace changed it (#716 A3): the mode the camera is
+ *  in, the one this tab uses, and the explicit switch. Leaving the workspace never switches by
+ *  itself; this notice offers it. */
+export interface ClassicModeNotice {
+  actual: string;
+  expected: string;
+  action: string;
+  /** Why the switch cannot be pressed now; "" when it can. */
+  blocked: string;
+}
+
+export function classicModeNotice(s: {
+  /** The workspace switched the mode, or a classic switch was skipped while it was open. */
+  stale: boolean;
+  tab: string;
+  instrumentModes: boolean;
+  instrumentMode: string | null | undefined;
+  geometry: CameraGeometry | null;
+  windowPlaced: boolean;
+  expActive: boolean;
+  runFrozen: boolean;
+}): ClassicModeNotice | null {
+  if (!s.stale || (s.tab !== "overview" && s.tab !== "experiment")) return null;
+  const blocked = s.expActive ? "a run is active" : "";
+  if (s.instrumentModes) {
+    const want = s.tab === "overview" ? "align" : "run";
+    const actual = s.instrumentMode;
+    if (!actual || actual === want) return null;
+    // Without a placed window the Experiment tab already says to place it (RunWindowNotice).
+    if (want === "run" && !s.windowPlaced) return null;
+    const name = (m: string) => (m === "align" ? "Align" : m === "run" ? "Run" : m);
+    return {
+      actual: name(actual), expected: name(want), action: want === "run" ? "Switch to Run" : "Switch to Align",
+      blocked: blocked || (s.runFrozen ? "Run is stopped to review the buffered frames: Resume Run first" : ""),
+    };
+  }
+  const g = s.geometry;
+  if (!g?.supported) return null;
+  const want = s.tab === "overview";
+  if (g.overview === want) return null;
+  const name = (overview: boolean) => (overview ? "the full sensor" : "the experiment window");
+  return { actual: name(g.overview), expected: name(want), action: want ? "Show the full sensor" : "Show the experiment window", blocked };
+}

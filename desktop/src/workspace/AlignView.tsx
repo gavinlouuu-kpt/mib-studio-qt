@@ -51,7 +51,8 @@ import {
 } from "./quickControlModel";
 import { useQuickControl } from "./useQuickControl";
 
-export type FrameSink = (packet: FramePacket) => void;
+/** Takes a delivered packet; true when the view shows it (false while frozen or invalid). */
+export type FrameSink = (packet: FramePacket) => boolean;
 
 export interface AlignViewProps {
   facts: AlignFacts;
@@ -218,14 +219,17 @@ function AlignImage(p: ImageProps) {
       () => performance.now());
     inspector.current = ins;
     subscribeFrames((packet) => {
-      if (!packet.valid || packet.width <= 0 || packet.height <= 0) return;
-      ins.deliver(packet as InspectFrame);
+      if (!packet.valid || packet.width <= 0 || packet.height <= 0) return false;
+      // A frozen display keeps its frame and with it its size: the view transform and the pointer
+      // mapping must keep matching the pixels shown, whatever the camera delivers meanwhile.
+      if (!ins.deliver(packet as InspectFrame)) return false;
       const size = imageSizeRef.current;
       if (!size || size.width !== packet.width || size.height !== packet.height) {
         imageSizeRef.current = { width: packet.width, height: packet.height };
         setImageSize(imageSizeRef.current);
       }
       requestPaint();
+      return true;
     });
     return () => { subscribeFrames(null); ins.dispose(); inspector.current = null; };
   }, [subscribeFrames, onInspection, requestPaint]);

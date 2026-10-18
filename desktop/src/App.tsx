@@ -83,7 +83,8 @@ import { previewIntervalMs } from "./previewPacing";
 import {CameraDocumentEditor,useCameraDocument} from "./cameraDocument";
 import { CoreManagementPanel, useCoreManagement } from "./coreManagement";
 import { rateSummary, RUN_WINDOW, snapRunWindow, type Rect } from "./cameraAlignment";
-import { restoredRunWindow, runModeBlockReason, useCameraWindow, type CameraModeError } from "./cameraWindow";
+import { classicModeNotice, restoredRunWindow, runModeBlockReason, useCameraWindow, type CameraModeError } from "./cameraWindow";
+import { ClassicModeNotice } from "./components/ClassicModeNotice";
 import { latencyReadout, linkReadout, sensorReadout } from "./linkHealth";
 import { RunWindowNotice } from "./components/RunWindowNotice";
 import { RunRateControl } from "./components/RunRateControl";
@@ -416,15 +417,33 @@ export default function App() {
     return liveCanvasRef.current;
   }, []);
 
-  // Draw only the pixels owned by this exact immutable pull response.
+  // The display rate: frames actually shown, by the classic canvas or by the workspace's Align view.
+  const countDisplayed = useCallback((meta: FramePacket) => {
+    const r = ratesRef.current;
+    r.frames += 1;
+    r.bytes += meta.byte_len;
+    r.lastFrameIndex = meta.frame_index;
+    const now = performance.now();
+    const elapsed = now - r.windowStartMs;
+    if (elapsed >= 1000) {
+      r.displayFps = (r.frames * 1000) / elapsed;
+      r.dataRateMBs = (r.bytes * 1000) / elapsed / (1024 * 1024);
+      r.frames = 0;
+      r.bytes = 0;
+      r.windowStartMs = now;
+      setRatesTick((t) => t + 1);
+    }
+  }, []);
+
+  // Draw only the pixels owned by this exact immutable pull response. True when it was drawn.
   const draw = useCallback(
-    (meta: FramePacket, canvas: HTMLCanvasElement | null) => {
-      if (!meta.valid || !canvas) return;
+    (meta: FramePacket, canvas: HTMLCanvasElement | null): boolean => {
+      if (!meta.valid || !canvas) return false;
       const bytes = meta.data;
       canvas.width = meta.width;
       canvas.height = meta.height;
       const ctx = canvas.getContext("2d");
-      if (!ctx) return;
+      if (!ctx) return false;
       ctx.putImageData(mono8ToImageData(bytes, meta.width, meta.height, meta.stride_bytes), 0, 0);
       // Camera & Alignment: the experiment window over a full-sensor image.
       const geometry = cameraGeometryRef.current, experimentWindow = cameraWindowRef.current;
@@ -454,22 +473,10 @@ export default function App() {
         lastMetadataRenderMs.current = performance.now();
         setLastMeta(metadata);
       }
-      const r = ratesRef.current;
-      r.frames += 1;
-      r.bytes += meta.byte_len;
-      r.lastFrameIndex = meta.frame_index;
-      const now = performance.now();
-      const elapsed = now - r.windowStartMs;
-      if (elapsed >= 1000) {
-        r.displayFps = (r.frames * 1000) / elapsed;
-        r.dataRateMBs = (r.bytes * 1000) / elapsed / (1024 * 1024);
-        r.frames = 0;
-        r.bytes = 0;
-        r.windowStartMs = now;
-        setRatesTick((t) => t + 1);
-      }
+      countDisplayed(meta);
+      return true;
     },
-    [],
+    [countDisplayed],
   );
 
   const applyEvents = useCallback((events: BridgeEvent[]) => {
@@ -500,10 +507,14 @@ export default function App() {
 
   useEffect(() => {
     const scheduler = framePulls.current;
-    const live = scheduler.mount("live", p => { draw(p, activeLiveCanvas()); alignFrameSink.current?.(p); }, e => append(`frame error: ${e}`));
+    const live = scheduler.mount("live", p => {
+      const drawn = draw(p, activeLiveCanvas());
+      // A frame only the workspace shows still counts in the display rate (not while it is frozen).
+      if (alignFrameSink.current?.(p) && !drawn) countDisplayed(p);
+    }, e => append(`frame error: ${e}`));
     const review = scheduler.mount("review", p => draw(p, reviewCanvasRef.current), e => append(`review frame error: ${e}`));
     return () => { live(); review(); };
-  }, [draw, activeLiveCanvas, append]);
+  }, [draw, activeLiveCanvas, append, countDisplayed]);
 
   // Navigation/config/source changes retire presentation replies only.
   useEffect(() => { framePulls.current.invalidate(); }, [tab, reviewPath, camStatus]);
@@ -593,12 +604,17 @@ export default function App() {
 
   // ---- Camera discovery/selection (BE-2) + camera actions ----
 
+  // Config reads overlap (a write's readback, another write's, the boot read): one that answers
+  // after a newer one is dropped, so an old processing ROI never replaces a newer readback (A3).
+  const configReads = useRef({ started: 0, shown: 0 });
   const refreshConfig = useCallback(async (discardDraft=false) => {
     const generation=configGeneration();
     const quickToken=quickGeneration();
+    const seq = ++configReads.current.started;
     try {
       const doc = await bridge.fetchProcessingConfigJson();
-      if (doc.valid) {
+      if (doc.valid && seq > configReads.current.shown) {
+        configReads.current.shown = seq;
         const parsed = JSON.parse(doc.json);
         acceptConfig(JSON.stringify(parsed, null, 2),discardDraft,generation);
         setBackgroundSet(Boolean(parsed.background_set));
@@ -1154,47 +1170,57 @@ export default function App() {
 
   // Qt parity (MainWindow tab change): Camera & Alignment shows the whole sensor, Experiment the
   // saved window, other tabs leave the camera as it is; never during a run. A running capture
-  // restarts in the new mode (backend). One function, used by the classic tab change and by the
-  // workspace's explicit "Show the full sensor" / "Switch to Align" button (A3); the workspace
-  // never calls it on navigation.
-  // Set when the workspace switched the mode: leaving it lets the classic tab apply its own mode again.
-  const modeFromWorkspace = useRef(false);
-  const applyCameraMode = useCallback(async (target: "overview" | "experiment", cancelled: () => boolean = () => false) => {
+  // restarts in the new mode (backend). One function, used by the classic tab change, by the
+  // workspace's explicit "Show the full sensor" / "Switch to Align" button (A3) and by the classic
+  // notice's button after the workspace changed the mode; the workspace never calls it on
+  // navigation, and leaving the workspace never calls it. Resolves true when the camera is in the
+  // target mode afterwards (switched, or already there).
+  // True when the workspace switched the mode, or a classic switch was skipped while it was open:
+  // the classic tab then shows the mismatch with an explicit switch (ClassicModeNotice).
+  const [classicModeStale, setClassicModeStale] = useState(false);
+  const [classicModeBusy, setClassicModeBusy] = useState(false);
+  const applyCameraMode = useCallback(async (target: "overview" | "experiment", cancelled: () => boolean = () => false): Promise<boolean> => {
     const geometry = await refreshCameraGeometry();
-    if (cancelled() || expActive) return;
+    if (cancelled() || expActive) return false;
     if (instrumentModes) {
       // PZ7035 (#501 P1): the backend owns the switch (LED, cell path, producer timing).
       const want = target === "overview" ? "align" : "run";
       const current = instrumentRef.current?.mode;
       const win = cameraWindowRef.current ? snapRunWindow(cameraWindowRef.current) : null;
       // No placed window: stay as we are; the Experiment tab says so and offers the way there.
-      if (want === "run" && (!win || !cameraWin.placedRef.current)) return;
-      if (current?.name === want && (want === "align" || (current.run_x === win!.x && current.run_y === win!.y))) { setModeError(null); return; }
+      if (want === "run" && (!win || !cameraWin.placedRef.current)) return false;
+      if (current?.name === want && (want === "align" || (current.run_x === win!.x && current.run_y === win!.y))) { setModeError(null); return true; }
       // A stopped Run holds the frames the operator stopped to review: a tab change must not silently discard them (the backend refuses the
       // switch as well). Resume Run ends it, and this effect then switches to the tab's mode.
       if (instrumentRef.current?.ring?.run_frozen) {
         append("Run is stopped to review the buffered frames: Resume Run before changing the camera mode");
-        return;
+        return false;
       }
       append(want === "align" ? "switching to Align (full sensor)…" : `switching to Run at (${win!.x}, ${win!.y})…`);
       const result = await bridge.setInstrumentMode(want, win?.x ?? 0, win?.y ?? 0);
       append(result.ok ? result.message : `Camera mode: ${result.message}`);
-      if (cancelled()) return;
+      if (cancelled()) return result.ok;
       setModeError(result.ok ? null : {mode: want, message: result.message});
       setRunning(result.ok && want === "align");
       await refreshCameraGeometry();
-      return;
+      return result.ok;
     }
-    if (!geometry?.supported) return;
+    if (!geometry?.supported) return false;
     const overview = target === "overview";
-    if (geometry.overview === overview) return;
+    if (geometry.overview === overview) return true;
     const result = await bridge.setCameraOverview(overview);
     append(result.ok ? result.message : `Camera mode: ${result.message}`);
     setModeError(result.ok ? null : {mode: overview ? "align" : "run", message: result.message});
     if (!cancelled()) await refreshCameraGeometry();
+    return result.ok;
   }, [expActive, refreshCameraGeometry, append, instrumentModes, cameraWin.placedRef]);
   useEffect(() => {
     if (!ready || (tab !== "overview" && tab !== "experiment")) return;
+    // While the workspace is shown the hidden classic tab switches nothing (a dependency change,
+    // such as a Run window placed in Align, would otherwise act behind the operator); the classic
+    // view says so when it is shown again, with an explicit switch.
+    if (workspaceStageRef.current !== null) { setClassicModeStale(true); return; }
+    setClassicModeStale(false);
     let cancelled = false;
     void applyCameraMode(tab, () => cancelled);
     return () => { cancelled = true; };
@@ -1216,14 +1242,20 @@ export default function App() {
   }, [ready, alignShown, refreshCameraGeometry]);
   // The workspace's explicit mode button: the classic tab's switch, never sent on navigation.
   const switchFromWorkspace = useCallback(async () => {
-    modeFromWorkspace.current = true;
+    setClassicModeStale(true);
     await applyCameraMode("overview");
   }, [applyCameraMode]);
-  const exitWorkspace = useCallback(() => {
-    setWorkspaceStage(null);
-    // The workspace changed the camera mode: the classic tab applies its own again (as on entry).
-    if (modeFromWorkspace.current) { modeFromWorkspace.current = false; setModeRetry((n) => n + 1); }
-  }, []);
+  // Leaving the workspace never acts: a mode the workspace changed is shown, not reverted.
+  const exitWorkspace = useCallback(() => setWorkspaceStage(null), []);
+  const modeNotice = workspaceStage === null ? classicModeNotice({
+    stale: classicModeStale, tab, instrumentModes, instrumentMode: instrument?.mode?.name, geometry: cameraGeometry,
+    windowPlaced: cameraWin.placed, expActive, runFrozen: !!instrument?.ring?.run_frozen,
+  }) : null;
+  const applyClassicMode = useCallback(async () => {
+    if (tab !== "overview" && tab !== "experiment") return;
+    setClassicModeBusy(true);
+    try { if (await applyCameraMode(tab)) setClassicModeStale(false); } finally { setClassicModeBusy(false); }
+  }, [tab, applyCameraMode]);
   // The workspace's ROI quick control writes through the classic tab's commands, and answers with
   // the readback read after the write.
   const writeAlignRoi = useCallback(async (kind: RoiKind, rect: Rect): Promise<WriteResult<Rect>> => {
@@ -1809,6 +1841,7 @@ export default function App() {
           {caps.reanalysis && <ReanalysisStatus model={reanalysis}/>}
           <ExportStatus model={reviewExport} />
           <div className="tab-body">
+            {modeNotice && <ClassicModeNotice notice={modeNotice} busy={classicModeBusy} onApply={() => void applyClassicMode()} />}
             <PanelErrorBoundary>{() => <>
             <div hidden={tab !== "connect"}>
               <HardwareControls ready={ready} experimentActive={expActive} append={append} capabilities={caps}
