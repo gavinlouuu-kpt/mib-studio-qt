@@ -196,7 +196,7 @@ the coordinator (ADR 0004/0011).
 |---|---|---|---|---|
 | S1 | One overlay kernel | none | none | merged (#721) |
 | S2 | Reanalysis engine in `mib_review_core` | none | none | merged (#721) |
-| S3 | Export engine in `mib_review_core` | none | none | in review |
+| S3 | Export engine in `mib_review_core` | none | none | in review (#724) |
 | S4 | Charts JSON and saved-overlay builders | none | none | planned |
 | S5 | The facade owns the ReviewSession | none (D1 (a): unchanged) | none | planned |
 | S6 | Parity harness: a MIB Studio half | none | none | planned |
@@ -266,7 +266,7 @@ the coordinator (ADR 0004/0011).
   fallback) now compiles in the review core on macOS and Windows; the review
   CI lanes (`review-ci.yml`) must stay green there.
 
-### S3 — Export engine in `mib_review_core` (in review)
+### S3 — Export engine in `mib_review_core` (in review, #724)
 
 - **Moves:** the facade's `submitReviewExportJson` worker (one
   `HdfExportService` run per source, per-file results, the batch rule
@@ -305,7 +305,7 @@ the coordinator (ADR 0004/0011).
   (`ExportCancelPolling::Direct` / `AtProgress`, both kept; S7 can unify
   them). A single-source export cancelled before it started reports
   `"error":""` (kept).
-- **Proof (this PR):** `review.export_engine` (new): parse defaults / every
+- **Proof (#724):** `review.export_engine` (new): parse defaults / every
   field / 12 exact refusal messages; single All and metrics-batch round trips;
   status snapshots byte for byte (validating, progress, terminal of single,
   batch, cancelled, failed, cancel-before-start, start failure); continue on
@@ -592,7 +592,7 @@ bridge contract):
 - [x] 2026-10-18 — S1 one overlay kernel (`review.overlay_kernel`).
 - [x] 2026-10-18 — S2 reanalysis engine (`review.reanalysis`).
 - [x] 2026-10-19 — S1 and S2 merged (#721); D1, D3, D4 and D6 ruled, D7 amended (#717, #722).
-- [x] 2026-10-19 — S3 export engine (`review.export_engine`); `review::writeMetricsCsv` deleted (F14).
+- [x] 2026-10-19 — S3 export engine (`review.export_engine`, #724); `review::writeMetricsCsv` deleted (F14).
 - [ ] S4 charts JSON and saved-overlay builders
 - [ ] S5 facade owns the ReviewSession (D1)
 - [ ] S6 parity harness MIB Studio half
