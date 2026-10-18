@@ -41,6 +41,7 @@ What becomes easier/harder; what future agents must respect.
 | [0011](0011-yofo-studio-pz7035-instrument.md) | YOFO Studio for the PZ7035: science in the PL, one trunk, contracts shared with the PL | accepted |
 | [0013](0013-motion-stage-device-class.md) | Motorized stages are a separate device class behind `IMotionStage` (Amendment 1, 2026-10-06: no homing) | proposed |
 | [0014](0014-yofo-review-on-react-tauri.md) | YOFO Review ships the Review tab as a React + Tauri product | accepted |
+| [0015](0015-experiment-run-chapter-identity.md) | Experiments group runs; one file per sample; chapters are recorded, never inferred | accepted |
 
 Decisions made before this index existed live implicitly in
 [`../architecture/`](../architecture/) and the vault

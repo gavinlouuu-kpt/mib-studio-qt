@@ -322,6 +322,168 @@
         18,
         27
       ]
+    },
+    "fold_in": {
+      "file_id": "2c3c14b3-8959-40f7-a29c-2e6202e341b6",
+      "page_id": "202e7953-c6e1-8109-8008-ca01abeab5bf",
+      "name": "PROPOSED · MIB Studio fold-in (eGrabber + iQue lessons) · 2026-10-14",
+      "revn_checked": 54,
+      "decisions": "docs/decisions/0015-experiment-run-chapter-identity.md",
+      "note": "docs/design/egrabber-workspace/FORECYT.md",
+      "views": [
+        {
+          "view": 0,
+          "purpose": "00 · Fold-in map",
+          "board_id": "8b742b76-d59d-4cf7-ae47-de4f40f3d46f",
+          "slice": "S1"
+        },
+        {
+          "view": 1,
+          "purpose": "01 · Prepare: readiness, run plan, calibration record",
+          "board_id": "14a7d154-9465-4525-b781-ec51ed7edc3d",
+          "slice": "S3, S4"
+        },
+        {
+          "view": 2,
+          "purpose": "03 · Experiment · Plan",
+          "board_id": "d6bbb202-e10c-4a77-ad10-b49b8ded7c0b",
+          "slice": "S5"
+        },
+        {
+          "view": 3,
+          "purpose": "03 · Experiment · Live (queue, stepper, pinned cell)",
+          "board_id": "368c693c-68ea-42be-92a0-2553f704b158",
+          "slice": "S5"
+        },
+        {
+          "view": 4,
+          "purpose": "04 · Review · Run overview (chapters, per-sample statistics)",
+          "board_id": "2b5022ad-4791-4710-a352-f3bb4cbb8545",
+          "slice": "S6"
+        },
+        {
+          "view": 5,
+          "purpose": "04 · Review · Inspector + population criteria",
+          "board_id": "be010d21-d507-4422-8f1a-61b0e48b6ecc",
+          "slice": "reference only (#523 FJ04)"
+        },
+        {
+          "view": 6,
+          "purpose": "04 · Review · Compare",
+          "board_id": "5cd0129c-264a-4861-bd23-21b7cff7b280",
+          "slice": "reference only (#314, #523 FJ09)"
+        }
+      ],
+      "pages": {
+        "operation_app": {
+          "page_id": "abaacf41-dfaf-500a-bc29-e6aa946d3273",
+          "name": "Operation app",
+          "views": [
+            {
+              "view": "O0",
+              "purpose": "Operation app map",
+              "board_id": "7ad763ec-7b0a-408f-bef9-ef9f3d25dcf1",
+              "slice": "S1"
+            },
+            {
+              "view": "O1",
+              "purpose": "Prepare · readiness, run plan, calibration record",
+              "board_id": "e4c8fe07-f21c-45cb-9f8d-0045e350da41",
+              "slice": "S3, S4"
+            },
+            {
+              "view": "O2",
+              "purpose": "Align · quick controls, focus/LED, overrides",
+              "board_id": "7832aa3b-faed-4e2c-ae5c-0b72f1e4fecb",
+              "slice": "S2"
+            },
+            {
+              "view": "O3",
+              "purpose": "Experiment · Plan",
+              "board_id": "14db68fb-c9d2-4e21-ae5a-bd4291fc6273",
+              "slice": "S5"
+            },
+            {
+              "view": "O4",
+              "purpose": "Experiment · Live",
+              "board_id": "22f62c97-3b47-43f4-bb9c-96eb2be8c257",
+              "slice": "S5"
+            },
+            {
+              "view": "O5",
+              "purpose": "Experiment · Run summary",
+              "board_id": "eb7b196d-6e3e-47c2-bb65-183b19329704",
+              "slice": "S5"
+            },
+            {
+              "view": "O6",
+              "purpose": "Experiment · Quick look (descriptive only)",
+              "board_id": "d8579b82-5140-4ee0-8205-d9f19862d237",
+              "slice": "S5"
+            }
+          ]
+        },
+        "review_app": {
+          "page_id": "6dcbad3e-bdc3-5c94-9a59-1307866b24c8",
+          "name": "Review app",
+          "views": [
+            {
+              "view": "R0",
+              "purpose": "Review app map",
+              "board_id": "643f5337-5992-46b6-9854-4b5ccf638c76",
+              "slice": "reference (#512)"
+            },
+            {
+              "view": "R1",
+              "purpose": "Open · experiment library",
+              "board_id": "9c08bf87-acdb-4e3e-aa68-c84fe430a1ae",
+              "slice": "reference (#512)"
+            },
+            {
+              "view": "R2",
+              "purpose": "Overview · per-run counts, small multiples",
+              "board_id": "f1003b66-4b1c-48f7-96eb-ed08b68e3ec4",
+              "slice": "S6"
+            },
+            {
+              "view": "R3",
+              "purpose": "Inspect · record, image, stored vs reprocessed",
+              "board_id": "dcdbaa6b-9790-4e69-bea4-936747f588b1",
+              "slice": "S6"
+            },
+            {
+              "view": "R4",
+              "purpose": "Populations · analysis plan, statistics, worker",
+              "board_id": "a65dfe20-fb6c-4629-96e2-2c098998c094",
+              "slice": "reference (#523 FJ04)"
+            },
+            {
+              "view": "R5",
+              "purpose": "Compare",
+              "board_id": "3c1618f7-f60c-445e-abcd-ce2354c247fa",
+              "slice": "reference (#314, #523 FJ09)"
+            },
+            {
+              "view": "R6",
+              "purpose": "Export",
+              "board_id": "1f19ee2f-b36b-481a-afad-b110567072cf",
+              "slice": "reference (#523)"
+            }
+          ]
+        },
+        "ui_language": {
+          "page_id": "1e1b66e2-283d-5c13-8083-7bc37a320cfd",
+          "name": "UI language",
+          "views": [
+            {
+              "view": "U0",
+              "purpose": "Chips, vocabulary, colours, chart, record identity, card anatomy",
+              "board_id": "80ae0c94-466d-4f46-babd-b131d5fef13b",
+              "slice": "all"
+            }
+          ]
+        }
+      }
     }
   }
 }

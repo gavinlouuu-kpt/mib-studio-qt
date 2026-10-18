@@ -15,6 +15,7 @@ No hardware commands, bridge ABI, dependencies or production routes are changed.
 - [Reviewed v2 interaction reference](docs/design/egrabber-workspace/prototype.html)
 - [Staged execution plan](docs/exec-plans/active/2026-10-14-egrabber-workspace.md)
 - [Reference provenance and machine-readable Penpot registry](docs/design/egrabber-workspace/reference.json)
+- [High-throughput cytometry lessons and ADR 0015 experiment/run/chapter identity](docs/design/egrabber-workspace/FORECYT.md)
 
 The seven-view interaction reference covers the later engineering refinements. It
 does not replace the full Prepare / Align / Experiment / Review workspace specification.
