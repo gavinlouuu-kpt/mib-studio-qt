@@ -11,6 +11,7 @@ import type { ReadinessGate } from "../eventAdapter";
 import type { PreflightInput } from "../preflight";
 import { PREPARE_READINESS_POLL_MS } from "./prepareModel";
 import { Workspace, type WorkspaceProps } from "./Workspace";
+import type { AlignFacts } from "./alignControls";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
@@ -27,10 +28,16 @@ const readinessReply = () => ({ transport_version: JSON_TRANSPORT.version, valid
 
 let host: HTMLDivElement, root: Root;
 const onStage = vi.fn(), onExit = vi.fn(), onConfirm = vi.fn(), onOpenSetup = vi.fn(), onRefreshChecks = vi.fn();
+const FACTS: AlignFacts = {
+  pz7035: false, instrumentModes: false, hostProcessing: true, geometry: null, instrumentMode: null, runFrozen: false, modeError: "",
+  appliedRunWindow: null, placedRunWindow: null, processingRoi: null, runFps: null, experimentActive: false, running: false,
+};
+const onSwitchMode = vi.fn(async () => {}), writeRoi = vi.fn(), subscribeFrames = vi.fn();
 const props = (over: Partial<WorkspaceProps> = {}): WorkspaceProps => ({
   brand: "MIB Studio", source: "Mock camera", method: "", stage: 0, onStage, onExit, serviceMode: false,
   preflightInput: INPUT, zStage: null, signature: "sig-now", confirmedFor: "", onConfirm, confirmLockedReason: "",
-  experimentActive: false, onRefreshChecks, onOpenSetup, ...over,
+  experimentActive: false, onRefreshChecks, onOpenSetup,
+  align: { facts: FACTS, subscribeFrames, onSwitchMode, writeRoi, lockedReason: "" }, ...over,
 });
 const render = (over: Partial<WorkspaceProps> = {}) => act(async () => root.render(<Workspace {...props(over)} />));
 const advance = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
@@ -220,14 +227,28 @@ describe("stages only navigate", () => {
     expect(calls().every((c) => c.cmd === "fetch_experiment_readiness")).toBe(true);
   });
 
-  it("the other stages say they are not in the workspace yet and offer the way back", async () => {
-    for (const [stage, name] of [[1, "Align"], [2, "Experiment"], [3, "Review"]] as const) {
+  it("Experiment and Review say they are not in the workspace yet and offer the way back", async () => {
+    for (const [stage, name] of [[2, "Experiment"], [3, "Review"]] as const) {
       await render({ stage });
       expect(host.textContent).toContain(`Not yet in the workspace · ${name}`);
       await act(async () => button("Back to the classic view").click());
     }
-    expect(onExit).toHaveBeenCalledTimes(3);
+    expect(onExit).toHaveBeenCalledTimes(2);
     expect(calls().length).toBe(0); // no stage but Prepare reads anything
+  });
+
+  it("Align (O2) has content now; opening it sends nothing, switches nothing and writes nothing", async () => {
+    await render({ stage: 1 });
+    expect(host.querySelector("[data-testid=workspace-align]")).not.toBeNull();
+    expect(host.textContent).not.toContain("Not yet in the workspace");
+    expect(host.querySelector("[data-testid=workspace-preview-chip]")!.textContent).toBe("Preview · acts only on a button");
+    await advance(5000);
+    expect(calls().length).toBe(0);
+    expect(onSwitchMode).not.toHaveBeenCalled();
+    expect(writeRoi).not.toHaveBeenCalled();
+    expect(subscribeFrames).toHaveBeenCalledTimes(1); // the one sink for the classic preview's frames
+    await act(async () => button("All features · classic view").click());
+    expect(onExit).toHaveBeenCalledTimes(1);
   });
 
   it("Camera setup leaves for the classic Connect tab without a command", async () => {

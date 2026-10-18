@@ -31,8 +31,13 @@ interface Options {
   /** Shared with callers that read the window outside React (the canvas draw loop). */
   windowRef?: {current: Rect | null};
   append: (line: string) => void;
-  refreshGeometry: () => Promise<unknown>;
+  /** Reads the geometry again; its answer is the readback after a save. */
+  refreshGeometry: () => Promise<CameraGeometry | null | void>;
 }
+
+/** What a save did: the window it placed or saved, the backend's answer, and the geometry read
+ *  after it (null on the PZ7035, where the Run window is applied later, by the switch to Run). */
+export interface WindowSave {ok: boolean; message: string; window: Rect; geometry: CameraGeometry | null}
 
 export function useCameraWindow({instrumentModes, geometryRef, expActive, append, refreshGeometry, windowRef: sharedWindowRef}: Options) {
   const [window, setWindow] = useState<Rect | null>(null);
@@ -61,22 +66,24 @@ export function useCameraWindow({instrumentModes, geometryRef, expActive, append
     setPlaced(true);
   }, []);
 
-  const save = useCallback(async (rect: Rect) => {
+  const save = useCallback(async (rect: Rect): Promise<WindowSave | null> => {
     if (instrumentModes) {
       // The Run window is applied (and saved) by the switch to Run when Experiment opens.
       const snapped = snapRunWindow(rect);
       setWindow(snapped);
       setPlaced(true);
-      append(`Run window (${snapped.x}, ${snapped.y}) 512×96: applied when Experiment opens`);
-      return;
+      const message = `Run window (${snapped.x}, ${snapped.y}) 512×96: applied when Experiment opens`;
+      append(message);
+      return {ok: true, message, window: snapped, geometry: null};
     }
     const geometry = geometryRef.current;
-    if (!geometry?.supported) return;
+    if (!geometry?.supported) return null;
     const snapped = snapWindow(rect, geometry);
     setWindow(snapped);
     const result = await bridge.saveCameraRoi(snapped.x, snapped.y, snapped.width, snapped.height);
     append(result.ok ? result.message : `Camera ROI not saved: ${result.message}`);
-    await refreshGeometry();
+    const after = await refreshGeometry();
+    return {ok: result.ok, message: result.message, window: snapped, geometry: after ?? null};
   }, [append, refreshGeometry, instrumentModes, geometryRef]);
 
   const canvasPoint = (e: ReactPointerEvent<HTMLCanvasElement>) => {

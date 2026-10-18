@@ -56,9 +56,12 @@ The repo root `src/` is the C++ tree, so the whole Tauri app lives under
 - `desktop/src/confirmationSignature.ts` — pure Preflight confirmation
   signature (#713), with `confirmationSignature.test.ts`.
 - `desktop/src/workspace/` — the opt-in four-stage workspace on the `@mib/ui`
-  kit (P1/P2, #713): `Workspace.tsx` (shell, stages), `PrepareView.tsx` (O1),
+  kit (P1/P2, #713; P3 Align, #716 A3): `Workspace.tsx` (shell, stages), `PrepareView.tsx` (O1),
   `prepareModel.ts` (pure tones and summaries), `usePrepareReadiness.ts`
-  (path-less readiness poll). See "Opt-in workspace" below.
+  (path-less readiness poll), `AlignView.tsx` (O2), `alignImageModel.ts` (view transform,
+  probe, histogram, profile, `FrameInspector`), `quickControlModel.ts` + `useQuickControl.ts`
+  (requested → readback machine), `alignControls.ts` (which controls an instrument offers).
+  See "Opt-in workspace" below.
 - `desktop/src/experimentCounters.ts` — operator saved counts by class, pending
   saves derived with exact u64 arithmetic, policy drops and writer failures
   from the existing experiment status fields (#546); Vitest covers labels.
@@ -136,8 +139,9 @@ LED on a service setting. Tests: `workflow.test.ts` (#548), `preflight.test.ts` 
 
 `desktop/src/workspace/Workspace.tsx` is the four-stage Prepare / Align / Experiment /
 Review shell on the `@mib/ui` kit (`AppShell`, `StageTabs`, `Toolbar`, `Card`, `FactList`,
-`StateChip`, `Button`, `Notice`), the Operation app's step A1 (#716). The kit stylesheets are
-imported once, there; `workspace.css` only places cards with the kit's spacing tokens.
+`StateChip`, `Button`, `Notice`, `DataTable`), the Operation app's steps A1 and A3 (#716). The kit
+stylesheets are imported once, there; `workspace.css` only places cards with the kit's spacing
+tokens (and styles the app-local number fields of the quick controls, until the kit has one).
 
 - **Opt-in, session only.** The menu row's "Workspace preview" button opens it; "Classic
   view" closes it. The flag is plain React state: every start and every reload opens the
@@ -146,7 +150,8 @@ imported once, there; `workspace.css` only places cards with the kit's spacing t
   classic tree mounts, unmounts or changes tab because of it; the status bar and log stay.
 - **Navigation never actuates.** The workspace never changes the classic `tab`: a classic tab
   change can act (Camera & Alignment switches the camera to the full sensor, and the PZ7035 to
-  Align with its LED; Experiment to Run). Stages only change what is shown. Align,
+  Align with its LED; Experiment to Run). Stages only change what is shown. In Align the
+  same switch is a button the operator presses ("Show the full sensor" / "Switch to Align").
   Experiment and Review say "Not yet in the workspace" and offer "Back to the classic view".
   Prepare's "Camera / Focus / Pump setup" leave for the classic Connect tab, which only reads.
   The classic startup landing is skipped when the workspace is already open.
@@ -185,15 +190,62 @@ imported once, there; `workspace.css` only places cards with the kit's spacing t
     `confirmBlockers`).
   - When it is available but a gate refuses Start, a warn Notice says so ("Start will be
     refused until: Processing core — activate the pinned core"; `startRefusalText`).
-- **Gate (P1).** `workspace/navigation.test.tsx` runs the whole App over a mocked transport,
-  desktop and PZ7035: opening the workspace, visiting every stage, leaving, coming back and
-  Camera setup add no command to the idle app's steady state except
-  `fetch_experiment_readiness` with `outputPath: ""`, and nothing that acts; a control shows the
-  classic Camera & Alignment tab does send `set_camera_overview` / `set_instrument_mode`.
-  `Workspace.test.tsx` proves Prepare polling never passes a path; `prepareModel.test.ts`
-  covers the derivations.
+- **Align (O2, P3; #716 A3).** Penpot board O2 (`7832aa3b-faed-4e2c-ae5c-0b72f1e4fecb`, read at
+  revn 218). Two cards: the live image and the quick controls.
+  - **The image is the classic preview's stream.** App's `live` frame view hands every packet it
+    already pulled (`fetch_frame_packet`, at the display rate) to one sink after the classic
+    draw (`subscribeAlignFrames`); there is no second capture path, and the sink only keeps a
+    reference. `FrameInspector` computes the histogram (at most 65,536 pixels on a regular grid)
+    and the line profile (at most 1,024 points) from the newest frame at most every 250 ms, on a
+    timer, never in the delivery callback; frames in between are skipped, not queued. Painting
+    is one `requestAnimationFrame` per delivery at most.
+  - **Image tools:** fit, 1:1, zoom (+ / −, wheel, keys) about the cursor, pan by drag or arrow
+    keys (`alignImageModel.ts`: one transform, clamped so the image never leaves the view), a
+    pixel probe (coordinates and the raw Mono8 value through the row stride), a click pins the
+    point the row or column profile runs through, the ROI outlined when the frame is the area it
+    is placed on, and "Freeze display", which holds the shown frame while capture and polling go
+    on.
+  - **Quick controls (requested → readback).** Only what the classic tab can write, through its
+    commands: the camera ROI (`save_camera_roi` via `useCameraWindow.save`, readback the
+    geometry read after the save), the PZ7035 Run window (placed, applied by the switch to Run;
+    readback `restoredRunWindow` of `fetch_instrument_status.mode`) or the processing ROI
+    (`set_processing_roi`, the classic Apply ROI's `applyProcessingRoi`; readback the applied
+    config's `roi`). Exposure and frame rate are read-only readbacks of
+    `fetch_camera_geometry.session` (Aravis; "Unavailable · not reported" otherwise), the
+    PZ7035 Run rate and exposure read-only from `fetch_run_fps` (set in the camera document),
+    gain "Unavailable · not bridged". `alignControls.ts` derives the rows from the capabilities.
+    `quickControlModel.ts` is the machine: bounds and increments are checked before sending
+    (off-step values snapped with a note, out-of-range refused with the range); a write is
+    pending until its own reply, whose readback is read after the write; a readback seen
+    meanwhile never settles it; a refusal shows the reason and restores the readback; no reply
+    in 5 s (`WRITE_TIMEOUT_MS`) shows "Timed out" and the readback, and the late reply is
+    ignored (stale token). Geometry reads that answer out of order are dropped
+    (`geometryReads` in App), so a readback from before a write never replaces one from after.
+    Locked while a run is active. All features, the XML and scripts stay in the classic view.
+  - **The mode switch is a button.** `alignMode` offers the classic tab's entry switch when the
+    image is not the full sensor (desktop camera with geometry: "Show the full sensor",
+    `set_camera_overview(true)`; PZ7035 outside Align: "Switch to Align", `set_instrument_mode`),
+    disabled during a run or while a stopped Run holds its frames. App's `applyCameraMode` is
+    the one function behind the classic tab change and this button. If the workspace switched
+    the mode, leaving it lets the classic tab apply its own mode again (`modeRetry`).
+  - While Align is shown, App polls `fetch_camera_geometry` every 2 s, as the classic tab does.
+- **Gate (P1, extended for P3).** `workspace/navigation.test.tsx` runs the whole App over a
+  mocked transport, desktop and PZ7035: opening the workspace, visiting every stage, leaving,
+  coming back and Camera setup add no command to the idle app's steady state except two reads,
+  `fetch_experiment_readiness` with `outputPath: ""` and Align's `fetch_camera_geometry`, and
+  nothing that acts or writes (ROI, config, script, camera selection writes are on the list);
+  visiting Align sends no mode switch, pressing its button sends exactly the classic command,
+  typing in a quick control writes nothing and Write sends `save_camera_roi` (desktop) or
+  nothing (the PZ7035 Run window). A control shows the classic Camera & Alignment tab does send
+  `set_camera_overview` / `set_instrument_mode`. `Workspace.test.tsx` proves Prepare polling
+  never passes a path and Align opens without a command; `AlignView.test.tsx` (StrictMode)
+  covers the image tools on delivered frames and the write states; `prepareModel.test.ts`,
+  `alignImageModel.test.ts`, `quickControlModel.test.ts` and `alignControls.test.ts` cover the
+  derivations.
 - **Not yet (later A-steps):** the other Prepare sub-views, storage budget and run plan,
-  fluidics estimates, the non-default-settings banner, the calibration card.
+  fluidics estimates, the non-default-settings banner, the calibration card; in Align the focus
+  and illumination card, the quality signals, All Features / GenApi XML / scripts, selector
+  enumeration and restoration, and overrides recorded by S2 (#712).
 
 **Quality gates (UX-4 slice, issue #308):** `desktop/src/quality.ts` —
 `deriveQualityGates(input)` turns the Camera & Alignment stage's
