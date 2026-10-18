@@ -221,6 +221,10 @@ int main()
             f.validation.area = 800.0 + static_cast<double>(idx);
             f.validation.brightnessMean = 112.5;
             f.validation.pixelCount = 840;
+            // The PL FRAME record's identity (#712); row 3 is a host-style row without one.
+            f.plRecordIdentity = idx != 3;
+            f.plRunId = f.plRecordIdentity ? 0x1234567890ull + idx : 0;
+            f.plEpoch = f.plRecordIdentity ? 41u : 0u;
             return f;
         };
         MIB_REQUIRE(w.appendFrames({imageless(1, true), imageless(2, true)}, {imageless(3, false)}),
@@ -237,17 +241,25 @@ int main()
                        valid[0].validation.brightnessMean == 112.5 && valid[0].validation.pixelCount == 840,
                    "imageless valid rows round-trip");
         MIB_EXPECT(r.readInvalidMetadata(invalid) && invalid.size() == 1, "imageless invalid row");
+        MIB_EXPECT(valid.size() == 3 && valid[0].plRecordIdentity && valid[0].plRunId == 0x1234567891ull &&
+                       valid[2].plRunId == 0x1234567894ull && valid[2].plEpoch == 41u,
+                   "PL run_id and epoch round-trip per row");
+        MIB_EXPECT(invalid.size() == 1 && !invalid[0].plRecordIdentity && invalid[0].plRunId == 0 &&
+                       invalid[0].plEpoch == 0,
+                   "a row without a PL record reads back without one (not a zero identity)");
         MIB_EXPECT(r.readValidFrames(full) && full.size() == 3 && full[0].originalImage.empty(),
                    "readValidFrames returns metadata-only frames");
         r.closeFile();
     }
 
     // A recording made before Contract 3 has no cell members in its metadata
-    // compound. Rewrite /valid_frames/metadata without them: the reader must
-    // keep the "not present" defaults (NaN brightness, zero counts).
+    // compound, nor the PL record identity (#712). Rewrite /valid_frames/metadata
+    // without them: the reader must keep the "not present" defaults (NaN
+    // brightness, zero counts, no PL identity).
     {
         const char* cellMembers[] = {"brightness_mean", "brightness_variance", "contourArea",
-                                     "pixelCount", "blemishCount", "degenerateContour"};
+                                     "pixelCount", "blemishCount", "degenerateContour",
+                                     "plRunId", "plEpoch", "plIdentity"};
         hid_t file = H5Fopen(path.c_str(), H5F_ACC_RDWR, H5P_DEFAULT);
         MIB_REQUIRE(file >= 0, "open raw HDF handle for the pre-Contract-3 fixture");
         hid_t dset = H5Dopen2(file, "/valid_frames/metadata", H5P_DEFAULT);
@@ -271,7 +283,8 @@ int main()
             }
             H5free_memory(name);
         }
-        MIB_REQUIRE(static_cast<int>(keep.size()) == members - 6, "the file has all six cell members");
+        MIB_REQUIRE(static_cast<int>(keep.size()) == members - 9,
+                    "the file has all six cell members and the three PL identity members");
         hid_t oldType = H5Tcreate(H5T_COMPOUND, size);
         size_t offset = 0;
         for (const auto& [name, mt] : keep) {
@@ -311,6 +324,9 @@ int main()
                        meta[1].validation.blemishCount == 0 &&
                        !meta[1].validation.degenerateContour,
                    "a file without cell members reads them as not present");
+        MIB_EXPECT(meta.size() == 2 && !meta[0].plRecordIdentity && !meta[1].plRecordIdentity &&
+                       meta[0].plRunId == 0 && meta[1].plEpoch == 0,
+                   "a file without the PL identity members reads rows as having none (unknown)");
         reader.closeFile();
     }
 

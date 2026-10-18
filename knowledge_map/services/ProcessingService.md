@@ -180,7 +180,13 @@ All gates in one struct. Notable fields:
 - Target-group gate: `target_group_area_*`, `target_group_deformability_*`,
   `enable_target_group_emodulus` + `target_group_emodulus_*` (uses
   `EModulusLut`, which is now fed from the managed LUT cache prepared by
-  `AppBackend` at startup)
+  `AppBackend` at startup). `eModulusLutIdentity()` returns what was loaded
+  (#712): `loaded`, `path`, the SHA-256 of the file bytes
+  `loadEModulusLut` read (taken at load, so a cache refresh afterwards does not
+  change it), and the catalog labels `AppBackend` sets with
+  `setEModulusLutCatalogIdentity` (`lutId`, `revision`, `source`,
+  `catalogSha256`, `checksumStatus`). The run snapshot v3 `emodulus_lut` block
+  is written from it ([[../data-model/HDF5-Storage]]).
 - Multi-image mode: `multi_image_enabled`, `multi_image_count`
   - **Series identity (realtime).** Every series member is appended through
     `appendSeriesMember` (all five realtime sites: ROI-path start/collect,
@@ -779,7 +785,9 @@ With the science on the PL (`MIB_PL_SCIENCE`), per-frame results come from
 an execution provider instead of the realtime loops.
 `ingestProviderFrame(const ProviderFrame&)` books the run accounting and feeds
 the identification funnel (PL reasons, 8 codes) and the monitoring rows,
-which carry no images. It never fires the target-group callback. See
+which carry no images. It never fires the target-group callback. Every row it
+writes carries the FRAME record's identity (`plRecordIdentity = true`,
+`plRunId`, `plEpoch`, #712), which the HDF5 compound stores per row. See
 [[../data-model/PZ7035-Records]].
 
 Background calibration with the science on the PL:

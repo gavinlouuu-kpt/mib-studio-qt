@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <exception>
+#include <filesystem>
 #include <iterator>
 #include <limits>
 #include <tuple>
@@ -919,7 +920,36 @@ double ProcessingService::getPixelToMicronFactor() const {
 }
 
 bool ProcessingService::loadEModulusLut(const std::string& path) {
-    return eModulusLut_.loadFromFile(path);
+    const bool ok = eModulusLut_.loadFromFile(path);
+    EModulusLutIdentity identity;
+    identity.loaded = ok;
+    std::error_code ec;
+    if (ok && std::filesystem::is_regular_file(path, ec)) {
+        // EModulusLut reads `path` itself when it names a file (its fallback candidates are only
+        // tried when it does not), so these are the bytes that were loaded.
+        identity.path = path;
+        std::string hashError;
+        identity.sha256 = backend::processing::processingCoreFileSha256(path, &hashError);
+        if (identity.sha256.empty()) SPDLOG_WARN("ProcessingService: the loaded E-modulus LUT {} could not be hashed: {}", path, hashError);
+    }
+    std::scoped_lock lk(eModulusLutIdentityMutex_);
+    eModulusLutIdentity_ = std::move(identity);
+    return ok;
+}
+
+ProcessingService::EModulusLutIdentity ProcessingService::eModulusLutIdentity() const {
+    std::scoped_lock lk(eModulusLutIdentityMutex_);
+    return eModulusLutIdentity_;
+}
+
+void ProcessingService::setEModulusLutCatalogIdentity(std::string lutId, std::string revision, std::string source,
+                                                      std::string catalogSha256, std::string checksumStatus) {
+    std::scoped_lock lk(eModulusLutIdentityMutex_);
+    eModulusLutIdentity_.lutId = std::move(lutId);
+    eModulusLutIdentity_.revision = std::move(revision);
+    eModulusLutIdentity_.source = std::move(source);
+    eModulusLutIdentity_.catalogSha256 = std::move(catalogSha256);
+    eModulusLutIdentity_.checksumStatus = std::move(checksumStatus);
 }
 
 // Attach one member to a multi-image series together with its source
@@ -2756,6 +2786,10 @@ void ProcessingService::ingestProviderFrame(const backend::processing::ProviderF
             row.index = idx;
             row.timestampNs = frame.timestampNs;
             row.validation = v;
+            // The PL record's identity (#712): persisted per row, never dropped at ingest.
+            row.plRecordIdentity = true;
+            row.plRunId = frame.runId;
+            row.plEpoch = frame.epoch;
             appendExperimentFrame(std::move(row), v.isValid);
         }
     }

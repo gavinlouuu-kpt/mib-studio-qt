@@ -142,6 +142,25 @@ int main()
         MIB_EXPECT(near(st.currentFlowRate, 10.0), "live flow 10 µL/min");
         MIB_EXPECT(st.accumulatedVolume > 0.0 && st.accumulatedVolume < 0.1,
                    "volume integrates between polls (µL)");
+        // Run facts (#712): the readback is the pump's registers (run state, speed), not the
+        // integrated volume, which the pump does not report.
+        SyringePumpService::RunFacts f;
+        MIB_REQUIRE(svc.runFacts(PumpId::Sample, std::chrono::milliseconds(10), f), "run facts");
+        MIB_EXPECT(f.connected && f.readback.valid && f.readback.lastPollOk &&
+                       f.readback.runStatus == SyringePumpService::RunStatus::Forward &&
+                       f.readback.speedRpm && near(*f.readback.speedRpm, 0.4) && !f.readback.accumulatedVolumeRaw &&
+                       !f.readback.realtimeFlowRaw && !f.readback.stalled,
+                   "peristaltic readback: run state and head speed only");
+        MIB_EXPECT(f.config.model == PumpModel::TushuiPeristaltic && near(f.config.microlitersPerRev, 25.0) &&
+                       near(f.config.flowRate, 10.0),
+                   "setpoint and calibration in the facts");
+        const auto at = f.readback.at;
+        wire.exceptionOnRead = true;
+        svc.pollStatus(PumpId::Sample);
+        wire.exceptionOnRead = false;
+        MIB_REQUIRE(svc.runFacts(PumpId::Sample, std::chrono::milliseconds(10), f), "run facts after a failed poll");
+        MIB_EXPECT(f.readback.valid && !f.readback.lastPollOk && f.readback.at == at,
+                   "a failed poll keeps the older readback, marked");
     }
     MIB_EXPECT(svc.stop(PumpId::Sample), "stop accepted");
     MIB_EXPECT(wire.read(104) == 0, "stop writes run state 0");
@@ -165,6 +184,12 @@ int main()
     svc.disconnect(PumpId::Sample);
     MIB_EXPECT(wire.read(104) == 0, "disconnect stops the pump");
     MIB_EXPECT(!svc.isConnected(PumpId::Sample), "disconnected");
+    {
+        SyringePumpService::RunFacts f;
+        MIB_EXPECT(svc.runFacts(PumpId::Sample, std::chrono::milliseconds(10), f) && !f.connected &&
+                       !f.readback.valid,
+                   "disconnect drops the readback");
+    }
     watchdog.mark("disconnected");
 
     // A silent address fails to connect and leaves the slot disconnected.

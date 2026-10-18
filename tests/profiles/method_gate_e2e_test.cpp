@@ -264,7 +264,8 @@ int main() {
     {
         const auto j = recordRun(out);
         const auto& m = j.at("method");
-        MIB_EXPECT(j.at("schema_version") == 2, "run snapshot schema v2");
+        // v3 (#712) keeps the v2 "method" block unchanged.
+        MIB_EXPECT(j.at("schema_version") == 3, "run snapshot schema v3");
         MIB_EXPECT(m.at("source") == "central" && m.at("revision_id") == "r1" &&
                        m.at("central_state") == "published" && m.at("validation") == "passed" &&
                        m.at("validator_id") == "user-bob" &&

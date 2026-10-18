@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -65,6 +66,28 @@ public:
         double speedRpm{0.0}; // peristaltic head speed setpoint read from the pump
     };
 
+    // The last complete status poll (#712, run snapshot v3): only what the pump
+    // answered in one pollStatus() in which every read succeeded. A command's own
+    // bookkeeping (start, stop, a written flow rate) never lands here, and the
+    // peristaltic pump's integrated volume (computed, not reported) is not part of it.
+    struct PumpReadback {
+        bool valid{false};      // a complete poll answered since connect
+        bool lastPollOk{false}; // the newest poll answered completely
+        std::chrono::steady_clock::time_point at{};
+        RunStatus runStatus{RunStatus::Stop};
+        std::optional<double> speedRpm;             // peristaltic: speed register (rpm)
+        std::optional<double> realtimeFlowRaw;      // dLSP: realtime infuse-flow register (device units)
+        std::optional<double> accumulatedVolumeRaw; // dLSP: accumulated-volume register (device units)
+        std::optional<bool> stalled;                // dLSP: error status bit 3
+    };
+
+    // What a run records about a pump slot: connected, its configuration, the last readback.
+    struct RunFacts {
+        bool connected{false};
+        PumpConfig config;
+        PumpReadback readback;
+    };
+
     // Pump serial I/O goes through the shared RS485 bus layer so a pump and
     // other Modbus devices (e.g. the pulse generator) can share one adapter.
     explicit SyringePumpService(serialbus::SerialBusManager& busManager);
@@ -100,6 +123,11 @@ public:
 
     // Poll current status from pump hardware (call from UI timer)
     void pollStatus(PumpId id);
+
+    // The slot's facts for a run's provenance, copied under the pump's lock. False when the lock is
+    // not free within `wait` (a poll or a command is talking to the pump): the caller records the
+    // pump as unknown instead of holding an experiment Start behind serial I/O. No I/O of its own.
+    bool runFacts(PumpId id, std::chrono::milliseconds wait, RunFacts& out) const;
 
     // Get COM port in use by a specific pump (for port collision avoidance)
     int getComPort(PumpId id) const;
@@ -141,9 +169,11 @@ private:
         std::shared_ptr<serialbus::ModbusBusSession> bus;
         PumpConfig config;
         PumpStatus status;
+        PumpReadback readback;
         bool purging{false};
         std::chrono::steady_clock::time_point lastPoll{};
-        mutable std::mutex mutex;
+        // Timed so runFacts() can give up instead of waiting out a serial timeout.
+        mutable std::timed_mutex mutex;
     };
 
     serialbus::SerialBusManager& busManager_;

@@ -51,6 +51,23 @@ struct LedSetting {
     double delayUs{0.0};
     double widthUs{0.0};
 };
+
+// The strobe registers as read back (#712, run snapshot v3): S[0] control (0 off, 1 XVS sync),
+// S[1] delay and S[2] width in strobe-clock cycles, S[10] the strobe clock in kHz.
+struct LedReadback {
+    uint32_t control{0};
+    uint32_t delayCycles{0};
+    uint32_t widthCycles{0};
+    uint32_t clockKhz{0};
+    bool on() const { return control != 0; }
+    // In µs; false when the block reports no clock (the cycles cannot be converted).
+    bool toMicroseconds(double& delayUs, double& widthUs) const {
+        if (clockKhz == 0) return false;
+        delayUs = delayCycles * 1000.0 / clockKhz;
+        widthUs = widthCycles * 1000.0 / clockKhz;
+        return true;
+    }
+};
 // Presets (docs/YOFO_HOST_INTERFACE.md "LED presets"), each straddling the exposure start: Run at
 // 5 kHz; Align at 400 fps full field (HMAX 232, results8 on); the banded fallback for older images
 // at 500 fps (HMAX 116).
@@ -107,6 +124,8 @@ public:
     bool ledOff(std::string* error);
     // S[0] = 0; S[1], S[2] in strobe-clock cycles; S[4] = S[5] = 0; S[0] = 1 (XVS sync).
     bool setLed(LedSetting setting, std::string* error);
+    // Reads S[0], S[1], S[2] and S[10]; writes nothing.
+    bool readLed(LedReadback& out, std::string* error);
     // S[46] and P[8] bit 4 (the U-Net enable level), together.
     bool setCellPath(bool on, std::string* error);
     bool cellPathOn(std::string* error);

@@ -13,6 +13,7 @@
 
 #include "support/assert.h"
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <memory>
@@ -29,8 +30,15 @@ namespace {
 // SyringePumpService.cpp). Only the two float rates need specific values.
 constexpr uint16_t REG_MIN_FLOW_RATE = 0x004A;
 constexpr uint16_t REG_MAX_FLOW_RATE = 0x004C;
+constexpr uint16_t REG_REALTIME_INFUSE_FLOW = 0x0102;
+constexpr uint16_t REG_ACCUM_VOLUME = 0x00C7;
 
 enum class Mode { Normal, NoResponse, BadCrc };
+
+// Fault switches for the readback section (#712): every FC03 answered with a bad CRC, or not at all.
+std::atomic<bool> gCorruptReads{false};
+std::atomic<bool> gSilentReads{false};
+std::atomic<int> gReadRequests{0};
 
 class FakeSerialPort final : public ISerialPort {
 public:
@@ -70,6 +78,8 @@ private:
 
         const uint8_t func = req[1];
         std::vector<uint8_t> resp;
+        if (func == 0x03) gReadRequests.fetch_add(1);
+        if (func == 0x03 && gSilentReads.load()) return; // -> read timeout
         if (func == 0x03) { // read holding
             const uint16_t startReg = static_cast<uint16_t>((req[2] << 8) | req[3]);
             const uint16_t count = static_cast<uint16_t>((req[4] << 8) | req[5]);
@@ -86,7 +96,7 @@ private:
             return;
         }
 
-        if (mode_ == Mode::BadCrc && !resp.empty()) {
+        if ((mode_ == Mode::BadCrc || (func == 0x03 && gCorruptReads.load())) && !resp.empty()) {
             resp.back() ^= 0xFF; // corrupt trailing CRC byte
         }
         rx_ = std::move(resp);
@@ -96,6 +106,8 @@ private:
     {
         if (startReg == REG_MIN_FLOW_RATE) return m::floatToRegisters(1.5f);
         if (startReg == REG_MAX_FLOW_RATE) return m::floatToRegisters(9999.0f);
+        if (startReg == REG_REALTIME_INFUSE_FLOW) return {0x00, 0x2A}; // 42
+        if (startReg == REG_ACCUM_VOLUME) return m::floatToRegisters(3.25f);
         return std::vector<uint8_t>(static_cast<size_t>(count) * 2, 0);
     }
 
@@ -168,6 +180,54 @@ int main()
         configure(bus, Mode::Normal, /*addr=*/2);
         SyringePumpService svc(bus);
         MIB_EXPECT(!svc.connect(PumpId::Sample, 6, 115200, 1), "wrong-address device does not respond");
+    }
+
+    // 5) Run facts (#712): the readback is the last complete poll, never a command's bookkeeping;
+    //    a failed poll keeps the older readback and says so; a busy pump is not waited out.
+    {
+        using namespace std::chrono_literals;
+        backend::services::serialbus::SerialBusManager bus;
+        configure(bus, Mode::Normal);
+        SyringePumpService svc(bus);
+        SyringePumpService::RunFacts f;
+        MIB_REQUIRE(svc.runFacts(PumpId::Sample, 10ms, f), "facts of an idle slot");
+        MIB_EXPECT(!f.connected && !f.readback.valid, "unconnected slot: no readback");
+        MIB_REQUIRE(svc.connect(PumpId::Sample, 3, 115200, 1), "connect");
+        MIB_REQUIRE(svc.runFacts(PumpId::Sample, 10ms, f), "facts after connect");
+        MIB_EXPECT(f.connected && !f.readback.valid, "connect alone is not a status readback");
+        MIB_EXPECT(svc.setFlowRate(PumpId::Sample, 100.0, 100) && svc.start(PumpId::Sample), "flow set, started");
+        MIB_REQUIRE(svc.runFacts(PumpId::Sample, 10ms, f), "facts after commands");
+        MIB_EXPECT(!f.readback.valid && f.config.flowRate == 100.0 && f.config.flowRateUnit == 100,
+                   "commands change the setpoint, not the readback");
+        svc.pollStatus(PumpId::Sample);
+        MIB_REQUIRE(svc.runFacts(PumpId::Sample, 10ms, f), "facts after a poll");
+        MIB_EXPECT(f.readback.valid && f.readback.lastPollOk &&
+                       f.readback.runStatus == SyringePumpService::RunStatus::Stop &&
+                       f.readback.realtimeFlowRaw == std::optional<double>(42.0) &&
+                       f.readback.accumulatedVolumeRaw == std::optional<double>(3.25) &&
+                       f.readback.stalled == std::optional<bool>(false) && !f.readback.speedRpm,
+                   "a complete poll is the readback, in the pump's own registers");
+        const auto firstAt = f.readback.at;
+        gCorruptReads = true;
+        svc.pollStatus(PumpId::Sample);
+        gCorruptReads = false;
+        MIB_REQUIRE(svc.runFacts(PumpId::Sample, 10ms, f), "facts after a failed poll");
+        MIB_EXPECT(f.readback.valid && !f.readback.lastPollOk && f.readback.at == firstAt,
+                   "a failed poll keeps the older readback and marks the newest poll failed");
+        // A poll stuck on a silent pump holds the slot: runFacts gives up instead of waiting it out.
+        gSilentReads = true;
+        const int before = gReadRequests.load();
+        std::thread poller([&] { svc.pollStatus(PumpId::Sample); });
+        const auto deadline = std::chrono::steady_clock::now() + 10s;
+        while (gReadRequests.load() == before && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(1ms);
+        MIB_EXPECT(gReadRequests.load() > before, "the poll reached the silent pump");
+        MIB_EXPECT(!svc.runFacts(PumpId::Sample, 20ms, f), "a busy pump is reported, not waited for");
+        gSilentReads = false;
+        poller.join();
+        svc.disconnect(PumpId::Sample);
+        MIB_REQUIRE(svc.runFacts(PumpId::Sample, 10ms, f), "facts after disconnect");
+        MIB_EXPECT(!f.connected && !f.readback.valid, "disconnect drops the readback");
     }
 
     if (mib::test::exitCode() == 0) {

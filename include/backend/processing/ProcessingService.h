@@ -567,6 +567,24 @@ public:
     // The loaded LUT (read-only; loaded at bootstrap), e.g. for the PZ7035
     // profile compiler's E-modulus table.
     const EModulusLut& eModulusLut() const { return eModulusLut_; }
+    // Identity of the loaded LUT (#712, run snapshot v3). loadEModulusLut
+    // records the file it read and the SHA-256 of its bytes (empty when the
+    // path does not name a file the hash could read); the shell adds what the
+    // LUT catalog says about it (setEModulusLutCatalogIdentity). Empty strings
+    // are unknown. A failed load clears it (loaded = false).
+    struct EModulusLutIdentity {
+        bool loaded{false};
+        std::string path;
+        std::string sha256;
+        std::string lutId;
+        std::string revision;
+        std::string source;          // catalog source type
+        std::string catalogSha256;   // the catalog's declared hash
+        std::string checksumStatus;  // the catalog's verdict
+    };
+    EModulusLutIdentity eModulusLutIdentity() const;
+    void setEModulusLutCatalogIdentity(std::string lutId, std::string revision, std::string source,
+                                       std::string catalogSha256, std::string checksumStatus);
 
     // Background capture callback for auto-capture (called when background is auto-captured)
     using BackgroundCaptureCallback = std::function<void(const cv::Mat& background, uint64_t frameIndex)>;
@@ -951,6 +969,8 @@ private:
 
     // Young's modulus LUT (read-only after loading, thread-safe)
     EModulusLut eModulusLut_;
+    mutable std::mutex eModulusLutIdentityMutex_;
+    EModulusLutIdentity eModulusLutIdentity_;
 };
 
 } // namespace backend::services

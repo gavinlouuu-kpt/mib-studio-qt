@@ -71,6 +71,10 @@ native CLI: `hdf_export_cli`
   malformed copies fail the export. Files with no contract metadata retain the
   legacy Contract-1 interpretation. The DATA pass is streamed after a range
   pass, so event values are not buffered as a second full dataset.
+  `$MIB_RUN_ID` is the snapshot v3 `run_id` read with
+  `recording::readRecordedRunProvenance` (#712); files without a v3 snapshot,
+  or whose snapshot does not parse, get no `$MIB_RUN_ID` keyword (never an
+  invented id) and still export.
 
 ## Threading
 

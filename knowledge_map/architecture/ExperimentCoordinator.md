@@ -45,7 +45,13 @@
      the presented preflight). Not ready → `NotReady`. LatestFrame without
      acknowledgement → `NotReady`.
   3. Freeze the `RunConfigurationSnapshot` from the evaluated candidate
-     (start generation, host + wall-clock start time, output path).
+     (start generation, host + wall-clock start time, output path), then the
+     snapshot v3 facts (#712): a fresh `run_id` (UUID v4) and
+     `captureRunFacts` (E-modulus LUT identity, pumps, PZ7035 LED strobe
+     registers, Z stage, piezo; see "Snapshot v3 facts" below). On a PL run the
+     PL run id (`RUN_ID`: the SSD run id, otherwise the start time in ms) is
+     chosen here too, after the SSD prepare and before the snapshot is written,
+     so the snapshot names the id the provider is armed with.
   4. Open the HDF5 file + `initializeDatasets()` (`StorageFailed` rolls back
      to Idle), then persist the snapshot **first** via
      `Hdf5Service::writeRunSnapshotJson` (`ProvenanceFailed` closes and
@@ -117,7 +123,13 @@ append only, never renumber.
    core record [[../services/MonitoringDensityService]] handed over through
    `setLiveKdeCoreRecord` (from its backend worker, no shell involved)
    (accepted only while `Active`, cleared at Start; a failed write logs a
-   warning and never changes the run outcome).
+   warning and never changes the run outcome). The stop record (#712)
+   `/run_provenance @run_stop_json` names the path that ended the run:
+   `stop_requested` (every `requestStop(false)` caller, the UI's Stop and the
+   bridge server's client-loss stop alike), `cancel_requested`,
+   `fatal_save_error` (with the message) or `shutdown`. Best effort like the
+   wall-clock provenance: a failed write logs an error, the run outcome is
+   unchanged, and the file reads its stop reason as unknown.
 6. `closeFile()`.
 7. Restore the realtime mode if Start switched it.
 8. Terminal status: `terminal=true`, `completion` from the reconciled
@@ -199,7 +211,7 @@ generator readback the readiness evaluation verified (candidate
 (`Hdf5Service::writeRfGeneratorProvenance`); the instrument is not
 re-queried at stop.
 
-## RunConfigurationSnapshot (schema v2)
+## RunConfigurationSnapshot (schema v3)
 
 Frozen at Start and never mutated: readiness/start/capture generations,
 start times, `CameraSourceInfo` (requested vs effective, simulated,
@@ -215,6 +227,33 @@ validation (passed/failed/none/notApplicable), validator, time, evidence
 test-run SHA-256, registry origin + session. `runSnapshotToJson()` /
 `readinessToJson()` produce the stable-key JSON stored on `/run_provenance`
 (see [[../data-model/HDF5-Storage]]).
+
+### Snapshot v3 facts (#712, ADR 0015 item 5)
+
+`RunConfigurationSnapshot::v3` (`recording::RunProvenanceV3`,
+`include/backend/recording/RunProvenanceRecord.h`) is filled by the Start
+transaction only; a readiness candidate leaves it unknown, so readiness polls
+do none of this. `captureRunFacts` reads what the services already hold and
+does no device I/O except the PZ7035 strobe registers (memory-mapped):
+
+- `run_id`: `profiles::generateUuidV4()`; the FCS `$MIB_RUN_ID`.
+- `emodulus_lut`: `ProcessingService::eModulusLutIdentity()` (SHA-256 of the
+  loaded bytes plus the catalog's labels, see [[../services/ProcessingService]]).
+- `pumps`: `SyringePumpService::runFacts(id, 150 ms)` per slot: the setpoint
+  and the last complete status poll with its age. The pump lock is a
+  `timed_mutex`; a slot busy with serial I/O past 150 ms is recorded with
+  `connected: null` (unknown) instead of holding Start behind a 1 s serial
+  timeout per register.
+- `led`: `AppBackend::readInstrumentLed` (S[0], S[1], S[2], S[10]) when the
+  instrument has PZ7035 control, else null. `stopped_run_at_start` is set when
+  the Start leaves a stopped Run: the LED is switched on with the Run preset
+  after the readback (`leaveStoppedRun`), so the readback shows it off.
+- `stage`: `StageService::snapshot()` (identity, zero, last published status
+  and its age).
+- `piezo`: `AutofocusService` atomics only (connected, last voltage read or
+  written, autofocus on); the device mutex is held across serial I/O, so no
+  backend kind or fresh read is taken.
+- `pl_run_id`: the id armed into the PL (null for a host run).
 
 ## Threading
 

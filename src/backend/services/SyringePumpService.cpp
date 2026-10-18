@@ -194,6 +194,7 @@ bool SyringePumpService::connect(PumpId id, const std::string& portName, int bau
     pump.config.microlitersPerRev = microlitersPerRev;
     pump.purging = false;
     pump.status = PumpStatus{};
+    pump.readback = PumpReadback{};
 
     // Acquire the shared bus session for this adapter (8N1, pump default).
     // If another service already holds the adapter with the same settings the
@@ -274,6 +275,7 @@ void SyringePumpService::disconnect(PumpId id) {
     pump.status.runStatus = RunStatus::Stop;
     pump.status.currentFlowRate = 0.0;
     pump.status.accumulatedVolume = 0.0;
+    pump.readback = PumpReadback{};
 
     SPDLOG_INFO("SyringePumpService: {} pump disconnected", pumpName(id));
 }
@@ -560,6 +562,10 @@ void SyringePumpService::pollStatus(PumpId id) {
         return;
     }
 
+    // Every read must answer for the poll to count as a readback (#712); a partial poll still
+    // updates the status the UI shows, as before.
+    bool complete = true;
+
     // Read run state (0=stopped, 1=running)
     std::vector<uint8_t> runData;
     if (readHoldingRegisters(idx, REG_RUN_COMMAND, 1, runData)) {
@@ -576,8 +582,11 @@ void SyringePumpService::pollStatus(PumpId id) {
                 pump.status.runStatus = (dir == 2) ? RunStatus::Backward : RunStatus::Forward;
             } else {
                 pump.status.runStatus = RunStatus::Forward;
+                complete = false; // the direction was assumed, not read
             }
         }
+    } else {
+        complete = false;
     }
 
     // Read error status (bit3 = stall/blockage)
@@ -586,6 +595,8 @@ void SyringePumpService::pollStatus(PumpId id) {
         uint16_t err = static_cast<uint16_t>(
             (static_cast<uint8_t>(errData[0]) << 8) | static_cast<uint8_t>(errData[1]));
         pump.status.stalled = (err & 0x0008) != 0;
+    } else {
+        complete = false;
     }
 
     // Read current flow rate (uint16 from realtime register)
@@ -593,6 +604,8 @@ void SyringePumpService::pollStatus(PumpId id) {
     if (readHoldingRegisters(idx, REG_REALTIME_INFUSE_FLOW, 1, flowData)) {
         pump.status.currentFlowRate = static_cast<double>(
             (static_cast<uint8_t>(flowData[0]) << 8) | static_cast<uint8_t>(flowData[1]));
+    } else {
+        complete = false;
     }
 
     // Read accumulated volume
@@ -600,7 +613,30 @@ void SyringePumpService::pollStatus(PumpId id) {
     if (readHoldingRegisters(idx, REG_ACCUM_VOLUME, 2, volData)) {
         pump.status.accumulatedVolume = registersToFloat(
             reinterpret_cast<const uint8_t*>(volData.data()));
+    } else {
+        complete = false;
     }
+
+    pump.readback.lastPollOk = complete;
+    if (complete) {
+        pump.readback.valid = true;
+        pump.readback.at = std::chrono::steady_clock::now();
+        pump.readback.runStatus = pump.status.runStatus;
+        pump.readback.speedRpm.reset();
+        pump.readback.realtimeFlowRaw = pump.status.currentFlowRate;
+        pump.readback.accumulatedVolumeRaw = pump.status.accumulatedVolume;
+        pump.readback.stalled = pump.status.stalled;
+    }
+}
+
+bool SyringePumpService::runFacts(PumpId id, std::chrono::milliseconds wait, RunFacts& out) const {
+    const auto& pump = pumps_[static_cast<size_t>(static_cast<int>(id))];
+    std::unique_lock<std::timed_mutex> lock(pump.mutex, std::defer_lock);
+    if (!lock.try_lock_for(wait)) return false;
+    out.connected = pump.status.connected;
+    out.config = pump.config;
+    out.readback = pump.readback;
+    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -716,6 +752,7 @@ void SyringePumpService::peristalticPoll(int pumpIdx) {
     tushui::Status st;
     if (!readHoldingRegisters(pumpIdx, tushui::kStatusFirst, tushui::kStatusCount, data) ||
         !tushui::decodeStatus(data, st)) {
+        pump.readback.lastPollOk = false;
         return;
     }
     const bool moving = tushui::isMoving(st.runState);
@@ -742,6 +779,16 @@ void SyringePumpService::peristalticPoll(int pumpIdx) {
         pump.status.accumulatedVolume += pump.status.currentFlowRate * minutes;
     }
     pump.lastPoll = now;
+    // The readback is what the pump answered (registers 100-107): run state and the speed register
+    // as read (also during a purge). The delivered volume above is integrated here, not reported.
+    pump.readback.valid = true;
+    pump.readback.lastPollOk = true;
+    pump.readback.at = now;
+    pump.readback.runStatus = pump.status.runStatus;
+    pump.readback.speedRpm = st.speedRpm;
+    pump.readback.realtimeFlowRaw.reset();
+    pump.readback.accumulatedVolumeRaw.reset();
+    pump.readback.stalled.reset();
 }
 
 } // namespace backend::services

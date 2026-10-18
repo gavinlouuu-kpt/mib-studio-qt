@@ -27,6 +27,19 @@
 - Per-pump control: `setFlowRate`, `setDirection`, `start`, `stop`,
   `purge`, `stopPurge`, `setSyringeVolume`.
 - Per-pump status polling: `pollStatus(id)` — UI timer drives this.
+- Run facts for the run snapshot (#712): `runFacts(id, wait, out)` returns the
+  slot's connection, configuration and last poll readback (`PumpReadback`:
+  `valid`, `lastPollOk`, steady-clock `at`, `runStatus`, optional
+  `speedRpm`, `realtimeFlowRaw`, `accumulatedVolumeRaw`, `stalled`). It waits at
+  most `wait` for the pump lock and returns false when the pump is busy with
+  serial I/O; it never talks to the pump. The readback is only replaced by a
+  poll in which every register answered (a dLSP poll whose direction read
+  failed and was assumed counts as incomplete); every poll sets `lastPollOk`.
+  Connect and disconnect clear it. Peristaltic readbacks carry `runStatus` and
+  `speedRpm` only (its `accumulatedVolume` is integrated by the host, not
+  reported); dLSP readbacks carry the raw flow/volume registers, whose units
+  the protocol PDF does not state. The coordinator records them in snapshot v3
+  ([[../data-model/HDF5-Storage]]).
 - Expose config/status structs (`PumpConfig`, `PumpStatus`).
 - Provide `scanModbusAddresses(comPort, baudRate, start, end, timeoutMs)` for
   settings-time address discovery on a selected serial port.
@@ -84,7 +97,9 @@ Public scan helper probes `REG_RUN_COMMAND` (`0x0001`) with Modbus function
 
 ## Threading
 
-Each pump has its own `std::mutex` guarding pump state; per-adapter frame
+Each pump has its own `std::timed_mutex` guarding pump state (timed since
+#712 so `runFacts` can give up instead of waiting out a 1 s serial timeout
+that `pollStatus` holds the lock across); per-adapter frame
 serialization and response correlation live in the shared [[SerialBus]]
 session (bus mutex always innermost). UI calls are synchronous; `pollStatus`
 is invoked from the Qt timer in [[../frontend/SyringePumpTab]].
@@ -94,6 +109,9 @@ is invoked from the Qt timer in [[../frontend/SyringePumpTab]].
 - `getComPort(id)` is used by [[../frontend/Dialogs]] SyringePumpSettingsDialog
   to avoid double-assigning a COM port to both pumps.
 - Dialog-provided `baudRate` and `modbusAddress` must match the hardware.
+- dLSP `setFlowRate` writes `clamp(rate, 1, 9999)` truncated to an integer
+  but keeps the unclamped rate in `PumpConfig`; the snapshot's setpoint is
+  that config value.
 - See `docs/dLSP_pump.pdf` for pump protocol reference (shipped in repo).
 - Peristaltic: which way Infuse pushes liquid depends on how the tubing is
   loaded in the head; swap the tubing ends rather than the mapping.

@@ -170,9 +170,11 @@ private:
     void publishLocked(std::unique_lock<std::mutex>& lk, const char* message);
     void worker();
     // Runs the finalization sequence with `lk` released for the I/O and
-    // re-acquired before the terminal state is written.
+    // re-acquired before the terminal state is written. `stopReason` is the
+    // coordinator path that ended the run (recording::RunStopRecord), written
+    // to the file as its stop record.
     void finalizeLocked(std::unique_lock<std::mutex>& lk, bool cancelled, bool failed,
-                        const std::string& failMessage);
+                        const std::string& failMessage, const char* stopReason);
 
     AppBackend& backend_;
     mutable std::mutex mutex_;
