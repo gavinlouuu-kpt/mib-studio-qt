@@ -96,16 +96,19 @@ export const GATE_LABELS: Readonly<Record<string, string>> = {
 export const gateLabel = (id: string): string => GATE_LABELS[id] ?? id;
 
 type IssueKind = "failed" | "unknown" | "warning";
+/** `blocking`: the issue blocks Confirm (a check) or Start (a gate); it sets the Not ready tone. */
 interface Issue { kind: IssueKind; name: string; blocking: boolean }
 
 export interface Verdict {
-  /** "Not ready" / "Ready with warnings" / "Ready", the same words wherever it is shown. */
-  word: "Not ready" | "Ready with warnings" | "Ready";
+  /** The same words wherever it is shown. */
+  word: "Not ready" | "Readiness paused" | "Ready to confirm" | "Ready with warnings" | "Ready";
   tone: StateTone;
-  /** "Not ready · 3 unknown, 1 warning". */
+  /** "Not ready · 3 unknown, 1 warning", "Ready to confirm · Start blocked: Processing core". */
   title: string;
   /** What the counts are, in plain names. */
   detail: string;
+  /** With "Ready to confirm": the gates Start will refuse on, "<label> — <remediation>". */
+  startBlocked: string[];
 }
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -124,35 +127,73 @@ function namesText(issues: Issue[]): string {
   return [group("failed", "Failed"), group("unknown", "Unknown"), group("warning", "Warnings")].filter(Boolean).join(" ");
 }
 
+/** "A, B and 2 more": the first names, so a chip stays one line. */
+function firstNames(names: string[], shown = 2): string {
+  const head = names.slice(0, shown).join(", ");
+  return names.length > shown ? `${head} and ${names.length - shown} more` : head;
+}
+
 /** One verdict for Prepare from the hardware checklist and the backend gates read without a
- *  path. Not ready: a required check blocks, a backend gate other than the destination blocks
- *  Start (Fail or Unavailable), or the gates were not read. Ready with warnings: nothing blocks,
- *  but a check or gate warns (or an optional check failed). The destination is checked at Start
- *  and never counted either way. */
-export function prepareVerdict(report: PreflightReport, r: ExperimentReadiness | null, error = ""): Verdict {
+ *  path. It never contradicts the Confirm button, which the checklist alone drives (as in the
+ *  classic Preflight: some gates can only pass later, e.g. the ROI in Align and the destination
+ *  at Start).
+ *  - Not ready: a required check blocks (Confirm is unavailable).
+ *  - Readiness paused · a run is active: the gates are not read during a run and Confirm is
+ *    locked (`paused`).
+ *  - Ready to confirm · Start blocked: the checklist passes, but a backend gate other than the
+ *    pending destination blocks Start (Fail, or Unavailable: Start refuses both). Warn tone, and
+ *    `startBlocked` says what Start will refuse on. With the gates not read, "Ready to confirm ·
+ *    gates not read yet" in the unknown tone.
+ *  - Ready with warnings: nothing blocks, but a check or gate warns (or an optional check failed).
+ *  - Ready.
+ *  The destination is checked at Start and never counted either way. */
+export function prepareVerdict(report: PreflightReport, r: ExperimentReadiness | null, error = "", paused = false): Verdict {
   const issues: Issue[] = [];
   for (const c of report.checks) {
     if (c.blocks) issues.push({ kind: c.status === "failed" ? "failed" : c.status === "unknown" ? "unknown" : "warning", name: c.label, blocking: true });
     else if (c.status === "warning" || c.status === "failed") issues.push({ kind: c.status === "failed" ? "failed" : "warning", name: c.label, blocking: false });
   }
-  if (!r || !r.valid) {
+  const checklistBlocks = issues.some((i) => i.blocking);
+  const gatesRead = !!r && r.valid;
+  const refused: ReadinessGate[] = [];
+  if (!gatesRead) {
     issues.push({ kind: "unknown", name: error ? `Backend gates (${error})` : !r ? "Backend gates (not read yet)" : "Backend gates (not reported)", blocking: true });
   } else {
     for (const g of r.gates) {
       if (pendingDestination(g)) continue;
       if (g.status === G.Warn) issues.push({ kind: "warning", name: gateLabel(g.id), blocking: false });
-      else if (gateBlocksStart(g.status)) issues.push({ kind: g.status === G.Fail ? "failed" : "unknown", name: gateLabel(g.id), blocking: true });
+      else if (gateBlocksStart(g.status)) {
+        issues.push({ kind: g.status === G.Fail ? "failed" : "unknown", name: gateLabel(g.id), blocking: true });
+        refused.push(g);
+      }
     }
   }
-  const destination = !!r?.valid && r.gates.some(pendingDestination);
+  const destination = gatesRead && r.gates.some(pendingDestination);
   const tail = destination ? " The destination is checked at Start, with the chosen file." : "";
-  const blocking = issues.filter((i) => i.blocking);
-  if (blocking.length) {
+  const detail = namesText(issues) + tail;
+  if (checklistBlocks) {
+    // The tone takes the gates that refuse Start into account too: a failed gate reads blocked.
+    const blocking = issues.filter((i) => i.blocking);
     const tone: StateTone = blocking.some((i) => i.kind === "failed") ? "blocked" : blocking.some((i) => i.kind === "unknown") ? "unknown" : "warn";
-    return { word: "Not ready", tone, title: `Not ready · ${countText(issues)}`, detail: namesText(issues) + tail };
+    return { word: "Not ready", tone, title: `Not ready · ${countText(issues)}`, detail, startBlocked: [] };
   }
-  if (issues.length) return { word: "Ready with warnings", tone: "warn", title: `Ready with warnings · ${countText(issues)}`, detail: namesText(issues) + tail };
-  return { word: "Ready", tone: "confirmed", title: destination ? "Ready · destination checked at Start" : "Ready", detail: tail.trim() };
+  if (paused) return { word: "Readiness paused", tone: "info", title: "Readiness paused · a run is active", detail: "Start re-evaluates every gate.", startBlocked: [] };
+  if (!gatesRead) return { word: "Ready to confirm", tone: "unknown", title: "Ready to confirm · gates not read yet", detail, startBlocked: [] };
+  if (refused.length) {
+    const startBlocked = refused.map((g) => {
+      const fix = (g.remediation || g.reason).replace(/\.$/, "");
+      return fix ? `${gateLabel(g.id)} — ${fix}` : gateLabel(g.id);
+    });
+    return { word: "Ready to confirm", tone: "warn", title: `Ready to confirm · Start blocked: ${firstNames(refused.map((g) => gateLabel(g.id)))}`, detail, startBlocked };
+  }
+  if (issues.length) return { word: "Ready with warnings", tone: "warn", title: `Ready with warnings · ${countText(issues)}`, detail, startBlocked: [] };
+  return { word: "Ready", tone: "confirmed", title: destination ? "Ready · destination checked at Start" : "Ready", detail: tail.trim(), startBlocked: [] };
+}
+
+/** The Notice next to an available Confirm when Start would still be refused. */
+export function startRefusalText(startBlocked: readonly string[]): { title: string; text: string } | null {
+  if (!startBlocked.length) return null;
+  return { title: `Start blocked · ${plural(startBlocked.length, "gate")}`, text: `Start will be refused until: ${startBlocked.join("; ")}.` };
 }
 
 /** Why the Preflight confirmation is unavailable because of the checklist, in plain words

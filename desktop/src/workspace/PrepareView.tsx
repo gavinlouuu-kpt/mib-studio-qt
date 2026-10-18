@@ -20,6 +20,7 @@ import {
   gateLabel,
   gateText,
   gateTone,
+  startRefusalText,
   summarizeRequired,
   worstState,
   zStageFact,
@@ -101,6 +102,8 @@ export function PrepareView(p: PrepareViewProps) {
   const pz = p.preflightInput.capabilities?.instrument === "pz7035";
   const zStage = zStageFact(p.zStage);
   const storageGates = gates.filter((g) => g.id.startsWith("storage."));
+  // Confirm follows the checklist; when it is available but Start would still be refused, say so.
+  const startRefusal = startRefusalText(p.verdict.startBlocked);
 
   return (
     <div className="ws-view" data-testid="workspace-prepare">
@@ -163,6 +166,11 @@ export function PrepareView(p: PrepareViewProps) {
             {confirmWhy.length > 0 && confirmation !== "confirmed" ? (
               <Notice tone={checklist && !locks.length ? checklist.tone : "info"} title="Confirm readiness is unavailable" data-testid="workspace-confirm-why">
                 {confirmWhy.join(". ") + "."}
+              </Notice>
+            ) : null}
+            {startRefusal ? (
+              <Notice tone="warn" title={startRefusal.title} data-testid="workspace-start-refused">
+                {startRefusal.text}
               </Notice>
             ) : null}
           </Card>

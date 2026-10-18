@@ -41,7 +41,7 @@ export function Workspace({ brand, source, method, stage, onStage, onExit, servi
   const readiness = usePrepareReadiness(stage === 0 && !prepare.experimentActive);
   // One verdict from the checklist and the gates, the same words in the header and in Prepare.
   const report = derivePreflight(prepare.preflightInput);
-  const verdict = prepareVerdict(report, readiness.snapshot, readiness.error);
+  const verdict = prepareVerdict(report, readiness.snapshot, readiness.error, prepare.experimentActive);
   return (
     <AppShell
       className="ws-shell"

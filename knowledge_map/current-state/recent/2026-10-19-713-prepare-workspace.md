@@ -10,9 +10,19 @@ Step A1 of track A (#716), the rest of #713 after the probe cache (#719) and the
 - **Prepare** shows the hardware checklist by subsystem and the backend readiness gates read
   without a path (`fetchExperimentReadiness("")`, every 2 s while shown, paused during a run): the
   backend reports `storage.output` Unavailable and writes no probe file; Start re-evaluates with
-  the chosen file. Gates show plain labels (raw id as secondary text). One verdict, Not ready /
-  Ready with warnings / Ready, combines the checklist and the gates; the destination gate is
-  never counted. A disabled Confirm says why next to the button.
+  the chosen file. Gates show plain labels (raw id as secondary text).
+- **One verdict** combines the checklist and the gates, and never contradicts Confirm:
+  - Not ready (the checklist blocks);
+  - Readiness paused (a run is active);
+  - Ready to confirm · Start blocked: <labels> (the checklist passes, a gate refuses Start), with
+    a Notice "Start will be refused until: <label> — <remediation>";
+  - Ready with warnings;
+  - Ready.
+  
+  The destination gate is never counted.
+- **Confirm** follows the checklist only, as in the classic Preflight. Some gates can only pass
+  later (the ROI in Align, the destination at Start). A disabled Confirm says why next to the
+  button.
 - **Checklist states** (`preflight.ts`): not read yet is `unknown` (was `failed` or
   `not-required`), an absent capability is `unsupported`, unreported storage is `unknown` (was
   `not-required`). `checkGateStatus` maps them to Pass / Warn / Fail / Unavailable / NotRequired.

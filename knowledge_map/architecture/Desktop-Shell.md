@@ -162,16 +162,29 @@ imported once, there; `workspace.css` only places cards with the kit's spacing t
   state and reason as a chip, and the remediation ("Fix: …"). Tones: Pass → confirmed,
   Warn → warn, Fail → blocked, Unavailable → unknown, NotRequired → neutral.
 - **One verdict** (`prepareVerdict`), the same words in the header chip and the "Ready to
-  operate?" card, combining the checklist and the gates: **Not ready** (a required check blocks,
-  a gate other than the destination is Fail or Unavailable, or the gates were not read),
-  **Ready with warnings** (nothing blocks, but a check or gate warns), **Ready**. The counts and
-  plain names follow ("Not ready · 3 unknown, 1 warning"). The destination gate is never counted:
-  "Ready · destination checked at Start".
+  operate?" card, combining the checklist and the gates. It never contradicts the Confirm
+  button, which the checklist alone drives:
+  - **Not ready**: a required check blocks. The counts and plain names follow ("Not ready ·
+    3 unknown, 1 warning").
+  - **Readiness paused · a run is active**: the gates are not read and Confirm is locked.
+  - **Ready to confirm · Start blocked: <labels>** (warn tone): the checklist passes, but a gate
+    other than the pending destination is Fail or Unavailable. Start refuses both. With the
+    gates not read: "Ready to confirm · gates not read yet" (unknown tone).
+  - **Ready with warnings**: nothing blocks, but a check or gate warns.
+  - **Ready**.
+  
+  The destination gate is never counted: "Ready · destination checked at Start".
 - **Confirmation.** "Confirm readiness" (the one primary action) stores the current Preflight
-  signature, the same state the classic workflow bar sets; it sends nothing to the backend and
-  is disabled while a required check blocks, with no camera, or during a run. When disabled, a
-  Notice next to it says why in plain words ("3 required checks not read yet or not verified:
-  PL core (build + weights), Sensor link, LED strobe"; `confirmBlockers`).
+  signature, the same state the classic workflow bar sets. It sends nothing to the backend.
+  - It is disabled while a required check blocks, with no camera, or during a run.
+  - It is not gated on the backend gates, as in the classic Preflight. Some gates can only pass
+    in a later stage: `processing.roi` needs live view (Align), and the destination comes at
+    Start.
+  - When disabled, a Notice next to it says why in plain words ("3 required checks not read
+    yet or not verified: PL core (build + weights), Sensor link, LED strobe";
+    `confirmBlockers`).
+  - When it is available but a gate refuses Start, a warn Notice says so ("Start will be
+    refused until: Processing core — activate the pinned core"; `startRefusalText`).
 - **Gate (P1).** `workspace/navigation.test.tsx` runs the whole App over a mocked transport,
   desktop and PZ7035: opening the workspace, visiting every stage, leaving, coming back and
   Camera setup add no command to the idle app's steady state except

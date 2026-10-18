@@ -19,6 +19,7 @@ import {
   gateText,
   gateTone,
   prepareVerdict,
+  startRefusalText,
   summarizeRequired,
   worstState,
   zStageFact,
@@ -58,10 +59,34 @@ const INPUT: PreflightInput = {
 const PASSING = derivePreflight(INPUT);
 
 describe("one Prepare verdict from the checklist and the path-less gates", () => {
-  it("is Not ready while the gates are not read, after a failed read, or when the backend is not initialized", () => {
-    expect(prepareVerdict(PASSING, null)).toMatchObject({ word: "Not ready", tone: "unknown", title: "Not ready · 1 unknown" });
+  it("with the gates not read it is never a pass: Unknown, and Not ready only when the checklist blocks", () => {
+    expect(prepareVerdict(PASSING, null)).toMatchObject({ word: "Ready to confirm", tone: "unknown", title: "Ready to confirm · gates not read yet", startBlocked: [] });
     expect(prepareVerdict(PASSING, null, "bridge gone").detail).toContain("bridge gone");
-    expect(prepareVerdict(PASSING, snapshot([], { valid: false })).word).toBe("Not ready");
+    expect(prepareVerdict(PASSING, snapshot([], { valid: false })).title).toBe("Ready to confirm · gates not read yet");
+    const notInitialized = derivePreflight({ ...INPUT, backendReady: false });
+    expect(prepareVerdict(notInitialized, null)).toMatchObject({ word: "Not ready", tone: "unknown", title: "Not ready · 2 unknown" });
+  });
+
+  it("checklist passes but a gate refuses Start: Ready to confirm · Start blocked, in the warn tone, never Not ready", () => {
+    const v = prepareVerdict(PASSING, snapshot([gate("camera.source", G.Pass), gate("processing.core", G.Fail, "processing core pin not satisfied", "activate the pinned core"), NO_PATH]));
+    expect(v).toMatchObject({ word: "Ready to confirm", tone: "warn", title: "Ready to confirm · Start blocked: Processing core" });
+    expect(v.startBlocked).toEqual(["Processing core — activate the pinned core"]);
+    expect(startRefusalText(v.startBlocked)).toEqual({ title: "Start blocked · 1 gate", text: "Start will be refused until: Processing core — activate the pinned core." });
+    expect(v.detail).toBe("Failed: Processing core. The destination is checked at Start, with the chosen file.");
+  });
+
+  it("Unavailable refuses Start like Fail; the reason stands in for a missing remediation; the chip names two", () => {
+    const v = prepareVerdict(PASSING, snapshot([
+      gate("processing.roi", G.Unavailable, "no live frame yet."), gate("processing.core", G.Fail, "pin", "activate the pinned core."), gate("clock.wall", G.Fail), NO_PATH]));
+    expect(v.title).toBe("Ready to confirm · Start blocked: Region of interest, Processing core and 1 more");
+    expect(v.startBlocked).toEqual(["Region of interest — no live frame yet", "Processing core — activate the pinned core", "Wall clock"]);
+    expect(startRefusalText(v.startBlocked)!.title).toBe("Start blocked · 3 gates");
+    expect(startRefusalText([])).toBeNull();
+  });
+
+  it("is paused, not ready to confirm, while a run is active; a blocking checklist still reads Not ready", () => {
+    expect(prepareVerdict(PASSING, null, "", true)).toMatchObject({ word: "Readiness paused", tone: "info", title: "Readiness paused · a run is active" });
+    expect(prepareVerdict(derivePreflight({ ...INPUT, coreKnown: false }), null, "", true).word).toBe("Not ready");
   });
 
   it("is Ready when the checklist passes and only the destination waits for Start; the destination is never counted", () => {
@@ -89,8 +114,10 @@ describe("one Prepare verdict from the checklist and the path-less gates", () =>
     expect(prepareVerdict(PASSING, snapshot([gate("processing.roi", G.Warn, "no ROI set"), NO_PATH])).detail).toContain("Warnings: Region of interest.");
   });
 
-  it("a destination gate that failed for another reason blocks", () => {
-    expect(prepareVerdict(PASSING, snapshot([gate("storage.output", G.Fail, "not writable")])).word).toBe("Not ready");
+  it("a destination gate that failed for another reason refuses Start", () => {
+    const v = prepareVerdict(PASSING, snapshot([gate("storage.output", G.Fail, "not writable")]));
+    expect(v.title).toBe("Ready to confirm · Start blocked: Destination file");
+    expect(v.startBlocked).toEqual(["Destination file — not writable"]);
   });
 
   it("keeps a fixed footnote, with no gate ids in it", () => {

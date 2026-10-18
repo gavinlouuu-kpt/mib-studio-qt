@@ -117,20 +117,39 @@ describe("Prepare states", () => {
     expect(verdictChip().textContent).toBe("Ready with warnings · 1 warning");
   });
 
-  it("is Not ready before the first read, never a pass", async () => {
+  it("is never a pass before the first read", async () => {
     vi.mocked(invoke).mockImplementation(() => new Promise(() => {})); // never answers
     await render();
-    expect(verdictChip().textContent).toBe("Not ready · 1 unknown");
+    expect(verdictChip().textContent).toBe("Ready to confirm · gates not read yet");
     expect(verdictChip().getAttribute("data-tone")).toBe("unknown");
+    expect(host.querySelector("[data-testid=workspace-start-refused]")).toBeNull();
   });
 
-  it("counts blocking gates and checks in one verdict", async () => {
+  it("counts blocking gates and checks in one verdict when the checklist blocks", async () => {
     gates = [{ id: "camera.source", status: G.Unavailable, reason: "no camera source configured", remediation: "" }, { id: "processing.core", status: G.Fail, reason: "pin", remediation: "" }, NO_PATH];
-    await render();
-    expect(verdictChip().textContent).toBe("Not ready · 1 failed, 1 unknown");
+    await render({ preflightInput: { ...INPUT, coreKnown: false, coreValid: false } });
+    expect(verdictChip().textContent).toBe("Not ready · 1 failed, 2 unknown");
     expect(verdictChip().getAttribute("data-tone")).toBe("blocked");
     expect(host.querySelector("[data-testid=workspace-verdict-detail]")!.textContent).toBe(
-      "Failed: Processing core. Unknown: Camera source. The destination is checked at Start, with the chosen file.");
+      "Failed: Processing core. Unknown: Processing core / trust, Camera source. The destination is checked at Start, with the chosen file.");
+    expect(host.querySelector("[data-testid=workspace-start-refused]")).toBeNull(); // Confirm is unavailable; its Notice says why
+  });
+
+  it("checklist passes but a gate fails: Ready to confirm · Start blocked, Confirm stays available, and a Notice says what Start will refuse", async () => {
+    gates = [{ id: "camera.source", status: G.Pass, reason: "", remediation: "" },
+      { id: "processing.core", status: G.Fail, reason: "processing core pin not satisfied", remediation: "activate the pinned core" }, NO_PATH];
+    await render();
+    expect(verdictChip().textContent).toBe("Ready to confirm · Start blocked: Processing core");
+    expect(verdictChip().getAttribute("data-tone")).toBe("warn");
+    const cardChip = [...host.querySelectorAll(".mib-card")].find((c) => c.textContent?.startsWith("Ready to operate?"))!.querySelector(".mib-card__status .mib-chip")!;
+    expect(cardChip.textContent).toBe(verdictChip().textContent);
+    expect(cardChip.getAttribute("data-tone")).toBe("warn");
+    expect(button("Confirm readiness").disabled).toBe(false); // the checklist drives Confirm, as in the classic Preflight
+    expect(host.querySelector("[data-testid=workspace-confirm-why]")).toBeNull();
+    const refused = host.querySelector("[data-testid=workspace-start-refused]")!;
+    expect(refused.getAttribute("data-tone")).toBe("warn");
+    expect(refused.textContent).toBe("Start blocked · 1 gateStart will be refused until: Processing core — activate the pinned core.");
+    expect(host.textContent).not.toContain("Not ready");
   });
 
   it("a failed read clears the gates instead of showing stale ones", async () => {
@@ -187,6 +206,7 @@ describe("Prepare states", () => {
     await render({ experimentActive: true, confirmLockedReason: "Setup is locked while an experiment is active" });
     expect(button("Confirm readiness").disabled).toBe(true);
     expect(host.querySelector("[data-testid=workspace-confirm-why]")!.textContent).toContain("Setup is locked while an experiment is active");
+    expect(verdictChip().textContent).toBe("Readiness paused · a run is active"); // never "Ready to confirm" while Confirm is locked
   });
 });
 
