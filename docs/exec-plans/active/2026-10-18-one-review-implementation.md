@@ -408,7 +408,8 @@ the coordinator (ADR 0004/0011).
   answered per request). D1 (a) is `AppBackend::setReviewSourceOpen(bool)` /
   `reviewSourceOpen()`: the facade sets it from `review_->isOpen()` inside the
   idle transaction (load, failed load, close; cleared at shutdown and in the
-  destructor), and the coordinator's `storage.hdf5` gate and Start check read
+  destructor) through a scope guard that also runs on an exception, and the
+  coordinator's `storage.hdf5` gate and Start check read
   `hdf5().isFileOpen() || reviewSourceOpen()` under the coordinator mutex, so
   the gate id, status, reason and remediation and the Start message are
   unchanged. Shutdown closes the session after the export and reanalysis jobs
@@ -420,12 +421,23 @@ the coordinator (ADR 0004/0011).
   flag too, with the same message. (2) The session read the valid metadata at
   open without remembering whether it was absent or unreadable, which the
   charts tell apart ("Cannot read valid-frame metrics"):
-  `ReviewSession::validMetadataReadable()`. (3) Before S5,
+  `ReviewSession::validSet()`, which returns the path, file type, readability
+  and rows in one snapshot. (3) Before S5,
   `fetch_review_metrics_page` and `fetch_review_image` checked only that the
   shared handle was open, so with no review file during a run they read the
   writer's file on the caller's thread; they now fail without a review file.
   (4) `framesPage` is overflow-safe for a huge `count`; the facade's old page
   (and `ReviewSession::metricsPage`, unchanged) compute `offset + count`.
+  Review of #733 (2026-10-19) found two defects, both fixed: (5) a metadata
+  read that threw inside `open()` after the reader opened (allocation, or
+  OpenCV on a malformed background) skipped the flag and released the
+  coordinator mutex with the reader open, a D1 window; `open()` is now all or
+  nothing (the reader is closed again, false, "Failed to read <path>: …") and
+  the facade's flag is set by a scope guard on every exit. (6) The charts read
+  path, file type, readability and rows with separate locks, so a concurrent
+  load could chart one file's rows under another's identity, or let a
+  recording past the experiment-only check; they now take one `validSet()`
+  snapshot.
 - **Proof (#733):** `backend.facade_review_session` (new) keeps the pre-slice
   facade code as the oracle: load result, RecordingStatusEvent, operation and
   error events, metadata, 14 pages per file, every dataset × 5 indices,
@@ -439,7 +451,18 @@ the coordinator (ADR 0004/0011).
   pre-slice message, and after Close File (or a failed load, or shutdown) the
   gate passes. `review.session` adds `framesPage` (equal to the reader's own
   metadata read and to `metricsPage`, bounds, zero and huge counts) and absent
-  vs unreadable valid sets. `backend.experiment_readiness` section 5b: with the
+  vs unreadable valid sets, `validSet` and the all-or-nothing open (a
+  malformed background whose read throws inside `Hdf5Service`: closed, no
+  throw, the error names the file, the next open works). The facade test also
+  loads that file from closed and after a good load: the flag equals the
+  session's state and the load fails closed with its failed-load events (with
+  the pre-fix load path the flag reads closed while the reader is open and
+  Start passes the writer check; with only the rollback removed, the guard
+  still keeps the flag equal and Start refused); and it charts on one thread
+  while another loads full / legacy / a recording 300 times: every answer is
+  one file's whole answer (probabilistic: the separate-lock accessors were caught
+  in 2 of 3 runs at 120 loads; the deterministic proof is the `validSet` unit test).
+  `backend.experiment_readiness` section 5b: with the
   flag set the gate equals the shared handle's, every other gate is unchanged,
   Start and raw recording are refused with the unchanged messages, and once
   cleared the instrument is ready and raw recording starts. `backend.facade_boundary`:

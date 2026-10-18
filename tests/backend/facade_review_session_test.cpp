@@ -16,7 +16,12 @@
 //  - decision D1 (a): while a review file is open the readiness gate
 //    `storage.hdf5` fails with the same id, status, reason and remediation as
 //    a file in the shared handle, and Start is refused with the same message;
-//    after Close File (or a failed load, or shutdown) the gate passes again.
+//    after Close File (or a failed load, or shutdown) the gate passes again;
+//    a metadata read that throws after the session's reader opened (a
+//    malformed background) leaves the D1 flag equal to the session's state
+//    (the load fails closed: open() is all or nothing);
+//  - charts never pair one file's identity with another's rows while loads
+//    replace the file on another thread (one session snapshot per request).
 // Watchdog guarded.
 
 #include "backend/app/AppBackend.h"
@@ -36,6 +41,8 @@
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 
+#include <atomic>
+#include <cstdio>
 #include <chrono>
 #include <cstring>
 #include <filesystem>
@@ -147,6 +154,26 @@ namespace
         MIB_REQUIRE(h.appendRecordingFrames(images, meta), "recording fixture frames");
         MIB_REQUIRE(h.writeRecordingInfo(10, 20, n, 2, multi > 1, multi), "recording fixture info");
         h.closeFile();
+    }
+
+    // A background dataset whose height does not fit an int: cv::Mat throws
+    // while the session reads the metadata, after its reader has opened.
+    void addMalformedBackground(const fs::path &path)
+    {
+        const hid_t file = H5Fopen(path.string().c_str(), H5F_ACC_RDWR, H5P_DEFAULT);
+        MIB_REQUIRE(file >= 0, "open background fault fixture");
+        hsize_t dims[3] = {1, hsize_t{1} << 31, 1};
+        hsize_t chunk[3] = {1, 1024, 1};
+        const hid_t space = H5Screate_simple(3, dims, nullptr);
+        const hid_t dcpl = H5Pcreate(H5P_DATASET_CREATE);
+        H5Pset_chunk(dcpl, 3, chunk);
+        const hid_t ds = H5Dcreate2(file, "/experiment_info/background", H5T_NATIVE_UINT8, space, H5P_DEFAULT, dcpl,
+                                    H5P_DEFAULT);
+        MIB_REQUIRE(ds >= 0, "malformed background dataset");
+        H5Dclose(ds);
+        H5Pclose(dcpl);
+        H5Sclose(space);
+        H5Fclose(file);
     }
 
     void makeValidMetadataUnreadable(const fs::path &path)
@@ -706,6 +733,108 @@ int main()
                    label + ": gate passes once the failed load closed the file");
     }
     wd.mark("failed loads");
+
+    // ---- D1 when a read throws after the reader opened (#512 S5 review) -----------
+    // Before the fix the exception left the session's reader open while the
+    // flag was never set, and the coordinator mutex was released: Start or raw
+    // recording could then open a writer beside it. The flag must equal the
+    // session's state on every exit; open() rolls back, so the load fails
+    // closed and Start is not held by a reader that is gone.
+    {
+        const fs::path bad = td.path() / "bad_background.h5";
+        writeExperiment(bad, 4, 1, false);
+        addMalformedBackground(bad);
+        for (const bool afterGoodLoad : {false, true})
+        {
+            const std::string label = afterGoodLoad ? "throwing read after a good load" : "throwing read from closed";
+            wd.mark(label.c_str());
+            if (afterGoodLoad)
+                MIB_REQUIRE(loadBoth(full, true, label + " (before)"), "good load first");
+            else
+                MIB_REQUIRE(facade.closeReview().ok && !backend.reviewSourceOpen(), "start closed");
+            oracle.close();
+            events.clear();
+            RecordingLoadCommand load;
+            load.filePath = bad.string();
+            BackendCommandResult result;
+            bool threw = false;
+            try
+            {
+                result = facade.dispatch(load);
+            }
+            catch (...)
+            {
+                threw = true;
+            }
+            BackendReviewMetadata meta;
+            MIB_REQUIRE(facade.fetchReviewMetadata(meta), label + ": metadata");
+            MIB_EXPECT(backend.reviewSourceOpen() == meta.fileOpen,
+                       label + ": the D1 flag equals the session's open state");
+            const auto r = backend.experiment().evaluateReadiness(runOut);
+            backend::app::ExperimentStartRequest request;
+            request.outputPath = runOut;
+            request.readinessGeneration = r.generation;
+            const auto start = backend.experiment().start(request);
+            const std::string writerConflict =
+                "stop raw recording and close the existing HDF5 file before starting an experiment";
+            if (meta.fileOpen)
+            {
+                MIB_EXPECT(sameGate(hdf5Gate(r), &sharedHandleGate) && start.message == writerConflict,
+                           label + ": an open reader keeps Start refused");
+            }
+            MIB_EXPECT(!threw && !result.ok && result.message == "Recording load failed" && !meta.fileOpen,
+                       label + ": the load fails closed (open() all or nothing)");
+            MIB_EXPECT(hdf5Gate(r) && hdf5Gate(r)->status == backend::app::GateStatus::Pass &&
+                           start.message != writerConflict && !start.started(),
+                       label + ": nothing holds Start once the reader is closed");
+            std::lock_guard<std::mutex> lk(events.m);
+            MIB_EXPECT(events.recording.size() == 1 && events.recording[0].state == RecordingState::Error &&
+                           events.loadOps.size() == 2 && events.loadOps[1].state == BackendOperationState::Failed,
+                       label + ": failed-load events");
+        }
+    }
+    wd.mark("throwing read");
+
+    // ---- charts never mix two files while loads replace them (#512 S5 review) ------
+    // One session snapshot per request: every charts JSON is one of the three
+    // whole answers (full's, legacy's, the recording refusal), never full's
+    // identity with legacy's rows or a recording slipping past the check.
+    {
+        auto chartsOf = [&](const fs::path &path) {
+            RecordingLoadCommand c;
+            c.filePath = path.string();
+            MIB_REQUIRE(facade.dispatch(c).ok, "load " + path.string());
+            return facade.fetchReviewChartsJson();
+        };
+        const std::string fullCharts = chartsOf(full);
+        const std::string legacyCharts = chartsOf(legacy);
+        const std::string recordingCharts = chartsOf(recMulti);
+        MIB_REQUIRE(nlohmann::json::parse(fullCharts).value("rows", "") == "10" &&
+                        nlohmann::json::parse(legacyCharts).value("rows", "") == "6" &&
+                        recordingCharts == backend::review::reviewChartsErrorJson("Charts require an experiment HDF file"),
+                    "the three answers");
+        MIB_REQUIRE(facade.dispatch(RecordingLoadCommand{full.string(), true}).ok, "start from full");
+        std::atomic<bool> done{false};
+        std::thread loader([&] {
+            for (int i = 0; i < 100; ++i)
+                for (const fs::path *p : {&legacy, &recMulti, &full})
+                    facade.dispatch(RecordingLoadCommand{p->string(), true});
+            done = true;
+        });
+        int fetched = 0;
+        int mixed = 0;
+        while (!done.load())
+        {
+            const auto charts = facade.fetchReviewChartsJson();
+            ++fetched;
+            if (charts != fullCharts && charts != legacyCharts && charts != recordingCharts) ++mixed;
+        }
+        loader.join();
+        std::fprintf(stderr, "charts interleave: %d fetches, %d mixed\n", fetched, mixed);
+        MIB_EXPECT(fetched > 0 && mixed == 0, "every charts answer belongs to one file");
+        events.clear();
+    }
+    wd.mark("charts interleave");
 
     // ---- D1 (a): Start refused while a review file is open, same message ---------
     {

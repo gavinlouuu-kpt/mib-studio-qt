@@ -36,8 +36,10 @@ namespace backend::review
         ReviewSession(const ReviewSession &) = delete;
         ReviewSession &operator=(const ReviewSession &) = delete;
 
-        // Opens `path` read-only, replacing any open file. On failure the
-        // session is closed and `error` (optional) names the reason.
+        // Opens `path` read-only, replacing any open file. All or nothing: on
+        // any failure, including a metadata read that throws after the
+        // reader opened, the session is closed (never left open) and `error`
+        // (optional) names the reason; it does not throw for a bad file.
         bool open(const std::string &path, std::string *error = nullptr);
         void close();
         bool isOpen() const;
@@ -68,12 +70,23 @@ namespace backend::review
         // metricsPage; false only when no file is open.
         bool framesPage(bool valid, std::uint64_t offset, std::uint64_t count,
                         std::vector<services::ProcessedFrame> &frames, std::uint64_t &totalOut) const;
-        // Experiment files: false when `/valid_frames/metadata` exists but
-        // could not be read at open, or its presence could not be determined
-        // (an absent dataset is an empty, readable set). The facade's charts
-        // report "Cannot read valid-frame metrics" for it (#512 S5). False
-        // when no file is open; true for recording files.
-        bool validMetadataReadable() const;
+        // The open file's valid set in one snapshot, taken under one lock so
+        // the identity and the rows belong to the same file even while another
+        // thread opens a different one (the facade's charts, #512 S5).
+        // `metadataReadable` is false for an experiment file whose
+        // `/valid_frames/metadata` exists but could not be read at open, or
+        // whose presence could not be determined (an absent dataset is an
+        // empty, readable set: "Cannot read valid-frame metrics" vs no rows);
+        // true for recording files. All empty / false when no file is open.
+        struct ValidSet
+        {
+            bool open{false};
+            std::string filePath;
+            bool recordingFile{false};
+            bool metadataReadable{false};
+            std::vector<services::ProcessedFrame> frames; // metadata only, no pixels
+        };
+        ValidSet validSet() const;
         // Copy of one metadata row (no pixels).
         bool frameMeta(bool valid, std::uint64_t index, services::ProcessedFrame &out) const;
 

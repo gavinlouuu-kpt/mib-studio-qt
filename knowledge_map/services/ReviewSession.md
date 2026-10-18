@@ -44,7 +44,13 @@ the Qt [[../frontend/HdfReviewTab]] (`recordedPixelToMicron`, TD-17)
 - `open(path, &error)` / `close()` / `isOpen()` / `filePath()`: one reader
   per session, never `AppBackend::hdf5()` (the experiment writer's handle),
   so a file can be reviewed while an experiment runs and the Tauri Raw
-  Frames view reads the **file**, not the live FrameStore.
+  Frames view reads the **file**, not the live FrameStore. `open()` is all
+  or nothing (#512 S5): a metadata read that throws after the reader opened
+  (an allocation failure, an OpenCV exception from a malformed dataset such
+  as an oversized background) closes the reader again and returns false with
+  "Failed to read <path>: …"; it never throws for a bad file and never leaves
+  a reader open that a host was not told about. The reopen after
+  `saveCoreRecordJson` follows the same rule.
 - `metadata()` → `ReviewMetadata`: counts, ROI, dataset infos (five paths),
   core identity, background flag, **series** (`/valid_frames/series_images`
   4D or the recording multi-image window), **run accounting** (#367,
@@ -62,7 +68,10 @@ the Qt [[../frontend/HdfReviewTab]] (`recordedPixelToMicron`, TD-17)
   with their own row type (the facade's `MonitoringObjectRow`); same bounds
   and totals, false only when closed, and overflow-safe for a huge `count`
   (`metricsPage` still computes `offset + count`).
-- `validMetadataReadable()` (#512 S5): false when an experiment file's
+- `validSet()` → `ValidSet` (#512 S5): the open file's path, file type,
+  `metadataReadable` and valid rows in **one snapshot under one lock**, so a
+  concurrent open of another file can never pair one file's identity with
+  the other's rows. `metadataReadable` is false when an experiment file's
   `/valid_frames/metadata` exists but could not be read at open, or its
   presence could not be determined (`metadataDatasetPresent`); an absent
   dataset is an empty, readable set. The facade's charts answer "Cannot read
@@ -245,7 +254,7 @@ and YOFO Studio's review commands read it: `load_recording` →
 field, `fetch_review_metrics_page` → `framesPage` mapped to
 `MonitoringObjectRow`, `fetch_review_image` → `readRaw` (Mono8, channel 0),
 `fetch_run_accounting("review")` → the accounting read at open,
-`fetch_review_charts_json` → the valid rows read at open (no second reader),
+`fetch_review_charts_json` → `validSet()` (one snapshot; no second reader),
 and `review_export_json`'s default source → `filePath()`. The load event's
 counts come from the same metadata. Nothing in the facade holds review state
 of its own any more, and none of it touches `AppBackend::hdf5()` (the
@@ -258,8 +267,9 @@ coordinator's idle transaction: "Experiment must be idle before loading review
 data", "Stop raw recording before loading review data" and the close
 equivalents. **Decision D1 (a):** the facade tells AppBackend whether its
 session is open (`AppBackend::setReviewSourceOpen`, set in the same
-transaction from `isOpen()`, cleared by close, a failed load, shutdown and the
-destructor). While it is, experiment readiness fails `storage.hdf5` with the
+transaction from `isOpen()` by a scope guard that also runs when an exception
+leaves the transaction, so the flag equals `isOpen()` on every exit; cleared
+by close, a failed load, shutdown and the destructor). While it is, experiment readiness fails `storage.hdf5` with the
 text a file in the shared handle produced ("an HDF5 file is already open",
 "finish or close the current file first"), Start is refused with "stop raw
 recording and close the existing HDF5 file before starting an experiment"
@@ -274,7 +284,10 @@ oracle (load result and events, metadata, pages, images, accounting, charts,
 the export's default source on experiment, legacy, recording, empty-set,
 unreadable-metadata and non-HDF5 fixtures, failed loads included), the writer
 handle untouched, the D1 gate equal to the shared handle's; `review.session`
-covers `framesPage` / `validMetadataReadable`; `backend.experiment_readiness`
+covers `framesPage`, `validSet` and the all-or-nothing open;
+`backend.facade_review_session` also loads a file whose background read
+throws (the flag equals `isOpen()`, the load fails closed) and loads files on
+one thread while charting on another; `backend.experiment_readiness`
 (section 5b) and `backend.facade_boundary` the D1 refusals and the guards
 with a live camera.
 

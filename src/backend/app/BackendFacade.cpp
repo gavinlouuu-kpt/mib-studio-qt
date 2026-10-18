@@ -1015,6 +1015,32 @@ namespace backend::bridge
         return result;
     }
 
+    namespace
+    {
+        // D1 (a), #512 S5: on every exit of the idle transaction that opens
+        // or closes the review session, including an exception, AppBackend's
+        // flag is set to what the session reports, so Start and raw recording
+        // never see an open review reader as closed once the coordinator
+        // mutex is released.
+        struct ReviewSourceFlagSync
+        {
+            AppBackend &backend;
+            const review::ReviewSession &session;
+            ~ReviewSourceFlagSync()
+            {
+                bool open = true; // if the session cannot even be asked, stay refused
+                try
+                {
+                    open = session.isOpen();
+                }
+                catch (...)
+                {
+                }
+                backend.setReviewSourceOpen(open);
+            }
+        };
+    } // namespace
+
     BackendCommandResult BackendFacade::handleRecordingLoadCommand(const RecordingLoadCommand &command)
     {
         BackendCommandResult result{false, BackendCommandType::RecordingLoad, "Experiment must be idle before loading review data"};
@@ -1031,10 +1057,11 @@ namespace backend::bridge
         // The session's own reader (#512 S5), never the experiment writer's
         // handle. Opening replaces the currently reviewed file (Qt parity:
         // selecting a new HDF file closes the previous one), also when the
-        // open fails. Inside the idle transaction, so Start and raw recording
-        // see the D1 flag and the open file together.
+        // open fails; open() is all or nothing. Inside the idle transaction,
+        // and the guard sets the D1 flag from isOpen() on every exit, so Start
+        // and raw recording see the flag and the open file together.
+        const ReviewSourceFlagSync flagSync{backend_, *review_};
         const bool opened = review_->open(command.filePath);
-        backend_.setReviewSourceOpen(review_->isOpen());
         if (!opened)
         {
             emitEvent(RecordingStatusEvent{
@@ -3755,9 +3782,10 @@ BackendCommandResult BackendFacade::closeReview() {
     if (!initialized_) return {false, BackendCommandType::RecordingLoad, "Backend is not initialized"};
     backend_.experiment().withIdleConfiguration([&] {
         if (backend_.isFrameRecording()) { result.message = "Stop raw recording before closing review data"; return; }
-        // The session's reader only (#512 S5): the writer's handle is never touched. Lifts the D1 refusal.
+        // The session's reader only (#512 S5): the writer's handle is never touched. The guard lifts the
+        // D1 refusal from isOpen() on every exit.
+        const ReviewSourceFlagSync flagSync{backend_, *review_};
         review_->close();
-        backend_.setReviewSourceOpen(false);
         result = {true, BackendCommandType::RecordingLoad, "Review file closed"};
     });
     return result;

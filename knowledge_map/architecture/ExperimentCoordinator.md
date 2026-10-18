@@ -275,8 +275,11 @@ reads review files with its own `ReviewSession` reader
 built without thread safety and `Hdf5Service` has no process-wide lock
 (#722), so a review reader beside the 5 kHz recorder would race inside the
 library. The facade sets `AppBackend::setReviewSourceOpen(bool)` from its
-session inside `withIdleConfiguration` (load, close, a failed load; cleared
-at shutdown). The gate, Start's writer-conflict check and raw recording's
+session's `isOpen()` inside `withIdleConfiguration` (load, close, a failed
+load; cleared at shutdown), through a scope guard that also runs when an
+exception leaves the transaction, and `ReviewSession::open()` is all or
+nothing, so the flag never reads closed while a review reader is open once
+the coordinator mutex is released. The gate, Start's writer-conflict check and raw recording's
 writer check all read `hdf5().isFileOpen() || reviewSourceOpen()` under the
 coordinator mutex, so the operator sees exactly what they saw before: gate
 `storage.hdf5` Fail, "an HDF5 file is already open" / "finish or close the

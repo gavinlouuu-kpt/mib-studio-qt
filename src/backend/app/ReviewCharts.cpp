@@ -11,7 +11,6 @@
 #include "backend/review/ReviewCharts.h"
 #include "backend/review/ReviewSession.h"
 #include <nlohmann/json.hpp>
-#include <limits>
 #include <stdexcept>
 namespace backend::bridge {
 std::vector<uint8_t> BackendFacade::renderReviewOverlayJson(const std::string& text) const {
@@ -30,15 +29,15 @@ std::string BackendFacade::fetchMonitoringChartReferenceJson() const {
 }
 std::string BackendFacade::fetchReviewChartsJson() const {
     try {
-        // The session's rows replace a second reader per fetch; the messages are the ones it gave.
-        const std::string source=review_->filePath();
-        if(source.empty())throw std::runtime_error("No HDF file open");
-        if(review_->isRecordingFile())throw std::runtime_error("Charts require an experiment HDF file");
-        std::vector<services::ProcessedFrame> rows;
-        std::uint64_t total=0;
-        if(!review_->validMetadataReadable() ||
-           !review_->framesPage(true,0,std::numeric_limits<std::uint64_t>::max(),rows,total))
-            throw std::runtime_error("Cannot read valid-frame metrics");
+        // The session's rows replace a second reader per fetch; the messages are the ones it gave. One
+        // snapshot (one lock): the path, the file type, readability and the rows belong to the same file
+        // even while another thread loads a different one.
+        const auto valid=review_->validSet();
+        const std::string& source=valid.filePath;
+        if(!valid.open || source.empty())throw std::runtime_error("No HDF file open");
+        if(valid.recordingFile)throw std::runtime_error("Charts require an experiment HDF file");
+        if(!valid.metadataReadable)throw std::runtime_error("Cannot read valid-frame metrics");
+        const auto& rows=valid.frames;
         const auto cfg=backend_.processing().getProcessingConfig();
         const auto factor=backend_.processing().getPixelToMicronFactor();
         return review::reviewChartsJson(rows,source,factor,cfg.ring_ratio_min,cfg.ring_ratio_max);

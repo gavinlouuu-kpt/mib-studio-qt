@@ -11,9 +11,11 @@ review state of its own (`loadedRecordingPath_`, `reviewMetricsLoaded_`,
 `reviewValidMeta_`, `reviewInvalidMeta_`, `reviewMutex_` deleted). The guards
 stay the facade's, inside the coordinator's idle transaction. `ReviewSession`
 gained `framesPage` (metadata-only `ProcessedFrame`s for the facade's
-`MonitoringObjectRow`) and `validMetadataReadable` (the charts' "Cannot read
-valid-frame metrics"). Decision D1 (a): `AppBackend::setReviewSourceOpen`, set
-by the facade, keeps the experiment readiness gate `storage.hdf5`, Start and
+`MonitoringObjectRow`) and `validSet` (the charts' path, file type,
+readability and rows in one snapshot), and `open()` became all or nothing (a
+read that throws after the reader opened closes it again). Decision D1 (a):
+`AppBackend::setReviewSourceOpen`, set by the facade from `isOpen()` on every
+exit of the idle transaction (a scope guard), keeps the experiment readiness gate `storage.hdf5`, Start and
 raw recording refused with byte-identical text while a review file is open
 (HDF5 is not thread-safe, #722). No bridge or review contract change. New test
 `backend.facade_review_session` (the pre-slice facade code as the oracle);

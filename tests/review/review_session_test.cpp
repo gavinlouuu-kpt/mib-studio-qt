@@ -11,9 +11,12 @@
 //  - recording fixture (multi-image window): recording-mode semantics;
 //  - faults: missing file, bad dataset/index, closed session, legacy file
 //    without snapshot/accounting falls back to the host factor;
-//  - framesPage / validMetadataReadable (#512 S5, the facade's rows and its
-//    charts' refusal): the page as ProcessedFrames equals metricsPage and the
-//    reader's own metadata read; absent vs unreadable valid sets.
+//  - framesPage / validSet (#512 S5, the facade's rows and its charts): the
+//    page as ProcessedFrames equals metricsPage and the reader's own metadata
+//    read; the valid-set snapshot keeps identity and rows of one file; absent
+//    vs unreadable valid sets;
+//  - open() is all or nothing (#512 S5): a metadata read that throws after
+//    the reader opened (a malformed background) leaves the session closed.
 // Watchdog guarded.
 
 #include "backend/review/ReviewSession.h"
@@ -192,7 +195,9 @@ int main()
         std::vector<ProcessedFrame> frames(2);
         total = 1;
         MIB_EXPECT(!s.framesPage(true, 0, 5, frames, total) && frames.empty() && total == 0, "frames page when closed");
-        MIB_EXPECT(!s.validMetadataReadable(), "valid metadata readable when closed");
+        const auto closedSet = s.validSet();
+        MIB_EXPECT(!closedSet.open && closedSet.filePath.empty() && !closedSet.metadataReadable && closedSet.frames.empty(),
+                   "valid set when closed");
         ReviewImage img;
         MIB_EXPECT(!s.fetchImage(ReviewDataset::ValidImage, 0, OverlayMode::None, false, img), "image when closed");
         MIB_EXPECT(s.scatter().frameIndex.empty(), "scatter when closed");
@@ -283,7 +288,12 @@ int main()
             MIB_EXPECT(frames.empty() && ftotal == 10, "zero count empty");
             MIB_REQUIRE(s.framesPage(true, 3, std::numeric_limits<uint64_t>::max(), frames, ftotal), "huge count");
             MIB_EXPECT(frames.size() == 7 && frames[0].index == direct[3].index, "huge count is the rest, no wrap");
-            MIB_EXPECT(s.validMetadataReadable(), "valid metadata readable");
+            const auto set = s.validSet();
+            MIB_EXPECT(set.open && set.filePath == experiment.string() && !set.recordingFile && set.metadataReadable,
+                       "valid set identity");
+            bool sameSet = set.frames.size() == direct.size();
+            for (std::size_t i = 0; sameSet && i < set.frames.size(); ++i) sameSet = same(set.frames[i], direct[i]);
+            MIB_EXPECT(sameSet, "valid set rows = reader metadata");
         }
 
         // Images: raw Mono8, overlays RGB and different, masks raw, ROI red.
@@ -436,7 +446,10 @@ int main()
                        "recording frames page rows");
             MIB_REQUIRE(s.framesPage(false, 0, 5, frames, ftotal), "recording invalid frames page");
             MIB_EXPECT(ftotal == 0 && frames.empty(), "recording has no invalid set");
-            MIB_EXPECT(s.validMetadataReadable(), "recording valid set readable");
+            const auto set = s.validSet();
+            MIB_EXPECT(set.open && set.recordingFile && set.metadataReadable && set.frames.size() == 9 &&
+                           set.filePath == recording.string(),
+                       "recording valid set");
         }
         ReviewImage img;
         MIB_REQUIRE(s.fetchImage(ReviewDataset::RecordedImage, 4, OverlayMode::AllContour, true, img), "recorded image");
@@ -491,8 +504,9 @@ int main()
         H5Fclose(file);
         ReviewSession s;
         MIB_REQUIRE(s.open(path.string()), "open valid-set fault fixture");
-        MIB_EXPECT(s.validMetadataReadable() == !unreadable,
+        MIB_EXPECT(s.validSet().metadataReadable == !unreadable,
                    unreadable ? "unreadable valid metadata reported readable" : "absent valid set reported unreadable");
+        MIB_EXPECT(s.validSet().frames.empty(), "faulty valid set has no rows in the snapshot");
         std::vector<ProcessedFrame> frames;
         uint64_t ftotal = 9;
         MIB_REQUIRE(s.framesPage(true, 0, 5, frames, ftotal), "valid page of a faulty set");
@@ -500,9 +514,86 @@ int main()
         MIB_REQUIRE(s.framesPage(false, 0, 5, frames, ftotal), "invalid page beside a faulty valid set");
         MIB_EXPECT(ftotal == 4 && frames.size() == 4, "invalid set still served");
         s.close();
-        MIB_EXPECT(!s.validMetadataReadable(), "closed session not readable");
+        MIB_EXPECT(!s.validSet().metadataReadable && !s.validSet().open, "closed session not readable");
     }
     wd.mark("valid set faults");
+
+    // ---- open() is all or nothing (#512 S5) -----------------------------------
+    // A malformed background (a dataset whose height does not fit an int)
+    // makes cv::Mat throw while the metadata is read, after the reader has
+    // opened. open() must close the reader again and report the failure, so a
+    // host mirroring isOpen() (the facade's D1 flag) never misses an open
+    // reader; a previously open file stays closed, and the next open works.
+    {
+        const auto bad = td.path() / "bad_background.h5";
+        writeExperiment(bad, false, false, false);
+        {
+            const hid_t file = H5Fopen(bad.string().c_str(), H5F_ACC_RDWR, H5P_DEFAULT);
+            MIB_REQUIRE(file >= 0, "open background fault fixture");
+            hsize_t dims[3] = {1, hsize_t{1} << 31, 1};
+            hsize_t chunk[3] = {1, 1024, 1};
+            const hid_t space = H5Screate_simple(3, dims, nullptr);
+            const hid_t dcpl = H5Pcreate(H5P_DATASET_CREATE);
+            H5Pset_chunk(dcpl, 3, chunk);
+            const hid_t ds = H5Dcreate2(file, "/experiment_info/background", H5T_NATIVE_UINT8, space, H5P_DEFAULT,
+                                        dcpl, H5P_DEFAULT);
+            MIB_REQUIRE(ds >= 0, "malformed background dataset");
+            H5Dclose(ds);
+            H5Pclose(dcpl);
+            H5Sclose(space);
+            H5Fclose(file);
+        }
+        {
+            Hdf5Service probe;
+            MIB_REQUIRE(probe.loadFile(bad.string()), "probe the fixture");
+            bool threw = false;
+            try
+            {
+                cv::Mat bg;
+                probe.readBackgroundImage(bg);
+            }
+            catch (const std::exception &)
+            {
+                threw = true;
+            }
+            probe.closeFile();
+            MIB_REQUIRE(threw, "the malformed background throws inside Hdf5Service (fixture premise)");
+        }
+        ReviewSession s;
+        MIB_REQUIRE(s.open(experiment.string()), "a good file first");
+        std::string err;
+        bool threw = false;
+        bool opened = true;
+        try
+        {
+            opened = s.open(bad.string(), &err);
+        }
+        catch (...)
+        {
+            threw = true;
+        }
+        MIB_EXPECT(!threw, "open() does not throw for a malformed file");
+        MIB_EXPECT(!opened && !s.isOpen(), "a throwing metadata read leaves the session closed");
+        MIB_EXPECT(err.find("Failed to read " + bad.string()) == 0, "the error names the file: " + err);
+        MIB_EXPECT(!s.metadata().fileOpen && s.filePath().empty() && s.frameCount(true) == 0 && !s.validSet().open,
+                   "nothing of either file is left");
+        ReviewImage img;
+        MIB_EXPECT(!s.fetchImage(ReviewDataset::ValidImage, 0, OverlayMode::None, false, img), "no reads after it");
+        threw = false;
+        try
+        {
+            opened = s.open(bad.string(), &err);
+        }
+        catch (...)
+        {
+            threw = true;
+        }
+        MIB_EXPECT(!threw && !opened && !s.isOpen(), "from closed: still all or nothing");
+        MIB_REQUIRE(s.open(legacy.string()), "the next open works");
+        const auto set = s.validSet();
+        MIB_EXPECT(set.open && set.filePath == legacy.string() && set.frames.size() == 10, "snapshot follows the reopen");
+    }
+    wd.mark("all or nothing");
 
     // ---- overlay compose is a pure function of its inputs ---------------------
     {
