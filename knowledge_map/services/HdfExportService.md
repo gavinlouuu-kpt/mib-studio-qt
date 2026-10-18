@@ -149,13 +149,17 @@ it. The repository's existing isoelastic table is embedded at build time, so
 installed chart behavior does not depend on a developer working directory.
 `fetchReviewChartsJson` uses all valid metrics from an independent source reader;
 its 128×128 density cells conserve every finite point (not a sampled page), and
-histogram bins retain exact full-file counts. Counters are decimal strings.
+histogram bins retain exact full-file counts. Counters are decimal strings. The
+JSON is built by `review::reviewChartsJson` in `mib_review_core` since #512 S4
+(see [[ReviewSession]]).
 
 Tauri `all` and `charts` jobs render 1200×1200 TIFFs using that same helper inside
 the transactional export worker. Chart-only jobs export no source-frame images;
 failed chart writes never publish a successful output. Calibration/ring limits
-are explicit snapshots of current backend settings, matching Qt, not claimed to
-be recovered recording calibration. Fixed isoelastic reference conditions are
+are explicit snapshots of current backend settings (the live factor and
+config), not claimed to be recovered recording calibration; the Qt tab and YOFO
+Review use each file's recorded factor (TD-17), and MIB Studio follows them once
+it mounts the review module (#512 decision D3). Fixed isoelastic reference conditions are
 labelled rather than automatically assumed to match the experiment.
 
 Tauri Review export options pass existing frame classes and inclusive series ranges to the shared service; fractional, negative and reversed ranges fail at the facade boundary.

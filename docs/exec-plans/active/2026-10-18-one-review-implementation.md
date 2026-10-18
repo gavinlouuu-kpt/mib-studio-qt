@@ -196,8 +196,8 @@ the coordinator (ADR 0004/0011).
 |---|---|---|---|---|
 | S1 | One overlay kernel | none | none | merged (#721) |
 | S2 | Reanalysis engine in `mib_review_core` | none | none | merged (#721) |
-| S3 | Export engine in `mib_review_core` | none | none | in review (#724) |
-| S4 | Charts JSON and saved-overlay builders | none | none | planned |
+| S3 | Export engine in `mib_review_core` | none | none | merged (#724) |
+| S4 | Charts JSON and saved-overlay builders | none (text only, D3) | none | merged (#726) |
 | S5 | The facade owns the ReviewSession | none (D1 (a): unchanged) | none | planned |
 | S6 | Parity harness: a MIB Studio half | none | none | planned |
 | S7 | Facade jobs on ReviewJobs lanes | none | none | planned |
@@ -322,7 +322,7 @@ the coordinator (ADR 0004/0011).
   the output tree (paths, sizes, content hashes) was identical before and
   after, normalized only for temp paths and job ids.
 
-### S4 — Charts JSON and saved-overlay builders
+### S4 — Charts JSON and saved-overlay builders (in review, #726)
 
 - **Moves:** `fetch_review_charts_json`'s body (`makeReviewChartData`, the
   128 × 128 density, bins, curves, the JSON) and `render_review_overlay`'s
@@ -340,6 +340,31 @@ the coordinator (ADR 0004/0011).
   `backend.export_bridge_facade` (chart snapshot, overlay PNG); the new test
   compares the JSON string with the pre-slice output on a fixture.
 - **Risks:** low.
+- **As built (2026-10-19):** `reviewChartsJson` and `renderSavedOverlayPng` in
+  `backend/review/ReviewCharts.h`, plus `reviewChartsErrorJson` (the
+  `{"valid":false,"error":…}` shape). The rows are still read by the facade
+  (loaded file, own reader; S5 moves that to the session). `RoiStyle` has
+  `Facade` (used) and `Review` (`drawRoiOverlay`, the Qt / ReviewSession
+  pixels), so D2's switch later is one argument. Per the D3 ruling this slice
+  drops the stale "same as Qt" from `review_charts_json.calibration` in
+  `bridge-contract.json` (description only, no ABI bump; the generated
+  contracts are unchanged). Not anticipated: `makeReviewChartData` throws for an
+  empty or reversed ring range, which the facade has always reported as
+  `{"valid":false,"error":"Invalid chart calibration or histogram range"}`
+  (kept).
+- **Proof (#726):** `review.charts_json` (new) keeps the pre-slice facade
+  code as the oracle: 20 chart cases (5 row sets incl. NaN / Inf / extremes
+  and bin edges × 4 factor / range settings, 5 of them refused) and 852
+  overlay requests (5 files × valid / invalid × 6 indices × modes −1..5 × ROI,
+  plus 12 malformed or default requests) are byte-identical or throw the same
+  type and message; a small fixture's JSON is pinned literally; the Review
+  ROI style equals `ReviewSession::fetchImage` for modes 0..4. Mutations (the
+  facade ROI colour, the `rows` counter, the Review ROI scale) fail it.
+  `backend.export_bridge_facade`, `backend.facade_boundary` and the review
+  tests pass unchanged. A temporary characterization (not committed) of the
+  facade (`fetchReviewChartsJson` on 6 files × 2 live settings and with no
+  file; `renderReviewOverlayJson` on 852 requests) was identical before and
+  after.
 
 ### S5 — The facade owns the ReviewSession (source ownership)
 
@@ -392,6 +417,10 @@ the coordinator (ADR 0004/0011).
   corpus, the 512x96 run of `integration.review_scatter_e2e`, the review
   fixtures); results in the PR.
 - **Risks:** needs the Qt build for the Qt half (`linux-system-release`).
+  `makeReviewChartData` pads the chart ranges in `long double`: 80-bit on
+  Linux GCC, 64-bit on MSVC and arm64 macOS, so ranges can differ in the last
+  bits across platforms. Compare chart ranges with a tolerance, or pin them
+  per platform (found in S4, #726).
 
 ### S7 — Facade jobs on ReviewJobs lanes
 
@@ -593,7 +622,7 @@ bridge contract):
 - [x] 2026-10-18 — S2 reanalysis engine (`review.reanalysis`).
 - [x] 2026-10-19 — S1 and S2 merged (#721); D1, D3, D4 and D6 ruled, D7 amended (#717, #722).
 - [x] 2026-10-19 — S3 export engine (`review.export_engine`, #724); `review::writeMetricsCsv` deleted (F14).
-- [ ] S4 charts JSON and saved-overlay builders
+- [x] 2026-10-19 — S4 charts JSON and saved-overlay builders (`review.charts_json`, #726).
 - [ ] S5 facade owns the ReviewSession (D1)
 - [ ] S6 parity harness MIB Studio half
 - [ ] S7 facade jobs on ReviewJobs lanes (D7)

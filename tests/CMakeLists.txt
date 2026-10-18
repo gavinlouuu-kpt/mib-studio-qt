@@ -855,6 +855,12 @@ mib_add_backend_test_executable(review_jobs_test review/review_jobs_test.cpp)
 mib_backend_test_link(review_jobs_test PRIVATE Threads::Threads)
 add_test(NAME review.jobs COMMAND $<TARGET_FILE:mib_backend_tests> review_jobs_test)
 set_tests_properties(review.jobs PROPERTIES LABELS "review;recording;backend;hdf5;concurrency;safety" TIMEOUT 300)
+# Charts JSON and saved-overlay builders in mib_review_core (#512 slice 4):
+# byte for byte against the pre-slice facade code (kept in the test as the
+# oracle); the Review ROI style draws ReviewSession's pixels.
+mib_add_backend_test_executable(review_charts_json_test review/review_charts_json_test.cpp)
+add_test(NAME review.charts_json COMMAND $<TARGET_FILE:mib_backend_tests> review_charts_json_test)
+set_tests_properties(review.charts_json PROPERTIES LABELS "review;recording;backend;hdf5;invariant" TIMEOUT 120)
 
 mib_add_backend_test_executable(kde_core_roundtrip_test recording/kde_core_roundtrip_test.cpp)
 add_test(NAME recording.kde_core_roundtrip COMMAND $<TARGET_FILE:mib_backend_tests> kde_core_roundtrip_test)

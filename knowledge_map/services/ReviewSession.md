@@ -135,6 +135,34 @@ opening its own reader so session reads never block:
 
 Guard: `review.jobs` (`tests/review/review_jobs_test.cpp`).
 
+## Charts JSON and saved overlay (`ReviewCharts.h`, #512 S4)
+
+**Source:** `src/backend/review/ReviewCharts.cpp` +
+`include/backend/review/ReviewCharts.h` (same library). **Test:**
+`tests/review/review_charts_json_test.cpp` (`review.charts_json`: byte for
+byte against the pre-slice facade code, kept in the test as the oracle).
+
+The builders behind the backend bridge's `fetch_review_charts_json` and
+`render_review_overlay` (MIB Studio, YOFO Studio), moved verbatim out of
+`src/backend/app/ReviewCharts.cpp`, which keeps the policy: the loaded file
+(its own reader, "Charts require an experiment HDF file"), the **live** factor
+and ring-ratio range (D3 / D4 keep them for the facade's JSON commands), and
+the facade's ROI style:
+
+- `reviewChartsJson(rows, source, factor, ringMin, ringMax)`:
+  `recording::makeReviewChartData`, the 128 × 128 density (conserves every
+  finite point), the exact 0.5-wide histogram, the bundled isoelastic curves,
+  counters as decimal strings. It throws what `makeReviewChartData` throws (an
+  empty or reversed ring range); the facade turns any throw into
+  `reviewChartsErrorJson(message)` (`{"valid":false,"error":…}`).
+- `renderSavedOverlayPng(requestJson, RoiStyle)`: an independent reader, the
+  64 MiB source-frame limit, image + saved mask + classification from the same
+  file, `recording::renderProcessingOverlay`, PNG; throws with the bridge's
+  messages. `RoiStyle::Facade` is the facade's yellow 1 px rectangle in source
+  pixels (still the facade's, until D2's switch); `RoiStyle::Review` draws
+  `drawRoiOverlay`'s red 3 px scaled rectangle, so its pixels equal
+  `fetchImage` with the ROI (Qt / YOFO).
+
 ## Reanalysis engine (`Reanalysis.h`, #512 S2)
 
 The engine behind the backend bridge's `review_reanalysis_json` and
