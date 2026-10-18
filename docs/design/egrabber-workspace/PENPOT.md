@@ -5,6 +5,7 @@ Status: reference handoff; native prototype routing is not complete.
 Use this document together with the [implementation brief](README.md),
 [reviewed interaction prototype](prototype.html), and
 [execution plan](../../exec-plans/active/2026-10-14-egrabber-workspace.md).
+Who implements each Operation app and Review app board is in [WORK-SPLIT.md](WORK-SPLIT.md).
 The machine-readable IDs below live in [reference.json](reference.json), under
 `penpot`; do not depend on this chat or a local download to find the design.
 

@@ -98,6 +98,10 @@ as missing data stays Unavailable.
 | S6 | Single review | P5 | #512 merged; S2 | Studio mounts the shared review; full u64 event identity; polygon AND E; per-run statistics and small multiples **consumed from** the #523 worker (FJ05/FJ08), not re-implemented in the shell | P5 gate |
 | S7 | Parity and promotion | P6 | S3–S6 | all 37 + 5 views reviewed; host and PZ7035 runs measured; manual, release notes, screenshots | P6 gate; promotion by normal review, CI and hardware acceptance |
 
+Who does each slice: the work is split into an Operation app track (#716), a Review app
+track (#717) and the shared kit (#715); see
+[WORK-SPLIT.md](../../design/egrabber-workspace/WORK-SPLIT.md).
+
 Deferred (not scheduled here): chapters (ADR 0015 item 3; needs `mark_chapter`, `/chapters`,
 `chapterId`, review ABI 2); multi-run Compare and dose-response (#314, #523 FJ09);
 feature-range criteria (#523 FJ04); recipe pairing.
