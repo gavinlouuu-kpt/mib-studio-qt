@@ -158,9 +158,10 @@ schema 0.
 Notes for readers: `lut_id` / `revision` describe the loaded bytes only when
 `catalog_matches_loaded` is true (the catalog reports a newer manifest whose
 download failed while the older cached file stays loaded); compare runs by
-`sha256`. The syringe pump's `setpoint.flow_rate` is the value the pump was
-written (the request clamped to 1–9999 and truncated to an integer), not the
-request the UI shows. `stopped_run_at_start: true` means the readback was
+`sha256`. `setpoint.flow_rate` is what the pump was written, not the request
+the UI shows: a syringe pump's request clamped to 1–9999 and truncated to an
+integer; a peristaltic pump's flow from the written 0.01 rpm speed register
+(1.1 µL/min at 25 µL/rev is written as 0.04 rpm and recorded as 1.0). `stopped_run_at_start: true` means the readback was
 taken before the Start switched the LED on with the Run preset.
 Tests: `recording.run_provenance_record` (codec + file round trip, v1/v2
 legacy, fault injection), `backend.experiment_readiness` (Start writes it,

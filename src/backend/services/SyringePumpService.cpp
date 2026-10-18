@@ -733,9 +733,12 @@ bool SyringePumpService::peristalticSetFlowRate(int pumpIdx, double rate, uint16
         return false;
     }
     pump.status.speedRpm = value / 100.0;
-    pump.config.flowRate = rate;
+    pump.config.flowRate = rate;            // the request, for the UI
     pump.config.flowRateUnit = unit;
-    pump.applied.flowRate = rate;
+    // Applied = the flow the written speed register gives (0.01 rpm steps), in the requested unit:
+    // at 25 µL/rev a request for 1.1 µL/min is written as 0.04 rpm = 1.0 µL/min (#712).
+    const double writtenUlPerMin = tushui::rpmToFlow(pump.status.speedRpm, pump.config.microlitersPerRev);
+    pump.applied.flowRate = unit == UNIT_ML_PER_MIN ? writtenUlPerMin / 1000.0 : writtenUlPerMin;
     pump.applied.flowRateUnit = unit;
     SPDLOG_INFO("SyringePumpService: {} pump flow rate {} {} -> {:.2f} rpm", pumpName(pumpIdx), rate,
                 unit == UNIT_ML_PER_MIN ? "mL/min" : "µL/min", pump.status.speedRpm);
