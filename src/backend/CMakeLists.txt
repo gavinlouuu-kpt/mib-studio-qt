@@ -206,12 +206,15 @@ mib_link_hdf5(mib_processing PUBLIC)
 add_library(mib_review_core STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/review/ReviewSession.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/review/OverlayCompose.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/review/ReviewCharts.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/review/ReviewJobs.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/review/Reanalysis.cpp
-    ${PROJECT_SOURCE_DIR}/src/backend/recording/ReviewExport.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/review/ExportEngine.cpp
     ${PROJECT_SOURCE_DIR}/include/backend/review/ReviewSession.h
+    ${PROJECT_SOURCE_DIR}/include/backend/review/ReviewCharts.h
     ${PROJECT_SOURCE_DIR}/include/backend/review/ReviewJobs.h
     ${PROJECT_SOURCE_DIR}/include/backend/review/Reanalysis.h
+    ${PROJECT_SOURCE_DIR}/include/backend/review/ExportEngine.h
     ${PROJECT_SOURCE_DIR}/include/backend/review/ReviewTypes.h
     ${PROJECT_SOURCE_DIR}/include/backend/review/OverlayCompose.h
 )
@@ -529,7 +532,7 @@ if(MIB_HAS_ARAVIS)
     )
 endif()
 
-# ReviewExport.cpp is compiled once, in mib_review_core (ADR 0014).
+# The review engines are compiled once, in mib_review_core (ADR 0014).
 target_link_libraries(mib_backend PUBLIC mib_review_core mib_processing stage_zc300 oeabt_serial)
 
 

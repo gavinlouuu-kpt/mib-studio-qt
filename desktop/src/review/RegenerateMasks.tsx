@@ -4,7 +4,7 @@
 // AVI or a folder of TIFF/PNG/JPEG, with the file's recorded config, ROI and
 // background by default, into a new HDF5 file the panel then opens.
 import { useState } from "react";
-import { open, save } from "@tauri-apps/plugin-dialog";
+import { open, save } from "../transport/dialogs";
 import { REGENERATE_SOURCE, type ReviewInfo } from "./reviewBridge";
 import { exportDir, joinPath, stem } from "./exports/exportHelpers";
 

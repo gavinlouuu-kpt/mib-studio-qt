@@ -14,18 +14,22 @@
 `include/backend/review/ReviewSession.h`, `include/backend/review/ReviewTypes.h`,
 `src/backend/review/OverlayCompose.cpp` (+ header),
 `src/backend/review/Reanalysis.cpp` + `include/backend/review/Reanalysis.h`
-(the reanalysis engine, #512 S2)
+(the reanalysis engine, #512 S2),
+`src/backend/review/ExportEngine.cpp` + `include/backend/review/ExportEngine.h`
+(the export engine, #512 S3)
 **Library:** `mib_review_core` (static; `src/backend/CMakeLists.txt`) on
 `mib_processing` only — no `mib_backend`, so YOFO Review links it without
 cameras, serial, SQLite, curl or Sentry. `mib_backend` links it for the
-facade's review engines (the reanalysis engine since #512 S2) and
-`ReviewExport.cpp`, whose `review::writeMetricsCsv` no longer has a caller
-(the facade exports through [[HdfExportService]]; #512 S3 deletes it).
+facade's review engines (reanalysis since #512 S2, export since S3). The
+unused second CSV writer `review::writeMetricsCsv` (`ReviewExport.cpp`) was
+deleted in S3; every metrics CSV comes from [[HdfExportService]].
 **Tests:** `tests/review/review_session_test.cpp` (`review.session`, labels
 `review;recording;backend;hdf5;safety`), `tests/review/review_overlay_kernel_test.cpp`
 (`review.overlay_kernel`: one overlay kernel, #512 S1),
 `tests/review/review_reanalysis_test.cpp` (`review.reanalysis`: the
-reanalysis engine without an `AppBackend`, #512 S2)
+reanalysis engine without an `AppBackend`, #512 S2),
+`tests/review/review_export_engine_test.cpp` (`review.export_engine`: the
+export engine without an `AppBackend`, #512 S3)
 **Consumers:** `crates/mib-bridge/src/review_shim.cpp` (`ReviewBridge`, [[../architecture/Rust-Bridge]]),
 the Qt [[../frontend/HdfReviewTab]] (`recordedPixelToMicron`, TD-17)
 **Related:** [[Hdf5Service]], [[HdfExportService]], [[BatchMaskSources]],
@@ -87,7 +91,9 @@ opening its own reader so session reads never block:
 
 - `startExportMetrics(path)` / `startExportAll(root, series, charts)` /
   `startBatchExport(sources, root, metricsOnly, series)`: run
-  [[HdfExportService]] with **each source's own recorded** factor (the
+  [[HdfExportService]] through the export engine (`runExportFile` /
+  `runExportBatch`, cancel applied at each progress report, since #512 S3)
+  with **each source's own recorded** factor (the
   fallback for files without one; 2026-10-04 — before, every source used the
   open file's factor); chart snapshots arrive
   encoded (PNG/TIFF) from the shell and are written beside the images; batch
@@ -129,6 +135,34 @@ opening its own reader so session reads never block:
 
 Guard: `review.jobs` (`tests/review/review_jobs_test.cpp`).
 
+## Charts JSON and saved overlay (`ReviewCharts.h`, #512 S4)
+
+**Source:** `src/backend/review/ReviewCharts.cpp` +
+`include/backend/review/ReviewCharts.h` (same library). **Test:**
+`tests/review/review_charts_json_test.cpp` (`review.charts_json`: byte for
+byte against the pre-slice facade code, kept in the test as the oracle).
+
+The builders behind the backend bridge's `fetch_review_charts_json` and
+`render_review_overlay` (MIB Studio, YOFO Studio), moved verbatim out of
+`src/backend/app/ReviewCharts.cpp`, which keeps the policy: the loaded file
+(its own reader, "Charts require an experiment HDF file"), the **live** factor
+and ring-ratio range (D3 / D4 keep them for the facade's JSON commands), and
+the facade's ROI style:
+
+- `reviewChartsJson(rows, source, factor, ringMin, ringMax)`:
+  `recording::makeReviewChartData`, the 128 × 128 density (conserves every
+  finite point), the exact 0.5-wide histogram, the bundled isoelastic curves,
+  counters as decimal strings. It throws what `makeReviewChartData` throws (an
+  empty or reversed ring range); the facade turns any throw into
+  `reviewChartsErrorJson(message)` (`{"valid":false,"error":…}`).
+- `renderSavedOverlayPng(requestJson, RoiStyle)`: an independent reader, the
+  64 MiB source-frame limit, image + saved mask + classification from the same
+  file, `recording::renderProcessingOverlay`, PNG; throws with the bridge's
+  messages. `RoiStyle::Facade` is the facade's yellow 1 px rectangle in source
+  pixels (still the facade's, until D2's switch); `RoiStyle::Review` draws
+  `drawRoiOverlay`'s red 3 px scaled rectangle, so its pixels equal
+  `fetchImage` with the ROI (Qt / YOFO).
+
 ## Reanalysis engine (`Reanalysis.h`, #512 S2)
 
 The engine behind the backend bridge's `review_reanalysis_json` and
@@ -154,6 +188,38 @@ delegates). Not yet used by YOFO Review's Regenerate masks (#512 S8):
   an independent reader.
 - `reanalysis{Loading,Progress,Terminal,StartFailed}StatusJson`: the
   contract's status snapshots, byte for byte as the facade wrote them.
+
+## Export engine (`ExportEngine.h`, #512 S3)
+
+The engine behind the backend bridge's `review_export_json` /
+`review_export_status_json` (MIB Studio, YOFO Studio) and ReviewJobs' Export
+Metrics / Export All / Batch export, moved verbatim out of
+`BackendFacade::submitReviewExportJson`, which now keeps only the policy
+(live factor and chart ring range as the defaults, the loaded file as the
+default source, one export at a time, the `Export` operation, the snapshot):
+
+- `parseExportRequest(json, defaults, out, error)`: the contract request
+  (`output_root`, 1-256 `source_paths`, `explicit_destination` (single source
+  only; an empty root becomes "."), `format` metrics_csv / images / all /
+  charts, `frames`, `series`, `conversion_factor`, `keep_partial_on_failure`,
+  `isoelastic_overlays`) with the facade's messages; `defaults` carries the
+  host's factor and chart range; the source is left to the host.
+- `runExportBatch(request, sources, cancel, onProgress, options)`: one
+  [[HdfExportService]] run per source on the caller's thread; continue after a
+  failed source, stop on a cancelled one or on a cancel seen before a source
+  starts; per-source outcomes, the last result, `cancelled` / `failed` and the
+  batch message. `options.prepare` lets the host adjust or skip each source's
+  request (ReviewJobs' batch: recorded factor, recording files → images,
+  Batch Metrics refusing recording files, `<base>_metrics_N.csv` names
+  resolved just before each run). `runExportFile` is one run.
+- Two cancel models, both kept byte for byte: `ExportCancelPolling::Direct`
+  (the facade; the service polls the operation's flag at every check) and
+  `AtProgress` (ReviewJobs; the flag is copied into the service's token at
+  each progress report, so a cancel lands one report later).
+- `export{Validating,Progress,Terminal,StartFailed}StatusJson`: the contract's
+  status snapshots (phase strings and the per-file `results` array read by
+  `desktop/src/exportControls.tsx`). A single-source batch cancelled before it
+  started reports `"error":""`, as the facade always has.
 
 ## Threading
 

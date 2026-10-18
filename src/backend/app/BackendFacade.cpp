@@ -22,7 +22,7 @@
 #include "backend/app/BackgroundFrame.h"
 #include "backend/camera/mock/MockCamera.h"
 #include "backend/processing/ProcessingConfigJson.h"
-#include "backend/recording/HdfExportService.h"
+#include "backend/review/ExportEngine.h"
 
 #include <nlohmann/json.hpp>
 
@@ -1579,62 +1579,25 @@ namespace backend::bridge
         return exportStatusJson_;
     }
 
+    // The engine (parse, one HdfExportService run per source, status JSON)
+    // lives in mib_review_core (backend/review/ExportEngine.h, #512 slice 3);
+    // the facade keeps the policy: the live factor and chart range as the
+    // defaults, the loaded file as the default source, one export at a time,
+    // the tracked operation (BackendOperationKind::Export) and the snapshot.
     BackendCommandResult BackendFacade::submitReviewExportJson(const std::string &json)
     {
-        using namespace backend::recording;
         if (!initialized_) return {false, BackendCommandType::Review, "Backend not initialized"};
-        HdfExportRequest request;
-        std::vector<std::string> sources;
-        try {
-            const auto input = nlohmann::json::parse(json);
-            request.outputRoot = input.at("output_root").get<std::string>();
-            if (input.contains("source_paths")) {
-                sources = input.at("source_paths").get<std::vector<std::string>>();
-                if (sources.empty() || sources.size() > 256 ||
-                    std::any_of(sources.begin(), sources.end(), [](const auto& p) { return p.empty(); }))
-                    throw std::invalid_argument("Batch requires 1 to 256 nonempty source paths");
-            }
-            request.explicitDestination = input.value("explicit_destination", std::string{});
-            if (sources.size() > 1 && !request.explicitDestination.empty())
-                throw std::invalid_argument("Batch exports use generated destinations, not an explicit destination");
-            if (request.outputRoot.empty() && !request.explicitDestination.empty())
-                request.outputRoot = ".";
-            const auto format = input.value("format", std::string{"all"});
-            if (format != "metrics_csv" && format != "images" && format != "all" && format != "charts")
-                throw std::invalid_argument("Unknown export format");
-            request.format = format == "metrics_csv" ? HdfExportFormat::MetricsCsv :
-                             format == "images" ? HdfExportFormat::Images : format == "charts" ? HdfExportFormat::Charts : HdfExportFormat::All;
-            request.generateReviewCharts=true;
-            const auto chartConfig=backend_.processing().getProcessingConfig();
-            request.chartRingMin=chartConfig.ring_ratio_min;request.chartRingMax=chartConfig.ring_ratio_max;
-            request.chartIsoelasticOverlays=input.value("isoelastic_overlays",true);
-            const auto frames = input.value("frames", std::string{"both"});
-            if (frames != "valid" && frames != "invalid" && frames != "both")
-                throw std::invalid_argument("Unknown frame selection");
-            request.frames = frames == "valid" ? HdfExportFrames::Valid :
-                             frames == "invalid" ? HdfExportFrames::Invalid : HdfExportFrames::Both;
-            if(input.contains("series")) {
-                const auto& series=input.at("series");
-                request.series.exportSeries=series.value("enabled",true);
-                const auto index=[&](const char* name) {
-                    if(!series.at(name).is_number_integer() || series.at(name)<0)throw std::invalid_argument("Series indices must be nonnegative integers");
-                    return series.at(name).get<size_t>();
-                };
-                if(series.contains("start"))request.series.startInclusive=index("start");
-                if(series.contains("end")) {
-                    request.series.endInclusive=index("end");
-                    if(request.series.endInclusive<request.series.startInclusive)throw std::invalid_argument("Series end must not precede start");
-                }
-            }
-            request.conversionFactor = input.value("conversion_factor", backend_.processing().getPixelToMicronFactor());
-            if (!std::isfinite(request.conversionFactor) || request.conversionFactor <= 0)
-                throw std::invalid_argument("Conversion factor must be finite and positive");
-            request.keepPartialOnFailure = input.value("keep_partial_on_failure", false);
-            if (request.outputRoot.empty() && request.explicitDestination.empty())
-                throw std::invalid_argument("Export destination is empty");
-        } catch (const std::exception &e) {
-            return {false, BackendCommandType::Review, e.what()};
+        review::ExportBatchRequest parsed;
+        {
+            const auto chartConfig = backend_.processing().getProcessingConfig();
+            const review::ExportDefaults defaults{backend_.processing().getPixelToMicronFactor(),
+                                                  chartConfig.ring_ratio_min, chartConfig.ring_ratio_max};
+            std::string error;
+            if (!review::parseExportRequest(json, defaults, parsed, error))
+                return {false, BackendCommandType::Review, error};
         }
+        auto &request = parsed.request;
+        auto &sources = parsed.sources;
         {
             std::scoped_lock lock(reviewMutex_);
             request.sourcePath = loadedRecordingPath_;
@@ -1656,53 +1619,27 @@ namespace backend::bridge
         const auto operationId = beginOperation(BackendOperationKind::Export, &cancelFlag, request.sourcePath);
         {
             std::scoped_lock lock(exportMutex_);
-            exportStatusJson_ = nlohmann::json{{"operation_id", std::to_string(operationId)},
-                {"state", "running"}, {"phase", "validating"}, {"completed", "0"}, {"total", "0"}}.dump();
+            exportStatusJson_ = review::exportValidatingStatusJson(operationId);
         }
         try {
-            exportThread_ = std::thread([this, operationId, cancelFlag, request, sources]() mutable {
-                HdfExportService service;
-                nlohmann::json results = nlohmann::json::array();
-                bool failed = false;
-                HdfExportResult result;
-                for (size_t index = 0; index < sources.size(); ++index) {
-                    if (cancelFlag->load(std::memory_order_acquire)) break;
-                    request.sourcePath = sources[index];
-                    result = service.run(request, HdfExportCancelToken(cancelFlag),
-                        [this, operationId, index, &sources, &results](const HdfExportProgress &progress) {
-                            {
-                                std::scoped_lock lock(exportMutex_);
-                                exportStatusJson_ = nlohmann::json{{"operation_id", std::to_string(operationId)},
-                                    {"job_id", progress.jobId}, {"state", "running"}, {"phase", toString(progress.phase)},
-                                    {"completed", std::to_string(progress.completed)}, {"total", std::to_string(progress.total)},
-                                    {"source_path", sources[index]}, {"file_index", index + 1}, {"file_count", sources.size()},
-                                    {"results", results}, {"current_output", progress.currentOutput}}.dump();
-                            }
-                            reportOperationProgress(operationId, progress.completed, progress.total);
-                        });
-                    failed = failed || result.status == HdfExportStatus::Failed;
-                    results.push_back(nlohmann::json{{"source_path", request.sourcePath}, {"state", toString(result.status)},
-                        {"final_path", result.finalPath}, {"retained_partial_path", result.retainedPartialPath},
-                        {"error", result.error}});
-                    if (result.status == HdfExportStatus::Cancelled) break;
-                }
-                // A cancellation accepted after a commit cannot undo that commit. If
-                // every file completed, report completion; otherwise retain each outcome.
-                const bool cancelled = results.size() < sources.size() || result.status == HdfExportStatus::Cancelled;
-                const auto state = cancelled ? BackendOperationState::Cancelled : failed ? BackendOperationState::Failed : BackendOperationState::Completed;
-                const auto error = cancelled ? std::string("Batch cancelled; completed files remain published") :
-                    failed ? std::string("One or more exports failed; see per-file results") : std::string{};
+            exportThread_ = std::thread([this, operationId, cancelFlag, request, sources]() {
+                const auto outcome = review::runExportBatch(request, sources, cancelFlag,
+                    [this, operationId, &sources](std::size_t index, const recording::HdfExportProgress &progress,
+                                                  const std::vector<review::ExportFileOutcome> &done) {
+                        {
+                            std::scoped_lock lock(exportMutex_);
+                            exportStatusJson_ = review::exportProgressStatusJson(operationId, sources, index, progress, done);
+                        }
+                        reportOperationProgress(operationId, progress.completed, progress.total);
+                    });
+                const auto state = outcome.cancelled ? BackendOperationState::Cancelled :
+                    outcome.failed ? BackendOperationState::Failed : BackendOperationState::Completed;
                 {
                     std::scoped_lock lock(exportMutex_);
-                    exportStatusJson_ = nlohmann::json{{"operation_id", std::to_string(operationId)},
-                        {"job_id", result.jobId}, {"state", cancelled ? "cancelled" : failed ? "failed" : "completed"},
-                        {"final_path", result.finalPath}, {"retained_partial_path", result.retainedPartialPath},
-                        {"images_exported", std::to_string(result.imagesExported)},
-                        {"images_failed", std::to_string(result.imagesFailed)}, {"metrics_written", result.metricsWritten},
-                        {"file_count", sources.size()}, {"results", results},
-                        {"warnings", result.warnings}, {"error", sources.size() == 1 ? result.error : error}}.dump();
+                    exportStatusJson_ = review::exportTerminalStatusJson(operationId, outcome);
                 }
-                finishOperation(operationId, state, state == BackendOperationState::Completed ? result.finalPath : error);
+                finishOperation(operationId, state,
+                                state == BackendOperationState::Completed ? outcome.last.finalPath : outcome.error);
                 std::scoped_lock lock(exportMutex_);
                 exportActive_ = false;
             });
@@ -1710,8 +1647,7 @@ namespace backend::bridge
             {
                 std::scoped_lock lock(exportMutex_);
                 exportActive_ = false;
-                exportStatusJson_ = nlohmann::json{{"operation_id", std::to_string(operationId)},
-                    {"state", "failed"}, {"error", e.what()}}.dump();
+                exportStatusJson_ = review::exportStartFailedStatusJson(operationId, e.what());
             }
             finishOperation(operationId, BackendOperationState::Failed, e.what());
             return {false, BackendCommandType::Review, e.what(), operationId};
