@@ -121,6 +121,23 @@ int main()
     MIB_EXPECT(!svc.setFlowRate(PumpId::Sample, 20.0, 103), "20 mL/min (800 rpm) rejected");
     MIB_EXPECT(!svc.setFlowRate(PumpId::Sample, 10.0, 7), "unknown unit rejected");
     MIB_EXPECT(wire.read(100) == 4000, "rejected rates leave the speed alone");
+    // The applied flow is what the written register gives, not the request (#712 review): the speed
+    // register has 0.01 rpm steps, so 1.1 µL/min at 25 µL/rev is written as 0.04 rpm = 1.0 µL/min.
+    {
+        SyringePumpService::RunFacts f;
+        MIB_EXPECT(svc.setFlowRate(PumpId::Sample, 1.1, 100), "1.1 µL/min accepted");
+        MIB_EXPECT(wire.read(100) == 4, "1.1 µL/min rounds to 0.04 rpm");
+        MIB_REQUIRE(svc.runFacts(PumpId::Sample, std::chrono::milliseconds(10), f), "facts after a rounded rate");
+        MIB_EXPECT(f.applied.flowRate && near(*f.applied.flowRate, 1.0) &&
+                       f.applied.flowRateUnit == std::optional<uint16_t>(100) && near(f.config.flowRate, 1.1),
+                   "applied = 1.0 µL/min from the register; the config keeps the 1.1 request");
+        MIB_EXPECT(svc.setFlowRate(PumpId::Sample, 0.0011, 103), "0.0011 mL/min accepted");
+        MIB_EXPECT(wire.read(100) == 4, "0.0011 mL/min also rounds to 0.04 rpm");
+        MIB_REQUIRE(svc.runFacts(PumpId::Sample, std::chrono::milliseconds(10), f), "facts in mL/min");
+        MIB_EXPECT(f.applied.flowRate && near(*f.applied.flowRate, 0.001) &&
+                       f.applied.flowRateUnit == std::optional<uint16_t>(103),
+                   "applied flow converted back to the requested unit (0.001 mL/min)");
+    }
     MIB_EXPECT(svc.setFlowRate(PumpId::Sample, 10.0, 100), "back to 10 µL/min");
     MIB_EXPECT(svc.setDirection(PumpId::Sample, SyringePumpService::Direction::Infuse),
                "direction accepted");

@@ -40,7 +40,9 @@
   reported); dLSP readbacks carry the raw flow/volume registers, whose units
   the protocol PDF does not state. `RunFacts::applied` (`AppliedSettings`:
   optional flow rate, unit, direction) holds only what the pump is known to
-  hold: set by a successful write (`setFlowRate`, the dLSP value as written;
+  hold: set by a successful write (`setFlowRate`: the dLSP value as written,
+  the peristaltic flow the written 0.01 rpm speed register gives, in the
+  requested unit (1.1 µL/min at 25 µL/rev is written as 0.04 rpm = 1.0);
   `setDirection`; a peristaltic `start` writes the direction) or a read-back
   (the peristaltic connect reads speed and direction), cleared on connect,
   disconnect and before each write (a failed write leaves it unknown); a
