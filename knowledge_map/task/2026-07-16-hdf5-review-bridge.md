@@ -9,7 +9,8 @@ Implementation Notes:
   (`src/backend/recording/ReviewExport.cpp`) — Qt-free metrics CSV with the
   exact column set/precision of the Qt HdfReviewTab export (scientifically
   equivalent outputs). Cancellable via a progress callback; partial files are
-  removed on cancel/failure; inputs are read-only.
+  removed on cancel/failure; inputs are read-only. (Superseded: the facade
+  moved to `HdfExportService`, and #512 S3 deleted this writer.)
 - **Facade** — `fetchReviewMetadata` (recording vs experiment mode,
   times/counts, ROI, core provenance, background presence, per-dataset
   capabilities via `getDatasetInfo`), `fetchReviewMetricsPage` (bounded pages

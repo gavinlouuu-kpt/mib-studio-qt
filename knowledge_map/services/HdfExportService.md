@@ -90,7 +90,10 @@ re-dispatches to its UI thread.
 ## Tauri facade binding (2026-09-23)
 
 `BackendFacade::submitReviewExportJson` starts one owned export worker over
-this service. Busy submissions are rejected; completed workers are reaped
+this service. Since #512 S3 the request parsing, the per-source runs and the
+status JSON are the export engine in `mib_review_core`
+(`backend/review/ExportEngine.h`, see [[ReviewSession]]), which ReviewJobs'
+exports share; the facade keeps the defaults, single flight and the operation. Busy submissions are rejected; completed workers are reaped
 before replacement. `fetchReviewExportStatusJson` retains the latest job's
 progress/terminal snapshot so event loss or view navigation does not hide
 its outcome. Operation IDs/counters are decimal strings at the JSON seam.

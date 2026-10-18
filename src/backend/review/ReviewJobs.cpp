@@ -1,4 +1,5 @@
 #include "backend/review/ReviewJobs.h"
+#include "backend/review/ExportEngine.h"
 #include "backend/app/WallClock.h"
 
 #include "backend/processing/BatchMaskSources.h"
@@ -127,18 +128,27 @@ namespace backend::review
             emit(ReviewJobEvent{id, kind, ReviewJobState::Progress, done, total, message});
         }
 
-        // One HdfExportService run with cancel + progress plumbing.
-        Outcome runExport(std::uint64_t id, ReviewJobKind kind, const recording::HdfExportRequest &request,
-                          const std::shared_ptr<std::atomic<bool>> &flag, recording::HdfExportResult *resultOut = nullptr)
+        // An export's progress as a job event ("<phase>[: <current output>]").
+        void exportProgress(std::uint64_t id, ReviewJobKind kind, const recording::HdfExportProgress &p)
         {
-            recording::HdfExportService service;
-            recording::HdfExportCancelToken token;
-            const auto result = service.run(request, token, [&](const recording::HdfExportProgress &p) {
-                if (flag->load()) token.cancel();
-                progress(id, kind, p.completed, p.total,
-                         std::string(recording::toString(p.phase)) + (p.currentOutput.empty() ? "" : ": " + p.currentOutput));
-            });
-            if (resultOut) *resultOut = result;
+            progress(id, kind, p.completed, p.total,
+                     std::string(recording::toString(p.phase)) + (p.currentOutput.empty() ? "" : ": " + p.currentOutput));
+        }
+
+        // One export through the engine (backend/review/ExportEngine.h), the
+        // job's cancel flag applied at each progress report.
+        Outcome runExport(std::uint64_t id, ReviewJobKind kind, const recording::HdfExportRequest &request,
+                          const std::shared_ptr<std::atomic<bool>> &flag)
+        {
+            ExportRunOptions options;
+            options.polling = ExportCancelPolling::AtProgress;
+            const auto result = runExportFile(
+                request, flag, [&](const recording::HdfExportProgress &p) { exportProgress(id, kind, p); }, options);
+            return exportOutcome(result);
+        }
+
+        static Outcome exportOutcome(const recording::HdfExportResult &result)
+        {
             switch (result.status)
             {
             case recording::HdfExportStatus::Completed:
@@ -268,18 +278,15 @@ namespace backend::review
         // use the host fallback, as when they are opened.
         const double fallback = impl_->session.fallbackPixelToMicron();
         return impl_->start(ReviewJobKind::BatchExport, [this, req, fallback](std::uint64_t id, auto flag) {
-            std::uint64_t exported = 0;
-            std::vector<std::string> failures;
-            for (std::size_t i = 0; i < req.sources.size(); ++i)
-            {
-                if (flag->load()) return Outcome{ReviewJobState::Cancelled, "cancelled after " + std::to_string(exported) + " file(s)"};
+            recording::HdfExportRequest base;
+            base.outputRoot = req.outputRoot;
+            base.conversionFactor = fallback;
+            base.series = toServiceRange(req.series);
+            ExportRunOptions options;
+            options.polling = ExportCancelPolling::AtProgress;
+            options.prepare = [&](std::size_t i, recording::HdfExportRequest &request, std::string &skipped) {
                 const std::string &source = req.sources[i];
                 impl_->progress(id, ReviewJobKind::BatchExport, i, req.sources.size(), source);
-                recording::HdfExportRequest request;
-                request.sourcePath = source;
-                request.outputRoot = req.outputRoot;
-                request.conversionFactor = fallback;
-                request.series = toServiceRange(req.series);
                 bool recordingFile = false;
                 {
                     services::Hdf5Service probe;
@@ -293,8 +300,8 @@ namespace backend::review
                 if (req.metricsOnly && recordingFile)
                 {
                     // As the Qt tab: recording files are refused, not attempted.
-                    failures.push_back(fs::path(source).filename().string() + ": recording files do not contain metrics");
-                    continue;
+                    skipped = "recording files do not contain metrics";
+                    return false;
                 }
                 if (req.metricsOnly)
                 {
@@ -308,11 +315,22 @@ namespace backend::review
                 {
                     request.format = recordingFile ? recording::HdfExportFormat::Images : recording::HdfExportFormat::All;
                 }
-                recording::HdfExportResult result;
-                const Outcome one = impl_->runExport(id, ReviewJobKind::BatchExport, request, flag, &result);
-                if (one.state == ReviewJobState::Completed) ++exported;
-                else if (one.state == ReviewJobState::Cancelled) return Outcome{ReviewJobState::Cancelled, "cancelled after " + std::to_string(exported) + " file(s)"};
-                else failures.push_back(fs::path(source).filename().string() + ": " + one.message);
+                return true;
+            };
+            const auto batch = runExportBatch(
+                base, req.sources, flag,
+                [&](std::size_t, const recording::HdfExportProgress &p, const std::vector<ExportFileOutcome> &) {
+                    impl_->exportProgress(id, ReviewJobKind::BatchExport, p);
+                },
+                options);
+            const std::size_t exported = batch.completedCount();
+            if (batch.cancelled) return Outcome{ReviewJobState::Cancelled, "cancelled after " + std::to_string(exported) + " file(s)"};
+            std::vector<std::string> failures;
+            for (const auto &file : batch.files)
+            {
+                if (file.attempted && file.result.status == recording::HdfExportStatus::Completed) continue;
+                failures.push_back(fs::path(file.sourcePath).filename().string() + ": " +
+                                   (file.attempted ? Impl::exportOutcome(file.result).message : file.result.error));
             }
             std::ostringstream summary;
             summary << "exported " << exported << " of " << req.sources.size() << " file(s)";
