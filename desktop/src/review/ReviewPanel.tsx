@@ -2,9 +2,10 @@ import { noImagesNotice } from "./noImages";
 import { metricNumber } from "../metricFormat";
 // The HDF5 review module (UI-4, #269; plan 2026-10-01-standalone-review-app).
 //
-// One React tree serves two products: MIB Studio mounts this panel in its
-// Review tab, YOFO Review (`review.html` → `ReviewApp.tsx`) mounts it as the
-// whole window. The panel owns its review state and the "review" and
+// YOFO Review (`review.html` → `ReviewApp.tsx`) mounts this panel as the
+// whole window. MIB Studio does not mount it yet: its Review tab is built
+// inline in `App.tsx` (develop #450, ADR 0014 amendment); mounting it there
+// is #512 step B5. The panel owns its review state and the "review" and
 // "viewer" slots of the shared FramePullScheduler, and talks only to the
 // review bridge (`reviewBridge.ts` → src-tauri/src/review.rs →
 // ReviewSession), so the review-only product needs no backend bridge at all.
@@ -16,7 +17,7 @@ import { metricNumber } from "../metricFormat";
 // viewer (series, zoom, prev/next). Charts (experiment files): the
 // deformability scatter, the same frame pane and the ring-width histogram
 // (`charts/ChartsView.tsx`, PR 3); clicking a point selects that valid cell.
-// Export dialogs with progress / cancel / series range arrive with PR 4.
+// Export dialogs with progress / cancel / series range are in `exports/`.
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";

@@ -2,7 +2,8 @@ import { PanelErrorBoundary } from "../components/PanelErrorBoundary";
 import { metricNumber } from "../metricFormat";
 // YOFO Review — the standalone review product (plan
 // 2026-10-01-standalone-review-app, ADR 0014). Mounted by `review.html` /
-// `main.tsx`; MIB Studio mounts the same `ReviewPanel` in its Review tab.
+// `main.tsx`. MIB Studio's Review tab does not use `ReviewPanel` yet (#512
+// step B5).
 //
 // This shell owns what the panel does not: backend initialization, the
 // menu bar, preferences (px→µm fallback), the log drawer and the About

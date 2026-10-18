@@ -414,6 +414,11 @@ mib_backend_test_link(experiment_readiness_test PRIVATE Threads::Threads)
 add_test(NAME backend.experiment_readiness COMMAND $<TARGET_FILE:mib_backend_tests> experiment_readiness_test)
 set_tests_properties(backend.experiment_readiness PROPERTIES LABELS "backend;processing;recording;hdf5;safety" TIMEOUT 180)
 
+# #713: the readiness destination probes run once per (output path, readiness generation).
+mib_add_backend_test_executable(readiness_probe_cache_test backend/readiness_probe_cache_test.cpp)
+add_test(NAME backend.readiness_probe_cache COMMAND $<TARGET_FILE:mib_backend_tests> readiness_probe_cache_test)
+set_tests_properties(backend.readiness_probe_cache PROPERTIES LABELS "backend;recording;hdf5;safety" TIMEOUT 60)
+
 mib_add_backend_test_executable(camera_script_apply_test backend/camera_script_apply_test.cpp)
 add_test(NAME backend.camera_script_apply COMMAND $<TARGET_FILE:mib_backend_tests> camera_script_apply_test)
 set_tests_properties(backend.camera_script_apply PROPERTIES LABELS "backend;camera" TIMEOUT 30)
@@ -828,6 +833,16 @@ if(DEFINED ENV{MIB_SSD_H5_REVIEW})
     set_tests_properties(review.ssd_h5 PROPERTIES LABELS "review;backend" TIMEOUT 120)
 endif()
 set_tests_properties(review.session PROPERTIES LABELS "review;recording;backend;hdf5;safety" TIMEOUT 120)
+# One overlay kernel (#512 slice 1): review::composeOverlay is byte-identical
+# to the implementation it replaced and draws the Qt/facade kernel's pixels.
+mib_add_backend_test_executable(review_overlay_kernel_test review/review_overlay_kernel_test.cpp)
+add_test(NAME review.overlay_kernel COMMAND $<TARGET_FILE:mib_backend_tests> review_overlay_kernel_test)
+set_tests_properties(review.overlay_kernel PROPERTIES LABELS "review;backend;invariant" TIMEOUT 60)
+# Reanalysis engine in mib_review_core (#512 slice 2): parse, round trip on
+# HDF/folder sources, cancel / budget / late-collision faults, status JSON.
+mib_add_backend_test_executable(review_reanalysis_test review/review_reanalysis_test.cpp)
+add_test(NAME review.reanalysis COMMAND $<TARGET_FILE:mib_backend_tests> review_reanalysis_test)
+set_tests_properties(review.reanalysis PROPERTIES LABELS "review;recording;backend;hdf5;safety" TIMEOUT 120)
 # ReviewJobs: exports (= direct HdfExportService output), cancel, batch,
 # regenerate masks, core contour, density (grid ≈ direct), single flight.
 mib_add_backend_test_executable(review_jobs_test review/review_jobs_test.cpp)

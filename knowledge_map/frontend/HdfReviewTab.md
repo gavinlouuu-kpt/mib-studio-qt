@@ -308,6 +308,9 @@ preparation, histogram math and embedded isoelastic reference curves. The Review
 view can toggle reference overlays and refresh after calibration changes;
 Export Charts and Export All write 1200-square TIFFs from the same full data.
 Reanalysis source/ROI/settings drafts are App-hook-owned and survive navigation.
+Since #512 S2 the native reanalysis engine (parse, run, preview, status JSON) is
+`backend/review/Reanalysis.h` in `mib_review_core` ([[../services/ReviewSession]]);
+the facade keeps the live-config default, one job at a time and the operation.
 
 Reanalysis now also previews a selected HDF dataset, folder or AVI frame through
 an independent-reader atomic frame packet. The operator can select that exact
@@ -318,7 +321,9 @@ the native job reopens the selected background and stores its pixels in output.
 Preview reads are bounded to 64 MiB and never replace the live Review reader.
 
 Saved valid/invalid images now expose the same five Qt contour/mask modes and
-saved ROI using the shared backend `ProcessingOverlay` renderer. Each explicit
+saved ROI using the shared backend `ProcessingOverlay` renderer (since #512 S1
+also the kernel behind [[../services/ReviewSession]]'s overlays; `review.overlay_kernel`).
+Each explicit
 source/index request renders image, mask and classification together. Frontend
 requests are serial/coalesced and stale source responses are discarded. Metric
 pages validate source before and after reads plus latest-request generation;
