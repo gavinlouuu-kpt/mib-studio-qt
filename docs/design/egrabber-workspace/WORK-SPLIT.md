@@ -30,7 +30,8 @@ Penpot and Claude Design meet only through it.
    (ids in [PENPOT.md](PENPOT.md)).
 2. **Claude Design** prototypes the flow with the real kit (project
    "MIB · YOFO UI language"). It does not invent components. When a prototype needs one,
-   the request goes to #715. The accepted prototype is linked from the board band.
+   the request goes to #715. Each board's band names its track step and
+   "Claude Design prototype: pending"; the accepted prototype replaces "pending".
 3. **The kit** gets any missing component: its `C · <Name>` board on the Penpot page
    "Components (@mib/ui)" first, then code, then a Claude Design re-sync.
 4. **The track** implements the view in its own directories, with tests, vault and
