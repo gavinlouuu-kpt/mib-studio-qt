@@ -66,6 +66,7 @@ namespace backend::services
         bool writable_{false};
         // Fault injection (tests): the run-provenance writers fail as a full disk would.
         std::atomic<bool> runProvenanceWriteFault_{false};
+        std::atomic<bool> annotationWriteFault_{false};
         bool datasetsInitialized_{false};
         hsize_t validFramesWritten_{0};
         hsize_t invalidFramesWritten_{0};
@@ -4914,6 +4915,97 @@ namespace backend::services {
         }
         H5Gclose(group);
         return ok && !runStopJson.empty();
+    }
+
+    // ---- Planned sample annotation (#712, annotation_schema_version = 1) ---------
+
+    bool Hdf5Service::writeExperimentAnnotationJson(const std::string& annotationJson)
+    {
+        if (!isFileOpen() || !impl_->writable_) {
+            SPDLOG_WARN("writeExperimentAnnotationJson: no writable HDF5 file open; annotation not stored");
+            return false;
+        }
+        if (impl_->annotationWriteFault_.load()) {
+            SPDLOG_ERROR("writeExperimentAnnotationJson: injected write fault; annotation not stored");
+            return false;
+        }
+        // Written once: the block is the sample as planned at Start and is never rewritten (ADR 0015 item 4).
+        if (H5Lexists(impl_->fileId_, "/experiment_annotation", H5P_DEFAULT) > 0) {
+            SPDLOG_ERROR("writeExperimentAnnotationJson: the file already has /experiment_annotation; not rewritten");
+            return false;
+        }
+        hid_t group = H5Gcreate2(impl_->fileId_, "/experiment_annotation", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+        if (group < 0) return false;
+        hid_t scalar = H5Screate(H5S_SCALAR);
+        bool ok = true;
+        {
+            hid_t type = H5Tcopy(H5T_C_S1);
+            H5Tset_size(type, H5T_VARIABLE);
+            H5Tset_cset(type, H5T_CSET_UTF8);
+            hid_t attr = H5Acreate2(group, "annotation_json", type, scalar, H5P_DEFAULT, H5P_DEFAULT);
+            if (attr >= 0) {
+                const char* ptr = annotationJson.c_str();
+                ok = H5Awrite(attr, type, &ptr) >= 0;
+                H5Aclose(attr);
+            } else {
+                ok = false;
+            }
+            H5Tclose(type);
+        }
+        // The JSON first: a failed document leaves no version that promises one.
+        if (ok) {
+            const uint64_t version = recording::kExperimentAnnotationSchemaVersion;
+            hid_t attr = H5Acreate2(group, "annotation_schema_version", H5T_NATIVE_UINT64, scalar, H5P_DEFAULT,
+                                    H5P_DEFAULT);
+            ok = attr >= 0 && H5Awrite(attr, H5T_NATIVE_UINT64, &version) >= 0;
+            if (attr >= 0) H5Aclose(attr);
+        }
+        H5Sclose(scalar);
+        H5Gclose(group);
+        if (ok && !flush()) SPDLOG_WARN("writeExperimentAnnotationJson: flush after annotation write failed");
+        return ok;
+    }
+
+    bool Hdf5Service::readExperimentAnnotationJson(std::string& annotationJson, uint64_t* schemaVersion) const
+    {
+        annotationJson.clear();
+        if (schemaVersion) *schemaVersion = 0;
+        if (!isFileOpen() || H5Lexists(impl_->fileId_, "/experiment_annotation", H5P_DEFAULT) <= 0) return false;
+        hid_t group = H5Gopen2(impl_->fileId_, "/experiment_annotation", H5P_DEFAULT);
+        if (group < 0) return false;
+        bool ok = false;
+        if (H5Aexists(group, "annotation_json") > 0) {
+            hid_t attr = H5Aopen(group, "annotation_json", H5P_DEFAULT);
+            if (attr >= 0) {
+                hid_t type = H5Aget_type(attr);
+                if (type >= 0 && H5Tget_class(type) == H5T_STRING && H5Tis_variable_str(type) > 0) {
+                    char* ptr = nullptr;
+                    ok = H5Aread(attr, type, &ptr) >= 0;
+                    if (ok) annotationJson = ptr ? ptr : "";
+                    if (ptr) H5free_memory(ptr);
+                }
+                if (type >= 0) H5Tclose(type);
+                H5Aclose(attr);
+            }
+        }
+        if (schemaVersion && H5Aexists(group, "annotation_schema_version") > 0) {
+            hid_t attr = H5Aopen(group, "annotation_schema_version", H5P_DEFAULT);
+            if (attr >= 0) {
+                hid_t type = H5Aget_type(attr);
+                uint64_t v = 0;
+                if (type >= 0 && H5Tget_class(type) == H5T_INTEGER && H5Aread(attr, H5T_NATIVE_UINT64, &v) >= 0)
+                    *schemaVersion = v;
+                if (type >= 0) H5Tclose(type);
+                H5Aclose(attr);
+            }
+        }
+        H5Gclose(group);
+        return ok && !annotationJson.empty();
+    }
+
+    void Hdf5Service::setExperimentAnnotationWriteFaultForTesting(bool fail)
+    {
+        impl_->annotationWriteFault_.store(fail);
     }
 
     // ---- KDE core contour records (kde_core_schema_version = 1) -----------------

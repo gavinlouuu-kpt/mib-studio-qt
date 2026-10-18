@@ -10,12 +10,17 @@
 // - device facts at Start: pump setpoints and the last complete status poll, the PZ7035 LED strobe
 //   registers, the Z stage's last status and the piezo's last known voltage;
 // - the run id armed into the PZ7035 PL (its RUN_ID registers);
-// - the stop record (/run_provenance @run_stop_json), written at finalization.
+// - the stop record (/run_provenance @run_stop_json), written at finalization;
+// - what the client declared at Start (bridge ABI 39): experiment / run / sample identity, the
+//   selected operator and the applied calibration record (RunStartIdentity.h), and the planned
+//   annotation read from /experiment_annotation.
 //
 // Unknown is std::nullopt, never 0 or "": an absent device or a fact the device did not report is
 // written as absent (null or a missing key) and reads back as nullopt. Files that predate v3 read
 // with every member nullopt. Nothing here is fabricated from a default.
 // Qt-free; part of mib_processing.
+
+#include "backend/recording/RunStartIdentity.h"
 
 #include <cstdint>
 #include <optional>
@@ -125,6 +130,7 @@ struct RunProvenanceV3 {
     std::optional<StageRecord> stage;
     std::optional<PiezoRecord> piezo;
     std::optional<uint64_t> plRunId;           // RUN_ID armed into the PL; nullopt for a host run
+    RunStartIdentity identity;                 // declared by the client at Start; each member nullopt when not
 };
 
 // How the run ended, written at finalization. `reason` names the coordinator path:
@@ -140,10 +146,14 @@ struct RecordedRunProvenance {
     uint32_t schemaVersion{0};                 // run_snapshot_json "schema_version"; 0: no snapshot
     RunProvenanceV3 v3;                        // every member nullopt before v3
     std::optional<RunStopRecord> stop;         // nullopt: no stop record (older file, or unreadable)
+    // /experiment_annotation: nullopt when the run was started without one (or the file predates it).
+    std::optional<ExperimentAnnotation> annotation;
+    uint32_t annotationSchemaVersion{0};       // 0: no annotation block
 };
 
 // The v3 members as JSON object members, in a stable order and without braces or a leading comma:
-// `"run_id":...,"emodulus_lut":...,"pumps":...,"led":...,"stage":...,"piezo":...,"pl_run_id":...`.
+// `"run_id":...,"emodulus_lut":...,"pumps":...,"led":...,"stage":...,"piezo":...,"pl_run_id":...,
+// "experiment_id":...,"run_index":...,"sample_ref":...,"operator":...,"calibration_record_id":...`.
 std::string runProvenanceV3Members(const RunProvenanceV3& v3);
 
 // Parse a run_snapshot_json document. Members it lacks, or holds as null, stay nullopt; a member
@@ -155,8 +165,9 @@ bool parseRunProvenance(const std::string& runSnapshotJson, RecordedRunProvenanc
 std::string runStopToJson(const RunStopRecord& stop);
 std::optional<RunStopRecord> parseRunStop(const std::string& json, std::string* why = nullptr);
 
-// Read and parse /run_provenance of an open file. False when the file has no readable snapshot
-// (out.schemaVersion stays 0); the stop record is read independently of the snapshot.
+// Read and parse /run_provenance (and /experiment_annotation) of an open file. False when the file
+// has no readable snapshot (out.schemaVersion stays 0); the stop record and the annotation are read
+// independently of the snapshot.
 bool readRecordedRunProvenance(const services::Hdf5Service& file, RecordedRunProvenance& out,
                                std::string* why = nullptr);
 

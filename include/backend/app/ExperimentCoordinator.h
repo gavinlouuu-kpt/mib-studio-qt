@@ -39,6 +39,11 @@ struct ExperimentStartRequest {
     std::string profileId;          // frontend profile identity (provenance only)
     bool acknowledgeLatestFrameDrops{false}; // operator accepted LatestFrame policy
     bool acknowledgeDiscardRing{false};      // operator accepted that a stopped Run's buffered frames are discarded by this start (#693)
+    // What the client declares about the run (#712, ABI 39): experiment / run / sample identity, the
+    // selected operator and the applied calibration record (into the run snapshot v3), and the
+    // planned annotation (written once into /experiment_annotation). Checked by
+    // recording::validateStartRequest; a refused one is InvalidRequest and nothing is opened.
+    recording::StartRequestIdentity declared;
 };
 
 class ExperimentCoordinator {
