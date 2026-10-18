@@ -1,0 +1,57 @@
+{
+  "projectId": "14e57f39-1852-4a03-a868-550dc43f27b1",
+  "pkg": "@mib/ui",
+  "globalName": "MibUI",
+  "shape": "package",
+  "buildCmd": "npm run build (from desktop/ui, with ../node_modules/.bin on PATH)",
+  "cssEntry": "dist/style.css",
+  "docsDir": "docs",
+  "provider": {
+    "component": "UiRoot"
+  },
+  "componentSrcMap": {
+    "conditionColor": null
+  },
+  "extraFonts": [
+    "dist/fonts.css"
+  ],
+  "guidelinesGlob": [
+    "guides/*.md"
+  ],
+  "overrides": {
+    "Toolbar": {
+      "cardMode": "column"
+    },
+    "AreaDeformChart": {
+      "cardMode": "column"
+    },
+    "RecordIdentity": {
+      "cardMode": "column"
+    },
+    "StatTile": {
+      "cardMode": "column"
+    },
+    "AppShell": {
+      "cardMode": "column"
+    },
+    "Card": {
+      "cardMode": "column"
+    },
+    "StageTabs": {
+      "cardMode": "column"
+    },
+    "DataTable": {
+      "cardMode": "column"
+    },
+    "CellStrip": {
+      "cardMode": "column"
+    },
+    "OptionGroup": {
+      "cardMode": "column"
+    },
+    "Notice": {
+      "cardMode": "column"
+    }
+  },
+  "readmeHeader": ".design-sync/conventions.md"
+}

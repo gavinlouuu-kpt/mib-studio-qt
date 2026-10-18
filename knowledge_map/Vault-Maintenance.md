@@ -17,6 +17,7 @@ below is the policy it cannot check for you.
 | HDF5 schema / dataset paths (`Hdf5Service.cpp`) | [[data-model/HDF5-Storage]] + [[services/Hdf5Service]] |
 | Review core (`src/backend/review/`, `include/backend/review/`) | [[services/ReviewSession]] (+ [[frontend/HdfReviewTab]] when shared behaviour moves) |
 | Review bridge / YOFO Review (`crates/mib-bridge/src/review_*`, `desktop/src/review/`, `desktop/src-tauri/src/{review,review_update,isoelastic}.rs`, `scripts/release/publish-review-update.py`, `tauri.review.conf.json`) | [[frontend/YofoReview]] + [[architecture/Rust-Bridge]] |
+| UI language kit (`desktop/ui/`: components, tokens, docs, `penpot.json`, `.design-sync/`) | [[frontend/UI-Language-Kit]] |
 | Camera code under `src/backend/camera/` (ICamera, EGrabber, Mock) | The matching note under `knowledge_map/camera/` |
 | Rust command layer and transports (`crates/mib-app-commands/`, `desktop/src-tauri/`, `crates/mib-bridge-server/`) | [[architecture/Desktop-Shell]], [[architecture/Rust-Bridge]] |
 | `CMakeLists.txt`, `conanfile.py`, `CMakePresets.json` | [[build-and-run/Build]], [[build-and-run/Dependencies]], [[build-and-run/Run-Modes]] |

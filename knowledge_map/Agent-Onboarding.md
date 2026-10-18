@@ -42,6 +42,7 @@ Jump to the notes that match your task:
 | React + Tauri migration / Rust bridge | [[architecture/Rust-Bridge]] + `docs/decisions/0003-rust-cxx-bridge.md` |
 | React + Tauri desktop app (`desktop/`) | [[architecture/Desktop-Shell]] |
 | YOFO Review (standalone review product, `desktop/src/review/`) | [[frontend/YofoReview]] + `docs/exec-plans/active/2026-10-01-standalone-review-app.md` |
+| Shared UI language kit (`desktop/ui/`, `@mib/ui`) | [[frontend/UI-Language-Kit]] |
 | Syringe pumps | [[services/SyringePumpService]] + [[frontend/SyringePumpTab]] |
 | Pulse generator / shared RS485 bus | [[services/PulseGeneratorService]] + [[services/SerialBus]] + [[frontend/ConfigTabs]] |
 | Motorized Z stage (ZC300 / TBZF6-60): Home, soft limits, read-only start-up | [[services/StageService]] + [[services/ZC300Stage]] + `docs/decisions/0013-motion-stage-device-class.md` |
