@@ -3,9 +3,11 @@
 > YOFO Review's review implementation (ADR 0014, plan
 > `docs/exec-plans/active/2026-10-01-standalone-review-app.md`), also used by
 > the Qt tab for the recorded factor. MIB Studio's Tauri shell keeps its own
-> facade review stack until #512 (ADR 0014 amendment, decision A), which moves
-> it here slice by slice (plan
-> `docs/exec-plans/active/2026-10-18-one-review-implementation.md`). Qt-free,
+> facade review commands until #512 (ADR 0014 amendment, decision A), which
+> moves them here slice by slice (plan
+> `docs/exec-plans/active/2026-10-18-one-review-implementation.md`); since S5
+> the facade's loaded review file **is** a `ReviewSession` (see "The facade's
+> session" below). Qt-free,
 > owns the open HDF5 file through its **own** read-only `Hdf5Service`,
 > serves bounded reads with overlays composed in the backend, and will own
 > the review jobs (PR 1b).
@@ -31,6 +33,8 @@ reanalysis engine without an `AppBackend`, #512 S2),
 `tests/review/review_export_engine_test.cpp` (`review.export_engine`: the
 export engine without an `AppBackend`, #512 S3)
 **Consumers:** `crates/mib-bridge/src/review_shim.cpp` (`ReviewBridge`, [[../architecture/Rust-Bridge]]),
+`BackendFacade` (`review_`, the facade's review source, #512 S5;
+`tests/backend/facade_review_session_test.cpp`, `backend.facade_review_session`),
 the Qt [[../frontend/HdfReviewTab]] (`recordedPixelToMicron`, TD-17)
 **Related:** [[Hdf5Service]], [[HdfExportService]], [[BatchMaskSources]],
 [[../data-model/HDF5-Storage]], [[../frontend/YofoReview]]
@@ -53,6 +57,16 @@ the Qt [[../frontend/HdfReviewTab]] (`recordedPixelToMicron`, TD-17)
   read (0 when absent), shared with the Qt tab and the batch job.
 - `metricsPage(valid, offset, count)` → `MetricRow` with **every**
   FilterResult column the Qt `HdfMetricsModel` shows plus `areaUm2`.
+- `framesPage(valid, offset, count, frames, total)` (#512 S5): the same page
+  as the metadata-only `ProcessedFrame`s read at open (no pixels), for hosts
+  with their own row type (the facade's `MonitoringObjectRow`); same bounds
+  and totals, false only when closed, and overflow-safe for a huge `count`
+  (`metricsPage` still computes `offset + count`).
+- `validMetadataReadable()` (#512 S5): false when an experiment file's
+  `/valid_frames/metadata` exists but could not be read at open, or its
+  presence could not be determined (`metadataDatasetPresent`); an absent
+  dataset is an empty, readable set. The facade's charts answer "Cannot read
+  valid-frame metrics" for it, as their own reader did before S5.
 - `fetchImage(dataset, index, OverlayMode, roiOverlay)` → packed Mono8 or
   RGB `ReviewImage`: the overlay (contours / outer-inner / mask / filtered
   mask) and the red 3 px ROI rectangle are composed here by `OverlayCompose`,
@@ -221,10 +235,56 @@ default source, one export at a time, the `Export` operation, the snapshot):
   `desktop/src/exportControls.tsx`). A single-source batch cancelled before it
   started reports `"error":""`, as the facade always has.
 
+## The facade's session (#512 S5)
+
+`BackendFacade` holds one `std::shared_ptr<ReviewSession> review_` (never
+reassigned; shared so the review bridge can attach to it, S10). MIB Studio's
+and YOFO Studio's review commands read it: `load_recording` →
+`open(path)` (replaces the open file, also when the open fails),
+`close_review` → `close()`, `fetch_review_metadata` → `metadata()` field for
+field, `fetch_review_metrics_page` → `framesPage` mapped to
+`MonitoringObjectRow`, `fetch_review_image` → `readRaw` (Mono8, channel 0),
+`fetch_run_accounting("review")` → the accounting read at open,
+`fetch_review_charts_json` → the valid rows read at open (no second reader),
+and `review_export_json`'s default source → `filePath()`. The load event's
+counts come from the same metadata. Nothing in the facade holds review state
+of its own any more, and none of it touches `AppBackend::hdf5()` (the
+experiment writer's handle): a load beside an open writer handle is refused
+only by the guards, and the writer is never closed or replaced by load or
+close.
+
+The guards stay the facade's policy around `open()` / `close()`, inside the
+coordinator's idle transaction: "Experiment must be idle before loading review
+data", "Stop raw recording before loading review data" and the close
+equivalents. **Decision D1 (a):** the facade tells AppBackend whether its
+session is open (`AppBackend::setReviewSourceOpen`, set in the same
+transaction from `isOpen()`, cleared by close, a failed load, shutdown and the
+destructor). While it is, experiment readiness fails `storage.hdf5` with the
+text a file in the shared handle produced ("an HDF5 file is already open",
+"finish or close the current file first"), Start is refused with "stop raw
+recording and close the existing HDF5 file before starting an experiment"
+and raw recording with "Close the existing HDF5 file before starting raw
+recording; its writer will not be replaced": HDF5 is built without thread
+safety (#722), so a review reader must not run beside the 5 kHz writer. See
+[[../architecture/ExperimentCoordinator]]. Shutdown closes the session after
+the export / reanalysis jobs are joined.
+
+Proof: `backend.facade_review_session` keeps the pre-S5 facade code as its
+oracle (load result and events, metadata, pages, images, accounting, charts,
+the export's default source on experiment, legacy, recording, empty-set,
+unreadable-metadata and non-HDF5 fixtures, failed loads included), the writer
+handle untouched, the D1 gate equal to the shared handle's; `review.session`
+covers `framesPage` / `validMetadataReadable`; `backend.experiment_readiness`
+(section 5b) and `backend.facade_boundary` the D1 refusals and the guards
+with a live camera.
+
 ## Threading
 
 Every public call takes one mutex (`Hdf5Service` is not thread-safe).
 Jobs (PR 1b) open their own readers on `filePath()` and never block a read.
+The facade's session is read on the bridge's calling threads, as the shared
+handle was before S5 (now serialized by this mutex); HDF5 itself is still not
+thread-safe across readers (#722), which is why D1 keeps experiments out.
 
 ## Gotchas
 

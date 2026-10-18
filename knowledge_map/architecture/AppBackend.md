@@ -365,7 +365,10 @@ no contour processing.
 - Recording admission runs inside the coordinator idle transaction, excluding
   experiment Start through writer acquisition. An experiment in Starting, Active
   or Stopping, or any already-open HDF5 file (including the requested path),
-  refuses admission without closing or opening a file. Recording retains busy
+  refuses admission without closing or opening a file; so does a file open for
+  review in the facade's own `ReviewSession` (`setReviewSourceOpen` /
+  `reviewSourceOpen()`, decision D1 (a) of #512 S5, same error text: HDF5 is
+  not thread-safe, #722; see [[ExperimentCoordinator]]). Recording retains busy
   ownership until Stop has joined its worker; failures must be stopped before
   another writer can start. Callers can request a diagnostic error string.
 - `startFrameRecording(hdf5Path)`, `stopFrameRecording()`, `isFrameRecording()`
