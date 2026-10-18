@@ -132,33 +132,35 @@ to #512.
 Owner (Gavin) or the merge coordinator decides; each slice says which it
 waits for. Recommendations are this plan's.
 
-**Status 2026-10-18.** The merge coordinator ruled the engineering choices:
-D2, D5, D7, D8 and D9 are accepted as recommended below. D1, D3, D4 and D6
-stay open for Gavin. They change instrument behaviour (D1: Start while a
-review file is open), the numbers MIB Studio shows and exports (D3: pixel
-factor, D4: histogram range), or the overwrite and timestamp semantics of
-regenerated files (D6). The slices they gate (S5, S8, S13) wait for him;
-S3, S4, S6, S7 and S9 can proceed.
+**Status 2026-10-19.** All nine decisions are ruled (merge coordinator, on #717). D2, D5,
+D7, D8 and D9 were accepted as recommended on 2026-10-18; D7 is amended below. On
+2026-10-19 Gavin delegated D1, D3, D4 and D6: D3, D4 and D6 are accepted as recommended,
+and D1 is ruled (a), against the recommendation, because HDF5 is built without thread
+safety (#722). No slice waits on a decision; S13 still needs S10–S12.
 
 - **D1 Experiments while a review file is open** (F7, gates S5). (a) Keep
   today's behaviour: the facade tells the readiness gate a review source is
   open and the `storage.hdf5` message stays. (b) Allow experiments while
   reviewing, since the review reader no longer touches the writer's handle.
-  Recommended: (b), landed as its own visible change inside S5 with the
-  readiness test updated; (a) is the byte-identical fallback.
+  **Ruled (a), 2026-10-19.** HDF5 1.14.6 is built with `threadsafe=False` (the
+  Conan default) and `Hdf5Service` has no process-wide lock, so a review reader
+  beside the 5 kHz recorder would race inside the library, besides competing
+  for disk and CPU. S5 keeps the refusal byte-identical. Revisit after #722.
 - **D2 One ROI style** (F2, gates S4's facade output and S13). Recommended:
   Qt's red 3 px scaled (already Qt and YOFO, parity-signed 2026-10-04).
-- **D3 Factor policy for MIB Studio** (F3, gates S13). Recommended: each
+- **D3 Factor policy for MIB Studio** (F3, gates S13). **Accepted.** Recommended: each
   file's recorded factor with the live factor as the fallback, as Qt and
   YOFO. The facade's JSON commands keep their live default until the contract
   text of `review_charts_json.calibration` ("current backend pixel_to_micron,
-  same as Qt") is revised by the coordinator.
-- **D4 Histogram range** (F4, gates S13). Recommended: the recorded range
+  same as Qt") is revised by the coordinator. Ruling: the facade commands keep
+  the live default; the stale "same as Qt" is dropped (description only, no ABI
+  bump) by the slice that next touches `review_charts_json`.
+- **D4 Histogram range** (F4, gates S13). **Accepted.** Recommended: the recorded range
   (YOFO), with the live range only for files without a recorded config.
 - **D5 Exported chart files** (F5, gates S12/S13). Recommended: the module's
   shell snapshots (Qt file names) for MIB Studio after B5; the facade's
   `review_export_json` keeps backend-rendered charts for its clients.
-- **D6 One regenerate semantics** (F6, gates S8). Recommended: one engine
+- **D6 One regenerate semantics** (F6, gates S8). **Accepted.** Recommended: one engine
   (S2) with two options, `timestamps: preserve | rebase` and
   `syntheticBackground: quietTile | medianOf32`; facade = preserve +
   quietTile, YOFO = rebase + medianOf32 (its owner-accepted difference of
@@ -167,6 +169,9 @@ S3, S4, S6, S7 and S9 can proceed.
 - **D7 Job lanes** (F8, gates S7). Recommended: two lanes per session, exports
   and processing (reanalysis / regenerate / density / core), single flight per
   lane: MIB Studio keeps export-while-reanalysing; YOFO gains it.
+  **Amended 2026-10-19:** the lanes stand, but YOFO does not gain the second
+  lane before #722 makes concurrent HDF5 use safe; MIB Studio's existing
+  export-while-reanalysing is listed in #722 as at risk.
 - **D8 Transport for the module in MIB Studio and YOFO Studio** (F9, gates
   S10-S12). Recommended: attach the review bridge to the facade (S10) and
   register the review commands in `mib-app-commands` for the Tauri studio
@@ -189,11 +194,11 @@ the coordinator (ADR 0004/0011).
 
 | # | Slice | Bridge contract | Review contract | Status |
 |---|---|---|---|---|
-| S1 | One overlay kernel | none | none | done on this branch |
-| S2 | Reanalysis engine in `mib_review_core` | none | none | done on this branch |
+| S1 | One overlay kernel | none | none | merged (#721) |
+| S2 | Reanalysis engine in `mib_review_core` | none | none | merged (#721) |
 | S3 | Export engine in `mib_review_core` | none | none | planned |
 | S4 | Charts JSON and saved-overlay builders | none | none | planned |
-| S5 | The facade owns the ReviewSession | none (behaviour D1) | none | planned |
+| S5 | The facade owns the ReviewSession | none (D1 (a): unchanged) | none | planned |
 | S6 | Parity harness: a MIB Studio half | none | none | planned |
 | S7 | Facade jobs on ReviewJobs lanes | none | none | planned |
 | S8 | YOFO regenerate on the reanalysis engine | none | none (behaviour D6) | planned |
@@ -204,7 +209,7 @@ the coordinator (ADR 0004/0011).
 | S13 | B5: MIB Studio's Review stage mounts the module | none | none | planned (B5) |
 | S14 | Close-out | none | none | planned |
 
-### S1 — One overlay kernel (done on this branch)
+### S1 — One overlay kernel (merged, #721)
 
 - **Moves:** `review::composeOverlay` stops carrying its own copy of the
   overlay algorithm and calls `recording::renderProcessingOverlay` with a new
@@ -230,7 +235,7 @@ the coordinator (ADR 0004/0011).
   cases was identical.
 - **Risks:** low; ROI drawing untouched (D2).
 
-### S2 — Reanalysis engine in `mib_review_core` (done on this branch)
+### S2 — Reanalysis engine in `mib_review_core` (merged, #721)
 
 - **Moves:** the facade's reanalysis request parsing, the worker body (load,
   budgets, overrides, synthetic background, `processBatch`, index / timestamp /
@@ -557,6 +562,7 @@ bridge contract):
       comments fixed (F12).
 - [x] 2026-10-18 — S1 one overlay kernel (`review.overlay_kernel`).
 - [x] 2026-10-18 — S2 reanalysis engine (`review.reanalysis`).
+- [x] 2026-10-19 — S1 and S2 merged (#721); D1, D3, D4 and D6 ruled, D7 amended (#717, #722).
 - [ ] S3 export engine
 - [ ] S4 charts JSON and saved-overlay builders
 - [ ] S5 facade owns the ReviewSession (D1)
