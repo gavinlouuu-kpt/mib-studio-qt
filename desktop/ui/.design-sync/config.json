@@ -45,6 +45,12 @@
     },
     "CellStrip": {
       "cardMode": "column"
+    },
+    "OptionGroup": {
+      "cardMode": "column"
+    },
+    "Notice": {
+      "cardMode": "column"
     }
   },
   "readmeHeader": ".design-sync/conventions.md"

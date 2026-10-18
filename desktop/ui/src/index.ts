@@ -41,3 +41,7 @@ export { DataTable } from "./components/DataTable";
 export type { DataTableProps, DataTableColumn } from "./components/DataTable";
 export { CellImage, CellStrip } from "./components/CellImage";
 export type { CellImageProps, CellOverlay, CellStripItem, CellStripProps } from "./components/CellImage";
+export { OptionGroup } from "./components/OptionGroup";
+export type { OptionGroupProps, OptionItem, SingleOptionGroupProps, MultipleOptionGroupProps } from "./components/OptionGroup";
+export { Notice } from "./components/Notice";
+export type { NoticeProps } from "./components/Notice";

@@ -12,6 +12,8 @@ import {
   ConditionSwatch,
   DataTable,
   FactList,
+  Notice,
+  OptionGroup,
   RecordIdentity,
   StateChip,
   StatTile,
@@ -207,6 +209,53 @@ describe("UI language kit", () => {
     it("says why an empty strip is empty", () => {
       render(<CellStrip cells={[]} empty="No cells detected yet in this run." />);
       expect(host.querySelector(".mib-cellstrip__empty")!.textContent).toBe("No cells detected yet in this run.");
+    });
+  });
+
+  describe("OptionGroup", () => {
+    const formats = [
+      { value: "single", label: "Single sample", description: "One run, one file" },
+      { value: "queue", label: "Sample queue" },
+      { value: "rack", label: "Tube rack", unavailable: "Unsupported · no autosampler" },
+    ];
+
+    it("reports a single choice as a draft and keeps unavailable options visible but inert", () => {
+      const onChange = vi.fn();
+      render(<OptionGroup legend="Sample format" options={formats} value="queue" onChange={onChange} />);
+      const inputs = [...host.querySelectorAll<HTMLInputElement>("input")];
+      expect(inputs.map((i) => i.type)).toEqual(["radio", "radio", "radio"]);
+      expect(inputs.map((i) => i.checked)).toEqual([false, true, false]);
+      expect(inputs[2].disabled).toBe(true);
+      expect(host.querySelector(".mib-option__reason")!.textContent).toBe("Unsupported · no autosampler");
+      act(() => inputs[0].click());
+      expect(onChange).toHaveBeenCalledWith("single");
+      act(() => inputs[2].click());
+      expect(onChange).toHaveBeenCalledTimes(1);
+    });
+
+    it("reports multiple choices in option order", () => {
+      const onChange = vi.fn();
+      const exports = [{ value: "csv", label: "Metrics CSV" }, { value: "fcs", label: "FCS" }, { value: "pdf", label: "Report" }];
+      render(<OptionGroup type="multiple" legend="What to export" options={exports} value={["pdf"]} onChange={onChange} />);
+      const inputs = [...host.querySelectorAll<HTMLInputElement>("input")];
+      expect(inputs.map((i) => i.type)).toEqual(["checkbox", "checkbox", "checkbox"]);
+      act(() => inputs[0].click());
+      expect(onChange).toHaveBeenLastCalledWith(["csv", "pdf"]);
+    });
+  });
+
+  describe("Notice", () => {
+    it("is a status banner with the backend tone and its actions", () => {
+      render(
+        <Notice tone="blocked" title="Start blocked · 1 gate" actions={<Button>Focus setup</Button>}>
+          Focus: coarse motor origin unknown.
+        </Notice>,
+      );
+      const notice = host.querySelector(".mib-notice")!;
+      expect(notice.getAttribute("role")).toBe("status");
+      expect(notice.getAttribute("data-tone")).toBe("blocked");
+      expect(notice.querySelector(".mib-notice__title")!.textContent).toBe("Start blocked · 1 gate");
+      expect(notice.querySelector(".mib-notice__actions button")!.textContent).toBe("Focus setup");
     });
   });
 });

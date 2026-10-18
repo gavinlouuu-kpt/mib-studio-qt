@@ -12,6 +12,7 @@
 | `Card`, `FactList` | Card anatomy: title, subtitle, chips, facts, actions |
 | `StateChip`, `ConditionSwatch` | Backend states (confirmed / warn / blocked / unknown / unsupported / info / neutral) and condition colours (slots 1–5) |
 | `Button` | primary / secondary / selected / destructive / disabled |
+| `OptionGroup`, `Notice` | Labelled choices that only change the draft (unavailable options stay visible with the reason); a status banner with a backend tone and at most two actions |
 | `StatTile`, `Stepper`, `RecordIdentity` | Counts and Quick look deltas, lifecycle steps, record identity with evidence |
 | `DataTable` | Rows of recorded facts: statistics, linked records, sample sheet, library, export preview. Numbers align right, a missing value shows as missing, the selected row is the inspected record |
 | `CellImage`, `CellStrip` | A recorded cell crop with its recorded contour or mask, by record id; the live detected-cell strip with click-to-pin. A missing image or overlay is stated, never drawn |

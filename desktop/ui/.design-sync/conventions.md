@@ -46,6 +46,8 @@ Components carry their own styles. There are no utility classes. For your own la
 - Show every backend state as a `StateChip` (`confirmed`, `warn`, `blocked`, `unknown`, `unsupported`, `info`, `neutral`). Unknown is never shown as Pass. Write labels as "State · detail".
 - Build a card as title, a one-line subtitle, chips, a `FactList`, then actions. Write missing values out ("Unknown · not reported").
 - Use one `primary` Button per view. Clicking a stage only navigates.
+- Show choices with `OptionGroup` (not a dropdown); choosing changes the draft and the primary Button applies it. Keep unavailable options visible with their reason.
+- Put a view-wide backend state that needs attention in a `Notice` at the top of the view, with at most two actions.
 - Condition colours never stand for states, and state colours never stand for conditions.
 - Show ids (record, frame, run) as strings, and identify a record with `RecordIdentity`.
 - Show rows of facts (statistics, records, sample sheets) in a `DataTable`. Pass missing values as `null`; the table shows them as missing.

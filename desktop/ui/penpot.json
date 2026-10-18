@@ -322,6 +322,48 @@
           "name": "O4 · Experiment · Live"
         }
       ]
+    },
+    "OptionGroup": {
+      "group": "Actions",
+      "section": "Sample format, auto-stop, what to export",
+      "boards": [
+        {
+          "page": "b64e9247-17fe-514c-be52-6d82bead2b2c",
+          "board": "9aa8331e-8eb6-4f93-84dd-0a0d58cb90cd",
+          "name": "C · OptionGroup"
+        },
+        {
+          "page": "abaacf41-dfaf-500a-bc29-e6aa946d3273",
+          "board": "14db68fb-c9d2-4e21-ae5a-bd4291fc6273",
+          "name": "O3 · Experiment · Plan"
+        },
+        {
+          "page": "6dcbad3e-bdc3-5c94-9a59-1307866b24c8",
+          "board": "1f19ee2f-b36b-481a-afad-b110567072cf",
+          "name": "R6 · Export"
+        }
+      ]
+    },
+    "Notice": {
+      "group": "States",
+      "section": "Override banner and blocked readiness",
+      "boards": [
+        {
+          "page": "b64e9247-17fe-514c-be52-6d82bead2b2c",
+          "board": "f9c56ff4-f56d-4206-81bc-63731e5bfd68",
+          "name": "C · Notice"
+        },
+        {
+          "page": "abaacf41-dfaf-500a-bc29-e6aa946d3273",
+          "board": "7832aa3b-faed-4e2c-ae5c-0b72f1e4fecb",
+          "name": "O2 · Align"
+        },
+        {
+          "page": "abaacf41-dfaf-500a-bc29-e6aa946d3273",
+          "board": "e4c8fe07-f21c-45cb-9f8d-0045e350da41",
+          "name": "O1 · Prepare"
+        }
+      ]
     }
   },
   "claude_design": {
