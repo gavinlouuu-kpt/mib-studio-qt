@@ -15,8 +15,9 @@ this note says who does each slice.
 | B | Review app: YOFO Review on a PC, and the review module Studio mounts | `desktop/src/review/**`; `review.html`; review packaging; the review contract | #717 |
 | Kit | `@mib/ui`, used by both | `desktop/ui/**` (PR #714) | #715 |
 
-All PRs target `feat/egrabber-workspace`. A track never edits another track's
-directories. Files both tracks touch (`desktop/package.json`, `desktop/vite.config.ts`,
+Workspace slices target `feat/egrabber-workspace`. Fixes that every build needs
+(S0, #512) target `develop`, which the workspace branch then merges. A track never
+edits another track's directories. Files both tracks touch (`desktop/package.json`, `desktop/vite.config.ts`,
 `desktop/src-tauri/`, `desktop/src/bridgeContract.ts`) change in small separate PRs,
 merged one at a time.
 
