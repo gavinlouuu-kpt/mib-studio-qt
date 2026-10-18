@@ -1,6 +1,8 @@
-// Qt-free overlay composition for review images (OpenCV only). The one
-// counterpart of frontend/utils/OverlayRenderer.cpp: same colours, same
-// contour rules, same ROI rectangle, so every shell shows the same pixels.
+// Qt-free overlay composition for review images (OpenCV only). The overlay
+// itself is the one shared kernel, recording::renderProcessingOverlay
+// (backend/recording/ProcessingOverlay.h), which the Qt OverlayRenderer and
+// the facade's render_review_overlay also call (#512); the ROI rectangle is
+// the Qt tab's. Every shell shows the same pixels.
 #pragma once
 
 #include "backend/review/ReviewTypes.h"
@@ -12,11 +14,11 @@ namespace backend::services { struct FilterResult; }
 namespace backend::review
 {
 
-    // Original (Mono8 or BGR) + mask → RGB (CV_8UC3) overlay for `mode`.
-    // OverlayMode::None returns the original converted to RGB only when it
-    // already has three channels; a Mono8 original stays Mono8 (CV_8UC1).
-    // An empty mask or no usable contour hierarchy falls back to the
-    // original, as the Qt renderer does.
+    // Original (Mono8 or BGR) + mask → RGB (CV_8UC3) overlay for `mode`:
+    // renderProcessingOverlay with OverlayPassthrough::KeepMono. When nothing
+    // is drawn (OverlayMode::None, an empty mask or no usable contour
+    // hierarchy) a colour original comes back as RGB and a Mono8 original
+    // stays Mono8 (CV_8UC1); every drawn pixel equals the Qt renderer's.
     cv::Mat composeOverlay(const cv::Mat &original,
                            const cv::Mat &mask,
                            const services::FilterResult *validation,

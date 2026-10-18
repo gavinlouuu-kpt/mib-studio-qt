@@ -51,24 +51,30 @@ static void applyMaskTint(cv::Mat& rgb, const cv::Mat& mask, const cv::Vec3b& ti
 cv::Mat renderProcessingOverlay(const cv::Mat& original,
                                const cv::Mat& mask,
                                const backend::services::FilterResult* validation,
-                               OverlayMode mode) {
+                               OverlayMode mode,
+                               OverlayPassthrough passthrough) {
     if (original.empty()) {
         return cv::Mat();
     }
-    if (mode == OverlayMode::None) {
+    // Nothing drawn: the original as RGB, or kept Mono8 when asked.
+    const auto unchanged = [&]() {
+        if (passthrough == OverlayPassthrough::KeepMono && original.channels() == 1) return original.clone();
         return toRgb(original);
+    };
+    if (mode == OverlayMode::None) {
+        return unchanged();
     }
     cv::Mat rgb = toRgb(original);
     if (rgb.empty()) return cv::Mat();
 
     if (mode == OverlayMode::AllMask) {
-        if (mask.empty()) return toRgb(original);
+        if (mask.empty()) return unchanged();
         applyMaskTint(rgb, mask, classificationColor(validation));
         return rgb;
     }
 
     if (mask.empty()) {
-        return toRgb(original);
+        return unchanged();
     }
 
     std::vector<std::vector<cv::Point>> contours;
@@ -77,7 +83,7 @@ cv::Mat renderProcessingOverlay(const cv::Mat& original,
 
     const int n = static_cast<int>(contours.size());
     if (n == 0) {
-        return toRgb(original);
+        return unchanged();
     }
 
     // hierarchy: [next, prev, first_child, parent] per contour
@@ -145,7 +151,7 @@ cv::Mat renderProcessingOverlay(const cv::Mat& original,
         return rgb;
     }
 
-    return toRgb(original);
+    return unchanged();
 }
 
 } // namespace backend::recording

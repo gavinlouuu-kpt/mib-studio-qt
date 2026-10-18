@@ -113,8 +113,14 @@ ReadinessGate gate(const char* id, GateStatus status, std::string reason = {},
 }
 
 // Probe that the destination directory exists and is writable without
-// touching the destination file itself.
-bool outputWritable(const std::string& path, std::string& reason)
+// touching the destination file itself. The writability probe (a temp file
+// created and removed next to the target) is the only step that writes: it is
+// skipped while `writeVerified` is set, which the caller keeps per (path,
+// readiness generation) so a UI polling readiness does not write to the disk
+// on every evaluation (#713). Only a pass is kept: a failed open created no
+// file, and retrying it lets a destination the operator fixed pass. The other
+// checks read metadata only and run every time.
+bool outputWritable(const std::string& path, std::string& reason, bool& writeVerified)
 {
     if (path.empty()) {
         reason = "no output path selected";
@@ -143,15 +149,18 @@ bool outputWritable(const std::string& path, std::string& reason)
     // Writability probe: create and remove a temp file next to the target.
     auto probeDir = std::filesystem::exists(dir, ec) ? dir : dir;
     while (!probeDir.empty() && !std::filesystem::exists(probeDir, ec)) probeDir = probeDir.parent_path();
-    const auto probeFile = probeDir / (".mib_write_probe_" + std::to_string(Tools::getTimestamp()));
-    {
-        std::ofstream f(probeFile, std::ios::binary);
-        if (!f.good()) {
-            reason = "output directory is not writable: " + probeDir.string();
-            return false;
+    if (!writeVerified) {
+        const auto probeFile = probeDir / (".mib_write_probe_" + std::to_string(Tools::getTimestamp()));
+        {
+            std::ofstream f(probeFile, std::ios::binary);
+            if (!f.good()) {
+                reason = "output directory is not writable: " + probeDir.string();
+                return false;
+            }
         }
+        std::filesystem::remove(probeFile, ec);
+        writeVerified = true;
     }
-    std::filesystem::remove(probeFile, ec);
     const auto space = std::filesystem::space(probeDir, ec);
     if (!ec && space.available < (64ULL << 20)) {
         reason = "less than 64 MiB free at " + probeDir.string();
@@ -160,8 +169,9 @@ bool outputWritable(const std::string& path, std::string& reason)
     return true;
 }
 
-// Small format/access probe, NOT a sustained-throughput certification. Cached
-// by readiness generation so a UI timer does not continuously write files.
+// Small format/access probe, NOT a sustained-throughput certification. The
+// caller keeps a pass per (path, readiness generation) so a UI timer does not
+// continuously write files (#713).
 bool probeHdf5Destination(const std::string& output, std::string& reason) {
     auto dir = std::filesystem::path(output).parent_path();
     if (dir.empty()) dir = std::filesystem::current_path();
@@ -860,16 +870,19 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
         r.gates.push_back(gate("storage.output", GateStatus::Unavailable, "no output path chosen yet",
                                "choose an HDF5 destination"));
     } else {
+        // The destination probes write to the disk: a pass is kept per (path, readiness
+        // generation), so a polled readiness does not probe again (#713). A path change bumps
+        // the generation too. A failure is probed again, so a fixed destination passes.
+        if (storageProbePath_ != outputPath || storageProbeGeneration_ != r.generation) {
+            storageProbePath_ = outputPath;
+            storageProbeGeneration_ = r.generation;
+            storageWriteVerified_ = false;
+            storageProbeOk_ = false;
+        }
         std::string why;
-        if (outputWritable(outputPath, why)) {
+        if (outputWritable(outputPath, why, storageWriteVerified_)) {
             r.gates.push_back(gate("storage.output", GateStatus::Pass, {}, {}, outputPath));
-            const auto generation = readinessGeneration_.load();
-            const auto now = Tools::getTimestamp();
-            if (storageProbeGeneration_ != generation || now - storageProbeTimeUs_ > 30'000'000) {
-                storageProbeOk_ = probeHdf5Destination(outputPath, storageProbeReason_);
-                storageProbeGeneration_ = generation;
-                storageProbeTimeUs_ = now;
-            }
+            if (!storageProbeOk_) storageProbeOk_ = probeHdf5Destination(outputPath, storageProbeReason_);
             r.gates.push_back(
                 gate("storage.roundtrip", storageProbeOk_ ? GateStatus::Pass : GateStatus::Fail,
                      storageProbeReason_, storageProbeOk_ ? "" : "choose another destination"));

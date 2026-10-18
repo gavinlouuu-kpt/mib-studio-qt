@@ -1,9 +1,9 @@
 // Typed client for the review bridge commands (src-tauri/src/review.rs;
-// ADR 0014, plan 2026-10-01-standalone-review-app). The one review surface
-// for both products: MIB Studio's Review tab and YOFO Review call these and
-// nothing else for review. Images arrive as binary frame packets (Mono8 or
-// RGB8 when the backend composed an overlay / ROI); everything else is
-// lossless JSON (u64 as decimal strings).
+// ADR 0014, plan 2026-10-01-standalone-review-app). YOFO Review calls these
+// and nothing else for review; MIB Studio's Review tab still uses its own
+// commands (`bridge.ts`) until #512 step B5. Images arrive as binary frame
+// packets (Mono8 or RGB8 when the backend composed an overlay / ROI);
+// everything else is lossless JSON (u64 as decimal strings).
 import { invoke } from "@tauri-apps/api/core";
 import { REVIEW_FRAME_PACKET, REVIEW_PIXEL_FORMATS } from "./reviewContract";
 import { decimalU64, type FramePacket } from "../framePacket";
