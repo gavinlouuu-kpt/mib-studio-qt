@@ -178,7 +178,8 @@ failed write fails the Start (`ProvenanceFailed`) and removes the file. Document
 channel, medium, temperature_c, notes, free {string: string}}`. `channel`, `medium` and
 `temperature_c` (°C) are the *declared* conditions: the plan (2026-10-15) treats them as
 annotation, not as free-text snapshot fields. Every fixed member is `null` when not declared (a
-declared `0` stays a value); `free` keeps the order given. A run started without an annotation has
+declared `0` stays a value); `free` is stored and read sorted by key (plain `nlohmann::json`: the wheel
+build's nlohmann_json 3.6 has no `ordered_json`). A run started without an annotation has
 no group, and so does every older file: `readRecordedRunProvenance` then returns no annotation and
 `annotationSchemaVersion` 0. The tolerant reader treats `""` and wrong types as unknown and skips free
 entries that are not non-empty strings. Bounds and refusals: [[../architecture/Rust-Bridge]] ABI 39.

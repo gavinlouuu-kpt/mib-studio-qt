@@ -1,5 +1,6 @@
 #include "backend/services/SyringePumpService.h"
 
+#include <thread>
 #include <string>
 #include "backend/services/ModbusRtu.h"
 #include "backend/services/SerialBus.h"
@@ -645,8 +646,14 @@ void SyringePumpService::pollStatus(PumpId id) {
 
 bool SyringePumpService::runFacts(PumpId id, std::chrono::milliseconds wait, RunFacts& out) const {
     const auto& pump = pumps_[static_cast<size_t>(static_cast<int>(id))];
-    std::unique_lock<std::timed_mutex> lock(pump.mutex, std::defer_lock);
-    if (!lock.try_lock_for(wait)) return false;
+    // Poll try_lock() until the deadline (see PumpConnection::mutex for why not try_lock_for).
+    const auto deadline = std::chrono::steady_clock::now() + wait;
+    std::unique_lock<std::mutex> lock(pump.mutex, std::try_to_lock);
+    while (!lock.owns_lock()) {
+        if (std::chrono::steady_clock::now() >= deadline) return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        lock = std::unique_lock<std::mutex>(pump.mutex, std::try_to_lock);
+    }
     out.connected = pump.status.connected;
     out.config = pump.config;
     out.applied = pump.applied;

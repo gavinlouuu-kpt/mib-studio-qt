@@ -11,7 +11,9 @@ namespace backend::recording {
 
 namespace {
 
-using OJson = nlohmann::ordered_json;
+// Plain nlohmann::json: the wheel build compiles this against nlohmann_json 3.6 (EPEL 8), which has no
+// ordered_json (3.9). Objects therefore keep their keys sorted, the free key/values included.
+using OJson = nlohmann::json;
 
 bool fail(std::string* why, std::string message)
 {
@@ -361,7 +363,6 @@ std::string experimentAnnotationToJson(const ExperimentAnnotation& a)
 
 std::optional<ExperimentAnnotation> parseExperimentAnnotation(const std::string& json, std::string* why)
 {
-    // Ordered, so the free key/values read back in the order they were written.
     const OJson root = OJson::parse(json, nullptr, /*allow_exceptions=*/false);
     if (root.is_discarded() || !root.is_object()) {
         if (why) *why = "annotation_json is not a JSON object";

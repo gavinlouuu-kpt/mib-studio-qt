@@ -12,7 +12,9 @@ namespace backend::recording {
 
 namespace {
 
-using OJson = nlohmann::ordered_json;
+// Plain nlohmann::json (keys sorted on dump, so still a stable order): the wheel build compiles this
+// file against nlohmann_json 3.6 (EPEL 8), which has no ordered_json (3.9).
+using OJson = nlohmann::json;
 using Json = nlohmann::json;
 
 // ---- writing -----------------------------------------------------------------

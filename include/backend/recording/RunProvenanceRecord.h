@@ -154,9 +154,9 @@ struct RecordedRunProvenance {
     uint32_t annotationSchemaVersion{0};       // 0: no annotation block
 };
 
-// The v3 members as JSON object members, in a stable order and without braces or a leading comma:
-// `"run_id":...,"emodulus_lut":...,"pumps":...,"led":...,"stage":...,"piezo":...,"pl_run_id":...,
-// "experiment_id":...,"run_index":...,"sample_ref":...,"operator":...,"calibration_record_id":...`.
+// The v3 members as JSON object members, in a stable (sorted) order, without braces or a leading comma:
+// run_id, emodulus_lut, pumps, led, stage, piezo, pl_run_id, experiment_id, run_index, sample_ref,
+// operator, calibration_record_id.
 std::string runProvenanceV3Members(const RunProvenanceV3& v3);
 
 // Parse a run_snapshot_json document. Members it lacks, or holds as null, stay nullopt; a member

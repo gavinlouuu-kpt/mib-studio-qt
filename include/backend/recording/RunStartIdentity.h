@@ -78,7 +78,8 @@ struct ExperimentAnnotation {
     std::optional<std::string> medium;            // declared medium
     std::optional<double> temperatureC;           // declared temperature, degrees Celsius
     std::optional<std::string> notes;
-    // Free key/values, strings only, in the order given. Keys are unique.
+    // Free key/values, strings only, keys unique. Read back (and parsed) sorted by key: a JSON object
+    // keeps no order with the nlohmann_json the wheel build uses.
     std::vector<std::pair<std::string, std::string>> free;
 };
 

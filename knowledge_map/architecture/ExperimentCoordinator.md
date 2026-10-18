@@ -250,8 +250,8 @@ does no device I/O except the PZ7035 strobe registers (memory-mapped):
 - `pumps`: `SyringePumpService::runFacts(id, 150 ms)` per slot: the settings
   the pump is known to hold (`AppliedSettings`; never the configuration's
   defaults: a pump connected but not yet configured records them as unknown)
-  and the last complete status poll with its age. The pump lock is a
-  `timed_mutex`; a slot busy with serial I/O past 150 ms is recorded with
+  and the last complete status poll with its age. `runFacts` polls the pump
+  lock with `try_lock()` until a 150 ms deadline; a slot busy with serial I/O past 150 ms is recorded with
   `connected: null` (unknown) instead of holding Start behind a 1 s serial
   timeout per register.
 - `led`: `AppBackend::readInstrumentLed` (S[0], S[1], S[2], S[10]) when the

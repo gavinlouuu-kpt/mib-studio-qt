@@ -10,7 +10,7 @@
 //    out-of-range numbers and identity without an experiment are refused with the key named.
 //  Round trip:
 //  - identity members written by runProvenanceV3Members parse back; null and "" read as unknown;
-//  - the annotation document round-trips, free key/values in order; a file holds it once.
+//  - the annotation document round-trips, free key/values sorted by key; a file holds it once.
 //  Legacy read:
 //  - v2 and PR-1 v3 snapshots read the identity as unknown; a file without /experiment_annotation
 //    has no annotation (schema 0).
@@ -94,9 +94,9 @@ int main()
                        a.medium == std::optional<std::string>("PBS + 0.5% MC") &&
                        a.notes == std::optional<std::string>("line 1\nline 2\ttab"),
                    "annotation fixed members");
-        MIB_EXPECT(a.free.size() == 2 && a.free[0].first == "passage" && a.free[1].first == "batch" &&
-                       a.free[1].second == "B-7",
-                   "free key/values in the order given");
+        MIB_EXPECT(a.free.size() == 2 && a.free[0].first == "batch" && a.free[0].second == "B-7" &&
+                       a.free[1].first == "passage",
+                   "free key/values, sorted by key");
         rec::StartRequestIdentity none;
         MIB_EXPECT(rec::parseStartRequestJson("", none, &why) && none.identity.empty() && !none.annotation,
                    "an empty request declares nothing");
@@ -258,7 +258,7 @@ int main()
                        back->channel == full.annotation->channel && back->medium == full.annotation->medium &&
                        back->temperatureC == full.annotation->temperatureC && back->notes == full.annotation->notes &&
                        back->free == full.annotation->free,
-                   "annotation round trip (free key/values in order)");
+                   "annotation round trip (free key/values sorted by key)");
 
         rec::ExperimentAnnotation blank;
         const std::string blankJson = rec::experimentAnnotationToJson(blank);
