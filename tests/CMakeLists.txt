@@ -833,6 +833,11 @@ set_tests_properties(review.session PROPERTIES LABELS "review;recording;backend;
 mib_add_backend_test_executable(review_overlay_kernel_test review/review_overlay_kernel_test.cpp)
 add_test(NAME review.overlay_kernel COMMAND $<TARGET_FILE:mib_backend_tests> review_overlay_kernel_test)
 set_tests_properties(review.overlay_kernel PROPERTIES LABELS "review;backend;invariant" TIMEOUT 60)
+# Reanalysis engine in mib_review_core (#512 slice 2): parse, round trip on
+# HDF/folder sources, cancel / budget / late-collision faults, status JSON.
+mib_add_backend_test_executable(review_reanalysis_test review/review_reanalysis_test.cpp)
+add_test(NAME review.reanalysis COMMAND $<TARGET_FILE:mib_backend_tests> review_reanalysis_test)
+set_tests_properties(review.reanalysis PROPERTIES LABELS "review;recording;backend;hdf5;safety" TIMEOUT 120)
 # ReviewJobs: exports (= direct HdfExportService output), cancel, batch,
 # regenerate masks, core contour, density (grid ≈ direct), single flight.
 mib_add_backend_test_executable(review_jobs_test review/review_jobs_test.cpp)

@@ -23,3 +23,12 @@ thumbnails) no longer carries a copy of the overlay algorithm: it calls
 `review.overlay_kernel` proves over 864 cases that the result is
 byte-identical to the replaced implementation and that every drawn pixel
 equals the Qt/facade output. No contract change.
+
+**S2, reanalysis engine.** The facade's reanalysis (request parsing, the
+worker, the preview read and the status JSON of `review_reanalysis_json`)
+moved verbatim into `mib_review_core` as `backend/review/Reanalysis.h`;
+`BackendFacade` keeps the live-config default, single flight and the
+`Reanalysis` operation. `backend.export_bridge_facade` passes unchanged and
+the new `review.reanalysis` drives the engine with no `AppBackend` (parse,
+round trips, cancel, budget, late collision, status strings byte for byte).
+No contract change.

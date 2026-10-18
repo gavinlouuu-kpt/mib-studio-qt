@@ -104,6 +104,10 @@ to #512.
   (comments only).
 - **F13 Out of scope:** FCS export (#574) exists only in the Qt tab; neither
   React shell has it, and #512 does not add it.
+- **F14 A dead second CSV writer.** `review::writeMetricsCsv`
+  (`include/backend/recording/ReviewExport.h`, compiled into
+  `mib_review_core`) has no callers since the facade's export moved to
+  `HdfExportService`; S3 deletes it.
 
 ## Target design
 
@@ -178,7 +182,7 @@ the coordinator (ADR 0004/0011).
 | # | Slice | Bridge contract | Review contract | Status |
 |---|---|---|---|---|
 | S1 | One overlay kernel | none | none | done on this branch |
-| S2 | Reanalysis engine in `mib_review_core` | none | none | planned (this PR) |
+| S2 | Reanalysis engine in `mib_review_core` | none | none | done on this branch |
 | S3 | Export engine in `mib_review_core` | none | none | planned |
 | S4 | Charts JSON and saved-overlay builders | none | none | planned |
 | S5 | The facade owns the ReviewSession | none (behaviour D1) | none | planned |
@@ -218,7 +222,7 @@ the coordinator (ADR 0004/0011).
   cases was identical.
 - **Risks:** low; ROI drawing untouched (D2).
 
-### S2 — Reanalysis engine in `mib_review_core` (this PR)
+### S2 — Reanalysis engine in `mib_review_core` (done on this branch)
 
 - **Moves:** the facade's reanalysis request parsing, the worker body (load,
   budgets, overrides, synthetic background, `processBatch`, index / timestamp /
@@ -235,11 +239,16 @@ the coordinator (ADR 0004/0011).
   `tests/CMakeLists.txt`; vault `services/ReviewSession.md`,
   `frontend/HdfReviewTab.md`.
 - **Contract:** none (the JSON shapes and messages are unchanged).
-- **Proof:** `backend.export_bridge_facade` (all its reanalysis cases) passes
-  unchanged; a new `review.reanalysis` test drives the engine with no
-  `AppBackend` (parse, round trips, cancel, budget, late collision, the status
-  strings byte for byte, the preview); a temporary before/after
-  characterization of the facade's rejections, status JSON and output files.
+- **Proof:** `backend.export_bridge_facade` (all its reanalysis cases:
+  fractional / negative ranges, existing output, cancel cycles, missing
+  source, write fault, folder / AVI ranges, selected background, late
+  collision) passes unchanged; `review.reanalysis` drives the engine with no
+  `AppBackend`: parse defaults / every field / 13 exact refusal messages,
+  round trips (all, range, folder), cancel before and during, budget, missing
+  source, late collision, the status strings byte for byte, the preview. A
+  mutation (timestamps not preserved) fails both tests. The characterization
+  run (19 rejections, 14 reanalysis cases, h5dump of 7 outputs, normalized
+  for wall-clock and temp paths) was identical before and after.
 - **Risks:** platform publish code (`renameat2`, `MoveFileExW`, hard-link
   fallback) now compiles in the review core on macOS and Windows; the review
   CI lanes (`review-ci.yml`) must stay green there.
@@ -255,11 +264,12 @@ the coordinator (ADR 0004/0011).
   per-file outcomes, `exportStatusJson(…)`). `ReviewJobs::startExportMetrics /
   startExportAll / startBatchExport` build their requests as today (recorded
   factor per source, shell chart snapshots, `_metrics_N.csv` names) and run
-  through the same engine.
+  through the same engine. The unused `review::writeMetricsCsv` (F14) goes.
 - **Files:** new `include/backend/review/ExportEngine.h`,
   `src/backend/review/ExportEngine.cpp`; `src/backend/app/BackendFacade.cpp`
   (`submitReviewExportJson`, `handleReviewCommand`); `src/backend/review/ReviewJobs.cpp`;
-  `src/backend/CMakeLists.txt`; new `tests/review/review_export_engine_test.cpp`;
+  `src/backend/CMakeLists.txt`; deleted `include/backend/recording/ReviewExport.h`,
+  `src/backend/recording/ReviewExport.cpp`; new `tests/review/review_export_engine_test.cpp`;
   vault `services/ReviewSession.md`, `services/HdfExportService.md`.
 - **Contract:** none.
 - **Proof:** `backend.export_bridge_facade` and `review.jobs` (its byte
@@ -521,7 +531,7 @@ bridge contract):
 ## Acceptance criteria
 
 - [x] S1: one overlay kernel behind Qt, the facade and ReviewSession.
-- [ ] S2: the reanalysis engine lives in `mib_review_core`; the facade
+- [x] S2: the reanalysis engine lives in `mib_review_core`; the facade
       delegates.
 - [ ] S3-S9 land with no bridge or review contract change.
 - [ ] S10-S12 land with coordinator-reserved ABI numbers.
@@ -538,7 +548,7 @@ bridge contract):
 - [x] 2026-10-18 — plan; stale ReviewPanel / ReviewApp / reviewBridge header
       comments fixed (F12).
 - [x] 2026-10-18 — S1 one overlay kernel (`review.overlay_kernel`).
-- [ ] S2 reanalysis engine
+- [x] 2026-10-18 — S2 reanalysis engine (`review.reanalysis`).
 - [ ] S3 export engine
 - [ ] S4 charts JSON and saved-overlay builders
 - [ ] S5 facade owns the ReviewSession (D1)

@@ -12,15 +12,20 @@
 
 **Source:** `src/backend/review/ReviewSession.cpp`,
 `include/backend/review/ReviewSession.h`, `include/backend/review/ReviewTypes.h`,
-`src/backend/review/OverlayCompose.cpp` (+ header)
+`src/backend/review/OverlayCompose.cpp` (+ header),
+`src/backend/review/Reanalysis.cpp` + `include/backend/review/Reanalysis.h`
+(the reanalysis engine, #512 S2)
 **Library:** `mib_review_core` (static; `src/backend/CMakeLists.txt`) on
 `mib_processing` only — no `mib_backend`, so YOFO Review links it without
-cameras, serial, SQLite, curl or Sentry. `mib_backend` links it because
-`ReviewExport.cpp` (`review::writeMetricsCsv`, used by the facade's CSV
-export) is compiled here once.
+cameras, serial, SQLite, curl or Sentry. `mib_backend` links it for the
+facade's review engines (the reanalysis engine since #512 S2) and
+`ReviewExport.cpp`, whose `review::writeMetricsCsv` no longer has a caller
+(the facade exports through [[HdfExportService]]; #512 S3 deletes it).
 **Tests:** `tests/review/review_session_test.cpp` (`review.session`, labels
 `review;recording;backend;hdf5;safety`), `tests/review/review_overlay_kernel_test.cpp`
-(`review.overlay_kernel`: one overlay kernel, #512 S1)
+(`review.overlay_kernel`: one overlay kernel, #512 S1),
+`tests/review/review_reanalysis_test.cpp` (`review.reanalysis`: the
+reanalysis engine without an `AppBackend`, #512 S2)
 **Consumers:** `crates/mib-bridge/src/review_shim.cpp` (`ReviewBridge`, [[../architecture/Rust-Bridge]]),
 the Qt [[../frontend/HdfReviewTab]] (`recordedPixelToMicron`, TD-17)
 **Related:** [[Hdf5Service]], [[HdfExportService]], [[BatchMaskSources]],
@@ -123,6 +128,32 @@ opening its own reader so session reads never block:
   cleared when its job starts running, not when a start is refused.
 
 Guard: `review.jobs` (`tests/review/review_jobs_test.cpp`).
+
+## Reanalysis engine (`Reanalysis.h`, #512 S2)
+
+The engine behind the backend bridge's `review_reanalysis_json` and
+`fetch_review_reanalysis_preview` (MIB Studio, YOFO Studio), moved verbatim
+out of `BackendFacade` (`src/backend/app/ReviewReanalysis.cpp` now only
+delegates). Not yet used by YOFO Review's Regenerate masks (#512 S8):
+
+- `parseReanalysisRequest(json, defaults, out, error)`: the contract request
+  (source kind hdf / folder / avi, dataset `all` or one images dataset,
+  start / count, `max_frames` 1..1 000 000, `max_input_mib` 1..16 384, ROI,
+  `image_processing`, background index / dataset / clear, synthetic
+  background) with the facade's messages; `defaults` is the config used when
+  the request carries none (the facade passes the live config); an existing
+  output is refused.
+- `runReanalysis(request, kernel, cancel, onProgress)`: load (HDF "all" in
+  timestamp order, then index, dataset, row), budgets, overrides, quiet-tile
+  synthetic background, `processBatch`, source index / timestamp / track ids
+  restored, `.<name>.partial-<job>` beside the output, no-replace publish
+  (`renameat2` / `MoveFileExW` / hard link), partial removed (or reported).
+  Runs on the caller's thread; the host owns single flight, the operation and
+  the status snapshot.
+- `loadReanalysisPreview(json, image, index)`: one Mono8 source frame through
+  an independent reader.
+- `reanalysis{Loading,Progress,Terminal,StartFailed}StatusJson`: the
+  contract's status snapshots, byte for byte as the facade wrote them.
 
 ## Threading
 

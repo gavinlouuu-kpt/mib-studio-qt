@@ -308,6 +308,9 @@ preparation, histogram math and embedded isoelastic reference curves. The Review
 view can toggle reference overlays and refresh after calibration changes;
 Export Charts and Export All write 1200-square TIFFs from the same full data.
 Reanalysis source/ROI/settings drafts are App-hook-owned and survive navigation.
+Since #512 S2 the native reanalysis engine (parse, run, preview, status JSON) is
+`backend/review/Reanalysis.h` in `mib_review_core` ([[../services/ReviewSession]]);
+the facade keeps the live-config default, one job at a time and the operation.
 
 Reanalysis now also previews a selected HDF dataset, folder or AVI frame through
 an independent-reader atomic frame packet. The operator can select that exact
