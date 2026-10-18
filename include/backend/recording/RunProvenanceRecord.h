@@ -15,9 +15,10 @@
 //   selected operator and the applied calibration record (RunStartIdentity.h), and the planned
 //   annotation read from /experiment_annotation.
 //
-// Unknown is std::nullopt, never 0 or "": an absent device or a fact the device did not report is
-// written as absent (null or a missing key) and reads back as nullopt. Files that predate v3 read
-// with every member nullopt. Nothing here is fabricated from a default.
+// Unknown is std::nullopt, never 0, false or "": an absent device or a fact the device did not
+// report is written as absent (null or a missing key) and reads back as nullopt. An empty string is
+// never a value: it is written as null and read as nullopt. Files that predate v3 read with every
+// member nullopt. Nothing here is fabricated from a default.
 // Qt-free; part of mib_processing.
 
 #include "backend/recording/RunStartIdentity.h"
@@ -55,8 +56,8 @@ struct EModulusLutRecord {
 // The last complete status poll of a pump (all registers of one poll answered).
 struct PumpReadbackRecord {
     uint64_t ageUs{0};                         // how long before the snapshot it was read
-    bool lastPollOk{true};                     // false: a newer poll did not answer completely
-    std::string runStatus;                     // "stop" | "forward" | "backward" | "pause"
+    std::optional<bool> lastPollOk;            // false: a newer poll did not answer completely
+    std::string runStatus;                     // "stop" | "forward" | "backward" | "pause" (required)
     std::optional<double> speedRpm;            // peristaltic: head speed register (rpm)
     std::optional<double> realtimeFlowRaw;     // syringe: realtime flow register, device units
     std::optional<double> accumulatedVolumeRaw; // syringe: accumulated volume register, device units
@@ -71,7 +72,8 @@ struct PumpRecord {
     std::optional<std::string> model;          // "dlsp_syringe" | "tushui_peristaltic"
     std::optional<std::string> port;
     std::optional<int> modbusAddress;
-    // Setpoint: the configuration the service applied to the pump.
+    // Setpoint: the settings the pump is known to hold (written successfully or read back in this
+    // connection, SyringePumpService::AppliedSettings); each nullopt until then.
     std::optional<double> flowRate;
     std::optional<int> flowRateUnitCode;       // 100 = µL/min, 103 = mL/min
     std::optional<std::string> flowRateUnit;   // "uL/min" | "mL/min"; nullopt for another code
@@ -84,26 +86,27 @@ struct PumpRecord {
 // The PZ7035 LED strobe registers as read back at Start (S[0] control, S[1] delay, S[2] width in
 // strobe-clock cycles, S[10] strobe clock).
 struct LedRecord {
-    std::string source{"pz7035_strobe"};
+    std::optional<std::string> source;         // "pz7035_strobe"
     std::optional<std::string> error;          // why the registers could not be read
     std::optional<uint32_t> control;           // 0 off, 1 XVS sync
     std::optional<double> delayUs;
     std::optional<double> widthUs;
     std::optional<uint32_t> clockKhz;
     // The Start left a stopped Run: it switches the LED on with the Run preset after this readback.
-    bool stoppedRunAtStart{false};
+    std::optional<bool> stoppedRunAtStart;
     std::optional<bool> enabled() const;
 };
 
 struct StageReadbackRecord {
     uint64_t ageUs{0};                         // how long before the snapshot the status was sampled
-    std::string state;                         // "idle" | "moving" | "homing" | "faulted"
-    double positionUm{0.0};                    // relative to the operator's zero (see StageRecord::zeroSet)
-    bool limitPositive{false};
-    bool limitNegative{false};
-    bool home{false};
-    bool emergencyStop{false};
-    bool driverAlarm{false};
+    // Each nullopt when the readback did not carry it (a missing alarm flag is unknown, not "no alarm").
+    std::optional<std::string> state;          // "idle" | "moving" | "homing" | "faulted"
+    std::optional<double> positionUm;          // relative to the operator's zero (see StageRecord::zeroSet)
+    std::optional<bool> limitPositive;
+    std::optional<bool> limitNegative;
+    std::optional<bool> home;
+    std::optional<bool> emergencyStop;
+    std::optional<bool> driverAlarm;
 };
 
 struct StageRecord {
@@ -137,8 +140,8 @@ struct RunProvenanceV3 {
 // "stop_requested" (every requestStop(false) caller: the UI's Stop and the bridge server's
 // client-loss stop alike), "cancel_requested", "fatal_save_error", "shutdown".
 struct RunStopRecord {
-    std::string reason;
-    std::string message;
+    std::string reason;                        // required
+    std::optional<std::string> message;        // the failure message; nullopt when there is none
 };
 
 // The typed view of a file's run provenance.

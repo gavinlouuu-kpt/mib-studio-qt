@@ -181,9 +181,10 @@ All gates in one struct. Notable fields:
   `enable_target_group_emodulus` + `target_group_emodulus_*` (uses
   `EModulusLut`, which is now fed from the managed LUT cache prepared by
   `AppBackend` at startup). `eModulusLutIdentity()` returns what was loaded
-  (#712): `loaded`, `path`, the SHA-256 of the file bytes
-  `loadEModulusLut` read (taken at load, so a cache refresh afterwards does not
-  change it), and the catalog labels `AppBackend` sets with
+  (#712): `loaded`, `path` (the file the bytes came from, after EModulusLut's
+  candidate resolution), the SHA-256 of exactly the bytes the table was built
+  from (`EModulusLut::loadFromFile(path, &bytes, &from)` reads the file once,
+  so a file replaced or a cache refreshed after the load does not change it), and the catalog labels `AppBackend` sets with
   `setEModulusLutCatalogIdentity` (`lutId`, `revision`, `source`,
   `catalogSha256`, `checksumStatus`). The run snapshot v3 `emodulus_lut` block
   is written from it ([[../data-model/HDF5-Storage]]).

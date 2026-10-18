@@ -195,10 +195,24 @@ int main()
         MIB_REQUIRE(svc.connect(PumpId::Sample, 3, 115200, 1), "connect");
         MIB_REQUIRE(svc.runFacts(PumpId::Sample, 10ms, f), "facts after connect");
         MIB_EXPECT(f.connected && !f.readback.valid, "connect alone is not a status readback");
+        MIB_EXPECT(!f.applied.flowRate && !f.applied.flowRateUnit && !f.applied.direction,
+                   "a dLSP connect applies and reads no setting: all unknown (not the config defaults)");
         MIB_EXPECT(svc.setFlowRate(PumpId::Sample, 100.0, 100) && svc.start(PumpId::Sample), "flow set, started");
         MIB_REQUIRE(svc.runFacts(PumpId::Sample, 10ms, f), "facts after commands");
         MIB_EXPECT(!f.readback.valid && f.config.flowRate == 100.0 && f.config.flowRateUnit == 100,
                    "commands change the setpoint, not the readback");
+        MIB_EXPECT(f.applied.flowRate == std::optional<double>(100.0) &&
+                       f.applied.flowRateUnit == std::optional<uint16_t>(100) && !f.applied.direction,
+                   "the applied flow rate is known, the never-written direction is not");
+        MIB_EXPECT(svc.setFlowRate(PumpId::Sample, 12345.6, 100), "an over-range rate is clamped");
+        MIB_REQUIRE(svc.runFacts(PumpId::Sample, 10ms, f), "facts after a clamped rate");
+        MIB_EXPECT(f.applied.flowRate == std::optional<double>(9999.0) && f.config.flowRate == 12345.6,
+                   "applied = the value the pump was written, config = the request");
+        MIB_EXPECT(svc.setDirection(PumpId::Sample, SyringePumpService::Direction::Withdraw), "direction set");
+        MIB_REQUIRE(svc.runFacts(PumpId::Sample, 10ms, f), "facts after direction");
+        MIB_EXPECT(f.applied.direction == std::optional<SyringePumpService::Direction>(
+                                               SyringePumpService::Direction::Withdraw),
+                   "applied direction known");
         svc.pollStatus(PumpId::Sample);
         MIB_REQUIRE(svc.runFacts(PumpId::Sample, 10ms, f), "facts after a poll");
         MIB_EXPECT(f.readback.valid && f.readback.lastPollOk &&
@@ -227,7 +241,8 @@ int main()
         poller.join();
         svc.disconnect(PumpId::Sample);
         MIB_REQUIRE(svc.runFacts(PumpId::Sample, 10ms, f), "facts after disconnect");
-        MIB_EXPECT(!f.connected && !f.readback.valid, "disconnect drops the readback");
+        MIB_EXPECT(!f.connected && !f.readback.valid && !f.applied.flowRate && !f.applied.direction,
+                   "disconnect drops the readback and the applied settings");
     }
 
     if (mib::test::exitCode() == 0) {

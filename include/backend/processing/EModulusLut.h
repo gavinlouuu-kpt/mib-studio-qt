@@ -15,7 +15,11 @@ public:
 
     /// Load LUT from a tab-separated file with columns: area_um, deform, emodulus.
     /// Returns true on success. Tries multiple path candidates relative to the executable.
-    bool loadFromFile(const std::string& basePath);
+    /// The file is read once; `loadedBytes` / `loadedPath` (optional) receive exactly the bytes
+    /// the grid was built from and the file they came from, so a caller can identify the table
+    /// in use (#712) even if the file is replaced afterwards.
+    bool loadFromFile(const std::string& basePath, std::string* loadedBytes = nullptr,
+                      std::string* loadedPath = nullptr);
 
     /// Whether a LUT has been successfully loaded.
     bool isLoaded() const { return loaded_; }
@@ -49,7 +53,7 @@ private:
         double emodulus;
     };
 
-    bool parseFile(const std::string& path, std::vector<LutPoint>& points) const;
+    bool parseText(const std::string& text, std::vector<LutPoint>& points) const;
     void buildGrid(const std::vector<LutPoint>& points);
     static std::string resolvePath(const std::string& basePath);
 

@@ -239,7 +239,9 @@ does no device I/O except the PZ7035 strobe registers (memory-mapped):
 - `run_id`: `profiles::generateUuidV4()`; the FCS `$MIB_RUN_ID`.
 - `emodulus_lut`: `ProcessingService::eModulusLutIdentity()` (SHA-256 of the
   loaded bytes plus the catalog's labels, see [[../services/ProcessingService]]).
-- `pumps`: `SyringePumpService::runFacts(id, 150 ms)` per slot: the setpoint
+- `pumps`: `SyringePumpService::runFacts(id, 150 ms)` per slot: the settings
+  the pump is known to hold (`AppliedSettings`; never the configuration's
+  defaults: a pump connected but not yet configured records them as unknown)
   and the last complete status poll with its age. The pump lock is a
   `timed_mutex`; a slot busy with serial I/O past 150 ms is recorded with
   `connected: null` (unknown) instead of holding Start behind a 1 s serial

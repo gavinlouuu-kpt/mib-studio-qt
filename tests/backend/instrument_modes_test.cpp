@@ -1257,7 +1257,7 @@ void testSsdRunHoldsRingThroughTheCoordinator(const mib::test::TempDir& td) {
         const auto& led = first.run.v3.led;
         MIB_EXPECT(led && led->control == std::optional<uint32_t>(1u) && led->clockKhz == std::optional<uint32_t>(100000u) &&
                        led->delayUs && std::fabs(*led->delayUs - pz::kRunLed.delayUs) < 1e-9 && led->widthUs &&
-                       std::fabs(*led->widthUs - pz::kRunLed.widthUs) < 1e-9 && !led->stoppedRunAtStart && !led->error,
+                       std::fabs(*led->widthUs - pz::kRunLed.widthUs) < 1e-9 && led->stoppedRunAtStart == false && !led->error,
                    "run 1 records the Run LED preset read back from S[0..2], S[10]");
         MIB_EXPECT(first.run.v3.plRunId == std::optional<uint64_t>(1u), "the snapshot names the armed PL run id (the SSD run id)");
     }
@@ -1296,7 +1296,7 @@ void testSsdRunHoldsRingThroughTheCoordinator(const mib::test::TempDir& td) {
     MIB_EXPECT(!racedOk && racedErr.find("experiment is starting or running") != std::string::npos, "a Resume Run racing the Start is refused: " + racedErr);
     MIB_REQUIRE(second.outcome == backend::app::ExperimentStartOutcome::Started, "run 2 starts with the acknowledgement: " + second.message);
     MIB_EXPECT(!backend.runFrozen() && s.live[S0 + 0] == 1 && second.run.ssdRunId == 2, "the start left the stopped Run");
-    MIB_EXPECT(second.run.v3.led && second.run.v3.led->stoppedRunAtStart &&
+    MIB_EXPECT(second.run.v3.led && second.run.v3.led->stoppedRunAtStart == true &&
                    second.run.v3.led->control == std::optional<uint32_t>(0u) && second.run.v3.plRunId == std::optional<uint64_t>(2u),
                "run 2 started from the held ring: the readback shows the LED off and says the Start switches it on after");
     MIB_EXPECT(backend.resumeRun(&err) && !backend.liveResultsActive(), "Resume Run during a run is a no-op: the live session does not start under the run's provider");
