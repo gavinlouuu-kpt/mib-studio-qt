@@ -309,6 +309,10 @@ explicit backend prerequisites and executed versus pending evidence.
 - Frontend: `npm install && npm run build` in `desktop/` → `desktop/dist`
   (Tauri's `frontendDist`): two pages, `index.html` (MIB Studio) and
   `review.html` (YOFO Review). `tsc` typechecks under strict mode.
+- UI language kit: `desktop/src` imports `@mib/ui` (and `@mib/ui/style.css`,
+  `@mib/ui/fonts.css`) from source through `resolve.alias` in `vite.config.ts`
+  and `paths` in `tsconfig.json`; no kit build step. See
+  [[../frontend/UI-Language-Kit]].
 - Version: `tauri.conf.json` and `package.json` carry the repository
   version, stamped by `scripts/release/stamp-tauri-version.py` from
   `cmake/MIBVersion.cmake` (`--check` runs in `review-ci.yml`).
