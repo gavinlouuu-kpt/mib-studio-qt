@@ -47,6 +47,13 @@ export const confirm = async (message: string, options?: string | dialog.Confirm
   }
 };
 
+// A Yes / No question (the plugin's ask, as the review module's core-contour prompts use).
+// Errors propagate, as with the plugin; a browser answers with window.confirm.
+export const ask = (async (message: string, options?: string | dialog.ConfirmDialogOptions) => {
+  if (!isRemote) return dialog.ask(message, options);
+  return window.confirm(message);
+}) as typeof dialog.ask;
+
 export const openUrl = (async (url: string | URL, openWith?: string) => {
   if (!isRemote) return opener.openUrl(url, openWith);
   window.open(String(url), "_blank", "noopener");

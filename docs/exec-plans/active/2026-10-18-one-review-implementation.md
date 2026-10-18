@@ -132,33 +132,35 @@ to #512.
 Owner (Gavin) or the merge coordinator decides; each slice says which it
 waits for. Recommendations are this plan's.
 
-**Status 2026-10-18.** The merge coordinator ruled the engineering choices:
-D2, D5, D7, D8 and D9 are accepted as recommended below. D1, D3, D4 and D6
-stay open for Gavin. They change instrument behaviour (D1: Start while a
-review file is open), the numbers MIB Studio shows and exports (D3: pixel
-factor, D4: histogram range), or the overwrite and timestamp semantics of
-regenerated files (D6). The slices they gate (S5, S8, S13) wait for him;
-S3, S4, S6, S7 and S9 can proceed.
+**Status 2026-10-19.** All nine decisions are ruled (merge coordinator, on #717). D2, D5,
+D7, D8 and D9 were accepted as recommended on 2026-10-18; D7 is amended below. On
+2026-10-19 Gavin delegated D1, D3, D4 and D6: D3, D4 and D6 are accepted as recommended,
+and D1 is ruled (a), against the recommendation, because HDF5 is built without thread
+safety (#722). No slice waits on a decision; S13 still needs S10–S12.
 
 - **D1 Experiments while a review file is open** (F7, gates S5). (a) Keep
   today's behaviour: the facade tells the readiness gate a review source is
   open and the `storage.hdf5` message stays. (b) Allow experiments while
   reviewing, since the review reader no longer touches the writer's handle.
-  Recommended: (b), landed as its own visible change inside S5 with the
-  readiness test updated; (a) is the byte-identical fallback.
+  **Ruled (a), 2026-10-19.** HDF5 1.14.6 is built with `threadsafe=False` (the
+  Conan default) and `Hdf5Service` has no process-wide lock, so a review reader
+  beside the 5 kHz recorder would race inside the library, besides competing
+  for disk and CPU. S5 keeps the refusal byte-identical. Revisit after #722.
 - **D2 One ROI style** (F2, gates S4's facade output and S13). Recommended:
   Qt's red 3 px scaled (already Qt and YOFO, parity-signed 2026-10-04).
-- **D3 Factor policy for MIB Studio** (F3, gates S13). Recommended: each
+- **D3 Factor policy for MIB Studio** (F3, gates S13). **Accepted.** Recommended: each
   file's recorded factor with the live factor as the fallback, as Qt and
   YOFO. The facade's JSON commands keep their live default until the contract
   text of `review_charts_json.calibration` ("current backend pixel_to_micron,
-  same as Qt") is revised by the coordinator.
-- **D4 Histogram range** (F4, gates S13). Recommended: the recorded range
+  same as Qt") is revised by the coordinator. Ruling: the facade commands keep
+  the live default; the stale "same as Qt" is dropped (description only, no ABI
+  bump) by the slice that next touches `review_charts_json`.
+- **D4 Histogram range** (F4, gates S13). **Accepted.** Recommended: the recorded range
   (YOFO), with the live range only for files without a recorded config.
 - **D5 Exported chart files** (F5, gates S12/S13). Recommended: the module's
   shell snapshots (Qt file names) for MIB Studio after B5; the facade's
   `review_export_json` keeps backend-rendered charts for its clients.
-- **D6 One regenerate semantics** (F6, gates S8). Recommended: one engine
+- **D6 One regenerate semantics** (F6, gates S8). **Accepted.** Recommended: one engine
   (S2) with two options, `timestamps: preserve | rebase` and
   `syntheticBackground: quietTile | medianOf32`; facade = preserve +
   quietTile, YOFO = rebase + medianOf32 (its owner-accepted difference of
@@ -167,6 +169,9 @@ S3, S4, S6, S7 and S9 can proceed.
 - **D7 Job lanes** (F8, gates S7). Recommended: two lanes per session, exports
   and processing (reanalysis / regenerate / density / core), single flight per
   lane: MIB Studio keeps export-while-reanalysing; YOFO gains it.
+  **Amended 2026-10-19:** the lanes stand, but YOFO does not gain the second
+  lane before #722 makes concurrent HDF5 use safe; MIB Studio's existing
+  export-while-reanalysing is listed in #722 as at risk.
 - **D8 Transport for the module in MIB Studio and YOFO Studio** (F9, gates
   S10-S12). Recommended: attach the review bridge to the facade (S10) and
   register the review commands in `mib-app-commands` for the Tauri studio
@@ -189,22 +194,22 @@ the coordinator (ADR 0004/0011).
 
 | # | Slice | Bridge contract | Review contract | Status |
 |---|---|---|---|---|
-| S1 | One overlay kernel | none | none | done on this branch |
-| S2 | Reanalysis engine in `mib_review_core` | none | none | done on this branch |
-| S3 | Export engine in `mib_review_core` | none | none | planned |
-| S4 | Charts JSON and saved-overlay builders | none | none | planned |
-| S5 | The facade owns the ReviewSession | none (behaviour D1) | none | planned |
+| S1 | One overlay kernel | none | none | merged (#721) |
+| S2 | Reanalysis engine in `mib_review_core` | none | none | merged (#721) |
+| S3 | Export engine in `mib_review_core` | none | none | merged (#724) |
+| S4 | Charts JSON and saved-overlay builders | none (text only, D3) | none | merged (#726) |
+| S5 | The facade owns the ReviewSession | none (D1 (a): unchanged) | none | planned |
 | S6 | Parity harness: a MIB Studio half | none | none | planned |
 | S7 | Facade jobs on ReviewJobs lanes | none | none | planned |
 | S8 | YOFO regenerate on the reanalysis engine | none | none (behaviour D6) | planned |
-| S9 | Transport-neutral review module | none | none | planned |
+| S9 | Transport-neutral review module | none | none | in review (#731) |
 | S10 | Attachable review bridge | **additive, ABI bump** | none | proposed, not implemented |
 | S11 | Review commands in the studio command layer | **additive command surface, ABI bump** | none | proposed, not implemented |
 | S12 | MIB Studio's options in the review contract | none | **additive, ABI bump** | proposed, not implemented |
 | S13 | B5: MIB Studio's Review stage mounts the module | none | none | planned (B5) |
 | S14 | Close-out | none | none | planned |
 
-### S1 — One overlay kernel (done on this branch)
+### S1 — One overlay kernel (merged, #721)
 
 - **Moves:** `review::composeOverlay` stops carrying its own copy of the
   overlay algorithm and calls `recording::renderProcessingOverlay` with a new
@@ -230,7 +235,7 @@ the coordinator (ADR 0004/0011).
   cases was identical.
 - **Risks:** low; ROI drawing untouched (D2).
 
-### S2 — Reanalysis engine in `mib_review_core` (done on this branch)
+### S2 — Reanalysis engine in `mib_review_core` (merged, #721)
 
 - **Moves:** the facade's reanalysis request parsing, the worker body (load,
   budgets, overrides, synthetic background, `processBatch`, index / timestamp /
@@ -261,7 +266,7 @@ the coordinator (ADR 0004/0011).
   fallback) now compiles in the review core on macOS and Windows; the review
   CI lanes (`review-ci.yml`) must stay green there.
 
-### S3 — Export engine in `mib_review_core`
+### S3 — Export engine in `mib_review_core` (in review, #724)
 
 - **Moves:** the facade's `submitReviewExportJson` worker (one
   `HdfExportService` run per source, per-file results, the batch rule
@@ -287,8 +292,37 @@ the coordinator (ADR 0004/0011).
   `tools/review_parity/run.sh` on the review fixtures (Qt ↔ YOFO) unchanged.
 - **Risks:** progress phase strings and the `results` array are consumed by
   `exportControls.tsx`; the `keep_partial_on_failure` manifest path.
+- **As built (2026-10-19):** `exportStatusJson(…)` is four formatters,
+  `export{Validating,Progress,Terminal,StartFailed}StatusJson`, as S2's.
+  `runExportBatch` takes `ExportRunOptions`: `prepare` (per-source request,
+  or skip) carries ReviewJobs' batch rules, which must run just before each
+  source (the `_metrics_N.csv` name depends on the files already written);
+  `runExportFile` is the single run ReviewJobs' Export Metrics / All use.
+  Not anticipated: the two hosts cancel differently. The facade hands the
+  operation's flag to the service as its token (polled at every check);
+  ReviewJobs copies its flag into a private token at each progress report, so
+  a cancel lands one report later and its event sequence differs
+  (`ExportCancelPolling::Direct` / `AtProgress`, both kept; S7 can unify
+  them). A single-source export cancelled before it started reports
+  `"error":""` (kept).
+- **Proof (#724):** `review.export_engine` (new): parse defaults / every
+  field / 12 exact refusal messages; single All and metrics-batch round trips;
+  status snapshots byte for byte (validating, progress, terminal of single,
+  batch, cancelled, failed, cancel-before-start, start failure); continue on
+  failure, stop on cancel, `prepare` skips; image write fault with and without
+  `keep_partial_on_failure` (manifest), a kept cancel; both polling modes and
+  ReviewJobs keeping `AtProgress`. Mutations (`file_index` off by one, the
+  before-source cancel check removed; ReviewJobs switched to `Direct`) fail
+  it. `backend.export_bridge_facade`, `review.jobs`, `review.session`,
+  `review.reanalysis`, `review.overlay_kernel`, `backend.facade_boundary`
+  pass unchanged. A temporary characterization (not committed) of the facade
+  (20 refusals, 19 export runs incl. batch, cancel, keep-partial, faults, the
+  legacy `ExportMetricsCsv` command) and of ReviewJobs (12 export jobs incl.
+  batch skips and cancels): every status snapshot, operation / job event and
+  the output tree (paths, sizes, content hashes) was identical before and
+  after, normalized only for temp paths and job ids.
 
-### S4 — Charts JSON and saved-overlay builders
+### S4 — Charts JSON and saved-overlay builders (in review, #726)
 
 - **Moves:** `fetch_review_charts_json`'s body (`makeReviewChartData`, the
   128 × 128 density, bins, curves, the JSON) and `render_review_overlay`'s
@@ -306,6 +340,31 @@ the coordinator (ADR 0004/0011).
   `backend.export_bridge_facade` (chart snapshot, overlay PNG); the new test
   compares the JSON string with the pre-slice output on a fixture.
 - **Risks:** low.
+- **As built (2026-10-19):** `reviewChartsJson` and `renderSavedOverlayPng` in
+  `backend/review/ReviewCharts.h`, plus `reviewChartsErrorJson` (the
+  `{"valid":false,"error":…}` shape). The rows are still read by the facade
+  (loaded file, own reader; S5 moves that to the session). `RoiStyle` has
+  `Facade` (used) and `Review` (`drawRoiOverlay`, the Qt / ReviewSession
+  pixels), so D2's switch later is one argument. Per the D3 ruling this slice
+  drops the stale "same as Qt" from `review_charts_json.calibration` in
+  `bridge-contract.json` (description only, no ABI bump; the generated
+  contracts are unchanged). Not anticipated: `makeReviewChartData` throws for an
+  empty or reversed ring range, which the facade has always reported as
+  `{"valid":false,"error":"Invalid chart calibration or histogram range"}`
+  (kept).
+- **Proof (#726):** `review.charts_json` (new) keeps the pre-slice facade
+  code as the oracle: 20 chart cases (5 row sets incl. NaN / Inf / extremes
+  and bin edges × 4 factor / range settings, 5 of them refused) and 852
+  overlay requests (5 files × valid / invalid × 6 indices × modes −1..5 × ROI,
+  plus 12 malformed or default requests) are byte-identical or throw the same
+  type and message; a small fixture's JSON is pinned literally; the Review
+  ROI style equals `ReviewSession::fetchImage` for modes 0..4. Mutations (the
+  facade ROI colour, the `rows` counter, the Review ROI scale) fail it.
+  `backend.export_bridge_facade`, `backend.facade_boundary` and the review
+  tests pass unchanged. A temporary characterization (not committed) of the
+  facade (`fetchReviewChartsJson` on 6 files × 2 live settings and with no
+  file; `renderReviewOverlayJson` on 852 requests) was identical before and
+  after.
 
 ### S5 — The facade owns the ReviewSession (source ownership)
 
@@ -358,6 +417,10 @@ the coordinator (ADR 0004/0011).
   corpus, the 512x96 run of `integration.review_scatter_e2e`, the review
   fixtures); results in the PR.
 - **Risks:** needs the Qt build for the Qt half (`linux-system-release`).
+  `makeReviewChartData` pads the chart ranges in `long double`: 80-bit on
+  Linux GCC, 64-bit on MSVC and arm64 macOS, so ranges can differ in the last
+  bits across platforms. Compare chart ranges with a tolerance, or pin them
+  per platform (found in S4, #726).
 
 ### S7 — Facade jobs on ReviewJobs lanes
 
@@ -395,7 +458,7 @@ the coordinator (ADR 0004/0011).
 - **Risks:** the no-clobber change for YOFO (D6) needs the YOFO save dialog to
   stop offering "replace".
 
-### S9 — Transport-neutral review module
+### S9 — Transport-neutral review module (in review, #731)
 
 - **Moves:** `desktop/src/review/` calls `invoke` and the dialogs through
   `desktop/src/transport/` (and the opener only when not remote), and chart
@@ -407,6 +470,19 @@ the coordinator (ADR 0004/0011).
 - **Contract:** none (same Tauri commands).
 - **Proof:** `npx vitest run`, `npx tsc --noEmit`, the review build under Xvfb.
 - **Risks:** `transport/` is shared with the operation app (track A).
+- **Landed (2026-10-19):** every `invoke`, dialog and opener call under
+  `desktop/src/review/` goes through `desktop/src/transport/` (`updates.tsx`
+  too); `reviewBridge` gained `clearCharts` / `stageChart`. Transport,
+  additive only: `Transport.upload(cmd, bytes, headers)` (Tauri:
+  `invoke(cmd, bytes, {headers})`; WebSocket: rejects with
+  `TransportUnsupportedError`, since the server reads no binary requests),
+  `transport/dialogs` `ask`. Over the WebSocket, Show in folder is disabled
+  with its reason and a refused chart upload is shown in plain words. Proof:
+  `reviewIpc.test.tsx` compares every call at the Tauri boundary with a golden
+  file recorded before the move, unchanged after it;
+  `transportBoundary.test.ts` is the import guard; `remoteTransport.test.tsx`
+  checks the browser behaviour. The Xvfb boot smoke was not run locally; it
+  runs in `review-ci.yml`. No contract change.
 
 ### S10 — Attachable review bridge (proposed; not implemented)
 
@@ -465,7 +541,10 @@ Same ABI bump as S10 if they land together. Exact proposed change:
   review-contract.json command set, also served by MIB Studio and the
   WebSocket server over attach_review_bridge"`; the ABI number as S10.
 - Risks: `review_list_dir` and the dialogs on a remote instrument browse the
-  board's file system; `review_stage_chart` needs the S9 upload over WS.
+  board's file system. `review_stage_chart` needs a binary request path in
+  `mib-bridge-server`, because client binary frames are only proof of life
+  today. Once that exists, `wsTransport.upload` replaces its
+  `TransportUnsupportedError` with a real send (the client side is S9's).
 
 ### S12 — MIB Studio's options in the review contract (proposed; not implemented)
 
@@ -557,13 +636,14 @@ bridge contract):
       comments fixed (F12).
 - [x] 2026-10-18 — S1 one overlay kernel (`review.overlay_kernel`).
 - [x] 2026-10-18 — S2 reanalysis engine (`review.reanalysis`).
-- [ ] S3 export engine
-- [ ] S4 charts JSON and saved-overlay builders
+- [x] 2026-10-19 — S1 and S2 merged (#721); D1, D3, D4 and D6 ruled, D7 amended (#717, #722).
+- [x] 2026-10-19 — S3 export engine (`review.export_engine`, #724); `review::writeMetricsCsv` deleted (F14).
+- [x] 2026-10-19 — S4 charts JSON and saved-overlay builders (`review.charts_json`, #726).
 - [ ] S5 facade owns the ReviewSession (D1)
 - [ ] S6 parity harness MIB Studio half
 - [ ] S7 facade jobs on ReviewJobs lanes (D7)
 - [ ] S8 YOFO regenerate on the engine (D6)
-- [ ] S9 transport-neutral review module
+- [x] 2026-10-19 — S9 transport-neutral review module (`reviewIpc` golden unchanged; import guard; `Transport.upload`; #731).
 - [ ] S10 attachable review bridge (ABI)
 - [ ] S11 review commands in the studio command layer (ABI)
 - [ ] S12 MIB Studio's options in the review contract (review ABI)
