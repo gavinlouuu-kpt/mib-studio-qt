@@ -4,9 +4,9 @@
 // view's toggles and contours as shown) and writes `scatter_plot.tiff` /
 // `ring_width_histogram.tiff`; here the same drawing
 // code (drawScatter / drawHistogram) renders offscreen, the PNG bytes go to
-// the backend one raw IPC call each (`review_stage_chart`) and the export
-// job decodes and writes them as TIFFs.
-import { invoke } from "@tauri-apps/api/core";
+// the backend one raw-body request each (`review_stage_chart` through the
+// transport's `upload`, #512 S9) and the export job decodes and writes them
+// as TIFFs.
 import { reviewBridge, type ReviewDensity, type ReviewInfo, type ReviewScatter } from "../reviewBridge";
 import { paddedExtent, ringRatioHistogram, type Range } from "./chartMath";
 import { contourFamilies, loadChartPrefs, loadCurves } from "./chartData";
@@ -108,6 +108,6 @@ export async function renderChartPngs(inp: ChartExportInputs): Promise<{ name: s
 
 /** Replace the staged snapshots with `charts` (raw bytes, no JSON). */
 export async function stageCharts(charts: { name: string; bytes: Uint8Array }[]): Promise<void> {
-  await invoke("review_clear_charts");
-  for (const c of charts) await invoke("review_stage_chart", c.bytes, { headers: { "x-chart-name": c.name } });
+  await reviewBridge.clearCharts();
+  for (const c of charts) await reviewBridge.stageChart(c.name, c.bytes);
 }

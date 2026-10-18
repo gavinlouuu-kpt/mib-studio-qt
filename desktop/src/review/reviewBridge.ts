@@ -3,8 +3,11 @@
 // and nothing else for review; MIB Studio's Review tab still uses its own
 // commands (`bridge.ts`) until #512 step B5. Images arrive as binary frame
 // packets (Mono8 or RGB8 when the backend composed an overlay / ROI);
-// everything else is lossless JSON (u64 as decimal strings).
-import { invoke } from "@tauri-apps/api/core";
+// everything else is lossless JSON (u64 as decimal strings). Every call goes
+// through `../transport` (#512 S9): Tauri IPC in the desktop shells, the
+// WebSocket in a browser (where the server does not serve these commands yet,
+// S11), with the same command names and arguments.
+import { invoke, upload, type TransportUnsupportedError } from "../transport";
 import { REVIEW_FRAME_PACKET, REVIEW_PIXEL_FORMATS } from "./reviewContract";
 import { decimalU64, type FramePacket } from "../framePacket";
 import { decodeReviewPacket } from "./reviewPacket";
@@ -240,6 +243,12 @@ export const reviewBridge = {
     }),
   /** Export Charts: the staged snapshots as files in `outputDir`. */
   exportCharts: (outputDir: string) => command("review_export_charts", { outputDir }),
+  /** Drop every staged chart snapshot. */
+  clearCharts: () => invoke<void>("review_clear_charts"),
+  /** Stage one chart snapshot: the PNG bytes as the raw request body, the
+   * file name in header `x-chart-name`; resolves with how many are staged.
+   * Rejects with TransportUnsupportedError over the WebSocket. */
+  stageChart: (name: string, bytes: Uint8Array) => upload<number>("review_stage_chart", bytes, { "x-chart-name": name }),
   /** File names in `dir` (default export names, exports/naming.ts). */
   listDir: (dir: string) => invoke<string[]>("review_list_dir", { dir }),
   batchExport: (sources: string[], outputRoot: string, metricsOnly: boolean, series: SeriesRange = ALL_SERIES) =>
@@ -278,6 +287,15 @@ export const reviewBridge = {
   pollEvents: async () => (await invoke<{ events: ReviewEvent[] }>("poll_review_events")).events ?? [],
   cancel: (operationId: string) => command("cancel_review_operation", { operationId }),
 };
+
+/** Plain words for a request the transport cannot carry (YOFO Studio in a
+ * browser: the WebSocket server reads no raw request bodies, so chart
+ * snapshots cannot be staged there until #512 S11). */
+export function unsupportedText(e: TransportUnsupportedError): string {
+  return e.operation === "review_stage_chart"
+    ? "Chart images cannot be sent to the instrument over this browser connection yet, so exports that include charts cannot run here."
+    : `This browser connection cannot do that yet (${e.operation}).`;
+}
 
 /** Mono8 or RGB8 packet → ImageData (RGB8 = three bytes per pixel). */
 export function packetToImageData(p: FramePacket): ImageData {

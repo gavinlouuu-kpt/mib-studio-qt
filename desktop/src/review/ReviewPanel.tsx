@@ -9,6 +9,8 @@ import { metricNumber } from "../metricFormat";
 // "viewer" slots of the shared FramePullScheduler, and talks only to the
 // review bridge (`reviewBridge.ts` → src-tauri/src/review.rs →
 // ReviewSession), so the review-only product needs no backend bridge at all.
+// Backend calls, dialogs and the opener go through `../transport` (#512 S9),
+// so the module is the same over Tauri and the WebSocket.
 //
 // Layout (the Qt HdfReviewTab): per set (Valid / Invalid, or "Frames" for a
 // recording file) a virtualised thumbnail grid on the left, the selected
@@ -20,7 +22,7 @@ import { metricNumber } from "../metricFormat";
 // Export dialogs with progress / cancel / series range are in `exports/`.
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { open, save } from "@tauri-apps/plugin-dialog";
+import { open, save } from "../transport/dialogs";
 import type { FramePacket } from "../framePacket";
 import type { FramePullScheduler } from "../framePullScheduler";
 import { REVIEW_OPERATION_KINDS } from "./reviewContract";
