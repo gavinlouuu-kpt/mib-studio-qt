@@ -143,8 +143,13 @@ fn fetch_experiment_readiness(state: State<AppState>, output_path: String) -> Re
 }
 
 #[tauri::command]
-fn experiment_start(state: State<AppState>, output_path: String, acknowledge_discard_ring: Option<bool>) -> Result<cmds::CmdResult, String> {
-    cmds::experiment_start(&state, output_path, acknowledge_discard_ring.unwrap_or(false))
+fn experiment_start(
+    state: State<AppState>,
+    output_path: String,
+    acknowledge_discard_ring: Option<bool>,
+    start_request: Option<serde_json::Value>,
+) -> Result<cmds::CmdResult, String> {
+    cmds::experiment_start(&state, output_path, acknowledge_discard_ring.unwrap_or(false), start_request)
 }
 
 #[tauri::command]

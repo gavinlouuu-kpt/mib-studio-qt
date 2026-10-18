@@ -15,6 +15,28 @@ export type { BridgeEvent, CmdResult, ExperimentReadiness, ExperimentStatus, Pro
 
 /** Autofocus/nanopositioner status (schema v11, BE-8). `ring_ratio_age_us`
  *  makes focus-metric staleness explicit (0 = never updated). */
+// What the client declares when it starts a run (bridge ABI 39, #712). Every member is optional;
+// null or a missing key = not declared. The backend checks it strictly against the contract's
+// EXPERIMENT_START_REQUEST bounds and refuses (never truncates) anything over them; "" is refused.
+export interface ExperimentStartRequestDoc {
+  experiment_id?: string | null;
+  run_index?: number | null;
+  sample_ref?: string | null;
+  operator?: { id?: string | null; name?: string | null } | null;
+  calibration_record_id?: string | null;
+  annotation?: {
+    sample?: string | null;
+    condition?: string | null;
+    experimental_unit?: string | null;
+    concentration?: { value: number; unit: string } | null;
+    channel?: string | null;
+    medium?: string | null;
+    temperature_c?: number | null;
+    notes?: string | null;
+    free?: Record<string, string> | null;
+  } | null;
+}
+
 export interface AutofocusStatus {
   valid: boolean;
   connected: boolean;
@@ -743,8 +765,12 @@ export const bridge = {
   // Experiment lifecycle (bridge schema v5, BE-4) — the backend owns
   // preconditions, accumulation, flush, metadata ordering, and recovery.
   // acknowledgeDiscardRing (ABI 37): the operator accepted that a stopped Run's buffered frames are discarded by this start (the backend refuses without it).
-  experimentStart: (outputPath: string, acknowledgeDiscardRing = false) =>
-    invokeCommand("experiment_start", { outputPath, acknowledgeDiscardRing }),
+  // startRequest (ABI 39, #712): the run's declared identity and planned annotation (optional).
+  experimentStart: (outputPath: string, acknowledgeDiscardRing = false, startRequest?: ExperimentStartRequestDoc) =>
+    invokeCommand(
+      "experiment_start",
+      startRequest ? { outputPath, acknowledgeDiscardRing, startRequest } : { outputPath, acknowledgeDiscardRing },
+    ),
   experimentStop: () => invokeCommand("experiment_stop"),
   fetchCaptureLifecycle: () => invoke<CaptureLifecycle>("fetch_capture_lifecycle"),
   experimentAcknowledgeFault: (expectedRun: string, faultRevision: string, code: string, message: string, confirmed: boolean) => invokeCommand("experiment_acknowledge_fault", {expectedRun, faultRevision, code, message, confirmed}),

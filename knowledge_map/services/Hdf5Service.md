@@ -212,6 +212,16 @@ mistyped member reads as `std::nullopt`, a v1/v2 file reads every v3 member as
 unknown, and only an unparseable document fails. See the v3 table in
 [[../data-model/HDF5-Storage]]. Guard: `recording.run_provenance_record`.
 
+## Planned sample annotation (#712 PR 2)
+
+`writeExperimentAnnotationJson(json)` / `readExperimentAnnotationJson(json, &schemaVersion)` store
+the `/experiment_annotation` group (`@annotation_json`, `@annotation_schema_version` =
+`recording::kExperimentAnnotationSchemaVersion`, 1), the JSON before the version. The write is
+refused with no file open, on a read-only file, when the group already exists (written once) and
+while `setExperimentAnnotationWriteFaultForTesting(true)`. The reader returns false (version 0) when
+the group or its JSON is absent. The document codec is `recording::experimentAnnotationToJson` /
+`parseExperimentAnnotation` (`RunStartIdentity.h`). See [[../data-model/HDF5-Storage]].
+
 ## PL record identity in the metadata compound (#712)
 
 `ProcessedFrame` carries `plRecordIdentity`, `plRunId`, `plEpoch` (set by

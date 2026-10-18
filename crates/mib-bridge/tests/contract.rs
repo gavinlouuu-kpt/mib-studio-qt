@@ -109,7 +109,35 @@ fn abi_version_is_stable() {
     // v36 the SSD run download lease (#667): ssd_export_begin / ssd_export_end for the HTTP export route.
     // v37 the ring status carries the CONFIG_COMMIT epoch (null without a ring) and a hold note; an SSD run leaves its ring held for playback (#693, D3).
     // v38 the Run frame rate (fetch_run_fps / check_pz_camera_document / apply_pz_camera_document).
-    assert_eq!(ffi::bridge_abi_version(), 38);
+    // v39 the experiment_start startRequest (#712): experiment/run/sample identity, the selected
+    // operator, the applied calibration record id and the planned annotation; start outcome
+    // InvalidRequest and the experiment_start_request bounds.
+    assert_eq!(ffi::bridge_abi_version(), 39);
+}
+
+// ABI 39 (#712): the startRequest bounds. Pinned in C++ by static_asserts in shim.cpp
+// (backend/recording/RunStartIdentity.h); pinned here for the Rust/TS side.
+#[test]
+fn experiment_start_request_bounds_are_pinned() {
+    let contract: serde_json::Value =
+        serde_json::from_str(include_str!("../contract/bridge-contract.json")).unwrap();
+    let bounds = &contract["experiment_start_request"];
+    for (key, value) in [
+        ("max_request_bytes", 16384i64),
+        ("max_id_bytes", 128),
+        ("max_text_bytes", 256),
+        ("max_notes_bytes", 2048),
+        ("max_unit_bytes", 32),
+        ("max_free_entries", 32),
+        ("max_free_key_bytes", 64),
+        ("max_free_value_bytes", 256),
+        ("temperature_c_min", -50),
+        ("temperature_c_max", 150),
+        ("annotation_schema_version", 1),
+    ] {
+        assert_eq!(bounds[key].as_i64(), Some(value), "experiment_start_request.{key} drifted");
+    }
+    assert!(bounds["document"].as_str().is_some_and(|d| d.contains("free")), "the document is described");
 }
 
 // ABI 31 (#549): with nothing loaded and no run finished, the accounting says so and why.
@@ -849,7 +877,8 @@ fn rust_enums_match_contract_json() {
     let groups: &[(&str, &[(&str, u64)])] = &[
         ("experiment_command_actions", &[("EvaluateReadiness", 0), ("Start", 1), ("Stop", 2), ("Status", 3)]),
         ("experiment_start_outcomes", &[("Started", 0), ("NotReady", 1), ("StaleReadiness", 2), ("AlreadyActive", 3),
-                                        ("StorageFailed", 4), ("ProvenanceFailed", 5), ("Busy", 6)]),
+                                        ("StorageFailed", 4), ("ProvenanceFailed", 5), ("Busy", 6),
+                                        ("InvalidRequest", 7)]),
         ("experiment_stop_outcomes", &[("Accepted", 0), ("NotActive", 1), ("Busy", 2)]),
         ("run_completion_states", &[("Complete", 0), ("IntentionallyPartial", 1), ("IncompleteLoss", 2), ("Failed", 3), ("Unknown", 4)]),
         ("readiness_gate_statuses", &[("Pass", 0), ("Warn", 1), ("Fail", 2), ("Unavailable", 3), ("NotRequired", 4)]),
@@ -1053,7 +1082,7 @@ fn experiment_lifecycle_end_to_end() {
         .find(|g| g.id == "camera.session")
         .expect("camera.session gate present");
     assert!(camera_gate.status == 2 || camera_gate.status == 3, "camera.session should Fail/Unavailable");
-    let early = bridge.pin_mut().experiment_start(&out_path.to_string_lossy(), false);
+    let early = bridge.pin_mut().experiment_start(&out_path.to_string_lossy(), false, "");
     assert!(!early.ok, "experiment started without a running camera");
     assert!(
         early.message.contains("camera.session"),
@@ -1068,12 +1097,32 @@ fn experiment_lifecycle_end_to_end() {
         std::thread::sleep(Duration::from_millis(10));
     }
 
-    let start = bridge.pin_mut().experiment_start(&out_path.to_string_lossy(), false);
+    // ABI 39 (#712): a startRequest the contract does not allow is refused with the key named,
+    // before anything is opened (the run below is still start generation 1).
+    for (bad, key) in [
+        (r#"{"annotation":{"free":{"donor":7}}}"#, "annotation.free"),
+        (r#"{"operator_name":"Alice"}"#, "operator_name"),
+        (r#"{"sample_ref":"S1"}"#, "sample_ref"),
+        (r#"{"experiment_id":""}"#, "experiment_id"),
+    ] {
+        let refused = bridge.pin_mut().experiment_start(&out_path.to_string_lossy(), false, bad);
+        assert!(!refused.ok, "startRequest {bad} must be refused");
+        assert!(
+            refused.message.contains("invalid start request") && refused.message.contains(key),
+            "refusal names {key}: {}",
+            refused.message
+        );
+    }
+    let declared = r#"{"experiment_id":"3F2A9C1E-7B4D-4E8A-9C2F-1A2B3C4D5E6F","run_index":2,
+        "sample_ref":"S2","operator":{"name":"Alice"},"calibration_record_id":"cal-7",
+        "annotation":{"condition":"vehicle","experimental_unit":"donor A",
+        "concentration":{"value":10,"unit":"uM"},"temperature_c":21.5,"free":{"passage":"4"}}}"#;
+    let start = bridge.pin_mut().experiment_start(&out_path.to_string_lossy(), false, declared);
     assert!(start.ok, "experiment_start failed: {}", start.message);
     assert!(start.operation_id != 0, "experiment has no operation id");
 
     // Duplicate start must fail without desynchronizing state.
-    assert!(!bridge.pin_mut().experiment_start(&out_path.to_string_lossy(), false).ok);
+    assert!(!bridge.pin_mut().experiment_start(&out_path.to_string_lossy(), false, "").ok);
 
     // The camera cannot stop underneath an active experiment (Qt parity).
     assert!(!bridge.pin_mut().stop_capture().ok);

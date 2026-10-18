@@ -276,9 +276,11 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
                 #[serde(rename = "outputPath")] output_path: String,
                 /// ABI 37: the client accepts that a stopped Run's buffered frames are discarded.
                 #[serde(rename = "acknowledgeDiscardRing", default)] acknowledge_discard_ring: bool,
+                /// ABI 39 (#712): {experiment_id, run_index, sample_ref, operator, calibration_record_id, annotation}.
+                #[serde(rename = "startRequest", default)] start_request: Option<serde_json::Value>,
             }
             let a: A = args(value)?;
-            crate::experiment_start(state, a.output_path, a.acknowledge_discard_ring).and_then(json)
+            crate::experiment_start(state, a.output_path, a.acknowledge_discard_ring, a.start_request).and_then(json)
         }
         "fetch_capture_lifecycle" => crate::fetch_capture_lifecycle(state).and_then(json),
         "experiment_acknowledge_fault" => {

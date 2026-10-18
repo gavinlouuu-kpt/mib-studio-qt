@@ -178,11 +178,14 @@ bool parseAnnotation(const OJson& v, std::optional<ExperimentAnnotation>& out, s
 
 // ---- tolerant annotation reading ---------------------------------------------------------------------
 
+// An empty string reads as unknown, like a missing one.
 std::optional<std::string> readStr(const OJson& j, const char* key)
 {
     const auto it = j.find(key);
     if (it == j.end() || !it->is_string()) return std::nullopt;
-    return it->get<std::string>();
+    std::string v = it->get<std::string>();
+    if (v.empty()) return std::nullopt;
+    return v;
 }
 
 std::optional<double> readNum(const OJson& j, const char* key)
@@ -192,10 +195,10 @@ std::optional<double> readNum(const OJson& j, const char* key)
     return it->get<double>();
 }
 
-template <typename T>
-OJson opt(const std::optional<T>& v)
+// An empty string is never a value: written as null.
+OJson opt(const std::optional<std::string>& v)
 {
-    return v ? OJson(*v) : OJson(nullptr);
+    return v && !v->empty() ? OJson(*v) : OJson(nullptr);
 }
 
 } // namespace
@@ -337,7 +340,7 @@ std::string experimentAnnotationToJson(const ExperimentAnnotation& a)
     j["sample"] = opt(a.sample);
     j["condition"] = opt(a.condition);
     j["experimental_unit"] = opt(a.experimentalUnit);
-    if (a.concentration && std::isfinite(a.concentration->value)) {
+    if (a.concentration && std::isfinite(a.concentration->value) && !a.concentration->unit.empty()) {
         OJson c;
         c["value"] = a.concentration->value;
         c["unit"] = a.concentration->unit;
@@ -350,7 +353,8 @@ std::string experimentAnnotationToJson(const ExperimentAnnotation& a)
     j["temperature_c"] = a.temperatureC && std::isfinite(*a.temperatureC) ? OJson(*a.temperatureC) : OJson(nullptr);
     j["notes"] = opt(a.notes);
     OJson free = OJson::object();
-    for (const auto& [key, value] : a.free) free[key] = value;
+    for (const auto& [key, value] : a.free)
+        if (!key.empty() && !value.empty()) free[key] = value;
     j["free"] = std::move(free);
     return j.dump();
 }
@@ -376,12 +380,15 @@ std::optional<ExperimentAnnotation> parseExperimentAnnotation(const std::string&
     if (c != flat.end() && c->is_object()) {
         const auto value = readNum(*c, "value");
         const auto unit = readStr(*c, "unit");
-        if (value && unit) a.concentration = ConcentrationRecord{*value, *unit};
+        if (value && unit) a.concentration = ConcentrationRecord{*value, *unit};   // readStr: no "" unit
     }
     const auto free = root.find("free");
     if (free != root.end() && free->is_object()) {
-        for (auto it = free->begin(); it != free->end(); ++it)
-            if (it.value().is_string()) a.free.emplace_back(it.key(), it.value().get<std::string>());
+        for (auto it = free->begin(); it != free->end(); ++it) {
+            if (it.key().empty() || !it.value().is_string()) continue;
+            std::string value = it.value().get<std::string>();
+            if (!value.empty()) a.free.emplace_back(it.key(), std::move(value));
+        }
     }
     return a;
 }
