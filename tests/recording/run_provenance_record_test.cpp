@@ -391,10 +391,10 @@ int main()
                    "the recorded hash is table A's, the table in use");
         MIB_EXPECT(std::fabs(proc.eModulusLut().lookup(100.0, 0.01) - 1.0) < 1e-6, "table A is the one in use");
         MIB_EXPECT(identity.path == lutPath.string(), "the path the bytes came from");
-        // EModulusLut hands back exactly the bytes it parsed.
+        // EModulusLut hands back exactly the bytes it parsed; the one-argument load still works.
         backend::EModulusLut lut;
         std::string bytes, from;
-        MIB_REQUIRE(lut.loadFromFile(lutPath.string(), &bytes, &from), "table B loads");
+        MIB_REQUIRE(lut.loadFromFileWithBytes(lutPath.string(), &bytes, &from), "table B loads");
         MIB_EXPECT(bytes == tableB && from == lutPath.string() && std::fabs(lut.lookup(100.0, 0.01) - 10.0) < 1e-6,
                    "loadFromFile returns the bytes its grid was built from");
     }

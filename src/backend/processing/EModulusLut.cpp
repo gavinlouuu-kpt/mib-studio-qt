@@ -140,7 +140,12 @@ void EModulusLut::buildGrid(const std::vector<LutPoint>& points) {
     }
 }
 
-bool EModulusLut::loadFromFile(const std::string& basePath, std::string* loadedBytes, std::string* loadedPath) {
+bool EModulusLut::loadFromFile(const std::string& basePath) {
+    return loadFromFileWithBytes(basePath, nullptr, nullptr);
+}
+
+bool EModulusLut::loadFromFileWithBytes(const std::string& basePath, std::string* loadedBytes,
+                                        std::string* loadedPath) {
     std::string resolvedPath = resolvePath(basePath);
 
     // Read the file once and build the grid from these bytes, so a caller that hashes what it is
