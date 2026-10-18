@@ -185,8 +185,10 @@ private:
         AppliedSettings applied;
         bool purging{false};
         std::chrono::steady_clock::time_point lastPoll{};
-        // Timed so runFacts() can give up instead of waiting out a serial timeout.
-        mutable std::timed_mutex mutex;
+        // runFacts() polls try_lock() up to its deadline instead of waiting out a serial timeout. A plain
+        // mutex, not std::timed_mutex: libstdc++ 13 implements try_lock_for with pthread_mutex_clocklock,
+        // which GCC 13's ThreadSanitizer does not intercept (a false "unlock of an unlocked mutex").
+        mutable std::mutex mutex;
     };
 
     serialbus::SerialBusManager& busManager_;

@@ -106,9 +106,13 @@ Public scan helper probes `REG_RUN_COMMAND` (`0x0001`) with Modbus function
 
 ## Threading
 
-Each pump has its own `std::timed_mutex` guarding pump state (timed since
-#712 so `runFacts` can give up instead of waiting out a 1 s serial timeout
-that `pollStatus` holds the lock across); per-adapter frame
+Each pump has its own `std::mutex` guarding pump state. `runFacts` polls
+`try_lock()` (1 ms sleeps) until its steady-clock deadline, so it can give up
+instead of waiting out a 1 s serial timeout that `pollStatus` holds the lock
+across (#712). It is not a `std::timed_mutex`: libstdc++ 13 implements
+`try_lock_for` with `pthread_mutex_clocklock`, which GCC 13's ThreadSanitizer
+does not intercept, so the TSan lane reported a false "unlock of an unlocked
+mutex" (same reason as [[ZC300Stage]]). Per-adapter frame
 serialization and response correlation live in the shared [[SerialBus]]
 session (bus mutex always innermost). UI calls are synchronous; `pollStatus`
 is invoked from the Qt timer in [[../frontend/SyringePumpTab]].

@@ -145,7 +145,7 @@ struct RecordedRunProvenance {
     std::optional<RunStopRecord> stop;         // nullopt: no stop record (older file, or unreadable)
 };
 
-// The v3 members as JSON object members, in a stable order and without braces or a leading comma:
+// The v3 members as JSON object members, in a stable (sorted) order, without braces or a leading comma:
 // `"run_id":...,"emodulus_lut":...,"pumps":...,"led":...,"stage":...,"piezo":...,"pl_run_id":...`.
 std::string runProvenanceV3Members(const RunProvenanceV3& v3);
 
