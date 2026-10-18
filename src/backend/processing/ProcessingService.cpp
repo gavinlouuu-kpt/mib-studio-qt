@@ -923,7 +923,7 @@ bool ProcessingService::loadEModulusLut(const std::string& path) {
     // The hash is of the very bytes the table was built from (EModulusLut reads the file once), so
     // a file replaced after the load cannot be recorded as the table in use (#712).
     std::string bytes, loadedPath;
-    const bool ok = eModulusLut_.loadFromFile(path, &bytes, &loadedPath);
+    const bool ok = eModulusLut_.loadFromFileWithBytes(path, &bytes, &loadedPath);
     EModulusLutIdentity identity;
     identity.loaded = ok;
     if (ok) {

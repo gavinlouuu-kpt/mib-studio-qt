@@ -15,11 +15,14 @@ public:
 
     /// Load LUT from a tab-separated file with columns: area_um, deform, emodulus.
     /// Returns true on success. Tries multiple path candidates relative to the executable.
-    /// The file is read once; `loadedBytes` / `loadedPath` (optional) receive exactly the bytes
-    /// the grid was built from and the file they came from, so a caller can identify the table
-    /// in use (#712) even if the file is replaced afterwards.
-    bool loadFromFile(const std::string& basePath, std::string* loadedBytes = nullptr,
-                      std::string* loadedPath = nullptr);
+    /// (One argument and not overloaded: the Python binding takes its address.)
+    bool loadFromFile(const std::string& basePath);
+
+    /// The same load, also handing back exactly the bytes the grid was built from and the file
+    /// they came from (each optional), so a caller can identify the table in use (#712) even if
+    /// the file is replaced afterwards. The file is read once.
+    bool loadFromFileWithBytes(const std::string& basePath, std::string* loadedBytes,
+                               std::string* loadedPath);
 
     /// Whether a LUT has been successfully loaded.
     bool isLoaded() const { return loaded_; }
