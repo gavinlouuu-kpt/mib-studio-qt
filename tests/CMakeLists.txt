@@ -414,6 +414,11 @@ mib_backend_test_link(experiment_readiness_test PRIVATE Threads::Threads)
 add_test(NAME backend.experiment_readiness COMMAND $<TARGET_FILE:mib_backend_tests> experiment_readiness_test)
 set_tests_properties(backend.experiment_readiness PROPERTIES LABELS "backend;processing;recording;hdf5;safety" TIMEOUT 180)
 
+# #713: the readiness destination probes run once per (output path, readiness generation).
+mib_add_backend_test_executable(readiness_probe_cache_test backend/readiness_probe_cache_test.cpp)
+add_test(NAME backend.readiness_probe_cache COMMAND $<TARGET_FILE:mib_backend_tests> readiness_probe_cache_test)
+set_tests_properties(backend.readiness_probe_cache PROPERTIES LABELS "backend;recording;hdf5;safety" TIMEOUT 60)
+
 mib_add_backend_test_executable(camera_script_apply_test backend/camera_script_apply_test.cpp)
 add_test(NAME backend.camera_script_apply COMMAND $<TARGET_FILE:mib_backend_tests> camera_script_apply_test)
 set_tests_properties(backend.camera_script_apply PROPERTIES LABELS "backend;camera" TIMEOUT 30)
