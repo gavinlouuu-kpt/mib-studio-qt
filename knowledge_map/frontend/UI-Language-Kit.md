@@ -2,7 +2,7 @@
 
 > The shared component library of MIB Studio, YOFO Studio and YOFO Review: one set of tokens, chips, cards, shell and the area–deformability chart. The brand changes per product; components and words do not.
 
-**Source:** `desktop/ui/` (package `@mib/ui`). Built with `npm run build` from `desktop/ui`, with `desktop/node_modules/.bin` on `PATH`. The build writes `dist/index.js`, `dist/style.css`, `dist/fonts.css` and `.d.ts` files. Tests live in `desktop/ui/src/ui.test.tsx` and run with the desktop `vitest`.
+**Source:** `desktop/ui/` (package `@mib/ui`). The desktop app consumes it **from source** (see "Using it from the desktop app" below); `npm run build` from `desktop/ui`, with `desktop/node_modules/.bin` on `PATH`, still writes a standalone `dist/index.js`, `dist/style.css`, `dist/fonts.css` and `.d.ts` files for consumers outside `desktop/`. Tests live in `desktop/ui/src/ui.test.tsx` and run with the desktop `vitest`.
 
 ## Components
 
@@ -25,8 +25,32 @@ Tokens are CSS custom properties named `--mib-*` (`desktop/ui/src/styles/tokens.
 - **Penpot:** the visual source is the Penpot sandbox file holding the "UI language" (U0), "Operation app" (O0–O6) and "Review app" (R0–R6) pages, plus a "Components (@mib/ui)" page with one board per component ("C · <Name>"; StageTabs and UiRoot share "C · AppShell"). Each component lists its own board first. `desktop/ui/penpot.json` maps each component to its boards, and each `desktop/ui/docs/<Name>.md` ends with a "Penpot reference".
 - **Claude Design:** `desktop/ui/.design-sync/` (config, notes, conventions, authored previews) syncs the kit to the Claude Design design-system project "MIB · YOFO UI language" (`14e57f39-1852-4a03-a868-550dc43f27b1`, first synced 2026-10-16), so designs made there use these components. Re-sync with `/design-sync` after kit changes.
 
+## Using it from the desktop app
+
+`desktop/src` imports the kit by its package name, exactly as the kit README shows:
+
+```tsx
+import "@mib/ui/fonts.css";
+import "@mib/ui/style.css";
+import { AppShell, Card, StateChip } from "@mib/ui";
+```
+
+The names resolve to the kit's **source**, not to `dist/`: `desktop/vite.config.ts` has three exact
+`resolve.alias` entries (`@mib/ui` → `ui/src/index.ts`, `@mib/ui/style.css` → the same entry, which
+imports `tokens.css` and `components.css` itself, `@mib/ui/fonts.css` → `ui/src/styles/fonts.css`),
+and `desktop/tsconfig.json` maps `@mib/ui` in `paths` for `tsc`. The dev server, Vitest, `tsc --noEmit`,
+both production pages (`index.html`, `review.html`) and the Tauri build (its `beforeBuildCommand`
+is `npm run build`) therefore need no kit build step. Why source and not `dist/`: nothing to
+prebuild in CI or before `npm run dev`, no stale `dist/`, one React (the kit resolves `react` from
+`desktop/node_modules`), kit edits hot-reload, and the kit is type-checked under the app's strict
+options. The kit's CSS is namespaced (`.mib-*` classes, `--mib-*` custom properties, `@font-face`
+"Inter"), so importing it does not restyle existing views. Guard: `desktop/src/uiKit.test.tsx`
+renders a kit shell from `desktop/src` through the aliases.
+
 ## Status
 
-New on `feat/ui-language-kit` (2026-10-16). Not yet mounted by `desktop/src`. Adopting it is the P1 shell work of the eGrabber workspace plan.
+New on `feat/ui-language-kit` (2026-10-16). Wired into the desktop app on 2026-10-19 (source
+alias, above); the opt-in workspace shell of the eGrabber workspace plan (P1, #713) is its first
+consumer.
 
 Related: [[YofoReview]], [[../architecture/Desktop-Shell]].
