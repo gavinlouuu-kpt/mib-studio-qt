@@ -95,12 +95,12 @@ export function CellImage({
     </span>
   );
 
-  const captionNode = caption ? (
-    <span className="mib-cell__caption">
+  const captionContent = (
+    <>
       <span className="mib-cell__id">{recordId}</span>
       {detail ? <span className="mib-cell__detail">{detail}</span> : null}
-    </span>
-  ) : null;
+    </>
+  );
 
   const classes = cx("mib-cell", selected && "mib-cell--selected", size < 90 && "mib-cell--small", className);
 
@@ -115,14 +115,14 @@ export function CellImage({
         onClick={() => onSelect(recordId)}
       >
         {box}
-        {captionNode}
+        {caption ? <span className="mib-cell__caption">{captionContent}</span> : null}
       </button>
     );
   }
   return (
     <figure {...rest} className={classes}>
       {box}
-      {captionNode}
+      {caption ? <figcaption className="mib-cell__caption">{captionContent}</figcaption> : null}
     </figure>
   );
 }

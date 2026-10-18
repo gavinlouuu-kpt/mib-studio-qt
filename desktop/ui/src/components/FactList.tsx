@@ -13,16 +13,24 @@ export interface Fact {
 export interface FactListProps extends HTMLAttributes<HTMLDListElement> {
   /** Label/value rows, in display order. */
   facts: Fact[];
+  /** Shown, in the unknown tone, for a value that is `null`, `undefined` or `""`. */
+  missing?: ReactNode;
 }
 
+const absent = (value: ReactNode) => value === null || value === undefined || value === "";
+
 /** Two-column label/value list used inside cards (readbacks, provenance, options). */
-export function FactList({ facts, className, ...rest }: FactListProps) {
+export function FactList({ facts, missing = "Not reported", className, ...rest }: FactListProps) {
   return (
     <dl {...rest} className={cx("mib-facts", className)}>
       {facts.map((fact, index) => (
         <div key={index} style={{ display: "contents" }}>
           <dt className="mib-facts__label">{fact.label}</dt>
-          <dd className={cx("mib-facts__value", fact.tone && `mib-facts__value--${fact.tone}`)}>{fact.value}</dd>
+          {absent(fact.value) ? (
+            <dd className="mib-facts__value mib-facts__value--unknown mib-facts__value--missing">{missing}</dd>
+          ) : (
+            <dd className={cx("mib-facts__value", fact.tone && `mib-facts__value--${fact.tone}`)}>{fact.value}</dd>
+          )}
         </div>
       ))}
     </dl>

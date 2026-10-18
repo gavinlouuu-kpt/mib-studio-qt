@@ -13,16 +13,29 @@ export interface StepperProps extends HTMLAttributes<HTMLOListElement> {
   steps: StepperStep[];
 }
 
+const STATE_TEXT: Record<StepperStep["state"], string> = {
+  done: "done",
+  current: "in progress",
+  pending: "not started",
+  failed: "failed",
+};
+
 /** Vertical lifecycle stepper. A step is done only when the backend confirmed it. */
 export function Stepper({ steps, className, ...rest }: StepperProps) {
   return (
     <ol {...rest} className={cx("mib-stepper", className)}>
       {steps.map((step, index) => (
-        <li key={index} className={cx("mib-stepper__step", `mib-stepper__step--${step.state}`)} data-state={step.state}>
+        <li
+          key={index}
+          className={cx("mib-stepper__step", `mib-stepper__step--${step.state}`)}
+          data-state={step.state}
+          aria-current={step.state === "current" ? "step" : undefined}
+        >
           <span className="mib-stepper__dot" aria-hidden="true">
             {step.state === "done" ? "✓" : step.state === "failed" ? "!" : ""}
           </span>
           {step.label}
+          <span className="mib-visually-hidden">{` (${STATE_TEXT[step.state]})`}</span>
         </li>
       ))}
     </ol>

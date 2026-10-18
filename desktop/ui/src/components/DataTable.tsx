@@ -1,4 +1,4 @@
-import type { KeyboardEvent, ReactNode, TableHTMLAttributes } from "react";
+import type { KeyboardEvent, MouseEvent, ReactNode, TableHTMLAttributes } from "react";
 import { cx } from "./classNames";
 
 export interface DataTableColumn<Row> {
@@ -28,7 +28,7 @@ export interface DataTableProps<Row>
   rows: Row[];
   /** Row id as a string (record, run or sample id; u64 ids travel as strings). */
   rowKey: (row: Row) => string;
-  /** The selected row's id: the inspected record. */
+  /** The selected row's id: the inspected record (marked `aria-current`). */
   selectedKey?: string;
   /** Makes rows selectable (click, Enter or Space). */
   onSelect?: (key: string, row: Row) => void;
@@ -40,6 +40,15 @@ export interface DataTableProps<Row>
   caption?: ReactNode;
   /** `compact` for sheets and dense lists inside cards. */
   density?: "default" | "compact";
+}
+
+// A click or key press on a control inside a cell (button, link, input) belongs to that control.
+const INTERACTIVE = "a, button, input, select, textarea, label, [contenteditable], [role=button]";
+
+function fromCellControl(event: { target: EventTarget; currentTarget: EventTarget }): boolean {
+  const target = event.target as Element | null;
+  const control = target?.closest?.(INTERACTIVE);
+  return Boolean(control && control !== event.currentTarget && (event.currentTarget as Element).contains(control));
 }
 
 function isMissing(value: ReactNode): boolean {
@@ -70,7 +79,14 @@ export function DataTable<Row>({
     onSelect?.(rowKey(row), row);
   }
 
+  function onClick(event: MouseEvent<HTMLTableRowElement>, row: Row) {
+    if (fromCellControl(event)) return;
+    select(row);
+  }
+
   function onKeyDown(event: KeyboardEvent<HTMLTableRowElement>, row: Row) {
+    // Only the focused row itself: Enter or Space in a cell control keeps its own meaning.
+    if (event.target !== event.currentTarget) return;
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       select(row);
@@ -112,9 +128,9 @@ export function DataTable<Row>({
               <tr
                 key={key}
                 className={cx("mib-table__row", selected && "mib-table__row--selected")}
-                aria-selected={selectable ? selected : undefined}
+                aria-current={selected ? "true" : undefined}
                 tabIndex={selectable ? 0 : undefined}
-                onClick={selectable ? () => select(row) : undefined}
+                onClick={selectable ? (event) => onClick(event, row) : undefined}
                 onKeyDown={selectable ? (event) => onKeyDown(event, row) : undefined}
               >
                 {columns.map((column) => {

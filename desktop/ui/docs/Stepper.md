@@ -4,7 +4,7 @@ category: Data
 
 # Stepper
 
-Vertical lifecycle stepper for runs (Start requested → Confirmed closed), export jobs and worker runs. A step is `done` only when the backend confirmed it; `current` is the step in progress; `failed` stops the sequence.
+Vertical lifecycle stepper for runs (Start requested → Confirmed closed), export jobs and worker runs. A step is `done` only when the backend confirmed it; `current` is the step in progress; `failed` stops the sequence. Each step carries its state as text for screen readers ("in progress", "done"), and the current step is marked `aria-current="step"`.
 
 ## Example
 

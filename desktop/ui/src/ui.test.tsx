@@ -155,7 +155,7 @@ describe("UI language kit", () => {
       const rows: Run[] = [{ id: "18446744073709551615", n: 1 }, { id: "2", n: 2 }];
       render(<DataTable columns={columns} rows={rows} rowKey={(r) => r.id} selectedKey="2" onSelect={onSelect} />);
       const trs = [...host.querySelectorAll<HTMLTableRowElement>("tbody tr")];
-      expect(trs.map((tr) => tr.getAttribute("aria-selected"))).toEqual(["false", "true"]);
+      expect(trs.map((tr) => tr.getAttribute("aria-current"))).toEqual([null, "true"]);
       expect(trs[1].className).toContain("mib-table__row--selected");
       act(() => trs[0].click());
       expect(onSelect).toHaveBeenLastCalledWith("18446744073709551615", rows[0]);
@@ -163,11 +163,23 @@ describe("UI language kit", () => {
       expect(onSelect).toHaveBeenLastCalledWith("2", rows[1]);
     });
 
+    it("leaves clicks and keys on a control inside a cell to that control", () => {
+      const onSelect = vi.fn();
+      const onButton = vi.fn();
+      const withControl = [...columns, { key: "act", header: "", cell: () => <button type="button" onClick={onButton}>Open</button> }];
+      render(<DataTable columns={withControl} rows={[{ id: "1" }]} rowKey={(r) => r.id} onSelect={onSelect} />);
+      const button = host.querySelector<HTMLButtonElement>("tbody button")!;
+      act(() => button.click());
+      act(() => button.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true })));
+      expect(onButton).toHaveBeenCalledTimes(1);
+      expect(onSelect).not.toHaveBeenCalled();
+    });
+
     it("is not interactive without onSelect", () => {
       render(<DataTable columns={columns} rows={[{ id: "1" }]} rowKey={(r) => r.id} />);
       const tr = host.querySelector("tbody tr")!;
       expect(tr.hasAttribute("tabindex")).toBe(false);
-      expect(tr.hasAttribute("aria-selected")).toBe(false);
+      expect(tr.hasAttribute("aria-current")).toBe(false);
     });
   });
 
@@ -256,6 +268,35 @@ describe("UI language kit", () => {
       expect(notice.getAttribute("data-tone")).toBe("blocked");
       expect(notice.querySelector(".mib-notice__title")!.textContent).toBe("Start blocked · 1 gate");
       expect(notice.querySelector(".mib-notice__actions button")!.textContent).toBe("Focus setup");
+    });
+  });
+
+  describe("missing values and step states", () => {
+    it("says a fact was not reported instead of leaving it blank", () => {
+      render(<FactList facts={[{ label: "Reservoir level", value: null }, { label: "Count", value: 0 }]} />);
+      const values = [...host.querySelectorAll(".mib-facts__value")];
+      expect(values.map((v) => v.textContent)).toEqual(["Not reported", "0"]);
+      expect(values[0].className).toContain("mib-facts__value--unknown");
+    });
+
+    it("shows a missing stat as missing and keeps a recorded zero", () => {
+      render(
+        <>
+          <StatTile label="Dropped" value={undefined} delta="+3" />
+          <StatTile label="Dropped" value={0} />
+        </>,
+      );
+      const values = [...host.querySelectorAll<HTMLElement>(".mib-stat__value")];
+      expect(values.map((v) => v.textContent)).toEqual(["–", "0"]);
+      expect(values[0].title).toBe("Not recorded");
+      expect(host.querySelectorAll(".mib-stat__delta")).toHaveLength(0);
+    });
+
+    it("exposes each step's state as text and marks the current step", () => {
+      render(<Stepper steps={[{ label: "Queued", state: "done" }, { label: "Writing", state: "current" }, { label: "Done", state: "pending" }]} />);
+      const steps = [...host.querySelectorAll("li")];
+      expect(steps.map((li) => li.textContent)).toEqual(["✓Queued (done)", "Writing (in progress)", "Done (not started)"]);
+      expect(steps.map((li) => li.getAttribute("aria-current"))).toEqual([null, "step", null]);
     });
   });
 });

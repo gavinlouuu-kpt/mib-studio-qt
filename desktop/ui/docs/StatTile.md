@@ -4,7 +4,7 @@ category: Data
 
 # StatTile
 
-A labelled number: accounting counts in the run summary, medians in Quick look. Values come formatted from the backend (thin-space thousands: "100 000"). `delta` shows the difference against the operator-chosen reference run; it is descriptive only, never a test result. `tone="confirmed"` for saved counts, `blocked` for losses.
+A labelled number: accounting counts in the run summary, medians in Quick look. Values come formatted from the backend (thin-space thousands: "100 000"). `delta` shows the difference against the operator-chosen reference run; it is descriptive only, never a test result. `tone="confirmed"` for saved counts, `blocked` for losses. A value passed as `null`, `undefined` or `""` shows as an en dash titled "Not recorded", without a delta; a recorded 0 stays 0.
 
 ## Example
 

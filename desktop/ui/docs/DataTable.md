@@ -8,7 +8,7 @@ Rows of recorded facts: per-run statistics, linked cell records, the sample shee
 
 The table never computes or fills in a value. A cell whose value is `null`, `undefined` or `""` shows as missing (an en dash, titled "Not recorded"); a recorded `0` stays `0`, and an empty list (no flags) renders as an empty cell. With no rows, `empty` says why ("No runs recorded yet.") instead of showing a blank grid.
 
-Rows are selectable only when `onSelect` is given (click, Enter or Space). The selected row (`selectedKey`) is the inspected record and uses the inspect colour, as `RecordIdentity` does. Use `density="compact"` for sheets and lists inside cards.
+Rows are selectable only when `onSelect` is given (click, Enter or Space). The selected row (`selectedKey`) is the inspected record: it uses the inspect colour, as `RecordIdentity` does, and is marked `aria-current`. Clicks and Enter or Space on a control inside a cell (a button, link or input) stay with that control and do not select the row. Use `density="compact"` for sheets and lists inside cards.
 
 ## Example
 

@@ -142,6 +142,7 @@
 .mib-stat__value--confirmed { color: var(--mib-color-confirmed); }
 .mib-stat__value--warn { color: var(--mib-color-warn); }
 .mib-stat__value--blocked { color: var(--mib-color-blocked); }
+.mib-stat__value--missing { color: var(--mib-color-mute); }
 .mib-stat__delta { font-size: var(--mib-font-size-md); font-weight: var(--mib-font-weight-semibold); color: var(--mib-color-accent); font-variant-numeric: tabular-nums; }
 
 /* ---- Stepper --------------------------------------------------------- */
@@ -225,7 +226,7 @@
 .mib-cell__detail { font-size: var(--mib-font-size-xs); color: var(--mib-color-sub); }
 .mib-cell--small .mib-cell__id { font-size: 9px; font-weight: var(--mib-font-weight-regular); color: var(--mib-color-mute); }
 .mib-cell--small.mib-cell--selected .mib-cell__id { font-weight: var(--mib-font-weight-semibold); color: var(--mib-color-inspect); }
-.mib-cellstrip { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 2px; }
+.mib-cellstrip { display: flex; gap: 10px; overflow-x: auto; padding: 4px; margin: -4px; }
 .mib-cellstrip__item { flex: none; }
 .mib-cellstrip__empty { flex: 1; padding: 22px var(--mib-space-5); border: 1px solid var(--mib-color-line); border-radius: var(--mib-radius-sm); background: var(--mib-color-tile); font-size: var(--mib-font-size-md); color: var(--mib-color-sub); }
 

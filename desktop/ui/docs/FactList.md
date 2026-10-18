@@ -4,7 +4,7 @@ category: Layout
 
 # FactList
 
-Label/value rows inside a card: readbacks ("requested 12.0 µm · read 12.0 µm"), provenance, export options. Give a row a `tone` only when the value is a backend state (`confirmed`, `warn`, `blocked`, `unknown`). Values that are not reported say so ("Unknown · no sensor fitted") instead of being left out.
+Label/value rows inside a card: readbacks ("requested 12.0 µm · read 12.0 µm"), provenance, export options. Give a row a `tone` only when the value is a backend state (`confirmed`, `warn`, `blocked`, `unknown`). Values that are not reported say so ("Unknown · no sensor fitted") instead of being left out. A value passed as `null`, `undefined` or `""` shows as "Not reported" in the unknown tone (change the text with `missing`); a recorded 0 stays 0.
 
 ## Example
 

@@ -11,3 +11,4 @@ See [[frontend/UI-Language-Kit]].
 - 2026-10-18: `DataTable` added (#715): Penpot board "C · DataTable", component, tests, doc and design-sync preview.
 - 2026-10-18: `CellImage` and `CellStrip` added (#715): Penpot board "C · CellImage", components, tests, docs and design-sync previews.
 - 2026-10-18: `OptionGroup` and `Notice` added (#715): Penpot boards "C · OptionGroup" and "C · Notice", components, tests, docs and previews. #715's four components are complete.
+- 2026-10-18: review fixes: DataTable leaves cell controls alone and marks the selected row `aria-current`; FactList and StatTile show missing values as missing; Stepper exposes step states as text; backend states use the kit's tones only.

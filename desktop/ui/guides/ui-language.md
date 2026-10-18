@@ -9,7 +9,8 @@ Shared by MIB Studio, YOFO Studio (the operation app) and YOFO Review (the revie
 
 ## Truth rules
 
-- State comes from the backend. `StateChip` tones: confirmed, warn, blocked, unknown, unsupported, info, neutral. Unknown is never shown as Pass; Unsupported never blocks.
+- State comes from the backend. `StateChip` tones: confirmed, warn, blocked, unknown, unsupported, info, neutral. `FactList`, `StatTile`, `Stepper` and `Notice` take the same tones for values, steps and banners; nothing else colours a state. Unknown is never shown as Pass; Unsupported never blocks.
+- A missing value is shown as missing: `DataTable` and `StatTile` show an en dash titled "Not recorded", `FactList` says "Not reported". A recorded 0 stays 0.
 - Facts never guess. A missing source is written out ("Unknown · not reported").
 - Navigation never actuates hardware. Only an explicit button press acts.
 - Requested values and readbacks are shown side by side; a value is current only after readback.

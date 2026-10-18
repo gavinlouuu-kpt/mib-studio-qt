@@ -43,7 +43,7 @@ Components carry their own styles. There are no utility classes. For your own la
 
 ## Rules the components assume
 
-- Show every backend state as a `StateChip` (`confirmed`, `warn`, `blocked`, `unknown`, `unsupported`, `info`, `neutral`). Unknown is never shown as Pass. Write labels as "State · detail".
+- Show backend states only through the kit's state tones: a `StateChip` (`confirmed`, `warn`, `blocked`, `unknown`, `unsupported`, `info`, `neutral`), or the `tone` of `FactList`, `StatTile`, `Stepper` and `Notice`, which use the same colours and meanings. Never colour a state by hand. Unknown is never shown as Pass. Write labels as "State · detail".
 - Build a card as title, a one-line subtitle, chips, a `FactList`, then actions. Write missing values out ("Unknown · not reported").
 - Use one `primary` Button per view. Clicking a stage only navigates.
 - Show choices with `OptionGroup` (not a dropdown); choosing changes the draft and the primary Button applies it. Keep unavailable options visible with their reason.
