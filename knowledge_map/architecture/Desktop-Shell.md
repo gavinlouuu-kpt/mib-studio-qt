@@ -206,9 +206,16 @@ Tauri IPC, in a browser `wsTransport` (socket at `/ws` of the page origin, or
 unit tests use the mocked Tauri API). `wsTransport` returns binary replies as
 `ArrayBuffer` like Tauri, answers `poll_events_exact` from the pushed
 envelopes (so the event loop is unchanged), reconnects on the next call and
-rejects calls in flight with `TRANSPORT_LOST`. `transport/dialogs` replaces the
+rejects calls in flight with `TRANSPORT_LOST`. `upload(cmd, bytes, headers)`
+sends a raw request body (the review module's chart snapshots, #512 S9): in
+Tauri `invoke(cmd, bytes, {headers})`, the raw IPC body; over the WebSocket it
+rejects with `TransportUnsupportedError` (`code` `TRANSPORT_UNSUPPORTED`,
+`isTransportUnsupported`) without sending anything, because the server reads
+text requests only. Callers show their own words for it. `transport/dialogs` replaces the
 dialog/opener plugins: native in Tauri, prompts for instrument paths and
-`window.open` in a browser. In a browser the close guard only warns on
+`window.open` in a browser (`ask`, the Yes / No question, is
+`window.confirm` there). The review module (`desktop/src/review/`) uses
+the transport too ([[../frontend/YofoReview]], "Transport"). In a browser the close guard only warns on
 `beforeunload` (the server owns stop-and-save) and the installer updater is
 hidden. Verified in headless Chromium: the full UI, live mock frames at 30 fps
 over the socket.

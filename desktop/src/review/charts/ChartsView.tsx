@@ -5,7 +5,7 @@
 // (started on open, polled until ready), stored KDE core records from the
 // file info, embedded isoelastic curves, and the compute-core job.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ask } from "@tauri-apps/plugin-dialog";
+import { ask } from "../../transport/dialogs";
 import { reviewBridge, type ReviewDensity, type ReviewInfo, type ReviewScatter as ScatterData } from "../reviewBridge";
 import { recordContours } from "./chartMath";
 import { contourFamilies, loadChartPrefs, loadCurves, saveChartPrefs, unsavedRecordJson } from "./chartData";

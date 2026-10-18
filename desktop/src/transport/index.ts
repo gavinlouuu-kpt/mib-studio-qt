@@ -4,6 +4,7 @@ import {tauriTransport} from "./tauriTransport";
 import {createWsTransport, wsUrlFromLocation} from "./wsTransport";
 
 export type {Transport} from "./Transport";
+export {TransportUnsupportedError, isTransportUnsupported} from "./Transport";
 
 // Desktop shell: Tauri IPC. Browser (YOFO Studio on the instrument): the yofo-studio-server
 // WebSocket at /ws of the page's origin (or ?server=ws://host:port/ws), token from ?token=.
@@ -22,6 +23,11 @@ export const transport: Transport = select();
 // Drop-in for Tauri's invoke at every call site.
 export function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   return args === undefined ? transport.invoke<T>(cmd) : transport.invoke<T>(cmd, args);
+}
+
+// Raw-body request (Transport.upload); rejects with TransportUnsupportedError over the WebSocket.
+export function upload<T>(cmd: string, body: Uint8Array, headers: Record<string, string>): Promise<T> {
+  return transport.upload<T>(cmd, body, headers);
 }
 
 // True in a browser against the instrument: native dialogs, file reveal and the desktop

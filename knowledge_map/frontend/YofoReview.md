@@ -79,6 +79,42 @@ overlay composed in the backend (Mono8 or RGB8 packets,
 `packetToImageData`). Exports and mask regeneration are backend jobs
 (`ReviewJobs`) — see **Exports and jobs** below.
 
+### Transport (#512 S9)
+
+The module reaches the backend, the dialogs and the opener only through
+`desktop/src/transport/` (see [[../architecture/Desktop-Shell]], "Frontend
+transport"), like the operation app: `reviewBridge.ts` and `updates.tsx`
+call `invoke`, chart staging calls `upload` (`reviewBridge.stageChart`), and
+`ReviewPanel`, `RegenerateMasks` and `ChartsView` use `transport/dialogs`
+(`open`, `save`, `ask`). In the desktop shells this is the same Tauri IPC as
+before: `reviewIpc.test.tsx` drives the operator's flows (open, metrics
+pages, frames, viewer and series, overlay / ROI, every export, charts and
+the core contour, regenerate masks, Show in folder, close, update check) and
+compares every call at `window.__TAURI_INTERNALS__.invoke` (command,
+arguments, staged chart bytes and headers, dialog and opener options) with
+`__snapshots__/reviewIpc.golden.json`, recorded before the move.
+`transportBoundary.test.ts` fails when a non-test file under
+`desktop/src/review/` imports `@tauri-apps/api/core`,
+`@tauri-apps/plugin-dialog` or `@tauri-apps/plugin-opener`. `ReviewApp.tsx`
+(the YOFO Review product shell) still uses `@tauri-apps/api/app`
+(`getVersion`) and `@tauri-apps/api/event` (the macOS open-file event).
+
+Over the WebSocket transport (YOFO Studio in a browser) the module behaves as
+follows, pinned by `remoteTransport.test.tsx`:
+- File dialogs become prompts for paths on the instrument (`transport/dialogs`).
+- **Show in folder** is disabled with the reason "The output is on the
+  instrument, so this browser cannot open its folder."
+- Chart staging is refused by the transport (`TransportUnsupportedError`: the
+  server reads no binary requests). The job dialog shows "Not started: Chart
+  images cannot be sent to the instrument over this browser connection yet,
+  so exports that include charts cannot run here."
+
+The server does not serve the review commands yet, so the module does not run
+remotely. Serving them is S11 of
+[`2026-10-18-one-review-implementation.md`](../../docs/exec-plans/active/2026-10-18-one-review-implementation.md):
+the review commands in `mib-app-commands` and a binary request path for
+`review_stage_chart`. S10 is the bridge attaching to the facade's session.
+
 ## Frames view (PR 2)
 
 The Qt tab's layout per set (Valid / Invalid, or "Frames" for a recording):
@@ -170,7 +206,8 @@ cells render with density ready in ~2–3 s.
   first behind a "Preparing…" state.
 - **`JobDialog`** (`exports/ExportDialogs.tsx`): progress bar + phase text
   (paths shortened to file names), Cancel; then the outcome — "Written to
-  …" with **Show in folder** (`revealItemInDir`), the batch summary with
+  …" with **Show in folder** (`revealItemInDir`; disabled with its reason
+  in a browser), the batch summary with
   per-file failures, "Cancelled. Partial output was discarded", or the
   refusal ("Not started: Another review job is still running").
 - **Toolbar**: Export Metrics, Export All, and a **More…** menu with Batch
@@ -189,10 +226,12 @@ cells render with density ready in ~2–3 s.
   1200 × 1200 over the whole run (data extent, no selection ring — the Qt
   rule) with the Charts view's toggles and contours (persisted defaults
   when it was never opened); density colours only when a ready result for
-  this file exists. PNG bytes are staged one raw IPC call each
-  (`review_stage_chart`, header `x-chart-name`) and consumed by the next
+  this file exists. PNG bytes are staged one raw-body request each
+  (`reviewBridge.stageChart` → the transport's `upload` →
+  `review_stage_chart`, header `x-chart-name`) and consumed by the next
   `review_export_all` / `review_export_charts`; the backend writes TIFFs.
-  Recording files export no charts.
+  Recording files export no charts. Over the WebSocket the upload is refused
+  (see **Transport** above).
 - **Regenerate masks** (`RegenerateMasks.tsx`): source (whole file, valid /
   invalid range with 1-based start + count, AVI, folder), recorded config
   / ROI / background by default (AVI and folder use defaults), synthesize

@@ -1,0 +1,831 @@
+[
+ {
+  "flow": "mount",
+  "calls": [
+   {
+    "cmd": "review_set_pixel_to_micron",
+    "args": {
+     "factor": 0.5
+    }
+   },
+   {
+    "cmd": "fetch_review_info",
+    "args": {}
+   }
+  ]
+ },
+ {
+  "flow": "open file",
+  "calls": [
+   {
+    "cmd": "plugin:dialog|open",
+    "args": {
+     "options": {
+      "title": "Open recording",
+      "filters": [
+       {
+        "name": "HDF5",
+        "extensions": [
+         "h5",
+         "hdf5"
+        ]
+       }
+      ],
+      "multiple": false
+     }
+    }
+   },
+   {
+    "cmd": "review_open",
+    "args": {
+     "path": "/data/run.h5"
+    }
+   },
+   {
+    "cmd": "fetch_review_info",
+    "args": {}
+   },
+   {
+    "cmd": "fetch_review_rows",
+    "args": {
+     "valid": true,
+     "offset": "0",
+     "count": 100
+    }
+   },
+   {
+    "cmd": "fetch_review_thumbnails_packet",
+    "args": {
+     "valid": true,
+     "offset": "0",
+     "count": 64,
+     "size": 128,
+     "overlay": 0,
+     "roiOverlay": false
+    }
+   },
+   {
+    "cmd": "fetch_review_frame",
+    "args": {
+     "dataset": 0,
+     "index": "0",
+     "overlay": 0,
+     "roiOverlay": false
+    }
+   }
+  ]
+ },
+ {
+  "flow": "metrics pages",
+  "calls": [
+   {
+    "cmd": "fetch_review_rows",
+    "args": {
+     "valid": true,
+     "offset": "100",
+     "count": 100
+    }
+   },
+   {
+    "cmd": "fetch_review_rows",
+    "args": {
+     "valid": true,
+     "offset": "0",
+     "count": 100
+    }
+   }
+  ]
+ },
+ {
+  "flow": "invalid set",
+  "calls": [
+   {
+    "cmd": "fetch_review_rows",
+    "args": {
+     "valid": false,
+     "offset": "0",
+     "count": 100
+    }
+   },
+   {
+    "cmd": "fetch_review_thumbnails_packet",
+    "args": {
+     "valid": false,
+     "offset": "0",
+     "count": 2,
+     "size": 128,
+     "overlay": 0,
+     "roiOverlay": false
+    }
+   },
+   {
+    "cmd": "fetch_review_frame",
+    "args": {
+     "dataset": 1,
+     "index": "0",
+     "overlay": 0,
+     "roiOverlay": false
+    }
+   },
+   {
+    "cmd": "fetch_review_rows",
+    "args": {
+     "valid": true,
+     "offset": "0",
+     "count": 100
+    }
+   },
+   {
+    "cmd": "fetch_review_thumbnails_packet",
+    "args": {
+     "valid": true,
+     "offset": "0",
+     "count": 64,
+     "size": 128,
+     "overlay": 0,
+     "roiOverlay": false
+    }
+   },
+   {
+    "cmd": "fetch_review_frame",
+    "args": {
+     "dataset": 0,
+     "index": "0",
+     "overlay": 0,
+     "roiOverlay": false
+    }
+   }
+  ]
+ },
+ {
+  "flow": "frame viewer and series",
+  "calls": [
+   {
+    "cmd": "fetch_review_series_count",
+    "args": {
+     "index": "0"
+    }
+   },
+   {
+    "cmd": "fetch_review_frame",
+    "args": {
+     "dataset": 0,
+     "index": "0",
+     "overlay": 0,
+     "roiOverlay": false
+    }
+   },
+   {
+    "cmd": "fetch_review_series_packet",
+    "args": {
+     "index": "0",
+     "k": "0",
+     "overlay": 0,
+     "roiOverlay": false
+    }
+   },
+   {
+    "cmd": "fetch_review_series_packet",
+    "args": {
+     "index": "0",
+     "k": "1",
+     "overlay": 0,
+     "roiOverlay": false
+    }
+   },
+   {
+    "cmd": "fetch_review_series_count",
+    "args": {
+     "index": "1"
+    }
+   },
+   {
+    "cmd": "fetch_review_series_packet",
+    "args": {
+     "index": "1",
+     "k": "1",
+     "overlay": 0,
+     "roiOverlay": false
+    }
+   },
+   {
+    "cmd": "fetch_review_frame",
+    "args": {
+     "dataset": 0,
+     "index": "1",
+     "overlay": 0,
+     "roiOverlay": false
+    }
+   },
+   {
+    "cmd": "fetch_review_frame",
+    "args": {
+     "dataset": 0,
+     "index": "1",
+     "overlay": 0,
+     "roiOverlay": false
+    }
+   }
+  ]
+ },
+ {
+  "flow": "overlay and ROI",
+  "calls": [
+   {
+    "cmd": "fetch_review_thumbnails_packet",
+    "args": {
+     "valid": true,
+     "offset": "0",
+     "count": 64,
+     "size": 128,
+     "overlay": 2,
+     "roiOverlay": false
+    }
+   },
+   {
+    "cmd": "fetch_review_frame",
+    "args": {
+     "dataset": 0,
+     "index": "1",
+     "overlay": 2,
+     "roiOverlay": false
+    }
+   },
+   {
+    "cmd": "fetch_review_thumbnails_packet",
+    "args": {
+     "valid": true,
+     "offset": "0",
+     "count": 64,
+     "size": 128,
+     "overlay": 2,
+     "roiOverlay": true
+    }
+   },
+   {
+    "cmd": "fetch_review_frame",
+    "args": {
+     "dataset": 0,
+     "index": "1",
+     "overlay": 2,
+     "roiOverlay": true
+    }
+   }
+  ]
+ },
+ {
+  "flow": "export metrics",
+  "calls": [
+   {
+    "cmd": "review_list_dir",
+    "args": {
+     "dir": "/data"
+    }
+   },
+   {
+    "cmd": "plugin:dialog|save",
+    "args": {
+     "options": {
+      "title": "Export Metrics to CSV",
+      "filters": [
+       {
+        "name": "CSV",
+        "extensions": [
+         "csv"
+        ]
+       }
+      ],
+      "defaultPath": "/data/run_metrics_2.csv"
+     }
+    }
+   },
+   {
+    "cmd": "review_export_metrics",
+    "args": {
+     "outputPath": "/data/out/run_metrics_2.csv"
+    }
+   },
+   {
+    "cmd": "plugin:opener|reveal_item_in_dir",
+    "args": {
+     "paths": [
+      "/data/out/run_metrics_2.csv"
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "flow": "export all with charts",
+  "calls": [
+   {
+    "cmd": "plugin:dialog|open",
+    "args": {
+     "options": {
+      "title": "Export All — choose the output root",
+      "directory": true,
+      "multiple": false,
+      "defaultPath": "/data/out"
+     }
+    }
+   },
+   {
+    "cmd": "fetch_review_scatter",
+    "args": {}
+   },
+   {
+    "cmd": "fetch_review_density",
+    "args": {}
+   },
+   {
+    "cmd": "fetch_isoelastic_curves",
+    "args": {}
+   },
+   {
+    "cmd": "review_clear_charts",
+    "args": {}
+   },
+   {
+    "cmd": "review_stage_chart",
+    "args": {
+     "rawBytes": [
+      137,
+      80,
+      78,
+      71,
+      13,
+      10,
+      26,
+      10,
+      1,
+      255,
+      0
+     ]
+    },
+    "options": {
+     "headers": {
+      "x-chart-name": "scatter_plot.tiff"
+     }
+    }
+   },
+   {
+    "cmd": "review_stage_chart",
+    "args": {
+     "rawBytes": [
+      137,
+      80,
+      78,
+      71,
+      13,
+      10,
+      26,
+      10,
+      2,
+      255,
+      0
+     ]
+    },
+    "options": {
+     "headers": {
+      "x-chart-name": "ring_width_histogram.tiff"
+     }
+    }
+   },
+   {
+    "cmd": "review_export_all",
+    "args": {
+     "outputRoot": "/data/out",
+     "exportSeries": true,
+     "seriesStart": "0",
+     "seriesEnd": ""
+    }
+   },
+   {
+    "cmd": "plugin:opener|reveal_item_in_dir",
+    "args": {
+     "paths": [
+      "/data/out/run"
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "flow": "export charts",
+  "calls": [
+   {
+    "cmd": "plugin:dialog|open",
+    "args": {
+     "options": {
+      "title": "Select Directory to Export Charts",
+      "directory": true,
+      "multiple": false,
+      "defaultPath": "/data/out"
+     }
+    }
+   },
+   {
+    "cmd": "fetch_review_scatter",
+    "args": {}
+   },
+   {
+    "cmd": "fetch_review_density",
+    "args": {}
+   },
+   {
+    "cmd": "review_clear_charts",
+    "args": {}
+   },
+   {
+    "cmd": "review_stage_chart",
+    "args": {
+     "rawBytes": [
+      137,
+      80,
+      78,
+      71,
+      13,
+      10,
+      26,
+      10,
+      3,
+      255,
+      0
+     ]
+    },
+    "options": {
+     "headers": {
+      "x-chart-name": "scatter_plot.tiff"
+     }
+    }
+   },
+   {
+    "cmd": "review_stage_chart",
+    "args": {
+     "rawBytes": [
+      137,
+      80,
+      78,
+      71,
+      13,
+      10,
+      26,
+      10,
+      4,
+      255,
+      0
+     ]
+    },
+    "options": {
+     "headers": {
+      "x-chart-name": "ring_width_histogram.tiff"
+     }
+    }
+   },
+   {
+    "cmd": "review_export_charts",
+    "args": {
+     "outputDir": "/data/out"
+    }
+   },
+   {
+    "cmd": "plugin:opener|reveal_item_in_dir",
+    "args": {
+     "paths": [
+      "/data/out"
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "flow": "batch metrics",
+  "calls": [
+   {
+    "cmd": "plugin:dialog|open",
+    "args": {
+     "options": {
+      "title": "Batch Metrics — choose files",
+      "filters": [
+       {
+        "name": "HDF5",
+        "extensions": [
+         "h5",
+         "hdf5"
+        ]
+       }
+      ],
+      "multiple": true
+     }
+    }
+   },
+   {
+    "cmd": "plugin:dialog|open",
+    "args": {
+     "options": {
+      "title": "Choose the output root",
+      "directory": true,
+      "multiple": false,
+      "defaultPath": "/data/out"
+     }
+    }
+   },
+   {
+    "cmd": "review_batch_export",
+    "args": {
+     "sources": [
+      "/data/a.h5",
+      "/data/b.h5"
+     ],
+     "outputRoot": "/data/out",
+     "metricsOnly": true,
+     "exportSeries": true,
+     "seriesStart": "0",
+     "seriesEnd": ""
+    }
+   }
+  ]
+ },
+ {
+  "flow": "batch export all",
+  "calls": [
+   {
+    "cmd": "plugin:dialog|open",
+    "args": {
+     "options": {
+      "title": "Batch Export All — choose files",
+      "filters": [
+       {
+        "name": "HDF5",
+        "extensions": [
+         "h5",
+         "hdf5"
+        ]
+       }
+      ],
+      "multiple": true
+     }
+    }
+   },
+   {
+    "cmd": "plugin:dialog|open",
+    "args": {
+     "options": {
+      "title": "Choose the output root",
+      "directory": true,
+      "multiple": false,
+      "defaultPath": "/data/out"
+     }
+    }
+   },
+   {
+    "cmd": "review_batch_export",
+    "args": {
+     "sources": [
+      "/data/a.h5",
+      "/data/b.h5"
+     ],
+     "outputRoot": "/data/out",
+     "metricsOnly": false,
+     "exportSeries": true,
+     "seriesStart": "0",
+     "seriesEnd": ""
+    }
+   }
+  ]
+ },
+ {
+  "flow": "charts and core contour",
+  "calls": [
+   {
+    "cmd": "fetch_review_scatter",
+    "args": {}
+   },
+   {
+    "cmd": "review_request_density",
+    "args": {
+     "bandwidthFactor": 1,
+     "coreFraction": 0.9,
+     "levels": 8,
+     "wantCoreRecord": true
+    }
+   },
+   {
+    "cmd": "fetch_review_density",
+    "args": {}
+   },
+   {
+    "cmd": "review_compute_core",
+    "args": {
+     "coreFraction": 0.8
+    }
+   },
+   {
+    "cmd": "review_jobs_busy",
+    "args": {}
+   },
+   {
+    "cmd": "fetch_review_computed_core_json",
+    "args": {}
+   },
+   {
+    "cmd": "plugin:dialog|message",
+    "args": {
+     "message": "Save this full-run core contour into the file?",
+     "title": "Save core contour",
+     "kind": "info",
+     "buttons": "YesNo"
+    }
+   },
+   {
+    "cmd": "plugin:dialog|message",
+    "args": {
+     "message": "This experiment already has a full-run core contour.\nReplace it with the new one?",
+     "title": "Replace core contour",
+     "kind": "warning",
+     "buttons": "YesNo"
+    }
+   },
+   {
+    "cmd": "review_save_core_record",
+    "args": {
+     "json": "{\"contours\":[[[11,0.011],[21,0.021],[31,0.011]]],\"core_fraction\":0.8,\"provisional\":false,\"source\":\"full_run\",\"cell_count\":2,\"population_count\":3}",
+     "overwrite": true
+    }
+   },
+   {
+    "cmd": "fetch_review_info",
+    "args": {}
+   }
+  ]
+ },
+ {
+  "flow": "regenerate masks",
+  "calls": [
+   {
+    "cmd": "plugin:dialog|open",
+    "args": {
+     "options": {
+      "title": "AVI source",
+      "filters": [
+       {
+        "name": "AVI",
+        "extensions": [
+         "avi"
+        ]
+       }
+      ],
+      "multiple": false
+     }
+    }
+   },
+   {
+    "cmd": "plugin:dialog|save",
+    "args": {
+     "options": {
+      "title": "Save regenerated masks",
+      "defaultPath": "/data/out/clip_remasked.h5",
+      "filters": [
+       {
+        "name": "HDF5",
+        "extensions": [
+         "h5"
+        ]
+       }
+      ]
+     }
+    }
+   },
+   {
+    "cmd": "review_regenerate_masks",
+    "args": {
+     "source": 3,
+     "sourcePath": "/data/clip.avi",
+     "startIndex": "0",
+     "count": "0",
+     "outputPath": "/data/out/clip_remasked.h5",
+     "useRecordedConfig": false,
+     "synthesizeBackground": false
+    }
+   },
+   {
+    "cmd": "review_open",
+    "args": {
+     "path": "/data/out/clip_remasked.h5"
+    }
+   },
+   {
+    "cmd": "fetch_review_info",
+    "args": {}
+   },
+   {
+    "cmd": "fetch_review_rows",
+    "args": {
+     "valid": true,
+     "offset": "0",
+     "count": 100
+    }
+   },
+   {
+    "cmd": "fetch_review_thumbnails_packet",
+    "args": {
+     "valid": true,
+     "offset": "0",
+     "count": 64,
+     "size": 128,
+     "overlay": 2,
+     "roiOverlay": true
+    }
+   },
+   {
+    "cmd": "fetch_review_frame",
+    "args": {
+     "dataset": 0,
+     "index": "0",
+     "overlay": 2,
+     "roiOverlay": true
+    }
+   },
+   {
+    "cmd": "plugin:opener|reveal_item_in_dir",
+    "args": {
+     "paths": [
+      "/data/out/clip_remasked.h5"
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "flow": "close file",
+  "calls": [
+   {
+    "cmd": "review_close",
+    "args": {}
+   }
+  ]
+ },
+ {
+  "flow": "bridge calls outside the panel",
+  "calls": [
+   {
+    "cmd": "review_abi_version",
+    "args": {}
+   },
+   {
+    "cmd": "review_launch_path",
+    "args": {}
+   },
+   {
+    "cmd": "review_take_open_request",
+    "args": {}
+   },
+   {
+    "cmd": "cancel_review_operation",
+    "args": {
+     "operationId": "101"
+    }
+   },
+   {
+    "cmd": "review_jobs_busy",
+    "args": {}
+   },
+   {
+    "cmd": "review_clear_charts",
+    "args": {}
+   },
+   {
+    "cmd": "review_stage_chart",
+    "args": {
+     "rawBytes": [
+      1,
+      2,
+      3,
+      250
+     ]
+    },
+    "options": {
+     "headers": {
+      "x-chart-name": "scatter_plot.tiff"
+     }
+    }
+   },
+   {
+    "cmd": "review_clear_charts",
+    "args": {}
+   },
+   {
+    "cmd": "review_check_update",
+    "args": {
+     "channel": "stable"
+    }
+   },
+   {
+    "cmd": "review_install_update",
+    "args": {
+     "channel": "beta"
+    }
+   }
+  ]
+ }
+]
