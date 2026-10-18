@@ -198,7 +198,7 @@ the coordinator (ADR 0004/0011).
 | S2 | Reanalysis engine in `mib_review_core` | none | none | merged (#721) |
 | S3 | Export engine in `mib_review_core` | none | none | merged (#724) |
 | S4 | Charts JSON and saved-overlay builders | none (text only, D3) | none | merged (#726) |
-| S5 | The facade owns the ReviewSession | none (D1 (a): unchanged) | none | in review (#PRNUM) |
+| S5 | The facade owns the ReviewSession | none (D1 (a): unchanged) | none | in review (#733) |
 | S6 | Parity harness: a MIB Studio half | none | none | planned |
 | S7 | Facade jobs on ReviewJobs lanes | none | none | planned |
 | S8 | YOFO regenerate on the reanalysis engine | none | none (behaviour D6) | planned |
@@ -366,7 +366,7 @@ the coordinator (ADR 0004/0011).
   file; `renderReviewOverlayJson` on 852 requests) was identical before and
   after.
 
-### S5 — The facade owns the ReviewSession (source ownership; in review, #PRNUM)
+### S5 — The facade owns the ReviewSession (source ownership; in review, #733)
 
 - **Moves:** `BackendFacade` gains `std::shared_ptr<review::ReviewSession> review_`.
   `RecordingLoad`, `closeReview`, `fetchReviewMetadata`,
@@ -426,7 +426,7 @@ the coordinator (ADR 0004/0011).
   writer's file on the caller's thread; they now fail without a review file.
   (4) `framesPage` is overflow-safe for a huge `count`; the facade's old page
   (and `ReviewSession::metricsPage`, unchanged) compute `offset + count`.
-- **Proof (#PRNUM):** `backend.facade_review_session` (new) keeps the pre-slice
+- **Proof (#733):** `backend.facade_review_session` (new) keeps the pre-slice
   facade code as the oracle: load result, RecordingStatusEvent, operation and
   error events, metadata, 14 pages per file, every dataset × 5 indices,
   "review" accounting and charts JSON are equal on experiment, legacy,
@@ -697,7 +697,7 @@ bridge contract):
 - [x] 2026-10-19 — S1 and S2 merged (#721); D1, D3, D4 and D6 ruled, D7 amended (#717, #722).
 - [x] 2026-10-19 — S3 export engine (`review.export_engine`, #724); `review::writeMetricsCsv` deleted (F14).
 - [x] 2026-10-19 — S4 charts JSON and saved-overlay builders (`review.charts_json`, #726).
-- [x] 2026-10-19 — S5 the facade owns the ReviewSession (`backend.facade_review_session`; D1 (a) via `AppBackend::setReviewSourceOpen`, gate text unchanged; #PRNUM).
+- [x] 2026-10-19 — S5 the facade owns the ReviewSession (`backend.facade_review_session`; D1 (a) via `AppBackend::setReviewSourceOpen`, gate text unchanged; #733).
 - [ ] S6 parity harness MIB Studio half
 - [ ] S7 facade jobs on ReviewJobs lanes (D7)
 - [ ] S8 YOFO regenerate on the engine (D6)
