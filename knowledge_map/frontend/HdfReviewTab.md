@@ -318,7 +318,9 @@ the native job reopens the selected background and stores its pixels in output.
 Preview reads are bounded to 64 MiB and never replace the live Review reader.
 
 Saved valid/invalid images now expose the same five Qt contour/mask modes and
-saved ROI using the shared backend `ProcessingOverlay` renderer. Each explicit
+saved ROI using the shared backend `ProcessingOverlay` renderer (since #512 S1
+also the kernel behind [[../services/ReviewSession]]'s overlays; `review.overlay_kernel`).
+Each explicit
 source/index request renders image, mask and classification together. Frontend
 requests are serial/coalesced and stale source responses are discarded. Metric
 pages validate source before and after reads plus latest-request generation;

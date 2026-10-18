@@ -3,7 +3,9 @@
 > YOFO Review's review implementation (ADR 0014, plan
 > `docs/exec-plans/active/2026-10-01-standalone-review-app.md`), also used by
 > the Qt tab for the recorded factor. MIB Studio's Tauri shell keeps its own
-> facade review stack until #512 (ADR 0014 amendment, decision A). Qt-free,
+> facade review stack until #512 (ADR 0014 amendment, decision A), which moves
+> it here slice by slice (plan
+> `docs/exec-plans/active/2026-10-18-one-review-implementation.md`). Qt-free,
 > owns the open HDF5 file through its **own** read-only `Hdf5Service`,
 > serves bounded reads with overlays composed in the backend, and will own
 > the review jobs (PR 1b).
@@ -17,7 +19,8 @@ cameras, serial, SQLite, curl or Sentry. `mib_backend` links it because
 `ReviewExport.cpp` (`review::writeMetricsCsv`, used by the facade's CSV
 export) is compiled here once.
 **Tests:** `tests/review/review_session_test.cpp` (`review.session`, labels
-`review;recording;backend;hdf5;safety`)
+`review;recording;backend;hdf5;safety`), `tests/review/review_overlay_kernel_test.cpp`
+(`review.overlay_kernel`: one overlay kernel, #512 S1)
 **Consumers:** `crates/mib-bridge/src/review_shim.cpp` (`ReviewBridge`, [[../architecture/Rust-Bridge]]),
 the Qt [[../frontend/HdfReviewTab]] (`recordedPixelToMicron`, TD-17)
 **Related:** [[Hdf5Service]], [[HdfExportService]], [[BatchMaskSources]],
@@ -43,9 +46,14 @@ the Qt [[../frontend/HdfReviewTab]] (`recordedPixelToMicron`, TD-17)
   FilterResult column the Qt `HdfMetricsModel` shows plus `areaUm2`.
 - `fetchImage(dataset, index, OverlayMode, roiOverlay)` → packed Mono8 or
   RGB `ReviewImage`: the overlay (contours / outer-inner / mask / filtered
-  mask, same colours and rules as the Qt `OverlayRenderer`) and the red 3 px
-  ROI rectangle are composed here by `OverlayCompose`, so every shell shows
-  the same pixels. Mask datasets and recording files ignore the mode.
+  mask) and the red 3 px ROI rectangle are composed here by `OverlayCompose`,
+  so every shell shows the same pixels. Since #512 S1 the overlay is the one
+  shared kernel, `recording::renderProcessingOverlay`
+  (`backend/recording/ProcessingOverlay.h`, `mib_processing`), which the Qt
+  `OverlayRenderer` and the facade's `render_review_overlay` also call;
+  `composeOverlay` passes `OverlayPassthrough::KeepMono`, so an undrawn Mono8
+  original stays Mono8 (Qt and the facade get RGB). Mask datasets and
+  recording files ignore the mode.
 - `seriesInfo(index)` / `fetchSeriesImage(index, k, …)`: experiment 4D
   series via `readSeriesImagesByIndex`, recording window via
   `readImagesRange(index, multiImageCount)` (as the Qt tab).

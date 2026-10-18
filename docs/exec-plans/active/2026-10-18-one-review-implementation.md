@@ -60,7 +60,7 @@ to #512.
   (`mib_processing`; behind the Qt `OverlayRenderer` and the facade's PNG) and
   `review::composeOverlay` (`mib_review_core`) were the same algorithm copied;
   they differed only in returning an undrawn Mono8 original as Mono8.
-  S1 resolves it.
+  Resolved by S1.
 - **F2 Three ROI styles became two:** Qt and ReviewSession draw red 3 px
   scaled; the facade draws yellow 1 px unscaled. Decision D2.
 - **F3 Factor policy.** The facade uses the live processing factor (charts;
@@ -177,7 +177,7 @@ the coordinator (ADR 0004/0011).
 
 | # | Slice | Bridge contract | Review contract | Status |
 |---|---|---|---|---|
-| S1 | One overlay kernel | none | none | planned (this PR) |
+| S1 | One overlay kernel | none | none | done on this branch |
 | S2 | Reanalysis engine in `mib_review_core` | none | none | planned (this PR) |
 | S3 | Export engine in `mib_review_core` | none | none | planned |
 | S4 | Charts JSON and saved-overlay builders | none | none | planned |
@@ -192,7 +192,7 @@ the coordinator (ADR 0004/0011).
 | S13 | B5: MIB Studio's Review stage mounts the module | none | none | planned (B5) |
 | S14 | Close-out | none | none | planned |
 
-### S1 — One overlay kernel (this PR)
+### S1 — One overlay kernel (done on this branch)
 
 - **Moves:** `review::composeOverlay` stops carrying its own copy of the
   overlay algorithm and calls `recording::renderProcessingOverlay` with a new
@@ -207,13 +207,15 @@ the coordinator (ADR 0004/0011).
   (`review.overlay_kernel`), `tests/CMakeLists.txt`, vault
   `services/ReviewSession.md`.
 - **Contract:** none.
-- **Proof:** a new `review.overlay_kernel` test over a matrix of originals,
-  masks, classes and modes requires `composeOverlay` to be byte-identical to
-  the pre-#512 implementation (kept in the test as the oracle), every drawn
-  pixel to equal the Qt/facade kernel's, and a Mono8 result to be the undrawn
-  original; `review.session`, `review.jobs`, `backend.export_bridge_facade`,
-  `backend.facade_boundary` unchanged; a temporary before/after
-  characterization of both kernels.
+- **Proof:** `review.overlay_kernel` runs 864 cases (3 originals × 8 masks × 6
+  classes × 6 modes) and requires `composeOverlay` to be byte-identical to the
+  pre-#512 implementation (kept in the test as the oracle), every drawn pixel
+  to equal the Qt/facade kernel's, and a Mono8 result to be the undrawn
+  original; a mutation (KeepMono → Rgb) fails 139 checks. `review.session`,
+  `review.jobs`, `backend.export_bridge_facade`, `backend.facade_boundary`
+  pass unchanged. A before/after characterization run (temporary, not
+  committed) of both kernels over the matrix plus the facade's reanalysis
+  cases was identical.
 - **Risks:** low; ROI drawing untouched (D2).
 
 ### S2 — Reanalysis engine in `mib_review_core` (this PR)
@@ -518,7 +520,7 @@ bridge contract):
 
 ## Acceptance criteria
 
-- [ ] S1: one overlay kernel behind Qt, the facade and ReviewSession.
+- [x] S1: one overlay kernel behind Qt, the facade and ReviewSession.
 - [ ] S2: the reanalysis engine lives in `mib_review_core`; the facade
       delegates.
 - [ ] S3-S9 land with no bridge or review contract change.
@@ -535,7 +537,7 @@ bridge contract):
 
 - [x] 2026-10-18 — plan; stale ReviewPanel / ReviewApp / reviewBridge header
       comments fixed (F12).
-- [ ] S1 one overlay kernel
+- [x] 2026-10-18 — S1 one overlay kernel (`review.overlay_kernel`).
 - [ ] S2 reanalysis engine
 - [ ] S3 export engine
 - [ ] S4 charts JSON and saved-overlay builders
