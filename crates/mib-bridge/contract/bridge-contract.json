@@ -497,7 +497,7 @@
   "review_charts_json": {
     "description": "all valid-file metrics; 128x128 density conserves every finite calibrated point; histogram exact; shared Qt math",
     "counters": "decimal strings",
-    "calibration": "current backend pixel_to_micron, same as Qt; reference conditions labelled",
+    "calibration": "current backend pixel_to_micron; reference conditions labelled",
     "curves": "bundled existing scaled_isoelastic_data_6.16-4.24 table"
   },
   "review_reanalysis_preview": "source_kind/source_path/dataset/index -> atomic Mono8 frame packet, independent reader, 64MiB frame limit",
