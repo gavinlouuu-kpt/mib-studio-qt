@@ -3,17 +3,22 @@ import type { StageStatus } from "../bridge";
 import { READINESS_GATE_STATUSES as G } from "../bridgeContract";
 import type { ExperimentReadiness, ReadinessGate } from "../eventAdapter";
 import { derivePreflight, type CheckStatus, type PreflightCheck, type PreflightInput } from "../preflight";
+import { DESKTOP_CAPABILITIES } from "../platformCapabilities";
 import {
   CONFIRMATION_TEXT,
+  GATE_LABELS,
   PREPARE_OUTPUT_PATH,
+  READINESS_FOOTNOTE,
   checkFactTone,
   checkText,
   checkTone,
+  confirmBlockers,
   confirmationState,
   gateBlocksStart,
+  gateLabel,
   gateText,
   gateTone,
-  summarizeReadiness,
+  prepareVerdict,
   summarizeRequired,
   worstState,
   zStageFact,
@@ -43,38 +48,84 @@ describe("backend gate statuses in the UI language (#713)", () => {
   });
 });
 
-describe("readiness summary without a path", () => {
-  it("is unknown before the first read, after a failed read, and when the backend is not initialized", () => {
-    expect(summarizeReadiness(null)).toMatchObject({ tone: "unknown", title: "Unknown · readiness not read yet" });
-    expect(summarizeReadiness(null, "bridge gone")).toMatchObject({ tone: "unknown", detail: "bridge gone" });
-    expect(summarizeReadiness(snapshot([], { valid: false }))).toMatchObject({ tone: "unknown" });
+const INPUT: PreflightInput = {
+  backendReady: true, cameraConfigured: true, cameraRunning: false, cameraIdentity: "Cam", cameraExpected: "",
+  coreValid: true, corePinSatisfied: true, coreVersion: "2.1.0", requiredCoreVersion: "2.1.0",
+  autofocus: { valid: true, connected: false, identity: "" }, samplePump: { valid: true, connected: false, identity: "" },
+  sheathPump: { valid: true, connected: false, identity: "" }, trigger: { valid: true, cameraAttached: false },
+  storageKnown: false, storageWritable: false, storageFreeOk: false, storagePath: "",
+};
+const PASSING = derivePreflight(INPUT);
+
+describe("one Prepare verdict from the checklist and the path-less gates", () => {
+  it("is Not ready while the gates are not read, after a failed read, or when the backend is not initialized", () => {
+    expect(prepareVerdict(PASSING, null)).toMatchObject({ word: "Not ready", tone: "unknown", title: "Not ready · 1 unknown" });
+    expect(prepareVerdict(PASSING, null, "bridge gone").detail).toContain("bridge gone");
+    expect(prepareVerdict(PASSING, snapshot([], { valid: false })).word).toBe("Not ready");
   });
 
-  it("does not count the destination Start chooses as a blocker, and never calls that ready", () => {
-    const s = summarizeReadiness(snapshot([gate("camera.source", G.Pass), NO_PATH]));
-    expect(s).toMatchObject({ tone: "info", title: "No blockers · destination checked at Start", blockers: [] });
-    expect(s.tone).not.toBe("confirmed");
+  it("is Ready when the checklist passes and only the destination waits for Start; the destination is never counted", () => {
+    const v = prepareVerdict(PASSING, snapshot([gate("camera.source", G.Pass), NO_PATH]));
+    expect(v).toMatchObject({ word: "Ready", tone: "confirmed", title: "Ready · destination checked at Start" });
+    expect(v.detail).toContain("checked at Start");
   });
 
-  it("names every other blocking gate, Unavailable included", () => {
-    const s = summarizeReadiness(snapshot([gate("camera.source", G.Unavailable, "no camera source configured"), gate("processing.core", G.Fail, "core pin"), NO_PATH]));
-    expect(s.tone).toBe("blocked");
-    expect(s.title).toBe("Start blocked · 2 gates");
-    expect(s.detail).toContain("camera.source, processing.core.");
-    expect(s.detail).toContain("checked at Start");
+  it("counts blocking checks and gates together, in plain names", () => {
+    const report = derivePreflight({ ...INPUT, coreKnown: false });
+    const v = prepareVerdict(report, snapshot([gate("camera.source", G.Unavailable, "no camera source configured"), gate("science.pl", G.Warn, "x"), gate("storage.hdf5", G.Fail, "open"), NO_PATH]));
+    expect(v).toMatchObject({ word: "Not ready", tone: "blocked", title: "Not ready · 1 failed, 2 unknown, 1 warning" });
+    expect(v.detail).toBe("Failed: Recording file. Unknown: Processing core / trust, Camera source. Warnings: PL science. The destination is checked at Start, with the chosen file.");
   });
 
-  it("a destination gate that failed for another reason still blocks", () => {
-    expect(summarizeReadiness(snapshot([gate("storage.output", G.Fail, "not writable")])).tone).toBe("blocked");
+  it("a required warning makes it Not ready even when no backend gate fails (#548)", () => {
+    const warned = derivePreflight({ ...INPUT, cameraExpected: "Other camera" });
+    const v = prepareVerdict(warned, snapshot([gate("camera.source", G.Pass), gate("camera.session", G.Warn, "w"), NO_PATH]));
+    expect(v).toMatchObject({ word: "Not ready", tone: "warn", title: "Not ready · 2 warnings" });
   });
 
-  it("reports warnings without blocking", () => {
-    const s = summarizeReadiness(snapshot([gate("telemetry.transportLoss", G.Warn, "cannot report"), NO_PATH]));
-    expect(s).toMatchObject({ tone: "warn", title: "No blockers · 1 warning" });
+  it("is Ready with warnings when only optional checks or gates warn", () => {
+    const optionalWarn = derivePreflight({ ...INPUT, storageKnown: true, storageWritable: true, storageFreeOk: false });
+    expect(prepareVerdict(optionalWarn, snapshot([NO_PATH]))).toMatchObject({ word: "Ready with warnings", tone: "warn", title: "Ready with warnings · 1 warning" });
+    expect(prepareVerdict(PASSING, snapshot([gate("processing.roi", G.Warn, "no ROI set"), NO_PATH])).detail).toContain("Warnings: Region of interest.");
   });
 
-  it("is confirmed only when the backend itself reports ready", () => {
-    expect(summarizeReadiness(snapshot([gate("camera.source", G.Pass)], { ready: true })).tone).toBe("confirmed");
+  it("a destination gate that failed for another reason blocks", () => {
+    expect(prepareVerdict(PASSING, snapshot([gate("storage.output", G.Fail, "not writable")])).word).toBe("Not ready");
+  });
+
+  it("keeps a fixed footnote, with no gate ids in it", () => {
+    expect(READINESS_FOOTNOTE).toBe("Unknown is never Pass. Unsupported never blocks. Start re-evaluates every gate with the chosen file.");
+  });
+});
+
+describe("plain gate labels", () => {
+  // Every gate id the backend emits (ExperimentCoordinator.cpp, MethodProvenance.cpp).
+  const BACKEND_GATES = [
+    "calibration.pixelToMicron", "camera.deliveryMode", "camera.geometry", "camera.mode", "camera.session", "camera.source", "clock.wall",
+    "instrument.mode", "instrument.strobe", "lifecycle.experiment", "lifecycle.fault", "lifecycle.recording", "method.revision",
+    "processing.background", "processing.backgroundCalibration", "processing.config", "processing.core", "processing.profileCompile",
+    "processing.roi", "rf.generator", "ring.placement", "run.frozen", "science.pl", "storage.buffer", "storage.hdf5", "storage.output",
+    "storage.persistent", "storage.roundtrip", "storage.ssd", "telemetry.transportLoss", "trigger.output",
+  ];
+  it("names every backend gate, with distinct labels", () => {
+    expect(Object.keys(GATE_LABELS).sort()).toEqual([...BACKEND_GATES].sort());
+    expect(new Set(Object.values(GATE_LABELS)).size).toBe(BACKEND_GATES.length);
+    expect(gateLabel("science.pl")).toBe("PL science");
+    expect(gateLabel("storage.hdf5")).toBe("Recording file");
+  });
+  it("falls back to the raw id for a gate it does not know", () => {
+    expect(gateLabel("future.gate")).toBe("future.gate");
+  });
+});
+
+describe("why Confirm is unavailable", () => {
+  it("names the blocking required checks in plain words", () => {
+    expect(confirmBlockers(PASSING)).toBeNull();
+    const pz = derivePreflight({ ...INPUT, capabilities: { ...DESKTOP_CAPABILITIES, instrument: "pz7035", autofocus: false, trigger: false, pl_identity: true, led_strobe: true }, instrument: null });
+    expect(confirmBlockers(pz)).toEqual({ tone: "unknown", lines: ["3 required checks not read yet or not verified: PL core (build + weights), Sensor link, LED strobe"] });
+    const mixed = derivePreflight({ ...INPUT, cameraConfigured: false, coreKnown: false });
+    expect(confirmBlockers(mixed)).toEqual({ tone: "blocked", lines: ["1 required check failed: Camera", "1 required check not read yet or not verified: Processing core / trust"] });
+    expect(confirmBlockers(derivePreflight({ ...INPUT, cameraExpected: "Other" }))).toEqual({ tone: "warn", lines: ["1 required check with a warning: Camera"] });
   });
 });
 
@@ -102,13 +153,7 @@ describe("checklist rows in the UI language", () => {
 });
 
 describe("required checks summary", () => {
-  const input: PreflightInput = {
-    backendReady: true, cameraConfigured: true, cameraRunning: false, cameraIdentity: "Cam", cameraExpected: "",
-    coreValid: true, corePinSatisfied: true, coreVersion: "2.1.0", requiredCoreVersion: "2.1.0",
-    autofocus: { valid: true, connected: false, identity: "" }, samplePump: { valid: true, connected: false, identity: "" },
-    sheathPump: { valid: true, connected: false, identity: "" }, trigger: { valid: true, cameraAttached: false },
-    storageKnown: false, storageWritable: false, storageFreeOk: false, storagePath: "",
-  };
+  const input = INPUT;
   it("counts ready, unknown and blocking required checks", () => {
     expect(summarizeRequired(derivePreflight(input))).toMatchObject({ title: "Required checks: 2 of 2 ready", allReady: true });
     const unread = summarizeRequired(derivePreflight({ ...input, coreKnown: false }));
@@ -118,10 +163,8 @@ describe("required checks summary", () => {
     expect(failed.title).toBe("Required checks: 1 of 2 ready · 1 blocking");
   });
 
-  it("a required warning is ready unless its backend gate fails", () => {
-    const warned = { ...input, cameraExpected: "Other" };
-    expect(summarizeRequired(derivePreflight(warned)).title).toBe("Required checks: 2 of 2 ready");
-    expect(summarizeRequired(derivePreflight(warned, undefined, [gate("camera.source", G.Fail)])).title).toBe("Required checks: 1 of 2 ready · 1 blocking");
+  it("a required warning is not ready: it blocks (#548)", () => {
+    expect(summarizeRequired(derivePreflight({ ...input, cameraExpected: "Other" })).title).toBe("Required checks: 1 of 2 ready · 1 blocking");
   });
 });
 

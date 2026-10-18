@@ -1,30 +1,40 @@
 // O1 Prepare (#713, track A step A1): the instrument's readiness, read-only. The hardware
-// checklist (preflight.ts) and the authoritative backend gates read without a destination.
-// Nothing here acts on hardware: the only action is the operator's explicit Preflight
-// confirmation, which stores a signature and sends nothing to the backend.
+// checklist (preflight.ts) and the authoritative backend gates read without a destination,
+// summed up in one verdict (prepareVerdict). Nothing here acts on hardware: the only action is
+// the operator's explicit Preflight confirmation, which stores a signature and sends nothing to
+// the backend.
 import { Button, Card, FactList, Notice, StateChip, Toolbar, type Fact } from "@mib/ui";
 import type { StageStatus } from "../bridge";
-import { derivePreflight, type PreflightCheck, type PreflightInput } from "../preflight";
+import type { ReadinessGate } from "../eventAdapter";
+import type { PreflightCheck, PreflightInput, PreflightReport } from "../preflight";
 import {
   CONFIRMATION_TEXT,
+  GATE_LABELS,
+  READINESS_FOOTNOTE,
   checkFactTone,
   checkText,
   checkTone,
+  confirmBlockers,
   confirmationState,
   gateFactTone,
+  gateLabel,
   gateText,
   gateTone,
-  summarizeReadiness,
   summarizeRequired,
   worstState,
   zStageFact,
+  type Verdict,
 } from "./prepareModel";
 import type { PrepareReadiness } from "./usePrepareReadiness";
 
 export interface PrepareViewProps {
   /** The same snapshot the classic checklist is derived from. */
   preflightInput: PreflightInput;
+  /** derivePreflight(preflightInput), computed once by the workspace. */
+  report: PreflightReport;
   readiness: PrepareReadiness;
+  /** The workspace's one verdict (also in its header chip). */
+  verdict: Verdict;
   zStage: StageStatus | null;
   /** The current Preflight signature and the one the operator confirmed. */
   signature: string;
@@ -46,6 +56,26 @@ const rows = (checks: PreflightCheck[]): Fact[] =>
     tone: checkFactTone(c.status),
   }));
 
+/** A gate's plain label, with its id as secondary text (and title) so support can match logs. */
+function GateLabel({ id }: { id: string }) {
+  return (
+    <span data-gate-id={id} title={id}>
+      {gateLabel(id)}
+      {GATE_LABELS[id] ? <span className="ws-gate-id">{id}</span> : null}
+    </span>
+  );
+}
+
+/** The gate's state and reason, then its remediation when there is one. */
+function GateValue({ g, chip }: { g: ReadinessGate; chip: boolean }) {
+  return (
+    <span className="ws-gate">
+      {chip ? <StateChip size="small" tone={gateTone(g.status)}>{gateText(g)}</StateChip> : gateText(g)}
+      {g.remediation ? <span className="ws-gate-fix">{`Fix: ${g.remediation}`}</span> : null}
+    </span>
+  );
+}
+
 /** The worst state among a card's checks (and extra facts), as one chip. */
 function cardChip(checks: Pick<PreflightCheck, "status">[]) {
   const worst = worstState(checks);
@@ -54,20 +84,20 @@ function cardChip(checks: Pick<PreflightCheck, "status">[]) {
 
 export function PrepareView(p: PrepareViewProps) {
   const gates = p.readiness.snapshot?.valid ? p.readiness.snapshot.gates : [];
-  const report = derivePreflight(p.preflightInput, undefined, gates);
+  const report = p.report;
   const byId = (ids: string[]) => report.checks.filter((c) => ids.includes(c.id));
   const camera = byId(["camera", "core", "plCore", "sensorLink", "led", "capture", "trigger"]);
   const focus = byId(["autofocus"]);
   const fluidics = byId(["samplePump", "sheathPump"]);
   const storage = byId(["storage"]);
   const required = summarizeRequired(report);
-  const summary = summarizeReadiness(p.readiness.snapshot, p.readiness.error);
   const confirmation = confirmationState(p.signature, p.confirmedFor, report.criticalPassed);
   const confirmText = CONFIRMATION_TEXT[confirmation];
-  const confirmDisabledReason = p.confirmLockedReason
-    || (p.signature === "" ? "No camera is configured: there is nothing to confirm yet." : "")
-    || (!report.criticalPassed ? "A required check blocks: it must pass (an unknown check is not a pass)." : "")
-    || (confirmation === "confirmed" ? "Already confirmed for this setup." : "");
+  // Why Confirm is unavailable, in plain words next to the button (never only a tooltip).
+  const checklist = confirmBlockers(report);
+  const locks = [p.confirmLockedReason, p.signature === "" ? "No camera is configured: there is nothing to confirm yet." : ""].filter(Boolean);
+  const confirmWhy = [...locks, ...(checklist?.lines ?? [])];
+  const confirmDisabled = confirmWhy.length > 0 || confirmation === "confirmed";
   const pz = p.preflightInput.capabilities?.instrument === "pz7035";
   const zStage = zStageFact(p.zStage);
   const storageGates = gates.filter((g) => g.id.startsWith("storage."));
@@ -110,30 +140,31 @@ export function PrepareView(p: PrepareViewProps) {
           <Card title="Data destination" subtitle="The file is chosen at Start; the backend checks it then" status={cardChip(storage)}>
             <FactList facts={[
               ...rows(storage),
-              ...storageGates.map((g) => ({ label: g.id, value: gateText(g), tone: gateFactTone(g.status) })),
+              ...storageGates.map((g) => ({ label: <GateLabel id={g.id} />, value: <GateValue g={g} chip={false} />, tone: gateFactTone(g.status) })),
             ]} />
           </Card>
           <Card
             title="Ready to operate?"
-            subtitle="The backend's readiness gates, read without a destination"
-            status={<StateChip tone={summary.tone} title={summary.detail}>{summary.title}</StateChip>}
+            subtitle="The checklist and the backend's gates, read without a destination"
+            status={<StateChip tone={p.verdict.tone}>{p.verdict.title}</StateChip>}
             actions={<>
               <Button onClick={p.readiness.refresh} disabled={p.experimentActive} title={p.experimentActive ? "Paused while a run is active" : undefined}>Read gates again</Button>
-              <Button variant="primary" onClick={p.onConfirm} disabled={confirmDisabledReason !== ""} title={confirmDisabledReason || undefined}>
-                Confirm readiness
-              </Button>
+              <Button variant="primary" onClick={p.onConfirm} disabled={confirmDisabled}>Confirm readiness</Button>
             </>}
           >
+            {p.verdict.detail ? <p className="ws-note" data-testid="workspace-verdict-detail">{p.verdict.detail}</p> : null}
             <FactList facts={[{ label: "Preflight confirmation", value: confirmText.text, tone: confirmText.tone }]} />
             {gates.length ? (
-              <FactList data-testid="workspace-gates" facts={gates.map((g) => ({
-                label: g.id,
-                value: <StateChip size="small" tone={gateTone(g.status)} title={g.remediation || undefined}>{gateText(g)}</StateChip>,
-              }))} />
+              <FactList data-testid="workspace-gates" facts={gates.map((g) => ({ label: <GateLabel id={g.id} />, value: <GateValue g={g} chip /> }))} />
             ) : (
-              <FactList facts={[{ label: "Backend gates", value: summary.title, tone: "unknown" }]} />
+              <FactList facts={[{ label: "Backend gates", value: p.readiness.error ? `Unknown · ${p.readiness.error}` : "Unknown · not read yet", tone: "unknown" }]} />
             )}
-            <p className="ws-note">Unknown is never Pass. Unsupported never blocks. {summary.detail}</p>
+            <p className="ws-note" data-testid="workspace-footnote">{READINESS_FOOTNOTE}</p>
+            {confirmWhy.length > 0 && confirmation !== "confirmed" ? (
+              <Notice tone={checklist && !locks.length ? checklist.tone : "info"} title="Confirm readiness is unavailable" data-testid="workspace-confirm-why">
+                {confirmWhy.join(". ") + "."}
+              </Notice>
+            ) : null}
           </Card>
         </div>
       </div>

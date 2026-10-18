@@ -38,6 +38,9 @@ const calls = () => vi.mocked(invoke).mock.calls.map(([cmd, args]) => ({ cmd, ar
 const button = (text: string) => [...host.querySelectorAll("button")].find((b) => b.textContent === text)!;
 const row = (label: string, scope = "") => [...host.querySelectorAll(`${scope} dt`)].find((d) => d.textContent === label)?.nextElementSibling as HTMLElement | undefined;
 const GATES = "[data-testid=workspace-gates]";
+/** The value cell of a gate row, found by the gate id (the label is the plain name). */
+const gateRow = (id: string, scope = GATES) => host.querySelector(`${scope} [data-gate-id="${id}"]`)?.closest("dt")?.nextElementSibling as HTMLElement | undefined;
+const verdictChip = () => host.querySelector("[data-testid=workspace-verdict]")!;
 
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -88,42 +91,55 @@ describe("Prepare reads readiness without a path (#713)", () => {
 });
 
 describe("Prepare states", () => {
-  it("shows the gates read-only, the destination as Unavailable and no blocker otherwise", async () => {
+  it("shows the gates read-only under plain labels, the destination as Unavailable, and one verdict", async () => {
     await render();
-    const chip = row("storage.output", GATES)!.querySelector(".mib-chip")!;
-    expect(row("storage.output")!.textContent).toBe("Unavailable · no output path chosen yet"); // the destination card
+    const label = host.querySelector(`${GATES} [data-gate-id="storage.output"]`)!;
+    expect(label.textContent).toBe("Destination filestorage.output"); // plain label, then the id for support
+    expect(label.getAttribute("title")).toBe("storage.output");
+    const value = gateRow("storage.output")!;
+    const chip = value.querySelector(".mib-chip")!;
     expect(chip.textContent).toBe("Unavailable · no output path chosen yet");
     expect(chip.getAttribute("data-tone")).toBe("unknown");
-    expect(chip.getAttribute("title")).toBe("choose an HDF5 destination");
-    const status = host.querySelector(".mib-shell__pills .mib-chip")!;
-    expect(status.textContent).toBe("Readiness · No blockers · destination checked at Start");
-    expect(status.getAttribute("data-tone")).toBe("info");
-    expect(host.textContent).toContain("Unknown is never Pass. Unsupported never blocks.");
+    expect(value.textContent).toContain("Fix: choose an HDF5 destination");
+    expect(gateRow("storage.output", "[data-testid=workspace-prepare]")!.textContent).toContain("Unavailable · no output path chosen yet"); // the destination card
+    // One verdict, the same words in the header and in the card.
+    expect(verdictChip().textContent).toBe("Ready · destination checked at Start");
+    expect(verdictChip().getAttribute("data-tone")).toBe("confirmed");
+    const cardChip = [...host.querySelectorAll(".mib-card")].find((c) => c.textContent?.startsWith("Ready to operate?"))!.querySelector(".mib-card__status .mib-chip")!;
+    expect(cardChip.textContent).toBe(verdictChip().textContent);
+    expect(host.querySelector("[data-testid=workspace-footnote]")!.textContent).toBe("Unknown is never Pass. Unsupported never blocks. Start re-evaluates every gate with the chosen file.");
   });
 
-  it("is Unknown before the first read, never a pass", async () => {
+  it("an unknown gate keeps its raw id as the label, never hidden", async () => {
+    gates = [{ id: "future.gate", status: G.Warn, reason: "new", remediation: "" }, NO_PATH];
+    await render();
+    expect(host.querySelector(`${GATES} [data-gate-id="future.gate"]`)!.textContent).toBe("future.gate");
+    expect(verdictChip().textContent).toBe("Ready with warnings · 1 warning");
+  });
+
+  it("is Not ready before the first read, never a pass", async () => {
     vi.mocked(invoke).mockImplementation(() => new Promise(() => {})); // never answers
     await render();
-    const status = host.querySelector(".mib-shell__pills .mib-chip")!;
-    expect(status.textContent).toBe("Readiness · Unknown · readiness not read yet");
-    expect(status.getAttribute("data-tone")).toBe("unknown");
+    expect(verdictChip().textContent).toBe("Not ready · 1 unknown");
+    expect(verdictChip().getAttribute("data-tone")).toBe("unknown");
   });
 
-  it("names the blocking gates", async () => {
+  it("counts blocking gates and checks in one verdict", async () => {
     gates = [{ id: "camera.source", status: G.Unavailable, reason: "no camera source configured", remediation: "" }, { id: "processing.core", status: G.Fail, reason: "pin", remediation: "" }, NO_PATH];
     await render();
-    const status = host.querySelector(".mib-shell__pills .mib-chip")!;
-    expect(status.textContent).toBe("Readiness · Start blocked · 2 gates");
-    expect(status.getAttribute("data-tone")).toBe("blocked");
+    expect(verdictChip().textContent).toBe("Not ready · 1 failed, 1 unknown");
+    expect(verdictChip().getAttribute("data-tone")).toBe("blocked");
+    expect(host.querySelector("[data-testid=workspace-verdict-detail]")!.textContent).toBe(
+      "Failed: Processing core. Unknown: Camera source. The destination is checked at Start, with the chosen file.");
   });
 
   it("a failed read clears the gates instead of showing stale ones", async () => {
     await render();
-    expect(row("camera.source", GATES)).toBeDefined();
+    expect(gateRow("camera.source")).toBeDefined();
     vi.mocked(invoke).mockRejectedValue(new Error("bridge gone"));
     await advance(PREPARE_READINESS_POLL_MS);
-    expect(row("camera.source", GATES)).toBeUndefined();
-    expect(host.querySelector(".mib-shell__pills .mib-chip")!.getAttribute("data-tone")).toBe("unknown");
+    expect(gateRow("camera.source")).toBeUndefined();
+    expect(verdictChip().getAttribute("data-tone")).toBe("unknown");
   });
 
   it("renders a check not read yet as Unknown, not failed, and keeps Confirm disabled", async () => {
@@ -134,6 +150,11 @@ describe("Prepare states", () => {
     expect(core.className).not.toContain("blocked");
     expect(host.textContent).toContain("Required checks: 1 of 2 ready · 1 unknown");
     expect(button("Confirm readiness").disabled).toBe(true);
+    // The disabled button says why, in plain words, next to it.
+    const why = host.querySelector("[data-testid=workspace-confirm-why]")!;
+    expect(why.getAttribute("data-tone")).toBe("unknown");
+    expect(why.textContent).toBe("Confirm readiness is unavailable1 required check not read yet or not verified: Processing core / trust.");
+    expect(verdictChip().textContent).toBe("Not ready · 1 unknown");
     // Storage that nothing reported is unknown, not "not required".
     expect(row("Storage destination")!.textContent).toMatch(/^Unknown · /);
   });
@@ -142,6 +163,7 @@ describe("Prepare states", () => {
     await render();
     const before = calls().length;
     expect(button("Confirm readiness").disabled).toBe(false);
+    expect(host.querySelector("[data-testid=workspace-confirm-why]")).toBeNull();
     await act(async () => button("Confirm readiness").click());
     expect(onConfirm).toHaveBeenCalledTimes(1);
     expect(calls().length).toBe(before);
@@ -152,12 +174,19 @@ describe("Prepare states", () => {
     expect(row("Preflight confirmation")!.textContent).toContain("Setup changed since the confirmation");
   });
 
-  it("a required warning blocks Confirm only when its backend gate says Fail", async () => {
+  it("a required warning blocks Confirm even when no backend gate fails: gates never unblock a check (#548)", async () => {
+    gates = [{ id: "camera.source", status: G.Pass, reason: "", remediation: "" }, { id: "camera.session", status: G.Warn, reason: "w", remediation: "" }, NO_PATH];
     await render({ preflightInput: { ...INPUT, cameraExpected: "Other camera" } });
-    expect(button("Confirm readiness").disabled).toBe(false);
-    gates = [{ id: "camera.source", status: G.Fail, reason: "simulated", remediation: "" }, NO_PATH];
-    await advance(PREPARE_READINESS_POLL_MS);
+    expect(gates.some((g) => g.status === G.Fail)).toBe(false);
     expect(button("Confirm readiness").disabled).toBe(true);
+    expect(host.querySelector("[data-testid=workspace-confirm-why]")!.textContent).toContain("1 required check with a warning: Camera");
+    expect(verdictChip().textContent).toBe("Not ready · 2 warnings");
+  });
+
+  it("names the lock when a run is active", async () => {
+    await render({ experimentActive: true, confirmLockedReason: "Setup is locked while an experiment is active" });
+    expect(button("Confirm readiness").disabled).toBe(true);
+    expect(host.querySelector("[data-testid=workspace-confirm-why]")!.textContent).toContain("Setup is locked while an experiment is active");
   });
 });
 

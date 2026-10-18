@@ -19,9 +19,11 @@
 // States follow the backend's readiness vocabulary (#713, `ExperimentReadiness.h`): a value that
 // has not been read yet is `unknown` (never `failed`, never `not-required`, never a pass), and a
 // capability the instrument does not have is `unsupported` (never blocks). `checkGateStatus` maps
-// each state to the backend's Pass / Warn / Fail / Unavailable / NotRequired. A required check
-// blocks the Preflight confirmation when it failed or is unknown; a required warning blocks only
-// when a backend gate for the same subsystem says Fail (`CHECK_GATES`).
+// each state to the backend's Pass / Warn / Fail / Unavailable / NotRequired. Blocking is #548's
+// rule, failing closed: a required check that is not passed (failed, unknown or warning) blocks
+// the Preflight confirmation; unsupported and not-required rows never block. Relaxing a specific
+// warning needs an explicit, audited per-warning acknowledgement (#310), not a backend gate: the
+// backend's `science.pl` gate, for one, never checks the PL build identity.
 //
 // Pure module: no React/Tauri imports so it is unit-testable in plain Node.
 
@@ -132,26 +134,6 @@ export interface PreflightReport {
   /** True when no check blocks (`blocks`): the gate for the Preflight confirmation. */
   criticalPassed: boolean;
 }
-
-/** One backend readiness gate as `fetch_experiment_readiness` reports it. */
-export interface BackendGate {
-  id: string;
-  /** A contract READINESS_GATE_STATUSES value. */
-  status: number;
-}
-
-/** The backend gates that judge the same subsystem as a checklist row. A required row in
- *  `warning` blocks only when one of these says Fail (#713); rows without a gate never block on
- *  a warning. */
-export const CHECK_GATES: Readonly<Record<string, readonly string[]>> = {
-  camera: ["camera.session", "camera.source"],
-  core: ["processing.core"],
-  plCore: ["science.pl", "processing.profileCompile"],
-  led: ["instrument.strobe"],
-  capture: ["camera.deliveryMode", "camera.geometry"],
-  trigger: ["trigger.output"],
-  storage: ["storage.output", "storage.roundtrip", "storage.persistent", "storage.ssd"],
-};
 
 /** The backend readiness status a checklist state corresponds to. Unknown is never Pass. */
 export function checkGateStatus(status: CheckStatus): number {
@@ -275,12 +257,14 @@ function plCoreCheck(i: PreflightInput): Draft {
     detail = `The PL build ${shortId(c.build_id)} is not the expected image ${shortId(c.expected?.build_id ?? "")}: reload the image or install its core.json.`;
     recovery = [RETRY];
   } else if (c.profile_match === "unknown") {
-    status = "warning";
+    // The weights cannot be verified: unknown, never a pass, and it blocks (#548, #713).
+    status = "unknown";
     detail = "No pinned weights in this build: the PL weights are not checked.";
   } else if (c.build_match === "unknown") {
-    status = "warning";
-    // This blocks Preflight (a required check that is not passed fails closed), so the text is the
-    // fix: the file is what lets the shell verify the PL build that is loaded (#548).
+    // The build cannot be verified: unknown, never a pass. This blocks Preflight (a required
+    // check that is not passed fails closed), so the text is the fix: the file is what lets the
+    // shell verify the PL build that is loaded (#548).
+    status = "unknown";
     detail = "The PL build is not verified: /etc/yofo/expected-core.json is missing. On the instrument run " +
       "scripts/pz_install_core.sh <build dir> (it writes that file from the build's core.json), then press Retry check.";
     recovery = [RETRY];
@@ -476,25 +460,17 @@ function storageCheck(i: PreflightInput, requirement: Requirement): Draft {
   };
 }
 
-/** Build the full preflight report from device snapshots and the profile's
- *  device requirements. */
-/** Whether a check blocks the Preflight confirmation: a required check that failed or is
- *  unknown, or a required warning whose backend gate (`CHECK_GATES`) says Fail. */
-function blocks(c: Draft, gates: readonly BackendGate[]): boolean {
-  if (c.requirement !== "required") return false;
-  if (c.status === "failed" || c.status === "unknown") return true;
-  if (c.status !== "warning") return false;
-  const ids = CHECK_GATES[c.id] ?? [];
-  return gates.some((g) => ids.includes(g.id) && g.status === READINESS_GATE_STATUSES.Fail);
+/** Whether a check blocks the Preflight confirmation (#548, failing closed): a required check
+ *  that failed, is unknown or warns. Unsupported and not-required rows never block. */
+function blocks(c: Draft): boolean {
+  return c.requirement === "required" && (c.status === "failed" || c.status === "unknown" || c.status === "warning");
 }
 
-/** Build the full preflight report from device snapshots, the profile's device requirements
- *  and, when the shell has read them, the backend readiness gates (only used to decide whether
- *  a required warning blocks). */
+/** Build the full preflight report from device snapshots and the profile's
+ *  device requirements. */
 export function derivePreflight(
   input: PreflightInput,
   requirements?: PreflightRequirements,
-  backendGates: readonly BackendGate[] = [],
 ): PreflightReport {
   const caps = input.capabilities ?? DESKTOP_CAPABILITIES;
   const req = requirements ?? requirementsFor(caps);
@@ -512,7 +488,7 @@ export function derivePreflight(
     triggerCheck(input, req.trigger, naFor(caps.trigger, pz ? "The PL times the sort output." : "Not on this instrument.")),
     storageCheck(input, req.storage),
   ];
-  const checks: PreflightCheck[] = drafts.map((c) => ({ ...c, blocks: blocks(c, backendGates) }));
+  const checks: PreflightCheck[] = drafts.map((c) => ({ ...c, blocks: blocks(c) }));
 
   const count = (status: CheckStatus) => checks.filter((c) => c.status === status).length;
   return {

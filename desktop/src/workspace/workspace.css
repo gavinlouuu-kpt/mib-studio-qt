@@ -24,3 +24,19 @@
   font-size: var(--mib-font-size-sm);
   color: var(--mib-color-sub);
 }
+.ws-shell .ws-gate {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--mib-space-1) var(--mib-space-2);
+}
+/* The raw gate id under its plain label, for matching the logs. */
+.ws-shell .ws-gate-id {
+  display: block;
+  font-size: var(--mib-font-size-xs);
+  color: var(--mib-color-mute);
+}
+.ws-shell .ws-gate-fix {
+  font-size: var(--mib-font-size-sm);
+  color: var(--mib-color-sub);
+}

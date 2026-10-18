@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { READINESS_GATE_STATUSES as G } from "./bridgeContract";
 import {
-  CHECK_GATES,
   CHECK_STATUS_LABEL,
   DEFAULT_REQUIREMENTS,
   checkGateStatus,
@@ -76,17 +75,16 @@ describe("derivePreflight — required checks", () => {
     expect(cam.detail).toContain("EG-Cam SN9");
   });
 
-  it("a required warning does not block unless a backend gate for it says Fail (#713)", () => {
-    const warned = { ...READY, cameraExpected: "EG-Cam SN9" };
-    expect(derivePreflight(warned).criticalPassed).toBe(true);
-    const warn = [{ id: "camera.source", status: G.Warn }];
-    expect(derivePreflight(warned, undefined, warn).criticalPassed).toBe(true);
-    const unrelatedFail = [{ id: "processing.background", status: G.Fail }];
-    expect(derivePreflight(warned, undefined, unrelatedFail).criticalPassed).toBe(true);
-    const fail = [{ id: "camera.source", status: G.Fail }];
-    const r = derivePreflight(warned, undefined, fail);
+  it("a required warning blocks, failing closed (#548)", () => {
+    const r = derivePreflight({ ...READY, cameraExpected: "EG-Cam SN9" });
     expect(r.checks.find((c) => c.id === "camera")).toMatchObject({ status: "warning", blocks: true });
     expect(r.criticalPassed).toBe(false);
+  });
+
+  it("an optional warning does not block", () => {
+    const r = derivePreflight({ ...READY, storageKnown: true, storageWritable: true, storageFreeOk: false });
+    expect(r.checks.find((c) => c.id === "storage")).toMatchObject({ status: "warning", requirement: "optional", blocks: false });
+    expect(r.criticalPassed).toBe(true);
   });
 
   it("core fails and blocks criticality when the pin is not satisfied", () => {
@@ -186,9 +184,13 @@ describe("checklist states in the backend's readiness vocabulary (#713)", () => 
     expect(states.map((s) => CHECK_STATUS_LABEL[s])).toEqual(["Passed", "Warning", "Failed", "Unknown", "Unsupported", "Not required"]);
   });
 
-  it("names backend gates only for rows the backend also judges", () => {
-    const ids = derivePreflight(READY).checks.map((c) => c.id);
-    for (const id of Object.keys(CHECK_GATES)) expect([...ids, "plCore", "led"]).toContain(id);
-    expect(CHECK_GATES.samplePump).toBeUndefined(); // no backend gate: a pump warning never blocks
+  it("blocks exactly the required rows that are not passed; unsupported and not-required never block", () => {
+    const reqs = { autofocus: "required", samplePump: "required", sheathPump: "required", trigger: "not-applicable", storage: "required" } as const;
+    const r = derivePreflight({ ...READY, autofocus: UNREAD, samplePump: ON, sheathPump: OFF, storageKnown: true, storageWritable: true, storageFreeOk: false }, reqs);
+    const blocking = Object.fromEntries(r.checks.map((c) => [c.id, [c.status, c.blocks]]));
+    expect(blocking).toMatchObject({
+      autofocus: ["unknown", true], samplePump: ["passed", false], sheathPump: ["failed", true],
+      trigger: ["not-required", false], storage: ["warning", true], capture: ["not-required", false],
+    });
   });
 });

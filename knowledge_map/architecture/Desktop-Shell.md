@@ -101,15 +101,17 @@ status with requirement, expected-vs-detected identity, cause, recovery actions 
 `blocks`; `criticalPassed` is true when no check blocks. Since #713: a value not read
 yet (backend not initialized, core status, PL core / sensor link / LED before the first
 instrument poll or while the link rates are still measured, a device snapshot with
-`valid: false`) is `unknown`, never `failed` or `not-required`; a capability the
-instrument lacks (`capabilities.autofocus`/`trigger` false) is `unsupported`; storage
-nothing reported is `unknown` (the desktop checks the file at Start). `checkGateStatus`
-maps the states to the backend's Pass / Warn / Fail / Unavailable / NotRequired
-(unknown → Unavailable, never Pass). A required check blocks when it failed or is
-unknown; a required `warning` blocks only when a backend gate for the same subsystem
-(`CHECK_GATES`, e.g. `plCore` → `science.pl`) says Fail, which needs the gates passed as
-`derivePreflight`'s third argument (the workspace does; the classic shell has none, and
-Start's own readiness evaluation is the backend check there). Required/optional/n-a per device
+`valid: false`) is `unknown`, never `failed` or `not-required`; a PL build or weights that
+cannot be verified (`build_match` / `profile_match` "unknown": no
+`/etc/yofo/expected-core.json`, no pinned weights) is `unknown` too, with the same fix-it
+text; a capability the instrument lacks (`capabilities.autofocus`/`trigger` false) is
+`unsupported`; storage nothing reported is `unknown` (the desktop checks the file at Start).
+`checkGateStatus` maps the states to the backend's Pass / Warn / Fail / Unavailable /
+NotRequired (unknown → Unavailable, never Pass). Blocking is unchanged from #548, failing
+closed: a required check that failed, is unknown or warns blocks; unsupported and
+not-required rows never block. Backend gates never unblock a row (the `science.pl` gate,
+for one, never checks the PL build identity); relaxing a specific warning would need an
+audited per-warning acknowledgement (#310). Required/optional/n-a per device
 is meant to come from the selected profile (not bridged yet → `DEFAULT_REQUIREMENTS`
 until UX-2 #306). The shell polls camera/core/autofocus/pumps/trigger every 1.5 s
 while the Preflight tab (or the workspace's Prepare stage) is shown, off the capture
@@ -124,10 +126,11 @@ authority for the Preflight stage and replaces the host core pin test, because t
 already holds the host core check on the desktop and the PL core check on the PZ7035. Each such
 check is a blocking reason, so the stage is "needs attention", the recommended action navigates
 instead of offering the confirmation, and a stage confirmed earlier goes back to "needs
-attention" if one starts failing. A required check that is `unknown` blocks too; a required
-`warning` no longer does unless its backend gate says Fail (#713, superseding #548's "a warning
-blocks", e.g. an unverified PL build no longer blocks the confirmation on its own). Tests:
-`workflow.test.ts` (#548), `preflight.test.ts` and `preflightPz7035.test.ts` (#713).
+attention" if one starts failing. A required check in `warning` blocks as well, and since #713
+so does a required `unknown` (formerly rendered `failed`). The three #548 cases stay pinned as
+blocking in `preflightPz7035.test.ts`: an unverified PL build, sustained sensor-link errors, the
+LED on a service setting. Tests: `workflow.test.ts` (#548), `preflight.test.ts` and
+`preflightPz7035.test.ts` (#713).
 
 ## Opt-in workspace (P1/P2, #713)
 
@@ -153,15 +156,22 @@ imported once, there; `workspace.css` only places cards with the kit's spacing t
   (`PREPARE_READINESS_POLL_MS`) while Prepare is shown and no run is active, one request at a
   time. The backend then reports `storage.output` Unavailable ("no output path chosen yet") and
   creates no probe file (`ExperimentCoordinator`, the `outputPath.empty()` branch); Start
-  re-evaluates every gate with the chosen file. The summary never calls that destination
-  gate ready: no other blocker reads "No blockers · destination checked at Start" (info tone);
-  other Fail/Unavailable gates read "Start blocked · N gates"; "Ready" only when the backend
-  says ready. A failed read clears the gates (never stale gates as current). Tones:
-  Pass → confirmed, Warn → warn, Fail → blocked, Unavailable → unknown, NotRequired → neutral.
+  re-evaluates every gate with the chosen file. A failed read clears the gates (never stale
+  gates as current). Gate rows show a plain label (`GATE_LABELS`, one table for every backend
+  gate id; an unmapped id is shown as itself) with the raw id as secondary text and title, the
+  state and reason as a chip, and the remediation ("Fix: …"). Tones: Pass → confirmed,
+  Warn → warn, Fail → blocked, Unavailable → unknown, NotRequired → neutral.
+- **One verdict** (`prepareVerdict`), the same words in the header chip and the "Ready to
+  operate?" card, combining the checklist and the gates: **Not ready** (a required check blocks,
+  a gate other than the destination is Fail or Unavailable, or the gates were not read),
+  **Ready with warnings** (nothing blocks, but a check or gate warns), **Ready**. The counts and
+  plain names follow ("Not ready · 3 unknown, 1 warning"). The destination gate is never counted:
+  "Ready · destination checked at Start".
 - **Confirmation.** "Confirm readiness" (the one primary action) stores the current Preflight
   signature, the same state the classic workflow bar sets; it sends nothing to the backend and
-  is disabled while a required check blocks (with the gates, so a warning whose gate fails
-  blocks), with no camera, or during a run.
+  is disabled while a required check blocks, with no camera, or during a run. When disabled, a
+  Notice next to it says why in plain words ("3 required checks not read yet or not verified:
+  PL core (build + weights), Sensor link, LED strobe"; `confirmBlockers`).
 - **Gate (P1).** `workspace/navigation.test.tsx` runs the whole App over a mocked transport,
   desktop and PZ7035: opening the workspace, visiting every stage, leaving, coming back and
   Camera setup add no command to the idle app's steady state except

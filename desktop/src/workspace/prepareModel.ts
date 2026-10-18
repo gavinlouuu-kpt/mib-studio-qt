@@ -55,47 +55,122 @@ export const gateBlocksStart = (status: number) => status !== G.Pass && status !
 /** The destination gate as Prepare expects it: Unavailable because no path was given. */
 const pendingDestination = (g: ReadinessGate) => g.id === DESTINATION_GATE && g.status === G.Unavailable;
 
-export interface ReadinessSummary {
+/** Plain labels for the backend readiness gates (ExperimentCoordinator, MethodProvenance). The
+ *  raw id stays visible as secondary text so support can match it to the logs; an id missing
+ *  here is shown as itself, never hidden. */
+export const GATE_LABELS: Readonly<Record<string, string>> = {
+  "instrument.mode": "Camera mode (Align / Run)",
+  "instrument.strobe": "LED strobe timing",
+  "camera.mode": "Camera mode",
+  "camera.session": "Camera session",
+  "camera.source": "Camera source",
+  "camera.deliveryMode": "Frame delivery",
+  "camera.geometry": "Frame size",
+  "science.pl": "PL science",
+  "ring.placement": "Frame ring memory",
+  "run.frozen": "Stopped Run (buffered frames)",
+  "processing.profileCompile": "Method on the PL",
+  "processing.roi": "Region of interest",
+  "processing.core": "Processing core",
+  "processing.config": "Processing settings",
+  "calibration.pixelToMicron": "Pixel → µm calibration",
+  "processing.background": "Background image",
+  "processing.backgroundCalibration": "Background calibration",
+  "trigger.output": "Sort trigger output",
+  "rf.generator": "RF generator",
+  "clock.wall": "Wall clock",
+  "storage.ssd": "SSD record store",
+  "storage.output": "Destination file",
+  "storage.roundtrip": "Destination write test",
+  "storage.persistent": "Destination kept at power-off",
+  "storage.buffer": "Recording memory budget",
+  "storage.hdf5": "Recording file",
+  "lifecycle.recording": "Raw recording",
+  "lifecycle.experiment": "Running experiment",
+  "lifecycle.fault": "Previous run fault",
+  "telemetry.transportLoss": "Frame loss reporting",
+  "method.revision": "Method revision",
+};
+
+/** The plain label of a gate, or its id when there is none. */
+export const gateLabel = (id: string): string => GATE_LABELS[id] ?? id;
+
+type IssueKind = "failed" | "unknown" | "warning";
+interface Issue { kind: IssueKind; name: string; blocking: boolean }
+
+export interface Verdict {
+  /** "Not ready" / "Ready with warnings" / "Ready", the same words wherever it is shown. */
+  word: "Not ready" | "Ready with warnings" | "Ready";
   tone: StateTone;
-  /** "State · detail" for a StateChip or a Notice title. */
+  /** "Not ready · 3 unknown, 1 warning". */
   title: string;
-  /** One line with the facts behind the title. */
+  /** What the counts are, in plain names. */
   detail: string;
-  /** Gates that block Start, other than the destination Start chooses. */
-  blockers: ReadinessGate[];
-  warnings: ReadinessGate[];
 }
 
-/** One summary of a readiness read without a path. */
-export function summarizeReadiness(r: ExperimentReadiness | null, error = ""): ReadinessSummary {
-  if (error && !r) return { tone: "unknown", title: "Unknown · readiness not read", detail: error, blockers: [], warnings: [] };
-  if (!r) return { tone: "unknown", title: "Unknown · readiness not read yet", detail: "Waiting for the first backend evaluation.", blockers: [], warnings: [] };
-  if (!r.valid) return { tone: "unknown", title: "Unknown · the backend did not report readiness", detail: "The backend is not initialized.", blockers: [], warnings: [] };
-  const blockers = r.gates.filter((g) => gateBlocksStart(g.status) && !pendingDestination(g));
-  const warnings = r.gates.filter((g) => g.status === G.Warn);
-  const destination = r.gates.some(pendingDestination) ? " The destination is checked at Start, with the chosen file." : "";
-  if (blockers.length) {
-    return {
-      tone: "blocked",
-      title: `Start blocked · ${blockers.length} ${blockers.length === 1 ? "gate" : "gates"}`,
-      detail: blockers.map((g) => g.id).join(", ") + "." + destination,
-      blockers,
-      warnings,
-    };
-  }
-  if (r.ready) return { tone: "confirmed", title: "Ready · the backend reports ready", detail: "", blockers, warnings };
-  if (warnings.length) {
-    return {
-      tone: "warn",
-      title: `No blockers · ${warnings.length} ${warnings.length === 1 ? "warning" : "warnings"}`,
-      detail: warnings.map((g) => g.id).join(", ") + "." + destination,
-      blockers,
-      warnings,
-    };
-  }
-  // Not "confirmed": the backend did not report ready, because the destination is not chosen yet.
-  return { tone: "info", title: "No blockers · destination checked at Start", detail: destination.trim(), blockers, warnings };
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+function countText(issues: Issue[]): string {
+  const n = (k: IssueKind) => issues.filter((i) => i.kind === k).length;
+  return [n("failed") ? `${n("failed")} failed` : "", n("unknown") ? `${n("unknown")} unknown` : "", n("warning") ? plural(n("warning"), "warning") : ""]
+    .filter(Boolean).join(", ");
 }
+
+function namesText(issues: Issue[]): string {
+  const group = (k: IssueKind, title: string) => {
+    const names = issues.filter((i) => i.kind === k).map((i) => i.name);
+    return names.length ? `${title}: ${names.join(", ")}.` : "";
+  };
+  return [group("failed", "Failed"), group("unknown", "Unknown"), group("warning", "Warnings")].filter(Boolean).join(" ");
+}
+
+/** One verdict for Prepare from the hardware checklist and the backend gates read without a
+ *  path. Not ready: a required check blocks, a backend gate other than the destination blocks
+ *  Start (Fail or Unavailable), or the gates were not read. Ready with warnings: nothing blocks,
+ *  but a check or gate warns (or an optional check failed). The destination is checked at Start
+ *  and never counted either way. */
+export function prepareVerdict(report: PreflightReport, r: ExperimentReadiness | null, error = ""): Verdict {
+  const issues: Issue[] = [];
+  for (const c of report.checks) {
+    if (c.blocks) issues.push({ kind: c.status === "failed" ? "failed" : c.status === "unknown" ? "unknown" : "warning", name: c.label, blocking: true });
+    else if (c.status === "warning" || c.status === "failed") issues.push({ kind: c.status === "failed" ? "failed" : "warning", name: c.label, blocking: false });
+  }
+  if (!r || !r.valid) {
+    issues.push({ kind: "unknown", name: error ? `Backend gates (${error})` : !r ? "Backend gates (not read yet)" : "Backend gates (not reported)", blocking: true });
+  } else {
+    for (const g of r.gates) {
+      if (pendingDestination(g)) continue;
+      if (g.status === G.Warn) issues.push({ kind: "warning", name: gateLabel(g.id), blocking: false });
+      else if (gateBlocksStart(g.status)) issues.push({ kind: g.status === G.Fail ? "failed" : "unknown", name: gateLabel(g.id), blocking: true });
+    }
+  }
+  const destination = !!r?.valid && r.gates.some(pendingDestination);
+  const tail = destination ? " The destination is checked at Start, with the chosen file." : "";
+  const blocking = issues.filter((i) => i.blocking);
+  if (blocking.length) {
+    const tone: StateTone = blocking.some((i) => i.kind === "failed") ? "blocked" : blocking.some((i) => i.kind === "unknown") ? "unknown" : "warn";
+    return { word: "Not ready", tone, title: `Not ready · ${countText(issues)}`, detail: namesText(issues) + tail };
+  }
+  if (issues.length) return { word: "Ready with warnings", tone: "warn", title: `Ready with warnings · ${countText(issues)}`, detail: namesText(issues) + tail };
+  return { word: "Ready", tone: "confirmed", title: destination ? "Ready · destination checked at Start" : "Ready", detail: tail.trim() };
+}
+
+/** Why the Preflight confirmation is unavailable because of the checklist, in plain words
+ *  ("3 required checks not read yet: PL core (build + weights), Sensor link, LED strobe"). */
+export function confirmBlockers(report: PreflightReport): { tone: "blocked" | "unknown" | "warn"; lines: string[] } | null {
+  const blocking = report.checks.filter((c) => c.blocks);
+  if (!blocking.length) return null;
+  const line = (status: CheckStatus, what: string) => {
+    const names = blocking.filter((c) => c.status === status).map((c) => c.label);
+    return names.length ? `${plural(names.length, "required check")} ${what}: ${names.join(", ")}` : "";
+  };
+  const lines = [line("failed", "failed"), line("unknown", "not read yet or not verified"), line("warning", "with a warning")].filter(Boolean);
+  const tone = blocking.some((c) => c.status === "failed") ? "blocked" : blocking.some((c) => c.status === "unknown") ? "unknown" : "warn";
+  return { tone, lines };
+}
+
+/** The fixed footnote of the "Ready to operate?" card. */
+export const READINESS_FOOTNOTE = "Unknown is never Pass. Unsupported never blocks. Start re-evaluates every gate with the chosen file.";
 
 const STATE_WORD: Readonly<Record<CheckStatus, string>> = {
   passed: "Pass",

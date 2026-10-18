@@ -1297,8 +1297,8 @@ export default function App() {
     coreValid: coreStatus?.valid ?? false,
     corePinSatisfied: coreStatus?.pin_satisfied ?? false,
     requiredCoreVersion: coreStatus?.required_version ?? "",
-    // The checklist's own rule: a required check that failed or is unknown cannot be confirmed
-    // (#548); a required warning blocks only when its backend gate says Fail (#713).
+    // The checklist's own rule: a required check that is not passed (failed, unknown or warning)
+    // cannot be confirmed (#548); unsupported and not-required rows never block (#713).
     requiredFailures: preflight.checks
       .filter((c) => c.blocks)
       .map((c) => `${c.label}: ${c.detail}`),
