@@ -132,6 +132,14 @@ to #512.
 Owner (Gavin) or the merge coordinator decides; each slice says which it
 waits for. Recommendations are this plan's.
 
+**Status 2026-10-18.** The merge coordinator ruled the engineering choices:
+D2, D5, D7, D8 and D9 are accepted as recommended below. D1, D3, D4 and D6
+stay open for Gavin. They change instrument behaviour (D1: Start while a
+review file is open), the numbers MIB Studio shows and exports (D3: pixel
+factor, D4: histogram range), or the overwrite and timestamp semantics of
+regenerated files (D6). The slices they gate (S5, S8, S13) wait for him;
+S3, S4, S6, S7 and S9 can proceed.
+
 - **D1 Experiments while a review file is open** (F7, gates S5). (a) Keep
   today's behaviour: the facade tells the readiness gate a review source is
   open and the `storage.hdf5` message stays. (b) Allow experiments while
