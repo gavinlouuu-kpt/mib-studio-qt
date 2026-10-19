@@ -164,8 +164,9 @@ fn experiment_acknowledge_fault(state: State<AppState>, expected_run: String, fa
 }
 
 #[tauri::command]
-fn experiment_stop(state: State<AppState>) -> Result<cmds::CmdResult, String> {
-    cmds::experiment_stop(&state)
+fn experiment_stop(state: State<AppState>, expected_start_generation: Option<String>) -> Result<cmds::CmdResult, String> {
+    // ABI 40 (#741): stop only this run (canonical decimal start generation); None: any active run.
+    cmds::experiment_stop(&state, expected_start_generation)
 }
 
 #[tauri::command]

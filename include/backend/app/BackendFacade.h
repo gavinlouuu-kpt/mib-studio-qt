@@ -202,6 +202,10 @@ namespace backend::bridge
         // record, annotation); empty = nothing declared. Parsed by recording::parseStartRequestJson.
         std::string startRequestJson;
         bool cancelled{false};                  // Stop
+        // Stop (ABI 40, #741): the start generation of the run the client means to stop. Set: a
+        // different or no held run is refused with ExperimentStopOutcome::RunMismatch and nothing
+        // is stopped (ExperimentCoordinator::requestStop). Unset: stops whatever run is active.
+        std::optional<std::uint64_t> expectedStartGeneration;
     };
 
     // Monitoring accumulation control (BE-5): visibility-gated enable/disable
