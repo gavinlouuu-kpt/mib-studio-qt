@@ -15,6 +15,9 @@
 #include "support/assert.h"
 #include "support/watchdog.h"
 
+#include <spdlog/sinks/stdout_sinks.h>
+#include <spdlog/spdlog.h>
+
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -407,6 +410,16 @@ int main()
             std::unique_lock lock(gHoldMutex);
             return gHoldCv.wait_for(lock, 10s, [] { return gLivePorts == 0; });
         };
+        // Each session keeps a reference to the logger it was created with, and a detached I/O
+        // thread drops it when it finishes. With spdlog's built-in default logger, the last
+        // reference would go when spdlog's registry is destroyed at exit, inside the spdlog
+        // library: uninstrumented, so ThreadSanitizer cannot see that release synchronise with
+        // the thread's own and reports a false race. A logger owned here keeps every release in
+        // instrumented code; it is not left in the registry.
+        const auto previousLogger = spdlog::default_logger();
+        const auto teardownLogger = std::make_shared<spdlog::logger>(
+            "syringe-teardown", std::make_shared<spdlog::sinks::stdout_sink_mt>());
+        spdlog::set_default_logger(teardownLogger);
         sb::SerialBusManager bus;
         configure(bus, Mode::Normal);
         SyringePumpService svc(bus);
@@ -429,8 +442,15 @@ int main()
         MIB_EXPECT(waitPortsClosed(), "released, the detached I/O thread closes its port");
 
         // 8) A transaction was abandoned, then the pump disconnects while the write is held.
+        //    The port stays reserved until the detached thread of 7) has released it, just
+        //    after closing it: retry the connect over that window.
         watchdog.mark("disconnect after an abandoned transaction");
-        MIB_REQUIRE(svc.connect(PumpId::Sample, 3, 115200, 1), "connect");
+        bool reconnected = false;
+        for (const auto until = Clock::now() + 10s; !reconnected && Clock::now() < until;) {
+            reconnected = svc.connect(PumpId::Sample, 3, 115200, 1);
+            if (!reconnected) std::this_thread::sleep_for(1ms);
+        }
+        MIB_REQUIRE(reconnected, "connect once the port is released");
         hold(true);
         MIB_EXPECT(!svc.stop(PumpId::Sample), "the held stop is abandoned");
         MIB_REQUIRE(holding(), "the I/O thread is still inside write()");
@@ -445,6 +465,7 @@ int main()
         MIB_EXPECT(svc.runFacts(PumpId::Sample, 10ms, f), "the pump's lock is free");
         hold(false);
         MIB_EXPECT(waitPortsClosed(), "released, the detached I/O thread closes its port");
+        spdlog::set_default_logger(previousLogger);
     }
 
     if (mib::test::exitCode() == 0) {
