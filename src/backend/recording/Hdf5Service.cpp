@@ -2,6 +2,7 @@
 #include "backend/diagnostics/CrashStateMirror.h"
 #include "backend/processing/ProcessingContract.h"
 #include "backend/processing/ProcessingService.h"
+#include "backend/recording/RunProvenanceRecord.h"
 
 #include <spdlog/spdlog.h>
 #include <opencv2/core.hpp>
@@ -11,6 +12,7 @@
 #include <hdf5.h>
 #include <hdf5_hl.h>
 
+#include <atomic>
 #include <vector>
 #include <cstdlib>
 #include <mutex>
@@ -62,6 +64,10 @@ namespace backend::services
         std::string filePath_;
         bool isOpen_{false};
         bool writable_{false};
+        // Fault injection (tests): the run-provenance writers fail as a full disk would.
+        std::atomic<bool> runProvenanceWriteFault_{false};
+        std::atomic<bool> annotationWriteFault_{false};
+        std::atomic<bool> annotationFlushFault_{false};
         bool datasetsInitialized_{false};
         hsize_t validFramesWritten_{0};
         hsize_t invalidFramesWritten_{0};
@@ -172,11 +178,18 @@ namespace backend::services
             int32_t pixelCount;
             int32_t blemishCount;
             uint8_t degenerateContour;
+            // PZ7035 rows (#712): the run_id and epoch of the PL FRAME record the
+            // row came from; plIdentity 1 marks a PL row. Appended to keep prior
+            // offsets; 0 for host rows and when read from an older file.
+            uint64_t plRunId;
+            uint32_t plEpoch;
+            uint8_t plIdentity;
         };
 
         hid_t createProcessedFrameMetadataType(bool includeBaseFields = true,
                                                bool includeObjectFields = true,
-                                               bool includeTrackingFields = true)
+                                               bool includeTrackingFields = true,
+                                               bool includePlFields = true)
         {
             hid_t compTypeId = H5Tcreate(H5T_COMPOUND, sizeof(ProcessedFrameMetadataRecord));
             if (includeBaseFields)
@@ -224,6 +237,12 @@ namespace backend::services
                 H5Tinsert(compTypeId, "centroidX", HOFFSET(ProcessedFrameMetadataRecord, centroidX), H5T_NATIVE_DOUBLE);
                 H5Tinsert(compTypeId, "centroidY", HOFFSET(ProcessedFrameMetadataRecord, centroidY), H5T_NATIVE_DOUBLE);
             }
+            if (includePlFields)
+            {
+                H5Tinsert(compTypeId, "plRunId", HOFFSET(ProcessedFrameMetadataRecord, plRunId), H5T_NATIVE_UINT64);
+                H5Tinsert(compTypeId, "plEpoch", HOFFSET(ProcessedFrameMetadataRecord, plEpoch), H5T_NATIVE_UINT32);
+                H5Tinsert(compTypeId, "plIdentity", HOFFSET(ProcessedFrameMetadataRecord, plIdentity), H5T_NATIVE_UINT8);
+            }
             return compTypeId;
         }
 
@@ -266,6 +285,9 @@ namespace backend::services
             md.pixelCount = frame.validation.pixelCount;
             md.blemishCount = frame.validation.blemishCount;
             md.degenerateContour = frame.validation.degenerateContour ? 1 : 0;
+            md.plIdentity = frame.plRecordIdentity ? 1 : 0;
+            md.plRunId = frame.plRecordIdentity ? frame.plRunId : 0;
+            md.plEpoch = frame.plRecordIdentity ? frame.plEpoch : 0;
             return md;
         }
     } // namespace
@@ -2246,9 +2268,13 @@ namespace backend::services
             md.pixelCount = 0;
             md.blemishCount = 0;
             md.degenerateContour = 0;
+            // PL record identity (#712): absent before it, and on host rows.
+            md.plRunId = 0;
+            md.plEpoch = 0;
+            md.plIdentity = 0;
         }
 
-        hid_t baseMemTypeId = createProcessedFrameMetadataType(true, false, false);
+        hid_t baseMemTypeId = createProcessedFrameMetadataType(true, false, false, false);
         herr_t status = H5Dread(datasetId, baseMemTypeId, H5S_ALL, H5S_ALL, H5P_DEFAULT, metadata.data());
         H5Tclose(baseMemTypeId);
         if (status < 0)
@@ -2263,7 +2289,7 @@ namespace backend::services
         const bool hasObjectCount = H5Tget_member_index(fileTypeId, "objectCount") >= 0;
         if (hasObjectId || hasObjectCount)
         {
-            hid_t objectMemTypeId = createProcessedFrameMetadataType(false, true, false);
+            hid_t objectMemTypeId = createProcessedFrameMetadataType(false, true, false, false);
             status = H5Dread(datasetId, objectMemTypeId, H5S_ALL, H5S_ALL, H5P_DEFAULT, metadata.data());
             H5Tclose(objectMemTypeId);
             if (status < 0)
@@ -2281,7 +2307,7 @@ namespace backend::services
         const bool hasTrackObservationCount = H5Tget_member_index(fileTypeId, "trackObservationCount") >= 0;
         if (hasTrackId || hasTrackFirstFrame || hasTrackLastFrame || hasTrackObservationCount)
         {
-            hid_t trackingMemTypeId = createProcessedFrameMetadataType(false, false, true);
+            hid_t trackingMemTypeId = createProcessedFrameMetadataType(false, false, true, false);
             status = H5Dread(datasetId, trackingMemTypeId, H5S_ALL, H5S_ALL, H5P_DEFAULT, metadata.data());
             H5Tclose(trackingMemTypeId);
             if (status < 0)
@@ -2289,6 +2315,21 @@ namespace backend::services
                 H5Tclose(fileTypeId);
                 H5Dclose(datasetId);
                 SPDLOG_ERROR("Failed to read tracking metadata fields from {}", datasetPath);
+                return false;
+            }
+        }
+
+        // PL record identity (#712): only files that carry the members.
+        if (H5Tget_member_index(fileTypeId, "plIdentity") >= 0)
+        {
+            hid_t plMemTypeId = createProcessedFrameMetadataType(false, false, false, true);
+            status = H5Dread(datasetId, plMemTypeId, H5S_ALL, H5S_ALL, H5P_DEFAULT, metadata.data());
+            H5Tclose(plMemTypeId);
+            if (status < 0)
+            {
+                H5Tclose(fileTypeId);
+                H5Dclose(datasetId);
+                SPDLOG_ERROR("Failed to read PL record identity fields from {}", datasetPath);
                 return false;
             }
         }
@@ -2338,6 +2379,9 @@ namespace backend::services
             frame.validation.pixelCount = md.pixelCount;
             frame.validation.blemishCount = md.blemishCount;
             frame.validation.degenerateContour = (md.degenerateContour != 0);
+            frame.plRecordIdentity = md.plIdentity != 0;
+            frame.plRunId = frame.plRecordIdentity ? md.plRunId : 0;
+            frame.plEpoch = frame.plRecordIdentity ? md.plEpoch : 0;
             frames.push_back(frame);
         }
 
@@ -4730,7 +4774,14 @@ namespace backend::services {
     bool Hdf5Service::writeRunSnapshotJson(const std::string& runSnapshotJson,
                                            const std::string& readinessJson)
     {
-        if (!isFileOpen()) return false;
+        if (!isFileOpen() || !impl_->writable_) {
+            SPDLOG_WARN("writeRunSnapshotJson: no writable HDF5 file open; run snapshot not stored");
+            return false;
+        }
+        if (impl_->runProvenanceWriteFault_.load()) {
+            SPDLOG_ERROR("writeRunSnapshotJson: injected write fault; run snapshot not stored");
+            return false;
+        }
         hid_t group = H5Lexists(impl_->fileId_, "/run_provenance", H5P_DEFAULT) > 0
                           ? H5Gopen2(impl_->fileId_, "/run_provenance", H5P_DEFAULT)
                           : H5Gcreate2(impl_->fileId_, "/run_provenance", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
@@ -4760,10 +4811,12 @@ namespace backend::services {
             if (H5Awrite(attr, H5T_NATIVE_UINT64, &value) < 0) ok = false;
             H5Aclose(attr);
         };
-        // Mirrors RunConfigurationSnapshot::kSchemaVersion (v2: "method" block, #398 M2).
-        writeU64("run_snapshot_schema_version", 2);
+        // Mirrors RunConfigurationSnapshot::kSchemaVersion (v2: "method" block, #398 M2; v3: run id,
+        // E-modulus LUT identity, device facts and the PL run id, #712). The JSON first: a failed
+        // document leaves no version attribute that promises one.
         writeStr("run_snapshot_json", runSnapshotJson);
-        writeStr("readiness_json", readinessJson);
+        if (ok) writeStr("readiness_json", readinessJson);
+        if (ok) writeU64("run_snapshot_schema_version", recording::kRunSnapshotSchemaVersion);
         H5Sclose(scalar);
         H5Gclose(group);
         if (ok && !flush()) SPDLOG_WARN("writeRunSnapshotJson: flush after provenance write failed");
@@ -4798,6 +4851,177 @@ namespace backend::services {
         if (readinessJson) readStr("readiness_json", *readinessJson);
         H5Gclose(group);
         return ok && !runSnapshotJson.empty();
+    }
+
+    bool Hdf5Service::writeRunStopJson(const std::string& runStopJson)
+    {
+        if (!isFileOpen() || !impl_->writable_) {
+            SPDLOG_WARN("writeRunStopJson: no writable HDF5 file open; stop record not stored");
+            return false;
+        }
+        if (impl_->runProvenanceWriteFault_.load()) {
+            SPDLOG_ERROR("writeRunStopJson: injected write fault; stop record not stored");
+            return false;
+        }
+        hid_t group = H5Lexists(impl_->fileId_, "/run_provenance", H5P_DEFAULT) > 0
+                          ? H5Gopen2(impl_->fileId_, "/run_provenance", H5P_DEFAULT)
+                          : H5Gcreate2(impl_->fileId_, "/run_provenance", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+        if (group < 0) return false;
+        bool ok = !(H5Aexists(group, "run_stop_json") > 0 && H5Adelete(group, "run_stop_json") < 0);
+        if (ok) {
+            hid_t scalar = H5Screate(H5S_SCALAR);
+            hid_t type = H5Tcopy(H5T_C_S1);
+            H5Tset_size(type, H5T_VARIABLE);
+            H5Tset_cset(type, H5T_CSET_UTF8);
+            hid_t attr = H5Acreate2(group, "run_stop_json", type, scalar, H5P_DEFAULT, H5P_DEFAULT);
+            if (attr >= 0) {
+                const char* ptr = runStopJson.c_str();
+                ok = H5Awrite(attr, type, &ptr) >= 0;
+                H5Aclose(attr);
+            } else {
+                ok = false;
+            }
+            H5Tclose(type);
+            H5Sclose(scalar);
+        }
+        H5Gclose(group);
+        return ok;
+    }
+
+    void Hdf5Service::setRunProvenanceWriteFaultForTesting(bool fail)
+    {
+        impl_->runProvenanceWriteFault_.store(fail);
+    }
+
+    bool Hdf5Service::readRunStopJson(std::string& runStopJson) const
+    {
+        runStopJson.clear();
+        if (!isFileOpen() || H5Lexists(impl_->fileId_, "/run_provenance", H5P_DEFAULT) <= 0) return false;
+        hid_t group = H5Gopen2(impl_->fileId_, "/run_provenance", H5P_DEFAULT);
+        if (group < 0) return false;
+        bool ok = false;
+        if (H5Aexists(group, "run_stop_json") > 0) {
+            hid_t attr = H5Aopen(group, "run_stop_json", H5P_DEFAULT);
+            if (attr >= 0) {
+                hid_t type = H5Aget_type(attr);
+                if (type >= 0 && H5Tget_class(type) == H5T_STRING && H5Tis_variable_str(type) > 0) {
+                    char* ptr = nullptr;
+                    ok = H5Aread(attr, type, &ptr) >= 0;
+                    if (ok) runStopJson = ptr ? ptr : "";
+                    if (ptr) H5free_memory(ptr);
+                }
+                if (type >= 0) H5Tclose(type);
+                H5Aclose(attr);
+            }
+        }
+        H5Gclose(group);
+        return ok && !runStopJson.empty();
+    }
+
+    // ---- Planned sample annotation (#712, annotation_schema_version = 1) ---------
+
+    bool Hdf5Service::writeExperimentAnnotationJson(const std::string& annotationJson)
+    {
+        if (!isFileOpen() || !impl_->writable_) {
+            SPDLOG_WARN("writeExperimentAnnotationJson: no writable HDF5 file open; annotation not stored");
+            return false;
+        }
+        if (impl_->annotationWriteFault_.load()) {
+            SPDLOG_ERROR("writeExperimentAnnotationJson: injected write fault; annotation not stored");
+            return false;
+        }
+        // Written once: the block is the sample as planned at Start and is never rewritten (ADR 0015 item 4).
+        if (H5Lexists(impl_->fileId_, "/experiment_annotation", H5P_DEFAULT) > 0) {
+            SPDLOG_ERROR("writeExperimentAnnotationJson: the file already has /experiment_annotation; not rewritten");
+            return false;
+        }
+        hid_t group = H5Gcreate2(impl_->fileId_, "/experiment_annotation", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+        if (group < 0) return false;
+        hid_t scalar = H5Screate(H5S_SCALAR);
+        bool ok = true;
+        {
+            hid_t type = H5Tcopy(H5T_C_S1);
+            H5Tset_size(type, H5T_VARIABLE);
+            H5Tset_cset(type, H5T_CSET_UTF8);
+            hid_t attr = H5Acreate2(group, "annotation_json", type, scalar, H5P_DEFAULT, H5P_DEFAULT);
+            if (attr >= 0) {
+                const char* ptr = annotationJson.c_str();
+                ok = H5Awrite(attr, type, &ptr) >= 0;
+                H5Aclose(attr);
+            } else {
+                ok = false;
+            }
+            H5Tclose(type);
+        }
+        // The JSON first: a failed document leaves no version that promises one.
+        if (ok) {
+            const uint64_t version = recording::kExperimentAnnotationSchemaVersion;
+            hid_t attr = H5Acreate2(group, "annotation_schema_version", H5T_NATIVE_UINT64, scalar, H5P_DEFAULT,
+                                    H5P_DEFAULT);
+            ok = attr >= 0 && H5Awrite(attr, H5T_NATIVE_UINT64, &version) >= 0;
+            if (attr >= 0) H5Aclose(attr);
+        }
+        H5Sclose(scalar);
+        H5Gclose(group);
+        // The annotation counts as written only once it is on disk: a failed flush (a full disk) fails
+        // the write, so the Start is refused (ProvenanceFailed) instead of running without it.
+        if (ok) {
+            if (impl_->annotationFlushFault_.load()) {
+                SPDLOG_ERROR("writeExperimentAnnotationJson: injected flush fault; annotation not durable");
+                ok = false;
+            } else if (!flush()) {
+                SPDLOG_ERROR("writeExperimentAnnotationJson: flush after the annotation write failed");
+                ok = false;
+            }
+        }
+        return ok;
+    }
+
+    bool Hdf5Service::readExperimentAnnotationJson(std::string& annotationJson, uint64_t* schemaVersion) const
+    {
+        annotationJson.clear();
+        if (schemaVersion) *schemaVersion = 0;
+        if (!isFileOpen() || H5Lexists(impl_->fileId_, "/experiment_annotation", H5P_DEFAULT) <= 0) return false;
+        hid_t group = H5Gopen2(impl_->fileId_, "/experiment_annotation", H5P_DEFAULT);
+        if (group < 0) return false;
+        bool ok = false;
+        if (H5Aexists(group, "annotation_json") > 0) {
+            hid_t attr = H5Aopen(group, "annotation_json", H5P_DEFAULT);
+            if (attr >= 0) {
+                hid_t type = H5Aget_type(attr);
+                if (type >= 0 && H5Tget_class(type) == H5T_STRING && H5Tis_variable_str(type) > 0) {
+                    char* ptr = nullptr;
+                    ok = H5Aread(attr, type, &ptr) >= 0;
+                    if (ok) annotationJson = ptr ? ptr : "";
+                    if (ptr) H5free_memory(ptr);
+                }
+                if (type >= 0) H5Tclose(type);
+                H5Aclose(attr);
+            }
+        }
+        if (schemaVersion && H5Aexists(group, "annotation_schema_version") > 0) {
+            hid_t attr = H5Aopen(group, "annotation_schema_version", H5P_DEFAULT);
+            if (attr >= 0) {
+                hid_t type = H5Aget_type(attr);
+                uint64_t v = 0;
+                if (type >= 0 && H5Tget_class(type) == H5T_INTEGER && H5Aread(attr, H5T_NATIVE_UINT64, &v) >= 0)
+                    *schemaVersion = v;
+                if (type >= 0) H5Tclose(type);
+                H5Aclose(attr);
+            }
+        }
+        H5Gclose(group);
+        return ok && !annotationJson.empty();
+    }
+
+    void Hdf5Service::setExperimentAnnotationWriteFaultForTesting(bool fail)
+    {
+        impl_->annotationWriteFault_.store(fail);
+    }
+
+    void Hdf5Service::setExperimentAnnotationFlushFaultForTesting(bool fail)
+    {
+        impl_->annotationFlushFault_.store(fail);
     }
 
     // ---- KDE core contour records (kde_core_schema_version = 1) -----------------

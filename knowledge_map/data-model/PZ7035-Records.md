@@ -176,7 +176,9 @@ snapped window, the gates, and the Service-mode LED.
 `include/backend/processing/IExecutionProvider.h` is the seam: one
 `ProviderFrame` per sensor frame on the provider's thread. It carries the
 frame identity, flags, the `UnetCell`s, and their `FilterResult` view
-(`filterResultFromUnetCell`). `include/backend/processing/pz/PzExecutionProviders.h`:
+(`filterResultFromUnetCell`). `runId` and `epoch` are the FRAME record's own
+fields (since #712; `runId` used to repeat the id the host armed), so a record
+from a stale run cannot be stamped with the current one. `include/backend/processing/pz/PzExecutionProviders.h`:
 
 - `PzRecordPipeline` — stream checks, then assembly into ProviderFrames,
   with status counters for decode errors, gaps, overruns, incomplete frames,
@@ -242,7 +244,9 @@ frame-id gaps and 0 incomplete frames:
 Recording (S3): `ingestProviderFrame` appends one experiment row per cell:
 valid cells always, invalid ones sampled. The rows carry the PL values
 (Laplacian, brightness mean/variance, contour area, pixel and blemish
-counts) and no images. See [[HDF5-Storage]].
+counts) and no images. Each row also stores the record's `plRunId` /
+`plEpoch` with `plIdentity = 1` (#712); the run snapshot's `pl_run_id` is the
+id the host armed. See [[HDF5-Storage]].
 
 ## Profile compiler (S2)
 

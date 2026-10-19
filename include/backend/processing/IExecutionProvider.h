@@ -23,11 +23,11 @@
 namespace backend::processing {
 
 struct ProviderFrame {
-    uint64_t runId{0};
+    uint64_t runId{0};           // the FRAME record's run_id (the PL's RUN_ID when it was written)
     uint64_t frameId{0};         // sensor frame counter (monotonic within a generation)
     uint64_t timestampTicks{0};  // SOF, device ticks
     uint64_t timestampNs{0};     // SOF, ticks converted with the provider's timestamp_hz
-    uint32_t epoch{0};
+    uint32_t epoch{0};           // the FRAME record's epoch (the CONFIG_COMMIT epoch it was produced under)
     uint32_t flags{0};           // backend::pz::kFrame* bits
     uint16_t width{0};
     uint16_t height{0};

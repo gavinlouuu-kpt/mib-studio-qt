@@ -207,8 +207,10 @@ public:
     bool readRunAccounting(backend::recording::RecordingAccountingSnapshot& accounting) const;
 
     // Frozen run configuration snapshot + readiness evaluation (issue #369),
-    // stored as JSON attributes on the /run_provenance group. Written at Start
-    // (before the run may be considered complete); readable from Review.
+    // stored as JSON attributes on the /run_provenance group with
+    // run_snapshot_schema_version (3 since #712, see RunProvenanceRecord.h).
+    // Written at Start (before the run may be considered complete); readable
+    // from Review. Refused (false) with no file open or a read-only file.
     bool writeRunSnapshotJson(const std::string& runSnapshotJson, const std::string& readinessJson);
 
     // Diagnostics (issue #344): number of HDF5 objects (files, datasets,
@@ -218,6 +220,31 @@ public:
     static long long globalOpenObjectCountForDiagnostics();
     long long openObjectCountForDiagnostics() const;
     bool readRunSnapshotJson(std::string& runSnapshotJson, std::string* readinessJson = nullptr) const;
+
+    // The run's stop record (#712, snapshot v3): /run_provenance @run_stop_json,
+    // written at finalization (recording::runStopToJson). Refused with no file
+    // open or a read-only file; the reader returns false when it is absent or
+    // not a string attribute.
+    bool writeRunStopJson(const std::string& runStopJson);
+    bool readRunStopJson(std::string& runStopJson) const;
+    // Fault injection for tests: while set, writeRunSnapshotJson and
+    // writeRunStopJson fail without writing (as on a full or failing disk).
+    void setRunProvenanceWriteFaultForTesting(bool fail);
+
+    // The planned sample annotation (#712, ADR 0015 item 4): the
+    // /experiment_annotation group with @annotation_json
+    // (recording::experimentAnnotationToJson) and @annotation_schema_version,
+    // written once at Start. Refused with no file open, a read-only file, or
+    // when the file already has the group (the block is immutable); false
+    // also when the flush after the attribute writes fails. The
+    // reader returns false when the group or its JSON is absent;
+    // `schemaVersion` is 0 when the version attribute is missing.
+    bool writeExperimentAnnotationJson(const std::string& annotationJson);
+    bool readExperimentAnnotationJson(std::string& annotationJson, uint64_t* schemaVersion = nullptr) const;
+    // Fault injection for tests: while set, writeExperimentAnnotationJson fails without writing.
+    void setExperimentAnnotationWriteFaultForTesting(bool fail);
+    // Fault injection for tests: the attributes are written, then the flush fails (a full disk).
+    void setExperimentAnnotationFlushFaultForTesting(bool fail);
 
     // KDE core contour records (`kde_core_schema_version` = 1). The JSON
     // documents are produced and parsed by the frontend codec

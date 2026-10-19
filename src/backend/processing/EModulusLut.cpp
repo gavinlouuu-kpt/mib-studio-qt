@@ -33,12 +33,11 @@ std::string EModulusLut::resolvePath(const std::string& basePath) {
     return basePath; // Return original if nothing found
 }
 
-bool EModulusLut::parseFile(const std::string& path, std::vector<LutPoint>& points) const {
-    std::ifstream file(path);
-    if (!file.is_open()) return false;
-
+bool EModulusLut::parseText(const std::string& text, std::vector<LutPoint>& points) const {
+    std::istringstream file(text);
     std::string line;
     while (std::getline(file, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back(); // CRLF: the binary read keeps the CR that text mode dropped
         // Skip empty lines and comments
         if (line.empty() || line[0] == '#') continue;
 
@@ -142,10 +141,32 @@ void EModulusLut::buildGrid(const std::vector<LutPoint>& points) {
 }
 
 bool EModulusLut::loadFromFile(const std::string& basePath) {
+    return loadFromFileWithBytes(basePath, nullptr, nullptr);
+}
+
+bool EModulusLut::loadFromFileWithBytes(const std::string& basePath, std::string* loadedBytes,
+                                        std::string* loadedPath) {
     std::string resolvedPath = resolvePath(basePath);
 
+    // Read the file once and build the grid from these bytes, so a caller that hashes what it is
+    // handed identifies the table in use, not whatever the path holds later (#712).
+    std::string bytes;
+    {
+        std::ifstream file(resolvedPath, std::ios::binary);
+        if (!file.is_open()) {
+            SPDLOG_WARN("EModulusLut: Failed to load LUT from {}", resolvedPath);
+            return false;
+        }
+        std::ostringstream buffer;
+        buffer << file.rdbuf();
+        if (file.bad()) {
+            SPDLOG_WARN("EModulusLut: Failed to read LUT from {}", resolvedPath);
+            return false;
+        }
+        bytes = std::move(buffer).str();
+    }
     std::vector<LutPoint> points;
-    if (!parseFile(resolvedPath, points)) {
+    if (!parseText(bytes, points)) {
         SPDLOG_WARN("EModulusLut: Failed to load LUT from {}", resolvedPath);
         return false;
     }
@@ -169,6 +190,8 @@ bool EModulusLut::loadFromFile(const std::string& basePath) {
 
     buildGrid(points);
     loaded_ = true;
+    if (loadedBytes) *loadedBytes = std::move(bytes);
+    if (loadedPath) *loadedPath = resolvedPath;
 
     SPDLOG_INFO("EModulusLut: Loaded {} data points from {}, grid {}x{}, "
                 "area=[{:.1f}, {:.1f}] um², deform=[{:.4f}, {:.4f}]",

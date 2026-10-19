@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -65,6 +66,40 @@ public:
         double speedRpm{0.0}; // peristaltic head speed setpoint read from the pump
     };
 
+    // The last complete status poll (#712, run snapshot v3): only what the pump
+    // answered in one pollStatus() in which every read succeeded. A command's own
+    // bookkeeping (start, stop, a written flow rate) never lands here, and the
+    // peristaltic pump's integrated volume (computed, not reported) is not part of it.
+    struct PumpReadback {
+        bool valid{false};      // a complete poll answered since connect
+        bool lastPollOk{false}; // the newest poll answered completely
+        std::chrono::steady_clock::time_point at{};
+        RunStatus runStatus{RunStatus::Stop};
+        std::optional<double> speedRpm;             // peristaltic: speed register (rpm)
+        std::optional<double> realtimeFlowRaw;      // dLSP: realtime infuse-flow register (device units)
+        std::optional<double> accumulatedVolumeRaw; // dLSP: accumulated-volume register (device units)
+        std::optional<bool> stalled;                // dLSP: error status bit 3
+    };
+
+    // The settings the pump is known to hold (#712): each is set only when it was written to the pump
+    // successfully, or read back from it, in the current connection, and cleared on connect, on
+    // disconnect and when a write of it failed (the pump may hold either value). PumpConfig keeps the
+    // operator's request for the UI and is no evidence that the pump got it.
+    struct AppliedSettings {
+        std::optional<double> flowRate;          // as written (dLSP: the clamped, truncated register value)
+        std::optional<uint16_t> flowRateUnit;    // 100 = µL/min, 103 = mL/min
+        std::optional<Direction> direction;
+    };
+
+    // What a run records about a pump slot: connected, its configuration, the settings the pump is
+    // known to hold, the last readback.
+    struct RunFacts {
+        bool connected{false};
+        PumpConfig config;
+        AppliedSettings applied;
+        PumpReadback readback;
+    };
+
     // Pump serial I/O goes through the shared RS485 bus layer so a pump and
     // other Modbus devices (e.g. the pulse generator) can share one adapter.
     explicit SyringePumpService(serialbus::SerialBusManager& busManager);
@@ -100,6 +135,11 @@ public:
 
     // Poll current status from pump hardware (call from UI timer)
     void pollStatus(PumpId id);
+
+    // The slot's facts for a run's provenance, copied under the pump's lock. False when the lock is
+    // not free within `wait` (a poll or a command is talking to the pump): the caller records the
+    // pump as unknown instead of holding an experiment Start behind serial I/O. No I/O of its own.
+    bool runFacts(PumpId id, std::chrono::milliseconds wait, RunFacts& out) const;
 
     // Get COM port in use by a specific pump (for port collision avoidance)
     int getComPort(PumpId id) const;
@@ -141,8 +181,13 @@ private:
         std::shared_ptr<serialbus::ModbusBusSession> bus;
         PumpConfig config;
         PumpStatus status;
+        PumpReadback readback;
+        AppliedSettings applied;
         bool purging{false};
         std::chrono::steady_clock::time_point lastPoll{};
+        // runFacts() polls try_lock() up to its deadline instead of waiting out a serial timeout. A plain
+        // mutex, not std::timed_mutex: libstdc++ 13 implements try_lock_for with pthread_mutex_clocklock,
+        // which GCC 13's ThreadSanitizer does not intercept (a false "unlock of an unlocked mutex").
         mutable std::mutex mutex;
     };
 

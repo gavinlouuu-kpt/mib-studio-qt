@@ -75,7 +75,8 @@ ProcessedFrame makeFrame(uint64_t idx, bool valid, int h, int w, int series)
     return f;
 }
 
-std::string writeFixture(const fs::path& path, int validN, int invalidN, int series, int h, int w)
+std::string writeFixture(const fs::path& path, int validN, int invalidN, int series, int h, int w,
+                         const std::string& runSnapshotJson = {})
 {
     std::vector<ProcessedFrame> valid, invalid;
     for (int i = 0; i < validN; ++i) valid.push_back(makeFrame(static_cast<uint64_t>(i * 2), true, h, w, series));
@@ -87,8 +88,15 @@ std::string writeFixture(const fs::path& path, int validN, int invalidN, int ser
     backend::services::ProcessingConfig cfg;
     backend::services::ProcessingService::Roi roi{0, 0, w, h};
     MIB_REQUIRE(hdf5.writeExperimentInfo(1000, 5000, valid.size(), invalid.size(), cfg, roi), "experiment info");
+    if (!runSnapshotJson.empty()) MIB_REQUIRE(hdf5.writeRunSnapshotJson(runSnapshotJson, "{}"), "run snapshot");
     hdf5.closeFile();
     return path.string();
+}
+
+std::string fileText(const fs::path& p)
+{
+    std::ifstream in(p, std::ios::binary);
+    return std::string((std::istreambuf_iterator<char>(in)), {});
 }
 
 uint64_t fnv1a(const fs::path& p)
@@ -336,6 +344,37 @@ int main()
         MIB_EXPECT(line == "fcs_event_index,source_frame_index,object_id,timestamp_ns,event_mode", "FCS event map header");
         std::getline(map, line);
         MIB_EXPECT(line.find("0,0,7,1000,detection") != std::string::npos, "FCS exact event map row");
+        // $MIB_RUN_ID (#712): only from a v3 snapshot's run id, never invented.
+        MIB_EXPECT(fileText(fcsPath).find("$MIB_RUN_ID") == std::string::npos,
+                   "a file without a run snapshot gets no $MIB_RUN_ID");
+        {
+            const std::string runId = "0c9d7e2a-5b1f-4c3d-8e9a-7f6b5a4c3d2e";
+            auto withRun = request(HdfExportFormat::Fcs);
+            withRun.sourcePath = writeFixture(td.path() / "with-run.h5", 2, 0, 0, kH, kW,
+                                              "{\"schema_version\":3,\"run_id\":\"" + runId + "\"}");
+            withRun.outputRoot = (td.path() / "fcs-run-id").string();
+            const auto exported = service.run(withRun, HdfExportCancelToken{});
+            MIB_REQUIRE(exported.completed(), "FCS of a v3 run completes: " + exported.error);
+            MIB_EXPECT(fileText(fs::path(exported.finalPath) / "with-run.fcs").find("$MIB_RUN_ID|" + runId + "|") !=
+                           std::string::npos,
+                       "$MIB_RUN_ID carries the snapshot's run id");
+            auto v2 = request(HdfExportFormat::Fcs);
+            v2.sourcePath = writeFixture(td.path() / "v2-run.h5", 2, 0, 0, kH, kW,
+                                         "{\"schema_version\":2,\"profile_id\":\"p\"}");
+            v2.outputRoot = (td.path() / "fcs-v2").string();
+            const auto v2Exported = service.run(v2, HdfExportCancelToken{});
+            MIB_REQUIRE(v2Exported.completed(), "FCS of a v2 run completes: " + v2Exported.error);
+            MIB_EXPECT(fileText(fs::path(v2Exported.finalPath) / "v2-run.fcs").find("$MIB_RUN_ID") == std::string::npos,
+                       "a v2 snapshot (no run id) gets no $MIB_RUN_ID");
+            auto garbage = request(HdfExportFormat::Fcs);
+            garbage.sourcePath = writeFixture(td.path() / "garbage-run.h5", 2, 0, 0, kH, kW, "{not json");
+            garbage.outputRoot = (td.path() / "fcs-garbage").string();
+            const auto garbageExported = service.run(garbage, HdfExportCancelToken{});
+            MIB_EXPECT(garbageExported.completed() &&
+                           fileText(fs::path(garbageExported.finalPath) / "garbage-run.fcs").find("$MIB_RUN_ID") ==
+                               std::string::npos,
+                       "an unreadable snapshot does not fail the export and gives no $MIB_RUN_ID");
+        }
 
         // Explicit FCS destinations publish one sibling event map alongside
         // the requested file.  Both names are a no-replace pair.

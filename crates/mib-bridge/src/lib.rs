@@ -838,8 +838,19 @@ pub mod ffi {
         ///
         /// `acknowledge_discard_ring` (ABI 37): the client has said that a stopped Run's buffered frames are discarded by this start. Without it a start from a
         /// stopped Run is refused with the number of frames; enforced in the coordinator, not only in the UI.
-        fn experiment_start(self: Pin<&mut BackendBridge>, output_path: &str, acknowledge_discard_ring: bool)
-            -> BridgeCommandResult;
+        ///
+        /// `start_request_json` (ABI 39, #712): the client's startRequest document, "" when it declares
+        /// nothing: `{experiment_id, run_index, sample_ref, operator{id, name}, calibration_record_id,
+        /// annotation{sample, condition, experimental_unit, concentration{value, unit}, channel, medium,
+        /// temperature_c, notes, free{}}}`, every member optional or null. Checked strictly in the backend
+        /// against the contract's `experiment_start_request` bounds; a refused one fails the start with
+        /// "invalid start request: <key>: <why>" and opens nothing.
+        fn experiment_start(
+            self: Pin<&mut BackendBridge>,
+            output_path: &str,
+            acknowledge_discard_ring: bool,
+            start_request_json: &str,
+        ) -> BridgeCommandResult;
 
         /// Request an asynchronous experiment stop: final flush, metadata/
         /// provenance write (only after data is flushed), close. Never blocks

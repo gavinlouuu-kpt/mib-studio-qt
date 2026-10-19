@@ -1,5 +1,6 @@
 #include "backend/services/SyringePumpService.h"
 
+#include <thread>
 #include <string>
 #include "backend/services/ModbusRtu.h"
 #include "backend/services/SerialBus.h"
@@ -194,6 +195,8 @@ bool SyringePumpService::connect(PumpId id, const std::string& portName, int bau
     pump.config.microlitersPerRev = microlitersPerRev;
     pump.purging = false;
     pump.status = PumpStatus{};
+    pump.readback = PumpReadback{};
+    pump.applied = AppliedSettings{};   // nothing is known about a newly connected device
 
     // Acquire the shared bus session for this adapter (8N1, pump default).
     // If another service already holds the adapter with the same settings the
@@ -274,6 +277,8 @@ void SyringePumpService::disconnect(PumpId id) {
     pump.status.runStatus = RunStatus::Stop;
     pump.status.currentFlowRate = 0.0;
     pump.status.accumulatedVolume = 0.0;
+    pump.readback = PumpReadback{};
+    pump.applied = AppliedSettings{};
 
     SPDLOG_INFO("SyringePumpService: {} pump disconnected", pumpName(id));
 }
@@ -300,6 +305,9 @@ bool SyringePumpService::setFlowRate(PumpId id, double rate, uint16_t unit) {
 
     uint16_t rateValue = static_cast<uint16_t>(std::clamp(rate, 1.0, 9999.0));
 
+    // Until all four writes succeed the pump may hold the old or the new rate: unknown.
+    pump.applied.flowRate.reset();
+    pump.applied.flowRateUnit.reset();
     // Set both infuse and withdraw flow rates
     if (!writeSingleRegister(idx, REG_INFUSE_FLOW_RATE, rateValue)) {
         SPDLOG_ERROR("SyringePumpService: Failed to set infuse flow rate for {} pump", pumpName(id));
@@ -320,6 +328,8 @@ bool SyringePumpService::setFlowRate(PumpId id, double rate, uint16_t unit) {
 
     pump.config.flowRate = rate;
     pump.config.flowRateUnit = unit;
+    pump.applied.flowRate = static_cast<double>(rateValue);   // what the pump was written
+    pump.applied.flowRateUnit = unit;
     SPDLOG_INFO("SyringePumpService: {} pump flow rate set to {} (unit={})", pumpName(id), rateValue, unit);
     return true;
 }
@@ -331,6 +341,7 @@ bool SyringePumpService::setDirection(PumpId id, Direction dir) {
 
     if (!pump.status.connected) return false;
 
+    pump.applied.direction.reset();   // a failed write leaves the pump's direction unknown
     if (pump.config.model == PumpModel::TushuiPeristaltic) {
         if (!writeSingleRegister(idx, tushui::kRegDirection, peristalticRotation(idx, dir))) {
             SPDLOG_ERROR("SyringePumpService: Failed to set direction for {} pump", pumpName(id));
@@ -342,6 +353,7 @@ bool SyringePumpService::setDirection(PumpId id, Direction dir) {
     }
 
     pump.config.direction = dir;
+    pump.applied.direction = dir;
     SPDLOG_INFO("SyringePumpService: {} pump direction set to {}",
                 pumpName(id), dir == Direction::Infuse ? "Infuse" : "Withdraw");
     return true;
@@ -356,9 +368,12 @@ bool SyringePumpService::start(PumpId id) {
 
     if (pump.config.model == PumpModel::TushuiPeristaltic) {
         if (!peristalticRun(idx, pump.status.speedRpm, pump.config.direction)) {
+            // The run writes speed and direction: after a failure either may be the old one.
+            pump.applied = AppliedSettings{};
             SPDLOG_ERROR("SyringePumpService: Failed to start {} pump", pumpName(id));
             return false;
         }
+        pump.applied.direction = pump.config.direction;   // written by the run
         SPDLOG_INFO("SyringePumpService: {} pump started ({:.2f} rpm)", pumpName(id),
                     pump.status.speedRpm);
         return true;
@@ -406,6 +421,8 @@ bool SyringePumpService::purge(PumpId id, Direction dir) {
         // The head runs at the fixed purge speed; stop/stopPurge restore the
         // configured flow speed and direction.
         pump.purging = true;
+        // The purge overwrites the speed and direction registers; stop restores them (#712).
+        pump.applied = AppliedSettings{};
         if (!peristalticRun(idx, tushui::kPurgeRpm, dir)) {
             SPDLOG_ERROR("SyringePumpService: Failed to purge {} pump", pumpName(id));
             peristalticStop(idx);
@@ -560,6 +577,10 @@ void SyringePumpService::pollStatus(PumpId id) {
         return;
     }
 
+    // Every read must answer for the poll to count as a readback (#712); a partial poll still
+    // updates the status the UI shows, as before.
+    bool complete = true;
+
     // Read run state (0=stopped, 1=running)
     std::vector<uint8_t> runData;
     if (readHoldingRegisters(idx, REG_RUN_COMMAND, 1, runData)) {
@@ -576,8 +597,11 @@ void SyringePumpService::pollStatus(PumpId id) {
                 pump.status.runStatus = (dir == 2) ? RunStatus::Backward : RunStatus::Forward;
             } else {
                 pump.status.runStatus = RunStatus::Forward;
+                complete = false; // the direction was assumed, not read
             }
         }
+    } else {
+        complete = false;
     }
 
     // Read error status (bit3 = stall/blockage)
@@ -586,6 +610,8 @@ void SyringePumpService::pollStatus(PumpId id) {
         uint16_t err = static_cast<uint16_t>(
             (static_cast<uint8_t>(errData[0]) << 8) | static_cast<uint8_t>(errData[1]));
         pump.status.stalled = (err & 0x0008) != 0;
+    } else {
+        complete = false;
     }
 
     // Read current flow rate (uint16 from realtime register)
@@ -593,6 +619,8 @@ void SyringePumpService::pollStatus(PumpId id) {
     if (readHoldingRegisters(idx, REG_REALTIME_INFUSE_FLOW, 1, flowData)) {
         pump.status.currentFlowRate = static_cast<double>(
             (static_cast<uint8_t>(flowData[0]) << 8) | static_cast<uint8_t>(flowData[1]));
+    } else {
+        complete = false;
     }
 
     // Read accumulated volume
@@ -600,7 +628,37 @@ void SyringePumpService::pollStatus(PumpId id) {
     if (readHoldingRegisters(idx, REG_ACCUM_VOLUME, 2, volData)) {
         pump.status.accumulatedVolume = registersToFloat(
             reinterpret_cast<const uint8_t*>(volData.data()));
+    } else {
+        complete = false;
     }
+
+    pump.readback.lastPollOk = complete;
+    if (complete) {
+        pump.readback.valid = true;
+        pump.readback.at = std::chrono::steady_clock::now();
+        pump.readback.runStatus = pump.status.runStatus;
+        pump.readback.speedRpm.reset();
+        pump.readback.realtimeFlowRaw = pump.status.currentFlowRate;
+        pump.readback.accumulatedVolumeRaw = pump.status.accumulatedVolume;
+        pump.readback.stalled = pump.status.stalled;
+    }
+}
+
+bool SyringePumpService::runFacts(PumpId id, std::chrono::milliseconds wait, RunFacts& out) const {
+    const auto& pump = pumps_[static_cast<size_t>(static_cast<int>(id))];
+    // Poll try_lock() until the deadline (see PumpConnection::mutex for why not try_lock_for).
+    const auto deadline = std::chrono::steady_clock::now() + wait;
+    std::unique_lock<std::mutex> lock(pump.mutex, std::try_to_lock);
+    while (!lock.owns_lock()) {
+        if (std::chrono::steady_clock::now() >= deadline) return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        lock = std::unique_lock<std::mutex>(pump.mutex, std::try_to_lock);
+    }
+    out.connected = pump.status.connected;
+    out.config = pump.config;
+    out.applied = pump.applied;
+    out.readback = pump.readback;
+    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -638,6 +696,10 @@ bool SyringePumpService::peristalticConnect(int pumpIdx) {
     pump.config.direction = st.direction == peristalticRotation(pumpIdx, Direction::Withdraw)
                                 ? Direction::Withdraw
                                 : Direction::Infuse;
+    // Read back from the pump, so known (#712).
+    pump.applied.flowRate = pump.config.flowRate;
+    pump.applied.flowRateUnit = UNIT_UL_PER_MIN;
+    pump.applied.direction = pump.config.direction;
     pump.lastPoll = {};
     SPDLOG_INFO("SyringePumpService: {} peristaltic pump: {:.2f} rpm ({:.2f} µL/min at {} µL/rev), "
                 "direction {}, run state {}",
@@ -664,13 +726,20 @@ bool SyringePumpService::peristalticSetFlowRate(int pumpIdx, double rate, uint16
         return false;
     }
     const uint16_t value = tushui::rpmToRegister(rpm);
+    pump.applied.flowRate.reset();
+    pump.applied.flowRateUnit.reset();
     if (!writeSingleRegister(pumpIdx, tushui::kRegSpeed, value)) {
         SPDLOG_ERROR("SyringePumpService: Failed to set speed for {} pump", pumpName(pumpIdx));
         return false;
     }
     pump.status.speedRpm = value / 100.0;
-    pump.config.flowRate = rate;
+    pump.config.flowRate = rate;            // the request, for the UI
     pump.config.flowRateUnit = unit;
+    // Applied = the flow the written speed register gives (0.01 rpm steps), in the requested unit:
+    // at 25 µL/rev a request for 1.1 µL/min is written as 0.04 rpm = 1.0 µL/min (#712).
+    const double writtenUlPerMin = tushui::rpmToFlow(pump.status.speedRpm, pump.config.microlitersPerRev);
+    pump.applied.flowRate = unit == UNIT_ML_PER_MIN ? writtenUlPerMin / 1000.0 : writtenUlPerMin;
+    pump.applied.flowRateUnit = unit;
     SPDLOG_INFO("SyringePumpService: {} pump flow rate {} {} -> {:.2f} rpm", pumpName(pumpIdx), rate,
                 unit == UNIT_ML_PER_MIN ? "mL/min" : "µL/min", pump.status.speedRpm);
     return true;
@@ -702,6 +771,10 @@ bool SyringePumpService::peristalticStop(int pumpIdx) {
                                 peristalticRotation(pumpIdx, pump.config.direction));
         if (restored) {
             pump.purging = false;
+            // The restore wrote the flow speed and direction back: those are the pump's settings now.
+            pump.applied.flowRate = tushui::rpmToFlow(pump.status.speedRpm, pump.config.microlitersPerRev);
+            pump.applied.flowRateUnit = UNIT_UL_PER_MIN;
+            pump.applied.direction = pump.config.direction;
         } else {
             SPDLOG_WARN("SyringePumpService: {} pump: could not restore flow speed after purge",
                         pumpName(pumpIdx));
@@ -716,6 +789,7 @@ void SyringePumpService::peristalticPoll(int pumpIdx) {
     tushui::Status st;
     if (!readHoldingRegisters(pumpIdx, tushui::kStatusFirst, tushui::kStatusCount, data) ||
         !tushui::decodeStatus(data, st)) {
+        pump.readback.lastPollOk = false;
         return;
     }
     const bool moving = tushui::isMoving(st.runState);
@@ -742,6 +816,16 @@ void SyringePumpService::peristalticPoll(int pumpIdx) {
         pump.status.accumulatedVolume += pump.status.currentFlowRate * minutes;
     }
     pump.lastPoll = now;
+    // The readback is what the pump answered (registers 100-107): run state and the speed register
+    // as read (also during a purge). The delivered volume above is integrated here, not reported.
+    pump.readback.valid = true;
+    pump.readback.lastPollOk = true;
+    pump.readback.at = now;
+    pump.readback.runStatus = pump.status.runStatus;
+    pump.readback.speedRpm = st.speedRpm;
+    pump.readback.realtimeFlowRaw.reset();
+    pump.readback.accumulatedVolumeRaw.reset();
+    pump.readback.stalled.reset();
 }
 
 } // namespace backend::services

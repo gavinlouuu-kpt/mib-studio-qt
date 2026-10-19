@@ -185,6 +185,13 @@ struct ProcessedFrame {
     // frames mid-series). A gapped series is still saved, but flagged: its
     // members are not N consecutive exposures.
     bool seriesContiguous{true};
+    // PZ7035 rows (#712): the run_id and epoch of the PL FRAME record this row
+    // came from, kept at ingest and persisted in the metadata compound
+    // (plRunId / plEpoch / plIdentity). plRecordIdentity is false for host rows
+    // and for rows read from files that predate the members (unknown, not 0).
+    bool plRecordIdentity{false};
+    uint64_t plRunId{0};
+    uint32_t plEpoch{0};
 };
 
 struct BufferedFrameCounts {

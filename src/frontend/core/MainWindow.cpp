@@ -1515,6 +1515,7 @@ void MainWindow::onStartExperiment()
         return;
     case backend::app::ExperimentStartOutcome::AlreadyActive:
     case backend::app::ExperimentStartOutcome::Busy:
+    case backend::app::ExperimentStartOutcome::InvalidRequest:
         QMessageBox::information(this, tr("Experiment"), QString::fromStdString(result.message));
         return;
     }

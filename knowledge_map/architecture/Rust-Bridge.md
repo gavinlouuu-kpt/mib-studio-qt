@@ -499,6 +499,40 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
   `stage_motion_is_control_only_but_stop_is_not` in the server;
   `backend.stage_bridge_facade`.
 
+## ABI 39: what the client declares when it starts a run (#712 PR 2, ADR 0015 items 1, 4, 5, 7)
+
+`experiment_start(output_path, acknowledge_discard_ring, start_request_json)` gains the client's
+**startRequest** document as **JSON text**: the transports take an optional string
+`startRequestJson` (`dispatch.rs`, so also the WebSocket server; the Tauri command
+`start_request_json`; `bridge.experimentStart(path, ack, startRequestJson?)` in
+`desktop/src/bridge.ts`, the shell does the `JSON.stringify`) and pass it on byte for byte; none of
+them decodes it. Only the backend parser does, so a duplicate key reaches it (a serde `Value` would
+keep the last one silently) and the 16 KiB bound measures the client's own bytes, whitespace
+included. Absent or null = nothing declared (old clients are unchanged). The document:
+`{experiment_id, run_index, sample_ref, operator{id, name}, calibration_record_id,
+annotation{sample, condition, experimental_unit, concentration{value, unit}, channel, medium,
+temperature_c, notes, free{}}}`. It is parsed and checked only in the backend
+(`recording::parseStartRequestJson`, `include/backend/recording/RunStartIdentity.h`, called by
+`BackendFacade` before an operation is opened, and `validateStartRequest` again in
+`ExperimentCoordinator::start` for C++ callers). Strict: unknown or duplicate keys, wrong types,
+empty strings (null means not declared), control characters (notes may hold tab/CR/LF), invalid
+UTF-8, a non-UUID `experiment_id` (stored lowercase), a `run_index` or `sample_ref` without an
+experiment, an operator with neither id nor name, a concentration without its unit, and anything
+over a bound are refused with the key named, never truncated: start outcome **`InvalidRequest` (7)**,
+message `invalid start request: <key>: <why>`, nothing opened. The bounds are the contract group
+`experiment_start_request` (request 16 KiB; ids 128 B; annotation texts 256 B; notes 2048 B; unit
+32 B; free key/values at most 32, key 64 B, value 256 B, strings only; temperature -50..150 °C;
+`annotation_schema_version` 1), pinned by static_asserts in `shim.cpp`, by
+`experiment_start_request_bounds_are_pinned` in `contract.rs` and generated into
+`bridgeContract.ts` as `EXPERIMENT_START_REQUEST`. Recorded: the identity and the selected operator
+(`assurance: "selected"`, #393 phase 1, not authentication) in the run snapshot v3, the annotation
+once in `/experiment_annotation` ([[../data-model/HDF5-Storage]]). The stop condition (objects /
+duration) is not part of ABI 39. Tests: `contract.rs` `experiment_lifecycle_end_to_end` (four refusals
+naming their key, then a declared start), `dispatch.rs` `start_request_json_reaches_the_backend_unparsed`
+and `ws.rs` `start_request_json_is_passed_through_the_server_unparsed` (a duplicate key and a request
+over 16 KiB only through whitespace padding are refused on the app-commands/Tauri and the raw
+WebSocket paths), `recording.run_start_identity`, `backend.experiment_readiness`.
+
 ## ABI 38: the Run frame rate and exposure, set by the PZ7035 camera document (Gavin: "The FPS should be adjustable.")
 
 Run was fixed at 5 kHz / 150 us. It is now set the way a MIB camera is set by its script: a **PZ7035 camera document** (a JSON file on the instrument, `resources/defaults/pz7035Camera.json` is the bundled default) edited, saved and applied in Config -> Camera document with the same editor as the camera scripts (`camera_document` kind `pz7035`: a `.json` file, checked save, revision-checked apply).
