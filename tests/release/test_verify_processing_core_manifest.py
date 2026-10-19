@@ -91,6 +91,20 @@ class ManifestVerificationTest(unittest.TestCase):
             manifest["native_plugins"][0]["contract_version"] = 2
             self.assertEqual(verify_fixture(Path(temp_dir), manifest), 1)
 
+            manifest.pop("wheel")
+            manifest["line"] = "absdiff-laplacian"
+            manifest["contract_version"] = 2
+            manifest["release_tag"] = "mib-processing-absdiff-laplacian-v0.1.0"
+            plugin = manifest["native_plugins"][0]
+            plugin["engine_abi_version"] = 2
+            plugin["entrypoint"] = "mib_processing_get_api_v2"
+            self.assertEqual(verify_fixture(Path(temp_dir), manifest), 0)
+            plugin["engine_abi_version"] = 1
+            self.assertEqual(verify_fixture(Path(temp_dir), manifest), 1)
+            plugin["engine_abi_version"] = 2
+            manifest["wheel"] = base_manifest()["wheel"]
+            self.assertEqual(verify_fixture(Path(temp_dir), manifest), 1)
+
     def test_accepts_linux_shared_library_and_rejects_cross_os_suffix(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             manifest = base_manifest()
