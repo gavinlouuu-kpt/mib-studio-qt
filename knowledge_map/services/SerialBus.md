@@ -17,7 +17,10 @@ FC03), FC06 write single, FC16 write multiple. FC03 and FC04 share one frame
 layout, length rule and correlation path; any other function code is
 unframeable (`expectedFrameLength` → -2) and fails the transaction.
 **Tests:** `tests/backend/serial_bus_pty_test.cpp` (POSIX pty bus simulator),
-`tests/backend/modbus_rtu_test.cpp` (framing primitives)
+`tests/backend/serial_bus_deadline_test.cpp` (`backend.serial_bus_deadline`,
+#720: held port call, fail-fast, late result and late reply never answer a
+later request, concurrent stress), `tests/backend/modbus_rtu_test.cpp`
+(framing primitives)
 **Related:** [[PulseGeneratorService]], [[SyringePumpService]],
 [[../architecture/AppBackend]], [[../frontend/ConfigTabs]]
 
@@ -52,7 +55,43 @@ unframeable (`expectedFrameLength` → -2) and fails the transaction.
   Callers are serialized; drains stale bytes first, enforces the RTU
   inter-frame delay **measured from the last bus activity** (an idle bus
   pays nothing), then reads exactly one frame, framed from its own header
-  via `modbus::expectedFrameLength`.
+  via `modbus::expectedFrameLength`. It never waits without limit
+  (Deadlines, below). `Transaction::detail` says why a transaction
+  failed ("no response within 1000 ms", the port's "serial output timed out:
+  ..." / "serial write timed out ...", "no result from the serial I/O thread
+  within 3510 ms ..."); services put it in their messages.
+
+## Deadlines (#720)
+
+Every step of a transaction is bounded by the port ([[ISerialPort]]): the
+write by `kSerialWriteTimeoutMs` (1 s), the drain by `timeoutMs` (a drain
+or write timeout is `WriteFailed`, and the port has discarded the unsent
+bytes), the response by `timeoutMs`. On top of that, `transact()` waits for
+the I/O thread at most `transactBudgetMs(timeoutMs)` = inter-frame delay +
+write bound + 2 x `timeoutMs` + collision listen + 500 ms slack (3510 ms for
+the pumps' 1000 ms). A transaction that runs to its own deadlines is never
+cut short; only a port call that ignores its bound (a driver stuck in the
+kernel, a fake that blocks) trips it. Then:
+
+- the caller gets `Timeout` ("no result from the serial I/O thread ...") and
+  its locks are released (a pump command returns);
+- every request carries a **sequence number**: the I/O thread's late result
+  for an abandoned request is dropped (logged as a warning, with its
+  outcome), never handed to the next caller; a request the I/O thread had
+  not taken yet is withdrawn and never sent;
+- while the abandoned request still holds the I/O thread, further calls fail
+  fast with `Timeout` ("the serial I/O thread is still stuck in an earlier
+  transaction"; nothing is queued or sent);
+- **recovery:** once the stuck call returns, the session works again with no
+  reopen. Any late reply bytes on the wire are drained by the next
+  transaction before it writes (the stale-drain step above), so they are
+  never attributed to it. A reply that arrives after that drain is
+  indistinguishable from an answer: Modbus RTU frames carry no transaction id.
+- The session destructor still joins the I/O thread, so closing a session
+  waits for a stuck port call to return (bounded for the platform ports).
+
+The handoff is all under `jobMutex_` (condition variable `wait_until`, no
+`std::timed_mutex`), clean on the TSan lane.
 
 ## Strict correlation (`modbus::classifyResponse`)
 
@@ -87,7 +126,7 @@ fighting over a second open.
 
 Each session owns a **dedicated I/O thread**: the `ISerialPort` is created
 (from the manager's factory), opened with `openNamed(portName, settings)`,
-used (blocking `waitFor*`), and destroyed only on that thread. `transact()` marshals the request to the I/O thread and blocks for
-the result; any thread may call it, and callers are serialized by the
-session's call mutex (always innermost — services take their own state mutex
-first).
+used (bounded `waitFor*`), and destroyed only on that thread. `transact()` marshals a copy of the request to the I/O thread and
+waits up to `transactBudgetMs(timeoutMs)` for the result; any thread may call
+it, and callers are serialized by the session's call mutex (always innermost —
+services take their own state mutex first).

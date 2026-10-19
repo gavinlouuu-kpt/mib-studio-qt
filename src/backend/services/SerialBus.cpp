@@ -6,7 +6,9 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <climits>
 #include <cstdio>
+#include <string>
 #include <thread>
 
 #if defined(_WIN32)
@@ -27,6 +29,9 @@ namespace {
     // After a complete valid frame, listen briefly for trailing bytes — a
     // second device answering the same address shows up here.
     constexpr int COLLISION_LISTEN_MS = 5;
+    // transact() gives the I/O thread the transaction's own worst case plus
+    // this much for scheduling delays (loaded hosts, sanitizer builds), #720.
+    constexpr int TRANSACT_SLACK_MS = 500;
 
     std::string hex(const Bytes& b)
     {
@@ -157,20 +162,33 @@ void ModbusBusSession::ioLoop()
 
     while (true) {
         std::unique_lock lock(jobMutex_);
-        jobCv_.wait(lock, [this] { return jobPending_ || stopRequested_; });
+        jobCv_.wait(lock, [this] { return pendingSeq_ != 0 || stopRequested_; });
         if (stopRequested_) {
             break;
         }
-        const Bytes request = *jobRequest_;
+        const std::uint64_t seq = pendingSeq_;
+        const Bytes request = std::move(jobRequest_);
+        jobRequest_.clear();
         const int timeoutMs = jobTimeoutMs_;
+        pendingSeq_ = 0;
+        runningSeq_ = seq;
         lock.unlock();
 
         Transaction result = runTransaction(request, timeoutMs);
 
         lock.lock();
+        runningSeq_ = 0;
+        if (abandonedSeq_ == seq) {
+            // Its caller already returned Timeout. The result answers nobody:
+            // drop it, so it can never be taken for a later request.
+            abandonedSeq_ = 0;
+            lock.unlock();
+            SPDLOG_WARN("SerialBus: {} dropped the late result ({}) of a transaction its caller "
+                        "gave up on", portName_, toString(result.error));
+            continue;
+        }
+        doneSeq_ = seq;
         jobResult_ = std::move(result);
-        jobPending_ = false;
-        jobDone_ = true;
         lock.unlock();
         jobCv_.notify_all();
     }
@@ -184,6 +202,15 @@ void ModbusBusSession::ioLoop()
     }
 }
 
+int ModbusBusSession::transactBudgetMs(int timeoutMs)
+{
+    const long long t = std::max(0, timeoutMs);
+    const long long budget = static_cast<long long>(INTER_FRAME_DELAY.count()) +
+                             kSerialWriteTimeoutMs + t /* drain */ + t /* response */ +
+                             COLLISION_LISTEN_MS + TRANSACT_SLACK_MS;
+    return static_cast<int>(std::min<long long>(budget, INT_MAX));
+}
+
 Transaction ModbusBusSession::transact(const Bytes& request, int timeoutMs)
 {
     std::scoped_lock callLock(callMutex_);
@@ -192,15 +219,46 @@ Transaction ModbusBusSession::transact(const Bytes& request, int timeoutMs)
         result.error = BusError::NotOpen;
         return result;
     }
+    const int budgetMs = transactBudgetMs(timeoutMs);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(budgetMs);
+
     std::unique_lock lock(jobMutex_);
-    jobRequest_ = &request;
+    if (runningSeq_ != 0) {
+        // Callers are serialized, so the I/O thread is only busy here with a
+        // request whose caller gave up: its port call is stuck. Fail fast
+        // rather than queue behind it.
+        result.error = BusError::Timeout;
+        result.detail = "the serial I/O thread is still stuck in an earlier transaction";
+        lock.unlock();
+        SPDLOG_ERROR("SerialBus: {} {}; request not sent", portName_, result.detail);
+        return result;
+    }
+    const std::uint64_t seq = ++lastSeq_;
+    jobRequest_ = request;
     jobTimeoutMs_ = timeoutMs;
-    jobPending_ = true;
-    jobDone_ = false;
+    pendingSeq_ = seq;
     jobCv_.notify_all();
-    jobCv_.wait(lock, [this] { return jobDone_; });
-    jobRequest_ = nullptr;
-    return jobResult_;
+    if (jobCv_.wait_until(lock, deadline, [this, seq] { return doneSeq_ == seq; })) {
+        return std::move(jobResult_);
+    }
+
+    // No result in time (#720). Whatever the I/O thread does next cannot
+    // answer this caller: a request it never took is withdrawn (never sent),
+    // a request it is running is marked abandoned (its result is dropped).
+    result.error = BusError::Timeout;
+    if (pendingSeq_ == seq) {
+        pendingSeq_ = 0;
+        jobRequest_.clear();
+        result.detail = "the serial I/O thread did not take the request within " +
+                        std::to_string(budgetMs) + " ms (withdrawn, not sent)";
+    } else {
+        abandonedSeq_ = seq;
+        result.detail = "no result from the serial I/O thread within " + std::to_string(budgetMs) +
+                        " ms (a port call is stuck)";
+    }
+    lock.unlock();
+    SPDLOG_ERROR("SerialBus: {} transaction timed out: {}", portName_, result.detail);
+    return result;
 }
 
 Transaction ModbusBusSession::runTransaction(const Bytes& request, int timeoutMs)
@@ -232,13 +290,22 @@ Transaction ModbusBusSession::runTransaction(const Bytes& request, int timeoutMs
 
     SPDLOG_DEBUG("SerialBus: {} TX [{}]: {}", portName_, request.size(), hex(request));
 
+    // Both calls are bounded by the port (#720): write() by
+    // kSerialWriteTimeoutMs, the drain by timeoutMs. On a timeout the port
+    // has already discarded the untransmitted bytes.
     if (serial_->write(request) != static_cast<int>(request.size())) {
-        SPDLOG_ERROR("SerialBus: {} failed to write {} bytes", portName_, request.size());
+        result.detail = serial_->lastError();
+        if (result.detail.empty()) result.detail = "serial write failed";
+        SPDLOG_ERROR("SerialBus: {} failed to write {} bytes: {}", portName_, request.size(), result.detail);
         result.error = BusError::WriteFailed;
         return result;
     }
     if (!serial_->waitForBytesWritten(timeoutMs)) {
-        SPDLOG_ERROR("SerialBus: {} write timeout", portName_);
+        result.detail = serial_->lastError();
+        if (result.detail.empty()) {
+            result.detail = "serial output did not drain within " + std::to_string(timeoutMs) + " ms";
+        }
+        SPDLOG_ERROR("SerialBus: {} write timeout: {}", portName_, result.detail);
         result.error = BusError::WriteFailed;
         return result;
     }
@@ -260,6 +327,9 @@ Transaction ModbusBusSession::runTransaction(const Bytes& request, int timeoutMs
         const auto now = std::chrono::steady_clock::now();
         if (now >= deadline) {
             SPDLOG_ERROR("SerialBus: {} timeout ({} bytes buffered): {}", portName_, buffer.size(), hex(buffer));
+            result.detail = (sawWrongAddress ? "only other addresses answered within "
+                                             : "no response within ") +
+                            std::to_string(timeoutMs) + " ms";
             return finish(sawWrongAddress ? BusError::WrongAddress : BusError::Timeout);
         }
         const int remainingMs = static_cast<int>(

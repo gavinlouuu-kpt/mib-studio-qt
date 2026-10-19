@@ -4,13 +4,18 @@
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <cerrno>
+#include <chrono>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <thread>
 
 #include <fcntl.h>
+#include <poll.h>
+#include <sys/ioctl.h>
 #include <sys/select.h>
 #include <termios.h>
 #include <unistd.h>
@@ -33,6 +38,13 @@ speed_t baudConstant(int baud)
         case 230400: return B230400;
         default:     return B115200;
     }
+}
+
+int remainingMs(std::chrono::steady_clock::time_point deadline)
+{
+    const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
+        deadline - std::chrono::steady_clock::now());
+    return static_cast<int>(std::max<long long>(0, left.count()));
 }
 
 // Best-effort COM-number -> device path for Linux USB-serial adapters (the
@@ -103,6 +115,7 @@ public:
             return false;
         }
         ::tcflush(fd_, TCIOFLUSH);
+        baudRate_ = baudRate;
         error_.clear();
         return true;
     }
@@ -123,27 +136,93 @@ public:
             error_ = "write on closed port";
             return -1;
         }
+        // The port is non-blocking: a full driver queue answers EAGAIN. Wait
+        // for room with poll() up to the write deadline instead of retrying
+        // for ever (#720).
+        const auto deadline = std::chrono::steady_clock::now() +
+                              std::chrono::milliseconds(kSerialWriteTimeoutMs);
         size_t total = 0;
         while (total < data.size()) {
             const ssize_t n = ::write(fd_, data.data() + total, data.size() - total);
-            if (n < 0) {
-                if (errno == EAGAIN || errno == EINTR) {
-                    continue;
-                }
+            if (n > 0) {
+                total += static_cast<size_t>(n);
+                continue;
+            }
+            if (n < 0 && errno == EINTR) {
+                continue;
+            }
+            if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
                 setErrno("write");
                 return -1;
             }
-            total += static_cast<size_t>(n);
+            const int left = remainingMs(deadline);
+            if (left <= 0) {
+                // Nothing may go out late: a partial frame the caller has
+                // already given up on is dropped from the driver queue.
+                discardOutput();
+                systemError_ = ETIMEDOUT;
+                error_ = "serial write timed out after " + std::to_string(kSerialWriteTimeoutMs) +
+                         " ms (" + std::to_string(total) + " of " + std::to_string(data.size()) +
+                         " bytes taken, discarded)";
+                return -1;
+            }
+            pollfd p{};
+            p.fd = fd_;
+            p.events = POLLOUT;
+            const int rc = ::poll(&p, 1, left);
+            if (rc < 0 && errno != EINTR) {
+                setErrno("poll while writing");
+                return -1;
+            }
+            if (rc > 0 && (p.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+                systemError_ = EIO;
+                error_ = "serial port error while writing (device gone?)";
+                return -1;
+            }
         }
+        lastWriteBytes_ = total;
         return static_cast<int>(total);
     }
 
-    bool waitForBytesWritten(int /*timeoutMs*/) override
+    bool waitForBytesWritten(int timeoutMs) override
     {
         if (fd_ < 0) return false;
-        // Block until the kernel has transmitted queued output. tcdrain has no
-        // timeout parameter; for a real device or a pty it returns promptly.
-        return ::tcdrain(fd_) == 0;
+        const int budgetMs = std::max(0, timeoutMs);
+#if defined(TIOCOUTQ)
+        // tcdrain() has no timeout and blocks for ever on an adapter that
+        // stops draining (#720). Poll the output queue to a deadline instead,
+        // as the Win32 port polls COMSTAT.cbOutQue.
+        const auto deadline =
+            std::chrono::steady_clock::now() + std::chrono::milliseconds(budgetMs);
+        for (;;) {
+            int queued = 0;
+            if (::ioctl(fd_, TIOCOUTQ, &queued) != 0) {
+                if (errno == EINTR) continue;
+                setErrno("TIOCOUTQ while waiting for serial output");
+                return false;
+            }
+            if (queued <= 0) return true;
+            if (std::chrono::steady_clock::now() >= deadline) {
+                discardOutput();
+                systemError_ = ETIMEDOUT;
+                error_ = "serial output timed out: " + std::to_string(queued) +
+                         " bytes not drained after " + std::to_string(budgetMs) + " ms (discarded)";
+                return false;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+#else
+        // No TIOCOUTQ on this platform: the queue cannot be read, and
+        // tcdrain() has no bound. Give the last write its nominal line time
+        // (10 bits per byte), capped at the timeout, and report the drain as
+        // unconfirmed rather than block.
+        const long long lineMs =
+            static_cast<long long>(lastWriteBytes_) * 10 * 1000 / std::max(1, baudRate_) + 1;
+        std::this_thread::sleep_for(std::chrono::milliseconds(std::min<long long>(lineMs, budgetMs)));
+        systemError_ = ENOTSUP;
+        error_ = "serial output drain cannot be confirmed on this platform (no TIOCOUTQ)";
+        return false;
+#endif
     }
 
     bool waitForReadyRead(int timeoutMs) override
@@ -188,7 +267,13 @@ private:
         error_ = what + ": " + std::strerror(errno);
     }
 
+    // Drop output the driver has not sent yet (best effort: bytes already in
+    // the adapter's own FIFO may still go out).
+    void discardOutput() { ::tcflush(fd_, TCOFLUSH); }
+
     int fd_{-1};
+    int baudRate_{9600};
+    size_t lastWriteBytes_{0};
     std::string error_;
     int systemError_{0};
 };

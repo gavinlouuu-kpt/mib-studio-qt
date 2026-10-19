@@ -21,7 +21,11 @@ BOOL WINAPI fakeSetState(HANDLE, LPDCB) {
 BOOL WINAPI fakeTimeouts(HANDLE, LPCOMMTIMEOUTS) {
     return TRUE;
 }
-BOOL WINAPI fakePurge(HANDLE, DWORD) {
+int purges = 0;
+DWORD lastPurge = 0;
+BOOL WINAPI fakePurge(HANDLE, DWORD flags) {
+    ++purges;
+    lastPurge = flags;
     return TRUE;
 }
 BOOL WINAPI fakeClose(HANDLE) {
@@ -55,8 +59,11 @@ int main() {
     auto port = backend::services::makePlatformSerialPort();
     MIB_REQUIRE(port->open(7, 115200), "fake port opens");
     watchdog.mark("stalled output must time out");
+    const int purgesBefore = purges;
     MIB_EXPECT(!port->waitForBytesWritten(20), "stalled driver returns failure");
     MIB_EXPECT(port->lastError().find("timed out") != std::string::npos, "timeout is actionable");
+    MIB_EXPECT(purges == purgesBefore + 1 && (lastPurge & PURGE_TXCLEAR) != 0,
+               "untransmitted output is discarded, not sent late (#720)");
     stalled = false;
     MIB_EXPECT(port->waitForBytesWritten(20), "drained output succeeds");
     driverError = true;

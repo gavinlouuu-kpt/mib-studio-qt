@@ -55,6 +55,7 @@ struct Transaction {
     BusError error{BusError::Timeout};
     uint8_t exceptionCode{0}; // valid when error == ModbusException
     Bytes response;           // full validated frame when error is None/ModbusException
+    std::string detail;       // why it failed, for logs and messages (e.g. which timeout); empty on success
 };
 
 // Exclusive owner of one ISerialPort. Construct only through
@@ -64,6 +65,16 @@ struct Transaction {
 // The port lives on a dedicated I/O thread (created and used only there), so
 // transact() marshals the request to that thread and blocks for the result.
 // Any thread may call transact(); callers are serialized.
+//
+// transact() never waits without limit (#720): it gives the I/O thread
+// transactBudgetMs(timeoutMs) and then returns Timeout. Every request carries
+// a sequence number, so the late result of an abandoned request is dropped
+// and never taken as the answer to the next one; a request the I/O thread had
+// not picked up is withdrawn and never sent. While an abandoned request still
+// holds the I/O thread (its port call is stuck), further calls fail fast with
+// Timeout instead of queueing behind it. Once the thread is back, the next
+// transaction drains any late reply bytes before it writes, as for any stale
+// traffic, and the bus works again.
 class ModbusBusSession {
 public:
     ~ModbusBusSession();
@@ -79,6 +90,14 @@ public:
     // continues until the deadline; corrupt or unframeable bytes fail the
     // transaction rather than being reinterpreted.
     Transaction transact(const Bytes& request, int timeoutMs = 1000);
+
+    // How long transact(request, timeoutMs) waits for the I/O thread: the
+    // worst case of the transaction's own bounded steps (inter-frame delay,
+    // write up to kSerialWriteTimeoutMs, drain up to timeoutMs, response up
+    // to timeoutMs, collision listen) plus scheduling slack. A transaction
+    // that runs to its own deadlines is never cut short; only a port call
+    // that ignores its bound trips it.
+    static int transactBudgetMs(int timeoutMs);
 
     std::string portName() const { return portName_; }
     SerialSettings settings() const { return settings_; }
@@ -105,14 +124,18 @@ private:
     std::thread ioThread_;
     std::mutex callMutex_; // serializes transact() callers
 
-    // Handshake between callers and the I/O thread.
+    // Handshake between callers and the I/O thread, all under jobMutex_.
+    // Sequence numbers start at 1; 0 means "none".
     std::mutex jobMutex_;
     std::condition_variable jobCv_;
-    const Bytes* jobRequest_{nullptr};
+    Bytes jobRequest_;              // a copy: a caller that timed out may be gone
     int jobTimeoutMs_{0};
+    std::uint64_t lastSeq_{0};      // last sequence number handed out
+    std::uint64_t pendingSeq_{0};   // posted, not yet taken by the I/O thread
+    std::uint64_t runningSeq_{0};   // being run by the I/O thread
+    std::uint64_t abandonedSeq_{0}; // its caller gave up; its result is dropped
+    std::uint64_t doneSeq_{0};      // the request jobResult_ answers
     Transaction jobResult_;
-    bool jobPending_{false};
-    bool jobDone_{false};
     bool stopRequested_{false};
     bool openDone_{false};
     BusError openErrorCode_{BusError::PortUnavailable};

@@ -141,6 +141,12 @@ public:
     // pump as unknown instead of holding an experiment Start behind serial I/O. No I/O of its own.
     bool runFacts(PumpId id, std::chrono::milliseconds wait, RunFacts& out) const;
 
+    // Why the slot's most recent serial transaction failed ("bus timeout: no
+    // response within 1000 ms", "write failed: serial write timed out ..."),
+    // empty after a success or a (dis)connect. Lets a caller say why a
+    // command failed (#720).
+    std::string lastBusError(PumpId id) const;
+
     // Get COM port in use by a specific pump (for port collision avoidance)
     int getComPort(PumpId id) const;
 
@@ -184,6 +190,7 @@ private:
         PumpReadback readback;
         AppliedSettings applied;
         bool purging{false};
+        std::string lastBusError; // see lastBusError()
         std::chrono::steady_clock::time_point lastPoll{};
         // runFacts() polls try_lock() up to its deadline instead of waiting out a serial timeout. A plain
         // mutex, not std::timed_mutex: libstdc++ 13 implements try_lock_for with pthread_mutex_clocklock,

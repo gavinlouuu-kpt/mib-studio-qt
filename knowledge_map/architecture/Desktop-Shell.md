@@ -249,7 +249,8 @@ delivers, ~400/s, while the UI shows 30/s) and 266 MiB RSS after a UI session
 (desktop-sized buffers; a target profile is open in impl spec S6).
 
 `desktop/dist` is served at `/` with `--dist`. Tests: `tests/ws.rs` (mock
-capture over the socket, wrong token refused, client loss and quick reconnect).
+capture over the socket, wrong token refused, client loss and quick reconnect,
+client loss with a pump on a stalled serial adapter, #720).
 
 ## Camera & Alignment (Qt Overview parity)
 

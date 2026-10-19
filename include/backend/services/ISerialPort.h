@@ -28,6 +28,12 @@ struct SerialSettings {
     bool operator!=(const SerialSettings& o) const { return !(*this == o); }
 };
 
+// How long write() keeps trying when the driver accepts no more bytes (a
+// stalled USB-serial adapter, output stopped by flow control). Win32 sets it
+// as the COM write timeout (WriteTotalTimeoutConstant); POSIX waits for room
+// with poll() up to this deadline (#720).
+inline constexpr int kSerialWriteTimeoutMs = 1000;
+
 class ISerialPort {
 public:
     virtual ~ISerialPort() = default;
@@ -52,10 +58,18 @@ public:
     virtual void close() = 0;
     virtual bool isOpen() const = 0;
 
-    // Write all bytes. Returns the number written, or -1 on error.
+    // Write all bytes. Returns the number written, or -1 on error. Never
+    // blocks without limit: if the driver takes no more bytes for
+    // kSerialWriteTimeoutMs the platform ports fail (lastError() names the
+    // timeout) and discard what they queued, so a partial frame is not sent
+    // late.
     virtual int write(const std::vector<uint8_t>& data) = 0;
 
     // Block until queued output has been transmitted, or timeoutMs elapses.
+    // On timeout the platform ports return false, name the timeout in
+    // lastError() and discard the untransmitted output (best effort), so a
+    // command the caller has already reported as failed cannot reach the
+    // device later (#720).
     virtual bool waitForBytesWritten(int timeoutMs) = 0;
     // Block until at least one byte is available to read, or timeoutMs elapses.
     virtual bool waitForReadyRead(int timeoutMs) = 0;

@@ -431,7 +431,8 @@ pub fn stop_and_save(state: &AppState) -> Vec<String> {
     }
     // Every connected sample or sheath pump is stopped, run and purge (#711). This runs last: pump
     // commands do serial I/O under the bridge lock, and a stalled adapter must not hold back the
-    // recording stop or the PZ7035 safe state above (serial I/O is not yet bounded, #720).
+    // recording stop or the PZ7035 safe state above. Since #720 that I/O is bounded (about a second
+    // per command on a stalled adapter), so the pass always finishes.
     actions.extend(stop_pumps(
         |pump| mib_app_commands::fetch_pump_status(state, pump).map(|s| serde_json::to_value(s).unwrap_or_default()),
         |cmd, pump| {

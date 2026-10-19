@@ -6,6 +6,16 @@ if(WIN32)
     target_link_libraries(serial_port_win32_timeout_test PRIVATE setupapi advapi32)
     add_test(NAME backend.serial_port_win32_timeout COMMAND serial_port_win32_timeout_test)
     set_tests_properties(backend.serial_port_win32_timeout PROPERTIES LABELS "backend;serial;fault-injection" TIMEOUT 15)
+else()
+    # #720: the real POSIX port's write/drain deadlines, with ioctl/tcflush
+    # faked and a pty for the rest. It compiles SerialPortPosix.cpp itself,
+    # so it cannot join the shared runner (duplicate platform-port symbols).
+    find_package(Threads REQUIRED)
+    add_executable(serial_port_posix_timeout_test backend/serial_port_posix_timeout_test.cpp)
+    target_include_directories(serial_port_posix_timeout_test PRIVATE ${PROJECT_SOURCE_DIR}/include ${PROJECT_SOURCE_DIR}/tests)
+    target_link_libraries(serial_port_posix_timeout_test PRIVATE spdlog::spdlog Threads::Threads)
+    add_test(NAME backend.serial_port_posix_timeout COMMAND serial_port_posix_timeout_test)
+    set_tests_properties(backend.serial_port_posix_timeout PROPERTIES LABELS "backend;serial;fault-injection" TIMEOUT 30)
 endif()
 
 # Catch a MindVision-only Windows build silently substituting the nanopositioner
@@ -346,6 +356,13 @@ set_tests_properties(backend.pulse_generator_frame PROPERTIES LABELS "backend" T
 
 # Shared RS485 bus + pulse-generator discovery/control over a POSIX pty
 # (compiles to a trivial pass on Windows).
+# #720: transact() deadline, fail-fast while the I/O thread is held, late
+# results and late replies never answer a later request; concurrent stress.
+mib_add_backend_test_executable(serial_bus_deadline_test backend/serial_bus_deadline_test.cpp)
+mib_backend_test_link(serial_bus_deadline_test PRIVATE Threads::Threads)
+add_test(NAME backend.serial_bus_deadline COMMAND $<TARGET_FILE:mib_backend_tests> serial_bus_deadline_test)
+set_tests_properties(backend.serial_bus_deadline PROPERTIES LABELS "backend;serial;fault-injection;concurrency" TIMEOUT 60)
+
 mib_add_backend_test_executable(serial_bus_pty_test backend/serial_bus_pty_test.cpp)
 mib_backend_test_link(serial_bus_pty_test PRIVATE Threads::Threads)
 add_test(NAME backend.serial_bus_pty COMMAND $<TARGET_FILE:mib_backend_tests> serial_bus_pty_test)

@@ -74,7 +74,7 @@ public:
         timeouts.ReadIntervalTimeout = MAXDWORD;
         timeouts.ReadTotalTimeoutConstant = 0;
         timeouts.ReadTotalTimeoutMultiplier = 0;
-        timeouts.WriteTotalTimeoutConstant = 1000;
+        timeouts.WriteTotalTimeoutConstant = static_cast<DWORD>(kSerialWriteTimeoutMs);
         timeouts.WriteTotalTimeoutMultiplier = 0;
         if (!::SetCommTimeouts(handle_, &timeouts)) {
             setLastError("SetCommTimeouts");
@@ -108,6 +108,15 @@ public:
             setLastError("WriteFile");
             return -1;
         }
+        if (written < data.size()) {
+            // The COM write timeout expired with the driver queue full: drop
+            // the partial frame so it is not sent late (#720).
+            ::PurgeComm(handle_, PURGE_TXABORT | PURGE_TXCLEAR);
+            systemError_ = ERROR_TIMEOUT;
+            error_ = "Serial write timed out after " + std::to_string(kSerialWriteTimeoutMs) +
+                     " ms (" + std::to_string(written) + " of " + std::to_string(data.size()) +
+                     " bytes taken, discarded)";
+        }
         return static_cast<int>(written);
     }
 
@@ -126,8 +135,12 @@ public:
             }
             if (stat.cbOutQue == 0) return true;
             if (std::chrono::steady_clock::now() >= deadline) {
+                // Drop what was not sent, so a command the caller reports as
+                // failed cannot reach the device later (#720).
+                ::PurgeComm(handle_, PURGE_TXABORT | PURGE_TXCLEAR);
                 systemError_ = ERROR_TIMEOUT;
-                error_ = "Serial output timed out";
+                error_ = "Serial output timed out (" + std::to_string(stat.cbOutQue) +
+                         " bytes not drained, discarded)";
                 return false;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(1));

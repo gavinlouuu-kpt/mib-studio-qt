@@ -94,12 +94,17 @@ bool SyringePumpService::sendRequest(int pumpIdx, const std::vector<uint8_t>& re
     if (!pump.bus) {
         return false;
     }
+    // Bounded (#720): a stalled adapter fails the transaction instead of
+    // holding the pump (and the caller's locks) for ever.
     const auto result = pump.bus->transact(request, SERIAL_TIMEOUT_MS);
     if (result.error != serialbus::BusError::None) {
+        pump.lastBusError = serialbus::toString(result.error);
+        if (!result.detail.empty()) pump.lastBusError += ": " + result.detail;
         SPDLOG_ERROR("SyringePumpService: pump {} transaction failed: {}",
-                     pumpIdx, serialbus::toString(result.error));
+                     pumpIdx, pump.lastBusError);
         return false;
     }
+    pump.lastBusError.clear();
     response = result.response;
     return true;
 }
@@ -194,6 +199,7 @@ bool SyringePumpService::connect(PumpId id, const std::string& portName, int bau
     pump.config.model = model;
     pump.config.microlitersPerRev = microlitersPerRev;
     pump.purging = false;
+    pump.lastBusError.clear();
     pump.status = PumpStatus{};
     pump.readback = PumpReadback{};
     pump.applied = AppliedSettings{};   // nothing is known about a newly connected device
@@ -273,6 +279,7 @@ void SyringePumpService::disconnect(PumpId id) {
 
     // The adapter only closes once its last client (pump or otherwise) lets go.
     pump.bus.reset();
+    pump.lastBusError.clear();
     pump.status.connected = false;
     pump.status.runStatus = RunStatus::Stop;
     pump.status.currentFlowRate = 0.0;
@@ -297,6 +304,7 @@ bool SyringePumpService::setFlowRate(PumpId id, double rate, uint16_t unit) {
     int idx = static_cast<int>(id);
     auto& pump = pumps_[static_cast<size_t>(idx)];
     std::scoped_lock lock(pump.mutex);
+    pump.lastBusError.clear(); // this command's failure only, not an older one
 
     if (!pump.status.connected) return false;
     if (pump.config.model == PumpModel::TushuiPeristaltic) {
@@ -338,6 +346,7 @@ bool SyringePumpService::setDirection(PumpId id, Direction dir) {
     int idx = static_cast<int>(id);
     auto& pump = pumps_[static_cast<size_t>(idx)];
     std::scoped_lock lock(pump.mutex);
+    pump.lastBusError.clear(); // this command's failure only, not an older one
 
     if (!pump.status.connected) return false;
 
@@ -363,6 +372,7 @@ bool SyringePumpService::start(PumpId id) {
     int idx = static_cast<int>(id);
     auto& pump = pumps_[static_cast<size_t>(idx)];
     std::scoped_lock lock(pump.mutex);
+    pump.lastBusError.clear(); // this command's failure only, not an older one
 
     if (!pump.status.connected) return false;
 
@@ -397,6 +407,7 @@ bool SyringePumpService::stop(PumpId id) {
     int idx = static_cast<int>(id);
     auto& pump = pumps_[static_cast<size_t>(idx)];
     std::scoped_lock lock(pump.mutex);
+    pump.lastBusError.clear(); // this command's failure only, not an older one
 
     if (!pump.status.connected) return false;
 
@@ -414,6 +425,7 @@ bool SyringePumpService::purge(PumpId id, Direction dir) {
     int idx = static_cast<int>(id);
     auto& pump = pumps_[static_cast<size_t>(idx)];
     std::scoped_lock lock(pump.mutex);
+    pump.lastBusError.clear(); // this command's failure only, not an older one
 
     if (!pump.status.connected) return false;
 
@@ -453,6 +465,7 @@ bool SyringePumpService::stopPurge(PumpId id) {
     int idx = static_cast<int>(id);
     auto& pump = pumps_[static_cast<size_t>(idx)];
     std::scoped_lock lock(pump.mutex);
+    pump.lastBusError.clear(); // this command's failure only, not an older one
 
     if (!pump.status.connected) return false;
 
@@ -470,6 +483,7 @@ bool SyringePumpService::setSyringeVolume(PumpId id, uint16_t volume, uint16_t u
     int idx = static_cast<int>(id);
     auto& pump = pumps_[static_cast<size_t>(idx)];
     std::scoped_lock lock(pump.mutex);
+    pump.lastBusError.clear(); // this command's failure only, not an older one
 
     if (!pump.status.connected) return false;
     if (pump.config.model == PumpModel::TushuiPeristaltic) {
@@ -504,6 +518,12 @@ SyringePumpService::PumpStatus SyringePumpService::getStatus(PumpId id) const {
     std::scoped_lock lock(pump.mutex);
 
     return pump.status;
+}
+
+std::string SyringePumpService::lastBusError(PumpId id) const {
+    const auto& pump = pumps_[static_cast<size_t>(static_cast<int>(id))];
+    std::scoped_lock lock(pump.mutex);
+    return pump.lastBusError;
 }
 
 SyringePumpService::PumpConfig SyringePumpService::getConfig(PumpId id) const {

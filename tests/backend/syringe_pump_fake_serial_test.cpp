@@ -4,7 +4,8 @@
 // (epic #246), with no hardware. A FakeSerialPort acts as a minimal Modbus RTU
 // slave (a dLSP pump): it answers FC03 reads with canned registers, echoes FC06
 // writes, and acks FC16. This turns the previously-untested connect/read/write
-// path into covered code and exercises the timeout + bad-CRC failure paths.
+// path into covered code and exercises the timeout + bad-CRC failure paths,
+// and a stalled adapter in each serial call (#720).
 
 #include "backend/services/SyringePumpService.h"
 #include "backend/services/ISerialPort.h"
@@ -12,11 +13,17 @@
 #include "backend/services/ModbusRtu.h"
 
 #include "support/assert.h"
+#include "support/watchdog.h"
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
+#include <cstdio>
 #include <memory>
+#include <mutex>
+#include <optional>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -40,6 +47,16 @@ std::atomic<bool> gCorruptReads{false};
 std::atomic<bool> gSilentReads{false};
 std::atomic<int> gReadRequests{0};
 
+// Stalled-adapter switches (#720), modelling the bounded platform ports: output that never drains
+// (the drain fails at its timeout), a write the driver never takes (write fails at its deadline),
+// and a port call that never returns at all (held until released).
+std::atomic<bool> gNeverDrains{false};
+std::atomic<bool> gWriteTimesOut{false};
+std::mutex gHoldMutex;
+std::condition_variable gHoldCv;
+bool gHoldWrites = false; // under gHoldMutex
+bool gHolding = false;    // under gHoldMutex: a write() is held right now
+
 class FakeSerialPort final : public ISerialPort {
 public:
     explicit FakeSerialPort(Mode mode, uint8_t slaveAddr) : mode_(mode), slaveAddr_(slaveAddr) {}
@@ -50,10 +67,36 @@ public:
 
     int write(const std::vector<uint8_t>& req) override
     {
+        {
+            std::unique_lock lock(gHoldMutex);
+            if (gHoldWrites) {
+                gHolding = true;
+                gHoldCv.notify_all();
+                gHoldCv.wait(lock, [] { return !gHoldWrites; });
+                gHolding = false;
+            }
+        }
+        if (gWriteTimesOut.load()) {
+            error_ = "serial write timed out after 1000 ms (0 of " + std::to_string(req.size()) +
+                     " bytes taken, discarded)";
+            return -1;
+        }
+        if (gNeverDrains.load()) {
+            queued_ = req.size(); // stays in the driver queue: never reaches the pump
+            return static_cast<int>(req.size());
+        }
         respondTo(req);
         return static_cast<int>(req.size());
     }
-    bool waitForBytesWritten(int) override { return true; }
+    bool waitForBytesWritten(int timeoutMs) override
+    {
+        if (queued_ == 0) return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(timeoutMs));
+        error_ = "serial output timed out: " + std::to_string(queued_) + " bytes not drained after " +
+                 std::to_string(timeoutMs) + " ms (discarded)";
+        queued_ = 0;
+        return false;
+    }
     bool waitForReadyRead(int timeoutMs) override
     {
         // The bus session polls until its deadline; a silent device must not
@@ -67,7 +110,7 @@ public:
         r.swap(rx_);
         return r;
     }
-    std::string lastError() const override { return {}; }
+    std::string lastError() const override { return error_; }
 
 private:
     void respondTo(const std::vector<uint8_t>& req)
@@ -115,6 +158,8 @@ private:
     uint8_t slaveAddr_;
     bool open_{false};
     std::vector<uint8_t> rx_;
+    size_t queued_{0};
+    std::string error_;
 };
 
 // The pump talks through the shared bus registry (SerialBus.h); the fake
@@ -130,6 +175,8 @@ void configure(backend::services::serialbus::SerialBusManager& bus, Mode mode, u
 int main()
 {
     using PumpId = SyringePumpService::PumpId;
+    // Fails fast with a diagnostic if a serial call ever hangs (#720).
+    mib::test::Watchdog watchdog(30);
 
     // 1) Happy path: connect succeeds, min/max flow rates parse from the fake's
     //    float registers, and control + polling round-trip.
@@ -157,6 +204,7 @@ int main()
         MIB_EXPECT(!svc.isConnected(PumpId::Sample), "disconnect clears connected");
     }
 
+    watchdog.mark("no response");
     // 2) A device that never answers -> connect fails (read timeout path), no hang.
     {
         backend::services::serialbus::SerialBusManager bus;
@@ -166,6 +214,7 @@ int main()
         MIB_EXPECT(!svc.isConnected(PumpId::Sheath), "not connected after failure");
     }
 
+    watchdog.mark("bad crc");
     // 3) Corrupted CRC on the channel-enable echo -> connect fails (frame rejected).
     {
         backend::services::serialbus::SerialBusManager bus;
@@ -174,6 +223,7 @@ int main()
         MIB_EXPECT(!svc.connect(PumpId::Sample, 5, 115200, 1), "bad-CRC response rejected -> connect fails");
     }
 
+    watchdog.mark("wrong address");
     // 4) Address mismatch: a device at addr 2 does not answer a scan/connect for addr 1.
     {
         backend::services::serialbus::SerialBusManager bus;
@@ -182,6 +232,7 @@ int main()
         MIB_EXPECT(!svc.connect(PumpId::Sample, 6, 115200, 1), "wrong-address device does not respond");
     }
 
+    watchdog.mark("run facts");
     // 5) Run facts (#712): the readback is the last complete poll, never a command's bookkeeping;
     //    a failed poll keeps the older readback and says so; a busy pump is not waited out.
     {
@@ -243,6 +294,80 @@ int main()
         MIB_REQUIRE(svc.runFacts(PumpId::Sample, 10ms, f), "facts after disconnect");
         MIB_EXPECT(!f.connected && !f.readback.valid && !f.applied.flowRate && !f.applied.direction,
                    "disconnect drops the readback and the applied settings");
+    }
+
+    watchdog.mark("stalled adapter");
+    // 6) A stalled adapter (#720): whichever serial call stalls, the pump command fails within its
+    //    bound, names the timeout, and lets go of the pump; once the adapter recovers it works again.
+    {
+        using namespace std::chrono_literals;
+        using Clock = std::chrono::steady_clock;
+        backend::services::serialbus::SerialBusManager bus;
+        configure(bus, Mode::Normal);
+        SyringePumpService svc(bus);
+        MIB_REQUIRE(svc.connect(PumpId::Sample, 3, 115200, 1), "connect");
+        // The bound of one pump transaction (SERIAL_TIMEOUT_MS = 1000) plus a generous ceiling.
+        const auto bound =
+            std::chrono::milliseconds(backend::services::serialbus::ModbusBusSession::transactBudgetMs(1000)) + 5s;
+        const auto msSince = [](Clock::time_point t0) {
+            return static_cast<long long>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count());
+        };
+        const auto why = [&] { return svc.lastBusError(PumpId::Sample); };
+
+        // a) Output that never drains.
+        gNeverDrains = true;
+        auto t0 = Clock::now();
+        MIB_EXPECT(!svc.stop(PumpId::Sample), "stop over a non-draining adapter fails");
+        long long ms = msSince(t0);
+        std::printf("never-drains stop: failed after %lld ms: %s\n", ms, why().c_str());
+        MIB_EXPECT(Clock::now() - t0 < bound, "within its bound");
+        MIB_EXPECT(why().find("write failed") != std::string::npos && why().find("timed out") != std::string::npos,
+                   "the failure names the drain timeout: " + why());
+        gNeverDrains = false;
+
+        // b) A write the driver never takes (endless EAGAIN on POSIX).
+        gWriteTimesOut = true;
+        t0 = Clock::now();
+        MIB_EXPECT(!svc.stop(PumpId::Sample), "stop over a full driver queue fails");
+        MIB_EXPECT(Clock::now() - t0 < bound, "within its bound");
+        MIB_EXPECT(why().find("serial write timed out") != std::string::npos,
+                   "the failure names the write timeout: " + why());
+        gWriteTimesOut = false;
+
+        // c) A port call that never returns: the I/O thread is held, the command still returns.
+        {
+            std::scoped_lock lock(gHoldMutex);
+            gHoldWrites = true;
+        }
+        t0 = Clock::now();
+        MIB_EXPECT(!svc.stop(PumpId::Sample), "stop with a held I/O thread fails");
+        ms = msSince(t0);
+        std::printf("held-call stop: failed after %lld ms: %s\n", ms, why().c_str());
+        MIB_EXPECT(Clock::now() - t0 < bound, "within its bound, not for ever");
+        MIB_EXPECT(why().find("bus timeout") != std::string::npos, "the failure names the timeout: " + why());
+        SyringePumpService::RunFacts f;
+        MIB_EXPECT(svc.runFacts(PumpId::Sample, 10ms, f), "the pump's lock is free again at once");
+        t0 = Clock::now();
+        MIB_EXPECT(!svc.stopPurge(PumpId::Sample), "a second command while the call is held fails");
+        MIB_EXPECT(msSince(t0) < backend::services::serialbus::ModbusBusSession::transactBudgetMs(1000),
+                   "fast, without waiting a budget of its own");
+        MIB_EXPECT(why().find("still stuck") != std::string::npos, "and says why: " + why());
+        {
+            std::scoped_lock lock(gHoldMutex);
+            MIB_EXPECT(gHolding, "the I/O thread is still inside write()");
+            gHoldWrites = false;
+        }
+        gHoldCv.notify_all();
+        bool stopped = false;
+        const auto retryUntil = Clock::now() + 10s;
+        while (!stopped && Clock::now() < retryUntil) {
+            stopped = svc.stop(PumpId::Sample);
+            if (!stopped) std::this_thread::sleep_for(1ms);
+        }
+        MIB_EXPECT(stopped, "the pump answers again once the call returns");
+        MIB_EXPECT(why().empty(), "a success clears the failure");
+        svc.disconnect(PumpId::Sample);
     }
 
     if (mib::test::exitCode() == 0) {

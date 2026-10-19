@@ -52,6 +52,14 @@
   device), not evidence. The coordinator records these in snapshot v3
   ([[../data-model/HDF5-Storage]]).
 - Expose config/status structs (`PumpConfig`, `PumpStatus`).
+- `lastBusError(id)` (#720): why the slot's latest serial transaction failed,
+  `BusError` text plus the [[SerialBus]] `Transaction::detail` ("bus timeout:
+  no response within 1000 ms", "write failed: serial write timed out after
+  1000 ms (0 of 8 bytes taken, discarded)"). Cleared at the start of each
+  control command, on success, and on (dis)connect, so it describes this
+  command's failure only. The facade appends it to a failed pump command's
+  message ("Pump stop failed: write failed: serial write timed out ...");
+  messages on success are unchanged.
 - Provide `scanModbusAddresses(comPort, baudRate, start, end, timeoutMs)` for
   settings-time address discovery on a selected serial port.
 
@@ -118,6 +126,20 @@ mutex" (same reason as [[ZC300Stage]]). Per-adapter frame
 serialization and response correlation live in the shared [[SerialBus]]
 session (bus mutex always innermost). UI calls are synchronous; `pollStatus`
 is invoked from the Qt timer in [[../frontend/SyringePumpTab]].
+
+## Stalled adapter (#720)
+
+Every transaction is bounded (see [[SerialBus]] Deadlines): on a USB-serial
+adapter that stops draining, a pump command fails after about a second per
+transaction (`SERIAL_TIMEOUT_MS` drain, or the 1 s write deadline), and after
+at most `transactBudgetMs(1000)` = 3.51 s if a port call itself hangs. The
+command returns false and releases the pump's lock (and the bridge lock of its
+caller); the untransmitted request is discarded, so a stop or start reported
+as failed is not delivered late when the adapter recovers. Tests: section 6
+of `backend.syringe_pump_fake_serial` (never drains, write timeout, held port
+call: bound, message, lock released, recovery) and the stalled-stop case of
+`backend.peristaltic_pump_fake_serial` (the stop never reaches the running
+pump; the next one does).
 
 ## Gotchas
 
