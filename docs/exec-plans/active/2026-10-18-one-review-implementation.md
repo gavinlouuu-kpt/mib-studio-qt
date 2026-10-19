@@ -201,7 +201,7 @@ the coordinator (ADR 0004/0011).
 | S5 | The facade owns the ReviewSession | none (D1 (a): unchanged) | none | planned |
 | S6 | Parity harness: a MIB Studio half | none | none | planned |
 | S7 | Facade jobs on ReviewJobs lanes | none | none | planned |
-| S8 | YOFO regenerate on the reanalysis engine | none | none (behaviour D6) | in review |
+| S8 | YOFO regenerate on the reanalysis engine | none | none (behaviour D6) | in review (#735) |
 | S9 | Transport-neutral review module | none | none | in review (#731) |
 | S10 | Attachable review bridge | **additive, ABI bump** | none | proposed, not implemented |
 | S11 | Review commands in the studio command layer | **additive command surface, ABI bump** | none | proposed, not implemented |
@@ -443,7 +443,7 @@ the coordinator (ADR 0004/0011).
 - **Risks:** event ordering (Started before Progress; one terminal state per
   id); the late-event policy of ADR 0004.
 
-### S8 — YOFO regenerate on the reanalysis engine (in review)
+### S8 — YOFO regenerate on the reanalysis engine (in review, #735)
 
 - **Moves:** `ReviewJobs::startRegenerateMasks` builds a `ReanalysisRequest`
   (recorded config read by the job; recorded ROI / background read by the
@@ -692,7 +692,7 @@ bridge contract):
 - [ ] S5 facade owns the ReviewSession (D1)
 - [ ] S6 parity harness MIB Studio half
 - [ ] S7 facade jobs on ReviewJobs lanes (D7)
-- [x] 2026-10-19 — S8 YOFO regenerate on the engine (D6; `review.jobs`, `review.reanalysis`, no clobber; the position-pairing fix)
+- [x] 2026-10-19 — S8 YOFO regenerate on the engine (D6; `review.jobs`, `review.reanalysis`, no clobber; the position-pairing fix; #735)
 - [x] 2026-10-19 — S9 transport-neutral review module (`reviewIpc` golden unchanged; import guard; `Transport.upload`; #731).
 - [ ] S10 attachable review bridge (ABI)
 - [ ] S11 review commands in the studio command layer (ABI)

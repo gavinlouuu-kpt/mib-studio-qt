@@ -1,4 +1,4 @@
-## 2026-10-19 — YOFO Review's Regenerate masks runs on the reanalysis engine (#512 S8)
+## 2026-10-19 — YOFO Review's Regenerate masks runs on the reanalysis engine (#512 S8, #735)
 
 Track B (#717), plan [`2026-10-18-one-review-implementation.md`](../../../docs/exec-plans/active/2026-10-18-one-review-implementation.md)
 slice S8, decision D6. `ReviewJobs::startRegenerateMasks` builds a
