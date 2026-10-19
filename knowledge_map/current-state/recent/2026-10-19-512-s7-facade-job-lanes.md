@@ -22,5 +22,5 @@ one whose own event starts its lane again or calls `shutdown()` is detached
 and keeps the runner state it uses alive (shared with the workers) until it
 ends, also if ReviewJobs is destroyed meanwhile (#742 review). New tests
 `backend.facade_review_jobs`, `review.jobs_lanes` (they wait for the lanes'
-own release, `ReviewJobsTestAccess::waitIdle`, never a sleep). Review round 2: callbacks may call `shutdown()` / `cancel()` but must not destroy the owner; a start overtaken by a `shutdown()` reports one Cancelled terminal without running, and `shutdown()` no longer waits for a start in progress (that wait could deadlock). No bridge or
+own release, `ReviewJobsTestAccess::waitIdle`, never a sleep). Review round 2: callbacks may call `shutdown()` / `cancel()` but must not destroy the owner; a start overtaken by a `shutdown()` reports one Cancelled terminal without running, and since round 3 `shutdown()` waits for it only when called from outside the runner (the owner's teardown), not from a lane worker or a callback, where waiting deadlocked. No bridge or
 review contract change. See [[ReviewSession]], [[Threading-Model]], [[Rust-Bridge]].

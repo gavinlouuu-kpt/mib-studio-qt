@@ -154,13 +154,25 @@ Destroying the owner from inside its own callback is out of contract. Hosts
 deliver events to their consumers asynchronously: both bridges' sinks only
 convert and enqueue, and the shell drains the queue. `shutdown()` sets every
 lane's flag and joins both lanes. Starts stay possible afterwards (as before).
-It does not wait for a start in progress, because that wait deadlocked: under
-the bridge's policy a start joins the previous worker while that worker may
-still be calling `shutdown()` from its terminal event. Instead a start that a
-`shutdown()` overtook between its claim and its worker does not run its job.
-That covers a shutdown from the job's own Started event or the host's
-`beginOperation`, and one on another thread. The start itself reports the
-one Cancelled terminal. ReviewJobs' own jobs carry "Review jobs shut down
+A start that a `shutdown()` overtook between its claim and its worker does
+not run its job. That covers a shutdown from the job's own Started event or
+the host's `beginOperation`, and one on another thread. The start itself
+reports the one Cancelled terminal. Whether `shutdown()` waits for such starts
+depends on where it is called (#742 review round 3):
+- **From outside the runner** (the owner's teardown: a thread that is neither
+  a lane worker nor inside a ReviewJobs callback), it waits until every start
+  claimed before it has returned, with its Cancelled reported. So no start is
+  inside ReviewJobs, the host or the sink when it returns, and
+  `BackendFacade::shutdown()` can tear down after it.
+- **From a lane worker or from inside a callback** (the host's
+  `beginOperation`, the sink), it does not wait. A thread-local marker per
+  runner tells the two cases apart. Round 1 waited here and deadlocked: under
+  the bridge's policy a start joins the previous worker while that worker may
+  still be calling `shutdown()` from its terminal event.
+- **Why the outside wait cannot deadlock:** a start in progress runs only
+  ReviewJobs' code and those callbacks, and joins its lane's previous worker.
+  A shutdown from either is the inside case, which returns, so the worker ends
+  and the join completes. ReviewJobs' own jobs carry "Review jobs shut down
 before the job started". The JSON jobs carry their engine's outcome for a run
 cancelled before its first step, with that status snapshot
 (`exportBatchCancelledBeforeStart`, `reanalysisCancelledBeforeStart`), so the
@@ -247,7 +259,9 @@ it with ReviewJobs destroyed before the callback returns. It also covers
 JSON jobs (each one Cancelled terminal from the start, matching the engine run
 cancelled on entry byte for byte, body never run). And it covers `shutdown()`
 from a terminal event while another thread's start joins that worker; this
-deadlocked before round 2. Lane release is
+deadlocked before round 2. Finally, it covers `shutdown()` from outside while a
+start is held inside its Started event, under both presets: the shutdown must
+be waiting, and must return only after the start's Cancelled. Lane release is
 waited for with `ReviewJobsTestAccess::waitIdle` (the release's own
 condition). The facade's side by `backend.facade_review_jobs`
 (`BackendFacadeTestAccess::reviewJobs` reaches its lanes).
