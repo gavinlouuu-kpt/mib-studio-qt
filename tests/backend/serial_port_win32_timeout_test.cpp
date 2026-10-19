@@ -21,7 +21,11 @@ BOOL WINAPI fakeSetState(HANDLE, LPDCB) {
 BOOL WINAPI fakeTimeouts(HANDLE, LPCOMMTIMEOUTS) {
     return TRUE;
 }
-BOOL WINAPI fakePurge(HANDLE, DWORD) {
+int purges = 0;
+DWORD lastPurge = 0;
+BOOL WINAPI fakePurge(HANDLE, DWORD flags) {
+    ++purges;
+    lastPurge = flags;
     return TRUE;
 }
 BOOL WINAPI fakeClose(HANDLE) {
@@ -33,6 +37,11 @@ BOOL WINAPI fakeClearError(HANDLE, LPDWORD errors, LPCOMSTAT stat) {
     stat->cbOutQue = stalled ? 10 : 0;
     if (driverError) SetLastError(ERROR_DEVICE_NOT_CONNECTED);
     return !driverError;
+}
+int cancels = 0;
+BOOL WINAPI fakeCancelIo(HANDLE, LPOVERLAPPED) {
+    ++cancels;
+    return TRUE;
 }
 BOOL WINAPI fakeFlush(HANDLE) {
     // FlushFileBuffers has no timeout. Model a device that never drains.
@@ -48,6 +57,7 @@ BOOL WINAPI fakeFlush(HANDLE) {
 #define CloseHandle fakeClose
 #define ClearCommError fakeClearError
 #define FlushFileBuffers fakeFlush
+#define CancelIoEx fakeCancelIo
 #include "../../src/backend/services/SerialPortWin32.cpp"
 
 int main() {
@@ -55,13 +65,25 @@ int main() {
     auto port = backend::services::makePlatformSerialPort();
     MIB_REQUIRE(port->open(7, 115200), "fake port opens");
     watchdog.mark("stalled output must time out");
+    const int purgesBefore = purges;
     MIB_EXPECT(!port->waitForBytesWritten(20), "stalled driver returns failure");
     MIB_EXPECT(port->lastError().find("timed out") != std::string::npos, "timeout is actionable");
+    MIB_EXPECT(purges == purgesBefore + 1 && (lastPurge & PURGE_TXCLEAR) != 0,
+               "untransmitted output is discarded, not sent late (#720)");
     stalled = false;
     MIB_EXPECT(port->waitForBytesWritten(20), "drained output succeeds");
     driverError = true;
     MIB_EXPECT(!port->waitForBytesWritten(20), "unplugged driver returns failure");
     MIB_EXPECT(port->lastSystemError() == ERROR_DEVICE_NOT_CONNECTED, "driver error preserved");
+    // interrupt() (session teardown, #720): pending I/O is cancelled and a
+    // stalled drain fails at once instead of waiting out its timeout.
+    driverError = false;
+    stalled = true;
+    port->interrupt();
+    MIB_EXPECT(cancels == 1, "a blocked WriteFile is cancelled");
+    watchdog.mark("interrupted drain must fail at once");
+    MIB_EXPECT(!port->waitForBytesWritten(60000), "an interrupted port fails the drain");
+    MIB_EXPECT(port->lastError().find("interrupted") != std::string::npos, "and says why");
     port->close();
     MIB_EXPECT(closes == 1, "port released after failures");
     MIB_EXPECT(!port->waitForBytesWritten(0), "closed port fails");
