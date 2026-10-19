@@ -141,7 +141,7 @@ void testCropPolicy()
     // margin = max(8, 20/2) = 10: 40 x 36 around the box centre (50, 38).
     auto r = MonitoringCellStore::cropRect(kW, kH, m, p);
     MIB_EXPECT(r == cv::Rect(30, 20, 40, 36), "box grown by the margin on each side");
-    MIB_EXPECT(r.contains({40, 30}) && r.contains({59, 45}), "the object is inside the crop");
+    MIB_EXPECT(r.contains(cv::Point(40, 30)) && r.contains(cv::Point(59, 45)), "the object is inside the crop");
     // Near an edge the window shifts, it does not shrink.
     m.bboxX = 2;
     m.bboxY = 1;
