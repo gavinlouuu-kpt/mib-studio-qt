@@ -114,6 +114,13 @@ struct ReviewBridge::Impl {
     std::unique_ptr<br::ReviewJobs> jobs;
 
     Impl() {
+        // Lane policy (#512 D7 as amended 2026-10-19): YOFO Review keeps one
+        // job of any kind at a time, its own operation ids, and a job's lane
+        // free before its terminal event is queued. It does not gain the
+        // second lane (an export beside a regenerate / density / core job)
+        // until #722: HDF5 is built without thread safety and Hdf5Service has
+        // no process-wide lock. MIB Studio's facade runs both lanes at once
+        // (ReviewJobsOptions::forFacade).
         jobs = std::make_unique<br::ReviewJobs>(session, &processing, [this](const br::ReviewJobEvent& e) {
             // Runs on the job thread: convert + enqueue, bounded drop-oldest.
             ReviewEvent out{};
@@ -126,7 +133,7 @@ struct ReviewBridge::Impl {
             std::scoped_lock lock(eventMutex);
             events.push_back(std::move(out));
             while (events.size() > kEventQueueCapacity) events.pop_front();
-        });
+        }, br::ReviewJobsOptions::forReviewBridge());
     }
 
     ReviewResult started(std::uint64_t id, const std::string& error, const char* what) {

@@ -27,6 +27,7 @@ namespace backend
 namespace backend::review
 {
     class ReviewSession;
+    class ReviewJobs;
 }
 
 namespace backend::bridge
@@ -1318,17 +1319,19 @@ namespace backend::bridge
         // refused while it is (decision D1 (a), #722). Never reassigned; shared
         // so the review bridge can attach to it later (S10).
         const std::shared_ptr<review::ReviewSession> review_;
-        // Export jobs run detached; joined at shutdown.
-        std::vector<std::thread> reviewJobThreads_;
-        std::mutex reviewJobsMutex_;
-        mutable std::mutex exportMutex_;
-        mutable std::mutex reanalysisMutex_;
-        bool reanalysisActive_{false};
-        std::thread reanalysisThread_;
-        std::string reanalysisStatusJson_{"{\"state\":\"idle\"}"};
-        bool exportActive_{false};
-        std::thread exportThread_;
-        std::string exportStatusJson_{"{\"state\":\"idle\"}"};
+        // Pump address scans and stage-operation waiters (tracked operations
+        // that are not review jobs); joined at shutdown.
+        std::vector<std::thread> operationWorkers_;
+        std::mutex operationWorkersMutex_;
+        // The review jobs (#512 S7): `review_export_json` and
+        // `review_reanalysis_json` on ReviewJobs' two lanes with the facade's
+        // policy (ReviewJobsOptions::forFacade): one export and one
+        // reanalysis at the same time, as before #512 (at risk until #722),
+        // as the facade's own operations (beginOperation: the Export /
+        // Reanalysis kinds, cancel_operation, shutdown cancellation). The
+        // lanes hold the status snapshots. Declared after everything its
+        // workers call back into, so it is destroyed (and joined) first.
+        const std::unique_ptr<review::ReviewJobs> reviewJobs_;
     };
 
 } // namespace backend::bridge
