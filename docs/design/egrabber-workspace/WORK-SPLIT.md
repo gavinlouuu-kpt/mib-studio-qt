@@ -14,6 +14,11 @@ Status: active, 2026-10-18. Progress, 2026-10-19:
 - **B0:** #512 S1–S4 and S9 merged (#721, #724, #726, #731). All nine #512 decisions are ruled on
   #717; D1 keeps Start refused while a review file is open (HDF5 thread safety, #722). S5 is in
   progress.
+- **B1:** in progress. B1a (#746, on `develop`): run identity in the review contract and the
+  identity probe, review ABI 2. B1b (on this branch): the YOFO Review shell on the kit, with the
+  stages Open, Overview, Inspect and Export, and R1 Open as a plain folder list. Grouping by
+  experiment follows once this branch carries review ABI 2. Missing kit pieces for R1 are listed
+  on #715.
 - **Kit:** DataTable, CellImage, OptionGroup and Notice are in #714; NumberField is requested (#730).
 
 The workspace delivers two products from one UI language
@@ -76,7 +81,7 @@ app-local markup until they land.
 | Step | View | Slice | Needs | Missing kit pieces |
 |---|---|---|---|---|
 | B0 | none | One review implementation (#512) | nothing | none |
-| B1 | R1 Open | Review shell on the kit (#269) | B0 | DataTable |
+| B1 | R1 Open | Review shell on the kit (#269): in progress (B1a #746, B1b) | B0 | DataTable |
 | B2 | R2 Overview | S6; statistics from the #523 worker | B1, A2 | DataTable |
 | B3 | R3 Inspect | S6 | B1 | DataTable, CellImage |
 | B4 | R6 Export | Parity (#269) | B1 | OptionGroup, DataTable |

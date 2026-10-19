@@ -304,12 +304,50 @@ when the bundles carry signatures. `review-release.yml` runs on the shared
 
 ## `ReviewApp` (the product shell)
 
-Initializes the review bridge on boot (`init("")` → Tauri `app_data_dir`)
-and renders the menu row (File ▸ Open… / Close / Preferences…, View ▸ Fit,
-Help ▸ About with the stamped version from `@tauri-apps/api/app`), the
-panel, a status bar and the log drawer. **Preferences** holds the fallback
-px→µm (`localStorage` `yofo.review.pixelToMicron`, default 0.4886 like the Qt tab) passed to
-the panel. No camera, experiment or hardware state exists.
+Initializes the review bridge on boot (`init("")` → Tauri `app_data_dir`).
+Since #717 B1 (#269) it is built on the `@mib/ui` kit (it imports
+`@mib/ui/fonts.css` and `@mib/ui/style.css`; layout only in
+`review/shell/shell.css`, every selector under `.rv-app`): an `AppShell`
+(brand "YOFO Review", tag "Analysis · PC", context "Open run", status chips
+for the backend and "Read-only · opening never modifies a file") with the
+Review app's stages **Open** (R1), **Overview** (R2), **Inspect** and
+**Export** (`REVIEW_STAGES`; Populations and Compare are reference views, not
+scheduled). Header buttons replace the old menu row: Fit (the panel's image
+scaling), Settings (Preferences), Updates…, About (stamped version from
+`@tauri-apps/api/app`). The status bar and the log drawer stay below the
+shell. **Preferences** holds the fallback px→µm (`localStorage`
+`yofo.review.pixelToMicron`, default 0.4886 like the Qt tab) passed to the
+panel. Selecting a stage only changes what is shown: no backend call
+(`ReviewApp.test.tsx` checks it). No camera, experiment or hardware state
+exists.
+
+- **Open (R1, `review/open/OpenView.tsx`, `openModel.ts`).** Open folder…
+  (directory dialog) lists the folder with `review_list_dir`: `.h5` /
+  `.hdf5` names only, hidden work files (`.<name>.partial-…`) dropped,
+  natural order, in a `DataTable` with an Open button per row; the folder is
+  remembered (`yofo.review.libraryFolder`) and listed again at start. Open
+  file…, Refresh and Close file sit beside it. Opening calls the panel's
+  `openPath` (`review_open`), stays on Open and shows the **Open run** card:
+  a `FactList` of what the file records (file, folder, kind, records,
+  started / ended, px→µm recorded or fallback, processing core, run
+  accounting) with the accounting as one `StateChip`; a value the file does
+  not record shows "Not reported", a legacy file's accounting "Not recorded ·
+  legacy file", never Complete. A refused open is a blocked `Notice` with the
+  backend's words, and nothing is open afterwards (the panel's `openPath` now
+  returns `{ ok, message }` and clears its info on failure: the backend has
+  already closed the previous file). The grouping by experiment (snapshot v3
+  identities through `review_probe_runs`, B1a on `develop`) is wired after
+  the workspace branch syncs review ABI 2.
+- **Overview (R2):** a "not available yet" `Notice`: the statistics come
+  from the #523 worker (step B2), and the shell shows no number it does not
+  have.
+- **Inspect:** today's `ReviewPanel`, unchanged (frames, charts, the
+  toolbar's exports and regenerate). It stays mounted (hidden) while another
+  stage shows, so the open run, the selection and a running job survive a
+  stage change. A launch file (`review_launch_path`, `?open=`) or a macOS
+  open request (`review_take_open_request`) opens straight into Inspect.
+- **Export (R6):** a `Notice` and a `FactList` naming where each export is on
+  Inspect's toolbar, with "Go to Inspect"; the export view itself is step B4.
 
 ## CI
 
