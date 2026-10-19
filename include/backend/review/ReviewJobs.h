@@ -121,7 +121,11 @@ namespace backend::review
         RegenerateSource source{RegenerateSource::WholeFile};
         std::string sourcePath;
         std::uint64_t startIndex{0};
-        std::uint64_t count{0}; // 0 = to the end
+        std::uint64_t count{0}; // 0 = to the end (clamped to the set)
+        // A new file. Runs on the reanalysis engine (backend/review/Reanalysis.h,
+        // #512 S8): written as a partial file beside it and published without
+        // replacing, so an existing output is refused at start and one created
+        // while the job runs fails the job, untouched.
         std::string outputPath;
         // Processing inputs. When `useRecordedConfig` the open file's recorded
         // config, ROI and background are used (the reanalysis default); else

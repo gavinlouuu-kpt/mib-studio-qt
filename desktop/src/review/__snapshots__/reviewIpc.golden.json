@@ -680,6 +680,12 @@
     }
    },
    {
+    "cmd": "review_list_dir",
+    "args": {
+     "dir": "/data/out"
+    }
+   },
+   {
     "cmd": "plugin:dialog|save",
     "args": {
      "options": {
@@ -751,6 +757,124 @@
     "args": {
      "paths": [
       "/data/out/clip_remasked.h5"
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "flow": "regenerate masks into an existing file",
+  "calls": [
+   {
+    "cmd": "plugin:dialog|open",
+    "args": {
+     "options": {
+      "title": "AVI source",
+      "filters": [
+       {
+        "name": "AVI",
+        "extensions": [
+         "avi"
+        ]
+       }
+      ],
+      "multiple": false
+     }
+    }
+   },
+   {
+    "cmd": "review_list_dir",
+    "args": {
+     "dir": "/data/out"
+    }
+   },
+   {
+    "cmd": "plugin:dialog|save",
+    "args": {
+     "options": {
+      "title": "Save regenerated masks",
+      "defaultPath": "/data/out/clip_remasked_2.h5",
+      "filters": [
+       {
+        "name": "HDF5",
+        "extensions": [
+         "h5"
+        ]
+       }
+      ]
+     }
+    }
+   },
+   {
+    "cmd": "review_regenerate_masks",
+    "args": {
+     "source": 3,
+     "sourcePath": "/data/clip.avi",
+     "startIndex": "0",
+     "count": "0",
+     "outputPath": "/data/out/clip_remasked.h5",
+     "useRecordedConfig": false,
+     "synthesizeBackground": false
+    }
+   },
+   {
+    "cmd": "review_list_dir",
+    "args": {
+     "dir": "/data/out"
+    }
+   },
+   {
+    "cmd": "plugin:dialog|save",
+    "args": {
+     "options": {
+      "title": "Save regenerated masks",
+      "defaultPath": "/data/out/clip_remasked_2.h5",
+      "filters": [
+       {
+        "name": "HDF5",
+        "extensions": [
+         "h5"
+        ]
+       }
+      ]
+     }
+    }
+   },
+   {
+    "cmd": "review_regenerate_masks",
+    "args": {
+     "source": 3,
+     "sourcePath": "/data/clip.avi",
+     "startIndex": "0",
+     "count": "0",
+     "outputPath": "/data/out/clip_remasked_2.h5",
+     "useRecordedConfig": false,
+     "synthesizeBackground": false
+    }
+   },
+   {
+    "cmd": "review_open",
+    "args": {
+     "path": "/data/out/clip_remasked_2.h5"
+    }
+   },
+   {
+    "cmd": "fetch_review_info",
+    "args": {}
+   },
+   {
+    "cmd": "fetch_review_rows",
+    "args": {
+     "valid": true,
+     "offset": "0",
+     "count": 100
+    }
+   },
+   {
+    "cmd": "plugin:opener|reveal_item_in_dir",
+    "args": {
+     "paths": [
+      "/data/out/clip_remasked_2.h5"
      ]
     }
    }

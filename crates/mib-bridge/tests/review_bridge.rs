@@ -182,6 +182,32 @@ fn review_bridge_reads_the_fixture_file() {
     let done = wait_terminal(&mut bridge, started.operation_id);
     assert_eq!((done.kind, done.state), (6, 3), "charts: {}", done.message);
     assert!(!dir.join("mib_bridge_bad_chart.tiff").exists());
+    // Regenerate masks (#512 S8, D6): never replaces a file. An existing
+    // output is refused at start with the reason, untouched; a new one is
+    // written (partial file, then a no-replace publish) and named in the
+    // completion message.
+    let existing = fixture_path("regen_existing");
+    std::fs::write(&existing, b"keep me").unwrap();
+    let refused = bridge.pin_mut().review_regenerate_masks(2, "", 0, 0, &existing.to_string_lossy(), true, false);
+    assert!(!refused.ok && refused.operation_id == 0);
+    assert_eq!(refused.message, "Output already exists; choose a new file");
+    assert_eq!(std::fs::read(&existing).unwrap(), b"keep me");
+    let fresh = fixture_path("regen_new");
+    let _ = std::fs::remove_file(&fresh);
+    let started = bridge.pin_mut().review_regenerate_masks(2, "", 0, 0, &fresh.to_string_lossy(), true, false);
+    assert!(started.ok, "{}", started.message);
+    let done = wait_terminal(&mut bridge, started.operation_id);
+    assert_eq!((done.kind, done.state), (3, 2), "regenerate: {}", done.message);
+    assert!(done.message.starts_with(&format!("{} (", fresh.to_string_lossy())) && done.message.contains(" images: "), "{}", done.message);
+    assert!(fresh.exists());
+    let dir = fresh.parent().unwrap();
+    let stem = fresh.file_name().unwrap().to_string_lossy().into_owned();
+    assert!(
+        !std::fs::read_dir(dir).unwrap().filter_map(|e| e.ok()).any(|e| e.file_name().to_string_lossy().starts_with(&format!(".{stem}.partial-"))),
+        "no partial file left"
+    );
+    let _ = std::fs::remove_file(&existing);
+    let _ = std::fs::remove_file(&fresh);
     // Refusals: unknown regenerate source, empty batch.
     assert!(!bridge.pin_mut().review_regenerate_masks(99, "", 0, 0, "x.h5", true, false).ok);
     assert!(!bridge.pin_mut().review_batch_export(Vec::new(), "/tmp", true, true, 0, u64::MAX).ok);

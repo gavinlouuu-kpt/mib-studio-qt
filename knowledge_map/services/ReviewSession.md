@@ -108,11 +108,19 @@ opening its own reader so session reads never block:
   `.<stem>.partial.<ext>` names, renamed once every one wrote; any failure
   or cancel removes them). Names must be bare file names ending
   .tif/.tiff/.png (`validChartName`, mirrored by the Tauri staging command).
-- `startRegenerateMasks(request)`: current valid / invalid range, whole file,
-  AVI or folder → `ProcessingService::processBatch` (bundled kernel) with the
-  recorded config, ROI and background by default (optional median
-  synthetic background) → `batch_masks::saveMasksToHdf5`; HDF5 sources keep
-  recorded indices and normalise timestamps to the first image.
+- `startRegenerateMasks(request)`: current valid / invalid range (clamped
+  to the set), whole file, AVI or folder, run on the reanalysis engine
+  (`runReanalysis`, below; #512 S8) with YOFO's D6 options. Timestamps are
+  rebased to the first selected frame and clamped at 0. The optional
+  synthetic background is the median of the first 32 frames. The whole
+  file is valid rows then invalid rows. The job has no frame or byte budget.
+  The recorded config (read here), ROI and background are used by default.
+  Otherwise the request's config and ROI apply and the background is
+  cleared. An existing output is refused at start ("Output already exists;
+  choose a new file"). An output created mid-run fails the job and stays
+  untouched; the partial file is removed. Terminal messages:
+  "<path> (N images: V valid, I invalid)", "nothing written" on cancel, or the
+  engine's error.
 - `startComputeCore(fraction)`: `computeFullRunCoreRecord` over the scatter
   (recorded factor, fixed seed); `computedCoreJson()` hands the record to the
   shell, which saves it with `saveCoreRecordJson`. `cell_count` is the
@@ -168,7 +176,25 @@ the facade's ROI style:
 The engine behind the backend bridge's `review_reanalysis_json` and
 `fetch_review_reanalysis_preview` (MIB Studio, YOFO Studio), moved verbatim
 out of `BackendFacade` (`src/backend/app/ReviewReanalysis.cpp` now only
-delegates). Not yet used by YOFO Review's Regenerate masks (#512 S8):
+delegates). Since #512 S8 it is also YOFO Review's Regenerate masks
+(`ReviewJobs::startRegenerateMasks`), with the D6 options on the request.
+Parsing never sets them, so the facade keeps the defaults:
+
+- `timestamps`: `Preserve` (facade) | `Rebase` (minus the first selected
+  frame's, clamped at 0; YOFO, the Qt BatchMaskDialog rule).
+- `syntheticBackgroundKind`: `QuietTile` (`batch_masks::buildSyntheticBackground`;
+  facade, Qt) | `MedianOf32` (per-pixel upper median of the first ≤ 32
+  selected frames; YOFO, moved from ReviewJobs).
+- `frameOrder` (HDF `all` only): `Timestamp` (facade, Qt) | `Datasets` (rows
+  as stored, valid then invalid; YOFO's whole file). D6 named two options.
+  The third keeps YOFO's 2026-10-04 accepted "timestamp order" difference.
+- `convertColorToGray` (HDF only): off, frames with more than one channel are
+  refused ("Source frames must be grayscale"; facade). On, they become Mono8
+  as `batch_masks::loadFromHdf5` converts them (BGR → gray; YOFO, whose
+  pre-S8 reader did this; #735 review).
+- `ReanalysisOutcome::valid` counts the valid records (YOFO's message).
+
+The functions:
 
 - `parseReanalysisRequest(json, defaults, out, error)`: the contract request
   (source kind hdf / folder / avi, dataset `all` or one images dataset,
