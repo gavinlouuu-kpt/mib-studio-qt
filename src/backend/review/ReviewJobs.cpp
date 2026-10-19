@@ -274,16 +274,20 @@ namespace backend::review
                 lanes[lane].starting = false;
                 laneStarted.notify_all();
             }
-            catch (const std::exception &e)
+            catch (...)
             {
-                // No worker: the lane is free again, and the operation gets its
-                // one terminal state here.
-                releaseLane(lane);
-                if (job->onFailure) job->onFailure(id, e.what());
-                emit(ReviewJobEvent{id, job->kind, ReviewJobState::Failed, 0, 0, e.what()});
-                result.id = id;
-                result.error = e.what();
+                // No worker (std::thread threw, or the first snapshot did): the
+                // lane is free again, and the operation gets its one terminal
+                // state here.
                 result.failure = std::current_exception();
+                result.error = "unknown error";
+                try { std::rethrow_exception(result.failure); }
+                catch (const std::exception &e) { result.error = e.what(); }
+                catch (...) {}
+                releaseLane(lane);
+                if (job->onFailure) try { job->onFailure(id, result.error); } catch (...) {}
+                emit(ReviewJobEvent{id, job->kind, ReviewJobState::Failed, 0, 0, result.error});
+                result.id = id;
                 return result;
             }
             result.id = id;

@@ -172,6 +172,15 @@ safety (#722). No slice waits on a decision; S13 still needs S10–S12.
   **Amended 2026-10-19:** the lanes stand, but YOFO does not gain the second
   lane before #722 makes concurrent HDF5 use safe; MIB Studio's existing
   export-while-reanalysing is listed in #722 as at risk.
+  **Per-host lane policy (S7, as built):** `ReviewJobsOptions` with one named
+  preset per host. `forReviewBridge()` (YOFO Review, `review_shim.cpp`, and
+  the default): `concurrentLanes = false` (one job of any kind; a comment
+  points at #722), ReviewJobs' own ids, the lane free before the terminal
+  event. `forFacade(host)` (MIB Studio, `BackendFacade`): `concurrentLanes =
+  true` (one export and one reanalysis at once, as before), the facade's
+  operations through `ReviewJobHost::beginOperation`, the lane free after the
+  terminal event. Tested per preset by `review.jobs_lanes`; the facade's by
+  `backend.facade_review_jobs` too. Revisit `forReviewBridge` after #722.
 - **D8 Transport for the module in MIB Studio and YOFO Studio** (F9, gates
   S10-S12). Recommended: attach the review bridge to the facade (S10) and
   register the review commands in `mib-app-commands` for the Tauri studio
@@ -200,7 +209,7 @@ the coordinator (ADR 0004/0011).
 | S4 | Charts JSON and saved-overlay builders | none (text only, D3) | none | merged (#726) |
 | S5 | The facade owns the ReviewSession | none (D1 (a): unchanged) | none | merged (#733) |
 | S6 | Parity harness: a MIB Studio half | none | none | planned |
-| S7 | Facade jobs on ReviewJobs lanes | none | none | planned |
+| S7 | Facade jobs on ReviewJobs lanes | none | none | in review |
 | S8 | YOFO regenerate on the reanalysis engine | none | none (behaviour D6) | merged (#735) |
 | S9 | Transport-neutral review module | none | none | merged (#731) |
 | S10 | Attachable review bridge | **additive, ABI bump** | none | proposed, not implemented |
@@ -542,6 +551,81 @@ the coordinator (ADR 0004/0011).
   `tests/review_bridge.rs`.
 - **Risks:** event ordering (Started before Progress; one terminal state per
   id); the late-event policy of ADR 0004.
+- **As built (2026-10-19):** `ReviewJobs` has two lanes (`ReviewJobLane`
+  Export / Processing, `laneOf(kind)`), single flight per lane, and
+  `ReviewJobsOptions` {`concurrentLanes`, `laneRelease`, `host`} with the two
+  presets recorded under D7. The facade's workers moved in verbatim as the
+  JSON jobs `startExportJson` / `startReanalysisJson` (kinds `Export` = 7 and
+  `Reanalysis` = 8 in the C++ enum, S12's proposed values; not in
+  `review-contract.json`, the review bridge never starts them); each lane
+  holds its job's status snapshot (`exportStatusJson()` /
+  `reanalysisStatusJson()`, the S2 / S3 formatters written at the same points
+  as before). The facade builds its `ReviewJobs` in the constructor with
+  `beginOperation` as the host hook (its operation ids, cancel flags,
+  `Export` / `Reanalysis` kinds) and a sink that maps Progress / terminal to
+  `reportOperationProgress` / `finishOperation`; `shutdown()` calls
+  `cancelAllOperations` then `ReviewJobs::shutdown()` (same order as the two
+  joins before). Gone from the facade: `exportThread_`, `reanalysisThread_`,
+  `exportActive_`, `reanalysisActive_`, `exportMutex_`, `reanalysisMutex_`,
+  `exportStatusJson_`, `reanalysisStatusJson_`. `review_shim.cpp` passes
+  `forReviewBridge()` explicitly. The two export cancel models (`Direct` for
+  the JSON export, `AtProgress` for ReviewJobs' own exports) are kept: unifying
+  them would change YOFO's event sequence. Not anticipated: (1)
+  `reviewJobThreads_` held no review job; it carried the pump address scans
+  and stage-operation waiters, so it stays, renamed `operationWorkers_`. (2)
+  `AppBackend::processing()` exists only after `AppBackend::initialize`, so
+  `startReanalysisJson` takes the kernel per start (the facade passes the
+  live service). (3) The hosts freed their single-flight state on opposite
+  sides of the terminal event (the facade after `finishOperation`, so a start
+  from inside the terminal event was refused; ReviewJobs before, so `busy()`
+  reads false when YOFO receives it); kept per host as
+  `ReviewLaneRelease`. (4) Fixed on the way, unreachable or unobservable
+  before: ReviewJobs emitted Started under its mutex (a sink could not call
+  back in); a start from inside a job's own terminal event self-joined
+  (`std::system_error`, swallowed) and now detaches the finished worker; a
+  worker that could not be created left the lane busy forever with no
+  terminal, and now reports Failed and frees it; a facade destroyed without
+  `shutdown()` with a joinable job thread ended the process, and now cancels
+  and joins its lanes first. (5) The validating / loading snapshot is visible
+  only between the start's return and the worker's first progress (no seam);
+  the stress cycles check that the lane's snapshot names the new operation as
+  soon as the start returns.
+- **Proof (S7):** `backend.facade_review_jobs` (new) keeps the pre-S7 facade
+  job code as the oracle (the two submit bodies, flags, threads, snapshots and
+  the operation registry, copied from develop 88e9afbe) and drives both through
+  11 scenarios with handshakes: complete, cancel at the first progress event
+  with a duplicate from inside it, explicit CSV, batch with a missing file,
+  charts, reanalysis complete / cancelled / missing source, an export run to
+  completion while a reanalysis is held, cancel through
+  `dispatch(OperationCommand)` during and after, a start from inside the
+  terminal event; all 209 trace lines (events with their status snapshot,
+  results, refusals, cancels, snapshots) are equal. Then 12 cycles with both
+  lanes held, duplicates refused on both, one lane cancelled while the other
+  waits, and shutdown with both held (the reanalysis cancelled once with
+  "Backend shutdown", the export's own terminal, nothing after shutdown).
+  `review.jobs_lanes` (new): both presets through `ReviewJobsTestAccess`
+  bodies, refusals per lane and policy, cancel by id and through the host's
+  flag, the release order and a start from inside the terminal event,
+  `cancelOverridesOutcome`, shutdown with the lanes held, 25 rounds of 16
+  racing starts, 200 mixed cycles per policy (complete / cancel one / cancel
+  both / shutdown / a cancel racing the end), one terminal per operation and
+  Started first. Mutations fail them: the bridge preset with concurrent lanes,
+  the lane policy ignored in `start`, the facade preset releasing before the
+  terminal event (also in the oracle test: the start from inside the terminal
+  event is accepted, 246 trace lines against 209), the
+  self-join guard removed, shutdown not setting the flags, no validating
+  snapshot. `backend.export_bridge_facade`, `review.jobs`,
+  `review.export_engine`, `review.reanalysis`, `review.session`,
+  `backend.facade_review_session`, `backend.facade_boundary`,
+  `backend.pump_bridge_facade`, `backend.stage_bridge_facade` pass unchanged.
+  A temporary characterization (not committed) of the facade (12 scenarios
+  incl. shutdown with an export and a reanalysis held) and of the review
+  bridge's ReviewJobs (9 scenarios: every job kind, cross-lane refusals,
+  cancels, shutdown with a held export, a start after it), 331 lines, was
+  identical before and after in 5 runs each. Cargo `tests/contract.rs` (28)
+  and `tests/review_bridge.rs` (2, also with `--features review-only`) pass
+  with `MIB_BRIDGE_NO_CMAKE=1`. The TSan lane is CI's (`sanitizers.yml`; the
+  new tests carry the `backend` label).
 
 ### S8 — YOFO regenerate on the reanalysis engine (in review, #735)
 
@@ -801,7 +885,7 @@ bridge contract):
 - [x] 2026-10-19 — S4 charts JSON and saved-overlay builders (`review.charts_json`, #726).
 - [x] 2026-10-19 — S5 the facade owns the ReviewSession (`backend.facade_review_session`; D1 (a) via `AppBackend::setReviewSourceOpen`, gate text unchanged; #733).
 - [ ] S6 parity harness MIB Studio half
-- [ ] S7 facade jobs on ReviewJobs lanes (D7)
+- [x] 2026-10-19 — S7 facade jobs on ReviewJobs lanes (D7 per-host policy: `forReviewBridge` one job at a time until #722, `forFacade` both lanes; `backend.facade_review_jobs` with the pre-S7 oracle, `review.jobs_lanes`)
 - [x] 2026-10-19 — S8 YOFO regenerate on the engine (D6; `review.jobs`, `review.reanalysis`, no clobber; the position-pairing fix; #735)
 - [x] 2026-10-19 — S9 transport-neutral review module (`reviewIpc` golden unchanged; import guard; `Transport.upload`; #731).
 - [ ] S10 attachable review bridge (ABI)
