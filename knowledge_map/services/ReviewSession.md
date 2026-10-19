@@ -7,10 +7,11 @@
 > moves them here slice by slice (plan
 > `docs/exec-plans/active/2026-10-18-one-review-implementation.md`); since S5
 > the facade's loaded review file **is** a `ReviewSession` (see "The facade's
-> session" below). Qt-free,
+> session" below), and since S7 the facade's review jobs run on `ReviewJobs`
+> lanes (see "Jobs"). Qt-free,
 > owns the open HDF5 file through its **own** read-only `Hdf5Service`,
-> serves bounded reads with overlays composed in the backend, and will own
-> the review jobs (PR 1b).
+> serves bounded reads with overlays composed in the backend; the review jobs
+> beside it are `ReviewJobs`.
 
 **Source:** `src/backend/review/ReviewSession.cpp`,
 `include/backend/review/ReviewSession.h`, `include/backend/review/ReviewTypes.h`,
@@ -113,13 +114,87 @@ the Qt [[../frontend/HdfReviewTab]] (`recordedPixelToMicron`, TD-17)
 - `loadFrameForDisplay(valid, index)`: the full `ProcessedFrame` (image,
   mask, series) the Qt viewer loads — shared by viewer, pane and jobs.
 
-## Jobs (`ReviewJobs`, PR 1b)
+## Jobs (`ReviewJobs`, PR 1b; lanes since #512 S7)
 
 `include/backend/review/ReviewJobs.h` / `src/backend/review/ReviewJobs.cpp`,
-same library. One job at a time (a second start is refused), each a tracked
-operation (ADR 0004 semantics: Started, bounded Progress, exactly one
-terminal Completed / Failed / Cancelled through the `ReviewJobSink`), each
-opening its own reader so session reads never block:
+same library. Each job is a tracked operation (ADR 0004 semantics: Started,
+bounded Progress, exactly one terminal Completed / Failed / Cancelled), each
+opening its own reader so session reads never block.
+
+**Lanes (decision D7 as amended 2026-10-19).** Every job runs on one of two
+lanes, single flight per lane: **export** (Export Metrics / All / Batch /
+Charts, `review_export_json`) and **processing** (regenerate masks, core
+contour, density, `review_reanalysis_json`); `laneOf(kind)`. A start on a
+busy lane is refused. Whether the two lanes run at the same time is the
+host's policy, `ReviewJobsOptions`, with one named preset per host:
+
+| Preset | Host | Lanes at once | Operation ids, Started, cancel | Lane free |
+|---|---|---|---|---|
+| `forReviewBridge()` (also the default) | YOFO Review's bridge (`review_shim.cpp`) | **no**: one job of any kind ("Another review job is still running") | ReviewJobs' own ids from 1, Started through the sink, `cancel(id)` | before the terminal event (`busy()` is false when it arrives) |
+| `forFacade(host)` | MIB Studio's `BackendFacade` | yes: one export and one processing job, as the facade ran before #512 | the host's (`ReviewJobHost::beginOperation` = `BackendFacade::beginOperation`: kinds `Export` / `Reanalysis`, `cancel_operation`, shutdown cancellation); Progress and terminal reach `reportOperationProgress` / `finishOperation` | after the terminal event (a start from inside it is refused, as the facade's flags were cleared after `finishOperation`) |
+
+YOFO Review does **not** gain the second lane until #722: HDF5 is built
+without thread safety and `Hdf5Service` has no process-wide lock, so an export
+beside a regenerate would call into the library from two threads at once.
+MIB Studio's existing export-while-reanalysing is listed in #722 as at risk.
+The refusal is the job's own message on its own lane ("An export is already
+active", "Reanalysis already active" for the JSON jobs) and "Another review
+job is still running" otherwise. Neither host lock is held while ReviewJobs
+calls the host or the sink, so either may call back in (a start, a cancel, a
+status read, even `shutdown()`). A worker is never joined by itself: one whose
+own event starts its lane again or calls `shutdown()` is detached, and it
+holds a reference to the runner state (`impl_` is a `shared_ptr`; job bodies
+reach the runner only through it), so the sink it is executing, its lane and
+the mutex stay alive until it ends even if the ReviewJobs object is destroyed
+meanwhile (#742 review). The host's own objects (session, kernel, the
+callback's targets) are the host's to keep. **Callback contract (#742 review
+round 2):** callbacks (the sink, the host's `beginOperation`) may call
+`shutdown()` or `cancel()`, but must not destroy this ReviewJobs or its host.
+Destroying the owner from inside its own callback is out of contract. Hosts
+deliver events to their consumers asynchronously: both bridges' sinks only
+convert and enqueue, and the shell drains the queue. `shutdown()` sets every
+lane's flag and joins both lanes. Starts stay possible afterwards (as before).
+A start that a `shutdown()` overtook between its claim and its worker does
+not run its job. That covers a shutdown from the job's own Started event or
+the host's `beginOperation`, and one on another thread. The start itself
+reports the one Cancelled terminal. Whether `shutdown()` waits for such starts
+depends on where it is called (#742 review round 3):
+- **From outside the runner** (the owner's teardown: a thread that is neither
+  a lane worker nor inside a ReviewJobs callback), it waits until every start
+  claimed before it has returned, with its Cancelled reported. So no start is
+  inside ReviewJobs, the host or the sink when it returns, and
+  `BackendFacade::shutdown()` can tear down after it.
+- **From a lane worker or from inside a callback** (the host's
+  `beginOperation`, the sink), it does not wait. A thread-local marker per
+  runner tells the two cases apart. Round 1 waited here and deadlocked: under
+  the bridge's policy a start joins the previous worker while that worker may
+  still be calling `shutdown()` from its terminal event.
+- **Why the outside wait cannot deadlock:** a start in progress runs only
+  ReviewJobs' code and those callbacks, and joins its lane's previous worker.
+  A shutdown from either is the inside case, which returns, so the worker ends
+  and the join completes. ReviewJobs' own jobs carry "Review jobs shut down
+before the job started". The JSON jobs carry their engine's outcome for a run
+cancelled before its first step, with that status snapshot
+(`exportBatchCancelledBeforeStart`, `reanalysisCancelledBeforeStart`), so the
+facade's events and status match a run cancelled on entry. A start holds its
+own reference to the runner state throughout. A worker that cannot be created gets its one Failed
+terminal and frees the lane (before S7 the lane stayed busy).
+
+**The JSON jobs (the facade's, #512 S7).** `startExportJson(ExportBatchRequest)`
+and `startReanalysisJson(ReanalysisRequest, kernel)` are the facade's
+`review_export_json` / `review_reanalysis_json` workers moved here verbatim:
+`runExportBatch` with the service polling the flag (`Direct`) and
+`runReanalysis` on the facade's live processing service; Progress without a
+message; terminal message = the final path (export completed) or the
+engine's error; no "a set flag turns Failed into Cancelled" rule (the
+engine's outcome stands). The lane holds each job's status snapshot,
+`exportStatusJson()` / `reanalysisStatusJson()` (the S2 / S3 formatters,
+written before each event: validating / loading once the id exists and
+before the worker starts, then progress, then terminal; start failed; `{"state":"idle"}`
+before the first). `ReviewJobKind::Export` (7) and `Reanalysis` (8) are not in
+`review-contract.json` (S12 proposes them with these values); the review
+bridge never starts them. The two export cancel models stay as they were:
+`Direct` for the JSON export, `AtProgress` for ReviewJobs' own exports.
 
 - `startExportMetrics(path)` / `startExportAll(root, series, charts)` /
   `startBatchExport(sources, root, metricsOnly, series)`: run
@@ -173,7 +248,23 @@ opening its own reader so session reads never block:
   handed the previous file's levels as ready). The density result is
   cleared when its job starts running, not when a start is refused.
 
-Guard: `review.jobs` (`tests/review/review_jobs_test.cpp`).
+Guard: `review.jobs` (`tests/review/review_jobs_test.cpp`);
+`review.jobs_lanes` (`tests/review/review_jobs_lanes_test.cpp`, #512 S7):
+both presets through job bodies supplied by `ReviewJobsTestAccess`, lanes ×
+cancel × shutdown with handshakes, racing starts, a cancel racing a job's
+end, 200 mixed cycles per policy, one terminal per operation, the release
+order, a start from inside the terminal event, and `shutdown()` from inside
+it with ReviewJobs destroyed before the callback returns. It also covers
+`shutdown()` from inside Started under both presets, for an own job and both
+JSON jobs (each one Cancelled terminal from the start, matching the engine run
+cancelled on entry byte for byte, body never run). And it covers `shutdown()`
+from a terminal event while another thread's start joins that worker; this
+deadlocked before round 2. Finally, it covers `shutdown()` from outside while a
+start is held inside its Started event, under both presets: the shutdown must
+be waiting, and must return only after the start's Cancelled. Lane release is
+waited for with `ReviewJobsTestAccess::waitIdle` (the release's own
+condition). The facade's side by `backend.facade_review_jobs`
+(`BackendFacadeTestAccess::reviewJobs` reaches its lanes).
 
 ## Charts JSON and saved overlay (`ReviewCharts.h`, #512 S4)
 
@@ -241,7 +332,8 @@ The functions:
   restored, `.<name>.partial-<job>` beside the output, no-replace publish
   (`renameat2` / `MoveFileExW` / hard link), partial removed (or reported).
   Runs on the caller's thread; the host owns single flight, the operation and
-  the status snapshot.
+  the status snapshot (since #512 S7 ReviewJobs' processing lane, for the
+  facade and for YOFO's regenerate).
 - `loadReanalysisPreview(json, image, index)`: one Mono8 source frame through
   an independent reader.
 - `reanalysis{Loading,Progress,Terminal,StartFailed}StatusJson`: the
@@ -254,7 +346,8 @@ The engine behind the backend bridge's `review_export_json` /
 Metrics / Export All / Batch export, moved verbatim out of
 `BackendFacade::submitReviewExportJson`, which now keeps only the policy
 (live factor and chart ring range as the defaults, the loaded file as the
-default source, one export at a time, the `Export` operation, the snapshot):
+default source, the `Export` operation; since #512 S7 the single flight and
+the snapshot are ReviewJobs' export lane, `startExportJson`):
 
 - `parseExportRequest(json, defaults, out, error)`: the contract request
   (`output_root`, 1-256 `source_paths`, `explicit_destination` (single source
@@ -330,6 +423,10 @@ with a live camera.
 
 Every public call takes one mutex (`Hdf5Service` is not thread-safe).
 Jobs (PR 1b) open their own readers on `filePath()` and never block a read.
+`ReviewJobs` owns one worker thread per lane (at most two; one at a time
+under the review bridge's policy), joined by the next start on the lane or
+by `shutdown()`; its lane state, results and status snapshots sit under one
+mutex that is never held while the host or the sink is called.
 The facade's session is read on the bridge's calling threads, as the shared
 handle was before S5 (now serialized by this mutex); HDF5 itself is still not
 thread-safe across readers (#722), which is why D1 keeps experiments out.

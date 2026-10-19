@@ -140,6 +140,19 @@ namespace backend::review
         return true;
     }
 
+    namespace
+    {
+        constexpr const char *kReanalysisCancelled = "Reanalysis cancelled";
+    } // namespace
+
+    ReanalysisOutcome reanalysisCancelledBeforeStart()
+    {
+        ReanalysisOutcome outcome;
+        outcome.cancelled = true;
+        outcome.error = kReanalysisCancelled;
+        return outcome;
+    }
+
     ReanalysisOutcome runReanalysis(const ReanalysisRequest &request, services::ProcessingService &kernel,
                                     const ReanalysisCancelFlag &cancel, const ReanalysisProgressFn &onProgress)
     {
@@ -161,7 +174,7 @@ namespace backend::review
         try
         {
             const auto checkCancel = [&] {
-                if (cancel->load(std::memory_order_acquire)) throw std::runtime_error("Reanalysis cancelled");
+                if (cancel->load(std::memory_order_acquire)) throw std::runtime_error(kReanalysisCancelled);
             };
             checkCancel();
             std::vector<services::ProcessedFrame> metadata;

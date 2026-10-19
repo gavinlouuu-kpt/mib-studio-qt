@@ -131,6 +131,29 @@ namespace backend::review
         }));
     }
 
+    namespace
+    {
+        // The batch's state and message from the files it reached.
+        void settleBatch(ExportBatchOutcome &outcome)
+        {
+            // A cancellation accepted after a commit cannot undo that commit. If
+            // every file completed, report completion; otherwise retain each outcome.
+            outcome.cancelled = outcome.files.size() < outcome.sourceCount ||
+                                outcome.last.status == recording::HdfExportStatus::Cancelled;
+            outcome.error = outcome.cancelled ? std::string("Batch cancelled; completed files remain published")
+                            : outcome.failed  ? std::string("One or more exports failed; see per-file results")
+                                              : std::string{};
+        }
+    } // namespace
+
+    ExportBatchOutcome exportBatchCancelledBeforeStart(std::size_t sourceCount)
+    {
+        ExportBatchOutcome outcome;
+        outcome.sourceCount = sourceCount;
+        settleBatch(outcome);
+        return outcome;
+    }
+
     ExportBatchOutcome runExportBatch(const recording::HdfExportRequest &request,
                                       const std::vector<std::string> &sources, const ExportCancelFlag &cancel,
                                       const ExportBatchProgressFn &onProgress, const ExportRunOptions &options)
@@ -164,12 +187,7 @@ namespace backend::review
             outcome.files.push_back(ExportFileOutcome{fileRequest.sourcePath, true, outcome.last});
             if (outcome.last.status == HdfExportStatus::Cancelled) break;
         }
-        // A cancellation accepted after a commit cannot undo that commit. If
-        // every file completed, report completion; otherwise retain each outcome.
-        outcome.cancelled = outcome.files.size() < sources.size() || outcome.last.status == HdfExportStatus::Cancelled;
-        outcome.error = outcome.cancelled ? std::string("Batch cancelled; completed files remain published")
-                        : outcome.failed  ? std::string("One or more exports failed; see per-file results")
-                                          : std::string{};
+        settleBatch(outcome);
         return outcome;
     }
 
