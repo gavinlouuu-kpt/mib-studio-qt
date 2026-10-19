@@ -25,6 +25,8 @@ namespace backend::services {
 
 namespace backend::services {
 
+struct Hdf5ServiceTestAccess; // fault hooks for tests (defined in Hdf5Service.cpp)
+
 // Optional telemetry hook for HDF5 I/O performance events (file close,
 // frame append). No-op until set, so Hdf5Service carries no CrashReporter
 // (and therefore no Qt) dependency -- it lives in the Qt-free mib_processing
@@ -53,9 +55,17 @@ public:
     // not initialised, so append paths stay unavailable. Fails when the file
     // is missing, read-only on disk, or already open elsewhere in-process.
     bool openFileForUpdate(const std::string& filePath);
+    // Closes any handle the service holds, also one whose open did not
+    // complete. The handle and the open state are cleared right after
+    // H5Fclose, before any diagnostics; it never throws.
     void closeFile();
     bool flush(); // Explicit global flush — call before metadata writes to protect frame data on crash
     bool isFileOpen() const;
+    // True while the service holds an HDF5 file handle at all, including one
+    // whose open did not complete (isFileOpen() is false then). Hosts that must
+    // fail closed on an open handle (ReviewSession::isOpen, the facade's D1
+    // flag, #512 S5) read this.
+    bool holdsFileHandle() const;
     
     // Frame saving (batch write - for final save or periodic flush)
     bool saveFrames(const std::vector<ProcessedFrame>& validFrames,
@@ -264,8 +274,18 @@ private:
     // synchronous I/O on every batch; closeFile() still does a final flush.
     bool maybeIntervalFlush();
 
+    friend struct Hdf5ServiceTestAccess;
     struct Impl;
     std::unique_ptr<Impl> impl_;
+};
+
+// Test-only fault hooks (#512 S5 review): `afterOpen` runs in loadFile()
+// right after H5Fopen succeeds, `afterClose` in closeFile() right after the
+// handle and state were cleared; either may throw to inject a fault.
+struct Hdf5ServiceTestAccess
+{
+    static void setAfterOpenHook(Hdf5Service &service, std::function<void()> hook);
+    static void setAfterCloseHook(Hdf5Service &service, std::function<void()> hook);
 };
 
 } // namespace backend::services

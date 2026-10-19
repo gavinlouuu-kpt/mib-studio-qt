@@ -28,6 +28,8 @@ namespace backend::services { class Hdf5Service; struct ProcessedFrame; }
 namespace backend::review
 {
 
+    struct ReviewSessionTestAccess; // the session's reader, for fault tests
+
     class ReviewSession
     {
     public:
@@ -42,6 +44,9 @@ namespace backend::review
         // (optional) names the reason; it does not throw for a bad file.
         bool open(const std::string &path, std::string *error = nullptr);
         void close();
+        // True while a file is open, and also while the reader holds a handle
+        // whose open did not complete (fail closed: hosts mirror it to keep
+        // writers out, #512 S5); close() releases either.
         bool isOpen() const;
         std::string filePath() const;
 
@@ -127,8 +132,16 @@ namespace backend::review
         bool loadFrameForDisplay(bool valid, std::uint64_t index, services::ProcessedFrame &out) const;
 
     private:
+        friend struct ReviewSessionTestAccess;
         struct Impl;
         std::unique_ptr<Impl> impl_;
+    };
+
+    // Test-only: the session's own reader (fault injection through
+    // services::Hdf5ServiceTestAccess, or a handle held behind its back).
+    struct ReviewSessionTestAccess
+    {
+        static services::Hdf5Service &reader(ReviewSession &session);
     };
 
 } // namespace backend::review

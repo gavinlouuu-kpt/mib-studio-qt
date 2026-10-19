@@ -270,15 +270,13 @@ namespace backend::review
             return reader.readSeriesImagesByIndex(static_cast<std::size_t>(index), images);
         }
 
-        // Closed, with nothing of the last file left. Allocates nothing, so it
-        // is safe in a catch block.
+        // Closed, with nothing of the last file left: also a reader handle
+        // whose open did not complete. Allocates nothing and does not throw
+        // (closeFile never does), so it is safe in a catch block.
         void resetLocked()
         {
-            if (open)
-            {
-                reader.closeFile();
-                open = false;
-            }
+            reader.closeFile();
+            open = false;
             path.clear();
             recording = false;
             meta = ReviewMetadata{};
@@ -294,14 +292,14 @@ namespace backend::review
         // reader it was not told about (the facade's D1 flag mirrors isOpen()).
         bool loadLocked(const std::string &filePath, std::string *error)
         {
-            if (!reader.loadFile(filePath))
-            {
-                if (error) *error = "File not found or not an HDF5 review file: " + filePath;
-                return false;
-            }
-            open = true;
             try
             {
+                if (!reader.loadFile(filePath))
+                {
+                    if (error) *error = "File not found or not an HDF5 review file: " + filePath;
+                    return false;
+                }
+                open = true;
                 path = filePath;
                 recording = reader.isRecordingFile();
                 readMetadataLocked();
@@ -310,16 +308,27 @@ namespace backend::review
             catch (const std::exception &e)
             {
                 resetLocked();
-                SPDLOG_ERROR("ReviewSession: reading {} failed: {}", filePath, e.what());
-                if (error) *error = "Failed to read " + filePath + ": " + e.what();
+                noteFailure(filePath, e.what(), error);
             }
             catch (...)
             {
                 resetLocked();
-                SPDLOG_ERROR("ReviewSession: reading {} failed", filePath);
-                if (error) *error = "Failed to read " + filePath;
+                noteFailure(filePath, nullptr, error);
             }
             return false;
+        }
+
+        // After the rollback: a log line and the error text, never a throw.
+        static void noteFailure(const std::string &filePath, const char *what, std::string *error) noexcept
+        {
+            try
+            {
+                SPDLOG_ERROR("ReviewSession: reading {} failed: {}", filePath, what ? what : "unknown error");
+                if (error) *error = "Failed to read " + filePath + (what ? std::string(": ") + what : std::string());
+            }
+            catch (...)
+            {
+            }
         }
     };
 
@@ -353,7 +362,15 @@ namespace backend::review
     bool ReviewSession::isOpen() const
     {
         std::scoped_lock lock(impl_->mutex);
-        return impl_->open;
+        // Fail closed (#512 S5 review): a reader handle the session did not
+        // finish opening still counts, so the facade's D1 flag keeps Start
+        // refused until close() or the next open() releases it.
+        return impl_->open || impl_->reader.holdsFileHandle();
+    }
+
+    services::Hdf5Service &ReviewSessionTestAccess::reader(ReviewSession &session)
+    {
+        return session.impl_->reader;
     }
 
     std::string ReviewSession::filePath() const
