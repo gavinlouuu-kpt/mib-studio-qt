@@ -36,10 +36,12 @@ export interface StartBlock {
 }
 
 /** Every reason Start run is unavailable, in plain words (empty = it is available). */
-export function startBlocks(p: { started: "started" | "unknown" | null; starting: boolean; verdict: Verdict; blockers: StartBlockers; lockedReason: string; issues: readonly PlanIssue[]; cameraReason?: string }): StartBlock[] {
+export function startBlocks(p: { started: "started" | "unknown" | null; notStarted?: boolean; starting: boolean; verdict: Verdict; blockers: StartBlockers; lockedReason: string; issues: readonly PlanIssue[]; cameraReason?: string }): StartBlock[] {
   const out: StartBlock[] = [];
   if (p.started === "started") out.push({ id: "started", tone: "info", title: "This plan's run has started", text: "Its identity is recorded in that run. A new plan mints a new experiment id." });
-  if (p.started === "unknown") out.push({ id: "started", tone: "info", title: "This plan's identity may be recorded", text: "The start request was sent but its reply was lost, so it is not sent again. A new plan mints a new experiment id." });
+  if (p.started === "unknown") out.push({ id: "started", tone: "info", title: "This plan's identity may be recorded", text: p.notStarted
+    ? "The backend did not start the run, but it may have opened the run's file first, so the identity is not sent again. A new plan mints a new experiment id."
+    : "The start request was sent but its reply was lost, so it is not sent again. A new plan mints a new experiment id." });
   if (p.starting) out.push({ id: "starting", tone: "info", title: "Start request pending", text: "Waiting for the file dialog, readiness and the backend's answer." });
   // Prepare governs: the same verdict and the same words as Prepare's "Confirm readiness is unavailable".
   if (p.verdict.word === "Not ready")
