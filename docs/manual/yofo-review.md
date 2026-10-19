@@ -100,6 +100,15 @@ not taken yet (`<name>_remasked.h5`, then `_2`, `_3`, …). If you pick a file
 that already exists, the regeneration does not start: the dialog says
 "Output already exists; choose a new file" and you can choose another name.
 
+**Files regenerated with review-v1.1.3-beta.1 or earlier** (#737): those
+versions wrote the wrong frame index, timestamp and track first/last frame
+into most records whenever processing produced fewer records than frames,
+which is the normal case for real cells. The images, masks and background
+in those files are correct; the per-record frame references are not.
+Regenerate such files again from the original recording with this version:
+each record now names its own frame. MIB Studio's reanalysis was never
+affected.
+
 ## Pixel-to-micron factor
 
 Files record the pixel-to-micron factor they were taken with, and YOFO
@@ -146,6 +155,9 @@ contours match. The visible differences:
 - **Sizes look wrong**: check the pixel-to-micron factor in the status
   bar. "(fallback)" means the file recorded none; set the right value under
   **File ▸ Preferences…**.
+- **A regenerated file's frame indices or times do not match its images**:
+  the file was probably written by review-v1.1.3-beta.1 or earlier. See
+  [Regenerate masks](#regenerate-masks) and regenerate it again.
 - **Check for updates fails**: the computer needs internet access to
   `updates.yofo.bio`. You can always install a newer version by hand from
   the GitHub Release.
