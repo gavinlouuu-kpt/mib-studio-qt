@@ -1,0 +1,328 @@
+// @vitest-environment jsdom
+// O3 Experiment · Plan (#716 A5) in the workspace, with the real plan state (usePlan) over a mocked
+// Start flow: Start run sends the plan's exact startRequestJson and nothing else acts; the
+// backend's InvalidRequest is shown next to the sheet in plain words and the plan is kept; over-
+// bound values are refused before anything is sent; Prepare's checklist and the classic Start's
+// locks disable Start run with their own words; a started run locks the plan.
+import { act, StrictMode, useState } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { invoke } from "@tauri-apps/api/core";
+import { EXPERIMENT_START_REQUEST as B, JSON_TRANSPORT, READINESS_GATE_STATUSES as G } from "../bridgeContract";
+import type { PreflightInput } from "../preflight";
+import type { AlignFacts } from "./alignControls";
+import type { ExperimentSubView } from "./ExperimentView";
+import { UUID_V4, buildStartRequest } from "./planModel";
+import { OPERATORS_STORAGE_KEY, usePlan, type PlanStartResult } from "./usePlan";
+import { Workspace, type WorkspaceProps } from "./Workspace";
+
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+
+const OFF = { valid: true, connected: false, identity: "" };
+const READY_INPUT: PreflightInput = {
+  backendReady: true, cameraConfigured: true, cameraRunning: true, cameraIdentity: "Mock camera", cameraExpected: "",
+  coreKnown: true, coreValid: true, corePinSatisfied: true, coreVersion: "2.1.0", requiredCoreVersion: "2.1.0",
+  autofocus: OFF, samplePump: OFF, sheathPump: OFF, trigger: { valid: true, cameraAttached: false },
+  storageKnown: false, storageWritable: false, storageFreeOk: false, storagePath: "",
+};
+const FACTS: AlignFacts = {
+  pz7035: false, instrumentModes: false, hostProcessing: true, geometry: null, instrumentMode: null, runFrozen: false, modeError: "",
+  appliedRunWindow: null, placedRunWindow: null, processingRoi: null, runFps: null, experimentActive: false, running: false,
+};
+
+let host: HTMLDivElement, root: Root;
+let runStart = vi.fn(async (_json: string): Promise<PlanStartResult> => ({ kind: "started", path: "/data/run.h5", notice: "" }));
+const onExit = vi.fn(), onStage = vi.fn();
+
+function Harness({ over = {}, lockedReason = "" }: { over?: Partial<WorkspaceProps>; lockedReason?: string }) {
+  const plan = usePlan(runStart);
+  const [view, setView] = useState<ExperimentSubView>("Plan");
+  const props: WorkspaceProps = {
+    brand: "MIB Studio", source: "Mock camera", method: "", stage: 2, onStage, onExit, serviceMode: false,
+    preflightInput: READY_INPUT, zStage: null, signature: "sig", confirmedFor: "", onConfirm: () => {}, confirmLockedReason: "",
+    experimentActive: false, onRefreshChecks: () => {}, onOpenSetup: () => {},
+    align: { facts: FACTS, subscribeFrames: () => () => {}, onSwitchMode: async () => {}, writeRoi: vi.fn(), lockedReason: "" },
+    experiment: { plan, lockedReason, view, onView: setView }, ...over,
+  };
+  return <Workspace {...props} />;
+}
+
+const render = (props: { over?: Partial<WorkspaceProps>; lockedReason?: string } = {}) =>
+  act(async () => root.render(<StrictMode><Harness {...props} /></StrictMode>));
+const advance = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+const $ = (id: string) => host.querySelector<HTMLElement>(`[data-testid=${id}]`);
+const button = (text: string) => [...host.querySelectorAll("button")].find((b) => b.textContent === text) as HTMLButtonElement | undefined;
+const startButton = () => button("Start run") ?? button("Starting…");
+async function type(testId: string, value: string) {
+  const el = host.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[data-testid=${testId}]`);
+  if (!el) throw new Error(`no field ${testId}`);
+  const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(proto, "value")!.set!.call(el, value);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+async function typeAria(label: string, value: string) {
+  const el = host.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(el, value);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+const experimentId = () => $("plan-experiment-id")!.textContent!;
+const backendCalls = () => vi.mocked(invoke).mock.calls.map(([cmd, args]) => ({ cmd, args }));
+
+async function fillFull() {
+  await type("plan-sample", "Donor 1 · vehicle");
+  await type("plan-condition", "Vehicle");
+  await type("plan-experimentalUnit", "D1");
+  await type("plan-concentrationValue", "0.1");
+  await type("plan-concentrationUnit", "µM");
+  await type("plan-channel", "C1 · 20 µm");
+  await type("plan-medium", "PBS + 0.5% MC");
+  await type("plan-temperatureC", "22.5");
+  await type("plan-notes", "Line 1\nLine 2");
+  await act(async () => button("Add key/value")!.click());
+  await typeAria("Key 1", "passage");
+  await typeAria("Value 1", "12");
+  await type("plan-operator-name", "A. Operator");
+  await type("plan-operator-id", "op-7");
+}
+
+beforeEach(() => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  vi.useFakeTimers();
+  vi.resetAllMocks();
+  runStart = vi.fn(async (_json: string): Promise<PlanStartResult> => ({ kind: "started", path: "/data/run.h5", notice: "" }));
+  const saved = new Map<string, string>();
+  vi.stubGlobal("localStorage", { getItem: (k: string) => saved.get(k) ?? null, setItem: (k: string, v: string) => void saved.set(k, v), removeItem: (k: string) => void saved.delete(k) });
+  vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+    if (cmd === "fetch_experiment_readiness") return { transport_version: JSON_TRANSPORT.version, valid: true, ready: false, generation: "1",
+      gates: [{ id: "storage.output", status: G.Unavailable, reason: "no output path chosen yet", remediation: "choose an HDF5 destination" }] };
+    throw new Error(`unexpected command ${cmd}`);
+  });
+  host = document.createElement("div"); document.body.append(host); root = createRoot(host);
+});
+afterEach(async () => {
+  await act(async () => root.unmount());
+  host.remove();
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
+
+describe("the Plan acts only on Start run", () => {
+  it("opening and filling the plan sends nothing but Prepare's path-less readiness reads", async () => {
+    await render();
+    expect(experimentId()).toMatch(UUID_V4);
+    await fillFull();
+    await advance(5000);
+    for (const c of backendCalls()) expect(c).toEqual({ cmd: "fetch_experiment_readiness", args: { outputPath: "" } });
+    expect(runStart).not.toHaveBeenCalled();
+    // The sheet's row as it will be recorded: one colour per condition.
+    const table = $("plan-sheet-table")!;
+    expect(table.querySelector(".mib-condition")!.textContent).toBe("Vehicle");
+    expect(table.textContent).toContain("0.1 µM");
+  });
+
+  it("Start run passes the plan's startRequestJson, exactly, once", async () => {
+    await render();
+    const id = experimentId();
+    await fillFull();
+    expect(startButton()!.disabled).toBe(false);
+    await act(async () => startButton()!.click());
+    expect(runStart).toHaveBeenCalledTimes(1);
+    expect(runStart.mock.calls[0][0]).toBe(
+      `{"experiment_id":"${id}","run_index":1,"sample_ref":"S1","operator":{"id":"op-7","name":"A. Operator"},` +
+      `"annotation":{"sample":"Donor 1 · vehicle","condition":"Vehicle","experimental_unit":"D1","concentration":{"value":0.1,"unit":"µM"},` +
+      `"channel":"C1 · 20 µm","medium":"PBS + 0.5% MC","temperature_c":22.5,"notes":"Line 1\\nLine 2","free":{"passage":"12"}}}`,
+    );
+  });
+
+  it("an empty plan sends its identity only", async () => {
+    await render();
+    await act(async () => startButton()!.click());
+    expect(runStart.mock.calls[0][0]).toBe(`{"experiment_id":"${experimentId()}","run_index":1,"sample_ref":"S1"}`);
+  });
+});
+
+describe("refusals keep the plan", () => {
+  it("an over-bound value is refused next to its field with the limit named; nothing is sent", async () => {
+    await render();
+    await type("plan-condition", "x".repeat(B.max_text_bytes + 1));
+    const field = $("plan-condition")!;
+    expect(field.getAttribute("aria-invalid")).toBe("true");
+    expect(field.parentElement!.querySelector(".ws-plan-issue")!.textContent).toBe(`too long: ${B.max_text_bytes + 1} bytes, at most ${B.max_text_bytes}. Shorten it; nothing is cut off.`);
+    expect((field as HTMLInputElement).value).toHaveLength(B.max_text_bytes + 1); // never cut off
+    expect(startButton()!.disabled).toBe(true);
+    expect($("plan-blocked-sheet")!.textContent).toContain(`Condition: too long: ${B.max_text_bytes + 1} bytes, at most ${B.max_text_bytes}`);
+    await act(async () => startButton()!.click());
+    expect(runStart).not.toHaveBeenCalled();
+    await type("plan-condition", "x".repeat(B.max_text_bytes));
+    expect(startButton()!.disabled).toBe(false);
+  });
+
+  it("the backend's InvalidRequest is shown in plain words next to the sheet; no run is claimed and the plan is kept", async () => {
+    runStart = vi.fn(async () => ({ kind: "refused", path: "/data/run.h5", message: "invalid start request: annotation.condition: 300 bytes, at most 256" }) as PlanStartResult);
+    await render();
+    const id = experimentId();
+    await fillFull();
+    await act(async () => startButton()!.click());
+    const refusal = $("plan-refusal")!;
+    expect(refusal.closest("[data-testid=plan-sheet]")).not.toBeNull(); // next to the sheet
+    expect(refusal.textContent).toContain("Not started · the backend refused the plan");
+    expect(refusal.textContent).toContain("Condition: 300 bytes, at most 256. No file was created. The plan is kept: correct it and press Start run again.");
+    expect(refusal.querySelector(".ws-gate-id")!.textContent).toBe("annotation.condition");
+    // No run is claimed: no started notice, no lock, the same plan and experiment id.
+    expect(host.textContent).not.toMatch(/Run 1 started|run has started/);
+    expect($("plan-outcome")).toBeNull();
+    expect(button("New plan")).toBeUndefined();
+    expect(experimentId()).toBe(id);
+    expect(($("plan-condition") as HTMLInputElement).value).toBe("Vehicle");
+    expect(($("plan-condition") as HTMLInputElement).disabled).toBe(false);
+    expect(startButton()!.disabled).toBe(false);
+    expect(localStorage.getItem(OPERATORS_STORAGE_KEY)).toBeNull(); // nothing remembered for a refused start
+  });
+
+  it("other outcomes are said as they are, and keep the plan too", async () => {
+    for (const [result, title] of [
+      [{ kind: "not-ready", message: "/data/run.h5: storage.roundtrip: write test failed" }, "Not started · readiness with the chosen file"],
+      [{ kind: "refused", path: "/data/run.h5", message: "Experiment is already running" }, "Not started · the backend refused the Start"],
+      [{ kind: "error", message: "Error: dialog unavailable" }, "Not started · an error before the start was sent"],
+    ] as const) {
+      runStart = vi.fn(async () => result as PlanStartResult);
+      await act(async () => root.unmount());
+      root = createRoot(host);
+      await render();
+      const id = experimentId();
+      await act(async () => startButton()!.click());
+      expect($("plan-outcome")!.textContent).toContain(title);
+      expect($("plan-refusal")).toBeNull();
+      expect(experimentId()).toBe(id);
+      expect(startButton()!.disabled).toBe(false);
+    }
+  });
+
+  it("a cancelled dialog says nothing and changes nothing", async () => {
+    runStart = vi.fn(async () => ({ kind: "cancelled" }) as PlanStartResult);
+    await render();
+    const id = experimentId();
+    await act(async () => startButton()!.click());
+    expect($("plan-outcome")).toBeNull();
+    expect(experimentId()).toBe(id);
+  });
+});
+
+describe("Start run follows Prepare and the classic Start's locks", () => {
+  it("while Prepare's checklist blocks, Start run is disabled with Prepare's own words", async () => {
+    const blocked: PreflightInput = { ...READY_INPUT, coreValid: false };
+    await render({ over: { preflightInput: blocked, stage: 0 } });
+    await advance(0);
+    const prepareWhy = $("workspace-confirm-why")!.textContent!; // Prepare's "Confirm readiness is unavailable"
+    const prepareVerdict = $("workspace-verdict")!.textContent!;
+    await render({ over: { preflightInput: blocked, stage: 2 } });
+    await advance(0);
+    expect(startButton()!.disabled).toBe(true);
+    const notice = $("plan-blocked-prepare")!;
+    expect(notice.querySelector(".mib-notice__title")!.textContent).toBe(`Start is unavailable · Prepare: ${prepareVerdict}`);
+    expect(prepareWhy).toContain(notice.querySelector(".mib-notice__detail")!.textContent!);
+    expect(notice.querySelector(".mib-notice__detail")!.textContent).toBe("1 required check failed: Processing core / trust.");
+    expect($("workspace-verdict")!.textContent).toBe(prepareVerdict); // the same verdict in the header
+    await act(async () => startButton()!.click());
+    expect(runStart).not.toHaveBeenCalled();
+  });
+
+  it("the classic Start button's reason disables it too, said next to it", async () => {
+    await render({ lockedReason: "Camera must be running before starting an experiment" });
+    expect(startButton()!.disabled).toBe(true);
+    expect($("plan-blocked-locked")!.textContent).toContain("Camera must be running before starting an experiment.");
+  });
+});
+
+describe("a started run locks its plan", () => {
+  it("is decided by the start reply alone: a failed status refresh afterwards keeps the plan locked and is said apart (#736 review)", async () => {
+    runStart = vi.fn(async () => ({ kind: "started", path: "/data/run.h5", notice: "", refreshError: "Error: TRANSPORT_LOST" }) as PlanStartResult);
+    await render();
+    await type("plan-condition", "Vehicle");
+    await act(async () => startButton()!.click());
+    expect($("plan-outcome")!.textContent).toContain("Run 1 started · /data/run.h5");
+    expect($("plan-refresh")!.textContent).toContain("Run status not refreshed");
+    expect($("plan-refresh")!.textContent).toContain("Error: TRANSPORT_LOST");
+    expect(startButton()!.disabled).toBe(true);
+    expect(($("plan-condition") as HTMLInputElement).disabled).toBe(true);
+    await act(async () => startButton()!.click());
+    expect(runStart).toHaveBeenCalledTimes(1);
+  });
+
+  it("a start whose reply was lost locks the plan too: the run may exist, so its identity is not sent again", async () => {
+    runStart = vi.fn(async () => ({ kind: "unknown", path: "/data/run.h5", message: "TRANSPORT_LOST" }) as PlanStartResult);
+    await render();
+    const id = experimentId();
+    await act(async () => startButton()!.click());
+    expect($("plan-outcome")!.textContent).toContain("Start outcome not known · /data/run.h5");
+    expect($("plan-blocked-started")!.textContent).toContain("This plan's identity may be recorded");
+    expect(startButton()!.disabled).toBe(true);
+    await act(async () => button("New plan")!.click());
+    expect(experimentId()).not.toBe(id);
+    expect(startButton()!.disabled).toBe(false);
+  });
+
+  it("an unexpected throw from the Start flow is treated as a lost reply", async () => {
+    runStart = vi.fn(async () => { throw new Error("boom"); });
+    await render();
+    await act(async () => startButton()!.click());
+    expect($("plan-outcome")!.textContent).toContain("Start outcome not known");
+    expect(startButton()!.disabled).toBe(true);
+  });
+
+  it("locks the sheet, says where it is recorded, remembers the operator; New plan mints a new id", async () => {
+    await render();
+    const id = experimentId();
+    await fillFull();
+    await act(async () => startButton()!.click());
+    expect($("plan-outcome")!.textContent).toContain("Run 1 started · /data/run.h5");
+    expect(startButton()!.disabled).toBe(true);
+    expect(($("plan-condition") as HTMLInputElement).disabled).toBe(true);
+    expect($("plan-blocked-started")!.textContent).toContain("A new plan mints a new experiment id.");
+    expect(JSON.parse(localStorage.getItem(OPERATORS_STORAGE_KEY)!)).toEqual([{ name: "A. Operator", id: "op-7" }]);
+    await act(async () => button("Start run")!.click());
+    expect(runStart).toHaveBeenCalledTimes(1); // no second run with the same identity
+
+    await act(async () => button("New plan")!.click());
+    expect(experimentId()).toMatch(UUID_V4);
+    expect(experimentId()).not.toBe(id);
+    expect(($("plan-condition") as HTMLInputElement).value).toBe("");
+    expect(($("plan-operator-name") as HTMLInputElement).value).toBe("A. Operator"); // the selected operator stays
+    expect($("plan-operators")!.textContent).toContain("A. Operator (op-7)");
+    expect(startButton()!.disabled).toBe(false);
+  });
+
+  it("a remembered operator is the next plan's default and can be picked", async () => {
+    localStorage.setItem(OPERATORS_STORAGE_KEY, JSON.stringify([{ name: "B. Second", id: "" }, { name: "A. Operator", id: "op-7" }]));
+    await render();
+    expect(($("plan-operator-name") as HTMLInputElement).value).toBe("B. Second");
+    await act(async () => button("A. Operator (op-7)")!.click());
+    expect(($("plan-operator-id") as HTMLInputElement).value).toBe("op-7");
+    expect($("plan-operator-note")!.textContent).toContain("not authentication");
+  });
+});
+
+describe("the sample format", () => {
+  it("offers a single sample; the queue is shown, inert, with the reason", async () => {
+    await render();
+    const options = [...host.querySelectorAll<HTMLLabelElement>(".mib-option")];
+    expect(options.map((o) => o.querySelector(".mib-option__label")!.textContent)).toEqual(["Single sample", "Sample queue"]);
+    expect(options[0].querySelector("input")!.checked).toBe(true);
+    const queue = options[1].querySelector("input")!;
+    expect(queue.disabled).toBe(true);
+    expect(options[1].querySelector(".mib-option__reason")!.textContent).toBe("Not yet · the guided queue comes in the next workspace step");
+  });
+});
+
+it("buildStartRequest is what the view sends (no second serializer)", async () => {
+  await render();
+  await type("plan-condition", "Vehicle");
+  await act(async () => startButton()!.click());
+  const sent = runStart.mock.calls[0][0];
+  expect(sent).toBe(buildStartRequest({ experimentId: JSON.parse(sent).experiment_id, format: "single", operator: { name: "", id: "" },
+    rows: [{ ref: "S1", sample: "", condition: "Vehicle", experimentalUnit: "", concentrationValue: "", concentrationUnit: "", channel: "", medium: "", temperatureC: "", notes: "", free: [] }] }).json);
+});

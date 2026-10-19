@@ -2,7 +2,7 @@
 // The opt-in workspace and its Prepare view over the mocked transport (#713): Prepare reads the
 // backend gates without a path and nothing else, renders Unknown as unknown, and stages only
 // change what is shown.
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
@@ -12,6 +12,9 @@ import type { PreflightInput } from "../preflight";
 import { PREPARE_READINESS_POLL_MS } from "./prepareModel";
 import { Workspace, type WorkspaceProps } from "./Workspace";
 import type { AlignFacts } from "./alignControls";
+import type { ExperimentSubView } from "./ExperimentView";
+import { newPlanDraft } from "./planModel";
+import type { PlanController } from "./usePlan";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
@@ -33,13 +36,25 @@ const FACTS: AlignFacts = {
   appliedRunWindow: null, placedRunWindow: null, processingRoi: null, runFps: null, experimentActive: false, running: false,
 };
 const onSwitchMode = vi.fn(async () => {}), writeRoi = vi.fn(), subscribeFrames = vi.fn();
+const planStart = vi.fn(async () => null);
+const PLAN: PlanController = {
+  draft: newPlanDraft("3f2b8c1e-9a4d-4e6f-8b21-0c5d7e9f1a2b"), edit: () => {}, operators: [], result: null, started: null, starting: false,
+  start: planStart, newPlan: () => {},
+};
 const props = (over: Partial<WorkspaceProps> = {}): WorkspaceProps => ({
   brand: "MIB Studio", source: "Mock camera", method: "", stage: 0, onStage, onExit, serviceMode: false,
   preflightInput: INPUT, zStage: null, signature: "sig-now", confirmedFor: "", onConfirm, confirmLockedReason: "",
   experimentActive: false, onRefreshChecks, onOpenSetup,
-  align: { facts: FACTS, subscribeFrames, onSwitchMode, writeRoi, lockedReason: "" }, ...over,
+  align: { facts: FACTS, subscribeFrames, onSwitchMode, writeRoi, lockedReason: "" },
+  experiment: { plan: PLAN, lockedReason: "", view: "Plan", onView: () => {} }, ...over,
 });
-const render = (over: Partial<WorkspaceProps> = {}) => act(async () => root.render(<Workspace {...props(over)} />));
+const onView = vi.fn();
+/** The Experiment sub-view is held by App: here by a wrapper, as App does. */
+function WithView(p: WorkspaceProps) {
+  const [view, setView] = useState<ExperimentSubView>(p.experiment.view);
+  return <Workspace {...p} experiment={{ ...p.experiment, view, onView: (v) => { setView(v); onView(v); } }} />;
+}
+const render = (over: Partial<WorkspaceProps> = {}) => act(async () => root.render(<WithView {...props(over)} />));
 const advance = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
 const calls = () => vi.mocked(invoke).mock.calls.map(([cmd, args]) => ({ cmd, args }));
 const button = (text: string) => [...host.querySelectorAll("button")].find((b) => b.textContent === text)!;
@@ -227,14 +242,55 @@ describe("stages only navigate", () => {
     expect(calls().every((c) => c.cmd === "fetch_experiment_readiness")).toBe(true);
   });
 
-  it("Experiment and Review say they are not in the workspace yet and offer the way back", async () => {
-    for (const [stage, name] of [[2, "Experiment"], [3, "Review"]] as const) {
-      await render({ stage });
-      expect(host.textContent).toContain(`Not yet in the workspace · ${name}`);
-      await act(async () => button("Back to the classic view").click());
+  it("Review says it is not in the workspace yet and offers the way back", async () => {
+    await render({ stage: 3 });
+    expect(host.textContent).toContain("Not yet in the workspace · Review");
+    await act(async () => button("Back to the classic view").click());
+    expect(onExit).toHaveBeenCalledTimes(1);
+    await advance(PREPARE_READINESS_POLL_MS * 3);
+    expect(calls().length).toBe(0); // Review reads nothing
+  });
+
+  it("Experiment opens on its Plan (O3): only Prepare's path-less readiness is read, nothing starts", async () => {
+    await render({ stage: 2 });
+    expect(host.querySelector("[data-testid=workspace-plan]")).not.toBeNull();
+    expect(host.textContent).not.toContain("Not yet in the workspace · Experiment");
+    expect(host.querySelector("[data-testid=workspace-preview-chip]")!.textContent).toBe("Preview · acts only on a button");
+    // Prepare's verdict governs the Plan: the same chip in the header.
+    expect(verdictChip().textContent).toBe("Ready · destination checked at Start");
+    await advance(PREPARE_READINESS_POLL_MS * 3);
+    for (const c of calls()) expect(c).toEqual({ cmd: "fetch_experiment_readiness", args: { outputPath: "" } });
+    expect(planStart).not.toHaveBeenCalled();
+    // Live and Summary are not in the workspace yet; choosing them sends nothing.
+    for (const sub of ["Live", "Summary"]) {
+      await act(async () => button(sub).click());
+      expect(host.textContent).toContain(`Not yet in the workspace · ${sub}`);
     }
-    expect(onExit).toHaveBeenCalledTimes(2);
-    expect(calls().length).toBe(0); // no stage but Prepare reads anything
+    await act(async () => button("Back to the classic view").click());
+    expect(onExit).toHaveBeenCalledTimes(1);
+    await act(async () => button("Plan").click());
+    expect(host.querySelector("[data-testid=workspace-plan]")).not.toBeNull();
+    expect(planStart).not.toHaveBeenCalled();
+    expect(onView.mock.calls.map(([v]) => v)).toEqual(["Live", "Summary", "Plan"]);
+  });
+
+  it("readiness is read only while the Plan is shown: Live and Summary stop the reads, Plan resumes them (#736 review)", async () => {
+    await render({ stage: 2 });
+    await advance(PREPARE_READINESS_POLL_MS * 2);
+    expect(calls().length).toBeGreaterThan(0);
+    expect(verdictChip()).not.toBeNull();
+    for (const sub of ["Live", "Summary"]) {
+      await act(async () => button(sub).click());
+      const before = calls().length;
+      await advance(PREPARE_READINESS_POLL_MS * 5);
+      expect(calls().length).toBe(before); // no read while a placeholder is shown
+      expect(host.querySelector("[data-testid=workspace-verdict]")).toBeNull(); // no verdict without the reads
+    }
+    const before = calls().length;
+    await act(async () => button("Plan").click());
+    await advance(PREPARE_READINESS_POLL_MS * 2);
+    expect(calls().length).toBeGreaterThan(before);
+    for (const c of calls()) expect(c).toEqual({ cmd: "fetch_experiment_readiness", args: { outputPath: "" } });
   });
 
   it("Align (O2) has content now; opening it sends nothing, switches nothing and writes nothing", async () => {

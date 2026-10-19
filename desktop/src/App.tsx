@@ -30,7 +30,9 @@ import { SsdStrip } from "./components/SsdStrip";
 import { stripView, type SsdStatus } from "./ssdView";
 import { RingPlaybackPanel } from "./components/RingPlaybackPanel";
 import { faultClearedNote } from "./ringPlayback";
-import { startExperiment } from "./experimentStart";
+import { startExperiment, type StartOutcome } from "./experimentStart";
+import { SerialReads } from "./serialReads";
+import { usePlan, type PlanStartResult } from "./workspace/usePlan";
 import { downloadUrl } from "./filesView";
 import { serverOrigin, tokenFromLocation } from "./transport/auth";
 import { FilesPanel } from "./components/FilesPanel";
@@ -62,7 +64,7 @@ import {
 import { deviceIdentity as cameraIdentity, preflightSignature as signPreflight, type SignatureDevice } from "./confirmationSignature";
 import { BRIDGE_ABI_VERSION, EXPERIMENT_STATES, PUMP_IDS } from "./bridgeContract";
 import { deriveWorkflow, type StageTab, type WorkflowFacts } from "./workflow";
-import { CHECK_STATUS_LABEL, derivePreflight, type PreflightInput } from "./preflight";
+import { CHECK_STATUS_LABEL, PREFLIGHT_POLL_MS, PREFLIGHT_READ_STALE_MS, derivePreflight, type PreflightInput } from "./preflight";
 import { capabilitiesOf, isPz7035, PL_IGNORED_SETTINGS_TEXT } from "./platformCapabilities";
 import { deriveQualityGates, GATE_STATUS_LABEL, type ImageQualityInput, type QualityInput } from "./quality";
 import { deriveContextBar, SEG_STATUS_LABEL, type ContextBarFacts } from "./contextBar";
@@ -99,7 +101,8 @@ import { ReanalysisControls, ReanalysisStatus, useReanalysis } from "./reanalysi
 import { SavedReviewImage } from "./components/SavedReviewImage";
 import { ReviewCharts } from "./components/ReviewCharts";
 import { ExportStatus, ReviewExportOptions, useReviewExport } from "./exportControls";
-import { Workspace } from "./workspace/Workspace";
+import { Workspace, workspaceReadsPrepare } from "./workspace/Workspace";
+import type { ExperimentSubView } from "./workspace/ExperimentView";
 import type { FrameSink } from "./workspace/AlignView";
 import type { RoiKind } from "./workspace/alignControls";
 import type { WriteResult } from "./workspace/quickControlModel";
@@ -198,6 +201,8 @@ export default function App() {
   // Opt-in workspace (P1, #713): the stage shown, or null for the classic view. Session state
   // only: every start and every reload opens the classic view, so startup does not change.
   const [workspaceStage, setWorkspaceStage] = useState<number | null>(null);
+  // The Experiment stage's sub-view (Plan / Live / Summary): what the workspace polls depends on it.
+  const [experimentView, setExperimentView] = useState<ExperimentSubView>("Plan");
   const workspaceStageRef = useRef<number | null>(null);
   workspaceStageRef.current = workspaceStage;
   const [connectTab, setConnectTab] = useState<"cameras" | "mindvision" | "framegrabbers">("cameras");
@@ -691,8 +696,17 @@ export default function App() {
   }, [ready, refreshCameraState]);
 
   // UX-3: poll every subsystem the preflight checklist needs. Runs off the
-  // capture loop so preflight works before the camera is started.
+  // capture loop so preflight works before the camera is started. One read at a time: a tick (or
+  // Refresh) while one is in flight is skipped, a read stuck for PREFLIGHT_READ_STALE_MS stops
+  // holding the poll, and a reply older than one already applied is dropped (#736 review).
+  const preflightReads = useRef(new SerialReads(PREFLIGHT_READ_STALE_MS));
   const refreshPreflight = useCallback(async () => {
+    const reads = preflightReads.current;
+    const seq = reads.begin();
+    if (seq === null) return;
+    // Separate from the batch so a backend without a Z stage cannot fail it. No Z stage on the
+    // PZ7035 (#464), so the instrument is not asked.
+    const stage = pz7035Ref.current ? null : bridge.fetchStageStatus().then((s) => s, () => null);
     try {
       const [sel, core, af, sample, sheath, trig] = await Promise.all([
         bridge.fetchCameraSelection(),
@@ -702,26 +716,29 @@ export default function App() {
         bridge.fetchPumpStatus(PUMP_IDS.Sheath),
         bridge.fetchTriggerStatus(),
       ]);
-      setCamSelection(sel);
-      setCoreStatus(core);
-      setAfStatus(af);
-      setSamplePump(sample);
-      setSheathPump(sheath);
-      setTrigStatus(trig);
+      if (reads.accept(seq)) {
+        setCamSelection(sel);
+        setCoreStatus(core);
+        setAfStatus(af);
+        setSamplePump(sample);
+        setSheathPump(sheath);
+        setTrigStatus(trig);
+      }
     } catch {
       /* backend gone — the capture loop / next poll surfaces it */
     }
-    // Separate from the batch above so a backend without a Z stage cannot fail it. No Z stage on
-    // the PZ7035 (#464), so the instrument is not asked.
-    if (!pz7035Ref.current) void bridge.fetchStageStatus().then(setZStage).catch(() => setZStage(null));
+    try {
+      if (stage) { const z = await stage; if (reads.accept(seq)) setZStage(z); }
+    } finally { reads.end(seq); }
   }, []);
 
-  // The checklist is shown on the classic Connect tab and in the workspace's Prepare stage.
-  const checklistShown = tab === "connect" || workspaceStage === 0;
+  // The checklist is shown on the classic Connect tab and in the workspace's Prepare stage; the
+  // workspace's Experiment plan takes Prepare's verdict from it too (reads only).
+  const checklistShown = tab === "connect" || (workspaceStage !== null && workspaceReadsPrepare(workspaceStage, experimentView));
   useEffect(() => {
     if (!ready || !checklistShown) return;
     void refreshPreflight();
-    const id = window.setInterval(() => void refreshPreflight(), 1500);
+    const id = window.setInterval(() => void refreshPreflight(), PREFLIGHT_POLL_MS);
     return () => window.clearInterval(id);
   }, [ready, checklistShown, refreshPreflight]);
 
@@ -927,28 +944,56 @@ export default function App() {
   const [readinessMessage, setReadinessMessage] = useState("");
   // Non-blocking readiness warnings shown at run start (e.g. recording to RAM, #501).
   const [startNotice, setStartNotice] = useState("");
-  const onStartExperiment = useCallback(async () => {
-    if (experimentPending.current) return;
+  // One Start flow for the classic Start button (no start request) and the workspace's Plan, which
+  // passes the run's identity and planned annotation as startRequestJson (ABI 39, #716 A5).
+  // The outcome is decided by the start reply alone (startExperiment): the status refresh after it
+  // is a separate read, and its failure is reported as such (refreshError), never as the outcome,
+  // so a started run's identity is never offered again (#736 review).
+  const runExperimentStart = useCallback(async (startRequestJson?: string): Promise<PlanStartResult> => {
+    if (experimentPending.current) return { kind: "busy" };
     experimentPending.current = true; setExperimentRequestBusy(true); setReadinessMessage(""); setStartNotice("");
     try {
-      const outcome = await startExperiment({
-        fetchRingStatus: () => bridge.fetchRingStatus(),
-        confirm,
-        pickFile: () => save({ title: "Save Experiment Data", filters: H5_FILTER, defaultPath: "experiment.h5" }),
-        fetchReadiness: (path) => bridge.fetchExperimentReadiness(path),
-        start: (path, acknowledgeDiscardRing) => bridge.experimentStart(path, acknowledgeDiscardRing),
-      });
-      if (outcome.kind === "not-ready") { setReadinessMessage(outcome.message); return; }
-      if (outcome.kind === "refused") {setReadinessMessage(`${outcome.path}: ${outcome.message}`); setExpStatus(await bridge.fetchExperimentStatus()); return append(`experiment start failed: ${outcome.message}`); }
+      let outcome: StartOutcome;
+      try {
+        outcome = await startExperiment({
+          fetchRingStatus: () => bridge.fetchRingStatus(),
+          confirm,
+          pickFile: () => save({ title: "Save Experiment Data", filters: H5_FILTER, defaultPath: "experiment.h5" }),
+          fetchReadiness: (path) => bridge.fetchExperimentReadiness(path),
+          start: (path, acknowledgeDiscardRing, request) => bridge.experimentStart(path, acknowledgeDiscardRing, request),
+        }, startRequestJson);
+      } catch (e) {
+        // Before the start request was sent (dialog or readiness): nothing was started.
+        append(`experiment start error: ${e}`);
+        return { kind: "error", message: String(e) };
+      }
+      const refreshStatus = async (): Promise<string> => {
+        try { setExpStatus(await bridge.fetchExperimentStatus()); return ""; }
+        catch (e) { append(`experiment status refresh error: ${e}`); return String(e); }
+      };
+      if (outcome.kind === "not-ready") { setReadinessMessage(outcome.message); return outcome; }
+      if (outcome.kind === "refused") {
+        setReadinessMessage(`${outcome.path}: ${outcome.message}`); append(`experiment start failed: ${outcome.message}`);
+        const refreshError = await refreshStatus();
+        return refreshError ? { ...outcome, refreshError } : outcome;
+      }
+      if (outcome.kind === "unknown") {
+        append(`experiment start error (outcome not known): ${outcome.message}`);
+        const refreshError = await refreshStatus();
+        return refreshError ? { ...outcome, refreshError } : outcome;
+      }
       if (outcome.kind === "started") {
         append(`experiment started → ${outcome.path}`);
         if (outcome.notice) { setStartNotice(outcome.notice); append(outcome.notice); }
-        setExpStatus(await bridge.fetchExperimentStatus());
+        const refreshError = await refreshStatus();
+        return refreshError ? { ...outcome, refreshError } : outcome;
       }
-    } catch (e) {
-      append(`experiment start error: ${e}`);
+      return outcome;
     } finally { experimentPending.current = false; setExperimentRequestBusy(false); }
   }, [append]);
+  const onStartExperiment = useCallback(() => { void runExperimentStart(); }, [runExperimentStart]);
+  // The workspace's Experiment plan (O3): local until its Start run button.
+  const plan = usePlan(runExperimentStart);
 
   const onStopExperiment = useCallback(async () => {
     try {
@@ -1660,6 +1705,8 @@ export default function App() {
             onRefreshChecks={() => void refreshPreflight()}
             // The classic Connect tab only reads (it never switches camera modes).
             onOpenSetup={() => { setTab("connect"); exitWorkspace(); }}
+            // O3 Plan: Start run is locked for the same reasons as the classic Start button.
+            experiment={{ plan, lockedReason: startExperimentReason ?? "", view: experimentView, onView: setExperimentView }}
           />
         </div>
       )}

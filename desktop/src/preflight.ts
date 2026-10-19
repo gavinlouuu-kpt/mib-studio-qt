@@ -105,6 +105,11 @@ export interface PreflightRequirements {
   storage: Requirement;
 }
 
+/** The checklist poll's period while it is shown, and how long one stuck read may hold the poll
+ *  before the next tick starts another (App, `SerialReads`; #736 review). */
+export const PREFLIGHT_POLL_MS = 1500;
+export const PREFLIGHT_READ_STALE_MS = 10_000;
+
 export const DEFAULT_REQUIREMENTS: PreflightRequirements = {
   autofocus: "optional",
   samplePump: "optional",

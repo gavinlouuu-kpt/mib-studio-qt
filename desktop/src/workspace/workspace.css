@@ -163,3 +163,119 @@
   white-space: normal;
   max-width: 100%;
 }
+/* O3 Experiment · Plan (A5): format, sheet and identity side by side (the sheet widest), one
+   column when narrow; the Start card below. Text fields are app-local until the kit has one. */
+.ws-shell .ws-plan {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(0, 2.2fr) minmax(260px, 1.1fr);
+  gap: var(--mib-space-4);
+  align-items: start;
+}
+@media (max-width: 1200px) {
+  .ws-shell .ws-plan {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .ws-shell .ws-plan__sheet {
+    grid-column: 1 / -1;
+    grid-row: 1;
+  }
+}
+@media (max-width: 760px) {
+  .ws-shell .ws-plan {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.ws-shell .ws-plan-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--mib-space-2) var(--mib-space-3);
+  margin-top: var(--mib-space-3);
+}
+.ws-shell .ws-plan-form--single {
+  grid-template-columns: minmax(0, 1fr);
+}
+.ws-shell .ws-plan-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ws-shell .ws-plan-field--wide {
+  grid-column: 1 / -1;
+}
+.ws-shell .ws-plan-field > label,
+.ws-shell .ws-plan-label {
+  font-size: var(--mib-font-size-xs);
+  font-weight: var(--mib-font-weight-semibold);
+  color: var(--mib-color-sub);
+}
+.ws-shell .ws-plan-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.6fr);
+  gap: var(--mib-space-2);
+}
+.ws-shell .ws-plan-field input,
+.ws-shell .ws-plan-field textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 28px;
+  padding: 3px 6px;
+  font: inherit;
+  font-size: var(--mib-font-size-sm);
+  color: var(--mib-color-ink);
+  background: var(--mib-color-card);
+  border: 1px solid var(--mib-color-line);
+  border-radius: var(--mib-radius-sm);
+}
+.ws-shell .ws-plan-field textarea {
+  resize: vertical;
+}
+.ws-shell .ws-plan-field input::placeholder,
+.ws-shell .ws-plan-field textarea::placeholder {
+  color: var(--mib-color-mute);
+}
+.ws-shell .ws-plan-field input:disabled,
+.ws-shell .ws-plan-field textarea:disabled {
+  background: var(--mib-color-tile);
+  color: var(--mib-color-mute);
+}
+.ws-shell .ws-plan-field [aria-invalid="true"] {
+  border-color: var(--mib-color-blocked);
+}
+/* A refused value: the reason under the field, in the blocked state's colour. */
+.ws-shell .ws-plan-issue {
+  font-size: var(--mib-font-size-xs);
+  color: var(--mib-color-blocked);
+}
+.ws-shell .ws-plan-kv {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr) auto;
+  gap: var(--mib-space-1) var(--mib-space-2);
+  align-items: center;
+}
+.ws-shell .ws-plan-kv .ws-plan-issue {
+  grid-column: 1 / -1;
+}
+.ws-shell .ws-plan-operators {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--mib-space-1);
+  margin-top: var(--mib-space-2);
+}
+.ws-shell .ws-plan-id {
+  font-variant-numeric: tabular-nums;
+  word-break: break-all;
+}
+/* The unavailable option's reason wraps inside the narrow format card (the kit chip is one line). */
+.ws-shell .ws-plan__format .mib-option__reason {
+  white-space: normal;
+  max-width: 100%;
+}
+/* The sheet's preview row keeps to the card: long values wrap, never cut off. */
+.ws-shell .ws-plan__sheet .mib-table {
+  width: 100%;
+}
+.ws-shell .ws-plan__sheet .mib-table__cell {
+  overflow-wrap: anywhere;
+}

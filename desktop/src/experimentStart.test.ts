@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
+import { invoke } from "@tauri-apps/api/core";
+import { bridge } from "./bridge";
+import { COMMAND_TYPES, JSON_TRANSPORT } from "./bridgeContract";
 import { startExperiment, type StartDeps, type StartReadiness } from "./experimentStart";
 import type { RingStatus } from "./ringPlayback";
+
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
 const ring = (over: Partial<RingStatus> = {}): RingStatus => ({
   available: true, frozen: true, invalid: false, stop_incomplete: false, restore_needed: false, run_frozen: true, capacity_frames: 5000, first_seq: 0, last_seq: 4999,
@@ -69,3 +74,58 @@ describe("starting an experiment from a stopped Run", () => {
     expect(await startExperiment(d)).toEqual({ kind: "started", path: "/data/run.h5", notice: "recording to RAM" });
   });
 });
+
+// ABI 39 (#712, #716 A5): the workspace Plan's startRequestJson goes through the same flow, unchanged.
+describe("the start request of a plan", () => {
+  const REQUEST = '{"experiment_id":"3f2b8c1e-9a4d-4e6f-8b21-0c5d7e9f1a2b","run_index":1,"sample_ref":"S1","annotation":{"notes":"a\\nb  ","condition":"µ"}}';
+  it("is passed to the start byte for byte", async () => {
+    const d = deps();
+    expect(await startExperiment(d, REQUEST)).toEqual({ kind: "started", path: "/data/run.h5", notice: "" });
+    expect(d.start).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(d.start).mock.calls[0]).toEqual(["/data/run.h5", true, REQUEST]);
+    expect(vi.mocked(d.start).mock.calls[0][2]).toBe(REQUEST);
+  });
+  it("an old caller without a plan sends no third argument", async () => {
+    const d = deps();
+    await startExperiment(d);
+    expect(vi.mocked(d.start).mock.calls[0]).toHaveLength(2);
+  });
+  it("a cancelled dialog or a failed readiness sends nothing, request or not", async () => {
+    const cancelled = deps({ pickFile: vi.fn(async () => null) });
+    expect(await startExperiment(cancelled, REQUEST)).toEqual({ kind: "cancelled" });
+    expect(cancelled.start).not.toHaveBeenCalled();
+    const notReady = deps({ fetchReadiness: vi.fn(async () => ({ valid: true, ready: false, gates: [] })) });
+    expect((await startExperiment(notReady, REQUEST)).kind).toBe("not-ready");
+    expect(notReady.start).not.toHaveBeenCalled();
+  });
+  it("a start call that throws is an unknown outcome, not an error before sending: the request may have been accepted", async () => {
+    const d = deps({ start: vi.fn(async () => { throw new Error("TRANSPORT_LOST"); }) });
+    expect(await startExperiment(d, REQUEST)).toEqual({ kind: "unknown", path: "/data/run.h5", message: "Error: TRANSPORT_LOST" });
+  });
+  it("an error before the start call (dialog, readiness) is thrown to the caller: nothing was sent", async () => {
+    const d = deps({ fetchReadiness: vi.fn(async () => { throw new Error("offline"); }) });
+    await expect(startExperiment(d, REQUEST)).rejects.toThrow("offline");
+    expect(d.start).not.toHaveBeenCalled();
+  });
+  it("the backend's InvalidRequest comes back as the refusal, with its message", async () => {
+    const message = "invalid start request: annotation.condition: 300 bytes, at most 256";
+    const d = deps({ start: vi.fn(async () => ({ ok: false, message })) });
+    expect(await startExperiment(d, REQUEST)).toEqual({ kind: "refused", path: "/data/run.h5", message });
+  });
+});
+
+describe("bridge.experimentStart on the transport", () => {
+  const reply = { transport_version: JSON_TRANSPORT.version, ok: true, command: COMMAND_TYPES.Experiment, message: "started", operation_id: "1" };
+  it("sends startRequestJson only when given, and then exactly the text", async () => {
+    vi.mocked(invoke).mockReset();
+    vi.mocked(invoke).mockResolvedValue(reply);
+    await bridge.experimentStart("/data/a.h5", false);
+    await bridge.experimentStart("/data/b.h5", true, REQUEST_TEXT);
+    expect(vi.mocked(invoke).mock.calls).toEqual([
+      ["experiment_start", { outputPath: "/data/a.h5", acknowledgeDiscardRing: false }],
+      ["experiment_start", { outputPath: "/data/b.h5", acknowledgeDiscardRing: true, startRequestJson: REQUEST_TEXT }],
+    ]);
+    expect(Object.keys(vi.mocked(invoke).mock.calls[0][1] as object)).not.toContain("startRequestJson");
+  });
+});
+const REQUEST_TEXT = '{"experiment_id":"3f2b8c1e-9a4d-4e6f-8b21-0c5d7e9f1a2b","run_index":1,"sample_ref":"S1"}';
