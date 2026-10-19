@@ -47,9 +47,10 @@ export interface StartBlock {
 }
 
 /** Every reason Start run is unavailable, in plain words (empty = it is available). */
-export function startBlocks(p: { started: boolean; starting: boolean; verdict: Verdict; blockers: PlanViewProps["blockers"]; lockedReason: string; issues: readonly PlanIssue[] }): StartBlock[] {
+export function startBlocks(p: { started: "started" | "unknown" | null; starting: boolean; verdict: Verdict; blockers: PlanViewProps["blockers"]; lockedReason: string; issues: readonly PlanIssue[] }): StartBlock[] {
   const out: StartBlock[] = [];
-  if (p.started) out.push({ id: "started", tone: "info", title: "This plan's run has started", text: "Its identity is recorded in that run. A new plan mints a new experiment id." });
+  if (p.started === "started") out.push({ id: "started", tone: "info", title: "This plan's run has started", text: "Its identity is recorded in that run. A new plan mints a new experiment id." });
+  if (p.started === "unknown") out.push({ id: "started", tone: "info", title: "This plan's identity may be recorded", text: "The start request was sent but its reply was lost, so it is not sent again. A new plan mints a new experiment id." });
   if (p.starting) out.push({ id: "starting", tone: "info", title: "Start request pending", text: "Waiting for the file dialog, readiness and the backend's answer." });
   // Prepare governs: the same verdict and the same words as Prepare's "Confirm readiness is unavailable".
   if (p.verdict.word === "Not ready")
@@ -60,17 +61,27 @@ export function startBlocks(p: { started: boolean; starting: boolean; verdict: V
   return out;
 }
 
-/** The Notice for the last Start's result; the InvalidRequest refusal is shown by the sheet. */
-function resultNotice(r: PlanStartResult | null): { tone: "confirmed" | "warn" | "blocked" | "info"; title: string; text: string } | null {
+type NoticeText = { tone: "confirmed" | "warn" | "blocked" | "info"; title: string; text: string };
+
+/** The Notice for the last Start's result, decided by the start reply alone; the InvalidRequest
+ *  refusal is shown by the sheet. */
+export function resultNotice(r: PlanStartResult | null): NoticeText | null {
   if (!r) return null;
   switch (r.kind) {
     case "started": return { tone: "confirmed", title: `Run ${SINGLE_SAMPLE_RUN_INDEX} started · ${r.path}`, text: `Its identity and the planned annotation are recorded in the file.${r.notice ? ` ${r.notice}` : ""} Monitor and stop it in the classic view.` };
+    case "unknown": return { tone: "blocked", title: `Start outcome not known${r.path ? ` · ${r.path}` : ""}`, text: `The start request was sent but no reply was read (${r.message}). The run may have started: check it in the classic view. This plan's identity is not sent again.` };
     case "not-ready": return { tone: "warn", title: "Not started · readiness with the chosen file", text: r.message };
     case "refused": return invalidRequestReason(r.message) ? null : { tone: "blocked", title: "Not started · the backend refused the Start", text: `${r.path}: ${r.message}` };
-    case "error": return { tone: "blocked", title: "Start error · the outcome is not known", text: `${r.message}. Check the run state in the classic view before starting again.` };
+    case "error": return { tone: "blocked", title: "Not started · an error before the start was sent", text: r.message };
     case "busy": return { tone: "info", title: "Not started · a start request is already pending", text: "Wait for it to finish." };
     default: return null;
   }
+}
+
+/** A failed status read after the start reply, said apart: it never changes the outcome. */
+export function refreshNotice(r: PlanStartResult | null): NoticeText | null {
+  if (!r || !("refreshError" in r) || !r.refreshError) return null;
+  return { tone: "warn", title: "Run status not refreshed", text: `${r.refreshError}. The start reply decides the outcome above; the status is read again on the next poll.` };
 }
 
 const NOT_DECLARED = <span title="Not declared">–</span>;
@@ -149,9 +160,10 @@ export function PlanView({ plan, lockedReason, verdict, blockers }: PlanViewProp
   const row = draft.rows[0];
   const build = buildStartRequest(draft, 0, SINGLE_SAMPLE_RUN_INDEX);
   const locked = !!started || starting;
-  const blocks = startBlocks({ started: !!started, starting, verdict, blockers, lockedReason, issues: build.issues });
+  const blocks = startBlocks({ started: started?.outcome ?? null, starting, verdict, blockers, lockedReason, issues: build.issues });
   const refusal = plan.result?.kind === "refused" ? invalidRequestReason(plan.result.message) : null;
   const outcome = resultNotice(plan.result);
+  const refresh = refreshNotice(plan.result);
   const slots = conditionSlots(draft.rows);
   const editRow = (change: (r: SampleRow) => SampleRow) => plan.edit((d) => ({ ...d, rows: d.rows.map((r, i) => (i === 0 ? change(r) : r)) }));
   const setOperator = (k: "name" | "id") => (v: string) => plan.edit((d) => ({ ...d, operator: { ...d.operator, [k]: v } }));
@@ -244,6 +256,7 @@ export function PlanView({ plan, lockedReason, verdict, blockers }: PlanViewProp
           </Button>
         </>}>
         {outcome ? <Notice tone={outcome.tone} title={outcome.title} data-testid="plan-outcome">{outcome.text}</Notice> : null}
+        {refresh ? <Notice tone={refresh.tone} title={refresh.title} data-testid="plan-refresh">{refresh.text}</Notice> : null}
         {blocks.map((b) => (
           <Notice key={b.id} tone={b.tone} title={b.title} data-testid={`plan-blocked-${b.id}`}>{b.text}</Notice>
         ))}

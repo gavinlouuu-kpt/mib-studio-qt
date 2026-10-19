@@ -4,13 +4,14 @@
 // backend's InvalidRequest is shown next to the sheet in plain words and the plan is kept; over-
 // bound values are refused before anything is sent; Prepare's checklist and the classic Start's
 // locks disable Start run with their own words; a started run locks the plan.
-import { act, StrictMode } from "react";
+import { act, StrictMode, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { EXPERIMENT_START_REQUEST as B, JSON_TRANSPORT, READINESS_GATE_STATUSES as G } from "../bridgeContract";
 import type { PreflightInput } from "../preflight";
 import type { AlignFacts } from "./alignControls";
+import type { ExperimentSubView } from "./ExperimentView";
 import { UUID_V4, buildStartRequest } from "./planModel";
 import { OPERATORS_STORAGE_KEY, usePlan, type PlanStartResult } from "./usePlan";
 import { Workspace, type WorkspaceProps } from "./Workspace";
@@ -35,12 +36,13 @@ const onExit = vi.fn(), onStage = vi.fn();
 
 function Harness({ over = {}, lockedReason = "" }: { over?: Partial<WorkspaceProps>; lockedReason?: string }) {
   const plan = usePlan(runStart);
+  const [view, setView] = useState<ExperimentSubView>("Plan");
   const props: WorkspaceProps = {
     brand: "MIB Studio", source: "Mock camera", method: "", stage: 2, onStage, onExit, serviceMode: false,
     preflightInput: READY_INPUT, zStage: null, signature: "sig", confirmedFor: "", onConfirm: () => {}, confirmLockedReason: "",
     experimentActive: false, onRefreshChecks: () => {}, onOpenSetup: () => {},
     align: { facts: FACTS, subscribeFrames: () => () => {}, onSwitchMode: async () => {}, writeRoi: vi.fn(), lockedReason: "" },
-    experiment: { plan, lockedReason }, ...over,
+    experiment: { plan, lockedReason, view, onView: setView }, ...over,
   };
   return <Workspace {...props} />;
 }
@@ -185,7 +187,7 @@ describe("refusals keep the plan", () => {
     for (const [result, title] of [
       [{ kind: "not-ready", message: "/data/run.h5: storage.roundtrip: write test failed" }, "Not started · readiness with the chosen file"],
       [{ kind: "refused", path: "/data/run.h5", message: "Experiment is already running" }, "Not started · the backend refused the Start"],
-      [{ kind: "error", message: "Error: transport closed" }, "Start error · the outcome is not known"],
+      [{ kind: "error", message: "Error: dialog unavailable" }, "Not started · an error before the start was sent"],
     ] as const) {
       runStart = vi.fn(async () => result as PlanStartResult);
       await act(async () => root.unmount());
@@ -237,6 +239,41 @@ describe("Start run follows Prepare and the classic Start's locks", () => {
 });
 
 describe("a started run locks its plan", () => {
+  it("is decided by the start reply alone: a failed status refresh afterwards keeps the plan locked and is said apart (#736 review)", async () => {
+    runStart = vi.fn(async () => ({ kind: "started", path: "/data/run.h5", notice: "", refreshError: "Error: TRANSPORT_LOST" }) as PlanStartResult);
+    await render();
+    await type("plan-condition", "Vehicle");
+    await act(async () => startButton()!.click());
+    expect($("plan-outcome")!.textContent).toContain("Run 1 started · /data/run.h5");
+    expect($("plan-refresh")!.textContent).toContain("Run status not refreshed");
+    expect($("plan-refresh")!.textContent).toContain("Error: TRANSPORT_LOST");
+    expect(startButton()!.disabled).toBe(true);
+    expect(($("plan-condition") as HTMLInputElement).disabled).toBe(true);
+    await act(async () => startButton()!.click());
+    expect(runStart).toHaveBeenCalledTimes(1);
+  });
+
+  it("a start whose reply was lost locks the plan too: the run may exist, so its identity is not sent again", async () => {
+    runStart = vi.fn(async () => ({ kind: "unknown", path: "/data/run.h5", message: "TRANSPORT_LOST" }) as PlanStartResult);
+    await render();
+    const id = experimentId();
+    await act(async () => startButton()!.click());
+    expect($("plan-outcome")!.textContent).toContain("Start outcome not known · /data/run.h5");
+    expect($("plan-blocked-started")!.textContent).toContain("This plan's identity may be recorded");
+    expect(startButton()!.disabled).toBe(true);
+    await act(async () => button("New plan")!.click());
+    expect(experimentId()).not.toBe(id);
+    expect(startButton()!.disabled).toBe(false);
+  });
+
+  it("an unexpected throw from the Start flow is treated as a lost reply", async () => {
+    runStart = vi.fn(async () => { throw new Error("boom"); });
+    await render();
+    await act(async () => startButton()!.click());
+    expect($("plan-outcome")!.textContent).toContain("Start outcome not known");
+    expect(startButton()!.disabled).toBe(true);
+  });
+
   it("locks the sheet, says where it is recorded, remembers the operator; New plan mints a new id", async () => {
     await render();
     const id = experimentId();

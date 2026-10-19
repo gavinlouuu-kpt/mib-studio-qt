@@ -98,6 +98,15 @@ describe("the start request of a plan", () => {
     expect((await startExperiment(notReady, REQUEST)).kind).toBe("not-ready");
     expect(notReady.start).not.toHaveBeenCalled();
   });
+  it("a start call that throws is an unknown outcome, not an error before sending: the request may have been accepted", async () => {
+    const d = deps({ start: vi.fn(async () => { throw new Error("TRANSPORT_LOST"); }) });
+    expect(await startExperiment(d, REQUEST)).toEqual({ kind: "unknown", path: "/data/run.h5", message: "Error: TRANSPORT_LOST" });
+  });
+  it("an error before the start call (dialog, readiness) is thrown to the caller: nothing was sent", async () => {
+    const d = deps({ fetchReadiness: vi.fn(async () => { throw new Error("offline"); }) });
+    await expect(startExperiment(d, REQUEST)).rejects.toThrow("offline");
+    expect(d.start).not.toHaveBeenCalled();
+  });
   it("the backend's InvalidRequest comes back as the refusal, with its message", async () => {
     const message = "invalid start request: annotation.condition: 300 bytes, at most 256";
     const d = deps({ start: vi.fn(async () => ({ ok: false, message })) });

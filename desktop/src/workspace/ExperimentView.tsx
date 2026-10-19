@@ -1,25 +1,28 @@
 // The workspace's Experiment stage (#716): sub-views Plan (O3, A5), Live (O4, A6) and Summary
 // (O5/O6, A7). Plan has content; Live and Summary are not in the workspace yet and send the
-// operator to the classic view. Choosing a sub-view only changes what is shown.
-import { useState } from "react";
+// operator to the classic view. Choosing a sub-view only changes what is shown. The sub-view is
+// held by App, because what is read depends on it: Prepare's checklist and gates are polled only
+// while the Plan is shown (workspaceReadsPrepare).
 import { Button, Notice, Toolbar } from "@mib/ui";
 import { PlanView, type PlanViewProps } from "./PlanView";
 
 export const EXPERIMENT_SUBVIEWS = ["Plan", "Live", "Summary"] as const;
-type SubView = (typeof EXPERIMENT_SUBVIEWS)[number];
+export type ExperimentSubView = (typeof EXPERIMENT_SUBVIEWS)[number];
 
-const CLASSIC_FOR: Readonly<Record<Exclude<SubView, "Plan">, string>> = {
+const CLASSIC_FOR: Readonly<Record<Exclude<ExperimentSubView, "Plan">, string>> = {
   Live: "monitoring and stopping a run",
   Summary: "a run's outcome and counts",
 };
 
 export interface ExperimentViewProps extends PlanViewProps {
+  /** The sub-view shown, and the operator's choice of another. */
+  view: ExperimentSubView;
+  onView: (view: ExperimentSubView) => void;
   /** Back to the classic view as it was (no classic tab change). */
   onClassic: () => void;
 }
 
-export function ExperimentView({ onClassic, ...plan }: ExperimentViewProps) {
-  const [sub, setSub] = useState<SubView>("Plan");
+export function ExperimentView({ view: sub, onView: setSub, onClassic, ...plan }: ExperimentViewProps) {
   return (
     <div className="ws-view" data-testid="workspace-experiment">
       <Toolbar title="Experiment plan">

@@ -53,6 +53,8 @@ The repo root `src/` is the C++ tree, so the whole Tauri app lives under
   with `desktop/src/workflow.test.ts` vitest coverage.
 - `desktop/src/preflight.ts` — pure hardware-preflight checklist derivation
   (UX-3), with `desktop/src/preflight.test.ts` vitest coverage.
+- `desktop/src/serialReads.ts` — one poll's reads one at a time, newest reply wins
+  (`SerialReads`, used by the checklist poll; #736 review), with `serialReads.test.ts`.
 - `desktop/src/confirmationSignature.ts` — pure Preflight confirmation
   signature (#713), with `confirmationSignature.test.ts`.
 - `desktop/src/workspace/` — the opt-in four-stage workspace on the `@mib/ui`
@@ -120,9 +122,13 @@ for one, never checks the PL build identity); relaxing a specific warning would 
 audited per-warning acknowledgement (#310). Required/optional/n-a per device
 is meant to come from the selected profile (not bridged yet → `DEFAULT_REQUIREMENTS`
 until UX-2 #306). The shell polls camera/core/autofocus/pumps/trigger every 1.5 s
-while the Preflight tab (or the workspace's Prepare stage) is shown, off the capture
-loop, plus the Z stage status on the desktop for the signature, and renders the checklist
-in the Connect tab. Storage reads `unknown` until a backend reports the destination
+(`PREFLIGHT_POLL_MS`) while the Preflight tab (or the workspace's Prepare stage, or
+Experiment's Plan) is shown, off the capture loop, plus the Z stage status on the desktop for
+the signature, and renders the checklist in the Connect tab. One read at a time
+(`serialReads.ts`, #736 review): a tick or Refresh while a read is in flight is skipped, a read
+stuck for 10 s (`PREFLIGHT_READ_STALE_MS`) stops holding the poll, and a reply older than one
+already applied is dropped, so stalled reads do not pile up and a late reply never overwrites
+newer state. Storage reads `unknown` until a backend reports the destination
 (the PZ7035 does). Details:
 `knowledge_map/task/2026-07-21-ux3-hardware-preflight.md`.
 
@@ -293,15 +299,25 @@ of the quick controls and the sample sheet, until the kit has them).
     the same function without one and sends none. It is disabled, each reason a `Notice` next to
     it (`startBlocks`), while Prepare's checklist blocks (the same `prepareVerdict` title and
     `confirmBlockers` lines as Prepare; the workspace reads the checklist and the path-less gates
-    while the Plan is shown, so the verdict is the same), for the classic Start button's reasons
+    while the Plan is shown, so the verdict is the same; `workspaceReadsPrepare(stage, view)` is
+    the one predicate for both polls, and the Live and Summary placeholders read neither, so App
+    holds the sub-view), for the classic Start button's reasons
     (`startExperimentReason`: backend, camera stream or Run mode, a run active, a start pending),
     while the sheet has an issue, while a start is pending, and once the plan's run has started.
+  - **The start reply alone decides the outcome** (#736 review). `startExperiment` returns
+    `started` or `refused` from the reply, `unknown` when the start call itself threw (the request
+    was sent, its reply was lost), and throws only for failures before sending (dialog,
+    readiness). App's status refresh after the reply is a separate read: its failure is
+    `refreshError`, shown as its own warn Notice ("Run status not refreshed"), never as the
+    outcome. The plan locks on `started` and on `unknown` (the run may exist), so a started run's
+    `experiment_id`/`run_index` are never sent again, whatever a later read did.
   - **Outcomes.** The backend's `InvalidRequest` (start outcome 7; `CmdResult` carries the
     message, "invalid start request: <key>: <why>", `invalidRequestReason`) is shown in the sheet
     card in plain words ("Condition: 300 bytes, at most 256. No file was created. The plan is
     kept"), with the key as secondary text; the plan, its id and the values are kept and nothing
-    claims a run started. Not ready, another refusal or a transport error are said as they are
-    and keep the plan; a cancelled dialog says nothing. A started run locks the plan ("Run 1
+    claims a run started. Not ready, another refusal or an error before sending are said as they
+    are and keep the plan; a cancelled dialog says nothing; a lost reply says "Start outcome not
+    known" and locks the plan. A started run locks the plan ("Run 1
     started · <path>"): its identity is in that run, so a single-sample plan has no second run;
     "New plan" mints a new id and keeps the operator.
 - **Gate (P1, extended for P3).** `workspace/navigation.test.tsx` runs the whole App over a
@@ -322,7 +338,12 @@ of the quick controls and the sample sheet, until the kit has them).
   (desktop and PZ7035, where the mock's checklist blocks and Start run says so); on a desktop host
   that can start, "Start run" sends exactly one `experiment_start` with the plan's
   `startRequestJson`, the classic Start Experiment still sends none, and an `InvalidRequest`
-  reply is shown next to the sheet with the plan kept. `PlanView.test.tsx` (StrictMode, the real
+  reply is shown next to the sheet with the plan kept. After review (#736): a successful start
+  followed by failing status reads keeps the plan locked (no second `experiment_start` after the
+  reads recover); with the core status read held, several periods send one read, not a pile, the
+  read after the stale bound is the only extra one, and the stalled older reply arriving last
+  does not overwrite the newer state; Live and Summary send neither the gates nor the checklist
+  reads, and Plan resumes them. `serialReads.test.ts` covers the skip, stale and ordering rules. `PlanView.test.tsx` (StrictMode, the real
   `usePlan`) covers the exact text sent, client refusals, outcomes, Prepare's and the classic
   locks, and the started lock; `planModel.test.ts` the exact JSON of full, minimal and empty
   plans, every bound at its limit and one past it, empty → absent, the UUID and the refusal

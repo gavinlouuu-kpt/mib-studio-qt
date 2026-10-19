@@ -22,7 +22,10 @@ export type StartOutcome =
   | { kind: "cancelled" }
   | { kind: "not-ready"; message: string }
   | { kind: "refused"; path: string; message: string }
-  | { kind: "started"; path: string; notice: string };
+  | { kind: "started"; path: string; notice: string }
+  /** The start request was sent but no reply was decoded (transport error): the backend may have
+   *  started the run, so its identity must be treated as used. */
+  | { kind: "unknown"; path: string; message: string };
 
 export async function startExperiment(deps: StartDeps, startRequestJson?: string): Promise<StartOutcome> {
   // A stopped Run (after Stop, or after an SSD run) holds its buffered frames and the start discards them: ask first, and tell the backend that the operator agreed.
@@ -37,9 +40,16 @@ export async function startExperiment(deps: StartDeps, startRequestJson?: string
     return { kind: "not-ready", message: `${picked}: ${reason || "Backend readiness unavailable; experiment was not started."}` };
   }
   const notice = readiness.gates.filter(g => g.id === "storage.persistent" && g.status === READINESS_GATE_STATUSES.Warn).map(g => g.reason).join(" ");
-  const res = startRequestJson === undefined
-    ? await deps.start(picked, discard !== "")
-    : await deps.start(picked, discard !== "", startRequestJson);
+  // The outcome is the start reply's alone. Anything before this point failing means nothing was
+  // sent; the start call itself failing means the outcome is not known.
+  let res: StartResult;
+  try {
+    res = startRequestJson === undefined
+      ? await deps.start(picked, discard !== "")
+      : await deps.start(picked, discard !== "", startRequestJson);
+  } catch (e) {
+    return { kind: "unknown", path: picked, message: String(e) };
+  }
   if (!res.ok) return { kind: "refused", path: picked, message: res.message };
   return { kind: "started", path: picked, notice };
 }

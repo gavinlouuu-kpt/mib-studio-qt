@@ -23,14 +23,21 @@ import {
 /** Where the remembered operators are kept (this machine only). */
 export const OPERATORS_STORAGE_KEY = "mib.workspace.operators";
 
-/** What a Start from the plan came to: the flow's outcome, a transport error, or nothing sent
- *  because a start request was already pending. */
-export type PlanStartResult = StartOutcome | { kind: "error"; message: string } | { kind: "busy" };
+/** What a Start from the plan came to: the flow's outcome (decided by the start reply alone; a
+ *  failed status refresh after it is `refreshError`, reported apart), an error before the start
+ *  was sent, or nothing sent because a start request was already pending. */
+export type PlanStartResult =
+  | (StartOutcome & { refreshError?: string })
+  | { kind: "error"; message: string }
+  | { kind: "busy" };
 
 export interface PlanStarted {
   path: string;
   notice: string;
   runIndex: number;
+  /** "started": the backend accepted the start. "unknown": the request was sent but its reply was
+   *  lost, so the run may exist: the identity is treated as used all the same. */
+  outcome: "started" | "unknown";
 }
 
 export interface PlanController {
@@ -41,7 +48,7 @@ export interface PlanController {
   operators: OperatorChoice[];
   /** The last Start's result, until the next Start or a new plan. */
   result: PlanStartResult | null;
-  /** Set once the plan's run has started: the plan is locked. */
+  /** Set once the plan's run has started (or may have): the plan is locked. */
   started: PlanStarted | null;
   starting: boolean;
   /** Run the Start flow with this startRequestJson. */
@@ -95,16 +102,24 @@ export function usePlan(runStart: (startRequestJson: string) => Promise<PlanStar
     try {
       const out = await runStart(json);
       setResult(out);
-      if (out.kind === "started") {
+      // Locked as soon as the backend accepted the start (or may have): whatever a later refresh
+      // did, this identity is recorded in that run and is not sent again.
+      if (out.kind === "started" || out.kind === "unknown") {
         startedRef.current = true;
-        setStarted({ path: out.path, notice: out.notice, runIndex });
+        setStarted({ path: out.path, notice: out.kind === "started" ? out.notice : "", runIndex, outcome: out.kind });
+      }
+      if (out.kind === "started") {
         const next = rememberOperator(operatorsRef.current, draftRef.current.operator);
         writeOperators(next);
         setOperators(next);
       }
       return out;
     } catch (e) {
-      const out: PlanStartResult = { kind: "error", message: String(e) };
+      // Not expected (the Start flow reports its own errors); the request may have been sent, so
+      // the identity is treated as used, as for a lost reply.
+      const out: PlanStartResult = { kind: "unknown", path: "", message: String(e) };
+      startedRef.current = true;
+      setStarted({ path: "", notice: "", runIndex, outcome: "unknown" });
       setResult(out);
       return out;
     } finally {

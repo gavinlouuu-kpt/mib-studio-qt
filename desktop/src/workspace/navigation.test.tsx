@@ -52,6 +52,14 @@ let holdNextGeometry = false;
 let canStart = false;
 /** The backend's answer to experiment_start. */
 let startReply: { ok: boolean; message: string } = { ok: true, message: "experiment started" };
+/** Set to make every experiment status read fail once experiment_start was sent. */
+let statusFailsAfterStart = false;
+let startSent = false;
+/** Set to hold the checklist's core status reads; the test answers each one. */
+let holdCore = false;
+const heldCore: ((reply: unknown) => void)[] = [];
+const CORE_OK = { valid: true, active_version: "2.1.0", contract_version: 1, engine_abi_version: 1, source: "bundled",
+  release_tag: "", build_id: "", artifact_sha256: "", required_version: "2.1.0", pin_satisfied: true };
 const heldGeometry: (() => void)[] = [];
 
 function respond(variant: Variant, cmd: string, args?: unknown): unknown {
@@ -61,9 +69,10 @@ function respond(variant: Variant, cmd: string, args?: unknown): unknown {
     case "abi_version": return BRIDGE_ABI_VERSION;
     case "is_initialized": return true;
     case "fetch_preview_buffer": return { capture_running: canStart, recording: false, available: false };
-    case "fetch_processing_core_status": return canStart ? { valid: true, active_version: "2.1.0", contract_version: 1, engine_abi_version: 1, source: "bundled",
-      release_tag: "", build_id: "", artifact_sha256: "", required_version: "2.1.0", pin_satisfied: true } : null;
-    case "fetch_experiment_status": return status;
+    case "fetch_processing_core_status":
+      if (holdCore) return new Promise((resolve) => heldCore.push(resolve));
+      return canStart ? CORE_OK : null;
+    case "fetch_experiment_status": if (statusFailsAfterStart && startSent) throw new Error("TRANSPORT_LOST"); return status;
     case "fetch_review_metadata": return { valid: false, file_open: false, file_path: "", recording_file: false };
     case "fetch_platform_info": return pz ? { science: "pl", host_processing: false, aravis: true, capabilities: PZ_CAPS } : { science: "host", host_processing: true, aravis: false };
     case "fetch_camera_selection": return { valid: true, configured: true, mode: 0, label: pz ? "PZ7035 IMX426" : "Camera 01", interface_index: 0, device_index: 0, mindvision_index: 0,
@@ -81,7 +90,7 @@ function respond(variant: Variant, cmd: string, args?: unknown): unknown {
       ? { transport_version: JSON_TRANSPORT.version, valid: true, ready: true, generation: "2", gates: [{ id: "storage.output", status: G.Pass, reason: "", remediation: "" }] }
       : { transport_version: JSON_TRANSPORT.version, valid: true, ready: false, generation: "1",
         gates: [{ id: "storage.output", status: G.Unavailable, reason: "no output path chosen yet", remediation: "choose an HDF5 destination" }] };
-    case "experiment_start": return { ...cmdResult(COMMAND_TYPES.Experiment), ...startReply };
+    case "experiment_start": startSent = true; return { ...cmdResult(COMMAND_TYPES.Experiment), ...startReply };
     case "poll_events_exact": return { transport_version: JSON_TRANSPORT.version, events: [] };
     case "set_camera_overview": device.overview = !!a.overview; return cmdResult(COMMAND_TYPES.Camera);
     case "save_camera_roi": return cmdResult(COMMAND_TYPES.Camera);
@@ -123,6 +132,10 @@ beforeEach(() => {
   heldGeometry.length = 0;
   canStart = false;
   startReply = { ok: true, message: "experiment started" };
+  statusFailsAfterStart = false;
+  startSent = false;
+  holdCore = false;
+  heldCore.length = 0;
   const saved = new Map<string, string>();
   const store = { getItem: (k: string) => saved.get(k) ?? null, setItem: (k: string, v: string) => void saved.set(k, v), removeItem: (k: string) => void saved.delete(k) };
   vi.stubGlobal("localStorage", store);
@@ -402,5 +415,79 @@ describe("Experiment · Plan Start run (desktop)", () => {
     expect(host.querySelector("[data-testid=plan-experiment-id]")!.textContent).toBe(id);
     expect(host.querySelector<HTMLInputElement>("[data-testid=plan-condition]")!.value).toBe("Vehicle");
     expect(buttonByText("Start run")!.disabled).toBe(false);
+  });
+});
+
+// #736 review: the start outcome is the start reply's alone; the checklist's reads do not stack;
+// the Plan's placeholders read nothing.
+describe("Experiment · Plan after review (desktop)", () => {
+  it("a successful start followed by a failed status read leaves the plan locked", async () => {
+    canStart = true;
+    statusFailsAfterStart = true;
+    await boot("desktop");
+    await openPlan();
+    await typeInto("[data-testid=plan-condition]", "Vehicle");
+    vi.mocked(save).mockResolvedValueOnce("/data/run.h5");
+    await click(buttonByText("Start run"), "Start run");
+    expect(log.filter((e) => e.cmd === "experiment_start")).toHaveLength(1);
+    expect(host.querySelector("[data-testid=plan-outcome]")!.textContent).toContain("Run 1 started · /data/run.h5");
+    expect(host.querySelector("[data-testid=plan-refresh]")!.textContent).toContain("TRANSPORT_LOST");
+    const start = buttonByText("Start run")!;
+    expect(start.disabled).toBe(true);
+    // The run stops (the status reads recover): the same identity is still not offered again.
+    statusFailsAfterStart = false;
+    await advance(6000);
+    expect(buttonByText("Start run")!.disabled).toBe(true);
+    vi.mocked(save).mockResolvedValueOnce("/data/again.h5");
+    await click(buttonByText("Start run"), "Start run");
+    expect(log.filter((e) => e.cmd === "experiment_start")).toHaveLength(1);
+  });
+
+  it("the checklist reads one at a time: a stalled read is not stacked, and an older reply never overwrites a newer one", async () => {
+    canStart = true;
+    await boot("desktop");
+    await openPlan();
+    await advance(3000);
+    expect(host.querySelector("[data-testid=plan-blocked-prepare]")).toBeNull(); // the core is valid: Prepare does not block
+    log.splice(0);
+    holdCore = true;
+    await advance(1600); // the next tick: its read stalls on the core status
+    const coreReads = () => log.filter((e) => e.cmd === "fetch_processing_core_status").length;
+    const triggerReads = () => log.filter((e) => e.cmd === "fetch_trigger_status").length;
+    expect(coreReads()).toBe(1);
+    for (let i = 0; i < 5; i++) await advance(1500); // several periods while it is held
+    expect(coreReads()).toBe(1);
+    expect(triggerReads()).toBe(1);
+    await advance(2000); // past the stale bound (10 s): the next tick starts one more read, not a pile
+    expect(coreReads()).toBe(2);
+    expect(heldCore).toHaveLength(2);
+    holdCore = false;
+    // The newer read answers first (core valid), then the stalled older one (core missing).
+    await act(async () => heldCore[1](CORE_OK));
+    await act(async () => heldCore[0]({ ...CORE_OK, valid: false }));
+    expect(host.querySelector("[data-testid=plan-blocked-prepare]")).toBeNull(); // the older reply was dropped
+    // Later reads apply again.
+    await advance(3000);
+    expect(host.querySelector("[data-testid=plan-blocked-prepare]")).toBeNull();
+  });
+
+  it("Live and Summary read neither the gates nor the checklist; Plan resumes both", async () => {
+    await boot("desktop");
+    // The classic Connect tab polls the checklist itself: leave it for Camera & Alignment first.
+    await click(host.querySelector('button[aria-label^="Camera & Alignment:"]'), "classic Camera & Alignment tab");
+    await advance(3000);
+    const prepareReads = (entries: { cmd: string }[]) => entries.filter((e) => e.cmd === "fetch_experiment_readiness" || e.cmd === "fetch_trigger_status");
+    await openPlan();
+    await advance(3000);
+    expect(prepareReads(log.splice(0)).length).toBeGreaterThan(0);
+    for (const sub of ["Live", "Summary"]) {
+      await click(buttonByText(sub), sub);
+      log.splice(0);
+      await advance(6000);
+      expect(prepareReads(log.splice(0))).toEqual([]);
+    }
+    await click(buttonByText("Plan"), "Plan");
+    await advance(3000);
+    expect(prepareReads(log.splice(0)).length).toBeGreaterThan(0);
   });
 });
