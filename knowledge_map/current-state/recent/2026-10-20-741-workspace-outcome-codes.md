@@ -1,6 +1,6 @@
 ## 2026-10-20 — Workspace queue and Plan on ABI 40 outcome codes (#741)
 
-Part 2 of #741, on `feat/egrabber-workspace` (track A, desktop only; no contract change). **Start:**
+Part 2 of #741 (#750), on `feat/egrabber-workspace` (track A, desktop only; no contract change). **Start:**
 the Plan's and the queue's start handling branches on the reply's `start_outcome`
 (`experimentStart.ts` `startReplyState` / `START_OUTCOME_STATES`), not on its message. Started →
 started; StaleReadiness, AlreadyActive, Busy, InvalidRequest → refused (returned before the

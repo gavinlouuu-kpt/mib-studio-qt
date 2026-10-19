@@ -18,7 +18,7 @@ Status: active, 2026-10-18. Progress, 2026-10-20:
     pending Start. Start is blocked while Align shows the full sensor.
   - #744 (ABI 40, #741) adds the start outcome code to the reply and an expected run to
     `experiment_stop`.
-  - The queue and Plan switched to ABI 40 (#741 part 2). They branch on the start outcome code;
+  - #750: the queue and Plan switched to ABI 40 (#741 part 2). They branch on the start outcome code;
     a code that can follow an opened file locks the identity. Next sample names the row's run,
     and a RunMismatch marks the row interrupted and sends nothing more.
 - **A0 follow-up:** #740 (#720) bounds serial write, drain and transact, with a bounded session
