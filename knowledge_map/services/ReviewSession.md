@@ -147,9 +147,25 @@ holds a reference to the runner state (`impl_` is a `shared_ptr`; job bodies
 reach the runner only through it), so the sink it is executing, its lane and
 the mutex stay alive until it ends even if the ReviewJobs object is destroyed
 meanwhile (#742 review). The host's own objects (session, kernel, the
-callback's targets) are the host's to keep. `shutdown()` waits for a job still being
-started, sets every lane's flag and joins both lanes; starts stay possible
-afterwards (as before). A worker that cannot be created gets its one Failed
+callback's targets) are the host's to keep. **Callback contract (#742 review
+round 2):** callbacks (the sink, the host's `beginOperation`) may call
+`shutdown()` or `cancel()`, but must not destroy this ReviewJobs or its host.
+Destroying the owner from inside its own callback is out of contract. Hosts
+deliver events to their consumers asynchronously: both bridges' sinks only
+convert and enqueue, and the shell drains the queue. `shutdown()` sets every
+lane's flag and joins both lanes. Starts stay possible afterwards (as before).
+It does not wait for a start in progress, because that wait deadlocked: under
+the bridge's policy a start joins the previous worker while that worker may
+still be calling `shutdown()` from its terminal event. Instead a start that a
+`shutdown()` overtook between its claim and its worker does not run its job.
+That covers a shutdown from the job's own Started event or the host's
+`beginOperation`, and one on another thread. The start itself reports the
+one Cancelled terminal. ReviewJobs' own jobs carry "Review jobs shut down
+before the job started". The JSON jobs carry their engine's outcome for a run
+cancelled before its first step, with that status snapshot
+(`exportBatchCancelledBeforeStart`, `reanalysisCancelledBeforeStart`), so the
+facade's events and status match a run cancelled on entry. A start holds its
+own reference to the runner state throughout. A worker that cannot be created gets its one Failed
 terminal and frees the lane (before S7 the lane stayed busy).
 
 **The JSON jobs (the facade's, #512 S7).** `startExportJson(ExportBatchRequest)`
@@ -226,7 +242,12 @@ both presets through job bodies supplied by `ReviewJobsTestAccess`, lanes ×
 cancel × shutdown with handshakes, racing starts, a cancel racing a job's
 end, 200 mixed cycles per policy, one terminal per operation, the release
 order, a start from inside the terminal event, and `shutdown()` from inside
-it with ReviewJobs destroyed before the callback returns; lane release is
+it with ReviewJobs destroyed before the callback returns. It also covers
+`shutdown()` from inside Started under both presets, for an own job and both
+JSON jobs (each one Cancelled terminal from the start, matching the engine run
+cancelled on entry byte for byte, body never run). And it covers `shutdown()`
+from a terminal event while another thread's start joins that worker; this
+deadlocked before round 2. Lane release is
 waited for with `ReviewJobsTestAccess::waitIdle` (the release's own
 condition). The facade's side by `backend.facade_review_jobs`
 (`BackendFacadeTestAccess::reviewJobs` reaches its lanes).

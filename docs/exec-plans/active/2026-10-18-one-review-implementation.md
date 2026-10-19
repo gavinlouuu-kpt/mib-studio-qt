@@ -645,6 +645,7 @@ the coordinator (ADR 0004/0011).
   for synchronisation (job bodies poll their cancel flag, which has no
   condition variable). The characterization was rerun on the fixed code:
   identical in 3 runs.
+- **Review round 2 (#742, 2026-10-19):** the coordinator ruled that destroying the owner (ReviewJobs, BackendFacade) from inside its own callback is out of contract; callbacks may call `shutdown()` / `cancel()` (now written on ReviewJobs and the facade). A start keeps its own reference to the runner state. A start that a `shutdown()` overtakes reports one Cancelled terminal without running its body (the JSON jobs: their engine's outcome for a run cancelled on entry). `shutdown()` no longer waits for a start in progress, because that wait deadlocked against a terminal-event `shutdown()` under the bridge's policy.
 
 ### S8 — YOFO regenerate on the reanalysis engine (in review, #735)
 
