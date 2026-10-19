@@ -20,6 +20,66 @@ export interface ReviewDatasetInfo {
   channels: number;
 }
 
+/** The planned annotation (`/experiment_annotation`, review ABI 2): `null`
+ * members were not declared; `free` is sorted by key. */
+export interface ReviewRunAnnotation {
+  schema_version: number | null;
+  sample: string | null;
+  condition: string | null;
+  experimental_unit: string | null;
+  concentration: { value: number; unit: string } | null;
+  channel: string | null;
+  medium: string | null;
+  temperature_c: number | null;
+  notes: string | null;
+  free: { key: string; value: string }[];
+}
+
+/** A file's run identity (run snapshot v3, #712; review ABI 2, #717 B1a).
+ * A member the file does not record is `null`, never 0 or "": a legacy file
+ * has `has_snapshot` false and every member `null`. `*_unreadable`: present
+ * in the file but not a JSON object (not the same as absent). */
+export interface ReviewRunIdentity {
+  has_snapshot: boolean;
+  snapshot_unreadable: boolean;
+  snapshot_version: number | null;
+  run_id: string | null;
+  experiment_id: string | null;
+  run_index: number | null;
+  sample_ref: string | null;
+  calibration_record_id: string | null;
+  /** The operator selected at Start (not an authenticated identity). */
+  operator: { id: string | null; name: string | null } | null;
+  annotation: ReviewRunAnnotation | null;
+  annotation_unreadable: boolean;
+}
+
+/** One file of `review_probe_runs`: header attributes only. `ok` false =
+ * `message` says why the file could not be read; nothing else is set. */
+export interface ReviewRunProbe {
+  path: string;
+  ok: boolean;
+  message: string;
+  recording_file: boolean;
+  identity: ReviewRunIdentity;
+  /** Decimal u64 strings; `null` when the file records none. */
+  start_time_ns: string | null;
+  end_time_ns: string | null;
+  total_valid: string | null;
+  total_invalid: string | null;
+  /** Contract run_completion_states; `null` for a file without run accounting. */
+  accounting_completion: number | null;
+  core_version: string | null;
+}
+
+/** `ok` false: the whole probe was refused (`message`): more than
+ * REVIEW_PROBE.max_paths paths, or a review job is running. */
+export interface ReviewProbeResult {
+  ok: boolean;
+  message: string;
+  runs: ReviewRunProbe[];
+}
+
 export interface ReviewInfo {
   valid: boolean;
   file_open: boolean;
@@ -68,6 +128,8 @@ export interface ReviewInfo {
   has_recorded_config: boolean;
   ring_ratio_min: number;
   ring_ratio_max: number;
+  /** Review ABI 2: the open file's run identity (absent members `null`). */
+  identity: ReviewRunIdentity;
 }
 
 export interface ReviewRow {
@@ -218,6 +280,14 @@ export const reviewBridge = {
   },
   setPixelToMicron: (factor: number) => invoke<void>("review_set_pixel_to_micron", { factor }),
   info: () => invoke<ReviewInfo>("fetch_review_info"),
+  /** Review ABI 2 (#717 B1a): the identity probe for the experiment library,
+   * header-only, at most REVIEW_PROBE.max_paths paths per call, one result
+   * per path in order (per-file errors). Refused as a whole while a review
+   * job runs. The open file is left as it was. */
+  probeRuns: async (paths: string[]): Promise<ReviewProbeResult> => {
+    const r = await invoke<ReviewProbeResult>("review_probe_runs", { paths });
+    return { ok: !!r.ok, message: String(r.message ?? ""), runs: r.runs ?? [] };
+  },
   rows: (valid: boolean, offset: number | string, count: number) =>
     invoke<ReviewRows>("fetch_review_rows", { valid, offset: decimalU64(offset), count }),
   frame: (dataset: number, index: number | string, overlay: OverlayMode = OVERLAY.None, roiOverlay = false) =>
