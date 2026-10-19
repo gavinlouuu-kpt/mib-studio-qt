@@ -51,6 +51,12 @@ export function defaultMetricsName(sourcePath: string, existing: readonly string
   return nextAvailableName(existing, `${b}_metrics.csv`, `${b}_metrics_`, ".csv");
 }
 
+/** Regenerate masks never replaces a file (#512 S8, D6): `<base>_remasked.h5`
+ * while free, else `_2`, `_3`, … one past the highest suffix in `existing`. */
+export function defaultRegenerateName(base: string, existing: readonly string[]): string {
+  return nextAvailableName(existing, `${base}_remasked.h5`, `${base}_remasked_`, ".h5");
+}
+
 // ---- series-range prompt (Export All) ---------------------------------------
 
 export type SeriesChoice =

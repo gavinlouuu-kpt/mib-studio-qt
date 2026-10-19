@@ -10,6 +10,14 @@
 //  - batch: continues after a missing file, summary names the failure;
 //  - regenerate masks (whole file, recorded config/ROI/background): output
 //    opens in a ReviewSession with the image count, recorded indices kept;
+//    on the reanalysis engine (#512 S8, D6) with YOFO's options: timestamps
+//    rebased to the first selected frame (clamped at 0), the whole file as
+//    valid rows then invalid rows, a median-of-32 synthetic background, and
+//    every record named by its own frame when tracking merges frames into
+//    one record (the pre-S8 job paired records with frames by position);
+//    a range clamped to the set; no clobber: an existing output is refused
+//    at start, one created while the job runs fails the job untouched with
+//    no partial file left, a cancel writes nothing;
 //  - compute core: full-run record JSON with the recorded factor;
 //  - density: one level per scatter point, no computed record when the
 //    file has one, a computed record on a legacy file, results only for the
@@ -23,6 +31,7 @@
 #include "backend/recording/Hdf5Service.h"
 #include "backend/recording/HdfExportService.h"
 #include "backend/processing/ProcessingService.h"
+#include "backend/processing/BatchMaskSources.h"
 #include "backend/processing/KdeCoreRecord.h"
 #include "backend/processing/MonitoringDensity.h"
 
@@ -39,6 +48,8 @@
 #include <condition_variable>
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <map>
 #include <mutex>
 #include <random>
 #include <string>
@@ -134,14 +145,146 @@ namespace
         hdf5.closeFile();
     }
 
+    // #512 S8 fixtures. A ring on black that the permissive config detects
+    // and tracks (processing_object_tracking_test's frames).
+    constexpr int kTrackedW = 180, kTrackedH = 96;
+
+    cv::Mat ringFrame(int x)
+    {
+        cv::Mat image(kTrackedH, kTrackedW, CV_8UC1, cv::Scalar(0));
+        if (x > 0)
+        {
+            cv::circle(image, cv::Point(x, 48), 20, cv::Scalar(255), cv::FILLED);
+            cv::circle(image, cv::Point(x, 48), 9, cv::Scalar(0), cv::FILLED);
+        }
+        return image;
+    }
+
+    backend::services::ProcessingConfig permissiveTrackingConfig()
+    {
+        backend::services::ProcessingConfig config;
+        config.gaussian_blur_size = 1;
+        config.bg_subtract_threshold = 127;
+        config.morph_kernel_size = 1;
+        config.morph_iterations = 1;
+        config.enable_area_range_check = false;
+        config.enable_ring_ratio_check = false;
+        config.enable_deformability_range_check = false;
+        config.enable_area_ratio_check = false;
+        config.enable_border_check = true;
+        config.require_single_inner_contour = true;
+        return config;
+    }
+
+    // Valid rows 100..107: a ring moving right over 100-102 (one track), two
+    // empty frames, a second ring entering at the left over 105-107 (a new
+    // track); invalid rows 108, 109 (empty) recorded EARLIER than every
+    // valid row. Recorded config = the permissive one,
+    // background black. Returns index -> (image, timestamp).
+    std::map<uint64_t, std::pair<cv::Mat, uint64_t>> writeTracked(const fs::path &path)
+    {
+        std::map<uint64_t, std::pair<cv::Mat, uint64_t>> source;
+        const std::vector<int> ringX{82, 90, 98, 0, 0, 42, 50, 58, 0, 0};
+        std::vector<ProcessedFrame> valid, invalid;
+        for (uint64_t i = 0; i < ringX.size(); ++i)
+        {
+            ProcessedFrame f;
+            f.index = 100 + i;
+            f.timestampNs = i < 8 ? 2'000'000 + i * 500 : 1'000'000 + i;
+            f.originalImage = ringFrame(ringX[i]);
+            f.processedImage = cv::Mat::zeros(kTrackedH, kTrackedW, CV_8UC1);
+            f.validation.isValid = i < 8;
+            f.validation.objectCount = 1;
+            source[f.index] = {f.originalImage, f.timestampNs};
+            (i < 8 ? valid : invalid).push_back(f);
+        }
+        Hdf5Service hdf5;
+        MIB_REQUIRE(hdf5.openFile(path.string()) && hdf5.initializeDatasets(), "open tracked fixture");
+        MIB_REQUIRE(hdf5.appendFrames(valid, invalid), "append tracked");
+        const cv::Mat black(kTrackedH, kTrackedW, CV_8UC1, cv::Scalar(0));
+        MIB_REQUIRE(hdf5.writeExperimentInfo(1000, 5000, valid.size(), invalid.size(), permissiveTrackingConfig(),
+                                             {0, 0, kTrackedW, kTrackedH}, &black),
+                    "tracked info");
+        hdf5.closeFile();
+        return source;
+    }
+
+    // 40 valid + 3 invalid pattern frames and no recorded background.
+    std::vector<cv::Mat> writeNoBackground(const fs::path &path)
+    {
+        std::vector<ProcessedFrame> valid, invalid;
+        std::vector<cv::Mat> stored; // as stored: valid rows, then invalid rows
+        for (int i = 0; i < 43; ++i)
+        {
+            ProcessedFrame f = makeFrame(static_cast<uint64_t>(i), i < 40, 700, 0.05);
+            f.originalImage = pattern(static_cast<uint64_t>(i * 11), i % 5 * 13);
+            stored.push_back(f.originalImage);
+            (i < 40 ? valid : invalid).push_back(f);
+        }
+        Hdf5Service hdf5;
+        MIB_REQUIRE(hdf5.openFile(path.string()) && hdf5.initializeDatasets(), "open no-background fixture");
+        MIB_REQUIRE(hdf5.appendFrames(valid, invalid), "append no-background");
+        MIB_REQUIRE(hdf5.writeExperimentInfo(1000, 5000, valid.size(), invalid.size(), {}, {0, 0, kW, kH}, nullptr),
+                    "no-background info");
+        hdf5.closeFile();
+        return stored;
+    }
+
+    // The pre-S8 job's median-of-32 background, kept here as the oracle.
+    cv::Mat medianOf32Oracle(const std::vector<cv::Mat> &images)
+    {
+        const std::size_t n = std::min<std::size_t>(images.size(), 32);
+        cv::Mat background(images.front().size(), CV_8UC1);
+        std::vector<uint8_t> column(n);
+        for (int y = 0; y < background.rows; ++y)
+            for (int x = 0; x < background.cols; ++x)
+            {
+                for (std::size_t k = 0; k < n; ++k) column[k] = images[k].at<uint8_t>(y, x);
+                std::nth_element(column.begin(), column.begin() + static_cast<std::ptrdiff_t>(n / 2), column.end());
+                background.at<uint8_t>(y, x) = column[n / 2];
+            }
+        return background;
+    }
+
+    // Output records in file order (valid set, then invalid set) with images.
+    struct OutRecord
+    {
+        bool valid;
+        ProcessedFrame meta;
+        cv::Mat image;
+    };
+    std::vector<OutRecord> outputRecords(const fs::path &path)
+    {
+        Hdf5Service reader;
+        MIB_REQUIRE(reader.loadFile(path.string()), "open output " + path.string());
+        std::vector<OutRecord> out;
+        for (const bool valid : {true, false})
+        {
+            std::vector<ProcessedFrame> rows;
+            if (!(valid ? reader.readValidMetadata(rows) : reader.readInvalidMetadata(rows))) continue;
+            for (std::size_t i = 0; i < rows.size(); ++i)
+            {
+                cv::Mat image;
+                MIB_REQUIRE(reader.readImageByIndex(valid ? "/valid_frames/images" : "/invalid_frames/images", i, image),
+                            "output image");
+                out.push_back({valid, rows[i], image});
+            }
+        }
+        return out;
+    }
+
     // Collects job events; waits for the terminal state of an operation.
     struct Sink
     {
         std::mutex m;
         std::condition_variable cv;
         std::vector<ReviewJobEvent> events;
+        // Called on the job's thread for every event, outside the lock
+        // (never on Started: ReviewJobs emits that under its own mutex).
+        std::function<void(const ReviewJobEvent &)> onProgress;
         void operator()(const ReviewJobEvent &e)
         {
+            if (e.state == ReviewJobState::Progress && onProgress) onProgress(e);
             std::scoped_lock lock(m);
             events.push_back(e);
             cv.notify_all();
@@ -388,8 +531,150 @@ int main()
         ProcessedFrame first;
         MIB_REQUIRE(out.frameCount(true) + out.frameCount(false) > 0 && (out.frameMeta(true, 0, first) || out.frameMeta(false, 0, first)), "first frame");
         MIB_EXPECT(first.timestampNs < 100000, "timestamps normalised to the first frame");
+        MIB_EXPECT(done.message == req.outputPath + " (33 images: " + std::to_string(out.frameCount(true)) + " valid, " +
+                                       std::to_string(out.frameCount(false)) + " invalid)",
+                   "completion message names the file and the counts: " + done.message);
+        MIB_EXPECT(noPartials(td.path()), "regenerate leaves no partial file");
     }
     wd.mark("regenerate");
+
+    // ---- regenerate on the reanalysis engine (#512 S8, D6) ------------------------
+    {
+        const fs::path trackedPath = td.path() / "tracked.h5";
+        const auto source = writeTracked(trackedPath);
+        ReviewSession ts;
+        MIB_REQUIRE(ts.open(trackedPath.string()), "open tracked");
+        Sink s;
+        ReviewJobs tj(ts, &processing, std::ref(s));
+        const auto run = [&](RegenerateMasksRequest r, ReviewJobEvent &end) {
+            const uint64_t id = tj.startRegenerateMasks(r, &err);
+            MIB_REQUIRE(id != 0, "start " + r.outputPath + ": " + err);
+            MIB_REQUIRE(s.terminal(id, end), "terminal " + r.outputPath);
+            return id;
+        };
+
+        // Whole file: rows as stored (valid then invalid), timestamps minus
+        // the first selected frame's (the first valid row), clamped at 0;
+        // every record is its own frame's (tracking merges 100-102 and
+        // 105-107 into one record each, so records < frames).
+        RegenerateMasksRequest whole;
+        whole.source = RegenerateSource::WholeFile;
+        whole.outputPath = (td.path() / "tracked_whole.h5").string();
+        run(whole, done);
+        MIB_REQUIRE(done.state == ReviewJobState::Completed, "tracked whole: " + done.message);
+        const auto records = outputRecords(whole.outputPath);
+        std::vector<uint64_t> validOrder, invalidOrder;
+        bool ownFrames = true, rebased = true, tracksInSource = true;
+        for (const auto &rec : records)
+        {
+            (rec.valid ? validOrder : invalidOrder).push_back(rec.meta.index);
+            const auto it = source.find(rec.meta.index);
+            ownFrames = ownFrames && it != source.end() && cv::norm(rec.image, it->second.first, cv::NORM_INF) == 0;
+            if (it == source.end()) continue;
+            const uint64_t first = source.at(100).second;
+            const uint64_t want = it->second.second >= first ? it->second.second - first : 0;
+            rebased = rebased && rec.meta.timestampNs == want;
+            if (rec.meta.validation.trackId >= 0)
+                tracksInSource = tracksInSource && source.count(rec.meta.validation.trackFirstFrame) &&
+                                 source.count(rec.meta.validation.trackLastFrame) &&
+                                 rec.meta.validation.trackFirstFrame == rec.meta.index &&
+                                 rec.meta.validation.trackLastFrame > rec.meta.index;
+        }
+        MIB_EXPECT(validOrder == std::vector<uint64_t>({100, 105}),
+                   "two tracked cells, one record each (" + std::to_string(validOrder.size()) + " valid)");
+        MIB_EXPECT(records.size() < source.size(), "tracking merged frames: the test is sensitive to pairing by position");
+        MIB_EXPECT(ownFrames, "every record carries its own frame's image (index-based pairing)");
+        MIB_EXPECT(invalidOrder == std::vector<uint64_t>({103, 104, 108, 109}),
+                   "whole file = valid rows then invalid rows, not timestamp order");
+        MIB_EXPECT(rebased, "timestamps rebased to the first selected frame, earlier rows clamped to 0");
+        MIB_EXPECT(tracksInSource, "track first/last frames are source indices");
+
+        // A range clamped to the set: from row 6, count 100 → rows 6, 7.
+        RegenerateMasksRequest range;
+        range.source = RegenerateSource::CurrentValid;
+        range.startIndex = 6;
+        range.count = 100;
+        range.outputPath = (td.path() / "tracked_range.h5").string();
+        run(range, done);
+        MIB_REQUIRE(done.state == ReviewJobState::Completed, "clamped range: " + done.message);
+        const auto ranged = outputRecords(range.outputPath);
+        MIB_EXPECT(ranged.size() == 1 && ranged.front().meta.index == 106 && ranged.front().meta.timestampNs == 0,
+                   "clamped range starts at row 6, rebased to it");
+        range.startIndex = 8;
+        range.outputPath = (td.path() / "tracked_empty.h5").string();
+        run(range, done);
+        MIB_EXPECT(done.state == ReviewJobState::Failed && done.message == "Selected source range is empty",
+                   "a range past the set fails: " + done.message);
+        MIB_EXPECT(!fs::exists(range.outputPath), "failed range writes nothing");
+
+        // No clobber: an existing output is refused at start, untouched.
+        const fs::path existing = td.path() / "existing.h5";
+        std::ofstream(existing) << "keep me";
+        RegenerateMasksRequest clobber = whole;
+        clobber.outputPath = existing.string();
+        err.clear();
+        MIB_EXPECT(tj.startRegenerateMasks(clobber, &err) == 0 && err == "Output already exists; choose a new file",
+                   "existing output refused: " + err);
+        clobber.outputPath = trackedPath.string();
+        MIB_EXPECT(tj.startRegenerateMasks(clobber, &err) == 0, "the open source file itself is refused");
+        MIB_EXPECT(readAll(existing) == "keep me", "refused output untouched");
+
+        // A file created while the job runs: the job fails, the file is
+        // untouched, the partial file is removed.
+        const fs::path late = td.path() / "late.h5";
+        s.onProgress = [&](const ReviewJobEvent &) {
+            if (!fs::exists(late)) std::ofstream(late) << "concurrent output";
+        };
+        RegenerateMasksRequest collide = whole;
+        collide.outputPath = late.string();
+        run(collide, done);
+        s.onProgress = nullptr;
+        MIB_EXPECT(done.state == ReviewJobState::Failed && done.message.find("Publish regenerated output") == 0,
+                   "late collision fails the job: " + done.message);
+        MIB_EXPECT(readAll(late) == "concurrent output", "concurrent output never overwritten");
+        MIB_EXPECT(noPartials(td.path()), "late collision leaves no partial file");
+
+        // Cancel during processing: Cancelled, nothing written.
+        RegenerateMasksRequest cancelled = whole;
+        cancelled.outputPath = (td.path() / "cancelled.h5").string();
+        s.onProgress = [&](const ReviewJobEvent &e) { tj.cancel(e.operationId); };
+        run(cancelled, done);
+        s.onProgress = nullptr;
+        MIB_EXPECT(done.state == ReviewJobState::Cancelled && done.message == "nothing written",
+                   "cancel during processing: " + done.message);
+        MIB_EXPECT(!fs::exists(cancelled.outputPath) && noPartials(td.path()), "cancel writes nothing");
+        tj.shutdown();
+    }
+    {
+        // Median-of-32 synthetic background: the first 32 frames in YOFO's
+        // order (here all valid rows), equal to the pre-S8 job's.
+        const fs::path nobg = td.path() / "nobg.h5";
+        const auto stored = writeNoBackground(nobg);
+        ReviewSession ns;
+        MIB_REQUIRE(ns.open(nobg.string()), "open no-background");
+        Sink s;
+        ReviewJobs nj(ns, &processing, std::ref(s));
+        RegenerateMasksRequest req;
+        req.source = RegenerateSource::WholeFile;
+        req.synthesizeBackground = true;
+        req.outputPath = (td.path() / "nobg_synth.h5").string();
+        const uint64_t id = nj.startRegenerateMasks(req, &err);
+        MIB_REQUIRE(id != 0 && s.terminal(id, done), "synthetic background job: " + err);
+        MIB_REQUIRE(done.state == ReviewJobState::Completed, "synthetic background: " + done.message);
+        Hdf5Service reader;
+        cv::Mat background;
+        MIB_REQUIRE(reader.loadFile(req.outputPath) && reader.readBackgroundImage(background) && !background.empty(),
+                    "synthetic background written");
+        const cv::Mat oracle = medianOf32Oracle(stored);
+        MIB_EXPECT(cv::norm(background, oracle, cv::NORM_INF) == 0, "median of the first 32 frames, as before");
+        MIB_EXPECT(cv::norm(oracle, backend::services::batch_masks::buildSyntheticBackground(stored), cv::NORM_INF) > 0,
+                   "median differs from the quiet-tile background (test is sensitive)");
+        MIB_EXPECT(cv::norm(oracle, medianOf32Oracle(std::vector<cv::Mat>(stored.rbegin(), stored.rend())),
+                            cv::NORM_INF) > 0,
+                   "the frames' order matters (test is sensitive)");
+        nj.shutdown();
+    }
+    wd.mark("regenerate engine");
 
     // ---- compute core -----------------------------------------------------------
     {
