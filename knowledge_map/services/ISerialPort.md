@@ -10,8 +10,10 @@
 `src/backend/services/SerialPortWin32.cpp` (Win32)
 **Tests:** `tests/backend/serial_port_posix_loopback_test.cpp` (pty loopback),
 `tests/backend/serial_port_posix_timeout_test.cpp` (`backend.serial_port_posix_timeout`,
-#720: the real POSIX port with `ioctl`/`tcflush` faked on a pty — output that
-never drains, endless `EAGAIN` via `tcflow(TCOOFF)`, recovery),
+#720: the real POSIX port with `ioctl`/`tcflush` faked and `write(2)` behind
+the `MIB_SERIAL_SYS_WRITE` seam, on a pty — output that never drains, endless
+`EAGAIN` via `tcflow(TCOOFF)`, endless `EINTR` from the queue query and from
+`write`, `interrupt()` from another thread, recovery),
 `tests/backend/syringe_pump_fake_serial_test.cpp` (fake slave),
 `tests/backend/serial_port_enumeration_test.cpp` (`backend.serial_port_enumeration`:
 well-formed unique names, `serialbus::availablePorts()` mirror; with
@@ -50,6 +52,19 @@ No serial call blocks without limit (#720). On both platforms:
   (never `tcdrain()`, which has no timeout). A failing query returns the
   driver's error at once; a platform without `TIOCOUTQ` would wait the frame's
   nominal line time (capped at `ms`) and report the drain as unconfirmed.
+- POSIX checks the deadline on **every** retry, `EINTR` included (a signal
+  storm, or a driver that keeps answering `EINTR`, still times out).
+- `interrupt()` (#720 review): the one call allowed from another thread while
+  the owner is inside a call (never concurrently with `open*`/`close`). It
+  makes the call in progress and every later wait, write or drain fail at
+  once ("serial port interrupted (session closing)") and discards the unsent
+  output; `close()` after it flushes output first so a tty close does not
+  wait out `closing_wait`. POSIX wakes a `poll`/`select` wait through a
+  non-blocking self-pipe created with the port; Win32 calls `CancelIoEx` on
+  the handle and the polling waits check the flag. The fd/handle stays owned
+  and is closed by the owner thread. Default no-op, so fakes need nothing.
+  [[SerialBus]] uses it to tear a session down without waiting out a stalled
+  call.
 - On either timeout the untransmitted output is **discarded** (POSIX
   `tcflush(TCOFLUSH)`, Win32 `PurgeComm(PURGE_TXABORT | PURGE_TXCLEAR)`), best
   effort, so a command the caller already reported as failed cannot reach the

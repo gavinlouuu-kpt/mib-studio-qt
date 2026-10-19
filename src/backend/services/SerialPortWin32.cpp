@@ -8,6 +8,7 @@
 #include <windows.h>
 #include <setupapi.h>
 
+#include <atomic>
 #include <chrono>
 #include <algorithm>
 #include <cstdlib>
@@ -32,6 +33,7 @@ public:
     bool openNamed(const std::string& systemName, const SerialSettings& settings) override
     {
         close();
+        interrupted_.store(false);
         // \\.\COMn form is required for COM10 and above.
         const std::string path = systemName.rfind("\\\\.\\", 0) == 0 ? systemName
                                                                    : "\\\\.\\" + systemName;
@@ -89,6 +91,7 @@ public:
     void close() override
     {
         if (handle_ != INVALID_HANDLE_VALUE) {
+            if (interrupted_.load()) ::PurgeComm(handle_, PURGE_TXABORT | PURGE_TXCLEAR);
             ::CloseHandle(handle_);
             handle_ = INVALID_HANDLE_VALUE;
         }
@@ -96,15 +99,25 @@ public:
 
     bool isOpen() const override { return handle_ != INVALID_HANDLE_VALUE; }
 
+    void interrupt() override
+    {
+        interrupted_.store(true);
+        // Aborts a WriteFile blocked on this handle (ERROR_OPERATION_ABORTED);
+        // the polling waits below check the flag.
+        if (handle_ != INVALID_HANDLE_VALUE) ::CancelIoEx(handle_, nullptr);
+    }
+
     int write(const std::vector<uint8_t>& data) override
     {
         if (handle_ == INVALID_HANDLE_VALUE) {
             error_ = "write on closed port";
             return -1;
         }
+        if (interrupted_.load()) { failInterrupted(); return -1; }
         DWORD written = 0;
         if (!::WriteFile(handle_, data.data(), static_cast<DWORD>(data.size()),
                          &written, nullptr)) {
+            if (interrupted_.load()) { failInterrupted(); return -1; }
             setLastError("WriteFile");
             return -1;
         }
@@ -127,6 +140,7 @@ public:
         const auto deadline =
             std::chrono::steady_clock::now() + std::chrono::milliseconds(std::max(0, timeoutMs));
         for (;;) {
+            if (interrupted_.load()) return failInterrupted();
             COMSTAT stat{};
             DWORD errors = 0;
             if (!::ClearCommError(handle_, &errors, &stat)) {
@@ -153,6 +167,7 @@ public:
         const auto deadline =
             std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
         for (;;) {
+            if (interrupted_.load()) return false;
             if (queuedBytes() > 0) return true;
             if (std::chrono::steady_clock::now() >= deadline) return false;
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -189,6 +204,15 @@ private:
         return stat.cbInQue;
     }
 
+    // interrupt() was called: drop what is queued and fail the call.
+    bool failInterrupted()
+    {
+        ::PurgeComm(handle_, PURGE_TXABORT | PURGE_TXCLEAR);
+        systemError_ = ERROR_OPERATION_ABORTED;
+        error_ = "Serial port interrupted (session closing), output discarded";
+        return false;
+    }
+
     void setLastError(const std::string& what)
     {
         systemError_ = static_cast<int>(::GetLastError());
@@ -196,6 +220,7 @@ private:
     }
 
     HANDLE handle_{INVALID_HANDLE_VALUE};
+    std::atomic<bool> interrupted_{false};
     std::string error_;
     int systemError_{0};
 };

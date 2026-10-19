@@ -56,10 +56,21 @@ std::mutex gHoldMutex;
 std::condition_variable gHoldCv;
 bool gHoldWrites = false; // under gHoldMutex
 bool gHolding = false;    // under gHoldMutex: a write() is held right now
+int gLivePorts = 0;       // under gHoldMutex: FakeSerialPort objects alive (owned by bus I/O threads)
 
 class FakeSerialPort final : public ISerialPort {
 public:
-    explicit FakeSerialPort(Mode mode, uint8_t slaveAddr) : mode_(mode), slaveAddr_(slaveAddr) {}
+    explicit FakeSerialPort(Mode mode, uint8_t slaveAddr) : mode_(mode), slaveAddr_(slaveAddr)
+    {
+        std::scoped_lock lock(gHoldMutex);
+        ++gLivePorts;
+    }
+    ~FakeSerialPort() override
+    {
+        std::scoped_lock lock(gHoldMutex);
+        --gLivePorts;
+        gHoldCv.notify_all();
+    }
 
     bool open(int, int) override { open_ = true; return true; }
     void close() override { open_ = false; }
@@ -368,6 +379,72 @@ int main()
         MIB_EXPECT(stopped, "the pump answers again once the call returns");
         MIB_EXPECT(why().empty(), "a success clears the failure");
         svc.disconnect(PumpId::Sample);
+    }
+
+    // 7) + 8) Teardown with the I/O thread still held (#720 review): dropping the session must not
+    //    wait for the stuck call. The fake ignores ISerialPort::interrupt() (a call stuck in the
+    //    driver), so the session detaches its thread after kShutdownJoinMs; the thread closes the
+    //    port by itself once released. Both checks destroy the session while the write is held.
+    {
+        using namespace std::chrono_literals;
+        using Clock = std::chrono::steady_clock;
+        namespace sb = backend::services::serialbus;
+        const auto ceiling = 5s;
+        const auto transactBound = std::chrono::milliseconds(sb::ModbusBusSession::transactBudgetMs(1000));
+        const auto joinBound = std::chrono::milliseconds(sb::ModbusBusSession::kShutdownJoinMs);
+        const auto hold = [](bool on) {
+            {
+                std::scoped_lock lock(gHoldMutex);
+                gHoldWrites = on;
+            }
+            gHoldCv.notify_all();
+        };
+        const auto holding = [] {
+            std::scoped_lock lock(gHoldMutex);
+            return gHolding;
+        };
+        const auto waitPortsClosed = [] {
+            std::unique_lock lock(gHoldMutex);
+            return gHoldCv.wait_for(lock, 10s, [] { return gLivePorts == 0; });
+        };
+        sb::SerialBusManager bus;
+        configure(bus, Mode::Normal);
+        SyringePumpService svc(bus);
+        SyringePumpService::RunFacts f;
+
+        // 7) The first connect transaction stalls: connect reports failure within its bound,
+        //    with the session dropped while the write is still held, and the pump is free.
+        watchdog.mark("stalled connect");
+        hold(true);
+        auto t0 = Clock::now();
+        const bool connected = svc.connect(PumpId::Sample, 3, 115200, 1);
+        const auto connectTook = Clock::now() - t0;
+        std::printf("stalled connect: failed after %lld ms\n",
+                    static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(connectTook).count()));
+        MIB_EXPECT(!connected && !svc.isConnected(PumpId::Sample), "a stalled connect fails");
+        MIB_EXPECT(connectTook < transactBound + joinBound + ceiling, "within its bound, not for ever");
+        MIB_EXPECT(holding(), "the session was dropped while its write was still held");
+        MIB_EXPECT(svc.runFacts(PumpId::Sample, 10ms, f), "the pump's lock is free");
+        hold(false);
+        MIB_EXPECT(waitPortsClosed(), "released, the detached I/O thread closes its port");
+
+        // 8) A transaction was abandoned, then the pump disconnects while the write is held.
+        watchdog.mark("disconnect after an abandoned transaction");
+        MIB_REQUIRE(svc.connect(PumpId::Sample, 3, 115200, 1), "connect");
+        hold(true);
+        MIB_EXPECT(!svc.stop(PumpId::Sample), "the held stop is abandoned");
+        MIB_REQUIRE(holding(), "the I/O thread is still inside write()");
+        t0 = Clock::now();
+        svc.disconnect(PumpId::Sample);
+        const auto disconnectTook = Clock::now() - t0;
+        std::printf("disconnect after an abandoned transaction: returned after %lld ms\n",
+                    static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(disconnectTook).count()));
+        MIB_EXPECT(!svc.isConnected(PumpId::Sample), "disconnected");
+        MIB_EXPECT(disconnectTook < joinBound + ceiling, "within the teardown bound, not for ever");
+        MIB_EXPECT(holding(), "the session was dropped while its write was still held");
+        MIB_EXPECT(svc.runFacts(PumpId::Sample, 10ms, f), "the pump's lock is free");
+        hold(false);
+        MIB_EXPECT(waitPortsClosed(), "released, the detached I/O thread closes its port");
     }
 
     if (mib::test::exitCode() == 0) {

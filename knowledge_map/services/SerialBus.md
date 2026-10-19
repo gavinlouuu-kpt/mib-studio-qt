@@ -19,7 +19,9 @@ unframeable (`expectedFrameLength` → -2) and fails the transaction.
 **Tests:** `tests/backend/serial_bus_pty_test.cpp` (POSIX pty bus simulator),
 `tests/backend/serial_bus_deadline_test.cpp` (`backend.serial_bus_deadline`,
 #720: held port call, fail-fast, late result and late reply never answer a
-later request, concurrent stress), `tests/backend/modbus_rtu_test.cpp`
+later request, concurrent stress, teardown with the I/O thread held: joined
+after `interrupt()`, detached after `kShutdownJoinMs` when the call ignores
+it), `tests/backend/modbus_rtu_test.cpp`
 (framing primitives)
 **Related:** [[PulseGeneratorService]], [[SyringePumpService]],
 [[../architecture/AppBackend]], [[../frontend/ConfigTabs]]
@@ -87,11 +89,25 @@ kernel, a fake that blocks) trips it. Then:
   transaction before it writes (the stale-drain step above), so they are
   never attributed to it. A reply that arrives after that drain is
   indistinguishable from an answer: Modbus RTU frames carry no transaction id.
-- The session destructor still joins the I/O thread, so closing a session
-  waits for a stuck port call to return (bounded for the platform ports).
+- **Teardown is bounded.** Dropping the last reference (a pump disconnect,
+  or a connect that failed on a stalled first transaction, both under the
+  pump and bridge locks) never waits for a stuck call: the destructor sets
+  stop, calls `ISerialPort::interrupt()` when a transaction is still running
+  (the platform ports wake a `poll`/`select` wait at once through a
+  self-pipe or `CancelIoEx`, fail it and discard the unsent bytes), and
+  waits at most `kShutdownJoinMs` (1 s) for the I/O thread. The thread
+  closes the port itself, on its own thread: the fd is never closed from
+  another thread, where its number could be reused and receive a late pump
+  frame. A thread still inside a port call after the bound (stuck in the
+  driver, or a fake that ignores `interrupt()`) is **detached** and logged.
+  It shares ownership (`shared_ptr<IoState>`) of everything it touches (the
+  port, the request copy, the sequence and result state), so it never uses
+  freed memory; once the call returns it sees stop, closes the port and
+  leaves. Until then a new session on the same port can open it again.
 
-The handoff is all under `jobMutex_` (condition variable `wait_until`, no
-`std::timed_mutex`), clean on the TSan lane.
+All handoff state lives in `ModbusBusSession::IoState` under its mutex
+(condition variable `wait_until` / `wait_for`, no `std::timed_mutex`), clean
+on the TSan lane and under ASan for the detached path.
 
 ## Strict correlation (`modbus::classifyResponse`)
 
@@ -126,7 +142,8 @@ fighting over a second open.
 
 Each session owns a **dedicated I/O thread**: the `ISerialPort` is created
 (from the manager's factory), opened with `openNamed(portName, settings)`,
-used (bounded `waitFor*`), and destroyed only on that thread. `transact()` marshals a copy of the request to the I/O thread and
+used (bounded `waitFor*`), and closed and destroyed only on that thread
+(the destructor may only `interrupt()` it). `transact()` marshals a copy of the request to the I/O thread and
 waits up to `transactBudgetMs(timeoutMs)` for the result; any thread may call
 it, and callers are serialized by the session's call mutex (always innermost —
 services take their own state mutex first).

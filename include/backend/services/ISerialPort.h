@@ -76,6 +76,15 @@ public:
     // Return everything currently available (possibly empty).
     virtual std::vector<uint8_t> readAll() = 0;
 
+    // Make a call in progress on the owning thread, and every later wait,
+    // write or drain, fail at once (lastError() says "interrupted"); the
+    // untransmitted output is discarded. The one call that may come from
+    // another thread while the owner is inside a call, but never concurrently
+    // with open*() or close(): the owner still closes the port itself. Used
+    // to shut a bus session down without waiting out a stalled call (#720).
+    // Fakes need not implement it.
+    virtual void interrupt() {}
+
     virtual std::string lastError() const = 0;
     // OS error code of the last failed open (GetLastError / errno); 0 when
     // unknown. Lets the bus layer classify "busy" without parsing text.

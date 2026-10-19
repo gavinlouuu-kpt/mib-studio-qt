@@ -135,9 +135,15 @@ transaction (`SERIAL_TIMEOUT_MS` drain, or the 1 s write deadline), and after
 at most `transactBudgetMs(1000)` = 3.51 s if a port call itself hangs. The
 command returns false and releases the pump's lock (and the bridge lock of its
 caller); the untransmitted request is discarded, so a stop or start reported
-as failed is not delivered late when the adapter recovers. Tests: section 6
-of `backend.syringe_pump_fake_serial` (never drains, write timeout, held port
-call: bound, message, lock released, recovery) and the stalled-stop case of
+as failed is not delivered late when the adapter recovers. Dropping the bus
+session is bounded too: a connect whose first transaction stalls reports
+failure after at most `transactBudgetMs(1000)` + `kShutdownJoinMs` (about
+4.5 s), and a disconnect after an abandoned transaction returns within
+`kShutdownJoinMs` (1 s); a still-stuck I/O thread is detached by
+[[SerialBus]]. Tests: sections 6-8 of `backend.syringe_pump_fake_serial`
+(never drains, write timeout, held port call: bound, message, lock released,
+recovery; stalled connect and disconnect after an abandoned transaction, both
+dropping the session while the write is still held) and the stalled-stop case of
 `backend.peristaltic_pump_fake_serial` (the stop never reaches the running
 pump; the next one does).
 

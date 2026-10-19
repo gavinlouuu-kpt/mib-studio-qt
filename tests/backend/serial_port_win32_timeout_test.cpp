@@ -38,6 +38,11 @@ BOOL WINAPI fakeClearError(HANDLE, LPDWORD errors, LPCOMSTAT stat) {
     if (driverError) SetLastError(ERROR_DEVICE_NOT_CONNECTED);
     return !driverError;
 }
+int cancels = 0;
+BOOL WINAPI fakeCancelIo(HANDLE, LPOVERLAPPED) {
+    ++cancels;
+    return TRUE;
+}
 BOOL WINAPI fakeFlush(HANDLE) {
     // FlushFileBuffers has no timeout. Model a device that never drains.
     for (;;)
@@ -52,6 +57,7 @@ BOOL WINAPI fakeFlush(HANDLE) {
 #define CloseHandle fakeClose
 #define ClearCommError fakeClearError
 #define FlushFileBuffers fakeFlush
+#define CancelIoEx fakeCancelIo
 #include "../../src/backend/services/SerialPortWin32.cpp"
 
 int main() {
@@ -69,6 +75,15 @@ int main() {
     driverError = true;
     MIB_EXPECT(!port->waitForBytesWritten(20), "unplugged driver returns failure");
     MIB_EXPECT(port->lastSystemError() == ERROR_DEVICE_NOT_CONNECTED, "driver error preserved");
+    // interrupt() (session teardown, #720): pending I/O is cancelled and a
+    // stalled drain fails at once instead of waiting out its timeout.
+    driverError = false;
+    stalled = true;
+    port->interrupt();
+    MIB_EXPECT(cancels == 1, "a blocked WriteFile is cancelled");
+    watchdog.mark("interrupted drain must fail at once");
+    MIB_EXPECT(!port->waitForBytesWritten(60000), "an interrupted port fails the drain");
+    MIB_EXPECT(port->lastError().find("interrupted") != std::string::npos, "and says why");
     port->close();
     MIB_EXPECT(closes == 1, "port released after failures");
     MIB_EXPECT(!port->waitForBytesWritten(0), "closed port fails");

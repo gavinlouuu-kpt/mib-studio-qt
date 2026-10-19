@@ -62,9 +62,9 @@ struct Transaction {
 // SerialBusManager::acquire(); hold via shared_ptr — the port closes when the
 // last client releases its reference.
 //
-// The port lives on a dedicated I/O thread (created and used only there), so
-// transact() marshals the request to that thread and blocks for the result.
-// Any thread may call transact(); callers are serialized.
+// The port lives on a dedicated I/O thread (created, used and closed only
+// there), so transact() marshals the request to that thread and blocks for
+// the result. Any thread may call transact(); callers are serialized.
 //
 // transact() never waits without limit (#720): it gives the I/O thread
 // transactBudgetMs(timeoutMs) and then returns Timeout. Every request carries
@@ -75,6 +75,13 @@ struct Transaction {
 // Timeout instead of queueing behind it. Once the thread is back, the next
 // transaction drains any late reply bytes before it writes, as for any stale
 // traffic, and the bus works again.
+//
+// Teardown is bounded too: the destructor asks the I/O thread to stop,
+// interrupts a port call in progress (ISerialPort::interrupt) and waits at
+// most kShutdownJoinMs for the thread. A thread still inside a port call then
+// is detached and logged: it shares ownership of everything it touches (the
+// port, the request, the handshake state), so it never uses freed memory, and
+// it closes the port when the call returns.
 class ModbusBusSession {
 public:
     ~ModbusBusSession();
@@ -99,9 +106,12 @@ public:
     // that ignores its bound trips it.
     static int transactBudgetMs(int timeoutMs);
 
+    // How long the destructor waits for the I/O thread before detaching it.
+    static constexpr int kShutdownJoinMs = 1000;
+
     std::string portName() const { return portName_; }
     SerialSettings settings() const { return settings_; }
-    bool isOpen() const { return portOpen_.load(); }
+    bool isOpen() const;
 
 private:
     friend class SerialBusManager;
@@ -109,38 +119,16 @@ private:
 
     // Spawns the I/O thread, which opens the port; blocks for the outcome.
     bool start(BusError* error, std::string* errorDetail);
-    void ioLoop();
-    bool openPortOnIoThread(); // io thread only
-    Transaction runTransaction(const Bytes& request, int timeoutMs); // io thread only
+
+    // Everything the I/O thread touches: the port, the request and result,
+    // the handshake. Shared by the session and the thread (SerialBus.cpp).
+    struct IoState;
 
     const std::string portName_;
     const SerialSettings settings_;
-    SerialPortFactory factory_;
-
-    // Touched only by the I/O thread.
-    std::unique_ptr<ISerialPort> serial_;
-    std::chrono::steady_clock::time_point lastBusActivity_{};
-
+    std::shared_ptr<IoState> io_;
     std::thread ioThread_;
     std::mutex callMutex_; // serializes transact() callers
-
-    // Handshake between callers and the I/O thread, all under jobMutex_.
-    // Sequence numbers start at 1; 0 means "none".
-    std::mutex jobMutex_;
-    std::condition_variable jobCv_;
-    Bytes jobRequest_;              // a copy: a caller that timed out may be gone
-    int jobTimeoutMs_{0};
-    std::uint64_t lastSeq_{0};      // last sequence number handed out
-    std::uint64_t pendingSeq_{0};   // posted, not yet taken by the I/O thread
-    std::uint64_t runningSeq_{0};   // being run by the I/O thread
-    std::uint64_t abandonedSeq_{0}; // its caller gave up; its result is dropped
-    std::uint64_t doneSeq_{0};      // the request jobResult_ answers
-    Transaction jobResult_;
-    bool stopRequested_{false};
-    bool openDone_{false};
-    BusError openErrorCode_{BusError::PortUnavailable};
-    std::string openErrorDetail_;
-    std::atomic<bool> portOpen_{false};
 };
 
 // Process-wide registry: one live session per system port. acquire() returns

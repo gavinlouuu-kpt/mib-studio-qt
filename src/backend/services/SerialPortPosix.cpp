@@ -5,6 +5,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <cstring>
@@ -19,6 +20,13 @@
 #include <sys/select.h>
 #include <termios.h>
 #include <unistd.h>
+
+// Test seam: serial_port_posix_timeout_test compiles this file with the
+// write(2) the port calls redirected (the member write() hides a macro on the
+// plain name). Production builds call ::write.
+#ifndef MIB_SERIAL_SYS_WRITE
+#define MIB_SERIAL_SYS_WRITE ::write
+#endif
 
 namespace backend::services {
 
@@ -57,7 +65,29 @@ std::string devicePathForComPort(int comPort)
 
 class PosixSerialPort final : public ISerialPort {
 public:
-    ~PosixSerialPort() override { close(); }
+    PosixSerialPort()
+    {
+        // Self-pipe for interrupt(): its read end joins every poll/select, so
+        // a wait in progress wakes at once. Without it (descriptor shortage)
+        // interrupt() still fails every later call; a wait already in
+        // progress then ends at its own (bounded) timeout.
+        int fds[2] = {-1, -1};
+        if (::pipe(fds) == 0) {
+            for (const int fd : fds) {
+                ::fcntl(fd, F_SETFL, ::fcntl(fd, F_GETFL) | O_NONBLOCK);
+                ::fcntl(fd, F_SETFD, FD_CLOEXEC);
+            }
+            wakeRead_ = fds[0];
+            wakeWrite_ = fds[1];
+        }
+    }
+
+    ~PosixSerialPort() override
+    {
+        close();
+        if (wakeRead_ >= 0) ::close(wakeRead_);
+        if (wakeWrite_ >= 0) ::close(wakeWrite_);
+    }
 
     bool open(int comPort, int baudRate) override
     {
@@ -76,6 +106,12 @@ public:
         const std::string devicePath = systemName.rfind('/', 0) == 0 ? systemName : "/dev/" + systemName;
         const int baudRate = settings.baudRate;
         close();
+        interrupted_.store(false);
+        if (wakeRead_ >= 0) {
+            char drain[16];
+            while (::read(wakeRead_, drain, sizeof(drain)) > 0) {
+            }
+        }
         fd_ = ::open(devicePath.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
         if (fd_ < 0) {
             setErrno("open " + devicePath);
@@ -123,8 +159,20 @@ public:
     void close() override
     {
         if (fd_ >= 0) {
+            // After an interrupt, drop unsent output first: a tty close
+            // otherwise waits for it to drain (closing_wait, 30 s).
+            if (interrupted_.load()) discardOutput();
             ::close(fd_);
             fd_ = -1;
+        }
+    }
+
+    void interrupt() override
+    {
+        interrupted_.store(true);
+        if (wakeWrite_ >= 0) {
+            const char wake = 1;
+            (void)!::write(wakeWrite_, &wake, 1); // a full pipe is already signalled
         }
     }
 
@@ -138,20 +186,24 @@ public:
         }
         // The port is non-blocking: a full driver queue answers EAGAIN. Wait
         // for room with poll() up to the write deadline instead of retrying
-        // for ever (#720).
+        // for ever (#720). Every retry, EINTR included, spends the same
+        // budget.
         const auto deadline = std::chrono::steady_clock::now() +
                               std::chrono::milliseconds(kSerialWriteTimeoutMs);
         size_t total = 0;
         while (total < data.size()) {
-            const ssize_t n = ::write(fd_, data.data() + total, data.size() - total);
+            if (interrupted_.load()) {
+                failInterrupted(total, data.size());
+                return -1;
+            }
+            const ssize_t n = MIB_SERIAL_SYS_WRITE(fd_, data.data() + total, data.size() - total);
+            const int err = n < 0 ? errno : 0;
             if (n > 0) {
                 total += static_cast<size_t>(n);
                 continue;
             }
-            if (n < 0 && errno == EINTR) {
-                continue;
-            }
-            if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+            if (n < 0 && err != EINTR && err != EAGAIN && err != EWOULDBLOCK) {
+                errno = err;
                 setErrno("write");
                 return -1;
             }
@@ -166,15 +218,20 @@ public:
                          " bytes taken, discarded)";
                 return -1;
             }
-            pollfd p{};
-            p.fd = fd_;
-            p.events = POLLOUT;
-            const int rc = ::poll(&p, 1, left);
+            if (err == EINTR) {
+                continue; // retry at once; the deadline above still applies
+            }
+            pollfd p[2]{};
+            p[0].fd = fd_;
+            p[0].events = POLLOUT;
+            p[1].fd = wakeRead_;
+            p[1].events = POLLIN;
+            const int rc = ::poll(p, wakeRead_ >= 0 ? 2 : 1, left);
             if (rc < 0 && errno != EINTR) {
                 setErrno("poll while writing");
                 return -1;
             }
-            if (rc > 0 && (p.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+            if (rc > 0 && (p[0].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
                 systemError_ = EIO;
                 error_ = "serial port error while writing (device gone?)";
                 return -1;
@@ -191,27 +248,46 @@ public:
 #if defined(TIOCOUTQ)
         // tcdrain() has no timeout and blocks for ever on an adapter that
         // stops draining (#720). Poll the output queue to a deadline instead,
-        // as the Win32 port polls COMSTAT.cbOutQue.
+        // as the Win32 port polls COMSTAT.cbOutQue. Every retry, EINTR
+        // included, is checked against the deadline.
         const auto deadline =
             std::chrono::steady_clock::now() + std::chrono::milliseconds(budgetMs);
+        int queued = -1; // unknown until a query succeeds
         for (;;) {
-            int queued = 0;
-            if (::ioctl(fd_, TIOCOUTQ, &queued) != 0) {
-                if (errno == EINTR) continue;
+            if (interrupted_.load()) {
+                failInterrupted(0, 0);
+                return false;
+            }
+            int count = 0;
+            const int rc = ::ioctl(fd_, TIOCOUTQ, &count);
+            const int err = rc != 0 ? errno : 0;
+            if (rc != 0 && err != EINTR) {
+                errno = err;
                 setErrno("TIOCOUTQ while waiting for serial output");
                 return false;
             }
-            if (queued <= 0) return true;
+            if (rc == 0) {
+                if (count <= 0) return true;
+                queued = count;
+            }
             if (std::chrono::steady_clock::now() >= deadline) {
                 discardOutput();
                 systemError_ = ETIMEDOUT;
-                error_ = "serial output timed out: " + std::to_string(queued) +
-                         " bytes not drained after " + std::to_string(budgetMs) + " ms (discarded)";
+                error_ = "serial output timed out: " +
+                         (queued >= 0 ? std::to_string(queued) + " bytes not drained"
+                                      : std::string("drain not confirmed (interrupted queries)")) +
+                         " after " + std::to_string(budgetMs) + " ms (discarded)";
                 return false;
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            if (rc == 0) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
         }
 #else
+        if (interrupted_.load()) {
+            failInterrupted(0, 0);
+            return false;
+        }
         // No TIOCOUTQ on this platform: the queue cannot be read, and
         // tcdrain() has no bound. Give the last write its nominal line time
         // (10 bits per byte), capped at the timeout, and report the drain as
@@ -227,14 +303,16 @@ public:
 
     bool waitForReadyRead(int timeoutMs) override
     {
-        if (fd_ < 0) return false;
+        if (fd_ < 0 || interrupted_.load()) return false;
         fd_set rset;
         FD_ZERO(&rset);
         FD_SET(fd_, &rset);
+        if (wakeRead_ >= 0) FD_SET(wakeRead_, &rset); // interrupt() wakes the wait
         timeval tv{};
         tv.tv_sec = timeoutMs / 1000;
         tv.tv_usec = (timeoutMs % 1000) * 1000;
-        const int rc = ::select(fd_ + 1, &rset, nullptr, nullptr, &tv);
+        const int rc = ::select(std::max(fd_, wakeRead_) + 1, &rset, nullptr, nullptr, &tv);
+        if (interrupted_.load()) return false;
         return rc > 0 && FD_ISSET(fd_, &rset);
     }
 
@@ -271,7 +349,22 @@ private:
     // the adapter's own FIFO may still go out).
     void discardOutput() { ::tcflush(fd_, TCOFLUSH); }
 
+    // interrupt() was called: drop what is queued and fail the call.
+    void failInterrupted(size_t taken, size_t size)
+    {
+        discardOutput();
+        systemError_ = EINTR;
+        error_ = "serial port interrupted (session closing)";
+        if (size > 0) {
+            error_ += ": " + std::to_string(taken) + " of " + std::to_string(size) +
+                      " bytes taken, discarded";
+        }
+    }
+
     int fd_{-1};
+    int wakeRead_{-1};
+    int wakeWrite_{-1};
+    std::atomic<bool> interrupted_{false};
     int baudRate_{9600};
     size_t lastWriteBytes_{0};
     std::string error_;

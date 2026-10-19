@@ -12,7 +12,12 @@
 //    request gets its own answer;
 //  - a reply that arrives after its transaction's deadline is drained by the
 //    next transaction, never taken as its answer;
-//  - under concurrent callers every answer belongs to its own request.
+//  - under concurrent callers every answer belongs to its own request;
+//  - destroying a session while its I/O thread is still held is bounded:
+//    a call that honours ISerialPort::interrupt() is woken and the thread
+//    joined (port closed before the destructor returns); a call that ignores
+//    it (stuck in the driver) is detached after kShutdownJoinMs, and the
+//    detached thread still closes its port, on its own, once released.
 // FC03 answers carry a register-dependent value and have the same shape for
 // every register, so a misattributed answer would pass the frame checks and
 // show up only as a wrong value.
@@ -70,11 +75,27 @@ struct Slave {
     int silentEvery{0};       // >0: every Nth request is not answered (stress)
     std::uint64_t jitterSeed{1};
     std::vector<Bytes> written;
+    bool honourInterrupt{false}; // interrupt() releases a held write
+    bool interrupted{false};
+    int interrupts{0};
+    int livePorts{0};            // SlavePort objects alive (the I/O thread owns them)
 };
 
 class SlavePort final : public backend::services::ISerialPort {
 public:
-    explicit SlavePort(Slave& slave) : slave_(slave), rng_(slave.jitterSeed) {}
+    explicit SlavePort(Slave& slave) : slave_(slave), rng_(slave.jitterSeed)
+    {
+        std::scoped_lock lock(slave_.mutex);
+        ++slave_.livePorts;
+    }
+    ~SlavePort() override
+    {
+        // Notify under the lock: once a waiter sees livePorts drop it may
+        // destroy the Slave, so nothing here may touch it after unlocking.
+        std::scoped_lock lock(slave_.mutex);
+        --slave_.livePorts;
+        slave_.cv.notify_all();
+    }
 
     bool open(int, int) override { return open_ = true; }
     bool openNamed(const std::string&, const backend::services::SerialSettings&) override
@@ -91,8 +112,11 @@ public:
         if (slave_.holdWrites) {
             slave_.holding = true;
             slave_.cv.notify_all();
-            slave_.cv.wait(lock, [this] { return !slave_.holdWrites; });
+            slave_.cv.wait(lock, [this] {
+                return !slave_.holdWrites || (slave_.honourInterrupt && slave_.interrupted);
+            });
             slave_.holding = false;
+            if (slave_.holdWrites) return -1; // woken by interrupt()
         }
         const bool silent =
             slave_.silentEvery > 0 && slave_.written.size() % static_cast<size_t>(slave_.silentEvery) == 0;
@@ -109,6 +133,15 @@ public:
         return static_cast<int>(q.size());
     }
     bool waitForBytesWritten(int) override { return true; }
+    void interrupt() override
+    {
+        {
+            std::scoped_lock lock(slave_.mutex);
+            slave_.interrupted = true;
+            ++slave_.interrupts;
+        }
+        slave_.cv.notify_all();
+    }
     bool waitForReadyRead(int ms) override
     {
         const auto deadline = Clock::now() + std::chrono::milliseconds(ms);
@@ -141,6 +174,31 @@ size_t writtenCount(Slave& slave)
 {
     std::scoped_lock lock(slave.mutex);
     return slave.written.size();
+}
+
+int livePorts(Slave& slave)
+{
+    std::scoped_lock lock(slave.mutex);
+    return slave.livePorts;
+}
+
+// Open a session on its own fake, hold its next write and let transact()
+// abandon it: the I/O thread is left inside write().
+std::shared_ptr<serialbus::ModbusBusSession> heldSession(serialbus::SerialBusManager& manager, Slave& slave,
+                                                         const std::string& port, int timeoutMs)
+{
+    manager.setSerialPortFactory([&slave] { return std::make_unique<SlavePort>(slave); });
+    auto session = manager.acquire(port, serialbus::SerialSettings{});
+    MIB_REQUIRE(session != nullptr, "fake bus opens");
+    {
+        std::scoped_lock lock(slave.mutex);
+        slave.holdWrites = true;
+    }
+    const auto t = session->transact(readRequest(0x70), timeoutMs);
+    MIB_EXPECT(t.error == serialbus::BusError::Timeout, "the held transaction is abandoned");
+    std::scoped_lock lock(slave.mutex);
+    MIB_REQUIRE(slave.holding, "the I/O thread is inside write()");
+    return session;
 }
 
 } // namespace
@@ -278,7 +336,59 @@ int main()
     MIB_EXPECT(other.load() == 0, "no other failure");
     MIB_EXPECT(answered.load() > 0 && timedOut.load() > 0, "both outcomes exercised");
 
+    {
+        std::scoped_lock lock(slave.mutex);
+        MIB_EXPECT(slave.interrupts == 0, "no transaction ran so far without a caller: nothing interrupted");
+    }
     bus.reset();
+    MIB_EXPECT(livePorts(slave) == 0, "an idle session closes its port before the destructor returns");
+
+    // 6) Teardown while the I/O thread is held (#720 review): bounded.
+    //    a) The port honours interrupt(): the held call is woken, the thread
+    //       closes the port and is joined.
+    watchdog.mark("teardown, interruptible call");
+    {
+        Slave wakeable;
+        wakeable.honourInterrupt = true;
+        serialbus::SerialBusManager teardown;
+        auto session = heldSession(teardown, wakeable, "ttyFAKE1", kTimeoutMs);
+        start = Clock::now();
+        session.reset();
+        elapsed = msSince(start);
+        std::printf("teardown, interruptible: destructor returned after %lld ms\n", elapsed);
+        MIB_EXPECT(livePorts(wakeable) == 0, "joined: the port is closed when the destructor returns");
+        std::scoped_lock lock(wakeable.mutex);
+        MIB_EXPECT(wakeable.interrupts == 1, "the held call was interrupted");
+    }
+    //    b) The call ignores interrupt() (stuck in the driver): the
+    //       destructor gives up at kShutdownJoinMs and detaches the thread,
+    //       which still owns the port and closes it once released.
+    watchdog.mark("teardown, stuck call");
+    {
+        Slave stuck;
+        serialbus::SerialBusManager teardown;
+        auto session = heldSession(teardown, stuck, "ttyFAKE2", kTimeoutMs);
+        start = Clock::now();
+        session.reset();
+        elapsed = msSince(start);
+        std::printf("teardown, stuck: destructor returned after %lld ms (bound %d ms)\n", elapsed,
+                    serialbus::ModbusBusSession::kShutdownJoinMs);
+        MIB_EXPECT(elapsed >= serialbus::ModbusBusSession::kShutdownJoinMs - 5 &&
+                       elapsed < serialbus::ModbusBusSession::kShutdownJoinMs + kCeilingMs,
+                   "the destructor waits its bound, not for ever");
+        {
+            std::scoped_lock lock(stuck.mutex);
+            MIB_EXPECT(stuck.holding && stuck.livePorts == 1,
+                       "the session is gone while its detached thread is still held, owning the port");
+            stuck.holdWrites = false;
+        }
+        stuck.cv.notify_all();
+        std::unique_lock lock(stuck.mutex);
+        const bool closed = stuck.cv.wait_for(lock, std::chrono::seconds(10), [&] { return stuck.livePorts == 0; });
+        MIB_EXPECT(closed, "released, the detached thread closes its port and leaves");
+        MIB_EXPECT(stuck.written.size() == 1, "and sends nothing more");
+    }
+
     if (mib::test::exitCode() == 0) std::printf("SerialBus deadlines verified\n");
     return mib::test::exitCode();
 }
