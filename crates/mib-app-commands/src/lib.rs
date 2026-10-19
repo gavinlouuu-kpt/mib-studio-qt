@@ -948,6 +948,7 @@ pub fn fetch_review_metrics_page(
                 ring_ratio: r.ring_ratio,
                 youngs_modulus: r.youngs_modulus,
                 pixel_to_micron: r.pixel_to_micron,
+                start_generation: None, // a review row belongs to no live run
             })
             .collect(),
     })
@@ -1594,6 +1595,11 @@ pub struct MonitoringRow {
     ring_ratio: f64,
     youngs_modulus: f64,
     pixel_to_micron: f64,
+    /// ABI 41 (#716 A6a): the start generation of the row's run (0 = outside a run), a canonical
+    /// decimal string; with `(frame_index, object_id)` it names the row for `monitoring_cell_pin`.
+    /// Monitoring snapshot rows only; omitted from review metric rows.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    start_generation: Option<String>,
 }
 
 /// Bounded monitoring snapshot for the webview (schema v6, BE-5).
@@ -1671,9 +1677,77 @@ pub fn fetch_monitoring_snapshot(
                 ring_ratio: r.ring_ratio,
                 youngs_modulus: r.youngs_modulus,
                 pixel_to_micron: r.pixel_to_micron,
+                start_generation: Some(r.start_generation.to_string()),
             })
             .collect(),
     })
+}
+
+/// A live cell's identity from transport strings (`json_transport`: canonical decimal u64).
+fn cell_identity(start_generation: &str, frame_index: &str, name: &str) -> Result<(u64, u64), String> {
+    let generation = parse_canonical_u64(start_generation)
+        .ok_or_else(|| format!("Invalid {name}: a canonical decimal start generation is required"))?;
+    let frame = parse_canonical_u64(frame_index)
+        .ok_or_else(|| "Invalid frameIndex: a canonical decimal frame index is required".to_string())?;
+    Ok((generation, frame))
+}
+
+/// ABI 41 (#716 A6a): the live cell strip and pins (bridge-contract.json `monitoring_cells`).
+/// Brings the strip up to date with the monitoring ring first; metadata only, never pixels.
+pub fn fetch_monitoring_cells(state: &AppState) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().fetch_monitoring_cells()).map_err(|e| e.to_string())
+}
+
+/// Pin a monitoring row by its identity; `{ok, outcome, message, cell, revision}`.
+pub fn monitoring_cell_pin(
+    state: &AppState,
+    expected_start_generation: String,
+    frame_index: String,
+    object_id: i32,
+) -> Result<serde_json::Value, String> {
+    let (generation, frame) = cell_identity(&expected_start_generation, &frame_index, "expectedStartGeneration")?;
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().monitoring_cell_pin(generation, frame, object_id)).map_err(|e| e.to_string())
+}
+
+pub fn monitoring_cell_unpin(
+    state: &AppState,
+    start_generation: String,
+    frame_index: String,
+    object_id: i32,
+) -> Result<CmdResult, String> {
+    let (generation, frame) = cell_identity(&start_generation, &frame_index, "startGeneration")?;
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().monitoring_cell_unpin(generation, frame, object_id).into())
+}
+
+pub fn monitoring_cell_clear_pins(state: &AppState) -> Result<CmdResult, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    Ok(guard.pin_mut().monitoring_cell_clear_pins().into())
+}
+
+/// The owned crop (`layer` "image", pull kind 5) or its mask ("mask", pull kind 6) of a pinned
+/// or strip cell as a frame packet; an empty packet (flags 0) when the cell or the layer is not
+/// held (the listing carries the reason).
+pub fn fetch_monitoring_cell_packet(
+    state: &AppState,
+    start_generation: String,
+    frame_index: String,
+    object_id: i32,
+    layer: String,
+) -> Result<Vec<u8>, String> {
+    let (generation, frame) = cell_identity(&start_generation, &frame_index, "startGeneration")?;
+    let (mask, kind) = match layer.as_str() {
+        "image" => (false, frame_packet::PULL_KIND_MONITORING_CELL_IMAGE),
+        "mask" => (true, frame_packet::PULL_KIND_MONITORING_CELL_MASK),
+        _ => return Err("Invalid layer: expected \"image\" or \"mask\"".into()),
+    };
+    let image = {
+        let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+        guard.pin_mut().fetch_monitoring_cell_image(generation, frame, object_id, mask)
+    };
+    frame_packet::encode(image, kind)
 }
 
 /// Set the sorter trigger pulse duration (µs).

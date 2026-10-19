@@ -3,7 +3,7 @@
 // Regenerate with: python3 scripts/gen_bridge_contract.py
 // CI verifies this file with: python3 scripts/gen_bridge_contract.py --check
 
-export const BRIDGE_ABI_VERSION = 40;
+export const BRIDGE_ABI_VERSION = 41;
 
 export const EVENT_KINDS = {
   FrameReady: 0,
@@ -223,6 +223,15 @@ export const EXPERIMENT_STOP_OUTCOMES = {
   RunMismatch: 3,
 } as const;
 
+export const MONITORING_CELL_PIN_OUTCOMES = {
+  Pinned: 0,
+  PinnedWithoutImage: 1,
+  AlreadyPinned: 2,
+  RunMismatch: 3,
+  NotFound: 4,
+  LimitReached: 5,
+} as const;
+
 export const RUN_COMPLETION_STATES = {
   Complete: 0,
   IntentionallyPartial: 1,
@@ -300,12 +309,14 @@ export const FRAME_PACKET = {
   "max_pixels": 16777216,
   "max_dimension": 8192,
   "timestamp_semantics": "legacy raw timestamp_ns; unit and clock validity unavailable",
-  "identity_semantics": "Live raw frames carry CaptureService generation and FrameStore epoch stamped atomically with pixels. Zero means unavailable; raw processing config is inapplicable. Review/background have separate explicit source ownership and zero capture identities.",
+  "identity_semantics": "Live raw frames carry CaptureService generation and FrameStore epoch stamped atomically with pixels. Zero means unavailable; raw processing config is inapplicable. Review/background have separate explicit source ownership and zero capture identities. Monitoring cell crops (pull kinds 5 and 6, ABI 41) are backend-owned copies with zero capture identities: frame_index and timestamp_ns are the row's; the run, frame and object that name the cell are the request's (monitoring_cells).",
   "pull_kinds": {
     "latest": 1,
     "indexed": 2,
     "review": 3,
-    "background": 4
+    "background": 4,
+    "monitoring_cell_image": 5,
+    "monitoring_cell_mask": 6
   },
   "fields": {
     "magic": 0,
@@ -435,6 +446,16 @@ export const EXPERIMENT_START_REQUEST = {
   "temperature_c_min": -50,
   "temperature_c_max": 150,
   "annotation_schema_version": 1
+} as const;
+
+export const MONITORING_CELLS = {
+  "strip_max_cells": 24,
+  "strip_max_bytes": 4194304,
+  "max_pins": 16,
+  "pin_max_bytes": 4194304,
+  "crop_max_side": 256,
+  "crop_min_margin": 8,
+  "row_index_max": 4096
 } as const;
 
 export const EVENT_KIND_NAMES: Readonly<Record<number, string>> = {

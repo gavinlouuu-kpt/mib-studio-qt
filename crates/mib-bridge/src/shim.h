@@ -224,6 +224,15 @@ public:
     BridgeCommandResult monitoring_set_active(bool active);
     BridgeCommandResult monitoring_clear();
     BridgeMonitoringSnapshot fetch_monitoring_snapshot(std::uint64_t max_rows);
+    // ABI 41 (#716 A6a): live cell images (bridge-contract.json monitoring_cells).
+    rust::String fetch_monitoring_cells();
+    rust::String monitoring_cell_pin(std::uint64_t expected_start_generation, std::uint64_t frame_index,
+                                     std::int32_t object_id);
+    BridgeCommandResult monitoring_cell_unpin(std::uint64_t start_generation, std::uint64_t frame_index,
+                                              std::int32_t object_id);
+    BridgeCommandResult monitoring_cell_clear_pins();
+    BridgeFrame fetch_monitoring_cell_image(std::uint64_t start_generation, std::uint64_t frame_index,
+                                            std::int32_t object_id, bool mask);
     BridgeCommandResult trigger_set_pulse_duration(std::int32_t pulse_us);
     BridgeCommandResult trigger_manual_pulse();
     BridgeCommandResult trigger_periodic_start(std::int32_t interval_ms);

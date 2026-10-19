@@ -342,6 +342,21 @@ mib_add_backend_test_executable(monitoring_density_contention_test performance/m
 add_test(NAME performance.monitoring_density_contention COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_density_contention_test)
 set_tests_properties(performance.monitoring_density_contention PROPERTIES LABELS "backend;monitoring;performance" TIMEOUT 120)
 
+# #716 A6a (bridge ABI 41): the live cell store (strip, pins, run rules, no-image reasons) on a scripted ring.
+mib_add_backend_test_executable(monitoring_cell_store_test backend/monitoring_cell_store_test.cpp)
+add_test(NAME backend.monitoring_cell_store COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_cell_store_test)
+set_tests_properties(backend.monitoring_cell_store PROPERTIES LABELS "backend;monitoring;bridge;invariant;safety" TIMEOUT 60)
+# #716 A6a: the store over the real ring while the realtime loop appends (TSan lane: concurrency/stress).
+mib_add_backend_test_executable(monitoring_cell_concurrency_test processing/monitoring_cell_concurrency_test.cpp)
+mib_backend_test_link(monitoring_cell_concurrency_test PRIVATE Threads::Threads)
+add_test(NAME processing.monitoring_cell_concurrency COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_cell_concurrency_test)
+set_tests_properties(processing.monitoring_cell_concurrency PROPERTIES LABELS "backend;processing;monitoring;concurrency;stress" TIMEOUT 180)
+# #716 A6a: what live cell images cost the hot path (ratio gates; sanitizer lanes skip `performance`).
+mib_add_backend_test_executable(monitoring_cell_hot_path_test performance/monitoring_cell_hot_path_test.cpp)
+mib_backend_test_link(monitoring_cell_hot_path_test PRIVATE Threads::Threads)
+add_test(NAME performance.monitoring_cell_hot_path COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_cell_hot_path_test)
+set_tests_properties(performance.monitoring_cell_hot_path PROPERTIES LABELS "backend;monitoring;performance" TIMEOUT 180)
+
 mib_add_backend_test_executable(pr4_monitoring_snapshot_test backend/pr4_monitoring_snapshot_test.cpp)
 add_test(NAME backend.pr4_monitoring_snapshot COMMAND $<TARGET_FILE:mib_backend_tests> pr4_monitoring_snapshot_test)
 set_tests_properties(backend.pr4_monitoring_snapshot PROPERTIES LABELS "backend;processing;monitoring" TIMEOUT 30)

@@ -608,6 +608,33 @@ fn fetch_monitoring_snapshot(state: State<AppState>, max_rows: u64) -> Result<cm
     cmds::fetch_monitoring_snapshot(&state, max_rows)
 }
 
+// ABI 41 (#716 A6a): live cell images. Identities are canonical decimal strings; the pixels travel
+// as frame packets (pull kinds 5 and 6), never in JSON.
+#[tauri::command]
+fn fetch_monitoring_cells(state: State<AppState>) -> Result<serde_json::Value, String> {
+    cmds::fetch_monitoring_cells(&state)
+}
+
+#[tauri::command]
+fn monitoring_cell_pin(state: State<AppState>, expected_start_generation: String, frame_index: String, object_id: i32) -> Result<serde_json::Value, String> {
+    cmds::monitoring_cell_pin(&state, expected_start_generation, frame_index, object_id)
+}
+
+#[tauri::command]
+fn monitoring_cell_unpin(state: State<AppState>, start_generation: String, frame_index: String, object_id: i32) -> Result<cmds::CmdResult, String> {
+    cmds::monitoring_cell_unpin(&state, start_generation, frame_index, object_id)
+}
+
+#[tauri::command]
+fn monitoring_cell_clear_pins(state: State<AppState>) -> Result<cmds::CmdResult, String> {
+    cmds::monitoring_cell_clear_pins(&state)
+}
+
+#[tauri::command]
+fn fetch_monitoring_cell_packet(state: State<AppState>, start_generation: String, frame_index: String, object_id: i32, layer: String) -> Result<Response, String> {
+    cmds::fetch_monitoring_cell_packet(&state, start_generation, frame_index, object_id, layer).map(Response::new)
+}
+
 #[tauri::command]
 fn trigger_set_pulse_duration(state: State<AppState>, pulse_us: i32) -> Result<cmds::CmdResult, String> {
     cmds::trigger_set_pulse_duration(&state, pulse_us)
@@ -878,6 +905,11 @@ pub fn run() {
             monitoring_set_active,
             monitoring_clear,
             fetch_monitoring_snapshot,
+            fetch_monitoring_cells,
+            monitoring_cell_pin,
+            monitoring_cell_unpin,
+            monitoring_cell_clear_pins,
+            fetch_monitoring_cell_packet,
             trigger_set_pulse_duration,
             trigger_manual_pulse,
             trigger_periodic_start,

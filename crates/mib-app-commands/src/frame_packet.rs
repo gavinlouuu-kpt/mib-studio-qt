@@ -5,7 +5,7 @@ use mib_bridge::ffi::BridgeFrame;
 include!("frame_packet_contract.rs");
 
 pub fn encode(frame: BridgeFrame, pull_kind: u32) -> Result<Vec<u8>, String> {
-    if !(1..=4).contains(&pull_kind) {
+    if !PULL_KINDS.contains(&pull_kind) {
         return Err("FRAME_PACKET_INVALID_SOURCE".into());
     }
     if frame.valid {

@@ -1,6 +1,6 @@
 {
   "$comment": "Single source of truth for the bridge command/event contract (BE-1, issue #271, epic #246, ADR 0004). C++ ties to these values via static_asserts in crates/mib-bridge/src/shim.cpp; Rust via crates/mib-bridge/tests/contract.rs; TypeScript via the generated desktop/src/bridgeContract.ts (scripts/gen_bridge_contract.py --check fails CI on drift). All changes must be additive: append values, never renumber or repurpose.",
-  "abi_version": 40,
+  "abi_version": 41,
   "event_kinds": {
     "FrameReady": 0,
     "CameraStatus": 1,
@@ -164,6 +164,14 @@
     "Busy": 2,
     "RunMismatch": 3
   },
+  "monitoring_cell_pin_outcomes": {
+    "Pinned": 0,
+    "PinnedWithoutImage": 1,
+    "AlreadyPinned": 2,
+    "RunMismatch": 3,
+    "NotFound": 4,
+    "LimitReached": 5
+  },
   "run_completion_states": {
     "Complete": 0,
     "IntentionallyPartial": 1,
@@ -258,12 +266,14 @@
     "max_pixels": 16777216,
     "max_dimension": 8192,
     "timestamp_semantics": "legacy raw timestamp_ns; unit and clock validity unavailable",
-    "identity_semantics": "Live raw frames carry CaptureService generation and FrameStore epoch stamped atomically with pixels. Zero means unavailable; raw processing config is inapplicable. Review/background have separate explicit source ownership and zero capture identities.",
+    "identity_semantics": "Live raw frames carry CaptureService generation and FrameStore epoch stamped atomically with pixels. Zero means unavailable; raw processing config is inapplicable. Review/background have separate explicit source ownership and zero capture identities. Monitoring cell crops (pull kinds 5 and 6, ABI 41) are backend-owned copies with zero capture identities: frame_index and timestamp_ns are the row's; the run, frame and object that name the cell are the request's (monitoring_cells).",
     "pull_kinds": {
       "latest": 1,
       "indexed": 2,
       "review": 3,
-      "background": 4
+      "background": 4,
+      "monitoring_cell_image": 5,
+      "monitoring_cell_mask": 6
     },
     "fields": {
       "magic": 0,
@@ -573,5 +583,24 @@
     "$comment": "ABI 40 (#741): experiment_stop gains an optional expected start generation, so a client stops only its own run. Transports: dispatch.rs / WebSocket arg expectedStartGeneration, Tauri arg expected_start_generation, bridge.experimentStop(expectedStartGeneration?) in desktop/src/bridge.ts; cxx experiment_stop(has_expected_start_generation, expected_start_generation: u64); C++ ExperimentCommand.expectedStartGeneration -> ExperimentCoordinator::requestStop(cancelled, expected, refusal). experiment_cancel is unchanged.",
     "expected_start_generation": "optional string, a canonical decimal u64 (json_transport encoding: no sign, no leading zero), the start_generation of the run to stop as fetch_experiment_status reports it; anything else is refused by mib-app-commands (\"Invalid expectedStartGeneration\", an error reply, nothing sent), absent or null = not given. Not given: stops whatever run is active, exactly as in ABI 39.",
     "semantics": "With it, the coordinator compares it with the run it holds in the same critical section (its mutex, also held by start and by the worker's finalization) that accepts the stop; it never checks first and acts later. The run is held from the Active entry until its finalization ends (Active, Stopping, or Failed while a fatal finalization runs); a Starting run has no generation a client could have read and is never held. No run held (Idle, Failed, Starting) or a held run with another start_generation: stop outcome RunMismatch (3), ok false, message \"stop refused: expected run <E>, but <run <N> is active | run <N> is stopping | run <N> failed and is finalizing | a new run is starting | no run is active>; nothing was stopped\", and nothing changes. Matching: the outcome without the argument (Accepted; Busy while that run is stopping or its stop is queued; NotActive while it is failing). An accepted stop is consumed by the finalization of the run it named, and no run can start before that finalization ends (start also clears any stale stop request), so it can never stop a newer run."
+  },
+  "monitoring_cells": {
+    "$comment": "ABI 41 (#716 A6a): per-row cell images for the live Monitoring view, backend-owned (C++ backend::services::MonitoringCellStore, owned by AppBackend; facade BackendFacade::fetchMonitoringCellsJson / pinMonitoringCellJson / unpinMonitoringCell / clearMonitoringCellPins / fetchMonitoringCellImage -> cxx fetch_monitoring_cells, monitoring_cell_pin, monitoring_cell_unpin, monitoring_cell_clear_pins, fetch_monitoring_cell_image -> mib-app-commands (Tauri and the WebSocket server alike) -> desktop/src/bridge.ts). Caps pinned by static_asserts in crates/mib-bridge/src/shim.cpp; outcomes by monitoring_cell_pin_outcomes. Additive over ABI 40.",
+    "strip_max_cells": 24,
+    "strip_max_bytes": 4194304,
+    "max_pins": 16,
+    "pin_max_bytes": 4194304,
+    "crop_max_side": 256,
+    "crop_min_margin": 8,
+    "row_index_max": 4096,
+    "identity": "A monitoring row is named by (start_generation, frame_index, object_id): start_generation is the run that was active when the processing path appended the row to the monitoring ring (ExperimentCoordinator sets it before the run's accumulation starts and resets it to 0 when the run stops accumulating or its start is rolled back), 0 = outside a run; frame_index and object_id are the row's. Stable across snapshots: fetch_monitoring_snapshot rows carry start_generation (canonical decimal string; omitted from review metric rows). The same frame index and object id can recur only outside a run after a capture restart; a lookup then takes the newest held row.",
+    "commands": "fetch_monitoring_cells (read; args none) -> JSON listing. monitoring_cell_pin (args expectedStartGeneration, frameIndex: canonical decimal strings; objectId: integer) -> JSON pin reply. monitoring_cell_unpin (args startGeneration, frameIndex, objectId) -> CmdResult (ok false + plain message when not pinned). monitoring_cell_clear_pins (no args) -> CmdResult (message \"cleared N pin(s)\"). fetch_monitoring_cell_packet (args startGeneration, frameIndex, objectId, layer: \"image\" | \"mask\") -> frame packet, pull kind monitoring_cell_image (5) or monitoring_cell_mask (6): the owned Mono8 crop or the same crop of the processed mask, pins first, then the strip; an empty packet (flags 0) when the cell or that layer is not held (the listing says why). A malformed identity or layer is an error reply and nothing is sent to the backend. Pin, unpin and clear are control commands on the WebSocket server (a viewer gets VIEWER_ONLY): pins are one shared, bounded set per instrument.",
+    "listing": "{valid, scope_start_generation (the latest run started, 0 before the first; pins belong to it), ring_start_generation (the strip's context at this refresh: the active run, or 0 outside a run), revision (bumps whenever the strip or the pins change), strip: [cell] oldest -> newest, pins: [cell] in pin order, stats: {strip_cells, strip_bytes, pins, pin_bytes, indexed_rows, peak_bytes, strip_admitted, strip_evicted, refreshes, last_refresh_us, last_source_us}, caps: {strip_max_cells, strip_max_bytes, max_pins, pin_max_bytes, crop_max_side, row_index_max}}; {valid: false} before init. u64 identities and counters are canonical decimal strings; counts bounded by a cap are numbers.",
+    "cell": "{start_generation, frame_index, object_id, timestamp_ns, valid, target_group, object_count, track_id, centroid_x, centroid_y, bbox: {x, y, w, h}, area (px^2), deformability, area_ratio, ring_ratio, youngs_modulus, pixel_to_micron, image: {width, height, crop_x, crop_y, source_width, source_height, has_mask, bytes} | null, no_image_reason: string | null}; exactly one of image and no_image_reason is non-null; non-finite numbers are null. Measurements are the row's as the processing path recorded them, never recomputed.",
+    "pin_reply": "{ok (Pinned, PinnedWithoutImage or AlreadyPinned), outcome (a monitoring_cell_pin_outcomes value; absent when the backend never evaluated the pin, e.g. before init), message, cell (the pin, or null when refused), revision}. Pinned: an owned crop (and mask when the row has one) that survives the monitoring ring. PinnedWithoutImage: the row's measurements only, message = the reason (the frame left the ring before the pin and only the bounded index of rows the snapshot served still describes it, or the instrument reports cells without images). AlreadyPinned: no change. RunMismatch: expected_start_generation is neither 0 nor the latest run started, or the row was detected in another run (or outside a run), or a run started while the pin was taken; nothing changes. NotFound: the backend holds neither the row nor its measurements. LimitReached: max_pins pins or pin_max_bytes bytes are held; a pin is never evicted to make room.",
+    "strip": "The most recently detected valid cells of the ring's current context (the active run's rows while one runs, rows outside a run otherwise), refreshed from the monitoring ring by fetch_monitoring_cells: at most strip_max_cells new crops per call, taken outside every lock; oldest evicted first when the count or strip_max_bytes is exceeded; a row of another context is dropped at the next refresh; every eviction counts in stats.strip_evicted. monitoring_clear also clears the strip (and the row index); pins stay.",
+    "crop": "The object's bounding box grown by max(crop_min_margin, the box's longer side / 2) on each side, at most crop_max_side square, shifted (never shrunk) to stay inside the row's source image (the processing ROI); an unknown box is centred on the centroid (else the image centre) with half the maximum side. Mono8: channel 0 of a multi-channel image, 16-bit scaled by 1/256; other formats have no image (reason given). The mask crop is the same rectangle of the processed mask when it has the image's size.",
+    "run_rules": "Pins and the strip are dropped when a run starts (ExperimentCoordinator, at Active). A pin names its run: expected_start_generation must be 0 (rows outside a run) or the latest run started (scope_start_generation); any other is RunMismatch, so a stale client cannot pin into a newer run. The row's own start_generation must match it (a row of another run, or of none, is RunMismatch).",
+    "threading": "Nothing runs on the acquisition/processing path: the ring's appends store one more 8-byte tag in a preallocated array under the lock they already hold. Readers take the ring's lock only to copy scalars and cv::Mat headers (refcount shares of frozen images), then crop and clone outside every lock; the store's own mutex is never held while the ring is read."
   }
 }

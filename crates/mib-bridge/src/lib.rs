@@ -719,6 +719,10 @@ pub mod ffi {
         pub ring_ratio: f64,
         pub youngs_modulus: f64,
         pub pixel_to_micron: f64,
+        /// ABI 41 (#716 A6a): the start generation of the run that was active when the processing
+        /// path appended the row (0 = outside a run). With `(frame_index, object_id)` it names the
+        /// row for a live cell pin. Review metric rows leave it 0 (mib-app-commands omits it).
+        pub start_generation: u64,
     }
 
     /// Bounded monitoring snapshot (schema v6, BE-5). Evictions are
@@ -1279,6 +1283,37 @@ pub mod ffi {
         /// metric rows (metrics only — never image payloads).
         fn fetch_monitoring_snapshot(self: Pin<&mut BackendBridge>, max_rows: u64)
             -> BridgeMonitoringSnapshot;
+
+        /// ABI 41 (#716 A6a): the live cell strip and pins as JSON (bridge-contract.json
+        /// `monitoring_cells`): brings the strip up to date with the monitoring ring first (at
+        /// most the strip cap of new crops, off the hot path), then lists it and the pins,
+        /// metadata only. `{"valid": false}` before init.
+        fn fetch_monitoring_cells(self: Pin<&mut BackendBridge>) -> String;
+        /// Pin the row `(expected_start_generation, frame_index, object_id)`: an owned copy that
+        /// survives the ring. JSON `{ok, outcome, message, cell, revision}`; `outcome` is a
+        /// `monitoring_cell_pin_outcomes` value.
+        fn monitoring_cell_pin(
+            self: Pin<&mut BackendBridge>,
+            expected_start_generation: u64,
+            frame_index: u64,
+            object_id: i32,
+        ) -> String;
+        fn monitoring_cell_unpin(
+            self: Pin<&mut BackendBridge>,
+            start_generation: u64,
+            frame_index: u64,
+            object_id: i32,
+        ) -> BridgeCommandResult;
+        fn monitoring_cell_clear_pins(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
+        /// The owned Mono8 crop (`mask` false) or its mask of a pinned or strip cell; invalid when
+        /// not held or absent (the listing says why).
+        fn fetch_monitoring_cell_image(
+            self: Pin<&mut BackendBridge>,
+            start_generation: u64,
+            frame_index: u64,
+            object_id: i32,
+            mask: bool,
+        ) -> BridgeFrame;
 
         /// Set the sorter trigger pulse duration in microseconds.
         fn trigger_set_pulse_duration(self: Pin<&mut BackendBridge>, pulse_us: i32)
