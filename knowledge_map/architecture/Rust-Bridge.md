@@ -505,6 +505,49 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
   `stage_motion_is_control_only_but_stop_is_not` in the server;
   `backend.stage_bridge_facade`.
 
+## ABI 40: the typed outcome in the reply, and the run a stop names (#741)
+
+Two additive gaps from the workspace queue and Plan (#716): a caller had to recognise a refused
+start by its message prefix, and a stop could hit another client's run that replaced its own
+inside one poll window.
+
+- **Reply outcome.** `BridgeCommandResult` gains `has_start_outcome` / `start_outcome: u32` and
+  `has_stop_outcome` / `stop_outcome: u32`, copied in `toBridgeResult` from
+  `BackendCommandResult.experimentStartOutcome` / `experimentStopOutcome` (`errorResult` sets
+  both flags false). The JSON `CmdResult` (Tauri and the WebSocket server alike) gains
+  `start_outcome` / `stop_outcome`, JSON numbers like `command`, present only on an
+  `experiment_start` (resp. `experiment_stop` / `experiment_cancel`) reply the backend evaluated
+  and omitted everywhere else, so every other reply is byte for byte as before. A refused start
+  request is `start_outcome: 7` (`InvalidRequest`); the message keeps `invalid start request: …`.
+  Contract group `experiment_command_reply`.
+- **Expected run on stop.** `experiment_stop(has_expected_start_generation, expected_start_generation: u64)`
+  (cxx); `expectedStartGeneration` in `dispatch.rs` (so also the WebSocket server), Tauri arg
+  `expected_start_generation`, `bridge.experimentStop(expectedStartGeneration?)`. It is an
+  optional **canonical decimal string** (the transport's u64 encoding), parsed strictly by
+  `mib_app_commands::parse_canonical_u64` (no sign, no leading zero, no whitespace; Rust's
+  `u64::from_str` alone takes `+7` and `007`): anything else is an error reply and nothing is
+  sent; absent or null = not given = exactly ABI 39. The check is in
+  `ExperimentCoordinator::requestStop(cancelled, expected, refusal)`, under the coordinator
+  mutex in the same critical section that accepts the stop (see [[ExperimentCoordinator]]): no
+  run held (Idle, Failed, Starting) or one with another `start_generation` (Active, Stopping, a
+  failed run still finalizing) is stop outcome **`RunMismatch` (3)**, `ok: false`, message
+  `stop refused: expected run <E>, but <run <N> is active | … is stopping | … failed and is
+  finalizing | a new run is starting | no run is active>; nothing was stopped`, and nothing
+  changes. A match gives the outcome without the argument (`accepted` / `busy` / `notActive`).
+  `experiment_cancel` and the server's client-loss stop do not take it. Contract group
+  `experiment_stop_request`; `RunMismatch` pinned by a `static_assert` in `shim.cpp`, by
+  `rust_enums_match_contract_json` and generated into `EXPERIMENT_STOP_OUTCOMES`.
+- **Tests:** `contract.rs` `experiment_lifecycle_end_to_end` (NotReady / InvalidRequest /
+  Started / AlreadyActive codes, three stale stops refused while the run continues, the matching
+  stop accepted, NotActive / RunMismatch after it) and
+  `experiment_command_reply_and_stop_request_are_described`; `dispatch.rs`
+  `experiment_outcomes_and_expected_generation_through_dispatch` (both host paths, malformed
+  generations) and `canonical_u64_is_strict`; `ws.rs`
+  `experiment_stop_names_its_run_over_the_websocket` (a real mock run); C++
+  `e2e.experiment_stop_generation` (every start outcome through the facade, the stop semantics,
+  and a stress test of stale stops racing six start/stop cycles); `eventAdapter.test.ts`,
+  `eventTransport.test.ts`.
+
 ## ABI 39: what the client declares when it starts a run (#712 PR 2, ADR 0015 items 1, 4, 5, 7)
 
 `experiment_start(output_path, acknowledge_discard_ring, start_request_json)` gains the client's

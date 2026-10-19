@@ -3,7 +3,7 @@
 // Regenerate with: python3 scripts/gen_bridge_contract.py
 // CI verifies this file with: python3 scripts/gen_bridge_contract.py --check
 
-export const BRIDGE_ABI_VERSION = 39;
+export const BRIDGE_ABI_VERSION = 40;
 
 export const EVENT_KINDS = {
   FrameReady: 0,
@@ -220,6 +220,7 @@ export const EXPERIMENT_STOP_OUTCOMES = {
   Accepted: 0,
   NotActive: 1,
   Busy: 2,
+  RunMismatch: 3,
 } as const;
 
 export const RUN_COMPLETION_STATES = {

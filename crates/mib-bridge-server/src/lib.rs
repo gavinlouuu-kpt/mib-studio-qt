@@ -394,7 +394,7 @@ pub fn stop_and_save(state: &AppState) -> Vec<String> {
         let running = status["valid"] == json!(true)
             && matches!(status["state"].as_u64(), Some(s) if s == EXPERIMENT_STARTING as u64 || s == EXPERIMENT_ACTIVE as u64);
         if running {
-            match mib_app_commands::experiment_stop(state) {
+            match mib_app_commands::experiment_stop(state, None) {
                 Ok(r) => actions.push(format!("experiment_stop: {}", serde_json::to_string(&r).unwrap_or_default())),
                 Err(e) => actions.push(format!("experiment_stop failed: {e}")),
             }

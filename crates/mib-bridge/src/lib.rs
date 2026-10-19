@@ -31,6 +31,17 @@ pub mod ffi {
         /// long-running operation; correlates with `OperationStatus` events
         /// (schema v4, ADR 0004).
         pub operation_id: u64,
+        /// ABI 40 (#741): `start_outcome` is the typed outcome of `experiment_start`, an
+        /// `experiment_start_outcomes` value, when `has_start_outcome`. False for every other
+        /// command and for a start that never reached the coordinator (backend not initialized,
+        /// an exception): only `ok` and `message` describe those.
+        pub has_start_outcome: bool,
+        pub start_outcome: u32,
+        /// ABI 40 (#741): `stop_outcome` is the typed outcome of `experiment_stop` /
+        /// `experiment_cancel`, an `experiment_stop_outcomes` value (`RunMismatch` = 3: the stop
+        /// named another run), when `has_stop_outcome`; false otherwise, as above.
+        pub has_stop_outcome: bool,
+        pub stop_outcome: u32,
     }
 
     /// Discriminant for [`BridgeEvent::kind`], mirroring the
@@ -855,7 +866,17 @@ pub mod ffi {
         /// Request an asynchronous experiment stop: final flush, metadata/
         /// provenance write (only after data is flushed), close. Never blocks
         /// on the flush.
-        fn experiment_stop(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
+        ///
+        /// `has_expected_start_generation` / `expected_start_generation` (ABI 40, #741): stop only
+        /// the run with this start generation. The backend compares it with the run it holds under
+        /// the lock that accepts the stop; another run (active or finalizing) or none is refused with
+        /// stop outcome `RunMismatch` and a plain reason, and nothing is stopped. When it matches, the
+        /// outcome is the one without it. `false`: stops whatever run is active, as before.
+        fn experiment_stop(
+            self: Pin<&mut BackendBridge>,
+            has_expected_start_generation: bool,
+            expected_start_generation: u64,
+        ) -> BridgeCommandResult;
         fn fetch_capture_lifecycle(self: Pin<&mut BackendBridge>) -> String;
         fn experiment_acknowledge_fault(self: Pin<&mut BackendBridge>, expected_run: u64, fault_revision: u64, code: &str, message: &str, confirmed: bool) -> BridgeCommandResult;
 

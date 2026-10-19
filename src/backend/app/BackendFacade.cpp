@@ -554,10 +554,13 @@ namespace backend::bridge
         }
         case ExperimentCommandAction::Stop:
         {
-            const auto outcome = coordinator.requestStop(command.cancelled);
+            // ABI 40 (#741): with an expected start generation the coordinator compares it with the run
+            // it holds under the lock that accepts the stop; a mismatch stops nothing and says why.
+            std::string refusal;
+            const auto outcome = coordinator.requestStop(command.cancelled, command.expectedStartGeneration, &refusal);
             result.experimentStopOutcome = outcome;
             result.ok = outcome == app::ExperimentStopOutcome::Accepted;
-            result.message = app::toString(outcome);
+            result.message = outcome == app::ExperimentStopOutcome::RunMismatch ? refusal : app::toString(outcome);
             result.operationId = experimentOperationId_.load();
             return result;
         }

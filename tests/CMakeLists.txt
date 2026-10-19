@@ -477,6 +477,12 @@ set_tests_properties(backend.facade_review_session PROPERTIES LABELS "backend;br
 mib_add_backend_test_executable(experiment_coordinator_test backend/experiment_coordinator_test.cpp)
 add_test(NAME e2e.experiment_coordinator COMMAND $<TARGET_FILE:mib_backend_tests> experiment_coordinator_test)
 set_tests_properties(e2e.experiment_coordinator PROPERTIES LABELS "backend;bridge;e2e" TIMEOUT 180)
+# #741 (bridge ABI 40): typed start outcomes in the command result, and experiment_stop's expected
+# start generation (a stale one is refused under the coordinator lock; stress with racing stops).
+mib_add_backend_test_executable(experiment_stop_generation_test backend/experiment_stop_generation_test.cpp)
+mib_backend_test_link(experiment_stop_generation_test PRIVATE Threads::Threads)
+add_test(NAME e2e.experiment_stop_generation COMMAND $<TARGET_FILE:mib_backend_tests> experiment_stop_generation_test)
+set_tests_properties(e2e.experiment_stop_generation PROPERTIES LABELS "backend;bridge;e2e;concurrency;stress;safety" TIMEOUT 180)
 
 mib_add_backend_test_executable(mindvision_selection_state_test backend/mindvision_selection_state_test.cpp)
 add_test(NAME backend.mindvision_selection_state COMMAND $<TARGET_FILE:mib_backend_tests> mindvision_selection_state_test)

@@ -145,6 +145,134 @@ async fn start_request_json_is_passed_through_the_server_unparsed() {
     let _ = std::fs::remove_dir_all(&data);
 }
 
+// ABI 40 (#741): over the WebSocket, a start reply carries start_outcome and a stop reply
+// stop_outcome; experiment_stop with expectedStartGeneration stops only that run. A stale
+// generation is refused with RunMismatch (3) and the run continues; the matching one stops it; a
+// stop without the argument is as before; a malformed generation is an error and sends nothing.
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn experiment_stop_names_its_run_over_the_websocket() {
+    let (server, addr, data) = start("stop_generation").await;
+    let mut ws = connect(addr).await;
+    let mut events = Vec::new();
+    let mut id = 0u64;
+    let mut next = || {
+        id += 1;
+        id
+    };
+    let Ok(Reply::Json(ok)) = call(&mut ws, next(), "init", json!({ "dataDir": "" }), &mut events).await else { panic!() };
+    assert_eq!(ok, json!(true));
+    let out = data.join("stop_generation.h5").to_string_lossy().into_owned();
+
+    // Idle: a generation is RunMismatch with the plain reason; without one NotActive, as before.
+    let Ok(Reply::Json(r)) = call(&mut ws, next(), "experiment_stop", json!({ "expectedStartGeneration": "1" }), &mut events).await
+    else {
+        panic!()
+    };
+    assert_eq!((r["ok"].clone(), r["stop_outcome"].clone()), (json!(false), json!(3)), "{r}");
+    assert_eq!(r["message"], json!("stop refused: expected run 1, but no run is active; nothing was stopped"), "{r}");
+    assert!(r.get("start_outcome").is_none(), "a stop reply has no start outcome: {r}");
+    let Ok(Reply::Json(r)) = call(&mut ws, next(), "experiment_stop", Value::Null, &mut events).await else { panic!() };
+    assert_eq!((r["stop_outcome"].clone(), r["message"].clone()), (json!(1), json!("notActive")), "{r}");
+    for bad in [json!("+1"), json!("01"), json!(""), json!(" 1"), json!("18446744073709551616"), json!(1)] {
+        let refused = call(&mut ws, next(), "experiment_stop", json!({ "expectedStartGeneration": bad }), &mut events).await;
+        assert!(refused.is_err(), "{bad} is not a canonical decimal generation: {refused:?}");
+    }
+
+    // No camera: NotReady (1); a refused start request: InvalidRequest (7), message unchanged.
+    let Ok(Reply::Json(r)) = call(&mut ws, next(), "experiment_start", json!({ "outputPath": out }), &mut events).await else { panic!() };
+    assert_eq!((r["ok"].clone(), r["start_outcome"].clone()), (json!(false), json!(1)), "{r}");
+    assert!(r.get("stop_outcome").is_none(), "{r}");
+    let Ok(Reply::Json(r)) = call(
+        &mut ws,
+        next(),
+        "experiment_start",
+        json!({ "outputPath": out, "startRequestJson": r#"{"operator_name":"Alice"}"# }),
+        &mut events,
+    )
+    .await
+    else {
+        panic!()
+    };
+    assert_eq!(r["start_outcome"], json!(7), "{r}");
+    assert!(r["message"].as_str().unwrap().starts_with("invalid start request: "), "{r}");
+
+    // A run: Started (0), then AlreadyActive (3) for a second start.
+    call(&mut ws, next(), "configure_mock", json!({ "frameDir": mock_frames(), "frameIntervalMs": 5, "loopFiles": true }), &mut events)
+        .await
+        .unwrap();
+    call(&mut ws, next(), "apply_processing", json!({ "realtimeEnabled": true, "pixelToMicron": 1.0 }), &mut events).await.unwrap();
+    call(&mut ws, next(), "start_capture", Value::Null, &mut events).await.unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let started = loop {
+        let Ok(Reply::Json(r)) = call(&mut ws, next(), "experiment_start", json!({ "outputPath": out }), &mut events).await else {
+            panic!()
+        };
+        if r["ok"] == json!(true) || Instant::now() > deadline {
+            break r;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await; // readiness settles once frames arrive
+    };
+    assert_eq!((started["ok"].clone(), started["start_outcome"].clone()), (json!(true), json!(0)), "{started}");
+    let Ok(Reply::Json(again)) = call(&mut ws, next(), "experiment_start", json!({ "outputPath": out }), &mut events).await else { panic!() };
+    assert_eq!(again["start_outcome"], json!(3), "{again}");
+    let Ok(Reply::Json(status)) = call(&mut ws, next(), "fetch_experiment_status", Value::Null, &mut events).await else { panic!() };
+    assert_eq!(status["state"], json!(2), "Active: {status}");
+    let generation: u64 = status["start_generation"].as_str().unwrap().parse().unwrap();
+
+    // A stale or unknown generation stops nothing.
+    for stale in [generation - 1, generation + 1] {
+        let Ok(Reply::Json(r)) = call(
+            &mut ws,
+            next(),
+            "experiment_stop",
+            json!({ "expectedStartGeneration": stale.to_string() }),
+            &mut events,
+        )
+        .await
+        else {
+            panic!()
+        };
+        assert_eq!((r["ok"].clone(), r["stop_outcome"].clone()), (json!(false), json!(3)), "{r}");
+        assert_eq!(
+            r["message"],
+            json!(format!("stop refused: expected run {stale}, but run {generation} is active; nothing was stopped")),
+            "{r}"
+        );
+    }
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let Ok(Reply::Json(status)) = call(&mut ws, next(), "fetch_experiment_status", Value::Null, &mut events).await else { panic!() };
+    assert_eq!(status["state"], json!(2), "the run continues: {status}");
+
+    // The run's own generation stops it.
+    let Ok(Reply::Json(r)) = call(
+        &mut ws,
+        next(),
+        "experiment_stop",
+        json!({ "expectedStartGeneration": generation.to_string() }),
+        &mut events,
+    )
+    .await
+    else {
+        panic!()
+    };
+    assert_eq!((r["ok"].clone(), r["stop_outcome"].clone(), r["message"].clone()), (json!(true), json!(0), json!("accepted")), "{r}");
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        let Ok(Reply::Json(s)) = call(&mut ws, next(), "fetch_experiment_status", Value::Null, &mut events).await else { panic!() };
+        if s["terminal"] == json!(true) {
+            assert_eq!(s["state"], json!(0), "Idle: {s}");
+            break;
+        }
+        assert!(Instant::now() < deadline, "the run did not finalize: {s}");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    call(&mut ws, next(), "stop_capture", Value::Null, &mut events).await.unwrap();
+    ws.close(None).await.unwrap();
+    server.state().bridge.lock().unwrap().pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(&data);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn mock_capture_over_websocket() {
