@@ -633,3 +633,126 @@ async fn one_client_controls_the_instrument() {
     let _ = std::fs::remove_dir_all(&data);
 }
 
+
+/// Blob frames as 8-bit BMPs (the mock camera decodes BMP as Mono8): a bright disk the lenient
+/// config below detects as a valid cell, through the real realtime path.
+fn blob_frames(tag: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("yofo_server_blobs_{tag}_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (w, h) = (160u32, 96u32);
+    for i in 0..8u32 {
+        let (cx, cy, r) = (40 + 10 * i as i32, 48i32, 14i32);
+        let offset: u32 = 14 + 40 + 1024;
+        let mut b: Vec<u8> = Vec::new();
+        b.extend_from_slice(b"BM");
+        for v in [offset + w * h, 0, offset, 40] { b.extend_from_slice(&v.to_le_bytes()); }
+        b.extend_from_slice(&(w as i32).to_le_bytes());
+        b.extend_from_slice(&(h as i32).to_le_bytes());
+        b.extend_from_slice(&1u16.to_le_bytes());
+        b.extend_from_slice(&8u16.to_le_bytes());
+        for v in [0u32, w * h, 2835, 2835, 256, 0] { b.extend_from_slice(&v.to_le_bytes()); }
+        for g in 0..256u32 { b.extend_from_slice(&[g as u8, g as u8, g as u8, 0]); }
+        for y in (0..h as i32).rev() {
+            for x in 0..w as i32 {
+                b.push(if (x - cx) * (x - cx) + (y - cy) * (y - cy) <= r * r { 220 } else { 0 });
+            }
+        }
+        std::fs::write(dir.join(format!("frame_{i:04}.bmp")), b).unwrap();
+    }
+    dir
+}
+
+const LENIENT: &str = r#"{"image_processing": {"gaussian_blur_size": 3, "bg_subtract_threshold": 8,
+    "morph_kernel_size": 3, "morph_iterations": 1, "empty_frame_pixel_threshold": 1, "auto_background_enabled": false,
+    "filters": {"enable_border_check": false, "enable_area_range_check": false, "enable_deformability_range_check": false,
+                "enable_area_ratio_check": false, "enable_ring_ratio_check": false,
+                "enable_laplacian_variance_check": false, "require_single_inner_contour": false}}}"#;
+
+// ABI 41 (#716 A6a): live cell images over the WebSocket. The pixels come back as binary frames
+// (8-byte request id, then the frame packet of pull kind 5 or 6), never inside JSON; every client
+// may read the strip, the pins and their images, but pins are one shared bounded set, so pin,
+// unpin and clear need control (a viewer gets VIEWER_ONLY).
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn live_cells_over_the_websocket() {
+    let (server, addr, data) = start("cells").await;
+    let frames = blob_frames("cells");
+    let mut controller = connect(addr).await;
+    let mut viewer = connect(addr).await;
+    let mut events = Vec::new();
+    call(&mut controller, 1, "init", json!({ "dataDir": "" }), &mut events).await.unwrap();
+    assert_eq!(server.controller(), Some(1));
+    let mut id = 1u64;
+    let ok = |r: Result<Reply, String>| match r {
+        Ok(Reply::Json(v)) => v,
+        other => panic!("{other:?}"),
+    };
+    for (cmd, args) in [
+        ("apply_processing_config_json", json!({ "json": LENIENT })),
+        ("apply_processing", json!({ "realtimeEnabled": true, "pixelToMicron": 0.5 })),
+        ("configure_mock", json!({ "frameDir": frames.to_string_lossy(), "frameIntervalMs": 5, "loopFiles": true })),
+        ("monitoring_set_active", json!({ "active": true })),
+        ("start_capture", Value::Null),
+    ] {
+        id += 1;
+        let r = ok(call(&mut controller, id, cmd, args, &mut events).await);
+        assert_eq!(r["ok"], json!(true), "{cmd}: {r}");
+    }
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        id += 1;
+        let snap = ok(call(&mut viewer, id, "fetch_monitoring_snapshot", json!({ "maxRows": 500 }), &mut events).await);
+        if snap["rows"].as_array().unwrap().iter().any(|r| r["valid"] == json!(true)) { break; }
+        assert!(Instant::now() < deadline, "no valid rows: {snap}");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    // A viewer reads the listing and pulls a crop as a binary frame.
+    id += 1;
+    let listing = ok(call(&mut viewer, id, "fetch_monitoring_cells", Value::Null, &mut events).await);
+    let cell = listing["strip"].as_array().unwrap().last().cloned().expect("a strip cell");
+    let identity = json!({ "startGeneration": cell["start_generation"], "frameIndex": cell["frame_index"], "objectId": cell["object_id"] });
+    for (layer, kind) in [("image", 5u32), ("mask", 6u32)] {
+        let mut args = identity.clone();
+        args["layer"] = json!(layer);
+        id += 1;
+        let Ok(Reply::Binary(p)) = call(&mut viewer, id, "fetch_monitoring_cell_packet", args, &mut events).await else {
+            panic!("{layer}: a binary frame")
+        };
+        assert_eq!(&p[..4], b"MIBF");
+        assert_eq!(u32::from_le_bytes(p[12..16].try_into().unwrap()), kind, "{layer}");
+        assert_eq!(u32::from_le_bytes(p[8..12].try_into().unwrap()), 1, "{layer}: a valid frame");
+        assert_eq!(u64::from_le_bytes(p[32..40].try_into().unwrap()), cell["image"]["width"].as_u64().unwrap());
+    }
+
+    // Pins need control.
+    for cmd in ["monitoring_cell_pin", "monitoring_cell_unpin", "monitoring_cell_clear_pins"] {
+        let args = match cmd {
+            "monitoring_cell_pin" => json!({ "expectedStartGeneration": cell["start_generation"], "frameIndex": cell["frame_index"], "objectId": cell["object_id"] }),
+            "monitoring_cell_unpin" => identity.clone(),
+            _ => Value::Null,
+        };
+        id += 1;
+        let refused = call(&mut viewer, id, cmd, args, &mut events).await.unwrap_err();
+        assert!(refused.starts_with("VIEWER_ONLY"), "{cmd}: {refused}");
+    }
+    id += 1;
+    let pinned = ok(call(&mut controller, id, "monitoring_cell_pin",
+        json!({ "expectedStartGeneration": cell["start_generation"], "frameIndex": cell["frame_index"], "objectId": cell["object_id"] }),
+        &mut events).await);
+    assert_eq!((pinned["ok"].clone(), pinned["outcome"].clone()), (json!(true), json!(0)), "{pinned}");
+    id += 1;
+    let seen = ok(call(&mut viewer, id, "fetch_monitoring_cells", Value::Null, &mut events).await);
+    assert_eq!(seen["pins"].as_array().unwrap().len(), 1, "the viewer sees the shared pin: {seen}");
+    id += 1;
+    let cleared = ok(call(&mut controller, id, "monitoring_cell_clear_pins", Value::Null, &mut events).await);
+    assert_eq!(cleared["message"], json!("cleared 1 pin(s)"), "{cleared}");
+
+    id += 1;
+    call(&mut controller, id, "stop_capture", Value::Null, &mut events).await.unwrap();
+    controller.close(None).await.unwrap();
+    viewer.close(None).await.unwrap();
+    server.state().bridge.lock().unwrap().pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(&frames);
+    let _ = std::fs::remove_dir_all(&data);
+}

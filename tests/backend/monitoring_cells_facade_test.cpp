@@ -1,0 +1,313 @@
+// monitoring_cells_facade_test (#716 A6a, bridge ABI 41)
+//
+// Live cell images through the BackendFacade surface the bridge calls, with
+// the real AppBackend, ExperimentCoordinator and monitoring ring (mock camera;
+// rows enter the ring through ProcessingService's append seam, which tags them
+// exactly as the realtime path does):
+//   1. snapshot rows carry their run's start generation (0 outside a run, the
+//      run's while it accumulates, 0 again after it stops);
+//   2. the listing JSON (strip, pins, caps, stats) and the image pull agree:
+//      the packet's size is the listed crop's, its pixels are the row's;
+//   3. Start drops the pins and the strip; a pin of the previous run is refused;
+//      a pre-run row is not the run's;
+//   4. a row the ring evicted after a snapshot served it is pinned with its
+//      measurements and the reason, and no image is served for it;
+//   5. monitoring_clear clears the strip and keeps the pins; unpin and clear.
+
+#include "backend/app/AppBackend.h"
+#include "backend/app/BackendFacade.h"
+#include "backend/app/ExperimentCoordinator.h"
+#include "backend/app/ExperimentReadiness.h"
+#include "backend/processing/ProcessingService.h"
+#include "backend/services/MonitoringCellStore.h"
+
+#include "support/assert.h"
+#include "support/tempdir.h"
+#include "support/watchdog.h"
+
+#include <nlohmann/json.hpp>
+#include <opencv2/core.hpp>
+#include <opencv2/imgcodecs.hpp>
+
+#include <chrono>
+#include <cstdint>
+#include <cstdlib>
+#include <filesystem>
+#include <functional>
+#include <optional>
+#include <string>
+#include <thread>
+
+namespace {
+namespace bridge = backend::bridge;
+namespace app = backend::app;
+using backend::services::MonitoringCellStore;
+using backend::services::ProcessedFrame;
+using json = nlohmann::json;
+
+void setEnv(const char* name, const char* value)
+{
+#ifdef _WIN32
+    _putenv_s(name, value);
+#else
+    setenv(name, value, 1);
+#endif
+}
+
+bool waitFor(const std::function<bool()>& pred, std::chrono::milliseconds timeout)
+{
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (pred()) return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return pred();
+}
+
+constexpr std::uint64_t kBase = 1000000000ull; // injected frame indexes, far from the mock camera's
+
+// A row as the realtime path appends it: images shared, a box inside them.
+void inject(backend::services::ProcessingService& proc, std::uint64_t frameIndex, bool valid, std::uint8_t value)
+{
+    ProcessedFrame f;
+    f.index = frameIndex;
+    f.timestampNs = frameIndex * 10;
+    f.originalImage = cv::Mat(96, 512, CV_8UC1, cv::Scalar(value));
+    f.processedImage = cv::Mat(96, 512, CV_8UC1, cv::Scalar(0));
+    f.processedImage(cv::Rect(200, 30, 24, 20)).setTo(255);
+    f.validation.isValid = valid;
+    f.validation.objectId = 0;
+    f.validation.objectCount = 1;
+    f.validation.bboxX = 200;
+    f.validation.bboxY = 30;
+    f.validation.bboxWidth = 24;
+    f.validation.bboxHeight = 20;
+    f.validation.centroidX = 212;
+    f.validation.centroidY = 40;
+    f.validation.area = 400.0 + static_cast<double>(frameIndex % 1000);
+    f.validation.deformability = 0.04;
+    proc.appendMonitoringFrameForTests(f);
+}
+
+json cells(bridge::BackendFacade& facade)
+{
+    std::string text;
+    MIB_REQUIRE(facade.fetchMonitoringCellsJson(text), "fetch_monitoring_cells");
+    return json::parse(text);
+}
+
+const json* inList(const json& list, std::uint64_t frameIndex)
+{
+    for (const auto& c : list)
+        if (c["frame_index"] == std::to_string(frameIndex)) return &c;
+    return nullptr;
+}
+
+json pin(bridge::BackendFacade& facade, std::uint64_t generation, std::uint64_t frameIndex)
+{
+    return json::parse(facade.pinMonitoringCellJson(generation, frameIndex, 0));
+}
+
+std::optional<std::string> snapshotGeneration(bridge::BackendFacade& facade, std::uint64_t frameIndex)
+{
+    bridge::BackendMonitoringSnapshot s;
+    MIB_REQUIRE(facade.fetchMonitoringSnapshot(s, 4000), "snapshot");
+    for (const auto& r : s.rows)
+        if (r.frameIndex == frameIndex) return std::to_string(r.startGeneration);
+    return std::nullopt;
+}
+
+bridge::BackendCommandResult startRun(bridge::BackendFacade& facade, const std::string& path)
+{
+    app::ExperimentReadinessSnapshot readiness;
+    bridge::ExperimentCommand start;
+    start.action = bridge::ExperimentCommandAction::Start;
+    start.outputPath = path;
+    if (facade.fetchExperimentReadiness(readiness, path)) start.readinessGeneration = readiness.generation;
+    return facade.dispatch(start);
+}
+
+int outcome(const json& reply) { return reply.contains("outcome") ? reply["outcome"].get<int>() : -1; }
+
+} // namespace
+
+int main()
+{
+    mib::test::Watchdog wd(90);
+    mib::test::TempDir td("mib_monitoring_cells");
+    const auto mockDir = td.path() / "mock_frames";
+    std::filesystem::create_directories(mockDir);
+    MIB_REQUIRE(cv::imwrite((mockDir / "frame_000.tiff").string(), cv::Mat(96, 512, CV_8UC1, cv::Scalar(180))),
+                "mock frame fixture");
+    setEnv("MIB_CAMERA_MODE", "mock");
+    setEnv("MIB_STUDIO_EMODULUS_LUT_CACHE_DIR", (td.path() / "lut-cache").string().c_str());
+    setEnv("MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL", "file:///nonexistent/manifest.json");
+
+    {
+        backend::AppBackend backendApp;
+        bridge::BackendFacade facade(backendApp);
+        {
+            std::string text;
+            MIB_EXPECT(!facade.fetchMonitoringCellsJson(text), "nothing before initialize");
+            MIB_EXPECT(!json::parse(facade.pinMonitoringCellJson(0, 1, 0))["ok"].get<bool>(), "pin before init");
+        }
+        MIB_REQUIRE(facade.initialize(td.path().string()), "facade initialize");
+        auto& proc = backendApp.processing();
+
+        // ---- 1-2. outside a run: tags, listing, image pull ------------------------------------
+        wd.mark("outside a run");
+        for (std::uint64_t i = 1; i <= 3; ++i) inject(proc, kBase + i, true, static_cast<std::uint8_t>(10 * i));
+        inject(proc, kBase + 4, false, 99);
+        MIB_EXPECT(snapshotGeneration(facade, kBase + 1) == std::string("0"), "a row outside a run is generation 0");
+        auto l = cells(facade);
+        MIB_EXPECT(l["valid"] == true && l["scope_start_generation"] == "0" && l["ring_start_generation"] == "0",
+                   l.dump());
+        MIB_EXPECT(l["caps"]["strip_max_cells"] == MonitoringCellStore::kStripMaxCells &&
+                       l["caps"]["max_pins"] == MonitoringCellStore::kMaxPins &&
+                       l["caps"]["crop_max_side"] == MonitoringCellStore::kCropMaxSide,
+                   "caps are reported");
+        MIB_REQUIRE(l["strip"].size() == 3, "three valid cells in the strip: " + l.dump());
+        MIB_EXPECT(!inList(l["strip"], kBase + 4), "an invalid row is not a strip cell");
+        const auto& cell = *inList(l["strip"], kBase + 2);
+        MIB_EXPECT(cell["start_generation"] == "0" && cell["object_id"] == 0 && cell["valid"] == true &&
+                       cell["no_image_reason"].is_null() && cell["image"]["has_mask"] == true,
+                   cell.dump());
+        // box 24 x 20, margin max(8, 12) = 12: 48 x 44 around the box.
+        MIB_EXPECT(cell["image"]["width"] == 48 && cell["image"]["height"] == 44 && cell["image"]["crop_x"] == 188 &&
+                       cell["image"]["crop_y"] == 18 && cell["image"]["source_width"] == 512,
+                   cell["image"].dump());
+        bridge::BackendFrame frame;
+        MIB_REQUIRE(facade.fetchMonitoringCellImage(0, kBase + 2, 0, false, frame), "image pull");
+        MIB_EXPECT(frame.width == 48 && frame.height == 44 && frame.strideBytes == 48 && frame.data.size() == 48u * 44 &&
+                       frame.frameIndex == kBase + 2 && frame.pixelFormat == 0,
+                   "the packet's geometry is the listed crop's");
+        MIB_EXPECT(frame.data[0] == 20 && frame.data[frame.data.size() - 1] == 20, "the row's pixels");
+        MIB_REQUIRE(facade.fetchMonitoringCellImage(0, kBase + 2, 0, true, frame), "mask pull");
+        std::size_t marked = 0;
+        for (auto b : frame.data) marked += b == 255;
+        MIB_EXPECT(marked == 24u * 20, "the mask crop marks the object");
+        MIB_EXPECT(!facade.fetchMonitoringCellImage(0, kBase + 4, 0, false, frame), "not held: no packet");
+
+        auto r = pin(facade, 0, kBase + 1);
+        MIB_EXPECT(r["ok"] == true && outcome(r) == 0 && r["cell"]["frame_index"] == std::to_string(kBase + 1),
+                   r.dump());
+        r = pin(facade, 0, kBase + 1);
+        MIB_EXPECT(r["ok"] == true && outcome(r) == 2, "AlreadyPinned: " + r.dump());
+        r = pin(facade, 0, kBase + 4); // an invalid row may be pinned too (from the scatter or the table)
+        MIB_EXPECT(r["ok"] == true && outcome(r) == 0, r.dump());
+
+        // ---- 3. a run: tags, pins dropped, stale refused ---------------------------------------
+        wd.mark("run 1");
+        {
+            bridge::CameraCommand configure;
+            configure.action = bridge::CameraCommandAction::ConfigureMockCamera;
+            configure.mockFrameDirectory = mockDir.string();
+            configure.mockFrameIntervalMs = 5;
+            configure.mockLoopFiles = true;
+            MIB_REQUIRE(facade.dispatch(configure).ok, "mock camera configure");
+            bridge::CameraCommand startCapture;
+            startCapture.action = bridge::CameraCommandAction::StartCapture;
+            MIB_REQUIRE(facade.dispatch(startCapture).ok, "capture start");
+            const auto probe = (td.path() / "probe.h5").string();
+            MIB_REQUIRE(waitFor(
+                            [&] {
+                                app::ExperimentReadinessSnapshot readiness;
+                                return facade.fetchExperimentReadiness(readiness, probe) && readiness.ready;
+                            },
+                            std::chrono::seconds(15)),
+                        "readiness passes with a running mock camera");
+        }
+        auto s1 = startRun(facade, (td.path() / "run1.h5").string());
+        MIB_REQUIRE(s1.ok, "run 1 starts: " + s1.message);
+        const auto run1 = backendApp.experiment().status().startGeneration;
+        MIB_REQUIRE(run1 >= 1, "a start generation");
+        MIB_EXPECT(proc.monitoringRunGeneration() == run1, "the ring tags rows with the run");
+        l = cells(facade);
+        MIB_EXPECT(l["pins"].empty() && l["scope_start_generation"] == std::to_string(run1),
+                   "Start dropped the pins: " + l.dump());
+        MIB_EXPECT(l["strip"].empty(), "pre-run cells are not the run's strip: " + l.dump());
+        inject(proc, kBase + 10, true, 50);
+        MIB_EXPECT(snapshotGeneration(facade, kBase + 10) == std::to_string(run1), "a run row carries the run");
+        MIB_EXPECT(snapshotGeneration(facade, kBase + 1) == std::string("0"), "a pre-run row keeps 0");
+        l = cells(facade);
+        MIB_EXPECT(l["strip"].size() == 1 && l["strip"][0]["start_generation"] == std::to_string(run1), l.dump());
+        r = pin(facade, run1, kBase + 10);
+        MIB_EXPECT(outcome(r) == 0, "the run's row pins: " + r.dump());
+        r = pin(facade, run1, kBase + 1);
+        MIB_EXPECT(outcome(r) == 3 && r["ok"] == false &&
+                       r["message"].get<std::string>().find("outside a run") != std::string::npos,
+                   "a pre-run row is not the run's: " + r.dump());
+        r = pin(facade, run1 + 1, kBase + 10);
+        MIB_EXPECT(outcome(r) == 3, "a future run is refused: " + r.dump());
+
+        bridge::ExperimentCommand stop;
+        stop.action = bridge::ExperimentCommandAction::Stop;
+        stop.expectedStartGeneration = run1;
+        MIB_REQUIRE(facade.dispatch(stop).ok, "stop run 1");
+        MIB_REQUIRE(waitFor([&] { return backendApp.experiment().status().state == app::ExperimentRunState::Idle; },
+                            std::chrono::seconds(20)),
+                    "run 1 finalizes");
+        MIB_EXPECT(proc.monitoringRunGeneration() == 0, "after the run, rows are outside a run");
+        inject(proc, kBase + 11, true, 60);
+        MIB_EXPECT(snapshotGeneration(facade, kBase + 11) == std::string("0"), "a post-run row is generation 0");
+        l = cells(facade);
+        MIB_EXPECT(l["pins"].size() == 1 && l["pins"][0]["frame_index"] == std::to_string(kBase + 10),
+                   "pins outlive the run's end: " + l.dump());
+        MIB_EXPECT(facade.fetchMonitoringCellImage(run1, kBase + 10, 0, false, frame) && frame.data[0] == 50,
+                   "the run's pin still serves its image");
+
+        wd.mark("run 2");
+        auto s2 = startRun(facade, (td.path() / "run2.h5").string());
+        MIB_REQUIRE(s2.ok, "run 2 starts: " + s2.message);
+        const auto run2 = backendApp.experiment().status().startGeneration;
+        MIB_EXPECT(run2 > run1, "a newer generation");
+        l = cells(facade);
+        MIB_EXPECT(l["pins"].empty(), "the next Start drops run 1's pins");
+        r = pin(facade, run1, kBase + 10);
+        MIB_EXPECT(outcome(r) == 3 && r["message"].get<std::string>().find("not the latest run") != std::string::npos,
+                   "a stale client cannot pin into the new run: " + r.dump());
+
+        // ---- 4. evicted after a snapshot served it ---------------------------------------------
+        wd.mark("evicted");
+        inject(proc, kBase + 20, true, 70);
+        MIB_REQUIRE(snapshotGeneration(facade, kBase + 20) == std::to_string(run2), "served by a snapshot");
+        for (std::uint64_t i = 0; i < 1001; ++i) inject(proc, kBase + 100000 + i, true, 1); // the ring turns over
+        r = pin(facade, run2, kBase + 20);
+        MIB_EXPECT(outcome(r) == 1 && r["ok"] == true && r["cell"]["image"].is_null(), "metadata only: " + r.dump());
+        MIB_EXPECT(r["cell"]["area"] == 420.0 && r["cell"]["frame_index"] == std::to_string(kBase + 20),
+                   "the measurements the snapshot reported");
+        MIB_EXPECT(r["message"] == r["cell"]["no_image_reason"] &&
+                       r["message"].get<std::string>().find("left the monitoring buffer") != std::string::npos,
+                   "a plain reason: " + r.dump());
+        MIB_EXPECT(!facade.fetchMonitoringCellImage(run2, kBase + 20, 0, false, frame), "no image is invented");
+        r = pin(facade, run2, kBase + 77);
+        MIB_EXPECT(outcome(r) == 4 && r["cell"].is_null(), "unknown row: NotFound " + r.dump());
+
+        // ---- 5. monitoring_clear, unpin, clear --------------------------------------------------
+        wd.mark("clear");
+        MIB_REQUIRE(pin(facade, run2, kBase + 100000 + 1000)["ok"] == true, "pin a held row");
+        MIB_EXPECT(!cells(facade)["strip"].empty(), "a strip before the clear");
+        bridge::MonitoringCommand clear;
+        clear.action = bridge::MonitoringCommandAction::Clear;
+        MIB_REQUIRE(facade.dispatch(clear).ok, "monitoring_clear");
+        l = cells(facade);
+        MIB_EXPECT(l["strip"].empty() && l["pins"].size() == 2, "the strip clears, the pins stay: " + l.dump());
+        auto u = facade.unpinMonitoringCell(run2, kBase + 20, 0);
+        MIB_EXPECT(u.ok && u.message == "unpinned", u.message);
+        u = facade.unpinMonitoringCell(run2, kBase + 20, 0);
+        MIB_EXPECT(!u.ok && u.message.find("not pinned") != std::string::npos, u.message);
+        u = facade.clearMonitoringCellPins();
+        MIB_EXPECT(u.ok && u.message == "cleared 1 pin(s)", u.message);
+        MIB_EXPECT(cells(facade)["pins"].empty(), "cleared");
+
+        bridge::ExperimentCommand stop2;
+        stop2.action = bridge::ExperimentCommandAction::Stop;
+        MIB_REQUIRE(facade.dispatch(stop2).ok, "stop run 2");
+        MIB_REQUIRE(waitFor([&] { return backendApp.experiment().status().state == app::ExperimentRunState::Idle; },
+                            std::chrono::seconds(20)),
+                    "run 2 finalizes");
+        facade.shutdown();
+    }
+    std::printf("monitoring_cells_facade_test: %s\n", mib::test::exitCode() == 0 ? "PASS" : "FAIL");
+    return mib::test::exitCode();
+}

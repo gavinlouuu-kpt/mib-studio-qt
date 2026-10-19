@@ -346,6 +346,10 @@ set_tests_properties(performance.monitoring_density_contention PROPERTIES LABELS
 mib_add_backend_test_executable(monitoring_cell_store_test backend/monitoring_cell_store_test.cpp)
 add_test(NAME backend.monitoring_cell_store COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_cell_store_test)
 set_tests_properties(backend.monitoring_cell_store PROPERTIES LABELS "backend;monitoring;bridge;invariant;safety" TIMEOUT 60)
+# #716 A6a: live cell images through the facade with the real coordinator (run tags, Start drops pins).
+mib_add_backend_test_executable(monitoring_cells_facade_test backend/monitoring_cells_facade_test.cpp)
+add_test(NAME e2e.monitoring_cells_facade COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_cells_facade_test)
+set_tests_properties(e2e.monitoring_cells_facade PROPERTIES LABELS "backend;bridge;e2e;monitoring;safety" TIMEOUT 180)
 # #716 A6a: the store over the real ring while the realtime loop appends (TSan lane: concurrency/stress).
 mib_add_backend_test_executable(monitoring_cell_concurrency_test processing/monitoring_cell_concurrency_test.cpp)
 mib_backend_test_link(monitoring_cell_concurrency_test PRIVATE Threads::Threads)

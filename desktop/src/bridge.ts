@@ -8,6 +8,9 @@ import type { ReviewExportRequest, ReviewExportStatus } from "./reviewExport";
 // (mib-bridge, ADR 0003). Mirrors the DTOs in src-tauri/src/lib.rs.
 import {invoke} from "./transport";
 import { decodeFramePacket, decimalU64 } from "./framePacket";
+import { FRAME_PACKET } from "./bridgeContract";
+import { cellKeyArgs, decodeMonitoringCellPinReply, decodeMonitoringCells, type MonitoringCellKeyInput } from "./monitoringCells";
+export type { MonitoringCell, MonitoringCellKey, MonitoringCellKeyInput, MonitoringCellPinReply, MonitoringCellsListing, MonitoringCellsReply } from "./monitoringCells";
 import { discoverCameras, type PollOptions } from "./discovery";
 export type { FrameMeta, FramePacket } from "./framePacket";
 import { decodeEvents, decodeCommandResult, decodeExperimentReadiness, decodeExperimentStatus, decodeProcessingStats, wireU64, type CmdResult } from "./eventAdapter";
@@ -498,6 +501,10 @@ export interface MonitoringRow {
   ring_ratio: number;
   youngs_modulus: number;
   pixel_to_micron?: number; // exact analysis-time factor; absent/0 = unknown
+  /** Bridge ABI 41 (#716 A6a): the run active when the row was detected ("0" = outside a run), a
+   *  canonical decimal string. With `(frame_index, object_id)` it names the row for
+   *  `monitoringCellPin`. Absent from review metric rows and from an older backend. */
+  start_generation?: string;
 }
 
 /** Bounded monitoring snapshot (bridge schema v6, BE-5). Evicted rows are
@@ -987,6 +994,21 @@ export const bridge = {
   monitoringClear: () => invokeCommand("monitoring_clear"),
   fetchMonitoringSnapshot: (maxRows: number) =>
     invoke<MonitoringSnapshot>("fetch_monitoring_snapshot", { maxRows }),
+  // Live cell images (bridge ABI 41, #716 A6a; bridge-contract.json monitoring_cells). The backend
+  // owns bounded copies: the strip of recent cells and the pins. The listing is metadata only; the
+  // pixels come as frame packets by identity. Pin, unpin and clear need control on the WebSocket
+  // server (VIEWER_ONLY otherwise); reading is open to every client.
+  fetchMonitoringCells: async () => decodeMonitoringCells(await invoke<unknown>("fetch_monitoring_cells")),
+  monitoringCellPin: async (key: MonitoringCellKeyInput) =>
+    decodeMonitoringCellPinReply(await invoke<unknown>("monitoring_cell_pin", cellKeyArgs(key, "expectedStartGeneration"))),
+  monitoringCellUnpin: (key: MonitoringCellKeyInput) => invokeCommand("monitoring_cell_unpin", cellKeyArgs(key)),
+  monitoringCellClearPins: () => invokeCommand("monitoring_cell_clear_pins"),
+  /** The owned Mono8 crop ("image", pull kind 5) or its mask ("mask", 6) of a pinned or strip
+   *  cell; `valid: false` when the backend no longer holds it (the listing says why). */
+  fetchMonitoringCellImage: async (key: MonitoringCellKeyInput, layer: "image" | "mask" = "image") => {
+    const kind = layer === "mask" ? FRAME_PACKET.pull_kinds.monitoring_cell_mask : FRAME_PACKET.pull_kinds.monitoring_cell_image;
+    return decodeFramePacket(await invoke<ArrayBuffer>("fetch_monitoring_cell_packet", { ...cellKeyArgs(key), layer }), kind);
+  },
   triggerSetPulseDuration: (pulseUs: number) =>
     invokeCommand("trigger_set_pulse_duration", { pulseUs }),
   triggerManualPulse: () => invokeCommand("trigger_manual_pulse"),

@@ -29,6 +29,9 @@ export function decimalU64(value: string | number | bigint): string {
   return s;
 }
 
+// Every pull kind the contract defines (ABI 41 added monitoring_cell_image 5 and _mask 6).
+const PULL_KINDS = new Set<number>(Object.values(FRAME_PACKET.pull_kinds));
+
 export function decodeFramePacket(buffer: ArrayBuffer, expectedKind: number): FramePacket {
   const c = FRAME_PACKET;
   if (!(buffer instanceof ArrayBuffer) || buffer.byteLength < c.header_bytes
@@ -39,7 +42,7 @@ export function decodeFramePacket(buffer: ArrayBuffer, expectedKind: number): Fr
       || d.getUint16(6, true) !== c.header_bytes)
     throw new Error("FRAME_PACKET_INCOMPATIBLE_VERSION");
   const flags = d.getUint32(8, true), kind = d.getUint32(12, true);
-  if (flags > 1 || kind !== expectedKind || kind < 1 || kind > 4)
+  if (flags > 1 || kind !== expectedKind || !PULL_KINDS.has(kind))
     throw new Error("FRAME_PACKET_INVALID_FLAGS_OR_SOURCE");
   const n = (offset: number) => d.getBigUint64(offset, true);
   // Raw acquisition identities are independent of processed recipe identities.

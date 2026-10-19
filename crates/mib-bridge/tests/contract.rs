@@ -115,7 +115,32 @@ fn abi_version_is_stable() {
     // v40 (#741) the command result carries the typed start / stop outcome (has_start_outcome,
     // start_outcome, has_stop_outcome, stop_outcome); experiment_stop takes an expected start
     // generation and refuses another run with stop outcome RunMismatch.
-    assert_eq!(ffi::bridge_abi_version(), 40);
+    // v41 (#716 A6a) live cell images: monitoring rows carry their run's start_generation; the
+    // bounded cell strip and pins (fetch_monitoring_cells, monitoring_cell_pin / _unpin /
+    // _clear_pins, fetch_monitoring_cell_image); frame packet pull kinds 5 and 6.
+    assert_eq!(ffi::bridge_abi_version(), 41);
+}
+
+// ABI 41 (#716 A6a): the contract describes the live cell commands, caps and rules.
+#[test]
+fn monitoring_cells_are_described() {
+    let contract: serde_json::Value =
+        serde_json::from_str(include_str!("../contract/bridge-contract.json")).unwrap();
+    let cells = &contract["monitoring_cells"];
+    for (key, value) in [("strip_max_cells", 24), ("strip_max_bytes", 4194304), ("max_pins", 16),
+                         ("pin_max_bytes", 4194304), ("crop_max_side", 256), ("crop_min_margin", 8),
+                         ("row_index_max", 4096)] {
+        assert_eq!(cells[key], serde_json::json!(value), "monitoring_cells.{key} (pinned in shim.cpp)");
+    }
+    for (key, needle) in [("identity", "start_generation"), ("commands", "VIEWER_ONLY"), ("listing", "revision"),
+                          ("cell", "no_image_reason"), ("pin_reply", "never evicted"), ("strip", "oldest evicted"),
+                          ("crop", "crop_max_side"), ("run_rules", "dropped when a run starts"),
+                          ("threading", "8-byte tag")] {
+        assert!(cells[key].as_str().is_some_and(|d| d.contains(needle)), "monitoring_cells.{key} mentions {needle}");
+    }
+    let kinds = &contract["frame_packet"]["pull_kinds"];
+    assert_eq!((kinds["monitoring_cell_image"].clone(), kinds["monitoring_cell_mask"].clone()),
+               (serde_json::json!(5), serde_json::json!(6)));
 }
 
 // ABI 40 (#741): the contract describes the reply's typed outcomes and the stop's expected run.
@@ -856,6 +881,147 @@ fn monitoring_and_trigger_contract() {
     let _ = std::fs::remove_dir_all(&data_dir);
 }
 
+/// An 8-bit grayscale BMP (the mock camera decodes BMP as Mono8).
+fn write_gray_bmp(path: &std::path::Path, width: u32, height: u32, pixels: &[u8]) {
+    let row = (width + 3) & !3;
+    let offset: u32 = 14 + 40 + 256 * 4;
+    let size = offset + row * height;
+    let mut b: Vec<u8> = Vec::with_capacity(size as usize);
+    b.extend_from_slice(b"BM");
+    for v in [size, 0, offset, 40] { b.extend_from_slice(&v.to_le_bytes()); }
+    b.extend_from_slice(&(width as i32).to_le_bytes());
+    b.extend_from_slice(&(height as i32).to_le_bytes());
+    b.extend_from_slice(&1u16.to_le_bytes());
+    b.extend_from_slice(&8u16.to_le_bytes());
+    for v in [0u32, row * height, 2835, 2835, 256, 0] { b.extend_from_slice(&v.to_le_bytes()); }
+    for i in 0..256u32 { b.extend_from_slice(&[i as u8, i as u8, i as u8, 0]); }
+    for y in (0..height).rev() {
+        let start = (y * width) as usize;
+        b.extend_from_slice(&pixels[start..start + width as usize]);
+        b.extend(std::iter::repeat_n(0u8, (row - width) as usize));
+    }
+    std::fs::write(path, b).unwrap();
+}
+
+/// Frames with one bright disk moving along the channel: the lenient config detects it as a
+/// valid cell in every frame, through the real realtime path.
+fn make_blob_frame_dir(tag: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("mib_bridge_{tag}_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (w, h) = (160u32, 96u32);
+    for i in 0..8u32 {
+        let mut px = vec![0u8; (w * h) as usize];
+        let (cx, cy, r) = (40 + 10 * i as i32, 48i32, 14i32);
+        for y in 0..h as i32 {
+            for x in 0..w as i32 {
+                if (x - cx) * (x - cx) + (y - cy) * (y - cy) <= r * r { px[(y as u32 * w + x as u32) as usize] = 220; }
+            }
+        }
+        write_gray_bmp(&dir.join(format!("frame_{i:04}.bmp")), w, h, &px);
+    }
+    dir
+}
+
+const LENIENT_CONFIG: &str = r#"{"image_processing": {"gaussian_blur_size": 3, "bg_subtract_threshold": 8,
+    "morph_kernel_size": 3, "morph_iterations": 1, "empty_frame_pixel_threshold": 1, "auto_background_enabled": false,
+    "filters": {"enable_border_check": false, "enable_area_range_check": false, "enable_deformability_range_check": false,
+                "enable_area_ratio_check": false, "enable_ring_ratio_check": false,
+                "enable_laplacian_variance_check": false, "require_single_inner_contour": false}}}"#;
+
+// ABI 41 (#716 A6a): live cell images end to end through the cxx bridge: blob frames from the
+// mock camera, the real realtime path into the monitoring ring, the store's owned crops, the
+// JSON listing and pin replies, and the pixels as a BridgeFrame.
+#[test]
+#[serial]
+fn monitoring_cells_end_to_end() {
+    let frame_dir = make_blob_frame_dir("cells");
+    let data_dir = std::env::temp_dir().join(format!("mib_bridge_cells_data_{}", std::process::id()));
+    let mut bridge = ffi::new_backend_bridge();
+    // Before init: no listing, no pin, no image.
+    let before: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_monitoring_cells()).unwrap();
+    assert_eq!(before["valid"], false);
+    assert!(!bridge.pin_mut().fetch_monitoring_cell_image(0, 1, 0, false).valid);
+
+    assert!(bridge.pin_mut().initialize(&data_dir.to_string_lossy()));
+    let empty: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_monitoring_cells()).unwrap();
+    assert_eq!((empty["valid"].clone(), empty["scope_start_generation"].clone()), (serde_json::json!(true), serde_json::json!("0")));
+    assert!(empty["strip"].as_array().unwrap().is_empty() && empty["pins"].as_array().unwrap().is_empty());
+    assert_eq!(empty["caps"]["max_pins"], 16);
+
+    assert!(bridge.pin_mut().apply_processing_config_json(LENIENT_CONFIG).ok);
+    assert!(bridge.pin_mut().apply_processing(true, 0.5).ok);
+    assert!(bridge.pin_mut().configure_mock_camera(&frame_dir.to_string_lossy(), 5, true).ok);
+    assert!(bridge.pin_mut().monitoring_set_active(true).ok);
+    assert!(bridge.pin_mut().start_capture().ok);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let rows = loop {
+        let snap = bridge.pin_mut().fetch_monitoring_snapshot(2000);
+        let valid: Vec<_> = snap.rows.iter().filter(|r| r.valid).cloned().collect();
+        if valid.len() >= 20 { break valid; }
+        assert!(Instant::now() < deadline, "no valid monitoring rows from the blob frames ({} rows)", snap.rows.len());
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert!(rows.iter().all(|r| r.start_generation == 0), "outside a run every row is generation 0");
+
+    // The strip: owned crops with their masks, metadata only in JSON.
+    let listing: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_monitoring_cells()).unwrap();
+    let strip = listing["strip"].as_array().unwrap();
+    assert!(!strip.is_empty() && strip.len() <= 24, "{listing}");
+    let cell = strip.last().unwrap();
+    assert!(cell["image"]["has_mask"] == true && cell["no_image_reason"].is_null(), "{cell}");
+    assert!(listing.to_string().len() < 64 * 1024, "the listing carries no pixels");
+    let (gen, frame, object) = (
+        cell["start_generation"].as_str().unwrap().parse::<u64>().unwrap(),
+        cell["frame_index"].as_str().unwrap().parse::<u64>().unwrap(),
+        cell["object_id"].as_i64().unwrap() as i32,
+    );
+    let image = bridge.pin_mut().fetch_monitoring_cell_image(gen, frame, object, false);
+    assert!(image.valid && image.frame_index == frame, "{image:?}");
+    assert_eq!((image.width, image.height), (cell["image"]["width"].as_u64().unwrap(), cell["image"]["height"].as_u64().unwrap()));
+    assert_eq!(image.data.len() as u64, image.width * image.height);
+    assert!(image.data.iter().any(|&p| p >= 200), "the crop holds the bright cell");
+    let mask = bridge.pin_mut().fetch_monitoring_cell_image(gen, frame, object, true);
+    assert!(mask.valid && mask.width == image.width && mask.data.iter().any(|&p| p > 0), "the mask crop");
+
+    // Pins: the reply JSON, idempotence, run rules, the count cap, unpin and clear.
+    let pin = |b: &mut cxx::UniquePtr<ffi::BackendBridge>, g: u64, f: u64, o: i32| -> serde_json::Value {
+        serde_json::from_str(&b.pin_mut().monitoring_cell_pin(g, f, o)).unwrap()
+    };
+    let newest = rows.last().unwrap();
+    let r = pin(&mut bridge, 0, newest.frame_index, newest.object_id);
+    assert_eq!((r["ok"].clone(), r["outcome"].clone()), (serde_json::json!(true), serde_json::json!(0)), "{r}");
+    assert_eq!(r["cell"]["frame_index"], serde_json::json!(newest.frame_index.to_string()));
+    assert_eq!(pin(&mut bridge, 0, newest.frame_index, newest.object_id)["outcome"], 2, "AlreadyPinned");
+    let stale = pin(&mut bridge, 7, newest.frame_index, newest.object_id);
+    assert_eq!((stale["ok"].clone(), stale["outcome"].clone()), (serde_json::json!(false), serde_json::json!(3)), "{stale}");
+    assert!(stale["cell"].is_null());
+    let unknown = pin(&mut bridge, 0, u64::MAX, 0);
+    assert_eq!(unknown["outcome"], 4, "NotFound: {unknown}");
+    let mut taken = 1;
+    for row in rows.iter().rev().skip(1) {
+        let r = pin(&mut bridge, 0, row.frame_index, row.object_id);
+        if r["outcome"] == 0 { taken += 1; }
+        if taken == 16 { break; }
+    }
+    assert_eq!(taken, 16, "sixteen pins");
+    let full = pin(&mut bridge, 0, rows[0].frame_index, rows[0].object_id);
+    assert_eq!(full["outcome"], 5, "LimitReached: {full}");
+    let image = bridge.pin_mut().fetch_monitoring_cell_image(0, newest.frame_index, newest.object_id, false);
+    assert!(image.valid, "a pinned cell serves its image");
+    let unpin = bridge.pin_mut().monitoring_cell_unpin(0, newest.frame_index, newest.object_id);
+    assert!(unpin.ok && unpin.message == "unpinned", "{unpin:?}");
+    assert!(!bridge.pin_mut().monitoring_cell_unpin(0, newest.frame_index, newest.object_id).ok, "not pinned twice");
+    let clear = bridge.pin_mut().monitoring_cell_clear_pins();
+    assert!(clear.ok && clear.message == "cleared 15 pin(s)", "{clear:?}");
+    let after: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_monitoring_cells()).unwrap();
+    assert!(after["pins"].as_array().unwrap().is_empty() && after["stats"]["pin_bytes"] == "0", "{after}");
+
+    assert!(bridge.pin_mut().stop_capture().ok);
+    bridge.pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(&frame_dir);
+    let _ = std::fs::remove_dir_all(&data_dir);
+}
+
 // The Rust enum values must match contract/bridge-contract.json — the single
 // source of truth also pinned by shim.cpp static_asserts (C++) and the
 // generated desktop/src/bridgeContract.ts (TypeScript). Drift fails here.
@@ -899,6 +1065,9 @@ fn rust_enums_match_contract_json() {
                                         ("StorageFailed", 4), ("ProvenanceFailed", 5), ("Busy", 6),
                                         ("InvalidRequest", 7)]),
         ("experiment_stop_outcomes", &[("Accepted", 0), ("NotActive", 1), ("Busy", 2), ("RunMismatch", 3)]),
+        // ABI 41 (#716 A6a): pinned in C++ by static_asserts in shim.cpp.
+        ("monitoring_cell_pin_outcomes", &[("Pinned", 0), ("PinnedWithoutImage", 1), ("AlreadyPinned", 2),
+                                           ("RunMismatch", 3), ("NotFound", 4), ("LimitReached", 5)]),
         ("run_completion_states", &[("Complete", 0), ("IntentionallyPartial", 1), ("IncompleteLoss", 2), ("Failed", 3), ("Unknown", 4)]),
         ("readiness_gate_statuses", &[("Pass", 0), ("Warn", 1), ("Fail", 2), ("Unavailable", 3), ("NotRequired", 4)]),
         // ABI 14 discovery groups (#419): pinned in C++ by static_asserts in shim.cpp.

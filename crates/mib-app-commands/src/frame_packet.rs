@@ -92,6 +92,26 @@ mod tests {
         let mut f = frame(1, 1); f.valid = false;
         assert!(encode(f, 1).is_err());
     }
+    // ABI 41 (#716 A6a): a monitoring cell crop travels as pull kind 5 (its mask as 6), Mono8 with
+    // zero capture identities; the shared golden is decoded by desktop/src/framePacket.test.ts.
+    #[test]
+    fn monitoring_cell_packet_matches_shared_golden() {
+        let frame = BridgeFrame { valid: true, frame_index: 9007199254740993, timestamp_ns: u64::MAX,
+            width: 3, height: 2, pixel_format: 0, stride_bytes: 3,
+            data: vec![11, 22, 33, 44, 55, 66], ..Default::default() };
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../mib-bridge/contract/fixtures/monitoring-cell-v2.json")).unwrap();
+        let packet = encode(frame.clone(), PULL_KIND_MONITORING_CELL_IMAGE).unwrap();
+        assert_eq!(hex::encode(&packet), fixture["hex"].as_str().unwrap());
+        let mask = encode(frame, PULL_KIND_MONITORING_CELL_MASK).unwrap();
+        assert_eq!(u32::from_le_bytes(mask[12..16].try_into().unwrap()), 6);
+        // Not held: an empty packet of the requested kind, nothing else.
+        let empty = encode(BridgeFrame::default(), PULL_KIND_MONITORING_CELL_IMAGE).unwrap();
+        assert_eq!(empty.len(), HEADER_BYTES);
+        assert_eq!(&empty[8..16], &[0, 0, 0, 0, 5, 0, 0, 0]);
+        assert!(encode(BridgeFrame::default(), 7).is_err(), "an unknown pull kind is refused");
+        assert!(encode(BridgeFrame::default(), 0).is_err());
+    }
     #[test]
     fn pins_wire_header_and_exact_integer_encoding() {
         let p = encode(frame(u64::MAX, 11), 1).unwrap();

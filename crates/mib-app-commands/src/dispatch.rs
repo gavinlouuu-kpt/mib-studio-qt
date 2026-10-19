@@ -1145,6 +1145,140 @@ mod tests {
         let _ = std::fs::remove_dir_all(&data);
     }
 
+    /// Blob frames as 8-bit BMPs (the mock camera decodes BMP as Mono8): a bright disk moving
+    /// along the channel, detected as a valid cell under [`LENIENT`] by the real realtime path.
+    pub(crate) fn blob_frames(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("mib_dispatch_{tag}_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (w, h) = (160u32, 96u32);
+        for i in 0..8u32 {
+            let (cx, cy, r) = (40 + 10 * i as i32, 48i32, 14i32);
+            let offset: u32 = 14 + 40 + 1024;
+            let mut b: Vec<u8> = Vec::new();
+            b.extend_from_slice(b"BM");
+            for v in [offset + w * h, 0, offset, 40] { b.extend_from_slice(&v.to_le_bytes()); }
+            b.extend_from_slice(&(w as i32).to_le_bytes());
+            b.extend_from_slice(&(h as i32).to_le_bytes());
+            b.extend_from_slice(&1u16.to_le_bytes());
+            b.extend_from_slice(&8u16.to_le_bytes());
+            for v in [0u32, w * h, 2835, 2835, 256, 0] { b.extend_from_slice(&v.to_le_bytes()); }
+            for g in 0..256u32 { b.extend_from_slice(&[g as u8, g as u8, g as u8, 0]); }
+            for y in (0..h as i32).rev() {
+                for x in 0..w as i32 {
+                    b.push(if (x - cx) * (x - cx) + (y - cy) * (y - cy) <= r * r { 220 } else { 0 });
+                }
+            }
+            std::fs::write(dir.join(format!("frame_{i:04}.bmp")), b).unwrap();
+        }
+        dir
+    }
+
+    pub(crate) const LENIENT: &str = r#"{"image_processing": {"gaussian_blur_size": 3, "bg_subtract_threshold": 8,
+        "morph_kernel_size": 3, "morph_iterations": 1, "empty_frame_pixel_threshold": 1, "auto_background_enabled": false,
+        "filters": {"enable_border_check": false, "enable_area_range_check": false, "enable_deformability_range_check": false,
+                    "enable_area_ratio_check": false, "enable_ring_ratio_check": false,
+                    "enable_laplacian_variance_check": false, "require_single_inner_contour": false}}}"#;
+
+    fn header_u32(p: &[u8], at: usize) -> u32 { u32::from_le_bytes(p[at..at + 4].try_into().unwrap()) }
+    fn header_u64(p: &[u8], at: usize) -> u64 { u64::from_le_bytes(p[at..at + 8].try_into().unwrap()) }
+
+    // ABI 41 (#716 A6a): the live cell commands through dispatch (the WebSocket's path) and the
+    // Tauri functions: strict identities, the JSON listing, pins, and the pixels as frame packets
+    // of pull kind 5 (image) and 6 (mask) — never in JSON.
+    #[test]
+    #[serial]
+    fn monitoring_cells_through_dispatch() {
+        let data = std::env::temp_dir().join(format!("mib_dispatch_cells_{}", std::process::id()));
+        let frames = blob_frames("cells");
+        let state = AppState::new();
+        let host = TestHost(data.to_string_lossy().into_owned());
+        assert_eq!(dispatch(&state, &host, "init", json!({ "dataDir": "" })).unwrap(), Reply::Json(json!(true)));
+        let reply = |name: &str, args: Value| match dispatch(&state, &host, name, args) {
+            Ok(Reply::Json(r)) => r,
+            other => panic!("{name}: {other:?}"),
+        };
+        let packet = |args: Value| match dispatch(&state, &host, "fetch_monitoring_cell_packet", args) {
+            Ok(Reply::Binary(p)) => p,
+            other => panic!("packet: {other:?}"),
+        };
+
+        // Strict arguments: nothing reaches the backend on a malformed identity or layer.
+        for bad in ["", "07", "+1", "1.0", "18446744073709551616"] {
+            let e = dispatch(&state, &host, "monitoring_cell_pin",
+                json!({ "expectedStartGeneration": bad, "frameIndex": "1", "objectId": 0 })).unwrap_err();
+            assert!(e.contains("Invalid expectedStartGeneration"), "{bad:?}: {e}");
+            let e = dispatch(&state, &host, "monitoring_cell_unpin",
+                json!({ "startGeneration": "0", "frameIndex": bad, "objectId": 0 })).unwrap_err();
+            assert!(e.contains("Invalid frameIndex"), "{bad:?}: {e}");
+        }
+        assert!(dispatch(&state, &host, "monitoring_cell_pin", json!({ "expectedStartGeneration": 0, "frameIndex": "1", "objectId": 0 }))
+            .unwrap_err().starts_with("INVALID_ARGUMENTS"), "identities travel as strings");
+        let e = dispatch(&state, &host, "fetch_monitoring_cell_packet",
+            json!({ "startGeneration": "0", "frameIndex": "1", "objectId": 0, "layer": "rgb" })).unwrap_err();
+        assert!(e.contains("Invalid layer"), "{e}");
+        // Not held: an empty packet of the requested kind.
+        for (layer, kind) in [("image", 5), ("mask", 6)] {
+            let p = packet(json!({ "startGeneration": "0", "frameIndex": "1", "objectId": 0, "layer": layer }));
+            assert_eq!((p.len(), header_u32(&p, 8), header_u32(&p, 12)), (crate::frame_packet::HEADER_BYTES, 0, kind));
+        }
+
+        // Real cells: mock camera -> realtime path -> monitoring ring.
+        assert_eq!(reply("apply_processing_config_json", json!({ "json": LENIENT }))["ok"], json!(true));
+        assert_eq!(reply("apply_processing", json!({ "realtimeEnabled": true, "pixelToMicron": 0.5 }))["ok"], json!(true));
+        let r = reply("configure_mock", json!({ "frameDir": frames.to_string_lossy(), "frameIntervalMs": 5, "loopFiles": true }));
+        assert_eq!(r["ok"], json!(true), "{r}");
+        assert_eq!(reply("monitoring_set_active", json!({ "active": true }))["ok"], json!(true));
+        assert_eq!(reply("start_capture", Value::Null)["ok"], json!(true));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        let rows = loop {
+            let snap = reply("fetch_monitoring_snapshot", json!({ "maxRows": 2000 }));
+            let rows: Vec<Value> = snap["rows"].as_array().unwrap().iter().filter(|r| r["valid"] == json!(true)).cloned().collect();
+            if rows.len() >= 3 { break rows; }
+            assert!(std::time::Instant::now() < deadline, "no valid monitoring rows: {snap}");
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        };
+        assert!(rows.iter().all(|r| r["start_generation"] == json!("0")), "rows carry start_generation as a string");
+
+        let listing = reply("fetch_monitoring_cells", Value::Null);
+        let cell = listing["strip"].as_array().unwrap().last().cloned().expect("a strip cell");
+        let id = json!({ "startGeneration": cell["start_generation"], "frameIndex": cell["frame_index"],
+                         "objectId": cell["object_id"], "layer": "image" });
+        let p = packet(id.clone());
+        assert_eq!(&p[..4], b"MIBF");
+        assert_eq!((header_u32(&p, 8), header_u32(&p, 12)), (1, 5), "a valid cell image packet");
+        assert_eq!(header_u64(&p, 16).to_string(), cell["frame_index"].as_str().unwrap(), "the row's frame index");
+        assert_eq!((header_u64(&p, 32), header_u64(&p, 40)),
+                   (cell["image"]["width"].as_u64().unwrap(), cell["image"]["height"].as_u64().unwrap()));
+        assert_eq!((header_u64(&p, 72), header_u64(&p, 88)), (0, 0), "no capture identities");
+        assert_eq!(p.len() as u64, 96 + header_u64(&p, 64));
+        let mut mask_id = id.clone();
+        mask_id["layer"] = json!("mask");
+        let m = packet(mask_id);
+        assert_eq!((header_u32(&m, 12), header_u64(&m, 32)), (6, header_u64(&p, 32)), "the mask: kind 6, same crop");
+
+        // Pins through dispatch and through the Tauri functions alike.
+        let pin_args = json!({ "expectedStartGeneration": cell["start_generation"], "frameIndex": cell["frame_index"],
+                               "objectId": cell["object_id"] });
+        let r = reply("monitoring_cell_pin", pin_args.clone());
+        assert_eq!((r["ok"].clone(), r["outcome"].clone()), (json!(true), json!(0)), "{r}");
+        assert_eq!(reply("monitoring_cell_pin", pin_args.clone())["outcome"], json!(2));
+        let tauri = crate::monitoring_cell_pin(&state, "3".into(), cell["frame_index"].as_str().unwrap().into(),
+                                               cell["object_id"].as_i64().unwrap() as i32).unwrap();
+        assert_eq!((tauri["ok"].clone(), tauri["outcome"].clone()), (json!(false), json!(3)), "{tauri}");
+        assert_eq!(reply("fetch_monitoring_cells", Value::Null)["pins"].as_array().unwrap().len(), 1);
+        let u = reply("monitoring_cell_unpin", json!({ "startGeneration": cell["start_generation"],
+                      "frameIndex": cell["frame_index"], "objectId": cell["object_id"] }));
+        assert_eq!((u["ok"].clone(), u["message"].clone()), (json!(true), json!("unpinned")), "{u}");
+        let c = reply("monitoring_cell_clear_pins", Value::Null);
+        assert_eq!((c["ok"].clone(), c["message"].clone()), (json!(true), json!("cleared 0 pin(s)")), "{c}");
+        assert!(crate::monitoring_cell_clear_pins(&state).unwrap().ok);
+
+        assert_eq!(reply("stop_capture", Value::Null)["ok"], json!(true));
+        state.bridge.lock().unwrap().pin_mut().shutdown();
+        let _ = std::fs::remove_dir_all(&frames);
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
     #[test]
     fn canonical_u64_is_strict() {
         for (text, value) in [("0", Some(0)), ("7", Some(7)), ("18446744073709551615", Some(u64::MAX))] {
