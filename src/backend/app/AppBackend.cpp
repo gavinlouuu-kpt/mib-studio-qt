@@ -34,6 +34,7 @@
 #include "backend/services/TriggerService.h"
 #include "backend/services/DotGridService.h"
 #include "backend/services/SerialBus.h"
+#include "backend/services/SimulatedSerialScenario.h"
 #include "backend/services/SyringePumpService.h"
 #include "backend/services/PulseGeneratorService.h"
 #include "backend/services/StageService.h"
@@ -447,6 +448,20 @@ namespace backend
         // Use user-writable location for logs if dataDir is in Program Files
         std::string logPath = getLogPath(dataDir);
         backend::services::Logger::init(logPath);
+
+        // Simulated serial hardware (MIB_SERIAL_MODE=sim), before any service
+        // can enumerate or open a port. A rig a test already installed stays.
+        // A broken scenario refuses the start rather than falling back to the
+        // real COM ports while the operator believes they are simulated.
+        if (!services::serialsim::installed())
+        {
+            std::string simError;
+            if (!services::serialsim::installFromEnvironment(simError) && !simError.empty())
+            {
+                SPDLOG_ERROR("AppBackend: simulated serial hardware not started: {}", simError);
+                return false;
+            }
+        }
 
         // Pipeline latency instrumentation: opt in via environment so field
         // diagnosis needs no rebuild. CSVs land in pipelineTimingDir_ on

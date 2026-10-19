@@ -1,6 +1,7 @@
 #include "backend/services/AutofocusService.h"
 #include "backend/services/AutofocusMath.h"
 #include "backend/app/Tools.h"
+#include "backend/services/SimulatedSerial.h"
 #include "backend/diagnostics/CrashStateMirror.h"
 
 #include <spdlog/spdlog.h>
@@ -204,6 +205,9 @@ std::vector<backend::nanopositioner::Endpoint> AutofocusService::availableEndpoi
                        [](const auto& endpoint) { return !endpoint.knownOeabtCandidate; }),
         endpoints.end());
 
+    // The CoreMorrow vendor DLL opens COM ports itself, past ISerialPort, so
+    // under simulated serial hardware it would reach the real ports.
+    if (serialsim::installed()) return endpoints;
     for (int port : backend::Tools::availableComPortNumbers()) {
         endpoints.push_back(legacyCoremorEndpoint(port, 115200, 1));
     }

@@ -1,6 +1,7 @@
 // Win32 implementation of ISerialPort. Compiled on Windows only (selected in
 // src/backend/CMakeLists.txt). Qt-free.
 #include "backend/services/ISerialPort.h"
+#include "backend/services/SimulatedSerial.h"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -191,6 +192,7 @@ private:
 
 std::unique_ptr<ISerialPort> makePlatformSerialPort()
 {
+    if (auto rig = serialsim::installed()) return rig->makePort();
     return std::make_unique<Win32SerialPort>();
 }
 
@@ -205,6 +207,7 @@ std::unique_ptr<ISerialPort> makeSerialPortForPathForTesting(const std::string& 
 // manufacturer, and the USB VID/PID parsed from the hardware id.
 std::vector<SerialPortInfo> enumerateSerialPorts()
 {
+    if (auto rig = serialsim::installed()) return rig->enumerate();
     std::vector<SerialPortInfo> ports;
     static const GUID kComPortClass = {0x86E0D1E0L, 0x8089, 0x11D0, {0x9C, 0xE4, 0x08, 0x00, 0x3E, 0x30, 0x1F, 0x73}};
     const HDEVINFO devs = ::SetupDiGetClassDevsA(&kComPortClass, nullptr, nullptr,
