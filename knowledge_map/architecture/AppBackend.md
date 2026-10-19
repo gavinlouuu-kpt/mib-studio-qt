@@ -451,6 +451,19 @@ the services. All `BackendCommandType` values are now explicit and pinned to
 AlreadyActive, Stop accepted, terminal Idle with the remainder committed,
 NotActive afterwards, Starting/Active/Stopping/Idle event sequence).
 
+## Live cell store (bridge ABI 41, #716 A6a)
+
+`initialize()` builds [[../services/MonitoringCellStore]] right after the
+`ProcessingService` (its source, `makeProcessingCellSource`, reads that
+service's monitoring ring, so a re-initialize resets the store and its source
+**before** replacing the processing service). `monitoringCells()` returns it
+(null before `initialize()`); the members are declared after the coordinator, so
+the store is destroyed before the ring it reads. [[ExperimentCoordinator]]
+calls `beginRun` when a run reaches Active; the facade serves
+`fetchMonitoringCellsJson` / `pinMonitoringCellJson` / `unpinMonitoringCell` /
+`clearMonitoringCellPins` / `fetchMonitoringCellImage` and feeds the rows
+`fetchMonitoringSnapshot` served into the store's bounded row index.
+
 ## Memory budget snapshot (issue #370)
 
 `memoryBudgetSnapshot()` assembles the [[../diagnostics/MemoryBudget]]
@@ -458,7 +471,8 @@ NotActive afterwards, Starting/Active/Stopping/Idle event sequence).
 platform helper), `capture.sdkBuffers` (Estimated from the telemetry
 input-buffer count × the latest frame payload while capture runs, otherwise
 Unknown — never a measured zero), `FrameStore::memoryStats()`, every
-`ProcessingService::memoryStats()` owner, and the streaming exporter entry.
+`ProcessingService::memoryStats()` owner, `monitoring.cellStore`
+([[../services/MonitoringCellStore]]), and the streaming exporter entry.
 Consumed by the [[../frontend/MainWindow]] Diagnostics dialog and the
 memory benchmark evidence.
 

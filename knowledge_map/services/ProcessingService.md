@@ -366,14 +366,24 @@ zero-fill it (NULL, core rebuilds the mask) and cores built before it ignore it.
   seam that fills the ring without the activity gate. `BatchPipelineStats`
   carries `queueCapacity` (configured `maxQueuedFrames`) so the density
   service can treat a quarter-full queue as load.
-- **Experiment accumulation** — bounded `std::deque<ProcessedFrame>` populated
-  while `experimentActive_` is true. Deque gives O(1) `pop_front()` when the
-  bounded backlog is full under high frame rates. `flushBufferedFrames(Hdf5Service&)`
-  moves frames into an `ExperimentBatch` via `std::make_move_iterator` (O(1)
-  per Mat, refcount transfer), submits to a 3-slot [[Hdf5Service]] `HdfWriteQueue`
-  the rings only fill while that tab is visible. Stored frames share cv::Mat
-  refcounts with the processing loop (no per-frame clone); consumers are
-  read-only.
+- **Run tags and the cell visitor (bridge ABI 41, #716 A6a)** — each ring
+  slot also stores the `start_generation` of the run active when the row was
+  appended (a parallel preallocated `gens_` array; 0 = outside a run).
+  `setMonitoringRunGeneration(g)` sets the tag under `monitoringFramesMutex_`
+  ([[../architecture/ExperimentCoordinator]] sets it right before
+  `startExperiment()` and back to 0 after `endExperiment()` or a failed
+  start), and every `push_back` stores it under the lock it already holds:
+  one more 8-byte store, no allocation, no new lock. `clearMonitoringFrames`
+  zeroes the tags. `visitMonitoringNewest(maxRows, includeInvalid, visit)`
+  hands the newest rows (valid first, then invalid with what is left) with
+  their tag to a visitor **under the ring lock** and returns a
+  `MonitoringRingView` (held / appended counts, the current tag). Visitors
+  may only copy scalars and cv::Mat headers (refcount shares of frozen
+  images); the bridge snapshot uses it for POD rows instead of copying the
+  whole ring, and [[MonitoringCellStore]]'s source uses it to find rows and
+  share their images, cropping outside the lock. `performance.monitoring_cell_hot_path`
+  measures the hold: ~1 µs for a 24-row strip read, ~24 µs for the 2000-row
+  snapshot (the full-ring copy it replaced: 70–260 µs).
 - **Experiment accumulation** — the extracted, bounded
   `ExperimentFrameBuffer` (`experimentBuffer_`, issue #370 —
   [[../diagnostics/MemoryBudget]]) populated while `experimentActive_` is

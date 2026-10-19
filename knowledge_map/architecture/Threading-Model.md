@@ -86,6 +86,12 @@ timeout, avoiding the unbounded `FlushFileBuffers` wait. See
   UI reads latest via `getLatestSnapshot`.
 - **Monitoring ring buffers** — fixed 1000-frame ring for live charts in
   [[../frontend/ExperimentMonitoringTab]]; active whenever realtime is on.
+  Each slot carries the run's `start_generation` (bridge ABI 41), stored under
+  the lock the append already holds. [[../services/MonitoringCellStore]] has no
+  thread: the caller of `fetch_monitoring_cells` / `monitoring_cell_pin` reads
+  the ring (lock held for scalars and cv::Mat headers only), crops outside every
+  lock and then takes the store mutex; the store mutex is never held while the
+  ring lock is taken.
 - **Experiment accumulation** — bounded vectors collected while
   `experimentActive_ == true`, periodically flushed to HDF5 via
   `flushBufferedFrames`. The realtime thread drops sampled invalid frames first
