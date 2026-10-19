@@ -82,11 +82,18 @@ export interface ReviewPanelProps {
   fallbackPixelToMicron?: number;
 }
 
+/** How an open ended: `message` is the backend's reason when `ok` is false. */
+export interface OpenOutcome {
+  ok: boolean;
+  message: string;
+}
+
 export interface ReviewPanelHandle {
   /** The File ▸ Open… action. */
   openFile: () => Promise<void>;
-  /** Open a known path (command line, file association, test harness). */
-  openPath: (path: string) => Promise<void>;
+  /** Open a known path (command line, file association, R1 Open's library,
+   * test harness). */
+  openPath: (path: string) => Promise<OpenOutcome>;
   /** The File ▸ Close action. */
   closeFile: () => Promise<void>;
 }
@@ -233,7 +240,7 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
   }, [log, onFileChange, onInfo, resetView]);
 
   const openPath = useCallback(
-    async (path: string) => {
+    async (path: string): Promise<OpenOutcome> => {
       beforeLoad?.();
       resetView();
       onFileChange?.(path);
@@ -241,7 +248,13 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
         const res = await reviewBridge.open(path);
         if (!res.ok) {
           log(`open failed: ${res.message}`);
-          return;
+          // The backend closed the previous file before it tried this one
+          // (ReviewSession::open resets first): nothing is open now.
+          setInfo(null);
+          setFileKey("");
+          onInfo?.(null);
+          onFileChange?.("");
+          return { ok: false, message: res.message };
         }
         const fresh = await reviewBridge.info();
         setInfo(fresh);
@@ -254,8 +267,10 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
         setReviewTab(startTab);
         await loadRows(startTab !== "invalid", 0);
         setSelected(setTotalFor(fresh, startTab !== "invalid") > 0 ? 0 : -1);
+        return { ok: true, message: "" };
       } catch (e) {
         log(`open error: ${e}`);
+        return { ok: false, message: String(e) };
       }
     },
     [beforeLoad, loadRows, log, onFileChange, onInfo, resetView],

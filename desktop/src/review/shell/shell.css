@@ -1,0 +1,36 @@
+/* YOFO Review on the @mib/ui kit (#717 B1). Components and colours come from
+   the kit; this file only places them, with the kit's spacing tokens. The
+   window is the AppShell over the status bar; Inspect (today's review panel)
+   fills what is left. Every selector is under .rv-app. */
+.rv-app .rv-shell {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.rv-app .rv-shell > .mib-shell__main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+.rv-app .rv-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--mib-space-2);
+}
+.rv-app .rv-stage[hidden],
+.rv-app .rv-inspect[hidden] {
+  display: none;
+}
+/* Inspect keeps the panel's own layout (review.css .review-main). */
+.rv-app .rv-inspect {
+  flex: 1;
+  min-height: 0;
+}
+.rv-app .rv-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mib-space-4);
+  padding: 0 var(--mib-space-6) var(--mib-space-6);
+}
