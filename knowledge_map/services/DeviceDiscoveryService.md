@@ -144,6 +144,17 @@ camera, nanopositioner, and pulse-generator providers. It therefore exercises
 startup selection and cancellation without relying on an SDK fallback or
 touching camera hardware.
 
+### Probes yield to services (2026-10-19)
+
+`probeNanopositionerEndpoint` takes a [[SerialPortClaims]] probe claim on the
+endpoint's port and refuses it (probe fails, logged "skips …") when a bus
+session or the connected nanopositioner holds the port, or config.json
+reserves it for the pumps. Before this, a CH340 USB-RS485 pump dongle (an
+OEABT candidate by VID) was probed for ~2 s per startup attempt and a pump
+Connect in that window failed busy. `backend.serial_startup_race` drives the
+real coordinator against the [[SimulatedSerial]] bench, with seeded operator
+connects and stale holders.
+
 ## Gotchas
 
 - Never call `shutdownDiscovery()` from inside an observer/provider (it

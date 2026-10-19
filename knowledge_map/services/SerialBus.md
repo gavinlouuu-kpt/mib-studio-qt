@@ -91,3 +91,14 @@ used (blocking `waitFor*`), and destroyed only on that thread. `transact()` mars
 the result; any thread may call it, and callers are serialized by the
 session's call mutex (always innermost — services take their own state mutex
 first).
+
+## Port claims in `acquire` (2026-10-19)
+
+Opening a **new** session takes a [[SerialPortClaims]] service claim first,
+outside the registry lock. When a discovery probe of this process is on the
+port, `acquire` waits for it (at most `portclaims::kProbeYield`, 3 s) instead
+of failing `PortBusy`. The session keeps the claim for its life, so probes
+skip the port while any client holds it. Sharing an existing session takes
+no new claim. `normalizeKey` now delegates to `portclaims::key` (same
+rules), so bus and claim keys cannot drift. Regression:
+`backend.serial_startup_race` ([[SimulatedSerial]]).

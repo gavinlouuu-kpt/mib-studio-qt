@@ -32,6 +32,10 @@
   per adapter, strict response correlation); transport for the two below
 - [[SyringePumpService]] — dual-pump Modbus RTU over serial
 - [[ISerialPort]] — Qt-free serial transport interface (POSIX/Win32) + factory
+- [[SerialPortClaims]] — in-process port arbitration: discovery probes yield to
+  bus sessions, the connected nanopositioner and config.json pump ports
+- [[SimulatedSerial]] — serial-sim rig: fake COM ports, Modbus/OEABT devices,
+  startup timing faults, stale holders, ownership ledger (`MIB_SERIAL_MODE=sim`)
 - [[PulseGeneratorService]] — Zhongsheng pulse module (camera ext-trigger
   source) via Modbus RTU over serial; addressed device on a shared bus
 - [[StageService]] — motorized Z stage: read-only start-up, operator "Set zero

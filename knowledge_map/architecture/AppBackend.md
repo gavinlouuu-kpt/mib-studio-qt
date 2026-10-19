@@ -468,6 +468,18 @@ memory benchmark evidence.
 config watcher, stored as a string attribute on `/experiment_info` in HDF5
 (see `Hdf5Service::writeConfigJson`).
 
+`setLastConfigJson` also reserves `pump_sample_com_port` /
+`pump_sheath_com_port` (`COM<n>`) in [[../services/SerialPortClaims]], so the
+startup nanopositioner probe never opens the pump RS485 bus (2026-10-19).
+
+## Simulated serial hardware (2026-10-19)
+
+`initialize()` calls `serialsim::installFromEnvironment` before any service
+exists (unless a test already installed a rig). `MIB_SERIAL_MODE=sim`
+replaces every COM port in the process with the [[../services/SimulatedSerial]]
+rig. An unreadable scenario or unknown mode fails `initialize()` rather than
+fall back to real ports.
+
 ## Saved illuminated Live View (#413)
 
 `stageMindVisionConfigFromFile` selects a next-start camera profile without
