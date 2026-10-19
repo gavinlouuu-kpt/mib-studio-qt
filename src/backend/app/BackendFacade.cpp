@@ -209,7 +209,12 @@ namespace backend::bridge
           // The review lanes report through the facade's operations: Started
           // comes from beginOperation (the host hook), Progress and the one
           // terminal state from the sink (ADR 0004 late-event policy: both
-          // drop events for an operation that already finished).
+          // drop events for an operation that already finished). Contract
+          // (#742 review round 2): these callbacks, and the event sink they
+          // call synchronously, may call shutdown() or cancel an operation,
+          // but must not destroy this facade or its ReviewJobs. Hosts deliver
+          // events to their consumers asynchronously (the bridge's sink
+          // converts and enqueues; Rust drains it with poll_events).
           reviewJobs_(std::make_unique<review::ReviewJobs>(
               *review_, nullptr,
               [this](const review::ReviewJobEvent &e) {

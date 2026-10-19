@@ -1045,6 +1045,10 @@ namespace backend::bridge
         void shutdown();
         bool isInitialized() const;
 
+        // Called synchronously on backend threads (operation events from the
+        // command or job thread). It may call shutdown() or cancel an
+        // operation but must not destroy this facade; the bridge's sink only
+        // converts and enqueues (ADR 0003).
         void setEventSink(EventSink sink);
         BackendCommandResult dispatch(const BackendCommand &command);
 

@@ -24,13 +24,22 @@
 // racing a job's end, and 200 mixed cycles per policy; a shutdown from inside
 // a terminal event followed by destroying ReviewJobs while that event's
 // callback still runs (the detached worker keeps the runner state it uses
-// alive; #742 review). Lane release is waited for on ReviewJobs' own
+// alive; #742 review). #742 review round 2: a shutdown() from inside a job's
+// own Started event (the sink; the facade preset: the host's beginOperation)
+// does not let the job run: one Cancelled terminal from the start itself,
+// the JSON jobs' terminal and status snapshot byte for byte with their
+// engine run with the flag set on entry; and a shutdown() from a terminal
+// event while another thread's start is joining that event's worker returns
+// (it used to wait for that start: deadlock). Lane release is waited for on ReviewJobs' own
 // condition (ReviewJobsTestAccess::waitIdle). Every operation must
 // see Started first, Progress only before its one terminal, nothing after.
 // `cancelOverridesOutcome`: a cancelled own job that fails reports Cancelled,
 // a JSON-style job keeps its Failed. The kind -> lane map. Runs in the TSan
 // lane (labels backend / concurrency). Watchdog guarded.
 
+#include "backend/processing/ProcessingService.h"
+#include "backend/review/ExportEngine.h"
+#include "backend/review/Reanalysis.h"
 #include "backend/review/ReviewJobs.h"
 #include "backend/review/ReviewSession.h"
 
@@ -116,6 +125,12 @@ namespace
             });
             if (ok && state) *state = byId[id].back();
             return ok;
+        }
+        std::string messageOf(std::uint64_t id)
+        {
+            std::scoped_lock lock(m);
+            const auto it = terminalMessage.find(id);
+            return it == terminalMessage.end() ? std::string{} : it->second;
         }
         int terminals(std::uint64_t id)
         {
@@ -722,6 +737,212 @@ namespace
         MIB_EXPECT(recorder.terminals(id) == 1, tag + "one terminal");
         MIB_EXPECT(recorder.violationCount() == 0, tag + "Started first, nothing after the terminal");
     }
+
+    // #742 review round 2: shutdown() from inside a job's own Started event
+    // (the sink: ReviewJobs' own ids; the facade preset: the host's
+    // beginOperation, which reports Started). The start must not launch a
+    // worker that runs the body: it reports exactly one terminal, Cancelled,
+    // itself before it returns (the JSON jobs: their engine's outcome for a
+    // run cancelled before its first step, byte for byte with the engine run
+    // with the flag set on entry, and that status snapshot), and the lane is
+    // free when it returns. Starts after it run normally. Before this round
+    // the job ran after the shutdown and completed.
+    void shutdownInsideStarted(const Policy &policy)
+    {
+        const std::string tag = std::string("[") + policy.name + ", shutdown inside Started] ";
+        ReviewSession session;
+        Recorder recorder;
+        FakeHost host{recorder};
+        backend::services::ProcessingService kernel; // owns no threads until start(); outlives the jobs
+        std::atomic<ReviewJobs *> self{nullptr};
+        std::atomic<bool> armed{false};
+        std::atomic<int> shutdownsInStarted{0};
+        const std::function<void()> shutdownIfArmed = [&] {
+            if (!armed.exchange(false)) return;
+            self.load()->shutdown(); // on the starting thread, inside Started
+            ++shutdownsInStarted;
+        };
+        ReviewJobSink sink = [&recorder, &shutdownIfArmed](const ReviewJobEvent &e) {
+            recorder(e);
+            if (e.state == ReviewJobState::Started) shutdownIfArmed();
+        };
+        ReviewJobsOptions options = ReviewJobsOptions::forReviewBridge();
+        if (policy.facade)
+        {
+            auto begin = host.hook().beginOperation;
+            options = ReviewJobsOptions::forFacade(ReviewJobHost{
+                [begin, &shutdownIfArmed](ReviewJobKind kind, const std::string &message, CancelFlag &cancel) {
+                    const auto id = begin(kind, message, cancel); // records Started
+                    shutdownIfArmed();
+                    return id;
+                }});
+        }
+        auto jobs = std::make_unique<ReviewJobs>(session, nullptr, std::move(sink), options);
+        self = jobs.get();
+        const auto setFlag = std::make_shared<std::atomic<bool>>(true);
+
+        // ReviewJobs' own job (one of the custom bodies).
+        std::atomic<bool> ran{false};
+        std::uint64_t own = 0;
+        {
+            std::string err;
+            armed = true;
+            own = ReviewJobsTestAccess::start(
+                *jobs, kExportKind,
+                [&ran](std::uint64_t, const CancelFlag &, const ReviewJobsTestAccess::Progress &) {
+                    ran = true;
+                    return ReviewJobsTestAccess::Result{ReviewJobState::Completed, "done"};
+                },
+                &err);
+            MIB_REQUIRE(own != 0, tag + "own job: the start returns its operation: " + err);
+            MIB_EXPECT(shutdownsInStarted.load() == 1, tag + "own job: shutdown() ran inside Started and returned");
+            // Reported by the start itself: no wait.
+            MIB_EXPECT(recorder.terminals(own) == 1, tag + "own job: its one terminal was reported before the start returned");
+            ReviewJobState s{};
+            MIB_EXPECT(recorder.waitTerminal(own, &s) && s == ReviewJobState::Cancelled, tag + "own job: Cancelled");
+            MIB_EXPECT(recorder.messageOf(own) == "Review jobs shut down before the job started",
+                       tag + "own job: message '" + recorder.messageOf(own) + "'");
+            MIB_EXPECT(!jobs->busy(), tag + "own job: the lane is free when the start returns");
+            if (policy.facade) MIB_EXPECT(host.flag(own)->load(), tag + "own job: the host's cancel flag is set");
+        }
+
+        // The export JSON job: nothing touches its (missing) sources.
+        {
+            ExportBatchRequest batch;
+            batch.sources = {"/nonexistent/review-jobs-lanes/a.h5", "/nonexistent/review-jobs-lanes/b.h5"};
+            batch.request.sourcePath = batch.sources.front();
+            batch.request.outputRoot = "/nonexistent/review-jobs-lanes/out";
+            armed = true;
+            const auto r = jobs->startExportJson(batch);
+            MIB_REQUIRE(r.operationId != 0 && r.started, tag + "export: started, its terminal already reported: " + r.error);
+            MIB_EXPECT(shutdownsInStarted.load() == 2, tag + "export: shutdown() ran inside Started");
+            const auto engine = runExportBatch(batch.request, batch.sources, setFlag, {});
+            MIB_REQUIRE(engine.cancelled && engine.files.empty(), tag + "export: the engine run cancelled on entry reaches no source");
+            MIB_EXPECT(recorder.terminals(r.operationId) == 1, tag + "export: one terminal, reported by the start");
+            ReviewJobState s{};
+            MIB_EXPECT(recorder.waitTerminal(r.operationId, &s) && s == ReviewJobState::Cancelled, tag + "export: Cancelled");
+            MIB_EXPECT(recorder.messageOf(r.operationId) == engine.error,
+                       tag + "export: the engine's message: '" + recorder.messageOf(r.operationId) + "'");
+            MIB_EXPECT(jobs->exportStatusJson() == exportTerminalStatusJson(r.operationId, engine),
+                       tag + "export: the engine's cancelled snapshot, byte for byte: " + jobs->exportStatusJson());
+            MIB_EXPECT(!jobs->busy(), tag + "export: the lane is free when the start returns");
+            if (policy.facade) MIB_EXPECT(host.flag(r.operationId)->load(), tag + "export: the host's cancel flag is set");
+        }
+
+        // The reanalysis JSON job: its (missing) source is never opened.
+        {
+            ReanalysisRequest request;
+            request.sourcePath = "/nonexistent/review-jobs-lanes/source.h5";
+            request.outputPath = "/nonexistent/review-jobs-lanes/reanalysed.h5";
+            armed = true;
+            const auto r = jobs->startReanalysisJson(request, kernel);
+            MIB_REQUIRE(r.operationId != 0 && r.started, tag + "reanalysis: started, its terminal already reported: " + r.error);
+            MIB_EXPECT(shutdownsInStarted.load() == 3, tag + "reanalysis: shutdown() ran inside Started");
+            const auto engine = runReanalysis(request, kernel, setFlag, {});
+            MIB_REQUIRE(engine.cancelled && !engine.published, tag + "reanalysis: the engine run cancelled on entry");
+            MIB_EXPECT(recorder.terminals(r.operationId) == 1, tag + "reanalysis: one terminal, reported by the start");
+            ReviewJobState s{};
+            MIB_EXPECT(recorder.waitTerminal(r.operationId, &s) && s == ReviewJobState::Cancelled,
+                       tag + "reanalysis: Cancelled");
+            MIB_EXPECT(recorder.messageOf(r.operationId) == engine.error,
+                       tag + "reanalysis: the engine's message: '" + recorder.messageOf(r.operationId) + "'");
+            MIB_EXPECT(jobs->reanalysisStatusJson() == reanalysisTerminalStatusJson(r.operationId, request, engine),
+                       tag + "reanalysis: the engine's cancelled snapshot, byte for byte: " + jobs->reanalysisStatusJson());
+            MIB_EXPECT(!jobs->busy(), tag + "reanalysis: the lane is free when the start returns");
+        }
+
+        // A start after it runs normally, on each lane.
+        for (const auto kind : {kExportKind, kProcessingKind})
+        {
+            std::string err;
+            const auto id = ReviewJobsTestAccess::start(
+                *jobs, kind,
+                [](std::uint64_t, const CancelFlag &, const ReviewJobsTestAccess::Progress &progress) {
+                    progress(1, 1);
+                    return ReviewJobsTestAccess::Result{ReviewJobState::Completed, "done"};
+                },
+                &err);
+            MIB_REQUIRE(id != 0, tag + "a start afterwards: " + err);
+            ReviewJobState s{};
+            MIB_EXPECT(recorder.waitTerminal(id, &s) && s == ReviewJobState::Completed, tag + "a start afterwards completes");
+            MIB_EXPECT(idle(*jobs), tag + "idle afterwards");
+        }
+        MIB_EXPECT(shutdownsInStarted.load() == 3, tag + "no other shutdown");
+        jobs.reset(); // joins every worker: a body that had been launched has run by now
+        MIB_EXPECT(!ran.load(), tag + "the overtaken job's body never ran");
+        MIB_EXPECT(recorder.violationCount() == 0, tag + "Started first, nothing after a terminal");
+        std::scoped_lock lock(recorder.m);
+        for (const auto &[id, seq] : recorder.byId)
+        {
+            int terminals = 0;
+            for (auto st : seq) terminals += isTerminal(st) ? 1 : 0;
+            MIB_EXPECT(terminals == 1, tag + "operation " + std::to_string(id) + " terminals: " + std::to_string(terminals));
+        }
+    }
+
+    // #742 review round 2: under the review bridge's policy a job's lane is
+    // free before its terminal event, so another thread's start can claim it
+    // and join the previous worker while that worker is still in the event.
+    // If the event's callback then calls shutdown(), shutdown() must not wait
+    // for that start (which waits for the worker): it returns, the worker
+    // ends, and the start, overtaken by the shutdown, reports Cancelled
+    // without running. Before this round shutdown() waited for a start in
+    // progress and this deadlocked. (The facade preset frees a lane only
+    // after the event, so no start can join a worker still in it.)
+    void shutdownFromTerminalWhileStarting()
+    {
+        const std::string tag = "[review bridge, shutdown from a terminal event while a start joins its worker] ";
+        ReviewSession session;
+        Recorder recorder;
+        auto jobs = std::make_unique<ReviewJobs>(session, nullptr, std::ref(recorder), ReviewJobsOptions::forReviewBridge());
+        Signal inTerminal, shutdownReturned;
+        std::atomic<bool> fired{false};
+        std::atomic<bool> claimSeen{false};
+        recorder.setOnTerminal([&](const ReviewJobEvent &) {
+            if (fired.exchange(true)) return; // the first job's terminal only
+            inTerminal.raise();
+            // The next start has claimed the lane; it joins this worker next.
+            claimSeen = ReviewJobsTestAccess::waitBusy(*jobs, ReviewJobLane::Export, kWait);
+            jobs->shutdown();
+            shutdownReturned.raise();
+        });
+        std::string err;
+        const auto first = ReviewJobsTestAccess::start(
+            *jobs, kExportKind,
+            [](std::uint64_t, const CancelFlag &, const ReviewJobsTestAccess::Progress &) {
+                return ReviewJobsTestAccess::Result{ReviewJobState::Completed, "done"};
+            },
+            &err);
+        MIB_REQUIRE(first != 0, tag + "first job: " + err);
+        MIB_REQUIRE(inTerminal.wait(), tag + "the first job is in its terminal event");
+        std::atomic<bool> ran{false};
+        std::uint64_t second = 0;
+        std::string secondErr;
+        std::thread starter([&] {
+            second = ReviewJobsTestAccess::start(
+                *jobs, kExportKind,
+                [&ran](std::uint64_t, const CancelFlag &, const ReviewJobsTestAccess::Progress &) {
+                    ran = true;
+                    return ReviewJobsTestAccess::Result{ReviewJobState::Completed, "done"};
+                },
+                &secondErr);
+        });
+        MIB_REQUIRE(shutdownReturned.wait(), tag + "shutdown() returns while the start joins its worker (no deadlock)");
+        starter.join();
+        MIB_EXPECT(claimSeen.load(), tag + "the second start claimed the lane before the shutdown");
+        MIB_REQUIRE(second != 0, tag + "the second start returns its operation: " + secondErr);
+        ReviewJobState s{};
+        MIB_EXPECT(recorder.waitTerminal(first, &s) && s == ReviewJobState::Completed, tag + "the first job completed");
+        MIB_EXPECT(recorder.waitTerminal(second, &s) && s == ReviewJobState::Cancelled, tag + "the overtaken start: Cancelled");
+        MIB_EXPECT(recorder.messageOf(second) == "Review jobs shut down before the job started",
+                   tag + "the overtaken start's message: '" + recorder.messageOf(second) + "'");
+        MIB_EXPECT(recorder.terminals(first) == 1 && recorder.terminals(second) == 1, tag + "one terminal each");
+        MIB_EXPECT(idle(*jobs), tag + "idle");
+        recorder.setOnTerminal({});
+        jobs.reset();
+        MIB_EXPECT(!ran.load(), tag + "the overtaken job's body never ran");
+        MIB_EXPECT(recorder.violationCount() == 0, tag + "Started first, nothing after a terminal");
+    }
 } // namespace
 
 int main()
@@ -748,5 +969,10 @@ int main()
     reentrantShutdown(Policy{"review bridge", false});
     reentrantShutdown(Policy{"facade", true});
     wd.mark("re-entrant shutdown");
+    shutdownInsideStarted(Policy{"review bridge", false});
+    shutdownInsideStarted(Policy{"facade", true});
+    wd.mark("shutdown inside Started");
+    shutdownFromTerminalWhileStarting();
+    wd.mark("shutdown from a terminal event while a start joins its worker");
     return mib::test::exitCode();
 }

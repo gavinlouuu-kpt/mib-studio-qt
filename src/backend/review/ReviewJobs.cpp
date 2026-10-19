@@ -95,6 +95,9 @@ namespace backend::review
     namespace
     {
         constexpr const char *kAnotherJobRunning = "Another review job is still running";
+        // The terminal of one of ReviewJobs' own jobs whose start a shutdown()
+        // overtook (the JSON jobs report their engine's cancelled outcome).
+        constexpr const char *kShutDownBeforeStart = "Review jobs shut down before the job started";
         constexpr const char *kIdleStatus = "{\"state\":\"idle\"}";
         constexpr std::size_t kLaneCount = 2;
 
@@ -134,6 +137,11 @@ namespace backend::review
             // Completed into Cancelled. The JSON jobs report the engine's
             // outcome as it is (the facade's rule before S7).
             bool cancelOverridesOutcome{true};
+            // A shutdown() overtook the start: the job's terminal without its
+            // body (the JSON jobs: the engine's outcome for a run cancelled
+            // before its first step, with that status snapshot). Unset:
+            // Cancelled with kShutDownBeforeStart.
+            std::function<Outcome(std::uint64_t id)> notRun;
         };
 
         struct StartResult
@@ -146,9 +154,7 @@ namespace backend::review
 
         struct Lane
         {
-            bool busy{false};     // claimed: being started or running
-            bool starting{false}; // claimed, worker not yet created (shutdown waits)
-            std::thread::id starter;
+            bool busy{false}; // claimed: being started or running
             std::uint64_t id{0};
             CancelFlag cancel;
             std::thread worker; // the last job's worker, joined by the next start or shutdown
@@ -161,9 +167,13 @@ namespace backend::review
         const ReviewJobsOptions options;
 
         mutable std::mutex mutex;
+        // Notified when a lane is claimed or released (the tests' waits).
         std::condition_variable laneChanged;
         std::array<Lane, kLaneCount> lanes;
         std::uint64_t nextId{1};
+        // shutdown() calls so far: a start that sees it change between its
+        // claim and its worker does not run the job.
+        std::uint64_t shutdowns{0};
         std::string computedCoreJson;
         std::string computedCorePath; // file computedCoreJson belongs to
         DensityResult density;
@@ -195,7 +205,6 @@ namespace backend::review
         {
             std::scoped_lock lock(mutex);
             lanes[lane].busy = false;
-            lanes[lane].starting = false;
             laneChanged.notify_all();
         }
 
@@ -205,12 +214,17 @@ namespace backend::review
         // calling the host or the sink, so either may call back in.
         StartResult start(Job jobIn)
         {
+            // This start's own reference to the runner state: a callback below
+            // that destroys the ReviewJobs object (out of contract) does not
+            // free it under the rest of the start (#742 review round 2).
+            const auto self = shared_from_this();
             auto job = std::make_shared<Job>(std::move(jobIn));
             const std::size_t lane = laneIndex(laneOf(job->kind));
             StartResult result;
             std::thread previous;
             CancelFlag flag;
             std::uint64_t id = 0;
+            std::uint64_t shutdownsAtClaim = 0;
             const bool hosted = static_cast<bool>(options.host.beginOperation);
             {
                 std::scoped_lock lock(mutex);
@@ -230,11 +244,10 @@ namespace backend::review
                 }
                 Lane &l = lanes[lane];
                 l.busy = true;
-                l.starting = true;
-                l.starter = std::this_thread::get_id();
                 l.cancel.reset();
                 l.id = 0;
                 previous = std::move(l.worker);
+                shutdownsAtClaim = shutdowns;
                 if (!hosted)
                 {
                     id = nextId++;
@@ -242,6 +255,7 @@ namespace backend::review
                     l.id = id;
                     l.cancel = flag;
                 }
+                laneChanged.notify_all();
             }
             // The lane's previous job has reported its terminal state (or is
             // reporting it: BeforeTerminal); join it before this one starts.
@@ -266,21 +280,27 @@ namespace backend::review
             {
                 emit(ReviewJobEvent{id, job->kind, ReviewJobState::Started, 0, 0, {}});
             }
+            bool overtaken = false;
             try
             {
                 if (job->onBegin) job->onBegin(id);
                 std::scoped_lock lock(mutex);
-                // The worker owns a reference to the runner state (this Impl):
-                // a shutdown from inside one of its events detaches it (it
-                // cannot join itself), and the ReviewJobs object may then be
-                // destroyed while the event's callback is still running; the
-                // sink, the lanes and the mutex it touches afterwards stay alive
-                // until it ends (#742 review).
-                lanes[lane].worker = std::thread([self = shared_from_this(), lane, id, flag, job]() {
-                    self->run(lane, id, flag, *job);
-                });
-                lanes[lane].starting = false;
-                laneChanged.notify_all();
+                // A shutdown() since the claim (from this job's own Started
+                // event or the host's beginOperation, or on another thread)
+                // already cancelled and joined the lanes: this job does not run.
+                // Checked and the worker stored under one lock, so a later
+                // shutdown() finds the worker and joins it.
+                overtaken = shutdowns != shutdownsAtClaim;
+                if (!overtaken)
+                {
+                    // The worker owns a reference to the runner state (this
+                    // Impl): a shutdown from inside one of its events detaches it
+                    // (it cannot join itself), and the ReviewJobs object may then
+                    // be destroyed while the event's callback is still running;
+                    // the sink, the lanes and the mutex it touches afterwards stay
+                    // alive until it ends (#742 review).
+                    lanes[lane].worker = std::thread([self, lane, id, flag, job]() { self->run(lane, id, flag, *job); });
+                }
             }
             catch (...)
             {
@@ -298,9 +318,30 @@ namespace backend::review
                 result.id = id;
                 return result;
             }
+            if (overtaken)
+            {
+                // The operation exists (Started was reported): it gets its one
+                // terminal here, Cancelled, on this thread, without the body.
+                flag->store(true);
+                Outcome outcome{ReviewJobState::Cancelled, kShutDownBeforeStart};
+                if (job->notRun)
+                {
+                    try { outcome = job->notRun(id); } catch (...) {}
+                }
+                finish(lane, id, job->kind, outcome);
+            }
             result.id = id;
             result.started = true;
             return result;
+        }
+
+        // A job's terminal event and its lane's release, in the host's order.
+        void finish(std::size_t lane, std::uint64_t id, ReviewJobKind kind, const Outcome &outcome)
+        {
+            const bool releaseFirst = options.laneRelease == ReviewLaneRelease::BeforeTerminal;
+            if (releaseFirst) releaseLane(lane);
+            emit(ReviewJobEvent{id, kind, outcome.state, 0, 0, outcome.message});
+            if (!releaseFirst) releaseLane(lane);
         }
 
         void run(std::size_t lane, std::uint64_t id, const CancelFlag &flag, const Job &job)
@@ -324,10 +365,7 @@ namespace backend::review
             {
                 outcome.state = ReviewJobState::Cancelled;
             }
-            const bool releaseFirst = options.laneRelease == ReviewLaneRelease::BeforeTerminal;
-            if (releaseFirst) releaseLane(lane);
-            emit(ReviewJobEvent{id, job.kind, outcome.state, 0, 0, outcome.message});
-            if (!releaseFirst) releaseLane(lane);
+            finish(lane, id, job.kind, outcome);
         }
 
         // One of ReviewJobs' own jobs: refusals as `error`, a worker that
@@ -397,14 +435,13 @@ namespace backend::review
     {
         std::vector<std::thread> workers;
         {
-            std::unique_lock lock(impl_->mutex);
-            // A job between claim and worker creation is waited for (unless
-            // this thread is the one starting it), so its worker is joined too.
-            impl_->laneChanged.wait(lock, [&] {
-                for (const auto &l : impl_->lanes)
-                    if (l.starting && l.starter != std::this_thread::get_id()) return false;
-                return true;
-            });
+            std::scoped_lock lock(impl_->mutex);
+            // A start between its claim and its worker sees this and does not
+            // run its job (it reports Cancelled itself); shutdown() does not
+            // wait for it. Waiting would deadlock a start that is joining the
+            // lane's previous worker while that worker calls shutdown() from
+            // its terminal event (#742 review round 2).
+            ++impl_->shutdowns;
             for (auto &l : impl_->lanes)
             {
                 if (l.cancel) l.cancel->store(true);
@@ -470,6 +507,11 @@ namespace backend::review
             impl->setStatus(ReviewJobLane::Export, exportTerminalStatusJson(id, outcome));
             return Outcome{state, state == ReviewJobState::Completed ? outcome.last.finalPath : outcome.error};
         };
+        job.notRun = [impl, count = batch.sources.size()](std::uint64_t id) {
+            const auto outcome = exportBatchCancelledBeforeStart(count);
+            impl->setStatus(ReviewJobLane::Export, exportTerminalStatusJson(id, outcome));
+            return Outcome{ReviewJobState::Cancelled, outcome.error};
+        };
         const auto r = impl_->start(std::move(job));
         return ReviewJobStart{r.id, r.started, r.error};
     }
@@ -497,6 +539,11 @@ namespace backend::review
                                                : ReviewJobState::Failed,
                            outcome.error};
         };
+        job.notRun = [impl, request](std::uint64_t id) {
+            const auto outcome = reanalysisCancelledBeforeStart();
+            impl->setStatus(ReviewJobLane::Processing, reanalysisTerminalStatusJson(id, request, outcome));
+            return Outcome{ReviewJobState::Cancelled, outcome.error};
+        };
         const auto r = impl_->start(std::move(job));
         return ReviewJobStart{r.id, r.started, r.error};
     }
@@ -517,6 +564,13 @@ namespace backend::review
         auto &impl = *jobs.impl_;
         std::unique_lock lock(impl.mutex);
         return impl.laneChanged.wait_for(lock, timeout, [&] { return !impl.lanes[laneIndex(lane)].busy; });
+    }
+
+    bool ReviewJobsTestAccess::waitBusy(const ReviewJobs &jobs, ReviewJobLane lane, std::chrono::milliseconds timeout)
+    {
+        auto &impl = *jobs.impl_;
+        std::unique_lock lock(impl.mutex);
+        return impl.laneChanged.wait_for(lock, timeout, [&] { return impl.lanes[laneIndex(lane)].busy; });
     }
 
     std::uint64_t ReviewJobsTestAccess::start(ReviewJobs &jobs, ReviewJobKind kind, Body body, std::string *error,

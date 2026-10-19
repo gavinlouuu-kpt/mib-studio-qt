@@ -90,6 +90,12 @@ namespace backend::review
         std::string message; // terminal: output path / summary / error
     };
 
+    // Receives every job event, on the thread that produced it (the starting
+    // thread for Started and for a terminal reported at start, else the job's
+    // worker), never under ReviewJobs' lock. Callbacks may call `shutdown()`
+    // or `cancel()`, but must not destroy this ReviewJobs or its host. Hosts
+    // deliver events to their consumers asynchronously (the review bridge and
+    // the facade's bridge convert and enqueue; the shell drains the queue).
     using ReviewJobSink = std::function<void(const ReviewJobEvent &)>;
 
     struct ExportSeriesRange
@@ -196,7 +202,8 @@ namespace backend::review
         // Started (`message`: the job's source) and returns its non-zero id
         // with the cancel flag the job observes (the host's cancel sets it).
         // The sink then receives the job's Progress and terminal events with
-        // that id, never a Started.
+        // that id, never a Started. Like the sink, it may call `shutdown()` or
+        // `cancel()` but must not destroy this ReviewJobs or its host.
         std::function<std::uint64_t(ReviewJobKind kind, const std::string &message, CancelFlag &cancel)>
             beginOperation;
     };
@@ -239,12 +246,24 @@ namespace backend::review
     struct ReviewJobStart
     {
         std::uint64_t operationId{0}; // 0 = refused before an operation existed
-        bool started{false};          // false with an id: the worker could not start (its terminal was reported)
+        // false with an id: the worker could not start (its terminal was
+        // reported). true: the terminal comes through the sink, or was already
+        // reported (Cancelled, without running) when a shutdown() overtook the
+        // start.
+        bool started{false};
         std::string error;
     };
 
     struct ReviewJobsTestAccess; // custom job bodies for the lane tests (defined in ReviewJobs.cpp)
 
+    // Runs YOFO Review's and MIB Studio's review jobs on two lanes (export,
+    // processing) under a host's policy (ReviewJobsOptions). Every operation
+    // gets Started, then Progress, then exactly one terminal event.
+    //
+    // Callbacks (the sink, the host's beginOperation) may call `shutdown()` or
+    // `cancel()`, but must not destroy this ReviewJobs or its host. Hosts
+    // deliver events to their consumers asynchronously. Destroying the owner
+    // from inside its own callback is out of contract (#742 review round 2).
     class ReviewJobs
     {
     public:
@@ -298,9 +317,12 @@ namespace backend::review
         // another file); the shell saves it through ReviewSession.
         std::string computedCoreJson() const;
         DensityResult density() const;
-        // Cancels the running jobs (both lanes) and joins them; a job still
-        // being started is waited for first. Starts stay possible afterwards.
-        // Called by the destructor.
+        // Cancels the running jobs (both lanes) and joins them. A job still
+        // being started (here from its own Started event, or on another
+        // thread) is not waited for and does not run: its start reports it
+        // Cancelled (the JSON jobs: their engine's outcome for a run cancelled
+        // before its first step). Starts stay possible afterwards. Called by
+        // the destructor.
         void shutdown();
 
         // Pure helpers, exposed for tests.
@@ -343,6 +365,9 @@ namespace backend::review
         // itself; false after `timeout`.
         static bool waitIdle(const ReviewJobs &jobs, std::chrono::milliseconds timeout);
         static bool waitIdle(const ReviewJobs &jobs, ReviewJobLane lane, std::chrono::milliseconds timeout);
+        // Blocks until `lane` is claimed by a start, woken by the claim
+        // itself; false after `timeout`.
+        static bool waitBusy(const ReviewJobs &jobs, ReviewJobLane lane, std::chrono::milliseconds timeout);
     };
 
 } // namespace backend::review
