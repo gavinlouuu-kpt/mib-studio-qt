@@ -108,7 +108,8 @@ public:
     // that ignores its bound trips it.
     static int transactBudgetMs(int timeoutMs);
 
-    // How long the destructor waits for the I/O thread before detaching it.
+    // How long the destructor waits for the I/O thread before detaching it
+    // (tests may set another bound: SerialBusManager::setShutdownJoinMsForTesting).
     static constexpr int kShutdownJoinMs = 1000;
 
     std::string portName() const { return portName_; }
@@ -121,7 +122,8 @@ public:
 
 private:
     friend class SerialBusManager;
-    ModbusBusSession(std::string portName, const SerialSettings& settings, SerialPortFactory factory);
+    ModbusBusSession(std::string portName, const SerialSettings& settings, SerialPortFactory factory,
+                     int shutdownJoinMs);
 
     // Spawns the I/O thread, which opens the port; blocks for the outcome.
     bool start(BusError* error, std::string* errorDetail);
@@ -137,6 +139,7 @@ private:
 
     const std::string portName_;
     const SerialSettings settings_;
+    const int shutdownJoinMs_; // kShutdownJoinMs outside tests
     std::shared_ptr<IoState> io_;
     std::thread ioThread_;
     std::mutex callMutex_; // serializes transact() callers
@@ -171,6 +174,14 @@ public:
                                               BusError* error = nullptr,
                                               std::string* errorDetail = nullptr);
 
+    // Tests only (#720). The destructor's wait for the I/O thread, for
+    // sessions opened afterwards and for acquire()'s wait on a closing one
+    // (default ModbusBusSession::kShutdownJoinMs; production never changes
+    // it). And how many acquire() calls are waiting for a closing session of
+    // this manager right now.
+    void setShutdownJoinMsForTesting(int ms);
+    int closingWaitersForTesting() const { return closingWaiters_.load(); }
+
     // Reuse bus identity normalization for facade collision checks.
     static bool samePort(const std::string& a, const std::string& b) {
         return normalizeKey(a) == normalizeKey(b);
@@ -186,7 +197,9 @@ private:
 
     std::mutex mutex_;
     SerialPortFactory factory_;
+    int shutdownJoinMs_{ModbusBusSession::kShutdownJoinMs};
     std::map<std::string, Entry> sessions_;
+    std::atomic<int> closingWaiters_{0};
 };
 
 } // namespace backend::services::serialbus

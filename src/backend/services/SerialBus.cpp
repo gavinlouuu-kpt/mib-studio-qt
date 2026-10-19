@@ -33,8 +33,8 @@ namespace {
     // transact() gives the I/O thread the transaction's own worst case plus
     // this much for scheduling delays (loaded hosts, sanitizer builds), #720.
     constexpr int TRANSACT_SLACK_MS = 500;
-    // acquire() waits this much past kShutdownJoinMs for a closing session's
-    // destructor to decide (closed or stalled) before refusing anyway.
+    // acquire() waits this much past the destructor's bound (kShutdownJoinMs)
+    // for a closing session to decide (closed or stalled) before refusing anyway.
     constexpr int CLOSING_SLACK_MS = 250;
 
     std::string hex(const Bytes& b)
@@ -199,8 +199,8 @@ struct ModbusBusSession::IoState {
 };
 
 ModbusBusSession::ModbusBusSession(std::string portName, const SerialSettings& settings,
-                                   SerialPortFactory factory)
-    : portName_(std::move(portName)), settings_(settings),
+                                   SerialPortFactory factory, int shutdownJoinMs)
+    : portName_(std::move(portName)), settings_(settings), shutdownJoinMs_(shutdownJoinMs),
       io_(std::make_shared<IoState>(portName_, settings_, std::move(factory)))
 {
 }
@@ -228,7 +228,7 @@ ModbusBusSession::~ModbusBusSession()
     bool exited = false;
     {
         std::unique_lock lock(io_->mutex);
-        exited = io_->cv.wait_for(lock, std::chrono::milliseconds(kShutdownJoinMs),
+        exited = io_->cv.wait_for(lock, std::chrono::milliseconds(shutdownJoinMs_),
                                   [this] { return io_->exited; });
         if (!exited && io_->reservation) {
             io_->reservation->markStalled(); // acquire() refuses the port, and says why
@@ -245,7 +245,7 @@ ModbusBusSession::~ModbusBusSession()
     ioThread_.detach();
     SPDLOG_LOGGER_ERROR(log, "SerialBus: session on {} closed, but its I/O thread is still inside "
                              "a port call after {} ms: detached; the port stays reserved until the "
-                             "thread closes it", portName_, kShutdownJoinMs);
+                             "thread closes it", portName_, shutdownJoinMs_);
 }
 
 std::weak_ptr<ModbusBusSession::PortReservation> ModbusBusSession::reservation() const
@@ -601,6 +601,12 @@ void SerialBusManager::setSerialPortFactory(SerialPortFactory factory)
     factory_ = std::move(factory);
 }
 
+void SerialBusManager::setShutdownJoinMsForTesting(int ms)
+{
+    std::scoped_lock lock(mutex_);
+    shutdownJoinMs_ = std::max(0, ms);
+}
+
 std::string SerialBusManager::normalizeKey(const std::string& portName)
 {
     // "COM3", "\\.\COM3", "ttyUSB0" and "/dev/ttyUSB0" must map to one bus.
@@ -625,8 +631,6 @@ std::shared_ptr<ModbusBusSession> SerialBusManager::acquire(const std::string& p
     // decides within kShutdownJoinMs: closed (the reservation is released) or
     // stalled (the I/O thread is detached, still holding the port). Wait for
     // that answer, never longer and never under the registry lock.
-    const auto closingDeadline =
-        Clock::now() + std::chrono::milliseconds(ModbusBusSession::kShutdownJoinMs + CLOSING_SLACK_MS);
     auto refuseClosing = [&](const char* why) -> std::shared_ptr<ModbusBusSession> {
         const std::string detail = "serial port " + portName + " is still closing" + why;
         SPDLOG_WARN("SerialBus: {}", detail);
@@ -636,6 +640,8 @@ std::shared_ptr<ModbusBusSession> SerialBusManager::acquire(const std::string& p
     };
 
     std::unique_lock lock(mutex_);
+    const auto closingDeadline =
+        Clock::now() + std::chrono::milliseconds(shutdownJoinMs_ + CLOSING_SLACK_MS);
     while (true) {
         auto it = sessions_.find(key);
         if (it == sessions_.end()) break;
@@ -657,7 +663,9 @@ std::shared_ptr<ModbusBusSession> SerialBusManager::acquire(const std::string& p
         if (state == ModbusBusSession::PortReservation::State::Closing) {
             if (Clock::now() >= closingDeadline) return refuseClosing("");
             lock.unlock();
+            ++closingWaiters_;
             reservation->waitUntil(closingDeadline);
+            --closingWaiters_;
             reservation.reset();
             lock.lock();
             continue; // the registry may have changed meanwhile: look again
@@ -669,7 +677,7 @@ std::shared_ptr<ModbusBusSession> SerialBusManager::acquire(const std::string& p
         break;
     }
 
-    auto* raw = new ModbusBusSession(portName, settings, factory_);
+    auto* raw = new ModbusBusSession(portName, settings, factory_, shutdownJoinMs_);
     BusError openError = BusError::PortUnavailable;
     std::string detail;
     if (!raw->start(&openError, &detail)) {
@@ -679,7 +687,7 @@ std::shared_ptr<ModbusBusSession> SerialBusManager::acquire(const std::string& p
         return nullptr;
     }
     // Plain delete, without the registry lock: the destructor may wait up to
-    // kShutdownJoinMs for the I/O thread. The registry keeps the port
+    // its bound (kShutdownJoinMs) for the I/O thread. The registry keeps the port
     // reserved through the session's reservation until the thread closed it.
     std::shared_ptr<ModbusBusSession> session(raw, [](ModbusBusSession* s) { delete s; });
     sessions_[key] = Entry{session, session->reservation()};

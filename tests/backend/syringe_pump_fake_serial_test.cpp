@@ -449,7 +449,9 @@ int main()
         MIB_EXPECT(!reconnectedWhileHeld && !svc.isConnected(PumpId::Sample), "the reconnect is refused");
         MIB_EXPECT(refusal.find("still closing after a stalled transaction") != std::string::npos,
                    "the pump's last bus error says why: " + refusal);
-        MIB_EXPECT(refusedTook < joinBound / 2, "at once");
+        // Waiting for a closing session would take the join bound + 250 ms; the stalled port
+        // is refused without any wait, so this bound only leaves room for a loaded host.
+        MIB_EXPECT(refusedTook < joinBound, "at once");
         MIB_EXPECT(holding(), "while the detached thread is still held");
         hold(false);
         MIB_EXPECT(waitPortsClosed(), "released, the detached I/O thread closes its port");
