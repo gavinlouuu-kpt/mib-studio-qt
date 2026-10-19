@@ -318,11 +318,14 @@ namespace backend::review
         std::string computedCoreJson() const;
         DensityResult density() const;
         // Cancels the running jobs (both lanes) and joins them. A job still
-        // being started (here from its own Started event, or on another
-        // thread) is not waited for and does not run: its start reports it
+        // being started when it is called does not run: its start reports it
         // Cancelled (the JSON jobs: their engine's outcome for a run cancelled
-        // before its first step). Starts stay possible afterwards. Called by
-        // the destructor.
+        // before its first step). Called from outside the runner (the owner's
+        // teardown), it returns only once every such start has returned, so
+        // none is inside ReviewJobs, the host or the sink afterwards. Called
+        // from a lane worker or from inside a callback it does not wait for
+        // them (waiting there could deadlock). Starts stay possible afterwards.
+        // Called by the destructor.
         void shutdown();
 
         // Pure helpers, exposed for tests.
@@ -368,6 +371,9 @@ namespace backend::review
         // Blocks until `lane` is claimed by a start, woken by the claim
         // itself; false after `timeout`.
         static bool waitBusy(const ReviewJobs &jobs, ReviewJobLane lane, std::chrono::milliseconds timeout);
+        // Blocks until a shutdown() from outside is waiting for a start in
+        // progress; false after `timeout`.
+        static bool waitShutdownWaiting(const ReviewJobs &jobs, std::chrono::milliseconds timeout);
     };
 
 } // namespace backend::review

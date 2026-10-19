@@ -22,6 +22,7 @@
 #include <exception>
 #include <filesystem>
 #include <limits>
+#include <map>
 #include <random>
 #include <sstream>
 #include <thread>
@@ -103,6 +104,27 @@ namespace backend::review
 
         std::size_t laneIndex(ReviewJobLane lane) { return static_cast<std::size_t>(lane); }
 
+        // The runners this thread is inside: a lane worker of one, or a call
+        // from one into its host or its sink. A shutdown() from inside does
+        // not wait for starts in progress (the callback case, #742 round 3).
+        std::vector<const void *> &insideRunners()
+        {
+            thread_local std::vector<const void *> runners;
+            return runners;
+        }
+        bool isInside(const void *runner)
+        {
+            const auto &runners = insideRunners();
+            return std::find(runners.begin(), runners.end(), runner) != runners.end();
+        }
+        struct Inside
+        {
+            explicit Inside(const void *runner) { insideRunners().push_back(runner); }
+            ~Inside() { insideRunners().pop_back(); }
+            Inside(const Inside &) = delete;
+            Inside &operator=(const Inside &) = delete;
+        };
+
         // Joins a finished worker; one that is the calling thread (a start or
         // shutdown from inside its own terminal event) is detached instead.
         void reap(std::thread &worker)
@@ -167,13 +189,19 @@ namespace backend::review
         const ReviewJobsOptions options;
 
         mutable std::mutex mutex;
-        // Notified when a lane is claimed or released (the tests' waits).
+        // Notified when a lane is claimed or released, a start returns, or a
+        // shutdown() begins or starts waiting (shutdown()'s and the tests' waits).
         std::condition_variable laneChanged;
         std::array<Lane, kLaneCount> lanes;
         std::uint64_t nextId{1};
         // shutdown() calls so far: a start that sees it change between its
         // claim and its worker does not run the job.
         std::uint64_t shutdowns{0};
+        // Claimed starts that have not returned yet, by the shutdown count
+        // they claimed under; a shutdown() from outside waits for those
+        // claimed before it. shutdownsWaiting: such shutdowns now waiting.
+        std::map<std::uint64_t, int> startsInProgress;
+        int shutdownsWaiting{0};
         std::string computedCoreJson;
         std::string computedCorePath; // file computedCoreJson belongs to
         DensityResult density;
@@ -185,6 +213,7 @@ namespace backend::review
         {
             if (sink)
             {
+                const Inside inside(this);
                 try { sink(e); } catch (...) {}
             }
         }
@@ -248,6 +277,7 @@ namespace backend::review
                 l.id = 0;
                 previous = std::move(l.worker);
                 shutdownsAtClaim = shutdowns;
+                ++startsInProgress[shutdownsAtClaim];
                 if (!hosted)
                 {
                     id = nextId++;
@@ -257,6 +287,8 @@ namespace backend::review
                 }
                 laneChanged.notify_all();
             }
+            // Counted until this start returns, whichever way it does.
+            const StartInProgress inProgress{*this, shutdownsAtClaim};
             // The lane's previous job has reported its terminal state (or is
             // reporting it: BeforeTerminal); join it before this one starts.
             reap(previous);
@@ -264,6 +296,7 @@ namespace backend::review
             {
                 try
                 {
+                    const Inside inside(this);
                     id = options.host.beginOperation(job->kind, job->startedMessage, flag);
                 }
                 catch (...)
@@ -335,6 +368,23 @@ namespace backend::review
             return result;
         }
 
+        // A claimed start until it returns (see startsInProgress).
+        struct StartInProgress
+        {
+            Impl &impl;
+            std::uint64_t generation;
+            StartInProgress(Impl &i, std::uint64_t g) : impl(i), generation(g) {}
+            StartInProgress(const StartInProgress &) = delete;
+            StartInProgress &operator=(const StartInProgress &) = delete;
+            ~StartInProgress()
+            {
+                std::scoped_lock lock(impl.mutex);
+                const auto it = impl.startsInProgress.find(generation);
+                if (it != impl.startsInProgress.end() && --it->second == 0) impl.startsInProgress.erase(it);
+                impl.laneChanged.notify_all();
+            }
+        };
+
         // A job's terminal event and its lane's release, in the host's order.
         void finish(std::size_t lane, std::uint64_t id, ReviewJobKind kind, const Outcome &outcome)
         {
@@ -346,6 +396,7 @@ namespace backend::review
 
         void run(std::size_t lane, std::uint64_t id, const CancelFlag &flag, const Job &job)
         {
+            const Inside inside(this); // a lane worker: its shutdown() calls do not wait
             Outcome outcome;
             try
             {
@@ -434,18 +485,44 @@ namespace backend::review
     void ReviewJobs::shutdown()
     {
         std::vector<std::thread> workers;
+        // Kept for the whole call: the waits below use the runner state.
+        const auto impl = impl_;
         {
-            std::scoped_lock lock(impl_->mutex);
+            std::unique_lock lock(impl->mutex);
             // A start between its claim and its worker sees this and does not
-            // run its job (it reports Cancelled itself); shutdown() does not
-            // wait for it. Waiting would deadlock a start that is joining the
-            // lane's previous worker while that worker calls shutdown() from
-            // its terminal event (#742 review round 2).
-            ++impl_->shutdowns;
-            for (auto &l : impl_->lanes)
+            // run its job: it reports Cancelled itself (#742 review round 2).
+            ++impl->shutdowns;
+            const std::uint64_t generation = impl->shutdowns;
+            for (auto &l : impl->lanes)
             {
                 if (l.cancel) l.cancel->store(true);
                 workers.push_back(std::move(l.worker));
+            }
+            impl->laneChanged.notify_all();
+            // From outside the runner (the owner's teardown): wait until every
+            // start claimed before this call has returned, its Cancelled
+            // reported, so none is inside ReviewJobs, the host or the sink
+            // when shutdown() returns. From a lane worker or from inside a
+            // callback (the host's beginOperation, the sink): no wait (#742
+            // review round 3).
+            //
+            // Why the wait cannot deadlock: a start in progress runs only
+            // ReviewJobs' own code, the host's beginOperation and the sink,
+            // and joins its lane's previous worker. A shutdown() from any of
+            // those callbacks, or from that worker (its terminal event, under
+            // the review bridge's policy the lane is free before it), is the
+            // inside case and returns without waiting; the worker then ends
+            // and the join completes. Waiting in that case is what deadlocked
+            // in round 1 (review.jobs_lanes: shutdown from a terminal event
+            // while a start joins its worker).
+            if (!isInside(impl.get()))
+            {
+                ++impl->shutdownsWaiting;
+                impl->laneChanged.notify_all();
+                impl->laneChanged.wait(lock, [&] {
+                    return impl->startsInProgress.empty() || impl->startsInProgress.begin()->first >= generation;
+                });
+                --impl->shutdownsWaiting;
             }
         }
         for (auto &worker : workers) reap(worker);
@@ -564,6 +641,13 @@ namespace backend::review
         auto &impl = *jobs.impl_;
         std::unique_lock lock(impl.mutex);
         return impl.laneChanged.wait_for(lock, timeout, [&] { return !impl.lanes[laneIndex(lane)].busy; });
+    }
+
+    bool ReviewJobsTestAccess::waitShutdownWaiting(const ReviewJobs &jobs, std::chrono::milliseconds timeout)
+    {
+        auto &impl = *jobs.impl_;
+        std::unique_lock lock(impl.mutex);
+        return impl.laneChanged.wait_for(lock, timeout, [&] { return impl.shutdownsWaiting > 0; });
     }
 
     bool ReviewJobsTestAccess::waitBusy(const ReviewJobs &jobs, ReviewJobLane lane, std::chrono::milliseconds timeout)
