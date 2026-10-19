@@ -17,7 +17,14 @@
 //    a call that honours ISerialPort::interrupt() is woken and the thread
 //    joined (port closed before the destructor returns); a call that ignores
 //    it (stuck in the driver) is detached after kShutdownJoinMs, and the
-//    detached thread still closes its port, on its own, once released.
+//    detached thread still closes its port, on its own, once released;
+//  - until it has, the port stays reserved: a new session on it is refused at
+//    once with the reason, and opens again once the thread closed the port;
+//    the registry lock is free meanwhile (another port opens during the
+//    teardown); an acquire racing a close that finishes in time waits for it
+//    and then succeeds, never opening the device twice;
+//  - the I/O thread logs through the session's own logger, so a detached
+//    thread's late warning still lands after spdlog::drop_all().
 // FC03 answers carry a register-dependent value and have the same shape for
 // every register, so a misattributed answer would pass the frame checks and
 // show up only as a wrong value.
@@ -28,6 +35,9 @@
 
 #include "support/assert.h"
 #include "support/watchdog.h"
+
+#include <spdlog/sinks/ringbuffer_sink.h>
+#include <spdlog/spdlog.h>
 
 #include <atomic>
 #include <chrono>
@@ -169,6 +179,12 @@ private:
     Bytes pending_;              // I/O thread only
     Clock::time_point readyAt_{}; // I/O thread only
 };
+
+void waitForInterrupt(Slave& slave)
+{
+    std::unique_lock lock(slave.mutex);
+    slave.cv.wait(lock, [&] { return slave.interrupts >= 1; });
+}
 
 size_t writtenCount(Slave& slave)
 {
@@ -362,15 +378,40 @@ int main()
     }
     //    b) The call ignores interrupt() (stuck in the driver): the
     //       destructor gives up at kShutdownJoinMs and detaches the thread,
-    //       which still owns the port and closes it once released.
+    //       which still owns the port and closes it once released. Until it
+    //       has, the port stays reserved; the registry lock stays free. The
+    //       session logs through its own logger: the detached thread's late
+    //       warning lands even after logging was torn down (drop_all).
     watchdog.mark("teardown, stuck call");
     {
+        const auto previousLogger = spdlog::default_logger();
+        const auto ring = std::make_shared<spdlog::sinks::ringbuffer_sink_mt>(128);
+        const auto testLogger = std::make_shared<spdlog::logger>("serial-bus-deadline", ring);
+        testLogger->set_level(spdlog::level::trace);
+        spdlog::set_default_logger(testLogger); // the session takes this one
+
         Slave stuck;
+        Slave other;
         serialbus::SerialBusManager teardown;
         auto session = heldSession(teardown, stuck, "ttyFAKE2", kTimeoutMs);
+        std::atomic<long long> destroyedAfter{-1};
         start = Clock::now();
-        session.reset();
-        elapsed = msSince(start);
+        std::thread destroyer([&] {
+            session.reset();
+            destroyedAfter = msSince(start);
+        });
+        waitForInterrupt(stuck); // the destructor now waits its bound
+
+        // The registry is not locked by the dying session: another port opens.
+        teardown.setSerialPortFactory([&other] { return std::make_unique<SlavePort>(other); });
+        auto unrelated = teardown.acquire("ttyFAKE3", serialbus::SerialSettings{});
+        const bool stillDestroying = destroyedAfter.load() < 0;
+        MIB_EXPECT(unrelated != nullptr, "another port opens during the teardown");
+        MIB_EXPECT(stillDestroying, "while the stuck session's destructor is still waiting");
+        unrelated.reset();
+
+        destroyer.join();
+        elapsed = destroyedAfter.load();
         std::printf("teardown, stuck: destructor returned after %lld ms (bound %d ms)\n", elapsed,
                     serialbus::ModbusBusSession::kShutdownJoinMs);
         MIB_EXPECT(elapsed >= serialbus::ModbusBusSession::kShutdownJoinMs - 5 &&
@@ -380,13 +421,100 @@ int main()
             std::scoped_lock lock(stuck.mutex);
             MIB_EXPECT(stuck.holding && stuck.livePorts == 1,
                        "the session is gone while its detached thread is still held, owning the port");
+        }
+
+        // Still reserved: refused at once, with the reason; nothing opened.
+        serialbus::BusError busError = serialbus::BusError::None;
+        std::string detail;
+        auto refusedAt = Clock::now();
+        auto again = teardown.acquire("ttyFAKE2", serialbus::SerialSettings{}, &busError, &detail);
+        const long long refusedMs = msSince(refusedAt);
+        std::printf("teardown, stuck: same port refused after %lld ms: %s\n", refusedMs, detail.c_str());
+        MIB_EXPECT(again == nullptr && busError == serialbus::BusError::PortBusy,
+                   "the port is refused while the detached thread still holds it");
+        MIB_EXPECT(detail == "serial port ttyFAKE2 is still closing after a stalled transaction",
+                   "and the refusal says why: " + detail);
+        MIB_EXPECT(refusedMs < serialbus::ModbusBusSession::kShutdownJoinMs / 2, "at once, without waiting");
+        MIB_EXPECT(livePorts(other) == 0, "no second port was opened");
+
+        // Logging goes away (as at exit) before the detached thread finishes.
+        spdlog::drop_all();
+        {
+            std::scoped_lock lock(stuck.mutex);
             stuck.holdWrites = false;
         }
         stuck.cv.notify_all();
-        std::unique_lock lock(stuck.mutex);
-        const bool closed = stuck.cv.wait_for(lock, std::chrono::seconds(10), [&] { return stuck.livePorts == 0; });
-        MIB_EXPECT(closed, "released, the detached thread closes its port and leaves");
-        MIB_EXPECT(stuck.written.size() == 1, "and sends nothing more");
+        {
+            std::unique_lock lock(stuck.mutex);
+            const bool closed =
+                stuck.cv.wait_for(lock, std::chrono::seconds(10), [&] { return stuck.livePorts == 0; });
+            MIB_EXPECT(closed, "released, the detached thread closes its port and leaves");
+            MIB_EXPECT(stuck.written.size() == 1, "and sends nothing more");
+        }
+        // Its warning (logged before it closed the port) went to the session's logger.
+        bool warned = false;
+        for (const auto& line : ring->last_formatted()) {
+            if (line.find("ttyFAKE2 dropped the late result") != std::string::npos) warned = true;
+        }
+        MIB_EXPECT(warned, "the detached thread's late warning reached the session's logger");
+        spdlog::set_default_logger(previousLogger);
+
+        // Closed: the port opens again (the thread releases it right after closing).
+        teardown.setSerialPortFactory([&stuck] { return std::make_unique<SlavePort>(stuck); });
+        std::shared_ptr<serialbus::ModbusBusSession> reopened;
+        const auto reopenUntil = Clock::now() + std::chrono::seconds(10);
+        do {
+            reopened = teardown.acquire("ttyFAKE2", serialbus::SerialSettings{}, &busError, &detail);
+            if (reopened) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        } while (Clock::now() < reopenUntil);
+        MIB_EXPECT(reopened != nullptr, "the port opens again once the detached thread closed it: " + detail);
+        reopened.reset();
+        MIB_EXPECT(livePorts(stuck) == 0, "and closes again");
+    }
+    //    c) A close that finishes within the bound, raced by an acquire of the
+    //       same port on another thread: the acquire waits for the port to
+    //       close (never two sessions on one device), then opens it. It is
+    //       not refused: only a stalled teardown is.
+    watchdog.mark("teardown raced by an acquire");
+    {
+        Slave slow;
+        serialbus::SerialBusManager teardown;
+        auto session = heldSession(teardown, slow, "ttyFAKE4", kTimeoutMs);
+        std::atomic<long long> destroyedAfter{-1};
+        std::atomic<long long> acquiredAfter{-1};
+        start = Clock::now();
+        std::thread destroyer([&] {
+            session.reset();
+            destroyedAfter = msSince(start);
+        });
+        waitForInterrupt(slow);
+        std::shared_ptr<serialbus::ModbusBusSession> raced;
+        serialbus::BusError racedError = serialbus::BusError::None;
+        std::string racedDetail;
+        std::thread racer([&] {
+            raced = teardown.acquire("ttyFAKE4", serialbus::SerialSettings{}, &racedError, &racedDetail);
+            acquiredAfter = msSince(start);
+        });
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        MIB_EXPECT(acquiredAfter.load() < 0, "the racing acquire waits while the old port is open");
+        {
+            std::scoped_lock lock(slow.mutex);
+            MIB_EXPECT(slow.livePorts == 1, "and has not opened a second port");
+            slow.holdWrites = false; // the call returns within the destructor's bound
+        }
+        slow.cv.notify_all();
+        racer.join();
+        destroyer.join();
+        std::printf("teardown raced: destructor returned after %lld ms, acquire after %lld ms\n",
+                    destroyedAfter.load(), acquiredAfter.load());
+        MIB_EXPECT(destroyedAfter.load() < serialbus::ModbusBusSession::kShutdownJoinMs,
+                   "the call returned in time: joined, not detached");
+        MIB_EXPECT(raced != nullptr && racedError == serialbus::BusError::None,
+                   "the racing acquire opens the port once it is closed: " + racedDetail);
+        MIB_EXPECT(livePorts(slow) == 1, "exactly one port: the new session's");
+        raced.reset();
+        MIB_EXPECT(livePorts(slow) == 0, "which closes in turn");
     }
 
     if (mib::test::exitCode() == 0) std::printf("SerialBus deadlines verified\n");

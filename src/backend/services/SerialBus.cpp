@@ -1,6 +1,7 @@
 #include "backend/services/SerialBus.h"
 #include "backend/services/ModbusRtu.h"
 
+#include <spdlog/sinks/null_sink.h>
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
@@ -32,6 +33,9 @@ namespace {
     // transact() gives the I/O thread the transaction's own worst case plus
     // this much for scheduling delays (loaded hosts, sanitizer builds), #720.
     constexpr int TRANSACT_SLACK_MS = 500;
+    // acquire() waits this much past kShutdownJoinMs for a closing session's
+    // destructor to decide (closed or stalled) before refusing anyway.
+    constexpr int CLOSING_SLACK_MS = 250;
 
     std::string hex(const Bytes& b)
     {
@@ -89,12 +93,71 @@ const char* toString(BusError error)
 // ModbusBusSession
 // ---------------------------------------------------------------------------
 
+// Created with the session and held by its I/O thread until the thread has
+// closed the port; SerialBusManager keeps only a weak reference. A session
+// that is gone (its last shared_ptr dropped) while its reservation lives is
+// still closing its port: its destructor is waiting for the I/O thread
+// (bounded) or has detached it after a stalled transaction (`stalled`).
+struct ModbusBusSession::PortReservation {
+    enum class State { Closing, Stalled, Released };
+
+    State state()
+    {
+        std::scoped_lock lock(mutex);
+        return stateLocked();
+    }
+
+    // Waits until the port is released or known to be stalled, or until
+    // `deadline`. Callers hold no other lock.
+    State waitUntil(std::chrono::steady_clock::time_point deadline)
+    {
+        std::unique_lock lock(mutex);
+        cv.wait_until(lock, deadline, [this] { return released || stalled; });
+        return stateLocked();
+    }
+
+    void release() { set(released); } // the I/O thread closed the port
+    void markStalled() { set(stalled); } // the destructor detached the I/O thread
+
+private:
+    State stateLocked() const
+    {
+        return released ? State::Released : stalled ? State::Stalled : State::Closing;
+    }
+    void set(bool& flag)
+    {
+        {
+            std::scoped_lock lock(mutex);
+            flag = true;
+        }
+        cv.notify_all();
+    }
+
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool released{false};
+    bool stalled{false};
+};
+
 // Shared by the session and its I/O thread (the thread's lambda holds a
 // shared_ptr), so a thread detached at teardown never touches freed memory.
 struct ModbusBusSession::IoState {
     IoState(std::string name, const SerialSettings& lineSettings, SerialPortFactory portFactory)
-        : portName(std::move(name)), settings(lineSettings), factory(std::move(portFactory))
+        : portName(std::move(name)), settings(lineSettings), factory(std::move(portFactory)),
+          logger(sessionLogger())
     {
+    }
+
+    // The session logs through its own reference to the logger it was created
+    // with, never through spdlog's global default: a detached I/O thread can
+    // still log after the application has dropped or replaced its loggers
+    // (spdlog::drop_all / shutdown at exit), and the global macros would then
+    // dereference a null default logger.
+    static std::shared_ptr<spdlog::logger> sessionLogger()
+    {
+        if (auto current = spdlog::default_logger()) return current;
+        return std::make_shared<spdlog::logger>("serialbus",
+                                                std::make_shared<spdlog::sinks::null_sink_mt>());
     }
 
     void run();                                               // the I/O thread
@@ -104,6 +167,7 @@ struct ModbusBusSession::IoState {
     const std::string portName;
     const SerialSettings settings;
     const SerialPortFactory factory;
+    const std::shared_ptr<spdlog::logger> logger; // every log line of the session goes here
 
     // Used by the I/O thread only. `serial` is also assigned and released
     // under `mutex`, so the destructor can interrupt it from another thread.
@@ -126,6 +190,9 @@ struct ModbusBusSession::IoState {
     std::atomic<bool> stopRequested{false};
     bool openDone{false};
     bool exited{false};            // the I/O thread has closed the port and is leaving
+    // Released by the I/O thread right after it closed the port (see
+    // SerialBusManager::acquire).
+    std::shared_ptr<PortReservation> reservation{std::make_shared<PortReservation>()};
     BusError openErrorCode{BusError::PortUnavailable};
     std::string openErrorDetail;
     std::atomic<bool> portOpen{false};
@@ -140,9 +207,10 @@ ModbusBusSession::ModbusBusSession(std::string portName, const SerialSettings& s
 
 ModbusBusSession::~ModbusBusSession()
 {
+    const auto& log = io_->logger;
     if (!ioThread_.joinable()) {
         // start() failed and already joined the thread.
-        SPDLOG_INFO("SerialBus: session on {} closed", portName_);
+        SPDLOG_LOGGER_INFO(log, "SerialBus: session on {} closed", portName_);
         return;
     }
     {
@@ -162,18 +230,28 @@ ModbusBusSession::~ModbusBusSession()
         std::unique_lock lock(io_->mutex);
         exited = io_->cv.wait_for(lock, std::chrono::milliseconds(kShutdownJoinMs),
                                   [this] { return io_->exited; });
+        if (!exited && io_->reservation) {
+            io_->reservation->markStalled(); // acquire() refuses the port, and says why
+        }
     }
     if (exited) {
         ioThread_.join(); // it is past its last use of the state
-        SPDLOG_INFO("SerialBus: session on {} closed", portName_);
+        SPDLOG_LOGGER_INFO(log, "SerialBus: session on {} closed", portName_);
         return;
     }
     // Still inside a port call (stuck in the driver). It holds its own
-    // reference to the state and closes the port when the call returns.
+    // reference to the state and closes the port when the call returns; the
+    // port stays reserved until then.
     ioThread_.detach();
-    SPDLOG_ERROR("SerialBus: session on {} closed, but its I/O thread is still inside a port call "
-                 "after {} ms: detached; it closes the port when the call returns",
-                 portName_, kShutdownJoinMs);
+    SPDLOG_LOGGER_ERROR(log, "SerialBus: session on {} closed, but its I/O thread is still inside "
+                             "a port call after {} ms: detached; the port stays reserved until the "
+                             "thread closes it", portName_, kShutdownJoinMs);
+}
+
+std::weak_ptr<ModbusBusSession::PortReservation> ModbusBusSession::reservation() const
+{
+    std::scoped_lock lock(io_->mutex);
+    return io_->reservation;
 }
 
 bool ModbusBusSession::isOpen() const
@@ -206,14 +284,14 @@ bool ModbusBusSession::IoState::openPort()
         return false;
     }
     if (!port->openNamed(portName, settings)) {
-        SPDLOG_ERROR("SerialBus: failed to open {}: {}", portName, port->lastError());
+        SPDLOG_LOGGER_ERROR(logger, "SerialBus: failed to open {}: {}", portName, port->lastError());
         std::scoped_lock lock(mutex);
         openErrorCode = classifyOpenError(port->lastSystemError());
         openErrorDetail = port->lastError();
         return false;
     }
-    SPDLOG_INFO("SerialBus: {} opened ({} {}{}{})", portName, settings.baudRate,
-                settings.dataBits, settings.parity, settings.stopBits);
+    SPDLOG_LOGGER_INFO(logger, "SerialBus: {} opened ({} {}{}{})", portName, settings.baudRate,
+                       settings.dataBits, settings.parity, settings.stopBits);
     std::scoped_lock lock(mutex);
     serial = std::move(port);
     return true;
@@ -255,8 +333,8 @@ void ModbusBusSession::IoState::run()
                 // nobody: drop it, so it can never be taken for a later request.
                 abandonedSeq = 0;
                 lock.unlock();
-                SPDLOG_WARN("SerialBus: {} dropped the late result ({}) of a transaction its caller "
-                            "gave up on", portName, toString(result.error));
+                SPDLOG_LOGGER_WARN(logger, "SerialBus: {} dropped the late result ({}) of a transaction "
+                                   "its caller gave up on", portName, toString(result.error));
                 continue;
             }
             doneSeq = seq;
@@ -282,6 +360,8 @@ void ModbusBusSession::IoState::run()
     }
     {
         std::scoped_lock lock(mutex);
+        reservation->release(); // the port is closed: a new session may open it
+        reservation.reset();
         exited = true;
     }
     cv.notify_all();
@@ -316,7 +396,8 @@ Transaction ModbusBusSession::transact(const Bytes& request, int timeoutMs)
         result.error = BusError::Timeout;
         result.detail = "the serial I/O thread is still stuck in an earlier transaction";
         lock.unlock();
-        SPDLOG_ERROR("SerialBus: {} {}; request not sent", portName_, result.detail);
+        SPDLOG_LOGGER_ERROR(io.logger, "SerialBus: {} {}; request not sent", portName_,
+                            result.detail);
         return result;
     }
     const std::uint64_t seq = ++io.lastSeq;
@@ -343,7 +424,8 @@ Transaction ModbusBusSession::transact(const Bytes& request, int timeoutMs)
                         " ms (a port call is stuck)";
     }
     lock.unlock();
-    SPDLOG_ERROR("SerialBus: {} transaction timed out: {}", portName_, result.detail);
+    SPDLOG_LOGGER_ERROR(io.logger, "SerialBus: {} transaction timed out: {}", portName_,
+                        result.detail);
     return result;
 }
 
@@ -364,7 +446,8 @@ Transaction ModbusBusSession::IoState::runTransaction(const Bytes& request, int 
     // transaction's deadline) so they cannot be attributed to this request.
     const Bytes stale = serial->readAll();
     if (!stale.empty()) {
-        SPDLOG_DEBUG("SerialBus: {} discarded {} stale bytes: {}", portName, stale.size(), hex(stale));
+        SPDLOG_LOGGER_DEBUG(logger, "SerialBus: {} discarded {} stale bytes: {}", portName,
+                            stale.size(), hex(stale));
     }
 
     // RTU inter-frame silence, measured from the last bus activity so an
@@ -379,7 +462,7 @@ Transaction ModbusBusSession::IoState::runTransaction(const Bytes& request, int 
         result.detail = "session closing";
         return result;
     }
-    SPDLOG_DEBUG("SerialBus: {} TX [{}]: {}", portName, request.size(), hex(request));
+    SPDLOG_LOGGER_DEBUG(logger, "SerialBus: {} TX [{}]: {}", portName, request.size(), hex(request));
 
     // Both calls are bounded by the port (#720): write() by
     // kSerialWriteTimeoutMs, the drain by timeoutMs. On a timeout the port
@@ -387,7 +470,8 @@ Transaction ModbusBusSession::IoState::runTransaction(const Bytes& request, int 
     if (serial->write(request) != static_cast<int>(request.size())) {
         result.detail = serial->lastError();
         if (result.detail.empty()) result.detail = "serial write failed";
-        SPDLOG_ERROR("SerialBus: {} failed to write {} bytes: {}", portName, request.size(), result.detail);
+        SPDLOG_LOGGER_ERROR(logger, "SerialBus: {} failed to write {} bytes: {}", portName,
+                            request.size(), result.detail);
         result.error = BusError::WriteFailed;
         return result;
     }
@@ -396,7 +480,7 @@ Transaction ModbusBusSession::IoState::runTransaction(const Bytes& request, int 
         if (result.detail.empty()) {
             result.detail = "serial output did not drain within " + std::to_string(timeoutMs) + " ms";
         }
-        SPDLOG_ERROR("SerialBus: {} write timeout: {}", portName, result.detail);
+        SPDLOG_LOGGER_ERROR(logger, "SerialBus: {} write timeout: {}", portName, result.detail);
         result.error = BusError::WriteFailed;
         return result;
     }
@@ -422,7 +506,8 @@ Transaction ModbusBusSession::IoState::runTransaction(const Bytes& request, int 
         }
         const auto now = std::chrono::steady_clock::now();
         if (now >= deadline) {
-            SPDLOG_ERROR("SerialBus: {} timeout ({} bytes buffered): {}", portName, buffer.size(), hex(buffer));
+            SPDLOG_LOGGER_ERROR(logger, "SerialBus: {} timeout ({} bytes buffered): {}", portName,
+                                buffer.size(), hex(buffer));
             result.detail = (sawWrongAddress ? "only other addresses answered within "
                                              : "no response within ") +
                             std::to_string(timeoutMs) + " ms";
@@ -443,7 +528,7 @@ Transaction ModbusBusSession::IoState::runTransaction(const Bytes& request, int 
             continue; // need more header bytes
         }
         if (frameLen == -2) {
-            SPDLOG_ERROR("SerialBus: {} unframeable bytes: {}", portName, hex(buffer));
+            SPDLOG_LOGGER_ERROR(logger, "SerialBus: {} unframeable bytes: {}", portName, hex(buffer));
             return finish(BusError::FrameError);
         }
         if (static_cast<int>(buffer.size()) < frameLen) {
@@ -454,28 +539,29 @@ Transaction ModbusBusSession::IoState::runTransaction(const Bytes& request, int 
         const auto verdict = modbus::classifyResponse(request, frame);
         if (verdict == modbus::ResponseVerdict::WrongAddress) {
             // Stale/delayed frame from another device: discard, keep reading.
-            SPDLOG_WARN("SerialBus: {} discarding frame from addr {} while waiting on addr {}",
-                        portName, frame[0], request[0]);
+            SPDLOG_LOGGER_WARN(logger, "SerialBus: {} discarding frame from addr {} while waiting "
+                               "on addr {}", portName, frame[0], request[0]);
             buffer.erase(buffer.begin(), buffer.begin() + frameLen);
             sawWrongAddress = true;
             continue;
         }
 
-        SPDLOG_DEBUG("SerialBus: {} RX [{}]: {}", portName, frame.size(), hex(frame));
+        SPDLOG_LOGGER_DEBUG(logger, "SerialBus: {} RX [{}]: {}", portName, frame.size(), hex(frame));
 
         switch (verdict) {
         case modbus::ResponseVerdict::Ok:
         case modbus::ResponseVerdict::Exception:
             break;
         case modbus::ResponseVerdict::CrcMismatch:
-            SPDLOG_ERROR("SerialBus: {} CRC mismatch (possible duplicate-address collision): {}",
-                         portName, hex(frame));
+            SPDLOG_LOGGER_ERROR(logger, "SerialBus: {} CRC mismatch (possible duplicate-address "
+                                "collision): {}", portName, hex(frame));
             return finish(BusError::CrcError);
         case modbus::ResponseVerdict::WrongFunction:
-            SPDLOG_ERROR("SerialBus: {} wrong function code in response: {}", portName, hex(frame));
+            SPDLOG_LOGGER_ERROR(logger, "SerialBus: {} wrong function code in response: {}",
+                                portName, hex(frame));
             return finish(BusError::WrongFunction);
         default:
-            SPDLOG_ERROR("SerialBus: {} malformed response: {}", portName, hex(frame));
+            SPDLOG_LOGGER_ERROR(logger, "SerialBus: {} malformed response: {}", portName, hex(frame));
             return finish(BusError::FrameError);
         }
 
@@ -486,16 +572,16 @@ Transaction ModbusBusSession::IoState::runTransaction(const Bytes& request, int 
             append(buffer, serial->readAll());
         }
         if (!buffer.empty()) {
-            SPDLOG_ERROR("SerialBus: {} {} trailing bytes after a valid frame — "
-                         "duplicate-address collision suspected: {}",
-                         portName, buffer.size(), hex(buffer));
+            SPDLOG_LOGGER_ERROR(logger, "SerialBus: {} {} trailing bytes after a valid frame — "
+                                "duplicate-address collision suspected: {}",
+                                portName, buffer.size(), hex(buffer));
             return finish(BusError::CollisionSuspected);
         }
 
         if (verdict == modbus::ResponseVerdict::Exception) {
             result.exceptionCode = frame[2];
-            SPDLOG_ERROR("SerialBus: {} Modbus exception 0x{:02X} (func=0x{:02X}, addr={})",
-                         portName, result.exceptionCode, frame[1] & 0x7F, frame[0]);
+            SPDLOG_LOGGER_ERROR(logger, "SerialBus: {} Modbus exception 0x{:02X} (func=0x{:02X}, "
+                                "addr={})", portName, result.exceptionCode, frame[1] & 0x7F, frame[0]);
             result.response = frame;
             return finish(BusError::ModbusException);
         }
@@ -533,12 +619,27 @@ std::shared_ptr<ModbusBusSession> SerialBusManager::acquire(const std::string& p
                                                             BusError* error,
                                                             std::string* errorDetail)
 {
+    using Clock = std::chrono::steady_clock;
     const std::string key = normalizeKey(portName);
-    std::scoped_lock lock(mutex_);
+    // A session that is gone may still be closing its port. Its destructor
+    // decides within kShutdownJoinMs: closed (the reservation is released) or
+    // stalled (the I/O thread is detached, still holding the port). Wait for
+    // that answer, never longer and never under the registry lock.
+    const auto closingDeadline =
+        Clock::now() + std::chrono::milliseconds(ModbusBusSession::kShutdownJoinMs + CLOSING_SLACK_MS);
+    auto refuseClosing = [&](const char* why) -> std::shared_ptr<ModbusBusSession> {
+        const std::string detail = "serial port " + portName + " is still closing" + why;
+        SPDLOG_WARN("SerialBus: {}", detail);
+        if (error) *error = BusError::PortBusy;
+        if (errorDetail) *errorDetail = detail;
+        return nullptr;
+    };
 
-    auto it = sessions_.find(key);
-    if (it != sessions_.end()) {
-        if (auto existing = it->second.lock()) {
+    std::unique_lock lock(mutex_);
+    while (true) {
+        auto it = sessions_.find(key);
+        if (it == sessions_.end()) break;
+        if (auto existing = it->second.session.lock()) {
             if (existing->settings() != settings) {
                 SPDLOG_ERROR("SerialBus: {} already open with different settings "
                              "({} vs requested {})", portName,
@@ -550,30 +651,38 @@ std::shared_ptr<ModbusBusSession> SerialBusManager::acquire(const std::string& p
             if (error) *error = BusError::None;
             return existing;
         }
-        sessions_.erase(it);
+        auto reservation = it->second.reservation.lock();
+        const auto state =
+            reservation ? reservation->state() : ModbusBusSession::PortReservation::State::Released;
+        if (state == ModbusBusSession::PortReservation::State::Closing) {
+            if (Clock::now() >= closingDeadline) return refuseClosing("");
+            lock.unlock();
+            reservation->waitUntil(closingDeadline);
+            reservation.reset();
+            lock.lock();
+            continue; // the registry may have changed meanwhile: look again
+        }
+        if (state == ModbusBusSession::PortReservation::State::Stalled) {
+            return refuseClosing(" after a stalled transaction");
+        }
+        sessions_.erase(it); // closed: the port is free
+        break;
     }
 
     auto* raw = new ModbusBusSession(portName, settings, factory_);
     BusError openError = BusError::PortUnavailable;
     std::string detail;
     if (!raw->start(&openError, &detail)) {
-        delete raw;
+        delete raw; // its I/O thread has already closed the port and been joined
         if (error) *error = openError;
         if (errorDetail) *errorDetail = detail;
         return nullptr;
     }
-    // The deleter closes the port and erases the registry entry atomically
-    // under the registry lock, so a dying session and a fresh acquire of the
-    // same port cannot interleave.
-    std::shared_ptr<ModbusBusSession> session(raw, [this, key](ModbusBusSession* s) {
-        std::scoped_lock l(mutex_);
-        auto entry = sessions_.find(key);
-        if (entry != sessions_.end() && entry->second.expired()) {
-            sessions_.erase(entry);
-        }
-        delete s;
-    });
-    sessions_[key] = session;
+    // Plain delete, without the registry lock: the destructor may wait up to
+    // kShutdownJoinMs for the I/O thread. The registry keeps the port
+    // reserved through the session's reservation until the thread closed it.
+    std::shared_ptr<ModbusBusSession> session(raw, [](ModbusBusSession* s) { delete s; });
+    sessions_[key] = Entry{session, session->reservation()};
     if (error) *error = BusError::None;
     return session;
 }

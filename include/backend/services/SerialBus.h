@@ -80,8 +80,10 @@ struct Transaction {
 // interrupts a port call in progress (ISerialPort::interrupt) and waits at
 // most kShutdownJoinMs for the thread. A thread still inside a port call then
 // is detached and logged: it shares ownership of everything it touches (the
-// port, the request, the handshake state), so it never uses freed memory, and
-// it closes the port when the call returns.
+// port, the request, the handshake state, the logger), so it never uses freed
+// memory or a dropped logger, and it closes the port when the call returns.
+// Until it has, the port stays reserved: SerialBusManager refuses a new
+// session on it.
 class ModbusBusSession {
 public:
     ~ModbusBusSession();
@@ -113,6 +115,10 @@ public:
     SerialSettings settings() const { return settings_; }
     bool isOpen() const;
 
+    // Registry bookkeeping: says whether the port of a session that is gone
+    // is closed yet (defined in SerialBus.cpp).
+    struct PortReservation;
+
 private:
     friend class SerialBusManager;
     ModbusBusSession(std::string portName, const SerialSettings& settings, SerialPortFactory factory);
@@ -121,8 +127,13 @@ private:
     bool start(BusError* error, std::string* errorDetail);
 
     // Everything the I/O thread touches: the port, the request and result,
-    // the handshake. Shared by the session and the thread (SerialBus.cpp).
+    // the handshake, the logger. Shared by the session and the thread
+    // (SerialBus.cpp).
     struct IoState;
+
+    // The I/O thread holds its port's reservation until it has closed the
+    // port; SerialBusManager keeps a weak reference to it (SerialBus.cpp).
+    std::weak_ptr<PortReservation> reservation() const;
 
     const std::string portName_;
     const SerialSettings settings_;
@@ -134,8 +145,14 @@ private:
 // Process-wide registry: one live session per system port. acquire() returns
 // the existing session when the settings match, refuses with PortBusy when the
 // port is already held with different settings, and opens the port otherwise.
-// Session teardown (port close + registry erase) happens atomically under the
-// registry lock, so a dying session and a fresh acquire cannot interleave.
+// A port stays reserved until the I/O thread of its last session has closed
+// it, so a dying session and a fresh acquire never hold the device at once.
+// While that session's destructor is still deciding (it waits at most
+// kShutdownJoinMs), acquire() waits for the outcome; once the destructor has
+// detached a thread stuck in a stalled transaction, acquire() refuses at once
+// with PortBusy ("still closing after a stalled transaction") until the
+// thread has closed the port. The registry lock is never held while a session
+// is torn down or waited for.
 class SerialBusManager {
 public:
     SerialBusManager();
@@ -162,9 +179,14 @@ public:
 private:
     static std::string normalizeKey(const std::string& portName);
 
+    struct Entry {
+        std::weak_ptr<ModbusBusSession> session;
+        std::weak_ptr<ModbusBusSession::PortReservation> reservation;
+    };
+
     std::mutex mutex_;
     SerialPortFactory factory_;
-    std::map<std::string, std::weak_ptr<ModbusBusSession>> sessions_;
+    std::map<std::string, Entry> sessions_;
 };
 
 } // namespace backend::services::serialbus
