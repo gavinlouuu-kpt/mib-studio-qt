@@ -71,7 +71,13 @@ Rust owns an opaque `BackendBridge` (`UniquePtr`) that composes an `AppBackend`
   hyperslab reads), `review_export_csv` (tracked Export operation on its own
   read-only reader; Qt-parity CSV; partial outputs cleaned on
   cancel/failure). RecordingLoad replaces an open file and is rejected during
-  an active experiment.
+  an active experiment. Since #512 S5 the loaded file lives in the facade's
+  own [[../services/ReviewSession]] (never `AppBackend::hdf5()`, the writer's
+  handle); the metadata, page, image, `fetch_run_accounting("review")` and
+  charts shapes are filled from it field for field (no contract change), and
+  a loaded file still keeps `experiment_start` and `start_frame_recording`
+  refused with the same gate and messages (decision D1 (a),
+  [[ExperimentCoordinator]]).
 - **Processing config/ROI/background/core (v8, BE-3):**
   `fetch/apply_processing_config_json` (lossless document, merge semantics,
   monotonic `config_version`), `set_processing_roi`,
@@ -596,7 +602,7 @@ Tests: `contract.rs` `local_profiles_roundtrip_and_conflict`; `profiles.startup_
 
 `fetch_run_accounting(source)` (read-only, not a control command) returns the reconciled accounting
 as JSON. `source` is `review` (the file loaded for review: `available` false with a reason when none
-is open; `recorded` false for a raw recording or a legacy file without accounting; adds `file_path`)
+is open; `recorded` false for a raw recording or a legacy file without accounting; adds `file_path`; read from the facade's ReviewSession since #512 S5)
 or `last_run` (the run that finished last in this session; adds `start_generation`; `available` false
 before any run). Fields: `completion` and `completion_name`, `completion_reason`, `reconciled`,
 `admitted` (the frames the run claimed, the true denominator), `empty`, `processed`,
@@ -604,7 +610,8 @@ before any run). Fields: `completion` and `completion_name`, `completion_reason`
 `store_malformed` (a declared loss: booked ingress-error frames), `cancelled_by_policy`,
 `pending_at_stop`, `sequence_gaps`, `objects_detected`, the `persistence_*` counters, `fatal_error`,
 `fatal_message` and `malformed_warn_fraction` (0.001). `BackendFacade::fetchRunAccountingJson` builds
-it from `Hdf5Service::readRunAccounting` (review) or `ExperimentCoordinator::lastRunAccounting`.
+it from the review session's accounting (`Hdf5Service::readRunAccounting` at open, #512 S5) or
+`ExperimentCoordinator::lastRunAccounting`.
 Test: `contract.rs` (`experiment_lifecycle_end_to_end` checks both sources agree after a real run;
 `run_accounting_is_unavailable_without_a_file_or_a_run`).
 
@@ -685,7 +692,9 @@ A second `#[cxx::bridge]` module, `review_ffi` (namespace
 `mib_review_bridge`), wraps [[../services/ReviewSession]] as an opaque
 `ReviewBridge`. It is YOFO Review's whole backend surface and is deliberately
 separate from `ffi::BackendBridge`; MIB Studio's Review tab does not use it
-(it keeps the facade's review commands, ADR 0014 decision A):
+(it keeps the facade's review commands, ADR 0014 decision A; since #512 S5
+those read a `ReviewSession` the facade owns, which S10 is to let this bridge
+attach to):
 
 - **Link set.** `review_shim.cpp` includes only `backend/review/*`,
   `Hdf5Service.h` and `KdeCoreRecord.h`, so it links `mib_review_core` +

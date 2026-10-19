@@ -24,6 +24,11 @@ namespace backend
     class AppBackend;
 }
 
+namespace backend::review
+{
+    class ReviewSession;
+}
+
 namespace backend::bridge
 {
 
@@ -1165,10 +1170,11 @@ namespace backend::bridge
         // monotonic config_version for external-change detection.
         bool fetchProcessingConfigJson(std::string &out) const;
         bool fetchProcessingCoreStatus(BackendProcessingCoreStatus &out) const;
-        // HDF5 review pulls (BE-6). Metrics pages are served from a lazily
-        // cached metadata read (metrics only, no image payloads) that is
-        // invalidated on every RecordingLoad; images/masks are pulled one at
-        // a time via hyperslab reads (bounded memory).
+        // HDF5 review pulls (BE-6), served by the facade's ReviewSession
+        // (#512 S5): its own read-only reader, never AppBackend::hdf5().
+        // Metrics pages come from the metadata the session read once at open
+        // (metrics only, no image payloads); images/masks are pulled one at a
+        // time via hyperslab reads (bounded memory).
         bool fetchReviewMetadata(BackendReviewMetadata &out) const;
         bool fetchReviewMetricsPage(bool valid,
                                     std::uint64_t offset,
@@ -1303,13 +1309,15 @@ namespace backend::bridge
         std::atomic<bool> runNoFsTracking_{false};
         std::atomic<std::int64_t> lastRunNoFsFrames_{-1};
 
-        // Review state (BE-6): the loaded file path (jobs open their own
-        // read-only reader on it) and the lazily cached metrics metadata.
-        mutable std::mutex reviewMutex_;
-        std::string loadedRecordingPath_;
-        mutable bool reviewMetricsLoaded_{false};
-        mutable std::vector<services::ProcessedFrame> reviewValidMeta_;
-        mutable std::vector<services::ProcessedFrame> reviewInvalidMeta_;
+        // The review source (#512 S5): the loaded file lives in this session's
+        // own reader (jobs open their own read-only reader on its path). The
+        // guards (experiment idle, no raw recording) are the facade's: it opens
+        // and closes the session only inside the coordinator's idle
+        // transaction and tells AppBackend whether a review source is open
+        // (setReviewSourceOpen), which keeps experiment Start and raw recording
+        // refused while it is (decision D1 (a), #722). Never reassigned; shared
+        // so the review bridge can attach to it later (S10).
+        const std::shared_ptr<review::ReviewSession> review_;
         // Export jobs run detached; joined at shutdown.
         std::vector<std::thread> reviewJobThreads_;
         std::mutex reviewJobsMutex_;

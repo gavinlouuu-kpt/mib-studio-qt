@@ -1,11 +1,14 @@
 #include "backend/recording/Hdf5Service.h"
 
+#include <hdf5.h>
 #include <opencv2/core.hpp>
 
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <new>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -378,6 +381,77 @@ bool testExperimentForcedClosePreservesData()
 }
 } // namespace
 
+// #512 S5 review: no handle outlives a throw. loadFile() releases a handle
+// it just opened when anything after H5Fopen throws; closeFile() clears the
+// handle and the open state right after H5Fclose, before any diagnostics,
+// and never throws. The library's open-file count proves no handle leaked.
+bool testHandleNeverLeaksOnThrow()
+{
+    using backend::services::Hdf5Service;
+    using backend::services::Hdf5ServiceTestAccess;
+    const auto path = makeTempPath("hdf5_handle_throw");
+    {
+        Hdf5Service writer;
+        if (!writer.openFile(path.string()) || !writer.initializeDatasets())
+        {
+            std::cerr << "handle test: fixture\n";
+            cleanup(path);
+            return false;
+        }
+        writer.closeFile();
+    }
+    const auto openFiles = [] { return H5Fget_obj_count(H5F_OBJ_ALL, H5F_OBJ_FILE); };
+    const auto baseline = openFiles();
+    bool ok = true;
+    auto expect = [&](bool condition, const char *what) {
+        if (!condition)
+        {
+            std::cerr << "handle test: " << what << "\n";
+            ok = false;
+        }
+    };
+
+    Hdf5Service reader;
+    expect(!reader.holdsFileHandle() && !reader.isFileOpen(), "a new service holds no handle");
+    reader.closeFile(); // no handle: a no-op
+    Hdf5ServiceTestAccess::setAfterOpenHook(reader, [] { throw std::bad_alloc(); });
+    bool threw = false;
+    try
+    {
+        reader.loadFile(path.string());
+    }
+    catch (const std::bad_alloc &)
+    {
+        threw = true;
+    }
+    expect(threw, "a throw after H5Fopen reaches the caller");
+    expect(!reader.isFileOpen() && !reader.holdsFileHandle(), "the just-opened handle is released");
+    expect(openFiles() == baseline, "no file handle leaked by the throwing open");
+
+    Hdf5ServiceTestAccess::setAfterOpenHook(reader, {});
+    expect(reader.loadFile(path.string()) && reader.isFileOpen() && reader.holdsFileHandle(), "the next open works");
+    expect(openFiles() == baseline + 1, "one handle while open");
+    Hdf5ServiceTestAccess::setAfterCloseHook(reader, [] { throw std::runtime_error("diagnostics failed"); });
+    threw = false;
+    try
+    {
+        reader.closeFile();
+    }
+    catch (...)
+    {
+        threw = true;
+    }
+    expect(!threw, "closeFile never throws");
+    expect(!reader.isFileOpen() && !reader.holdsFileHandle(), "the state is cleared before the throwing diagnostics");
+    expect(openFiles() == baseline, "the handle is closed despite the throwing diagnostics");
+    Hdf5ServiceTestAccess::setAfterCloseHook(reader, {});
+    expect(reader.loadFile(path.string()), "the service opens again after it");
+    reader.closeFile();
+    expect(openFiles() == baseline, "closed again");
+    cleanup(path);
+    return ok;
+}
+
 int main()
 {
     if (!testDestructorFinalizesWritableFile())
@@ -391,6 +465,10 @@ int main()
     if (!testExperimentForcedClosePreservesData())
     {
         return 3;
+    }
+    if (!testHandleNeverLeaksOnThrow())
+    {
+        return 4;
     }
     return 0;
 }

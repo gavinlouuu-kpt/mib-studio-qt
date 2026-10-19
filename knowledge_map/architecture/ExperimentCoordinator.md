@@ -185,7 +185,7 @@ thresholds, so a slow trickle of large frames never sits unwritten.
 | `trigger.output` | sorting enabled but TriggerService not bound to the running session (`NotRequired` when sorting is off) | — |
 | `rf.generator` | sorting enabled and the configured [[../services/RfGeneratorService]] link is down, or the SSG3021X is mis-armed (RF off, pulse mod off, trigger mode not external, source not internal, zero width — reason lists them); `NotRequired` when sorting is off or `rf_generator.enabled` is false or absent (bundled defaults included) | — |
 | `storage.output` | no path (`Unavailable`), unwritable parent, path is a directory, < 64 MiB free | — |
-| `storage.hdf5` / `lifecycle.recording` / `lifecycle.experiment` | file already open / raw recording active / coordinator not Idle | — |
+| `storage.hdf5` / `lifecycle.recording` / `lifecycle.experiment` | file already open (the shared handle, or a review file in the facade's ReviewSession: `AppBackend::reviewSourceOpen()`, #512 S5) / raw recording active / coordinator not Idle | — |
 | `lifecycle.fault` | unresolved fault reported | — |
 | `telemetry.transportLoss` | no active session | backend cannot / has not reported transport loss |
 
@@ -318,6 +318,31 @@ is frozen. Cancellation/completion restores this gate.
 Background set/clear and calibration apply share `withIdleConfiguration` with ROI
 settings. Asynchronous calibration publication uses the nonblocking overload to
 avoid waiting on a configuration transaction that might join its worker (#542).
+
+### A review file blocks Start (#512 S5, decision D1 (a))
+
+Before #512 S5 a file loaded for review sat in `AppBackend::hdf5()`, so
+`storage.hdf5` failed and Start was refused until Close File. The facade now
+reads review files with its own `ReviewSession` reader
+([[../services/ReviewSession]]), and keeps the refusal on purpose: HDF5 is
+built without thread safety and `Hdf5Service` has no process-wide lock
+(#722), so a review reader beside the 5 kHz recorder would race inside the
+library. The facade sets `AppBackend::setReviewSourceOpen(bool)` from its
+session's `isOpen()` inside `withIdleConfiguration` (load, close, a failed
+load; cleared at shutdown), through a scope guard that also runs when an
+exception leaves the transaction, and `ReviewSession::open()` is all or
+nothing, so the flag never reads closed while a review reader is open once
+the coordinator mutex is released. The gate, Start's writer-conflict check and raw recording's
+writer check all read `hdf5().isFileOpen() || reviewSourceOpen()` under the
+coordinator mutex, so the operator sees exactly what they saw before: gate
+`storage.hdf5` Fail, "an HDF5 file is already open" / "finish or close the
+current file first"; Start NotReady "stop raw recording and close the
+existing HDF5 file before starting an experiment"; raw recording "Close the
+existing HDF5 file before starting raw recording; its writer will not be
+replaced". Like the shared handle, the flag is not an invalidation input (no
+generation bump). Tests: `backend.experiment_readiness` section 5b,
+`backend.facade_review_session`, `backend.facade_boundary`. Revisit after
+#722.
 
 ### Raw recording admission (#451)
 
