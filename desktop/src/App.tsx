@@ -33,7 +33,7 @@ import { faultClearedNote } from "./ringPlayback";
 import { startExperiment, type StartOutcome } from "./experimentStart";
 import { SerialReads } from "./serialReads";
 import { usePlan, type PlanStartResult, type StopReply } from "./workspace/usePlan";
-import { planRunMode } from "./workspace/planModel";
+import { planCameraMode } from "./workspace/planModel";
 import { useHoldsControl } from "./transport/useControlRole";
 import { downloadUrl } from "./filesView";
 import { serverOrigin, tokenFromLocation } from "./transport/auth";
@@ -951,7 +951,9 @@ export default function App() {
   // The outcome is decided by the start reply alone (startExperiment): the status refresh after it
   // is a separate read, and its failure is reported as such (refreshError), never as the outcome,
   // so a started run's identity is never offered again (#736 review).
-  const runExperimentStart = useCallback(async (startRequestJson?: string): Promise<PlanStartResult> => {
+  // `stillWanted` (the workspace's Plan) withdraws a pending Start that lost its controlling
+  // client: checked after each answer and immediately before experiment_start (#716 A5 review).
+  const runExperimentStart = useCallback(async (startRequestJson?: string, stillWanted?: () => boolean): Promise<PlanStartResult> => {
     if (experimentPending.current) return { kind: "busy" };
     experimentPending.current = true; setExperimentRequestBusy(true); setReadinessMessage(""); setStartNotice("");
     try {
@@ -963,7 +965,7 @@ export default function App() {
           pickFile: () => save({ title: "Save Experiment Data", filters: H5_FILTER, defaultPath: "experiment.h5" }),
           fetchReadiness: (path) => bridge.fetchExperimentReadiness(path),
           start: (path, acknowledgeDiscardRing, request) => bridge.experimentStart(path, acknowledgeDiscardRing, request),
-        }, startRequestJson);
+        }, startRequestJson, stillWanted);
       } catch (e) {
         // Before the start request was sent (dialog or readiness): nothing was started.
         append(`experiment start error: ${e}`);
@@ -973,6 +975,7 @@ export default function App() {
         try { setExpStatus(await bridge.fetchExperimentStatus()); return ""; }
         catch (e) { append(`experiment status refresh error: ${e}`); return String(e); }
       };
+      if (outcome.kind === "withdrawn") { append("experiment start withdrawn: control was lost while it was pending; nothing was sent"); return outcome; }
       if (outcome.kind === "not-ready") { setReadinessMessage(outcome.message); return outcome; }
       if (outcome.kind === "refused") {
         setReadinessMessage(`${outcome.path}: ${outcome.message}`); append(`experiment start failed: ${outcome.message}`);
@@ -1307,9 +1310,10 @@ export default function App() {
     setClassicModeStale(true);
     await applyCameraMode("overview");
   }, [applyCameraMode]);
-  // The Plan's explicit switch to Run on the PZ7035 (#716 A5): the classic Experiment tab's entry
-  // switch, here only on its button.
-  const switchToRunFromWorkspace = useCallback(async () => {
+  // The Plan's explicit switch to the mode a run records in (#716 A5): the PZ7035's Run, a desktop
+  // camera's experiment window after the full sensor; the classic Experiment tab's entry switch,
+  // here only on its button.
+  const switchPlanCameraMode = useCallback(async () => {
     setClassicModeStale(true);
     await applyCameraMode("experiment");
   }, [applyCameraMode]);
@@ -1725,9 +1729,11 @@ export default function App() {
             onOpenSetup={() => { setTab("connect"); exitWorkspace(); }}
             // O3 Plan: Start run is locked for the same reasons as the classic Start button.
             experiment={{ plan, lockedReason: startExperimentReason ?? "", view: experimentView, onView: setExperimentView,
-              runMode: planRunMode({ instrumentModes, mode: instrumentModes ? instrument?.mode?.name ?? null : null, windowPlaced: cameraWin.placed,
-                experimentActive: expActive, runFrozen: !!instrument?.ring?.run_frozen, modeError: modeError?.mode === "run" ? modeError.message : "" }),
-              onSwitchToRun: switchToRunFromWorkspace }}
+              cameraMode: planCameraMode({ instrumentModes, mode: instrumentModes ? instrument?.mode?.name ?? null : null, windowPlaced: cameraWin.placed,
+                experimentActive: expActive, runFrozen: !!instrument?.ring?.run_frozen, modeError: modeError?.mode === "run" ? modeError.message : "",
+                fullSensor: !instrumentModes && cameraGeometry?.supported && cameraGeometry.overview
+                  ? { width: cameraGeometry.sensor_width, height: cameraGeometry.sensor_height } : null }),
+              onCameraMode: switchPlanCameraMode }}
           />
         </div>
       )}

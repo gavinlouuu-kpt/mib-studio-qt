@@ -22,7 +22,7 @@ import {
   nextSampleRef,
   type SampleRow,
 } from "./planModel";
-import { FormatCard, NOT_DECLARED, OperatorFields, RunModeNotice, SampleEditor, startBlocks, type StartBlock } from "./planParts";
+import { FormatCard, NOT_DECLARED, OperatorFields, CameraModeNotice, SampleEditor, startBlocks, type StartBlock } from "./planParts";
 import type { PlanViewProps } from "./PlanView";
 import {
   canEnd,
@@ -30,6 +30,7 @@ import {
   canRemove,
   currentIndex,
   lifecycle,
+  ownRunActive,
   plannedRunIndex,
   queueBegun,
   queueInProgress,
@@ -48,7 +49,7 @@ const rowFile = (st: QueueRow) => st.end?.outputPath || st.outputPath || st.atte
 
 type NoticeText = { tone: "confirmed" | "warn" | "blocked" | "unknown" | "info"; title: string; text: string };
 
-export function QueuePlan({ plan, lockedReason, verdict, blockers, runMode, onSwitchToRun }: PlanViewProps) {
+export function QueuePlan({ plan, lockedReason, verdict, blockers, cameraMode, onCameraMode }: PlanViewProps) {
   const { draft, queue } = plan;
   const q = queue.state;
   const order = draft.rows.map((r) => r.ref);
@@ -130,7 +131,10 @@ export function QueuePlan({ plan, lockedReason, verdict, blockers, runMode, onSw
   const lastRun = curState?.attempts[curState.attempts.length - 1];
   const runStatus = queue.status?.valid && lastRun?.generation && queue.status.start_generation === lastRun.generation ? queue.status : null;
   const remaining = cur < 0 ? 0 : order.slice(cur + 1).length;
-  const startable = !!curState && ["planned", "refused", "unknown", "failed"].includes(curState.phase);
+  const startable = !!curState && ["planned", "refused", "unknown", "failed", "interrupted"].includes(curState.phase);
+  // Next sample sends experiment_stop, which stops whatever run is active: only once the status
+  // shows this row's own run (its file, its generation) active.
+  const ownActive = !!curState && ownRunActive(curState, queue.status);
 
   let notice: NoticeText | null = null;
   if (curRow && curState) {
@@ -147,6 +151,9 @@ export function QueuePlan({ plan, lockedReason, verdict, blockers, runMode, onSw
       case "running":
         notice = curState.failure
           ? { tone: curState.failure.tone, title: curState.failure.title, text: curState.failure.text }
+          : lastRun?.generation === null
+          ? { tone: "info", title: `${curRow.ref} started · waiting for the status to report its run`,
+            text: `${remaining ? "Next sample" : "Stop last sample"} is available once the status shows this run on ${curRow.ref}'s file (${file || "the chosen file"}).` }
           : { tone: "confirmed", title: `${curRow.ref} running · run ${lastRun?.runIndex ?? "?"}${file ? ` · ${file}` : ""}`,
             text: `${remaining ? "Next sample" : "Stop last sample"} stops this run, waits for the drain and finalize, then asks you to confirm the close. Nothing stops on its own here.` };
         break;
@@ -158,7 +165,7 @@ export function QueuePlan({ plan, lockedReason, verdict, blockers, runMode, onSw
           title: `${curRow.ref} finalized · the backend closed ${curState.end?.outputPath || "the file"}`,
           text: `${curState.end?.cancelled ? "The run was cancelled. " : ""}${curState.end?.headline ? `${curState.end.headline} ` : ""}Confirm the close to go on; nothing else happens until then.` };
         break;
-      case "refused": case "unknown": case "failed":
+      case "refused": case "unknown": case "failed": case "interrupted":
         if (curState.failure) notice = { tone: curState.failure.tone, title: curState.failure.title,
           text: `${curState.failure.text}${curState.phase === "failed" && file ? ` The file is kept: ${file}.` : ""} ${choiceText(curState.phase, curRow.ref, q.nextRunIndex)}` };
         break;
@@ -176,7 +183,7 @@ export function QueuePlan({ plan, lockedReason, verdict, blockers, runMode, onSw
 
   const blocks: StartBlock[] = startable && curBuild ? queueStartBlocks() : [];
   function queueStartBlocks(): StartBlock[] {
-    const out = startBlocks({ started: null, starting: pending === "start", verdict, blockers, lockedReason, issues: curBuild!.issues })
+    const out = startBlocks({ started: null, starting: pending === "start", verdict, blockers, lockedReason, issues: curBuild!.issues, cameraReason: cameraMode?.startReason })
       .map((b) => (b.id === "sheet" ? { ...b, title: `Start is unavailable · ${curRow!.ref} has ${curBuild!.issues.length === 1 ? "1 issue" : `${curBuild!.issues.length} issues`}` } : b));
     if (!queue.controlHeld) out.push({ id: "control", tone: "blocked", title: "Start is unavailable · this client does not control the instrument", text: "Take control first; the banner at the top offers it." });
     if (!queue.status?.valid) out.push({ id: "status", tone: "unknown", title: "Start is unavailable · run status not read yet", text: "The queue follows each run in the experiment status, which is read every half second." });
@@ -188,13 +195,13 @@ export function QueuePlan({ plan, lockedReason, verdict, blockers, runMode, onSw
     switch (curState.phase) {
       case "planned": case "refused":
         return { label: pending === "start" ? "Starting…" : `Start ${curRow.ref}`, onClick: () => void queue.startCurrent(), disabled: actionsLocked || blocks.length > 0, testId: "queue-start" };
-      case "unknown": case "failed":
+      case "unknown": case "failed": case "interrupted":
         return { label: `Retry ${curRow.ref} as run ${q.nextRunIndex}`, onClick: () => void queue.startCurrent(), disabled: actionsLocked || blocks.length > 0, testId: "queue-retry" };
       case "starting":
         return { label: "Starting…", onClick: () => {}, disabled: true, testId: "queue-start" };
       case "running":
-        return { label: remaining ? "Next sample" : "Stop last sample", onClick: () => void queue.stopCurrent(), disabled: actionsLocked, testId: "queue-next",
-          title: `Stops ${curRow.ref}'s run (stop → drain → finalize), then asks you to confirm the close` };
+        return { label: remaining ? "Next sample" : "Stop last sample", onClick: () => void queue.stopCurrent(), disabled: actionsLocked || !ownActive, testId: "queue-next",
+          title: ownActive ? `Stops ${curRow.ref}'s run (stop → drain → finalize), then asks you to confirm the close` : `Waiting for the status to show ${curRow.ref}'s run active` };
       case "stopping":
         return { label: "Stopping…", onClick: () => {}, disabled: true, testId: "queue-next" };
       case "finalized":
@@ -203,7 +210,7 @@ export function QueuePlan({ plan, lockedReason, verdict, blockers, runMode, onSw
         return null;
     }
   })();
-  const showSkip = !!curState && ["refused", "unknown", "failed"].includes(curState.phase);
+  const showSkip = !!curState && ["refused", "unknown", "failed", "interrupted"].includes(curState.phase);
   const showEnd = canEnd(order, q) && begun;
 
   const steps = curState ? lifecycle(curState).map((s) => ({
@@ -225,7 +232,7 @@ export function QueuePlan({ plan, lockedReason, verdict, blockers, runMode, onSw
         {showEnd ? <Button disabled={actionsLocked} onClick={queue.end} data-testid="queue-end">End queue</Button> : null}
         {primary ? <Button variant="primary" disabled={primary.disabled} title={"title" in primary ? primary.title : undefined} onClick={primary.onClick} data-testid={primary.testId}>{primary.label}</Button> : null}
       </>}>
-      <RunModeNotice runMode={runMode} onSwitch={onSwitchToRun} />
+      <CameraModeNotice mode={cameraMode} onSwitch={onCameraMode} />
       {paused ? (
         <Notice tone="warn" title="Queue paused · control lost" data-testid="queue-paused"
           actions={<Button disabled={!queue.controlHeld} title={queue.controlHeld ? undefined : "Take control of the instrument first"} onClick={queue.resume} data-testid="queue-resume">Resume queue</Button>}>
@@ -301,8 +308,9 @@ export function QueuePlan({ plan, lockedReason, verdict, blockers, runMode, onSw
 }
 
 /** What the operator can do at a failure, in plain words. */
-function choiceText(phase: "refused" | "unknown" | "failed", ref: string, nextRunIndex: number): string {
+function choiceText(phase: "refused" | "unknown" | "failed" | "interrupted", ref: string, nextRunIndex: number): string {
   switch (phase) {
+    case "interrupted": return `Retry ${ref} as run ${nextRunIndex} once the other run is over, skip ${ref}, or end the queue.`;
     case "refused": return `Correct ${ref} if needed and press Start ${ref} again, skip it, or end the queue.`;
     case "unknown": return `If a run is active it may be this sample's: stop it in the classic view before a retry. Retry as run ${nextRunIndex}, skip ${ref}, or end the queue.`;
     case "failed": return `Retry ${ref} as run ${nextRunIndex} (a new file), skip it, or end the queue. A fault may need acknowledging in the classic view before the next Start.`;

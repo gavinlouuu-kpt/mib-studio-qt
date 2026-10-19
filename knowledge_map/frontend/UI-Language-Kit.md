@@ -61,7 +61,7 @@ row as it will be recorded, or the sample queue's selectable rows with a state c
 file per row, with a "Not declared" `missing`), `ConditionSwatch` slots 1–4 in sheet order,
 `FactList` for the run identity and the run's progress, `Stepper` for the current row's run
 lifecycle and `Notice` for each step, each reason Start is unavailable, the outcome and the
-PZ7035's "Switch to Run". The `Stepper` has no unknown or refused step state: a lost start reply
+camera-mode switch (the PZ7035's "Switch to Run", a desktop camera's "Show the experiment window"). The `Stepper` has no unknown or refused step state: a lost start reply
 is a `current` step and a refused one a `failed` step, each with a `StateChip` in its label (a
 candidate for #715). Its text fields (and the notes
 textarea) are app-local too, without `maxLength` (a long value is refused, never cut off). Two

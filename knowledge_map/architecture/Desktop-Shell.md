@@ -163,8 +163,8 @@ of the quick controls and the sample sheet, until the kit has them).
   Align with its LED; Experiment to Run). Stages only change what is shown. In Align the
   same switch is a button the operator presses ("Show the full sensor" / "Switch to Align").
   Experiment opens on its Plan, where a run starts only on "Start run" (or a sample queue's
-  Start), stops only on the queue's "Next sample" and the PZ7035 switches to Run only on its
-  "Switch to Run"; its Live and Summary
+  Start), stops only on the queue's "Next sample", and the camera goes to the mode a run records in
+  only on the Plan's "Switch to Run" (PZ7035) or "Show the experiment window" (desktop); its Live and Summary
   sub-views, and the Review stage, say "Not yet in the workspace" and offer "Back to the classic
   view".
   Prepare's "Camera / Focus / Pump setup" leave for the classic Connect tab, which only reads.
@@ -326,14 +326,20 @@ of the quick controls and the sample sheet, until the kit has them).
     known" and locks the plan. A started run locks the plan ("Run 1
     started · <path>"): its identity is in that run, so a single-sample plan has no second run;
     "New plan" mints a new id and keeps the operator and the format.
-  - **PZ7035: "Switch to Run" (A5).** While the instrument is not in Run, the Start (or Queue) card
-    shows a kit `Notice` "Camera · <mode>" with the explicit switch (`planRunMode` in
-    `planModel.ts`; App's `switchToRunFromWorkspace` calls the shared `applyCameraMode("experiment")`,
-    the classic Experiment tab's entry switch, and marks the classic tab's mode stale for its
-    `ClassicModeNotice`). It is disabled with the reason during a run, with no Run window placed
-    ("place the 512×96 Run window in Align first (Write Run window)") or while a stopped Run holds its
-    frames; a refused switch shows the backend's reason. Start stays disabled with the classic reason
-    ("The camera is not in Run mode yet") until the instrument is in Run. Navigation never switches.
+  - **The camera mode a run records in (A5, #739 review).** `planCameraMode` (`planModel.ts`) and
+    the Start (or Queue) card's kit `Notice` "Camera · <mode>" offer the classic Experiment tab's
+    entry switch as a button: App's `switchPlanCameraMode` calls the shared
+    `applyCameraMode("experiment")` and marks the classic tab's mode stale for its
+    `ClassicModeNotice`. Navigation never switches.
+    - PZ7035, while the instrument is not in Run: "Switch to Run", disabled with the reason during a
+      run, with no Run window placed ("place the 512×96 Run window in Align first (Write Run
+      window)") or while a stopped Run holds its frames; a refused switch shows the backend's reason.
+      Start stays disabled with the classic reason ("The camera is not in Run mode yet").
+    - Desktop camera left on the full sensor (Align's "Show the full sensor"; the geometry's
+      `overview`): "Show the experiment window", and Start (single and queue) is disabled with "The
+      camera shows the full sensor, not the experiment window" (`startBlocks`' `camera` block), since a
+      run would record the full sensor. The classic Start is unchanged: the classic Experiment tab
+      switches on entry.
 - **Sample queue (O3/O4, P4; #716 A5, ADR 0015 items 1–2).** A guided flow over the existing
   commands, with no backend queue state, no new bridge command and no contract change.
   `queueModel.ts` is the pure state machine; `usePlan` holds it (App, so it survives stage changes
@@ -357,10 +363,20 @@ of the quick controls and the sample sheet, until the kit has them).
     **Start S2** (readiness with S2's file at its Start, as always). Nothing advances, stops or starts
     on its own: a run that ends without Next sample (the classic Stop, the server's safe stop) is
     followed to Finalized and still waits for the close confirmation and the next Start.
-  - **The run is the first newer generation.** A Start records the `start_generation` of the last
-    status read (Start is unavailable until one was read); the row's run is the first status with a
-    larger generation, an older read answering late is ignored, and a later generation before the
-    run's end was seen fails the row ("the end of run N was not seen"). Phases only move forward.
+  - **A run is the row's only on the row's own file (#739 review).** A Start records the
+    `start_generation` of the last status read (Start is unavailable until one was read). A status
+    counts for the row only when its `output_path` is the row's chosen file (`recordedPath`: the
+    backend appends ".h5" unless the path ends in ".h5" or ".hdf5") and its generation is newer than
+    that read; an older read answering late is ignored. A newer generation on another file, or a
+    later generation after the row's run was seen, means another run took over the instrument: the
+    row is **interrupted** ("another run started on this instrument", unknown tone), its run's end is
+    not known, and the queue never stops or confirms that run (Retry as a new run, Skip or End
+    queue). "Next sample" is enabled only while the status shows the row's own run active
+    (`ownRunActive`: its generation, its file, Active), because `experiment_stop` stops whatever run
+    is active; until the first such read the step says "waiting for the status to report its run".
+    A stop that races another client's start inside one poll period would still reach that run: an
+    expected-run argument on `experiment_stop` (a contract change) would close it. Phases only move
+    forward.
   - **Identity (#736 rules).** Each row's start reply alone decides started / refused / unknown.
     Every Start sends `nextRunIndex`, which grows on started and unknown only, so a run index is
     never sent twice; a refused Start recorded nothing and keeps its index. Started and unknown rows
@@ -378,6 +394,12 @@ of the quick controls and the sample sheet, until the kit has them).
     unknown Start `current`, each with a kit `StateChip` (the Stepper has no unknown state, #715).
     The Queue card sits under the sheet while planning and above it once the queue began, so the
     step to press is in view during a run.
+  - **A control loss withdraws a pending Start (#739 review).** `usePlan` bumps an epoch on every
+    control loss; each Start (single or queue) passes `stillWanted` to the Start flow
+    (`startExperiment`), which asks it after the discard question, after the file dialog (whose
+    answer is then not used), after readiness and immediately before `experiment_start`. A withdrawn
+    Start sends nothing (outcome `withdrawn`: "Not started · control was lost while the Start was
+    pending"); the operator presses Start again after Resume.
   - **A lost controlling client pauses the queue** (`useHoldsControl` in
     `transport/useControlRole.ts`: always held on the desktop; in a browser only while connected and
     named the controller). Paused, every queue button is disabled and the machine refuses every
@@ -418,7 +440,14 @@ of the quick controls and the sample sheet, until the kit has them).
   `experiment_stop`, `experiment_start` (S2, run 2), `experiment_stop`, each on its button and
   nothing in between (not on the finalize, the close confirmation or the swap prompt); on the
   PZ7035, visiting the Plan sends no switch, "Switch to Run" is disabled until the Run window is
-  placed in Align, then sends exactly `set_instrument_mode` run at the placed window.
+  placed in Align, then sends exactly `set_instrument_mode` run at the placed window. After review
+  (#739, `useHoldsControl` mocked as a store the test flips): losing and regaining control while
+  the Start's readiness read is held sends no `experiment_start`, and Start after Resume sends one;
+  when S1's post-start refresh fails and another client's run (its own file) is reported first, S1
+  is interrupted, never adopted, and nothing is stopped or confirmed; after Align's "Show the full
+  sensor", Start (queue and single) is disabled with the reason, navigating sends nothing, and "Show
+  the experiment window" sends exactly `set_camera_overview` false. `experimentStart.test.ts` covers
+  the withdrawal at each step.
   `queueModel.test.ts` covers every transition, a failure at each step, retry / skip / end, the
   generation rules, the pause, editing locks, the stepper and a 50-trial sequence check that no run
   index is sent twice; `QueuePlan.test.tsx` (StrictMode, the real `usePlan`) the two-sample flow,

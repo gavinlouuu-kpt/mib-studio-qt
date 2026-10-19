@@ -14,10 +14,10 @@ import {
   concentrationText,
   invalidRequestReason,
   issuesFor,
-  type PlanRunMode,
+  type PlanCameraMode,
   type SampleRow,
 } from "./planModel";
-import { FormatCard, NOT_DECLARED, OperatorFields, RunModeNotice, SampleEditor, startBlocks } from "./planParts";
+import { FormatCard, NOT_DECLARED, OperatorFields, CameraModeNotice, SampleEditor, startBlocks } from "./planParts";
 import { QueuePlan } from "./QueuePlan";
 import type { Verdict } from "./prepareModel";
 import type { PlanController, PlanStartResult } from "./usePlan";
@@ -30,9 +30,10 @@ export interface PlanViewProps {
   /** Prepare's one verdict, and why its checklist blocks (confirmBlockers), null when it does not. */
   verdict: Verdict;
   blockers: { tone: "blocked" | "unknown" | "warn"; lines: string[] } | null;
-  /** PZ7035: the explicit switch to Run while the instrument is not in Run (null when none). */
-  runMode?: PlanRunMode | null;
-  onSwitchToRun?: () => Promise<unknown>;
+  /** The explicit switch to the mode a run records in: the PZ7035's Run, a desktop camera's
+   *  experiment window after the full sensor (null when none is needed). */
+  cameraMode?: PlanCameraMode | null;
+  onCameraMode?: () => Promise<unknown>;
 }
 
 export { startBlocks, type StartBlock } from "./planParts";
@@ -50,6 +51,7 @@ export function resultNotice(r: PlanStartResult | null): NoticeText | null {
     case "refused": return invalidRequestReason(r.message) ? null : { tone: "blocked", title: "Not started · the backend refused the Start", text: `${r.path}: ${r.message}` };
     case "error": return { tone: "blocked", title: "Not started · an error before the start was sent", text: r.message };
     case "busy": return { tone: "info", title: "Not started · a start request is already pending", text: "Wait for it to finish." };
+    case "withdrawn": return { tone: "warn", title: "Not started · control was lost while the Start was pending", text: "Nothing was sent. Press Start run again." };
     default: return null;
   }
 }
@@ -64,12 +66,12 @@ export function PlanView(props: PlanViewProps) {
   return props.plan.draft.format === "queue" ? <QueuePlan {...props} /> : <SinglePlan {...props} />;
 }
 
-function SinglePlan({ plan, lockedReason, verdict, blockers, runMode, onSwitchToRun }: PlanViewProps) {
+function SinglePlan({ plan, lockedReason, verdict, blockers, cameraMode, onCameraMode }: PlanViewProps) {
   const { draft, started, starting } = plan;
   const row = draft.rows[0];
   const build = buildStartRequest(draft, 0, SINGLE_SAMPLE_RUN_INDEX);
   const locked = !!started || starting;
-  const blocks = startBlocks({ started: started?.outcome ?? null, starting, verdict, blockers, lockedReason, issues: build.issues });
+  const blocks = startBlocks({ started: started?.outcome ?? null, starting, verdict, blockers, lockedReason, issues: build.issues, cameraReason: cameraMode?.startReason });
   const refusal = plan.result?.kind === "refused" ? invalidRequestReason(plan.result.message) : null;
   const outcome = resultNotice(plan.result);
   const refresh = refreshNotice(plan.result);
@@ -134,7 +136,7 @@ function SinglePlan({ plan, lockedReason, verdict, blockers, runMode, onSwitchTo
             {starting ? "Starting…" : "Start run"}
           </Button>
         </>}>
-        <RunModeNotice runMode={runMode} onSwitch={onSwitchToRun} />
+        <CameraModeNotice mode={cameraMode} onSwitch={onCameraMode} />
         {outcome ? <Notice tone={outcome.tone} title={outcome.title} data-testid="plan-outcome">{outcome.text}</Notice> : null}
         {refresh ? <Notice tone={refresh.tone} title={refresh.title} data-testid="plan-refresh">{refresh.text}</Notice> : null}
         {blocks.map((b) => (

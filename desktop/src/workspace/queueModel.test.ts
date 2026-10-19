@@ -20,6 +20,8 @@ import {
   rowChip,
   rowEditable,
   rowState,
+  ownRunActive,
+  recordedPath,
   type QueueEvent,
   type QueueState,
   type RowPhase,
@@ -33,12 +35,14 @@ const status = (over: Partial<ExperimentStatus> = {}): ExperimentStatus => ({
   capture_generation: "1", persistence_admitted: "0", persistence_committed: "0", persistence_failed: "0", terminal: false, finalization_ok: false,
   completion: C.Complete, completion_reason: "", fault_revision: "0", fault_code: "", fault_message: "", ...over,
 });
-const active = (gen: string, path = `/data/${gen}.h5`) => status({ state: S.Active, start_generation: gen, output_path: path });
-const stopping = (gen: string) => status({ state: S.Stopping, flushing: true, start_generation: gen, output_path: `/data/${gen}.h5` });
+/** Statuses of a run on a file (by default the file every test row chose, "/data/run.h5"). */
+const RUN = "/data/run.h5";
+const active = (gen: string, path = RUN) => status({ state: S.Active, start_generation: gen, output_path: path });
+const stopping = (gen: string, path = RUN) => status({ state: S.Stopping, flushing: true, start_generation: gen, output_path: path });
 const closed = (gen: string, over: Partial<ExperimentStatus> = {}) =>
-  status({ state: S.Idle, terminal: true, finalization_ok: true, start_generation: gen, output_path: `/data/${gen}.h5`, persistence_admitted: "10", ...over });
+  status({ state: S.Idle, terminal: true, finalization_ok: true, start_generation: gen, output_path: RUN, persistence_admitted: "10", ...over });
 
-const STARTED = (path = "/data/run.h5"): PlanStartResult => ({ kind: "started", path, notice: "" });
+const STARTED = (path = RUN): PlanStartResult => ({ kind: "started", path, notice: "" });
 
 /** Apply events in order. */
 function run(events: QueueEvent[], q: QueueState = newQueue(), order = ORDER): QueueState {
@@ -49,7 +53,7 @@ const phase = (q: QueueState, ref: string): RowPhase => rowState(q, ref).phase;
 /** S1 started as run 1 (generation 1, from 0), and running. */
 const startedS1 = (): QueueState => run([
   { type: "start", ref: "S1", runIndex: 1, generationBefore: "0" },
-  { type: "start-result", ref: "S1", runIndex: 1, generationBefore: "0", result: STARTED("/data/s1.h5") },
+  { type: "start-result", ref: "S1", runIndex: 1, generationBefore: "0", result: STARTED() },
 ]);
 /** S1 run through to finalized. */
 const finalizedS1 = (): QueueState => run([
@@ -88,7 +92,7 @@ describe("Start", () => {
     const q = startedS1();
     expect(phase(q, "S1")).toBe("running");
     expect(q.nextRunIndex).toBe(2);
-    expect(rowState(q, "S1").attempts).toEqual([{ runIndex: 1, outcome: "started", path: "/data/s1.h5", generationBefore: "0", generation: null }]);
+    expect(rowState(q, "S1").attempts).toEqual([{ runIndex: 1, outcome: "started", path: RUN, generationBefore: "0", generation: null }]);
     expect(rowEditable(q, "S1")).toBe(false);
     expect(queueInProgress(ORDER, q)).toBe(true);
   });
@@ -124,6 +128,7 @@ describe("Start", () => {
     ["not ready", { kind: "not-ready", message: "/data/s1.h5: storage.output: not writable" }, "Not started · readiness with the chosen file"],
     ["an error before sending", { kind: "error", message: "dialog unavailable" }, "Not started · an error before the start was sent"],
     ["busy", { kind: "busy" }, "Not started · a start request is already pending"],
+    ["withdrawn (control lost while pending)", { kind: "withdrawn" }, "Not started · control was lost while the Start of S1 was pending"],
   ])("%s: nothing was recorded, the index is kept, the row stays editable; the flow stops there", (_, result, title) => {
     const q = run([
       { type: "start", ref: "S1", runIndex: 1, generationBefore: "0" },
@@ -175,7 +180,7 @@ describe("the run, followed in the status", () => {
     expect(before).toBe(q); // the previous run's terminal status does not finalize this one
     const seen = run([{ type: "status", status: active("5") }], q);
     expect(rowState(seen, "S1").attempts[0].generation).toBe("5");
-    expect(rowState(seen, "S1").outputPath).toBe("/data/5.h5");
+    expect(rowState(seen, "S1").outputPath).toBe(RUN);
     expect(run([{ type: "status", status: closed("4") }], seen)).toBe(seen); // an older read answering late
   });
 
@@ -191,7 +196,7 @@ describe("the run, followed in the status", () => {
     expect(phase(q, "S1")).toBe("stopping");
     q = run([{ type: "status", status: stopping("1") }, { type: "status", status: closed("1") }], q);
     expect(phase(q, "S1")).toBe("finalized");
-    expect(rowState(q, "S1").end).toMatchObject({ ok: true, outputPath: "/data/1.h5", severity: "ok" });
+    expect(rowState(q, "S1").end).toMatchObject({ ok: true, outputPath: RUN, severity: "ok" });
     // Any number of further reads change nothing: the close waits for the operator, S2 waits for its Start.
     const again = run(Array.from({ length: 5 }, () => ({ type: "status", status: closed("1") }) as QueueEvent), q);
     expect(again).toBe(q);
@@ -224,11 +229,64 @@ describe("the run, followed in the status", () => {
     expect(phase(run([{ type: "skip", ref: "S1" }], q), "S1")).toBe("skipped");
   });
 
-  it("a later run reported before this run's end was seen: failed, said as such", () => {
+  it("another run during the row (a later generation, another file): interrupted; the queue never stops or confirms that run", () => {
     const q = run([{ type: "status", status: active("1") }, { type: "status", status: active("2", "/data/other.h5") }], startedS1());
-    expect(phase(q, "S1")).toBe("failed");
-    expect(rowState(q, "S1").failure).toMatchObject({ tone: "unknown", title: "S1 · the end of run 1 was not seen" });
+    expect(phase(q, "S1")).toBe("interrupted");
+    expect(rowState(q, "S1").failure).toMatchObject({ step: "run", tone: "unknown", title: "S1 · interrupted · another run started on this instrument" });
     expect(rowState(q, "S1").failure!.text).toContain("/data/other.h5");
+    expect(rowState(q, "S1").failure!.text).toContain("does not stop or confirm that run");
+    expect(run([{ type: "stop", ref: "S1" }], q)).toBe(q);
+    // The other run finalizing changes nothing for S1: it is not S1's to confirm.
+    const after = run([{ type: "status", status: closed("2", { output_path: "/data/other.h5" }) }], q);
+    expect(after).toBe(q);
+    expect(run([{ type: "confirm-closed", ref: "S1" }], after)).toBe(after);
+    expect(rowChip(rowState(q, "S1"), false)).toEqual({ tone: "unknown", text: "Interrupted · another run" });
+    // The operator decides: retry as a new run, skip or end.
+    expect(canEnd(ORDER, q)).toBe(true);
+    expect(phase(run([{ type: "start", ref: "S1", runIndex: 2, generationBefore: "2" }], q), "S1")).toBe("starting");
+    expect(phase(run([{ type: "skip", ref: "S1" }], q), "S1")).toBe("skipped");
+  });
+
+  it("another run starting before the queue's first observation of the row's run is never adopted as the row's", () => {
+    // S1's start was accepted (generation 1), its refresh failed; another client stopped it and
+    // started its own run (generation 2, its own file) before the next good poll.
+    const q = run([{ type: "status", status: active("2", "/data/theirs.h5") }], startedS1());
+    expect(phase(q, "S1")).toBe("interrupted");
+    expect(rowState(q, "S1").attempts[0].generation).toBeNull(); // never adopted
+    expect(rowState(q, "S1").outputPath).toBe("");
+    expect(run([{ type: "status", status: stopping("2", "/data/theirs.h5") }, { type: "status", status: closed("2", { output_path: "/data/theirs.h5" }) }], q)).toBe(q);
+  });
+
+  it("a status of the row's generation on another file, or of its file at an older generation, is not the row's", () => {
+    const seen = run([{ type: "status", status: active("1") }], startedS1());
+    expect(phase(run([{ type: "status", status: active("1", "/data/other.h5") }], seen), "S1")).toBe("interrupted");
+    const unseen = startedS1();
+    expect(run([{ type: "status", status: active("0") }], unseen)).toBe(unseen); // the read before the start, same file or not
+  });
+
+  it("the backend appends .h5 to a chosen file without it: that is still the row's file", () => {
+    expect(recordedPath("/data/s1")).toBe("/data/s1.h5");
+    expect(recordedPath("/data/s1.h5")).toBe("/data/s1.h5");
+    expect(recordedPath("/data/s1.hdf5")).toBe("/data/s1.hdf5");
+    const q = run([
+      { type: "start", ref: "S1", runIndex: 1, generationBefore: "0" },
+      { type: "start-result", ref: "S1", runIndex: 1, generationBefore: "0", result: STARTED("/data/s1") },
+      { type: "status", status: active("1", "/data/s1.h5") },
+    ]);
+    expect(phase(q, "S1")).toBe("running");
+    expect(rowState(q, "S1").attempts[0].generation).toBe("1");
+  });
+
+  it("Next sample needs the row's own run seen active: not before the first observation, not for another run", () => {
+    const unseen = startedS1();
+    expect(ownRunActive(rowState(unseen, "S1"), active("1"))).toBe(false); // the machine has not seen it yet
+    expect(run([{ type: "stop", ref: "S1" }], unseen)).toBe(unseen);
+    const seen = run([{ type: "status", status: active("1") }], unseen);
+    expect(ownRunActive(rowState(seen, "S1"), active("1"))).toBe(true);
+    expect(ownRunActive(rowState(seen, "S1"), active("1", "/data/other.h5"))).toBe(false);
+    expect(ownRunActive(rowState(seen, "S1"), active("2"))).toBe(false);
+    expect(ownRunActive(rowState(seen, "S1"), stopping("1"))).toBe(false);
+    expect(ownRunActive(rowState(seen, "S1"), null)).toBe(false);
   });
 
   it("a stop that is not accepted (or gets no reply) stops the flow there: the run is shown running with the reason; Next sample sends it again", () => {
@@ -405,6 +463,7 @@ describe("presentation", () => {
     expect(states("finalized")).toEqual(["planned:done", "starting:done", "running:done", "stopping:done", "finalized:done", "closed:current"]);
     expect(states("failed")).toEqual(["planned:done", "starting:done", "running:done", "stopping:done", "finalized:failed(Failed)", "closed:pending"]);
     expect(states("closed")).toEqual(["planned:done", "starting:done", "running:done", "stopping:done", "finalized:done", "closed:done"]);
+    expect(states("interrupted")).toEqual(["planned:done", "starting:done", "running:failed(Interrupted · another run)", "stopping:pending", "finalized:pending", "closed:pending"]);
   });
 
   it("row chips use the kit tones", () => {

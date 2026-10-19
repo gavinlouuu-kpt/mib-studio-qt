@@ -16,7 +16,7 @@ import {
   type OperatorChoice,
   type PlanDraft,
   type PlanIssue,
-  type PlanRunMode,
+  type PlanCameraMode,
   type RowTextField,
   type SampleFormat,
   type SampleRow,
@@ -29,14 +29,14 @@ export type StartBlockers = { tone: "blocked" | "unknown" | "warn"; lines: strin
 
 /** Why Start run is unavailable, each as its own Notice next to the button. */
 export interface StartBlock {
-  id: "started" | "starting" | "prepare" | "locked" | "sheet" | "control" | "status" | "paused";
+  id: "started" | "starting" | "prepare" | "locked" | "sheet" | "control" | "status" | "paused" | "camera";
   tone: "blocked" | "unknown" | "warn" | "info";
   title: string;
   text: string;
 }
 
 /** Every reason Start run is unavailable, in plain words (empty = it is available). */
-export function startBlocks(p: { started: "started" | "unknown" | null; starting: boolean; verdict: Verdict; blockers: StartBlockers; lockedReason: string; issues: readonly PlanIssue[] }): StartBlock[] {
+export function startBlocks(p: { started: "started" | "unknown" | null; starting: boolean; verdict: Verdict; blockers: StartBlockers; lockedReason: string; issues: readonly PlanIssue[]; cameraReason?: string }): StartBlock[] {
   const out: StartBlock[] = [];
   if (p.started === "started") out.push({ id: "started", tone: "info", title: "This plan's run has started", text: "Its identity is recorded in that run. A new plan mints a new experiment id." });
   if (p.started === "unknown") out.push({ id: "started", tone: "info", title: "This plan's identity may be recorded", text: "The start request was sent but its reply was lost, so it is not sent again. A new plan mints a new experiment id." });
@@ -45,6 +45,7 @@ export function startBlocks(p: { started: "started" | "unknown" | null; starting
   if (p.verdict.word === "Not ready")
     out.push({ id: "prepare", tone: p.blockers?.tone ?? "blocked", title: `Start is unavailable · Prepare: ${p.verdict.title}`, text: p.blockers?.lines.length ? `${p.blockers.lines.join(". ")}.` : p.verdict.detail });
   if (p.lockedReason) out.push({ id: "locked", tone: "info", title: "Start is unavailable", text: `${p.lockedReason.replace(/\.$/, "")}.` });
+  if (p.cameraReason) out.push({ id: "camera", tone: "blocked", title: "Start is unavailable · camera mode", text: `${p.cameraReason}. Show the experiment window first (the button above).` });
   if (p.issues.length)
     out.push({ id: "sheet", tone: "blocked", title: `Start is unavailable · the plan has ${p.issues.length === 1 ? "1 issue" : `${p.issues.length} issues`}`, text: p.issues.map(issueLine).join(" ") });
   return out;
@@ -171,9 +172,10 @@ export function OperatorFields({ plan, issues, locked }: { plan: PlanController;
   );
 }
 
-/** The PZ7035's explicit switch to Run (App's applyCameraMode, as the classic Experiment tab on
- *  entry): shown while the instrument is not in Run; navigation never switches. */
-export function RunModeNotice({ runMode, onSwitch }: { runMode: PlanRunMode | null | undefined; onSwitch?: () => Promise<unknown> }) {
+/** The explicit switch to the mode a run records in (App's applyCameraMode("experiment"), as the
+ *  classic Experiment tab on entry): the PZ7035's "Switch to Run", a desktop camera's "Show the
+ *  experiment window". Navigation never switches. */
+export function CameraModeNotice({ mode: runMode, onSwitch }: { mode: PlanCameraMode | null | undefined; onSwitch?: () => Promise<unknown> }) {
   const [switching, setSwitching] = useState(false);
   if (!runMode || !onSwitch) return null;
   const press = async () => {
@@ -182,7 +184,7 @@ export function RunModeNotice({ runMode, onSwitch }: { runMode: PlanRunMode | nu
     try { await onSwitch(); } finally { setSwitching(false); }
   };
   return (
-    <Notice tone={runMode.tone === "blocked" ? "blocked" : runMode.tone === "unknown" ? "unknown" : "info"} title={`Camera · ${runMode.label}`} data-testid="plan-run-mode"
+    <Notice tone={runMode.tone} title={`Camera · ${runMode.label}`} data-testid="plan-camera-mode"
       actions={<Button variant="primary" disabled={!!runMode.blocked || switching} title={runMode.blocked || undefined} onClick={() => void press()}>
         {switching ? "Switching…" : runMode.action}
       </Button>}>

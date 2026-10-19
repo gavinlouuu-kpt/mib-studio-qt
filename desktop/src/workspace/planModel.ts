@@ -84,36 +84,56 @@ export function nextSampleRef(rows: readonly Pick<SampleRow, "ref">[]): string {
   return `S${n + 1}`;
 }
 
-// ---- the PZ7035 Run mode -------------------------------------------------------------------------
+// ---- the camera mode a run needs ---------------------------------------------------------------
 
-export interface PlanRunModeFacts {
+export interface PlanCameraModeFacts {
   /** The instrument has Align and Run modes (the PZ7035). */
   instrumentModes: boolean;
-  /** The mode the instrument reports (fetch_instrument_status.mode.name), null before it is read. */
+  /** PZ7035: the mode the instrument reports (fetch_instrument_status.mode.name), null before it is read. */
   mode: string | null;
-  /** The Run window was placed (in Align, or restored from the backend). */
+  /** PZ7035: the Run window was placed (in Align, or restored from the backend). */
   windowPlaced: boolean;
   experimentActive: boolean;
-  /** A stopped Run holds its buffered frames (the backend refuses a mode switch). */
+  /** PZ7035: a stopped Run holds its buffered frames (the backend refuses a mode switch). */
   runFrozen: boolean;
-  /** The backend's refusal of the last switch to Run, "" when none. */
+  /** The backend's refusal of the last switch to the experiment mode (Run, or the experiment window), "" when none. */
   modeError: string;
+  /** A desktop camera showing the full sensor (the geometry's overview, e.g. after Align's "Show the
+   *  full sensor"), with the sensor size; null when it shows the experiment window or does not say. */
+  fullSensor: { width: number; height: number } | null;
 }
 
-export interface PlanRunMode {
+export interface PlanCameraMode {
   label: string;
-  tone: "blocked" | "info" | "unknown";
-  action: "Switch to Run";
+  tone: "blocked" | "info" | "unknown" | "warn";
+  action: "Switch to Run" | "Show the experiment window";
   detail: string;
   /** Why the switch is unavailable, "" when it can be pressed. */
   blocked: string;
+  /** Why Start is unavailable in this mode, when no other reason says so ("" on the PZ7035, where the
+   *  classic Start's own reason, "The camera is not in Run mode yet", already does). */
+  startReason: string;
 }
 
-/** The Plan's explicit switch to Run on the PZ7035 (#716 A5): offered while the instrument is not
- *  in Run, the same switch the classic Experiment tab makes on entry, here only on the button.
- *  Null when no switch is needed (in Run already, or a camera without Align/Run modes). */
-export function planRunMode(f: PlanRunModeFacts): PlanRunMode | null {
-  if (!f.instrumentModes || f.mode === "run") return null;
+/** The Plan's explicit switch to the mode a run records in (#716 A5), the classic Experiment tab's
+ *  entry switch (App's applyCameraMode("experiment")), here only on its button; navigation never
+ *  switches. On the PZ7035: "Switch to Run" while the instrument is not in Run. On a desktop camera
+ *  left on the full sensor (Align's "Show the full sensor"): "Show the experiment window", and Start
+ *  is unavailable until then, because a run would record the full sensor. Null when no switch is
+ *  needed. */
+export function planCameraMode(f: PlanCameraModeFacts): PlanCameraMode | null {
+  if (!f.instrumentModes) {
+    if (!f.fullSensor) return null;
+    return {
+      label: f.modeError ? `Experiment window refused · ${f.modeError}` : `Full sensor ${f.fullSensor.width || "?"} × ${f.fullSensor.height || "?"}`,
+      tone: f.modeError ? "blocked" : "warn",
+      action: "Show the experiment window",
+      detail: "A run would record the full sensor. This switches the camera back to the experiment window (a running camera restarts), as the classic Experiment tab does on entry; here only this button does.",
+      blocked: f.experimentActive ? "a run is active" : "",
+      startReason: "The camera shows the full sensor, not the experiment window",
+    };
+  }
+  if (f.mode === "run") return null;
   const blocked = f.experimentActive ? "a run is active"
     : !f.windowPlaced ? "place the 512×96 Run window in Align first (Write Run window)"
     : f.runFrozen ? "Run is stopped to review the buffered frames: Resume Run in the classic Experiment tab first"
@@ -124,6 +144,7 @@ export function planRunMode(f: PlanRunModeFacts): PlanRunMode | null {
     action: "Switch to Run",
     detail: "Switches the PZ7035 to Run at the placed Run window (the LED on the Run preset, the cell path on). The classic Experiment tab does this on entry; here only this button does. Start stays unavailable until the instrument is in Run.",
     blocked,
+    startReason: "",
   };
 }
 

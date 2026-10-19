@@ -12,6 +12,9 @@
 //   experiment id; queueModel.ts is the state machine. Each button press is one step; the status
 //   App already polls is observed; nothing advances or starts on its own. A lost controlling client
 //   pauses the queue until the operator resumes it.
+// - A control loss withdraws any pending Start (single or queue): an epoch, taken when Start is
+//   pressed, is checked by the Start flow after every answer and immediately before
+//   experiment_start. A withdrawn Start sends nothing; the operator presses Start again.
 // - The selected operator (#393 phase 1) is remembered locally, in localStorage, when a run
 //   starts with it, and is the next plan's default. It is a selection, not authentication.
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -26,7 +29,7 @@ import {
   type OperatorChoice,
   type PlanDraft,
 } from "./planModel";
-import { currentIndex, editKeepsRecorded, newQueue, queueInProgress, reduceQueue, type QueueEvent, type QueueState } from "./queueModel";
+import { currentIndex, editKeepsRecorded, newQueue, ownRunActive, queueInProgress, reduceQueue, rowState, type QueueEvent, type QueueState } from "./queueModel";
 
 /** Where the remembered operators are kept (this machine only). */
 export const OPERATORS_STORAGE_KEY = "mib.workspace.operators";
@@ -125,7 +128,11 @@ function writeOperators(list: OperatorChoice[]) {
 
 const noStop = async (): Promise<StopReply> => ({ ok: false, message: "stopping is not available here" });
 
-export function usePlan(runStart: (startRequestJson: string) => Promise<PlanStartResult>, options: PlanOptions = {}): PlanController {
+/** The caller's Start flow: the startRequestJson, and whether the Start is still wanted (asked
+ *  after each step and immediately before experiment_start; false withdraws it). */
+export type RunStart = (startRequestJson: string, stillWanted?: () => boolean) => Promise<PlanStartResult>;
+
+export function usePlan(runStart: RunStart, options: PlanOptions = {}): PlanController {
   const status = options.status ?? null;
   const controlHeld = options.controlHeld ?? true;
   const [operators, setOperators] = useState<OperatorChoice[]>(readOperators);
@@ -151,6 +158,8 @@ export function usePlan(runStart: (startRequestJson: string) => Promise<PlanStar
   controlRef.current = controlHeld;
   const stopRef = useRef(options.stop ?? noStop);
   stopRef.current = options.stop ?? noStop;
+  // Bumped on every control loss: a Start pressed before it is no longer wanted.
+  const controlEpoch = useRef(0);
 
   const order = () => draftRef.current.rows.map((r) => r.ref);
   const dispatch = useCallback((e: QueueEvent) => {
@@ -163,7 +172,12 @@ export function usePlan(runStart: (startRequestJson: string) => Promise<PlanStar
   // The queue observes every status read (backend facts apply even while paused).
   useEffect(() => { dispatch({ type: "status", status }); }, [status, dispatch]);
   // A lost controlling client pauses a queue in progress; it never resumes on its own.
-  useEffect(() => { if (!controlHeld) dispatch({ type: "pause", reason: CONTROL_LOST_REASON }); }, [controlHeld, dispatch]);
+  // A control loss also withdraws any pending Start (the epoch the Start flow checks).
+  useEffect(() => {
+    if (controlHeld) return;
+    controlEpoch.current += 1;
+    dispatch({ type: "pause", reason: CONTROL_LOST_REASON });
+  }, [controlHeld, dispatch]);
 
   const edit = useCallback((change: (d: PlanDraft) => PlanDraft) => {
     if (startedRef.current || pending.current) return;
@@ -185,8 +199,9 @@ export function usePlan(runStart: (startRequestJson: string) => Promise<PlanStar
     pending.current = true;
     setStarting(true);
     setResult(null);
+    const epoch = controlEpoch.current;
     try {
-      const out = await runStart(json);
+      const out = await runStart(json, () => controlEpoch.current === epoch && controlRef.current);
       setResult(out);
       // Locked as soon as the backend accepted the start (or may have): whatever a later refresh
       // did, this identity is recorded in that run and is not sent again.
@@ -224,9 +239,10 @@ export function usePlan(runStart: (startRequestJson: string) => Promise<PlanStar
     if (queueRef.current.rows[ref]?.phase !== "starting") return; // the machine refused it
     pending.current = true;
     setQueuePending("start");
+    const epoch = controlEpoch.current;
     let out: PlanStartResult;
     try {
-      out = await runStart(build.json);
+      out = await runStart(build.json, () => controlEpoch.current === epoch && controlRef.current && !queueRef.current.paused);
     } catch (e) {
       out = { kind: "unknown", path: "", message: String(e) }; // the request may have been sent
     } finally {
@@ -244,6 +260,8 @@ export function usePlan(runStart: (startRequestJson: string) => Promise<PlanStar
     const index = currentIndex(order(), q);
     if (index < 0) return;
     const ref = draftRef.current.rows[index].ref;
+    // experiment_stop stops whatever run is active: only when the status shows this row's own run.
+    if (!ownRunActive(rowState(q, ref), statusRef.current)) return;
     dispatch({ type: "stop", ref });
     if (!queueRef.current.rows[ref]?.stopPending) return; // the machine refused it
     pending.current = true;

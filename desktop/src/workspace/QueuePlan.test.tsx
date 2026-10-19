@@ -13,7 +13,7 @@ import type { ExperimentStatus } from "../eventAdapter";
 import type { PreflightInput } from "../preflight";
 import type { AlignFacts } from "./alignControls";
 import type { ExperimentSubView } from "./ExperimentView";
-import { planRunMode, type PlanRunMode } from "./planModel";
+import { planCameraMode, type PlanCameraMode } from "./planModel";
 import { usePlan, type PlanStartResult, type StopReply } from "./usePlan";
 import { Workspace, type WorkspaceProps } from "./Workspace";
 
@@ -38,14 +38,16 @@ const status = (over: Partial<ExperimentStatus> = {}): ExperimentStatus => ({
 });
 
 let host: HTMLDivElement, root: Root;
-let runStart = vi.fn(async (_json: string): Promise<PlanStartResult> => ({ kind: "started", path: "/data/run.h5", notice: "" }));
+/** The file the mock's dialog gives each sample: /data/s1.h5 for S1. */
+const fileFor = (json: string) => `/data/${String(JSON.parse(json).sample_ref).toLowerCase()}.h5`;
+let runStart = vi.fn(async (json: string, _stillWanted?: () => boolean): Promise<PlanStartResult> => ({ kind: "started", path: fileFor(json), notice: "" }));
 let stop = vi.fn(async (): Promise<StopReply> => ({ ok: true, message: "stop accepted" }));
-const onSwitchToRun = vi.fn(async () => {});
+const onCameraMode = vi.fn(async () => {});
 /** The test's handles on the harness's backend facts. */
 let setStatus: (s: ExperimentStatus | null) => void = () => {};
 let setControl: (held: boolean) => void = () => {};
 
-function Harness({ runMode = null }: { runMode?: PlanRunMode | null }) {
+function Harness({ cameraMode = null }: { cameraMode?: PlanCameraMode | null }) {
   const [st, setSt] = useState<ExperimentStatus | null>(status());
   const [held, setHeld] = useState(true);
   setStatus = setSt; setControl = setHeld;
@@ -56,12 +58,12 @@ function Harness({ runMode = null }: { runMode?: PlanRunMode | null }) {
     preflightInput: READY_INPUT, zStage: null, signature: "sig", confirmedFor: "", onConfirm: () => {}, confirmLockedReason: "",
     experimentActive: false, onRefreshChecks: () => {}, onOpenSetup: () => {},
     align: { facts: FACTS, subscribeFrames: () => () => {}, onSwitchMode: async () => {}, writeRoi: vi.fn(), lockedReason: "" },
-    experiment: { plan, lockedReason: "", view, onView: setView, runMode, onSwitchToRun },
+    experiment: { plan, lockedReason: "", view, onView: setView, cameraMode, onCameraMode },
   };
   return <Workspace {...props} />;
 }
 
-const render = (props: { runMode?: PlanRunMode | null } = {}) => act(async () => root.render(<StrictMode><Harness {...props} /></StrictMode>));
+const render = (props: { cameraMode?: PlanCameraMode | null } = {}) => act(async () => root.render(<StrictMode><Harness {...props} /></StrictMode>));
 const advance = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
 const $ = (id: string) => host.querySelector<HTMLElement>(`[data-testid=${id}]`);
 const button = (text: string) => [...host.querySelectorAll("button")].find((b) => b.textContent === text) as HTMLButtonElement | undefined;
@@ -101,7 +103,7 @@ beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   vi.useFakeTimers();
   vi.resetAllMocks();
-  runStart = vi.fn(async (_json: string): Promise<PlanStartResult> => ({ kind: "started", path: "/data/run.h5", notice: "" }));
+  runStart = vi.fn(async (json: string, _stillWanted?: () => boolean): Promise<PlanStartResult> => ({ kind: "started", path: fileFor(json), notice: "" }));
   stop = vi.fn(async (): Promise<StopReply> => ({ ok: true, message: "stop accepted" }));
   const saved = new Map<string, string>();
   vi.stubGlobal("localStorage", { getItem: (k: string) => saved.get(k) ?? null, setItem: (k: string, v: string) => void saved.set(k, v), removeItem: (k: string) => void saved.delete(k) });
@@ -294,7 +296,7 @@ describe("a failure stops the flow at its step, with the operator's choice", () 
     stop = vi.fn(async () => ({ ok: false, message: "Busy" }));
     await twoSamples();
     await press($("queue-start"), "Start S1");
-    await report({ state: S.Active, start_generation: "1" });
+    await report({ state: S.Active, start_generation: "1", output_path: "/data/s1.h5" });
     await press(button("Next sample"), "Next sample");
     expect($("queue-step")!.textContent).toContain("S1 · the stop was not accepted");
     expect(stateOf("S1")).toBe("Running · stop not accepted");
@@ -359,29 +361,132 @@ describe("a lost controlling client", () => {
   });
 });
 
-describe("the PZ7035 Run switch", () => {
-  const facts = { instrumentModes: true, mode: "align", windowPlaced: true, experimentActive: false, runFrozen: false, modeError: "" };
+describe("the camera mode a run records in", () => {
+  const facts = { instrumentModes: true, mode: "align", windowPlaced: true, experimentActive: false, runFrozen: false, modeError: "", fullSensor: null };
 
-  it("is a button: shown outside Run, pressed once it calls the switch once; navigation alone never calls it", async () => {
-    await render({ runMode: planRunMode(facts) });
-    const notice = $("plan-run-mode")!;
+  it("PZ7035: Switch to Run is a button: shown outside Run, pressed once it calls the switch once; navigation alone never calls it", async () => {
+    await render({ cameraMode: planCameraMode(facts) });
+    const notice = $("plan-camera-mode")!;
     expect(notice.textContent).toContain("Camera · Align · not in Run");
     await advance(5000);
-    expect(onSwitchToRun).not.toHaveBeenCalled();
+    expect(onCameraMode).not.toHaveBeenCalled();
     await press(button("Switch to Run"), "Switch to Run");
-    expect(onSwitchToRun).toHaveBeenCalledTimes(1);
+    expect(onCameraMode).toHaveBeenCalledTimes(1);
+    expect($("plan-blocked-camera")).toBeNull(); // the classic Start's reason says it on the PZ7035
     // In the queue too.
     await press(host.querySelectorAll<HTMLInputElement>(".mib-option input")[1], "Sample queue");
-    expect($("queue-card")!.querySelector("[data-testid=plan-run-mode]")).not.toBeNull();
+    expect($("queue-card")!.querySelector("[data-testid=plan-camera-mode]")).not.toBeNull();
   });
 
-  it("says why it cannot switch (no Run window placed, a run active), and is not offered in Run or off the PZ7035", async () => {
-    await render({ runMode: planRunMode({ ...facts, windowPlaced: false }) });
+  it("PZ7035: says why it cannot switch (no Run window placed, a run active), and is not offered in Run", async () => {
+    await render({ cameraMode: planCameraMode({ ...facts, windowPlaced: false }) });
     expect(button("Switch to Run")!.disabled).toBe(true);
-    expect($("plan-run-mode")!.textContent).toContain("Switch to Run is unavailable: place the 512×96 Run window in Align first");
-    expect(planRunMode({ ...facts, experimentActive: true })!.blocked).toBe("a run is active");
-    expect(planRunMode({ ...facts, mode: "run" })).toBeNull();
-    expect(planRunMode({ ...facts, instrumentModes: false })).toBeNull();
-    expect(planRunMode({ ...facts, modeError: "producer busy" })).toMatchObject({ label: "Run refused · producer busy", tone: "blocked" });
+    expect($("plan-camera-mode")!.textContent).toContain("Switch to Run is unavailable: place the 512×96 Run window in Align first");
+    expect(planCameraMode({ ...facts, experimentActive: true })!.blocked).toBe("a run is active");
+    expect(planCameraMode({ ...facts, mode: "run" })).toBeNull();
+    expect(planCameraMode({ ...facts, modeError: "producer busy" })).toMatchObject({ label: "Run refused · producer busy", tone: "blocked" });
+  });
+
+  it("desktop on the full sensor: Start is unavailable with the reason, in the single plan and the queue; only the button switches", async () => {
+    const desktop = { ...facts, instrumentModes: false, mode: null, fullSensor: { width: 2048, height: 512 } };
+    expect(planCameraMode({ ...desktop, fullSensor: null })).toBeNull(); // the experiment window: nothing to switch
+    await render({ cameraMode: planCameraMode(desktop) });
+    expect($("plan-camera-mode")!.textContent).toContain("Camera · Full sensor 2048 × 512");
+    const single = button("Start run")!;
+    expect(single.disabled).toBe(true);
+    expect($("plan-blocked-camera")!.textContent).toContain("The camera shows the full sensor, not the experiment window");
+    await press(single, "Start run");
+    await advance(5000);
+    expect(runStart).not.toHaveBeenCalled();
+    expect(onCameraMode).not.toHaveBeenCalled();
+    await press(host.querySelectorAll<HTMLInputElement>(".mib-option input")[1], "Sample queue");
+    expect(($("queue-start") as HTMLButtonElement).disabled).toBe(true);
+    expect($("plan-blocked-camera")!.textContent).toContain("The camera shows the full sensor, not the experiment window");
+    await press(button("Show the experiment window"), "Show the experiment window");
+    expect(onCameraMode).toHaveBeenCalledTimes(1);
+    expect(runStart).not.toHaveBeenCalled();
+    // Back in the experiment window: Start is available again.
+    await render({ cameraMode: planCameraMode({ ...desktop, fullSensor: null }) });
+    expect($("plan-camera-mode")).toBeNull();
+    expect(($("queue-start") as HTMLButtonElement).disabled).toBe(false);
+  });
+});
+
+describe("a run is the row's only on the row's own file (#739 review)", () => {
+  it("another run starting before the first observation of S1's run: S1 is interrupted; the queue never stops or confirms it", async () => {
+    await twoSamples();
+    await press($("queue-start"), "Start S1");
+    // Before any good read of S1's run, another client's run is reported (a newer generation, its own file).
+    await report({ state: S.Active, start_generation: "2", output_path: "/data/theirs.h5" });
+    expect(stateOf("S1")).toBe("Interrupted · another run");
+    expect($("queue-step")!.textContent).toContain("S1 · interrupted · another run started on this instrument");
+    expect($("queue-step")!.textContent).toContain("/data/theirs.h5");
+    expect(button("Next sample")).toBeUndefined();
+    expect(stepStates()[2]).toBe("failed");
+    // That run ends: it is not S1's to confirm.
+    await report({ state: S.Idle, terminal: true, finalization_ok: true, start_generation: "2", output_path: "/data/theirs.h5" });
+    expect(button("Confirm closed")).toBeUndefined();
+    expect($("queue-file-S1")!.textContent).toBe("s1.h5"); // S1's own chosen file, never the other run's
+    await advance(10_000);
+    expect(stop).not.toHaveBeenCalled();
+    expect(runStart).toHaveBeenCalledTimes(1);
+    // The operator decides: retry as run 2 (a new file), skip or end.
+    expect(button("Retry S1 as run 2")).toBeDefined();
+    expect(button("Skip S1")).toBeDefined();
+    expect(button("End queue")).toBeDefined();
+  });
+
+  it("another run starting during S1: interrupted; Next sample is gone, so the queue cannot stop that run", async () => {
+    await twoSamples();
+    await press($("queue-start"), "Start S1");
+    await report({ state: S.Active, start_generation: "1", output_path: "/data/s1.h5" });
+    expect(button("Next sample")!.disabled).toBe(false);
+    await report({ state: S.Active, start_generation: "2", output_path: "/data/theirs.h5" });
+    expect(stateOf("S1")).toBe("Interrupted · another run");
+    expect(button("Next sample")).toBeUndefined();
+    expect(stop).not.toHaveBeenCalled();
+  });
+
+  it("Next sample waits until the status shows S1's own run active", async () => {
+    await twoSamples();
+    await press($("queue-start"), "Start S1");
+    expect($("queue-step")!.textContent).toContain("S1 started · waiting for the status to report its run");
+    expect(button("Next sample")!.disabled).toBe(true);
+    await press(button("Next sample"), "Next sample");
+    expect(stop).not.toHaveBeenCalled();
+    await report({ state: S.Active, start_generation: "1", output_path: "/data/s1.h5" });
+    expect(button("Next sample")!.disabled).toBe(false);
+  });
+});
+
+describe("a control loss withdraws a pending Start (#739 review)", () => {
+  it("lose and regain control while the Start is pending: the flow is told it is no longer wanted; nothing is sent; Start again after Resume", async () => {
+    // The mock Start flow waits (readiness pending), then asks whether it is still wanted before it would send.
+    let release: () => void = () => {};
+    const sent: string[] = [];
+    runStart = vi.fn(async (json: string, stillWanted?: () => boolean): Promise<PlanStartResult> => {
+      await new Promise<void>((r) => { release = r; });
+      if (stillWanted && !stillWanted()) return { kind: "withdrawn" };
+      sent.push(json);
+      return { kind: "started", path: fileFor(json), notice: "" };
+    });
+    await twoSamples();
+    await press($("queue-start"), "Start S1");
+    expect(runStart).toHaveBeenCalledTimes(1);
+    await act(async () => setControl(false));
+    await act(async () => setControl(true));
+    await act(async () => release());
+    expect(sent).toEqual([]);
+    expect(stateOf("S1")).toBe("Not started");
+    expect($("queue-step")!.textContent).toContain("Not started · control was lost while the Start of S1 was pending");
+    expect($("queue-next-run-index")!.textContent).toBe("1"); // nothing recorded
+    expect($("queue-paused")).not.toBeNull();
+    expect(($("queue-start") as HTMLButtonElement).disabled).toBe(true);
+    await press(button("Resume queue"), "Resume queue");
+    expect(runStart).toHaveBeenCalledTimes(1); // resuming starts nothing
+    await press($("queue-start"), "Start S1");
+    await act(async () => release());
+    expect(sent).toHaveLength(1);
+    expect(JSON.parse(sent[0])).toMatchObject({ run_index: 1, sample_ref: "S1" });
   });
 });

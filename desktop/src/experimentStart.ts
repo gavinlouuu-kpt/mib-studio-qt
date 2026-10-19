@@ -1,6 +1,9 @@
 // The Start Experiment flow (extracted from App.tsx so it can be tested): pick the file, ask before a stopped Run's buffered frames are discarded, evaluate readiness, start.
 // `startRequestJson` (ABI 39, #712) is the run's declared identity and planned annotation as JSON text, from the workspace's Plan
 // (workspace/planModel.ts buildStartRequest). It is passed on unchanged; without one (the classic Start) none is sent.
+// `stillWanted` (the workspace's Plan) is asked after every step the operator answers or waits for (the discard question,
+// the file dialog, readiness) and immediately before experiment_start: once it says no (the client lost control while the
+// Start was pending, #716 A5 review) the flow sends nothing more and reports "withdrawn"; the operator presses Start again.
 import { READINESS_GATE_STATUSES } from "./bridgeContract";
 import { startDiscardNotice, type RingStatus } from "./ringPlayback";
 
@@ -25,15 +28,21 @@ export type StartOutcome =
   | { kind: "started"; path: string; notice: string }
   /** The start request was sent but no reply was decoded (transport error): the backend may have
    *  started the run, so its identity must be treated as used. */
-  | { kind: "unknown"; path: string; message: string };
+  | { kind: "unknown"; path: string; message: string }
+  /** Nothing was sent: the Start was withdrawn while it was pending (`stillWanted` said no). */
+  | { kind: "withdrawn" };
 
-export async function startExperiment(deps: StartDeps, startRequestJson?: string): Promise<StartOutcome> {
+export async function startExperiment(deps: StartDeps, startRequestJson?: string, stillWanted: () => boolean = () => true): Promise<StartOutcome> {
   // A stopped Run (after Stop, or after an SSD run) holds its buffered frames and the start discards them: ask first, and tell the backend that the operator agreed.
   const discard = startDiscardNotice(await deps.fetchRingStatus().catch(() => null));
+  if (!stillWanted()) return { kind: "withdrawn" };
   if (discard && !(await deps.confirm(discard))) return { kind: "cancelled" };
+  if (!stillWanted()) return { kind: "withdrawn" };
   const picked = await deps.pickFile();
+  if (!stillWanted()) return { kind: "withdrawn" }; // the dialog's answer is not used
   if (!picked) return { kind: "cancelled" };
   const readiness = await deps.fetchReadiness(picked);
+  if (!stillWanted()) return { kind: "withdrawn" };
   if (!readiness.valid || !readiness.ready) {
     const reason = readiness.gates.filter(g => g.status === READINESS_GATE_STATUSES.Fail || g.status === READINESS_GATE_STATUSES.Unavailable)
       .map(g => `${g.id}: ${g.reason}${g.remediation ? ` — ${g.remediation}` : ""}`).join("; ");
@@ -43,6 +52,7 @@ export async function startExperiment(deps: StartDeps, startRequestJson?: string
   // The outcome is the start reply's alone. Anything before this point failing means nothing was
   // sent; the start call itself failing means the outcome is not known.
   let res: StartResult;
+  if (!stillWanted()) return { kind: "withdrawn" }; // immediately before sending
   try {
     res = startRequestJson === undefined
       ? await deps.start(picked, discard !== "")

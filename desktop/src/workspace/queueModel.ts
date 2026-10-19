@@ -10,6 +10,11 @@
 // advances or starts on its own: after a close the next row waits for its Start, after a failure
 // the row waits for the operator's retry, skip or end.
 //
+// A status belongs to a row's run only when its `output_path` is the row's own file (one file per
+// sample) and its start_generation is newer than the read before the row's Start. A newer run on
+// another file means another run took over this instrument (another client, the classic view): the
+// row is "interrupted", and the queue never stops or confirms that run.
+//
 // Identity rules (#736): a row's start reply alone decides started / refused / unknown. A started
 // or unknown attempt uses its run_index for good: the next Start always sends `nextRunIndex`, which
 // only grows, so a run_index is never sent twice. A refused start recorded nothing and keeps the
@@ -36,6 +41,7 @@ export type RowPhase =
   | "stopping"  // Next sample sent the stop, or the status reports the run stopping (drain, finalize)
   | "finalized" // the backend reports the run terminal and its file closed; awaiting the operator's confirmation
   | "failed"    // the run ended failed or its finalization did not complete
+  | "interrupted" // another run (not this row's file) was reported: this run's end is not known
   | "closed"    // the operator confirmed the close
   | "skipped";  // the operator skipped the row
 
@@ -106,7 +112,7 @@ export const rowState = (q: QueueState, ref: string): QueueRow => q.rows[ref] ??
 
 const DONE: ReadonlySet<RowPhase> = new Set(["closed", "skipped"]);
 /** Phases from which the current row may be started (a retry from unknown or failed uses a new index). */
-const STARTABLE: ReadonlySet<RowPhase> = new Set(["planned", "refused", "unknown", "failed"]);
+const STARTABLE: ReadonlySet<RowPhase> = new Set(["planned", "refused", "unknown", "failed", "interrupted"]);
 
 /** The position of the row the queue is at: the first row not closed or skipped; -1 when the queue
  *  is complete or ended. */
@@ -189,6 +195,7 @@ function startFailure(ref: string, runIndex: number, r: PlanStartResult): QueueF
     case "not-ready": return { step: "start", tone: "warn", title: `Not started · readiness with the chosen file`, text: r.message };
     case "error": return { step: "start", tone: "blocked", title: `Not started · an error before the start was sent`, text: r.message };
     case "busy": return { step: "start", tone: "warn", title: `Not started · a start request is already pending`, text: "Wait for it to finish, then press Start again." };
+    case "withdrawn": return { step: "start", tone: "warn", title: `Not started · control was lost while the Start of ${ref} was pending`, text: "Nothing was sent. Press Start again once the queue is resumed." };
     case "unknown": return {
       step: "start", tone: "unknown", title: `Start outcome not known · ${ref}, run ${runIndex}${r.path ? ` · ${r.path}` : ""}`,
       text: `The start request was sent but no reply was read (${r.message}). The run may have started, so run ${runIndex} is not sent again. Skip the sample, or retry it as run ${runIndex + 1}.`,
@@ -197,31 +204,44 @@ function startFailure(ref: string, runIndex: number, r: PlanStartResult): QueueF
   }
 }
 
-/** The status read applied to the current row's started run. */
+/** The file the backend records for a chosen path: it appends ".h5" unless the path ends in ".h5"
+ *  or ".hdf5" (ExperimentCoordinator::start), so the status's output_path is compared with this. */
+export function recordedPath(chosen: string): string {
+  return chosen.endsWith(".h5") || chosen.endsWith(".hdf5") ? chosen : `${chosen}.h5`;
+}
+
+/** The row taken over by another run: its own run's end is not known, and that run is not the
+ *  queue's to stop or confirm. */
+function interrupted(ref: string, row: QueueRow, last: RunAttempt, s: ExperimentStatus): QueueRow {
+  return {
+    ...row, phase: "interrupted", end: null,
+    failure: { step: "run", tone: "unknown", title: `${ref} · interrupted · another run started on this instrument`,
+      text: `The backend now reports another run${s.output_path ? ` (${s.output_path})` : ""}, not ${ref}'s file ${recordedPath(last.path) || "(unknown)"}. `
+        + `The queue does not stop or confirm that run, and does not know how run ${last.runIndex} ended: check its file before going on.` },
+  };
+}
+
+/** The status read applied to the row's started run (see the header: own file, newer generation). */
 function observe(ref: string, row: QueueRow, s: ExperimentStatus): QueueRow {
   if (row.phase !== "running" && row.phase !== "stopping") return row;
   const last = row.attempts[row.attempts.length - 1];
   if (!last || last.outcome !== "started") return row;
   const gen = big(s.start_generation);
   if (gen === null) return row;
+  const mine = last.path !== "" && s.output_path === recordedPath(last.path);
   let attempt = last;
   if (last.generation === null) {
     const before = big(last.generationBefore);
-    if (before !== null && gen <= before) return row; // an earlier run's status, or a read from before the start
+    if (before === null || gen <= before) return row; // an earlier run's status, or a read from before the start
+    if (!mine) return interrupted(ref, row, last, s); // a newer run on another file took over before this one was seen
     attempt = { ...last, generation: s.start_generation };
   } else {
-    const mine = big(last.generation);
-    if (mine === null || gen < mine) return row; // an older read answering late
-    if (gen > mine) {
-      return {
-        ...row, phase: "failed", stopPending: false, end: null,
-        failure: { step: "run", tone: "unknown", title: `${ref} · the end of run ${last.runIndex} was not seen`,
-          text: `The backend now reports a later run${s.output_path ? ` (${s.output_path})` : ""}. Check run ${last.runIndex}'s file before going on.` },
-      };
-    }
+    const seen = big(last.generation);
+    if (seen === null || gen < seen) return row; // an older read answering late
+    if (gen > seen || !mine) return interrupted(ref, row, last, s); // a later run: this run's end was not seen
   }
   const attempts = [...row.attempts.slice(0, -1), attempt];
-  const outputPath = s.output_path || row.outputPath;
+  const outputPath = s.output_path;
   const terminal = s.terminal && (s.state === EXPERIMENT_STATES.Idle || s.state === EXPERIMENT_STATES.Failed);
   if (terminal) {
     const ok = s.finalization_ok && s.state !== EXPERIMENT_STATES.Failed && !s.fault_code;
@@ -239,6 +259,16 @@ function observe(ref: string, row: QueueRow, s: ExperimentStatus): QueueRow {
     return { ...row, attempts, outputPath, phase: "stopping", failure: row.failure?.step === "stop" ? null : row.failure };
   }
   return { ...row, attempts, outputPath };
+}
+
+/** Whether a status shows the row's own run active, seen before (generation and file): the only
+ *  state in which Next sample may send the stop, since `experiment_stop` stops whatever run is
+ *  active. */
+export function ownRunActive(row: QueueRow, s: ExperimentStatus | null): boolean {
+  const last = row.attempts[row.attempts.length - 1];
+  return !!s?.valid && row.phase === "running" && !!last && last.outcome === "started" && last.generation !== null
+    && s.start_generation === last.generation && s.output_path === recordedPath(last.path)
+    && s.state === EXPERIMENT_STATES.Active && !s.terminal;
 }
 
 /** The queue after one event. Events that do not apply (a guard fails) leave it unchanged, so a
@@ -276,7 +306,8 @@ export function reduceQueue(q: QueueState, e: QueueEvent, order: readonly string
     case "stop": {
       if (q.paused || e.ref !== curRef) return q;
       const row = rowState(q, e.ref);
-      if (row.phase !== "running" || row.stopPending) return q;
+      const last = row.attempts[row.attempts.length - 1];
+      if (row.phase !== "running" || row.stopPending || !last || last.generation === null) return q; // not before its run was seen
       return withRow(q, e.ref, { ...row, phase: "stopping", stopPending: true, failure: null });
     }
     case "stop-result": {
@@ -308,7 +339,7 @@ export function reduceQueue(q: QueueState, e: QueueEvent, order: readonly string
     case "skip": {
       if (q.paused || e.ref !== curRef) return q;
       const row = rowState(q, e.ref);
-      if (row.phase !== "refused" && row.phase !== "unknown" && row.phase !== "failed") return q;
+      if (row.phase !== "refused" && row.phase !== "unknown" && row.phase !== "failed" && row.phase !== "interrupted") return q;
       return withRow(q, e.ref, { ...row, phase: "skipped", failure: null });
     }
     case "end": {
@@ -334,7 +365,7 @@ export function canEnd(order: readonly string[], q: QueueState): boolean {
   if (cur < 0) return false;
   const row = rowState(q, order[cur]);
   if (row.stopPending) return false;
-  return row.phase === "planned" || row.phase === "refused" || row.phase === "unknown" || row.phase === "failed"
+  return row.phase === "planned" || row.phase === "refused" || row.phase === "unknown" || row.phase === "failed" || row.phase === "interrupted"
     || (row.phase === "running" && row.failure?.step === "stop");
 }
 
@@ -353,6 +384,7 @@ export function rowChip(row: QueueRow, ended: boolean): { tone: ChipTone; text: 
     case "stopping": return { tone: "info", text: "Stopping · draining" };
     case "finalized": return { tone: "info", text: "Finalized · confirm close" };
     case "failed": return { tone: "blocked", text: "Failed" };
+    case "interrupted": return { tone: "unknown", text: "Interrupted · another run" };
     case "closed": return row.end?.severity && row.end.severity !== "ok" && row.end.severity !== "partial"
       ? { tone: "warn", text: "Closed · see outcome" } : { tone: "confirmed", text: "Closed" };
     case "skipped": return { tone: "neutral", text: row.attempts.length ? "Skipped · after a run" : "Skipped" };
@@ -391,6 +423,7 @@ export function lifecycle(row: QueueRow): LifecycleStep[] {
     stopping: [3, "current"],
     finalized: [5, "current"],
     failed: [4, "failed", { tone: "blocked", text: "Failed" }],
+    interrupted: [2, "failed", { tone: "unknown", text: "Interrupted · another run" }],
     closed: [5, "done"],
     skipped: [0, "pending", { tone: "neutral", text: "Skipped" }],
   };
