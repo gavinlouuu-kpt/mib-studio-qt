@@ -80,7 +80,11 @@ of a core, 60/s at 8 %, 30/s at 4 %.
   `instrumentModeMutex_`: the coordinator calls them under its own mutex, and `setInstrumentMode` takes the two in the other order. Only SSD runs hold
   the ring; an HDF5-only run resumes the live session as before.
 - **LED.** `setServiceMode` latches Service mode; `setInstrumentLed`
-  requires it.
+  requires it. `readInstrumentLed(out, why)` (#712) reads the strobe
+  registers back through `PzInstrumentControl::readLed` (S[0] control, S[1]
+  delay, S[2] width in strobe-clock cycles, S[10] clock kHz) without writing;
+  it returns false where there is no PZ7035 control. The coordinator records
+  it in the run snapshot v3 `led` block.
 - **Preview.** `fetchRunPreview` encodes one cell capture.
 
 **Camera & Alignment.** `setCameraOverview` / `saveCameraRoi` /
@@ -183,6 +187,14 @@ profile catalog:
 - Remote payloads are verified with SHA-256 before replacing the local cache.
 - The active LUT path is logged with source, revision, checksum status, and
   remote update outcome.
+- After the load, `AppBackend` hands the catalog's description of the loaded
+  file to `ProcessingService::setEModulusLutCatalogIdentity` (#712): the
+  catalog's `lutId` / revision / source / checksum status, or, when the bundled
+  fallback was loaded, its file name with revision `bundled`, source
+  `bundled-fallback`, no catalog hash and status `unknown`. The run snapshot
+  records it beside the hash of the loaded bytes; the catalog can describe a
+  newer manifest while an older cached file stays loaded, hence
+  `catalog_matches_loaded` ([[../data-model/HDF5-Storage]]).
 - `MIB_STUDIO_EMODULUS_LUT_CACHE_DIR` can redirect the cache path for tests
   or local validation.
 - **Qt-free (epic #246, ADR 0002):** the catalog is `std::string`/

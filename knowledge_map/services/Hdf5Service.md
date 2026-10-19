@@ -190,11 +190,38 @@ See [[../data-model/HDF5-Storage]].
 `writeRunSnapshotJson(runJson, readinessJson)` / `readRunSnapshotJson(...)`
 store the frozen `RunConfigurationSnapshot` and the readiness evaluation it
 was started from as variable-length UTF-8 string attributes
-(`run_snapshot_json`, `readiness_json`, `run_snapshot_schema_version` = 2;
-v2 adds the #398 `method` block)
+(`run_snapshot_json`, `readiness_json`, `run_snapshot_schema_version` =
+`recording::kRunSnapshotSchemaVersion`, 3 since #712; v2 added the #398
+`method` block, v3 the run facts below)
 on the `/run_provenance` group. [[../architecture/ExperimentCoordinator]]
 writes them immediately after `initializeDatasets()` and before the run may
 enter Running; a failure rolls the Start back and removes the file.
+The write refuses with no file open or a file opened read-only, and writes
+the JSON, then the readiness, then the version, each only after the previous
+one succeeded. `setRunProvenanceWriteFaultForTesting(true)` makes it (and
+`writeRunStopJson`) fail as a refused HDF5 write would; HDF5 keeps oversized
+variable-length attributes in the global heap, so size alone cannot provoke
+the failure.
+
+`writeRunStopJson(json)` / `readRunStopJson(...)` store `@run_stop_json` (why
+the run ended) on the same group at finalization; the reader returns false
+for older files. Typed access to the whole record (snapshot v3 members, stop
+record) is `recording::readRecordedRunProvenance(service, out)` in
+`include/backend/recording/RunProvenanceRecord.h`: a missing, `null` or
+mistyped member reads as `std::nullopt`, a v1/v2 file reads every v3 member as
+unknown, and only an unparseable document fails. See the v3 table in
+[[../data-model/HDF5-Storage]]. Guard: `recording.run_provenance_record`.
+
+## PL record identity in the metadata compound (#712)
+
+`ProcessedFrame` carries `plRecordIdentity`, `plRunId`, `plEpoch` (set by
+`ProcessingService::ingestProviderFrame` from the PL FRAME record). The
+`ProcessedFrameMetadataRecord` compound appends `plRunId` (u64), `plEpoch`
+(u32), `plIdentity` (u8) after `centroidY`; the reader maps them back only when
+the file's type has `plIdentity`, so older files read every row with no
+identity. `createProcessedFrameMetadataType(..., includePlFields)` leaves them
+out for the partial reads. Guards: `recording.experiment_roundtrip` (round trip
+and a legacy layout), `backend.pl_science_provider`.
 
 ## Acquisition provenance (issue #368)
 

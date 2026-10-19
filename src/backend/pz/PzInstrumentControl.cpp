@@ -183,6 +183,16 @@ bool PzInstrumentControl::setLed(LedSetting s, std::string* error) {
     return true;
 }
 
+bool PzInstrumentControl::readLed(LedReadback& out, std::string* error) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!readyLocked(error)) return false;
+    out.control = S(kStrobeControl);
+    out.delayCycles = S(kStrobeDelay);
+    out.widthCycles = S(kStrobeWidth);
+    out.clockKhz = S(kStrobeClockKhz);
+    return true;
+}
+
 bool PzInstrumentControl::setCellPath(bool on, std::string* error) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!readyLocked(error)) return false;

@@ -21,13 +21,18 @@
 #include "backend/app/ExperimentCoordinator.h"
 #include "backend/playback/FrameStore.h"
 #include "backend/diagnostics/PipelineTimingRecorder.h"
+#include "backend/processing/ProcessingCoreSha256.h"
 #include "backend/processing/ProcessingService.h"
 #include "backend/recording/Hdf5Service.h"
+#include "backend/recording/RunProvenanceRecord.h"
 #include "backend/services/CaptureService.h"
+#include "backend/services/SerialBus.h"
+#include "backend/services/SyringePumpService.h"
 #include "backend/services/RfGeneratorService.h"
 #include "backend/camera/mock/MockCamera.h"
 
 #include "support/assert.h"
+#include "support/fake_modbus_bench.h"
 #include "support/fake_ssg.h"
 #include "support/frames.h"
 #include "support/faultinject.h"
@@ -501,10 +506,48 @@ int main()
         MIB_EXPECT(runJson == backend::app::runSnapshotToJson(frozen), "persisted snapshot equals the frozen one");
         MIB_EXPECT(runJson.find("\"requested\":\"mock\"") != std::string::npos &&
                        runJson.find("\"profile_id\":\"profile-A\"") != std::string::npos &&
-                       runJson.find("\"schema_version\":2") != std::string::npos &&
+                       runJson.find("\"schema_version\":3") != std::string::npos &&
                        runJson.find("\"method\":{") != std::string::npos,
                    "snapshot JSON content");
         MIB_EXPECT(readinessJson.find("\"camera.session\"") != std::string::npos, "readiness JSON persisted");
+
+        // Snapshot v3 (#712), read back typed: the run's own id, the LUT the processing service
+        // loaded, and the devices as this host has them (none connected: written as absent).
+        backend::recording::RecordedRunProvenance prov;
+        std::string why;
+        MIB_REQUIRE(backend::recording::readRecordedRunProvenance(reader, prov, &why), "typed provenance: " + why);
+        MIB_EXPECT(prov.schemaVersion == 3, "typed reader sees schema 3");
+        MIB_EXPECT(prov.v3.runId && prov.v3.runId == frozen.v3.runId && prov.v3.runId->size() == 36 &&
+                       (*prov.v3.runId)[14] == '4',
+                   "the run id is the frozen UUID v4");
+        MIB_REQUIRE(prov.v3.eModulusLut.has_value(), "the LUT block is recorded");
+        const auto lutNow = proc.eModulusLutIdentity();
+        MIB_EXPECT(prov.v3.eModulusLut->loaded == proc.eModulusLut().isLoaded() &&
+                       prov.v3.eModulusLut->loaded == lutNow.loaded,
+                   "LUT loaded flag is the processing service's");
+        if (lutNow.loaded) {
+            MIB_EXPECT(prov.v3.eModulusLut->sha256 && *prov.v3.eModulusLut->sha256 == lutNow.sha256 &&
+                           lutNow.sha256.size() == 64 &&
+                           lutNow.sha256 == backend::processing::processingCoreFileSha256(lutNow.path),
+                       "LUT sha256 is the hash of the loaded file");
+        } else {
+            MIB_EXPECT(!prov.v3.eModulusLut->sha256 && !prov.v3.eModulusLut->lutId, "no LUT: no identity invented");
+        }
+        MIB_REQUIRE(prov.v3.pumps && prov.v3.pumps->size() == 2, "both pump slots recorded");
+        MIB_EXPECT((*prov.v3.pumps)[0].slot == "sample" && (*prov.v3.pumps)[1].slot == "sheath", "pump slots");
+        for (const auto& pump : *prov.v3.pumps) {
+            MIB_EXPECT(pump.connected == std::optional<bool>(false) && !pump.flowRate && !pump.readback,
+                       "an unconnected pump has no setpoint or readback: " + pump.slot);
+        }
+        MIB_EXPECT(!prov.v3.led, "no LED readback on this host (unknown)");
+        MIB_EXPECT(prov.v3.stage && !prov.v3.stage->connected && !prov.v3.stage->readback, "stage absent");
+        MIB_EXPECT(prov.v3.piezo && !prov.v3.piezo->connected && !prov.v3.piezo->voltageV, "piezo absent");
+        MIB_EXPECT(!prov.v3.plRunId, "a host run arms no PL run id");
+        MIB_EXPECT(runJson.find("\"led\":null") != std::string::npos &&
+                       runJson.find("\"pl_run_id\":null") != std::string::npos,
+                   "absent facts are written as null, not zero");
+        MIB_EXPECT(prov.stop && prov.stop->reason == "stop_requested" && !prov.stop->message,
+                   "stop record: the coordinator's Stop");
         reader.closeFile();
     }
 
@@ -554,6 +597,142 @@ int main()
         MIB_EXPECT(coordinator.requestStop(false) == backend::app::ExperimentStopOutcome::Accepted, "stop accepted");
         MIB_REQUIRE(waitFor([&] { return coordinator.status().terminal; }, std::chrono::seconds(20)), "status run finalizes");
         MIB_EXPECT(coordinator.status().state == backend::app::ExperimentRunState::Idle, "idle after finalize");
+    }
+
+    // ---- 6b'. Snapshot write fault and cancel (#712) ------------------------------
+    {
+        wd.mark("provenance write fault");
+        auto& coordinator = backend.experiment();
+        // The snapshot write fails (as on a full disk): the Start rolls back with no file and no run.
+        {
+            const auto out = (td.path() / "provenance_fault.h5").string();
+            const auto r = coordinator.evaluateReadiness(out);
+            MIB_REQUIRE(r.ready, "ready for the provenance fault");
+            ExperimentStartRequest req;
+            req.outputPath = out;
+            req.readinessGeneration = r.generation;
+            backend.hdf5().setRunProvenanceWriteFaultForTesting(true);
+            const auto res = coordinator.start(req);
+            backend.hdf5().setRunProvenanceWriteFaultForTesting(false);
+            MIB_EXPECT(res.outcome == ExperimentStartOutcome::ProvenanceFailed,
+                       std::string("unwritable snapshot -> ProvenanceFailed, got ") + backend::app::toString(res.outcome));
+            MIB_EXPECT(!std::filesystem::exists(out) && !backend.hdf5().isFileOpen() &&
+                           coordinator.state() == backend::app::ExperimentRunState::Idle && !coordinator.activeRun(),
+                       "the failed Start leaves no file and no run");
+        }
+        // The stop record fails at finalization: the run still finalizes, and the file reads its stop
+        // reason as unknown (the record is best effort, like the wall-clock provenance).
+        {
+            const auto out = (td.path() / "stop_record_fault.h5").string();
+            const auto r = coordinator.evaluateReadiness(out);
+            MIB_REQUIRE(r.ready, "ready for the stop-record fault");
+            ExperimentStartRequest req;
+            req.outputPath = out;
+            req.readinessGeneration = r.generation;
+            MIB_REQUIRE(coordinator.start(req).started(), "run starts");
+            backend.hdf5().setRunProvenanceWriteFaultForTesting(true);
+            MIB_EXPECT(coordinator.requestStop(false) == backend::app::ExperimentStopOutcome::Accepted, "stop");
+            MIB_REQUIRE(waitFor([&] { return coordinator.status().terminal; }, std::chrono::seconds(20)), "finalizes");
+            backend.hdf5().setRunProvenanceWriteFaultForTesting(false);
+            MIB_EXPECT(coordinator.state() == backend::app::ExperimentRunState::Idle, "the run still ends Idle");
+            backend::services::Hdf5Service reader;
+            backend::recording::RecordedRunProvenance faultProv;
+            MIB_EXPECT(reader.loadFile(out) && backend::recording::readRecordedRunProvenance(reader, faultProv) &&
+                           faultProv.v3.runId && !faultProv.stop,
+                       "the snapshot is there; the missing stop record reads as unknown");
+            reader.closeFile();
+        }
+
+        // Cancel records its own stop reason.
+        const auto out = (td.path() / "cancel_run.h5").string();
+        const auto r = coordinator.evaluateReadiness(out);
+        MIB_REQUIRE(r.ready, "ready for the cancel run");
+        ExperimentStartRequest req;
+        req.outputPath = out;
+        req.readinessGeneration = r.generation;
+        MIB_REQUIRE(coordinator.start(req).started(), "cancel run starts");
+        MIB_EXPECT(coordinator.requestStop(true) == backend::app::ExperimentStopOutcome::Accepted, "cancel accepted");
+        MIB_REQUIRE(waitFor([&] { return coordinator.status().terminal; }, std::chrono::seconds(20)), "cancel finalizes");
+        backend::services::Hdf5Service reader;
+        backend::recording::RecordedRunProvenance cancelProv;
+        MIB_EXPECT(reader.loadFile(out) && backend::recording::readRecordedRunProvenance(reader, cancelProv) &&
+                       cancelProv.stop && cancelProv.stop->reason == "cancel_requested",
+                   "stop record: cancel");
+        reader.closeFile();
+
+        // Pump settings are recorded only once the pump is known to hold them (#712 review): a dLSP
+        // connect neither reads nor writes the flow rate or direction, so a run started right after
+        // it records them as unknown, not as the configuration's defaults.
+        {
+            using Pump = backend::services::SyringePumpService;
+            static mib::test::FakeModbusBench pumpBench;   // outlives the bus factory below
+            static mib::test::FakeModbusWire pumpWire;
+            pumpWire.address = 1;
+            pumpBench.attach("fake-pump", &pumpWire);
+            backend.serialBus().setSerialPortFactory(
+                [] { return std::make_unique<mib::test::FakeModbusPort>(pumpBench); });
+            auto& pumps = backend.syringePump();
+            // A configuration left by an earlier device must not leak into the record either.
+            auto stale = pumps.getConfig(Pump::PumpId::Sample);
+            stale.flowRate = 55.0;
+            stale.direction = Pump::Direction::Withdraw;
+            pumps.setConfig(Pump::PumpId::Sample, stale);
+            MIB_REQUIRE(pumps.connect(Pump::PumpId::Sample, "fake-pump", 9600, 1), "dLSP pump connects (fake)");
+
+            auto runAndRead = [&](const std::string& name) {
+                const auto path = (td.path() / name).string();
+                const auto ready = coordinator.evaluateReadiness(path);
+                MIB_REQUIRE(ready.ready, "ready for " + name);
+                ExperimentStartRequest request;
+                request.outputPath = path;
+                request.readinessGeneration = ready.generation;
+                MIB_REQUIRE(coordinator.start(request).started(), name + " starts");
+                MIB_EXPECT(coordinator.requestStop(false) == backend::app::ExperimentStopOutcome::Accepted, "stop");
+                MIB_REQUIRE(waitFor([&] { return coordinator.status().terminal; }, std::chrono::seconds(20)),
+                            name + " finalizes");
+                backend::services::Hdf5Service file;
+                backend::recording::RecordedRunProvenance recorded;
+                MIB_REQUIRE(file.loadFile(path) && backend::recording::readRecordedRunProvenance(file, recorded),
+                            "read " + name);
+                file.closeFile();
+                MIB_REQUIRE(recorded.v3.pumps && recorded.v3.pumps->size() == 2, "pump slots in " + name);
+                return (*recorded.v3.pumps)[0];
+            };
+
+            const auto connectedOnly = runAndRead("pump_connected_only.h5");
+            MIB_EXPECT(connectedOnly.connected == std::optional<bool>(true) &&
+                           connectedOnly.model == std::optional<std::string>("dlsp_syringe") &&
+                           connectedOnly.port == std::optional<std::string>("fake-pump") &&
+                           connectedOnly.modbusAddress == std::optional<int>(1),
+                       "connected pump identity recorded");
+            MIB_EXPECT(!connectedOnly.flowRate && !connectedOnly.flowRateUnit && !connectedOnly.flowRateUnitCode &&
+                           !connectedOnly.direction && !connectedOnly.microlitersPerRev,
+                       "connect then start: the never-applied settings are absent, not 0 / uL/min / infuse");
+
+            MIB_REQUIRE(pumps.setFlowRate(Pump::PumpId::Sample, 12.7, 100), "flow rate applied");
+            MIB_REQUIRE(pumps.setDirection(Pump::PumpId::Sample, Pump::Direction::Withdraw), "direction applied");
+            const auto configured = runAndRead("pump_configured.h5");
+            MIB_EXPECT(configured.flowRate == std::optional<double>(12.0) &&
+                           configured.flowRateUnitCode == std::optional<int>(100) &&
+                           configured.flowRateUnit == std::optional<std::string>("uL/min") &&
+                           configured.direction == std::optional<std::string>("withdraw"),
+                       "configure then start: the applied settings (the rate as written: truncated to 12)");
+
+            pumpWire.failWrites = true;
+            MIB_EXPECT(!pumps.setFlowRate(Pump::PumpId::Sample, 30.0, 100), "the flow-rate write fails");
+            pumpWire.failWrites = false;
+            const auto failedWrite = runAndRead("pump_failed_write.h5");
+            MIB_EXPECT(!failedWrite.flowRate && !failedWrite.flowRateUnit &&
+                           failedWrite.direction == std::optional<std::string>("withdraw"),
+                       "a failed flow-rate write leaves the rate unknown; the direction stays known");
+
+            pumps.disconnect(Pump::PumpId::Sample);
+            MIB_REQUIRE(pumps.connect(Pump::PumpId::Sample, "fake-pump", 9600, 1), "reconnect");
+            const auto reconnected = runAndRead("pump_reconnected.h5");
+            MIB_EXPECT(!reconnected.flowRate && !reconnected.direction,
+                       "a reconnect starts from unknown (the settings may belong to another device)");
+            pumps.disconnect(Pump::PumpId::Sample);
+        }
     }
 
     // ---- 6c. Backend-owned finalization -----------------------------------------
@@ -745,6 +924,11 @@ int main()
                    "persisted write failure is Failed and reconciles");
         MIB_EXPECT(saved.fatalMessage == s.completionReason,
                    "persisted fatal reason matches terminal outcome");
+        backend::recording::RecordedRunProvenance fatalProv;
+        backend::recording::readRecordedRunProvenance(reader, fatalProv);
+        MIB_EXPECT(fatalProv.stop && fatalProv.stop->reason == "fatal_save_error" &&
+                       fatalProv.stop->message == s.completionReason,
+                   "stop record: the fatal save error and its message");
         backend::recording::RecordingAccountingSnapshot cached;
         uint64_t generation = 0;
         MIB_REQUIRE(coordinator.lastRunAccounting(cached, generation), "cached last accounting");
@@ -768,6 +952,13 @@ int main()
         const auto s = coordinator.status();
         MIB_EXPECT(s.terminal && s.state == backend::app::ExperimentRunState::Idle, "shutdown finalizes the run");
         MIB_EXPECT(!backend.hdf5().isFileOpen(), "shutdown closes the file");
+        {
+            backend::services::Hdf5Service reader;
+            backend::recording::RecordedRunProvenance shutdownProv;
+            MIB_EXPECT(reader.loadFile(out) && backend::recording::readRecordedRunProvenance(reader, shutdownProv) &&
+                           shutdownProv.stop && shutdownProv.stop->reason == "shutdown",
+                       "stop record: shutdown");
+        }
         coordinator.shutdown(); // idempotent
         ExperimentStartRequest again;
         again.outputPath = (td.path() / "after_shutdown.h5").string();

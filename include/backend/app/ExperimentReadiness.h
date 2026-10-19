@@ -14,6 +14,7 @@
 
 #include "backend/processing/IProcessingKernel.h"
 #include "backend/recording/RecordingAccounting.h"
+#include "backend/recording/RunProvenanceRecord.h"
 
 #include <cstdint>
 #include <string>
@@ -88,8 +89,9 @@ struct MethodProvenance {
 // Frozen identities/settings of one run. Owned by the coordinator; the UI
 // only reads it.
 struct RunConfigurationSnapshot {
-    // v2 (#398 M2): adds the "method" block.
-    static constexpr uint32_t kSchemaVersion = 2;
+    // v2 (#398 M2): adds the "method" block. v3 (#712): adds the `v3` members below.
+    static constexpr uint32_t kSchemaVersion = recording::kRunSnapshotSchemaVersion;
+    static_assert(kSchemaVersion == 3, "run snapshot schema: update runSnapshotToJson and HDF5-Storage.md together");
     uint64_t readinessGeneration{0};
     uint64_t startGeneration{0};      // coordinator start counter
     uint64_t captureGeneration{0};    // CaptureService session generation
@@ -163,6 +165,11 @@ struct RunConfigurationSnapshot {
     std::string applicationVersion;
     std::string buildId;
     std::string operatingSystem;
+
+    // Snapshot v3 (#712, ADR 0015 item 5): the run's own id, the E-modulus LUT identity, the
+    // device facts at Start and the run id armed into the PL. Filled by the Start transaction only
+    // (a readiness candidate leaves them unknown). Unknown is nullopt, written as null.
+    recording::RunProvenanceV3 v3;
 };
 
 struct ExperimentReadinessSnapshot {

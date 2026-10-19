@@ -77,6 +77,7 @@ add_library(mib_processing STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/processing/pz/PzProfileCompiler.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/Hdf5Service.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/HdfExportService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/recording/RunProvenanceRecord.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/FcsWriter.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/ReviewChartData.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/ProcessingOverlay.cpp

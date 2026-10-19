@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <exception>
+#include <filesystem>
 #include <iterator>
 #include <limits>
 #include <tuple>
@@ -919,7 +920,35 @@ double ProcessingService::getPixelToMicronFactor() const {
 }
 
 bool ProcessingService::loadEModulusLut(const std::string& path) {
-    return eModulusLut_.loadFromFile(path);
+    // The hash is of the very bytes the table was built from (EModulusLut reads the file once), so
+    // a file replaced after the load cannot be recorded as the table in use (#712).
+    std::string bytes, loadedPath;
+    const bool ok = eModulusLut_.loadFromFileWithBytes(path, &bytes, &loadedPath);
+    EModulusLutIdentity identity;
+    identity.loaded = ok;
+    if (ok) {
+        identity.path = loadedPath;
+        identity.sha256 = backend::processing::processingCoreBytesSha256(
+            reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size());
+    }
+    std::scoped_lock lk(eModulusLutIdentityMutex_);
+    eModulusLutIdentity_ = std::move(identity);
+    return ok;
+}
+
+ProcessingService::EModulusLutIdentity ProcessingService::eModulusLutIdentity() const {
+    std::scoped_lock lk(eModulusLutIdentityMutex_);
+    return eModulusLutIdentity_;
+}
+
+void ProcessingService::setEModulusLutCatalogIdentity(std::string lutId, std::string revision, std::string source,
+                                                      std::string catalogSha256, std::string checksumStatus) {
+    std::scoped_lock lk(eModulusLutIdentityMutex_);
+    eModulusLutIdentity_.lutId = std::move(lutId);
+    eModulusLutIdentity_.revision = std::move(revision);
+    eModulusLutIdentity_.source = std::move(source);
+    eModulusLutIdentity_.catalogSha256 = std::move(catalogSha256);
+    eModulusLutIdentity_.checksumStatus = std::move(checksumStatus);
 }
 
 // Attach one member to a multi-image series together with its source
@@ -2756,6 +2785,10 @@ void ProcessingService::ingestProviderFrame(const backend::processing::ProviderF
             row.index = idx;
             row.timestampNs = frame.timestampNs;
             row.validation = v;
+            // The PL record's identity (#712): persisted per row, never dropped at ingest.
+            row.plRecordIdentity = true;
+            row.plRunId = frame.runId;
+            row.plEpoch = frame.epoch;
             appendExperimentFrame(std::move(row), v.isValid);
         }
     }

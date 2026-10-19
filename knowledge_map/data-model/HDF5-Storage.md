@@ -99,7 +99,8 @@
   `saveChartSnapshot(path, image)`.
 
 - **Run configuration snapshot (issue #369, `run_snapshot_schema_version`
-  = 2 since #398 M2; v1 files lack the `method` block)** — `Hdf5Service::writeRunSnapshotJson` stores the frozen
+  = 3 since #712; v2 files lack the v3 members below, v1 files also lack the
+  `method` block)** — `Hdf5Service::writeRunSnapshotJson` stores the frozen
   `RunConfigurationSnapshot` (`run_snapshot_json`, stable key order: camera
   requested/effective/simulated/fallback, delivery mode, timestamp
   descriptor, ROI, frame geometry, processing core + pin, config version /
@@ -110,7 +111,9 @@
   the readiness evaluation (`readiness_json`, per-gate status/reason) as
   attributes on `/run_provenance`. Written at Start, before any frame;
   `readRunSnapshotJson` returns false (never a fabricated snapshot) for
-  older files. See [[../architecture/ExperimentCoordinator]].
+  older files. The JSON is written before the version attribute, so a failed
+  document leaves no version that promises one. See
+  [[../architecture/ExperimentCoordinator]] and "Run snapshot v3" below.
 - **KDE core contour records (`kde_core_schema_version` = 1)** — JSON
   documents produced/parsed by the Qt-free frontend codec
   `include/backend/processing/KdeCoreRecord.h`, stored verbatim as UTF-8 string
@@ -126,6 +129,43 @@
   `axis_range`, `grid`, `contours` (closed polylines `[[x, y], ...]` in µm² /
   deformability), `computed_at_ns`. Absent records mean "none"; readers
   prefer the analysis record. See [[../frontend/ExperimentMonitoringTab]].
+
+## Run snapshot v3 (#712, ADR 0015 item 5)
+
+Additive to v2: these members are appended to `run_snapshot_json` after
+`application`, and `/run_provenance` gains `@run_stop_json`. The plain types,
+the codec and the typed reader are in
+`include/backend/recording/RunProvenanceRecord.h`
+(`readRecordedRunProvenance(file, out)`). **Unknown is never 0, false or
+`""`:** an absent device or a fact the device did not report is written as
+`null` (or the key is missing) and reads back as `std::nullopt`; an empty
+string is never a value (written as `null`, read as unknown); a v1/v2 file
+reads every member below as unknown, a file without `/run_provenance` has
+schema 0.
+
+| Member | Source | Unknown |
+|---|---|---|
+| `run_id` | UUID v4 minted at Start; the FCS `$MIB_RUN_ID` | `null` (readiness candidates, files before v3) |
+| `emodulus_lut` `{loaded, lut_id, revision, source, sha256, catalog_sha256, checksum_status, catalog_matches_loaded}` | `sha256`: of the very bytes `EModulusLut::loadFromFile` built the table from (read once, so a file replaced after the load is not recorded as the table in use; the host E values and the PL profile's E table come from them). The rest: what `EModulusLutCatalog` says about the file (the bundled copy: its file name, revision `bundled`, no catalog hash) | `loaded:false` with nothing else when no LUT loaded; each label `null` when the catalog gave none |
+| `pumps` `[{slot, connected, model, port, modbus_address, setpoint, readback}]` | `SyringePumpService::runFacts`: `setpoint {flow_rate, flow_rate_unit, flow_rate_unit_code, direction, microliters_per_rev}` holds only the settings the pump is known to hold (`AppliedSettings`: written successfully or read back in this connection; a dLSP flow rate as written, i.e. clamped and truncated), and `microliters_per_rev` (the peristaltic connect calibration); `readback {age_us, last_poll_ok, run_status, speed_rpm, realtime_flow_raw, accumulated_volume_raw, stalled}` is the last poll in which every register answered | `connected:null` when the pump was busy with serial I/O at Start; no setpoint/readback when not connected; each setpoint value `null` until applied or read back (a dLSP pump right after connect, after a failed write of that setting, during a peristaltic purge, after a reconnect); `readback:null` before the first complete poll; peristaltic readbacks have only `run_status` + `speed_rpm`, syringe readbacks the raw registers (device units) |
+| `led` `{source, error, enabled, control, delay_us, width_us, clock_khz, stopped_run_at_start}` | PZ7035 strobe registers S[0], S[1], S[2], S[10] read at Start | `null` on instruments without PZ7035 control (eGrabber and MindVision hosts have no LED readback); values `null` with `error` when the PL could not be read |
+| `stage` `{connected, model, serial, firmware, zero_set, readback {age_us, state, position_um, limit_*, home, emergency_stop, driver_alarm}}` | `StageService::snapshot()` (the driver's last published status) | `connected:false` alone when absent; `readback:null` when never sampled; inside a readback `state`, `position_um` and every flag are `null` when the readback did not carry them (a missing alarm flag is unknown, never "no alarm") |
+| `piezo` `{connected, voltage_v, voltage_basis, autofocus_enabled}` | `AutofocusService`: the last voltage read (connect, autofocus loop) or written; `voltage_basis` = `last_read_or_written` | `connected:false` alone when absent |
+| `pl_run_id` | the id armed into the PL `RUN_ID` registers (the SSD run id, else Start time in ms) | `null` for a host run |
+| `@run_stop_json` `{reason, message}` | finalization: `stop_requested`, `cancel_requested`, `fatal_save_error` (+ message), `shutdown` | attribute absent (older file, or the best-effort write failed); `message: null` when there is none |
+
+Notes for readers: `lut_id` / `revision` describe the loaded bytes only when
+`catalog_matches_loaded` is true (the catalog reports a newer manifest whose
+download failed while the older cached file stays loaded); compare runs by
+`sha256`. `setpoint.flow_rate` is what the pump was written, not the request
+the UI shows: a syringe pump's request clamped to 1–9999 and truncated to an
+integer; a peristaltic pump's flow from the written 0.01 rpm speed register
+(1.1 µL/min at 25 µL/rev is written as 0.04 rpm and recorded as 1.0). `stopped_run_at_start: true` means the readback was
+taken before the Start switched the LED on with the Run preset.
+Tests: `recording.run_provenance_record` (codec + file round trip, v1/v2
+legacy, fault injection), `backend.experiment_readiness` (Start writes it,
+stop reasons, a failed snapshot write is `ProvenanceFailed` with no file),
+`backend.instrument_modes` (LED readback, armed PL run id).
 
 ## Write paths
 
@@ -189,6 +229,14 @@
   `blemishCount`, `degenerateContour`) are appended. The names and order are
   develop's, so files from both lines share one layout. Older files read the
   members as not present.
+- **PL record identity per row (#712):** the metadata compound appends
+  `plRunId` (u64), `plEpoch` (u32) and `plIdentity` (u8, 1 = the row came from
+  a PL FRAME record) after `centroidY`. Ingest stamps every PL row with its
+  FRAME record's own `run_id` and `epoch` (not the id the host armed; the
+  snapshot's `pl_run_id` holds that). Host rows write `plIdentity = 0` with
+  zero values; files without the members read every row as `plIdentity = 0`
+  (no identity, not a zero one). `tools/pzrec_to_h5` output keeps the same
+  facts in its parallel `ssd_meta` dataset instead.
 - The run snapshot records `science_placement` and `execution_provider`,
   plus `pl_core` (ADR 0011: a core is a PL build plus its weights). `pl_core`
   holds `valid`, `abi_version`, `science_profile`, `profile_version`,
