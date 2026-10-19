@@ -2,6 +2,7 @@
 
 #include "backend/processing/ProcessingTypes.h"
 #include "backend/recording/Hdf5Service.h"
+#include "backend/recording/RunProvenanceRecord.h"
 #include "backend/review/OverlayCompose.h"
 
 #include <nlohmann/json.hpp>
@@ -11,6 +12,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <filesystem>
 #include <sstream>
 
 namespace backend::review
@@ -102,6 +104,76 @@ namespace backend::review
             cv::resize(src, scaled, cv::Size(w, h), 0, 0, cv::INTER_AREA);
             scaled.copyTo(tile(cv::Rect((size - w) / 2, (size - h) / 2, w, h)));
             return tile;
+        }
+
+        // One file of the identity probe (#717 B1a), with its own short-lived
+        // reader: header attributes only. The caller serializes it with the
+        // session's HDF5 access (ReviewSession::probeRuns).
+        RunProbe probeOne(const std::string &path)
+        {
+            RunProbe probe;
+            probe.path = path;
+            auto failed = [&path](std::string message) {
+                RunProbe out;
+                out.path = path;
+                out.message = std::move(message);
+                return out;
+            };
+            if (path.empty()) return failed("No file path");
+            std::error_code ec;
+            const auto status = std::filesystem::status(std::filesystem::u8path(path), ec);
+            if (status.type() == std::filesystem::file_type::not_found) return failed("No such file: " + path);
+            if (ec) return failed("Cannot read " + path + ": " + ec.message());
+            if (status.type() != std::filesystem::file_type::regular) return failed("Not a file: " + path);
+            services::Hdf5Service reader;
+            try
+            {
+                if (!reader.loadFile(path))
+                {
+                    reader.closeFile();
+                    return failed("Not an HDF5 file, or it cannot be opened (locked or unreadable): " + path);
+                }
+                probe.recordingFile = reader.isRecordingFile();
+                std::uint64_t start = 0;
+                std::uint64_t end = 0;
+                if (probe.recordingFile)
+                {
+                    std::uint64_t total = 0;
+                    std::uint64_t filtered = 0;
+                    if (reader.readRecordingInfo(start, end, total, filtered)) probe.totalValid = total;
+                }
+                else
+                {
+                    std::size_t valid = 0;
+                    std::size_t invalid = 0;
+                    if (reader.readExperimentInfo(start, end, valid, invalid))
+                    {
+                        probe.totalValid = valid;
+                        probe.totalInvalid = invalid;
+                    }
+                }
+                // A zero time is a missing attribute (the readers leave it unset), not 1970.
+                if (start != 0) probe.startTimeNs = start;
+                if (end != 0) probe.endTimeNs = end;
+                recording::RecordingAccountingSnapshot accounting;
+                if (reader.readRunAccounting(accounting)) probe.completion = accounting.completion;
+                processing::ProcessingCoreIdentity core;
+                if (reader.readProcessingCoreIdentity(core) && !core.version.empty()) probe.coreVersion = core.version;
+                probe.identity = ReviewSession::readRunIdentity(reader);
+                probe.ok = true;
+            }
+            catch (const std::exception &e)
+            {
+                reader.closeFile();
+                return failed("Failed to read " + path + ": " + e.what());
+            }
+            catch (...)
+            {
+                reader.closeFile();
+                return failed("Failed to read " + path);
+            }
+            reader.closeFile();
+            return probe;
         }
     } // namespace
 
@@ -207,6 +279,7 @@ namespace backend::review
             }
             reader.readKdeAnalysisJson(meta.kdeAnalysisJson);
             reader.readKdeLiveJson(meta.kdeLiveJson);
+            meta.runIdentity = ReviewSession::readRunIdentity(reader);
         }
 
         const std::vector<services::ProcessedFrame> &set(bool valid) const
@@ -406,6 +479,67 @@ namespace backend::review
         if (!j.is_object() || !j.contains("pixel_to_micron") || !j["pixel_to_micron"].is_number()) return 0.0;
         const double f = j["pixel_to_micron"].get<double>();
         return f > 0.0 ? f : 0.0;
+    }
+
+    RunIdentity ReviewSession::readRunIdentity(const services::Hdf5Service &reader)
+    {
+        RunIdentity out;
+        std::string snapshot;
+        if (reader.readRunSnapshotJson(snapshot))
+        {
+            recording::RecordedRunProvenance parsed;
+            if (recording::parseRunProvenance(snapshot, parsed))
+            {
+                out.hasSnapshot = true;
+                out.snapshotVersion = parsed.schemaVersion;
+                out.runId = parsed.v3.runId;
+                out.declared = parsed.v3.identity;
+            }
+            else
+            {
+                out.snapshotUnreadable = true;
+            }
+        }
+        std::string annotation;
+        std::uint64_t annotationVersion = 0;
+        if (reader.readExperimentAnnotationJson(annotation, &annotationVersion))
+        {
+            out.annotation = recording::parseExperimentAnnotation(annotation);
+            if (!out.annotation)
+            {
+                out.annotationUnreadable = true;
+            }
+            else if (annotationVersion != 0 && annotationVersion <= 0xFFFFFFFFull)
+            {
+                out.annotationSchemaVersion = static_cast<std::uint32_t>(annotationVersion);
+            }
+        }
+        return out;
+    }
+
+    bool ReviewSession::probeRuns(const std::vector<std::string> &paths, std::vector<RunProbe> &out,
+                                  std::string *error) const
+    {
+        out.clear();
+        if (paths.size() > kReviewProbeMaxPaths)
+        {
+            if (error)
+            {
+                *error = "Too many files to probe at once: " + std::to_string(paths.size()) + " (at most " +
+                         std::to_string(kReviewProbeMaxPaths) + ")";
+            }
+            return false;
+        }
+        out.reserve(paths.size());
+        for (const auto &path : paths)
+        {
+            // The session's own lock, per file (#722): no session read, open or
+            // close interleaves with the probe's HDF5 calls, and the open file
+            // stays as it was.
+            std::scoped_lock lock(impl_->mutex);
+            out.push_back(probeOne(path));
+        }
+        return true;
     }
 
     ReviewMetadata ReviewSession::metadata() const

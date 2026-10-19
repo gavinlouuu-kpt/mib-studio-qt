@@ -21,6 +21,7 @@ struct ReviewScatter;
 struct ReviewEvent;
 struct ReviewChartSnapshot;
 struct ReviewDensity;
+struct ReviewProbeResult;
 
 class ReviewBridge {
 public:
@@ -38,6 +39,7 @@ public:
     void set_fallback_pixel_to_micron(double factor);
 
     ReviewInfo fetch_review_info();
+    ReviewProbeResult review_probe_runs(rust::Vec<rust::String> paths);
     ReviewRows fetch_review_rows(bool valid, std::uint64_t offset, std::uint64_t count);
     ReviewFrame fetch_review_frame(std::uint32_t dataset, std::uint64_t index, std::uint32_t overlay,
                                    bool roi_overlay);
@@ -76,6 +78,7 @@ private:
 std::unique_ptr<ReviewBridge> new_review_bridge();
 std::uint32_t review_bridge_abi_version();
 bool review_fixture_write_experiment(rust::Str path);
+bool review_fixture_write_run(rust::Str path, rust::Str snapshot_json, rust::Str annotation_json);
 bool review_fixture_write_population(rust::Str path, std::uint32_t cells, std::uint64_t seed);
 
 } // namespace mib_review_bridge

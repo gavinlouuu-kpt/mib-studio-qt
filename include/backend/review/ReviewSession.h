@@ -12,6 +12,7 @@
 // Thread safety: every public call locks one mutex (Hdf5Service is not
 // thread-safe). Long jobs (export, batch, regenerate masks, core contour)
 // open their own readers — see ReviewJobs.h — so they never block a read.
+// The identity probe (#717 B1a) takes the same mutex per file.
 #pragma once
 
 #include "backend/review/ReviewTypes.h"
@@ -60,6 +61,26 @@ namespace backend::review
         // TD-17: the factor `reader`'s open file was recorded with (run
         // snapshot `pixel_to_micron`); 0 when the file records none.
         static double recordedPixelToMicron(const services::Hdf5Service &reader);
+        // #717 B1a: the run identity of `reader`'s open file (snapshot v3 +
+        // /experiment_annotation). Attributes only; absent members for a
+        // legacy file, never a default. Does not throw for a bad attribute.
+        static RunIdentity readRunIdentity(const services::Hdf5Service &reader);
+
+        // #717 B1a: the experiment library's identity probe. Each path is
+        // opened with its own short-lived reader, its header attributes read
+        // (RunProbe: identity, times, counts, accounting, core version; no
+        // images, no metadata rows) and closed again. A file that cannot be
+        // read is a per-file error (`ok` false), never a failure of the call.
+        // Refused (false, `error`) for more than kReviewProbeMaxPaths paths.
+        //
+        // Serialized with this session's own HDF5 access (#722: HDF5 is built
+        // without thread safety): each file is probed under the session's
+        // mutex, the one every read, open and close takes. The open file is
+        // left as it was. Review jobs open their own readers outside that
+        // mutex, so hosts gate the probe on the job lane as well
+        // (ReviewJobs::probeRuns); the bridge only calls that one.
+        bool probeRuns(const std::vector<std::string> &paths, std::vector<RunProbe> &out,
+                       std::string *error = nullptr) const;
 
         ReviewMetadata metadata() const;
         bool isRecordingFile() const;

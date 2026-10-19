@@ -3,7 +3,7 @@
 // YOFO Review's own contract (ADR 0014); the MIB Studio bridge contract is
 // ../bridgeContract.ts.
 
-export const REVIEW_ABI_VERSION = 1;
+export const REVIEW_ABI_VERSION = 2;
 
 export const OVERLAY_MODES = {
   None: 0,
@@ -112,4 +112,8 @@ export const REVIEW_FRAME_PACKET = {
   "identity_semantics": "capture_session and store_generation are zero: review frames come from a recorded file, not a capture",
   "rgb8_semantics": "review pulls (kinds 3, 5, 6) may carry RGB8 (3 bytes per pixel, stride = width*3) when the backend composed an overlay or ROI; mono pulls are unchanged",
   "thumbnail_strip_semantics": "pull kind 5 packs count tiles of size x size as one frame of width size and height size*count; frame_index = page offset"
+} as const;
+
+export const REVIEW_PROBE = {
+  "max_paths": 256
 } as const;

@@ -179,6 +179,15 @@ namespace backend::review
 
         bool cancel(std::uint64_t operationId);
         bool busy() const;
+
+        // #717 B1a: the experiment library's identity probe
+        // (ReviewSession::probeRuns), gated on this lane. It holds the lane's
+        // start lock for the whole call, so no job starts while it runs, and
+        // it is refused (false, `error`) while a job runs: a job's readers
+        // work outside the session's mutex, and HDF5 is not thread-safe
+        // (#722). Synchronous; per-file errors are in `out`.
+        bool probeRuns(const std::vector<std::string> &paths, std::vector<RunProbe> &out,
+                       std::string *error = nullptr);
         // The record the last ComputeCore / Density job produced for the file
         // the session holds now (JSON, empty when none or computed for
         // another file); the shell saves it through ReviewSession.

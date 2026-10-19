@@ -192,6 +192,20 @@ namespace backend::review
 
     bool ReviewJobs::busy() const { return impl_->running.load(); }
 
+    bool ReviewJobs::probeRuns(const std::vector<std::string> &paths, std::vector<RunProbe> &out, std::string *error)
+    {
+        out.clear();
+        // The start lock: start() takes it before a job's thread exists, so
+        // holding it keeps every job off the library while the probe reads.
+        std::scoped_lock lock(impl_->mutex);
+        if (impl_->running.load())
+        {
+            if (error) *error = "A review job is running; the files can be read when it finishes";
+            return false;
+        }
+        return impl_->session.probeRuns(paths, out, error);
+    }
+
     std::string ReviewJobs::computedCoreJson() const
     {
         const std::string current = impl_->session.filePath();

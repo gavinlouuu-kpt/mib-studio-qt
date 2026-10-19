@@ -48,6 +48,106 @@ pub mod review_ffi {
         pub channels: i32,
     }
 
+    /// One free key/value of the planned annotation (sorted by key).
+    #[derive(Debug, Clone, Default)]
+    pub struct ReviewKeyValue {
+        pub key: String,
+        pub value: String,
+    }
+
+    /// The planned sample annotation (`/experiment_annotation`, #712) as
+    /// written at Start (review ABI 2, #717 B1a). `present` false = the file
+    /// has none; `unreadable` = the block exists but is not a JSON object.
+    /// Each `has_*` false = not declared: the value beside it is then empty
+    /// or zero and means nothing.
+    #[derive(Debug, Clone, Default)]
+    pub struct ReviewAnnotation {
+        pub present: bool,
+        pub unreadable: bool,
+        pub has_schema_version: bool,
+        pub schema_version: u32,
+        pub has_sample: bool,
+        pub sample: String,
+        pub has_condition: bool,
+        pub condition: String,
+        pub has_experimental_unit: bool,
+        pub experimental_unit: String,
+        pub has_concentration: bool,
+        pub concentration_value: f64,
+        pub concentration_unit: String,
+        pub has_channel: bool,
+        pub channel: String,
+        pub has_medium: bool,
+        pub medium: String,
+        pub has_temperature_c: bool,
+        pub temperature_c: f64,
+        pub has_notes: bool,
+        pub notes: String,
+        pub free: Vec<ReviewKeyValue>,
+    }
+
+    /// A run file's identity (review ABI 2, #717 B1a): run snapshot v3
+    /// (#712) and the annotation. A legacy file has `has_snapshot` false and
+    /// every `has_*` false; nothing is fabricated. `snapshot_unreadable`: a
+    /// snapshot attribute that is not a JSON object. `snapshot_version` is
+    /// meaningful only with `has_snapshot`.
+    #[derive(Debug, Clone, Default)]
+    pub struct ReviewRunIdentity {
+        pub has_snapshot: bool,
+        pub snapshot_unreadable: bool,
+        pub snapshot_version: u32,
+        pub has_run_id: bool,
+        pub run_id: String,
+        pub has_experiment_id: bool,
+        pub experiment_id: String,
+        pub has_run_index: bool,
+        pub run_index: u32,
+        pub has_sample_ref: bool,
+        pub sample_ref: String,
+        pub has_calibration_record_id: bool,
+        pub calibration_record_id: String,
+        /// The operator the client selected at Start (not authenticated).
+        pub has_operator_id: bool,
+        pub operator_id: String,
+        pub has_operator_name: bool,
+        pub operator_name: String,
+        pub annotation: ReviewAnnotation,
+    }
+
+    /// One file of the identity probe (`review_probe_runs`). `ok` false: the
+    /// file could not be read (`message` says why) and nothing else is set.
+    /// Each `has_*` false = the file records no such value.
+    #[derive(Debug, Clone, Default)]
+    pub struct ReviewRunProbe {
+        pub path: String,
+        pub ok: bool,
+        pub message: String,
+        pub recording_file: bool,
+        pub identity: ReviewRunIdentity,
+        pub has_start_time: bool,
+        pub start_time_ns: u64,
+        pub has_end_time: bool,
+        pub end_time_ns: u64,
+        pub has_total_valid: bool,
+        pub total_valid: u64,
+        pub has_total_invalid: bool,
+        pub total_invalid: u64,
+        /// `accounting_completion` is a contract `run_completion_states` value.
+        pub has_accounting: bool,
+        pub accounting_completion: u32,
+        pub has_core_version: bool,
+        pub core_version: String,
+    }
+
+    /// `ok` false: the whole probe was refused (`message`): more than
+    /// `review_probe.max_paths` paths, or a review job is running.
+    #[derive(Debug, Clone, Default)]
+    pub struct ReviewProbeResult {
+        pub ok: bool,
+        pub message: String,
+        pub runs: Vec<ReviewRunProbe>,
+    }
+
     /// Everything a shell shows about the open file without reading pixels.
     #[derive(Debug, Clone, Default)]
     pub struct ReviewInfo {
@@ -105,6 +205,9 @@ pub mod review_ffi {
         pub has_recorded_config: bool,
         pub ring_ratio_min: f64,
         pub ring_ratio_max: f64,
+        /// Review ABI 2 (#717 B1a): the open file's run identity; every
+        /// member absent for a legacy file or when no file is open.
+        pub identity: ReviewRunIdentity,
     }
 
     /// One metrics row: the full FilterResult the Qt table shows.
@@ -224,6 +327,12 @@ pub mod review_ffi {
         /// record) so bridge tests need no camera.
         fn review_fixture_write_experiment(path: &str) -> bool;
 
+        /// Test fixture (never a Tauri command, review ABI 2): the experiment
+        /// fixture's frames with `snapshot_json` as the run snapshot and
+        /// `annotation_json` as `/experiment_annotation`, each written
+        /// verbatim; an empty string writes none (a legacy file).
+        fn review_fixture_write_run(path: &str, snapshot_json: &str, annotation_json: &str) -> bool;
+
         /// Dev / screenshot fixture (never a Tauri command): `cells` valid
         /// cells in two seeded populations (Charts view: scatter, density,
         /// histogram), `cells / 10` invalid frames, pixel_to_micron 0.25,
@@ -242,6 +351,14 @@ pub mod review_ffi {
         fn set_fallback_pixel_to_micron(self: Pin<&mut ReviewBridge>, factor: f64);
 
         fn fetch_review_info(self: Pin<&mut ReviewBridge>) -> ReviewInfo;
+        /// Review ABI 2 (#717 B1a): the experiment library's identity probe.
+        /// Header attributes of each path (identity, times, counts,
+        /// accounting, core version), no images; at most
+        /// `review_probe.max_paths` paths; per-file errors in the result.
+        /// Serialized with the open session's HDF5 reads (its mutex, per
+        /// file) and with the job lane (refused while a job runs, #722);
+        /// the open file is left as it was.
+        fn review_probe_runs(self: Pin<&mut ReviewBridge>, paths: Vec<String>) -> ReviewProbeResult;
         fn fetch_review_rows(
             self: Pin<&mut ReviewBridge>,
             valid: bool,
