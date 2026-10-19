@@ -145,6 +145,134 @@ async fn start_request_json_is_passed_through_the_server_unparsed() {
     let _ = std::fs::remove_dir_all(&data);
 }
 
+// ABI 40 (#741): over the WebSocket, a start reply carries start_outcome and a stop reply
+// stop_outcome; experiment_stop with expectedStartGeneration stops only that run. A stale
+// generation is refused with RunMismatch (3) and the run continues; the matching one stops it; a
+// stop without the argument is as before; a malformed generation is an error and sends nothing.
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn experiment_stop_names_its_run_over_the_websocket() {
+    let (server, addr, data) = start("stop_generation").await;
+    let mut ws = connect(addr).await;
+    let mut events = Vec::new();
+    let mut id = 0u64;
+    let mut next = || {
+        id += 1;
+        id
+    };
+    let Ok(Reply::Json(ok)) = call(&mut ws, next(), "init", json!({ "dataDir": "" }), &mut events).await else { panic!() };
+    assert_eq!(ok, json!(true));
+    let out = data.join("stop_generation.h5").to_string_lossy().into_owned();
+
+    // Idle: a generation is RunMismatch with the plain reason; without one NotActive, as before.
+    let Ok(Reply::Json(r)) = call(&mut ws, next(), "experiment_stop", json!({ "expectedStartGeneration": "1" }), &mut events).await
+    else {
+        panic!()
+    };
+    assert_eq!((r["ok"].clone(), r["stop_outcome"].clone()), (json!(false), json!(3)), "{r}");
+    assert_eq!(r["message"], json!("stop refused: expected run 1, but no run is active; nothing was stopped"), "{r}");
+    assert!(r.get("start_outcome").is_none(), "a stop reply has no start outcome: {r}");
+    let Ok(Reply::Json(r)) = call(&mut ws, next(), "experiment_stop", Value::Null, &mut events).await else { panic!() };
+    assert_eq!((r["stop_outcome"].clone(), r["message"].clone()), (json!(1), json!("notActive")), "{r}");
+    for bad in [json!("+1"), json!("01"), json!(""), json!(" 1"), json!("18446744073709551616"), json!(1)] {
+        let refused = call(&mut ws, next(), "experiment_stop", json!({ "expectedStartGeneration": bad }), &mut events).await;
+        assert!(refused.is_err(), "{bad} is not a canonical decimal generation: {refused:?}");
+    }
+
+    // No camera: NotReady (1); a refused start request: InvalidRequest (7), message unchanged.
+    let Ok(Reply::Json(r)) = call(&mut ws, next(), "experiment_start", json!({ "outputPath": out }), &mut events).await else { panic!() };
+    assert_eq!((r["ok"].clone(), r["start_outcome"].clone()), (json!(false), json!(1)), "{r}");
+    assert!(r.get("stop_outcome").is_none(), "{r}");
+    let Ok(Reply::Json(r)) = call(
+        &mut ws,
+        next(),
+        "experiment_start",
+        json!({ "outputPath": out, "startRequestJson": r#"{"operator_name":"Alice"}"# }),
+        &mut events,
+    )
+    .await
+    else {
+        panic!()
+    };
+    assert_eq!(r["start_outcome"], json!(7), "{r}");
+    assert!(r["message"].as_str().unwrap().starts_with("invalid start request: "), "{r}");
+
+    // A run: Started (0), then AlreadyActive (3) for a second start.
+    call(&mut ws, next(), "configure_mock", json!({ "frameDir": mock_frames(), "frameIntervalMs": 5, "loopFiles": true }), &mut events)
+        .await
+        .unwrap();
+    call(&mut ws, next(), "apply_processing", json!({ "realtimeEnabled": true, "pixelToMicron": 1.0 }), &mut events).await.unwrap();
+    call(&mut ws, next(), "start_capture", Value::Null, &mut events).await.unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let started = loop {
+        let Ok(Reply::Json(r)) = call(&mut ws, next(), "experiment_start", json!({ "outputPath": out }), &mut events).await else {
+            panic!()
+        };
+        if r["ok"] == json!(true) || Instant::now() > deadline {
+            break r;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await; // readiness settles once frames arrive
+    };
+    assert_eq!((started["ok"].clone(), started["start_outcome"].clone()), (json!(true), json!(0)), "{started}");
+    let Ok(Reply::Json(again)) = call(&mut ws, next(), "experiment_start", json!({ "outputPath": out }), &mut events).await else { panic!() };
+    assert_eq!(again["start_outcome"], json!(3), "{again}");
+    let Ok(Reply::Json(status)) = call(&mut ws, next(), "fetch_experiment_status", Value::Null, &mut events).await else { panic!() };
+    assert_eq!(status["state"], json!(2), "Active: {status}");
+    let generation: u64 = status["start_generation"].as_str().unwrap().parse().unwrap();
+
+    // A stale or unknown generation stops nothing.
+    for stale in [generation - 1, generation + 1] {
+        let Ok(Reply::Json(r)) = call(
+            &mut ws,
+            next(),
+            "experiment_stop",
+            json!({ "expectedStartGeneration": stale.to_string() }),
+            &mut events,
+        )
+        .await
+        else {
+            panic!()
+        };
+        assert_eq!((r["ok"].clone(), r["stop_outcome"].clone()), (json!(false), json!(3)), "{r}");
+        assert_eq!(
+            r["message"],
+            json!(format!("stop refused: expected run {stale}, but run {generation} is active; nothing was stopped")),
+            "{r}"
+        );
+    }
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let Ok(Reply::Json(status)) = call(&mut ws, next(), "fetch_experiment_status", Value::Null, &mut events).await else { panic!() };
+    assert_eq!(status["state"], json!(2), "the run continues: {status}");
+
+    // The run's own generation stops it.
+    let Ok(Reply::Json(r)) = call(
+        &mut ws,
+        next(),
+        "experiment_stop",
+        json!({ "expectedStartGeneration": generation.to_string() }),
+        &mut events,
+    )
+    .await
+    else {
+        panic!()
+    };
+    assert_eq!((r["ok"].clone(), r["stop_outcome"].clone(), r["message"].clone()), (json!(true), json!(0), json!("accepted")), "{r}");
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        let Ok(Reply::Json(s)) = call(&mut ws, next(), "fetch_experiment_status", Value::Null, &mut events).await else { panic!() };
+        if s["terminal"] == json!(true) {
+            assert_eq!(s["state"], json!(0), "Idle: {s}");
+            break;
+        }
+        assert!(Instant::now() < deadline, "the run did not finalize: {s}");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    call(&mut ws, next(), "stop_capture", Value::Null, &mut events).await.unwrap();
+    ws.close(None).await.unwrap();
+    server.state().bridge.lock().unwrap().pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(&data);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn mock_capture_over_websocket() {
@@ -270,6 +398,205 @@ async fn client_loss_stops_and_saves() {
     call(&mut ws, 10, "stop_capture", Value::Null, &mut events).await.unwrap();
     ws.close(None).await.unwrap();
     server.state().bridge.lock().unwrap().pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(&data);
+}
+
+/// A fake dLSP syringe pump (Modbus RTU slave 1) on the master side of a pseudo-terminal; the
+/// backend opens the slave as the pump's serial port. `stall()` stops the tty's output
+/// (`tcflow(TCOOFF)`), so the kernel refuses every write the backend makes, as a USB-serial adapter
+/// that stops draining does; `resume()` restarts it.
+#[cfg(target_os = "linux")]
+mod fake_pump {
+    use std::ffi::{CStr, CString};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::thread::JoinHandle;
+
+    fn crc16(data: &[u8]) -> u16 {
+        let mut crc = 0xFFFFu16;
+        for &b in data {
+            crc ^= u16::from(b);
+            for _ in 0..8 {
+                crc = if crc & 1 != 0 { (crc >> 1) ^ 0xA001 } else { crc >> 1 };
+            }
+        }
+        crc
+    }
+
+    fn with_crc(mut frame: Vec<u8>) -> Vec<u8> {
+        let crc = crc16(&frame);
+        frame.extend_from_slice(&crc.to_le_bytes());
+        frame
+    }
+
+    /// The answer to one complete request at the front of `rx`, and its length.
+    fn answer(rx: &[u8]) -> Option<(usize, Option<Vec<u8>>)> {
+        if rx.len() < 8 {
+            return None;
+        }
+        let len = match rx[1] {
+            0x10 if rx.len() >= 7 => 9 + usize::from(rx[6]),
+            0x10 => return None,
+            _ => 8,
+        };
+        if rx.len() < len {
+            return None;
+        }
+        let reply = match (rx[0], rx[1]) {
+            (1, 0x03) => {
+                let count = u16::from_be_bytes([rx[4], rx[5]]) as usize;
+                let mut frame = vec![1, 0x03, (count * 2) as u8];
+                frame.resize(3 + count * 2, 0);
+                Some(with_crc(frame))
+            }
+            (1, 0x06) => Some(rx[..8].to_vec()),
+            (1, 0x10) => Some(with_crc(rx[..6].to_vec())),
+            _ => None,
+        };
+        Some((len, reply))
+    }
+
+    pub struct FakePump {
+        pub slave_path: String,
+        master: libc::c_int,
+        control: libc::c_int,
+        stop: Arc<AtomicBool>,
+        thread: Option<JoinHandle<()>>,
+    }
+
+    impl FakePump {
+        pub fn start() -> Self {
+            // SAFETY: plain POSIX pty calls on descriptors this struct owns.
+            unsafe {
+                let master = libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY);
+                assert!(master >= 0, "pty available");
+                assert_eq!(libc::grantpt(master), 0);
+                assert_eq!(libc::unlockpt(master), 0);
+                let mut name = [0 as libc::c_char; 128];
+                assert_eq!(libc::ptsname_r(master, name.as_mut_ptr(), name.len()), 0);
+                let slave_path = CStr::from_ptr(name.as_ptr()).to_string_lossy().into_owned();
+                let path = CString::new(slave_path.clone()).unwrap();
+                // A second handle on the slave: it lets the test stop and restart the tty's output.
+                let control = libc::open(path.as_ptr(), libc::O_RDWR | libc::O_NOCTTY | libc::O_NONBLOCK);
+                assert!(control >= 0, "second handle on the pty slave");
+                let stop = Arc::new(AtomicBool::new(false));
+                let flag = stop.clone();
+                let thread = std::thread::spawn(move || {
+                    let mut rx = Vec::new();
+                    while !flag.load(Ordering::SeqCst) {
+                        let mut fds = libc::pollfd { fd: master, events: libc::POLLIN, revents: 0 };
+                        if libc::poll(&mut fds, 1, 20) <= 0 {
+                            continue;
+                        }
+                        let mut buf = [0u8; 256];
+                        let n = libc::read(master, buf.as_mut_ptr().cast(), buf.len());
+                        if n <= 0 {
+                            continue;
+                        }
+                        rx.extend_from_slice(&buf[..n as usize]);
+                        while let Some((len, reply)) = answer(&rx) {
+                            rx.drain(..len);
+                            if let Some(reply) = reply {
+                                libc::write(master, reply.as_ptr().cast(), reply.len());
+                            }
+                        }
+                    }
+                });
+                FakePump { slave_path, master, control, stop, thread: Some(thread) }
+            }
+        }
+
+        pub fn stall(&self) {
+            // SAFETY: `control` is an open descriptor of the pty slave.
+            assert_eq!(unsafe { libc::tcflow(self.control, libc::TCOOFF) }, 0, "pty output stopped");
+        }
+
+        pub fn resume(&self) {
+            // SAFETY: as above.
+            assert_eq!(unsafe { libc::tcflow(self.control, libc::TCOON) }, 0, "pty output restarted");
+        }
+    }
+
+    impl Drop for FakePump {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::SeqCst);
+            if let Some(thread) = self.thread.take() {
+                let _ = thread.join();
+            }
+            // SAFETY: both descriptors are owned here and closed once.
+            unsafe {
+                libc::close(self.control);
+                libc::close(self.master);
+            }
+        }
+    }
+}
+
+// #720: a pump on a stalled serial adapter must not hold the client-loss stop-and-save, or the
+// bridge lock, for ever. Before #720 the backend retried EAGAIN without limit: the pump stop spun
+// under the bridge lock and the server never finished. Now each pump command fails at the write
+// deadline (about a second), the recording is saved, and the next client is answered.
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn client_loss_with_a_stalled_pump_still_stops_and_saves() {
+    let (server, addr, data) = start("stalled_pump").await;
+    let pump = fake_pump::FakePump::start();
+    let mut ws = connect(addr).await;
+    let mut events = Vec::new();
+    call(&mut ws, 1, "init", json!({ "dataDir": "" }), &mut events).await.unwrap();
+    let Ok(Reply::Json(r)) = call(&mut ws, 2, "pump_connect_endpoint",
+        json!({ "pump": 0, "portName": pump.slave_path, "baudRate": 9600, "modbusAddress": 1 }), &mut events).await
+    else {
+        panic!()
+    };
+    assert_eq!(r["ok"], json!(true), "the fake pump answers: {r}");
+    call(&mut ws, 3, "configure_mock", json!({ "frameDir": mock_frames(), "frameIntervalMs": 5, "loopFiles": true }), &mut events)
+        .await
+        .unwrap();
+    call(&mut ws, 4, "start_capture", Value::Null, &mut events).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let recording = data.join("stalled.h5");
+    let Ok(Reply::Json(r)) =
+        call(&mut ws, 5, "start_recording", json!({ "filePath": recording.to_string_lossy() }), &mut events).await
+    else {
+        panic!()
+    };
+    assert_eq!(r["ok"], json!(true), "{r}");
+
+    // The adapter stalls, then the link drops without a close handshake.
+    pump.stall();
+    drop(ws);
+    let dropped = Instant::now();
+    let deadline = dropped + Duration::from_secs(60);
+    while server.stop_and_saves() == 0 && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    eprintln!("stop-and-save with a stalled pump finished {:?} after the drop", dropped.elapsed());
+    assert_eq!(server.stop_and_saves(), 1, "the server finalised despite the stalled pump");
+
+    // The bridge lock is free: a new client is answered, the recording was saved, and a pump
+    // command on the stalled adapter fails within its bound, naming the timeout.
+    let mut ws = connect(addr).await;
+    let Ok(Reply::Json(buffer)) = call(&mut ws, 6, "fetch_preview_buffer", Value::Null, &mut events).await else { panic!() };
+    assert_eq!(buffer["recording"], json!(false), "the recording was stopped and saved");
+    assert!(recording.exists(), "the recording file is on disk");
+    let started = Instant::now();
+    let Ok(Reply::Json(r)) = call(&mut ws, 7, "pump_stop", json!({ "pump": 0 }), &mut events).await else { panic!() };
+    eprintln!("pump_stop on the stalled adapter answered in {:?}: {r}", started.elapsed());
+    assert_eq!(r["ok"], json!(false), "{r}");
+    let message = r["message"].as_str().unwrap_or_default();
+    assert!(message.starts_with("Pump stop failed") && message.contains("timed out"), "{r}");
+
+    // The adapter recovers: the same session stops the pump.
+    pump.resume();
+    let Ok(Reply::Json(r)) = call(&mut ws, 8, "pump_stop", json!({ "pump": 0 }), &mut events).await else { panic!() };
+    assert_eq!(r["ok"], json!(true), "the pump answers again: {r}");
+    call(&mut ws, 9, "pump_disconnect", json!({ "pump": 0 }), &mut events).await.unwrap();
+    call(&mut ws, 10, "stop_capture", Value::Null, &mut events).await.unwrap();
+    ws.close(None).await.unwrap();
+    server.state().bridge.lock().unwrap().pin_mut().shutdown();
+    drop(pump);
     let _ = std::fs::remove_dir_all(&data);
 }
 

@@ -114,6 +114,7 @@ namespace backend::review
         bool recording{false};
         std::vector<services::ProcessedFrame> validMeta;
         std::vector<services::ProcessedFrame> invalidMeta;
+        bool validMetaReadable{false};
         ReviewMetadata meta;
         double fallbackFactor{0.4886};
 
@@ -131,6 +132,7 @@ namespace backend::review
             meta.recordingFile = recording;
             validMeta.clear();
             invalidMeta.clear();
+            validMetaReadable = true;
             if (recording)
             {
                 std::uint64_t total = 0;
@@ -147,7 +149,11 @@ namespace backend::review
                 reader.readExperimentInfo(meta.startTimeNs, meta.endTimeNs, totalValid, totalInvalid, &meta.roi);
                 meta.totalValid = totalValid;
                 meta.totalInvalid = totalInvalid;
-                reader.readValidMetadata(validMeta);
+                const bool validRead = reader.readValidMetadata(validMeta);
+                // An absent valid set is empty, not unreadable (the facade's
+                // charts rule before #512 S5, when they opened their own reader).
+                const auto validPresent = reader.metadataDatasetPresent(true);
+                validMetaReadable = validPresent.has_value() && (!*validPresent || validRead);
                 reader.readInvalidMetadata(invalidMeta);
                 std::size_t seriesFrames = 0;
                 std::size_t seriesCount = 0;
@@ -263,6 +269,67 @@ namespace backend::review
             if (!meta.hasSeries) return true;
             return reader.readSeriesImagesByIndex(static_cast<std::size_t>(index), images);
         }
+
+        // Closed, with nothing of the last file left: also a reader handle
+        // whose open did not complete. Allocates nothing and does not throw
+        // (closeFile never does), so it is safe in a catch block.
+        void resetLocked()
+        {
+            reader.closeFile();
+            open = false;
+            path.clear();
+            recording = false;
+            meta = ReviewMetadata{};
+            validMeta.clear();
+            invalidMeta.clear();
+            validMetaReadable = false;
+        }
+
+        // All or nothing (#512 S5): either `filePath` is open with its
+        // metadata read, or the session is closed. A read that throws after
+        // the reader opened (an allocation failure, an OpenCV exception from a
+        // malformed dataset) closes the reader again, so no host sees an open
+        // reader it was not told about (the facade's D1 flag mirrors isOpen()).
+        bool loadLocked(const std::string &filePath, std::string *error)
+        {
+            try
+            {
+                if (!reader.loadFile(filePath))
+                {
+                    if (error) *error = "File not found or not an HDF5 review file: " + filePath;
+                    return false;
+                }
+                open = true;
+                path = filePath;
+                recording = reader.isRecordingFile();
+                readMetadataLocked();
+                return true;
+            }
+            catch (const std::exception &e)
+            {
+                resetLocked();
+                noteFailure(filePath, e.what(), error);
+            }
+            catch (...)
+            {
+                resetLocked();
+                noteFailure(filePath, nullptr, error);
+            }
+            return false;
+        }
+
+        // After the rollback: a log line and the error text, never a throw.
+        static void noteFailure(const std::string &filePath, const char *what, std::string *error) noexcept
+        {
+            try
+            {
+                SPDLOG_ERROR("ReviewSession: reading {} failed: {}", filePath, what ? what : "unknown error");
+                if (error) *error = "Failed to read " + filePath + (what ? std::string(": ") + what : std::string());
+            }
+            catch (...)
+            {
+            }
+        }
     };
 
     ReviewSession::ReviewSession() : impl_(std::make_unique<Impl>()) {}
@@ -272,29 +339,13 @@ namespace backend::review
     bool ReviewSession::open(const std::string &path, std::string *error)
     {
         std::scoped_lock lock(impl_->mutex);
-        if (impl_->open)
-        {
-            impl_->reader.closeFile();
-            impl_->open = false;
-        }
-        impl_->path.clear();
-        impl_->meta = ReviewMetadata{};
-        impl_->validMeta.clear();
-        impl_->invalidMeta.clear();
+        impl_->resetLocked();
         if (path.empty())
         {
             if (error) *error = "No file path";
             return false;
         }
-        if (!impl_->reader.loadFile(path))
-        {
-            if (error) *error = "File not found or not an HDF5 review file: " + path;
-            return false;
-        }
-        impl_->open = true;
-        impl_->path = path;
-        impl_->recording = impl_->reader.isRecordingFile();
-        impl_->readMetadataLocked();
+        if (!impl_->loadLocked(path, error)) return false;
         SPDLOG_INFO("ReviewSession: opened {} ({} file, valid {}, invalid {}, factor {}{})", path,
                     impl_->recording ? "recording" : "experiment", impl_->validMeta.size(),
                     impl_->invalidMeta.size(), impl_->factor(),
@@ -305,22 +356,21 @@ namespace backend::review
     void ReviewSession::close()
     {
         std::scoped_lock lock(impl_->mutex);
-        if (impl_->open)
-        {
-            impl_->reader.closeFile();
-            impl_->open = false;
-        }
-        impl_->path.clear();
-        impl_->recording = false;
-        impl_->meta = ReviewMetadata{};
-        impl_->validMeta.clear();
-        impl_->invalidMeta.clear();
+        impl_->resetLocked();
     }
 
     bool ReviewSession::isOpen() const
     {
         std::scoped_lock lock(impl_->mutex);
-        return impl_->open;
+        // Fail closed (#512 S5 review): a reader handle the session did not
+        // finish opening still counts, so the facade's D1 flag keeps Start
+        // refused until close() or the next open() releases it.
+        return impl_->open || impl_->reader.holdsFileHandle();
+    }
+
+    services::Hdf5Service &ReviewSessionTestAccess::reader(ReviewSession &session)
+    {
+        return session.impl_->reader;
     }
 
     std::string ReviewSession::filePath() const
@@ -394,6 +444,37 @@ namespace backend::review
         const double f = impl_->factor();
         for (std::uint64_t i = offset; i < end; ++i) rows.push_back(rowFromFrame(source[i], i, f));
         return true;
+    }
+
+    bool ReviewSession::framesPage(bool valid, std::uint64_t offset, std::uint64_t count,
+                                   std::vector<services::ProcessedFrame> &frames, std::uint64_t &totalOut) const
+    {
+        std::scoped_lock lock(impl_->mutex);
+        frames.clear();
+        totalOut = 0;
+        if (!impl_->open) return false;
+        const auto &source = impl_->set(valid);
+        totalOut = source.size();
+        if (offset >= source.size()) return true;
+        // Overflow-safe end (offset + count may wrap for a huge count).
+        const std::uint64_t remaining = source.size() - offset;
+        const std::uint64_t end = offset + std::min<std::uint64_t>(remaining, count);
+        frames.assign(source.begin() + static_cast<std::ptrdiff_t>(offset),
+                      source.begin() + static_cast<std::ptrdiff_t>(end));
+        return true;
+    }
+
+    ReviewSession::ValidSet ReviewSession::validSet() const
+    {
+        std::scoped_lock lock(impl_->mutex);
+        ValidSet out;
+        if (!impl_->open) return out;
+        out.open = true;
+        out.filePath = impl_->path;
+        out.recordingFile = impl_->recording;
+        out.metadataReadable = impl_->validMetaReadable;
+        out.frames = impl_->validMeta;
+        return out;
     }
 
     bool ReviewSession::frameMeta(bool valid, std::uint64_t index, services::ProcessedFrame &out) const
@@ -587,6 +668,7 @@ namespace backend::review
         }
         const std::string path = impl_->path;
         impl_->reader.closeFile();
+        impl_->open = false;
         bool ok = false;
         {
             services::Hdf5Service updater;
@@ -601,13 +683,13 @@ namespace backend::review
                 updater.closeFile();
             }
         }
-        if (!impl_->reader.loadFile(path))
+        // Reopen all or nothing, as open().
+        if (!impl_->loadLocked(path, nullptr))
         {
-            impl_->open = false;
+            impl_->resetLocked();
             if (error) *error = "Failed to reopen " + path;
             return false;
         }
-        impl_->readMetadataLocked();
         return ok;
     }
 

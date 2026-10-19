@@ -198,11 +198,11 @@ the coordinator (ADR 0004/0011).
 | S2 | Reanalysis engine in `mib_review_core` | none | none | merged (#721) |
 | S3 | Export engine in `mib_review_core` | none | none | merged (#724) |
 | S4 | Charts JSON and saved-overlay builders | none (text only, D3) | none | merged (#726) |
-| S5 | The facade owns the ReviewSession | none (D1 (a): unchanged) | none | planned |
+| S5 | The facade owns the ReviewSession | none (D1 (a): unchanged) | none | merged (#733) |
 | S6 | Parity harness: a MIB Studio half | none | none | planned |
 | S7 | Facade jobs on ReviewJobs lanes | none | none | planned |
-| S8 | YOFO regenerate on the reanalysis engine | none | none (behaviour D6) | planned |
-| S9 | Transport-neutral review module | none | none | in review (#731) |
+| S8 | YOFO regenerate on the reanalysis engine | none | none (behaviour D6) | merged (#735) |
+| S9 | Transport-neutral review module | none | none | merged (#731) |
 | S10 | Attachable review bridge | **additive, ABI bump** | none | proposed, not implemented |
 | S11 | Review commands in the studio command layer | **additive command surface, ABI bump** | none | proposed, not implemented |
 | S12 | MIB Studio's options in the review contract | none | **additive, ABI bump** | proposed, not implemented |
@@ -366,7 +366,7 @@ the coordinator (ADR 0004/0011).
   file; `renderReviewOverlayJson` on 852 requests) was identical before and
   after.
 
-### S5 — The facade owns the ReviewSession (source ownership)
+### S5 — The facade owns the ReviewSession (source ownership; in review, #733)
 
 - **Moves:** `BackendFacade` gains `std::shared_ptr<review::ReviewSession> review_`.
   `RecordingLoad`, `closeReview`, `fetchReviewMetadata`,
@@ -401,6 +401,106 @@ the coordinator (ADR 0004/0011).
   handle (F7; the Qt shell does not use the facade); shutdown order (jobs
   joined before the session closes); YOFO Studio's remote client sees the same
   JSON.
+- **As built (2026-10-19):** as planned; the facade's `review_` is a
+  `const std::shared_ptr` made in the constructor. The load event's counts,
+  the metadata, the "review" accounting and the charts' rows come from what
+  the session read at open (the same `Hdf5Service` calls the shared handle
+  answered per request). D1 (a) is `AppBackend::setReviewSourceOpen(bool)` /
+  `reviewSourceOpen()`: the facade sets it from `review_->isOpen()` inside the
+  idle transaction (load, failed load, close; cleared at shutdown and in the
+  destructor) through a scope guard that also runs on an exception, and the
+  coordinator's `storage.hdf5` gate and Start check read
+  `hdf5().isFileOpen() || reviewSourceOpen()` under the coordinator mutex, so
+  the gate id, status, reason and remediation and the Start message are
+  unchanged. Shutdown closes the session after the export and reanalysis jobs
+  are joined and no longer closes the shared handle (its writers close it).
+  Not anticipated: (1) raw recording also refused on the shared handle
+  (`AppBackend::startFrameRecordingLocked`, "Close the existing HDF5 file
+  before starting raw recording; its writer will not be replaced"); without
+  the hook it would have been admitted beside a review reader, so it reads the
+  flag too, with the same message. (2) The session read the valid metadata at
+  open without remembering whether it was absent or unreadable, which the
+  charts tell apart ("Cannot read valid-frame metrics"):
+  `ReviewSession::validSet()`, which returns the path, file type, readability
+  and rows in one snapshot. (3) Before S5,
+  `fetch_review_metrics_page` and `fetch_review_image` checked only that the
+  shared handle was open, so with no review file during a run they read the
+  writer's file on the caller's thread; they now fail without a review file.
+  (4) `framesPage` is overflow-safe for a huge `count`; the facade's old page
+  (and `ReviewSession::metricsPage`, unchanged) compute `offset + count`.
+  Review of #733 (2026-10-19) found two defects, both fixed: (5) a metadata
+  read that threw inside `open()` after the reader opened (allocation, or
+  OpenCV on a malformed background) skipped the flag and released the
+  coordinator mutex with the reader open, a D1 window; `open()` is now all or
+  nothing (the reader is closed again, false, "Failed to read <path>: …") and
+  the facade's flag is set by a scope guard on every exit. (6) The charts read
+  path, file type, readability and rows with separate locks, so a concurrent
+  load could chart one file's rows under another's identity, or let a
+  recording past the experiment-only check; they now take one `validSet()`
+  snapshot. The re-review found three more, fixed: (7) `Hdf5Service::loadFile`
+  could leak a handle when the path copy after `H5Fopen` threw (the open state
+  still false, so the guard would clear the refusal); it now releases the
+  handle and rethrows, and `ReviewSession::isOpen()` fails closed on any handle
+  the reader holds (`Hdf5Service::holdsFileHandle()`). (8) `closeFile()` built
+  diagnostics after `H5Fclose` but before clearing its state; it now clears
+  the handle and state right after `H5Fclose`, wraps every diagnostic in
+  `try`, and closes any handle held, also one whose open did not complete.
+  (9) The charts stress test could run zero fetches; a handshake now makes
+  the loader wait for the first fetch.
+- **Proof (#733):** `backend.facade_review_session` (new) keeps the pre-slice
+  facade code as the oracle: load result, RecordingStatusEvent, operation and
+  error events, metadata, 14 pages per file, every dataset × 5 indices,
+  "review" accounting and charts JSON are equal on experiment, legacy,
+  empty-valid, unreadable-metadata and two recording fixtures, a
+  `readMetadata = false` load and three failed loads (missing, not HDF5, empty
+  path) that close the open file; the export's default source is the session's
+  file; a writer handle open beside it is not closed or replaced by load,
+  replace or close and keeps writing; the `storage.hdf5` gate of every loaded
+  file equals the shared handle's field for field, Start is refused with the
+  pre-slice message, and after Close File (or a failed load, or shutdown) the
+  gate passes. `review.session` adds `framesPage` (equal to the reader's own
+  metadata read and to `metricsPage`, bounds, zero and huge counts) and absent
+  vs unreadable valid sets, `validSet` and the all-or-nothing open (a
+  malformed background whose read throws inside `Hdf5Service`: closed, no
+  throw, the error names the file, the next open works). The facade test also
+  loads that file from closed and after a good load: the flag equals the
+  session's state and the load fails closed with its failed-load events (with
+  the pre-fix load path the flag reads closed while the reader is open and
+  Start passes the writer check; with only the rollback removed, the guard
+  still keeps the flag equal and Start refused); and it charts on one thread
+  while another loads full / legacy / a recording 300 times: every answer is
+  one file's whole answer (probabilistic: the separate-lock accessors were caught
+  in 2 of 3 runs at 120 loads; the deterministic proof is the `validSet` unit test).
+  The final round adds `recording.hdf5_resilience`
+  (`testHandleNeverLeaksOnThrow`: a throw injected right after `H5Fopen`, and
+  one in `closeFile`'s diagnostics, leave no handle, the library's open-file
+  count back at baseline, `closeFile` not throwing) and `review.session` (the
+  same open-time throw through the session: closed, no handle, the file named;
+  a reader handle held behind the session's back makes `isOpen()` true while
+  nothing is served, and `close()` / the next `open()` release it), with the
+  test hooks `Hdf5ServiceTestAccess` / `ReviewSessionTestAccess`. Mutations
+  (no release in `loadFile`, the close hook before the state is cleared,
+  `isOpen()` without the handle) fail them.
+  `backend.experiment_readiness` section 5b: with the
+  flag set the gate equals the shared handle's, every other gate is unchanged,
+  Start and raw recording are refused with the unchanged messages, and once
+  cleared the instrument is ready and raw recording starts. `backend.facade_boundary`:
+  the raw-recording and idle guards' exact messages with the writer handle
+  open and untouched, and at the facade with a live camera the D1 gate, Start
+  and raw-recording refusals beside a loaded file, then Close File and a real
+  experiment run. Mutations (the gate without the flag; the load not setting
+  it; the readability rule reduced to the read result) fail the new tests.
+  A temporary characterization (not committed) of the facade on 15 files (the
+  six fixtures and nine real runs, among them the 512x96 review-scatter run
+  and the review-parity inputs): load events, metadata, pages, image hashes,
+  accounting, charts, the export's default source and CSV hashes, the
+  `storage.hdf5` gate, the Start and raw-recording refusals, close and the
+  guards during a raw recording, 1844 lines, identical before and after.
+  cargo `tests/contract.rs` 27 passed (incl. `record_then_load_and_review`,
+  `recording_load_emits_operation_lifecycle`,
+  `review_metadata_pages_images_and_export_job`) and `tests/review_bridge.rs`
+  with `MIB_BRIDGE_NO_CMAKE=1`. `frontend.review_parity` needs the Qt build:
+  left to CI's Linux Qt lane.
 
 ### S6 — Parity harness: a MIB Studio half
 
@@ -443,20 +543,80 @@ the coordinator (ADR 0004/0011).
 - **Risks:** event ordering (Started before Progress; one terminal state per
   id); the late-event policy of ADR 0004.
 
-### S8 — YOFO regenerate on the reanalysis engine
+### S8 — YOFO regenerate on the reanalysis engine (in review, #735)
 
 - **Moves:** `ReviewJobs::startRegenerateMasks` builds a `ReanalysisRequest`
-  (recorded config / ROI / background; the D6 options) and runs
-  `runReanalysis`; its own load / background / write code goes.
-- **Files:** `include/backend/review/Reanalysis.h` (options),
-  `src/backend/review/Reanalysis.cpp`, `src/backend/review/ReviewJobs.cpp`,
-  `tests/review/review_jobs_test.cpp`, vault `frontend/YofoReview.md`
-  ("Differences from the Qt tab").
-- **Contract:** none (`review_regenerate_sources` unchanged).
-- **Proof:** `review.jobs` regenerate cases, `review.reanalysis` with the new
-  options, cargo `tests/review_bridge.rs`.
-- **Risks:** the no-clobber change for YOFO (D6) needs the YOFO save dialog to
-  stop offering "replace".
+  (recorded config read by the job; recorded ROI / background read by the
+  engine; the D6 options) and runs `runReanalysis`; its own load / median /
+  remap / write code goes (the median-of-32 moved into the engine). The
+  request gets three options, all left at the facade's values by parsing:
+  `timestamps: Preserve | Rebase`, `syntheticBackgroundKind: QuietTile |
+  MedianOf32`, and `frameOrder: Timestamp | Datasets` (plus `convertColorToGray`,
+  see Review below). D6 named two
+  options; the third keeps YOFO's whole file as valid rows then invalid
+  rows, the "timestamp order" difference accepted on 2026-10-04 (without it
+  rows reorder and the rebase origin moves). YOFO keeps no budget, its range
+  clamp and its message format. An existing output is refused at start with
+  the facade's message ("Output already exists; choose a new file").
+- **Found:** the pre-S8 job paired records with frames **by position**.
+  `processBatch` emits one record per track (fewer records than frames when
+  tracking merges frames) or per object. So on real cells most records
+  carried another frame's index and timestamp, and track first/last frames
+  stayed batch positions. The engine pairs by the record's frame (as Qt and
+  the facade do), which fixes it. Accepted by the coordinator; the existing
+  files are tracked as #737.
+- **Review (#735):** `frameOrder` kept (ruled). Colour HDF frames: the
+  pre-S8 reader (`loadFromHdf5`) converted 3-channel frames BGR → gray, which
+  the engine refused. A fourth option, `convertColorToGray` (YOFO on, facade
+  off), keeps that. `review.jobs` compares a colour fixture's output with the
+  pre-S8 job, kept as the oracle.
+- **Dialog:** `RegenerateMasks.tsx` proposes a free name
+  (`defaultRegenerateName`, `_2`, `_3` … via `review_list_dir`; names
+  compared ignoring case, the search bounded, with a timestamped fallback,
+  #735 review). It stays
+  open on a refusal, shows "Not started: <backend reason> (<file>)", clears
+  the output and asks again. It closes once the job starts
+  (`useReviewJobs.start` hooks `onRefused` / `onStarted`). The OS save panel's
+  own overwrite question cannot be turned off through the dialog plugin;
+  confirming it replaces nothing now.
+- **Files:** `include/backend/review/Reanalysis.h`,
+  `src/backend/review/Reanalysis.cpp`, `include/backend/review/ReviewJobs.h`,
+  `src/backend/review/ReviewJobs.cpp`, `tests/review/review_jobs_test.cpp`,
+  `tests/review/review_reanalysis_test.cpp`,
+  `crates/mib-bridge/tests/review_bridge.rs`, `desktop/src/review/`
+  (`RegenerateMasks.tsx`, `ReviewPanel.tsx`, `exports/useReviewJobs.ts`,
+  `exports/exportHelpers.ts`, tests, IPC golden), vault
+  `frontend/YofoReview.md`, `services/ReviewSession.md`, manual
+  `yofo-review.md`.
+- **Contract:** none (`review_regenerate_sources` unchanged; the refusal is
+  the existing not-started result with a message).
+- **Proof:** `review.jobs` has a tracked-ring fixture where 10 frames give 6
+  records. It checks that every record's image is its frame's, the rebase
+  and clamp, valid-then-invalid order, source-index track frames, the range
+  clamp, the median-of-32 against the pre-S8 code (kept as the oracle), the
+  start refusal (the original untouched), a mid-run collision (job fails,
+  file untouched, no partial) and cancel (nothing written). Mutations fail it:
+  facade options for YOFO fail 4 checks; positional pairing fails 4.
+  `review.reanalysis` covers the options (parse keeps the defaults, rebase
+  offsets and clamp, dataset order, median vs quiet tile). Cargo
+  `review_bridge.rs` covers the refusal over the bridge and a regenerate into
+  a new file. The desktop IPC golden gains `review_list_dir` before the save
+  dialog and a refused-then-renamed flow (additions only).
+- **Characterization** (temporary harness, not committed; h5diff before /
+  after). YOFO regenerate covers 19 cases: synthetic experiment / recording /
+  folder / AVI fixtures and the real-cell `review_e2e_512x96_run.h5` and
+  `512x96stream-mock-frames`. Hdf outputs with one record per frame are
+  identical. Folder and AVI outputs differ only in the wall-clock
+  `experiment_info` start / end. Real-cell hdf outputs have identical
+  images, masks and background; only metadata differs: the pairing fix
+  (1040 of 1049 records misnamed before, 0 after; files regenerated up to
+  review-v1.1.3-beta.1 are affected, #737) and `end_time_ns`. Messages
+  are unchanged except the empty range ("Selected source range is empty").
+  The facade path (12 cases) has identical status JSON and outputs, except the
+  wall-clock attributes of folder and AVI outputs.
+- **Risks:** low. The YOFO save dialog's flow changed (refusal stays in the
+  dialog). A folder or AVI with an unreadable image now fails, as the facade
+  does, instead of skipping it.
 
 ### S9 — Transport-neutral review module (in review, #731)
 
@@ -639,10 +799,10 @@ bridge contract):
 - [x] 2026-10-19 — S1 and S2 merged (#721); D1, D3, D4 and D6 ruled, D7 amended (#717, #722).
 - [x] 2026-10-19 — S3 export engine (`review.export_engine`, #724); `review::writeMetricsCsv` deleted (F14).
 - [x] 2026-10-19 — S4 charts JSON and saved-overlay builders (`review.charts_json`, #726).
-- [ ] S5 facade owns the ReviewSession (D1)
+- [x] 2026-10-19 — S5 the facade owns the ReviewSession (`backend.facade_review_session`; D1 (a) via `AppBackend::setReviewSourceOpen`, gate text unchanged; #733).
 - [ ] S6 parity harness MIB Studio half
 - [ ] S7 facade jobs on ReviewJobs lanes (D7)
-- [ ] S8 YOFO regenerate on the engine (D6)
+- [x] 2026-10-19 — S8 YOFO regenerate on the engine (D6; `review.jobs`, `review.reanalysis`, no clobber; the position-pairing fix; #735)
 - [x] 2026-10-19 — S9 transport-neutral review module (`reviewIpc` golden unchanged; import guard; `Transport.upload`; #731).
 - [ ] S10 attachable review bridge (ABI)
 - [ ] S11 review commands in the studio command layer (ABI)

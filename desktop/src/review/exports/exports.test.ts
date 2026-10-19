@@ -3,10 +3,13 @@ import {
   baseName,
   batchSummaryText,
   defaultMetricsName,
+  defaultRegenerateName,
   dirName,
   exportDir,
   joinPath,
   LAST_EXPORT_DIR_KEY,
+  MAX_NAME_PROBES,
+  MAX_NAME_SUFFIX,
   nextAvailableName,
   parseBatchSummary,
   parseSeriesRange,
@@ -49,6 +52,34 @@ describe("default export names (HdfExportService::nextAvailableName)", () => {
   it("goes past the highest suffix in use, like the backend", () => {
     expect(defaultMetricsName("/d/run.h5", ["run_metrics.csv", "run_metrics_7.csv"])).toBe("run_metrics_8.csv");
     expect(nextAvailableName(["run", "run_x"], "run", "run_", "")).toBe("run_2");
+  });
+  it("proposes a free regenerate output: regenerate never replaces a file (#512 S8)", () => {
+    expect(defaultRegenerateName("run", [])).toBe("run_remasked.h5");
+    expect(defaultRegenerateName("run", ["run_metrics.csv", "other_remasked.h5"])).toBe("run_remasked.h5");
+    expect(defaultRegenerateName("run", ["run_remasked.h5"])).toBe("run_remasked_2.h5");
+    expect(defaultRegenerateName("run", ["run_remasked.h5", "run_remasked_2.h5"])).toBe("run_remasked_3.h5");
+    expect(defaultRegenerateName("run", ["run_remasked.h5", "run_remasked_4.h5"])).toBe("run_remasked_5.h5");
+  });
+  it("treats names as taken ignoring case: Windows and macOS volumes are case-insensitive (#735)", () => {
+    expect(defaultRegenerateName("run", ["RUN_remasked.h5"])).toBe("run_remasked_2.h5");
+    expect(defaultRegenerateName("run", ["Run_Remasked.H5", "run_REMASKED_2.h5"])).toBe("run_remasked_3.h5");
+    expect(defaultRegenerateName("run", ["run_remasked.h5", "RUN_REMASKED_7.H5"])).toBe("run_remasked_8.h5");
+    expect(defaultMetricsName("/d/run.h5", ["RUN_METRICS.CSV"])).toBe("run_metrics_2.csv");
+  });
+  it("ignores suffixes too large to step, bounds the search, falls back to a timestamp (#735)", () => {
+    // 2^53: one past Number.MAX_SAFE_INTEGER, where c + 1 === c and the old loop never ended.
+    expect(defaultRegenerateName("run", ["run_remasked.h5", "run_remasked_9007199254740992.h5"])).toBe("run_remasked_2.h5");
+    expect(defaultRegenerateName("run", ["run_remasked.h5", "run_remasked_1000000000.h5"])).toBe("run_remasked_2.h5");
+    const now = new Date(2026, 9, 19, 10, 35, 12);
+    expect(defaultRegenerateName("run", ["run_remasked.h5", `run_remasked_${MAX_NAME_SUFFIX}.h5`], now)).toBe("run_remasked_20261019-103512.h5");
+    expect(
+      defaultRegenerateName("run", ["run_remasked.h5", `run_remasked_${MAX_NAME_SUFFIX}.h5`, "RUN_remasked_20261019-103512.h5"], now),
+    ).toBe("run_remasked_20261019-103512-2.h5");
+    // The bound holds even when the stamped names are all taken.
+    const stamped = Array.from({ length: MAX_NAME_PROBES }, (_, k) => (k < 2 ? "run_remasked_20261019-103512.h5" : `run_remasked_20261019-103512-${k}.h5`));
+    expect(nextAvailableName(["run_remasked.h5", `run_remasked_${MAX_NAME_SUFFIX}.h5`, ...stamped], "run_remasked.h5", "run_remasked_", ".h5", now)).toMatch(
+      /^run_remasked_20261019-103512-\d+\.h5$/,
+    );
   });
 });
 

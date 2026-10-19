@@ -28,27 +28,64 @@ export function joinPath(dir: string, name: string): string {
   return dir.endsWith("/") || dir.endsWith("\\") ? dir + name : dir + sep + name;
 }
 
+/** Numeric suffixes above this are ignored: they are never stepped (a suffix
+ * such as 9007199254740992 cannot be incremented in a JS number). */
+export const MAX_NAME_SUFFIX = 999_999_999;
+/** Candidates tried past the highest suffix before the timestamp fallback. */
+export const MAX_NAME_PROBES = 10_000;
+
+/** `YYYYMMDD-HHMMSS` (local time) for the fallback name. */
+function nameStamp(now: Date): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}-${p(now.getHours())}${p(now.getMinutes())}${p(now.getSeconds())}`;
+}
+
 /** HdfExportService::nextAvailableName: `first` when free, else
- * `prefix + (max numeric suffix in use, at least 1) + 1 + suffix`. */
-export function nextAvailableName(names: readonly string[], first: string, prefix: string, suffix: string): string {
-  const taken = new Set(names);
-  if (!taken.has(first)) return first;
+ * `prefix + (max numeric suffix in use, at least 1) + 1 + suffix`.
+ * Conservative for the proposal (#735 review): a name counts as taken when
+ * any existing name matches it ignoring case (Windows and macOS volumes are
+ * case-insensitive), suffixes above MAX_NAME_SUFFIX are ignored, and the
+ * search is bounded; past it, `prefix + YYYYMMDD-HHMMSS + suffix` (then
+ * `-2`, `-3`, …). The backend refuses an existing file in any case. */
+export function nextAvailableName(
+  names: readonly string[],
+  first: string,
+  prefix: string,
+  suffix: string,
+  now: Date = new Date(),
+): string {
+  const taken = new Set(names.map((n) => n.toLowerCase()));
+  const free = (name: string) => !taken.has(name.toLowerCase());
+  if (free(first)) return first;
+  const lowPrefix = prefix.toLowerCase();
+  const lowSuffix = suffix.toLowerCase();
   let max = 1;
-  for (const n of names) {
-    if (n.length <= prefix.length + suffix.length || !n.startsWith(prefix) || !n.endsWith(suffix)) continue;
-    const digits = n.slice(prefix.length, n.length - suffix.length);
-    if (/^\d+$/.test(digits)) max = Math.max(max, Number(digits));
+  for (const n of taken) {
+    if (n.length <= lowPrefix.length + lowSuffix.length || !n.startsWith(lowPrefix) || !n.endsWith(lowSuffix)) continue;
+    const digits = n.slice(lowPrefix.length, n.length - lowSuffix.length);
+    if (!/^\d{1,9}$/.test(digits)) continue; // at most MAX_NAME_SUFFIX
+    max = Math.max(max, Number(digits));
   }
-  for (let c = max + 1; ; c++) {
+  for (let c = max + 1, probes = 0; c <= MAX_NAME_SUFFIX && probes < MAX_NAME_PROBES; c++, probes++) {
     const name = `${prefix}${c}${suffix}`;
-    if (!taken.has(name)) return name;
+    if (free(name)) return name;
   }
+  const stamp = `${prefix}${nameStamp(now)}`;
+  let name = `${stamp}${suffix}`;
+  for (let k = 2; !free(name) && k < MAX_NAME_PROBES; k++) name = `${stamp}-${k}${suffix}`;
+  return name;
 }
 
 /** `<basename>_metrics.csv`, then `_2`, `_3`, … (the Qt default). */
 export function defaultMetricsName(sourcePath: string, existing: readonly string[]): string {
   const b = stem(sourcePath);
   return nextAvailableName(existing, `${b}_metrics.csv`, `${b}_metrics_`, ".csv");
+}
+
+/** Regenerate masks never replaces a file (#512 S8, D6): `<base>_remasked.h5`
+ * while free, else `_2`, `_3`, … one past the highest suffix in `existing`. */
+export function defaultRegenerateName(base: string, existing: readonly string[], now: Date = new Date()): string {
+  return nextAvailableName(existing, `${base}_remasked.h5`, `${base}_remasked_`, ".h5", now);
 }
 
 // ---- series-range prompt (Export All) ---------------------------------------

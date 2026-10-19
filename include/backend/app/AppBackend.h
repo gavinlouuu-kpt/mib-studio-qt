@@ -112,6 +112,16 @@ namespace backend
 
         services::SqliteService &sqlite();
         services::Hdf5Service &hdf5();
+        // Decision D1 (a) of #512 (S5, #722): a file open for review in a
+        // reader of its own (the facade's ReviewSession) keeps experiment
+        // Start and raw recording refused exactly as a file in the shared
+        // hdf5() handle does (gate `storage.hdf5`, same messages): HDF5 is
+        // built without thread safety, so a review reader must not run beside
+        // a writer. The facade sets it inside the coordinator's idle
+        // transaction (withIdleConfiguration), the same lock Start and raw
+        // recording check it under.
+        void setReviewSourceOpen(bool open) { reviewSourceOpen_.store(open); }
+        bool reviewSourceOpen() const { return reviewSourceOpen_.load(); }
         services::CaptureService &capture();
         services::ProcessingService &processing();
         // Source of per-frame results when the science runs on the PL
@@ -613,6 +623,8 @@ namespace backend
 
         // Where pipeline-timing CSVs are dumped (set in initialize()).
         std::string pipelineTimingDir_;
+
+        std::atomic<bool> reviewSourceOpen_{false}; // D1: see setReviewSourceOpen()
 
         // Frame recording state
         std::unique_ptr<std::thread> frameRecordingThread_;
