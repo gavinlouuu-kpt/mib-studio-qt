@@ -71,9 +71,60 @@ export function emptyRow(ref: string): SampleRow {
   };
 }
 
-/** A new single-sample plan: a fresh experiment id, one empty row ("S1"), the given operator. */
-export function newPlanDraft(experimentId: string, operator: OperatorChoice = { name: "", id: "" }): PlanDraft {
-  return { experimentId, format: "single", rows: [emptyRow("S1")], operator: { ...operator } };
+/** A new plan: a fresh experiment id, one empty row ("S1"), the given operator; single sample
+ *  unless a format is given. */
+export function newPlanDraft(experimentId: string, operator: OperatorChoice = { name: "", id: "" }, format: SampleFormat = "single"): PlanDraft {
+  return { experimentId, format, rows: [emptyRow("S1")], operator: { ...operator } };
+}
+
+/** The ref of a new sheet row: "S" and one more than the highest number in use, so a ref is never
+ *  given to two rows of one plan, even after a removal. */
+export function nextSampleRef(rows: readonly Pick<SampleRow, "ref">[]): string {
+  const n = rows.reduce((max, r) => { const m = /^S(\d+)$/.exec(r.ref); return m ? Math.max(max, Number(m[1])) : max; }, 0);
+  return `S${n + 1}`;
+}
+
+// ---- the PZ7035 Run mode -------------------------------------------------------------------------
+
+export interface PlanRunModeFacts {
+  /** The instrument has Align and Run modes (the PZ7035). */
+  instrumentModes: boolean;
+  /** The mode the instrument reports (fetch_instrument_status.mode.name), null before it is read. */
+  mode: string | null;
+  /** The Run window was placed (in Align, or restored from the backend). */
+  windowPlaced: boolean;
+  experimentActive: boolean;
+  /** A stopped Run holds its buffered frames (the backend refuses a mode switch). */
+  runFrozen: boolean;
+  /** The backend's refusal of the last switch to Run, "" when none. */
+  modeError: string;
+}
+
+export interface PlanRunMode {
+  label: string;
+  tone: "blocked" | "info" | "unknown";
+  action: "Switch to Run";
+  detail: string;
+  /** Why the switch is unavailable, "" when it can be pressed. */
+  blocked: string;
+}
+
+/** The Plan's explicit switch to Run on the PZ7035 (#716 A5): offered while the instrument is not
+ *  in Run, the same switch the classic Experiment tab makes on entry, here only on the button.
+ *  Null when no switch is needed (in Run already, or a camera without Align/Run modes). */
+export function planRunMode(f: PlanRunModeFacts): PlanRunMode | null {
+  if (!f.instrumentModes || f.mode === "run") return null;
+  const blocked = f.experimentActive ? "a run is active"
+    : !f.windowPlaced ? "place the 512×96 Run window in Align first (Write Run window)"
+    : f.runFrozen ? "Run is stopped to review the buffered frames: Resume Run in the classic Experiment tab first"
+    : "";
+  return {
+    label: f.modeError ? `Run refused · ${f.modeError}` : f.mode === "align" ? "Align · not in Run" : f.mode ? `Mode · ${f.mode}` : "Mode · not read yet",
+    tone: f.modeError ? "blocked" : f.mode ? "info" : "unknown",
+    action: "Switch to Run",
+    detail: "Switches the PZ7035 to Run at the placed Run window (the LED on the Run preset, the cell path on). The classic Experiment tab does this on entry; here only this button does. Start stays unavailable until the instrument is in Run.",
+    blocked,
+  };
 }
 
 // ---- experiment id ------------------------------------------------------------------------------

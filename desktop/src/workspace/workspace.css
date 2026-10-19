@@ -279,3 +279,80 @@
 .ws-shell .ws-plan__sheet .mib-table__cell {
   overflow-wrap: anywhere;
 }
+/* O3 sample queue (A5): the sheet takes the wide column (it holds every sample, its state and its
+   file), format and identity stack beside it; one column when narrow. */
+.ws-shell .ws-plan--queue {
+  grid-template-columns: minmax(240px, 1fr) minmax(0, 3fr);
+}
+.ws-shell .ws-plan--queue .ws-plan__format { grid-column: 1; grid-row: 1; }
+.ws-shell .ws-plan--queue .ws-plan__identity { grid-column: 1; grid-row: 2; }
+.ws-shell .ws-plan--queue .ws-plan__sheet { grid-column: 2; grid-row: 1 / span 2; }
+@media (max-width: 1200px) {
+  .ws-shell .ws-plan--queue { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .ws-shell .ws-plan--queue .ws-plan__sheet { grid-column: 1 / -1; grid-row: 1; }
+  .ws-shell .ws-plan--queue .ws-plan__format { grid-column: 1; grid-row: 2; }
+  .ws-shell .ws-plan--queue .ws-plan__identity { grid-column: 2; grid-row: 2; }
+}
+@media (max-width: 760px) {
+  .ws-shell .ws-plan--queue { grid-template-columns: minmax(0, 1fr); }
+  .ws-shell .ws-plan--queue .ws-plan__format,
+  .ws-shell .ws-plan--queue .ws-plan__identity,
+  .ws-shell .ws-plan--queue .ws-plan__sheet { grid-column: 1; grid-row: auto; }
+}
+/* The queue card: the current row's lifecycle beside its step (notice, progress, blocks). */
+.ws-shell .ws-queue-body {
+  display: grid;
+  grid-template-columns: minmax(200px, 260px) minmax(0, 1fr);
+  gap: var(--mib-space-4);
+  align-items: start;
+}
+.ws-shell .ws-queue-now {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mib-space-2);
+  min-width: 0;
+}
+@media (max-width: 760px) {
+  .ws-shell .ws-queue-body { grid-template-columns: minmax(0, 1fr); }
+}
+/* O3 sample queue (A5): the row's state chips and order buttons stay on one line where they fit;
+   the file shows its name, the full path as a tooltip. */
+.ws-shell .ws-queue-state,
+.ws-shell .ws-queue-order {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--mib-space-1);
+  align-items: center;
+  overflow-wrap: normal;
+}
+.ws-shell .ws-queue-order {
+  flex-wrap: nowrap;
+}
+.ws-shell .ws-queue-file {
+  font-variant-numeric: tabular-nums;
+}
+.ws-shell .ws-queue-sheet-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--mib-space-2);
+  margin-top: var(--mib-space-2);
+}
+.ws-shell .ws-queue-editing {
+  margin: var(--mib-space-3) 0 0;
+  font-size: var(--mib-font-size-sm);
+  font-weight: var(--mib-font-weight-semibold);
+  color: var(--mib-color-ink);
+}
+/* The current row's lifecycle above its step notice; a flagged step carries its kit chip. */
+.ws-shell .ws-queue-lifecycle {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mib-space-1);
+}
+.ws-shell .ws-queue-step {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--mib-space-2);
+}

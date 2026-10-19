@@ -5,7 +5,8 @@
 // to Run). Selecting a stage here only changes what is shown; it never starts capture, switches a
 // camera mode, moves a motor or stage, enables light, runs a pump or installs an update. Prepare
 // (O1), Align (O2) and Experiment · Plan (O3, A5) have content; in Align a mode switch or a write
-// happens only on a button, and in Plan a run starts only on "Start run".
+// happens only on a button, and in Plan a run starts, stops or switches to Run only on a button
+// ("Start run", the sample queue's steps, "Switch to Run").
 //
 // The kit stylesheets are imported once, here, at the workspace entry.
 import "@mib/ui/fonts.css";
@@ -17,6 +18,7 @@ import { AlignView, type AlignViewProps } from "./AlignView";
 import { ExperimentView, type ExperimentSubView } from "./ExperimentView";
 import { PrepareView, type PrepareViewProps } from "./PrepareView";
 import { confirmBlockers, prepareVerdict } from "./prepareModel";
+import type { PlanRunMode } from "./planModel";
 import type { PlanController } from "./usePlan";
 import { usePrepareReadiness } from "./usePrepareReadiness";
 
@@ -44,10 +46,14 @@ export interface WorkspaceProps extends Omit<PrepareViewProps, "readiness" | "re
   serviceMode: boolean;
   /** O2 Align: the live image, image tools and quick controls. */
   align: Omit<AlignViewProps, "onClassic">;
-  /** O3 Experiment · Plan: the plan (held by App), why Start is locked apart from it and
-   *  Prepare (the classic Start button's reasons; "" when none), and the sub-view shown (held by
-   *  App, which polls the checklist only while the Plan is shown). */
-  experiment: { plan: PlanController; lockedReason: string; view: ExperimentSubView; onView: (view: ExperimentSubView) => void };
+  /** O3 Experiment · Plan: the plan (held by App, with its sample queue), why Start is locked apart
+   *  from it and Prepare (the classic Start button's reasons; "" when none), the sub-view shown (held
+   *  by App, which polls the checklist only while the Plan is shown), and on the PZ7035 the explicit
+   *  switch to Run (App's applyCameraMode, null when the instrument is in Run). */
+  experiment: {
+    plan: PlanController; lockedReason: string; view: ExperimentSubView; onView: (view: ExperimentSubView) => void;
+    runMode?: PlanRunMode | null; onSwitchToRun?: () => Promise<unknown>;
+  };
 }
 
 export function Workspace({ brand, source, method, stage, onStage, onExit, serviceMode, align, experiment, ...prepare }: WorkspaceProps) {
@@ -91,6 +97,7 @@ export function Workspace({ brand, source, method, stage, onStage, onExit, servi
         <AlignView {...align} onClassic={onExit} />
       ) : stage === 2 ? (
         <ExperimentView plan={experiment.plan} lockedReason={experiment.lockedReason} view={experiment.view} onView={experiment.onView}
+          runMode={experiment.runMode} onSwitchToRun={experiment.onSwitchToRun}
           verdict={verdict} blockers={confirmBlockers(report)} onClassic={onExit} />
       ) : (
         <div className="ws-view" data-testid={`workspace-${WORKSPACE_STAGES[stage]?.toLowerCase() ?? "stage"}`}>

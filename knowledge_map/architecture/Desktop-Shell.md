@@ -148,7 +148,7 @@ LED on a service setting. Tests: `workflow.test.ts` (#548), `preflight.test.ts` 
 
 `desktop/src/workspace/Workspace.tsx` is the four-stage Prepare / Align / Experiment /
 Review shell on the `@mib/ui` kit (`AppShell`, `StageTabs`, `Toolbar`, `Card`, `FactList`,
-`StateChip`, `Button`, `Notice`, `DataTable`, `OptionGroup`, `ConditionSwatch`), the Operation
+`StateChip`, `Button`, `Notice`, `DataTable`, `OptionGroup`, `ConditionSwatch`, `Stepper`), the Operation
 app's steps A1, A3 and A5 (#716). The kit stylesheets are imported once, there; `workspace.css`
 only places cards with the kit's spacing tokens (and styles the app-local number and text fields
 of the quick controls and the sample sheet, until the kit has them).
@@ -162,7 +162,9 @@ of the quick controls and the sample sheet, until the kit has them).
   change can act (Camera & Alignment switches the camera to the full sensor, and the PZ7035 to
   Align with its LED; Experiment to Run). Stages only change what is shown. In Align the
   same switch is a button the operator presses ("Show the full sensor" / "Switch to Align").
-  Experiment opens on its Plan, where a run starts only on "Start run"; its Live and Summary
+  Experiment opens on its Plan, where a run starts only on "Start run" (or a sample queue's
+  Start), stops only on the queue's "Next sample" and the PZ7035 switches to Run only on its
+  "Switch to Run"; its Live and Summary
   sub-views, and the Review stage, say "Not yet in the workspace" and offer "Back to the classic
   view".
   Prepare's "Camera / Focus / Pump setup" leave for the classic Connect tab, which only reads.
@@ -260,13 +262,17 @@ of the quick controls and the sample sheet, until the kit has them).
     wrong mode.
   - While Align is shown, App polls `fetch_camera_geometry` every 2 s, as the classic tab does.
 - **Experiment · Plan (O3, P4; #716 A5).** Penpot board O3 (`14db68fb-c9d2-4e21-ae5a-bd4291fc6273`,
-  read at revn 218; the queue preview, per-run auto-stop and "Base on …" are later steps). Three
-  cards and a Start card; the plan is local until "Start run".
+  read at revn 218; per-run auto-stop, the queue's duration/size preview and "Base on …" are later
+  steps), with O4's queue strip and run lifecycle (`22f62c97-3b47-43f4-bb9c-96eb2be8c257`) and O5's
+  "Next sample" (`eb7b196d-6e3e-47c2-bb65-183b19329704`), both read at revn 218. Three cards and a
+  Start card (a Queue card for a sample queue); the plan is local until a button acts.
   - **The plan lives in App** (`usePlan`), so it survives stage changes and leaving the workspace;
     a reload starts a new one. It holds the format, the sheet rows and the selected operator.
     Creating or editing it sends nothing.
-  - **Sample format** (`OptionGroup`): "Single sample" (one run, one file) and "Sample queue",
-    shown inert with the reason "Not yet · the guided queue comes in the next workspace step".
+  - **Sample format** (`OptionGroup`): "Single sample" (one run, one file) and "Sample queue"
+    (one run and one file per sample, below). With more than one sample in the sheet "Single
+    sample" is inert with the reason ("The sheet has 3 samples · remove all but one first"); the
+    format is fixed once a run started.
   - **Sample sheet**, the fixed schema of `/experiment_annotation` ([[../data-model/HDF5-Storage]]):
     sample, condition, experimental unit, concentration (value + unit), channel, medium,
     temperature (°C), notes and free key/values (strings, unique keys). A compact `DataTable`
@@ -319,7 +325,69 @@ of the quick controls and the sample sheet, until the kit has them).
     are and keep the plan; a cancelled dialog says nothing; a lost reply says "Start outcome not
     known" and locks the plan. A started run locks the plan ("Run 1
     started · <path>"): its identity is in that run, so a single-sample plan has no second run;
-    "New plan" mints a new id and keeps the operator.
+    "New plan" mints a new id and keeps the operator and the format.
+  - **PZ7035: "Switch to Run" (A5).** While the instrument is not in Run, the Start (or Queue) card
+    shows a kit `Notice` "Camera · <mode>" with the explicit switch (`planRunMode` in
+    `planModel.ts`; App's `switchToRunFromWorkspace` calls the shared `applyCameraMode("experiment")`,
+    the classic Experiment tab's entry switch, and marks the classic tab's mode stale for its
+    `ClassicModeNotice`). It is disabled with the reason during a run, with no Run window placed
+    ("place the 512×96 Run window in Align first (Write Run window)") or while a stopped Run holds its
+    frames; a refused switch shows the backend's reason. Start stays disabled with the classic reason
+    ("The camera is not in Run mode yet") until the instrument is in Run. Navigation never switches.
+- **Sample queue (O3/O4, P4; #716 A5, ADR 0015 items 1–2).** A guided flow over the existing
+  commands, with no backend queue state, no new bridge command and no contract change.
+  `queueModel.ts` is the pure state machine; `usePlan` holds it (App, so it survives stage changes
+  and leaving the workspace) and is its controller; `QueuePlan.tsx` the view; `planParts.tsx` the
+  parts both formats share.
+  - **The sheet** holds N rows under the plan's one `experiment_id`, each with its own ref
+    (`sample_ref` S1, S2, …; `nextSampleRef` never gives a removed ref out again) and the same fixed
+    schema; one colour per condition. A selectable `DataTable` shows each row's run index (planned in
+    muted text until its Start, "1?" for a lost reply), state chip, issue count and output file (the
+    backend's `output_path`, the name with the path as tooltip); the editor edits the selected row.
+    "+ Sample" adds a row at any time; ↑ / ↓ / Remove only for rows not yet started (the started rows
+    are a fixed prefix). `editKeepsRecorded` refuses any edit that would change a row with a started
+    or unknown attempt, its order, the format, the operator or the experiment id once the queue began.
+  - **The flow**, each step one button and at most one command: **Start S1** (App's
+    `runExperimentStart`, the classic Start flow: pick the file, readiness with it, `experiment_start`
+    with `buildStartRequest(draft, row, nextRunIndex)`) → running → **Next sample** ("Stop last
+    sample" for the last row; App's `stopForPlan`, the classic `experiment_stop`) → the drain and
+    finalize are followed in the experiment status App already polls every 500 ms (Stopping/flushing,
+    then terminal), with the counters and committed/admitted shown → **Confirm closed** (sends
+    nothing; the backend closed the file, the operator confirms) → "Swap the tube for S2 · …" →
+    **Start S2** (readiness with S2's file at its Start, as always). Nothing advances, stops or starts
+    on its own: a run that ends without Next sample (the classic Stop, the server's safe stop) is
+    followed to Finalized and still waits for the close confirmation and the next Start.
+  - **The run is the first newer generation.** A Start records the `start_generation` of the last
+    status read (Start is unavailable until one was read); the row's run is the first status with a
+    larger generation, an older read answering late is ignored, and a later generation before the
+    run's end was seen fails the row ("the end of run N was not seen"). Phases only move forward.
+  - **Identity (#736 rules).** Each row's start reply alone decides started / refused / unknown.
+    Every Start sends `nextRunIndex`, which grows on started and unknown only, so a run index is
+    never sent twice; a refused Start recorded nothing and keeps its index. Started and unknown rows
+    are locked and stay visible.
+  - **Failures stop the flow at their step** with the reason (kit tones) and the operator's choice:
+    a refused Start (the InvalidRequest named in plain words, not ready, an error before sending, a
+    pending start) → correct and Start again, Skip or End queue; a lost start reply (unknown) →
+    "Retry S1 as run 2", Skip or End queue; a stop that is not accepted or gets no reply → the run is
+    shown running with the reason, Next sample sends it again, End queue says the run keeps running;
+    a failed run (Failed, finalization not ok, or a fault) → the reason and the kept file, Retry as a
+    new run, Skip or End queue. End queue is refused while a Start is pending, a run runs (unless its
+    stop failed) or a finalized run waits for its close confirmation.
+  - **Lifecycle stepper** (kit `Stepper`, `lifecycle`) for the current row: Planned → Starting →
+    Running → Stopping · drain → Finalized → Closed; a refused or failed step is `failed` and an
+    unknown Start `current`, each with a kit `StateChip` (the Stepper has no unknown state, #715).
+    The Queue card sits under the sheet while planning and above it once the queue began, so the
+    step to press is in view during a run.
+  - **A lost controlling client pauses the queue** (`useHoldsControl` in
+    `transport/useControlRole.ts`: always held on the desktop; in a browser only while connected and
+    named the controller). Paused, every queue button is disabled and the machine refuses every
+    action; status facts still apply (the server's #711 safe stop may finalize the run meanwhile).
+    It never resumes on its own: "Resume queue" needs control again and sends nothing, and the
+    operator then presses the step (e.g. Confirm closed) again. Without control, Start says why.
+  - Not in this step: per-run auto-stop (a backend stop condition with its own ABI number),
+    "base on previous experiment", the queue's duration/size preview, Live, Summary and Quick look.
+    A backend restart that remounts the browser app (a new boot id) starts a new plan: the queue is
+    local by design, the recorded files stay.
 - **Gate (P1, extended for P3).** `workspace/navigation.test.tsx` runs the whole App over a
   mocked transport, desktop and PZ7035: opening the workspace, visiting every stage, leaving,
   coming back and Camera setup add no command to the idle app's steady state except two reads,
@@ -343,7 +411,19 @@ of the quick controls and the sample sheet, until the kit has them).
   reads recover); with the core status read held, several periods send one read, not a pile, the
   read after the stale bound is the only extra one, and the stalled older reply arriving last
   does not overwrite the newer state; Live and Summary send neither the gates nor the checklist
-  reads, and Plan resumes them. `serialReads.test.ts` covers the skip, stale and ordering rules. `PlanView.test.tsx` (StrictMode, the real
+  reads, and Plan resumes them. For the sample queue (A5, desktop and PZ7035): choosing the queue,
+  adding, typing, moving and removing samples and switching sub-views send nothing that acts (only
+  the path-less readiness read), and the queue survives leaving the workspace; on a desktop host
+  whose mock runs experiments, two samples send exactly `experiment_start` (S1, run 1),
+  `experiment_stop`, `experiment_start` (S2, run 2), `experiment_stop`, each on its button and
+  nothing in between (not on the finalize, the close confirmation or the swap prompt); on the
+  PZ7035, visiting the Plan sends no switch, "Switch to Run" is disabled until the Run window is
+  placed in Align, then sends exactly `set_instrument_mode` run at the placed window.
+  `queueModel.test.ts` covers every transition, a failure at each step, retry / skip / end, the
+  generation rules, the pause, editing locks, the stepper and a 50-trial sequence check that no run
+  index is sent twice; `QueuePlan.test.tsx` (StrictMode, the real `usePlan`) the two-sample flow,
+  the exact text of each Start, each failure's choice, the lost-client pause and resume, and the Run
+  switch. `serialReads.test.ts` covers the skip, stale and ordering rules. `PlanView.test.tsx` (StrictMode, the real
   `usePlan`) covers the exact text sent, client refusals, outcomes, Prepare's and the classic
   locks, and the started lock; `planModel.test.ts` the exact JSON of full, minimal and empty
   plans, every bound at its limit and one past it, empty → absent, the UUID and the refusal
@@ -355,12 +435,9 @@ of the quick controls and the sample sheet, until the kit has them).
 - **Not yet (later A-steps):** the other Prepare sub-views, storage budget and run plan,
   fluidics estimates, the non-default-settings banner, the calibration card; in Align the focus
   and illumination card, the quality signals, All Features / GenApi XML / scripts, selector
-  enumeration and restoration, and overrides recorded by S2 (#712); in Experiment the guided
-  sample queue (stop → drain → finalize → close → prompt → readiness → Start), per-run auto-stop
-  (a backend stop condition), "base on previous experiment", Live (A6), Summary and Quick look
-  (A7). The workspace has no Run-mode switch of its own yet: on the PZ7035, Start run stays
-  locked with the classic reason ("The camera is not in Run mode yet") until the instrument is in
-  Run, which today only the classic Experiment tab switches to.
+  enumeration and restoration, and overrides recorded by S2 (#712); in Experiment per-run
+  auto-stop (a backend stop condition), "base on previous experiment", the queue preview, Live
+  (A6), Summary and Quick look (A7).
 
 **Quality gates (UX-4 slice, issue #308):** `desktop/src/quality.ts` —
 `deriveQualityGates(input)` turns the Camera & Alignment stage's
@@ -419,7 +496,8 @@ loopback):
 **Who controls the instrument (#501).** In a browser one client at a time controls the instrument; the
 others only watch and their commands fail with `VIEWER_ONLY`. The server sends each client
 `{"session": {"client_id", "controller_id"}}` on connect and `{"session": {"controller_id"}}` when control
-changes; `wsTransport` keeps it (`transport.session`, reset on a lost link) and `useControlRole` exposes it.
+changes; `wsTransport` keeps it (`transport.session`, reset on a lost link) and `useControlRole` exposes it
+(`useHoldsControl` too: this client controls the instrument; the workspace's sample queue pauses without it).
 `ControlBanner` (in `AuthGate`) tells a viewer "Another client controls this instrument: you can watch,
 not operate." with a **Take control** button (`take_control`), which disappears for the new controller and
 appears for the old one. Without it a second browser, or an older tab that reconnected first after a

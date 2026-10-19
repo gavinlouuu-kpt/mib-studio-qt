@@ -32,7 +32,9 @@ import { RingPlaybackPanel } from "./components/RingPlaybackPanel";
 import { faultClearedNote } from "./ringPlayback";
 import { startExperiment, type StartOutcome } from "./experimentStart";
 import { SerialReads } from "./serialReads";
-import { usePlan, type PlanStartResult } from "./workspace/usePlan";
+import { usePlan, type PlanStartResult, type StopReply } from "./workspace/usePlan";
+import { planRunMode } from "./workspace/planModel";
+import { useHoldsControl } from "./transport/useControlRole";
 import { downloadUrl } from "./filesView";
 import { serverOrigin, tokenFromLocation } from "./transport/auth";
 import { FilesPanel } from "./components/FilesPanel";
@@ -992,8 +994,18 @@ export default function App() {
     } finally { experimentPending.current = false; setExperimentRequestBusy(false); }
   }, [append]);
   const onStartExperiment = useCallback(() => { void runExperimentStart(); }, [runExperimentStart]);
-  // The workspace's Experiment plan (O3): local until its Start run button.
-  const plan = usePlan(runExperimentStart);
+  // The workspace's sample queue stops a run with the classic Stop's command and is told its reply
+  // (the queue then follows the drain and finalize in the polled status).
+  const stopForPlan = useCallback(async (): Promise<StopReply> => {
+    const res = await bridge.experimentStop();
+    append(res.ok ? "experiment stop requested (sample queue)" : `experiment stop failed: ${res.message}`);
+    try { setExpStatus(await bridge.fetchExperimentStatus()); } catch (e) { append(`experiment status refresh error: ${e}`); }
+    return res;
+  }, [append]);
+  // Who controls the instrument: a browser that loses control pauses the sample queue (#711).
+  const controlHeld = useHoldsControl();
+  // The workspace's Experiment plan (O3): local until its buttons (Start run, the queue's steps).
+  const plan = usePlan(runExperimentStart, { status: expStatus, stop: stopForPlan, controlHeld });
 
   const onStopExperiment = useCallback(async () => {
     try {
@@ -1294,6 +1306,12 @@ export default function App() {
   const switchFromWorkspace = useCallback(async () => {
     setClassicModeStale(true);
     await applyCameraMode("overview");
+  }, [applyCameraMode]);
+  // The Plan's explicit switch to Run on the PZ7035 (#716 A5): the classic Experiment tab's entry
+  // switch, here only on its button.
+  const switchToRunFromWorkspace = useCallback(async () => {
+    setClassicModeStale(true);
+    await applyCameraMode("experiment");
   }, [applyCameraMode]);
   // Opening the workspace cancels a pending classic switch at once (the ref, before the render):
   // a classic tab change that is still awaiting its read then sends nothing.
@@ -1706,7 +1724,10 @@ export default function App() {
             // The classic Connect tab only reads (it never switches camera modes).
             onOpenSetup={() => { setTab("connect"); exitWorkspace(); }}
             // O3 Plan: Start run is locked for the same reasons as the classic Start button.
-            experiment={{ plan, lockedReason: startExperimentReason ?? "", view: experimentView, onView: setExperimentView }}
+            experiment={{ plan, lockedReason: startExperimentReason ?? "", view: experimentView, onView: setExperimentView,
+              runMode: planRunMode({ instrumentModes, mode: instrumentModes ? instrument?.mode?.name ?? null : null, windowPlaced: cameraWin.placed,
+                experimentActive: expActive, runFrozen: !!instrument?.ring?.run_frozen, modeError: modeError?.mode === "run" ? modeError.message : "" }),
+              onSwitchToRun: switchToRunFromWorkspace }}
           />
         </div>
       )}

@@ -1,30 +1,24 @@
-// O3 Experiment · Plan (#716 A5; ADR 0015 items 1, 4, 5): a single-sample plan with its sample
-// sheet, the run's identity and the selected operator, and an explicit "Start run". Editing the
-// plan sends nothing; "Start run" runs the classic Start flow (pick the file, ask before a stopped
-// Run's frames are discarded, readiness with the chosen file, start) with the plan's
-// startRequestJson (bridge ABI 39). Prepare's verdict still governs: while Prepare's checklist
-// blocks, Start run is disabled with Prepare's own words (prepareVerdict, confirmBlockers).
-import { useId } from "react";
-import { Button, Card, ConditionSwatch, DataTable, FactList, Notice, OptionGroup, StateChip, type DataTableColumn } from "@mib/ui";
+// O3 Experiment · Plan (#716 A5; ADR 0015 items 1, 2, 4, 5): the sample format, the sample sheet,
+// the run's identity and the selected operator. A single sample has an explicit "Start run"; a
+// sample queue is the guided flow of QueuePlan. Editing the plan sends nothing; "Start run" runs the
+// classic Start flow (pick the file, ask before a stopped Run's frames are discarded, readiness with
+// the chosen file, start) with the plan's startRequestJson (bridge ABI 39). Prepare's verdict still
+// governs: while Prepare's checklist blocks, Start is disabled with Prepare's own words
+// (prepareVerdict, confirmBlockers). On the PZ7035 the Plan offers the explicit switch to Run.
+import { Button, Card, ConditionSwatch, DataTable, FactList, Notice, StateChip, type DataTableColumn } from "@mib/ui";
 import { EXPERIMENT_START_REQUEST as B } from "../bridgeContract";
 import {
-  FIELD_KEYS,
-  KEY_LABELS,
-  ROW_TEXT_FIELDS,
   SINGLE_SAMPLE_RUN_INDEX,
   buildStartRequest,
   conditionSlots,
   concentrationText,
-  freeRowIssues,
   invalidRequestReason,
-  issueLine,
   issuesFor,
-  operatorText,
-  type OperatorChoice,
-  type PlanIssue,
-  type RowTextField,
+  type PlanRunMode,
   type SampleRow,
 } from "./planModel";
+import { FormatCard, NOT_DECLARED, OperatorFields, RunModeNotice, SampleEditor, startBlocks } from "./planParts";
+import { QueuePlan } from "./QueuePlan";
 import type { Verdict } from "./prepareModel";
 import type { PlanController, PlanStartResult } from "./usePlan";
 
@@ -36,30 +30,12 @@ export interface PlanViewProps {
   /** Prepare's one verdict, and why its checklist blocks (confirmBlockers), null when it does not. */
   verdict: Verdict;
   blockers: { tone: "blocked" | "unknown" | "warn"; lines: string[] } | null;
+  /** PZ7035: the explicit switch to Run while the instrument is not in Run (null when none). */
+  runMode?: PlanRunMode | null;
+  onSwitchToRun?: () => Promise<unknown>;
 }
 
-/** Why Start run is unavailable, each as its own Notice next to the button. */
-export interface StartBlock {
-  id: "started" | "starting" | "prepare" | "locked" | "sheet";
-  tone: "blocked" | "unknown" | "warn" | "info";
-  title: string;
-  text: string;
-}
-
-/** Every reason Start run is unavailable, in plain words (empty = it is available). */
-export function startBlocks(p: { started: "started" | "unknown" | null; starting: boolean; verdict: Verdict; blockers: PlanViewProps["blockers"]; lockedReason: string; issues: readonly PlanIssue[] }): StartBlock[] {
-  const out: StartBlock[] = [];
-  if (p.started === "started") out.push({ id: "started", tone: "info", title: "This plan's run has started", text: "Its identity is recorded in that run. A new plan mints a new experiment id." });
-  if (p.started === "unknown") out.push({ id: "started", tone: "info", title: "This plan's identity may be recorded", text: "The start request was sent but its reply was lost, so it is not sent again. A new plan mints a new experiment id." });
-  if (p.starting) out.push({ id: "starting", tone: "info", title: "Start request pending", text: "Waiting for the file dialog, readiness and the backend's answer." });
-  // Prepare governs: the same verdict and the same words as Prepare's "Confirm readiness is unavailable".
-  if (p.verdict.word === "Not ready")
-    out.push({ id: "prepare", tone: p.blockers?.tone ?? "blocked", title: `Start is unavailable · Prepare: ${p.verdict.title}`, text: p.blockers?.lines.length ? `${p.blockers.lines.join(". ")}.` : p.verdict.detail });
-  if (p.lockedReason) out.push({ id: "locked", tone: "info", title: "Start is unavailable", text: `${p.lockedReason.replace(/\.$/, "")}.` });
-  if (p.issues.length)
-    out.push({ id: "sheet", tone: "blocked", title: `Start is unavailable · the plan has ${p.issues.length === 1 ? "1 issue" : `${p.issues.length} issues`}`, text: p.issues.map(issueLine).join(" ") });
-  return out;
-}
+export { startBlocks, type StartBlock } from "./planParts";
 
 type NoticeText = { tone: "confirmed" | "warn" | "blocked" | "info"; title: string; text: string };
 
@@ -84,78 +60,11 @@ export function refreshNotice(r: PlanStartResult | null): NoticeText | null {
   return { tone: "warn", title: "Run status not refreshed", text: `${r.refreshError}. The start reply decides the outcome above; the status is read again on the next poll.` };
 }
 
-const NOT_DECLARED = <span title="Not declared">–</span>;
-const sameOperator = (a: OperatorChoice, b: OperatorChoice) => a.name.trim() === b.name.trim() && a.id.trim() === b.id.trim();
-
-/** One labelled input of the sheet, with its issues under it. */
-function Field(p: {
-  label: string; value: string; onChange: (v: string) => void; issues: PlanIssue[]; disabled: boolean;
-  hint?: string; multiline?: boolean; numeric?: boolean; wide?: boolean; testId?: string;
-}) {
-  const id = useId();
-  const invalid = p.issues.length > 0;
-  const common = {
-    id, value: p.value, disabled: p.disabled, placeholder: "Not declared", "aria-invalid": invalid || undefined,
-    "aria-describedby": invalid || p.hint ? `${id}-note` : undefined, "data-testid": p.testId,
-  };
-  return (
-    <div className={`ws-plan-field${p.wide ? " ws-plan-field--wide" : ""}`}>
-      <label htmlFor={id}>{p.label}</label>
-      {p.multiline
-        ? <textarea {...common} rows={3} onChange={(e) => p.onChange(e.target.value)} />
-        : <input {...common} type="text" inputMode={p.numeric ? "decimal" : undefined} autoComplete="off" onChange={(e) => p.onChange(e.target.value)} />}
-      {invalid
-        ? <span id={`${id}-note`} className="ws-plan-issue" role="alert">{p.issues.map((i) => i.text).join(" ")}</span>
-        : p.hint ? <span id={`${id}-note`} className="ws-detail">{p.hint}</span> : null}
-    </div>
-  );
+export function PlanView(props: PlanViewProps) {
+  return props.plan.draft.format === "queue" ? <QueuePlan {...props} /> : <SinglePlan {...props} />;
 }
 
-function SampleEditor({ row, issues, disabled, onRow }: { row: SampleRow; issues: PlanIssue[]; disabled: boolean; onRow: (change: (r: SampleRow) => SampleRow) => void }) {
-  const set = (field: RowTextField) => (v: string) => onRow((r) => ({ ...r, [field]: v }));
-  const fieldIssues = (field: RowTextField, extra: string[] = []) => issuesFor(issues, [FIELD_KEYS[field], ...extra]);
-  const used = row.free.filter((e) => e.key.trim() !== "" || e.value.trim() !== "").length;
-  return (
-    <div className="ws-plan-form" data-testid="plan-editor">
-      {ROW_TEXT_FIELDS.map((f) => (
-        <Field key={f.field} label={KEY_LABELS[f.key]} value={row[f.field]} onChange={set(f.field)} issues={fieldIssues(f.field)} disabled={disabled} hint={f.hint} testId={`plan-${f.field}`} />
-      ))}
-      <div className="ws-plan-field ws-plan-pair">
-        <Field label="Concentration" value={row.concentrationValue} onChange={set("concentrationValue")} numeric
-          issues={fieldIssues("concentrationValue", ["annotation.concentration"])} disabled={disabled} hint="value ≥ 0, with its unit" testId="plan-concentrationValue" />
-        <Field label="Unit" value={row.concentrationUnit} onChange={set("concentrationUnit")} issues={fieldIssues("concentrationUnit")} disabled={disabled} hint="e.g. µM" testId="plan-concentrationUnit" />
-      </div>
-      <Field label={KEY_LABELS["annotation.temperature_c"]} value={row.temperatureC} onChange={set("temperatureC")} numeric issues={fieldIssues("temperatureC")}
-        disabled={disabled} hint={`declared, ${B.temperature_c_min} to ${B.temperature_c_max} °C`} testId="plan-temperatureC" />
-      <Field label="Notes" value={row.notes} onChange={set("notes")} multiline wide issues={fieldIssues("notes")} disabled={disabled} testId="plan-notes" />
-      <div className="ws-plan-field ws-plan-field--wide" data-testid="plan-free">
-        <span className="ws-plan-label">Key/values</span>
-        {row.free.map((e, i) => {
-          const rowIssues = freeRowIssues(issues, i);
-          return (
-            <div key={i} className="ws-plan-kv">
-              <input type="text" aria-label={`Key ${i + 1}`} placeholder="key" value={e.key} disabled={disabled} aria-invalid={rowIssues.length > 0 || undefined} autoComplete="off"
-                onChange={(ev) => { const key = ev.target.value; onRow((r) => ({ ...r, free: r.free.map((x, j) => (j === i ? { ...x, key } : x)) })); }} />
-              <input type="text" aria-label={`Value ${i + 1}`} placeholder="value" value={e.value} disabled={disabled} aria-invalid={rowIssues.length > 0 || undefined} autoComplete="off"
-                onChange={(ev) => { const value = ev.target.value; onRow((r) => ({ ...r, free: r.free.map((x, j) => (j === i ? { ...x, value } : x)) })); }} />
-              <Button size="small" disabled={disabled} aria-label={`Remove key/value ${i + 1}`} onClick={() => onRow((r) => ({ ...r, free: r.free.filter((_, j) => j !== i) }))}>Remove</Button>
-              {rowIssues.length ? <span className="ws-plan-issue" role="alert">{rowIssues.map((x) => `${x.label}: ${x.text}`).join(" ")}</span> : null}
-            </div>
-          );
-        })}
-        {issuesFor(issues, ["annotation.free"]).map((x) => <span key={x.text} className="ws-plan-issue" role="alert">{x.text}</span>)}
-        <div>
-          <Button size="small" disabled={disabled || row.free.length >= B.max_free_entries}
-            title={row.free.length >= B.max_free_entries ? `At most ${B.max_free_entries} key/values` : undefined}
-            onClick={() => onRow((r) => ({ ...r, free: [...r.free, { key: "", value: "" }] }))}>Add key/value</Button>
-          <span className="ws-detail">{`Strings only, unique keys, ${used} of at most ${B.max_free_entries}.`}</span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-export function PlanView({ plan, lockedReason, verdict, blockers }: PlanViewProps) {
+function SinglePlan({ plan, lockedReason, verdict, blockers, runMode, onSwitchToRun }: PlanViewProps) {
   const { draft, started, starting } = plan;
   const row = draft.rows[0];
   const build = buildStartRequest(draft, 0, SINGLE_SAMPLE_RUN_INDEX);
@@ -166,7 +75,6 @@ export function PlanView({ plan, lockedReason, verdict, blockers }: PlanViewProp
   const refresh = refreshNotice(plan.result);
   const slots = conditionSlots(draft.rows);
   const editRow = (change: (r: SampleRow) => SampleRow) => plan.edit((d) => ({ ...d, rows: d.rows.map((r, i) => (i === 0 ? change(r) : r)) }));
-  const setOperator = (k: "name" | "id") => (v: string) => plan.edit((d) => ({ ...d, operator: { ...d.operator, [k]: v } }));
   const operatorIssues = (k: "name" | "id") => issuesFor(build.issues, [`operator.${k}`]);
 
   const columns: DataTableColumn<SampleRow>[] = [
@@ -187,20 +95,7 @@ export function PlanView({ plan, lockedReason, verdict, blockers }: PlanViewProp
   return (
     <div className="ws-body" data-testid="workspace-plan">
       <div className="ws-plan">
-        <Card title="Sample format" subtitle="Each run is its own file" className="ws-plan__format">
-          <OptionGroup
-            legend="Sample format"
-            hideLegend
-            value={draft.format}
-            disabled={locked}
-            onChange={(format) => plan.edit((d) => ({ ...d, format: format === "queue" ? "queue" : "single" }))}
-            options={[
-              { value: "single", label: "Single sample", description: "One run, one file" },
-              { value: "queue", label: "Sample queue", description: "Manual tube swaps · one file per sample", unavailable: "Not yet · the guided queue comes in the next workspace step" },
-            ]}
-          />
-          <p className="ws-note">A sample change is a new run (ADR 0015). Nothing here acts until you press Start run.</p>
-        </Card>
+        <FormatCard draft={draft} locked={locked} onFormat={(format) => plan.edit((d) => ({ ...d, format }))} />
 
         <Card title="Sample sheet" className="ws-plan__sheet" data-testid="plan-sheet"
           subtitle="Fixed schema · written once, as planned, into the run's file at Start (/experiment_annotation)">
@@ -227,23 +122,7 @@ export function PlanView({ plan, lockedReason, verdict, blockers }: PlanViewProp
             { label: "Calibration record", value: "Unavailable · calibration runs come in a later step; not recorded", tone: "unknown" },
             { label: "Destination", value: "Chosen when you press Start run" },
           ]} />
-          <div className="ws-plan-form ws-plan-form--single">
-            <Field label="Operator" value={draft.operator.name} onChange={setOperator("name")} issues={operatorIssues("name")} disabled={locked} testId="plan-operator-name"
-              hint="Type a name, or pick one remembered below" />
-            <Field label="Operator id" value={draft.operator.id} onChange={setOperator("id")} issues={operatorIssues("id")} disabled={locked} testId="plan-operator-id" hint="Optional" />
-          </div>
-          {plan.operators.length ? (
-            <div className="ws-plan-operators" data-testid="plan-operators">
-              <span className="ws-detail">Remembered:</span>
-              {plan.operators.map((o) => (
-                <Button key={`${o.name}\u0000${o.id}`} size="small" disabled={locked} variant={sameOperator(o, draft.operator) ? "selected" : "secondary"}
-                  onClick={() => plan.edit((d) => ({ ...d, operator: { ...o } }))}>{operatorText(o)}</Button>
-              ))}
-            </div>
-          ) : null}
-          <p className="ws-note" data-testid="plan-operator-note">
-            The operator you select is recorded as selected (assurance "selected"). It is not a sign-in and not authentication. Names are remembered on this computer only.
-          </p>
+          <OperatorFields plan={plan} issues={operatorIssues} locked={locked} />
         </Card>
       </div>
 
@@ -255,6 +134,7 @@ export function PlanView({ plan, lockedReason, verdict, blockers }: PlanViewProp
             {starting ? "Starting…" : "Start run"}
           </Button>
         </>}>
+        <RunModeNotice runMode={runMode} onSwitch={onSwitchToRun} />
         {outcome ? <Notice tone={outcome.tone} title={outcome.title} data-testid="plan-outcome">{outcome.text}</Notice> : null}
         {refresh ? <Notice tone={refresh.tone} title={refresh.title} data-testid="plan-refresh">{refresh.text}</Notice> : null}
         {blocks.map((b) => (
