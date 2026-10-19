@@ -21,7 +21,11 @@
 // with both lanes held (each job ends Cancelled, shutdown returns after both
 // terminals, nothing reported after it, starts work again), concurrent starts
 // racing for the lanes (exactly one winner per lane, or one overall), a cancel
-// racing a job's end, and 200 mixed cycles per policy. Every operation must
+// racing a job's end, and 200 mixed cycles per policy; a shutdown from inside
+// a terminal event followed by destroying ReviewJobs while that event's
+// callback still runs (the detached worker keeps the runner state it uses
+// alive; #742 review). Lane release is waited for on ReviewJobs' own
+// condition (ReviewJobsTestAccess::waitIdle). Every operation must
 // see Started first, Progress only before its one terminal, nothing after.
 // `cancelOverridesOutcome`: a cancelled own job that fails reports Cancelled,
 // a JSON-style job keeps its Failed. The kind -> lane map. Runs in the TSan
@@ -196,7 +200,8 @@ namespace
             released = true;
             cv.notify_all();
         }
-        // True when released, false when cancelled.
+        // True when released, false when cancelled (the flag is polled: it
+        // has no condition variable).
         bool hold(const CancelFlag &cancel)
         {
             std::unique_lock lock(m);
@@ -251,10 +256,17 @@ namespace
         };
     }
 
-    bool waitUntil(const std::function<bool()> &condition)
+    // Lane release is waited for on ReviewJobs' own condition (no sleeps).
+    constexpr std::chrono::seconds kWait{30};
+    bool idle(const ReviewJobs &jobs) { return ReviewJobsTestAccess::waitIdle(jobs, kWait); }
+    bool idle(const ReviewJobs &jobs, ReviewJobLane lane) { return ReviewJobsTestAccess::waitIdle(jobs, lane, kWait); }
+
+    // The cancel flag has no condition variable: a body observes it by
+    // polling, as ReviewJobs' own jobs do.
+    bool waitForCancel(const CancelFlag &cancel)
     {
-        const auto deadline = Clock::now() + std::chrono::seconds(30);
-        while (!condition())
+        const auto deadline = Clock::now() + std::chrono::seconds(60);
+        while (!cancel->load())
         {
             if (Clock::now() > deadline) return false;
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -359,7 +371,7 @@ namespace
                 MIB_REQUIRE(recorder.waitTerminal(idb, &sa), tag + "processing terminal");
                 MIB_EXPECT(sa == ReviewJobState::Completed, tag + "processing completes");
             }
-            MIB_EXPECT(waitUntil([&] { return !jobs->busy(); }), tag + "idle after both");
+            MIB_EXPECT(idle(*jobs), tag + "idle after both");
             MIB_EXPECT(occ.maxLane[0].load() == 1 && occ.maxLane[1].load() <= 1, tag + "single flight per lane");
             MIB_EXPECT(occ.maxAll.load() == (policy.facade ? 2 : 1), tag + "lane policy held");
         }
@@ -382,7 +394,7 @@ namespace
             ReviewJobState s{};
             MIB_REQUIRE(recorder.waitTerminal(ida, &s), tag + "cancelled terminal");
             MIB_EXPECT(s == ReviewJobState::Cancelled, tag + "cancelled, not completed");
-            MIB_EXPECT(waitUntil([&] { return !jobs->busy(ReviewJobLane::Export); }), tag + "export lane free");
+            MIB_EXPECT(idle(*jobs, ReviewJobLane::Export), tag + "export lane free");
             MIB_EXPECT(!jobs->cancel(ida), tag + "finished id");
             if (policy.facade)
             {
@@ -393,7 +405,7 @@ namespace
                 MIB_REQUIRE(recorder.waitTerminal(idb, &s), tag + "host-cancelled terminal");
                 MIB_EXPECT(s == ReviewJobState::Cancelled, tag + "the host's flag cancels the job");
             }
-            MIB_EXPECT(waitUntil([&] { return !jobs->busy(); }), tag + "idle after cancels");
+            MIB_EXPECT(idle(*jobs), tag + "idle after cancels");
         }
         wd.mark("cancel");
 
@@ -434,7 +446,7 @@ namespace
                 next.release();
                 MIB_REQUIRE(recorder.waitTerminal(startedFromTerminal.load()), tag + "its terminal");
             }
-            MIB_EXPECT(waitUntil([&] { return !jobs->busy(); }), tag + "idle after ordering");
+            MIB_EXPECT(idle(*jobs), tag + "idle after ordering");
         }
         wd.mark("ordering");
 
@@ -448,7 +460,7 @@ namespace
                     *jobs, kExportKind,
                     [&](std::uint64_t, const CancelFlag &cancel, const ReviewJobsTestAccess::Progress &) {
                         g.enter();
-                        while (!cancel->load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                        waitForCancel(cancel);
                         return ReviewJobsTestAccess::Result{ReviewJobState::Failed, "engine failed"};
                     },
                     &err, overrides);
@@ -458,7 +470,7 @@ namespace
                 MIB_REQUIRE(recorder.waitTerminal(id, &s), tag + "override terminal");
                 MIB_EXPECT(s == (overrides ? ReviewJobState::Cancelled : ReviewJobState::Failed),
                            tag + (overrides ? "own jobs: a cancelled failure is Cancelled" : "JSON jobs: the engine's Failed stays"));
-                MIB_EXPECT(waitUntil([&] { return !jobs->busy(); }), tag + "idle after override");
+                MIB_EXPECT(idle(*jobs), tag + "idle after override");
             }
         }
 
@@ -494,7 +506,7 @@ namespace
             MIB_REQUIRE(idc != 0 && c.waitEntered(), tag + "start after shutdown: " + err);
             c.release();
             MIB_REQUIRE(recorder.waitTerminal(idc, &s) && s == ReviewJobState::Completed, tag + "completes after shutdown");
-            MIB_EXPECT(waitUntil([&] { return !jobs->busy(); }), tag + "idle after restart");
+            MIB_EXPECT(idle(*jobs), tag + "idle after restart");
         }
         wd.mark("shutdown");
 
@@ -534,7 +546,7 @@ namespace
                 gates[i]->release();
                 MIB_REQUIRE(recorder.waitTerminal(ids[i]), tag + "winner terminal");
             }
-            MIB_EXPECT(waitUntil([&] { return !jobs->busy(); }), tag + "idle after race");
+            MIB_EXPECT(idle(*jobs), tag + "idle after race");
             MIB_EXPECT(occ.maxLane[0].load() <= 1 && occ.maxLane[1].load() <= 1, tag + "race: single flight per lane");
             MIB_EXPECT(occ.maxAll.load() <= (policy.facade ? 2 : 1), tag + "race: lane policy");
         }
@@ -599,7 +611,7 @@ namespace
                     MIB_REQUIRE(recorder.waitTerminal(idb, &s), tag + "cycle terminal B");
                     MIB_EXPECT(s == expectB, tag + "cycle " + std::to_string(cycle) + " processing-lane outcome");
                 }
-                MIB_EXPECT(waitUntil([&] { return !jobs->busy(); }), tag + "cycle idle");
+                MIB_EXPECT(idle(*jobs), tag + "cycle idle");
                 MIB_EXPECT(recorder.terminals(ida) == 1 && (!idb || recorder.terminals(idb) == 1), tag + "one terminal each");
             }
             MIB_EXPECT(occ.maxLane[0].load() <= 1 && occ.maxLane[1].load() <= 1, tag + "cycles: single flight per lane");
@@ -620,6 +632,95 @@ namespace
                 MIB_EXPECT(terminals == 1, tag + "operation " + std::to_string(id) + " terminals: " + std::to_string(terminals));
             }
         }
+    }
+
+    // ---- a shutdown from inside a terminal event, then the runner destroyed ----
+    struct Signal
+    {
+        std::mutex m;
+        std::condition_variable cv;
+        bool set{false};
+        void raise()
+        {
+            std::scoped_lock lock(m);
+            set = true;
+            cv.notify_all();
+        }
+        bool isSet()
+        {
+            std::scoped_lock lock(m);
+            return set;
+        }
+        bool wait()
+        {
+            std::unique_lock lock(m);
+            return cv.wait_for(lock, std::chrono::seconds(30), [&] { return set; });
+        }
+    };
+
+    // Carried by the sink closure: raises `gone` when the last copy of that
+    // closure (the one inside the runner) is destroyed.
+    struct SinkToken
+    {
+        explicit SinkToken(Signal *g) : gone(g) {}
+        SinkToken(const SinkToken &) = delete;
+        SinkToken &operator=(const SinkToken &) = delete;
+        ~SinkToken() { gone->raise(); }
+        Signal *gone;
+    };
+
+    // #742 review (P2): a terminal-event callback calls shutdown() on the
+    // job's own worker, which cannot join itself and is detached; the owner
+    // then destroys ReviewJobs while that callback still runs. The worker must
+    // still find the runner state it uses after the callback (the sink it is
+    // executing, its lane and mutex: the facade preset frees the lane after
+    // the event) alive, and the state must go once the worker ends. Clean
+    // under ASan; before the fix the destructor freed the sink under the
+    // running callback and the worker then released its lane in freed memory.
+    void reentrantShutdown(const Policy &policy)
+    {
+        const std::string tag = std::string("[") + policy.name + ", shutdown inside the terminal event] ";
+        ReviewSession session;
+        Recorder recorder;
+        FakeHost host{recorder};
+        Signal shutdownReturned, destroyed, sinkGone;
+        std::atomic<bool> sinkAliveAfterDestroy{false};
+        std::atomic<bool> callbackDone{false};
+        std::atomic<ReviewJobs *> self{nullptr};
+        auto token = std::make_shared<SinkToken>(&sinkGone);
+        ReviewJobSink sink = [token, &recorder, &self, &shutdownReturned, &destroyed, &sinkGone, &sinkAliveAfterDestroy,
+                              &callbackDone](const ReviewJobEvent &e) {
+            recorder(e);
+            if (!isTerminal(e.state)) return;
+            self.load()->shutdown(); // re-entrant, on this job's own worker
+            shutdownReturned.raise();
+            destroyed.wait(); // the owner destroys ReviewJobs meanwhile
+            sinkAliveAfterDestroy = !sinkGone.isSet();
+            callbackDone = true;
+        };
+        const ReviewJobsOptions options =
+            policy.facade ? ReviewJobsOptions::forFacade(host.hook()) : ReviewJobsOptions::forReviewBridge();
+        auto jobs = std::make_unique<ReviewJobs>(session, nullptr, std::move(sink), options);
+        token.reset(); // the runner's sink holds the only copy now
+        self = jobs.get();
+        std::string err;
+        const auto id = ReviewJobsTestAccess::start(
+            *jobs, kExportKind,
+            [](std::uint64_t, const CancelFlag &, const ReviewJobsTestAccess::Progress &progress) {
+                progress(1, 1);
+                return ReviewJobsTestAccess::Result{ReviewJobState::Completed, "done"};
+            },
+            &err);
+        MIB_REQUIRE(id != 0, tag + "start: " + err);
+        MIB_REQUIRE(shutdownReturned.wait(), tag + "shutdown() from inside the terminal event returns (no self-join)");
+        jobs.reset(); // destroyed while the callback still runs on the detached worker
+        destroyed.raise();
+        MIB_REQUIRE(sinkGone.wait(), tag + "the runner state is released once the detached worker ends");
+        MIB_EXPECT(callbackDone.load(), tag + "the callback finished");
+        MIB_EXPECT(sinkAliveAfterDestroy.load(),
+                   tag + "the sink the worker was running outlived ReviewJobs until the worker ended");
+        MIB_EXPECT(recorder.terminals(id) == 1, tag + "one terminal");
+        MIB_EXPECT(recorder.violationCount() == 0, tag + "Started first, nothing after the terminal");
     }
 } // namespace
 
@@ -644,5 +745,8 @@ int main()
 
     runPolicy(Policy{"review bridge", false}, wd);
     runPolicy(Policy{"facade", true}, wd);
+    reentrantShutdown(Policy{"review bridge", false});
+    reentrantShutdown(Policy{"facade", true});
+    wd.mark("re-entrant shutdown");
     return mib::test::exitCode();
 }

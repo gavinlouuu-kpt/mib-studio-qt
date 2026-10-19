@@ -225,6 +225,11 @@ namespace backend::bridge
     {
     }
 
+    review::ReviewJobs &BackendFacadeTestAccess::reviewJobs(BackendFacade &facade)
+    {
+        return *facade.reviewJobs_;
+    }
+
     BackendFacade::~BackendFacade()
     {
         // Review jobs left running without shutdown(): cancelled and joined

@@ -24,6 +24,7 @@
 #include "backend/review/ReviewTypes.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -314,7 +315,11 @@ namespace backend::review
     private:
         friend struct ReviewJobsTestAccess;
         struct Impl;
-        std::unique_ptr<Impl> impl_;
+        // Shared with the lane workers: a worker detached by a shutdown from
+        // inside its own event keeps the runner state it still touches alive
+        // after this object is gone. Job bodies reach the runner only through
+        // it, never through `this`.
+        std::shared_ptr<Impl> impl_;
     };
 
     // Test-only: a job with a caller-supplied body on `kind`'s lane, through
@@ -334,6 +339,10 @@ namespace backend::review
                                           const Progress &progress)>;
         static std::uint64_t start(ReviewJobs &jobs, ReviewJobKind kind, Body body, std::string *error = nullptr,
                                    bool cancelOverridesOutcome = true, const std::string &busyMessage = {});
+        // Blocks until no lane (or `lane`) is busy, woken by the lane release
+        // itself; false after `timeout`.
+        static bool waitIdle(const ReviewJobs &jobs, std::chrono::milliseconds timeout);
+        static bool waitIdle(const ReviewJobs &jobs, ReviewJobLane lane, std::chrono::milliseconds timeout);
     };
 
 } // namespace backend::review

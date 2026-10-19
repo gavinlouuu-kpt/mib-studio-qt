@@ -32,6 +32,7 @@ namespace backend::review
 
 namespace backend::bridge
 {
+    struct BackendFacadeTestAccess; // test-only (defined in BackendFacade.cpp)
 
     // Values are part of the bridge contract
     // (crates/mib-bridge/contract/bridge-contract.json, ADR 0004) and are
@@ -1249,6 +1250,7 @@ namespace backend::bridge
         bool fetchExperimentStatus(app::ExperimentStatus &out) const;
 
     private:
+        friend struct BackendFacadeTestAccess;
         BackendCommandResult handleCameraCommand(const CameraCommand &command);
         BackendCommandResult handleRecordingCommand(const RecordingCommand &command);
         BackendCommandResult handleProcessingSettingsCommand(const ProcessingSettingsCommand &command);
@@ -1332,6 +1334,14 @@ namespace backend::bridge
         // lanes hold the status snapshots. Declared after everything its
         // workers call back into, so it is destroyed (and joined) first.
         const std::unique_ptr<review::ReviewJobs> reviewJobs_;
+    };
+
+    // Test-only: the facade's review lanes (#512 S7), so tests wait for a
+    // lane's release (review::ReviewJobsTestAccess::waitIdle) instead of
+    // sleeping.
+    struct BackendFacadeTestAccess
+    {
+        static review::ReviewJobs &reviewJobs(BackendFacade &facade);
     };
 
 } // namespace backend::bridge

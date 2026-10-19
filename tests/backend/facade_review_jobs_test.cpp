@@ -28,7 +28,10 @@
 // waits, both released in turn; and shutdown with both held: the reanalysis
 // is cancelled with "Backend shutdown" once, the export reports its own
 // terminal, shutdown returns after both and nothing is reported after it.
-// Every operation sees Started first and exactly one terminal. Watchdog
+// Every operation sees Started first and exactly one terminal. Between jobs
+// the test waits for the lane's own release (BackendFacadeTestAccess +
+// ReviewJobsTestAccess::waitIdle; the oracle's: joining its worker), never a
+// sleep: the lane is freed only after the terminal event returns. Watchdog
 // guarded.
 
 #include "backend/app/AppBackend.h"
@@ -37,6 +40,7 @@
 #include "backend/recording/Hdf5Service.h"
 #include "backend/review/ExportEngine.h"
 #include "backend/review/Reanalysis.h"
+#include "backend/review/ReviewJobs.h"
 
 #include "support/assert.h"
 #include "support/tempdir.h"
@@ -288,6 +292,8 @@ namespace
         virtual bool cancel(std::uint64_t id) = 0;
         virtual BackendCommandResult dispatchCancel(std::uint64_t id) = 0;
         virtual std::size_t active() const = 0;
+        // Returns once the job's lane is free for the next start.
+        virtual void waitLaneIdle(bool reanalysis) = 0;
         // Operation events of kind Export / Reanalysis.
         virtual void setSink(std::function<void(const OperationStatusEvent &)> sink) = 0;
     };
@@ -306,6 +312,14 @@ namespace
             return facade.dispatch(OperationCommand{OperationCommandAction::Cancel, id});
         }
         std::size_t active() const override { return facade.activeOperationCount(); }
+        // The lane's own release (after the terminal event), not a sleep.
+        void waitLaneIdle(bool reanalysis) override
+        {
+            MIB_REQUIRE(br::ReviewJobsTestAccess::waitIdle(BackendFacadeTestAccess::reviewJobs(facade),
+                                                          reanalysis ? br::ReviewJobLane::Processing : br::ReviewJobLane::Export,
+                                                          std::chrono::seconds(60)),
+                        "lane released");
+        }
         void setSink(std::function<void(const OperationStatusEvent &)> sink) override
         {
             if (!sink)
@@ -354,6 +368,13 @@ namespace
             return jobs.handleOperationCommand(OperationCommand{OperationCommandAction::Cancel, id});
         }
         std::size_t active() const override { return jobs.activeOperationCount(); }
+        // A join handshake: the pre-S7 worker cleared its single-flight flag
+        // just before its thread ended.
+        void waitLaneIdle(bool reanalysis) override
+        {
+            std::thread &worker = reanalysis ? jobs.reanalysisThread_ : jobs.exportThread_;
+            if (worker.joinable()) worker.join();
+        }
         void setSink(std::function<void(const OperationStatusEvent &)> sink) override { jobs.sink = std::move(sink); }
     };
 
@@ -541,19 +562,13 @@ namespace
             std::scoped_lock lock(hookMutex);
             hook = std::move(h);
         };
-        // After a job's terminal event: its status left "running" and no
-        // operation is active. The pre-S7 code clears its single-flight flag
-        // just after the terminal event, so both drivers get a moment for that
-        // before the next start (as backend.export_bridge_facade does).
+        // After a job's terminal event, wait for its lane's release: both
+        // drivers free the lane only after the terminal event returned (the
+        // pre-S7 code cleared its flag after finishOperation), so the next
+        // start must not race it. The status was written before the event.
         auto settle = [&](std::uint64_t id, bool reanalysis) {
             MIB_REQUIRE(t.waitTerminal(id), "terminal event");
-            for (int i = 0; i < 5000; ++i)
-            {
-                const auto st = json::parse(reanalysis ? d.reanalysisStatus() : d.exportStatus());
-                if (st.value("operation_id", "") == std::to_string(id) && st["state"] != "running" && d.active() == 0) break;
-                std::this_thread::sleep_for(std::chrono::milliseconds(2));
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            d.waitLaneIdle(reanalysis);
             t.line("STATUS export=" + d.exportStatus());
             t.line("STATUS reanalysis=" + d.reanalysisStatus());
         };
@@ -658,7 +673,7 @@ namespace
             recordResult("DUP reanalysis ", d.submitReanalysis(reanalysisRequest(source)));
             const auto ex = started(t, "START export ", [&] { return d.submitExport(all.dump()); });
             MIB_REQUIRE(t.waitTerminal(ex.operationId), "export beside the reanalysis");
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            d.waitLaneIdle(false);
             t.line("STATUS export=" + d.exportStatus());
             t.line("STATUS reanalysis=" + d.reanalysisStatus());
             recordResult("DUP reanalysis ", d.submitReanalysis(reanalysisRequest(source)));
@@ -795,10 +810,12 @@ int main()
             heldExport = 0;
             heldReanalysis = 0;
         };
+        // Both lanes released (after their terminal events), woken by the
+        // release itself: no operation count, no sleep.
+        br::ReviewJobs &lanes = BackendFacadeTestAccess::reviewJobs(facade);
         auto idle = [&] {
-            for (int i = 0; i < 5000 && facade.activeOperationCount() != 0; ++i)
-                std::this_thread::sleep_for(std::chrono::milliseconds(2));
-            std::this_thread::sleep_for(std::chrono::milliseconds(20)); // the lane is released after the terminal event
+            MIB_REQUIRE(br::ReviewJobsTestAccess::waitIdle(lanes, std::chrono::seconds(60)), "both lanes released");
+            MIB_EXPECT(facade.activeOperationCount() == 0, "no operation left");
         };
         for (int cycle = 0; cycle < 12; ++cycle)
         {
@@ -871,7 +888,7 @@ int main()
             // cancelAllOperations reports the reanalysis cancelled ("Backend
             // shutdown") on the shutdown thread; then the held jobs are let go
             // in turn (the reanalysis first, the export once the reanalysis
-            // wrote its terminal status).
+            // lane is released).
             facade.setEventSink([&](const BackendEvent &event) {
                 const auto *op = std::get_if<OperationStatusEvent>(&event);
                 if (!op || (op->kind != BackendOperationKind::Export && op->kind != BackendOperationKind::Reanalysis)) return;
@@ -882,11 +899,11 @@ int main()
                     std::scoped_lock lock(releaserMutex);
                     releaser = std::thread([&] {
                         lr.release();
-                        for (int i = 0; i < 5000; ++i)
-                        {
-                            if (json::parse(facade.fetchReviewReanalysisStatusJson())["state"] != "running") break;
-                            std::this_thread::sleep_for(std::chrono::milliseconds(2));
-                        }
+                        // The reanalysis worker is done (lane released) before
+                        // the export resumes its HDF5 work.
+                        MIB_EXPECT(br::ReviewJobsTestAccess::waitIdle(lanes, br::ReviewJobLane::Processing,
+                                                                      std::chrono::seconds(60)),
+                                   "the reanalysis lane is released during shutdown");
                         le.release();
                     });
                 }

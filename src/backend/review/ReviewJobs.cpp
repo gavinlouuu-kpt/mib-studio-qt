@@ -110,7 +110,7 @@ namespace backend::review
         }
     } // namespace
 
-    struct ReviewJobs::Impl
+    struct ReviewJobs::Impl : std::enable_shared_from_this<ReviewJobs::Impl>
     {
         using CancelFlag = std::shared_ptr<std::atomic<bool>>;
 
@@ -161,7 +161,7 @@ namespace backend::review
         const ReviewJobsOptions options;
 
         mutable std::mutex mutex;
-        std::condition_variable laneStarted;
+        std::condition_variable laneChanged;
         std::array<Lane, kLaneCount> lanes;
         std::uint64_t nextId{1};
         std::string computedCoreJson;
@@ -196,7 +196,7 @@ namespace backend::review
             std::scoped_lock lock(mutex);
             lanes[lane].busy = false;
             lanes[lane].starting = false;
-            laneStarted.notify_all();
+            laneChanged.notify_all();
         }
 
         // Claims the job's lane (refused while it, or under single-job policy
@@ -270,9 +270,17 @@ namespace backend::review
             {
                 if (job->onBegin) job->onBegin(id);
                 std::scoped_lock lock(mutex);
-                lanes[lane].worker = std::thread([this, lane, id, flag, job]() { run(lane, id, flag, *job); });
+                // The worker owns a reference to the runner state (this Impl):
+                // a shutdown from inside one of its events detaches it (it
+                // cannot join itself), and the ReviewJobs object may then be
+                // destroyed while the event's callback is still running; the
+                // sink, the lanes and the mutex it touches afterwards stay alive
+                // until it ends (#742 review).
+                lanes[lane].worker = std::thread([self = shared_from_this(), lane, id, flag, job]() {
+                    self->run(lane, id, flag, *job);
+                });
                 lanes[lane].starting = false;
-                laneStarted.notify_all();
+                laneChanged.notify_all();
             }
             catch (...)
             {
@@ -379,7 +387,7 @@ namespace backend::review
 
     ReviewJobs::ReviewJobs(ReviewSession &session, services::ProcessingService *processing, ReviewJobSink sink,
                            ReviewJobsOptions options)
-        : impl_(std::make_unique<Impl>(session, processing, std::move(sink), std::move(options)))
+        : impl_(std::make_shared<Impl>(session, processing, std::move(sink), std::move(options)))
     {
     }
 
@@ -392,7 +400,7 @@ namespace backend::review
             std::unique_lock lock(impl_->mutex);
             // A job between claim and worker creation is waited for (unless
             // this thread is the one starting it), so its worker is joined too.
-            impl_->laneStarted.wait(lock, [&] {
+            impl_->laneChanged.wait(lock, [&] {
                 for (const auto &l : impl_->lanes)
                     if (l.starting && l.starter != std::this_thread::get_id()) return false;
                 return true;
@@ -493,6 +501,24 @@ namespace backend::review
         return ReviewJobStart{r.id, r.started, r.error};
     }
 
+    bool ReviewJobsTestAccess::waitIdle(const ReviewJobs &jobs, std::chrono::milliseconds timeout)
+    {
+        auto &impl = *jobs.impl_;
+        std::unique_lock lock(impl.mutex);
+        return impl.laneChanged.wait_for(lock, timeout, [&] {
+            for (const auto &l : impl.lanes)
+                if (l.busy) return false;
+            return true;
+        });
+    }
+
+    bool ReviewJobsTestAccess::waitIdle(const ReviewJobs &jobs, ReviewJobLane lane, std::chrono::milliseconds timeout)
+    {
+        auto &impl = *jobs.impl_;
+        std::unique_lock lock(impl.mutex);
+        return impl.laneChanged.wait_for(lock, timeout, [&] { return !impl.lanes[laneIndex(lane)].busy; });
+    }
+
     std::uint64_t ReviewJobsTestAccess::start(ReviewJobs &jobs, ReviewJobKind kind, Body body, std::string *error,
                                               bool cancelOverridesOutcome, const std::string &busyMessage)
     {
@@ -542,14 +568,14 @@ namespace backend::review
             return 0;
         }
         const double factor = impl_->session.pixelToMicron();
-        return impl_->startOwn(ReviewJobKind::ExportMetrics, [this, source, outputPath, factor](std::uint64_t id, auto flag) {
+        return impl_->startOwn(ReviewJobKind::ExportMetrics, [impl = impl_.get(), source, outputPath, factor](std::uint64_t id, auto flag) {
             recording::HdfExportRequest request;
             request.sourcePath = source;
             request.outputRoot = fs::path(outputPath).parent_path().string();
             request.format = recording::HdfExportFormat::MetricsCsv;
             request.conversionFactor = factor;
             request.explicitDestination = outputPath;
-            return impl_->runExport(id, ReviewJobKind::ExportMetrics, request, flag);
+            return impl->runExport(id, ReviewJobKind::ExportMetrics, request, flag);
         }, error);
     }
 
@@ -567,7 +593,7 @@ namespace backend::review
             return 0;
         }
         const double factor = impl_->session.pixelToMicron();
-        return impl_->startOwn(ReviewJobKind::ExportAll, [this, source, req, factor](std::uint64_t id, auto flag) {
+        return impl_->startOwn(ReviewJobKind::ExportAll, [impl = impl_.get(), source, req, factor](std::uint64_t id, auto flag) {
             recording::HdfExportRequest request;
             request.sourcePath = source;
             request.outputRoot = req.outputRoot;
@@ -580,7 +606,7 @@ namespace backend::review
                 cv::Mat image = cv::imdecode(chart.encoded, cv::IMREAD_COLOR);
                 if (!image.empty()) request.supplementalImages[chart.name] = image;
             }
-            return impl_->runExport(id, ReviewJobKind::ExportAll, request, flag);
+            return impl->runExport(id, ReviewJobKind::ExportAll, request, flag);
         }, error);
     }
 
@@ -599,7 +625,7 @@ namespace backend::review
         // Each source uses its own recorded factor (TD-17); files without one
         // use the host fallback, as when they are opened.
         const double fallback = impl_->session.fallbackPixelToMicron();
-        return impl_->startOwn(ReviewJobKind::BatchExport, [this, req, fallback](std::uint64_t id, auto flag) {
+        return impl_->startOwn(ReviewJobKind::BatchExport, [impl = impl_.get(), req, fallback](std::uint64_t id, auto flag) {
             recording::HdfExportRequest base;
             base.outputRoot = req.outputRoot;
             base.conversionFactor = fallback;
@@ -608,7 +634,7 @@ namespace backend::review
             options.polling = ExportCancelPolling::AtProgress;
             options.prepare = [&](std::size_t i, recording::HdfExportRequest &request, std::string &skipped) {
                 const std::string &source = req.sources[i];
-                impl_->progress(id, ReviewJobKind::BatchExport, i, req.sources.size(), source);
+                impl->progress(id, ReviewJobKind::BatchExport, i, req.sources.size(), source);
                 bool recordingFile = false;
                 {
                     services::Hdf5Service probe;
@@ -642,7 +668,7 @@ namespace backend::review
             const auto batch = runExportBatch(
                 base, req.sources, flag,
                 [&](std::size_t, const recording::HdfExportProgress &p, const std::vector<ExportFileOutcome> &) {
-                    impl_->exportProgress(id, ReviewJobKind::BatchExport, p);
+                    impl->exportProgress(id, ReviewJobKind::BatchExport, p);
                 },
                 options);
             const std::size_t exported = batch.completedCount();
@@ -697,7 +723,7 @@ namespace backend::review
                 return 0;
             }
         }
-        return impl_->startOwn(ReviewJobKind::ExportCharts, [this, req](std::uint64_t id, auto flag) {
+        return impl_->startOwn(ReviewJobKind::ExportCharts, [impl = impl_.get(), req](std::uint64_t id, auto flag) {
             const fs::path dir(req.outputDir);
             std::error_code ec;
             if (!fs::is_directory(dir, ec)) return Outcome{ReviewJobState::Failed, "not a directory: " + req.outputDir};
@@ -714,7 +740,7 @@ namespace backend::review
                     discard();
                     return Outcome{ReviewJobState::Cancelled, "cancelled; partial charts discarded"};
                 }
-                impl_->progress(id, ReviewJobKind::ExportCharts, i, total, chart.name);
+                impl->progress(id, ReviewJobKind::ExportCharts, i, total, chart.name);
                 const cv::Mat image = cv::imdecode(chart.encoded, cv::IMREAD_COLOR);
                 if (image.empty())
                 {
@@ -740,7 +766,7 @@ namespace backend::review
                     return Outcome{ReviewJobState::Failed, "could not publish " + req.charts[i].name + ": " + ec.message()};
                 }
             }
-            impl_->progress(id, ReviewJobKind::ExportCharts, total, total);
+            impl->progress(id, ReviewJobKind::ExportCharts, total, total);
             return Outcome{ReviewJobState::Completed,
                            "exported " + std::to_string(total) + " chart(s) to " + req.outputDir};
         }, error);
@@ -781,7 +807,7 @@ namespace backend::review
             return 0;
         }
         const bool recordingFile = impl_->session.isRecordingFile();
-        return impl_->startOwn(ReviewJobKind::RegenerateMasks, [this, req, source, recordingFile](std::uint64_t id, auto flag) {
+        return impl_->startOwn(ReviewJobKind::RegenerateMasks, [impl = impl_.get(), req, source, recordingFile](std::uint64_t id, auto flag) {
             // YOFO Review's regenerate on the shared reanalysis engine
             // (backend/review/Reanalysis.h) with its D6 options: timestamps
             // rebased to the first selected frame, a median-of-32 synthetic
@@ -840,10 +866,10 @@ namespace backend::review
             }
             const auto onProgress = [&](std::uint64_t done, std::uint64_t total) {
                 if ((done % 25) == 0 || done == total)
-                    impl_->progress(id, ReviewJobKind::RegenerateMasks, done, total, "processing");
-                if (done == total) impl_->progress(id, ReviewJobKind::RegenerateMasks, total, total, "saving");
+                    impl->progress(id, ReviewJobKind::RegenerateMasks, done, total, "processing");
+                if (done == total) impl->progress(id, ReviewJobKind::RegenerateMasks, total, total, "saving");
             };
-            const auto outcome = runReanalysis(r, *impl_->processing, flag, onProgress);
+            const auto outcome = runReanalysis(r, *impl->processing, flag, onProgress);
             if (!outcome.warning.empty()) spdlog::warn("Regenerate masks {}: {}", req.outputPath, outcome.warning);
             const std::string kept =
                 outcome.retainedPartialPath.empty() ? "" : "; partial output kept at " + outcome.retainedPartialPath;
@@ -868,10 +894,10 @@ namespace backend::review
             return 0;
         }
         const double fraction = std::clamp(std::isfinite(coreFraction) ? coreFraction : 0.9, 0.05, 1.0);
-        return impl_->startOwn(ReviewJobKind::ComputeCore, [this, fraction](std::uint64_t, auto flag) {
-            const std::string path = impl_->session.filePath();
-            const ScatterData sc = impl_->session.scatter();
-            if (impl_->session.filePath() != path) return Outcome{ReviewJobState::Failed, "the file changed while reading"};
+        return impl_->startOwn(ReviewJobKind::ComputeCore, [impl = impl_.get(), fraction](std::uint64_t, auto flag) {
+            const std::string path = impl->session.filePath();
+            const ScatterData sc = impl->session.scatter();
+            if (impl->session.filePath() != path) return Outcome{ReviewJobState::Failed, "the file changed while reading"};
             std::vector<backend::monitoring::DensityPoint> points;
             points.reserve(sc.areaUm2.size());
             for (std::size_t i = 0; i < sc.areaUm2.size(); ++i) points.push_back({sc.areaUm2[i], sc.deformability[i]});
@@ -883,9 +909,9 @@ namespace backend::review
             if (flag->load()) return Outcome{ReviewJobState::Cancelled, "cancelled"};
             const std::string json = backend::monitoring::toJson(record);
             {
-                std::scoped_lock lock(impl_->mutex);
-                impl_->computedCoreJson = json;
-                impl_->computedCorePath = path;
+                std::scoped_lock lock(impl->mutex);
+                impl->computedCoreJson = json;
+                impl->computedCorePath = path;
             }
             return Outcome{ReviewJobState::Completed, "Core " + std::to_string(std::lround(record.coreFraction * 100.0)) + "%: " +
                                                               std::to_string(record.cellCount) + " of " + std::to_string(record.populationCount) +
@@ -964,15 +990,15 @@ namespace backend::review
         r.bandwidthFactor = std::clamp(std::isfinite(r.bandwidthFactor) ? r.bandwidthFactor : 1.0, 0.2, 5.0);
         r.coreFraction = std::clamp(std::isfinite(r.coreFraction) ? r.coreFraction : 0.9, 0.05, 1.0);
         r.levels = std::clamp(r.levels, 1, 64);
-        return impl_->startOwn(ReviewJobKind::Density, [this, r](std::uint64_t, auto flag) {
+        return impl_->startOwn(ReviewJobKind::Density, [impl = impl_.get(), r](std::uint64_t, auto flag) {
             {
-                std::scoped_lock lock(impl_->mutex);
-                impl_->density = DensityResult{}; // not ready while this one runs
+                std::scoped_lock lock(impl->mutex);
+                impl->density = DensityResult{}; // not ready while this one runs
             }
-            const std::string path = impl_->session.filePath();
-            const ScatterData sc = impl_->session.scatter();
-            const ReviewMetadata meta = impl_->session.metadata();
-            if (impl_->session.filePath() != path) return Outcome{ReviewJobState::Failed, "the file changed while reading"};
+            const std::string path = impl->session.filePath();
+            const ScatterData sc = impl->session.scatter();
+            const ReviewMetadata meta = impl->session.metadata();
+            if (impl->session.filePath() != path) return Outcome{ReviewJobState::Failed, "the file changed while reading"};
             std::vector<backend::monitoring::DensityPoint> points;
             points.reserve(sc.areaUm2.size());
             for (std::size_t i = 0; i < sc.areaUm2.size(); ++i) points.push_back({sc.areaUm2[i], sc.deformability[i]});
@@ -996,12 +1022,12 @@ namespace backend::review
             result.ready = true;
             result.sourcePath = path;
             {
-                std::scoped_lock lock(impl_->mutex);
-                impl_->density = result;
+                std::scoped_lock lock(impl->mutex);
+                impl->density = result;
                 if (!result.computedRecordJson.empty())
                 {
-                    impl_->computedCoreJson = result.computedRecordJson;
-                    impl_->computedCorePath = path;
+                    impl->computedCoreJson = result.computedRecordJson;
+                    impl->computedCorePath = path;
                 }
             }
             return Outcome{ReviewJobState::Completed, "density estimated for " + std::to_string(points.size()) + " cells"};
