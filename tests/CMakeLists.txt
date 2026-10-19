@@ -811,6 +811,17 @@ set_tests_properties(recording.hdf5_save_performance PROPERTIES LABELS "recordin
 mib_add_backend_test_executable(experiment_roundtrip_test recording/experiment_roundtrip_test.cpp)
 add_test(NAME recording.experiment_roundtrip COMMAND $<TARGET_FILE:mib_backend_tests> experiment_roundtrip_test)
 set_tests_properties(recording.experiment_roundtrip PROPERTIES LABELS "recording;backend" TIMEOUT 30)
+# Run snapshot v3 (#712): codec + typed reader round trip, legacy (v1/v2, no
+# provenance) reads as unknown, and write-path faults (no file, read-only,
+# garbage, foreign attribute types, an oversized snapshot).
+mib_add_backend_test_executable(run_provenance_record_test recording/run_provenance_record_test.cpp)
+add_test(NAME recording.run_provenance_record COMMAND $<TARGET_FILE:mib_backend_tests> run_provenance_record_test)
+set_tests_properties(recording.run_provenance_record PROPERTIES LABELS "recording;backend;hdf5;roundtrip;fault-injection;safety" TIMEOUT 30)
+# Start-request identity and /experiment_annotation (#712 PR 2, bridge ABI 39): strict request
+# parsing and bounds, snapshot identity members, annotation block round trip, legacy read, faults.
+mib_add_backend_test_executable(run_start_identity_test recording/run_start_identity_test.cpp)
+add_test(NAME recording.run_start_identity COMMAND $<TARGET_FILE:mib_backend_tests> run_start_identity_test)
+set_tests_properties(recording.run_start_identity PROPERTIES LABELS "recording;backend;hdf5;roundtrip;fault-injection;safety" TIMEOUT 30)
 
 # Series identity (/valid_frames/series_meta, series_contiguous) and sort
 # pulse records (/trigger_events): round-trip + fault injection.

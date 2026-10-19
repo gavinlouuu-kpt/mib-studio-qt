@@ -3,7 +3,7 @@
 // Regenerate with: python3 scripts/gen_bridge_contract.py
 // CI verifies this file with: python3 scripts/gen_bridge_contract.py --check
 
-export const BRIDGE_ABI_VERSION = 38;
+export const BRIDGE_ABI_VERSION = 39;
 
 export const EVENT_KINDS = {
   FrameReady: 0,
@@ -213,6 +213,7 @@ export const EXPERIMENT_START_OUTCOMES = {
   StorageFailed: 4,
   ProvenanceFailed: 5,
   Busy: 6,
+  InvalidRequest: 7,
 } as const;
 
 export const EXPERIMENT_STOP_OUTCOMES = {
@@ -419,6 +420,20 @@ export const EVENT_PAYLOADS = {
     "terminal": "experiment_terminal",
     "finalizationOk": "experiment_finalization_ok"
   }
+} as const;
+
+export const EXPERIMENT_START_REQUEST = {
+  "max_request_bytes": 16384,
+  "max_id_bytes": 128,
+  "max_text_bytes": 256,
+  "max_notes_bytes": 2048,
+  "max_unit_bytes": 32,
+  "max_free_entries": 32,
+  "max_free_key_bytes": 64,
+  "max_free_value_bytes": 256,
+  "temperature_c_min": -50,
+  "temperature_c_max": 150,
+  "annotation_schema_version": 1
 } as const;
 
 export const EVENT_KIND_NAMES: Readonly<Record<number, string>> = {

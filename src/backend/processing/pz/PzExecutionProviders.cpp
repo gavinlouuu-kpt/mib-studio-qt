@@ -115,7 +115,9 @@ ProviderStatus PzRecordPipeline::status() const {
 
 void PzRecordPipeline::deliver(bpz::FrameResults&& fr, const IExecutionProvider::Sink& sink) {
     ProviderFrame out;
-    out.runId = runId_;
+    // The FRAME record's own run_id (what the PL stamped), not the id this host armed: a row then
+    // says which run it came from (#712), and a record from another run is visible as such.
+    out.runId = fr.frame.runId;
     out.frameId = fr.frame.frameId;
     out.timestampTicks = fr.frame.timestamp;
     out.timestampNs = static_cast<uint64_t>(static_cast<long double>(fr.frame.timestamp) * 1e9L / timestampHz_);

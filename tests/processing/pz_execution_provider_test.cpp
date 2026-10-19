@@ -106,7 +106,9 @@ std::vector<ProviderFrame> replay(std::vector<uint8_t> bytes, double fps, backen
     });
     std::string error;
     const auto t0 = std::chrono::steady_clock::now();
-    MIB_REQUIRE(provider.start(7, &error), "replay starts: " + error);
+    // Armed with another id than the records carry (7): a ProviderFrame keeps the FRAME record's
+    // run_id, which is what a row persists (#712).
+    MIB_REQUIRE(provider.start(99, &error), "replay starts: " + error);
     MIB_REQUIRE(provider.waitFinished(std::chrono::seconds(20)), "replay finishes");
     if (seconds) *seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     provider.stop();
@@ -125,7 +127,7 @@ void testReplayDeliversThePlCells(const std::string& vectors) {
         const auto& g = got[i];
         const auto& e = s.frames[i];
         const std::string where = "frame " + std::to_string(e.frameId);
-        MIB_EXPECT(g.frameId == e.frameId && g.runId == 7 && !g.incomplete, where + " identity");
+        MIB_EXPECT(g.frameId == e.frameId && g.runId == 7 && !g.incomplete, where + " identity (the record's run_id)");
         MIB_EXPECT(g.timestampNs == e.frameId * 200000ULL, where + " timestamp ticks -> ns");
         MIB_EXPECT(g.empty() == (e.cells == 0), where + " EMPTY flag");
         MIB_REQUIRE(g.cells.size() == e.results.size() && g.objects.size() == e.results.size(), where + " cells");

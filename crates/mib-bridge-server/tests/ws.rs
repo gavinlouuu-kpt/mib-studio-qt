@@ -37,7 +37,12 @@ async fn connect(addr: std::net::SocketAddr) -> Socket {
 /// One request; returns the reply (text JSON or binary payload after the id), skipping events
 /// and pings but recording events in `events`.
 async fn call(ws: &mut Socket, id: u64, cmd: &str, args: Value, events: &mut Vec<Value>) -> Result<Reply, String> {
-    ws.send(Message::Text(json!({ "request_id": id, "cmd": cmd, "args": args }).to_string().into())).await.unwrap();
+    call_text(ws, id, json!({ "request_id": id, "cmd": cmd, "args": args }).to_string(), events).await
+}
+
+/// The same with a request frame written by hand (the exact bytes a client sends).
+async fn call_text(ws: &mut Socket, id: u64, text: String, events: &mut Vec<Value>) -> Result<Reply, String> {
+    ws.send(Message::Text(text.into())).await.unwrap();
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         let message = tokio::time::timeout_at(deadline.into(), ws.next()).await.expect("reply in time").unwrap().unwrap();
@@ -107,6 +112,36 @@ async fn auth_probe_reports_the_token_without_a_socket() {
     assert_eq!(first.len(), 16, "{first}");
     let (_, refused) = http_get(addr, "/auth?token=wrong").await;
     assert_eq!(boot(&refused).as_deref(), Some(first.as_str()), "{refused}");
+    let _ = std::fs::remove_dir_all(&data);
+}
+
+// ABI 39 (#712): the server passes startRequestJson to the backend unparsed, so the backend's strict
+// parser sees a duplicate key (a serde Value would keep the last) and bounds the client's own bytes
+// (a request over 16 KiB only through whitespace is refused, although it would pass re-serialised).
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn start_request_json_is_passed_through_the_server_unparsed() {
+    let (server, addr, data) = start("start_request").await;
+    let mut ws = connect(addr).await;
+    let mut events = Vec::new();
+    let Ok(Reply::Json(ok)) = call(&mut ws, 1, "init", json!({ "dataDir": "" }), &mut events).await else { panic!() };
+    assert_eq!(ok, json!(true));
+    let out = serde_json::to_string(&data.join("start_request.h5").to_string_lossy()).unwrap();
+    let duplicate = r#"{"operator":{"name":"Alice","name":"Bob"}}"#.to_string();
+    let padded = format!("{{{}\"sample_ref\":null}}", " ".repeat(16400));
+    for (id, doc, why) in [(2u64, duplicate, "duplicate key"), (3u64, padded, "at most 16384")] {
+        // Written by hand: the request document is a JSON string inside the frame, as a client sends it.
+        let frame = format!(
+            r#"{{"request_id":{id},"cmd":"experiment_start","args":{{"outputPath":{out},"startRequestJson":{}}}}}"#,
+            serde_json::to_string(&doc).unwrap()
+        );
+        let Ok(Reply::Json(r)) = call_text(&mut ws, id, frame, &mut events).await else { panic!("a CommandResult") };
+        let message = r["message"].as_str().unwrap_or_default();
+        assert_eq!(r["ok"], json!(false), "{r}");
+        assert!(message.contains("invalid start request") && message.contains(why), "{why}: {message}");
+    }
+    ws.close(None).await.unwrap();
+    server.state().bridge.lock().unwrap().pin_mut().shutdown();
     let _ = std::fs::remove_dir_all(&data);
 }
 

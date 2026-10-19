@@ -4,6 +4,7 @@
 
 #include "backend/recording/Hdf5Service.h"
 #include "backend/recording/FcsWriter.h"
+#include "backend/recording/RunProvenanceRecord.h"
 #include "backend/processing/ProcessingService.h"
 
 #include <opencv2/imgcodecs.hpp>
@@ -326,6 +327,13 @@ HdfExportResult HdfExportService::run(const HdfExportRequest& request, const Hdf
             options.pixelToMicron = request.conversionFactor;
             options.cancel = cancel.nativeFlag();
             options.metadata.source = request.sourcePath;
+            // $MIB_RUN_ID is the run's own id from snapshot v3 (#712). A file without one (older than
+            // v3, or no snapshot) gets no keyword: the id is never invented from the file name or time.
+            {
+                RecordedRunProvenance provenance;
+                if (readRecordedRunProvenance(reader, provenance) && provenance.v3.runId)
+                    options.metadata.runId = *provenance.v3.runId;
+            }
             options.metadata.contract = options.contract;
             options.metadata.pixelToMicron = request.conversionFactor;
             const std::time_t now = static_cast<std::time_t>(backend::app::WallClock::nowNs() / 1'000'000'000ULL);
