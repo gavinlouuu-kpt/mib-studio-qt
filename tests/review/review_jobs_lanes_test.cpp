@@ -1010,10 +1010,11 @@ namespace
             shutdownReturnedAt = ++sequence;
             shutdownReturned.raise();
         });
-        // The shutdown has begun and is waiting for the start (it would
-        // otherwise have returned: a mutation that skips the wait fails here).
-        MIB_REQUIRE(ReviewJobsTestAccess::waitShutdownWaiting(*jobs, kWait),
-                    tag + "shutdown() waits for the start in progress");
+        // The shutdown has begun and is waiting for the start. Without the
+        // wait this times out, by when shutdown() has long returned: the
+        // checks below then fail as well.
+        MIB_EXPECT(ReviewJobsTestAccess::waitShutdownWaiting(*jobs, kWait),
+                   tag + "shutdown() waits for the start in progress");
         MIB_EXPECT(!shutdownReturned.isSet(), tag + "shutdown() has not returned while the start is in Started");
         release.raise();
         MIB_REQUIRE(shutdownReturned.wait(), tag + "shutdown() returns once the start has returned");
