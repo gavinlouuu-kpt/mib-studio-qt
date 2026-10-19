@@ -297,9 +297,8 @@ namespace backend::review
                 if (local >= selected) throw std::runtime_error("Processing returned an out-of-range source index");
                 const auto &origin = metadata[local];
                 frame.index = origin.index;
-                frame.timestampNs = !rebase                            ? origin.timestampNs
-                                    : origin.timestampNs >= firstTimestamp ? origin.timestampNs - firstTimestamp
-                                                                           : 0;
+                frame.timestampNs = origin.timestampNs;
+                if (rebase) frame.timestampNs = origin.timestampNs >= firstTimestamp ? origin.timestampNs - firstTimestamp : 0;
                 if (frame.validation.trackId >= 0)
                 {
                     if (frame.validation.trackFirstFrame < selected)
