@@ -121,6 +121,23 @@ int main()
     MIB_EXPECT(!svc.setFlowRate(PumpId::Sample, 20.0, 103), "20 mL/min (800 rpm) rejected");
     MIB_EXPECT(!svc.setFlowRate(PumpId::Sample, 10.0, 7), "unknown unit rejected");
     MIB_EXPECT(wire.read(100) == 4000, "rejected rates leave the speed alone");
+    // The applied flow is what the written register gives, not the request (#712 review): the speed
+    // register has 0.01 rpm steps, so 1.1 µL/min at 25 µL/rev is written as 0.04 rpm = 1.0 µL/min.
+    {
+        SyringePumpService::RunFacts f;
+        MIB_EXPECT(svc.setFlowRate(PumpId::Sample, 1.1, 100), "1.1 µL/min accepted");
+        MIB_EXPECT(wire.read(100) == 4, "1.1 µL/min rounds to 0.04 rpm");
+        MIB_REQUIRE(svc.runFacts(PumpId::Sample, std::chrono::milliseconds(10), f), "facts after a rounded rate");
+        MIB_EXPECT(f.applied.flowRate && near(*f.applied.flowRate, 1.0) &&
+                       f.applied.flowRateUnit == std::optional<uint16_t>(100) && near(f.config.flowRate, 1.1),
+                   "applied = 1.0 µL/min from the register; the config keeps the 1.1 request");
+        MIB_EXPECT(svc.setFlowRate(PumpId::Sample, 0.0011, 103), "0.0011 mL/min accepted");
+        MIB_EXPECT(wire.read(100) == 4, "0.0011 mL/min also rounds to 0.04 rpm");
+        MIB_REQUIRE(svc.runFacts(PumpId::Sample, std::chrono::milliseconds(10), f), "facts in mL/min");
+        MIB_EXPECT(f.applied.flowRate && near(*f.applied.flowRate, 0.001) &&
+                       f.applied.flowRateUnit == std::optional<uint16_t>(103),
+                   "applied flow converted back to the requested unit (0.001 mL/min)");
+    }
     MIB_EXPECT(svc.setFlowRate(PumpId::Sample, 10.0, 100), "back to 10 µL/min");
     MIB_EXPECT(svc.setDirection(PumpId::Sample, SyringePumpService::Direction::Infuse),
                "direction accepted");
@@ -142,6 +159,30 @@ int main()
         MIB_EXPECT(near(st.currentFlowRate, 10.0), "live flow 10 µL/min");
         MIB_EXPECT(st.accumulatedVolume > 0.0 && st.accumulatedVolume < 0.1,
                    "volume integrates between polls (µL)");
+        // Run facts (#712): the readback is the pump's registers (run state, speed), not the
+        // integrated volume, which the pump does not report.
+        SyringePumpService::RunFacts f;
+        MIB_REQUIRE(svc.runFacts(PumpId::Sample, std::chrono::milliseconds(10), f), "run facts");
+        MIB_EXPECT(f.connected && f.readback.valid && f.readback.lastPollOk &&
+                       f.readback.runStatus == SyringePumpService::RunStatus::Forward &&
+                       f.readback.speedRpm && near(*f.readback.speedRpm, 0.4) && !f.readback.accumulatedVolumeRaw &&
+                       !f.readback.realtimeFlowRaw && !f.readback.stalled,
+                   "peristaltic readback: run state and head speed only");
+        MIB_EXPECT(f.config.model == PumpModel::TushuiPeristaltic && near(f.config.microlitersPerRev, 25.0) &&
+                       near(f.config.flowRate, 10.0),
+                   "setpoint and calibration in the facts");
+        MIB_EXPECT(f.applied.flowRate && near(*f.applied.flowRate, 10.0) &&
+                       f.applied.flowRateUnit == std::optional<uint16_t>(100) &&
+                       f.applied.direction == std::optional<SyringePumpService::Direction>(
+                                                  SyringePumpService::Direction::Infuse),
+                   "peristaltic settings are known: read back at connect, then written");
+        const auto at = f.readback.at;
+        wire.exceptionOnRead = true;
+        svc.pollStatus(PumpId::Sample);
+        wire.exceptionOnRead = false;
+        MIB_REQUIRE(svc.runFacts(PumpId::Sample, std::chrono::milliseconds(10), f), "run facts after a failed poll");
+        MIB_EXPECT(f.readback.valid && !f.readback.lastPollOk && f.readback.at == at,
+                   "a failed poll keeps the older readback, marked");
     }
     MIB_EXPECT(svc.stop(PumpId::Sample), "stop accepted");
     MIB_EXPECT(wire.read(104) == 0, "stop writes run state 0");
@@ -155,7 +196,21 @@ int main()
     MIB_EXPECT(svc.getStatus(PumpId::Sample).runStatus == SyringePumpService::RunStatus::Backward,
                "purge withdraw reads as Backward");
     MIB_EXPECT(near(svc.getStatus(PumpId::Sample).speedRpm, 0.4), "purge keeps the flow setpoint");
+    {
+        SyringePumpService::RunFacts f;
+        MIB_EXPECT(svc.runFacts(PumpId::Sample, std::chrono::milliseconds(10), f) && !f.applied.flowRate &&
+                       !f.applied.direction,
+                   "during a purge the speed and direction registers hold the purge: unknown");
+    }
     MIB_EXPECT(svc.stop(PumpId::Sample), "stop during purge accepted");
+    {
+        SyringePumpService::RunFacts f;
+        MIB_EXPECT(svc.runFacts(PumpId::Sample, std::chrono::milliseconds(10), f) && f.applied.flowRate &&
+                       near(*f.applied.flowRate, 10.0) &&
+                       f.applied.direction == std::optional<SyringePumpService::Direction>(
+                                                  SyringePumpService::Direction::Infuse),
+                   "the restore after the purge makes them known again");
+    }
     MIB_EXPECT(wire.read(104) == 0, "purge stopped");
     MIB_EXPECT(wire.read(100) == 40, "flow speed restored after purge");
     MIB_EXPECT(wire.read(101) == tushui::kCounterClockwise, "direction restored after purge");
@@ -165,6 +220,12 @@ int main()
     svc.disconnect(PumpId::Sample);
     MIB_EXPECT(wire.read(104) == 0, "disconnect stops the pump");
     MIB_EXPECT(!svc.isConnected(PumpId::Sample), "disconnected");
+    {
+        SyringePumpService::RunFacts f;
+        MIB_EXPECT(svc.runFacts(PumpId::Sample, std::chrono::milliseconds(10), f) && !f.connected &&
+                       !f.readback.valid,
+                   "disconnect drops the readback");
+    }
     watchdog.mark("disconnected");
 
     // A silent address fails to connect and leaves the slot disconnected.

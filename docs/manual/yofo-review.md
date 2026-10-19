@@ -95,6 +95,11 @@ background the file was recorded with. Untick that option to use the
 default settings instead. AVI and image-folder sources always use the
 defaults.
 
+Regenerating never replaces a file. **Save as…** suggests a name that is
+not taken yet (`<name>_remasked.h5`, then `_2`, `_3`, …). If you pick a file
+that already exists, the regeneration does not start: the dialog says
+"Output already exists; choose a new file" and you can choose another name.
+
 ## Pixel-to-micron factor
 
 Files record the pixel-to-micron factor they were taken with, and YOFO

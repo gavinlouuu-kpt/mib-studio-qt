@@ -198,6 +198,9 @@ namespace backend::bridge
         std::string profileId;                  // Start / EvaluateReadiness
         bool acknowledgeLatestFrameDrops{false}; // Start
         bool acknowledgeDiscardRing{false};      // Start from a stopped Run: its buffered frames are discarded (#693)
+        // Start (ABI 39, #712): the client's startRequest document (identity, operator, calibration
+        // record, annotation); empty = nothing declared. Parsed by recording::parseStartRequestJson.
+        std::string startRequestJson;
         bool cancelled{false};                  // Stop
     };
 

@@ -99,6 +99,10 @@ def render(contract: dict) -> str:
     for key, name in [("json_transport", "JSON_TRANSPORT"), ("event_payloads", "EVENT_PAYLOADS")]:
         lines.append("export const " + name + " = " + json.dumps(contract[key], indent=2) + " as const;")
         lines.append("")
+    # ABI 39 (#712): the startRequest bounds (numbers only; the prose stays in the JSON).
+    bounds = {k: v for k, v in contract["experiment_start_request"].items() if isinstance(v, int)}
+    lines.append("export const EXPERIMENT_START_REQUEST = " + json.dumps(bounds, indent=2) + " as const;")
+    lines.append("")
     # Reverse lookup for event kinds: numeric value -> stable name.
     lines.append("export const EVENT_KIND_NAMES: Readonly<Record<number, string>> = {")
     for name, value in contract["event_kinds"].items():

@@ -13,10 +13,15 @@
 #include "backend/playback/FrameStore.h"
 #include "backend/processing/ProcessingCoreLoader.h"
 #include "backend/processing/ProcessingService.h"
+#include "backend/profiles/InstrumentIdentity.h"
 #include "backend/profiles/ProfileRegistryWorker.h"
 #include "backend/recording/Hdf5Service.h"
+#include "backend/recording/RunProvenanceRecord.h"
+#include "backend/services/AutofocusService.h"
 #include "backend/services/CaptureService.h"
 #include "backend/services/RfGeneratorService.h"
+#include "backend/services/StageService.h"
+#include "backend/services/SyringePumpService.h"
 #include "backend/services/TriggerService.h"
 
 #include <limits>
@@ -232,6 +237,200 @@ static backend::processing::pz::CompiledProfile compilePlProfile(AppBackend& bac
     return backend.compilePlProfile();
 }
 
+// ---------------------------------------------------------------------------
+// Snapshot v3 facts (#712): read from what the services hold at Start, with no device I/O of their
+// own except the PZ7035 strobe registers (memory-mapped). Anything a service does not have is left
+// unknown (nullopt), never filled with a default.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// How long Start waits for a pump's lock (a poll or a command may be on the wire, up to a serial
+// timeout per register): past it the pump is recorded as not sampled.
+constexpr std::chrono::milliseconds kPumpFactsWait{150};
+
+uint64_t ageUs(std::chrono::steady_clock::time_point now, std::chrono::steady_clock::time_point at)
+{
+    if (at > now) return 0;
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(now - at).count());
+}
+
+const char* runStatusName(services::SyringePumpService::RunStatus s)
+{
+    using RS = services::SyringePumpService::RunStatus;
+    switch (s) {
+    case RS::Stop: return "stop";
+    case RS::Forward: return "forward";
+    case RS::Backward: return "backward";
+    case RS::Pause: return "pause";
+    }
+    return "unknown";
+}
+
+std::optional<std::string> flowUnitName(uint16_t code)
+{
+    if (code == 100) return std::string("uL/min");
+    if (code == 103) return std::string("mL/min");
+    return std::nullopt;
+}
+
+recording::PumpRecord pumpRecord(const services::SyringePumpService& pumps, services::SyringePumpService::PumpId id,
+                                 std::chrono::steady_clock::time_point now)
+{
+    using Pump = services::SyringePumpService;
+    recording::PumpRecord r;
+    r.slot = id == Pump::PumpId::Sample ? "sample" : "sheath";
+    Pump::RunFacts f;
+    if (!pumps.runFacts(id, kPumpFactsWait, f)) {
+        SPDLOG_WARN("ExperimentCoordinator: the {} pump was busy at Start; its state is recorded as unknown", r.slot);
+        return r;
+    }
+    r.connected = f.connected;
+    if (!f.connected) return r;
+    const bool peristaltic = f.config.model == Pump::PumpModel::TushuiPeristaltic;
+    r.model = peristaltic ? "tushui_peristaltic" : "dlsp_syringe";
+    if (!f.config.portName.empty()) r.port = f.config.portName;
+    else if (f.config.comPort > 0) r.port = "COM" + std::to_string(f.config.comPort);
+    r.modbusAddress = f.config.modbusAddress;
+    // Only the settings the pump is known to hold (written or read back in this connection); the
+    // configuration's defaults are never recorded as facts (#712).
+    if (f.applied.flowRate && f.applied.flowRateUnit) {
+        r.flowRate = f.applied.flowRate;
+        r.flowRateUnitCode = static_cast<int>(*f.applied.flowRateUnit);
+        r.flowRateUnit = flowUnitName(*f.applied.flowRateUnit);
+    }
+    if (f.applied.direction)
+        r.direction = *f.applied.direction == Pump::Direction::Withdraw ? "withdraw" : "infuse";
+    if (peristaltic) r.microlitersPerRev = f.config.microlitersPerRev;   // the connect calibration
+    if (f.readback.valid) {
+        recording::PumpReadbackRecord rb;
+        rb.ageUs = ageUs(now, f.readback.at);
+        rb.lastPollOk = f.readback.lastPollOk;
+        rb.runStatus = runStatusName(f.readback.runStatus);
+        rb.speedRpm = f.readback.speedRpm;
+        rb.realtimeFlowRaw = f.readback.realtimeFlowRaw;
+        rb.accumulatedVolumeRaw = f.readback.accumulatedVolumeRaw;
+        rb.stalled = f.readback.stalled;
+        r.readback = rb;
+    }
+    return r;
+}
+
+const char* moveStateName(stage::MoveState s)
+{
+    switch (s) {
+    case stage::MoveState::Idle: return "idle";
+    case stage::MoveState::Moving: return "moving";
+    case stage::MoveState::Homing: return "homing";
+    case stage::MoveState::Faulted: return "faulted";
+    }
+    return "unknown";
+}
+
+std::optional<std::string> nonEmpty(const std::string& s)
+{
+    return s.empty() ? std::nullopt : std::optional<std::string>(s);
+}
+
+} // namespace
+
+// Fill the v3 facts of a run being started (Start transaction, coordinator lock held; the service
+// locks taken here are leaves, in the same order as the stage busy probe).
+static void captureRunFacts(AppBackend& backend, recording::RunProvenanceV3& v3)
+{
+    const auto now = std::chrono::steady_clock::now();
+
+    // E-modulus LUT: the bytes ProcessingService loaded (the host E values, and the table the PL
+    // profile is compiled from).
+    {
+        const auto lut = backend.processing().eModulusLutIdentity();
+        recording::EModulusLutRecord l;
+        l.loaded = lut.loaded;
+        if (lut.loaded) {
+            l.lutId = nonEmpty(lut.lutId);
+            l.revision = nonEmpty(lut.revision);
+            l.source = nonEmpty(lut.source);
+            l.sha256 = nonEmpty(lut.sha256);
+            l.catalogSha256 = nonEmpty(lut.catalogSha256);
+            l.checksumStatus = nonEmpty(lut.checksumStatus);
+        }
+        v3.eModulusLut = l;
+    }
+
+    // Pumps: setpoint and the last complete status poll.
+    {
+        using Pump = services::SyringePumpService;
+        std::vector<recording::PumpRecord> pumps;
+        for (const auto id : {Pump::PumpId::Sample, Pump::PumpId::Sheath})
+            pumps.push_back(pumpRecord(backend.syringePump(), id, now));
+        v3.pumps = std::move(pumps);
+    }
+
+    // LED: the PZ7035 strobe registers. Other instruments have no LED readback (left unknown).
+    if (backend.instrumentControlAvailable()) {
+        recording::LedRecord l;
+        l.source = "pz7035_strobe";
+        pz::LedReadback rb;
+        std::string error;
+        if (backend.readInstrumentLed(rb, &error)) {
+            l.control = rb.control;
+            l.clockKhz = rb.clockKhz;
+            double delayUs = 0.0, widthUs = 0.0;
+            if (rb.toMicroseconds(delayUs, widthUs)) {
+                l.delayUs = delayUs;
+                l.widthUs = widthUs;
+            }
+        } else {
+            l.error = error.empty() ? std::string("the strobe registers could not be read") : error;
+        }
+        l.stoppedRunAtStart = backend.runFrozen();
+        v3.led = l;
+    }
+
+    // Z stage: identity, zero and its last published status.
+    {
+        const auto snap = backend.stage().snapshot();
+        recording::StageRecord st;
+        st.connected = snap.connected;
+        if (snap.connected) {
+            st.model = nonEmpty(snap.identity.model);
+            st.serial = nonEmpty(snap.identity.serial);
+            st.firmware = nonEmpty(snap.identity.firmware);
+            st.zeroSet = snap.zeroSet;
+            if (snap.status.sampledAtNs > 0) {
+                // sampledAtNs is steady-clock nanoseconds (the driver's stamp).
+                const int64_t nowNs =
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
+                recording::StageReadbackRecord rb;
+                rb.ageUs = nowNs > snap.status.sampledAtNs
+                               ? static_cast<uint64_t>((nowNs - snap.status.sampledAtNs) / 1000)
+                               : 0;
+                rb.state = moveStateName(snap.status.state);
+                rb.positionUm = snap.status.positionUm;
+                rb.limitPositive = snap.status.limitPositive;
+                rb.limitNegative = snap.status.limitNegative;
+                rb.home = snap.status.home;
+                rb.emergencyStop = snap.status.emergencyStop;
+                rb.driverAlarm = snap.status.driverAlarm;
+                st.readback = rb;
+            }
+        }
+        v3.stage = st;
+    }
+
+    // Piezo (nanopositioner): connected, the last voltage read or written, autofocus on/off.
+    {
+        auto& af = backend.autofocus();
+        recording::PiezoRecord p;
+        p.connected = af.isConnected();
+        if (p.connected) {
+            p.voltageV = af.getCurrentVoltage();
+            p.autofocusEnabled = af.isEnabled();
+        }
+        v3.piezo = p;
+    }
+}
+
 std::string runSnapshotToJson(const RunConfigurationSnapshot& s)
 {
     std::ostringstream o;
@@ -292,6 +491,7 @@ std::string runSnapshotToJson(const RunConfigurationSnapshot& s)
       << ",\"weights_sha256_prefix\":" << q(s.plWeightsId) << "}"
       << ",\"application\":{\"version\":" << q(s.applicationVersion) << ",\"build_id\":" << q(s.buildId)
       << ",\"os\":" << q(s.operatingSystem) << "}"
+      << "," << recording::runProvenanceV3Members(s.v3)
       << "}";
     return o.str();
 }
@@ -996,6 +1196,17 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateReadiness(const std::
 ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest& request)
 {
     ExperimentStartResult result;
+    // What the client declares about the run (#712, ABI 39) is checked before anything else: a refused
+    // declaration opens nothing and changes no state, whatever the coordinator is doing.
+    {
+        std::string why;
+        if (!recording::validateStartRequest(request.declared, &why)) {
+            result.outcome = ExperimentStartOutcome::InvalidRequest;
+            result.message = "invalid start request: " + why;
+            SPDLOG_WARN("ExperimentCoordinator: start refused — {}", result.message);
+            return result;
+        }
+    }
     // A start during an active run is AlreadyActive however busy the mutex is: answer it before the
     // try-lock, which reports Busy while another thread (status polls, the worker) holds the mutex (#595).
     if (state_.load() == ExperimentRunState::Active) {
@@ -1131,6 +1342,12 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
     }
     run.outputPath = path;
 
+    // 4a. Snapshot v3 (#712): the run's own id (the FCS $MIB_RUN_ID) and the facts the backend holds
+    // at Start: E-modulus LUT identity, pumps, LED, stage, piezo.
+    run.v3.runId = profiles::generateUuidV4();
+    captureRunFacts(backend_, run.v3);
+    run.v3.identity = request.declared.identity;   // as declared; each member null when not
+
     // 4b. The SSD run (#667 S2): ask pzrec for the id it will give the run, before anything is opened. The id goes into the snapshot, into RUN_ID of the
     // bridge before ARM (the stored records carry it) and is checked against the run pzrec opens after ARM. A refusal names the SSD state.
     pz::SsdStore* ssdRecord = nullptr;
@@ -1153,6 +1370,16 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
         }
         run.ssdRunId = prep.runId;
         prepareGuard.store = ssdRecord;
+    }
+    // 4c. The run id armed into the PL (RUN_ID), chosen before the snapshot is written so the snapshot names it (#712).
+    // An SSD run's id is the run-table id (RUN_ID of the stored records = the table's id, pz7035 #49); otherwise the start time as before.
+    uint64_t plRunId = 0;
+    if (!app::hostProcessingAvailable() && backend_.executionProvider()) {
+        plRunId = ssdRecord ? static_cast<uint64_t>(run.ssdRunId)
+                            : static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                        std::chrono::system_clock::now().time_since_epoch())
+                                                        .count());
+        run.v3.plRunId = plRunId;
     }
 
     // 5. Persistence resources.
@@ -1186,6 +1413,20 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
         publishLocked(lk, "start failed");
         return result;
     }
+    // The planned annotation, written once beside the snapshot (ADR 0015 item 4). A run whose
+    // declared annotation could not be stored is not started.
+    if (request.declared.annotation &&
+        !hdf5.writeExperimentAnnotationJson(recording::experimentAnnotationToJson(*request.declared.annotation))) {
+        hdf5.closeFile();
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+        state_ = ExperimentRunState::Idle;
+        result.outcome = ExperimentStartOutcome::ProvenanceFailed;
+        result.message = "failed to persist the experiment annotation";
+        restoreModeOnFailure();
+        publishLocked(lk, "start failed");
+        return result;
+    }
 
     // 6-7. Acquire processing ownership and enter Active.
     proc.setExperimentAccountingContext(run.captureGeneration, run.deliveryModeActive == "latestFrame");
@@ -1200,12 +1441,8 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
         proc.startRealtime(backend_.getFrameStore());
     } else if (auto* provider = backend_.executionProvider()) {
         // PL science: arm after the run's accounting started, so every frame the
-        // PL reports from here on is admitted once.
-        // An SSD run's id is the run-table id (RUN_ID of the stored records = the table's id, pz7035 #49); otherwise the start time as before.
-        const uint64_t runId = ssdRecord ? static_cast<uint64_t>(run.ssdRunId)
-                                         : static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
-                                                                     std::chrono::system_clock::now().time_since_epoch())
-                                                                     .count());
+        // PL reports from here on is admitted once. The run id was chosen at 4c (in the snapshot).
+        const uint64_t runId = plRunId;
         std::string providerError;
         backend_.stopLiveResults(); // the live session (Run without a file) hands the provider to the run (G5)
         const auto profile = compilePlProfile(backend_);
@@ -1433,8 +1670,14 @@ void ExperimentCoordinator::worker()
             const bool failed = fatalRequested_;
             const std::string msg = fatalMessage_;
             const bool cancelled = cancelRequested_;
+            // Which path ended the run (#712 stop record). requestStop(false) covers the UI's Stop
+            // and the bridge server's client-loss stop alike; the backend cannot tell them apart.
+            const char* stopReason = failed      ? "fatal_save_error"
+                                     : workerExit_ ? "shutdown"
+                                     : cancelled   ? "cancel_requested"
+                                                   : "stop_requested";
             stopRequested_ = cancelRequested_ = fatalRequested_ = false;
-            finalizeLocked(lk, cancelled, failed, msg);
+            finalizeLocked(lk, cancelled, failed, msg, stopReason);
             lastFlushTime = clock::now(); // finalize drained everything
             continue;
         }
@@ -1472,7 +1715,7 @@ constexpr std::chrono::seconds kSsdStopDeadline{60};
 } // namespace
 
 void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, bool cancelled, bool failed,
-                                           const std::string& failMessage)
+                                           const std::string& failMessage, const char* stopReason)
 {
     using clock = std::chrono::steady_clock;
     const auto tBegin = clock::now();
@@ -1605,6 +1848,15 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
             }
             const std::string cfgJson = backend_.getLastConfigJson();
             if (!cfgJson.empty()) hdf5.writeConfigJson(cfgJson);
+        }
+        // The stop record (#712, snapshot v3): best effort like the wall-clock provenance; a file
+        // without it reads its stop reason as unknown.
+        {
+            recording::RunStopRecord stop;
+            stop.reason = stopReason ? stopReason : "stop_requested";
+            if (failed && !failMessage.empty()) stop.message = failMessage;
+            if (!hdf5.writeRunStopJson(recording::runStopToJson(stop)))
+                SPDLOG_ERROR("ExperimentCoordinator: the run's stop record could not be persisted");
         }
         SPDLOG_INFO("ExperimentCoordinator: metadata+accounting+provenance took {:.3f} ms", sinceMs(t0));
         // Provisional KDE core contour (copy of the live view); best effort,

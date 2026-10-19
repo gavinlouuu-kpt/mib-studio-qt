@@ -27,6 +27,30 @@
 - Per-pump control: `setFlowRate`, `setDirection`, `start`, `stop`,
   `purge`, `stopPurge`, `setSyringeVolume`.
 - Per-pump status polling: `pollStatus(id)` — UI timer drives this.
+- Run facts for the run snapshot (#712): `runFacts(id, wait, out)` returns the
+  slot's connection, configuration and last poll readback (`PumpReadback`:
+  `valid`, `lastPollOk`, steady-clock `at`, `runStatus`, optional
+  `speedRpm`, `realtimeFlowRaw`, `accumulatedVolumeRaw`, `stalled`). It waits at
+  most `wait` for the pump lock and returns false when the pump is busy with
+  serial I/O; it never talks to the pump. The readback is only replaced by a
+  poll in which every register answered (a dLSP poll whose direction read
+  failed and was assumed counts as incomplete); every poll sets `lastPollOk`.
+  Connect and disconnect clear it. Peristaltic readbacks carry `runStatus` and
+  `speedRpm` only (its `accumulatedVolume` is integrated by the host, not
+  reported); dLSP readbacks carry the raw flow/volume registers, whose units
+  the protocol PDF does not state. `RunFacts::applied` (`AppliedSettings`:
+  optional flow rate, unit, direction) holds only what the pump is known to
+  hold: set by a successful write (`setFlowRate`: the dLSP value as written,
+  the peristaltic flow the written 0.01 rpm speed register gives, in the
+  requested unit (1.1 µL/min at 25 µL/rev is written as 0.04 rpm = 1.0);
+  `setDirection`; a peristaltic `start` writes the direction) or a read-back
+  (the peristaltic connect reads speed and direction), cleared on connect,
+  disconnect and before each write (a failed write leaves it unknown); a
+  peristaltic purge clears it and the restore at stop sets it again. A dLSP
+  connect reads neither, so a pump connected but not configured has none:
+  `PumpConfig` is the operator's request (and may be left from another
+  device), not evidence. The coordinator records these in snapshot v3
+  ([[../data-model/HDF5-Storage]]).
 - Expose config/status structs (`PumpConfig`, `PumpStatus`).
 - Provide `scanModbusAddresses(comPort, baudRate, start, end, timeoutMs)` for
   settings-time address discovery on a selected serial port.
@@ -84,7 +108,13 @@ Public scan helper probes `REG_RUN_COMMAND` (`0x0001`) with Modbus function
 
 ## Threading
 
-Each pump has its own `std::mutex` guarding pump state; per-adapter frame
+Each pump has its own `std::mutex` guarding pump state. `runFacts` polls
+`try_lock()` (1 ms sleeps) until its steady-clock deadline, so it can give up
+instead of waiting out a 1 s serial timeout that `pollStatus` holds the lock
+across (#712). It is not a `std::timed_mutex`: libstdc++ 13 implements
+`try_lock_for` with `pthread_mutex_clocklock`, which GCC 13's ThreadSanitizer
+does not intercept, so the TSan lane reported a false "unlock of an unlocked
+mutex" (same reason as [[ZC300Stage]]). Per-adapter frame
 serialization and response correlation live in the shared [[SerialBus]]
 session (bus mutex always innermost). UI calls are synchronous; `pollStatus`
 is invoked from the Qt timer in [[../frontend/SyringePumpTab]].
@@ -94,6 +124,9 @@ is invoked from the Qt timer in [[../frontend/SyringePumpTab]].
 - `getComPort(id)` is used by [[../frontend/Dialogs]] SyringePumpSettingsDialog
   to avoid double-assigning a COM port to both pumps.
 - Dialog-provided `baudRate` and `modbusAddress` must match the hardware.
+- dLSP `setFlowRate` writes `clamp(rate, 1, 9999)` truncated to an integer
+  but keeps the unclamped rate in `PumpConfig`; the snapshot's setpoint is
+  the written value (`AppliedSettings`).
 - See `docs/dLSP_pump.pdf` for pump protocol reference (shipped in repo).
 - Peristaltic: which way Infuse pushes liquid depends on how the tubing is
   loaded in the head; swap the tubing ends rather than the mapping.

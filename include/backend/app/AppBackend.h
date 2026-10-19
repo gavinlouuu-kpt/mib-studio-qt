@@ -27,7 +27,7 @@
 #include "backend/recording/RecordingAccounting.h"
 
 namespace backend::processing { class IExecutionProvider; }
-namespace backend::pz { class PzPlatformMonitor; class PzInstrumentControl; class IPzControlRegisters; enum class InstrumentMode; }
+namespace backend::pz { class PzPlatformMonitor; class PzInstrumentControl; class IPzControlRegisters; enum class InstrumentMode; struct LedReadback; }
 
 namespace backend::services
 {
@@ -250,6 +250,9 @@ namespace backend
         // Service mode only, within the current mode's limits (pz::checkLed); refused during
         // an experiment. The next mode switch restores the preset.
         bool setInstrumentLed(double delayUs, double widthUs, std::string *errorOut);
+        // The LED strobe registers as read back now (#712, run snapshot v3); false with the reason
+        // when there is no instrument control or the PL cannot be read. Writes nothing.
+        bool readInstrumentLed(pz::LedReadback &out, std::string *errorOut);
         // Run mode: one cell capture as a run-preview packet (pz::encodeRunPreview).
         bool fetchRunPreview(std::vector<uint8_t> &out, std::string *errorOut);
         void setInstrumentControlForTesting(std::unique_ptr<pz::IPzControlRegisters> registers);

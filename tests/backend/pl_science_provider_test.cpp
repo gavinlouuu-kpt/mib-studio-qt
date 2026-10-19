@@ -14,6 +14,7 @@
 #include "backend/processing/pz/PzExecutionProviders.h"
 #include "backend/pz/PzRecords.h"
 #include "backend/recording/Hdf5Service.h"
+#include "backend/recording/RunProvenanceRecord.h"
 #include "backend/services/CaptureService.h"
 
 #include "support/assert.h"
@@ -61,6 +62,11 @@ bool waitFor(const std::function<bool()>& pred, std::chrono::milliseconds timeou
     return pred();
 }
 
+// The run id and epoch the replayed FRAME records carry (#712): the PL's own stamps, which the rows
+// must keep. The host arms another id (the start time), so the two are told apart.
+constexpr uint64_t kRecordRunId = 0x0000BEEF00C0FFEEull;
+constexpr uint32_t kRecordEpoch = 7;
+
 struct Written {
     uint64_t frames{0};
     uint64_t validCells{0};
@@ -83,10 +89,12 @@ Written writeRecords(const std::string& vectorsPath, const fs::path& out, int re
             for (const auto& frame : kase.at("frames")) {
                 const auto& results = frame.at("results");
                 bpz::FrameRecord f;
+                f.runId = kRecordRunId;
+                f.epoch = kRecordEpoch;
                 f.frameId = frameId;
                 f.timestamp = frameId * 11880;
                 f.resultCount = static_cast<uint16_t>(results.size());
-                f.flags = results.empty() ? bpz::kFrameEmpty : 0;
+                f.flags = (results.empty() ? bpz::kFrameEmpty : 0u) | (frameId == 1 ? bpz::kFrameFirstOfEpoch : 0u);
                 f.scienceProfile = bpz::kScienceProfileUnetCells;
                 f.profileVersion = bpz::kUnetCellsProfileVersion;
                 append(bpz::encodeFrameRecord(f, seq++));
@@ -232,6 +240,12 @@ int main(int argc, char** argv) {
                      f.validation.contourArea > 0 && std::isnan(f.validation.ringRatio);
         }
         MIB_EXPECT(values, "valid rows carry the PL cell values");
+        // The PL record identity survives ingest (#712): every row keeps its FRAME's run_id and epoch.
+        bool identity = !valid.empty() && !invalid.empty();
+        for (const auto* rows : {&valid, &invalid})
+            for (const auto& f : *rows)
+                identity = identity && f.plRecordIdentity && f.plRunId == kRecordRunId && f.plEpoch == kRecordEpoch;
+        MIB_EXPECT(identity, "every row carries the PL record's run_id and epoch");
         std::vector<backend::services::ProcessedFrame> full;
         MIB_EXPECT(reader.readValidFrames(full) && full.size() == valid.size() && full.front().originalImage.empty(),
                    "a PL run reads without images");
@@ -243,6 +257,11 @@ int main(int argc, char** argv) {
         MIB_EXPECT(snapshot.find("\"pl_core\":{\"valid\":false") != std::string::npos &&
                        snapshot.find("\"weights_sha256_prefix\":\"\"") != std::string::npos,
                    "the run snapshot carries the PL core (none for a replay)");
+        backend::recording::RecordedRunProvenance prov;
+        MIB_REQUIRE(backend::recording::readRecordedRunProvenance(reader, prov), "typed run provenance");
+        MIB_EXPECT(prov.v3.plRunId && *prov.v3.plRunId == started.run.v3.plRunId && *prov.v3.plRunId != kRecordRunId,
+                   "the snapshot names the run id armed into the PL (not the replay's own)");
+        MIB_EXPECT(!prov.v3.led, "no instrument control in this test: the LED is unknown");
         reader.closeFile();
     }
 

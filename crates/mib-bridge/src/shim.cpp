@@ -10,6 +10,7 @@
 #include "backend/app/BackendFacade.h"
 #include "backend/app/MethodApply.h"
 #include "backend/profiles/ProfileRegistryWorker.h"
+#include "backend/recording/RunStartIdentity.h"
 #include "backend/services/CameraControlService.h"
 #include "backend/services/SyringePumpService.h"
 #include "backend/stage/StageTypes.h"
@@ -194,6 +195,20 @@ static_assert(static_cast<std::uint32_t>(backend::app::ExperimentStartOutcome::A
 static_assert(static_cast<std::uint32_t>(backend::app::ExperimentStartOutcome::StorageFailed) == 4);
 static_assert(static_cast<std::uint32_t>(backend::app::ExperimentStartOutcome::ProvenanceFailed) == 5);
 static_assert(static_cast<std::uint32_t>(backend::app::ExperimentStartOutcome::Busy) == 6);
+// ABI 39 (#712): a refused startRequest, and the startRequest bounds (contract group
+// experiment_start_request; recording/RunStartIdentity.h).
+static_assert(static_cast<std::uint32_t>(backend::app::ExperimentStartOutcome::InvalidRequest) == 7);
+static_assert(backend::recording::kStartRequestMaxBytes == 16384);
+static_assert(backend::recording::kStartIdMaxBytes == 128);
+static_assert(backend::recording::kAnnotationTextMaxBytes == 256);
+static_assert(backend::recording::kAnnotationNotesMaxBytes == 2048);
+static_assert(backend::recording::kAnnotationUnitMaxBytes == 32);
+static_assert(backend::recording::kAnnotationFreeMaxEntries == 32);
+static_assert(backend::recording::kAnnotationFreeKeyMaxBytes == 64);
+static_assert(backend::recording::kAnnotationFreeValueMaxBytes == 256);
+static_assert(backend::recording::kAnnotationTemperatureMinC == -50);
+static_assert(backend::recording::kAnnotationTemperatureMaxC == 150);
+static_assert(backend::recording::kExperimentAnnotationSchemaVersion == 1);
 static_assert(static_cast<std::uint32_t>(backend::app::ExperimentStopOutcome::Accepted) == 0);
 static_assert(static_cast<std::uint32_t>(backend::app::ExperimentStopOutcome::NotActive) == 1);
 static_assert(static_cast<std::uint32_t>(backend::app::ExperimentStopOutcome::Busy) == 2);
@@ -704,7 +719,8 @@ BridgeCommandResult BackendBridge::cancel_operation(std::uint64_t operation_id) 
     }
 }
 
-BridgeCommandResult BackendBridge::experiment_start(rust::Str output_path, bool acknowledge_discard_ring) {
+BridgeCommandResult BackendBridge::experiment_start(rust::Str output_path, bool acknowledge_discard_ring,
+                                                    rust::Str start_request_json) {
     try {
         // Start is authorized by a backend readiness evaluation (issue #369):
         // evaluate with the destination, then present that generation. The
@@ -718,6 +734,7 @@ BridgeCommandResult BackendBridge::experiment_start(rust::Str output_path, bool 
         cmd.outputPath = toStd(output_path);
         cmd.readinessGeneration = readiness.generation;
         cmd.acknowledgeDiscardRing = acknowledge_discard_ring;
+        cmd.startRequestJson = toStd(start_request_json);   // ABI 39: "" = nothing declared
         return toBridgeResult(impl_->facade.dispatch(cmd));
     } catch (const std::exception& e) {
         return errorResult(std::string("experiment_start: ") + e.what());
@@ -2483,12 +2500,15 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // removed, stage_set_zero added, referenced -> zero_set, soft_* -> envelope_*,
 // session_only_zero); v31 added fetch_run_accounting (#549); v32 added
 // restore_startup_configuration (#398 M2c: the last applied profile or central
-// method, re-applied at startup). All additive over v1 except that removal (ADR
+// method, re-applied at startup); v33-v38 see the contract test; v39 the
+// experiment_start startRequest (#712: experiment/run/sample identity, selected
+// operator, calibration record id, planned annotation; outcome InvalidRequest
+// and the experiment_start_request bounds). All additive over v1 except that removal (ADR
 // 0003/0004). Must match
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 38; }
+std::uint32_t bridge_abi_version() { return 39; }
 
 } // namespace mib_bridge
 

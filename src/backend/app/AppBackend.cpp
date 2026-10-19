@@ -788,6 +788,20 @@ namespace backend
                     SPDLOG_WARN("Young's modulus LUT not loaded - emodulus gating will not be available");
                 }
             }
+            // What the catalog says about the file that was loaded (#712, run snapshot v3). The
+            // snapshot keeps the hash of the loaded bytes beside it, so a catalog that names a
+            // manifest whose download failed is visible as a mismatch, not taken as the identity.
+            if (processingService_->eModulusLut().isLoaded())
+            {
+                // The bundled file itself (no cache, or the cache failed to load): the catalog names the
+                // bundled LUT by its file name and declares no hash for it.
+                if (activeLutPath == bundledLutStr)
+                    processingService_->setEModulusLutCatalogIdentity(
+                        bundledLutPath.filename().string(), "bundled", "bundled-fallback", {}, "unknown");
+                else
+                    processingService_->setEModulusLutCatalogIdentity(lutInfo.lutId, lutInfo.revision, lutInfo.sourceType,
+                                                                      lutInfo.sha256, lutInfo.checksumStatus);
+            }
             SPDLOG_INFO("AppBackend: Young's modulus LUT source={}, revision={}, path={}, checksum_status={}, remote_updated={}, bundled_fallback={}, manifest={}",
                         lutInfo.sourceType,
                         lutInfo.revision,
@@ -2192,6 +2206,16 @@ namespace backend
         instrumentIdle_.store(true);
         SPDLOG_INFO("AppBackend: instrument idle (LED off, cell path off, camera released)");
         return true;
+    }
+
+    bool AppBackend::readInstrumentLed(pz::LedReadback &out, std::string *errorOut)
+    {
+        if (!pzControl_)
+        {
+            if (errorOut) *errorOut = "no PZ7035 instrument control";
+            return false;
+        }
+        return pzControl_->readLed(out, errorOut);
     }
 
     bool AppBackend::setInstrumentLed(double delayUs, double widthUs, std::string *errorOut)

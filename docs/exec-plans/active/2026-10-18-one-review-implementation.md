@@ -198,10 +198,10 @@ the coordinator (ADR 0004/0011).
 | S2 | Reanalysis engine in `mib_review_core` | none | none | merged (#721) |
 | S3 | Export engine in `mib_review_core` | none | none | merged (#724) |
 | S4 | Charts JSON and saved-overlay builders | none (text only, D3) | none | merged (#726) |
-| S5 | The facade owns the ReviewSession | none (D1 (a): unchanged) | none | in review (#733) |
+| S5 | The facade owns the ReviewSession | none (D1 (a): unchanged) | none | merged (#733) |
 | S6 | Parity harness: a MIB Studio half | none | none | planned |
 | S7 | Facade jobs on ReviewJobs lanes | none | none | planned |
-| S8 | YOFO regenerate on the reanalysis engine | none | none (behaviour D6) | planned |
+| S8 | YOFO regenerate on the reanalysis engine | none | none (behaviour D6) | merged (#735) |
 | S9 | Transport-neutral review module | none | none | merged (#731) |
 | S10 | Attachable review bridge | **additive, ABI bump** | none | proposed, not implemented |
 | S11 | Review commands in the studio command layer | **additive command surface, ABI bump** | none | proposed, not implemented |
@@ -543,20 +543,80 @@ the coordinator (ADR 0004/0011).
 - **Risks:** event ordering (Started before Progress; one terminal state per
   id); the late-event policy of ADR 0004.
 
-### S8 — YOFO regenerate on the reanalysis engine
+### S8 — YOFO regenerate on the reanalysis engine (in review, #735)
 
 - **Moves:** `ReviewJobs::startRegenerateMasks` builds a `ReanalysisRequest`
-  (recorded config / ROI / background; the D6 options) and runs
-  `runReanalysis`; its own load / background / write code goes.
-- **Files:** `include/backend/review/Reanalysis.h` (options),
-  `src/backend/review/Reanalysis.cpp`, `src/backend/review/ReviewJobs.cpp`,
-  `tests/review/review_jobs_test.cpp`, vault `frontend/YofoReview.md`
-  ("Differences from the Qt tab").
-- **Contract:** none (`review_regenerate_sources` unchanged).
-- **Proof:** `review.jobs` regenerate cases, `review.reanalysis` with the new
-  options, cargo `tests/review_bridge.rs`.
-- **Risks:** the no-clobber change for YOFO (D6) needs the YOFO save dialog to
-  stop offering "replace".
+  (recorded config read by the job; recorded ROI / background read by the
+  engine; the D6 options) and runs `runReanalysis`; its own load / median /
+  remap / write code goes (the median-of-32 moved into the engine). The
+  request gets three options, all left at the facade's values by parsing:
+  `timestamps: Preserve | Rebase`, `syntheticBackgroundKind: QuietTile |
+  MedianOf32`, and `frameOrder: Timestamp | Datasets` (plus `convertColorToGray`,
+  see Review below). D6 named two
+  options; the third keeps YOFO's whole file as valid rows then invalid
+  rows, the "timestamp order" difference accepted on 2026-10-04 (without it
+  rows reorder and the rebase origin moves). YOFO keeps no budget, its range
+  clamp and its message format. An existing output is refused at start with
+  the facade's message ("Output already exists; choose a new file").
+- **Found:** the pre-S8 job paired records with frames **by position**.
+  `processBatch` emits one record per track (fewer records than frames when
+  tracking merges frames) or per object. So on real cells most records
+  carried another frame's index and timestamp, and track first/last frames
+  stayed batch positions. The engine pairs by the record's frame (as Qt and
+  the facade do), which fixes it. Accepted by the coordinator; the existing
+  files are tracked as #737.
+- **Review (#735):** `frameOrder` kept (ruled). Colour HDF frames: the
+  pre-S8 reader (`loadFromHdf5`) converted 3-channel frames BGR → gray, which
+  the engine refused. A fourth option, `convertColorToGray` (YOFO on, facade
+  off), keeps that. `review.jobs` compares a colour fixture's output with the
+  pre-S8 job, kept as the oracle.
+- **Dialog:** `RegenerateMasks.tsx` proposes a free name
+  (`defaultRegenerateName`, `_2`, `_3` … via `review_list_dir`; names
+  compared ignoring case, the search bounded, with a timestamped fallback,
+  #735 review). It stays
+  open on a refusal, shows "Not started: <backend reason> (<file>)", clears
+  the output and asks again. It closes once the job starts
+  (`useReviewJobs.start` hooks `onRefused` / `onStarted`). The OS save panel's
+  own overwrite question cannot be turned off through the dialog plugin;
+  confirming it replaces nothing now.
+- **Files:** `include/backend/review/Reanalysis.h`,
+  `src/backend/review/Reanalysis.cpp`, `include/backend/review/ReviewJobs.h`,
+  `src/backend/review/ReviewJobs.cpp`, `tests/review/review_jobs_test.cpp`,
+  `tests/review/review_reanalysis_test.cpp`,
+  `crates/mib-bridge/tests/review_bridge.rs`, `desktop/src/review/`
+  (`RegenerateMasks.tsx`, `ReviewPanel.tsx`, `exports/useReviewJobs.ts`,
+  `exports/exportHelpers.ts`, tests, IPC golden), vault
+  `frontend/YofoReview.md`, `services/ReviewSession.md`, manual
+  `yofo-review.md`.
+- **Contract:** none (`review_regenerate_sources` unchanged; the refusal is
+  the existing not-started result with a message).
+- **Proof:** `review.jobs` has a tracked-ring fixture where 10 frames give 6
+  records. It checks that every record's image is its frame's, the rebase
+  and clamp, valid-then-invalid order, source-index track frames, the range
+  clamp, the median-of-32 against the pre-S8 code (kept as the oracle), the
+  start refusal (the original untouched), a mid-run collision (job fails,
+  file untouched, no partial) and cancel (nothing written). Mutations fail it:
+  facade options for YOFO fail 4 checks; positional pairing fails 4.
+  `review.reanalysis` covers the options (parse keeps the defaults, rebase
+  offsets and clamp, dataset order, median vs quiet tile). Cargo
+  `review_bridge.rs` covers the refusal over the bridge and a regenerate into
+  a new file. The desktop IPC golden gains `review_list_dir` before the save
+  dialog and a refused-then-renamed flow (additions only).
+- **Characterization** (temporary harness, not committed; h5diff before /
+  after). YOFO regenerate covers 19 cases: synthetic experiment / recording /
+  folder / AVI fixtures and the real-cell `review_e2e_512x96_run.h5` and
+  `512x96stream-mock-frames`. Hdf outputs with one record per frame are
+  identical. Folder and AVI outputs differ only in the wall-clock
+  `experiment_info` start / end. Real-cell hdf outputs have identical
+  images, masks and background; only metadata differs: the pairing fix
+  (1040 of 1049 records misnamed before, 0 after; files regenerated up to
+  review-v1.1.3-beta.1 are affected, #737) and `end_time_ns`. Messages
+  are unchanged except the empty range ("Selected source range is empty").
+  The facade path (12 cases) has identical status JSON and outputs, except the
+  wall-clock attributes of folder and AVI outputs.
+- **Risks:** low. The YOFO save dialog's flow changed (refusal stays in the
+  dialog). A folder or AVI with an unreadable image now fails, as the facade
+  does, instead of skipping it.
 
 ### S9 — Transport-neutral review module (in review, #731)
 
@@ -742,7 +802,7 @@ bridge contract):
 - [x] 2026-10-19 — S5 the facade owns the ReviewSession (`backend.facade_review_session`; D1 (a) via `AppBackend::setReviewSourceOpen`, gate text unchanged; #733).
 - [ ] S6 parity harness MIB Studio half
 - [ ] S7 facade jobs on ReviewJobs lanes (D7)
-- [ ] S8 YOFO regenerate on the engine (D6)
+- [x] 2026-10-19 — S8 YOFO regenerate on the engine (D6; `review.jobs`, `review.reanalysis`, no clobber; the position-pairing fix; #735)
 - [x] 2026-10-19 — S9 transport-neutral review module (`reviewIpc` golden unchanged; import guard; `Transport.upload`; #731).
 - [ ] S10 attachable review bridge (ABI)
 - [ ] S11 review commands in the studio command layer (ABI)

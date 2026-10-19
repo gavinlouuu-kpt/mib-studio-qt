@@ -3,10 +3,16 @@
 // the open file's images (a set with start / count, or the whole file), an
 // AVI or a folder of TIFF/PNG/JPEG, with the file's recorded config, ROI and
 // background by default, into a new HDF5 file the panel then opens.
+//
+// The job never replaces a file (#512 S8, decision D6: it runs on the
+// reanalysis engine, partial file + no-replace publish). "Save as…" proposes
+// a free name (`<base>_remasked.h5`, then `_2`, `_3`, …); if the operator
+// picks an existing file anyway, the backend refuses, the dialog stays open
+// with the reason and the operator chooses again.
 import { useState } from "react";
 import { open, save } from "../transport/dialogs";
-import { REGENERATE_SOURCE, type ReviewInfo } from "./reviewBridge";
-import { exportDir, joinPath, stem } from "./exports/exportHelpers";
+import { REGENERATE_SOURCE, reviewBridge, type ReviewInfo } from "./reviewBridge";
+import { baseName, defaultRegenerateName, dirName, exportDir, joinPath, stem } from "./exports/exportHelpers";
 
 export interface RegenerateRequest {
   source: number;
@@ -61,7 +67,9 @@ export function regenerateRequest(form: {
   };
 }
 
-export function RegenerateMasksDialog(props: { info: ReviewInfo | null; onRun: (r: RegenerateRequest) => void; onCancel: () => void }) {
+/** `onRun` resolves once the job started (null; the panel closes the dialog)
+ * or with the backend's refusal, which the dialog shows. */
+export function RegenerateMasksDialog(props: { info: ReviewInfo | null; onRun: (r: RegenerateRequest) => Promise<string | null>; onCancel: () => void }) {
   const { info } = props;
   const fileOpen = !!info?.file_open;
   const recording = !!info?.recording_file;
@@ -72,6 +80,10 @@ export function RegenerateMasksDialog(props: { info: ReviewInfo | null; onRun: (
   const [outputPath, setOutputPath] = useState("");
   const [useRecordedConfig, setUseRecordedConfig] = useState(true);
   const [synthesizeBackground, setSynthesizeBackground] = useState(!info?.has_background);
+  // The backend's reason the last Regenerate was not started (e.g. the
+  // output exists), shown until the operator picks another output.
+  const [refusal, setRefusal] = useState("");
+  const [starting, setStarting] = useState(false);
   const external = source === REGENERATE_SOURCE.Avi || source === REGENERATE_SOURCE.Folder;
   const setSize = !info
     ? 0
@@ -89,12 +101,34 @@ export function RegenerateMasksDialog(props: { info: ReviewInfo | null; onRun: (
   };
   const pickOutput = async () => {
     const base = fileOpen && !external ? stem(info!.file_path) : sourcePath ? stem(sourcePath) : "masks";
+    const dir = outputPath ? dirName(outputPath) : exportDir(info?.file_path ?? "");
+    let taken: string[] = [];
+    try {
+      taken = dir ? await reviewBridge.listDir(dir) : [];
+    } catch {
+      taken = []; // unlisted: the backend still refuses an existing file
+    }
     const out = await save({
       title: "Save regenerated masks",
-      defaultPath: joinPath(exportDir(info?.file_path ?? ""), `${base}_remasked.h5`),
+      defaultPath: joinPath(dir, defaultRegenerateName(base, taken)),
       filters: [{ name: "HDF5", extensions: ["h5"] }],
     });
-    if (out) setOutputPath(out);
+    if (out) {
+      setOutputPath(out);
+      setRefusal("");
+    }
+  };
+  const run = async () => {
+    if (!result.ok || starting) return;
+    const picked = result.request.outputPath;
+    setStarting(true);
+    setRefusal("");
+    const why = await props.onRun(result.request);
+    setStarting(false);
+    if (why) {
+      setRefusal(`Not started: ${why} (${baseName(picked)})`);
+      setOutputPath("");
+    }
   };
 
   const option = (value: Source, label: string, disabled = false) => (
@@ -148,12 +182,18 @@ export function RegenerateMasksDialog(props: { info: ReviewInfo | null; onRun: (
             Save as…
           </button>
         </div>
-        {!result.ok && <p className="form-error">{result.error}</p>}
+        {refusal ? (
+          <p className="form-error" role="alert">
+            {refusal}
+          </p>
+        ) : (
+          !result.ok && <p className="form-error">{result.error}</p>
+        )}
         <div className="actions">
           <button className="btn" onClick={props.onCancel}>
             Cancel
           </button>
-          <button className="btn primary" disabled={!result.ok} onClick={() => result.ok && props.onRun(result.request)}>
+          <button className="btn primary" disabled={!result.ok || starting} onClick={() => void run()}>
             Regenerate
           </button>
         </div>
