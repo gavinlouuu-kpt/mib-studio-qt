@@ -1,6 +1,7 @@
 #include "backend/app/AppBackend.h"
 #include "backend/app/BackendFacade.h"
 #include "backend/app/ExperimentCoordinator.h"
+#include "backend/recording/Hdf5Service.h"
 
 #include <opencv2/core.hpp>
 #include <nlohmann/json.hpp>
@@ -286,11 +287,21 @@ int main()
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(25));
 
+    // The guards, not the writer's handle, refuse review load / close during a raw
+    // recording (#512 S5: review reads its own ReviewSession reader); the writer's
+    // handle stays open and keeps writing (the file is loaded intact below).
     bridge::RecordingLoadCommand forbiddenLoad;
     forbiddenLoad.filePath = recordingPath.string();
-    if (facade.dispatch(forbiddenLoad).ok || facade.closeReview().ok || !backend.isFrameRecording()) {
-        std::cerr << "Review load must not replace an active raw writer\n";
-        facade.shutdown(); return 29;
+    {
+        const auto refusedLoad = facade.dispatch(forbiddenLoad);
+        const auto refusedClose = facade.closeReview();
+        if (refusedLoad.ok || refusedLoad.message != "Stop raw recording before loading review data" ||
+            refusedClose.ok || refusedClose.message != "Stop raw recording before closing review data" ||
+            !backend.isFrameRecording() || !backend.hdf5().isFileOpen() || backend.reviewSourceOpen()) {
+            std::cerr << "Review load must not replace an active raw writer: " << refusedLoad.message << " / "
+                      << refusedClose.message << "\n";
+            facade.shutdown(); return 29;
+        }
     }
     bridge::RecordingCommand stopRecording;
     stopRecording.action = bridge::RecordingCommandAction::StopFrameRecording;
@@ -300,6 +311,59 @@ int main()
         std::cerr << "RecordingCommand should stop frame recording through AppBackend\n";
         facade.shutdown();
         return 10;
+    }
+
+    // Decision D1 (a), #512 S5: a review file, now in the facade's own
+    // ReviewSession reader instead of the shared handle, still refuses the
+    // experiment with the same storage.hdf5 gate and Start message, and raw
+    // recording with the same error (HDF5 is not thread-safe, #722). Close File
+    // lifts both: the experiment below then starts.
+    {
+        const auto runPath = (dataDir / "facade_run.h5").string();
+        bridge::RecordingLoadCommand reviewLoad;
+        reviewLoad.filePath = recordingPath.string();
+        if (!facade.dispatch(reviewLoad).ok || backend.hdf5().isFileOpen() || !backend.reviewSourceOpen()) {
+            std::cerr << "a review load must use the session's reader and raise the D1 flag\n";
+            facade.shutdown(); return 100;
+        }
+        bridge::ExperimentCommand evaluate;
+        evaluate.action = bridge::ExperimentCommandAction::EvaluateReadiness;
+        evaluate.outputPath = runPath;
+        backend::app::ExperimentReadinessSnapshot readiness;
+        if (!facade.dispatch(evaluate).ok || !facade.fetchExperimentReadiness(readiness, runPath)) {
+            facade.shutdown(); return 101;
+        }
+        const auto *gate = readiness.gate("storage.hdf5");
+        if (readiness.ready || !gate || gate->status != backend::app::GateStatus::Fail ||
+            gate->reason != "an HDF5 file is already open" ||
+            gate->remediation != "finish or close the current file first" || !gate->detail.empty()) {
+            std::cerr << "a review file must fail storage.hdf5 with the pre-S5 text\n";
+            facade.shutdown(); return 102;
+        }
+        bridge::ExperimentCommand start;
+        start.action = bridge::ExperimentCommandAction::Start;
+        start.outputPath = runPath;
+        start.readinessGeneration = readiness.generation;
+        const auto refused = facade.dispatch(start);
+        if (refused.ok || !refused.experimentStartOutcome ||
+            *refused.experimentStartOutcome != backend::app::ExperimentStartOutcome::NotReady ||
+            refused.message != "stop raw recording and close the existing HDF5 file before starting an experiment") {
+            std::cerr << "Start beside a review file must be refused with the pre-S5 message: " << refused.message
+                      << "\n";
+            facade.shutdown(); return 103;
+        }
+        bridge::RecordingCommand rawProbe;
+        rawProbe.action = bridge::RecordingCommandAction::StartFrameRecording;
+        rawProbe.filePath = (dataDir / "raw_probe.h5").string();
+        const auto rawRefused = facade.dispatch(rawProbe);
+        if (rawRefused.ok || backend.isFrameRecording() ||
+            rawRefused.message != "Close the existing HDF5 file before starting raw recording; its writer will not be replaced") {
+            std::cerr << "raw recording beside a review file must be refused: " << rawRefused.message << "\n";
+            facade.shutdown(); return 104;
+        }
+        if (!facade.closeReview().ok || backend.reviewSourceOpen() || backend.hdf5().isFileOpen()) {
+            facade.shutdown(); return 105;
+        }
     }
 
     // Experiment lifecycle through the facade only (shared backend, #372
@@ -348,6 +412,22 @@ int main()
             return 23;
         }
         if (facade.runStartupDiscoveryJson("start").find("\"accepted\":false") == std::string::npos) return 73;
+        {
+            // The idle guard refuses review load / close during the run; the experiment's
+            // writer handle is never closed or replaced by them (#512 S5).
+            bridge::RecordingLoadCommand duringRun;
+            duringRun.filePath = recordingPath.string();
+            const auto refusedLoad = facade.dispatch(duringRun);
+            const auto refusedClose = facade.closeReview();
+            if (refusedLoad.ok || refusedLoad.message != "Experiment must be idle before loading review data" ||
+                refusedClose.ok || refusedClose.message != "Experiment must be idle before closing review data" ||
+                !backend.hdf5().isFileOpen() || backend.reviewSourceOpen()) {
+                std::cerr << "review load / close must be refused by the idle guard during a run: "
+                          << refusedLoad.message << " / " << refusedClose.message << "\n";
+                facade.shutdown();
+                return 106;
+            }
+        }
         if (facade.backgroundCalibrationCommandJson(R"({"action":"start","required_accepted":10,"max_attempts":200,"timeout_ms":5000})").ok) return 78;
         const std::uint8_t backgroundPixel = 17;
         const auto frozenVersion = backend.processing().getConfigVersion();

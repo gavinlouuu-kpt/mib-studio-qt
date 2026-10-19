@@ -296,7 +296,16 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
             let a: A = args(value)?;
             crate::experiment_acknowledge_fault(state, a.expected_run, a.fault_revision, a.code, a.message, a.confirmed).and_then(json)
         }
-        "experiment_stop" => crate::experiment_stop(state).and_then(json),
+        "experiment_stop" => {
+            #[derive(Deserialize)]
+            struct A {
+                /// ABI 40 (#741): the start generation of the run to stop, a canonical decimal string;
+                /// another run (or none) is refused with stop outcome RunMismatch. Absent or null: any run.
+                #[serde(rename = "expectedStartGeneration", default)] expected_start_generation: Option<String>,
+            }
+            let a: A = args(value)?;
+            crate::experiment_stop(state, a.expected_start_generation).and_then(json)
+        }
         "experiment_cancel" => crate::experiment_cancel(state).and_then(json),
         "fetch_experiment_status" => crate::fetch_experiment_status(state).and_then(json),
         "set_processed_preview_enabled" => {
@@ -1033,6 +1042,76 @@ mod tests {
         }
         state.bridge.lock().unwrap().pin_mut().shutdown();
         let _ = std::fs::remove_dir_all(&data);
+    }
+
+    // ABI 40 (#741): the typed outcomes reach the JSON reply on both host paths (dispatch for the
+    // remote server, crate::experiment_* for Tauri), only on experiment replies; the stop's expected
+    // start generation is a canonical decimal string, checked before anything is sent.
+    #[test]
+    #[serial]
+    fn experiment_outcomes_and_expected_generation_through_dispatch() {
+        let data = std::env::temp_dir().join(format!("mib_dispatch_outcomes_{}", std::process::id()));
+        let state = AppState::new();
+        let host = TestHost(data.to_string_lossy().into_owned());
+        assert_eq!(dispatch(&state, &host, "init", json!({ "dataDir": "" })).unwrap(), Reply::Json(json!(true)));
+        let out = data.join("outcomes.h5").to_string_lossy().into_owned();
+        let reply = |name: &str, args: Value| match dispatch(&state, &host, name, args) {
+            Ok(Reply::Json(r)) => r,
+            other => panic!("{name}: {other:?}"),
+        };
+
+        // Start: NotReady (1) without a camera, InvalidRequest (7) for a refused request.
+        let r = reply("experiment_start", json!({ "outputPath": out }));
+        assert_eq!((r["ok"].clone(), r["start_outcome"].clone()), (json!(false), json!(1)), "{r}");
+        assert!(r.get("stop_outcome").is_none(), "{r}");
+        let r = reply("experiment_start", json!({ "outputPath": out, "startRequestJson": "{\"operator_name\":\"A\"}" }));
+        assert_eq!(r["start_outcome"], json!(7), "{r}");
+        let message = r["message"].as_str().unwrap();
+        assert!(message.starts_with("invalid start request: ") && message.contains("operator_name"), "{r}");
+        let tauri = crate::experiment_start(&state, out.clone(), false, Some("{\"sample_ref\":\"S\"}".into())).unwrap();
+        assert_eq!(tauri.start_outcome, Some(7), "Tauri start reply: {}", tauri.message);
+
+        // Stop: no generation is NotActive (1) as before; a generation while idle is RunMismatch (3).
+        for args in [Value::Null, json!({}), json!({ "expectedStartGeneration": null })] {
+            let r = reply("experiment_stop", args.clone());
+            assert_eq!((r["ok"].clone(), r["stop_outcome"].clone(), r["message"].clone()), (json!(false), json!(1), json!("notActive")), "{args}: {r}");
+            assert!(r.get("start_outcome").is_none(), "{r}");
+        }
+        for generation in ["0", "7", "18446744073709551615"] {
+            let r = reply("experiment_stop", json!({ "expectedStartGeneration": generation }));
+            assert_eq!((r["ok"].clone(), r["stop_outcome"].clone()), (json!(false), json!(3)), "{r}");
+            assert_eq!(
+                r["message"],
+                json!(format!("stop refused: expected run {generation}, but no run is active; nothing was stopped")),
+                "{r}"
+            );
+        }
+        let tauri = crate::experiment_stop(&state, Some("7".into())).unwrap();
+        assert_eq!((tauri.ok, tauri.stop_outcome, tauri.start_outcome), (false, Some(3), None), "{}", tauri.message);
+        // A malformed generation is an error: nothing reaches the backend.
+        for bad in ["", "+7", "07", " 7", "7 ", "-1", "7.0", "1e3", "0x7", "18446744073709551616"] {
+            let error = dispatch(&state, &host, "experiment_stop", json!({ "expectedStartGeneration": bad })).unwrap_err();
+            assert!(error.contains("Invalid expectedStartGeneration"), "{bad:?}: {error}");
+            assert!(crate::experiment_stop(&state, Some(bad.to_string())).is_err(), "Tauri {bad:?}");
+        }
+        assert!(dispatch(&state, &host, "experiment_stop", json!({ "expectedStartGeneration": 7 }))
+            .unwrap_err().starts_with("INVALID_ARGUMENTS"), "generations travel as strings");
+        // Cancel carries the stop outcome too; other replies carry neither field.
+        assert_eq!(reply("experiment_cancel", Value::Null)["stop_outcome"], json!(1));
+        let other = reply("stop_capture", Value::Null);
+        assert!(other.get("start_outcome").is_none() && other.get("stop_outcome").is_none(), "{other}");
+        state.bridge.lock().unwrap().pin_mut().shutdown();
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    #[test]
+    fn canonical_u64_is_strict() {
+        for (text, value) in [("0", Some(0)), ("7", Some(7)), ("18446744073709551615", Some(u64::MAX))] {
+            assert_eq!(crate::parse_canonical_u64(text), value, "{text}");
+        }
+        for text in ["", "+7", "07", "00", " 7", "7 ", "-0", "7.0", "1e3", "0x7", "18446744073709551616", "７"] {
+            assert_eq!(crate::parse_canonical_u64(text), None, "{text:?}");
+        }
     }
 
     #[test]

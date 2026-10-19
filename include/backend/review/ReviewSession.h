@@ -28,6 +28,8 @@ namespace backend::services { class Hdf5Service; struct ProcessedFrame; }
 namespace backend::review
 {
 
+    struct ReviewSessionTestAccess; // the session's reader, for fault tests
+
     class ReviewSession
     {
     public:
@@ -36,10 +38,15 @@ namespace backend::review
         ReviewSession(const ReviewSession &) = delete;
         ReviewSession &operator=(const ReviewSession &) = delete;
 
-        // Opens `path` read-only, replacing any open file. On failure the
-        // session is closed and `error` (optional) names the reason.
+        // Opens `path` read-only, replacing any open file. All or nothing: on
+        // any failure, including a metadata read that throws after the
+        // reader opened, the session is closed (never left open) and `error`
+        // (optional) names the reason; it does not throw for a bad file.
         bool open(const std::string &path, std::string *error = nullptr);
         void close();
+        // True while a file is open, and also while the reader holds a handle
+        // whose open did not complete (fail closed: hosts mirror it to keep
+        // writers out, #512 S5); close() releases either.
         bool isOpen() const;
         std::string filePath() const;
 
@@ -62,6 +69,29 @@ namespace backend::review
         std::uint64_t frameCount(bool valid) const;
         bool metricsPage(bool valid, std::uint64_t offset, std::uint64_t count,
                          std::vector<MetricRow> &rows, std::uint64_t &totalOut) const;
+        // The same page as metadata-only ProcessedFrames (the rows as read,
+        // no pixels), for hosts that map them to their own row type (the
+        // facade's MonitoringObjectRow, #512 S5). Same bounds and totals as
+        // metricsPage; false only when no file is open.
+        bool framesPage(bool valid, std::uint64_t offset, std::uint64_t count,
+                        std::vector<services::ProcessedFrame> &frames, std::uint64_t &totalOut) const;
+        // The open file's valid set in one snapshot, taken under one lock so
+        // the identity and the rows belong to the same file even while another
+        // thread opens a different one (the facade's charts, #512 S5).
+        // `metadataReadable` is false for an experiment file whose
+        // `/valid_frames/metadata` exists but could not be read at open, or
+        // whose presence could not be determined (an absent dataset is an
+        // empty, readable set: "Cannot read valid-frame metrics" vs no rows);
+        // true for recording files. All empty / false when no file is open.
+        struct ValidSet
+        {
+            bool open{false};
+            std::string filePath;
+            bool recordingFile{false};
+            bool metadataReadable{false};
+            std::vector<services::ProcessedFrame> frames; // metadata only, no pixels
+        };
+        ValidSet validSet() const;
         // Copy of one metadata row (no pixels).
         bool frameMeta(bool valid, std::uint64_t index, services::ProcessedFrame &out) const;
 
@@ -102,8 +132,16 @@ namespace backend::review
         bool loadFrameForDisplay(bool valid, std::uint64_t index, services::ProcessedFrame &out) const;
 
     private:
+        friend struct ReviewSessionTestAccess;
         struct Impl;
         std::unique_ptr<Impl> impl_;
+    };
+
+    // Test-only: the session's own reader (fault injection through
+    // services::Hdf5ServiceTestAccess, or a handle held behind its back).
+    struct ReviewSessionTestAccess
+    {
+        static services::Hdf5Service &reader(ReviewSession &session);
     };
 
 } // namespace backend::review

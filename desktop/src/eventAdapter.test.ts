@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { decodeEvents, decodeCommandResult, decodeExperimentReadiness, decodeExperimentStatus } from "./eventAdapter";
 import golden from "../../crates/mib-bridge/contract/fixtures/events-v1.json";
-import { JSON_TRANSPORT } from "./bridgeContract";
+import { BRIDGE_ABI_VERSION, EXPERIMENT_START_OUTCOMES, EXPERIMENT_STOP_OUTCOMES, JSON_TRANSPORT } from "./bridgeContract";
 const fixture=()=>structuredClone(golden);
 it("decodes the shared C++/Rust JSON golden into named fields",()=>{
   const events=decodeEvents(fixture());
@@ -35,6 +35,28 @@ it("distinguishes command acceptance from a terminal operation notification",()=
   expect(accepted).toEqual({ok:true,command:6,message:"accepted",operation_id:"9007199254740993"});
   expect(accepted).not.toHaveProperty("completed");
   expect(()=>decodeCommandResult({...accepted,transport_version:1,operation_id:9007199254740992})).toThrow();
+});
+// Bridge ABI 40 (#741): experiment replies carry their typed outcome; the message is unchanged.
+it("decodes the typed start and stop outcomes of experiment replies",()=>{
+  expect(BRIDGE_ABI_VERSION).toBe(40);
+  expect(EXPERIMENT_START_OUTCOMES).toMatchObject({Started:0,NotReady:1,StaleReadiness:2,AlreadyActive:3,StorageFailed:4,ProvenanceFailed:5,Busy:6,InvalidRequest:7});
+  expect(EXPERIMENT_STOP_OUTCOMES).toEqual({Accepted:0,NotActive:1,Busy:2,RunMismatch:3});
+  const base={transport_version:1,ok:false,command:6,operation_id:"0"};
+  for(const code of Object.values(EXPERIMENT_START_OUTCOMES))
+    expect(decodeCommandResult({...base,message:"m",start_outcome:code}).start_outcome).toBe(code);
+  const invalid=decodeCommandResult({...base,message:"invalid start request: operator_name: unknown key",start_outcome:7});
+  expect(invalid).toEqual({ok:false,command:6,message:"invalid start request: operator_name: unknown key",operation_id:"0",start_outcome:EXPERIMENT_START_OUTCOMES.InvalidRequest});
+  const mismatch=decodeCommandResult({...base,message:"stop refused: expected run 4, but run 5 is active; nothing was stopped",stop_outcome:3});
+  expect(mismatch.stop_outcome).toBe(EXPERIMENT_STOP_OUTCOMES.RunMismatch);
+  expect(mismatch).not.toHaveProperty("start_outcome");
+  // An older backend (ABI 39) sends neither field; other commands never do.
+  const old=decodeCommandResult({...base,message:"accepted"});
+  expect(old).not.toHaveProperty("start_outcome");
+  expect(old).not.toHaveProperty("stop_outcome");
+  expect(decodeCommandResult({...base,message:"m",start_outcome:null})).not.toHaveProperty("start_outcome");
+  // A code this UI does not know is ignored (fall back to ok/message); a malformed one is refused.
+  expect(decodeCommandResult({...base,message:"m",start_outcome:99,stop_outcome:9})).toEqual({ok:false,command:6,message:"m",operation_id:"0"});
+  for(const bad of ["7",7.5,true,{}]) expect(()=>decodeCommandResult({...base,message:"m",stop_outcome:bad})).toThrow("TRANSPORT_INVALID_OUTCOME");
 });
 it("keeps experiment snapshot counts exact and refuses partial snapshots",()=>{
   const snapshot={transport_version:1,valid:true,state:2,start_time_ns:"18446744073709551614",end_time_ns:"18446744073709551615",valid_buffered:"9007199254740993",invalid_buffered:"5",valid_saved:"18446744073709551615",invalid_saved:"7",dropped_valid:"9007199254740993",dropped_invalid:"18446744073709551615",flushing:true,cancelled:false,output_path:"test.h5",message:"saving",

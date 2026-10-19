@@ -1,4 +1,5 @@
 import { CAMERA_STATES, FRAME_READY_SOURCES, COMMAND_TYPES, ERROR_SOURCES, EVENT_PAYLOADS, EXPERIMENT_STATES,
+  EXPERIMENT_START_OUTCOMES, EXPERIMENT_STOP_OUTCOMES,
   JSON_TRANSPORT, OPERATION_KINDS, OPERATION_STATES, RECORDING_STATES, READINESS_GATE_STATUSES, RUN_COMPLETION_STATES } from "./bridgeContract";
 import { decimalU64 } from "./framePacket";
 
@@ -90,11 +91,26 @@ export function decodeEvents(value: unknown): BridgeEvent[] {
   });
 }
 
-export interface CmdResult { ok:boolean; command:number; message:string; operation_id:string }
+/** Bridge ABI 40 (#741): `start_outcome` (an EXPERIMENT_START_OUTCOMES value) on an experiment_start
+ *  reply and `stop_outcome` (an EXPERIMENT_STOP_OUTCOMES value) on an experiment_stop / experiment_cancel
+ *  reply, when the backend evaluated the command; absent otherwise (other commands, an older backend).
+ *  Switch on them, not on `message`; fall back to the message only when they are absent. */
+export interface CmdResult { ok:boolean; command:number; message:string; operation_id:string; start_outcome?:number; stop_outcome?:number }
+/** An optional typed outcome: absent or null -> undefined; a value this UI does not know (a newer
+ *  backend) -> undefined, so the caller falls back to ok/message; anything but an integer is malformed. */
+function optionalOutcome(value:unknown, values:Readonly<Record<string,number>>):number|undefined {
+  if(value===undefined || value===null) return undefined;
+  if(typeof value!=="number" || !Number.isInteger(value)) throw new Error("TRANSPORT_INVALID_OUTCOME");
+  return Object.values(values).includes(value) ? value : undefined;
+}
 export function decodeCommandResult(value:unknown):CmdResult {
   const o=object(value); version(o);
   if(typeof o.command!=="number" || !Object.values(COMMAND_TYPES).includes(o.command as never)) throw new Error("TRANSPORT_UNKNOWN_REQUIRED_ENUM");
-  return {ok:bool(o.ok),command:o.command,message:text(o.message),operation_id:wireU64(o.operation_id)};
+  const result:CmdResult={ok:bool(o.ok),command:o.command,message:text(o.message),operation_id:wireU64(o.operation_id)};
+  const start=optionalOutcome(o.start_outcome,EXPERIMENT_START_OUTCOMES), stop=optionalOutcome(o.stop_outcome,EXPERIMENT_STOP_OUTCOMES);
+  if(start!==undefined) result.start_outcome=start;
+  if(stop!==undefined) result.stop_outcome=stop;
+  return result;
 }
 export interface ExperimentStatus {
   valid:boolean; state:number; start_time_ns:string; end_time_ns:string;

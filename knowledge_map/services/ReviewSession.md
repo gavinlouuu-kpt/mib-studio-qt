@@ -3,9 +3,11 @@
 > YOFO Review's review implementation (ADR 0014, plan
 > `docs/exec-plans/active/2026-10-01-standalone-review-app.md`), also used by
 > the Qt tab for the recorded factor. MIB Studio's Tauri shell keeps its own
-> facade review stack until #512 (ADR 0014 amendment, decision A), which moves
-> it here slice by slice (plan
-> `docs/exec-plans/active/2026-10-18-one-review-implementation.md`). Qt-free,
+> facade review commands until #512 (ADR 0014 amendment, decision A), which
+> moves them here slice by slice (plan
+> `docs/exec-plans/active/2026-10-18-one-review-implementation.md`); since S5
+> the facade's loaded review file **is** a `ReviewSession` (see "The facade's
+> session" below). Qt-free,
 > owns the open HDF5 file through its **own** read-only `Hdf5Service`,
 > serves bounded reads with overlays composed in the backend, and will own
 > the review jobs (PR 1b).
@@ -31,6 +33,8 @@ reanalysis engine without an `AppBackend`, #512 S2),
 `tests/review/review_export_engine_test.cpp` (`review.export_engine`: the
 export engine without an `AppBackend`, #512 S3)
 **Consumers:** `crates/mib-bridge/src/review_shim.cpp` (`ReviewBridge`, [[../architecture/Rust-Bridge]]),
+`BackendFacade` (`review_`, the facade's review source, #512 S5;
+`tests/backend/facade_review_session_test.cpp`, `backend.facade_review_session`),
 the Qt [[../frontend/HdfReviewTab]] (`recordedPixelToMicron`, TD-17)
 **Related:** [[Hdf5Service]], [[HdfExportService]], [[BatchMaskSources]],
 [[../data-model/HDF5-Storage]], [[../frontend/YofoReview]]
@@ -40,7 +44,22 @@ the Qt [[../frontend/HdfReviewTab]] (`recordedPixelToMicron`, TD-17)
 - `open(path, &error)` / `close()` / `isOpen()` / `filePath()`: one reader
   per session, never `AppBackend::hdf5()` (the experiment writer's handle),
   so a file can be reviewed while an experiment runs and the Tauri Raw
-  Frames view reads the **file**, not the live FrameStore.
+  Frames view reads the **file**, not the live FrameStore. `open()` is all
+  or nothing (#512 S5): a metadata read that throws after the reader opened
+  (an allocation failure, an OpenCV exception from a malformed dataset such
+  as an oversized background) closes the reader again and returns false with
+  "Failed to read <path>: …"; it never throws for a bad file and never leaves
+  a reader open that a host was not told about. The reopen after
+  `saveCoreRecordJson` follows the same rule. A throw inside the reader's own
+  open right after `H5Fopen` is caught the same way ([[Hdf5Service]] releases
+  the handle). `isOpen()` **fails closed**: it is true while the session has
+  a file open *or* its reader still holds any handle
+  (`Hdf5Service::holdsFileHandle()`), so a handle that somehow outlived a
+  failed open keeps the facade's D1 flag set (Start refused) until `close()`
+  or the next `open()`, which always close the reader first. Nothing is
+  served from such a handle (reads check the session's own state).
+  `ReviewSessionTestAccess::reader(session)` (friend, test only) reaches the
+  reader for fault injection.
 - `metadata()` → `ReviewMetadata`: counts, ROI, dataset infos (five paths),
   core identity, background flag, **series** (`/valid_frames/series_images`
   4D or the recording multi-image window), **run accounting** (#367,
@@ -53,6 +72,19 @@ the Qt [[../frontend/HdfReviewTab]] (`recordedPixelToMicron`, TD-17)
   read (0 when absent), shared with the Qt tab and the batch job.
 - `metricsPage(valid, offset, count)` → `MetricRow` with **every**
   FilterResult column the Qt `HdfMetricsModel` shows plus `areaUm2`.
+- `framesPage(valid, offset, count, frames, total)` (#512 S5): the same page
+  as the metadata-only `ProcessedFrame`s read at open (no pixels), for hosts
+  with their own row type (the facade's `MonitoringObjectRow`); same bounds
+  and totals, false only when closed, and overflow-safe for a huge `count`
+  (`metricsPage` still computes `offset + count`).
+- `validSet()` → `ValidSet` (#512 S5): the open file's path, file type,
+  `metadataReadable` and valid rows in **one snapshot under one lock**, so a
+  concurrent open of another file can never pair one file's identity with
+  the other's rows. `metadataReadable` is false when an experiment file's
+  `/valid_frames/metadata` exists but could not be read at open, or its
+  presence could not be determined (`metadataDatasetPresent`); an absent
+  dataset is an empty, readable set. The facade's charts answer "Cannot read
+  valid-frame metrics" for it, as their own reader did before S5.
 - `fetchImage(dataset, index, OverlayMode, roiOverlay)` → packed Mono8 or
   RGB `ReviewImage`: the overlay (contours / outer-inner / mask / filtered
   mask) and the red 3 px ROI rectangle are composed here by `OverlayCompose`,
@@ -108,11 +140,19 @@ opening its own reader so session reads never block:
   `.<stem>.partial.<ext>` names, renamed once every one wrote; any failure
   or cancel removes them). Names must be bare file names ending
   .tif/.tiff/.png (`validChartName`, mirrored by the Tauri staging command).
-- `startRegenerateMasks(request)`: current valid / invalid range, whole file,
-  AVI or folder → `ProcessingService::processBatch` (bundled kernel) with the
-  recorded config, ROI and background by default (optional median
-  synthetic background) → `batch_masks::saveMasksToHdf5`; HDF5 sources keep
-  recorded indices and normalise timestamps to the first image.
+- `startRegenerateMasks(request)`: current valid / invalid range (clamped
+  to the set), whole file, AVI or folder, run on the reanalysis engine
+  (`runReanalysis`, below; #512 S8) with YOFO's D6 options. Timestamps are
+  rebased to the first selected frame and clamped at 0. The optional
+  synthetic background is the median of the first 32 frames. The whole
+  file is valid rows then invalid rows. The job has no frame or byte budget.
+  The recorded config (read here), ROI and background are used by default.
+  Otherwise the request's config and ROI apply and the background is
+  cleared. An existing output is refused at start ("Output already exists;
+  choose a new file"). An output created mid-run fails the job and stays
+  untouched; the partial file is removed. Terminal messages:
+  "<path> (N images: V valid, I invalid)", "nothing written" on cancel, or the
+  engine's error.
 - `startComputeCore(fraction)`: `computeFullRunCoreRecord` over the scatter
   (recorded factor, fixed seed); `computedCoreJson()` hands the record to the
   shell, which saves it with `saveCoreRecordJson`. `cell_count` is the
@@ -168,7 +208,25 @@ the facade's ROI style:
 The engine behind the backend bridge's `review_reanalysis_json` and
 `fetch_review_reanalysis_preview` (MIB Studio, YOFO Studio), moved verbatim
 out of `BackendFacade` (`src/backend/app/ReviewReanalysis.cpp` now only
-delegates). Not yet used by YOFO Review's Regenerate masks (#512 S8):
+delegates). Since #512 S8 it is also YOFO Review's Regenerate masks
+(`ReviewJobs::startRegenerateMasks`), with the D6 options on the request.
+Parsing never sets them, so the facade keeps the defaults:
+
+- `timestamps`: `Preserve` (facade) | `Rebase` (minus the first selected
+  frame's, clamped at 0; YOFO, the Qt BatchMaskDialog rule).
+- `syntheticBackgroundKind`: `QuietTile` (`batch_masks::buildSyntheticBackground`;
+  facade, Qt) | `MedianOf32` (per-pixel upper median of the first ≤ 32
+  selected frames; YOFO, moved from ReviewJobs).
+- `frameOrder` (HDF `all` only): `Timestamp` (facade, Qt) | `Datasets` (rows
+  as stored, valid then invalid; YOFO's whole file). D6 named two options.
+  The third keeps YOFO's 2026-10-04 accepted "timestamp order" difference.
+- `convertColorToGray` (HDF only): off, frames with more than one channel are
+  refused ("Source frames must be grayscale"; facade). On, they become Mono8
+  as `batch_masks::loadFromHdf5` converts them (BGR → gray; YOFO, whose
+  pre-S8 reader did this; #735 review).
+- `ReanalysisOutcome::valid` counts the valid records (YOFO's message).
+
+The functions:
 
 - `parseReanalysisRequest(json, defaults, out, error)`: the contract request
   (source kind hdf / folder / avi, dataset `all` or one images dataset,
@@ -221,10 +279,60 @@ default source, one export at a time, the `Export` operation, the snapshot):
   `desktop/src/exportControls.tsx`). A single-source batch cancelled before it
   started reports `"error":""`, as the facade always has.
 
+## The facade's session (#512 S5)
+
+`BackendFacade` holds one `std::shared_ptr<ReviewSession> review_` (never
+reassigned; shared so the review bridge can attach to it, S10). MIB Studio's
+and YOFO Studio's review commands read it: `load_recording` →
+`open(path)` (replaces the open file, also when the open fails),
+`close_review` → `close()`, `fetch_review_metadata` → `metadata()` field for
+field, `fetch_review_metrics_page` → `framesPage` mapped to
+`MonitoringObjectRow`, `fetch_review_image` → `readRaw` (Mono8, channel 0),
+`fetch_run_accounting("review")` → the accounting read at open,
+`fetch_review_charts_json` → `validSet()` (one snapshot; no second reader),
+and `review_export_json`'s default source → `filePath()`. The load event's
+counts come from the same metadata. Nothing in the facade holds review state
+of its own any more, and none of it touches `AppBackend::hdf5()` (the
+experiment writer's handle): a load beside an open writer handle is refused
+only by the guards, and the writer is never closed or replaced by load or
+close.
+
+The guards stay the facade's policy around `open()` / `close()`, inside the
+coordinator's idle transaction: "Experiment must be idle before loading review
+data", "Stop raw recording before loading review data" and the close
+equivalents. **Decision D1 (a):** the facade tells AppBackend whether its
+session is open (`AppBackend::setReviewSourceOpen`, set in the same
+transaction from `isOpen()` by a scope guard that also runs when an exception
+leaves the transaction, so the flag equals `isOpen()` on every exit; cleared
+by close, a failed load, shutdown and the destructor). While it is, experiment readiness fails `storage.hdf5` with the
+text a file in the shared handle produced ("an HDF5 file is already open",
+"finish or close the current file first"), Start is refused with "stop raw
+recording and close the existing HDF5 file before starting an experiment"
+and raw recording with "Close the existing HDF5 file before starting raw
+recording; its writer will not be replaced": HDF5 is built without thread
+safety (#722), so a review reader must not run beside the 5 kHz writer. See
+[[../architecture/ExperimentCoordinator]]. Shutdown closes the session after
+the export / reanalysis jobs are joined.
+
+Proof: `backend.facade_review_session` keeps the pre-S5 facade code as its
+oracle (load result and events, metadata, pages, images, accounting, charts,
+the export's default source on experiment, legacy, recording, empty-set,
+unreadable-metadata and non-HDF5 fixtures, failed loads included), the writer
+handle untouched, the D1 gate equal to the shared handle's; `review.session`
+covers `framesPage`, `validSet` and the all-or-nothing open;
+`backend.facade_review_session` also loads a file whose background read
+throws (the flag equals `isOpen()`, the load fails closed) and loads files on
+one thread while charting on another; `backend.experiment_readiness`
+(section 5b) and `backend.facade_boundary` the D1 refusals and the guards
+with a live camera.
+
 ## Threading
 
 Every public call takes one mutex (`Hdf5Service` is not thread-safe).
 Jobs (PR 1b) open their own readers on `filePath()` and never block a read.
+The facade's session is read on the bridge's calling threads, as the shared
+handle was before S5 (now serialized by this mutex); HDF5 itself is still not
+thread-safe across readers (#722), which is why D1 keeps experiments out.
 
 ## Gotchas
 
