@@ -18,8 +18,8 @@
 //  2. no pump port configured: the probe may identify the bus before the
 //     pumps connect, but a pump Connect waits for it and never fails;
 //  3. a stale process holds the nanopositioner port at startup (an earlier
-//     instance that died without closing it, #417): startup retries and
-//     connects once it is released;
+//     instance that died without closing it, #417) until it has refused a
+//     probe: startup keeps retrying and connects once it is released;
 //  4. a stale process holds the pump bus: Connect fails fast as "busy", never
 //     hangs, and succeeds once the port is released.
 // Every scenario: no in-process contention, and shutdown releases every port.
@@ -109,7 +109,7 @@ std::shared_ptr<serialsim::Rig> makeRig(uint64_t seed, Scenario scenario)
     nano.replyLatencyMinMs = 2;
     nano.replyLatencyMaxMs = 15;
     nano.fragmentReplies = true;
-    if (scenario == Scenario::StaleNanopositionerHolder) nano.staleHolderUntilMs = 700;
+    if (scenario == Scenario::StaleNanopositionerHolder) nano.staleHolderUntilMs = -1; // until the test releases it
     rig->addPort(nano);
     rig->addDevice("COM5", std::make_shared<serialsim::OeabtDevice>());
     return rig;
@@ -145,7 +145,9 @@ bool run(uint64_t seed, Scenario scenario, mib::test::Watchdog& watchdog)
 
         StartupDiscoveryCoordinator::Timing timing;
         timing.cameraDelay = 20ms;
-        timing.nanopositionerRetries = 6;
+        // The stale-holder run releases the port only after a refused probe,
+        // which may be late under TSan: leave startup room to retry.
+        timing.nanopositionerRetries = scenario == Scenario::StaleNanopositionerHolder ? 10 : 6; // request limit is 10
         timing.nanopositionerRetryDelay = 200ms;
         timing.nanopositionerDeadline = 15000ms;
         auto& coordinator = backend.startupDiscovery();
@@ -160,6 +162,22 @@ bool run(uint64_t seed, Scenario scenario, mib::test::Watchdog& watchdog)
             if (o.endpoint) result.nanoPath = o.endpoint->systemPath;
             cv.notify_all();
         });
+
+        // The stale process exits once it has visibly refused a probe, so the
+        // ordering is forced by a condition, not by timing.
+        std::thread staleProcess;
+        if (scenario == Scenario::StaleNanopositionerHolder) {
+            staleProcess = std::thread([&] {
+                const auto deadline = std::chrono::steady_clock::now() + 20s;
+                while (std::chrono::steady_clock::now() < deadline) {
+                    bool refused = false;
+                    for (const auto& e : rig->events(serialsim::Event::Kind::OpenDenied)) refused |= e.port == "COM5";
+                    if (refused) break;
+                    std::this_thread::sleep_for(10ms);
+                }
+                rig->releaseStaleHolder("COM5");
+            });
+        }
 
         watchdog.mark("startup");
         coordinator.start();
@@ -178,10 +196,11 @@ bool run(uint64_t seed, Scenario scenario, mib::test::Watchdog& watchdog)
             result.generator = backend.pulseGenerator().connect("COM4", 9600, 1);
         });
         operatorThread.join();
+        if (staleProcess.joinable()) staleProcess.join();
         watchdog.mark("operator connected");
         {
             std::unique_lock<std::mutex> lock(m);
-            cv.wait_for(lock, 20s, [&] { return result.nano.has_value(); });
+            cv.wait_for(lock, 30s, [&] { return result.nano.has_value(); });
         }
         watchdog.mark("startup outcome");
         // No explicit shutdown(): the destructor must release the ports too,
