@@ -45,6 +45,8 @@ namespace backend::services
     class StageService;
     class RfGeneratorService;
     class MonitoringDensityService;
+    class MonitoringCellSource;
+    class MonitoringCellStore;
     namespace serialbus
     {
         class SerialBusManager;
@@ -419,6 +421,10 @@ namespace backend
         // push settings and read results; the provisional record goes to the
         // experiment coordinator from the backend worker.
         services::MonitoringDensityService& monitoringDensity();
+        // Live cell images (#716 A6a, bridge ABI 41): bounded owned crops of the
+        // recent detected cells and the operator's pins, read from the
+        // monitoring ring off the hot path. Null before initialize().
+        services::MonitoringCellStore* monitoringCells();
         // Shared RS485 bus registry (pump, pulse generator); tests inject a
         // fake serial-port factory here.
         services::serialbus::SerialBusManager& serialBus();
@@ -620,6 +626,10 @@ namespace backend
         // Declared after the coordinator and processing so it is destroyed
         // first: its worker reads the monitoring ring and feeds the coordinator.
         std::unique_ptr<services::MonitoringDensityService> monitoringDensity_;
+        // Built with processingService_ (its source reads that ring) and
+        // destroyed before it; no thread of its own.
+        std::unique_ptr<services::MonitoringCellSource> monitoringCellSource_;
+        std::unique_ptr<services::MonitoringCellStore> monitoringCells_;
 
         // Where pipeline-timing CSVs are dumped (set in initialize()).
         std::string pipelineTimingDir_;

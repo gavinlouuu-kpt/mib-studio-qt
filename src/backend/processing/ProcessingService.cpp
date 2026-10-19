@@ -833,10 +833,10 @@ void ProcessingService::appendMonitoringFrameForTests(const ProcessedFrame& fram
     ProcessedFrame copy = frame;
     if (frame.validation.isValid) {
         monitoringValidAppended_.fetch_add(1, std::memory_order_relaxed);
-        monitoringValidFrames_.push_back(std::move(copy));
+        monitoringValidFrames_.push_back(std::move(copy), monitoringRunGeneration_);
     } else {
         monitoringInvalidAppended_.fetch_add(1, std::memory_order_relaxed);
-        monitoringInvalidFrames_.push_back(std::move(copy));
+        monitoringInvalidFrames_.push_back(std::move(copy), monitoringRunGeneration_);
     }
 }
 
@@ -852,6 +852,42 @@ void ProcessingService::clearMonitoringFrames() {
 
 void ProcessingService::setMonitoringActive(bool active) {
     monitoringActive_.store(active, std::memory_order_relaxed);
+}
+
+void ProcessingService::setMonitoringRunGeneration(uint64_t startGeneration) {
+    // The same lock the append path holds while it pushes: a row is tagged
+    // with the generation in force when it entered the ring, never a later one.
+    std::scoped_lock lk(monitoringFramesMutex_);
+    monitoringRunGeneration_ = startGeneration;
+}
+
+uint64_t ProcessingService::monitoringRunGeneration() const {
+    std::scoped_lock lk(monitoringFramesMutex_);
+    return monitoringRunGeneration_;
+}
+
+ProcessingService::MonitoringRingView ProcessingService::visitMonitoringNewest(
+    size_t maxRows, bool includeInvalid, const MonitoringVisitor& visit) const {
+    MonitoringRingView view;
+    std::scoped_lock lk(monitoringFramesMutex_);
+    view.validHeld = monitoringValidFrames_.size();
+    view.invalidHeld = monitoringInvalidFrames_.size();
+    view.validAppended = monitoringValidAppended_.load(std::memory_order_relaxed);
+    view.invalidAppended = monitoringInvalidAppended_.load(std::memory_order_relaxed);
+    view.runGeneration = monitoringRunGeneration_;
+    if (!visit) return view;
+    // Valid rows are favoured (the charts' emphasis), as fetchMonitoringSnapshot always did.
+    const size_t takeValid = std::min(view.validHeld, maxRows);
+    monitoringValidFrames_.forEachNewest(takeValid, [&visit](const ProcessedFrame& f, uint64_t gen) {
+        visit(f, gen, true);
+    });
+    if (includeInvalid) {
+        const size_t remaining = maxRows > takeValid ? maxRows - takeValid : 0;
+        monitoringInvalidFrames_.forEachNewest(remaining, [&visit](const ProcessedFrame& f, uint64_t gen) {
+            visit(f, gen, false);
+        });
+    }
+    return view;
 }
 
 void ProcessingService::setProcessingConfig(const ProcessingConfig& config) {
@@ -2690,10 +2726,10 @@ void ProcessingService::appendRealtimeMonitoringFrame(uint64_t index, uint64_t t
     std::scoped_lock monitoringLk(monitoringFramesMutex_);
     if (validation.isValid) {
         monitoringValidAppended_.fetch_add(1, std::memory_order_relaxed);
-        monitoringValidFrames_.push_back(std::move(monitoringFrame));
+        monitoringValidFrames_.push_back(std::move(monitoringFrame), monitoringRunGeneration_);
     } else {
         monitoringInvalidAppended_.fetch_add(1, std::memory_order_relaxed);
-        monitoringInvalidFrames_.push_back(std::move(monitoringFrame));
+        monitoringInvalidFrames_.push_back(std::move(monitoringFrame), monitoringRunGeneration_);
     }
 }
 
@@ -2707,10 +2743,10 @@ void ProcessingService::appendProviderMonitoringRow(uint64_t index, uint64_t tim
     std::scoped_lock monitoringLk(monitoringFramesMutex_);
     if (validation.isValid) {
         monitoringValidAppended_.fetch_add(1, std::memory_order_relaxed);
-        monitoringValidFrames_.push_back(std::move(row));
+        monitoringValidFrames_.push_back(std::move(row), monitoringRunGeneration_);
     } else {
         monitoringInvalidAppended_.fetch_add(1, std::memory_order_relaxed);
-        monitoringInvalidFrames_.push_back(std::move(row));
+        monitoringInvalidFrames_.push_back(std::move(row), monitoringRunGeneration_);
     }
 }
 
@@ -2826,9 +2862,9 @@ void ProcessingService::publishRealtimeBatchFrame(ProcessedFrame&& frame) {
 
         std::scoped_lock monitoringLk(monitoringFramesMutex_);
         if (validation.isValid) {
-            monitoringValidFrames_.push_back(std::move(monitoringFrame));
+            monitoringValidFrames_.push_back(std::move(monitoringFrame), monitoringRunGeneration_);
         } else {
-            monitoringInvalidFrames_.push_back(std::move(monitoringFrame));
+            monitoringInvalidFrames_.push_back(std::move(monitoringFrame), monitoringRunGeneration_);
         }
     }
 

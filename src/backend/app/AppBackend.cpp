@@ -39,6 +39,7 @@
 #include "backend/services/StageService.h"
 #include "backend/services/RfGeneratorService.h"
 #include "backend/services/MonitoringDensityService.h"
+#include "backend/services/MonitoringCellStore.h"
 #include "backend/discovery/DeviceDiscoveryService.h"
 #include "backend/discovery/StartupDiscoveryCoordinator.h"
 #include "backend/discovery/providers/CameraEnumerationProvider.h"
@@ -498,7 +499,11 @@ namespace backend
         sqliteService_ = std::make_unique<services::SqliteService>();
         hdf5Service_ = std::make_unique<services::Hdf5Service>();
         captureService_ = std::make_unique<services::CaptureService>();
+        monitoringCells_.reset(); // its source reads the ring of the processing service replaced next
+        monitoringCellSource_.reset();
         processingService_ = std::make_unique<services::ProcessingService>();
+        monitoringCellSource_ = services::makeProcessingCellSource(*processingService_);
+        monitoringCells_ = std::make_unique<services::MonitoringCellStore>(*monitoringCellSource_);
         experimentCoordinator_ = std::make_unique<app::ExperimentCoordinator>(*this);
         experimentCoordinator_->setApplicationIdentity(
             MIB_APPLICATION_VERSION, MIB_APPLICATION_BUILD_ID, MIB_APPLICATION_OS);
@@ -3142,6 +3147,8 @@ namespace backend
 
     services::MonitoringDensityService &AppBackend::monitoringDensity() { return *monitoringDensity_; }
 
+    services::MonitoringCellStore *AppBackend::monitoringCells() { return monitoringCells_.get(); }
+
     services::serialbus::SerialBusManager &AppBackend::serialBus() { return *serialBusManager_; }
 
     bool AppBackend::isCameraConfigured() const
@@ -3675,6 +3682,8 @@ namespace backend
         if (processingService_) {
             for (auto& o : processingService_->memoryStats().all()) s.owners.push_back(std::move(o));
         }
+        // 3b) Live cell images (#716 A6a): owned crops of the strip and the pins.
+        if (monitoringCells_) s.owners.push_back(monitoringCells_->memoryStats());
         // 4) Exporter jobs: streaming by design (issue #344), no retained pool.
         {
             diagnostics::MemoryOwnerStats o;

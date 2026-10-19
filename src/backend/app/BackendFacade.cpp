@@ -41,6 +41,7 @@
 #include "backend/services/TriggerService.h"
 #include "backend/services/PulseGeneratorService.h"
 #include "backend/services/StageService.h"
+#include "backend/services/MonitoringCellStore.h"
 
 #include <algorithm>
 #include "backend/pz/PzPlatformMonitor.h"
@@ -1218,6 +1219,8 @@ namespace backend::bridge
             return {true, BackendCommandType::Monitoring, "Monitoring disabled"};
         case MonitoringCommandAction::Clear:
             processing.clearMonitoringFrames();
+            // The live cell strip mirrors the ring (#716 A6a); pins are the operator's and stay.
+            if (auto *cells = backend_.monitoringCells()) cells->clearStrip();
             return {true, BackendCommandType::Monitoring, "Monitoring buffers cleared"};
         }
         return {false, BackendCommandType::Monitoring, "Unknown monitoring command"};
@@ -1271,51 +1274,236 @@ namespace backend::bridge
             return false;
         }
         auto &processing = backend_.processing();
-        const auto validFrames = processing.getMonitoringValidFrames();
-        const auto invalidFrames = processing.getMonitoringInvalidFrames();
-
         out = BackendMonitoringSnapshot{};
         out.monitoringActive = processing.isMonitoringActive();
-        out.validHeld = validFrames.size();
-        out.invalidHeld = invalidFrames.size();
-        out.validAppended = processing.getMonitoringValidAppended();
-        out.invalidAppended = processing.getMonitoringInvalidAppended();
         out.capacity = services::ProcessingService::getMonitoringCapacity();
-
-        auto appendRow = [&out](const services::ProcessedFrame &frame) {
-            const auto &v = frame.validation;
-            MonitoringObjectRow row;
-            row.frameIndex = frame.index;
-            row.timestampNs = frame.timestampNs;
-            row.valid = v.isValid;
-            row.targetGroup = v.isTargetGroup;
-            row.objectId = v.objectId;
-            row.objectCount = v.objectCount;
-            row.trackId = v.trackId;
-            row.centroidX = v.centroidX;
-            row.centroidY = v.centroidY;
-            row.area = v.area;
-            row.deformability = v.deformability;
-            row.areaRatio = v.areaRatio;
-            row.ringRatio = v.ringRatio;
-            row.youngsModulus = v.youngsModulus;
-            row.pixelToMicronFactor = v.analysisPixelToMicronFactor;
-            out.rows.push_back(row);
-            out.latestTimestampNs = std::max(out.latestTimestampNs, frame.timestampNs);
-        };
-
-        // Most-recent rows first: take tails of both buffers, bounded by
-        // maxRows overall (valid rows favored to match the chart emphasis).
-        const std::size_t takeValid = std::min(validFrames.size(), maxRows);
-        for (std::size_t i = validFrames.size() - takeValid; i < validFrames.size(); ++i)
+        // Most-recent rows, bounded by maxRows overall (valid rows favored to
+        // match the chart emphasis): the valid tail, then the invalid tail.
+        // Read through the ring visitor (#716 A6a): metric rows (POD) are
+        // built under the ring's lock instead of copying every ProcessedFrame
+        // of both rings, and each row carries its run's start generation.
+        out.rows.reserve(std::min<std::size_t>(maxRows, 2 * out.capacity));
+        const auto view = processing.visitMonitoringNewest(
+            maxRows, true, [&out](const services::ProcessedFrame &frame, std::uint64_t generation, bool) {
+                const auto &v = frame.validation;
+                MonitoringObjectRow row;
+                row.frameIndex = frame.index;
+                row.timestampNs = frame.timestampNs;
+                row.valid = v.isValid;
+                row.targetGroup = v.isTargetGroup;
+                row.objectId = v.objectId;
+                row.objectCount = v.objectCount;
+                row.trackId = v.trackId;
+                row.centroidX = v.centroidX;
+                row.centroidY = v.centroidY;
+                row.area = v.area;
+                row.deformability = v.deformability;
+                row.areaRatio = v.areaRatio;
+                row.ringRatio = v.ringRatio;
+                row.youngsModulus = v.youngsModulus;
+                row.pixelToMicronFactor = v.analysisPixelToMicronFactor;
+                row.startGeneration = generation;
+                out.rows.push_back(row);
+                out.latestTimestampNs = std::max(out.latestTimestampNs, frame.timestampNs);
+            });
+        out.validHeld = view.validHeld;
+        out.invalidHeld = view.invalidHeld;
+        out.validAppended = view.validAppended;
+        out.invalidAppended = view.invalidAppended;
+        // The rows this snapshot served stay describable (metadata only, a
+        // bounded index): a pin of one whose image the ring has since evicted
+        // reports these measurements with the reason, never a substitute.
+        if (auto *cells = backend_.monitoringCells())
         {
-            appendRow(validFrames[i]);
+            std::vector<std::pair<services::MonitoringCellKey, services::MonitoringCellMetrics>> seen;
+            seen.reserve(out.rows.size());
+            for (const auto &r : out.rows)
+            {
+                services::MonitoringCellMetrics m;
+                m.timestampNs = r.timestampNs;
+                m.valid = r.valid;
+                m.targetGroup = r.targetGroup;
+                m.objectCount = r.objectCount;
+                m.trackId = r.trackId;
+                m.centroidX = r.centroidX;
+                m.centroidY = r.centroidY;
+                m.area = r.area;
+                m.deformability = r.deformability;
+                m.areaRatio = r.areaRatio;
+                m.ringRatio = r.ringRatio;
+                m.youngsModulus = r.youngsModulus;
+                m.pixelToMicron = r.pixelToMicronFactor;
+                seen.push_back({{r.startGeneration, r.frameIndex, r.objectId}, m});
+            }
+            cells->noteRows(seen);
         }
-        const std::size_t remaining = maxRows > takeValid ? maxRows - takeValid : 0;
-        const std::size_t takeInvalid = std::min(invalidFrames.size(), remaining);
-        for (std::size_t i = invalidFrames.size() - takeInvalid; i < invalidFrames.size(); ++i)
+        return true;
+    }
+
+    namespace
+    {
+        // u64 identities and counters travel as canonical decimal strings (json_transport).
+        std::string dec(std::uint64_t v) { return std::to_string(v); }
+
+        nlohmann::json finiteOrNull(double v)
         {
-            appendRow(invalidFrames[i]);
+            return std::isfinite(v) ? nlohmann::json(v) : nlohmann::json(nullptr);
+        }
+
+        nlohmann::json monitoringCellJson(const services::MonitoringCellInfo &c)
+        {
+            const auto &m = c.metrics;
+            nlohmann::json j{
+                {"start_generation", dec(c.key.startGeneration)},
+                {"frame_index", dec(c.key.frameIndex)},
+                {"object_id", c.key.objectId},
+                {"timestamp_ns", dec(m.timestampNs)},
+                {"valid", m.valid},
+                {"target_group", m.targetGroup},
+                {"object_count", m.objectCount},
+                {"track_id", m.trackId},
+                {"centroid_x", finiteOrNull(m.centroidX)},
+                {"centroid_y", finiteOrNull(m.centroidY)},
+                {"bbox", {{"x", finiteOrNull(m.bboxX)}, {"y", finiteOrNull(m.bboxY)},
+                          {"w", finiteOrNull(m.bboxWidth)}, {"h", finiteOrNull(m.bboxHeight)}}},
+                {"area", finiteOrNull(m.area)},
+                {"deformability", finiteOrNull(m.deformability)},
+                {"area_ratio", finiteOrNull(m.areaRatio)},
+                {"ring_ratio", finiteOrNull(m.ringRatio)},
+                {"youngs_modulus", finiteOrNull(m.youngsModulus)},
+                {"pixel_to_micron", finiteOrNull(m.pixelToMicron)},
+            };
+            if (c.hasImage)
+            {
+                j["image"] = {{"width", c.width},        {"height", c.height},
+                              {"crop_x", c.cropX},       {"crop_y", c.cropY},
+                              {"source_width", c.sourceWidth}, {"source_height", c.sourceHeight},
+                              {"has_mask", c.hasMask},   {"bytes", dec(c.bytes)}};
+                j["no_image_reason"] = nullptr;
+            }
+            else
+            {
+                j["image"] = nullptr;
+                j["no_image_reason"] = c.noImageReason;
+            }
+            return j;
+        }
+
+        bool pinOk(services::MonitoringCellStore::PinOutcome o)
+        {
+            using O = services::MonitoringCellStore::PinOutcome;
+            return o == O::Pinned || o == O::PinnedWithoutImage || o == O::AlreadyPinned;
+        }
+    } // namespace
+
+    bool BackendFacade::fetchMonitoringCellsJson(std::string &out) const
+    {
+        auto *cells = initialized_ ? backend_.monitoringCells() : nullptr;
+        if (!cells)
+        {
+            return false;
+        }
+        cells->refreshStrip();
+        const auto l = cells->listing();
+        nlohmann::json strip = nlohmann::json::array();
+        for (const auto &c : l.strip) strip.push_back(monitoringCellJson(c));
+        nlohmann::json pins = nlohmann::json::array();
+        for (const auto &c : l.pins) pins.push_back(monitoringCellJson(c));
+        const auto &st = l.stats;
+        const auto &p = l.policy;
+        nlohmann::json doc{
+            {"valid", true},
+            {"scope_start_generation", dec(l.scopeGeneration)},
+            {"ring_start_generation", dec(l.ringGeneration)},
+            {"revision", dec(l.revision)},
+            {"strip", std::move(strip)},
+            {"pins", std::move(pins)},
+            {"stats",
+             {{"strip_cells", st.stripCells},
+              {"strip_bytes", dec(st.stripBytes)},
+              {"pins", st.pins},
+              {"pin_bytes", dec(st.pinBytes)},
+              {"indexed_rows", st.indexedRows},
+              {"peak_bytes", dec(st.peakBytes)},
+              {"strip_admitted", dec(st.stripAdmitted)},
+              {"strip_evicted", dec(st.stripEvicted)},
+              {"refreshes", dec(st.refreshes)},
+              {"last_refresh_us", dec(st.lastRefreshUs)},
+              {"last_source_us", dec(st.lastSourceUs)}}},
+            {"caps",
+             {{"strip_max_cells", p.stripMaxCells},
+              {"strip_max_bytes", p.stripMaxBytes},
+              {"max_pins", p.maxPins},
+              {"pin_max_bytes", p.pinMaxBytes},
+              {"crop_max_side", p.cropMaxSide},
+              {"row_index_max", p.rowIndexMax}}},
+        };
+        out = doc.dump();
+        return true;
+    }
+
+    std::string BackendFacade::pinMonitoringCellJson(std::uint64_t expectedStartGeneration,
+                                                     std::uint64_t frameIndex, int objectId)
+    {
+        auto *cells = initialized_ ? backend_.monitoringCells() : nullptr;
+        if (!cells)
+        {
+            return nlohmann::json{{"ok", false}, {"message", "Backend not initialized"}, {"cell", nullptr}}.dump();
+        }
+        const auto r = cells->pin(expectedStartGeneration, frameIndex, objectId);
+        nlohmann::json doc{
+            {"ok", pinOk(r.outcome)},
+            {"outcome", static_cast<std::uint32_t>(r.outcome)},
+            {"message", r.message},
+            {"cell", r.cell ? monitoringCellJson(*r.cell) : nlohmann::json(nullptr)},
+            {"revision", dec(cells->listing().revision)},
+        };
+        return doc.dump();
+    }
+
+    BackendCommandResult BackendFacade::unpinMonitoringCell(std::uint64_t startGeneration, std::uint64_t frameIndex,
+                                                            int objectId)
+    {
+        auto *cells = initialized_ ? backend_.monitoringCells() : nullptr;
+        if (!cells) return {false, BackendCommandType::Monitoring, "Backend not initialized"};
+        if (!cells->unpin({startGeneration, frameIndex, objectId}))
+        {
+            return {false, BackendCommandType::Monitoring,
+                    "not pinned: frame " + std::to_string(frameIndex) + " object " + std::to_string(objectId) +
+                        " of start generation " + std::to_string(startGeneration)};
+        }
+        return {true, BackendCommandType::Monitoring, "unpinned"};
+    }
+
+    BackendCommandResult BackendFacade::clearMonitoringCellPins()
+    {
+        auto *cells = initialized_ ? backend_.monitoringCells() : nullptr;
+        if (!cells) return {false, BackendCommandType::Monitoring, "Backend not initialized"};
+        const auto n = cells->clearPins();
+        return {true, BackendCommandType::Monitoring, "cleared " + std::to_string(n) + " pin(s)"};
+    }
+
+    bool BackendFacade::fetchMonitoringCellImage(std::uint64_t startGeneration, std::uint64_t frameIndex,
+                                                 int objectId, bool mask, BackendFrame &out) const
+    {
+        auto *cells = initialized_ ? backend_.monitoringCells() : nullptr;
+        if (!cells) return false;
+        cv::Mat image;
+        services::MonitoringCellInfo info;
+        if (!cells->image({startGeneration, frameIndex, objectId}, mask, image, &info)) return false;
+        // The share is immutable; the pixels are copied here, after the store's lock.
+        out = BackendFrame{};
+        out.frameIndex = frameIndex;
+        out.timestampNs = info.metrics.timestampNs;
+        out.width = static_cast<std::uint64_t>(image.cols);
+        out.height = static_cast<std::uint64_t>(image.rows);
+        out.pixelFormat = 0; // Mono8, as review and background images
+        out.strideBytes = static_cast<std::size_t>(image.cols);
+        out.data.resize(static_cast<std::size_t>(image.cols) * image.rows);
+        for (int row = 0; row < image.rows; ++row)
+        {
+            std::memcpy(out.data.data() + static_cast<std::size_t>(row) * image.cols, image.ptr(row),
+                        static_cast<std::size_t>(image.cols));
         }
         return true;
     }

@@ -225,6 +225,32 @@ public:
         double deformability{0.0};
     };
     std::vector<MonitoringPoint> getMonitoringValidPoints() const;
+    // Live cell images (#716 A6a, bridge ABI 41). Every monitoring ring slot
+    // carries the start generation of the experiment run that was active when
+    // the processing path appended it (0 = outside a run). The tag is a plain
+    // field written under monitoringFramesMutex_, which the append path holds
+    // anyway: no new lock and no copy on the hot path. ExperimentCoordinator
+    // sets it before the run's accumulation starts and resets it to 0 when
+    // the run stops accumulating (or its start is rolled back).
+    void setMonitoringRunGeneration(uint64_t startGeneration);
+    uint64_t monitoringRunGeneration() const;
+    // Read the ring without copying ProcessedFrames: under the ring's lock,
+    // visit the newest `maxRows` rows (valid rows first, then invalid ones
+    // with the remaining budget when `includeInvalid`), oldest -> newest
+    // within each ring. The visitor runs under the lock the processing thread
+    // takes to append, so it must only copy scalars and cv::Mat headers
+    // (refcount shares of the frozen images), never pixels. Returns the ring
+    // counters read under the same lock.
+    struct MonitoringRingView {
+        size_t validHeld{0};
+        size_t invalidHeld{0};
+        uint64_t validAppended{0};
+        uint64_t invalidAppended{0};
+        uint64_t runGeneration{0}; // the tag new rows get now
+    };
+    using MonitoringVisitor = std::function<void(const ProcessedFrame& frame, uint64_t runGeneration, bool valid)>;
+    MonitoringRingView visitMonitoringNewest(size_t maxRows, bool includeInvalid,
+                                             const MonitoringVisitor& visit) const;
     // Test seam: append to the monitoring ring as the realtime path does,
     // without the activity gate or images.
     void appendMonitoringFrameForTests(const ProcessedFrame& frame);
@@ -829,10 +855,11 @@ private:
     class FrameRingBuffer {
     public:
         explicit FrameRingBuffer(size_t capacity = 1000)
-            : capacity_(capacity), data_(capacity) {}
+            : capacity_(capacity), data_(capacity), gens_(capacity, 0) {}
 
         void clear() {
             for (auto& f : data_) f = ProcessedFrame{}; // release retained images
+            std::fill(gens_.begin(), gens_.end(), 0);
             size_ = 0;
             head_ = 0;
             bytes_ = 0;
@@ -845,13 +872,16 @@ private:
         uint64_t peakBytes() const { return peakBytes_; }
         uint64_t replaced() const { return replaced_; }
 
-        void push_back(ProcessedFrame&& frame) {
+        // `runGeneration`: the slot's run tag (#716 A6a); an 8-byte store in
+        // the preallocated parallel array, under the caller's lock.
+        void push_back(ProcessedFrame&& frame, uint64_t runGeneration = 0) {
             const uint64_t incoming = processedFrameBytes(frame);
             if (size_ == capacity_) {
                 bytes_ -= std::min(bytes_, processedFrameBytes(data_[head_]));
                 ++replaced_;
             }
             data_[head_] = std::move(frame);
+            gens_[head_] = runGeneration;
             bytes_ += incoming;
             if (bytes_ > peakBytes_) peakBytes_ = bytes_;
             head_ = (head_ + 1) % capacity_;
@@ -869,6 +899,17 @@ private:
             }
         }
 
+        // Visit the newest `count` entries, oldest -> newest, with their run tags.
+        template <class F>
+        void forEachNewest(size_t count, F&& visit) const {
+            const size_t n = std::min(count, size_);
+            const size_t start = (head_ + capacity_ - n) % capacity_;
+            for (size_t i = 0; i < n; ++i) {
+                const size_t at = (start + i) % capacity_;
+                visit(data_[at], gens_[at]);
+            }
+        }
+
         // Copy out as oldest -> newest
         std::vector<ProcessedFrame> toVector() const {
             std::vector<ProcessedFrame> out;
@@ -883,6 +924,7 @@ private:
     private:
         size_t capacity_{0};
         std::vector<ProcessedFrame> data_;
+        std::vector<uint64_t> gens_; // run tag per slot, parallel to data_
         size_t size_{0};
         size_t head_{0}; // next write position
         uint64_t bytes_{0};
@@ -894,6 +936,7 @@ private:
     FrameRingBuffer monitoringInvalidFrames_{1000};
     static constexpr size_t MAX_MONITORING_FRAMES = 1000; // Keep last 1000 frames for monitoring
     std::atomic<bool> monitoringActive_{false}; // gating: no clones when no consumer is active
+    uint64_t monitoringRunGeneration_{0}; // under monitoringFramesMutex_ (#716 A6a)
     // Totals appended to the monitoring ring buffers since start/clear (BE-5)
     std::atomic<uint64_t> monitoringValidAppended_{0};
     std::atomic<uint64_t> monitoringInvalidAppended_{0};
