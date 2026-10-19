@@ -141,8 +141,13 @@ The refusal is the job's own message on its own lane ("An export is already
 active", "Reanalysis already active" for the JSON jobs) and "Another review
 job is still running" otherwise. Neither host lock is held while ReviewJobs
 calls the host or the sink, so either may call back in (a start, a cancel, a
-status read); a worker started from inside its own lane's terminal event is
-detached instead of joined. `shutdown()` waits for a job still being
+status read, even `shutdown()`). A worker is never joined by itself: one whose
+own event starts its lane again or calls `shutdown()` is detached, and it
+holds a reference to the runner state (`impl_` is a `shared_ptr`; job bodies
+reach the runner only through it), so the sink it is executing, its lane and
+the mutex stay alive until it ends even if the ReviewJobs object is destroyed
+meanwhile (#742 review). The host's own objects (session, kernel, the
+callback's targets) are the host's to keep. `shutdown()` waits for a job still being
 started, sets every lane's flag and joins both lanes; starts stay possible
 afterwards (as before). A worker that cannot be created gets its one Failed
 terminal and frees the lane (before S7 the lane stayed busy).
@@ -220,8 +225,11 @@ Guard: `review.jobs` (`tests/review/review_jobs_test.cpp`);
 both presets through job bodies supplied by `ReviewJobsTestAccess`, lanes ×
 cancel × shutdown with handshakes, racing starts, a cancel racing a job's
 end, 200 mixed cycles per policy, one terminal per operation, the release
-order and a start from inside the terminal event; the facade's side by
-`backend.facade_review_jobs`.
+order, a start from inside the terminal event, and `shutdown()` from inside
+it with ReviewJobs destroyed before the callback returns; lane release is
+waited for with `ReviewJobsTestAccess::waitIdle` (the release's own
+condition). The facade's side by `backend.facade_review_jobs`
+(`BackendFacadeTestAccess::reviewJobs` reaches its lanes).
 
 ## Charts JSON and saved overlay (`ReviewCharts.h`, #512 S4)
 

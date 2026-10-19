@@ -17,6 +17,10 @@ from the facade; `reviewJobThreads_` (pump scans and stage waiters, never a
 review job) is now `operationWorkers_`. Events, status strings, refusals and
 cancel / shutdown behaviour are byte-identical for both hosts (the pre-S7
 facade code is the oracle in `backend.facade_review_jobs`; a temporary
-characterization of both hosts was identical). New tests
-`backend.facade_review_jobs`, `review.jobs_lanes`. No bridge or review
-contract change. See [[ReviewSession]], [[Threading-Model]], [[Rust-Bridge]].
+characterization of both hosts was identical). A worker never joins itself:
+one whose own event starts its lane again or calls `shutdown()` is detached
+and keeps the runner state it uses alive (shared with the workers) until it
+ends, also if ReviewJobs is destroyed meanwhile (#742 review). New tests
+`backend.facade_review_jobs`, `review.jobs_lanes` (they wait for the lanes'
+own release, `ReviewJobsTestAccess::waitIdle`, never a sleep). No bridge or
+review contract change. See [[ReviewSession]], [[Threading-Model]], [[Rust-Bridge]].

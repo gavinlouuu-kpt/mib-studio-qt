@@ -626,6 +626,25 @@ the coordinator (ADR 0004/0011).
   and `tests/review_bridge.rs` (2, also with `--features review-only`) pass
   with `MIB_BRIDGE_NO_CMAKE=1`. The TSan lane is CI's (`sanitizers.yml`; the
   new tests carry the `backend` label).
+- **Review (#742, 2026-10-19):** (P2) a shutdown from inside a job's own
+  event detached that worker, and if the owner then destroyed ReviewJobs while
+  the callback still ran, the worker released its lane in freed memory and the
+  sink it was executing was destroyed under it. The runner state is now shared
+  with the lane workers (`impl_` is a `shared_ptr`, each worker holds a
+  reference; job bodies reach the runner only through it, never through the
+  ReviewJobs object), so it outlives the object until the worker ends; never a
+  self-join. `review.jobs_lanes` calls `shutdown()` inside the terminal event
+  and destroys ReviewJobs before the callback returns, for both presets: the
+  sink must still be alive when the callback resumes and be released once the
+  worker ends (with the worker not holding the runner it fails and crashes).
+  (P3) the new tests took "no active operation plus a sleep" as both lanes
+  free, but `finishOperation` removes the operation before the terminal event
+  and the lane is freed only after it returns. `ReviewJobsTestAccess::waitIdle`
+  waits on the lane release itself (`BackendFacadeTestAccess::reviewJobs`
+  reaches the facade's lanes; the oracle joins its worker); no sleep stands in
+  for synchronisation (job bodies poll their cancel flag, which has no
+  condition variable). The characterization was rerun on the fixed code:
+  identical in 3 runs.
 
 ### S8 — YOFO regenerate on the reanalysis engine (in review, #735)
 
