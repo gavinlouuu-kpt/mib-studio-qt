@@ -3,6 +3,7 @@ import {
   baseName,
   batchSummaryText,
   defaultMetricsName,
+  defaultRegenerateName,
   dirName,
   exportDir,
   joinPath,
@@ -49,6 +50,13 @@ describe("default export names (HdfExportService::nextAvailableName)", () => {
   it("goes past the highest suffix in use, like the backend", () => {
     expect(defaultMetricsName("/d/run.h5", ["run_metrics.csv", "run_metrics_7.csv"])).toBe("run_metrics_8.csv");
     expect(nextAvailableName(["run", "run_x"], "run", "run_", "")).toBe("run_2");
+  });
+  it("proposes a free regenerate output: regenerate never replaces a file (#512 S8)", () => {
+    expect(defaultRegenerateName("run", [])).toBe("run_remasked.h5");
+    expect(defaultRegenerateName("run", ["run_metrics.csv", "other_remasked.h5"])).toBe("run_remasked.h5");
+    expect(defaultRegenerateName("run", ["run_remasked.h5"])).toBe("run_remasked_2.h5");
+    expect(defaultRegenerateName("run", ["run_remasked.h5", "run_remasked_2.h5"])).toBe("run_remasked_3.h5");
+    expect(defaultRegenerateName("run", ["run_remasked.h5", "run_remasked_4.h5"])).toBe("run_remasked_5.h5");
   });
 });
 
