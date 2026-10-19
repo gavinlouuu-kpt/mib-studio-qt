@@ -9,6 +9,7 @@
 #include <cerrno>
 #include <condition_variable>
 #include <deque>
+#include <iterator>
 #include <set>
 #include <sstream>
 
