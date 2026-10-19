@@ -480,6 +480,13 @@ set_tests_properties(backend.processing_config_transaction PROPERTIES LABELS "ba
 mib_add_backend_test_executable(backend_facade_boundary_test backend/backend_facade_boundary_test.cpp)
 add_test(NAME backend.facade_boundary COMMAND $<TARGET_FILE:mib_backend_tests> backend_facade_boundary_test)
 set_tests_properties(backend.facade_boundary PROPERTIES LABELS "backend;bridge")
+# The facade owns the ReviewSession (#512 S5): its review surface equals the
+# pre-slice facade code (kept as the oracle), the writer's handle is untouched
+# by load / close, and a review file fails storage.hdf5 like a file in the
+# shared handle (decision D1 (a)).
+mib_add_backend_test_executable(facade_review_session_test backend/facade_review_session_test.cpp)
+add_test(NAME backend.facade_review_session COMMAND $<TARGET_FILE:mib_backend_tests> facade_review_session_test)
+set_tests_properties(backend.facade_review_session PROPERTIES LABELS "backend;bridge;review;recording;hdf5;safety" TIMEOUT 120)
 
 # BE-4 (#274): backend-owned experiment lifecycle state machine — pipeline e2e
 # over the facade command surface plus fault-injection (fatal save error,

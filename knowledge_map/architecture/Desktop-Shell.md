@@ -574,6 +574,11 @@ Review Close File now calls the shared facade rather than a disabled placeholder
 The facade rejects active recording/experiment and clears cached source identity;
 the shell clears review pixels/metrics only after successful closure. Startup
 selection completion refreshes the camera selection in the main shell.
+Since #512 S5 the facade's loaded review file is its own `ReviewSession`
+([[../services/ReviewSession]]), not the experiment writer's handle; the
+Review tab's commands and shapes are unchanged, and a loaded file still keeps
+Start Experiment and Record refused (readiness `storage.hdf5`, same text,
+decision D1 (a)) until Close File, as before.
 
 ### Finite background calibration
 

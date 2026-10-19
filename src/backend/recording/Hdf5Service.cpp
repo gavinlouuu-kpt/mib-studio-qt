@@ -82,6 +82,10 @@ namespace backend::services
         std::chrono::steady_clock::time_point lastIntervalFlush_{};
         std::chrono::milliseconds flushInterval_{5000};
 
+        // Test-only fault hooks (Hdf5ServiceTestAccess).
+        std::function<void()> afterOpenForTest_;
+        std::function<void()> afterCloseForTest_;
+
         ~Impl()
         {
             if (fileId_ != H5I_INVALID_HID)
@@ -406,17 +410,27 @@ namespace backend::services
 
     void Hdf5Service::closeFile()
     {
-        if (impl_->fileId_ != H5I_INVALID_HID && impl_->isOpen_)
+        // Any handle held is closed, also one whose open did not complete
+        // (isOpen_ still false; #512 S5 review). Diagnostics run in try blocks:
+        // a throwing log or allocation must never leave the file half-closed.
+        if (impl_->fileId_ < 0)
         {
-            bool flushOk = true;
-            if (impl_->writable_)
+            impl_->fileId_ = H5I_INVALID_HID;
+            impl_->isOpen_ = false;
+            impl_->writable_ = false;
+            return;
+        }
+        bool flushOk = true;
+        if (impl_->writable_ && impl_->isOpen_)
+        {
+            const auto flushStart = std::chrono::steady_clock::now();
+            const herr_t flushStatus = H5Fflush(impl_->fileId_, H5F_SCOPE_GLOBAL);
+            const double flushMs = std::chrono::duration<double, std::milli>(
+                                       std::chrono::steady_clock::now() - flushStart)
+                                       .count();
+            flushOk = flushStatus >= 0;
+            try
             {
-                const auto flushStart = std::chrono::steady_clock::now();
-                const herr_t flushStatus = H5Fflush(impl_->fileId_, H5F_SCOPE_GLOBAL);
-                const double flushMs = std::chrono::duration<double, std::milli>(
-                                           std::chrono::steady_clock::now() - flushStart)
-                                           .count();
-                flushOk = flushStatus >= 0;
                 if (flushOk)
                 {
                     SPDLOG_INFO("HDF5 final flush completed: {} ({:.3f} ms)",
@@ -428,22 +442,45 @@ namespace backend::services
                                  impl_->filePath_, flushMs);
                 }
             }
+            catch (...)
+            {
+            }
+        }
 
-            const auto openObjects = H5Fget_obj_count(impl_->fileId_, H5F_OBJ_ALL);
+        const auto openObjects = H5Fget_obj_count(impl_->fileId_, H5F_OBJ_ALL);
+        try
+        {
             if (openObjects > 1)
             {
                 SPDLOG_WARN("HDF5 file {} has {} open objects before close; strong close will finalize them",
                             impl_->filePath_, static_cast<long long>(openObjects));
             }
+        }
+        catch (...)
+        {
+        }
 
-            // stop-lag diagnostic: H5Fclose implicitly flushes dirty buffers,
-            // which on large multi-image payloads can dominate the shutdown
-            // time. Time it explicitly so it shows up in the log.
-            const auto t0 = std::chrono::steady_clock::now();
-            herr_t status = H5Fclose(impl_->fileId_);
-            const double ms = std::chrono::duration<double, std::milli>(
-                                  std::chrono::steady_clock::now() - t0)
-                                  .count();
+        // stop-lag diagnostic: H5Fclose implicitly flushes dirty buffers,
+        // which on large multi-image payloads can dominate the shutdown
+        // time. Time it explicitly so it shows up in the log.
+        const auto t0 = std::chrono::steady_clock::now();
+        const herr_t status = H5Fclose(impl_->fileId_);
+        const double ms = std::chrono::duration<double, std::milli>(
+                              std::chrono::steady_clock::now() - t0)
+                              .count();
+        // The handle is gone: clear it and the open state before anything
+        // that can throw.
+        impl_->fileId_ = H5I_INVALID_HID;
+        impl_->isOpen_ = false;
+        impl_->writable_ = false;
+        try
+        {
+            {
+                auto& m = backend::diagnostics::CrashStateMirror::instance();
+                m.hdf5.fileOpen.store(false);
+                m.clearHdf5Path();
+            }
+            if (impl_->afterCloseForTest_) impl_->afterCloseForTest_();
             if (status < 0)
             {
                 SPDLOG_ERROR("Error closing HDF5 file (after {:.3f} ms)", ms);
@@ -453,21 +490,14 @@ namespace backend::services
                 SPDLOG_INFO("HDF5 file closed: {} (H5Fclose took {:.3f} ms)",
                             impl_->filePath_, ms);
             }
-            {
-                std::ostringstream data;
-                data << "{\"status\":" << status
-                     << ",\"final_flush_ok\":" << (flushOk ? "true" : "false")
-                     << ",\"open_objects_before_close\":" << openObjects << "}";
-                tracePerformance("hdf5.close_file", "hdf5.close", ms, data.str());
-            }
-            impl_->fileId_ = H5I_INVALID_HID;
-            impl_->isOpen_ = false;
-            impl_->writable_ = false;
-            {
-                auto& m = backend::diagnostics::CrashStateMirror::instance();
-                m.hdf5.fileOpen.store(false);
-                m.clearHdf5Path();
-            }
+            std::ostringstream data;
+            data << "{\"status\":" << status
+                 << ",\"final_flush_ok\":" << (flushOk ? "true" : "false")
+                 << ",\"open_objects_before_close\":" << openObjects << "}";
+            tracePerformance("hdf5.close_file", "hdf5.close", ms, data.str());
+        }
+        catch (...)
+        {
         }
     }
 
@@ -504,6 +534,21 @@ namespace backend::services
     bool Hdf5Service::isFileOpen() const
     {
         return impl_->isOpen_ && impl_->fileId_ != H5I_INVALID_HID;
+    }
+
+    bool Hdf5Service::holdsFileHandle() const
+    {
+        return impl_->fileId_ >= 0 || impl_->isOpen_;
+    }
+
+    void Hdf5ServiceTestAccess::setAfterOpenHook(Hdf5Service &service, std::function<void()> hook)
+    {
+        service.impl_->afterOpenForTest_ = std::move(hook);
+    }
+
+    void Hdf5ServiceTestAccess::setAfterCloseHook(Hdf5Service &service, std::function<void()> hook)
+    {
+        service.impl_->afterCloseForTest_ = std::move(hook);
     }
 
     static bool writeImageDataset(hid_t fileId, const std::string &datasetPath,
@@ -2079,11 +2124,25 @@ namespace backend::services
         closePropertyList(fileAccessId);
         if (impl_->fileId_ < 0)
         {
+            impl_->fileId_ = H5I_INVALID_HID;
             SPDLOG_ERROR("Failed to open HDF5 file for reading: {}", filePath);
             return false;
         }
 
-        impl_->filePath_ = filePath;
+        // A throw between H5Fopen and the open state (the path copy) must not
+        // leak the handle (#512 S5 review): release it and rethrow.
+        try
+        {
+            if (impl_->afterOpenForTest_) impl_->afterOpenForTest_();
+            impl_->filePath_ = filePath;
+        }
+        catch (...)
+        {
+            H5Fclose(impl_->fileId_);
+            impl_->fileId_ = H5I_INVALID_HID;
+            impl_->isOpen_ = false;
+            throw;
+        }
         impl_->isOpen_ = true;
         impl_->writable_ = false;
         SPDLOG_INFO("HDF5 file opened for reading: {}", filePath);

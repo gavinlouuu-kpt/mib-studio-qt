@@ -23,6 +23,7 @@
 #include "backend/camera/mock/MockCamera.h"
 #include "backend/processing/ProcessingConfigJson.h"
 #include "backend/review/ExportEngine.h"
+#include "backend/review/ReviewSession.h"
 
 #include <nlohmann/json.hpp>
 
@@ -184,7 +185,7 @@ namespace backend::bridge
     } // namespace
 
     BackendFacade::BackendFacade(AppBackend &backend)
-        : backend_(backend)
+        : backend_(backend), review_(std::make_shared<review::ReviewSession>())
     {
     }
 
@@ -198,6 +199,13 @@ namespace backend::bridge
         // initialized facade installed it (the coordinator exists only after
         // AppBackend::initialize); shutdown() already cleared it.
         if (initialized_) backend_.experiment().setStatusCallback({});
+        // A review file left open without shutdown(): close it and lift the
+        // D1 refusal it holds on AppBackend (#512 S5).
+        if (review_->isOpen())
+        {
+            review_->close();
+            backend_.setReviewSourceOpen(false);
+        }
     }
 
     bool BackendFacade::initialize(const std::string &dataDir, const std::string &resourceRoot)
@@ -320,10 +328,11 @@ namespace backend::bridge
         backend_.capture().stop();
         backend_.processing().stopRealtime();
         backend_.processing().stop();
-        if (backend_.hdf5().isFileOpen())
-        {
-            backend_.hdf5().closeFile();
-        }
+        // The review source (#512 S5): its own reader, closed after the jobs
+        // above were joined; the shared hdf5() handle belongs to its writers,
+        // which closed it when they stopped.
+        review_->close();
+        backend_.setReviewSourceOpen(false);
         initialized_ = false;
 
         emitEvent(RecordingStatusEvent{
@@ -1020,6 +1029,32 @@ namespace backend::bridge
         return result;
     }
 
+    namespace
+    {
+        // D1 (a), #512 S5: on every exit of the idle transaction that opens
+        // or closes the review session, including an exception, AppBackend's
+        // flag is set to what the session reports, so Start and raw recording
+        // never see an open review reader as closed once the coordinator
+        // mutex is released.
+        struct ReviewSourceFlagSync
+        {
+            AppBackend &backend;
+            const review::ReviewSession &session;
+            ~ReviewSourceFlagSync()
+            {
+                bool open = true; // if the session cannot even be asked, stay refused
+                try
+                {
+                    open = session.isOpen();
+                }
+                catch (...)
+                {
+                }
+                backend.setReviewSourceOpen(open);
+            }
+        };
+    } // namespace
+
     BackendCommandResult BackendFacade::handleRecordingLoadCommand(const RecordingLoadCommand &command)
     {
         BackendCommandResult result{false, BackendCommandType::RecordingLoad, "Experiment must be idle before loading review data"};
@@ -1033,20 +1068,15 @@ namespace backend::bridge
         const std::uint64_t operationId =
             beginOperation(BackendOperationKind::RecordingLoad, nullptr, command.filePath);
 
-        auto &hdf5 = backend_.hdf5();
-        // Clear identities before replacing the handle, including a failed open.
-        {
-            std::scoped_lock lock(reviewMutex_);
-            loadedRecordingPath_.clear(); reviewMetricsLoaded_ = false;
-            reviewValidMeta_.clear(); reviewInvalidMeta_.clear();
-        }
-        // Loading replaces the currently reviewed file (Qt parity: selecting
-        // a new HDF file closes the previous one).
-        if (hdf5.isFileOpen())
-        {
-            hdf5.closeFile();
-        }
-        if (!hdf5.loadFile(command.filePath))
+        // The session's own reader (#512 S5), never the experiment writer's
+        // handle. Opening replaces the currently reviewed file (Qt parity:
+        // selecting a new HDF file closes the previous one), also when the
+        // open fails; open() is all or nothing. Inside the idle transaction,
+        // and the guard sets the D1 flag from isOpen() on every exit, so Start
+        // and raw recording see the flag and the open file together.
+        const ReviewSourceFlagSync flagSync{backend_, *review_};
+        const bool opened = review_->open(command.filePath);
+        if (!opened)
         {
             emitEvent(RecordingStatusEvent{
                 RecordingState::Error,
@@ -1070,50 +1100,25 @@ namespace backend::bridge
 
         if (command.readMetadata)
         {
-            event.recordingFile = hdf5.isRecordingFile();
+            // What the session read at open: the recording info's totals
+            // (zero when absent) and the metadata row counts (zero when a set
+            // cannot be read), as the shared handle's reads gave them.
+            const auto meta = review_->metadata();
+            event.recordingFile = meta.recordingFile;
             if (event.recordingFile)
             {
-                std::uint64_t startTimeNs = 0;
-                std::uint64_t endTimeNs = 0;
-                std::uint64_t totalFrames = 0;
-                std::uint64_t filteredFrames = 0;
-                if (hdf5.readRecordingInfo(startTimeNs, endTimeNs, totalFrames, filteredFrames))
-                {
-                    event.framesWritten = totalFrames;
-                    event.framesFiltered = filteredFrames;
-                }
-
-                std::vector<services::ProcessedFrame> frames;
-                if (hdf5.readRecordingMetadata(frames))
-                {
-                    event.loadedValidFrames = frames.size();
-                }
+                event.framesWritten = meta.totalValid;
+                event.framesFiltered = meta.filteredFrames;
+                event.loadedValidFrames = review_->frameCount(true);
             }
             else
             {
-                std::vector<services::ProcessedFrame> validFrames;
-                std::vector<services::ProcessedFrame> invalidFrames;
-                if (hdf5.readValidMetadata(validFrames))
-                {
-                    event.loadedValidFrames = validFrames.size();
-                }
-                if (hdf5.readInvalidMetadata(invalidFrames))
-                {
-                    event.loadedInvalidFrames = invalidFrames.size();
-                }
+                event.loadedValidFrames = review_->frameCount(true);
+                event.loadedInvalidFrames = review_->frameCount(false);
             }
         }
 
         emitEvent(event);
-        {
-            // Remember the loaded path for review jobs and invalidate the
-            // paged-metrics cache (BE-6).
-            std::scoped_lock lock(reviewMutex_);
-            loadedRecordingPath_ = command.filePath;
-            reviewMetricsLoaded_ = false;
-            reviewValidMeta_.clear();
-            reviewInvalidMeta_.clear();
-        }
         finishOperation(operationId, BackendOperationState::Completed, command.filePath);
         return {true, BackendCommandType::RecordingLoad, "Recording loaded", operationId};
             }();
@@ -1386,22 +1391,26 @@ namespace backend::bridge
 
     namespace
     {
-        const char *reviewDatasetPath(ReviewImageDataset dataset)
+        // Both enums carry the bridge contract's `review_image_datasets`.
+        static_assert(static_cast<int>(ReviewImageDataset::ValidImage) == static_cast<int>(review::ReviewDataset::ValidImage) &&
+                          static_cast<int>(ReviewImageDataset::InvalidImage) == static_cast<int>(review::ReviewDataset::InvalidImage) &&
+                          static_cast<int>(ReviewImageDataset::RecordedImage) == static_cast<int>(review::ReviewDataset::RecordedImage) &&
+                          static_cast<int>(ReviewImageDataset::ValidMask) == static_cast<int>(review::ReviewDataset::ValidMask) &&
+                          static_cast<int>(ReviewImageDataset::InvalidMask) == static_cast<int>(review::ReviewDataset::InvalidMask),
+                      "ReviewImageDataset and review::ReviewDataset must keep the contract values");
+
+        bool reviewDatasetKnown(ReviewImageDataset dataset)
         {
             switch (dataset)
             {
             case ReviewImageDataset::ValidImage:
-                return "/valid_frames/images";
             case ReviewImageDataset::InvalidImage:
-                return "/invalid_frames/images";
             case ReviewImageDataset::RecordedImage:
-                return "/recorded_frames/images";
             case ReviewImageDataset::ValidMask:
-                return "/valid_frames/masks";
             case ReviewImageDataset::InvalidMask:
-                return "/invalid_frames/masks";
+                return true;
             }
-            return nullptr;
+            return false;
         }
 
         MonitoringObjectRow metricsRowFromFrame(const services::ProcessedFrame &frame)
@@ -1433,61 +1442,42 @@ namespace backend::bridge
         {
             return false;
         }
-        auto &hdf5 = backend_.hdf5();
+        // Filled field for field from the session's metadata (read once at
+        // open with the same Hdf5Service calls the shared handle used to
+        // answer; recording files carry no ROI and no invalid count). Only a
+        // file loaded for review is reported: the writer's handle is never
+        // inspected.
+        const auto meta = review_->metadata();
         out = BackendReviewMetadata{};
-        out.fileOpen = hdf5.isFileOpen();
-        if (!out.fileOpen)
+        if (!meta.fileOpen)
         {
             return true;
         }
-        {
-            std::scoped_lock lock(reviewMutex_);
-            out.filePath = loadedRecordingPath_;
-        }
-        // The shared HDF handle may belong to a live writer, not a review source.
-        // Only loadRecording publishes this path; do not inspect writer datasets.
-        if (out.filePath.empty()) { out.fileOpen = false; return true; }
-        out.recordingFile = hdf5.isRecordingFile();
-
-        if (out.recordingFile)
-        {
-            std::uint64_t total = 0;
-            std::uint64_t filtered = 0;
-            hdf5.readRecordingInfo(out.startTimeNs, out.endTimeNs, total, filtered);
-            out.totalValid = total;
-        }
-        else
-        {
-            std::size_t totalValid = 0;
-            std::size_t totalInvalid = 0;
-            hdf5.readExperimentInfo(out.startTimeNs, out.endTimeNs, totalValid, totalInvalid, &out.roi);
-            out.totalValid = totalValid;
-            out.totalInvalid = totalInvalid;
-        }
-
-        backend::processing::ProcessingCoreIdentity identity;
-        if (hdf5.readProcessingCoreIdentity(identity))
-        {
-            out.hasCoreIdentity = true;
-            out.coreVersion = identity.version;
-            out.coreSource = identity.source;
-            out.coreReleaseTag = identity.releaseTag;
-        }
-        {
-            cv::Mat bg;
-            out.hasBackground = hdf5.readBackgroundImage(bg) && !bg.empty();
-        }
-
-        auto fillInfo = [&hdf5](const char *path, BackendReviewDatasetInfo &info) {
-            std::size_t count = 0;
-            info.present = hdf5.getDatasetInfo(path, count, info.height, info.width, info.channels);
-            info.count = count;
+        out.fileOpen = true;
+        out.filePath = meta.filePath;
+        out.recordingFile = meta.recordingFile;
+        out.startTimeNs = meta.startTimeNs;
+        out.endTimeNs = meta.endTimeNs;
+        out.totalValid = meta.totalValid;
+        out.totalInvalid = meta.totalInvalid;
+        out.roi = meta.roi;
+        out.hasCoreIdentity = meta.hasCoreIdentity;
+        out.coreVersion = meta.coreVersion;
+        out.coreSource = meta.coreSource;
+        out.coreReleaseTag = meta.coreReleaseTag;
+        out.hasBackground = meta.hasBackground;
+        auto fillInfo = [](const review::DatasetInfo &from, BackendReviewDatasetInfo &info) {
+            info.present = from.present;
+            info.count = from.count;
+            info.height = from.height;
+            info.width = from.width;
+            info.channels = from.channels;
         };
-        fillInfo("/valid_frames/images", out.validImages);
-        fillInfo("/invalid_frames/images", out.invalidImages);
-        fillInfo("/valid_frames/masks", out.validMasks);
-        fillInfo("/invalid_frames/masks", out.invalidMasks);
-        fillInfo("/recorded_frames/images", out.recordedImages);
+        fillInfo(meta.validImages, out.validImages);
+        fillInfo(meta.invalidImages, out.invalidImages);
+        fillInfo(meta.validMasks, out.validMasks);
+        fillInfo(meta.invalidMasks, out.invalidMasks);
+        fillInfo(meta.recordedImages, out.recordedImages);
         return true;
     }
 
@@ -1497,43 +1487,24 @@ namespace backend::bridge
                                                std::vector<MonitoringObjectRow> &rows,
                                                std::uint64_t &totalOut) const
     {
-        if (!initialized_ || !backend_.hdf5().isFileOpen())
+        if (!initialized_)
         {
             return false;
         }
-
-        std::scoped_lock lock(reviewMutex_);
-        if (!reviewMetricsLoaded_)
+        // One metadata-only read per loaded file (the session's, at open; no
+        // image payloads): pages are served from it with bounded IPC size.
+        std::vector<services::ProcessedFrame> frames;
+        std::uint64_t total = 0;
+        if (!review_->framesPage(valid, offset, count, frames, total))
         {
-            // One metadata-only read per loaded file (no image payloads) —
-            // pages are then served from the cache with bounded IPC size.
-            auto &hdf5 = backend_.hdf5();
-            reviewValidMeta_.clear();
-            reviewInvalidMeta_.clear();
-            if (hdf5.isRecordingFile())
-            {
-                hdf5.readRecordingMetadata(reviewValidMeta_);
-            }
-            else
-            {
-                hdf5.readValidMetadata(reviewValidMeta_);
-                hdf5.readInvalidMetadata(reviewInvalidMeta_);
-            }
-            reviewMetricsLoaded_ = true;
+            return false;
         }
-
-        const auto &source = valid ? reviewValidMeta_ : reviewInvalidMeta_;
-        totalOut = source.size();
+        totalOut = total;
         rows.clear();
-        if (offset >= source.size())
+        rows.reserve(frames.size());
+        for (const auto &frame : frames)
         {
-            return true;
-        }
-        const std::uint64_t end = std::min<std::uint64_t>(source.size(), offset + count);
-        rows.reserve(end - offset);
-        for (std::uint64_t i = offset; i < end; ++i)
-        {
-            rows.push_back(metricsRowFromFrame(source[i]));
+            rows.push_back(metricsRowFromFrame(frame));
         }
         return true;
     }
@@ -1542,28 +1513,15 @@ namespace backend::bridge
                                          std::uint64_t index,
                                          BackendFrame &out) const
     {
-        if (!initialized_ || !backend_.hdf5().isFileOpen())
+        if (!initialized_ || !reviewDatasetKnown(dataset))
         {
             return false;
         }
-        const char *path = reviewDatasetPath(dataset);
-        if (!path)
-        {
-            return false;
-        }
-        cv::Mat image;
-        if (!backend_.hdf5().readImageByIndex(path, index, image) || image.empty())
-        {
-            return false;
-        }
+        // The session's raw read: the stored image, channel 0 when it has more.
         cv::Mat gray;
-        if (image.channels() == 1)
+        if (!review_->readRaw(static_cast<review::ReviewDataset>(dataset), index, gray) || gray.empty())
         {
-            gray = image;
-        }
-        else
-        {
-            cv::extractChannel(image, gray, 0);
+            return false;
         }
         out = BackendFrame{};
         out.frameIndex = index;
@@ -1612,10 +1570,7 @@ namespace backend::bridge
         }
         auto &request = parsed.request;
         auto &sources = parsed.sources;
-        {
-            std::scoped_lock lock(reviewMutex_);
-            request.sourcePath = loadedRecordingPath_;
-        }
+        request.sourcePath = review_->filePath();
         if (sources.empty()) {
             if (request.sourcePath.empty())
                 return {false, BackendCommandType::Review, "No recording loaded to export"};
@@ -3498,23 +3453,16 @@ std::string BackendFacade::fetchRunAccountingJson(const std::string& source) con
         return j.dump();
     }
     if (source == "review") {
-        auto& hdf5 = backend_.hdf5();
-        std::string path;
-        {
-            std::scoped_lock lock(reviewMutex_);
-            path = loadedRecordingPath_;
-        }
-        // Only a file loaded for review counts: the shared handle may belong to a live writer, so with
-        // no review file do not touch it at all (the experiment worker writes its state at finalize).
-        if (path.empty() || !hdf5.isFileOpen()) return none("no file is open for review");
-        recording::RecordingAccountingSnapshot a;
+        // The file loaded for review (the session's reader, #512 S5; its accounting was read at open).
+        const auto meta = review_->metadata();
+        if (!meta.fileOpen || meta.filePath.empty()) return none("no file is open for review");
         nlohmann::json j;
-        const bool recorded = !hdf5.isRecordingFile() && hdf5.readRunAccounting(a);
-        j = recorded ? accountingToJson(a) : nlohmann::json::object();
+        const bool recorded = !meta.recordingFile && meta.hasAccounting;
+        j = recorded ? accountingToJson(meta.accounting) : nlohmann::json::object();
         j["available"] = true;
         j["recorded"] = recorded;  // false: a raw recording or a legacy file without accounting
         j["source"] = source;
-        j["file_path"] = path;
+        j["file_path"] = meta.filePath;
         return j.dump();
     }
     return none("unknown accounting source (review | last_run)");
@@ -3854,10 +3802,10 @@ BackendCommandResult BackendFacade::closeReview() {
     if (!initialized_) return {false, BackendCommandType::RecordingLoad, "Backend is not initialized"};
     backend_.experiment().withIdleConfiguration([&] {
         if (backend_.isFrameRecording()) { result.message = "Stop raw recording before closing review data"; return; }
-        backend_.hdf5().closeFile();
-        std::scoped_lock lock(reviewMutex_);
-        loadedRecordingPath_.clear(); reviewMetricsLoaded_ = false;
-        reviewValidMeta_.clear(); reviewInvalidMeta_.clear();
+        // The session's reader only (#512 S5): the writer's handle is never touched. The guard lifts the
+        // D1 refusal from isOpen() on every exit.
+        const ReviewSourceFlagSync flagSync{backend_, *review_};
+        review_->close();
         result = {true, BackendCommandType::RecordingLoad, "Review file closed"};
     });
     return result;
