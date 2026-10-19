@@ -79,6 +79,22 @@ overlay composed in the backend (Mono8 or RGB8 packets,
 `packetToImageData`). Exports and mask regeneration are backend jobs
 (`ReviewJobs`) — see **Exports and jobs** below.
 
+**Run identity (review ABI 2, #717 B1a).** `info().identity` is the open
+file's `ReviewRunIdentity` (run snapshot v3, #712, and the planned
+annotation): `snapshot_version`, `run_id`, `experiment_id`, `run_index`,
+`sample_ref`, `calibration_record_id`, `operator`, `annotation` (fixed
+members + `free` key/values sorted by key). A member the file does not
+record is `null`, never 0 or ""; a legacy file has `has_snapshot` false and
+every member `null`; `snapshot_unreadable` / `annotation_unreadable` mark an
+attribute that is not a JSON object. `reviewBridge.probeRuns(paths)`
+(`review_probe_runs`) is the experiment library's header-only probe: at most
+`REVIEW_PROBE.max_paths` (256, `reviewContract.ts`) paths per call, one
+`ReviewRunProbe` per path in order (identity, start/end time, counts,
+`accounting_completion`, `core_version`; `ok` false + `message` for a file
+that cannot be read), refused as a whole while a review job runs. The B1a
+PR adds the client only; R1 Open (B1b, on `feat/egrabber-workspace`) is its
+first user. `reviewIpc.golden.json` records the probe call.
+
 ### Transport (#512 S9)
 
 The module reaches the backend, the dialogs and the opener only through

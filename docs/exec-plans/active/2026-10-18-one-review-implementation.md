@@ -187,7 +187,7 @@ safety (#722). No slice waits on a decision; S13 still needs S10–S12.
 
 One PR each, in order. "Contract" names the bridge contract
 (`bridge-contract.json`, ABI 38 on develop) and the review contract
-(`review-contract.json`, `review_abi_version` 1). Every slice keeps
+(`review-contract.json`, `review_abi_version` 1; 2 since B1a, below). Every slice keeps
 `python3 scripts/check_docs.py` and `python3 scripts/gen_bridge_contract.py --check`
 green and lands its vault updates. ABI numbers in the proposals are left to
 the coordinator (ADR 0004/0011).
@@ -208,6 +208,30 @@ the coordinator (ADR 0004/0011).
 | S12 | MIB Studio's options in the review contract | none | **additive, ABI bump** | proposed, not implemented |
 | S13 | B5: MIB Studio's Review stage mounts the module | none | none | planned (B5) |
 | S14 | Close-out | none | none | planned |
+
+### B1a — Run identity in the review contract (track B step B1; not a #512 slice)
+
+R1 Open's backend (#717 B1, #269), on `develop` because it bumps the review
+ABI; review ABI 2 was reserved by the coordinator on #717 (2026-10-19), so
+S12 takes 3 or higher. Additive; the bridge ABI is untouched.
+
+- **Identity:** `ReviewMetadata::runIdentity` / `fetch_review_info.identity`:
+  snapshot version, run id, experiment id, run index, sample ref,
+  calibration record id, operator and the annotation, read from run snapshot
+  v3 (#712) and `/experiment_annotation`. Absent members are absent (`has_*`
+  false over the bridge, `null` in JSON), never 0 or ""; an attribute that is
+  not a JSON object is "unreadable", not legacy.
+- **Probe:** `review_probe_runs(paths)`: header attributes only (identity,
+  times, counts, accounting, core version), at most 256 paths
+  (`review_probe.max_paths`), per-file errors. Serialized with the session's
+  HDF5 access (#722): each file under `ReviewSession`'s mutex, and the whole
+  call under the job lane's start lock with a refusal while a job runs
+  (`ReviewJobs::probeRuns`), because jobs read outside the session's mutex.
+- **Proof:** `review.run_identity` (v3 / legacy / v1 / unreadable / corrupt
+  files, the cap, a probe while a file is open, probe and reads on two
+  threads, the lane gate); `tests/review_bridge.rs` in both feature
+  configurations; the Tauri JSON test; the `reviewIpc` golden gains the probe
+  call. No UI change; B1b uses it on `feat/egrabber-workspace`.
 
 ### S1 — One overlay kernel (merged, #721)
 
@@ -708,7 +732,7 @@ Same ABI bump as S10 if they land together. Exact proposed change:
 
 ### S12 — MIB Studio's options in the review contract (proposed; not implemented)
 
-Needs a reserved `review_abi_version`. Exact proposed change (JSON
+Needs a reserved `review_abi_version` (3 or higher: B1a took 2). Exact proposed change (JSON
 passthrough, reusing the S2 / S3 parsers so the shapes stay those of the
 bridge contract):
 
@@ -804,6 +828,7 @@ bridge contract):
 - [ ] S7 facade jobs on ReviewJobs lanes (D7)
 - [x] 2026-10-19 — S8 YOFO regenerate on the engine (D6; `review.jobs`, `review.reanalysis`, no clobber; the position-pairing fix; #735)
 - [x] 2026-10-19 — S9 transport-neutral review module (`reviewIpc` golden unchanged; import guard; `Transport.upload`; #731).
+- [x] 2026-10-19 — B1a run identity in the review contract (review ABI 2, `review.run_identity`; track B step B1, not a slice).
 - [ ] S10 attachable review bridge (ABI)
 - [ ] S11 review commands in the studio command layer (ABI)
 - [ ] S12 MIB Studio's options in the review contract (review ABI)

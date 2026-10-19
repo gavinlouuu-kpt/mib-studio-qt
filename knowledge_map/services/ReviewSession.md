@@ -31,7 +31,10 @@ deleted in S3; every metrics CSV comes from [[HdfExportService]].
 `tests/review/review_reanalysis_test.cpp` (`review.reanalysis`: the
 reanalysis engine without an `AppBackend`, #512 S2),
 `tests/review/review_export_engine_test.cpp` (`review.export_engine`: the
-export engine without an `AppBackend`, #512 S3)
+export engine without an `AppBackend`, #512 S3),
+`tests/review/review_run_identity_test.cpp` (`review.run_identity`: run
+identity and the identity probe, #717 B1a; labels
+`review;recording;backend;hdf5;concurrency;safety`)
 **Consumers:** `crates/mib-bridge/src/review_shim.cpp` (`ReviewBridge`, [[../architecture/Rust-Bridge]]),
 `BackendFacade` (`review_`, the facade's review source, #512 S5;
 `tests/backend/facade_review_session_test.cpp`, `backend.facade_review_session`),
@@ -70,6 +73,38 @@ the Qt [[../frontend/HdfReviewTab]] (`recordedPixelToMicron`, TD-17)
   factor; `fallbackPixelToMicron()` reads it back); `pixelToMicronFromFile`
   says which applied. The static `recordedPixelToMicron(reader)` is that
   read (0 when absent), shared with the Qt tab and the batch job.
+- `metadata().runIdentity` → `RunIdentity` (#717 B1a, review ABI 2): what
+  the file says about its own run, read at open by the static
+  `readRunIdentity(reader)` from run snapshot v3 (#712, parsed with
+  `recording::parseRunProvenance`) and `/experiment_annotation`
+  (`parseExperimentAnnotation`): `hasSnapshot`, `snapshotVersion` (1 for a
+  snapshot without `schema_version`), `runId`, `declared`
+  (`RunStartIdentity`: `experimentId`, `runIndex`, `sampleRef`,
+  `selectedOperator`, `calibrationRecordId`), `annotation` (fixed members +
+  free key/values sorted by key) and `annotationSchemaVersion`. Absent is
+  `std::nullopt` / `false`, **never** 0 or ""; a legacy file reads every
+  member absent. `snapshotUnreadable` / `annotationUnreadable`: the attribute
+  exists but is not a JSON object, which is not the same as legacy.
+- `probeRuns(paths, out, &error)` (#717 B1a, R1 Open's experiment library):
+  for each path a short-lived reader of its own opens the file, reads only
+  header attributes into a `RunProbe` (the `RunIdentity`, `startTimeNs` /
+  `endTimeNs` with 0 read as not recorded, `totalValid` / `totalInvalid`
+  from `/experiment_info` or `totalValid` from `/recording_info`, the
+  accounting `completion`, the processing `coreVersion`) and closes it: no
+  images, no metadata rows. A missing path ("No such file"), a directory
+  ("Not a file"), an empty path, a non-HDF5 or locked file ("Not an HDF5
+  file, or it cannot be opened …") or a throwing read is a per-file error
+  (`ok` false, every other member absent), never a failure of the call.
+  More than `kReviewProbeMaxPaths` (256, review contract
+  `review_probe.max_paths`) is refused as a whole. **Serialization (#722):**
+  each file is probed under the session's own mutex, the one every read,
+  open and close takes, so its HDF5 calls never interleave with the
+  session's; the open file, its metadata and its pixels are left as they
+  were, also when the probe reads the open file itself (a second read-only
+  handle, as the export jobs open). Jobs read outside that mutex, so the
+  bridge calls `ReviewJobs::probeRuns`, which holds the job lane's start lock
+  for the whole probe (no job starts) and refuses while one runs ("A review
+  job is running; …").
 - `metricsPage(valid, offset, count)` → `MetricRow` with **every**
   FilterResult column the Qt `HdfMetricsModel` shows plus `areaUm2`.
 - `framesPage(valid, offset, count, frames, total)` (#512 S5): the same page
@@ -330,6 +365,11 @@ with a live camera.
 
 Every public call takes one mutex (`Hdf5Service` is not thread-safe).
 Jobs (PR 1b) open their own readers on `filePath()` and never block a read.
+The identity probe (#717 B1a) takes the same mutex per file and, through
+`ReviewJobs::probeRuns`, the job lane's start lock for the whole call (lock
+order: lane, then session; nothing takes them the other way round), so it
+never runs beside a session read or a job. `review.run_identity` probes from
+one thread while another reads frames and rows.
 The facade's session is read on the bridge's calling threads, as the shared
 handle was before S5 (now serialized by this mutex); HDF5 itself is still not
 thread-safe across readers (#722), which is why D1 keeps experiments out.
