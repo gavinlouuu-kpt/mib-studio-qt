@@ -1,5 +1,6 @@
 // Reanalysis engine (#512 slice 2): moved verbatim from
 // src/backend/app/ReviewReanalysis.cpp (BackendFacade); see Reanalysis.h.
+// Slice 8 added the D6 options YOFO Review's regenerate masks runs with.
 #include "backend/review/Reanalysis.h"
 
 #include "backend/processing/BatchMaskSources.h"
@@ -32,6 +33,28 @@
 
 namespace backend::review
 {
+
+    namespace
+    {
+        // YOFO Review's synthetic background (moved from ReviewJobs, #512 S8):
+        // the per-pixel median of the first <= 32 frames, the least-changing
+        // pixels; the upper median for an even count.
+        cv::Mat medianOf32Background(const std::vector<cv::Mat> &images)
+        {
+            const std::size_t n = std::min<std::size_t>(images.size(), 32);
+            std::vector<cv::Mat> stack(images.begin(), images.begin() + static_cast<std::ptrdiff_t>(n));
+            cv::Mat background(images.front().size(), CV_8UC1);
+            std::vector<std::uint8_t> column(n);
+            for (int y = 0; y < background.rows; ++y)
+                for (int x = 0; x < background.cols; ++x)
+                {
+                    for (std::size_t k = 0; k < n; ++k) column[k] = stack[k].at<std::uint8_t>(y, x);
+                    std::nth_element(column.begin(), column.begin() + static_cast<std::ptrdiff_t>(n / 2), column.end());
+                    background.at<std::uint8_t>(y, x) = column[n / 2];
+                }
+            return background;
+        }
+    } // namespace
 
     bool parseReanalysisRequest(const std::string &text, const services::ProcessingConfig &defaults,
                                 ReanalysisRequest &out, std::string &error)
@@ -93,7 +116,7 @@ namespace backend::review
             if (r.dataset != "all" && r.dataset != "/valid_frames/images" && r.dataset != "/invalid_frames/images" &&
                 r.dataset != "/recorded_frames/images")
                 throw std::runtime_error("Unsupported HDF dataset");
-            if (std::filesystem::exists(r.outputPath)) throw std::runtime_error("Output already exists; choose a new file");
+            if (std::filesystem::exists(r.outputPath)) throw std::runtime_error(kReanalysisOutputExists);
         }
         catch (const std::exception &failure)
         {
@@ -121,7 +144,7 @@ namespace backend::review
         std::filesystem::path partial;
         bool published = false;
         std::string error, warning, retained;
-        size_t produced = 0;
+        size_t produced = 0, valid = 0;
         try
         {
             const auto checkCancel = [&] {
@@ -173,15 +196,19 @@ namespace backend::review
                         collect("/valid_frames/images", true);
                         collect("/invalid_frames/images", true);
                     }
-                    const bool hasTime = std::any_of(refs.begin(), refs.end(),
-                                                     [](const auto &ref) { return ref.metadata.timestampNs != 0; });
-                    std::sort(refs.begin(), refs.end(), [hasTime](const auto &a, const auto &b) {
-                        if (hasTime && a.metadata.timestampNs != b.metadata.timestampNs)
-                            return a.metadata.timestampNs < b.metadata.timestampNs;
-                        if (a.metadata.index != b.metadata.index) return a.metadata.index < b.metadata.index;
-                        if (a.dataset != b.dataset) return a.dataset < b.dataset;
-                        return a.row < b.row;
-                    });
+                    // ReanalysisFrameOrder::Datasets keeps the rows as collected.
+                    if (request.frameOrder == ReanalysisFrameOrder::Timestamp)
+                    {
+                        const bool hasTime = std::any_of(refs.begin(), refs.end(),
+                                                         [](const auto &ref) { return ref.metadata.timestampNs != 0; });
+                        std::sort(refs.begin(), refs.end(), [hasTime](const auto &a, const auto &b) {
+                            if (hasTime && a.metadata.timestampNs != b.metadata.timestampNs)
+                                return a.metadata.timestampNs < b.metadata.timestampNs;
+                            if (a.metadata.index != b.metadata.index) return a.metadata.index < b.metadata.index;
+                            if (a.dataset != b.dataset) return a.dataset < b.dataset;
+                            return a.row < b.row;
+                        });
+                    }
                 }
                 else
                     collect(dataset, false);
@@ -246,8 +273,10 @@ namespace backend::review
             if (!background.empty() && background.size() != images.front().size())
                 throw std::runtime_error("Background dimensions do not match the selected source range");
             if (request.syntheticBackground && background.empty())
-                background = services::batch_masks::buildSyntheticBackground(
-                    images, [cancel] { return cancel->load(std::memory_order_acquire); });
+                background = request.syntheticBackgroundKind == ReanalysisSyntheticBackground::MedianOf32
+                                 ? medianOf32Background(images)
+                                 : services::batch_masks::buildSyntheticBackground(
+                                       images, [cancel] { return cancel->load(std::memory_order_acquire); });
             const auto selected = images.size();
             processing::ProcessingCoreIdentity usedCore;
             auto frames = kernel.processBatch(
@@ -260,13 +289,17 @@ namespace backend::review
             checkCancel();
             if (hasOriginalCore && originalCore != usedCore)
                 warning = "Source processing core differs; output records the active processing core.";
+            const bool rebase = request.timestamps == ReanalysisTimestamps::Rebase;
+            const std::uint64_t firstTimestamp = metadata.empty() ? 0 : metadata.front().timestampNs;
             for (auto &frame : frames)
             {
                 const auto local = frame.index;
                 if (local >= selected) throw std::runtime_error("Processing returned an out-of-range source index");
                 const auto &origin = metadata[local];
                 frame.index = origin.index;
-                frame.timestampNs = origin.timestampNs;
+                frame.timestampNs = !rebase                            ? origin.timestampNs
+                                    : origin.timestampNs >= firstTimestamp ? origin.timestampNs - firstTimestamp
+                                                                           : 0;
                 if (frame.validation.trackId >= 0)
                 {
                     if (frame.validation.trackFirstFrame < selected)
@@ -276,6 +309,8 @@ namespace backend::review
                 }
             }
             produced = frames.size();
+            valid = static_cast<std::size_t>(
+                std::count_if(frames.begin(), frames.end(), [](const auto &f) { return f.validation.isValid; }));
             if (frames.empty()) throw std::runtime_error("Reanalysis produced no output frames");
             partial = std::filesystem::path(output).parent_path() /
                       ("." + std::filesystem::path(output).filename().string() + ".partial-" +
@@ -323,6 +358,7 @@ namespace backend::review
         outcome.warning = std::move(warning);
         outcome.retainedPartialPath = std::move(retained);
         outcome.produced = produced;
+        outcome.valid = valid;
         return outcome;
     }
 

@@ -11,7 +11,7 @@
 // parsing and the status JSON follow bridge-contract.json
 // `review_reanalysis_json` exactly; the facade's messages are these.
 //
-// Semantics (unchanged from the facade): sources hdf (dataset "all" in
+// Semantics (the facade's, the defaults): sources hdf (dataset "all" in
 // timestamp order, or one images dataset) / folder / avi with start, count
 // and frame + input-byte budgets; optional ROI, processing-config, background
 // frame or clear-background overrides; quiet-tile synthetic background;
@@ -19,6 +19,13 @@
 // `.<name>.partial-<job>` beside the output and published with a no-replace
 // rename (hard-link fallback), so an existing or concurrently created output
 // is never overwritten and a partial file never looks finished.
+//
+// One engine, two semantics (#512 S8, decision D6): YOFO Review's
+// regenerate-masks job (ReviewJobs) runs here too, with the options below set
+// to its owner-accepted differences of 2026-10-04 (timestamps rebased to the
+// first selected frame, a median-of-32 synthetic background, "all" as valid
+// rows then invalid rows). Request parsing never sets them, so the facade's
+// output is unchanged.
 #pragma once
 
 #include "backend/processing/ProcessingService.h"
@@ -35,6 +42,32 @@ namespace cv { class Mat; }
 
 namespace backend::review
 {
+
+    // Output timestamps: the source's (facade) or minus the first selected
+    // frame's, clamped at 0 (YOFO Review, the Qt BatchMaskDialog's rule).
+    enum class ReanalysisTimestamps
+    {
+        Preserve,
+        Rebase,
+    };
+
+    // The synthetic background built when `syntheticBackground` is set and
+    // no background is in use: the quietest temporal tiles
+    // (batch_masks::buildSyntheticBackground; facade, Qt) or the per-pixel
+    // median of the first <= 32 selected frames (YOFO Review).
+    enum class ReanalysisSyntheticBackground
+    {
+        QuietTile,
+        MedianOf32,
+    };
+
+    // hdf dataset "all": every frame in timestamp order (facade, Qt), or the
+    // dataset rows as stored, valid then invalid (YOFO Review's whole file).
+    enum class ReanalysisFrameOrder
+    {
+        Timestamp,
+        Datasets,
+    };
 
     struct ReanalysisRequest
     {
@@ -55,7 +88,15 @@ namespace backend::review
         std::string backgroundDataset{"/valid_frames/images"};
         bool overrideRoi{false};
         services::ProcessingService::Roi roi{0, 0, 0, 0};
+        // D6 options; not part of the JSON request (the facade keeps the defaults).
+        ReanalysisTimestamps timestamps{ReanalysisTimestamps::Preserve};
+        ReanalysisSyntheticBackground syntheticBackgroundKind{ReanalysisSyntheticBackground::QuietTile};
+        ReanalysisFrameOrder frameOrder{ReanalysisFrameOrder::Timestamp};
     };
+
+    // The refusal for an output path that already exists (the facade's
+    // `review_reanalysis_json` and YOFO Review's regenerate masks).
+    inline constexpr const char *kReanalysisOutputExists = "Output already exists; choose a new file";
 
     // Parses and validates a `review_reanalysis_json` request. `defaults` is
     // the processing config used when the request carries no
@@ -74,6 +115,7 @@ namespace backend::review
         std::string warning;
         std::string retainedPartialPath; // a partial file that could not be removed
         std::size_t produced{0};         // frames the kernel returned
+        std::size_t valid{0};            // of those, the valid ones
     };
 
     using ReanalysisCancelFlag = std::shared_ptr<std::atomic<bool>>;

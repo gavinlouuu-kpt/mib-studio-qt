@@ -1,8 +1,8 @@
 #include "backend/review/ReviewJobs.h"
 #include "backend/review/ExportEngine.h"
+#include "backend/review/Reanalysis.h"
 #include "backend/app/WallClock.h"
 
-#include "backend/processing/BatchMaskSources.h"
 #include "backend/processing/KdeCoreRecord.h"
 #include "backend/processing/MonitoringDensity.h"
 #include "backend/processing/ProcessingService.h"
@@ -18,6 +18,7 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <limits>
 #include <random>
 #include <sstream>
 #include <thread>
@@ -449,115 +450,90 @@ namespace backend::review
             if (error) *error = "Source path is empty";
             return 0;
         }
+        // D6 (#512 S8): the reanalysis engine writes a partial file and
+        // publishes without replacing, so an existing output is refused here
+        // (and a file created while the job runs fails the job, untouched).
+        std::error_code exists;
+        if (fs::exists(fs::path(req.outputPath), exists))
+        {
+            if (error) *error = kReanalysisOutputExists;
+            return 0;
+        }
         const bool recordingFile = impl_->session.isRecordingFile();
         return impl_->start(ReviewJobKind::RegenerateMasks, [this, req, source, recordingFile](std::uint64_t id, auto flag) {
-            using namespace services::batch_masks;
-            std::vector<cv::Mat> images;
-            std::vector<std::string> names;
-            std::vector<std::string> errors;
-            std::vector<std::uint64_t> sourceIndex;
-            std::vector<std::uint64_t> sourceTimestamp;
-            services::ProcessingConfig config = req.config;
-            services::ProcessingService::Roi roi = req.roi;
-            cv::Mat background;
-            bool fromHdf5 = false;
-
+            // YOFO Review's regenerate on the shared reanalysis engine
+            // (backend/review/Reanalysis.h) with its D6 options: timestamps
+            // rebased to the first selected frame, a median-of-32 synthetic
+            // background, the whole file as valid rows then invalid rows.
+            ReanalysisRequest r;
+            r.outputPath = req.outputPath;
+            r.timestamps = ReanalysisTimestamps::Rebase;
+            r.syntheticBackgroundKind = ReanalysisSyntheticBackground::MedianOf32;
+            r.frameOrder = ReanalysisFrameOrder::Datasets;
+            // No budget: the job loads the whole selection, as before.
+            r.maxFrames = std::numeric_limits<std::uint64_t>::max();
+            r.maxInputBytes = std::numeric_limits<std::uint64_t>::max();
+            r.syntheticBackground = req.synthesizeBackground;
+            r.config = req.config;
+            r.roi = req.roi;
             if (req.source == RegenerateSource::Avi || req.source == RegenerateSource::Folder)
             {
-                const bool ok = req.source == RegenerateSource::Avi ? loadFromAvi(req.sourcePath, images, names, errors)
-                                                                    : loadFromFolder(req.sourcePath, images, names, errors);
-                if (!ok || images.empty())
-                    return Outcome{ReviewJobState::Failed, errors.empty() ? "no images loaded from " + req.sourcePath : errors.front()};
+                r.sourceKind = req.source == RegenerateSource::Avi ? "avi" : "folder";
+                r.sourcePath = req.sourcePath;
+                r.overrideRoi = true;
             }
             else
             {
-                fromHdf5 = true;
+                r.sourceKind = "hdf";
+                r.sourcePath = source;
+                if (req.source == RegenerateSource::WholeFile) r.dataset = "all";
+                else if (recordingFile) r.dataset = "/recorded_frames/images";
+                else if (req.source == RegenerateSource::CurrentInvalid) r.dataset = "/invalid_frames/images";
+                else r.dataset = "/valid_frames/images";
+                // The recorded config (the engine reads the recorded ROI and
+                // background itself) and a range clamped to the set.
                 services::Hdf5Service reader;
                 if (!reader.loadFile(source)) return Outcome{ReviewJobState::Failed, "cannot open " + source};
                 if (req.useRecordedConfig)
                 {
                     services::ProcessingConfig recorded;
-                    if (reader.readRecordedProcessingConfig(recorded)) config = recorded;
-                    std::uint64_t t0 = 0, t1 = 0;
-                    std::size_t nv = 0, ni = 0;
-                    if (!recordingFile) reader.readExperimentInfo(t0, t1, nv, ni, &roi);
-                    reader.readBackgroundImage(background);
+                    if (reader.readRecordedProcessingConfig(recorded)) r.config = recorded;
                 }
-                struct Part { const char *path; bool valid; };
-                std::vector<Part> parts;
-                if (recordingFile) parts.push_back({"/recorded_frames/images", true});
-                else if (req.source == RegenerateSource::CurrentInvalid) parts.push_back({"/invalid_frames/images", false});
-                else if (req.source == RegenerateSource::CurrentValid) parts.push_back({"/valid_frames/images", true});
-                else { parts.push_back({"/valid_frames/images", true}); parts.push_back({"/invalid_frames/images", false}); }
-                const bool ranged = req.source != RegenerateSource::WholeFile;
-                for (const auto &part : parts)
+                if (req.source != RegenerateSource::WholeFile)
                 {
-                    std::size_t count = 0;
+                    std::size_t available = 0;
                     int h = 0, w = 0, c = 0;
-                    if (!reader.getDatasetInfo(part.path, count, h, w, c) || count == 0) continue;
-                    std::size_t start = ranged ? static_cast<std::size_t>(std::min<std::uint64_t>(req.startIndex, count)) : 0;
-                    std::size_t n = ranged && req.count > 0 ? static_cast<std::size_t>(std::min<std::uint64_t>(req.count, count - start)) : count - start;
-                    if (n == 0) continue;
-                    std::vector<cv::Mat> gray;
-                    if (!loadFromHdf5(reader, part.path, start, n, gray)) return Outcome{ReviewJobState::Failed, std::string("failed to read ") + part.path};
-                    for (std::size_t k = 0; k < gray.size(); ++k)
-                    {
-                        services::ProcessedFrame meta;
-                        const bool haveMeta = impl_->session.frameMeta(part.valid, start + k, meta);
-                        sourceIndex.push_back(haveMeta ? meta.index : start + k);
-                        sourceTimestamp.push_back(haveMeta ? meta.timestampNs : 0);
-                    }
-                    images.insert(images.end(), gray.begin(), gray.end());
-                    if (flag->load()) return Outcome{ReviewJobState::Cancelled, "cancelled while loading"};
+                    if (!reader.getDatasetInfo(r.dataset, available, h, w, c)) available = 0;
+                    r.start = req.startIndex;
+                    r.count = req.count;
+                    if (req.count > 0 && req.startIndex < available)
+                        r.count = std::min<std::uint64_t>(req.count, available - req.startIndex);
                 }
                 reader.closeFile();
-                if (images.empty()) return Outcome{ReviewJobState::Failed, "no images in the selected range"};
+                // The recorded ROI applies to experiment files only; recording
+                // files and "not recorded" use the request's.
+                r.overrideRoi = !req.useRecordedConfig || recordingFile;
+                r.clearBackground = !req.useRecordedConfig;
             }
-            if (background.empty() && req.synthesizeBackground)
+            const auto onProgress = [&](std::uint64_t done, std::uint64_t total) {
+                if ((done % 25) == 0 || done == total)
+                    impl_->progress(id, ReviewJobKind::RegenerateMasks, done, total, "processing");
+                if (done == total) impl_->progress(id, ReviewJobKind::RegenerateMasks, total, total, "saving");
+            };
+            const auto outcome = runReanalysis(r, *impl_->processing, flag, onProgress);
+            if (!outcome.warning.empty()) spdlog::warn("Regenerate masks {}: {}", req.outputPath, outcome.warning);
+            const std::string kept =
+                outcome.retainedPartialPath.empty() ? "" : "; partial output kept at " + outcome.retainedPartialPath;
+            if (outcome.published)
             {
-                // Median of the first ≤ 32 frames: the least-changing pixels.
-                const std::size_t n = std::min<std::size_t>(images.size(), 32);
-                std::vector<cv::Mat> stack(images.begin(), images.begin() + static_cast<std::ptrdiff_t>(n));
-                background = cv::Mat(images.front().size(), CV_8UC1);
-                std::vector<std::uint8_t> column(n);
-                for (int y = 0; y < background.rows; ++y)
-                    for (int x = 0; x < background.cols; ++x)
-                    {
-                        for (std::size_t k = 0; k < n; ++k) column[k] = stack[k].at<std::uint8_t>(y, x);
-                        std::nth_element(column.begin(), column.begin() + static_cast<std::ptrdiff_t>(n / 2), column.end());
-                        background.at<std::uint8_t>(y, x) = column[n / 2];
-                    }
+                std::ostringstream msg;
+                msg << req.outputPath << " (" << outcome.produced << " images: " << outcome.valid << " valid, "
+                    << (outcome.produced - outcome.valid) << " invalid)";
+                return Outcome{ReviewJobState::Completed, msg.str()};
             }
-            impl_->progress(id, ReviewJobKind::RegenerateMasks, 0, images.size(), "processing");
-            if (flag->load()) return Outcome{ReviewJobState::Cancelled, "cancelled before processing"};
-            backend::processing::ProcessingCoreIdentity identity;
-            const std::size_t total = images.size();
-            auto results = impl_->processing->processBatch(
-                images, config, background, roi,
-                [&](const services::ProcessingService::BatchProgress &p) {
-                    if ((p.done % 25) == 0 || p.done == p.total)
-                        impl_->progress(id, ReviewJobKind::RegenerateMasks, p.done, total, "processing");
-                },
-                &identity);
-            if (flag->load()) return Outcome{ReviewJobState::Cancelled, "cancelled after processing; nothing written"};
-            if (fromHdf5)
-            {
-                const std::uint64_t base = sourceTimestamp.empty() ? 0 : sourceTimestamp.front();
-                for (std::size_t k = 0; k < results.size() && k < sourceIndex.size(); ++k)
-                {
-                    results[k].index = sourceIndex[k];
-                    results[k].timestampNs = sourceTimestamp[k] >= base ? sourceTimestamp[k] - base : 0;
-                }
-            }
-            std::size_t valid = 0;
-            for (const auto &f : results) if (f.validation.isValid) ++valid;
-            impl_->progress(id, ReviewJobKind::RegenerateMasks, total, total, "saving");
-            const bool ok = saveMasksToHdf5(results, req.outputPath, config, roi.x, roi.y, roi.w, roi.h, background,
-                                            fromHdf5, &identity);
-            if (!ok) return Outcome{ReviewJobState::Failed, "HDF5 write failed: " + req.outputPath};
-            std::ostringstream msg;
-            msg << req.outputPath << " (" << results.size() << " images: " << valid << " valid, " << (results.size() - valid) << " invalid)";
-            return Outcome{ReviewJobState::Completed, msg.str()};
+            if (outcome.cancelled)
+                return Outcome{ReviewJobState::Cancelled, kept.empty() ? "nothing written" : kept.substr(2)};
+            return Outcome{ReviewJobState::Failed, outcome.error + kept};
         }, error);
     }
 
