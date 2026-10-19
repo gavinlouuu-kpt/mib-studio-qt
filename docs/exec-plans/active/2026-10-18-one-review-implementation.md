@@ -437,7 +437,16 @@ the coordinator (ADR 0004/0011).
   path, file type, readability and rows with separate locks, so a concurrent
   load could chart one file's rows under another's identity, or let a
   recording past the experiment-only check; they now take one `validSet()`
-  snapshot.
+  snapshot. The re-review found three more, fixed: (7) `Hdf5Service::loadFile`
+  could leak a handle when the path copy after `H5Fopen` threw (the open state
+  still false, so the guard would clear the refusal); it now releases the
+  handle and rethrows, and `ReviewSession::isOpen()` fails closed on any handle
+  the reader holds (`Hdf5Service::holdsFileHandle()`). (8) `closeFile()` built
+  diagnostics after `H5Fclose` but before clearing its state; it now clears
+  the handle and state right after `H5Fclose`, wraps every diagnostic in
+  `try`, and closes any handle held, also one whose open did not complete.
+  (9) The charts stress test could run zero fetches; a handshake now makes
+  the loader wait for the first fetch.
 - **Proof (#733):** `backend.facade_review_session` (new) keeps the pre-slice
   facade code as the oracle: load result, RecordingStatusEvent, operation and
   error events, metadata, 14 pages per file, every dataset × 5 indices,
@@ -462,6 +471,16 @@ the coordinator (ADR 0004/0011).
   while another loads full / legacy / a recording 300 times: every answer is
   one file's whole answer (probabilistic: the separate-lock accessors were caught
   in 2 of 3 runs at 120 loads; the deterministic proof is the `validSet` unit test).
+  The final round adds `recording.hdf5_resilience`
+  (`testHandleNeverLeaksOnThrow`: a throw injected right after `H5Fopen`, and
+  one in `closeFile`'s diagnostics, leave no handle, the library's open-file
+  count back at baseline, `closeFile` not throwing) and `review.session` (the
+  same open-time throw through the session: closed, no handle, the file named;
+  a reader handle held behind the session's back makes `isOpen()` true while
+  nothing is served, and `close()` / the next `open()` release it), with the
+  test hooks `Hdf5ServiceTestAccess` / `ReviewSessionTestAccess`. Mutations
+  (no release in `loadFile`, the close hook before the state is cleared,
+  `isOpen()` without the handle) fail them.
   `backend.experiment_readiness` section 5b: with the
   flag set the gate equals the shared handle's, every other gate is unchanged,
   Start and raw recording are refused with the unchanged messages, and once

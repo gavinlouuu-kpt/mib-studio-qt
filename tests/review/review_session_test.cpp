@@ -16,7 +16,10 @@
 //    read; the valid-set snapshot keeps identity and rows of one file; absent
 //    vs unreadable valid sets;
 //  - open() is all or nothing (#512 S5): a metadata read that throws after
-//    the reader opened (a malformed background) leaves the session closed.
+//    the reader opened (a malformed background), or a throw inside the
+//    reader's own open right after H5Fopen, leaves the session closed with
+//    no handle held; isOpen() fails closed on a reader handle the session
+//    did not open (a host mirroring it keeps writers out).
 // Watchdog guarded.
 
 #include "backend/review/ReviewSession.h"
@@ -37,6 +40,7 @@
 #include <cmath>
 #include <filesystem>
 #include <limits>
+#include <new>
 #include <string>
 #include <vector>
 
@@ -594,6 +598,50 @@ int main()
         MIB_EXPECT(set.open && set.filePath == legacy.string() && set.frames.size() == 10, "snapshot follows the reopen");
     }
     wd.mark("all or nothing");
+
+    // ---- no reader handle outlives a throw; isOpen() fails closed (#512 S5) ----
+    {
+        const auto openFiles = [] { return H5Fget_obj_count(H5F_OBJ_ALL, H5F_OBJ_FILE); };
+        const auto baseline = openFiles();
+        ReviewSession s;
+        auto &reader = backend::review::ReviewSessionTestAccess::reader(s);
+        // A throw inside the reader's open, right after H5Fopen: the reader
+        // releases the handle, the session reports the failure, closed.
+        backend::services::Hdf5ServiceTestAccess::setAfterOpenHook(reader, [] { throw std::bad_alloc(); });
+        std::string err;
+        bool threw = false;
+        bool opened = true;
+        try
+        {
+            opened = s.open(experiment.string(), &err);
+        }
+        catch (...)
+        {
+            threw = true;
+        }
+        MIB_EXPECT(!threw && !opened && !s.isOpen() && !reader.holdsFileHandle(),
+                   "a throw after H5Fopen leaves the session closed with no handle");
+        MIB_EXPECT(err.find("Failed to read " + experiment.string()) == 0, "the error names the file: " + err);
+        MIB_EXPECT(openFiles() == baseline, "no file handle leaked");
+        backend::services::Hdf5ServiceTestAccess::setAfterOpenHook(reader, {});
+
+        // A reader handle the session did not open (its own flag false):
+        // isOpen() fails closed, nothing is served from it, close() and the
+        // next open() release it.
+        MIB_REQUIRE(reader.loadFile(experiment.string()), "a handle behind the session's back");
+        MIB_EXPECT(s.isOpen(), "isOpen() counts a held reader handle");
+        MIB_EXPECT(!s.metadata().fileOpen && !s.validSet().open && s.frameCount(true) == 0,
+                   "nothing is served from a handle the session did not open");
+        s.close();
+        MIB_EXPECT(!s.isOpen() && !reader.holdsFileHandle() && openFiles() == baseline, "close() releases it");
+        MIB_REQUIRE(reader.loadFile(experiment.string()), "a stray handle again");
+        MIB_REQUIRE(s.open(legacy.string()), "open() over a stray handle");
+        MIB_EXPECT(s.isOpen() && s.filePath() == legacy.string() && openFiles() == baseline + 1,
+                   "open() released the stray handle first");
+        s.close();
+        MIB_EXPECT(!s.isOpen() && openFiles() == baseline, "closed");
+    }
+    wd.mark("fail closed");
 
     // ---- overlay compose is a pure function of its inputs ---------------------
     {

@@ -814,8 +814,12 @@ int main()
                         recordingCharts == backend::review::reviewChartsErrorJson("Charts require an experiment HDF file"),
                     "the three answers");
         MIB_REQUIRE(facade.dispatch(RecordingLoadCommand{full.string(), true}).ok, "start from full");
+        // Handshake: the loader starts its loop only after the first fetch, so
+        // at least one fetch runs however the threads are scheduled.
+        std::atomic<bool> go{false};
         std::atomic<bool> done{false};
         std::thread loader([&] {
+            while (!go.load()) std::this_thread::yield();
             for (int i = 0; i < 100; ++i)
                 for (const fs::path *p : {&legacy, &recMulti, &full})
                     facade.dispatch(RecordingLoadCommand{p->string(), true});
@@ -823,15 +827,16 @@ int main()
         });
         int fetched = 0;
         int mixed = 0;
-        while (!done.load())
+        do
         {
             const auto charts = facade.fetchReviewChartsJson();
             ++fetched;
             if (charts != fullCharts && charts != legacyCharts && charts != recordingCharts) ++mixed;
-        }
+            go = true;
+        } while (!done.load());
         loader.join();
         std::fprintf(stderr, "charts interleave: %d fetches, %d mixed\n", fetched, mixed);
-        MIB_EXPECT(fetched > 0 && mixed == 0, "every charts answer belongs to one file");
+        MIB_EXPECT(fetched >= 1 && mixed == 0, "every charts answer belongs to one file");
         events.clear();
     }
     wd.mark("charts interleave");

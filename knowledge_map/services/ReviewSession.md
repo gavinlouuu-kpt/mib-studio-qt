@@ -50,7 +50,16 @@ the Qt [[../frontend/HdfReviewTab]] (`recordedPixelToMicron`, TD-17)
   as an oversized background) closes the reader again and returns false with
   "Failed to read <path>: …"; it never throws for a bad file and never leaves
   a reader open that a host was not told about. The reopen after
-  `saveCoreRecordJson` follows the same rule.
+  `saveCoreRecordJson` follows the same rule. A throw inside the reader's own
+  open right after `H5Fopen` is caught the same way ([[Hdf5Service]] releases
+  the handle). `isOpen()` **fails closed**: it is true while the session has
+  a file open *or* its reader still holds any handle
+  (`Hdf5Service::holdsFileHandle()`), so a handle that somehow outlived a
+  failed open keeps the facade's D1 flag set (Start refused) until `close()`
+  or the next `open()`, which always close the reader first. Nothing is
+  served from such a handle (reads check the session's own state).
+  `ReviewSessionTestAccess::reader(session)` (friend, test only) reaches the
+  reader for fault injection.
 - `metadata()` → `ReviewMetadata`: counts, ROI, dataset infos (five paths),
   core identity, background flag, **series** (`/valid_frames/series_images`
   4D or the recording multi-image window), **run accounting** (#367,

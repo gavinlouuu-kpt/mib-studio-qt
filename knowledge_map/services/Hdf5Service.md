@@ -170,6 +170,29 @@ persist and read the versioned `accounting_*` attributes described in
 debug logging can prove HDF5 handles return to baseline after repeated
 jobs ([[HdfExportService]] stress test). HDF5 ids never leave this class.
 
+## Handles never outlive a throw (#512 S5 review)
+
+- `loadFile()` releases a handle it just opened when anything after
+  `H5Fopen` throws (the path copy, an allocation): `H5Fclose`, the id
+  invalidated, rethrow. A failed `H5Fopen` leaves `H5I_INVALID_HID`.
+- `closeFile()` closes **any** handle held, also one whose open did not
+  complete (`isOpen_` still false). Right after `H5Fclose` it clears the id
+  and the open / writable state, before the crash-mirror update, the logs
+  and the performance trace; those, and the logs before the close, run in
+  `try` blocks, so it never throws and never leaves the file half-closed.
+- `holdsFileHandle()`: true while the service holds a handle at all
+  (`isFileOpen()` is false for an incomplete open). `ReviewSession::isOpen()`
+  reads it to fail closed, which keeps the facade's D1 flag and so experiment
+  Start and raw recording refused ([[ReviewSession]]).
+- `Hdf5ServiceTestAccess` (friend, test only): `setAfterOpenHook` runs right
+  after `H5Fopen` in `loadFile`, `setAfterCloseHook` right after the state is
+  cleared in `closeFile`; either may throw to inject a fault. Guard:
+  `recording.hdf5_resilience` (`testHandleNeverLeaksOnThrow`: the library's
+  open-file count returns to baseline in both cases, the service opens again).
+  `openFile` / `openFileForUpdate` keep their order (a throw after their
+  `H5Fopen` leaves the handle to the next `closeFile()` or the destructor,
+  which now close it).
+
 ## KDE core contour records
 
 `writeKdeLiveJson` / `readKdeLiveJson` (`/monitoring @kde_live_json`) and

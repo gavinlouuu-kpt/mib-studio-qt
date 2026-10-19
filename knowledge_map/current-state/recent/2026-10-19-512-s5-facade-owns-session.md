@@ -13,7 +13,9 @@ stay the facade's, inside the coordinator's idle transaction. `ReviewSession`
 gained `framesPage` (metadata-only `ProcessedFrame`s for the facade's
 `MonitoringObjectRow`) and `validSet` (the charts' path, file type,
 readability and rows in one snapshot), and `open()` became all or nothing (a
-read that throws after the reader opened closes it again). Decision D1 (a):
+read that throws after the reader opened closes it again; `isOpen()` also
+counts any handle the reader still holds, and `Hdf5Service::loadFile` /
+`closeFile` never leave a handle behind on a throw). Decision D1 (a):
 `AppBackend::setReviewSourceOpen`, set by the facade from `isOpen()` on every
 exit of the idle transaction (a scope guard), keeps the experiment readiness gate `storage.hdf5`, Start and
 raw recording refused with byte-identical text while a review file is open
