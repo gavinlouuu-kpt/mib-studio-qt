@@ -71,6 +71,17 @@ public:
     // NotActive when there is no run.
     ExperimentStopOutcome requestStop(bool cancelled);
 
+    // The same, for one named run (#741, bridge ABI 40). With an expected start generation the
+    // check and the stop are one critical section under mutex_ (the lock start() and the
+    // worker's finalization hold), so a stale generation can never stop a newer run: when the
+    // coordinator holds no run (Idle, Failed, Starting) or holds one with another generation
+    // (Active, Stopping, or a failed run still finalizing), the result is RunMismatch, nothing
+    // changes and `refusal` (when given) receives a plain reason. When the generation matches,
+    // the outcome is exactly the one-argument outcome (Accepted, Busy, NotActive). Without one,
+    // this is requestStop(cancelled).
+    ExperimentStopOutcome requestStop(bool cancelled, std::optional<uint64_t> expectedStartGeneration,
+                                      std::string* refusal = nullptr);
+
     // Z stage (#533): Start is refused while the probe says a stage operation is active, so
     // an experiment never starts under a moving stage. The probe runs with the coordinator
     // lock held (lock order: coordinator, then stage), so it must not call back in. Stage

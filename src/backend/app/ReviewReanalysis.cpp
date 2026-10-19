@@ -1,12 +1,15 @@
 // The facade's reanalysis commands (bridge contract `review_reanalysis_json`,
 // `fetch_review_reanalysis_preview`). Parsing, the engine and the status JSON
-// live in mib_review_core (backend/review/Reanalysis.h, #512 slice 2); the
-// facade keeps the policy: the live processing config as the default, one
-// reanalysis at a time, the tracked operation (BackendOperationKind::
-// Reanalysis) and the status snapshot.
+// live in mib_review_core (backend/review/Reanalysis.h, #512 slice 2); the job
+// runs on the review lanes' processing lane (ReviewJobs, #512 S7: one
+// reanalysis at a time, beside an export; the lane holds the status snapshot).
+// The facade keeps the policy: the live processing config as the default and
+// the live processing service as the kernel, the tracked operation
+// (BackendOperationKind::Reanalysis, through the lanes' host hook).
 #include "backend/app/BackendFacade.h"
 #include "backend/app/AppBackend.h"
 #include "backend/review/Reanalysis.h"
+#include "backend/review/ReviewJobs.h"
 #include <opencv2/core.hpp>
 #include <cstring>
 
@@ -22,8 +25,7 @@ bool BackendFacade::fetchReviewReanalysisPreviewJson(const std::string& text,Bac
 }
 
 std::string BackendFacade::fetchReviewReanalysisStatusJson() const {
-    std::scoped_lock lock(reanalysisMutex_);
-    return reanalysisStatusJson_;
+    return reviewJobs_->reanalysisStatusJson();
 }
 
 BackendCommandResult BackendFacade::submitReviewReanalysisJson(const std::string& text) {
@@ -34,37 +36,9 @@ BackendCommandResult BackendFacade::submitReviewReanalysisJson(const std::string
         if(!review::parseReanalysisRequest(text,backend_.processing().getProcessingConfig(),request,error))
             return {false,BackendCommandType::Review,error};
     }
-    {
-        std::scoped_lock lock(reanalysisMutex_);
-        if (reanalysisActive_) return {false,BackendCommandType::Review,"Reanalysis already active"};
-        reanalysisActive_=true;
-    }
-    if (reanalysisThread_.joinable()) reanalysisThread_.join();
-    CancelFlag cancel;
-    const auto id=beginOperation(BackendOperationKind::Reanalysis,&cancel,request.sourcePath);
-    {
-        std::scoped_lock lock(reanalysisMutex_);
-        reanalysisStatusJson_=review::reanalysisLoadingStatusJson(id);
-    }
-    try {
-        reanalysisThread_=std::thread([this,id,cancel,request] {
-            const auto outcome=review::runReanalysis(request,backend_.processing(),cancel,
-                [&](std::uint64_t done,std::uint64_t total) {
-                    {std::scoped_lock lock(reanalysisMutex_);reanalysisStatusJson_=review::reanalysisProgressStatusJson(id,done,total);}
-                    reportOperationProgress(id,done,total);
-                });
-            {
-                std::scoped_lock lock(reanalysisMutex_);
-                reanalysisStatusJson_=review::reanalysisTerminalStatusJson(id,request,outcome);
-            }
-            finishOperation(id,outcome.published?BackendOperationState::Completed:outcome.cancelled?BackendOperationState::Cancelled:BackendOperationState::Failed,outcome.error);
-            std::scoped_lock lock(reanalysisMutex_);reanalysisActive_=false;
-        });
-    } catch(const std::exception& error) {
-        {std::scoped_lock lock(reanalysisMutex_);reanalysisActive_=false;reanalysisStatusJson_=review::reanalysisStartFailedStatusJson(id,error.what());}
-        finishOperation(id,BackendOperationState::Failed,error.what());
-        return {false,BackendCommandType::Review,error.what(),id};
-    }
-    return {true,BackendCommandType::Review,"Reanalysis started",id};
+    const auto started=reviewJobs_->startReanalysisJson(request,backend_.processing());
+    if (started.operationId==0) return {false,BackendCommandType::Review,started.error};
+    if (!started.started) return {false,BackendCommandType::Review,started.error,started.operationId};
+    return {true,BackendCommandType::Review,"Reanalysis started",started.operationId};
 }
 } // namespace backend::bridge

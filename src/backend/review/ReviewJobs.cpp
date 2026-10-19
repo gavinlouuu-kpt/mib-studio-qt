@@ -15,10 +15,14 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
+#include <exception>
 #include <filesystem>
 #include <limits>
+#include <map>
 #include <random>
 #include <sstream>
 #include <thread>
@@ -53,74 +57,380 @@ namespace backend::review
         }
     } // namespace
 
-    struct ReviewJobs::Impl
+    ReviewJobLane laneOf(ReviewJobKind kind)
     {
+        switch (kind)
+        {
+        case ReviewJobKind::ExportMetrics:
+        case ReviewJobKind::ExportAll:
+        case ReviewJobKind::BatchExport:
+        case ReviewJobKind::ExportCharts:
+        case ReviewJobKind::Export:
+            return ReviewJobLane::Export;
+        case ReviewJobKind::RegenerateMasks:
+        case ReviewJobKind::ComputeCore:
+        case ReviewJobKind::Density:
+        case ReviewJobKind::Reanalysis:
+            break;
+        }
+        return ReviewJobLane::Processing;
+    }
+
+    ReviewJobsOptions ReviewJobsOptions::forReviewBridge()
+    {
+        ReviewJobsOptions options;
+        options.concurrentLanes = false; // #722: one job of any kind at a time
+        options.laneRelease = ReviewLaneRelease::BeforeTerminal;
+        return options;
+    }
+
+    ReviewJobsOptions ReviewJobsOptions::forFacade(ReviewJobHost host)
+    {
+        ReviewJobsOptions options;
+        options.concurrentLanes = true; // one export and one reanalysis at once, as before #512
+        options.laneRelease = ReviewLaneRelease::AfterTerminal;
+        options.host = std::move(host);
+        return options;
+    }
+
+    namespace
+    {
+        constexpr const char *kAnotherJobRunning = "Another review job is still running";
+        // The terminal of one of ReviewJobs' own jobs whose start a shutdown()
+        // overtook (the JSON jobs report their engine's cancelled outcome).
+        constexpr const char *kShutDownBeforeStart = "Review jobs shut down before the job started";
+        constexpr const char *kIdleStatus = "{\"state\":\"idle\"}";
+        constexpr std::size_t kLaneCount = 2;
+
+        std::size_t laneIndex(ReviewJobLane lane) { return static_cast<std::size_t>(lane); }
+
+        // The runners this thread is inside: a lane worker of one, or a call
+        // from one into its host or its sink. A shutdown() from inside does
+        // not wait for starts in progress (the callback case, #742 round 3).
+        std::vector<const void *> &insideRunners()
+        {
+            thread_local std::vector<const void *> runners;
+            return runners;
+        }
+        bool isInside(const void *runner)
+        {
+            const auto &runners = insideRunners();
+            return std::find(runners.begin(), runners.end(), runner) != runners.end();
+        }
+        struct Inside
+        {
+            explicit Inside(const void *runner) { insideRunners().push_back(runner); }
+            ~Inside() { insideRunners().pop_back(); }
+            Inside(const Inside &) = delete;
+            Inside &operator=(const Inside &) = delete;
+        };
+
+        // Joins a finished worker; one that is the calling thread (a start or
+        // shutdown from inside its own terminal event) is detached instead.
+        void reap(std::thread &worker)
+        {
+            if (!worker.joinable()) return;
+            if (worker.get_id() == std::this_thread::get_id()) worker.detach();
+            else worker.join();
+        }
+    } // namespace
+
+    struct ReviewJobs::Impl : std::enable_shared_from_this<ReviewJobs::Impl>
+    {
+        using CancelFlag = std::shared_ptr<std::atomic<bool>>;
+
+        // A job as the lane runner sees it.
+        struct Job
+        {
+            ReviewJobKind kind{ReviewJobKind::ExportMetrics};
+            // The host's Started message (the job's source); ReviewJobs' own
+            // Started carries none.
+            std::string startedMessage;
+            // The refusal while this job's own lane is busy.
+            std::string busyMessage{kAnotherJobRunning};
+            // On the starting thread once the id is known, before the worker
+            // exists (the JSON jobs' first status snapshot).
+            std::function<void(std::uint64_t id)> onBegin;
+            std::function<Outcome(std::uint64_t id, const CancelFlag &cancel)> body;
+            // The status snapshot when the worker could not start or the body
+            // threw (the JSON jobs).
+            std::function<void(std::uint64_t id, const std::string &error)> onFailure;
+            // ReviewJobs' own jobs: a set cancel flag turns any outcome but
+            // Completed into Cancelled. The JSON jobs report the engine's
+            // outcome as it is (the facade's rule before S7).
+            bool cancelOverridesOutcome{true};
+            // A shutdown() overtook the start: the job's terminal without its
+            // body (the JSON jobs: the engine's outcome for a run cancelled
+            // before its first step, with that status snapshot). Unset:
+            // Cancelled with kShutDownBeforeStart.
+            std::function<Outcome(std::uint64_t id)> notRun;
+        };
+
+        struct StartResult
+        {
+            std::uint64_t id{0};
+            bool started{false};
+            std::string error;
+            std::exception_ptr failure; // the worker could not start (thrown again by the native starts)
+        };
+
+        struct Lane
+        {
+            bool busy{false}; // claimed: being started or running
+            std::uint64_t id{0};
+            CancelFlag cancel;
+            std::thread worker; // the last job's worker, joined by the next start or shutdown
+            std::string status{kIdleStatus}; // the JSON job's snapshot (export lane: review_export_json; processing: review_reanalysis_json)
+        };
+
         ReviewSession &session;
         services::ProcessingService *processing;
         ReviewJobSink sink;
+        const ReviewJobsOptions options;
 
         mutable std::mutex mutex;
-        std::thread worker;
-        std::atomic<bool> running{false};
-        std::atomic<std::uint64_t> nextId{1};
-        std::uint64_t currentId{0};
-        ReviewJobKind currentKind{ReviewJobKind::ExportMetrics};
-        std::shared_ptr<std::atomic<bool>> cancelFlag;
+        // Notified when a lane is claimed or released, a start returns, or a
+        // shutdown() begins or starts waiting (shutdown()'s and the tests' waits).
+        std::condition_variable laneChanged;
+        std::array<Lane, kLaneCount> lanes;
+        std::uint64_t nextId{1};
+        // shutdown() calls so far: a start that sees it change between its
+        // claim and its worker does not run the job.
+        std::uint64_t shutdowns{0};
+        // Claimed starts that have not returned yet, by the shutdown count
+        // they claimed under; a shutdown() from outside waits for those
+        // claimed before it. shutdownsWaiting: such shutdowns now waiting.
+        std::map<std::uint64_t, int> startsInProgress;
+        int shutdownsWaiting{0};
         std::string computedCoreJson;
         std::string computedCorePath; // file computedCoreJson belongs to
         DensityResult density;
 
-        Impl(ReviewSession &s, services::ProcessingService *p, ReviewJobSink k)
-            : session(s), processing(p), sink(std::move(k)) {}
+        Impl(ReviewSession &s, services::ProcessingService *p, ReviewJobSink k, ReviewJobsOptions o)
+            : session(s), processing(p), sink(std::move(k)), options(std::move(o)) {}
 
         void emit(const ReviewJobEvent &e)
         {
             if (sink)
             {
+                const Inside inside(this);
                 try { sink(e); } catch (...) {}
             }
         }
 
-        // Start `job` on the worker; refuses while one runs (single-flight).
-        template <typename Job>
-        std::uint64_t start(ReviewJobKind kind, Job job, std::string *error)
+        void setStatus(ReviewJobLane lane, std::string status)
         {
             std::scoped_lock lock(mutex);
-            if (running.load())
+            lanes[laneIndex(lane)].status = std::move(status);
+        }
+
+        std::string status(ReviewJobLane lane) const
+        {
+            std::scoped_lock lock(mutex);
+            return lanes[laneIndex(lane)].status;
+        }
+
+        void releaseLane(std::size_t lane)
+        {
+            std::scoped_lock lock(mutex);
+            lanes[lane].busy = false;
+            laneChanged.notify_all();
+        }
+
+        // Claims the job's lane (refused while it, or under single-job policy
+        // any lane, is busy), takes the operation (the host's or a new id),
+        // reports Started, then starts the worker. Never holds the mutex while
+        // calling the host or the sink, so either may call back in.
+        StartResult start(Job jobIn)
+        {
+            // This start's own reference to the runner state: a callback below
+            // that destroys the ReviewJobs object (out of contract) does not
+            // free it under the rest of the start (#742 review round 2).
+            const auto self = shared_from_this();
+            auto job = std::make_shared<Job>(std::move(jobIn));
+            const std::size_t lane = laneIndex(laneOf(job->kind));
+            StartResult result;
+            std::thread previous;
+            CancelFlag flag;
+            std::uint64_t id = 0;
+            std::uint64_t shutdownsAtClaim = 0;
+            const bool hosted = static_cast<bool>(options.host.beginOperation);
             {
-                if (error) *error = "Another review job is still running";
-                return 0;
+                std::scoped_lock lock(mutex);
+                for (std::size_t i = 0; i < kLaneCount; ++i)
+                {
+                    if (!lanes[i].busy) continue;
+                    if (i == lane)
+                    {
+                        result.error = job->busyMessage;
+                        return result;
+                    }
+                    if (!options.concurrentLanes)
+                    {
+                        result.error = kAnotherJobRunning;
+                        return result;
+                    }
+                }
+                Lane &l = lanes[lane];
+                l.busy = true;
+                l.cancel.reset();
+                l.id = 0;
+                previous = std::move(l.worker);
+                shutdownsAtClaim = shutdowns;
+                ++startsInProgress[shutdownsAtClaim];
+                if (!hosted)
+                {
+                    id = nextId++;
+                    flag = std::make_shared<std::atomic<bool>>(false);
+                    l.id = id;
+                    l.cancel = flag;
+                }
+                laneChanged.notify_all();
             }
-            if (worker.joinable()) worker.join();
-            const std::uint64_t id = nextId.fetch_add(1);
-            auto flag = std::make_shared<std::atomic<bool>>(false);
-            cancelFlag = flag;
-            currentId = id;
-            currentKind = kind;
-            running.store(true);
-            emit(ReviewJobEvent{id, kind, ReviewJobState::Started, 0, 0, {}});
-            worker = std::thread([this, id, kind, flag, job = std::move(job)]() mutable {
-                Outcome outcome;
+            // Counted until this start returns, whichever way it does.
+            const StartInProgress inProgress{*this, shutdownsAtClaim};
+            // The lane's previous job has reported its terminal state (or is
+            // reporting it: BeforeTerminal); join it before this one starts.
+            reap(previous);
+            if (hosted)
+            {
                 try
                 {
-                    outcome = job(id, flag);
-                }
-                catch (const std::exception &e)
-                {
-                    outcome = Outcome{ReviewJobState::Failed, std::string("job failed: ") + e.what()};
+                    const Inside inside(this);
+                    id = options.host.beginOperation(job->kind, job->startedMessage, flag);
                 }
                 catch (...)
                 {
-                    outcome = Outcome{ReviewJobState::Failed, "job failed: unknown error"};
+                    releaseLane(lane);
+                    throw;
                 }
-                if (flag->load() && outcome.state != ReviewJobState::Completed)
+                if (!flag) flag = std::make_shared<std::atomic<bool>>(false);
+                std::scoped_lock lock(mutex);
+                lanes[lane].id = id;
+                lanes[lane].cancel = flag;
+            }
+            else
+            {
+                emit(ReviewJobEvent{id, job->kind, ReviewJobState::Started, 0, 0, {}});
+            }
+            bool overtaken = false;
+            try
+            {
+                if (job->onBegin) job->onBegin(id);
+                std::scoped_lock lock(mutex);
+                // A shutdown() since the claim (from this job's own Started
+                // event or the host's beginOperation, or on another thread)
+                // already cancelled and joined the lanes: this job does not run.
+                // Checked and the worker stored under one lock, so a later
+                // shutdown() finds the worker and joins it.
+                overtaken = shutdowns != shutdownsAtClaim;
+                if (!overtaken)
                 {
-                    outcome.state = ReviewJobState::Cancelled;
+                    // The worker owns a reference to the runner state (this
+                    // Impl): a shutdown from inside one of its events detaches it
+                    // (it cannot join itself), and the ReviewJobs object may then
+                    // be destroyed while the event's callback is still running;
+                    // the sink, the lanes and the mutex it touches afterwards stay
+                    // alive until it ends (#742 review).
+                    lanes[lane].worker = std::thread([self, lane, id, flag, job]() { self->run(lane, id, flag, *job); });
                 }
-                running.store(false);
-                emit(ReviewJobEvent{id, kind, outcome.state, 0, 0, outcome.message});
-            });
-            return id;
+            }
+            catch (...)
+            {
+                // No worker (std::thread threw, or the first snapshot did): the
+                // lane is free again, and the operation gets its one terminal
+                // state here.
+                result.failure = std::current_exception();
+                result.error = "unknown error";
+                try { std::rethrow_exception(result.failure); }
+                catch (const std::exception &e) { result.error = e.what(); }
+                catch (...) {}
+                releaseLane(lane);
+                if (job->onFailure) try { job->onFailure(id, result.error); } catch (...) {}
+                emit(ReviewJobEvent{id, job->kind, ReviewJobState::Failed, 0, 0, result.error});
+                result.id = id;
+                return result;
+            }
+            if (overtaken)
+            {
+                // The operation exists (Started was reported): it gets its one
+                // terminal here, Cancelled, on this thread, without the body.
+                flag->store(true);
+                Outcome outcome{ReviewJobState::Cancelled, kShutDownBeforeStart};
+                if (job->notRun)
+                {
+                    try { outcome = job->notRun(id); } catch (...) {}
+                }
+                finish(lane, id, job->kind, outcome);
+            }
+            result.id = id;
+            result.started = true;
+            return result;
+        }
+
+        // A claimed start until it returns (see startsInProgress).
+        struct StartInProgress
+        {
+            Impl &impl;
+            std::uint64_t generation;
+            StartInProgress(Impl &i, std::uint64_t g) : impl(i), generation(g) {}
+            StartInProgress(const StartInProgress &) = delete;
+            StartInProgress &operator=(const StartInProgress &) = delete;
+            ~StartInProgress()
+            {
+                std::scoped_lock lock(impl.mutex);
+                const auto it = impl.startsInProgress.find(generation);
+                if (it != impl.startsInProgress.end() && --it->second == 0) impl.startsInProgress.erase(it);
+                impl.laneChanged.notify_all();
+            }
+        };
+
+        // A job's terminal event and its lane's release, in the host's order.
+        void finish(std::size_t lane, std::uint64_t id, ReviewJobKind kind, const Outcome &outcome)
+        {
+            const bool releaseFirst = options.laneRelease == ReviewLaneRelease::BeforeTerminal;
+            if (releaseFirst) releaseLane(lane);
+            emit(ReviewJobEvent{id, kind, outcome.state, 0, 0, outcome.message});
+            if (!releaseFirst) releaseLane(lane);
+        }
+
+        void run(std::size_t lane, std::uint64_t id, const CancelFlag &flag, const Job &job)
+        {
+            const Inside inside(this); // a lane worker: its shutdown() calls do not wait
+            Outcome outcome;
+            try
+            {
+                outcome = job.body(id, flag);
+            }
+            catch (const std::exception &e)
+            {
+                outcome = Outcome{ReviewJobState::Failed, std::string("job failed: ") + e.what()};
+                if (job.onFailure) try { job.onFailure(id, outcome.message); } catch (...) {}
+            }
+            catch (...)
+            {
+                outcome = Outcome{ReviewJobState::Failed, "job failed: unknown error"};
+                if (job.onFailure) try { job.onFailure(id, outcome.message); } catch (...) {}
+            }
+            if (job.cancelOverridesOutcome && flag->load() && outcome.state != ReviewJobState::Completed)
+            {
+                outcome.state = ReviewJobState::Cancelled;
+            }
+            finish(lane, id, job.kind, outcome);
+        }
+
+        // One of ReviewJobs' own jobs: refusals as `error`, a worker that
+        // could not start thrown as before S7.
+        std::uint64_t startOwn(ReviewJobKind kind, std::function<Outcome(std::uint64_t, const CancelFlag &)> body,
+                               std::string *error)
+        {
+            Job job;
+            job.kind = kind;
+            job.body = std::move(body);
+            const StartResult r = start(std::move(job));
+            if (r.failure) std::rethrow_exception(r.failure);
+            if (r.id == 0 && error) *error = r.error;
+            return r.id;
         }
 
         void progress(std::uint64_t id, ReviewJobKind kind, std::uint64_t done, std::uint64_t total,
@@ -164,8 +474,9 @@ namespace backend::review
         }
     };
 
-    ReviewJobs::ReviewJobs(ReviewSession &session, services::ProcessingService *processing, ReviewJobSink sink)
-        : impl_(std::make_unique<Impl>(session, processing, std::move(sink)))
+    ReviewJobs::ReviewJobs(ReviewSession &session, services::ProcessingService *processing, ReviewJobSink sink,
+                           ReviewJobsOptions options)
+        : impl_(std::make_shared<Impl>(session, processing, std::move(sink), std::move(options)))
     {
     }
 
@@ -173,35 +484,216 @@ namespace backend::review
 
     void ReviewJobs::shutdown()
     {
-        std::thread worker;
+        std::vector<std::thread> workers;
+        // Kept for the whole call: the waits below use the runner state.
+        const auto impl = impl_;
         {
-            std::scoped_lock lock(impl_->mutex);
-            if (impl_->cancelFlag) impl_->cancelFlag->store(true);
-            worker = std::move(impl_->worker);
+            std::unique_lock lock(impl->mutex);
+            // A start between its claim and its worker sees this and does not
+            // run its job: it reports Cancelled itself (#742 review round 2).
+            ++impl->shutdowns;
+            const std::uint64_t generation = impl->shutdowns;
+            for (auto &l : impl->lanes)
+            {
+                if (l.cancel) l.cancel->store(true);
+                workers.push_back(std::move(l.worker));
+            }
+            impl->laneChanged.notify_all();
+            // From outside the runner (the owner's teardown): wait until every
+            // start claimed before this call has returned, its Cancelled
+            // reported, so none is inside ReviewJobs, the host or the sink
+            // when shutdown() returns. From a lane worker or from inside a
+            // callback (the host's beginOperation, the sink): no wait (#742
+            // review round 3).
+            //
+            // Why the wait cannot deadlock: a start in progress runs only
+            // ReviewJobs' own code, the host's beginOperation and the sink,
+            // and joins its lane's previous worker. A shutdown() from any of
+            // those callbacks, or from that worker (its terminal event, under
+            // the review bridge's policy the lane is free before it), is the
+            // inside case and returns without waiting; the worker then ends
+            // and the join completes. Waiting in that case is what deadlocked
+            // in round 1 (review.jobs_lanes: shutdown from a terminal event
+            // while a start joins its worker).
+            if (!isInside(impl.get()))
+            {
+                ++impl->shutdownsWaiting;
+                impl->laneChanged.notify_all();
+                impl->laneChanged.wait(lock, [&] {
+                    return impl->startsInProgress.empty() || impl->startsInProgress.begin()->first >= generation;
+                });
+                --impl->shutdownsWaiting;
+            }
         }
-        if (worker.joinable()) worker.join();
+        for (auto &worker : workers) reap(worker);
     }
 
     bool ReviewJobs::cancel(std::uint64_t operationId)
     {
         std::scoped_lock lock(impl_->mutex);
-        if (!impl_->running.load() || impl_->currentId != operationId || !impl_->cancelFlag) return false;
-        impl_->cancelFlag->store(true);
-        return true;
+        for (auto &l : impl_->lanes)
+        {
+            if (l.busy && l.id == operationId && l.cancel)
+            {
+                l.cancel->store(true);
+                return true;
+            }
+        }
+        return false;
     }
 
-    bool ReviewJobs::busy() const { return impl_->running.load(); }
+    bool ReviewJobs::busy() const
+    {
+        std::scoped_lock lock(impl_->mutex);
+        for (const auto &l : impl_->lanes)
+            if (l.busy) return true;
+        return false;
+    }
+
+    bool ReviewJobs::busy(ReviewJobLane lane) const
+    {
+        std::scoped_lock lock(impl_->mutex);
+        return impl_->lanes[laneIndex(lane)].busy;
+    }
+
+    std::string ReviewJobs::exportStatusJson() const { return impl_->status(ReviewJobLane::Export); }
+    std::string ReviewJobs::reanalysisStatusJson() const { return impl_->status(ReviewJobLane::Processing); }
+
+    ReviewJobStart ReviewJobs::startExportJson(const ExportBatchRequest &batch)
+    {
+        Impl::Job job;
+        job.kind = ReviewJobKind::Export;
+        job.startedMessage = batch.request.sourcePath;
+        job.busyMessage = "An export is already active";
+        job.cancelOverridesOutcome = false;
+        Impl *impl = impl_.get();
+        job.onBegin = [impl](std::uint64_t id) { impl->setStatus(ReviewJobLane::Export, exportValidatingStatusJson(id)); };
+        job.onFailure = [impl](std::uint64_t id, const std::string &error) {
+            impl->setStatus(ReviewJobLane::Export, exportStartFailedStatusJson(id, error));
+        };
+        job.body = [impl, request = batch.request, sources = batch.sources](std::uint64_t id, const Impl::CancelFlag &flag) {
+            const auto outcome = runExportBatch(
+                request, sources, flag,
+                [&](std::size_t index, const recording::HdfExportProgress &progress, const std::vector<ExportFileOutcome> &done) {
+                    impl->setStatus(ReviewJobLane::Export, exportProgressStatusJson(id, sources, index, progress, done));
+                    impl->progress(id, ReviewJobKind::Export, progress.completed, progress.total);
+                });
+            const auto state = outcome.cancelled ? ReviewJobState::Cancelled
+                               : outcome.failed  ? ReviewJobState::Failed
+                                                 : ReviewJobState::Completed;
+            impl->setStatus(ReviewJobLane::Export, exportTerminalStatusJson(id, outcome));
+            return Outcome{state, state == ReviewJobState::Completed ? outcome.last.finalPath : outcome.error};
+        };
+        job.notRun = [impl, count = batch.sources.size()](std::uint64_t id) {
+            const auto outcome = exportBatchCancelledBeforeStart(count);
+            impl->setStatus(ReviewJobLane::Export, exportTerminalStatusJson(id, outcome));
+            return Outcome{ReviewJobState::Cancelled, outcome.error};
+        };
+        const auto r = impl_->start(std::move(job));
+        return ReviewJobStart{r.id, r.started, r.error};
+    }
+
+    ReviewJobStart ReviewJobs::startReanalysisJson(const ReanalysisRequest &request, services::ProcessingService &kernel)
+    {
+        Impl::Job job;
+        job.kind = ReviewJobKind::Reanalysis;
+        job.startedMessage = request.sourcePath;
+        job.busyMessage = "Reanalysis already active";
+        job.cancelOverridesOutcome = false;
+        Impl *impl = impl_.get();
+        job.onBegin = [impl](std::uint64_t id) { impl->setStatus(ReviewJobLane::Processing, reanalysisLoadingStatusJson(id)); };
+        job.onFailure = [impl](std::uint64_t id, const std::string &error) {
+            impl->setStatus(ReviewJobLane::Processing, reanalysisStartFailedStatusJson(id, error));
+        };
+        job.body = [impl, request, kernel = &kernel](std::uint64_t id, const Impl::CancelFlag &flag) {
+            const auto outcome = runReanalysis(request, *kernel, flag, [&](std::uint64_t done, std::uint64_t total) {
+                impl->setStatus(ReviewJobLane::Processing, reanalysisProgressStatusJson(id, done, total));
+                impl->progress(id, ReviewJobKind::Reanalysis, done, total);
+            });
+            impl->setStatus(ReviewJobLane::Processing, reanalysisTerminalStatusJson(id, request, outcome));
+            return Outcome{outcome.published   ? ReviewJobState::Completed
+                           : outcome.cancelled ? ReviewJobState::Cancelled
+                                               : ReviewJobState::Failed,
+                           outcome.error};
+        };
+        job.notRun = [impl, request](std::uint64_t id) {
+            const auto outcome = reanalysisCancelledBeforeStart();
+            impl->setStatus(ReviewJobLane::Processing, reanalysisTerminalStatusJson(id, request, outcome));
+            return Outcome{ReviewJobState::Cancelled, outcome.error};
+        };
+        const auto r = impl_->start(std::move(job));
+        return ReviewJobStart{r.id, r.started, r.error};
+    }
+
+    bool ReviewJobsTestAccess::waitIdle(const ReviewJobs &jobs, std::chrono::milliseconds timeout)
+    {
+        auto &impl = *jobs.impl_;
+        std::unique_lock lock(impl.mutex);
+        return impl.laneChanged.wait_for(lock, timeout, [&] {
+            for (const auto &l : impl.lanes)
+                if (l.busy) return false;
+            return true;
+        });
+    }
+
+    bool ReviewJobsTestAccess::waitIdle(const ReviewJobs &jobs, ReviewJobLane lane, std::chrono::milliseconds timeout)
+    {
+        auto &impl = *jobs.impl_;
+        std::unique_lock lock(impl.mutex);
+        return impl.laneChanged.wait_for(lock, timeout, [&] { return !impl.lanes[laneIndex(lane)].busy; });
+    }
+
+    bool ReviewJobsTestAccess::waitShutdownWaiting(const ReviewJobs &jobs, std::chrono::milliseconds timeout)
+    {
+        auto &impl = *jobs.impl_;
+        std::unique_lock lock(impl.mutex);
+        return impl.laneChanged.wait_for(lock, timeout, [&] { return impl.shutdownsWaiting > 0; });
+    }
+
+    bool ReviewJobsTestAccess::waitBusy(const ReviewJobs &jobs, ReviewJobLane lane, std::chrono::milliseconds timeout)
+    {
+        auto &impl = *jobs.impl_;
+        std::unique_lock lock(impl.mutex);
+        return impl.laneChanged.wait_for(lock, timeout, [&] { return impl.lanes[laneIndex(lane)].busy; });
+    }
+
+    std::uint64_t ReviewJobsTestAccess::start(ReviewJobs &jobs, ReviewJobKind kind, Body body, std::string *error,
+                                              bool cancelOverridesOutcome, const std::string &busyMessage)
+    {
+        ReviewJobs::Impl::Job job;
+        job.kind = kind;
+        if (!busyMessage.empty()) job.busyMessage = busyMessage;
+        job.cancelOverridesOutcome = cancelOverridesOutcome;
+        ReviewJobs::Impl *impl = jobs.impl_.get();
+        job.body = [impl, kind, body = std::move(body)](std::uint64_t id, const ReviewJobs::Impl::CancelFlag &flag) {
+            const auto result = body(id, flag, [&](std::uint64_t done, std::uint64_t total) {
+                impl->progress(id, kind, done, total);
+            });
+            return Outcome{result.state, result.message};
+        };
+        const auto r = impl->start(std::move(job));
+        if (r.failure) std::rethrow_exception(r.failure);
+        if (r.id == 0 && error) *error = r.error;
+        return r.id;
+    }
 
     bool ReviewJobs::probeRuns(const std::vector<std::string> &paths, std::vector<RunProbe> &out, std::string *error)
     {
         out.clear();
-        // The start lock: start() takes it before a job's thread exists, so
-        // holding it keeps every job off the library while the probe reads.
+        // The lanes' lock: a start claims its lane under it before the job's
+        // worker exists, and a lane stays claimed until its job's body has
+        // returned. Holding it for the whole probe keeps every job off the
+        // library while the probe reads; a claimed lane (either one) refuses
+        // the probe. Lock order: this mutex, then the session's (nothing takes
+        // them the other way round).
         std::scoped_lock lock(impl_->mutex);
-        if (impl_->running.load())
+        for (const auto &lane : impl_->lanes)
         {
-            if (error) *error = "A review job is running; the files can be read when it finishes";
-            return false;
+            if (lane.busy)
+            {
+                if (error) *error = "A review job is running; the files can be read when it finishes";
+                return false;
+            }
         }
         return impl_->session.probeRuns(paths, out, error);
     }
@@ -235,14 +727,14 @@ namespace backend::review
             return 0;
         }
         const double factor = impl_->session.pixelToMicron();
-        return impl_->start(ReviewJobKind::ExportMetrics, [this, source, outputPath, factor](std::uint64_t id, auto flag) {
+        return impl_->startOwn(ReviewJobKind::ExportMetrics, [impl = impl_.get(), source, outputPath, factor](std::uint64_t id, auto flag) {
             recording::HdfExportRequest request;
             request.sourcePath = source;
             request.outputRoot = fs::path(outputPath).parent_path().string();
             request.format = recording::HdfExportFormat::MetricsCsv;
             request.conversionFactor = factor;
             request.explicitDestination = outputPath;
-            return impl_->runExport(id, ReviewJobKind::ExportMetrics, request, flag);
+            return impl->runExport(id, ReviewJobKind::ExportMetrics, request, flag);
         }, error);
     }
 
@@ -260,7 +752,7 @@ namespace backend::review
             return 0;
         }
         const double factor = impl_->session.pixelToMicron();
-        return impl_->start(ReviewJobKind::ExportAll, [this, source, req, factor](std::uint64_t id, auto flag) {
+        return impl_->startOwn(ReviewJobKind::ExportAll, [impl = impl_.get(), source, req, factor](std::uint64_t id, auto flag) {
             recording::HdfExportRequest request;
             request.sourcePath = source;
             request.outputRoot = req.outputRoot;
@@ -273,7 +765,7 @@ namespace backend::review
                 cv::Mat image = cv::imdecode(chart.encoded, cv::IMREAD_COLOR);
                 if (!image.empty()) request.supplementalImages[chart.name] = image;
             }
-            return impl_->runExport(id, ReviewJobKind::ExportAll, request, flag);
+            return impl->runExport(id, ReviewJobKind::ExportAll, request, flag);
         }, error);
     }
 
@@ -292,7 +784,7 @@ namespace backend::review
         // Each source uses its own recorded factor (TD-17); files without one
         // use the host fallback, as when they are opened.
         const double fallback = impl_->session.fallbackPixelToMicron();
-        return impl_->start(ReviewJobKind::BatchExport, [this, req, fallback](std::uint64_t id, auto flag) {
+        return impl_->startOwn(ReviewJobKind::BatchExport, [impl = impl_.get(), req, fallback](std::uint64_t id, auto flag) {
             recording::HdfExportRequest base;
             base.outputRoot = req.outputRoot;
             base.conversionFactor = fallback;
@@ -301,7 +793,7 @@ namespace backend::review
             options.polling = ExportCancelPolling::AtProgress;
             options.prepare = [&](std::size_t i, recording::HdfExportRequest &request, std::string &skipped) {
                 const std::string &source = req.sources[i];
-                impl_->progress(id, ReviewJobKind::BatchExport, i, req.sources.size(), source);
+                impl->progress(id, ReviewJobKind::BatchExport, i, req.sources.size(), source);
                 bool recordingFile = false;
                 {
                     services::Hdf5Service probe;
@@ -335,7 +827,7 @@ namespace backend::review
             const auto batch = runExportBatch(
                 base, req.sources, flag,
                 [&](std::size_t, const recording::HdfExportProgress &p, const std::vector<ExportFileOutcome> &) {
-                    impl_->exportProgress(id, ReviewJobKind::BatchExport, p);
+                    impl->exportProgress(id, ReviewJobKind::BatchExport, p);
                 },
                 options);
             const std::size_t exported = batch.completedCount();
@@ -390,7 +882,7 @@ namespace backend::review
                 return 0;
             }
         }
-        return impl_->start(ReviewJobKind::ExportCharts, [this, req](std::uint64_t id, auto flag) {
+        return impl_->startOwn(ReviewJobKind::ExportCharts, [impl = impl_.get(), req](std::uint64_t id, auto flag) {
             const fs::path dir(req.outputDir);
             std::error_code ec;
             if (!fs::is_directory(dir, ec)) return Outcome{ReviewJobState::Failed, "not a directory: " + req.outputDir};
@@ -407,7 +899,7 @@ namespace backend::review
                     discard();
                     return Outcome{ReviewJobState::Cancelled, "cancelled; partial charts discarded"};
                 }
-                impl_->progress(id, ReviewJobKind::ExportCharts, i, total, chart.name);
+                impl->progress(id, ReviewJobKind::ExportCharts, i, total, chart.name);
                 const cv::Mat image = cv::imdecode(chart.encoded, cv::IMREAD_COLOR);
                 if (image.empty())
                 {
@@ -433,7 +925,7 @@ namespace backend::review
                     return Outcome{ReviewJobState::Failed, "could not publish " + req.charts[i].name + ": " + ec.message()};
                 }
             }
-            impl_->progress(id, ReviewJobKind::ExportCharts, total, total);
+            impl->progress(id, ReviewJobKind::ExportCharts, total, total);
             return Outcome{ReviewJobState::Completed,
                            "exported " + std::to_string(total) + " chart(s) to " + req.outputDir};
         }, error);
@@ -474,7 +966,7 @@ namespace backend::review
             return 0;
         }
         const bool recordingFile = impl_->session.isRecordingFile();
-        return impl_->start(ReviewJobKind::RegenerateMasks, [this, req, source, recordingFile](std::uint64_t id, auto flag) {
+        return impl_->startOwn(ReviewJobKind::RegenerateMasks, [impl = impl_.get(), req, source, recordingFile](std::uint64_t id, auto flag) {
             // YOFO Review's regenerate on the shared reanalysis engine
             // (backend/review/Reanalysis.h) with its D6 options: timestamps
             // rebased to the first selected frame, a median-of-32 synthetic
@@ -533,10 +1025,10 @@ namespace backend::review
             }
             const auto onProgress = [&](std::uint64_t done, std::uint64_t total) {
                 if ((done % 25) == 0 || done == total)
-                    impl_->progress(id, ReviewJobKind::RegenerateMasks, done, total, "processing");
-                if (done == total) impl_->progress(id, ReviewJobKind::RegenerateMasks, total, total, "saving");
+                    impl->progress(id, ReviewJobKind::RegenerateMasks, done, total, "processing");
+                if (done == total) impl->progress(id, ReviewJobKind::RegenerateMasks, total, total, "saving");
             };
-            const auto outcome = runReanalysis(r, *impl_->processing, flag, onProgress);
+            const auto outcome = runReanalysis(r, *impl->processing, flag, onProgress);
             if (!outcome.warning.empty()) spdlog::warn("Regenerate masks {}: {}", req.outputPath, outcome.warning);
             const std::string kept =
                 outcome.retainedPartialPath.empty() ? "" : "; partial output kept at " + outcome.retainedPartialPath;
@@ -561,10 +1053,10 @@ namespace backend::review
             return 0;
         }
         const double fraction = std::clamp(std::isfinite(coreFraction) ? coreFraction : 0.9, 0.05, 1.0);
-        return impl_->start(ReviewJobKind::ComputeCore, [this, fraction](std::uint64_t, auto flag) {
-            const std::string path = impl_->session.filePath();
-            const ScatterData sc = impl_->session.scatter();
-            if (impl_->session.filePath() != path) return Outcome{ReviewJobState::Failed, "the file changed while reading"};
+        return impl_->startOwn(ReviewJobKind::ComputeCore, [impl = impl_.get(), fraction](std::uint64_t, auto flag) {
+            const std::string path = impl->session.filePath();
+            const ScatterData sc = impl->session.scatter();
+            if (impl->session.filePath() != path) return Outcome{ReviewJobState::Failed, "the file changed while reading"};
             std::vector<backend::monitoring::DensityPoint> points;
             points.reserve(sc.areaUm2.size());
             for (std::size_t i = 0; i < sc.areaUm2.size(); ++i) points.push_back({sc.areaUm2[i], sc.deformability[i]});
@@ -576,9 +1068,9 @@ namespace backend::review
             if (flag->load()) return Outcome{ReviewJobState::Cancelled, "cancelled"};
             const std::string json = backend::monitoring::toJson(record);
             {
-                std::scoped_lock lock(impl_->mutex);
-                impl_->computedCoreJson = json;
-                impl_->computedCorePath = path;
+                std::scoped_lock lock(impl->mutex);
+                impl->computedCoreJson = json;
+                impl->computedCorePath = path;
             }
             return Outcome{ReviewJobState::Completed, "Core " + std::to_string(std::lround(record.coreFraction * 100.0)) + "%: " +
                                                               std::to_string(record.cellCount) + " of " + std::to_string(record.populationCount) +
@@ -657,15 +1149,15 @@ namespace backend::review
         r.bandwidthFactor = std::clamp(std::isfinite(r.bandwidthFactor) ? r.bandwidthFactor : 1.0, 0.2, 5.0);
         r.coreFraction = std::clamp(std::isfinite(r.coreFraction) ? r.coreFraction : 0.9, 0.05, 1.0);
         r.levels = std::clamp(r.levels, 1, 64);
-        return impl_->start(ReviewJobKind::Density, [this, r](std::uint64_t, auto flag) {
+        return impl_->startOwn(ReviewJobKind::Density, [impl = impl_.get(), r](std::uint64_t, auto flag) {
             {
-                std::scoped_lock lock(impl_->mutex);
-                impl_->density = DensityResult{}; // not ready while this one runs
+                std::scoped_lock lock(impl->mutex);
+                impl->density = DensityResult{}; // not ready while this one runs
             }
-            const std::string path = impl_->session.filePath();
-            const ScatterData sc = impl_->session.scatter();
-            const ReviewMetadata meta = impl_->session.metadata();
-            if (impl_->session.filePath() != path) return Outcome{ReviewJobState::Failed, "the file changed while reading"};
+            const std::string path = impl->session.filePath();
+            const ScatterData sc = impl->session.scatter();
+            const ReviewMetadata meta = impl->session.metadata();
+            if (impl->session.filePath() != path) return Outcome{ReviewJobState::Failed, "the file changed while reading"};
             std::vector<backend::monitoring::DensityPoint> points;
             points.reserve(sc.areaUm2.size());
             for (std::size_t i = 0; i < sc.areaUm2.size(); ++i) points.push_back({sc.areaUm2[i], sc.deformability[i]});
@@ -689,12 +1181,12 @@ namespace backend::review
             result.ready = true;
             result.sourcePath = path;
             {
-                std::scoped_lock lock(impl_->mutex);
-                impl_->density = result;
+                std::scoped_lock lock(impl->mutex);
+                impl->density = result;
                 if (!result.computedRecordJson.empty())
                 {
-                    impl_->computedCoreJson = result.computedRecordJson;
-                    impl_->computedCorePath = path;
+                    impl->computedCoreJson = result.computedRecordJson;
+                    impl->computedCorePath = path;
                 }
             }
             return Outcome{ReviewJobState::Completed, "density estimated for " + std::to_string(points.size()) + " cells"};

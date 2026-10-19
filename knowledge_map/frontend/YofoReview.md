@@ -225,7 +225,11 @@ cells render with density ready in ~2–3 s.
   …" with **Show in folder** (`revealItemInDir`; disabled with its reason
   in a browser), the batch summary with
   per-file failures, "Cancelled. Partial output was discarded", or the
-  refusal ("Not started: Another review job is still running").
+  refusal ("Not started: Another review job is still running"). One job of
+  any kind runs at a time: the bridge's lane policy
+  (`ReviewJobsOptions::forReviewBridge()`, #512 S7) keeps YOFO Review off the
+  second lane (an export beside a regenerate / density / core job) until
+  HDF5 is thread-safe (#722).
 - **Toolbar**: Export Metrics, Export All, and a **More…** menu with Batch
   Metrics, Batch Export All, Export Charts, Regenerate masks (the Qt
   layout); job buttons disable while a job runs.

@@ -15,7 +15,7 @@ Track B (#717) step B1, the backend half of R1 Open (#269). Review ABI 1 → 2
   no images; at most 256 paths (`review_probe.max_paths`); a missing,
   non-HDF5 or locked file is a per-file error.
 - HDF5 is built without thread safety (#722), so the probe reads each file
-  under `ReviewSession`'s own mutex and holds the job lane's start lock for the
+  under `ReviewSession`'s own mutex and holds the job lanes' mutex for the
   whole call (`ReviewJobs::probeRuns`), refusing while a job runs. The open
   file is left as it was, also when it is probed itself.
 - `reviewBridge.ts` gains the types and `probeRuns`; no UI change.

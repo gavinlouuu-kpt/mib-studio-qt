@@ -46,6 +46,15 @@ pub struct CmdResult {
     /// (schema v4) — correlates with OperationStatus events.
     #[serde(serialize_with = "event_transport::serialize_u64")]
     operation_id: u64,
+    /// ABI 40 (#741): the typed outcome of `experiment_start` (an `experiment_start_outcomes`
+    /// value, a JSON number like `command`). Omitted from every other reply and from a start the
+    /// backend never evaluated; `message` is unchanged, so a caller without it still works.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    start_outcome: Option<u32>,
+    /// ABI 40 (#741): the typed outcome of `experiment_stop` / `experiment_cancel` (an
+    /// `experiment_stop_outcomes` value; `RunMismatch` = 3). Omitted otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stop_outcome: Option<u32>,
 }
 
 impl From<ffi::BridgeCommandResult> for CmdResult {
@@ -56,8 +65,22 @@ impl From<ffi::BridgeCommandResult> for CmdResult {
             command: r.command,
             message: r.message,
             operation_id: r.operation_id,
+            start_outcome: r.has_start_outcome.then_some(r.start_outcome),
+            stop_outcome: r.has_stop_outcome.then_some(r.stop_outcome),
         }
     }
+}
+
+/// A transport u64 argument in the contract's encoding (`json_transport.unsigned_integer_encoding`):
+/// a canonical decimal string, `0` to `18446744073709551615`. No sign, no leading zero, no
+/// whitespace, no exponent; `None` for anything else (Rust's `u64::from_str` alone accepts `+7`
+/// and `007`).
+pub fn parse_canonical_u64(text: &str) -> Option<u64> {
+    let digits = text.as_bytes();
+    if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) || (digits.len() > 1 && digits[0] == b'0') {
+        return None;
+    }
+    text.parse::<u64>().ok()
 }
 
 /// Realtime processing stats snapshot for the webview.
@@ -327,9 +350,22 @@ pub fn experiment_acknowledge_fault(state: &AppState, expected_run: String, faul
 }
 
 /// Request asynchronous final flush, metadata persistence and close.
-pub fn experiment_stop(state: &AppState) -> Result<CmdResult, String> {
+///
+/// `expected_start_generation` (ABI 40, #741): the `start_generation` of the run the client means to
+/// stop, as a canonical decimal string (the transport's u64 encoding); anything else is an error
+/// and nothing is sent. With it the backend stops only that run: another run, active or
+/// finalizing, or none, is refused with stop outcome `RunMismatch` (3) and a plain reason, and
+/// nothing is stopped. The comparison happens in the backend under the lock that accepts the
+/// stop. `None` stops whatever run is active, exactly as before.
+pub fn experiment_stop(state: &AppState, expected_start_generation: Option<String>) -> Result<CmdResult, String> {
+    let expected = match expected_start_generation {
+        None => None,
+        Some(text) => Some(parse_canonical_u64(&text).ok_or_else(|| {
+            "Invalid expectedStartGeneration: a canonical decimal start generation is required".to_string()
+        })?),
+    };
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().experiment_stop().into())
+    Ok(guard.pin_mut().experiment_stop(expected.is_some(), expected.unwrap_or(0)).into())
 }
 
 /// Like stop, but the terminal status is marked cancelled.
@@ -1046,6 +1082,8 @@ pub fn set_background_from_current_frame(state: &AppState) -> Result<CmdResult, 
             command: 2, // ProcessingSettings
             message: "No live frame available to capture as background".into(),
             operation_id: 0,
+            start_outcome: None,
+            stop_outcome: None,
         });
     }
     // The bridge background path expects tightly-packed Mono8 (len == w*h).

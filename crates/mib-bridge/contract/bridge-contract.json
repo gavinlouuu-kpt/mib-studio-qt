@@ -1,6 +1,6 @@
 {
   "$comment": "Single source of truth for the bridge command/event contract (BE-1, issue #271, epic #246, ADR 0004). C++ ties to these values via static_asserts in crates/mib-bridge/src/shim.cpp; Rust via crates/mib-bridge/tests/contract.rs; TypeScript via the generated desktop/src/bridgeContract.ts (scripts/gen_bridge_contract.py --check fails CI on drift). All changes must be additive: append values, never renumber or repurpose.",
-  "abi_version": 39,
+  "abi_version": 40,
   "event_kinds": {
     "FrameReady": 0,
     "CameraStatus": 1,
@@ -161,7 +161,8 @@
   "experiment_stop_outcomes": {
     "Accepted": 0,
     "NotActive": 1,
-    "Busy": 2
+    "Busy": 2,
+    "RunMismatch": 3
   },
   "run_completion_states": {
     "Complete": 0,
@@ -562,5 +563,15 @@
     "temperature_c_max": 150,
     "annotation_schema_version": 1,
     "document": "startRequestJson = JSON text of {experiment_id: UUID (8-4-4-4-12 hex, stored lowercase), run_index: 0..4294967295 (needs experiment_id), sample_ref: id into the experiment's sample sheet (needs experiment_id), operator: {id, name} (the operator the client selected, #393 phase 1, recorded with assurance \"selected\", not authentication; at least one of the two), calibration_record_id: the applied calibration record (ADR 0015 item 7), annotation: {sample, condition, experimental_unit, concentration: {value (finite, >= 0), unit} (both or null), channel, medium, temperature_c (declared, degrees Celsius), notes, free: {string: string}}}; every member optional, null = not declared. Strict: unknown or duplicate keys, wrong types, empty strings (use null), control characters (notes may hold tab, CR, LF), invalid UTF-8 and anything over a bound (max_request_bytes counts the client's bytes, whitespace included) are refused with the key named (outcome InvalidRequest, message \"invalid start request: <key>: <why>\"), never truncated; a refused request opens nothing. Recorded: the identity and operator as members of the run snapshot v3 (run_snapshot_json: experiment_id, run_index, sample_ref, operator{id, name, assurance}, calibration_record_id; null when not declared); the annotation once, at Start, in /experiment_annotation (@annotation_json, @annotation_schema_version), which is absent when the request had none; a failed annotation write fails the start (ProvenanceFailed) and removes the file."
+  },
+  "experiment_command_reply": {
+    "$comment": "ABI 40 (#741): the typed outcome of an experiment command in its CommandResult reply, additive over ABI 39. C++ BackendCommandResult.experimentStartOutcome / experimentStopOutcome -> cxx BridgeCommandResult has_start_outcome + start_outcome / has_stop_outcome + stop_outcome (values pinned by static_asserts in crates/mib-bridge/src/shim.cpp) -> mib-app-commands CmdResult (Tauri and the WebSocket server alike) -> desktop/src/eventAdapter.ts decodeCommandResult. message is unchanged, so a caller that reads only ok and message keeps working.",
+    "start_outcome": "JSON number, an experiment_start_outcomes value; on every experiment_start reply the backend evaluated (Started, NotReady, StaleReadiness, AlreadyActive, StorageFailed, ProvenanceFailed, Busy, InvalidRequest); omitted from other replies and from a start that never reached the coordinator (backend not initialized, an exception), where only ok and message describe it. A refused start request is InvalidRequest (7): switch on it instead of the message prefix \"invalid start request: \".",
+    "stop_outcome": "JSON number, an experiment_stop_outcomes value; on every experiment_stop and experiment_cancel reply the backend evaluated (Accepted, NotActive, Busy, RunMismatch); omitted otherwise. message stays \"accepted\" | \"notActive\" | \"busy\" for those; for RunMismatch it is the plain reason (experiment_stop_request)."
+  },
+  "experiment_stop_request": {
+    "$comment": "ABI 40 (#741): experiment_stop gains an optional expected start generation, so a client stops only its own run. Transports: dispatch.rs / WebSocket arg expectedStartGeneration, Tauri arg expected_start_generation, bridge.experimentStop(expectedStartGeneration?) in desktop/src/bridge.ts; cxx experiment_stop(has_expected_start_generation, expected_start_generation: u64); C++ ExperimentCommand.expectedStartGeneration -> ExperimentCoordinator::requestStop(cancelled, expected, refusal). experiment_cancel is unchanged.",
+    "expected_start_generation": "optional string, a canonical decimal u64 (json_transport encoding: no sign, no leading zero), the start_generation of the run to stop as fetch_experiment_status reports it; anything else is refused by mib-app-commands (\"Invalid expectedStartGeneration\", an error reply, nothing sent), absent or null = not given. Not given: stops whatever run is active, exactly as in ABI 39.",
+    "semantics": "With it, the coordinator compares it with the run it holds in the same critical section (its mutex, also held by start and by the worker's finalization) that accepts the stop; it never checks first and acts later. The run is held from the Active entry until its finalization ends (Active, Stopping, or Failed while a fatal finalization runs); a Starting run has no generation a client could have read and is never held. No run held (Idle, Failed, Starting) or a held run with another start_generation: stop outcome RunMismatch (3), ok false, message \"stop refused: expected run <E>, but <run <N> is active | run <N> is stopping | run <N> failed and is finalizing | a new run is starting | no run is active>; nothing was stopped\", and nothing changes. Matching: the outcome without the argument (Accepted; Busy while that run is stopping or its stop is queued; NotActive while it is failing). An accepted stop is consumed by the finalization of the run it named, and no run can start before that finalization ends (start also clears any stale stop request), so it can never stop a newer run."
   }
 }

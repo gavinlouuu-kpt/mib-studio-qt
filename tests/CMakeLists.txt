@@ -487,6 +487,13 @@ set_tests_properties(backend.facade_boundary PROPERTIES LABELS "backend;bridge")
 mib_add_backend_test_executable(facade_review_session_test backend/facade_review_session_test.cpp)
 add_test(NAME backend.facade_review_session COMMAND $<TARGET_FILE:mib_backend_tests> facade_review_session_test)
 set_tests_properties(backend.facade_review_session PROPERTIES LABELS "backend;bridge;review;recording;hdf5;safety" TIMEOUT 120)
+# The facade's review jobs on ReviewJobs' lanes (#512 S7): the pre-S7 facade
+# job code kept as the oracle (events, status snapshots, refusals, cancels
+# byte for byte), then both lanes held at once x cancel x shutdown.
+mib_add_backend_test_executable(facade_review_jobs_test backend/facade_review_jobs_test.cpp)
+mib_backend_test_link(facade_review_jobs_test PRIVATE Threads::Threads)
+add_test(NAME backend.facade_review_jobs COMMAND $<TARGET_FILE:mib_backend_tests> facade_review_jobs_test)
+set_tests_properties(backend.facade_review_jobs PROPERTIES LABELS "backend;bridge;review;recording;hdf5;concurrency;stress" TIMEOUT 300)
 
 # BE-4 (#274): backend-owned experiment lifecycle state machine — pipeline e2e
 # over the facade command surface plus fault-injection (fatal save error,
@@ -494,6 +501,12 @@ set_tests_properties(backend.facade_review_session PROPERTIES LABELS "backend;br
 mib_add_backend_test_executable(experiment_coordinator_test backend/experiment_coordinator_test.cpp)
 add_test(NAME e2e.experiment_coordinator COMMAND $<TARGET_FILE:mib_backend_tests> experiment_coordinator_test)
 set_tests_properties(e2e.experiment_coordinator PROPERTIES LABELS "backend;bridge;e2e" TIMEOUT 180)
+# #741 (bridge ABI 40): typed start outcomes in the command result, and experiment_stop's expected
+# start generation (a stale one is refused under the coordinator lock; stress with racing stops).
+mib_add_backend_test_executable(experiment_stop_generation_test backend/experiment_stop_generation_test.cpp)
+mib_backend_test_link(experiment_stop_generation_test PRIVATE Threads::Threads)
+add_test(NAME e2e.experiment_stop_generation COMMAND $<TARGET_FILE:mib_backend_tests> experiment_stop_generation_test)
+set_tests_properties(e2e.experiment_stop_generation PROPERTIES LABELS "backend;bridge;e2e;concurrency;stress;safety" TIMEOUT 180)
 
 mib_add_backend_test_executable(mindvision_selection_state_test backend/mindvision_selection_state_test.cpp)
 add_test(NAME backend.mindvision_selection_state COMMAND $<TARGET_FILE:mib_backend_tests> mindvision_selection_state_test)
@@ -898,6 +911,15 @@ mib_add_backend_test_executable(review_jobs_test review/review_jobs_test.cpp)
 mib_backend_test_link(review_jobs_test PRIVATE Threads::Threads)
 add_test(NAME review.jobs COMMAND $<TARGET_FILE:mib_backend_tests> review_jobs_test)
 set_tests_properties(review.jobs PROPERTIES LABELS "review;recording;backend;hdf5;concurrency;safety" TIMEOUT 300)
+# ReviewJobs' lanes and host hooks (#512 S7, D7 as amended): both shipped
+# policies (review bridge: one job at a time, #722; facade: one export and one
+# processing job at once, the host's operations), lanes x cancel x shutdown
+# with handshakes (custom bodies via ReviewJobsTestAccess), racing starts,
+# one terminal per operation. Runs in the TSan lane.
+mib_add_backend_test_executable(review_jobs_lanes_test review/review_jobs_lanes_test.cpp)
+mib_backend_test_link(review_jobs_lanes_test PRIVATE Threads::Threads)
+add_test(NAME review.jobs_lanes COMMAND $<TARGET_FILE:mib_backend_tests> review_jobs_lanes_test)
+set_tests_properties(review.jobs_lanes PROPERTIES LABELS "review;backend;concurrency;stress;safety" TIMEOUT 300)
 # Charts JSON and saved-overlay builders in mib_review_core (#512 slice 4):
 # byte for byte against the pre-slice facade code (kept in the test as the
 # oracle); the Review ROI style draws ReviewSession's pixels.

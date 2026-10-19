@@ -76,7 +76,7 @@ public:
     BridgeCommandResult apply_processing(bool realtime_enabled, double pixel_to_micron);
     BridgeCommandResult cancel_operation(std::uint64_t operation_id);
     BridgeCommandResult experiment_start(rust::Str output_path, bool acknowledge_discard_ring, rust::Str start_request_json);
-    BridgeCommandResult experiment_stop();
+    BridgeCommandResult experiment_stop(bool has_expected_start_generation, std::uint64_t expected_start_generation);
     rust::String fetch_capture_lifecycle();
     BridgeCommandResult experiment_acknowledge_fault(std::uint64_t expected_run,
                                                      std::uint64_t fault_revision, rust::Str code,

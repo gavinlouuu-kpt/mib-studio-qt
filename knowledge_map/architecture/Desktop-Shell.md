@@ -402,6 +402,26 @@ the backend parses it strictly and refuses with `invalid start request: <key>`
 `operatorName: ""` stays); the bounds are in `bridgeContract.ts`
 `EXPERIMENT_START_REQUEST` for the Plan view (S5).
 
+**Typed outcome and the run a stop names (ABI 40, #741).** `CmdResult`
+(`eventAdapter.ts`) gains `start_outcome?` (an `EXPERIMENT_START_OUTCOMES`
+value) on an `experiment_start` reply and `stop_outcome?` (an
+`EXPERIMENT_STOP_OUTCOMES` value) on an `experiment_stop` / `experiment_cancel`
+reply. `decodeCommandResult` leaves them out when the reply has none (an older
+backend, any other command) or a code this UI does not know (fall back to
+`ok` / `message`) and refuses a non-integer (`TRANSPORT_INVALID_OUTCOME`).
+Callers switch on `start_outcome === EXPERIMENT_START_OUTCOMES.InvalidRequest`
+instead of the `invalid start request: ` prefix, keeping the prefix only as the
+fallback for an older backend. `bridge.experimentStop(expectedStartGeneration?)`
+sends `{expectedStartGeneration}` as a canonical decimal string (`decimalU64`;
+the `fetchExperimentStatus().start_generation` of the client's run) and no
+argument without one; another run, or none, comes back `ok: false`,
+`stop_outcome: RunMismatch` (3) and nothing is stopped ([[Rust-Bridge]] ABI 40).
+The Tauri command takes `expected_start_generation: Option<String>`. The
+develop shell (`App.tsx`, `experimentStart.ts`) neither parsed the prefix nor
+passes a generation, so it is unchanged; the workspace queue and Plan switch on
+`feat/egrabber-workspace` after the next develop sync. Guards:
+`eventAdapter.test.ts`, `eventTransport.test.ts`.
+
 ## Central profile registry (ABI 25, issue #398)
 
 **Settings → Central Methods…** opens `desktop/src/CentralMethodsPanel.tsx`:
