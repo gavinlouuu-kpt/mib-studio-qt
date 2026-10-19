@@ -25,7 +25,9 @@
 //    file has one, a computed record on a legacy file, results only for the
 //    file they were computed from; grid path agrees
 //    with the direct path within one level on a 4000-point population;
-//  - single flight: a second start while one runs is refused.
+//  - single flight: a second start while one runs is refused (the default
+//    options are the review bridge's: one job of any kind at a time; both
+//    lane policies are covered by review.jobs_lanes, #512 S7).
 // Watchdog guarded.
 
 #include "backend/review/ReviewJobs.h"
@@ -413,8 +415,7 @@ namespace
         std::mutex m;
         std::condition_variable cv;
         std::vector<ReviewJobEvent> events;
-        // Called on the job's thread for every event, outside the lock
-        // (never on Started: ReviewJobs emits that under its own mutex).
+        // Called on the job's thread for Progress events, outside the lock.
         std::function<void(const ReviewJobEvent &)> onProgress;
         void operator()(const ReviewJobEvent &e)
         {

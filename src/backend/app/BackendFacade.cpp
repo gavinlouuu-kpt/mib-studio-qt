@@ -23,6 +23,7 @@
 #include "backend/camera/mock/MockCamera.h"
 #include "backend/processing/ProcessingConfigJson.h"
 #include "backend/review/ExportEngine.h"
+#include "backend/review/ReviewJobs.h"
 #include "backend/review/ReviewSession.h"
 
 #include <nlohmann/json.hpp>
@@ -184,13 +185,62 @@ namespace backend::bridge
         }
     } // namespace
 
-    BackendFacade::BackendFacade(AppBackend &backend)
-        : backend_(backend), review_(std::make_shared<review::ReviewSession>())
+    namespace
     {
+        static_assert(static_cast<int>(review::ReviewJobState::Started) == static_cast<int>(BackendOperationState::Started));
+        static_assert(static_cast<int>(review::ReviewJobState::Progress) == static_cast<int>(BackendOperationState::Progress));
+        static_assert(static_cast<int>(review::ReviewJobState::Completed) == static_cast<int>(BackendOperationState::Completed));
+        static_assert(static_cast<int>(review::ReviewJobState::Failed) == static_cast<int>(BackendOperationState::Failed));
+        static_assert(static_cast<int>(review::ReviewJobState::Cancelled) == static_cast<int>(BackendOperationState::Cancelled));
+        static_assert(static_cast<int>(review::ReviewJobState::TimedOut) == static_cast<int>(BackendOperationState::TimedOut));
+
+        // The facade's operation kind for a review job (#512 S7): the facade
+        // starts only the JSON jobs, `Export` on the export lane and
+        // `Reanalysis` on the processing lane.
+        BackendOperationKind operationKindOf(review::ReviewJobKind kind)
+        {
+            return review::laneOf(kind) == review::ReviewJobLane::Export ? BackendOperationKind::Export
+                                                                         : BackendOperationKind::Reanalysis;
+        }
+    } // namespace
+
+    BackendFacade::BackendFacade(AppBackend &backend)
+        : backend_(backend), review_(std::make_shared<review::ReviewSession>()),
+          // The review lanes report through the facade's operations: Started
+          // comes from beginOperation (the host hook), Progress and the one
+          // terminal state from the sink (ADR 0004 late-event policy: both
+          // drop events for an operation that already finished). Contract
+          // (#742 review round 2): these callbacks, and the event sink they
+          // call synchronously, may call shutdown() or cancel an operation,
+          // but must not destroy this facade or its ReviewJobs. Hosts deliver
+          // events to their consumers asynchronously (the bridge's sink
+          // converts and enqueues; Rust drains it with poll_events).
+          reviewJobs_(std::make_unique<review::ReviewJobs>(
+              *review_, nullptr,
+              [this](const review::ReviewJobEvent &e) {
+                  if (e.state == review::ReviewJobState::Progress)
+                      reportOperationProgress(e.operationId, e.progress, e.total, e.message);
+                  else if (e.state != review::ReviewJobState::Started)
+                      finishOperation(e.operationId, static_cast<BackendOperationState>(e.state), e.message);
+              },
+              review::ReviewJobsOptions::forFacade(review::ReviewJobHost{
+                  [this](review::ReviewJobKind kind, const std::string &message, CancelFlag &cancel) {
+                      return beginOperation(operationKindOf(kind), &cancel, message);
+                  }})))
+    {
+    }
+
+    review::ReviewJobs &BackendFacadeTestAccess::reviewJobs(BackendFacade &facade)
+    {
+        return *facade.reviewJobs_;
     }
 
     BackendFacade::~BackendFacade()
     {
+        // Review jobs left running without shutdown(): cancelled and joined
+        // before the session closes (before #512 S7 a joinable job thread
+        // here ended the process).
+        reviewJobs_->shutdown();
         backend_.setBackgroundCaptureCallback({});
         // The coordinator outlives the facade and its worker may still publish
         // (e.g. AppBackend::shutdown() finalizing a run when shutdown() was
@@ -298,21 +348,21 @@ namespace backend::bridge
         backend_.experiment().shutdown();
         backend_.experiment().setStatusCallback({});
         cancelAllOperations("Backend shutdown");
-        if (exportThread_.joinable()) exportThread_.join();
-        if (reanalysisThread_.joinable()) reanalysisThread_.join();
-        // Review export jobs observe their (now set) cancel flags and clean
-        // partial outputs; join them so no callback fires after destruction.
+        // The review lanes (#512 S7): their jobs observe the (now set) cancel
+        // flags, clean partial outputs and report; joined so no callback
+        // fires after destruction. Then the pump scans and stage waiters.
+        reviewJobs_->shutdown();
         {
-            std::vector<std::thread> jobs;
+            std::vector<std::thread> workers;
             {
-                std::scoped_lock lock(reviewJobsMutex_);
-                jobs.swap(reviewJobThreads_);
+                std::scoped_lock lock(operationWorkersMutex_);
+                workers.swap(operationWorkers_);
             }
-            for (auto &job : jobs)
+            for (auto &worker : workers)
             {
-                if (job.joinable())
+                if (worker.joinable())
                 {
-                    job.join();
+                    worker.join();
                 }
             }
         }
@@ -1550,15 +1600,16 @@ namespace backend::bridge
 
     std::string BackendFacade::fetchReviewExportStatusJson() const
     {
-        std::scoped_lock lock(exportMutex_);
-        return exportStatusJson_;
+        return reviewJobs_->exportStatusJson();
     }
 
     // The engine (parse, one HdfExportService run per source, status JSON)
-    // lives in mib_review_core (backend/review/ExportEngine.h, #512 slice 3);
-    // the facade keeps the policy: the live factor and chart range as the
-    // defaults, the loaded file as the default source, one export at a time,
-    // the tracked operation (BackendOperationKind::Export) and the snapshot.
+    // lives in mib_review_core (backend/review/ExportEngine.h, #512 slice 3)
+    // and runs on the review lanes' export lane (ReviewJobs, #512 S7: one
+    // export at a time, beside a reanalysis; the lane holds the snapshot).
+    // The facade keeps the policy: the live factor and chart range as the
+    // defaults, the loaded file as the default source, the tracked operation
+    // (BackendOperationKind::Export, through the lanes' host hook).
     BackendCommandResult BackendFacade::submitReviewExportJson(const std::string &json)
     {
         if (!initialized_) return {false, BackendCommandType::Review, "Backend not initialized"};
@@ -1580,51 +1631,10 @@ namespace backend::bridge
             sources.push_back(request.sourcePath);
         }
         request.sourcePath = sources.front();
-        {
-            std::scoped_lock lock(exportMutex_);
-            if (exportActive_) return {false, BackendCommandType::Review, "An export is already active"};
-            exportActive_ = true;
-        }
-        // Reap completed exports before creating another worker: bounded thread storage.
-        if (exportThread_.joinable()) exportThread_.join();
-        CancelFlag cancelFlag;
-        const auto operationId = beginOperation(BackendOperationKind::Export, &cancelFlag, request.sourcePath);
-        {
-            std::scoped_lock lock(exportMutex_);
-            exportStatusJson_ = review::exportValidatingStatusJson(operationId);
-        }
-        try {
-            exportThread_ = std::thread([this, operationId, cancelFlag, request, sources]() {
-                const auto outcome = review::runExportBatch(request, sources, cancelFlag,
-                    [this, operationId, &sources](std::size_t index, const recording::HdfExportProgress &progress,
-                                                  const std::vector<review::ExportFileOutcome> &done) {
-                        {
-                            std::scoped_lock lock(exportMutex_);
-                            exportStatusJson_ = review::exportProgressStatusJson(operationId, sources, index, progress, done);
-                        }
-                        reportOperationProgress(operationId, progress.completed, progress.total);
-                    });
-                const auto state = outcome.cancelled ? BackendOperationState::Cancelled :
-                    outcome.failed ? BackendOperationState::Failed : BackendOperationState::Completed;
-                {
-                    std::scoped_lock lock(exportMutex_);
-                    exportStatusJson_ = review::exportTerminalStatusJson(operationId, outcome);
-                }
-                finishOperation(operationId, state,
-                                state == BackendOperationState::Completed ? outcome.last.finalPath : outcome.error);
-                std::scoped_lock lock(exportMutex_);
-                exportActive_ = false;
-            });
-        } catch (const std::exception &e) {
-            {
-                std::scoped_lock lock(exportMutex_);
-                exportActive_ = false;
-                exportStatusJson_ = review::exportStartFailedStatusJson(operationId, e.what());
-            }
-            finishOperation(operationId, BackendOperationState::Failed, e.what());
-            return {false, BackendCommandType::Review, e.what(), operationId};
-        }
-        return {true, BackendCommandType::Review, "Export started", operationId};
+        const auto started = reviewJobs_->startExportJson(parsed);
+        if (started.operationId == 0) return {false, BackendCommandType::Review, started.error};
+        if (!started.started) return {false, BackendCommandType::Review, started.error, started.operationId};
+        return {true, BackendCommandType::Review, "Export started", started.operationId};
     }
 
     BackendCommandResult BackendFacade::handleReviewCommand(const ReviewCommand &command)
@@ -1818,8 +1828,8 @@ namespace backend::bridge
                 finishOperation(operationId, BackendOperationState::Completed, found);
             });
             {
-                std::scoped_lock lock(reviewJobsMutex_);
-                reviewJobThreads_.push_back(std::move(worker));
+                std::scoped_lock lock(operationWorkersMutex_);
+                operationWorkers_.push_back(std::move(worker));
             }
             return {true, BackendCommandType::Pump, "Pump address scan started", operationId};
         }
@@ -1992,8 +2002,8 @@ namespace backend::bridge
             finishOperation(operationId, state, detail);
         });
         {
-            std::scoped_lock lock(reviewJobsMutex_); // joined in shutdown()
-            reviewJobThreads_.push_back(std::move(worker));
+            std::scoped_lock lock(operationWorkersMutex_); // joined in shutdown()
+            operationWorkers_.push_back(std::move(worker));
         }
         return operationId;
     }

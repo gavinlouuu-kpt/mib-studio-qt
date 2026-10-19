@@ -347,6 +347,14 @@ reconciliation even if operation events are missed. Full general resnapshot,
 frame source/session/config identities and native cross-shell acceptance remain
 open; this addition does not close #372/#246.
 
+Since #512 S7 the facade's export (`review_export_json`) and reanalysis
+(`review_reanalysis_json`) run on `review::ReviewJobs`' two lanes with the
+facade's policy (`ReviewJobsOptions::forFacade`): one export and one
+reanalysis at a time each, both at once as before, operation ids and cancel
+flags from `beginOperation`, the status JSON held by each lane. Same commands,
+events, status strings and refusals (no contract change); see
+[[../services/ReviewSession]].
+
 ABI 16 adds preview-buffer range/save JSON. Latest-frame facade pulls now fetch
 the exact queried committed index, never a later frame under an earlier label;
 concurrent frame-identity stress regression covers index/timestamp/pixel agreement.
@@ -768,7 +776,10 @@ attach to):
   `review_export_charts` (kind `ExportCharts` = 6),
   `review_compute_core` + `fetch_review_computed_core_json`,
   `review_request_density` + `fetch_review_density` (contract
-  `review_density` constants), `review_jobs_busy`,
+  `review_density` constants), `review_jobs_busy`; the jobs run one at a
+  time whatever their kind (`ReviewJobsOptions::forReviewBridge()`, explicit
+  in `review_shim.cpp`, #512 D7 as amended: no second lane until HDF5 is
+  thread-safe, #722),
   `review_bridge_abi_version()` (`review-contract.json` `review_abi_version`,
   independent of `bridge_abi_version()`),
   and the fixtures `review_fixture_write_experiment(path)` and
