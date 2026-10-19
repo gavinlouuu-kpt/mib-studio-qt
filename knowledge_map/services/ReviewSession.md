@@ -188,6 +188,10 @@ Parsing never sets them, so the facade keeps the defaults:
 - `frameOrder` (HDF `all` only): `Timestamp` (facade, Qt) | `Datasets` (rows
   as stored, valid then invalid; YOFO's whole file). D6 named two options.
   The third keeps YOFO's 2026-10-04 accepted "timestamp order" difference.
+- `convertColorToGray` (HDF only): off, frames with more than one channel are
+  refused ("Source frames must be grayscale"; facade). On, they become Mono8
+  as `batch_masks::loadFromHdf5` converts them (BGR → gray; YOFO, whose
+  pre-S8 reader did this; #735 review).
 - `ReanalysisOutcome::valid` counts the valid records (YOFO's message).
 
 The functions:

@@ -28,7 +28,12 @@ YOFO behaviour changes:
   records with frames by position. Tracking emits one record per track, so on
   the real-cell 512x96 run 1040 of 1049 records named another frame's index
   and timestamp. The engine pairs by the record's frame, as Qt and the facade
-  do.
+  do. Files regenerated with YOFO Review up to review-v1.1.3-beta.1 carry the
+  mis-paired metadata; #737 tracks the data-integrity follow-up.
+- Colour (3-channel) HDF frames are still converted to gray, as before (the
+  engine option `convertColorToGray`; the facade keeps refusing them).
+- Save as… proposals compare names ignoring case and the search is bounded:
+  suffixes too large to step are ignored, with a timestamped fallback name.
 - A folder or AVI with an unreadable image now fails the job, as the facade
   does, instead of skipping the image.
 

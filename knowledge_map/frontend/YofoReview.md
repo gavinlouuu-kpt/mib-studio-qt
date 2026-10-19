@@ -216,7 +216,12 @@ cells render with density ready in ~2–3 s.
 - **Rules** (`exports/exportHelpers.ts`, Qt parity): metrics default to
   `<basename>_metrics.csv`, then `_N` one past the highest suffix in the
   directory (`HdfExportService::nextAvailableName`, mirrored; directory
-  listed through `review_list_dir`); the last successful export directory
+  listed through `review_list_dir`). Since #735 the proposal is
+  conservative: a name counts as taken when any existing name matches it
+  ignoring case (Windows and macOS volumes), suffixes above 999 999 999 are
+  ignored (one such as 2^53 cannot be stepped in JS), and the search is
+  bounded. Past the bound it falls back to `<prefix>YYYYMMDD-HHMMSS<suffix>`.
+  The last successful export directory
   is remembered (`localStorage` `yofo.review.lastExportDir`, else the
   file's directory); Export All asks the series question (all / 1-based
   range such as `9-15` / skip) when records have series, Batch Export All
@@ -240,7 +245,7 @@ cells render with density ready in ~2–3 s.
   replaces a file** (partial file + no-replace publish, D6). **Save as…**
   lists the output directory (`review_list_dir`) and proposes a free name,
   `<base>_remasked.h5` then `_N` one past the highest suffix
-  (`defaultRegenerateName`). If the operator picks an existing file anyway
+  (`defaultRegenerateName`, with the rules above). If the operator picks an existing file anyway
   (past the OS dialog's own overwrite question), the backend refuses the
   start ("Output already exists; choose a new file"). The dialog stays open
   and shows "Not started: <reason> (<file>)", clears the output and the
@@ -291,14 +296,17 @@ accounting text for recording files.
   engine (`backend/review/Reanalysis.h`, decision D6). YOFO runs
   `timestamps = Rebase` (minus the first selected frame, clamped at 0),
   `syntheticBackgroundKind = MedianOf32` and `frameOrder = Datasets` (the whole
-  file as valid rows then invalid rows). The facade (MIB Studio's reanalysis)
-  keeps Preserve / QuietTile / Timestamp. The content is unchanged on the S8
-  characterization fixtures, with one fix: when tracking merges frames into
-  one record, each record now carries its own frame's index, timestamp and
-  track frames. The pre-S8 job paired records with frames by position, so on
-  the real-cell 512x96 run 1040 of 1049 records named another frame. YOFO
-  also gained the facade's no-clobber publish: an existing output is refused,
-  not replaced.
+  file as valid rows then invalid rows). It also sets `convertColorToGray`, so
+  colour HDF frames become gray as `loadFromHdf5` made them. The facade (MIB
+  Studio's reanalysis) keeps Preserve / QuietTile / Timestamp and refuses
+  colour frames. The content is unchanged on the S8 characterization fixtures,
+  with one fix: when tracking merges frames into one record, each record now
+  carries its own frame's index, timestamp and track frames. The pre-S8 job
+  paired records with frames by position, so on the real-cell 512x96 run 1040
+  of 1049 records named another frame. Files regenerated with YOFO Review up to
+  review-v1.1.3-beta.1 carry that mis-paired per-record metadata; the
+  data-integrity follow-up is #737. YOFO also gained the facade's no-clobber
+  publish: an existing output is refused, not replaced.
 - **Regenerate gating:** YOFO enables Regenerate masks once a file is ready;
   Qt requires data.
 - **Core fraction:** YOFO uses the stored record's fraction, else 0.9; Qt uses

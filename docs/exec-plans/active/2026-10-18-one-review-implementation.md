@@ -451,7 +451,8 @@ the coordinator (ADR 0004/0011).
   remap / write code goes (the median-of-32 moved into the engine). The
   request gets three options, all left at the facade's values by parsing:
   `timestamps: Preserve | Rebase`, `syntheticBackgroundKind: QuietTile |
-  MedianOf32`, and `frameOrder: Timestamp | Datasets`. D6 named two
+  MedianOf32`, and `frameOrder: Timestamp | Datasets` (plus `convertColorToGray`,
+  see Review below). D6 named two
   options; the third keeps YOFO's whole file as valid rows then invalid
   rows, the "timestamp order" difference accepted on 2026-10-04 (without it
   rows reorder and the rebase origin moves). YOFO keeps no budget, its range
@@ -462,9 +463,17 @@ the coordinator (ADR 0004/0011).
   tracking merges frames) or per object. So on real cells most records
   carried another frame's index and timestamp, and track first/last frames
   stayed batch positions. The engine pairs by the record's frame (as Qt and
-  the facade do), which fixes it.
+  the facade do), which fixes it. Accepted by the coordinator; the existing
+  files are tracked as #737.
+- **Review (#735):** `frameOrder` kept (ruled). Colour HDF frames: the
+  pre-S8 reader (`loadFromHdf5`) converted 3-channel frames BGR → gray, which
+  the engine refused. A fourth option, `convertColorToGray` (YOFO on, facade
+  off), keeps that. `review.jobs` compares a colour fixture's output with the
+  pre-S8 job, kept as the oracle.
 - **Dialog:** `RegenerateMasks.tsx` proposes a free name
-  (`defaultRegenerateName`, `_2`, `_3` … via `review_list_dir`). It stays
+  (`defaultRegenerateName`, `_2`, `_3` … via `review_list_dir`; names
+  compared ignoring case, the search bounded, with a timestamped fallback,
+  #735 review). It stays
   open on a refusal, shows "Not started: <backend reason> (<file>)", clears
   the output and asks again. It closes once the job starts
   (`useReviewJobs.start` hooks `onRefused` / `onStarted`). The OS save panel's
@@ -500,7 +509,8 @@ the coordinator (ADR 0004/0011).
   identical. Folder and AVI outputs differ only in the wall-clock
   `experiment_info` start / end. Real-cell hdf outputs have identical
   images, masks and background; only metadata differs: the pairing fix
-  (1040 of 1049 records misnamed before, 0 after) and `end_time_ns`. Messages
+  (1040 of 1049 records misnamed before, 0 after; files regenerated up to
+  review-v1.1.3-beta.1 are affected, #737) and `end_time_ns`. Messages
   are unchanged except the empty range ("Selected source range is empty").
   The facade path (12 cases) has identical status JSON and outputs, except the
   wall-clock attributes of folder and AVI outputs.
