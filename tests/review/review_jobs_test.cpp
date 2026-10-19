@@ -15,7 +15,9 @@
 //    valid rows then invalid rows, a median-of-32 synthetic background, and
 //    every record named by its own frame when tracking merges frames into
 //    one record (the pre-S8 job paired records with frames by position);
-//    a range clamped to the set; no clobber: an existing output is refused
+//    a range clamped to the set; colour (3-channel) HDF frames converted to
+//    gray as before, output equal to the pre-S8 job's (kept as the oracle);
+//    no clobber: an existing output is refused
 //    at start, one created while the job runs fails the job untouched with
 //    no partial file left, a cancel writes nothing;
 //  - compute core: full-run record JSON with the recorded factor;
@@ -252,6 +254,7 @@ namespace
         bool valid;
         ProcessedFrame meta;
         cv::Mat image;
+        cv::Mat mask;
     };
     std::vector<OutRecord> outputRecords(const fs::path &path)
     {
@@ -264,13 +267,144 @@ namespace
             if (!(valid ? reader.readValidMetadata(rows) : reader.readInvalidMetadata(rows))) continue;
             for (std::size_t i = 0; i < rows.size(); ++i)
             {
-                cv::Mat image;
+                cv::Mat image, mask;
                 MIB_REQUIRE(reader.readImageByIndex(valid ? "/valid_frames/images" : "/invalid_frames/images", i, image),
                             "output image");
-                out.push_back({valid, rows[i], image});
+                reader.readImageByIndex(valid ? "/valid_frames/masks" : "/invalid_frames/masks", i, mask);
+                out.push_back({valid, rows[i], image, mask});
             }
         }
         return out;
+    }
+
+    // Colour (BGR) frames: a ring crossing the top border (found, then
+    // refused by the border check, so one record per frame and no track)
+    // on a tinted background, every other frame empty. Valid rows 200..205,
+    // invalid rows 206, 207. Recorded config = the permissive one, background
+    // black Mono8. Returns the stored BGR frames, valid rows then invalid.
+    std::vector<cv::Mat> writeColour(const fs::path &path)
+    {
+        std::vector<ProcessedFrame> valid, invalid;
+        std::vector<cv::Mat> stored;
+        for (uint64_t i = 0; i < 8; ++i)
+        {
+            cv::Mat bgr(kTrackedH, kTrackedW, CV_8UC3);
+            for (int y = 0; y < kTrackedH; ++y)
+                for (int x = 0; x < kTrackedW; ++x)
+                    bgr.at<cv::Vec3b>(y, x) = cv::Vec3b(static_cast<uint8_t>((x * 3) % 50), 30, static_cast<uint8_t>(60 + y % 9));
+            if (i % 2 == 0)
+            {
+                const cv::Point centre(40 + static_cast<int>(i) * 15, 10);
+                cv::circle(bgr, centre, 20, cv::Scalar(200, 255, 120), cv::FILLED);
+                cv::circle(bgr, centre, 9, cv::Scalar(10, 30, 60), cv::FILLED);
+            }
+            ProcessedFrame f;
+            f.index = 200 + i;
+            f.timestampNs = 3'000'000 + i * 250;
+            f.originalImage = bgr;
+            f.processedImage = cv::Mat::zeros(kTrackedH, kTrackedW, CV_8UC1);
+            f.validation.isValid = i < 6;
+            f.validation.objectCount = 1;
+            stored.push_back(bgr);
+            (i < 6 ? valid : invalid).push_back(f);
+        }
+        Hdf5Service hdf5;
+        MIB_REQUIRE(hdf5.openFile(path.string()) && hdf5.initializeDatasets(), "open colour fixture");
+        MIB_REQUIRE(hdf5.appendFrames(valid, invalid), "append colour");
+        const cv::Mat black(kTrackedH, kTrackedW, CV_8UC1, cv::Scalar(0));
+        MIB_REQUIRE(hdf5.writeExperimentInfo(1000, 5000, valid.size(), invalid.size(), permissiveTrackingConfig(),
+                                             {0, 0, kTrackedW, kTrackedH}, &black),
+                    "colour info");
+        hdf5.closeFile();
+        return stored;
+    }
+
+    // The pre-S8 job's whole-file path, kept as the oracle: loadFromHdf5 per
+    // set (valid, then invalid), the session's metadata, processBatch with the
+    // recorded config / ROI / background, records paired with frames by
+    // position, timestamps rebased to the first frame, saveMasksToHdf5.
+    void preS8WholeFile(const ReviewSession &session, backend::services::ProcessingService &processing,
+                        const fs::path &source, const fs::path &output)
+    {
+        Hdf5Service reader;
+        MIB_REQUIRE(reader.loadFile(source.string()), "oracle open");
+        backend::services::ProcessingConfig config;
+        MIB_REQUIRE(reader.readRecordedProcessingConfig(config), "oracle config");
+        backend::services::ProcessingService::Roi roi{};
+        uint64_t t0 = 0, t1 = 0;
+        std::size_t nv = 0, ni = 0;
+        reader.readExperimentInfo(t0, t1, nv, ni, &roi);
+        cv::Mat background;
+        reader.readBackgroundImage(background);
+        std::vector<cv::Mat> images;
+        std::vector<uint64_t> index, stamp;
+        for (const bool valid : {true, false})
+        {
+            const char *dataset = valid ? "/valid_frames/images" : "/invalid_frames/images";
+            std::size_t count = 0;
+            int h = 0, w = 0, c = 0;
+            if (!reader.getDatasetInfo(dataset, count, h, w, c) || count == 0) continue;
+            std::vector<cv::Mat> gray;
+            MIB_REQUIRE(backend::services::batch_masks::loadFromHdf5(reader, dataset, 0, count, gray), "oracle load");
+            for (std::size_t k = 0; k < gray.size(); ++k)
+            {
+                ProcessedFrame meta;
+                const bool have = session.frameMeta(valid, k, meta);
+                index.push_back(have ? meta.index : k);
+                stamp.push_back(have ? meta.timestampNs : 0);
+            }
+            images.insert(images.end(), gray.begin(), gray.end());
+        }
+        reader.closeFile();
+        backend::processing::ProcessingCoreIdentity identity;
+        auto results = processing.processBatch(images, config, background, roi, {}, &identity);
+        const uint64_t base = stamp.empty() ? 0 : stamp.front();
+        for (std::size_t k = 0; k < results.size() && k < index.size(); ++k)
+        {
+            results[k].index = index[k];
+            results[k].timestampNs = stamp[k] >= base ? stamp[k] - base : 0;
+        }
+        MIB_REQUIRE(backend::services::batch_masks::saveMasksToHdf5(results, output.string(), config, roi.x, roi.y, roi.w,
+                                                                    roi.h, background, true, &identity),
+                    "oracle save");
+    }
+
+    // Two outputs hold the same records (metadata, images, masks) and background.
+    bool sameOutput(const fs::path &a, const fs::path &b, std::string &why)
+    {
+        const auto ra = outputRecords(a), rb = outputRecords(b);
+        if (ra.size() != rb.size())
+        {
+            why = "record count " + std::to_string(ra.size()) + " vs " + std::to_string(rb.size());
+            return false;
+        }
+        const auto same = [](const cv::Mat &x, const cv::Mat &y) {
+            return x.size() == y.size() && x.type() == y.type() && (x.empty() || cv::norm(x, y, cv::NORM_INF) == 0);
+        };
+        for (std::size_t i = 0; i < ra.size(); ++i)
+        {
+            const auto &x = ra[i], &y = rb[i];
+            const auto &u = x.meta.validation, &v = y.meta.validation;
+            if (x.valid != y.valid || x.meta.index != y.meta.index || x.meta.timestampNs != y.meta.timestampNs ||
+                u.isValid != v.isValid || u.area != v.area || u.deformability != v.deformability ||
+                u.objectCount != v.objectCount || u.trackId != v.trackId || u.trackFirstFrame != v.trackFirstFrame ||
+                u.trackLastFrame != v.trackLastFrame || !same(x.image, y.image) || !same(x.mask, y.mask))
+            {
+                why = "record " + std::to_string(i) + " (index " + std::to_string(x.meta.index) + ") differs";
+                return false;
+            }
+        }
+        Hdf5Service ha, hb;
+        cv::Mat ba, bb;
+        MIB_REQUIRE(ha.loadFile(a.string()) && hb.loadFile(b.string()), "reopen outputs");
+        ha.readBackgroundImage(ba);
+        hb.readBackgroundImage(bb);
+        if (!same(ba, bb))
+        {
+            why = "background differs";
+            return false;
+        }
+        return true;
     }
 
     // Collects job events; waits for the terminal state of an operation.
@@ -673,6 +807,49 @@ int main()
                             cv::NORM_INF) > 0,
                    "the frames' order matters (test is sensitive)");
         nj.shutdown();
+    }
+    {
+        // Colour HDF input (Codex P2 on #735): the pre-S8 reader converted
+        // 3-channel frames to gray (loadFromHdf5, BGR -> gray); the job keeps
+        // that, and its output equals the pre-S8 job's on this fixture.
+        const fs::path colourPath = td.path() / "colour.h5";
+        const auto stored = writeColour(colourPath);
+        {
+            Hdf5Service probe;
+            std::size_t count = 0;
+            int h = 0, w = 0, c = 0;
+            MIB_REQUIRE(probe.loadFile(colourPath.string()) && probe.getDatasetInfo("/valid_frames/images", count, h, w, c),
+                        "colour dataset");
+            MIB_REQUIRE(c == 3 && count == 6, "the fixture stores 3-channel frames");
+        }
+        ReviewSession cs;
+        MIB_REQUIRE(cs.open(colourPath.string()), "open colour");
+        Sink s;
+        ReviewJobs cj(cs, &processing, std::ref(s));
+        RegenerateMasksRequest req;
+        req.source = RegenerateSource::WholeFile;
+        req.outputPath = (td.path() / "colour_regen.h5").string();
+        const uint64_t id = cj.startRegenerateMasks(req, &err);
+        MIB_REQUIRE(id != 0 && s.terminal(id, done), "colour job: " + err);
+        MIB_REQUIRE(done.state == ReviewJobState::Completed, "colour input regenerates: " + done.message);
+        const fs::path oracle = td.path() / "colour_pre_s8.h5";
+        preS8WholeFile(cs, processing, colourPath, oracle);
+        std::string why;
+        MIB_EXPECT(sameOutput(req.outputPath, oracle, why), "colour output equals the pre-S8 job's: " + why);
+        const auto records = outputRecords(req.outputPath);
+        MIB_EXPECT(records.size() == stored.size(), "one record per frame (pairing by position is exact here)");
+        bool gray = true, masked = false, channelZeroDiffers = false;
+        for (std::size_t i = 0; i < records.size() && i < stored.size(); ++i)
+        {
+            gray = gray && records[i].image.type() == CV_8UC1;
+            masked = masked || (!records[i].mask.empty() && cv::countNonZero(records[i].mask) > 0);
+            cv::Mat channel0;
+            cv::extractChannel(stored[i], channel0, 0);
+            channelZeroDiffers = channelZeroDiffers || cv::norm(records[i].image, channel0, cv::NORM_INF) > 0;
+        }
+        MIB_EXPECT(gray && masked, "Mono8 output images with ring masks");
+        MIB_EXPECT(channelZeroDiffers, "the conversion is BGR -> gray, not a channel pick (test is sensitive)");
+        cj.shutdown();
     }
     wd.mark("regenerate engine");
 

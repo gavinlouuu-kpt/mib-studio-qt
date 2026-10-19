@@ -24,8 +24,8 @@
 // regenerate-masks job (ReviewJobs) runs here too, with the options below set
 // to its owner-accepted differences of 2026-10-04 (timestamps rebased to the
 // first selected frame, a median-of-32 synthetic background, "all" as valid
-// rows then invalid rows). Request parsing never sets them, so the facade's
-// output is unchanged.
+// rows then invalid rows, colour HDF frames converted to gray). Request
+// parsing never sets them, so the facade's output is unchanged.
 #pragma once
 
 #include "backend/processing/ProcessingService.h"
@@ -92,6 +92,11 @@ namespace backend::review
         ReanalysisTimestamps timestamps{ReanalysisTimestamps::Preserve};
         ReanalysisSyntheticBackground syntheticBackgroundKind{ReanalysisSyntheticBackground::QuietTile};
         ReanalysisFrameOrder frameOrder{ReanalysisFrameOrder::Timestamp};
+        // hdf only: frames with more than one channel are refused ("Source
+        // frames must be grayscale"; facade) or converted to Mono8 the way
+        // batch_masks::loadFromHdf5 does (BGR -> gray; YOFO Review's job,
+        // whose pre-S8 reader converted them).
+        bool convertColorToGray{false};
     };
 
     // The refusal for an output path that already exists (the facade's

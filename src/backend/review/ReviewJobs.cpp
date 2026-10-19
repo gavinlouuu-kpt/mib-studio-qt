@@ -464,7 +464,8 @@ namespace backend::review
             // YOFO Review's regenerate on the shared reanalysis engine
             // (backend/review/Reanalysis.h) with its D6 options: timestamps
             // rebased to the first selected frame, a median-of-32 synthetic
-            // background, the whole file as valid rows then invalid rows.
+            // background, the whole file as valid rows then invalid rows,
+            // colour HDF frames converted to gray.
             ReanalysisRequest r;
             r.outputPath = req.outputPath;
             r.timestamps = ReanalysisTimestamps::Rebase;
@@ -486,6 +487,7 @@ namespace backend::review
             {
                 r.sourceKind = "hdf";
                 r.sourcePath = source;
+                r.convertColorToGray = true; // as the pre-S8 reader (loadFromHdf5) did
                 if (req.source == RegenerateSource::WholeFile) r.dataset = "all";
                 else if (recordingFile) r.dataset = "/recorded_frames/images";
                 else if (req.source == RegenerateSource::CurrentInvalid) r.dataset = "/invalid_frames/images";

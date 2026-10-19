@@ -11,6 +11,7 @@
 
 #include <nlohmann/json.hpp>
 #include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
 
 #include <algorithm>
 #include <cerrno>
@@ -53,6 +54,18 @@ namespace backend::review
                     background.at<std::uint8_t>(y, x) = column[n / 2];
                 }
             return background;
+        }
+
+        // YOFO Review's HDF input rule (#512 S8): a frame with more than one
+        // channel becomes Mono8 exactly as batch_masks::loadFromHdf5 (the
+        // pre-S8 job's reader) converts it.
+        cv::Mat grayLikeLoadFromHdf5(cv::Mat frame)
+        {
+            if (frame.empty() || frame.type() == CV_8UC1) return frame;
+            cv::Mat gray;
+            if (frame.channels() == 3) cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
+            else frame.convertTo(gray, CV_8UC1);
+            return gray;
         }
     } // namespace
 
@@ -220,7 +233,7 @@ namespace backend::review
                 for (size_t i = start; i < start + selected; ++i)
                 {
                     const auto &ref = refs[i];
-                    if (ref.height <= 0 || ref.width <= 0 || ref.channels != 1)
+                    if (ref.height <= 0 || ref.width <= 0 || (ref.channels != 1 && !request.convertColorToGray))
                         throw std::runtime_error("Source frames must be grayscale");
                     const uint64_t bytes = static_cast<uint64_t>(ref.height) * static_cast<uint64_t>(ref.width);
                     if (bytes > maxInputBytes - inputBytes)
@@ -241,6 +254,7 @@ namespace backend::review
                     cv::Mat frame;
                     if (!reader.readImageByIndex(refs[i].dataset, refs[i].row, frame))
                         throw std::runtime_error("Failed to read source frame");
+                    if (request.convertColorToGray) frame = grayLikeLoadFromHdf5(std::move(frame));
                     images.push_back(std::move(frame));
                     metadata.push_back(std::move(refs[i].metadata));
                 }

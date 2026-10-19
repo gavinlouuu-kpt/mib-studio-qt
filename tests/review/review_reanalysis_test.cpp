@@ -17,7 +17,8 @@
 //    them (the facade keeps preserve + quiet tile + timestamp order); rebase
 //    clamps rows recorded before the first selected one to 0; "all" in
 //    dataset order; the median-of-32 background, which differs from the
-//    quiet-tile one on the same frames.
+//    quiet-tile one on the same frames; colour HDF frames refused by default
+//    (the facade) and converted BGR -> gray with `convertColorToGray`.
 // The facade surface over it is covered by backend.export_bridge_facade.
 // Watchdog guarded.
 
@@ -374,6 +375,64 @@ int main()
         MIB_EXPECT(cv::norm(background, oracle, cv::NORM_INF) == 0, "median-of-32 background");
         MIB_EXPECT(cv::norm(oracle, backend::services::batch_masks::buildSyntheticBackground(frames), cv::NORM_INF) > 0,
                    "quiet tile differs on these frames (test is sensitive)");
+    }
+    {
+        // Colour HDF frames: the facade refuses them; YOFO's option converts
+        // them the way batch_masks::loadFromHdf5 does.
+        const fs::path colour = td.path() / "colour.h5";
+        std::vector<cv::Mat> bgr;
+        {
+            Hdf5Service writer;
+            MIB_REQUIRE(writer.openFile(colour.string()) && writer.initializeDatasets(), "colour open");
+            std::vector<ProcessedFrame> valid;
+            for (int i = 0; i < 3; ++i)
+            {
+                cv::Mat m(32, 32, CV_8UC3, cv::Scalar(20 + i, 90, 160));
+                cv::circle(m, {16, 16}, 6 + i, cv::Scalar(240, 10, 60), -1);
+                bgr.push_back(m);
+                ProcessedFrame f;
+                f.index = 300 + static_cast<std::uint64_t>(i);
+                f.timestampNs = 9000 + static_cast<std::uint64_t>(i);
+                f.originalImage = m;
+                f.processedImage = cv::Mat::zeros(32, 32, CV_8UC1);
+                f.validation.isValid = true;
+                valid.push_back(f);
+            }
+            MIB_REQUIRE(writer.appendFrames(valid, {}), "colour frames");
+            MIB_REQUIRE(writer.writeExperimentInfo(1000, 2000, 3, 0, {}, {0, 0, 32, 32}, nullptr), "colour info");
+            writer.closeFile();
+        }
+        ReanalysisRequest refused =
+            parse({{"source_path", colour.string()}, {"output_path", (td.path() / "colour-refused.h5").string()}});
+        const auto no = backend::review::runReanalysis(refused, kernel, flag(), {});
+        MIB_EXPECT(!no.published && no.error == "Source frames must be grayscale", "facade refuses colour: " + no.error);
+        ReanalysisRequest converted = refused;
+        converted.outputPath = (td.path() / "colour-gray.h5").string();
+        converted.convertColorToGray = true;
+        const auto yes = backend::review::runReanalysis(converted, kernel, flag(), {});
+        MIB_REQUIRE(yes.published, "converted colour published: " + yes.error);
+        Hdf5Service reader;
+        MIB_REQUIRE(reader.loadFile(converted.outputPath), "colour output");
+        std::vector<ProcessedFrame> rows;
+        reader.readValidMetadata(rows);
+        std::vector<ProcessedFrame> invalidRows;
+        reader.readInvalidMetadata(invalidRows);
+        std::size_t checked = 0;
+        for (const bool valid : {true, false})
+        {
+            const auto &set = valid ? rows : invalidRows;
+            for (std::size_t i = 0; i < set.size(); ++i)
+            {
+                cv::Mat image, expected;
+                MIB_REQUIRE(reader.readImageByIndex(valid ? "/valid_frames/images" : "/invalid_frames/images", i, image),
+                            "colour output image");
+                cv::cvtColor(bgr.at(set[i].index - 300), expected, cv::COLOR_BGR2GRAY);
+                MIB_EXPECT(image.type() == CV_8UC1 && cv::norm(image, expected, cv::NORM_INF) == 0,
+                           "output frame is the BGR -> gray source");
+                ++checked;
+            }
+        }
+        MIB_EXPECT(checked > 0, "colour output holds records");
     }
     wd.mark("d6 options");
 
