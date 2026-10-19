@@ -1,4 +1,6 @@
 // The Start Experiment flow (extracted from App.tsx so it can be tested): pick the file, ask before a stopped Run's buffered frames are discarded, evaluate readiness, start.
+// `startRequestJson` (ABI 39, #712) is the run's declared identity and planned annotation as JSON text, from the workspace's Plan
+// (workspace/planModel.ts buildStartRequest). It is passed on unchanged; without one (the classic Start) none is sent.
 import { READINESS_GATE_STATUSES } from "./bridgeContract";
 import { startDiscardNotice, type RingStatus } from "./ringPlayback";
 
@@ -12,7 +14,8 @@ export interface StartDeps {
   confirm: (message: string) => Promise<boolean>;
   pickFile: () => Promise<string | null | undefined>;
   fetchReadiness: (path: string) => Promise<StartReadiness>;
-  start: (path: string, acknowledgeDiscardRing: boolean) => Promise<StartResult>;
+  /** Called with a third argument only when the flow was given a startRequestJson. */
+  start: (path: string, acknowledgeDiscardRing: boolean, startRequestJson?: string) => Promise<StartResult>;
 }
 
 export type StartOutcome =
@@ -21,7 +24,7 @@ export type StartOutcome =
   | { kind: "refused"; path: string; message: string }
   | { kind: "started"; path: string; notice: string };
 
-export async function startExperiment(deps: StartDeps): Promise<StartOutcome> {
+export async function startExperiment(deps: StartDeps, startRequestJson?: string): Promise<StartOutcome> {
   // A stopped Run (after Stop, or after an SSD run) holds its buffered frames and the start discards them: ask first, and tell the backend that the operator agreed.
   const discard = startDiscardNotice(await deps.fetchRingStatus().catch(() => null));
   if (discard && !(await deps.confirm(discard))) return { kind: "cancelled" };
@@ -34,7 +37,9 @@ export async function startExperiment(deps: StartDeps): Promise<StartOutcome> {
     return { kind: "not-ready", message: `${picked}: ${reason || "Backend readiness unavailable; experiment was not started."}` };
   }
   const notice = readiness.gates.filter(g => g.id === "storage.persistent" && g.status === READINESS_GATE_STATUSES.Warn).map(g => g.reason).join(" ");
-  const res = await deps.start(picked, discard !== "");
+  const res = startRequestJson === undefined
+    ? await deps.start(picked, discard !== "")
+    : await deps.start(picked, discard !== "", startRequestJson);
   if (!res.ok) return { kind: "refused", path: picked, message: res.message };
   return { kind: "started", path: picked, notice };
 }

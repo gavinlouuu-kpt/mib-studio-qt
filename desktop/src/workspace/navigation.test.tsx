@@ -13,6 +13,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
+import { save } from "@tauri-apps/plugin-dialog";
 import App from "../App";
 import { BRIDGE_ABI_VERSION, COMMAND_TYPES, EXPERIMENT_STATES, JSON_TRANSPORT, READINESS_GATE_STATUSES as G, RUN_COMPLETION_STATES } from "../bridgeContract";
 import { DESKTOP_CAPABILITIES } from "../platformCapabilities";
@@ -47,6 +48,10 @@ const cmdResult = (command: number) => ({ transport_version: JSON_TRANSPORT.vers
 let device = { overview: false, mode: "unknown", runX: 0, runY: 0, runSet: false };
 /** Set to hold the next camera geometry read back until the test releases it. */
 let holdNextGeometry = false;
+/** A host that can start a run (A5): the camera streams and the pinned core is active. */
+let canStart = false;
+/** The backend's answer to experiment_start. */
+let startReply: { ok: boolean; message: string } = { ok: true, message: "experiment started" };
 const heldGeometry: (() => void)[] = [];
 
 function respond(variant: Variant, cmd: string, args?: unknown): unknown {
@@ -55,7 +60,9 @@ function respond(variant: Variant, cmd: string, args?: unknown): unknown {
   switch (cmd) {
     case "abi_version": return BRIDGE_ABI_VERSION;
     case "is_initialized": return true;
-    case "fetch_preview_buffer": return { capture_running: false, recording: false, available: false };
+    case "fetch_preview_buffer": return { capture_running: canStart, recording: false, available: false };
+    case "fetch_processing_core_status": return canStart ? { valid: true, active_version: "2.1.0", contract_version: 1, engine_abi_version: 1, source: "bundled",
+      release_tag: "", build_id: "", artifact_sha256: "", required_version: "2.1.0", pin_satisfied: true } : null;
     case "fetch_experiment_status": return status;
     case "fetch_review_metadata": return { valid: false, file_open: false, file_path: "", recording_file: false };
     case "fetch_platform_info": return pz ? { science: "pl", host_processing: false, aravis: true, capabilities: PZ_CAPS } : { science: "host", host_processing: true, aravis: false };
@@ -70,8 +77,11 @@ function respond(variant: Variant, cmd: string, args?: unknown): unknown {
       width_increment: 16, height_increment: 4, offset_x_increment: 16, offset_y_increment: 4, min_width: 64, min_height: 4, session: {} };
     case "fetch_instrument_status": return pz ? { available: true, mode: { name: device.mode, run_x: device.runX, run_y: device.runY, run_set: device.runSet, service: false } }
       : { available: false, error: "not a PZ7035" };
-    case "fetch_experiment_readiness": return { transport_version: JSON_TRANSPORT.version, valid: true, ready: false, generation: "1",
-      gates: [{ id: "storage.output", status: G.Unavailable, reason: "no output path chosen yet", remediation: "choose an HDF5 destination" }] };
+    case "fetch_experiment_readiness": return a.outputPath
+      ? { transport_version: JSON_TRANSPORT.version, valid: true, ready: true, generation: "2", gates: [{ id: "storage.output", status: G.Pass, reason: "", remediation: "" }] }
+      : { transport_version: JSON_TRANSPORT.version, valid: true, ready: false, generation: "1",
+        gates: [{ id: "storage.output", status: G.Unavailable, reason: "no output path chosen yet", remediation: "choose an HDF5 destination" }] };
+    case "experiment_start": return { ...cmdResult(COMMAND_TYPES.Experiment), ...startReply };
     case "poll_events_exact": return { transport_version: JSON_TRANSPORT.version, events: [] };
     case "set_camera_overview": device.overview = !!a.overview; return cmdResult(COMMAND_TYPES.Camera);
     case "save_camera_roi": return cmdResult(COMMAND_TYPES.Camera);
@@ -111,6 +121,8 @@ beforeEach(() => {
   device = { overview: false, mode: "unknown", runX: 0, runY: 0, runSet: false };
   holdNextGeometry = false;
   heldGeometry.length = 0;
+  canStart = false;
+  startReply = { ok: true, message: "experiment started" };
   const saved = new Map<string, string>();
   const store = { getItem: (k: string) => saved.get(k) ?? null, setItem: (k: string, v: string) => void saved.set(k, v), removeItem: (k: string) => void saved.delete(k) };
   vi.stubGlobal("localStorage", store);
@@ -301,5 +313,94 @@ describe.each<Variant>(["desktop", "pz7035"])("workspace navigation never actuat
     await click(host.querySelector('button[aria-label^="Camera & Alignment:"]'), "classic Camera & Alignment tab");
     await advance(3000);
     expect(log.map((e) => e.cmd)).toContain(variant === "pz7035" ? "set_instrument_mode" : "set_camera_overview");
+  });
+});
+
+/** Type into a field of the workspace (React's controlled input). */
+async function typeInto(selector: string, value: string) {
+  const el = host.querySelector<HTMLInputElement>(selector);
+  if (!el) throw new Error(`no field ${selector}`);
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(el, value);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+const openPlan = async () => {
+  await click(buttonByText("Workspace preview"), "workspace toggle");
+  await click(host.querySelectorAll(".mib-stages__tab")[2], "Experiment");
+  expect(host.querySelector("[data-testid=workspace-plan]")).not.toBeNull();
+};
+
+describe.each<Variant>(["desktop", "pz7035"])("Experiment · Plan never acts on its own (%s)", (variant) => {
+  it("visiting the Plan, filling the sheet and switching sub-views sends nothing that acts; Start run is locked with the reason", async () => {
+    await boot(variant);
+    const idle = await steadyState();
+    await openPlan();
+    await typeInto("[data-testid=plan-condition]", "Vehicle");
+    await typeInto("[data-testid=plan-operator-name]", "A. Operator");
+    for (const sub of ["Live", "Summary", "Plan"]) await click(buttonByText(sub), sub);
+    await advance(6000);
+    const visit = log.splice(0);
+    expect(visit.filter((e) => ACTUATING.includes(e.cmd))).toEqual([]);
+    // Only Prepare's path-less readiness read is added (the Plan takes Prepare's verdict).
+    for (const n of [...namesIn(visit)].filter((n) => !namesIn(idle).has(n))) expect(n).toBe("fetch_experiment_readiness");
+    for (const r of readinessReads(visit)) expect(r.args).toEqual({ outputPath: "" });
+    // In the mock nothing is ready to run (no core status, no stream or Run mode): Start run says why and sends nothing.
+    const start = buttonByText("Start run")!;
+    expect(start.disabled).toBe(true);
+    expect(host.querySelector("[data-testid=plan-blocked-prepare]")!.textContent).toContain("Start is unavailable · Prepare: Not ready");
+    await click(start, "Start run");
+    expect(log.splice(0).filter((e) => ACTUATING.includes(e.cmd))).toEqual([]);
+  });
+});
+
+describe("Experiment · Plan Start run (desktop)", () => {
+  it("sends experiment_start once, with the plan's startRequestJson; the classic Start still sends none", async () => {
+    canStart = true;
+    await boot("desktop");
+    await openPlan();
+    const id = host.querySelector("[data-testid=plan-experiment-id]")!.textContent!;
+    await typeInto("[data-testid=plan-condition]", "Vehicle");
+    await typeInto("[data-testid=plan-temperatureC]", "22.5");
+    await typeInto("[data-testid=plan-operator-name]", "A. Operator");
+    await advance(3000);
+    log.splice(0);
+    vi.mocked(save).mockResolvedValueOnce("/data/run.h5");
+    await click(buttonByText("Start run"), "Start run");
+    const acted = log.splice(0).filter((e) => ACTUATING.includes(e.cmd));
+    expect(acted).toEqual([{ cmd: "experiment_start", args: {
+      outputPath: "/data/run.h5", acknowledgeDiscardRing: false,
+      startRequestJson: `{"experiment_id":"${id}","run_index":1,"sample_ref":"S1","operator":{"name":"A. Operator"},"annotation":{"condition":"Vehicle","temperature_c":22.5}}`,
+    } }]);
+    expect(host.querySelector("[data-testid=plan-outcome]")!.textContent).toContain("Run 1 started · /data/run.h5");
+
+    // The classic Start button is unchanged: no start request.
+    await click(buttonByText("Classic view"), "Classic view");
+    await click(host.querySelector('button[aria-label^="Experiment:"]'), "classic Experiment tab");
+    await advance(3000);
+    log.splice(0);
+    vi.mocked(save).mockResolvedValueOnce("/data/classic.h5");
+    await click(buttonByText("Start Experiment"), "classic Start Experiment");
+    const classic = log.splice(0).filter((e) => e.cmd === "experiment_start");
+    expect(classic).toEqual([{ cmd: "experiment_start", args: { outputPath: "/data/classic.h5", acknowledgeDiscardRing: false } }]);
+  });
+
+  it("the backend's InvalidRequest is shown next to the sheet, no run is claimed, and the plan is kept", async () => {
+    canStart = true;
+    startReply = { ok: false, message: "invalid start request: annotation.condition: 300 bytes, at most 256" };
+    await boot("desktop");
+    await openPlan();
+    const id = host.querySelector("[data-testid=plan-experiment-id]")!.textContent!;
+    await typeInto("[data-testid=plan-condition]", "Vehicle");
+    vi.mocked(save).mockResolvedValueOnce("/data/run.h5");
+    await click(buttonByText("Start run"), "Start run");
+    expect(log.filter((e) => e.cmd === "experiment_start")).toHaveLength(1);
+    const refusal = host.querySelector("[data-testid=plan-sheet] [data-testid=plan-refusal]")!;
+    expect(refusal.textContent).toContain("Condition: 300 bytes, at most 256. No file was created.");
+    expect(host.querySelector("[data-testid=workspace-plan]")!.textContent).not.toMatch(/Run 1 started|run has started/);
+    expect(host.querySelector("[data-testid=plan-outcome]")).toBeNull();
+    expect(host.querySelector("[data-testid=plan-experiment-id]")!.textContent).toBe(id);
+    expect(host.querySelector<HTMLInputElement>("[data-testid=plan-condition]")!.value).toBe("Vehicle");
+    expect(buttonByText("Start run")!.disabled).toBe(false);
   });
 });

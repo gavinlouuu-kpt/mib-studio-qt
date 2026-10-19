@@ -31,6 +31,7 @@ import { stripView, type SsdStatus } from "./ssdView";
 import { RingPlaybackPanel } from "./components/RingPlaybackPanel";
 import { faultClearedNote } from "./ringPlayback";
 import { startExperiment } from "./experimentStart";
+import { usePlan, type PlanStartResult } from "./workspace/usePlan";
 import { downloadUrl } from "./filesView";
 import { serverOrigin, tokenFromLocation } from "./transport/auth";
 import { FilesPanel } from "./components/FilesPanel";
@@ -716,8 +717,9 @@ export default function App() {
     if (!pz7035Ref.current) void bridge.fetchStageStatus().then(setZStage).catch(() => setZStage(null));
   }, []);
 
-  // The checklist is shown on the classic Connect tab and in the workspace's Prepare stage.
-  const checklistShown = tab === "connect" || workspaceStage === 0;
+  // The checklist is shown on the classic Connect tab and in the workspace's Prepare stage; the
+  // workspace's Experiment plan takes Prepare's verdict from it too (reads only).
+  const checklistShown = tab === "connect" || workspaceStage === 0 || workspaceStage === 2;
   useEffect(() => {
     if (!ready || !checklistShown) return;
     void refreshPreflight();
@@ -927,8 +929,10 @@ export default function App() {
   const [readinessMessage, setReadinessMessage] = useState("");
   // Non-blocking readiness warnings shown at run start (e.g. recording to RAM, #501).
   const [startNotice, setStartNotice] = useState("");
-  const onStartExperiment = useCallback(async () => {
-    if (experimentPending.current) return;
+  // One Start flow for the classic Start button (no start request) and the workspace's Plan, which
+  // passes the run's identity and planned annotation as startRequestJson (ABI 39, #716 A5).
+  const runExperimentStart = useCallback(async (startRequestJson?: string): Promise<PlanStartResult> => {
+    if (experimentPending.current) return { kind: "busy" };
     experimentPending.current = true; setExperimentRequestBusy(true); setReadinessMessage(""); setStartNotice("");
     try {
       const outcome = await startExperiment({
@@ -936,19 +940,24 @@ export default function App() {
         confirm,
         pickFile: () => save({ title: "Save Experiment Data", filters: H5_FILTER, defaultPath: "experiment.h5" }),
         fetchReadiness: (path) => bridge.fetchExperimentReadiness(path),
-        start: (path, acknowledgeDiscardRing) => bridge.experimentStart(path, acknowledgeDiscardRing),
-      });
-      if (outcome.kind === "not-ready") { setReadinessMessage(outcome.message); return; }
-      if (outcome.kind === "refused") {setReadinessMessage(`${outcome.path}: ${outcome.message}`); setExpStatus(await bridge.fetchExperimentStatus()); return append(`experiment start failed: ${outcome.message}`); }
+        start: (path, acknowledgeDiscardRing, request) => bridge.experimentStart(path, acknowledgeDiscardRing, request),
+      }, startRequestJson);
+      if (outcome.kind === "not-ready") { setReadinessMessage(outcome.message); return outcome; }
+      if (outcome.kind === "refused") {setReadinessMessage(`${outcome.path}: ${outcome.message}`); setExpStatus(await bridge.fetchExperimentStatus()); append(`experiment start failed: ${outcome.message}`); return outcome; }
       if (outcome.kind === "started") {
         append(`experiment started → ${outcome.path}`);
         if (outcome.notice) { setStartNotice(outcome.notice); append(outcome.notice); }
         setExpStatus(await bridge.fetchExperimentStatus());
       }
+      return outcome;
     } catch (e) {
       append(`experiment start error: ${e}`);
+      return { kind: "error", message: String(e) };
     } finally { experimentPending.current = false; setExperimentRequestBusy(false); }
   }, [append]);
+  const onStartExperiment = useCallback(() => { void runExperimentStart(); }, [runExperimentStart]);
+  // The workspace's Experiment plan (O3): local until its Start run button.
+  const plan = usePlan(runExperimentStart);
 
   const onStopExperiment = useCallback(async () => {
     try {
@@ -1660,6 +1669,8 @@ export default function App() {
             onRefreshChecks={() => void refreshPreflight()}
             // The classic Connect tab only reads (it never switches camera modes).
             onOpenSetup={() => { setTab("connect"); exitWorkspace(); }}
+            // O3 Plan: Start run is locked for the same reasons as the classic Start button.
+            experiment={{ plan, lockedReason: startExperimentReason ?? "" }}
           />
         </div>
       )}

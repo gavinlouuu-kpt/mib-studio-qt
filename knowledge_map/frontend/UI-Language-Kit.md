@@ -55,6 +55,12 @@ see [[../architecture/Desktop-Shell]], "Opt-in workspace"), which imports the st
 at its entry. O2 Align (#716 A3) uses `DataTable` (compact) for the quick controls, `Notice` for
 the explicit mode switch and `StateChip` tones for write states. The kit has no number field yet:
 the quick controls' X / Y / W / H inputs are app-local markup in `workspace.css` until one lands
-(#715).
+(#715). O3 Experiment · Plan (#716 A5) uses `OptionGroup` (sample format, the queue inert with its
+reason), a compact `DataTable` for the sheet's row as it will be recorded (with a "Not declared"
+`missing`), `ConditionSwatch` slots 1–4 in sheet order, `FactList` for the run identity and
+`Notice` for each reason Start is unavailable and for the outcome. Its text fields (and the notes
+textarea) are app-local too, without `maxLength` (a long value is refused, never cut off). Two
+local CSS rules wrap content the kit keeps on one line: an `OptionGroup` reason chip in a narrow
+card and long values in the sheet's table cells.
 
 Related: [[YofoReview]], [[../architecture/Desktop-Shell]].

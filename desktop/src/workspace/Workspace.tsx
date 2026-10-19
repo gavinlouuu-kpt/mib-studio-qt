@@ -4,7 +4,8 @@
 // can act on hardware (Camera & Alignment switches the PZ7035 to Align and its LED on; Experiment
 // to Run). Selecting a stage here only changes what is shown; it never starts capture, switches a
 // camera mode, moves a motor or stage, enables light, runs a pump or installs an update. Prepare
-// (O1) and Align (O2) have content; in Align a mode switch or a write happens only on a button.
+// (O1), Align (O2) and Experiment · Plan (O3, A5) have content; in Align a mode switch or a write
+// happens only on a button, and in Plan a run starts only on "Start run".
 //
 // The kit stylesheets are imported once, here, at the workspace entry.
 import "@mib/ui/fonts.css";
@@ -13,15 +14,16 @@ import "./workspace.css";
 import { AppShell, Button, Notice, StateChip, Toolbar } from "@mib/ui";
 import { derivePreflight } from "../preflight";
 import { AlignView, type AlignViewProps } from "./AlignView";
+import { ExperimentView } from "./ExperimentView";
 import { PrepareView, type PrepareViewProps } from "./PrepareView";
-import { prepareVerdict } from "./prepareModel";
+import { confirmBlockers, prepareVerdict } from "./prepareModel";
+import type { PlanController } from "./usePlan";
 import { usePrepareReadiness } from "./usePrepareReadiness";
 
 export const WORKSPACE_STAGES = ["Prepare", "Align", "Experiment", "Review"] as const;
 
 /** What each stage still uses the classic view for, until it moves into the workspace. */
 const CLASSIC_FOR: Readonly<Record<number, string>> = {
-  2: "starting, monitoring and stopping a run (Experiment)",
   3: "opening and reviewing recordings (Review)",
 };
 
@@ -37,11 +39,15 @@ export interface WorkspaceProps extends Omit<PrepareViewProps, "readiness" | "re
   serviceMode: boolean;
   /** O2 Align: the live image, image tools and quick controls. */
   align: Omit<AlignViewProps, "onClassic">;
+  /** O3 Experiment · Plan: the plan (held by App) and why Start is locked apart from it and
+   *  Prepare (the classic Start button's reasons; "" when none). */
+  experiment: { plan: PlanController; lockedReason: string };
 }
 
-export function Workspace({ brand, source, method, stage, onStage, onExit, serviceMode, align, ...prepare }: WorkspaceProps) {
-  // Read only while Prepare is shown and no run is active (the gates would only say "running").
-  const readiness = usePrepareReadiness(stage === 0 && !prepare.experimentActive);
+export function Workspace({ brand, source, method, stage, onStage, onExit, serviceMode, align, experiment, ...prepare }: WorkspaceProps) {
+  // Read only while Prepare or the Experiment plan (which takes Prepare's verdict) is shown and no
+  // run is active (the gates would only say "running"). Always without a path.
+  const readiness = usePrepareReadiness((stage === 0 || stage === 2) && !prepare.experimentActive);
   // One verdict from the checklist and the gates, the same words in the header and in Prepare.
   const report = derivePreflight(prepare.preflightInput);
   const verdict = prepareVerdict(report, readiness.snapshot, readiness.error, prepare.experimentActive);
@@ -60,8 +66,8 @@ export function Workspace({ brand, source, method, stage, onStage, onExit, servi
       onStageSelect={onStage}
       band={{ left: "Workspace preview · opt-in", right: "Navigation never acts: only an explicit button switches or writes. The classic view stays the default." }}
       status={<>
-        {stage === 0 ? <StateChip tone={verdict.tone} title={verdict.detail || undefined} data-testid="workspace-verdict">{verdict.title}</StateChip> : null}
-        <StateChip tone="neutral" data-testid="workspace-preview-chip">{stage === 1 ? "Preview · acts only on a button" : "Preview · read-only"}</StateChip>
+        {stage === 0 || stage === 2 ? <StateChip tone={verdict.tone} title={verdict.detail || undefined} data-testid="workspace-verdict">{verdict.title}</StateChip> : null}
+        <StateChip tone="neutral" data-testid="workspace-preview-chip">{stage === 1 || stage === 2 ? "Preview · acts only on a button" : "Preview · read-only"}</StateChip>
       </>}
       headerActions={<Button onClick={onExit}>Classic view</Button>}
     >
@@ -76,6 +82,8 @@ export function Workspace({ brand, source, method, stage, onStage, onExit, servi
         <PrepareView {...prepare} report={report} readiness={readiness} verdict={verdict} />
       ) : stage === 1 ? (
         <AlignView {...align} onClassic={onExit} />
+      ) : stage === 2 ? (
+        <ExperimentView plan={experiment.plan} lockedReason={experiment.lockedReason} verdict={verdict} blockers={confirmBlockers(report)} onClassic={onExit} />
       ) : (
         <div className="ws-view" data-testid={`workspace-${WORKSPACE_STAGES[stage]?.toLowerCase() ?? "stage"}`}>
           <Toolbar title={WORKSPACE_STAGES[stage]}>

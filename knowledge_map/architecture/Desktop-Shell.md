@@ -60,7 +60,10 @@ The repo root `src/` is the C++ tree, so the whole Tauri app lives under
   `prepareModel.ts` (pure tones and summaries), `usePrepareReadiness.ts`
   (path-less readiness poll), `AlignView.tsx` (O2), `alignImageModel.ts` (view transform,
   probe, histogram, profile, `FrameInspector`), `quickControlModel.ts` + `useQuickControl.ts`
-  (requested → readback machine), `alignControls.ts` (which controls an instrument offers).
+  (requested → readback machine), `alignControls.ts` (which controls an instrument offers);
+  O3 Experiment · Plan (#716 A5): `ExperimentView.tsx` (sub-views Plan / Live / Summary),
+  `PlanView.tsx`, `planModel.ts` (pure: sheet, identity, `buildStartRequest`, bounds, refusals)
+  and `usePlan.ts` (the plan held by App, remembered operators).
   See "Opt-in workspace" below.
 - `desktop/src/experimentCounters.ts` — operator saved counts by class, pending
   saves derived with exact u64 arithmetic, policy drops and writer failures
@@ -139,9 +142,10 @@ LED on a service setting. Tests: `workflow.test.ts` (#548), `preflight.test.ts` 
 
 `desktop/src/workspace/Workspace.tsx` is the four-stage Prepare / Align / Experiment /
 Review shell on the `@mib/ui` kit (`AppShell`, `StageTabs`, `Toolbar`, `Card`, `FactList`,
-`StateChip`, `Button`, `Notice`, `DataTable`), the Operation app's steps A1 and A3 (#716). The kit
-stylesheets are imported once, there; `workspace.css` only places cards with the kit's spacing
-tokens (and styles the app-local number fields of the quick controls, until the kit has one).
+`StateChip`, `Button`, `Notice`, `DataTable`, `OptionGroup`, `ConditionSwatch`), the Operation
+app's steps A1, A3 and A5 (#716). The kit stylesheets are imported once, there; `workspace.css`
+only places cards with the kit's spacing tokens (and styles the app-local number and text fields
+of the quick controls and the sample sheet, until the kit has them).
 
 - **Opt-in, session only.** The menu row's "Workspace preview" button opens it; "Classic
   view" closes it. The flag is plain React state: every start and every reload opens the
@@ -152,7 +156,9 @@ tokens (and styles the app-local number fields of the quick controls, until the 
   change can act (Camera & Alignment switches the camera to the full sensor, and the PZ7035 to
   Align with its LED; Experiment to Run). Stages only change what is shown. In Align the
   same switch is a button the operator presses ("Show the full sensor" / "Switch to Align").
-  Experiment and Review say "Not yet in the workspace" and offer "Back to the classic view".
+  Experiment opens on its Plan, where a run starts only on "Start run"; its Live and Summary
+  sub-views, and the Review stage, say "Not yet in the workspace" and offer "Back to the classic
+  view".
   Prepare's "Camera / Focus / Pump setup" leave for the classic Connect tab, which only reads.
   The classic startup landing is skipped when the workspace is already open.
 - **Prepare (O1)** shows the checklist by subsystem (camera and acquisition, focus, fluidics,
@@ -247,6 +253,57 @@ tokens (and styles the app-local number fields of the quick controls, until the 
     way sends nothing and leaves the classic tab showing the notice's mismatch, not a silently
     wrong mode.
   - While Align is shown, App polls `fetch_camera_geometry` every 2 s, as the classic tab does.
+- **Experiment · Plan (O3, P4; #716 A5).** Penpot board O3 (`14db68fb-c9d2-4e21-ae5a-bd4291fc6273`,
+  read at revn 218; the queue preview, per-run auto-stop and "Base on …" are later steps). Three
+  cards and a Start card; the plan is local until "Start run".
+  - **The plan lives in App** (`usePlan`), so it survives stage changes and leaving the workspace;
+    a reload starts a new one. It holds the format, the sheet rows and the selected operator.
+    Creating or editing it sends nothing.
+  - **Sample format** (`OptionGroup`): "Single sample" (one run, one file) and "Sample queue",
+    shown inert with the reason "Not yet · the guided queue comes in the next workspace step".
+  - **Sample sheet**, the fixed schema of `/experiment_annotation` ([[../data-model/HDF5-Storage]]):
+    sample, condition, experimental unit, concentration (value + unit), channel, medium,
+    temperature (°C), notes and free key/values (strings, unique keys). A compact `DataTable`
+    shows the row as it will be recorded ("–" = not declared), the condition with its
+    `ConditionSwatch` (`conditionSlots`: distinct conditions take slots 1–4 in sheet order;
+    slot 5 is the kit's calibration colour); the editor below it has one app-local field per
+    member. No `maxLength`: a long value stays as typed and is refused.
+  - **Client checks mirror the contract** (`planModel.ts`, the generated
+    `EXPERIMENT_START_REQUEST`, bytes of UTF-8 as the backend counts them): every text bound,
+    control characters (notes may hold tab, CR, LF), concentration value and unit both or neither
+    (a finite number ≥ 0), temperature from `temperature_c_min` to `temperature_c_max`, at most
+    `max_free_entries` free entries, a half-filled or repeated key/value row, and
+    `max_request_bytes` of the text as sent. Each refusal names the field and the limit next to
+    the field and in the Start card ("Condition: too long: 257 bytes, at most 256. Shorten it;
+    nothing is cut off."); nothing is truncated. Spaces around a value are not part of it; an
+    empty field is not declared and its key is left out, never sent as `""` or `null`. The
+    backend checks the same request again and stays the authority.
+  - **Identity** (`buildStartRequest`, one ordered serializer so the text is exact):
+    `experiment_id` is a UUID v4 minted with `crypto.getRandomValues` when the plan is created
+    (lowercase; `randomUUID` is missing outside a secure context, as on the instrument's HTTP
+    UI), `run_index` 1, `sample_ref` the row's ref ("S1"), `operator {id, name}` when one is
+    given, then `annotation` when anything is declared. No `calibration_record_id` until A4.
+    The operator is the one the operator selected or typed (#393 phase 1), recorded by the
+    backend with assurance "selected"; the card says it is not authentication. Operators are
+    remembered on this machine (`localStorage` `mib.workspace.operators`, most recent first, at
+    most 8) when a run starts with them, and the last one is the next plan's default.
+  - **Start run** (the one primary action) runs App's `runExperimentStart`, the classic Start
+    flow (`experimentStart.ts`: ask before a stopped Run's frames are discarded, pick the file,
+    readiness with it, start) with the plan's `startRequestJson`; the classic Start button runs
+    the same function without one and sends none. It is disabled, each reason a `Notice` next to
+    it (`startBlocks`), while Prepare's checklist blocks (the same `prepareVerdict` title and
+    `confirmBlockers` lines as Prepare; the workspace reads the checklist and the path-less gates
+    while the Plan is shown, so the verdict is the same), for the classic Start button's reasons
+    (`startExperimentReason`: backend, camera stream or Run mode, a run active, a start pending),
+    while the sheet has an issue, while a start is pending, and once the plan's run has started.
+  - **Outcomes.** The backend's `InvalidRequest` (start outcome 7; `CmdResult` carries the
+    message, "invalid start request: <key>: <why>", `invalidRequestReason`) is shown in the sheet
+    card in plain words ("Condition: 300 bytes, at most 256. No file was created. The plan is
+    kept"), with the key as secondary text; the plan, its id and the values are kept and nothing
+    claims a run started. Not ready, another refusal or a transport error are said as they are
+    and keep the plan; a cancelled dialog says nothing. A started run locks the plan ("Run 1
+    started · <path>"): its identity is in that run, so a single-sample plan has no second run;
+    "New plan" mints a new id and keeps the operator.
 - **Gate (P1, extended for P3).** `workspace/navigation.test.tsx` runs the whole App over a
   mocked transport, desktop and PZ7035: opening the workspace, visiting every stage, leaving,
   coming back and Camera setup add no command to the idle app's steady state except two reads,
@@ -260,7 +317,16 @@ tokens (and styles the app-local number fields of the quick controls, until the 
   geometry read is held until after "Workspace preview" sends nothing that acts once the read
   answers, and the classic view then shows the notice (this case failed before the cancellation).
   A control shows the classic Camera & Alignment tab does send
-  `set_camera_overview` / `set_instrument_mode`. `Workspace.test.tsx` proves Prepare polling
+  `set_camera_overview` / `set_instrument_mode`. For the Plan (A5), visiting it, typing in the
+  sheet and switching its sub-views add only the path-less readiness read and nothing that acts
+  (desktop and PZ7035, where the mock's checklist blocks and Start run says so); on a desktop host
+  that can start, "Start run" sends exactly one `experiment_start` with the plan's
+  `startRequestJson`, the classic Start Experiment still sends none, and an `InvalidRequest`
+  reply is shown next to the sheet with the plan kept. `PlanView.test.tsx` (StrictMode, the real
+  `usePlan`) covers the exact text sent, client refusals, outcomes, Prepare's and the classic
+  locks, and the started lock; `planModel.test.ts` the exact JSON of full, minimal and empty
+  plans, every bound at its limit and one past it, empty → absent, the UUID and the refusal
+  parser; `experimentStart.test.ts` the pass-through. `Workspace.test.tsx` proves Prepare polling
   never passes a path and Align opens without a command; `AlignView.test.tsx` (StrictMode)
   covers the image tools on delivered frames and the write states; `prepareModel.test.ts`,
   `alignImageModel.test.ts`, `quickControlModel.test.ts` and `alignControls.test.ts` cover the
@@ -268,7 +334,12 @@ tokens (and styles the app-local number fields of the quick controls, until the 
 - **Not yet (later A-steps):** the other Prepare sub-views, storage budget and run plan,
   fluidics estimates, the non-default-settings banner, the calibration card; in Align the focus
   and illumination card, the quality signals, All Features / GenApi XML / scripts, selector
-  enumeration and restoration, and overrides recorded by S2 (#712).
+  enumeration and restoration, and overrides recorded by S2 (#712); in Experiment the guided
+  sample queue (stop → drain → finalize → close → prompt → readiness → Start), per-run auto-stop
+  (a backend stop condition), "base on previous experiment", Live (A6), Summary and Quick look
+  (A7). The workspace has no Run-mode switch of its own yet: on the PZ7035, Start run stays
+  locked with the classic reason ("The camera is not in Run mode yet") until the instrument is in
+  Run, which today only the classic Experiment tab switches to.
 
 **Quality gates (UX-4 slice, issue #308):** `desktop/src/quality.ts` —
 `deriveQualityGates(input)` turns the Camera & Alignment stage's
@@ -565,14 +636,16 @@ with typed fields, readiness gates, unknown enum refusal),
 **Start request (ABI 39, #712).** `experiment_start` takes an optional
 string `startRequestJson` (Tauri command arg `start_request_json`, `dispatch.rs`
 `startRequestJson`, `bridge.experimentStart(path, ack, startRequestJson?)`; the
-shell writes it with `JSON.stringify` of an `ExperimentStartRequestDoc`).
+document's shape is `ExperimentStartRequestDoc`).
 `mib-app-commands` passes the text to the bridge byte for byte, `""` when absent
 or null; it is never decoded in Rust or TypeScript, so duplicate keys and the
 byte bound reach the backend parser unchanged. Nothing is checked in Rust or TypeScript:
 the backend parses it strictly and refuses with `invalid start request: <key>`
-([[Rust-Bridge]] ABI 39). No UI sends it yet (the context bar's
-`operatorName: ""` stays); the bounds are in `bridgeContract.ts`
-`EXPERIMENT_START_REQUEST` for the Plan view (S5).
+([[Rust-Bridge]] ABI 39). The workspace's Experiment · Plan sends it (#716 A5, "Opt-in
+workspace" above): `planModel.buildStartRequest` writes the text with one ordered serializer and
+checks it first against `bridgeContract.ts` `EXPERIMENT_START_REQUEST`, so an over-bound plan is
+refused before it is sent; the backend still checks it and stays the authority. The classic Start
+sends none (the context bar's `operatorName: ""` stays).
 
 ## Central profile registry (ABI 25, issue #398)
 
