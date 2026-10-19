@@ -209,7 +209,7 @@ the coordinator (ADR 0004/0011).
 | S4 | Charts JSON and saved-overlay builders | none (text only, D3) | none | merged (#726) |
 | S5 | The facade owns the ReviewSession | none (D1 (a): unchanged) | none | merged (#733) |
 | S6 | Parity harness: a MIB Studio half | none | none | planned |
-| S7 | Facade jobs on ReviewJobs lanes | none | none | in review |
+| S7 | Facade jobs on ReviewJobs lanes | none | none | in review (#742) |
 | S8 | YOFO regenerate on the reanalysis engine | none | none (behaviour D6) | merged (#735) |
 | S9 | Transport-neutral review module | none | none | merged (#731) |
 | S10 | Attachable review bridge | **additive, ABI bump** | none | proposed, not implemented |
@@ -531,7 +531,7 @@ the coordinator (ADR 0004/0011).
   bits across platforms. Compare chart ranges with a tolerance, or pin them
   per platform (found in S4, #726).
 
-### S7 — Facade jobs on ReviewJobs lanes
+### S7 — Facade jobs on ReviewJobs lanes (in review, #742)
 
 - **Moves:** `ReviewJobs` gains lanes (D7) and host hooks: the host supplies
   the operation id and cancel flag (the facade's `beginOperation`) and
@@ -590,7 +590,7 @@ the coordinator (ADR 0004/0011).
   only between the start's return and the worker's first progress (no seam);
   the stress cycles check that the lane's snapshot names the new operation as
   soon as the start returns.
-- **Proof (S7):** `backend.facade_review_jobs` (new) keeps the pre-S7 facade
+- **Proof (#742):** `backend.facade_review_jobs` (new) keeps the pre-S7 facade
   job code as the oracle (the two submit bodies, flags, threads, snapshots and
   the operation registry, copied from develop 88e9afbe) and drives both through
   11 scenarios with handshakes: complete, cancel at the first progress event
@@ -885,7 +885,7 @@ bridge contract):
 - [x] 2026-10-19 — S4 charts JSON and saved-overlay builders (`review.charts_json`, #726).
 - [x] 2026-10-19 — S5 the facade owns the ReviewSession (`backend.facade_review_session`; D1 (a) via `AppBackend::setReviewSourceOpen`, gate text unchanged; #733).
 - [ ] S6 parity harness MIB Studio half
-- [x] 2026-10-19 — S7 facade jobs on ReviewJobs lanes (D7 per-host policy: `forReviewBridge` one job at a time until #722, `forFacade` both lanes; `backend.facade_review_jobs` with the pre-S7 oracle, `review.jobs_lanes`)
+- [x] 2026-10-19 — S7 facade jobs on ReviewJobs lanes (D7 per-host policy: `forReviewBridge` one job at a time until #722, `forFacade` both lanes; `backend.facade_review_jobs` with the pre-S7 oracle, `review.jobs_lanes`; #742)
 - [x] 2026-10-19 — S8 YOFO regenerate on the engine (D6; `review.jobs`, `review.reanalysis`, no clobber; the position-pairing fix; #735)
 - [x] 2026-10-19 — S9 transport-neutral review module (`reviewIpc` golden unchanged; import guard; `Transport.upload`; #731).
 - [ ] S10 attachable review bridge (ABI)

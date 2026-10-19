@@ -1,4 +1,4 @@
-## 2026-10-19 — The facade's review jobs run on ReviewJobs lanes (#512 S7)
+## 2026-10-19 — The facade's review jobs run on ReviewJobs lanes (#512 S7, #742)
 
 Track B (#717), plan [`2026-10-18-one-review-implementation.md`](../../../docs/exec-plans/active/2026-10-18-one-review-implementation.md)
 slice S7, decision D7 as amended 2026-10-19. `ReviewJobs` gained two lanes
