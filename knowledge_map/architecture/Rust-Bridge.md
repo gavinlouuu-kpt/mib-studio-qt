@@ -497,7 +497,8 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
   off, camera released; `mode.idle` reads true until the next switch).
 - **Pumps on client loss (#711):** as the last step of the pass, after the
   recording stop and the PZ7035 safe state (pump commands do serial I/O under
-  the bridge lock, and serial I/O is not yet bounded, #720), every connected pump
+  the bridge lock; since #720 it is bounded, about a second per command on a
+  stalled adapter, but it still goes last), every connected pump
   (Sample and Sheath slots, DLSP syringe or Tushui peristaltic) gets
   `pump_stop` and then `pump_stop_purge`, whatever its `run_status` says: the
   snapshot is only as fresh as the last poll, and the DLSP purges through
@@ -508,7 +509,12 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
   the same pass. Tests: `client_loss_stops_every_connected_pump_and_its_purge`
   and `client_loss_reports_a_pump_that_fails_to_stop` (`stop_pumps` with fake
   status and stop calls), `client_loss_stops_and_saves` (`ws.rs`, real
-  backend, no pump connected: nothing sent).
+  backend, no pump connected: nothing sent), and
+  `client_loss_with_a_stalled_pump_still_stops_and_saves` (`ws.rs`, Linux,
+  #720: a fake dLSP pump on a pty whose output is stopped with
+  `tcflow(TCOOFF)`; the pass finishes in about 2.5 s, the recording is saved,
+  the next client's `pump_stop` answers in about 1 s with "Pump stop failed:
+  write failed: serial write timed out ...", and works again after `TCOON`).
 - **Tests:** `contract.rs` `stage_commands_fail_safely_without_hardware`;
   `stage_motion_is_control_only_but_stop_is_not` in the server;
   `backend.stage_bridge_facade`.

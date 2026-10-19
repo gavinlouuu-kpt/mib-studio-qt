@@ -52,6 +52,10 @@ struct FakeModbusBench {
     std::map<std::string, std::vector<FakeModbusWire*>> wires;
     std::set<std::string> busy; // held by another program
     std::atomic<int> openPorts{0};
+    // A stalled adapter (#720): written frames stay in the "driver queue" and
+    // never reach a slave; the drain fails at its timeout, as the platform
+    // ports now do, and the frame is discarded.
+    std::atomic<bool> outputStalls{false};
     // Optional observers for ordering assertions (called on the bus I/O thread).
     std::function<void(const std::string&)> onOpen;
     std::function<void(const std::string&)> onClose;
@@ -99,6 +103,10 @@ public:
     }
     int write(const std::vector<uint8_t>& q) override
     {
+        if (bench_.outputStalls) {
+            stalledBytes_ = q.size();
+            return static_cast<int>(q.size());
+        }
         if (!slaves_ || q.size() < 6) return static_cast<int>(q.size());
         FakeModbusWire* wire = nullptr;
         for (auto* w : *slaves_) {
@@ -139,7 +147,15 @@ public:
         }
         return static_cast<int>(q.size());
     }
-    bool waitForBytesWritten(int) override { return true; }
+    bool waitForBytesWritten(int ms) override
+    {
+        if (stalledBytes_ == 0) return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+        error_ = "serial output timed out: " + std::to_string(stalledBytes_) + " bytes not drained after " +
+                 std::to_string(ms) + " ms (discarded)";
+        stalledBytes_ = 0;
+        return false;
+    }
     bool waitForReadyRead(int ms) override
     {
         if (rx_.empty()) std::this_thread::sleep_for(std::chrono::milliseconds(ms));
@@ -151,7 +167,7 @@ public:
         rx_.clear();
         return out;
     }
-    std::string lastError() const override { return {}; }
+    std::string lastError() const override { return error_; }
 
 private:
     FakeModbusBench& bench_;
@@ -160,6 +176,8 @@ private:
     std::string name_;
     int systemError_ = 0;
     std::vector<uint8_t> rx_;
+    size_t stalledBytes_ = 0;
+    std::string error_;
 };
 
 // Fill the 12-register generator map so the identity read "looks like" a

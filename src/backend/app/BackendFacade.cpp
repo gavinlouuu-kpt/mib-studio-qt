@@ -1663,6 +1663,12 @@ namespace backend::bridge
                                         BackendCommandType::Pump, message});
             return {false, BackendCommandType::Pump, message};
         };
+        // A command that failed on the serial bus says why (a timeout names
+        // itself, #720); other failures keep their message.
+        auto failBus = [&](const std::string &message) -> BackendCommandResult {
+            const auto why = pumps.lastBusError(pumpId);
+            return fail(why.empty() ? message : message + ": " + why);
+        };
 
         switch (command.action)
         {
@@ -1711,7 +1717,15 @@ namespace backend::bridge
                     : pumps.connect(pumpId, port, command.baudRate,
                                     static_cast<std::uint8_t>(command.modbusAddress), model,
                                     command.microlitersPerRev);
-            if (!connected) return fail("Pump connect failed (no Modbus response)");
+            if (!connected)
+            {
+                // The bus error says why when there is one (a transaction
+                // timeout, or the port refused at open, e.g. still closing
+                // after a stalled transaction, #720).
+                const auto why = pumps.lastBusError(pumpId);
+                return fail(why.empty() ? "Pump connect failed (no Modbus response)"
+                                        : "Pump connect failed: " + why);
+            }
             return {true, BackendCommandType::Pump, "Pump connected"};
         }
         case PumpCommandAction::Disconnect:
@@ -1727,7 +1741,7 @@ namespace backend::bridge
             if (!pumps.setFlowRate(pumpId, command.flowRate,
                                    static_cast<std::uint16_t>(command.flowRateUnit)))
             {
-                return fail("Set flow rate failed");
+                return failBus("Set flow rate failed");
             }
             return {true, BackendCommandType::Pump, "Flow rate set"};
         case PumpCommandAction::SetDirection:
@@ -1735,32 +1749,32 @@ namespace backend::bridge
                                                 ? Pump::Direction::Withdraw
                                                 : Pump::Direction::Infuse))
             {
-                return fail("Set direction failed");
+                return failBus("Set direction failed");
             }
             return {true, BackendCommandType::Pump, "Direction set"};
         case PumpCommandAction::Start:
             if (!pumps.start(pumpId))
             {
-                return fail("Pump start failed");
+                return failBus("Pump start failed");
             }
             return {true, BackendCommandType::Pump, "Pump started"};
         case PumpCommandAction::Stop:
             if (!pumps.stop(pumpId))
             {
-                return fail("Pump stop failed");
+                return failBus("Pump stop failed");
             }
             return {true, BackendCommandType::Pump, "Pump stopped"};
         case PumpCommandAction::Purge:
             if (!pumps.purge(pumpId, command.direction == 1 ? Pump::Direction::Withdraw
                                                             : Pump::Direction::Infuse))
             {
-                return fail("Pump purge failed");
+                return failBus("Pump purge failed");
             }
             return {true, BackendCommandType::Pump, "Pump purge started"};
         case PumpCommandAction::StopPurge:
             if (!pumps.stopPurge(pumpId))
             {
-                return fail("Pump purge stop failed");
+                return failBus("Pump purge stop failed");
             }
             return {true, BackendCommandType::Pump, "Pump purge stopped"};
         case PumpCommandAction::SetSyringeVolume:
@@ -1772,7 +1786,7 @@ namespace backend::bridge
                                         static_cast<std::uint16_t>(command.syringeVolume),
                                         static_cast<std::uint16_t>(command.syringeVolumeUnit)))
             {
-                return fail("Set syringe volume failed");
+                return failBus("Set syringe volume failed");
             }
             return {true, BackendCommandType::Pump, "Syringe volume set"};
         case PumpCommandAction::PollStatus:
