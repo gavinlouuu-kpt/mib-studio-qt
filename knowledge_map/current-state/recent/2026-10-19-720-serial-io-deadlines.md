@@ -23,6 +23,15 @@ transaction stalls fails in about 4.5 s and a disconnect after an abandoned tran
 1 s, instead of joining for ever under the pump and bridge locks. The POSIX deadlines are checked on
 every retry, `EINTR` included.
 
+Until a detached thread has closed its port, the port stays reserved (review round 2): the registry
+holds a weak reference to a reservation the I/O thread releases only after its close. A new session
+on that port is refused at once with `PortBusy` ("serial port <name> is still closing after a
+stalled transaction") and opens again once the thread is done; an acquire that races a normal close
+waits for it (at most 1.25 s, never under the registry lock) and then opens. The session deleter no
+longer takes the registry lock, so other ports open during a teardown. The session and its I/O
+thread log through the logger captured at session creation, never spdlog's global default, so a
+detached thread can still log after `spdlog::drop_all()` at exit.
+
 On a write or drain timeout the port discards the unsent bytes (POSIX `tcflush(TCOFLUSH)`, Win32
 `PurgeComm`), so a stop or start reported as failed is not delivered when the adapter recovers.
 `Transaction::detail` names the failure; `SyringePumpService::lastBusError()` keeps it per pump and
@@ -38,7 +47,10 @@ No bridge ABI or contract change. See [[services/SerialBus]], [[services/ISerial
 (held port call: 1550 ms of a 1550 ms budget, fail-fast 0 ms, late result and late reply never
 answer the next request, 240-call concurrent stress with no misattributed answer, teardown while
 held: joined at once after `interrupt()`, detached at 1000 ms when the call ignores it, the
-detached thread closing its port once released), stalled-adapter, stalled-connect (4.5 s) and
+detached thread closing its port once released; the same port refused after 0 ms while it holds it
+and reopened after, another port opening during the teardown, a racing acquire waiting about 100 ms
+for a normal close and then opening, the late warning reaching the session's logger after
+`spdlog::drop_all()`), stalled-adapter, stalled-connect (4.5 s) and
 disconnect-after-abandon (1.0 s) cases in `backend.syringe_pump_fake_serial`, the stalled stop in
 `backend.peristaltic_pump_fake_serial`, the Win32 purge and interrupt checks in
 `backend.serial_port_win32_timeout`, and

@@ -21,7 +21,9 @@ unframeable (`expectedFrameLength` → -2) and fails the transaction.
 #720: held port call, fail-fast, late result and late reply never answer a
 later request, concurrent stress, teardown with the I/O thread held: joined
 after `interrupt()`, detached after `kShutdownJoinMs` when the call ignores
-it), `tests/backend/modbus_rtu_test.cpp`
+it; the port refused while the detached thread holds it and reopened after,
+another port opening during the teardown, an acquire racing a normal close,
+the late warning surviving `spdlog::drop_all()`), `tests/backend/modbus_rtu_test.cpp`
 (framing primitives)
 **Related:** [[PulseGeneratorService]], [[SyringePumpService]],
 [[../architecture/AppBackend]], [[../frontend/ConfigTabs]]
@@ -48,11 +50,19 @@ it), `tests/backend/modbus_rtu_test.cpp`
   with different settings, opens the port otherwise. Open failures are
   classified from `ISerialPort::lastSystemError()` (the OS code, never the
   text): `ERROR_ACCESS_DENIED` / `ERROR_SHARING_VIOLATION` (Win32) and
-  `EBUSY` / `EACCES` / `EPERM` (POSIX) → `PortBusy`, else `PortUnavailable`. Sessions are held via `shared_ptr` with a custom
-  deleter that closes the port and erases the registry entry atomically
-  under the registry lock — one service disconnecting never yanks the port
-  from another, and a dying session cannot interleave with a fresh acquire
-  of the same port.
+  `EBUSY` / `EACCES` / `EPERM` (POSIX) → `PortBusy`, else `PortUnavailable`. Sessions are held via `shared_ptr`
+  (one service disconnecting never yanks the port from another). The
+  registry keeps a weak reference to the session and to its **port
+  reservation**, which the session's I/O thread holds until it has closed
+  the port, so a dying session and a fresh acquire never hold the device at
+  once. A port whose last session is still closing: `acquire()` waits for
+  the destructor's outcome (at most `kShutdownJoinMs` + 250 ms, never under
+  the registry lock), then opens it; once the destructor has detached a
+  stalled thread, `acquire()` refuses at once with `PortBusy`, detail
+  "serial port <name> is still closing after a stalled transaction", until
+  the thread releases the reservation right after its close. The deleter is
+  a plain `delete`: the registry lock is never held during a teardown, so
+  other ports open meanwhile (#720).
 - `ModbusBusSession::transact(request, timeoutMs)` — the only I/O path.
   Callers are serialized; drains stale bytes first, enforces the RTU
   inter-frame delay **measured from the last bus activity** (an idle bus
@@ -103,7 +113,16 @@ kernel, a fake that blocks) trips it. Then:
   It shares ownership (`shared_ptr<IoState>`) of everything it touches (the
   port, the request copy, the sequence and result state), so it never uses
   freed memory; once the call returns it sees stop, closes the port and
-  leaves. Until then a new session on the same port can open it again.
+  leaves. Until then the port stays reserved: a new session on it is
+  refused, not opened beside the old one (registry, above).
+- **Logging outlives the logging setup.** The session and its I/O thread log
+  through the logger captured when the session was created (the default
+  logger, or a null sink when there is none), with `SPDLOG_LOGGER_*`, never
+  through the global macros: a detached thread can still log after the
+  application dropped its loggers (`spdlog::drop_all()` / `shutdown()` at
+  exit), when the global default is null. The ports, the factory and the
+  Modbus helpers do not log on that path; the manager's own lines run on the
+  caller's thread and use the global macros.
 
 All handoff state lives in `ModbusBusSession::IoState` under its mutex
 (condition variable `wait_until` / `wait_for`, no `std::timed_mutex`), clean
