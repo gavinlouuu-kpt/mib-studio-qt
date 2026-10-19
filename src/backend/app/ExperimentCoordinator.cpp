@@ -1194,6 +1194,17 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateReadiness(const std::
 ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest& request)
 {
     ExperimentStartResult result;
+    // What the client declares about the run (#712, ABI 39) is checked before anything else: a refused
+    // declaration opens nothing and changes no state, whatever the coordinator is doing.
+    {
+        std::string why;
+        if (!recording::validateStartRequest(request.declared, &why)) {
+            result.outcome = ExperimentStartOutcome::InvalidRequest;
+            result.message = "invalid start request: " + why;
+            SPDLOG_WARN("ExperimentCoordinator: start refused — {}", result.message);
+            return result;
+        }
+    }
     // A start during an active run is AlreadyActive however busy the mutex is: answer it before the
     // try-lock, which reports Busy while another thread (status polls, the worker) holds the mutex (#595).
     if (state_.load() == ExperimentRunState::Active) {
@@ -1332,6 +1343,7 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
     // at Start: E-modulus LUT identity, pumps, LED, stage, piezo.
     run.v3.runId = profiles::generateUuidV4();
     captureRunFacts(backend_, run.v3);
+    run.v3.identity = request.declared.identity;   // as declared; each member null when not
 
     // 4b. The SSD run (#667 S2): ask pzrec for the id it will give the run, before anything is opened. The id goes into the snapshot, into RUN_ID of the
     // bridge before ARM (the stored records carry it) and is checked against the run pzrec opens after ARM. A refusal names the SSD state.
@@ -1394,6 +1406,20 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
         state_ = ExperimentRunState::Idle;
         result.outcome = ExperimentStartOutcome::ProvenanceFailed;
         result.message = "failed to persist the run configuration snapshot";
+        restoreModeOnFailure();
+        publishLocked(lk, "start failed");
+        return result;
+    }
+    // The planned annotation, written once beside the snapshot (ADR 0015 item 4). A run whose
+    // declared annotation could not be stored is not started.
+    if (request.declared.annotation &&
+        !hdf5.writeExperimentAnnotationJson(recording::experimentAnnotationToJson(*request.declared.annotation))) {
+        hdf5.closeFile();
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+        state_ = ExperimentRunState::Idle;
+        result.outcome = ExperimentStartOutcome::ProvenanceFailed;
+        result.message = "failed to persist the experiment annotation";
         restoreModeOnFailure();
         publishLocked(lk, "start failed");
         return result;

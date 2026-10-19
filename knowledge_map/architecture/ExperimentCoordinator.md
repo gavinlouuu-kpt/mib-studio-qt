@@ -35,7 +35,11 @@
   state keeps its generation, so a preflight stays usable until something
   actually changes.
 - `start(ExperimentStartRequest{outputPath, readinessGeneration, profileId,
-  acknowledgeLatestFrameDrops})` is the serialized Start transaction:
+  acknowledgeLatestFrameDrops, acknowledgeDiscardRing, declared})` is the serialized Start transaction:
+  0. `declared` (the client's identity and planned annotation, bridge ABI 39,
+     `recording::StartRequestIdentity`) is checked with
+     `recording::validateStartRequest` before anything else: a refused one is
+     `InvalidRequest`, whatever the state, and opens nothing.
   1. A run in progress gets `AlreadyActive` first, from the atomic `state_`,
      before any lock (a status poll or the worker holding the mutex used to
      turn it into `Busy`, #595). Then `try_lock` — a concurrent transaction
@@ -51,11 +55,15 @@
      registers, Z stage, piezo; see "Snapshot v3 facts" below). On a PL run the
      PL run id (`RUN_ID`: the SSD run id, otherwise the start time in ms) is
      chosen here too, after the SSD prepare and before the snapshot is written,
-     so the snapshot names the id the provider is armed with.
+     so the snapshot names the id the provider is armed with. The declared
+     identity is copied into `run.v3.identity` as given.
   4. Open the HDF5 file + `initializeDatasets()` (`StorageFailed` rolls back
      to Idle), then persist the snapshot **first** via
      `Hdf5Service::writeRunSnapshotJson` (`ProvenanceFailed` closes and
      removes the file). A run without its frozen snapshot is never Running.
+     A declared annotation is written right after it, once, into
+     `/experiment_annotation` (`writeExperimentAnnotationJson`); a failure is
+     `ProvenanceFailed` with the same rollback.
   5. `setExperimentAccountingContext(captureGeneration, latestFrame)` +
      `ProcessingService::startExperiment()`; start the worker thread (first
      run only); publish `Active`. Before step 2 a multi-image series run
@@ -256,6 +264,10 @@ does no device I/O except the PZ7035 strobe registers (memory-mapped):
   written, autofocus on); the device mutex is held across serial I/O, so no
   backend kind or fresh read is taken.
 - `pl_run_id`: the id armed into the PL (null for a host run).
+- `experiment_id`, `run_index`, `sample_ref`, `operator`, `calibration_record_id`:
+  the request's `declared.identity` (ABI 39), null when not declared; the
+  operator is recorded with `assurance: "selected"` (the client's selection,
+  #393 phase 1, not authentication).
 
 ## Threading
 

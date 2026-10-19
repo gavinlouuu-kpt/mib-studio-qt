@@ -389,6 +389,18 @@ completion / gate-status values; `bridge.ts` exposes
 with typed fields, readiness gates, unknown enum refusal),
 `event_transport::tests::cpp_rust_json_matches_shared_golden`.
 
+**Start request (ABI 39, #712).** `experiment_start` takes an optional
+string `startRequestJson` (Tauri command arg `start_request_json`, `dispatch.rs`
+`startRequestJson`, `bridge.experimentStart(path, ack, startRequestJson?)`; the
+shell writes it with `JSON.stringify` of an `ExperimentStartRequestDoc`).
+`mib-app-commands` passes the text to the bridge byte for byte, `""` when absent
+or null; it is never decoded in Rust or TypeScript, so duplicate keys and the
+byte bound reach the backend parser unchanged. Nothing is checked in Rust or TypeScript:
+the backend parses it strictly and refuses with `invalid start request: <key>`
+([[Rust-Bridge]] ABI 39). No UI sends it yet (the context bar's
+`operatorName: ""` stays); the bounds are in `bridgeContract.ts`
+`EXPERIMENT_START_REQUEST` for the Plan view (S5).
+
 ## Central profile registry (ABI 25, issue #398)
 
 **Settings → Central Methods…** opens `desktop/src/CentralMethodsPanel.tsx`:

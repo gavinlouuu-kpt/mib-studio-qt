@@ -152,6 +152,7 @@ schema 0.
 | `stage` `{connected, model, serial, firmware, zero_set, readback {age_us, state, position_um, limit_*, home, emergency_stop, driver_alarm}}` | `StageService::snapshot()` (the driver's last published status) | `connected:false` alone when absent; `readback:null` when never sampled; inside a readback `state`, `position_um` and every flag are `null` when the readback did not carry them (a missing alarm flag is unknown, never "no alarm") |
 | `piezo` `{connected, voltage_v, voltage_basis, autofocus_enabled}` | `AutofocusService`: the last voltage read (connect, autofocus loop) or written; `voltage_basis` = `last_read_or_written` | `connected:false` alone when absent |
 | `pl_run_id` | the id armed into the PL `RUN_ID` registers (the SSD run id, else Start time in ms) | `null` for a host run |
+| `experiment_id`, `run_index`, `sample_ref`, `operator` `{id, name, assurance}`, `calibration_record_id` | declared by the client in the start request (bridge ABI 39, `RunStartIdentity.h`): the experiment (UUID, lowercase) and the run's index in it, the sample-sheet entry, the operator the client selected (`assurance` = `selected`: #393 phase 1, not authentication) and the applied calibration record (ADR 0015 item 7) | `null` when not declared; `operator: null` when none was selected, its `id` / `name` `null` when only the other was given |
 | `@run_stop_json` `{reason, message}` | finalization: `stop_requested`, `cancel_requested`, `fatal_save_error` (+ message), `shutdown` | attribute absent (older file, or the best-effort write failed); `message: null` when there is none |
 
 Notes for readers: `lut_id` / `revision` describe the loaded bytes only when
@@ -166,6 +167,24 @@ Tests: `recording.run_provenance_record` (codec + file round trip, v1/v2
 legacy, fault injection), `backend.experiment_readiness` (Start writes it,
 stop reasons, a failed snapshot write is `ProvenanceFailed` with no file),
 `backend.instrument_modes` (LED readback, armed PL run id).
+
+## Planned sample annotation (`/experiment_annotation`, #712, ADR 0015 item 4)
+
+Written once at Start, right after the snapshot, when the start request carried an `annotation`:
+group `/experiment_annotation` with `@annotation_json` and `@annotation_schema_version` = 1
+(`Hdf5Service::writeExperimentAnnotationJson`, refused when the group exists: the block is the
+sample as planned and is never rewritten; corrections live in the workspace store, #397/#523). A
+failed write fails the Start (`ProvenanceFailed`) and removes the file. Document:
+`{schema_version, sample, condition, experimental_unit, concentration {value, unit} | null,
+channel, medium, temperature_c, notes, free {string: string}}`. `channel`, `medium` and
+`temperature_c` (°C) are the *declared* conditions: the plan (2026-10-15) treats them as
+annotation, not as free-text snapshot fields. Every fixed member is `null` when not declared (a
+declared `0` stays a value); `free` is stored and read sorted by key (plain `nlohmann::json`: the wheel
+build's nlohmann_json 3.6 has no `ordered_json`). A run started without an annotation has
+no group, and so does every older file: `readRecordedRunProvenance` then returns no annotation and
+`annotationSchemaVersion` 0. The tolerant reader treats `""` and wrong types as unknown and skips free
+entries that are not non-empty strings. Bounds and refusals: [[../architecture/Rust-Bridge]] ABI 39.
+Tests: `recording.run_start_identity`, `backend.experiment_readiness`.
 
 ## Write paths
 

@@ -295,9 +295,22 @@ pub fn fetch_experiment_readiness(state: &AppState, output_path: String) -> Resu
 }
 
 /// Start an experiment (backend-owned lifecycle; schema v5).
-pub fn experiment_start(state: &AppState, output_path: String, acknowledge_discard_ring: bool) -> Result<CmdResult, String> {
+///
+/// `start_request_json` (ABI 39, #712): the client's startRequest document (experiment/run/sample
+/// identity, the selected operator, the applied calibration record, the planned annotation) as the
+/// JSON text the client wrote. It is passed to the backend byte for byte and never decoded here:
+/// only the backend parser sees it, so a duplicate key is refused instead of being collapsed and
+/// the 16 KiB bound applies to the client's own bytes (contract `experiment_start_request`).
+/// `None` declares nothing.
+pub fn experiment_start(
+    state: &AppState,
+    output_path: String,
+    acknowledge_discard_ring: bool,
+    start_request_json: Option<String>,
+) -> Result<CmdResult, String> {
+    let request = start_request_json.unwrap_or_default();
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().experiment_start(&output_path, acknowledge_discard_ring).into())
+    Ok(guard.pin_mut().experiment_start(&output_path, acknowledge_discard_ring, &request).into())
 }
 
 /// Authoritative capture state and retained failure details.

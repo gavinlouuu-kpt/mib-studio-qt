@@ -343,6 +343,21 @@ std::string runProvenanceV3Members(const RunProvenanceV3& v3)
     j["stage"] = v3.stage ? stageJson(*v3.stage) : OJson(nullptr);
     j["piezo"] = v3.piezo ? piezoJson(*v3.piezo) : OJson(nullptr);
     j["pl_run_id"] = opt(v3.plRunId);
+    // Declared at Start (ABI 39). The operator is the client's selection, not an authenticated one.
+    const auto& id = v3.identity;
+    j["experiment_id"] = opt(id.experimentId);
+    j["run_index"] = opt(id.runIndex);
+    j["sample_ref"] = opt(id.sampleRef);
+    if (id.selectedOperator) {
+        OJson op;
+        op["id"] = opt(id.selectedOperator->id);
+        op["name"] = opt(id.selectedOperator->name);
+        op["assurance"] = "selected";
+        j["operator"] = std::move(op);
+    } else {
+        j["operator"] = nullptr;
+    }
+    j["calibration_record_id"] = opt(id.calibrationRecordId);
     std::string text = j.dump();
     // Strip the braces: the caller splices the members into the snapshot object.
     return text.size() >= 2 ? text.substr(1, text.size() - 2) : std::string{};
@@ -368,6 +383,18 @@ bool parseRunProvenance(const std::string& runSnapshotJson, RecordedRunProvenanc
     v.stage = parseStage(root);
     v.piezo = parsePiezo(root);
     v.plRunId = u64(root, "pl_run_id");
+    auto& id = v.identity;
+    id.experimentId = str(root, "experiment_id");
+    if (const auto index = u64(root, "run_index"); index && *index <= 0xFFFFFFFFull)
+        id.runIndex = static_cast<uint32_t>(*index);
+    id.sampleRef = str(root, "sample_ref");
+    if (const Json* op = member(root, "operator"); op && op->is_object()) {
+        OperatorRecord rec;
+        rec.id = str(*op, "id");
+        rec.name = str(*op, "name");
+        if (rec.id || rec.name) id.selectedOperator = std::move(rec);
+    }
+    id.calibrationRecordId = str(root, "calibration_record_id");
     return true;
 }
 
@@ -402,6 +429,12 @@ bool readRecordedRunProvenance(const services::Hdf5Service& file, RecordedRunPro
     out = RecordedRunProvenance{};
     std::string stopJson;
     if (file.readRunStopJson(stopJson)) out.stop = parseRunStop(stopJson);
+    std::string annotationJson;
+    uint64_t annotationVersion = 0;
+    if (file.readExperimentAnnotationJson(annotationJson, &annotationVersion)) {
+        out.annotation = parseExperimentAnnotation(annotationJson);
+        if (out.annotation) out.annotationSchemaVersion = static_cast<uint32_t>(annotationVersion);
+    }
     std::string snapshot;
     if (!file.readRunSnapshotJson(snapshot)) {
         if (why) *why = "the file has no run snapshot";

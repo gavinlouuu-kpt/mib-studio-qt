@@ -733,6 +733,102 @@ int main()
                        "a reconnect starts from unknown (the settings may belong to another device)");
             pumps.disconnect(Pump::PumpId::Sample);
         }
+
+        // The client's declarations (#712 PR 2, ABI 39): identity into the snapshot, the planned
+        // annotation once into /experiment_annotation; a refused declaration opens nothing.
+        {
+            namespace rec = backend::recording;
+            rec::StartRequestIdentity declared;
+            std::string why;
+            MIB_REQUIRE(rec::parseStartRequestJson(
+                            R"({"experiment_id":"3f2a9c1e-7b4d-4e8a-9c2f-1a2b3c4d5e6f","run_index":1,"sample_ref":"S1",
+                                "operator":{"name":"Alice"},"calibration_record_id":"cal-7",
+                                "annotation":{"condition":"vehicle","experimental_unit":"donor A",
+                                "concentration":{"value":0,"unit":"uM"},"free":{"passage":"4"}}})",
+                            declared, &why),
+                        "declared request parses: " + why);
+            auto startWith = [&](const std::string& name, const rec::StartRequestIdentity& d) {
+                const auto path = (td.path() / name).string();
+                const auto ready = coordinator.evaluateReadiness(path);
+                MIB_REQUIRE(ready.ready, "ready for " + name);
+                ExperimentStartRequest request;
+                request.outputPath = path;
+                request.readinessGeneration = ready.generation;
+                request.declared = d;
+                return std::make_pair(path, coordinator.start(request));
+            };
+            auto finishAndRead = [&](const std::string& path) {
+                MIB_EXPECT(coordinator.requestStop(false) == backend::app::ExperimentStopOutcome::Accepted, "stop");
+                MIB_REQUIRE(waitFor([&] { return coordinator.status().terminal; }, std::chrono::seconds(20)),
+                            "finalizes");
+                backend::services::Hdf5Service file;
+                rec::RecordedRunProvenance recorded;
+                MIB_REQUIRE(file.loadFile(path) && rec::readRecordedRunProvenance(file, recorded), "read " + path);
+                file.closeFile();
+                return recorded;
+            };
+
+            const auto [declaredPath, started] = startWith("declared_run.h5", declared);
+            MIB_REQUIRE(started.started(), "a declared run starts: " + started.message);
+            MIB_EXPECT(started.run.v3.identity.sampleRef == std::optional<std::string>("S1"),
+                       "the frozen snapshot carries the identity");
+            const auto recorded = finishAndRead(declaredPath);
+            const auto& id = recorded.v3.identity;
+            MIB_EXPECT(id.experimentId == declared.identity.experimentId && id.runIndex == std::optional<uint32_t>(1) &&
+                           id.sampleRef == std::optional<std::string>("S1") && id.selectedOperator &&
+                           id.selectedOperator->name == std::optional<std::string>("Alice") && !id.selectedOperator->id &&
+                           id.calibrationRecordId == std::optional<std::string>("cal-7"),
+                       "the identity is recorded as declared (operator id not declared: unknown)");
+            MIB_EXPECT(recorded.annotation && recorded.annotationSchemaVersion == 1 &&
+                           recorded.annotation->condition == std::optional<std::string>("vehicle") &&
+                           recorded.annotation->concentration && recorded.annotation->concentration->value == 0.0 &&
+                           !recorded.annotation->medium && !recorded.annotation->temperatureC &&
+                           recorded.annotation->free == declared.annotation->free,
+                       "the annotation is written as planned; undeclared members unknown (0 uM stays a value)");
+
+            // Nothing declared: identity null, no annotation block.
+            const auto [plainPath, plain] = startWith("undeclared_run.h5", rec::StartRequestIdentity{});
+            MIB_REQUIRE(plain.started(), "an undeclared run starts");
+            const auto plainRecorded = finishAndRead(plainPath);
+            MIB_EXPECT(plainRecorded.v3.identity.empty() && !plainRecorded.annotation &&
+                           plainRecorded.annotationSchemaVersion == 0,
+                       "nothing declared: identity unknown, no /experiment_annotation");
+
+            // A typed request over a bound is refused before anything happens.
+            rec::StartRequestIdentity tooMany = declared;
+            for (std::size_t i = 0; i <= rec::kAnnotationFreeMaxEntries; ++i)
+                tooMany.annotation->free.emplace_back("k" + std::to_string(i), "v");
+            const auto [refusedPath, refusedStart] = startWith("refused_run.h5", tooMany);
+            MIB_EXPECT(refusedStart.outcome == ExperimentStartOutcome::InvalidRequest &&
+                           refusedStart.message.find("annotation.free") != std::string::npos,
+                       std::string("over the free-entry bound -> InvalidRequest, got ") +
+                           backend::app::toString(refusedStart.outcome) + ": " + refusedStart.message);
+            MIB_EXPECT(!std::filesystem::exists(refusedPath) && !backend.hdf5().isFileOpen() &&
+                           coordinator.state() == backend::app::ExperimentRunState::Idle,
+                       "a refused declaration opens nothing");
+
+            // The annotation cannot be stored: the start fails like a failed snapshot and removes the file.
+            backend.hdf5().setExperimentAnnotationWriteFaultForTesting(true);
+            const auto [faultPath, faultStart] = startWith("annotation_fault.h5", declared);
+            backend.hdf5().setExperimentAnnotationWriteFaultForTesting(false);
+            MIB_EXPECT(faultStart.outcome == ExperimentStartOutcome::ProvenanceFailed,
+                       std::string("unwritable annotation -> ProvenanceFailed, got ") +
+                           backend::app::toString(faultStart.outcome));
+            MIB_EXPECT(!std::filesystem::exists(faultPath) && !backend.hdf5().isFileOpen() &&
+                           coordinator.state() == backend::app::ExperimentRunState::Idle,
+                       "the failed Start leaves no file and no run");
+
+            // The attributes are written but the flush fails (a full disk): the Start must not go Active.
+            backend.hdf5().setExperimentAnnotationFlushFaultForTesting(true);
+            const auto [flushPath, flushStart] = startWith("annotation_flush_fault.h5", declared);
+            backend.hdf5().setExperimentAnnotationFlushFaultForTesting(false);
+            MIB_EXPECT(flushStart.outcome == ExperimentStartOutcome::ProvenanceFailed,
+                       std::string("annotation flush failure -> ProvenanceFailed, got ") +
+                           backend::app::toString(flushStart.outcome));
+            MIB_EXPECT(!std::filesystem::exists(flushPath) && !backend.hdf5().isFileOpen() &&
+                           coordinator.state() == backend::app::ExperimentRunState::Idle && !coordinator.activeRun(),
+                       "a failed annotation flush removes the file and leaves no run");
+        }
     }
 
     // ---- 6c. Backend-owned finalization -----------------------------------------

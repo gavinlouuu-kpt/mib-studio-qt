@@ -202,6 +202,7 @@ enum class ExperimentStartOutcome {
     StorageFailed = 4,      // HDF5 open/init failed (rolled back)
     ProvenanceFailed = 5,   // run snapshot could not be persisted (rolled back)
     Busy = 6,               // another start/stop transaction is in progress
+    InvalidRequest = 7,     // the start request's declared identity/annotation is refused (#712, ABI 39)
 };
 
 inline const char* toString(ExperimentStartOutcome o)
@@ -214,6 +215,7 @@ inline const char* toString(ExperimentStartOutcome o)
     case ExperimentStartOutcome::StorageFailed: return "storageFailed";
     case ExperimentStartOutcome::ProvenanceFailed: return "provenanceFailed";
     case ExperimentStartOutcome::Busy: return "busy";
+    case ExperimentStartOutcome::InvalidRequest: return "invalidRequest";
     }
     return "unknown";
 }

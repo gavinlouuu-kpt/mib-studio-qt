@@ -276,9 +276,12 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
                 #[serde(rename = "outputPath")] output_path: String,
                 /// ABI 37: the client accepts that a stopped Run's buffered frames are discarded.
                 #[serde(rename = "acknowledgeDiscardRing", default)] acknowledge_discard_ring: bool,
+                /// ABI 39 (#712): the startRequest document as the client's JSON text, passed through
+                /// unparsed (the backend alone decodes it and bounds those bytes). Absent or null: none.
+                #[serde(rename = "startRequestJson", default)] start_request_json: Option<String>,
             }
             let a: A = args(value)?;
-            crate::experiment_start(state, a.output_path, a.acknowledge_discard_ring).and_then(json)
+            crate::experiment_start(state, a.output_path, a.acknowledge_discard_ring, a.start_request_json).and_then(json)
         }
         "fetch_capture_lifecycle" => crate::fetch_capture_lifecycle(state).and_then(json),
         "experiment_acknowledge_fault" => {
@@ -985,6 +988,49 @@ mod tests {
         assert_eq!(ssd["state"], json!("ABSENT"), "{ssd}");
         let Reply::Json(runs) = dispatch(&state, &host, "fetch_ssd_runs", Value::Null).unwrap() else { panic!("JSON") };
         assert_eq!(runs["runs"], json!([]), "{runs}");
+        state.bridge.lock().unwrap().pin_mut().shutdown();
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    // ABI 39 (#712): startRequestJson reaches the backend byte for byte on both host paths: the
+    // remote server's dispatch and the Tauri command (which calls crate::experiment_start). A
+    // duplicate key would be collapsed by a serde Value (Bob would start), and whitespace padding
+    // would disappear on re-serialisation; the backend must see and refuse both.
+    #[test]
+    #[serial]
+    fn start_request_json_reaches_the_backend_unparsed() {
+        let data = std::env::temp_dir().join(format!("mib_dispatch_start_request_{}", std::process::id()));
+        let state = AppState::new();
+        let host = TestHost(data.to_string_lossy().into_owned());
+        assert_eq!(dispatch(&state, &host, "init", json!({ "dataDir": "" })).unwrap(), Reply::Json(json!(true)));
+        let out = data.join("start_request.h5").to_string_lossy().into_owned();
+        let duplicate = r#"{"operator":{"name":"Alice","name":"Bob"}}"#;
+        let padded = format!("{{{}\"sample_ref\":null}}", " ".repeat(16400));
+        assert!(padded.len() > 16384, "raw request is over the bound");
+        assert!(serde_json::from_str::<Value>(&padded).unwrap().to_string().len() < 64, "normalised it would pass");
+        for (doc, why) in [(duplicate, "duplicate key"), (padded.as_str(), "at most 16384")] {
+            let Reply::Json(remote) =
+                dispatch(&state, &host, "experiment_start", json!({ "outputPath": out, "startRequestJson": doc })).unwrap()
+            else {
+                panic!("experiment_start returns JSON")
+            };
+            let message = remote["message"].as_str().unwrap_or_default().to_string();
+            assert_eq!(remote["ok"], json!(false), "{remote}");
+            assert!(message.contains("invalid start request") && message.contains(why), "dispatch: {message}");
+            let tauri = crate::experiment_start(&state, out.clone(), false, Some(doc.to_string())).unwrap();
+            assert!(!tauri.ok, "the Tauri path refuses too");
+            assert!(tauri.message.contains("invalid start request") && tauri.message.contains(why), "tauri: {}", tauri.message);
+        }
+        // A valid document (whitespace and all) passes the parser; this host then refuses the start for
+        // its own reason (no camera), never as an invalid request. Absent or null declares nothing.
+        for args in [
+            json!({ "outputPath": out, "startRequestJson": "  {\"sample_ref\" : null }\n" }),
+            json!({ "outputPath": out, "startRequestJson": null }),
+            json!({ "outputPath": out }),
+        ] {
+            let Reply::Json(r) = dispatch(&state, &host, "experiment_start", args.clone()).unwrap() else { panic!("JSON") };
+            assert!(!r["message"].as_str().unwrap_or_default().contains("invalid start request"), "{args}: {r}");
+        }
         state.bridge.lock().unwrap().pin_mut().shutdown();
         let _ = std::fs::remove_dir_all(&data);
     }
