@@ -1,25 +1,36 @@
 # Two tracks: Operation app and Review app
 
-Status: active, 2026-10-18. Progress, 2026-10-19:
+Status: active, 2026-10-18. Progress, 2026-10-20:
 
 - **A0:** done. #711 merged in #718, and #713's probe caching in #719.
 - **A1:** done. #723 wires `@mib/ui` into the app; #727 adds the opt-in workspace and Prepare
   (backend gates read without a path, Unknown/Unsupported, required warnings still block per
   #548, one verdict, extended confirmation signature). One backend test remains on #713.
-- **A2:** in review: #725 (snapshot v3 file schema) and #728 (start-request identity and
-  `/experiment_annotation`, ABI 39), both on `develop`.
+- **A2:** done. #725 (snapshot v3 file schema) and #728 (start-request identity and
+  `/experiment_annotation`, ABI 39) are merged on `develop`, and #712 is closed.
 - **A3:** first PR merged (#729): Align's live image tools and ROI quick controls; navigation and
   leaving the workspace never switch the camera mode. Writable exposure, gain and frame rate need
   a backend feature service (a later P3 step); the kit NumberField is #730.
-- **B0:** #512 S1–S4 and S9 merged (#721, #724, #726, #731). All nine #512 decisions are ruled on
-  #717; D1 keeps Start refused while a review file is open (HDF5 thread safety, #722). S5 is in
-  progress.
-- **B1:** in progress. B1a (#746, on `develop`): run identity in the review contract and the
-  identity probe, review ABI 2. B1b (on this branch): the YOFO Review shell on the kit, with the
-  stages Open, Overview, Inspect and Export, and R1 Open as a plain folder list. Grouping by
-  experiment follows once this branch carries review ABI 2. Missing kit pieces for R1 are listed
-  on #715.
-- **Kit:** DataTable, CellImage, OptionGroup and Notice are in #714; NumberField is requested (#730).
+- **A5:** done.
+  - #736: the Plan view. A started or unknown start locks the run identity.
+  - #739: the guided sample queue and the PZ7035 Run switch. A row matches only its own file and
+    start generation. Another client's run marks the row interrupted. A control loss withdraws a
+    pending Start. Start is blocked while Align shows the full sensor.
+  - #744 (ABI 40, #741) adds the start outcome code to the reply and an expected run to
+    `experiment_stop`. The queue and Plan switch to both in a follow-up on this branch.
+- **A0 follow-up:** #740 (#720) bounds serial write, drain and transact, with a bounded session
+  teardown.
+- **B0:** #512 S1–S5, S8 and S9 merged (#721, #724, #726, #733, #735, #731). All nine #512
+  decisions are ruled on #717; D1 keeps Start refused while a review file is open (HDF5 thread
+  safety, #722). S7 (#742, the facade's jobs on ReviewJobs lanes) is in review. Since #735, YOFO's
+  Regenerate pairs records with their own frames; #737 carries the notice for older files.
+- **B1:** in progress (#717). B1a (#746, on `develop`): run identity in the review contract and
+  the identity probe, review ABI 2. B1b (#747, on this branch): the YOFO Review shell on the kit,
+  with the stages Open, Overview, Inspect and Export, and R1 Open as a plain folder list. Grouping
+  by experiment follows once this branch carries review ABI 2. Missing kit pieces for R1 are
+  listed on #715.
+- **Kit:** DataTable, CellImage, OptionGroup and Notice are in #714; NumberField is requested
+  (#730), and TextField, overflow and more than four colours (#738).
 
 The workspace delivers two products from one UI language
 ([README](README.md), "One UI language, two products"). Their work is split into
@@ -69,7 +80,7 @@ app-local markup until they land.
 |---|---|---|---|---|
 | A0 | none | S0 hygiene (#711, #713 probe caching) | nothing | none |
 | A1 | O1 Prepare | S3 shell and Prepare (#713) | A0 | Notice |
-| A2 | none (contract) | S2 run snapshot v3 (#712), on `develop` | ABI 39 reserved | none |
+| A2 | none (contract) | S2 run snapshot v3 (#712), on `develop` | ABI 39 (done) | none |
 | A3 | O2 Align | P3; overrides recorded by S2 | A1 | Notice |
 | A4 | O1 calibration card | S4 calibration run | A1, A2 | none |
 | A5 | O3 Plan | S5 | A1, A2 | DataTable, OptionGroup |

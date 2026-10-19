@@ -112,7 +112,26 @@ fn abi_version_is_stable() {
     // v39 the experiment_start startRequest (#712): experiment/run/sample identity, the selected
     // operator, the applied calibration record id and the planned annotation; start outcome
     // InvalidRequest and the experiment_start_request bounds.
-    assert_eq!(ffi::bridge_abi_version(), 39);
+    // v40 (#741) the command result carries the typed start / stop outcome (has_start_outcome,
+    // start_outcome, has_stop_outcome, stop_outcome); experiment_stop takes an expected start
+    // generation and refuses another run with stop outcome RunMismatch.
+    assert_eq!(ffi::bridge_abi_version(), 40);
+}
+
+// ABI 40 (#741): the contract describes the reply's typed outcomes and the stop's expected run.
+#[test]
+fn experiment_command_reply_and_stop_request_are_described() {
+    let contract: serde_json::Value =
+        serde_json::from_str(include_str!("../contract/bridge-contract.json")).unwrap();
+    let reply = &contract["experiment_command_reply"];
+    for (key, group) in [("start_outcome", "experiment_start_outcomes"), ("stop_outcome", "experiment_stop_outcomes")] {
+        assert!(reply[key].as_str().is_some_and(|d| d.contains(group)), "experiment_command_reply.{key} names {group}");
+    }
+    let stop = &contract["experiment_stop_request"];
+    assert!(stop["expected_start_generation"].as_str().is_some_and(|d| d.contains("canonical decimal")), "the argument");
+    assert!(stop["semantics"].as_str().is_some_and(|d| d.contains("RunMismatch") && d.contains("same critical section")),
+            "the semantics");
+    assert_eq!(contract["experiment_stop_outcomes"]["RunMismatch"], serde_json::json!(3));
 }
 
 // ABI 39 (#712): the startRequest bounds. Pinned in C++ by static_asserts in shim.cpp
@@ -879,7 +898,7 @@ fn rust_enums_match_contract_json() {
         ("experiment_start_outcomes", &[("Started", 0), ("NotReady", 1), ("StaleReadiness", 2), ("AlreadyActive", 3),
                                         ("StorageFailed", 4), ("ProvenanceFailed", 5), ("Busy", 6),
                                         ("InvalidRequest", 7)]),
-        ("experiment_stop_outcomes", &[("Accepted", 0), ("NotActive", 1), ("Busy", 2)]),
+        ("experiment_stop_outcomes", &[("Accepted", 0), ("NotActive", 1), ("Busy", 2), ("RunMismatch", 3)]),
         ("run_completion_states", &[("Complete", 0), ("IntentionallyPartial", 1), ("IncompleteLoss", 2), ("Failed", 3), ("Unknown", 4)]),
         ("readiness_gate_statuses", &[("Pass", 0), ("Warn", 1), ("Fail", 2), ("Unavailable", 3), ("NotRequired", 4)]),
         // ABI 14 discovery groups (#419): pinned in C++ by static_asserts in shim.cpp.
@@ -1084,6 +1103,8 @@ fn experiment_lifecycle_end_to_end() {
     assert!(camera_gate.status == 2 || camera_gate.status == 3, "camera.session should Fail/Unavailable");
     let early = bridge.pin_mut().experiment_start(&out_path.to_string_lossy(), false, "");
     assert!(!early.ok, "experiment started without a running camera");
+    // ABI 40 (#741): the typed outcome travels with the reply: NotReady (1).
+    assert!(early.has_start_outcome && early.start_outcome == 1 && !early.has_stop_outcome, "{early:?}");
     assert!(
         early.message.contains("camera.session"),
         "unexpected precondition message: {}",
@@ -1091,7 +1112,9 @@ fn experiment_lifecycle_end_to_end() {
     );
 
     assert!(bridge.pin_mut().apply_processing(true, 1.0).ok);
-    assert!(bridge.pin_mut().start_capture().ok);
+    let capture = bridge.pin_mut().start_capture();
+    // ABI 40: only experiment replies carry a typed outcome.
+    assert!(capture.ok && !capture.has_start_outcome && !capture.has_stop_outcome, "{capture:?}");
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline && !bridge.pin_mut().fetch_latest_frame().valid {
         std::thread::sleep(Duration::from_millis(10));
@@ -1107,6 +1130,7 @@ fn experiment_lifecycle_end_to_end() {
     ] {
         let refused = bridge.pin_mut().experiment_start(&out_path.to_string_lossy(), false, bad);
         assert!(!refused.ok, "startRequest {bad} must be refused");
+        assert!(refused.has_start_outcome && refused.start_outcome == 7, "InvalidRequest (ABI 40): {refused:?}");
         assert!(
             refused.message.contains("invalid start request") && refused.message.contains(key),
             "refusal names {key}: {}",
@@ -1120,9 +1144,11 @@ fn experiment_lifecycle_end_to_end() {
     let start = bridge.pin_mut().experiment_start(&out_path.to_string_lossy(), false, declared);
     assert!(start.ok, "experiment_start failed: {}", start.message);
     assert!(start.operation_id != 0, "experiment has no operation id");
+    assert!(start.has_start_outcome && start.start_outcome == 0, "Started (ABI 40): {start:?}");
 
-    // Duplicate start must fail without desynchronizing state.
-    assert!(!bridge.pin_mut().experiment_start(&out_path.to_string_lossy(), false, "").ok);
+    // Duplicate start must fail without desynchronizing state: AlreadyActive (3).
+    let duplicate = bridge.pin_mut().experiment_start(&out_path.to_string_lossy(), false, "");
+    assert!(!duplicate.ok && duplicate.has_start_outcome && duplicate.start_outcome == 3, "{duplicate:?}");
 
     // The camera cannot stop underneath an active experiment (Qt parity).
     assert!(!bridge.pin_mut().stop_capture().ok);
@@ -1134,8 +1160,24 @@ fn experiment_lifecycle_end_to_end() {
 
     std::thread::sleep(Duration::from_millis(400)); // let frames accumulate
 
-    let stop = bridge.pin_mut().experiment_stop();
+    // ABI 40 (#741): a stop that names another run stops nothing: RunMismatch (3), a plain reason,
+    // and the run (start generation 1) is still Active.
+    for stale in [0u64, 2, u64::MAX] {
+        let refused = bridge.pin_mut().experiment_stop(true, stale);
+        assert!(!refused.ok && refused.has_stop_outcome && refused.stop_outcome == 3, "{refused:?}");
+        assert!(!refused.has_start_outcome, "{refused:?}");
+        assert_eq!(
+            refused.message,
+            format!("stop refused: expected run {stale}, but run 1 is active; nothing was stopped")
+        );
+    }
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(bridge.pin_mut().fetch_experiment_status().state, 2, "the run continues after a stale stop");
+
+    let stop = bridge.pin_mut().experiment_stop(true, 1);
     assert!(stop.ok, "experiment_stop failed: {}", stop.message);
+    assert!(stop.has_stop_outcome && stop.stop_outcome == 0 && stop.message == "accepted", "{stop:?}");
+    assert_eq!(stop.operation_id, start.operation_id, "the stop targets the run's operation");
 
     // The stop finalizes asynchronously; wait for the terminal Idle status.
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -1195,8 +1237,11 @@ fn experiment_lifecycle_end_to_end() {
     }
 
 
-    // Double stop fails safely.
-    assert!(!bridge.pin_mut().experiment_stop().ok);
+    // Double stop fails safely: NotActive (1) without a generation, RunMismatch (3) with one.
+    let again = bridge.pin_mut().experiment_stop(false, 0);
+    assert!(!again.ok && again.has_stop_outcome && again.stop_outcome == 1, "{again:?}");
+    let named = bridge.pin_mut().experiment_stop(true, 1);
+    assert!(!named.ok && named.stop_outcome == 3 && named.message.contains("no run is active"), "{named:?}");
 
     // ABI 31 (#549): the finished run's reconciled accounting, with the true admitted-frame count.
     let last: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_run_accounting("last_run")).unwrap();

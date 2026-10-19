@@ -617,7 +617,8 @@ delivers, ~400/s, while the UI shows 30/s) and 266 MiB RSS after a UI session
 (desktop-sized buffers; a target profile is open in impl spec S6).
 
 `desktop/dist` is served at `/` with `--dist`. Tests: `tests/ws.rs` (mock
-capture over the socket, wrong token refused, client loss and quick reconnect).
+capture over the socket, wrong token refused, client loss and quick reconnect,
+client loss with a pump on a stalled serial adapter, #720).
 
 ## Camera & Alignment (Qt Overview parity)
 
@@ -774,6 +775,26 @@ workspace" above): `planModel.buildStartRequest` writes the text with one ordere
 checks it first against `bridgeContract.ts` `EXPERIMENT_START_REQUEST`, so an over-bound plan is
 refused before it is sent; the backend still checks it and stays the authority. The classic Start
 sends none (the context bar's `operatorName: ""` stays).
+
+**Typed outcome and the run a stop names (ABI 40, #741).** `CmdResult`
+(`eventAdapter.ts`) gains `start_outcome?` (an `EXPERIMENT_START_OUTCOMES`
+value) on an `experiment_start` reply and `stop_outcome?` (an
+`EXPERIMENT_STOP_OUTCOMES` value) on an `experiment_stop` / `experiment_cancel`
+reply. `decodeCommandResult` leaves them out when the reply has none (an older
+backend, any other command) or a code this UI does not know (fall back to
+`ok` / `message`) and refuses a non-integer (`TRANSPORT_INVALID_OUTCOME`).
+Callers switch on `start_outcome === EXPERIMENT_START_OUTCOMES.InvalidRequest`
+instead of the `invalid start request: ` prefix, keeping the prefix only as the
+fallback for an older backend. `bridge.experimentStop(expectedStartGeneration?)`
+sends `{expectedStartGeneration}` as a canonical decimal string (`decimalU64`;
+the `fetchExperimentStatus().start_generation` of the client's run) and no
+argument without one; another run, or none, comes back `ok: false`,
+`stop_outcome: RunMismatch` (3) and nothing is stopped ([[Rust-Bridge]] ABI 40).
+The Tauri command takes `expected_start_generation: Option<String>`. The
+develop shell (`App.tsx`, `experimentStart.ts`) neither parsed the prefix nor
+passes a generation, so it is unchanged; the workspace queue and Plan switch on
+`feat/egrabber-workspace` after the next develop sync. Guards:
+`eventAdapter.test.ts`, `eventTransport.test.ts`.
 
 ## Central profile registry (ABI 25, issue #398)
 
@@ -947,6 +968,11 @@ Review Close File now calls the shared facade rather than a disabled placeholder
 The facade rejects active recording/experiment and clears cached source identity;
 the shell clears review pixels/metrics only after successful closure. Startup
 selection completion refreshes the camera selection in the main shell.
+Since #512 S5 the facade's loaded review file is its own `ReviewSession`
+([[../services/ReviewSession]]), not the experiment writer's handle; the
+Review tab's commands and shapes are unchanged, and a loaded file still keeps
+Start Experiment and Record refused (readiness `storage.hdf5`, same text,
+decision D1 (a)) until Close File, as before.
 
 ### Finite background calibration
 

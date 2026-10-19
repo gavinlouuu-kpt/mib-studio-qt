@@ -2,13 +2,14 @@
 // `fetch_review_charts_json`, `render_review_overlay`). The JSON, the
 // density, the reader-side overlay and the PNG live in mib_review_core
 // (backend/review/ReviewCharts.h, #512 slice 4); the facade keeps the policy:
-// the loaded file, the live factor and ring-ratio range, and the facade's
-// ROI style (RoiStyle::Facade until decision D2 switches it).
+// the loaded file (the valid rows its ReviewSession read at open, #512 S5),
+// the live factor and ring-ratio range, and the facade's ROI style
+// (RoiStyle::Facade until decision D2 switches it).
 #include "backend/app/BackendFacade.h"
 #include "backend/app/AppBackend.h"
 #include "backend/recording/ReviewChartData.h"
-#include "backend/recording/Hdf5Service.h"
 #include "backend/review/ReviewCharts.h"
+#include "backend/review/ReviewSession.h"
 #include <nlohmann/json.hpp>
 #include <stdexcept>
 namespace backend::bridge {
@@ -28,14 +29,15 @@ std::string BackendFacade::fetchMonitoringChartReferenceJson() const {
 }
 std::string BackendFacade::fetchReviewChartsJson() const {
     try {
-        std::string source;
-        {std::scoped_lock lock(reviewMutex_);source=loadedRecordingPath_;}
-        if(source.empty())throw std::runtime_error("No HDF file open");
-        services::Hdf5Service reader;
-        if(!reader.loadFile(source) || reader.isRecordingFile())throw std::runtime_error("Charts require an experiment HDF file");
-        std::vector<services::ProcessedFrame> rows;
-        const auto present=reader.metadataDatasetPresent(true);
-        if(!present || (*present && !reader.readValidMetadata(rows)))throw std::runtime_error("Cannot read valid-frame metrics");
+        // The session's rows replace a second reader per fetch; the messages are the ones it gave. One
+        // snapshot (one lock): the path, the file type, readability and the rows belong to the same file
+        // even while another thread loads a different one.
+        const auto valid=review_->validSet();
+        const std::string& source=valid.filePath;
+        if(!valid.open || source.empty())throw std::runtime_error("No HDF file open");
+        if(valid.recordingFile)throw std::runtime_error("Charts require an experiment HDF file");
+        if(!valid.metadataReadable)throw std::runtime_error("Cannot read valid-frame metrics");
+        const auto& rows=valid.frames;
         const auto cfg=backend_.processing().getProcessingConfig();
         const auto factor=backend_.processing().getPixelToMicronFactor();
         return review::reviewChartsJson(rows,source,factor,cfg.ring_ratio_min,cfg.ring_ratio_max);

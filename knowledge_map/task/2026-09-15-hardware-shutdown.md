@@ -56,7 +56,8 @@ Program Files executable have not been modified by this task.
 
 No claim is made that arbitrary vendor DLL calls can be cancelled: an active
 discovery call must return before its future drains. The POSIX transport's
-`tcdrain` remains separate work. This change prevents cooperating duplicate
+`tcdrain` remains separate work (done in #720, 2026-10-19: bounded
+`TIOCOUTQ` polling). This change prevents cooperating duplicate
 launches, not external vendor tools taking a port. Tests use simulated serial
 devices; live hardware was not interrupted. ThreadSanitizer requires the Linux
 CI lane; the local Windows/MSVC environment cannot run it.

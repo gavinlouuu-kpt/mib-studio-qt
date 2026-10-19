@@ -62,14 +62,29 @@ export function prepareFailureText(label: string, e: unknown): string {
   return isTransportUnsupported(e) ? unsupportedText(e) : `${label} failed: ${e}`;
 }
 
+/** Optional start hooks. With `onRefused` a refusal goes back to the caller
+ * (still logged) instead of the job dialog, so the caller's own dialog can
+ * show it and let the operator choose again (Regenerate masks, #512 S8);
+ * `onStarted` runs once the backend accepted the job. */
+export interface StartHooks {
+  onRefused?: (message: string) => void;
+  onStarted?: () => void;
+}
+
 export interface ReviewJobs {
   /** The tracked job (running, or finished and not yet dismissed). */
   job: TrackedJob | null;
   /** Start a job: `prepare` (optional; e.g. rendering chart snapshots)
    * runs first behind a "Preparing…" dialog, then `run` issues the bridge
    * command. Resolves with the finished job (null when refused or the
-   * preparation failed — logged and shown). */
-  start: (title: string, kind: number, run: () => Promise<ReviewCmdResult>, prepare?: { label: string; work: () => Promise<void> }) => Promise<TrackedJob | null>;
+   * preparation failed — logged and shown, or handed to `hooks.onRefused`). */
+  start: (
+    title: string,
+    kind: number,
+    run: () => Promise<ReviewCmdResult>,
+    prepare?: { label: string; work: () => Promise<void> },
+    hooks?: StartHooks,
+  ) => Promise<TrackedJob | null>;
   cancel: () => void;
   dismiss: () => void;
   /** True while a tracked job runs. */
@@ -136,7 +151,13 @@ export function useReviewJobs(ready: boolean, log: (line: string) => void): Revi
   }, [ready, ingest, log]);
 
   const start = useCallback(
-    async (title: string, kind: number, run: () => Promise<ReviewCmdResult>, prepare?: { label: string; work: () => Promise<void> }): Promise<TrackedJob | null> => {
+    async (
+      title: string,
+      kind: number,
+      run: () => Promise<ReviewCmdResult>,
+      prepare?: { label: string; work: () => Promise<void> },
+      hooks?: StartHooks,
+    ): Promise<TrackedJob | null> => {
       if (prepare) {
         // Not an operation yet: no id, nothing to cancel.
         update({ id: "", kind, title, phase: "running", progress: 0, total: 0, message: prepare.label, cancelling: true });
@@ -157,10 +178,16 @@ export function useReviewJobs(ready: boolean, log: (line: string) => void): Revi
       }
       if (!r.ok || r.operation_id === "0") {
         log(`${title} refused: ${r.message}`);
-        update({ id: "0", kind, title, phase: "failed", progress: 0, total: 0, message: r.message || "refused", cancelling: false });
+        if (hooks?.onRefused) {
+          if (prepare) update(null);
+          hooks.onRefused(r.message || "refused");
+        } else {
+          update({ id: "0", kind, title, phase: "failed", progress: 0, total: 0, message: r.message || "refused", cancelling: false });
+        }
         return null;
       }
       log(`${title} started (operation ${r.operation_id})`);
+      hooks?.onStarted?.();
       let tracked: TrackedJob = { id: r.operation_id, kind, title, phase: "running", progress: 0, total: 0, message: "", cancelling: false };
       for (const e of buffer.current.get(r.operation_id) ?? []) tracked = applyJobEvent(tracked, e);
       buffer.current.delete(r.operation_id);

@@ -1127,7 +1127,9 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
             r.gates.push_back(gate("storage.buffer", GateStatus::Pass));
     }
 
-    if (backend_.hdf5().isFileOpen()) {
+    // A file open for review in the facade's own reader fails the same gate
+    // with the same text (D1 (a), #512 S5): HDF5 is not thread-safe (#722).
+    if (backend_.hdf5().isFileOpen() || backend_.reviewSourceOpen()) {
         r.gates.push_back(gate("storage.hdf5", GateStatus::Fail, "an HDF5 file is already open",
                                "finish or close the current file first"));
     } else {
@@ -1249,8 +1251,9 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
     }
 
     // Writer conflicts must be refused before even changing processing mode.
-    // Raw recording acquires its writer under this same coordinator mutex.
-    if (backend_.isFrameRecording() || backend_.hdf5().isFileOpen()) {
+    // Raw recording acquires its writer under this same coordinator mutex. A
+    // review file (the facade's own reader) is one too (D1 (a), #512 S5).
+    if (backend_.isFrameRecording() || backend_.hdf5().isFileOpen() || backend_.reviewSourceOpen()) {
         result.outcome = ExperimentStartOutcome::NotReady;
         result.message =
             "stop raw recording and close the existing HDF5 file before starting an experiment";
@@ -1612,7 +1615,35 @@ ExperimentCoordinator::~ExperimentCoordinator()
 
 ExperimentStopOutcome ExperimentCoordinator::requestStop(bool cancelled)
 {
+    return requestStop(cancelled, std::nullopt, nullptr);
+}
+
+ExperimentStopOutcome ExperimentCoordinator::requestStop(bool cancelled, std::optional<uint64_t> expectedStartGeneration,
+                                                         std::string* refusal)
+{
     std::lock_guard<std::mutex> lk(mutex_);
+    // A stop for one named run (#741, ABI 40): compared with the run this coordinator holds in the critical section
+    // that also accepts the stop, never check-then-act. activeRun_ is set from the Active entry until the end of the
+    // finalization (Stopping, or Failed while a fatal finalization runs). A Starting run has none: its generation is
+    // not published until it is Active, so no client can name it. An accepted stop is consumed by the finalization of
+    // the run held here, and no other run can start before that finalization ends, so it never reaches a newer run.
+    if (expectedStartGeneration && (!activeRun_ || activeRun_->startGeneration != *expectedStartGeneration)) {
+        const ExperimentRunState now = state_.load();
+        std::string held;
+        if (activeRun_) {
+            held = "run " + std::to_string(activeRun_->startGeneration) +
+                   (now == ExperimentRunState::Active     ? " is active"
+                    : now == ExperimentRunState::Stopping ? " is stopping"
+                                                          : " failed and is finalizing");
+        } else {
+            held = now == ExperimentRunState::Starting ? "a new run is starting" : "no run is active";
+        }
+        std::string reason = "stop refused: expected run " + std::to_string(*expectedStartGeneration) + ", but " +
+                             held + "; nothing was stopped";
+        SPDLOG_WARN("ExperimentCoordinator: {}", reason);
+        if (refusal) *refusal = std::move(reason);
+        return ExperimentStopOutcome::RunMismatch;
+    }
     if (state_ == ExperimentRunState::Stopping || state_ == ExperimentRunState::Starting)
         return ExperimentStopOutcome::Busy;
     if (state_ != ExperimentRunState::Active || !activeRun_) return ExperimentStopOutcome::NotActive;

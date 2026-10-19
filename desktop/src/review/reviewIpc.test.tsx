@@ -7,6 +7,9 @@
 // Show in folder, close, and the update check. The golden file was recorded
 // before the module moved onto `desktop/src/transport/`; the move must leave
 // every command, argument, chart byte, header and dialog option unchanged.
+// #512 S8 changed one flow on purpose: Regenerate masks lists the output
+// directory to propose a free name, and a new flow regenerates into an
+// existing file (refused by the backend, the dialog asks again).
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -35,6 +38,10 @@ function snapshotOf(value: unknown): unknown {
 let opened = "";
 let nextOperation = 100;
 const queuedEvents: unknown[] = [];
+// Files the backend has written (regenerate never replaces one, #512 S8) and
+// what the operator answers in the next regenerate save dialogs.
+const existingOutputs = new Set<string>();
+const regenerateSaveAnswers: string[] = [];
 
 const dataset = (count: number) => ({ present: count > 0, count: String(count), height: 96, width: 512, channels: 1 });
 const STORED_RECORD = JSON.stringify({ contours: [[[10, 0.01], [20, 0.02], [30, 0.01]]], core_fraction: 0.8, provisional: false, source: "full_run" });
@@ -192,7 +199,7 @@ function respond(cmd: string, args: Record<string, unknown>): unknown {
     case "review_save_core_record":
       return ok(3);
     case "review_list_dir":
-      return ["run_metrics.csv"];
+      return ["run_metrics.csv", ...Array.from(existingOutputs).filter((p) => p.startsWith(`${args.dir}/`)).map((p) => p.slice(String(args.dir).length + 1))];
     case "review_export_metrics":
       return job(REVIEW_OPERATION_KINDS.ExportMetrics, String(args.outputPath));
     case "review_export_all":
@@ -202,6 +209,8 @@ function respond(cmd: string, args: Record<string, unknown>): unknown {
     case "review_batch_export":
       return job(REVIEW_OPERATION_KINDS.BatchExport, `exported 2 of 2 file(s)`);
     case "review_regenerate_masks":
+      if (existingOutputs.has(String(args.outputPath))) return { ok: false, command: 0, message: "Output already exists; choose a new file", operation_id: "0" };
+      existingOutputs.add(String(args.outputPath));
       return job(REVIEW_OPERATION_KINDS.RegenerateMasks, `${args.outputPath} (2 images: 2 valid, 0 invalid)`);
     case "poll_review_events":
       return { events: queuedEvents.splice(0) };
@@ -224,8 +233,9 @@ function respond(cmd: string, args: Record<string, unknown>): unknown {
       return "/data/run.h5";
     }
     case "plugin:dialog|save": {
-      const o = args.options as { title?: string };
-      return o.title === "Save regenerated masks" ? "/data/out/clip_remasked.h5" : "/data/out/run_metrics_2.csv";
+      const o = args.options as { title?: string; defaultPath?: string };
+      // Regenerate: the operator takes the proposed name unless told otherwise.
+      return o.title === "Save regenerated masks" ? (regenerateSaveAnswers.shift() ?? o.defaultPath) : "/data/out/run_metrics_2.csv";
     }
     case "plugin:dialog|message":
       return "Yes";
@@ -280,6 +290,8 @@ beforeEach(() => {
   opened = "";
   nextOperation = 100;
   queuedEvents.length = 0;
+  existingOutputs.clear();
+  regenerateSaveAnswers.length = 0;
   pngSerial = 0;
   log.length = 0;
   const saved = new Map<string, string>();
@@ -475,6 +487,31 @@ it("sends the same commands, arguments, chart bytes and dialogs as before the tr
       await click(button("Choose…", dialog));
       await click(button("Save as…", dialog));
       await click(button("Regenerate", dialog));
+      await finishJob("Regenerate masks");
+    }),
+  );
+
+  flows.push(
+    await flow("regenerate masks into an existing file", async () => {
+      await more("Regenerate masks…");
+      const dialog = modal("Regenerate masks");
+      const avi = Array.from(dialog.querySelectorAll("label")).find((l) => l.textContent?.trim() === "AVI file")!.querySelector("input")!;
+      await click(avi);
+      await click(button("Choose…", dialog));
+      // The operator picks the file the last run wrote (past the OS's own
+      // overwrite question): the backend refuses, nothing is replaced.
+      regenerateSaveAnswers.push("/data/out/clip_remasked.h5");
+      await click(button("Save as…", dialog));
+      await click(button("Regenerate", dialog));
+      const refused = modal("Regenerate masks");
+      expect(refused.querySelector('[role="alert"]')?.textContent).toBe("Not started: Output already exists; choose a new file (clip_remasked.h5)");
+      expect((refused.querySelector('input[aria-label="Output file"]') as HTMLInputElement).value).toBe("");
+      expect(host.querySelector('[role="dialog"][aria-label="Regenerate masks"].job-dialog')).toBeNull();
+      // Choose again: the proposal is the next free name.
+      await click(button("Save as…", refused));
+      expect((refused.querySelector('input[aria-label="Output file"]') as HTMLInputElement).value).toBe("/data/out/clip_remasked_2.h5");
+      expect(refused.querySelector('[role="alert"]')).toBeNull();
+      await click(button("Regenerate", refused));
       await finishJob("Regenerate masks");
     }),
   );

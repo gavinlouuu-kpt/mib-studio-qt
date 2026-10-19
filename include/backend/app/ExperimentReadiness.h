@@ -245,7 +245,14 @@ inline const char* toString(ExperimentRunState s)
 }
 
 // Typed outcome of requestStop().
-enum class ExperimentStopOutcome { Accepted = 0, NotActive = 1, Busy = 2 };
+enum class ExperimentStopOutcome {
+    Accepted = 0,
+    NotActive = 1,
+    Busy = 2,
+    // The stop named a run (expected start generation, #741, ABI 40) that is not the run the
+    // coordinator holds: another run is active or finalizing, or none is. Nothing was stopped.
+    RunMismatch = 3,
+};
 
 inline const char* toString(ExperimentStopOutcome o)
 {
@@ -253,6 +260,7 @@ inline const char* toString(ExperimentStopOutcome o)
     case ExperimentStopOutcome::Accepted: return "accepted";
     case ExperimentStopOutcome::NotActive: return "notActive";
     case ExperimentStopOutcome::Busy: return "busy";
+    case ExperimentStopOutcome::RunMismatch: return "runMismatch";
     }
     return "unknown";
 }

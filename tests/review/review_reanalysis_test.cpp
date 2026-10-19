@@ -12,10 +12,17 @@
 //    budget, an output created while the job runs (never overwritten), no
 //    partial file left behind;
 //  - the status snapshots, byte for byte;
-//  - the independent-reader preview.
+//  - the independent-reader preview;
+//  - the D6 options (#512 S8; YOFO Review's regenerate): parsing never sets
+//    them (the facade keeps preserve + quiet tile + timestamp order); rebase
+//    clamps rows recorded before the first selected one to 0; "all" in
+//    dataset order; the median-of-32 background, which differs from the
+//    quiet-tile one on the same frames; colour HDF frames refused by default
+//    (the facade) and converted BGR -> gray with `convertColorToGray`.
 // The facade surface over it is covered by backend.export_bridge_facade.
 // Watchdog guarded.
 
+#include "backend/processing/BatchMaskSources.h"
 #include "backend/processing/ProcessingService.h"
 #include "backend/recording/Hdf5Service.h"
 #include "backend/review/Reanalysis.h"
@@ -39,8 +46,11 @@
 #include <vector>
 
 namespace fs = std::filesystem;
+using backend::review::ReanalysisFrameOrder;
 using backend::review::ReanalysisOutcome;
 using backend::review::ReanalysisRequest;
+using backend::review::ReanalysisSyntheticBackground;
+using backend::review::ReanalysisTimestamps;
 using backend::services::Hdf5Service;
 using backend::services::ProcessedFrame;
 using nlohmann::json;
@@ -155,6 +165,10 @@ int main()
                    "background options");
         MIB_EXPECT(r.overrideRoi && r.roi.x == 1 && r.roi.y == 2 && r.roi.w == 3 && r.roi.h == 4, "ROI override");
         MIB_EXPECT(r.config.ring_ratio_min == 7.5, "image_processing overrides the defaults");
+        MIB_EXPECT(r.timestamps == ReanalysisTimestamps::Preserve &&
+                       r.syntheticBackgroundKind == ReanalysisSyntheticBackground::QuietTile &&
+                       r.frameOrder == ReanalysisFrameOrder::Timestamp,
+                   "parsing keeps the facade's semantics (D6 options are not in the JSON)");
 
         const std::string out = (td.path() / "x.h5").string();
         const std::vector<std::pair<json, std::string>> refusals{
@@ -280,6 +294,147 @@ int main()
         MIB_EXPECT(!backend::review::loadReanalysisPreview("{bad", preview, index), "malformed preview refused");
     }
     wd.mark("folder");
+
+    // ---- D6 options (#512 S8): YOFO Review's regenerate semantics ------------------
+    {
+        // "all" in dataset order (valid rows 100..111, then invalid 112..117)
+        // with timestamps minus the first selected row's: the fixture records
+        // later indices EARLIER, so row 100 is the latest and every other row
+        // clamps to 0 (the pre-S8 YOFO rule).
+        ReanalysisRequest yofo = parse(
+            {{"source_path", source.string()}, {"output_path", (td.path() / "yofo-all.h5").string()}, {"dataset", "all"}});
+        yofo.timestamps = ReanalysisTimestamps::Rebase;
+        yofo.frameOrder = ReanalysisFrameOrder::Datasets;
+        const auto outcome = backend::review::runReanalysis(yofo, kernel, flag(), {});
+        MIB_REQUIRE(outcome.published, "dataset order published: " + outcome.error);
+        std::size_t valid = 0;
+        const auto yofoFrames = outputFrames(yofo.outputPath);
+        for (const auto &f : yofoFrames)
+        {
+            valid += f.validation.isValid ? 1 : 0;
+            MIB_EXPECT(f.timestampNs == 0 && f.index >= 100 && f.index < 100 + kValid + kInvalid,
+                       "rebased to row 100 and clamped: index " + std::to_string(f.index));
+        }
+        MIB_EXPECT(!yofoFrames.empty() && outcome.valid == valid, "outcome counts the valid records");
+
+        // Rebase alone (timestamp order): offsets from the earliest row, 117.
+        ReanalysisRequest rebased = parse(
+            {{"source_path", source.string()}, {"output_path", (td.path() / "rebased.h5").string()}, {"dataset", "all"}});
+        rebased.timestamps = ReanalysisTimestamps::Rebase;
+        MIB_REQUIRE(backend::review::runReanalysis(rebased, kernel, flag(), {}).published, "rebased published");
+        for (const auto &f : outputFrames(rebased.outputPath))
+            MIB_EXPECT(f.timestampNs == timestampFor(f.index) - timestampFor(117),
+                       "rebased offset for index " + std::to_string(f.index));
+
+        // Dataset order vs timestamp order: the first output row of the
+        // invalid set differs (112 as stored vs 117, the earliest).
+        const auto firstInvalid = [&](const fs::path &path) {
+            Hdf5Service reader;
+            MIB_REQUIRE(reader.loadFile(path.string()), "reopen");
+            std::vector<ProcessedFrame> rows;
+            reader.readInvalidMetadata(rows);
+            return rows.empty() ? std::uint64_t{0} : rows.front().index;
+        };
+        const auto defaultOrder = firstInvalid(td.path() / "all.h5");
+        const auto datasetOrder = firstInvalid(yofo.outputPath);
+        MIB_EXPECT(defaultOrder != datasetOrder && defaultOrder != 0 && datasetOrder != 0,
+                   "dataset order keeps the rows as stored (" + std::to_string(datasetOrder) + " vs timestamp order " +
+                       std::to_string(defaultOrder) + ")");
+
+        // Median of the first <= 32 frames, the upper median; quiet tile on
+        // the same frames gives another background.
+        const fs::path folder = td.path() / "median";
+        fs::create_directory(folder);
+        std::vector<cv::Mat> frames;
+        for (int i = 0; i < 6; ++i)
+        {
+            cv::Mat m(32, 32, CV_8UC1);
+            for (int y = 0; y < 32; ++y)
+                for (int x = 0; x < 32; ++x) m.at<uint8_t>(y, x) = static_cast<uint8_t>((x * 7 + y * 3 + i * 41) % 251);
+            frames.push_back(m);
+            MIB_REQUIRE(cv::imwrite((folder / ("m" + std::to_string(i) + ".png")).string(), m), "median png");
+        }
+        cv::Mat oracle(32, 32, CV_8UC1);
+        for (int y = 0; y < 32; ++y)
+            for (int x = 0; x < 32; ++x)
+            {
+                std::vector<uint8_t> column;
+                for (const auto &m : frames) column.push_back(m.at<uint8_t>(y, x));
+                std::sort(column.begin(), column.end());
+                oracle.at<uint8_t>(y, x) = column[column.size() / 2];
+            }
+        ReanalysisRequest median = parse({{"source_kind", "folder"},
+                                          {"source_path", folder.string()},
+                                          {"output_path", (td.path() / "median.h5").string()},
+                                          {"synthetic_background", true}});
+        median.syntheticBackgroundKind = ReanalysisSyntheticBackground::MedianOf32;
+        MIB_REQUIRE(backend::review::runReanalysis(median, kernel, flag(), {}).published, "median published");
+        Hdf5Service reader;
+        cv::Mat background;
+        MIB_REQUIRE(reader.loadFile(median.outputPath) && reader.readBackgroundImage(background), "median background");
+        MIB_EXPECT(cv::norm(background, oracle, cv::NORM_INF) == 0, "median-of-32 background");
+        MIB_EXPECT(cv::norm(oracle, backend::services::batch_masks::buildSyntheticBackground(frames), cv::NORM_INF) > 0,
+                   "quiet tile differs on these frames (test is sensitive)");
+    }
+    {
+        // Colour HDF frames: the facade refuses them; YOFO's option converts
+        // them the way batch_masks::loadFromHdf5 does.
+        const fs::path colour = td.path() / "colour.h5";
+        std::vector<cv::Mat> bgr;
+        {
+            Hdf5Service writer;
+            MIB_REQUIRE(writer.openFile(colour.string()) && writer.initializeDatasets(), "colour open");
+            std::vector<ProcessedFrame> valid;
+            for (int i = 0; i < 3; ++i)
+            {
+                cv::Mat m(32, 32, CV_8UC3, cv::Scalar(20 + i, 90, 160));
+                cv::circle(m, {16, 16}, 6 + i, cv::Scalar(240, 10, 60), -1);
+                bgr.push_back(m);
+                ProcessedFrame f;
+                f.index = 300 + static_cast<std::uint64_t>(i);
+                f.timestampNs = 9000 + static_cast<std::uint64_t>(i);
+                f.originalImage = m;
+                f.processedImage = cv::Mat::zeros(32, 32, CV_8UC1);
+                f.validation.isValid = true;
+                valid.push_back(f);
+            }
+            MIB_REQUIRE(writer.appendFrames(valid, {}), "colour frames");
+            MIB_REQUIRE(writer.writeExperimentInfo(1000, 2000, 3, 0, {}, {0, 0, 32, 32}, nullptr), "colour info");
+            writer.closeFile();
+        }
+        ReanalysisRequest refused =
+            parse({{"source_path", colour.string()}, {"output_path", (td.path() / "colour-refused.h5").string()}});
+        const auto no = backend::review::runReanalysis(refused, kernel, flag(), {});
+        MIB_EXPECT(!no.published && no.error == "Source frames must be grayscale", "facade refuses colour: " + no.error);
+        ReanalysisRequest converted = refused;
+        converted.outputPath = (td.path() / "colour-gray.h5").string();
+        converted.convertColorToGray = true;
+        const auto yes = backend::review::runReanalysis(converted, kernel, flag(), {});
+        MIB_REQUIRE(yes.published, "converted colour published: " + yes.error);
+        Hdf5Service reader;
+        MIB_REQUIRE(reader.loadFile(converted.outputPath), "colour output");
+        std::vector<ProcessedFrame> rows;
+        reader.readValidMetadata(rows);
+        std::vector<ProcessedFrame> invalidRows;
+        reader.readInvalidMetadata(invalidRows);
+        std::size_t checked = 0;
+        for (const bool valid : {true, false})
+        {
+            const auto &set = valid ? rows : invalidRows;
+            for (std::size_t i = 0; i < set.size(); ++i)
+            {
+                cv::Mat image, expected;
+                MIB_REQUIRE(reader.readImageByIndex(valid ? "/valid_frames/images" : "/invalid_frames/images", i, image),
+                            "colour output image");
+                cv::cvtColor(bgr.at(set[i].index - 300), expected, cv::COLOR_BGR2GRAY);
+                MIB_EXPECT(image.type() == CV_8UC1 && cv::norm(image, expected, cv::NORM_INF) == 0,
+                           "output frame is the BGR -> gray source");
+                ++checked;
+            }
+        }
+        MIB_EXPECT(checked > 0, "colour output holds records");
+    }
+    wd.mark("d6 options");
 
     // ---- fault injection ----------------------------------------------------------
     {

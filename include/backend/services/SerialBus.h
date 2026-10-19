@@ -55,15 +55,35 @@ struct Transaction {
     BusError error{BusError::Timeout};
     uint8_t exceptionCode{0}; // valid when error == ModbusException
     Bytes response;           // full validated frame when error is None/ModbusException
+    std::string detail;       // why it failed, for logs and messages (e.g. which timeout); empty on success
 };
 
 // Exclusive owner of one ISerialPort. Construct only through
 // SerialBusManager::acquire(); hold via shared_ptr — the port closes when the
 // last client releases its reference.
 //
-// The port lives on a dedicated I/O thread (created and used only there), so
-// transact() marshals the request to that thread and blocks for the result.
-// Any thread may call transact(); callers are serialized.
+// The port lives on a dedicated I/O thread (created, used and closed only
+// there), so transact() marshals the request to that thread and blocks for
+// the result. Any thread may call transact(); callers are serialized.
+//
+// transact() never waits without limit (#720): it gives the I/O thread
+// transactBudgetMs(timeoutMs) and then returns Timeout. Every request carries
+// a sequence number, so the late result of an abandoned request is dropped
+// and never taken as the answer to the next one; a request the I/O thread had
+// not picked up is withdrawn and never sent. While an abandoned request still
+// holds the I/O thread (its port call is stuck), further calls fail fast with
+// Timeout instead of queueing behind it. Once the thread is back, the next
+// transaction drains any late reply bytes before it writes, as for any stale
+// traffic, and the bus works again.
+//
+// Teardown is bounded too: the destructor asks the I/O thread to stop,
+// interrupts a port call in progress (ISerialPort::interrupt) and waits at
+// most kShutdownJoinMs for the thread. A thread still inside a port call then
+// is detached and logged: it shares ownership of everything it touches (the
+// port, the request, the handshake state, the logger), so it never uses freed
+// memory or a dropped logger, and it closes the port when the call returns.
+// Until it has, the port stays reserved: SerialBusManager refuses a new
+// session on it.
 class ModbusBusSession {
 public:
     ~ModbusBusSession();
@@ -80,51 +100,62 @@ public:
     // transaction rather than being reinterpreted.
     Transaction transact(const Bytes& request, int timeoutMs = 1000);
 
+    // How long transact(request, timeoutMs) waits for the I/O thread: the
+    // worst case of the transaction's own bounded steps (inter-frame delay,
+    // write up to kSerialWriteTimeoutMs, drain up to timeoutMs, response up
+    // to timeoutMs, collision listen) plus scheduling slack. A transaction
+    // that runs to its own deadlines is never cut short; only a port call
+    // that ignores its bound trips it.
+    static int transactBudgetMs(int timeoutMs);
+
+    // How long the destructor waits for the I/O thread before detaching it
+    // (tests may set another bound: SerialBusManager::setShutdownJoinMsForTesting).
+    static constexpr int kShutdownJoinMs = 1000;
+
     std::string portName() const { return portName_; }
     SerialSettings settings() const { return settings_; }
-    bool isOpen() const { return portOpen_.load(); }
+    bool isOpen() const;
+
+    // Registry bookkeeping: says whether the port of a session that is gone
+    // is closed yet (defined in SerialBus.cpp).
+    struct PortReservation;
 
 private:
     friend class SerialBusManager;
-    ModbusBusSession(std::string portName, const SerialSettings& settings, SerialPortFactory factory);
+    ModbusBusSession(std::string portName, const SerialSettings& settings, SerialPortFactory factory,
+                     int shutdownJoinMs);
 
     // Spawns the I/O thread, which opens the port; blocks for the outcome.
     bool start(BusError* error, std::string* errorDetail);
-    void ioLoop();
-    bool openPortOnIoThread(); // io thread only
-    Transaction runTransaction(const Bytes& request, int timeoutMs); // io thread only
+
+    // Everything the I/O thread touches: the port, the request and result,
+    // the handshake, the logger. Shared by the session and the thread
+    // (SerialBus.cpp).
+    struct IoState;
+
+    // The I/O thread holds its port's reservation until it has closed the
+    // port; SerialBusManager keeps a weak reference to it (SerialBus.cpp).
+    std::weak_ptr<PortReservation> reservation() const;
 
     const std::string portName_;
     const SerialSettings settings_;
-    SerialPortFactory factory_;
-
-    // Touched only by the I/O thread.
-    std::unique_ptr<ISerialPort> serial_;
-    std::chrono::steady_clock::time_point lastBusActivity_{};
-
+    const int shutdownJoinMs_; // kShutdownJoinMs outside tests
+    std::shared_ptr<IoState> io_;
     std::thread ioThread_;
     std::mutex callMutex_; // serializes transact() callers
-
-    // Handshake between callers and the I/O thread.
-    std::mutex jobMutex_;
-    std::condition_variable jobCv_;
-    const Bytes* jobRequest_{nullptr};
-    int jobTimeoutMs_{0};
-    Transaction jobResult_;
-    bool jobPending_{false};
-    bool jobDone_{false};
-    bool stopRequested_{false};
-    bool openDone_{false};
-    BusError openErrorCode_{BusError::PortUnavailable};
-    std::string openErrorDetail_;
-    std::atomic<bool> portOpen_{false};
 };
 
 // Process-wide registry: one live session per system port. acquire() returns
 // the existing session when the settings match, refuses with PortBusy when the
 // port is already held with different settings, and opens the port otherwise.
-// Session teardown (port close + registry erase) happens atomically under the
-// registry lock, so a dying session and a fresh acquire cannot interleave.
+// A port stays reserved until the I/O thread of its last session has closed
+// it, so a dying session and a fresh acquire never hold the device at once.
+// While that session's destructor is still deciding (it waits at most
+// kShutdownJoinMs), acquire() waits for the outcome; once the destructor has
+// detached a thread stuck in a stalled transaction, acquire() refuses at once
+// with PortBusy ("still closing after a stalled transaction") until the
+// thread has closed the port. The registry lock is never held while a session
+// is torn down or waited for.
 class SerialBusManager {
 public:
     SerialBusManager();
@@ -143,6 +174,14 @@ public:
                                               BusError* error = nullptr,
                                               std::string* errorDetail = nullptr);
 
+    // Tests only (#720). The destructor's wait for the I/O thread, for
+    // sessions opened afterwards and for acquire()'s wait on a closing one
+    // (default ModbusBusSession::kShutdownJoinMs; production never changes
+    // it). And how many acquire() calls are waiting for a closing session of
+    // this manager right now.
+    void setShutdownJoinMsForTesting(int ms);
+    int closingWaitersForTesting() const { return closingWaiters_.load(); }
+
     // Reuse bus identity normalization for facade collision checks.
     static bool samePort(const std::string& a, const std::string& b) {
         return normalizeKey(a) == normalizeKey(b);
@@ -151,9 +190,16 @@ public:
 private:
     static std::string normalizeKey(const std::string& portName);
 
+    struct Entry {
+        std::weak_ptr<ModbusBusSession> session;
+        std::weak_ptr<ModbusBusSession::PortReservation> reservation;
+    };
+
     std::mutex mutex_;
     SerialPortFactory factory_;
-    std::map<std::string, std::weak_ptr<ModbusBusSession>> sessions_;
+    int shutdownJoinMs_{ModbusBusSession::kShutdownJoinMs};
+    std::map<std::string, Entry> sessions_;
+    std::atomic<int> closingWaiters_{0};
 };
 
 } // namespace backend::services::serialbus

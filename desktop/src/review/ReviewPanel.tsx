@@ -394,17 +394,33 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
     [askSeries, info, jobs, log],
   );
 
+  // Regenerate never replaces a file (#512 S8, D6): a refusal (an existing
+  // output) goes back to the dialog, which stays open so the operator can
+  // choose another name; the dialog closes once the job has started.
   const onRegenerate = useCallback(
-    async (r: RegenerateRequest) => {
-      setShowRegenerate(false);
-      const job = await jobs.start("Regenerate masks", REVIEW_OPERATION_KINDS.RegenerateMasks, () => reviewBridge.regenerateMasks(r));
-      // The Qt tab reloads from the regenerated file.
-      if (job?.phase === "completed") {
-        rememberExportDir(dirName(r.outputPath));
-        await openPath(r.outputPath);
-      }
-    },
-    [jobs, openPath],
+    (r: RegenerateRequest) =>
+      new Promise<string | null>((settle) => {
+        jobs
+          .start("Regenerate masks", REVIEW_OPERATION_KINDS.RegenerateMasks, () => reviewBridge.regenerateMasks(r), undefined, {
+            onRefused: (message) => settle(message),
+            onStarted: () => {
+              settle(null);
+              setShowRegenerate(false);
+            },
+          })
+          .then(async (job) => {
+            // The Qt tab reloads from the regenerated file.
+            if (job?.phase === "completed") {
+              rememberExportDir(dirName(r.outputPath));
+              await openPath(r.outputPath);
+            }
+          })
+          .catch((e) => {
+            log(`regenerate error: ${e}`);
+            settle(String(e));
+          });
+      }),
+    [jobs, log, openPath],
   );
 
   const pageTo = (offset: number) => void loadRows(validSet, Math.max(0, offset));
@@ -630,7 +646,7 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
           }}
         />
       )}
-      {showRegenerate && <RegenerateMasksDialog info={info} onRun={(r) => void onRegenerate(r)} onCancel={() => setShowRegenerate(false)} />}
+      {showRegenerate && <RegenerateMasksDialog info={info} onRun={onRegenerate} onCancel={() => setShowRegenerate(false)} />}
       {jobs.job && <JobDialog job={jobs.job} onCancel={jobs.cancel} onClose={jobs.dismiss} />}
       {viewerOpen && reviewing && selected >= 0 && (
         <FrameViewer
