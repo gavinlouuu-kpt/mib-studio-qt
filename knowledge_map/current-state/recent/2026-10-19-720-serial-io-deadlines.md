@@ -50,8 +50,9 @@ No bridge ABI or contract change. See [[services/SerialBus]], [[services/ISerial
 answer the next request, 240-call concurrent stress with no misattributed answer, teardown while
 held: joined at once after `interrupt()`, detached at 1000 ms when the call ignores it, the
 detached thread closing its port once released; the same port refused after 0 ms while it holds it
-and reopened after, another port opening during the teardown, a racing acquire waiting about 100 ms
-for a normal close and then opening, the late warning reaching the session's logger after
+and reopened after, another port opening during a teardown, a racing acquire that is released only
+once it is seen waiting (`closingWaitersForTesting()`, with a 10 s test bound from
+`setShutdownJoinMsForTesting()`) and then opens, the late warning reaching the session's logger after
 `spdlog::drop_all()`), stalled-adapter, stalled-connect (4.5 s) and
 disconnect-after-abandon (1.0 s) cases in `backend.syringe_pump_fake_serial`, the stalled stop in
 `backend.peristaltic_pump_fake_serial`, the Win32 purge and interrupt checks in

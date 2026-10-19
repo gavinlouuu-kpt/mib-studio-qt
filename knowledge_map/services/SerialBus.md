@@ -23,7 +23,12 @@ later request, concurrent stress, teardown with the I/O thread held: joined
 after `interrupt()`, detached after `kShutdownJoinMs` when the call ignores
 it; the port refused while the detached thread holds it and reopened after,
 another port opening during the teardown, an acquire racing a normal close,
-the late warning surviving `spdlog::drop_all()`), `tests/backend/modbus_rtu_test.cpp`
+the late warning surviving `spdlog::drop_all()`; the race is made
+deterministic by two test seams on the manager,
+`setShutdownJoinMsForTesting()` (a generous destructor bound for sessions
+opened afterwards; production keeps `kShutdownJoinMs`) and
+`closingWaitersForTesting()` (acquire calls waiting for a closing session)),
+`tests/backend/modbus_rtu_test.cpp`
 (framing primitives)
 **Related:** [[PulseGeneratorService]], [[SyringePumpService]],
 [[../architecture/AppBackend]], [[../frontend/ConfigTabs]]
