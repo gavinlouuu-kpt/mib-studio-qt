@@ -55,10 +55,15 @@ see [[../architecture/Desktop-Shell]], "Opt-in workspace"), which imports the st
 at its entry. O2 Align (#716 A3) uses `DataTable` (compact) for the quick controls, `Notice` for
 the explicit mode switch and `StateChip` tones for write states. The kit has no number field yet:
 the quick controls' X / Y / W / H inputs are app-local markup in `workspace.css` until one lands
-(#715). O3 Experiment · Plan (#716 A5) uses `OptionGroup` (sample format, the queue inert with its
-reason), a compact `DataTable` for the sheet's row as it will be recorded (with a "Not declared"
-`missing`), `ConditionSwatch` slots 1–4 in sheet order, `FactList` for the run identity and
-`Notice` for each reason Start is unavailable and for the outcome. Its text fields (and the notes
+(#715). O3 Experiment · Plan (#716 A5) uses `OptionGroup` (sample format; "Single sample" inert
+with its reason when the sheet holds several samples), a compact `DataTable` for the sheet (one
+row as it will be recorded, or the sample queue's selectable rows with a state chip, run index and
+file per row, with a "Not declared" `missing`), `ConditionSwatch` slots 1–4 in sheet order,
+`FactList` for the run identity and the run's progress, `Stepper` for the current row's run
+lifecycle and `Notice` for each step, each reason Start is unavailable, the outcome and the
+camera-mode switch (the PZ7035's "Switch to Run", a desktop camera's "Show the experiment window"). The `Stepper` has no unknown or refused step state: a lost start reply
+is a `current` step and a refused one a `failed` step, each with a `StateChip` in its label (a
+candidate for #715). Its text fields (and the notes
 textarea) are app-local too, without `maxLength` (a long value is refused, never cut off). Two
 local CSS rules wrap content the kit keeps on one line: an `OptionGroup` reason chip in a narrow
 card and long values in the sheet's table cells.

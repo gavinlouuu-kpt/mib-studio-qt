@@ -32,7 +32,9 @@ import { RingPlaybackPanel } from "./components/RingPlaybackPanel";
 import { faultClearedNote } from "./ringPlayback";
 import { startExperiment, type StartOutcome } from "./experimentStart";
 import { SerialReads } from "./serialReads";
-import { usePlan, type PlanStartResult } from "./workspace/usePlan";
+import { usePlan, type PlanStartResult, type StopReply } from "./workspace/usePlan";
+import { planCameraMode } from "./workspace/planModel";
+import { useHoldsControl } from "./transport/useControlRole";
 import { downloadUrl } from "./filesView";
 import { serverOrigin, tokenFromLocation } from "./transport/auth";
 import { FilesPanel } from "./components/FilesPanel";
@@ -949,7 +951,9 @@ export default function App() {
   // The outcome is decided by the start reply alone (startExperiment): the status refresh after it
   // is a separate read, and its failure is reported as such (refreshError), never as the outcome,
   // so a started run's identity is never offered again (#736 review).
-  const runExperimentStart = useCallback(async (startRequestJson?: string): Promise<PlanStartResult> => {
+  // `stillWanted` (the workspace's Plan) withdraws a pending Start that lost its controlling
+  // client: checked after each answer and immediately before experiment_start (#716 A5 review).
+  const runExperimentStart = useCallback(async (startRequestJson?: string, stillWanted?: () => boolean): Promise<PlanStartResult> => {
     if (experimentPending.current) return { kind: "busy" };
     experimentPending.current = true; setExperimentRequestBusy(true); setReadinessMessage(""); setStartNotice("");
     try {
@@ -961,7 +965,7 @@ export default function App() {
           pickFile: () => save({ title: "Save Experiment Data", filters: H5_FILTER, defaultPath: "experiment.h5" }),
           fetchReadiness: (path) => bridge.fetchExperimentReadiness(path),
           start: (path, acknowledgeDiscardRing, request) => bridge.experimentStart(path, acknowledgeDiscardRing, request),
-        }, startRequestJson);
+        }, startRequestJson, stillWanted);
       } catch (e) {
         // Before the start request was sent (dialog or readiness): nothing was started.
         append(`experiment start error: ${e}`);
@@ -971,6 +975,7 @@ export default function App() {
         try { setExpStatus(await bridge.fetchExperimentStatus()); return ""; }
         catch (e) { append(`experiment status refresh error: ${e}`); return String(e); }
       };
+      if (outcome.kind === "withdrawn") { append("experiment start withdrawn: control was lost while it was pending; nothing was sent"); return outcome; }
       if (outcome.kind === "not-ready") { setReadinessMessage(outcome.message); return outcome; }
       if (outcome.kind === "refused") {
         setReadinessMessage(`${outcome.path}: ${outcome.message}`); append(`experiment start failed: ${outcome.message}`);
@@ -992,8 +997,18 @@ export default function App() {
     } finally { experimentPending.current = false; setExperimentRequestBusy(false); }
   }, [append]);
   const onStartExperiment = useCallback(() => { void runExperimentStart(); }, [runExperimentStart]);
-  // The workspace's Experiment plan (O3): local until its Start run button.
-  const plan = usePlan(runExperimentStart);
+  // The workspace's sample queue stops a run with the classic Stop's command and is told its reply
+  // (the queue then follows the drain and finalize in the polled status).
+  const stopForPlan = useCallback(async (): Promise<StopReply> => {
+    const res = await bridge.experimentStop();
+    append(res.ok ? "experiment stop requested (sample queue)" : `experiment stop failed: ${res.message}`);
+    try { setExpStatus(await bridge.fetchExperimentStatus()); } catch (e) { append(`experiment status refresh error: ${e}`); }
+    return res;
+  }, [append]);
+  // Who controls the instrument: a browser that loses control pauses the sample queue (#711).
+  const controlHeld = useHoldsControl();
+  // The workspace's Experiment plan (O3): local until its buttons (Start run, the queue's steps).
+  const plan = usePlan(runExperimentStart, { status: expStatus, stop: stopForPlan, controlHeld });
 
   const onStopExperiment = useCallback(async () => {
     try {
@@ -1294,6 +1309,13 @@ export default function App() {
   const switchFromWorkspace = useCallback(async () => {
     setClassicModeStale(true);
     await applyCameraMode("overview");
+  }, [applyCameraMode]);
+  // The Plan's explicit switch to the mode a run records in (#716 A5): the PZ7035's Run, a desktop
+  // camera's experiment window after the full sensor; the classic Experiment tab's entry switch,
+  // here only on its button.
+  const switchPlanCameraMode = useCallback(async () => {
+    setClassicModeStale(true);
+    await applyCameraMode("experiment");
   }, [applyCameraMode]);
   // Opening the workspace cancels a pending classic switch at once (the ref, before the render):
   // a classic tab change that is still awaiting its read then sends nothing.
@@ -1706,7 +1728,12 @@ export default function App() {
             // The classic Connect tab only reads (it never switches camera modes).
             onOpenSetup={() => { setTab("connect"); exitWorkspace(); }}
             // O3 Plan: Start run is locked for the same reasons as the classic Start button.
-            experiment={{ plan, lockedReason: startExperimentReason ?? "", view: experimentView, onView: setExperimentView }}
+            experiment={{ plan, lockedReason: startExperimentReason ?? "", view: experimentView, onView: setExperimentView,
+              cameraMode: planCameraMode({ instrumentModes, mode: instrumentModes ? instrument?.mode?.name ?? null : null, windowPlaced: cameraWin.placed,
+                experimentActive: expActive, runFrozen: !!instrument?.ring?.run_frozen, modeError: modeError?.mode === "run" ? modeError.message : "",
+                fullSensor: !instrumentModes && cameraGeometry?.supported && cameraGeometry.overview
+                  ? { width: cameraGeometry.sensor_width, height: cameraGeometry.sensor_height } : null }),
+              onCameraMode: switchPlanCameraMode }}
           />
         </div>
       )}

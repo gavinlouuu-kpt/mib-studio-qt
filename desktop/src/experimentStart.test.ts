@@ -129,3 +129,35 @@ describe("bridge.experimentStart on the transport", () => {
   });
 });
 const REQUEST_TEXT = '{"experiment_id":"3f2b8c1e-9a4d-4e6f-8b21-0c5d7e9f1a2b","run_index":1,"sample_ref":"S1"}';
+
+// #739 review: a Start that is no longer wanted (the workspace lost control while it was pending)
+// sends nothing, wherever it is: the discard question, the file dialog, readiness.
+describe("a Start that is no longer wanted", () => {
+  const until = (step: "ring" | "confirm" | "pick" | "readiness") => {
+    let wanted = true;
+    const d = deps({
+      fetchRingStatus: vi.fn(async () => { if (step === "ring") wanted = false; return ring(); }),
+      confirm: vi.fn(async () => { if (step === "confirm") wanted = false; return true; }),
+      pickFile: vi.fn(async () => { if (step === "pick") wanted = false; return "/data/run.h5"; }),
+      fetchReadiness: vi.fn(async () => { if (step === "readiness") wanted = false; return ready; }),
+    });
+    return { d, stillWanted: () => wanted };
+  };
+  it.each(["ring", "confirm", "pick", "readiness"] as const)("withdrawn while %s is pending: nothing is sent, the outcome says so", async (step) => {
+    const { d, stillWanted } = until(step);
+    expect(await startExperiment(d, '{"run_index":1}', stillWanted)).toEqual({ kind: "withdrawn" });
+    expect(d.start).not.toHaveBeenCalled();
+  });
+  it("the file dialog's answer is not used once the Start is withdrawn (not even its readiness is read)", async () => {
+    const { d, stillWanted } = until("pick");
+    await startExperiment(d, '{"run_index":1}', stillWanted);
+    expect(d.fetchReadiness).not.toHaveBeenCalled();
+  });
+  it("still wanted at every step: started, with the request", async () => {
+    const d = deps();
+    const stillWanted = vi.fn(() => true);
+    expect(await startExperiment(d, '{"run_index":1}', stillWanted)).toEqual({ kind: "started", path: "/data/run.h5", notice: "" });
+    expect(d.start).toHaveBeenCalledWith("/data/run.h5", true, '{"run_index":1}');
+    expect(stillWanted.mock.calls.length).toBeGreaterThanOrEqual(4);
+  });
+});

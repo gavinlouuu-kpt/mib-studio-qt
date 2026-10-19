@@ -23,6 +23,16 @@ vi.mock("@tauri-apps/api/app", () => ({ getVersion: vi.fn(async () => "1.2.0") }
 vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ onCloseRequested: async () => () => {}, close: async () => {} }) }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn(async () => null), save: vi.fn(async () => null), confirm: vi.fn(async () => false), message: vi.fn(async () => {}) }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn(), revealItemInDir: vi.fn() }));
+// Whether this client controls the instrument: a store the test flips (a browser's lost and
+// regained control; the desktop always holds it, so the default is held).
+const control = vi.hoisted(() => ({ held: true, listeners: new Set<() => void>() }));
+vi.mock("../transport/useControlRole", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../transport/useControlRole")>();
+  const { useSyncExternalStore } = await import("react");
+  return { ...actual, useHoldsControl: () => useSyncExternalStore(
+    (l: () => void) => { control.listeners.add(l); return () => { control.listeners.delete(l); }; }, () => control.held) };
+});
+const setControl = (held: boolean) => act(async () => { control.held = held; for (const l of control.listeners) l(); });
 
 /** Commands that act on hardware, files or the session, or write settings: none may follow from navigation. */
 const ACTUATING = [
@@ -54,7 +64,15 @@ let canStart = false;
 let startReply: { ok: boolean; message: string } = { ok: true, message: "experiment started" };
 /** Set to make every experiment status read fail once experiment_start was sent. */
 let statusFailsAfterStart = false;
+/** Set to make the mock backend run experiments (A5 queue): a start makes a run Active (a new
+ *  generation, its file), a stop makes it Stopping; `finalizeRun` makes it terminal and closed. */
+let statefulRuns = false;
+let run = { generation: 0, state: EXPERIMENT_STATES.Idle as number, flushing: false, terminal: false, ok: false, path: "" };
+const finalizeRun = () => Object.assign(run, { state: EXPERIMENT_STATES.Idle, flushing: false, terminal: true, ok: true });
 let startSent = false;
+/** Set to hold the next readiness read with a file (the Start flow's), until the test releases it. */
+let holdStartReadiness = false;
+const heldReadiness: (() => void)[] = [];
 /** Set to hold the checklist's core status reads; the test answers each one. */
 let holdCore = false;
 const heldCore: ((reply: unknown) => void)[] = [];
@@ -72,7 +90,9 @@ function respond(variant: Variant, cmd: string, args?: unknown): unknown {
     case "fetch_processing_core_status":
       if (holdCore) return new Promise((resolve) => heldCore.push(resolve));
       return canStart ? CORE_OK : null;
-    case "fetch_experiment_status": if (statusFailsAfterStart && startSent) throw new Error("TRANSPORT_LOST"); return status;
+    case "fetch_experiment_status": if (statusFailsAfterStart && startSent) throw new Error("TRANSPORT_LOST");
+      return statefulRuns ? { ...status, state: run.state, flushing: run.flushing, terminal: run.terminal, finalization_ok: run.ok, output_path: run.path,
+        start_generation: String(run.generation) } : status;
     case "fetch_review_metadata": return { valid: false, file_open: false, file_path: "", recording_file: false };
     case "fetch_platform_info": return pz ? { science: "pl", host_processing: false, aravis: true, capabilities: PZ_CAPS } : { science: "host", host_processing: true, aravis: false };
     case "fetch_camera_selection": return { valid: true, configured: true, mode: 0, label: pz ? "PZ7035 IMX426" : "Camera 01", interface_index: 0, device_index: 0, mindvision_index: 0,
@@ -86,11 +106,24 @@ function respond(variant: Variant, cmd: string, args?: unknown): unknown {
       width_increment: 16, height_increment: 4, offset_x_increment: 16, offset_y_increment: 4, min_width: 64, min_height: 4, session: {} };
     case "fetch_instrument_status": return pz ? { available: true, mode: { name: device.mode, run_x: device.runX, run_y: device.runY, run_set: device.runSet, service: false } }
       : { available: false, error: "not a PZ7035" };
-    case "fetch_experiment_readiness": return a.outputPath
+    case "fetch_experiment_readiness": if (a.outputPath && holdStartReadiness) {
+      holdStartReadiness = false;
+      const reply = respond(variant, cmd, args);
+      return new Promise((resolve) => heldReadiness.push(() => resolve(reply)));
+    } return a.outputPath
       ? { transport_version: JSON_TRANSPORT.version, valid: true, ready: true, generation: "2", gates: [{ id: "storage.output", status: G.Pass, reason: "", remediation: "" }] }
       : { transport_version: JSON_TRANSPORT.version, valid: true, ready: false, generation: "1",
         gates: [{ id: "storage.output", status: G.Unavailable, reason: "no output path chosen yet", remediation: "choose an HDF5 destination" }] };
-    case "experiment_start": startSent = true; return { ...cmdResult(COMMAND_TYPES.Experiment), ...startReply };
+    case "experiment_start": startSent = true;
+      if (statefulRuns && startReply.ok) run = { generation: run.generation + 1, state: EXPERIMENT_STATES.Active, flushing: false, terminal: false, ok: false, path: String(a.outputPath) };
+      return { ...cmdResult(COMMAND_TYPES.Experiment), ...startReply };
+    // With running experiments the shell's 500 ms status poll must get through (it reads the
+    // processing stats first).
+    case "fetch_processing_stats": return statefulRuns
+      ? { transport_version: JSON_TRANSPORT.version, valid: false, algo_fps1s: null, valid_fps1s: null, invalid_fps1s: null, pixel_to_micron: null } : null;
+    case "experiment_stop":
+      if (statefulRuns && run.state === EXPERIMENT_STATES.Active) Object.assign(run, { state: EXPERIMENT_STATES.Stopping, flushing: true });
+      return cmdResult(COMMAND_TYPES.Experiment);
     case "poll_events_exact": return { transport_version: JSON_TRANSPORT.version, events: [] };
     case "set_camera_overview": device.overview = !!a.overview; return cmdResult(COMMAND_TYPES.Camera);
     case "save_camera_roi": return cmdResult(COMMAND_TYPES.Camera);
@@ -133,6 +166,11 @@ beforeEach(() => {
   canStart = false;
   startReply = { ok: true, message: "experiment started" };
   statusFailsAfterStart = false;
+  statefulRuns = false;
+  holdStartReadiness = false;
+  heldReadiness.length = 0;
+  control.held = true;
+  run = { generation: 0, state: EXPERIMENT_STATES.Idle, flushing: false, terminal: false, ok: false, path: "" };
   startSent = false;
   holdCore = false;
   heldCore.length = 0;
@@ -142,6 +180,8 @@ beforeEach(() => {
   vi.stubGlobal("sessionStorage", store);
   vi.useFakeTimers();
   vi.mocked(invoke).mockReset();
+  vi.mocked(save).mockReset(); // no file left over from an earlier test's unused answer
+  vi.mocked(save).mockResolvedValue(null);
   log = [];
   host = document.createElement("div"); document.body.append(host); root = createRoot(host);
 });
@@ -489,5 +529,234 @@ describe("Experiment · Plan after review (desktop)", () => {
     await click(buttonByText("Plan"), "Plan");
     await advance(3000);
     expect(prepareReads(log.splice(0)).length).toBeGreaterThan(0);
+  });
+});
+
+// #716 A5 (second PR): the guided sample queue and the PZ7035's explicit switch to Run.
+const chooseQueue = async () => {
+  await click(host.querySelectorAll<HTMLInputElement>("[data-testid=workspace-plan] .mib-option input")[1], "Sample queue");
+  expect(host.querySelector("[data-testid=queue-card]")).not.toBeNull();
+};
+const byTestId = (id: string) => host.querySelector<HTMLElement>(`[data-testid=${id}]`);
+
+describe.each<Variant>(["desktop", "pz7035"])("the sample queue never acts on its own (%s)", (variant) => {
+  it("choosing the queue, adding, typing, moving and removing samples, and switching sub-views send nothing that acts", async () => {
+    await boot(variant);
+    const idle = await steadyState();
+    await openPlan();
+    await chooseQueue();
+    await typeInto("[data-testid=plan-condition]", "Vehicle");
+    await click(byTestId("queue-add"), "+ Sample");
+    await typeInto("[data-testid=plan-condition]", "Cytochalasin D");
+    await click(byTestId("queue-add"), "+ Sample");
+    await click(host.querySelector('[aria-label="Move S3 up"]'), "Move S3 up");
+    await click(host.querySelector('[aria-label="Remove S2"]'), "Remove S2");
+    for (const sub of ["Live", "Summary", "Plan"]) await click(buttonByText(sub), sub);
+    await advance(10_000);
+    const visit = log.splice(0);
+    expect(visit.filter((e) => ACTUATING.includes(e.cmd))).toEqual([]);
+    for (const n of [...namesIn(visit)].filter((n) => !namesIn(idle).has(n))) expect(n).toBe("fetch_experiment_readiness");
+    for (const r of readinessReads(visit)) expect(r.args).toEqual({ outputPath: "" });
+    // The queue is still there after leaving the stage and the workspace.
+    await click(host.querySelectorAll(".mib-stages__tab")[0], "Prepare");
+    await click(buttonByText("Classic view"), "Classic view");
+    await click(buttonByText("Workspace preview"), "workspace toggle");
+    await click(host.querySelectorAll(".mib-stages__tab")[2], "Experiment");
+    expect([...host.querySelectorAll("[data-testid=plan-sheet-table] tbody tr")].map((tr) => tr.children[1].textContent)).toEqual(["S1", "S3"]);
+    expect(log.splice(0).filter((e) => ACTUATING.includes(e.cmd))).toEqual([]);
+  });
+});
+
+describe("the sample queue over the mocked transport (desktop)", () => {
+  it("two samples send exactly start S1, stop, start S2, stop, each on its button, and nothing in between", async () => {
+    canStart = true;
+    statefulRuns = true;
+    await boot("desktop");
+    await openPlan();
+    await chooseQueue();
+    const id = host.querySelector("[data-testid=plan-experiment-id]")!.textContent!;
+    await typeInto("[data-testid=plan-condition]", "Vehicle");
+    await click(byTestId("queue-add"), "+ Sample");
+    await typeInto("[data-testid=plan-condition]", "Cytochalasin D");
+    await advance(3000);
+    log.splice(0);
+    const acts = () => log.filter((e) => ACTUATING.includes(e.cmd));
+
+    vi.mocked(save).mockResolvedValueOnce("/data/s1.h5");
+    await click(byTestId("queue-start"), "Start S1");
+    await advance(10_000);
+    expect(acts()).toEqual([{ cmd: "experiment_start", args: { outputPath: "/data/s1.h5", acknowledgeDiscardRing: false,
+      startRequestJson: `{"experiment_id":"${id}","run_index":1,"sample_ref":"S1","annotation":{"condition":"Vehicle"}}` } }]);
+    // Readiness was evaluated with the chosen file before the start.
+    expect(log.some((e) => e.cmd === "fetch_experiment_readiness" && (e.args as { outputPath: string }).outputPath === "/data/s1.h5")).toBe(true);
+    expect(byTestId("queue-step")!.textContent).toContain("S1 running · run 1 · /data/s1.h5");
+
+    await click(buttonByText("Next sample"), "Next sample");
+    await advance(3000);
+    expect(acts().map((e) => e.cmd)).toEqual(["experiment_start", "experiment_stop"]);
+    expect(byTestId("queue-step")!.textContent).toContain("Stopping S1");
+    finalizeRun();
+    await advance(10_000);
+    expect(byTestId("queue-step")!.textContent).toContain("S1 finalized · the backend closed /data/s1.h5");
+    expect(acts()).toHaveLength(2); // the close waits for the operator
+
+    await click(buttonByText("Confirm closed"), "Confirm closed");
+    await advance(10_000);
+    expect(byTestId("queue-step")!.textContent).toContain("Swap the tube for S2");
+    expect(acts()).toHaveLength(2); // S2 waits for its Start
+
+    vi.mocked(save).mockResolvedValueOnce("/data/s2.h5");
+    await click(buttonByText("Start S2"), "Start S2");
+    await advance(3000);
+    await click(buttonByText("Stop last sample"), "Stop last sample");
+    finalizeRun();
+    await advance(3000);
+    await click(buttonByText("Confirm closed"), "Confirm closed");
+    await advance(10_000);
+    expect(byTestId("queue-finished")!.textContent).toContain("Queue complete · 2 of 2 closed");
+    expect(acts()).toEqual([
+      { cmd: "experiment_start", args: { outputPath: "/data/s1.h5", acknowledgeDiscardRing: false,
+        startRequestJson: `{"experiment_id":"${id}","run_index":1,"sample_ref":"S1","annotation":{"condition":"Vehicle"}}` } },
+      { cmd: "experiment_stop", args: undefined },
+      { cmd: "experiment_start", args: { outputPath: "/data/s2.h5", acknowledgeDiscardRing: false,
+        startRequestJson: `{"experiment_id":"${id}","run_index":2,"sample_ref":"S2","annotation":{"condition":"Cytochalasin D"}}` } },
+      { cmd: "experiment_stop", args: undefined },
+    ]);
+  });
+});
+
+describe("the Plan's switch to Run (pz7035)", () => {
+  it("visiting the Plan sends no switch; with the Run window placed in Align, the button sends exactly the classic Run switch", async () => {
+    await boot("pz7035");
+    log.splice(0);
+    await openPlan();
+    await advance(3000);
+    const notice = byTestId("plan-camera-mode")!;
+    expect(notice.textContent).toContain("Camera · Mode · unknown");
+    expect(buttonByText("Switch to Run")!.disabled).toBe(true); // no Run window placed yet
+    expect(notice.textContent).toContain("place the 512×96 Run window in Align first");
+    expect(byTestId("plan-blocked-locked")!.textContent).toContain("Place the 512×96 run window in Camera & Alignment first");
+    expect(log.splice(0).filter((e) => ACTUATING.includes(e.cmd))).toEqual([]);
+    // Place the Run window in Align (no switch: it is applied by the switch to Run).
+    await click(host.querySelectorAll(".mib-stages__tab")[1], "Align");
+    await advance(3000);
+    await typeInto('input[aria-label$=" X"]', "40");
+    await click(buttonByText("Write Run window"), "Write Run window");
+    await click(host.querySelectorAll(".mib-stages__tab")[2], "Experiment");
+    await advance(3000);
+    expect(log.splice(0).filter((e) => ACTUATING.includes(e.cmd))).toEqual([]);
+    expect(byTestId("plan-blocked-locked")!.textContent).toContain("The camera is not in Run mode yet");
+    await click(buttonByText("Switch to Run"), "Switch to Run");
+    await advance(3000);
+    expect(log.splice(0).filter((e) => ACTUATING.includes(e.cmd))).toEqual([{ cmd: "set_instrument_mode", args: { mode: "run", x: 40, y: expect.any(Number) } }]);
+    expect(byTestId("plan-camera-mode")).toBeNull(); // in Run now
+    expect(byTestId("plan-blocked-locked")?.textContent ?? "").not.toContain("Run mode");
+    // And nothing more on its own.
+    await advance(10_000);
+    expect(log.splice(0).filter((e) => ACTUATING.includes(e.cmd))).toEqual([]);
+  });
+});
+
+// #739 review: a control loss withdraws a pending Start; a run is the row's only on its own file;
+// a desktop camera left on the full sensor blocks Start until the explicit switch.
+describe("the sample queue after review (desktop)", () => {
+  async function queueOfTwo() {
+    canStart = true;
+    statefulRuns = true;
+    await boot("desktop");
+    await openPlan();
+    await chooseQueue();
+    await typeInto("[data-testid=plan-condition]", "Vehicle");
+    await click(byTestId("queue-add"), "+ Sample");
+    await advance(3000);
+    log.splice(0);
+  }
+  const starts = () => log.filter((e) => e.cmd === "experiment_start");
+
+  it("losing and regaining control while readiness is pending sends no experiment_start; Start again after Resume sends one", async () => {
+    await queueOfTwo();
+    holdStartReadiness = true;
+    vi.mocked(save).mockResolvedValueOnce("/data/s1.h5");
+    await click(byTestId("queue-start"), "Start S1");
+    expect(heldReadiness).toHaveLength(1); // the Start flow waits on readiness with the chosen file
+    await setControl(false);
+    await advance(1000);
+    await setControl(true);
+    await advance(1000);
+    await act(async () => heldReadiness.shift()!());
+    await advance(10_000);
+    expect(starts()).toEqual([]);
+    expect(log.filter((e) => ACTUATING.includes(e.cmd))).toEqual([]);
+    expect(byTestId("queue-step")!.textContent).toContain("Not started · control was lost while the Start of S1 was pending");
+    expect(byTestId("queue-paused")).not.toBeNull();
+    await click(buttonByText("Resume queue"), "Resume queue");
+    await advance(5000);
+    expect(starts()).toEqual([]); // resuming sends nothing
+    vi.mocked(save).mockResolvedValueOnce("/data/s1.h5");
+    await click(byTestId("queue-start"), "Start S1");
+    await advance(3000);
+    expect(starts()).toHaveLength(1);
+    expect(JSON.parse((starts()[0].args as { startRequestJson: string }).startRequestJson)).toMatchObject({ run_index: 1, sample_ref: "S1" });
+  });
+
+  it("S1's refresh fails and another client's run starts before the next good read: S1 is interrupted, never adopted; nothing is stopped", async () => {
+    await queueOfTwo();
+    statusFailsAfterStart = true;
+    vi.mocked(save).mockResolvedValueOnce("/data/s1.h5");
+    await click(byTestId("queue-start"), "Start S1");
+    expect(starts()).toHaveLength(1);
+    // Meanwhile another client stops S1 and starts its own run on its own file.
+    run = { generation: run.generation + 1, state: EXPERIMENT_STATES.Active, flushing: false, terminal: false, ok: false, path: "/data/theirs.h5" };
+    statusFailsAfterStart = false;
+    await advance(3000);
+    expect(byTestId("queue-state-S1")!.textContent).toBe("Interrupted · another run");
+    expect(byTestId("queue-step")!.textContent).toContain("another run started on this instrument");
+    expect(buttonByText("Next sample")).toBeUndefined();
+    finalizeRun(); // their run ends: not S1's to confirm
+    await advance(5000);
+    expect(buttonByText("Confirm closed")).toBeUndefined();
+    expect(log.filter((e) => e.cmd === "experiment_stop")).toEqual([]);
+    expect(starts()).toHaveLength(1);
+  });
+
+  it("Align's full sensor blocks Start in the Plan with the reason; only Show the experiment window switches back", async () => {
+    await queueOfTwo();
+    await click(host.querySelectorAll(".mib-stages__tab")[1], "Align");
+    await advance(3000);
+    await click(buttonByText("Show the full sensor"), "Show the full sensor");
+    await advance(3000);
+    await click(host.querySelectorAll(".mib-stages__tab")[2], "Experiment");
+    await advance(3000);
+    log.splice(0);
+    // The queue and the single plan both say why Start is unavailable.
+    expect(byTestId("plan-camera-mode")!.textContent).toContain("Camera · Full sensor 2048 × 512");
+    expect((byTestId("queue-start") as HTMLButtonElement).disabled).toBe(true);
+    expect(byTestId("plan-blocked-camera")!.textContent).toContain("The camera shows the full sensor, not the experiment window");
+    await click(byTestId("queue-start"), "Start S1");
+    for (const sub of ["Live", "Summary", "Plan"]) await click(buttonByText(sub), sub);
+    await advance(6000);
+    expect(log.splice(0).filter((e) => ACTUATING.includes(e.cmd))).toEqual([]);
+    await click(buttonByText("Show the experiment window"), "Show the experiment window");
+    await advance(3000);
+    expect(log.splice(0).filter((e) => ACTUATING.includes(e.cmd))).toEqual([{ cmd: "set_camera_overview", args: { overview: false } }]);
+    expect(byTestId("plan-camera-mode")).toBeNull();
+    expect(byTestId("plan-blocked-camera")).toBeNull();
+    expect((byTestId("queue-start") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("the single plan is blocked the same way on the full sensor", async () => {
+    canStart = true;
+    await boot("desktop");
+    await click(buttonByText("Workspace preview"), "workspace toggle");
+    await click(host.querySelectorAll(".mib-stages__tab")[1], "Align");
+    await advance(3000);
+    await click(buttonByText("Show the full sensor"), "Show the full sensor");
+    await click(host.querySelectorAll(".mib-stages__tab")[2], "Experiment");
+    await advance(3000);
+    log.splice(0);
+    expect(buttonByText("Start run")!.disabled).toBe(true);
+    expect(byTestId("plan-blocked-camera")!.textContent).toContain("The camera shows the full sensor, not the experiment window");
+    await click(buttonByText("Start run"), "Start run");
+    expect(log.filter((e) => ACTUATING.includes(e.cmd))).toEqual([]);
   });
 });

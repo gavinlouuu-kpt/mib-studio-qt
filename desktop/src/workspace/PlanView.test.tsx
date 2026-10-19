@@ -307,14 +307,23 @@ describe("a started run locks its plan", () => {
 });
 
 describe("the sample format", () => {
-  it("offers a single sample; the queue is shown, inert, with the reason", async () => {
+  it("offers a single sample (chosen) and the sample queue (#716 A5, QueuePlan.test.tsx); choosing sends nothing", async () => {
     await render();
     const options = [...host.querySelectorAll<HTMLLabelElement>(".mib-option")];
     expect(options.map((o) => o.querySelector(".mib-option__label")!.textContent)).toEqual(["Single sample", "Sample queue"]);
     expect(options[0].querySelector("input")!.checked).toBe(true);
     const queue = options[1].querySelector("input")!;
-    expect(queue.disabled).toBe(true);
-    expect(options[1].querySelector(".mib-option__reason")!.textContent).toBe("Not yet · the guided queue comes in the next workspace step");
+    expect(queue.disabled).toBe(false);
+    expect(options[1].querySelector(".mib-option__reason")).toBeNull();
+    await act(async () => queue.click());
+    expect($("queue-card")).not.toBeNull();
+    expect(runStart).not.toHaveBeenCalled();
+  });
+
+  it("is fixed once the single sample's run has started", async () => {
+    await render();
+    await act(async () => startButton()!.click());
+    expect(host.querySelectorAll<HTMLInputElement>(".mib-option input")[1].disabled).toBe(true);
   });
 });
 
