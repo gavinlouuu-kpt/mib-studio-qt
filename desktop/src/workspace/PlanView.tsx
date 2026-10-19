@@ -2,7 +2,8 @@
 // the run's identity and the selected operator. A single sample has an explicit "Start run"; a
 // sample queue is the guided flow of QueuePlan. Editing the plan sends nothing; "Start run" runs the
 // classic Start flow (pick the file, ask before a stopped Run's frames are discarded, readiness with
-// the chosen file, start) with the plan's startRequestJson (bridge ABI 39). Prepare's verdict still
+// the chosen file, start) with the plan's startRequestJson (bridge ABI 39); the reply's start outcome
+// code decides what it means (ABI 40, experimentStart.ts startReplyState). Prepare's verdict still
 // governs: while Prepare's checklist blocks, Start is disabled with Prepare's own words
 // (prepareVerdict, confirmBlockers). On the PZ7035 the Plan offers the explicit switch to Run.
 import { Button, Card, ConditionSwatch, DataTable, FactList, Notice, StateChip, type DataTableColumn } from "@mib/ui";

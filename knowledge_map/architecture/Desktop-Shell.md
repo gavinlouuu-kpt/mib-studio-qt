@@ -311,19 +311,31 @@ of the quick controls and the sample sheet, until the kit has them).
     (`startExperimentReason`: backend, camera stream or Run mode, a run active, a start pending),
     while the sheet has an issue, while a start is pending, and once the plan's run has started.
   - **The start reply alone decides the outcome** (#736 review). `startExperiment` returns
-    `started` or `refused` from the reply, `unknown` when the start call itself threw (the request
-    was sent, its reply was lost), and throws only for failures before sending (dialog,
-    readiness). App's status refresh after the reply is a separate read: its failure is
+    `started`, `refused` or `unknown` from the reply, `unknown` also when the start call itself
+    threw (the request was sent, its reply was lost), and throws only for failures before sending
+    (dialog, readiness). Since ABI 40 (#741) the reply's `start_outcome` decides, not its message
+    (`startReplyState`, `START_OUTCOME_STATES` in `experimentStart.ts`): Started → started;
+    StaleReadiness, AlreadyActive, Busy and InvalidRequest → refused (the coordinator returns them
+    before it begins the run: no start generation, no file); NotReady, StorageFailed and
+    ProvenanceFailed → `unknown` with the `code` (the coordinator can return them after it opened
+    the run's HDF5 file: `initializeDatasets` failing closes the file without removing it, a
+    snapshot or annotation write failing removes it best effort, and on the PZ7035 "execution
+    provider did not start" comes after the file and snapshot were written, under NotReady, which
+    the code cannot tell apart from the readiness refusal before anything). A code that contradicts
+    `ok`, or one the table does not know, is `unknown`. Without a code (a backend before ABI 40, or
+    a code the decoder dropped as unknown) `ok` decides, as before. App's status refresh after the reply is a separate read: its failure is
     `refreshError`, shown as its own warn Notice ("Run status not refreshed"), never as the
     outcome. The plan locks on `started` and on `unknown` (the run may exist), so a started run's
     `experiment_id`/`run_index` are never sent again, whatever a later read did.
-  - **Outcomes.** The backend's `InvalidRequest` (start outcome 7; `CmdResult` carries the
-    message, "invalid start request: <key>: <why>", `invalidRequestReason`) is shown in the sheet
+  - **Outcomes.** The backend's `InvalidRequest` (start outcome 7, decided by the code; the
+    `invalid start request: ` prefix decides only for a reply without a code; the message is
+    "invalid start request: <key>: <why>", `invalidRequestReason(message, code)`) is shown in the sheet
     card in plain words ("Condition: 300 bytes, at most 256. No file was created. The plan is
     kept"), with the key as secondary text; the plan, its id and the values are kept and nothing
     claims a run started. Not ready, another refusal or an error before sending are said as they
     are and keep the plan; a cancelled dialog says nothing; a lost reply says "Start outcome not
-    known" and locks the plan. A started run locks the plan ("Run 1
+    known" and locks the plan; a locking code says "Not started · its file may exist" with the
+    backend's message and locks the plan too (its identity may be in a file left behind). A started run locks the plan ("Run 1
     started · <path>"): its identity is in that run, so a single-sample plan has no second run;
     "New plan" mints a new id and keeps the operator and the format.
   - **The camera mode a run records in (A5, #739 review).** `planCameraMode` (`planModel.ts`) and
@@ -341,7 +353,8 @@ of the quick controls and the sample sheet, until the kit has them).
       run would record the full sensor. The classic Start is unchanged: the classic Experiment tab
       switches on entry.
 - **Sample queue (O3/O4, P4; #716 A5, ADR 0015 items 1–2).** A guided flow over the existing
-  commands, with no backend queue state, no new bridge command and no contract change.
+  commands, with no backend queue state and no new bridge command; since ABI 40 (#741) it reads the
+  start and stop outcome codes and names its own run on `experiment_stop`.
   `queueModel.ts` is the pure state machine; `usePlan` holds it (App, so it survives stage changes
   and leaving the workspace) and is its controller; `QueuePlan.tsx` the view; `planParts.tsx` the
   parts both formats share.
@@ -356,7 +369,8 @@ of the quick controls and the sample sheet, until the kit has them).
   - **The flow**, each step one button and at most one command: **Start S1** (App's
     `runExperimentStart`, the classic Start flow: pick the file, readiness with it, `experiment_start`
     with `buildStartRequest(draft, row, nextRunIndex)`) → running → **Next sample** ("Stop last
-    sample" for the last row; App's `stopForPlan`, the classic `experiment_stop`) → the drain and
+    sample" for the last row; App's `stopForPlan`: `experiment_stop` with `expectedStartGeneration`,
+    the row's own `start_generation` as seen in the status) → the drain and
     finalize are followed in the experiment status App already polls every 500 ms (Stopping/flushing,
     then terminal), with the counters and committed/admitted shown → **Confirm closed** (sends
     nothing; the backend closed the file, the operator confirms) → "Swap the tube for S2 · …" →
@@ -374,9 +388,19 @@ of the quick controls and the sample sheet, until the kit has them).
     queue). "Next sample" is enabled only while the status shows the row's own run active
     (`ownRunActive`: its generation, its file, Active), because `experiment_stop` stops whatever run
     is active; until the first such read the step says "waiting for the status to report its run".
-    A stop that races another client's start inside one poll period would still reach that run: an
-    expected-run argument on `experiment_stop` (a contract change) would close it. Phases only move
-    forward.
+    **Next sample stops only the row's run (ABI 40, #741).** `usePlan.stopCurrent` passes the row's
+    `start_generation` (the generation `ownRunActive` matched, a canonical decimal string) and App's
+    `stopForPlan` sends it; the backend compares it under the lock that accepts the stop. A
+    `stop_outcome` RunMismatch (3: another run is active, or none is) stopped nothing: the row is
+    **interrupted** at the stop ("<ref> · not stopped · run N is not the backend's active run", chip
+    "Interrupted · not stopped", the backend's reason in the text), and the queue sends nothing more
+    for it, with or without the generation. A later status of another run keeps that reason; a
+    status of the row's own run Stopping or terminal (its generation, its file) is still followed, so
+    a run that had ended by itself reaches Finalized and its close. Busy and NotActive keep the
+    "stop was not accepted" handling, as does a reply without a code. The classic Stop Experiment is
+    not tied to a row and sends no generation; the single-sample plan has no stop of its own (it is
+    stopped in the classic view). Phases only move forward, except that a row interrupted at its stop
+    can still reach its own run's end.
   - **Identity (#736 rules).** Each row's start reply alone decides started / refused / unknown.
     Every Start sends `nextRunIndex`, which grows on started and unknown only, so a run index is
     never sent twice; a refused Start recorded nothing and keeps its index. Started and unknown rows
@@ -384,7 +408,11 @@ of the quick controls and the sample sheet, until the kit has them).
   - **Failures stop the flow at their step** with the reason (kit tones) and the operator's choice:
     a refused Start (the InvalidRequest named in plain words, not ready, an error before sending, a
     pending start) → correct and Start again, Skip or End queue; a lost start reply (unknown) →
-    "Retry S1 as run 2", Skip or End queue; a stop that is not accepted or gets no reply → the run is
+    "Retry S1 as run 2", Skip or End queue; a start answered with a locking code (NotReady,
+    StorageFailed, ProvenanceFailed) → "Not started · S1, run 1 · its file may exist", unknown and
+    locked like a lost reply (chip "Not started · file may exist"), "check whether the backend left
+    the run's file", Retry as run 2, Skip or End queue; a stop refused as RunMismatch → interrupted,
+    nothing more sent, Retry as a new run, Skip or End queue; a stop that is not accepted or gets no reply → the run is
     shown running with the reason, Next sample sends it again, End queue says the run keeps running;
     a failed run (Failed, finalization not ok, or a fault) → the reason and the kept file, Retry as a
     new run, Skip or End queue. End queue is refused while a Start is pending, a run runs (unless its
@@ -446,13 +474,25 @@ of the quick controls and the sample sheet, until the kit has them).
   when S1's post-start refresh fails and another client's run (its own file) is reported first, S1
   is interrupted, never adopted, and nothing is stopped or confirmed; after Align's "Show the full
   sensor", Start (queue and single) is disabled with the reason, navigating sends nothing, and "Show
-  the experiment window" sends exactly `set_camera_overview` false. `experimentStart.test.ts` covers
-  the withdrawal at each step.
+  the experiment window" sends exactly `set_camera_overview` false. With the mock answering as an
+  ABI 40 backend (#741: start and stop outcome codes, `expectedStartGeneration` compared with its
+  run): the two samples' stops carry `{expectedStartGeneration: "1"}` and `"2"`; another run
+  started between the last read and Next sample gets exactly one stop naming run 1, is not
+  stopped, S1 is "Interrupted · not stopped" with the backend's reason and nothing more is sent;
+  S1's run that ended by itself is refused ("no run is active") and still followed to Finalized;
+  the classic Stop Experiment sends no generation; a reply without codes is handled as before; the
+  InvalidRequest is shown next to the sheet by its code and, without one, by its prefix; a
+  StorageFailed reply locks the single plan. `experimentStart.test.ts` covers the withdrawal at
+  each step, and every start code of the contract (written out, so a change of the mapping or a
+  new code fails), a code against `ok`, an unknown code and the reply without one.
   `queueModel.test.ts` covers every transition, a failure at each step, retry / skip / end, the
   generation rules, the pause, editing locks, the stepper and a 50-trial sequence check that no run
-  index is sent twice; `QueuePlan.test.tsx` (StrictMode, the real `usePlan`) the two-sample flow,
-  the exact text of each Start, each failure's choice, the lost-client pause and resume, and the Run
-  switch. `serialReads.test.ts` covers the skip, stale and ordering rules. `PlanView.test.tsx` (StrictMode, the real
+  index is sent twice, and (ABI 40) RunMismatch, Busy, NotActive and no-code stop replies, a
+  locking start code and a refusal code with a misleading message; `QueuePlan.test.tsx`
+  (StrictMode, the real `usePlan`) the two-sample flow, the exact text of each Start, each failure's
+  choice, the lost-client pause and resume, the Run switch, and (ABI 40, through the real
+  `startExperiment`) every start code's row state, the exact generation of each stop and the
+  RunMismatch row; `PlanView.test.tsx` also locks the single plan on each locking code. `serialReads.test.ts` covers the skip, stale and ordering rules. `PlanView.test.tsx` (StrictMode, the real
   `usePlan`) covers the exact text sent, client refusals, outcomes, Prepare's and the classic
   locks, and the started lock; `planModel.test.ts` the exact JSON of full, minimal and empty
   plans, every bound at its limit and one past it, empty → absent, the UUID and the refusal
@@ -792,9 +832,14 @@ argument without one; another run, or none, comes back `ok: false`,
 `stop_outcome: RunMismatch` (3) and nothing is stopped ([[Rust-Bridge]] ABI 40).
 The Tauri command takes `expected_start_generation: Option<String>`. The
 develop shell (`App.tsx`, `experimentStart.ts`) neither parsed the prefix nor
-passes a generation, so it is unchanged; the workspace queue and Plan switch on
-`feat/egrabber-workspace` after the next develop sync. Guards:
-`eventAdapter.test.ts`, `eventTransport.test.ts`.
+passes a generation, so it was unchanged by the contract step; the workspace's
+queue and Plan switched on `feat/egrabber-workspace` (#741 part 2, "Opt-in
+workspace" above: `startReplyState` maps each start code to started / refused /
+unknown, and only the queue's Next sample / Stop last sample pass the row's
+generation; the classic Stop Experiment sends none). Guards:
+`eventAdapter.test.ts`, `eventTransport.test.ts`, and for the workspace
+`experimentStart.test.ts`, `queueModel.test.ts`, `QueuePlan.test.tsx`,
+`PlanView.test.tsx`, `navigation.test.tsx`.
 
 ## Central profile registry (ABI 25, issue #398)
 

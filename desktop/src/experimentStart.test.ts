@@ -133,7 +133,7 @@ describe("the start reply's outcome code (ABI 40)", () => {
     expect(Object.keys(EXPECTED).sort()).toEqual(Object.keys(O).sort());
     expect(Object.keys(START_OUTCOME_STATES).map(Number).sort()).toEqual(Object.values(O).sort());
   });
-  it.each(CODES)("%s (%i) is %s through the Start flow", async (name, code) => {
+  it.each(CODES)("%s (%i) maps to its state through the Start flow", async (name, code) => {
     const ok = code === O.Started;
     const d = deps({ start: vi.fn(async () => ({ ok, message: `reply ${name}`, start_outcome: code })) });
     const out = await startExperiment(d, REQUEST_TEXT);
