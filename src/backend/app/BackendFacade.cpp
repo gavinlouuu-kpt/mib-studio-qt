@@ -1707,7 +1707,15 @@ namespace backend::bridge
                     : pumps.connect(pumpId, port, command.baudRate,
                                     static_cast<std::uint8_t>(command.modbusAddress), model,
                                     command.microlitersPerRev);
-            if (!connected) return failBus("Pump connect failed (no Modbus response)");
+            if (!connected)
+            {
+                // The bus error says why when there is one (a transaction
+                // timeout, or the port refused at open, e.g. still closing
+                // after a stalled transaction, #720).
+                const auto why = pumps.lastBusError(pumpId);
+                return fail(why.empty() ? "Pump connect failed (no Modbus response)"
+                                        : "Pump connect failed: " + why);
+            }
             return {true, BackendCommandType::Pump, "Pump connected"};
         }
         case PumpCommandAction::Disconnect:

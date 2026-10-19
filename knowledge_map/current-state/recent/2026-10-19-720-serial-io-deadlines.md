@@ -30,7 +30,9 @@ stalled transaction") and opens again once the thread is done; an acquire that r
 waits for it (at most 1.25 s, never under the registry lock) and then opens. The session deleter no
 longer takes the registry lock, so other ports open during a teardown. The session and its I/O
 thread log through the logger captured at session creation, never spdlog's global default, so a
-detached thread can still log after `spdlog::drop_all()` at exit.
+detached thread can still log after `spdlog::drop_all()` at exit. A pump reconnect refused that way
+says so: "Pump connect failed: port busy: serial port COM3 is still closing after a stalled
+transaction".
 
 On a write or drain timeout the port discards the unsent bytes (POSIX `tcflush(TCOFLUSH)`, Win32
 `PurgeComm`), so a stop or start reported as failed is not delivered when the adapter recovers.

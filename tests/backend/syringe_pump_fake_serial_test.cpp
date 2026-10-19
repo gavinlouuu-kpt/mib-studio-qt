@@ -438,6 +438,19 @@ int main()
         MIB_EXPECT(connectTook < transactBound + joinBound + ceiling, "within its bound, not for ever");
         MIB_EXPECT(holding(), "the session was dropped while its write was still held");
         MIB_EXPECT(svc.runFacts(PumpId::Sample, 10ms, f), "the pump's lock is free");
+        // The detached thread still holds the port: a reconnect is refused at once, and says why.
+        t0 = Clock::now();
+        const bool reconnectedWhileHeld = svc.connect(PumpId::Sample, 3, 115200, 1);
+        const auto refusedTook = Clock::now() - t0;
+        const std::string refusal = svc.lastBusError(PumpId::Sample);
+        std::printf("reconnect while the detached thread holds the port: refused after %lld ms: %s\n",
+                    static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(refusedTook).count()),
+                    refusal.c_str());
+        MIB_EXPECT(!reconnectedWhileHeld && !svc.isConnected(PumpId::Sample), "the reconnect is refused");
+        MIB_EXPECT(refusal.find("still closing after a stalled transaction") != std::string::npos,
+                   "the pump's last bus error says why: " + refusal);
+        MIB_EXPECT(refusedTook < joinBound / 2, "at once");
+        MIB_EXPECT(holding(), "while the detached thread is still held");
         hold(false);
         MIB_EXPECT(waitPortsClosed(), "released, the detached I/O thread closes its port");
 

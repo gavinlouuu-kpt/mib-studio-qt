@@ -140,10 +140,15 @@ session is bounded too: a connect whose first transaction stalls reports
 failure after at most `transactBudgetMs(1000)` + `kShutdownJoinMs` (about
 4.5 s), and a disconnect after an abandoned transaction returns within
 `kShutdownJoinMs` (1 s); a still-stuck I/O thread is detached by
-[[SerialBus]]. Tests: sections 6-8 of `backend.syringe_pump_fake_serial`
+[[SerialBus]]. Until that thread has closed the port, a reconnect on the
+adapter is refused at once; `lastBusError()` then holds the open failure
+("port busy: serial port COM3 is still closing after a stalled
+transaction") and the facade reports "Pump connect failed: <that>".
+Tests: sections 6-8 of `backend.syringe_pump_fake_serial`
 (never drains, write timeout, held port call: bound, message, lock released,
 recovery; stalled connect and disconnect after an abandoned transaction, both
-dropping the session while the write is still held) and the stalled-stop case of
+dropping the session while the write is still held; the reconnect refused
+while the detached thread holds the port) and the stalled-stop case of
 `backend.peristaltic_pump_fake_serial` (the stop never reaches the running
 pump; the next one does).
 

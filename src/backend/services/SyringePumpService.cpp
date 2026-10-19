@@ -216,6 +216,10 @@ bool SyringePumpService::connect(PumpId id, const std::string& portName, int bau
         SPDLOG_ERROR("SyringePumpService: Failed to open {} for {} pump: {} ({})",
                     portName, pumpName(id), serialbus::toString(busError),
                     errorDetail);
+        // The facade names it in the connect failure, e.g. a port still
+        // closing after a stalled transaction (#720).
+        pump.lastBusError = serialbus::toString(busError);
+        if (!errorDetail.empty()) pump.lastBusError += ": " + errorDetail;
         return false;
     }
     SPDLOG_INFO("SyringePumpService: {} opened for {} pump (baud={}, addr={}, model={})",

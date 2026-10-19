@@ -143,8 +143,9 @@ public:
 
     // Why the slot's most recent serial transaction failed ("bus timeout: no
     // response within 1000 ms", "write failed: serial write timed out ..."),
-    // empty after a success or a (dis)connect. Lets a caller say why a
-    // command failed (#720).
+    // or why connect() could not open the port ("port busy: serial port COM3
+    // is still closing after a stalled transaction"); empty after a success
+    // or a disconnect. Lets a caller say why a command failed (#720).
     std::string lastBusError(PumpId id) const;
 
     // Get COM port in use by a specific pump (for port collision avoidance)
