@@ -102,6 +102,7 @@ std::shared_ptr<Rig> loadScenario(const std::string& jsonText, std::optional<uin
             }
             spec.silentAfterOpenMs = node.value("silentAfterOpenMs", 0);
             spec.fragmentReplies = node.value("fragmentReplies", false);
+            spec.staleHolderUntilMs = node.value("staleHolderUntilMs", 0);
             if (node.contains("unplugged")) {
                 for (const auto& window : node.at("unplugged")) {
                     spec.unpluggedWindowsMs.emplace_back(window.at("fromMs").get<int>(),

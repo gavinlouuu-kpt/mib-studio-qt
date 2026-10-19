@@ -86,6 +86,9 @@ bool AutofocusService::connect(const backend::nanopositioner::Endpoint& requeste
         return false;
     }
 
+    // Waits for a startup probe on this port to finish instead of failing busy.
+    auto claim = portclaims::claimForService(backend::nanopositioner::endpointPortName(endpoint),
+                                             "nanopositioner");
     std::string error;
     if (!device->connect(endpoint, error)) {
         SPDLOG_ERROR("AutofocusService: {} connection failed for {}: {}",
@@ -106,6 +109,7 @@ bool AutofocusService::connect(const backend::nanopositioner::Endpoint& requeste
     {
         std::scoped_lock deviceLock(deviceMutex_);
         device_ = std::move(device);
+        portClaim_ = std::move(claim);
         endpoint_ = endpoint;
         endpoint_.systemPath = device_->connectedEndpoint();
     }
@@ -173,6 +177,7 @@ void AutofocusService::disconnect() {
             device_->disconnect();
             device_.reset();
         }
+        portClaim_.release();
     }
     connected_.store(false);
     activeControlSession_.store(false);

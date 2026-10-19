@@ -34,6 +34,7 @@
 #include "backend/services/TriggerService.h"
 #include "backend/services/DotGridService.h"
 #include "backend/services/SerialBus.h"
+#include "backend/services/SerialPortClaims.h"
 #include "backend/services/SimulatedSerialScenario.h"
 #include "backend/services/SyringePumpService.h"
 #include "backend/services/PulseGeneratorService.h"
@@ -3622,6 +3623,21 @@ namespace backend
         {
             std::lock_guard<std::mutex> lk(configJsonMutex_);
             lastConfigJson_ = json;
+        }
+        // The pump COM ports in config.json are reserved, so the startup
+        // nanopositioner probe never opens the pump RS485 bus, even before
+        // the operator connects the pumps (SerialPortClaims.h).
+        {
+            std::vector<std::string> pumpPorts;
+            const auto parsed = nlohmann::json::parse(json, nullptr, /*allow_exceptions=*/false);
+            if (parsed.is_object()) {
+                for (const char *key : {"pump_sample_com_port", "pump_sheath_com_port"}) {
+                    const auto it = parsed.find(key);
+                    if (it != parsed.end() && it->is_number_integer() && it->get<int>() > 0)
+                        pumpPorts.push_back("COM" + std::to_string(it->get<int>()));
+                }
+            }
+            services::portclaims::setReserved("the syringe pumps (config.json)", pumpPorts);
         }
         // Optional `rf_generator` block: {"enabled":true,"transport":"usb"|"lan",
         // "resource":"auto"|"/dev/usbtmc0"|"USB0::...::INSTR"|"host[:port]",

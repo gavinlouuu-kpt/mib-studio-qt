@@ -1,6 +1,7 @@
 #pragma once
 
 #include "backend/services/ISerialPort.h"
+#include "backend/services/SerialPortClaims.h"
 
 #include <atomic>
 #include <chrono>
@@ -97,6 +98,7 @@ private:
     const std::string portName_;
     const SerialSettings settings_;
     SerialPortFactory factory_;
+    portclaims::Claim claim_; // keeps discovery probes off the port while the session lives
 
     // Touched only by the I/O thread.
     std::unique_ptr<ISerialPort> serial_;

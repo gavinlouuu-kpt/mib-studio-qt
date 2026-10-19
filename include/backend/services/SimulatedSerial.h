@@ -122,12 +122,17 @@ struct PortSpec {
     // Scheduled cable pulls, ms after the rig was made: {from, to}; to < 0
     // never comes back. A handle opened before `from` stays dead afterwards.
     std::vector<std::pair<int, int>> unpluggedWindowsMs;
+    // Another process holds the port from the start: an earlier instance
+    // that crashed or hung without closing it (#417), or a vendor tool.
+    // Opens are refused with ACCESS_DENIED until this many ms after the rig
+    // was made (the stale process exits); -1 holds until releaseStaleHolder().
+    int staleHolderUntilMs{0};
 };
 
 struct Event {
     enum class Kind {
         Opened,
-        OpenDenied,   // another handle holds the port (exclusive open)
+        OpenDenied,   // another handle or process holds the port (exclusive open)
         SharedOpen,   // a second handle opened it (non-exclusive mode)
         OpenFailed,   // port absent, not yet present, or unplugged
         Closed,
@@ -165,6 +170,11 @@ public:
     void unplug(const std::string& port);
     void replug(const std::string& port);
 
+    // Another process grabs the port (any open handle here keeps working, as
+    // Windows only refuses new opens), or lets it go.
+    void holdByStaleProcess(const std::string& port);
+    void releaseStaleHolder(const std::string& port);
+
     std::unique_ptr<ISerialPort> makePort();
     std::vector<SerialPortInfo> enumerate() const;
     std::vector<int> comPortNumbers() const; // "COMn" ports, for Tools::availableComPortNumbers
@@ -194,6 +204,7 @@ private:
     const PortState* findLocked(const std::string& portName) const;
     bool presentLocked(const PortState& port, Clock::time_point now) const;
     bool staleLocked(const PortState& port, const void* handle, Clock::time_point now) const;
+    bool heldElsewhereLocked(const PortState& port, Clock::time_point now) const;
     void recordLocked(Event::Kind kind, const std::string& port, std::string detail);
     int latencyLocked(const PortState& port);
 

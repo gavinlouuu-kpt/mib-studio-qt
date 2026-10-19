@@ -229,6 +229,8 @@ struct Rig::PortState {
     PortSpec spec;
     std::string key;
     bool unplugged{false};
+    bool staleHolder{false};         // holdByStaleProcess()
+    bool staleHolderReleased{false}; // releaseStaleHolder() ended spec.staleHolderUntilMs early
     std::vector<std::shared_ptr<SimDevice>> devices;
     std::vector<Holder> holders;
     std::set<const void*> staleHandles; // open across an unplug: I/O fails
@@ -361,6 +363,28 @@ void Rig::replug(const std::string& port)
     recordLocked(Event::Kind::Replugged, state->spec.systemName, {});
 }
 
+bool Rig::heldElsewhereLocked(const PortState& port, Clock::time_point now) const
+{
+    if (port.staleHolder) return true;
+    if (port.staleHolderReleased || port.spec.staleHolderUntilMs == 0) return false;
+    return port.spec.staleHolderUntilMs < 0 || msBetween(start_, now) < port.spec.staleHolderUntilMs;
+}
+
+void Rig::holdByStaleProcess(const std::string& port)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (auto* state = findLocked(port)) state->staleHolder = true;
+}
+
+void Rig::releaseStaleHolder(const std::string& port)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (auto* state = findLocked(port)) {
+        state->staleHolder = false;
+        state->staleHolderReleased = true;
+    }
+}
+
 std::vector<SerialPortInfo> Rig::enumerate() const
 {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -480,6 +504,13 @@ public:
             error_ = "open " + systemName + ": no such device (simulated)";
             rig_->recordLocked(Event::Kind::OpenFailed, systemName,
                                !state ? "unknown port" : "unplugged or not yet enumerated");
+            return false;
+        }
+        if (rig_->heldElsewhereLocked(*state, now)) {
+            systemError_ = kErrAccessDenied;
+            error_ = "open " + systemName + ": Access is denied (simulated; held by another process)";
+            rig_->recordLocked(Event::Kind::OpenDenied, state->spec.systemName,
+                               "held by another process (stale handle)");
             return false;
         }
         std::vector<const Rig::Holder*> live;

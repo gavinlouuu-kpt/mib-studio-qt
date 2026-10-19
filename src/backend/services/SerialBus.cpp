@@ -351,15 +351,9 @@ void SerialBusManager::setSerialPortFactory(SerialPortFactory factory)
 
 std::string SerialBusManager::normalizeKey(const std::string& portName)
 {
-    // "COM3", "\\.\COM3", "ttyUSB0" and "/dev/ttyUSB0" must map to one bus.
-    std::string key = portName;
-    key.erase(0, key.find_first_not_of(" \t"));
-    if (const auto end = key.find_last_not_of(" \t"); end != std::string::npos) key.erase(end + 1);
-    if (key.rfind("\\\\.\\", 0) == 0) key.erase(0, 4);
-    if (const auto slash = key.find_last_of('/'); slash != std::string::npos) key = key.substr(slash + 1);
-    std::transform(key.begin(), key.end(), key.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return key;
+    // "COM3", "\\.\COM3", "ttyUSB0" and "/dev/ttyUSB0" must map to one bus,
+    // and to the same key the port claims use.
+    return portclaims::key(portName);
 }
 
 std::shared_ptr<ModbusBusSession> SerialBusManager::acquire(const std::string& portName,
@@ -368,10 +362,12 @@ std::shared_ptr<ModbusBusSession> SerialBusManager::acquire(const std::string& p
                                                             std::string* errorDetail)
 {
     const std::string key = normalizeKey(portName);
-    std::scoped_lock lock(mutex_);
-
-    auto it = sessions_.find(key);
-    if (it != sessions_.end()) {
+    // Caller holds mutex_. True when the request is settled by a live session:
+    // shared on matching settings, refused otherwise.
+    std::shared_ptr<ModbusBusSession> result;
+    const auto settledByExisting = [&] {
+        auto it = sessions_.find(key);
+        if (it == sessions_.end()) return false;
         if (auto existing = it->second.lock()) {
             if (existing->settings() != settings) {
                 SPDLOG_ERROR("SerialBus: {} already open with different settings "
@@ -379,15 +375,28 @@ std::shared_ptr<ModbusBusSession> SerialBusManager::acquire(const std::string& p
                              existing->settings().baudRate, settings.baudRate);
                 if (error) *error = BusError::PortBusy;
                 if (errorDetail) *errorDetail = "port already in use with different serial settings";
-                return nullptr;
+                return true;
             }
             if (error) *error = BusError::None;
-            return existing;
+            result = existing;
+            return true;
         }
         sessions_.erase(it);
+        return false;
+    };
+    {
+        std::scoped_lock lock(mutex_);
+        if (settledByExisting()) return result;
     }
+    // A discovery probe of this process may be on the port right now (the
+    // startup nanopositioner probe opens CH340 adapters, the common RS485
+    // dongle). Wait for it, unlocked, rather than fail with "busy".
+    auto claim = portclaims::claimForService(portName, "serial bus " + portName);
+    std::scoped_lock lock(mutex_);
+    if (settledByExisting()) return result;
 
     auto* raw = new ModbusBusSession(portName, settings, factory_);
+    raw->claim_ = std::move(claim);
     BusError openError = BusError::PortUnavailable;
     std::string detail;
     if (!raw->start(&openError, &detail)) {
