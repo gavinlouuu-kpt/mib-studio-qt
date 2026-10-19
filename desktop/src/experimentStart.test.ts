@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { bridge } from "./bridge";
-import { COMMAND_TYPES, JSON_TRANSPORT } from "./bridgeContract";
-import { startExperiment, type StartDeps, type StartReadiness } from "./experimentStart";
+import { COMMAND_TYPES, EXPERIMENT_START_OUTCOMES as O, JSON_TRANSPORT } from "./bridgeContract";
+import { START_OUTCOME_STATES, startExperiment, startReplyState, type StartDeps, type StartReadiness, type StartReplyState } from "./experimentStart";
 import type { RingStatus } from "./ringPlayback";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -111,6 +111,61 @@ describe("the start request of a plan", () => {
     const message = "invalid start request: annotation.condition: 300 bytes, at most 256";
     const d = deps({ start: vi.fn(async () => ({ ok: false, message })) });
     expect(await startExperiment(d, REQUEST)).toEqual({ kind: "refused", path: "/data/run.h5", message });
+  });
+});
+
+// ABI 40 (#741): the start reply's start_outcome decides started / refused / unknown, not its message.
+// Written out here, not read from START_OUTCOME_STATES, so a change of the mapping fails a test.
+const EXPECTED: Record<keyof typeof O, StartReplyState> = {
+  Started: "started",
+  NotReady: "unknown",         // also after the file and snapshot (the PZ7035 provider did not start)
+  StaleReadiness: "refused",
+  AlreadyActive: "refused",
+  StorageFailed: "unknown",    // the file was opened: initializeDatasets failing leaves it
+  ProvenanceFailed: "unknown", // the file was opened: removed best effort
+  Busy: "refused",
+  InvalidRequest: "refused",
+};
+const CODES = Object.entries(O) as [keyof typeof O, number][];
+
+describe("the start reply's outcome code (ABI 40)", () => {
+  it("every code of the contract has a state, and no other code does", () => {
+    expect(Object.keys(EXPECTED).sort()).toEqual(Object.keys(O).sort());
+    expect(Object.keys(START_OUTCOME_STATES).map(Number).sort()).toEqual(Object.values(O).sort());
+  });
+  it.each(CODES)("%s (%i) is %s through the Start flow", async (name, code) => {
+    const ok = code === O.Started;
+    const d = deps({ start: vi.fn(async () => ({ ok, message: `reply ${name}`, start_outcome: code })) });
+    const out = await startExperiment(d, REQUEST_TEXT);
+    expect(out.kind).toBe(EXPECTED[name]);
+    if (out.kind === "started") expect(out).toEqual({ kind: "started", path: "/data/run.h5", notice: "" });
+    else expect(out).toEqual({ kind: EXPECTED[name], path: "/data/run.h5", message: `reply ${name}`, code });
+  });
+  it("the message does not decide when a code is present: a refusal code with the InvalidRequest prefix is still its own code", async () => {
+    const message = "invalid start request: looks like a sheet problem";
+    const d = deps({ start: vi.fn(async () => ({ ok: false, message, start_outcome: O.StorageFailed })) });
+    expect(await startExperiment(d, REQUEST_TEXT)).toEqual({ kind: "unknown", path: "/data/run.h5", message, code: O.StorageFailed });
+  });
+  it("a code that contradicts ok, or a code not in this table, is unknown: the run may exist", () => {
+    expect(startReplyState({ ok: true, message: "", start_outcome: O.StorageFailed })).toBe("unknown");
+    expect(startReplyState({ ok: true, message: "", start_outcome: O.InvalidRequest })).toBe("unknown");
+    expect(startReplyState({ ok: false, message: "", start_outcome: O.Started })).toBe("unknown");
+    expect(startReplyState({ ok: false, message: "", start_outcome: 99 })).toBe("unknown");
+    expect(startReplyState({ ok: true, message: "", start_outcome: 99 })).toBe("unknown");
+  });
+  it("without a code (a backend before ABI 40) ok decides, as before", async () => {
+    expect(startReplyState({ ok: true, message: "" })).toBe("started");
+    expect(startReplyState({ ok: false, message: "" })).toBe("refused");
+    const d = deps({ start: vi.fn(async () => ({ ok: false, message: "already active" })) });
+    expect(await startExperiment(d, REQUEST_TEXT)).toEqual({ kind: "refused", path: "/data/run.h5", message: "already active" });
+  });
+  it("bridge.experimentStart decodes the code from the transport reply", async () => {
+    vi.mocked(invoke).mockReset();
+    vi.mocked(invoke).mockResolvedValue({ transport_version: JSON_TRANSPORT.version, ok: false, command: COMMAND_TYPES.Experiment, message: "storage", operation_id: "0",
+      start_outcome: O.StorageFailed });
+    const res = await bridge.experimentStart("/data/a.h5", false, REQUEST_TEXT);
+    expect(res.start_outcome).toBe(O.StorageFailed);
+    expect(startReplyState(res)).toBe("unknown");
   });
 });
 

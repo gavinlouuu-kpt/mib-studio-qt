@@ -8,7 +8,8 @@ import { act, StrictMode, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import { EXPERIMENT_START_REQUEST as B, JSON_TRANSPORT, READINESS_GATE_STATUSES as G } from "../bridgeContract";
+import { EXPERIMENT_START_OUTCOMES as O, EXPERIMENT_START_REQUEST as B, JSON_TRANSPORT, READINESS_GATE_STATUSES as G } from "../bridgeContract";
+import { startExperiment } from "../experimentStart";
 import type { PreflightInput } from "../preflight";
 import type { AlignFacts } from "./alignControls";
 import type { ExperimentSubView } from "./ExperimentView";
@@ -334,4 +335,67 @@ it("buildStartRequest is what the view sends (no second serializer)", async () =
   const sent = runStart.mock.calls[0][0];
   expect(sent).toBe(buildStartRequest({ experimentId: JSON.parse(sent).experiment_id, format: "single", operator: { name: "", id: "" },
     rows: [{ ref: "S1", sample: "", condition: "Vehicle", experimentalUnit: "", concentrationValue: "", concentrationUnit: "", channel: "", medium: "", temperatureC: "", notes: "", free: [] }] }).json);
+});
+
+// Bridge ABI 40 (#741): the start reply's code, through the real Start flow, decides the single plan.
+describe("the start outcome code (ABI 40)", () => {
+  const startAnswering = (code: number | undefined, message: string) => vi.fn(async (json: string, stillWanted?: () => boolean): Promise<PlanStartResult> => startExperiment({
+    fetchRingStatus: async () => null, confirm: async () => true, pickFile: async () => "/data/run.h5",
+    fetchReadiness: async () => ({ valid: true, ready: true, gates: [] }),
+    start: async () => ({ ok: code === O.Started, message, ...(code === undefined ? {} : { start_outcome: code }) }),
+  }, json, stillWanted));
+
+  it.each([["NotReady", O.NotReady], ["StorageFailed", O.StorageFailed], ["ProvenanceFailed", O.ProvenanceFailed]] as const)(
+    "%s locks the plan: the backend may have opened the file, so the identity is not sent again", async (name, code) => {
+      runStart = startAnswering(code, `failed ${name}`);
+      await render();
+      const id = experimentId();
+      await type("plan-condition", "Vehicle");
+      await act(async () => startButton()!.click());
+      expect($("plan-outcome")!.textContent).toContain("Not started · its file may exist · /data/run.h5");
+      expect($("plan-outcome")!.textContent).toContain(`The backend did not start the run (failed ${name})`);
+      expect($("plan-blocked-started")!.textContent).toContain("it may have opened the run's file first");
+      expect($("plan-refusal")).toBeNull();
+      expect(startButton()!.disabled).toBe(true);
+      expect(($("plan-condition") as HTMLInputElement).disabled).toBe(true);
+      await act(async () => startButton()!.click());
+      expect(runStart).toHaveBeenCalledTimes(1);
+      await act(async () => button("New plan")!.click());
+      expect(experimentId()).not.toBe(id);
+    });
+
+  it.each([["StaleReadiness", O.StaleReadiness], ["AlreadyActive", O.AlreadyActive], ["Busy", O.Busy]] as const)(
+    "%s refuses before anything is recorded: the plan is kept, even when the message reads like an invalid request", async (name, code) => {
+      runStart = startAnswering(code, `invalid start request: not this, ${name}`);
+      await render();
+      const id = experimentId();
+      await act(async () => startButton()!.click());
+      expect($("plan-outcome")!.textContent).toContain("Not started · the backend refused the Start");
+      expect($("plan-refusal")).toBeNull(); // the code decides, not the message
+      expect(experimentId()).toBe(id);
+      expect(startButton()!.disabled).toBe(false);
+    });
+
+  it("InvalidRequest by its code is shown next to the sheet, with or without the message prefix", async () => {
+    runStart = startAnswering(O.InvalidRequest, "startRequest: unknown key \"operator_name\"");
+    await render();
+    await act(async () => startButton()!.click());
+    expect($("plan-refusal")!.textContent).toContain('The plan as sent: startRequest: unknown key "operator_name". No file was created.');
+    expect($("plan-outcome")).toBeNull();
+    expect(startButton()!.disabled).toBe(false);
+  });
+
+  it("without a code (a backend before ABI 40) the message prefix still decides", async () => {
+    runStart = startAnswering(undefined, "invalid start request: annotation.condition: 300 bytes, at most 256");
+    await render();
+    await act(async () => startButton()!.click());
+    expect($("plan-refusal")!.textContent).toContain("Condition: 300 bytes, at most 256. No file was created.");
+    runStart = startAnswering(undefined, "Experiment is already running");
+    await act(async () => root.unmount());
+    root = createRoot(host);
+    await render();
+    await act(async () => startButton()!.click());
+    expect($("plan-outcome")!.textContent).toContain("Not started · the backend refused the Start");
+    expect(startButton()!.disabled).toBe(false);
+  });
 });

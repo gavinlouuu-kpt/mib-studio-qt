@@ -412,6 +412,10 @@ export function notStarted(row: QueueRow): boolean {
   return row.phase === "unknown" && last?.outcome === "unknown" && last.code !== undefined;
 }
 
+/** An interrupted row: another run was reported, or the backend refused its Next sample as RunMismatch
+ *  (its run was not the active one: another run was, or none). */
+const interruptedText = (row: QueueRow): string => (stopMismatched(row) ? "Interrupted · not stopped" : "Interrupted · another run");
+
 /** A row's state as the queue table shows it. */
 export function rowChip(row: QueueRow, ended: boolean): { tone: ChipTone; text: string } {
   switch (row.phase) {
@@ -423,7 +427,7 @@ export function rowChip(row: QueueRow, ended: boolean): { tone: ChipTone; text: 
     case "stopping": return { tone: "info", text: "Stopping · draining" };
     case "finalized": return { tone: "info", text: "Finalized · confirm close" };
     case "failed": return { tone: "blocked", text: "Failed" };
-    case "interrupted": return { tone: "unknown", text: "Interrupted · another run" };
+    case "interrupted": return { tone: "unknown", text: interruptedText(row) };
     case "closed": return row.end?.severity && row.end.severity !== "ok" && row.end.severity !== "partial"
       ? { tone: "warn", text: "Closed · see outcome" } : { tone: "confirmed", text: "Closed" };
     case "skipped": return { tone: "neutral", text: row.attempts.length ? "Skipped · after a run" : "Skipped" };
@@ -462,7 +466,7 @@ export function lifecycle(row: QueueRow): LifecycleStep[] {
     stopping: [3, "current"],
     finalized: [5, "current"],
     failed: [4, "failed", { tone: "blocked", text: "Failed" }],
-    interrupted: [2, "failed", { tone: "unknown", text: "Interrupted · another run" }],
+    interrupted: [2, "failed", { tone: "unknown", text: interruptedText(row) }],
     closed: [5, "done"],
     skipped: [0, "pending", { tone: "neutral", text: "Skipped" }],
   };

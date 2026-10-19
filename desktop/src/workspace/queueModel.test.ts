@@ -2,7 +2,7 @@
 // operator's retry / skip / end, identity locking (a run index is never sent twice), the pause on a
 // lost controlling client, and no transition that starts or advances on its own.
 import { describe, expect, it } from "vitest";
-import { EXPERIMENT_STATES as S, RUN_COMPLETION_STATES as C } from "../bridgeContract";
+import { EXPERIMENT_START_OUTCOMES as O, EXPERIMENT_STATES as S, EXPERIMENT_STOP_OUTCOMES as SO, RUN_COMPLETION_STATES as C } from "../bridgeContract";
 import type { ExperimentStatus } from "../eventAdapter";
 import { emptyRow, newPlanDraft, type PlanDraft } from "./planModel";
 import {
@@ -13,6 +13,7 @@ import {
   editKeepsRecorded,
   lifecycle,
   newQueue,
+  notStarted,
   plannedRunIndex,
   queueBegun,
   queueInProgress,
@@ -475,5 +476,92 @@ describe("presentation", () => {
     expect(chip("closed")).toEqual({ tone: "confirmed", text: "Closed" });
     expect(rowChip({ ...rowState(newQueue(), "S1"), phase: "closed", end: { ok: true, cancelled: false, outputPath: "", headline: "", severity: "loss" } }, false))
       .toEqual({ tone: "warn", text: "Closed · see outcome" });
+  });
+});
+
+// Bridge ABI 40 (#741): the stop reply's code, and a start that locks by its code.
+describe("the outcome codes (ABI 40)", () => {
+  const MISMATCH = "stop refused: expected run 1, but run 2 is active; nothing was stopped";
+  /** S1 running as generation 1, its Next sample sent and answered with this reply. */
+  const stopAnswered = (ok: boolean, message: string, code?: number) => run([
+    { type: "status", status: active("1") },
+    { type: "stop", ref: "S1" },
+    { type: "stop-result", ref: "S1", ok, message, ...(code === undefined ? {} : { code }) },
+  ], startedS1());
+
+  it("RunMismatch: interrupted at the stop with the backend's reason; no further stop is taken", () => {
+    const q = stopAnswered(false, MISMATCH, SO.RunMismatch);
+    const row = rowState(q, "S1");
+    expect(row.phase).toBe("interrupted");
+    expect(row.stopPending).toBe(false);
+    expect(row.failure).toMatchObject({ step: "stop", tone: "unknown", title: "S1 · not stopped · run 1 is not the backend's active run" });
+    expect(row.failure!.text).toContain(MISMATCH);
+    expect(row.failure!.text).toContain("nothing more is sent");
+    expect(run([{ type: "stop", ref: "S1" }], q)).toBe(q);
+    expect(ownRunActive(row, active("1"))).toBe(false);
+    expect(rowChip(row, false)).toEqual({ tone: "unknown", text: "Interrupted · not stopped" });
+    expect(lifecycle(row).find((st) => st.key === "running")!.flag).toEqual({ tone: "unknown", text: "Interrupted · not stopped" });
+    expect(canEnd(ORDER, q)).toBe(true);
+  });
+
+  it("after RunMismatch: another run's status keeps the reason; an older Active read changes nothing; the row's own end is followed", () => {
+    const q = stopAnswered(false, MISMATCH, SO.RunMismatch);
+    expect(run([{ type: "status", status: active("2", "/data/other.h5") }], q)).toBe(q);
+    expect(run([{ type: "status", status: closed("2", { output_path: "/data/other.h5" }) }], q)).toBe(q);
+    expect(run([{ type: "status", status: active("1") }], q)).toBe(q);
+    expect(phase(run([{ type: "status", status: stopping("1") }], q), "S1")).toBe("stopping");
+    const done = run([{ type: "status", status: closed("1") }], q);
+    expect(phase(done, "S1")).toBe("finalized");
+    expect(rowState(done, "S1").failure).toBeNull();
+    const failed = run([{ type: "status", status: closed("1", { state: S.Failed, finalization_ok: false, fault_message: "disk full" }) }], q);
+    expect(phase(failed, "S1")).toBe("failed");
+  });
+
+  it.each([["Busy", SO.Busy], ["NotActive", SO.NotActive], ["no code", undefined]] as const)("%s: the stop was not accepted, as before ABI 40", (name, code) => {
+    const q = stopAnswered(false, name, code);
+    expect(phase(q, "S1")).toBe("running");
+    expect(rowState(q, "S1").failure).toMatchObject({ step: "stop", tone: "blocked", title: "S1 · the stop was not accepted" });
+    expect(phase(run([{ type: "stop", ref: "S1" }], q), "S1")).toBe("stopping");
+  });
+
+  it("Accepted, with or without its code: stopping until the status shows the end", () => {
+    for (const code of [SO.Accepted, undefined]) {
+      const q = stopAnswered(true, "Accepted", code);
+      expect(phase(q, "S1")).toBe("stopping");
+      expect(rowState(q, "S1").stopPending).toBe(false);
+    }
+  });
+
+  it("a start that locks by its code: unknown, its index used, said as not started with its file possibly left", () => {
+    const q = run([
+      { type: "start", ref: "S1", runIndex: 1, generationBefore: "0" },
+      { type: "start-result", ref: "S1", runIndex: 1, generationBefore: "0",
+        result: { kind: "unknown", path: RUN, message: "failed to initialize datasets", code: O.StorageFailed } },
+    ]);
+    const row = rowState(q, "S1");
+    expect(row.phase).toBe("unknown");
+    expect(row.attempts).toEqual([{ runIndex: 1, outcome: "unknown", path: RUN, generationBefore: "0", generation: null, code: O.StorageFailed }]);
+    expect(q.nextRunIndex).toBe(2);
+    expect(notStarted(row)).toBe(true);
+    expect(rowChip(row, false)).toEqual({ tone: "unknown", text: "Not started · file may exist" });
+    expect(row.failure!.title).toBe(`Not started · S1, run 1 · its file may exist · ${RUN}`);
+    expect(rowEditable(q, "S1")).toBe(false);
+    // A lost reply is still said as lost.
+    const lost = run([
+      { type: "start", ref: "S1", runIndex: 1, generationBefore: "0" },
+      { type: "start-result", ref: "S1", runIndex: 1, generationBefore: "0", result: { kind: "unknown", path: RUN, message: "TRANSPORT_LOST" } },
+    ]);
+    expect(notStarted(rowState(lost, "S1"))).toBe(false);
+    expect(rowChip(rowState(lost, "S1"), false)).toEqual({ tone: "unknown", text: "Unknown · reply lost" });
+  });
+
+  it("a refusal by a code other than InvalidRequest is not read as a sheet problem, whatever its message", () => {
+    const q = run([
+      { type: "start", ref: "S1", runIndex: 1, generationBefore: "0" },
+      { type: "start-result", ref: "S1", runIndex: 1, generationBefore: "0",
+        result: { kind: "refused", path: RUN, message: "invalid start request: looks like one", code: O.AlreadyActive } },
+    ]);
+    expect(rowState(q, "S1").failure!.title).toBe("Not started · the backend refused the Start of S1");
+    expect(q.nextRunIndex).toBe(1);
   });
 });
