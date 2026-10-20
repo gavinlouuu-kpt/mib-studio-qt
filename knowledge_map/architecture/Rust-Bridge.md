@@ -832,7 +832,13 @@ attach to):
 - **Calls:** `review_open/close`, `set_fallback_pixel_to_micron`,
   `fetch_review_info` (counts, ROI, datasets, series, multi-image window,
   accounting + summary text, recorded factor, KDE JSON, recorded
-  ring-ratio range),
+  ring-ratio range, and since review ABI 2 the run `identity`),
+  `review_probe_runs(paths)` (review ABI 2, #717 B1a: the experiment
+  library's header-only identity probe → `ReviewProbeResult { ok, message,
+  runs: Vec<ReviewRunProbe> }`, at most `review_probe.max_paths` = 256
+  paths, per-file errors, refused while a job runs; it goes through
+  `ReviewJobs::probeRuns`, so it is serialized with the session's reads and
+  the job lane, see [[../services/ReviewSession]]),
   `fetch_review_rows` (full-column `ReviewRow`s), `fetch_review_frame(dataset,
   index, overlay, roi)` → `ReviewFrame` Mono8 or **RGB8**
   (`review_pixel_formats`), `fetch_review_series_count/frame`,
@@ -851,12 +857,27 @@ attach to):
   thread-safe, #722),
   `review_bridge_abi_version()` (`review-contract.json` `review_abi_version`,
   independent of `bridge_abi_version()`),
-  and the fixtures `review_fixture_write_experiment(path)` and
+  and the fixtures `review_fixture_write_experiment(path)`,
+  `review_fixture_write_run(path, snapshot_json, annotation_json)` (review
+  ABI 2: the experiment fixture with a verbatim run snapshot and annotation;
+  empty = none, a legacy file) and
   `review_fixture_write_population(path, cells, seed)` (two seeded
   populations for the Charts view; `examples/review_fixture --population N`).
+- **Run identity (review ABI 2).** cxx structs carry no `Option`, so
+  `ReviewRunIdentity`, `ReviewAnnotation` and `ReviewRunProbe` pair every
+  value with a `has_*` flag (an absent value is empty / zero and means
+  nothing); `review.rs` turns each pair into an `Option`, so the shell's
+  JSON has `null` for absent and never a 0 or "" stand-in (`ReviewInfo.identity`,
+  `review_probe_runs`). A legacy file: `has_snapshot` false, every member
+  absent; `snapshot_unreadable` / `annotation.unreadable` for an attribute
+  that is not a JSON object.
 - **Contract.** YOFO Review has its own versioned contract,
-  `contract/review-contract.json` (`review_abi_version` 1), so the shared
-  `bridge-contract.json` is never touched for it: `overlay_modes`,
+  `contract/review-contract.json` (`review_abi_version` 2 since #717 B1a;
+  v1 was the ReviewSession surface), so the shared
+  `bridge-contract.json` is never touched for it: `run_identity` and
+  `review_probe` (prose + `max_paths`, rendered as `REVIEW_PROBE` and
+  checked against `ReviewTypes.h` `kReviewProbeMaxPaths` by the generator),
+  `overlay_modes`,
   `review_density` (incl. `ramp_rgb`, checked against `MonitoringDensity.h`
   `kStops` by the generator), `review_pixel_formats`,
   `review_operation_kinds`, `review_regenerate_sources`, and the review

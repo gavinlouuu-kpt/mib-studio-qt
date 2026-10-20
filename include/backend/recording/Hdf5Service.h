@@ -90,6 +90,12 @@ public:
     bool readExperimentInfo(uint64_t& startTimeNs, uint64_t& endTimeNs,
                              size_t& totalValidFrames, size_t& totalInvalidFrames,
                              ProcessingService::Roi* roi = nullptr);
+    // One scalar integer attribute of the top-level group `groupPath` (e.g.
+    // "/experiment_info"), presence-aware: nullopt when the group or the
+    // attribute is missing, not a scalar integer, or unreadable; a recorded 0
+    // is 0. readExperimentInfo and readRecordingInfo keep their 0 defaults for
+    // their callers (#717 B1a review).
+    std::optional<uint64_t> readScalarUintAttribute(const char* groupPath, const char* name) const;
     // Reads /experiment_info, or /recording_info for raw recordings. Returns
     // false for legacy files that predate processing-core provenance.
     bool readProcessingCoreIdentity(

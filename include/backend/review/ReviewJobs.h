@@ -312,6 +312,15 @@ namespace backend::review
         // A job runs on any lane / on `lane`.
         bool busy() const;
         bool busy(ReviewJobLane lane) const;
+
+        // #717 B1a: the experiment library's identity probe
+        // (ReviewSession::probeRuns), gated on the lanes. It holds the lanes'
+        // lock for the whole call, so no job claims a lane while it runs, and
+        // it is refused (false, `error`) while either lane is claimed: a job's
+        // readers work outside the session's mutex, and HDF5 is not
+        // thread-safe (#722). Synchronous; per-file errors are in `out`.
+        bool probeRuns(const std::vector<std::string> &paths, std::vector<RunProbe> &out,
+                       std::string *error = nullptr);
         // The record the last ComputeCore / Density job produced for the file
         // the session holds now (JSON, empty when none or computed for
         // another file); the shell saves it through ReviewSession.

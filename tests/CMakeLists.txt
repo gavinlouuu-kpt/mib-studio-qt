@@ -906,6 +906,14 @@ if(DEFINED ENV{MIB_SSD_H5_REVIEW})
     set_tests_properties(review.ssd_h5 PROPERTIES LABELS "review;backend" TIMEOUT 120)
 endif()
 set_tests_properties(review.session PROPERTIES LABELS "review;recording;backend;hdf5;safety" TIMEOUT 120)
+# Run identity in the review contract (#717 B1a): snapshot v3 identity and the
+# annotation through open() and the header-only probe; legacy files read
+# absent, unreadable attributes and files are per-file errors; the probe is
+# serialized with the session's reads (#722) and gated on the job lane.
+mib_add_backend_test_executable(review_run_identity_test review/review_run_identity_test.cpp)
+mib_backend_test_link(review_run_identity_test PRIVATE Threads::Threads)
+add_test(NAME review.run_identity COMMAND $<TARGET_FILE:mib_backend_tests> review_run_identity_test)
+set_tests_properties(review.run_identity PROPERTIES LABELS "review;recording;backend;hdf5;concurrency;safety" TIMEOUT 180)
 # One overlay kernel (#512 slice 1): review::composeOverlay is byte-identical
 # to the implementation it replaced and draws the Qt/facade kernel's pixels.
 mib_add_backend_test_executable(review_overlay_kernel_test review/review_overlay_kernel_test.cpp)

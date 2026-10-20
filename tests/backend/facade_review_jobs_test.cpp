@@ -418,11 +418,14 @@ namespace
         // Caller holds `m`.
         std::string norm(std::string s)
         {
-            // JSON escapes the path's backslashes on Windows: replace that form first (on POSIX it is `dir`).
-            std::string escaped;
-            for (const char c : dir) escaped += c == '\\' ? std::string("\\\\") : std::string(1, c);
-            for (const auto& form : {escaped, dir})
-                for (std::size_t pos; (pos = s.find(form)) != std::string::npos;) s.replace(pos, form.size(), "<DIR>");
+            // The directory appears raw in messages and JSON-escaped in the
+            // status snapshots, where a Windows path's backslashes are doubled.
+            const std::string quoted = json(dir).dump();
+            const std::string escaped = quoted.substr(1, quoted.size() - 2);
+            for (const std::string &needle : {escaped, dir})
+            {
+                for (std::size_t pos; (pos = s.find(needle)) != std::string::npos;) s.replace(pos, needle.size(), "<DIR>");
+            }
             s = std::regex_replace(s, std::regex(R"(\.partial-[A-Za-z0-9_-]+)"), ".partial-<J>");
             s = std::regex_replace(s, std::regex(R"re("job_id":"[^"]*")re"), "\"job_id\":\"<J>\"");
             std::string out;
@@ -737,8 +740,16 @@ int main()
 #else
     setenv("MIB_CAMERA_MODE", "mock", 1);
 #endif
+#ifdef _WIN32
     const fs::path oracleDir = root / "oracle";
     const fs::path facadeDir = root / "facade";
+#else
+    // A backslash is JSON-escaped in the status snapshots, as every Windows
+    // path is, so the POSIX lanes check the trace normalization too (the MSVC
+    // lane does not run on every PR).
+    const fs::path oracleDir = root / "ora\\cle";
+    const fs::path facadeDir = root / "fac\\ade";
+#endif
     fs::create_directories(oracleDir);
     fs::create_directories(facadeDir);
     writeFixture(oracleDir / "fixture.h5", 24);

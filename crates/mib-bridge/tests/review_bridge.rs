@@ -262,3 +262,154 @@ fn population_fixture_feeds_the_charts_view() {
     bridge.pin_mut().shutdown();
     let _ = std::fs::remove_file(&path);
 }
+
+// ---- Review ABI 2 (#717 B1a): run identity and the identity probe ----------------------------
+
+const EXPERIMENT_ID: &str = "5b1d6f8e-2c4a-4e7b-9a3d-0f1e2d3c4b5a";
+
+/// A v3 snapshot as RunProvenanceRecord writes it (the members the review reads).
+fn v3_snapshot(experiment_id: Option<&str>, run_index: Option<u32>, sample_ref: Option<&str>) -> String {
+    serde_json::json!({
+        "schema_version": 3,
+        "profile_id": "fixture",
+        "pixel_to_micron": 0.25,
+        "run_id": "3f2a9c1e-7b4d-4e8a-9c2f-1a2b3c4d5e6f",
+        "experiment_id": experiment_id,
+        "run_index": run_index,
+        "sample_ref": sample_ref,
+        "operator": {"id": null, "name": "Gavin", "assurance": "selected"},
+        "calibration_record_id": "cal-0042",
+    })
+    .to_string()
+}
+
+const ANNOTATION: &str = r#"{"schema_version":1,"sample":"Donor 4","condition":"CytoD 0.1","experimental_unit":null,"concentration":{"value":0.1,"unit":"uM"},"channel":null,"medium":"PBS","temperature_c":22.5,"notes":null,"free":{"plate":"B","batch":"2026-10-19"}}"#;
+
+/// Every identity member absent: the flags say so and nothing stands in for a value.
+fn assert_identity_absent(id: &ffi::ReviewRunIdentity, what: &str) {
+    assert!(!id.has_snapshot && !id.snapshot_unreadable && id.snapshot_version == 0, "{what}: snapshot");
+    assert!(!id.has_run_id && id.run_id.is_empty(), "{what}: run id");
+    assert!(!id.has_experiment_id && id.experiment_id.is_empty(), "{what}: experiment id");
+    assert!(!id.has_run_index && id.run_index == 0, "{what}: run index");
+    assert!(!id.has_sample_ref && id.sample_ref.is_empty(), "{what}: sample ref");
+    assert!(!id.has_calibration_record_id && !id.has_operator_id && !id.has_operator_name, "{what}: calibration / operator");
+    assert!(!id.annotation.present && !id.annotation.unreadable && id.annotation.free.is_empty(), "{what}: annotation");
+}
+
+fn assert_identity_declared(id: &ffi::ReviewRunIdentity, run_index: u32, sample_ref: &str) {
+    assert!(id.has_snapshot && !id.snapshot_unreadable && id.snapshot_version == 3);
+    assert!(id.has_run_id && id.run_id == "3f2a9c1e-7b4d-4e8a-9c2f-1a2b3c4d5e6f");
+    assert!(id.has_experiment_id && id.experiment_id == EXPERIMENT_ID);
+    assert!(id.has_run_index && id.run_index == run_index);
+    assert!(id.has_sample_ref && id.sample_ref == sample_ref);
+    assert!(id.has_calibration_record_id && id.calibration_record_id == "cal-0042");
+    assert!(!id.has_operator_id && id.has_operator_name && id.operator_name == "Gavin");
+    let a = &id.annotation;
+    assert!(a.present && !a.unreadable && a.has_schema_version && a.schema_version == 1);
+    assert!(a.has_sample && a.sample == "Donor 4" && a.has_condition && a.condition == "CytoD 0.1");
+    assert!(!a.has_experimental_unit && a.experimental_unit.is_empty(), "null is absent");
+    assert!(a.has_concentration && a.concentration_value == 0.1 && a.concentration_unit == "uM");
+    assert!(!a.has_channel && a.has_medium && a.medium == "PBS");
+    assert!(a.has_temperature_c && a.temperature_c == 22.5 && !a.has_notes);
+    let free: Vec<(String, String)> = a.free.iter().map(|kv| (kv.key.clone(), kv.value.clone())).collect();
+    assert_eq!(free, vec![("batch".into(), "2026-10-19".into()), ("plate".into(), "B".into())], "sorted by key");
+}
+
+#[test]
+#[serial]
+fn run_identity_in_info_and_the_probe() {
+    let contract: serde_json::Value =
+        serde_json::from_str(include_str!("../contract/review-contract.json")).unwrap();
+    assert_eq!(ffi::review_bridge_abi_version(), 2, "review ABI 2 (#717 B1a)");
+    let max_paths = contract["review_probe"]["max_paths"].as_u64().unwrap() as usize;
+    assert_eq!(max_paths, 256);
+
+    let v3 = fixture_path("identity_v3");
+    let run4 = fixture_path("identity_run4");
+    let legacy = fixture_path("identity_legacy");
+    let unreadable = fixture_path("identity_unreadable");
+    let corrupt = fixture_path("identity_corrupt");
+    let population = fixture_path("identity_population");
+    for p in [&v3, &run4, &legacy, &unreadable, &corrupt] {
+        let _ = std::fs::remove_file(p);
+    }
+    let s = |p: &std::path::PathBuf| p.to_string_lossy().into_owned();
+    assert!(ffi::review_fixture_write_run(&s(&v3), &v3_snapshot(Some(EXPERIMENT_ID), Some(2), Some("S-03")), ANNOTATION));
+    assert!(ffi::review_fixture_write_run(&s(&run4), &v3_snapshot(Some(EXPERIMENT_ID), Some(4), Some("S-05")), ANNOTATION));
+    assert!(ffi::review_fixture_write_run(&s(&legacy), "", ""));
+    assert!(ffi::review_fixture_write_run(&s(&unreadable), "not json {", "[1]"));
+    std::fs::write(&corrupt, b"not an HDF5 file").unwrap();
+    assert!(ffi::review_fixture_write_population(&s(&population), 50, 3));
+
+    let mut bridge = ffi::new_review_bridge();
+    assert!(bridge.pin_mut().initialize(""));
+
+    // Nothing open: the identity is absent.
+    let info = bridge.pin_mut().fetch_review_info();
+    assert!(info.valid && !info.file_open);
+    assert_identity_absent(&info.identity, "closed");
+
+    // fetch_review_info: v3 as written; legacy absent; unreadable named.
+    assert!(bridge.pin_mut().review_open(&s(&v3)).ok);
+    let info = bridge.pin_mut().fetch_review_info();
+    assert_identity_declared(&info.identity, 2, "S-03");
+    assert!(info.pixel_to_micron_from_file, "the v3 snapshot still carries the TD-17 factor");
+    assert!(bridge.pin_mut().review_open(&s(&legacy)).ok);
+    let info = bridge.pin_mut().fetch_review_info();
+    assert!(info.file_open && !info.has_accounting);
+    assert_identity_absent(&info.identity, "legacy");
+    assert!(bridge.pin_mut().review_open(&s(&unreadable)).ok, "an unreadable snapshot does not stop the open");
+    let id = bridge.pin_mut().fetch_review_info().identity;
+    assert!(!id.has_snapshot && id.snapshot_unreadable && !id.has_experiment_id && !id.has_run_index);
+    assert!(!id.annotation.present && id.annotation.unreadable);
+
+    // The probe, while v3 is open: per-file results in order, the open file untouched.
+    assert!(bridge.pin_mut().review_open(&s(&v3)).ok);
+    let frame_before = bridge.pin_mut().fetch_review_frame(0, 1, 1, true);
+    let missing = fixture_path("identity_missing");
+    let paths = vec![s(&v3), s(&run4), s(&legacy), s(&unreadable), s(&corrupt), s(&missing), s(&population), String::new()];
+    let probe = bridge.pin_mut().review_probe_runs(paths.clone());
+    assert!(probe.ok, "{}", probe.message);
+    assert_eq!(probe.runs.iter().map(|r| r.path.clone()).collect::<Vec<_>>(), paths);
+    let r = &probe.runs[0];
+    assert!(r.ok && r.message.is_empty() && !r.recording_file);
+    assert_identity_declared(&r.identity, 2, "S-03");
+    assert!(r.has_start_time && r.start_time_ns == 1000 && r.has_end_time && r.end_time_ns == 5000);
+    assert!(r.has_total_valid && r.total_valid == 10 && r.has_total_invalid && r.total_invalid == 4);
+    assert!(r.has_accounting && r.accounting_completion == 0, "Complete");
+    assert!(r.has_core_version && !r.core_version.is_empty());
+    assert_identity_declared(&probe.runs[1].identity, 4, "S-05");
+    let l = &probe.runs[2];
+    assert!(l.ok && l.has_total_valid && !l.has_accounting && l.accounting_completion == 4, "legacy: no accounting");
+    assert_identity_absent(&l.identity, "legacy probe");
+    let u = &probe.runs[3];
+    assert!(u.ok && u.identity.snapshot_unreadable && u.identity.annotation.unreadable);
+    for (i, what) in [(4, "corrupt"), (5, "missing"), (7, "empty path")] {
+        let e = &probe.runs[i];
+        assert!(!e.ok && !e.message.is_empty(), "{what}: a per-file error");
+        assert!(!e.has_start_time && !e.has_total_valid && !e.has_accounting && !e.has_core_version, "{what}: nothing else");
+        assert_identity_absent(&e.identity, what);
+    }
+    // The population fixture writes a snapshot without schema_version: v1, no identity.
+    let v1 = &probe.runs[6].identity;
+    assert!(probe.runs[6].ok && v1.has_snapshot && v1.snapshot_version == 1 && !v1.has_experiment_id && !v1.has_run_index);
+    let info = bridge.pin_mut().fetch_review_info();
+    assert!(info.file_open && info.file_path == s(&v3), "the open file is left as it was");
+    assert_identity_declared(&info.identity, 2, "S-03");
+    let frame_after = bridge.pin_mut().fetch_review_frame(0, 1, 1, true);
+    assert!(frame_after.valid && frame_after.data == frame_before.data, "the same pixels after the probe");
+
+    // The cap: refused as a whole above it, served at it.
+    let over = bridge.pin_mut().review_probe_runs(vec![s(&legacy); max_paths + 1]);
+    assert!(!over.ok && over.runs.is_empty() && over.message.contains("257") && over.message.contains("256"), "{}", over.message);
+    let at = bridge.pin_mut().review_probe_runs(vec![s(&legacy); max_paths]);
+    assert!(at.ok && at.runs.len() == max_paths && at.runs.iter().all(|r| r.ok));
+    let empty = bridge.pin_mut().review_probe_runs(Vec::new());
+    assert!(empty.ok && empty.runs.is_empty());
+
+    assert!(bridge.pin_mut().review_close().ok);
+    bridge.pin_mut().shutdown();
+    for p in [&v3, &run4, &legacy, &unreadable, &corrupt, &population] {
+        let _ = std::fs::remove_file(p);
+    }
+}

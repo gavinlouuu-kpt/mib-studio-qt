@@ -2753,6 +2753,43 @@ namespace backend::services
         return success;
     }
 
+    std::optional<uint64_t> Hdf5Service::readScalarUintAttribute(const char* groupPath, const char* name) const
+    {
+        if (!isFileOpen() || !groupPath || !name) return std::nullopt;
+        if (H5Lexists(impl_->fileId_, groupPath, H5P_DEFAULT) <= 0) return std::nullopt;
+        hid_t group = H5Gopen2(impl_->fileId_, groupPath, H5P_DEFAULT);
+        if (group < 0) return std::nullopt;
+        std::optional<uint64_t> out;
+        if (H5Aexists(group, name) > 0)
+        {
+            hid_t attribute = H5Aopen(group, name, H5P_DEFAULT);
+            if (attribute >= 0)
+            {
+                hid_t type = H5Aget_type(attribute);
+                if (type >= 0 && H5Tget_class(type) == H5T_INTEGER && isScalarAttribute(attribute))
+                {
+                    // A signed attribute is read as signed, so a negative value
+                    // is unreadable rather than converted (clipped) to 0.
+                    if (H5Tget_sign(type) == H5T_SGN_2)
+                    {
+                        int64_t value = 0;
+                        if (H5Aread(attribute, H5T_NATIVE_INT64, &value) >= 0 && value >= 0)
+                            out = static_cast<uint64_t>(value);
+                    }
+                    else
+                    {
+                        uint64_t value = 0;
+                        if (H5Aread(attribute, H5T_NATIVE_UINT64, &value) >= 0) out = value;
+                    }
+                }
+                if (type >= 0) H5Tclose(type);
+                H5Aclose(attribute);
+            }
+        }
+        H5Gclose(group);
+        return out;
+    }
+
     bool Hdf5Service::readProcessingCoreIdentity(
         backend::processing::ProcessingCoreIdentity& processingCore) const
     {
