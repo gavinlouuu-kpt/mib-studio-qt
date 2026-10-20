@@ -94,15 +94,17 @@ function row(valid: boolean, i: number) {
   return {
     frame_index: String((valid ? 1000 : 2000) + i * 3),
     timestamp_ns: String(i * 1000),
-    valid,
+    // A recording's row is a frame: the backend fills the frame index and
+    // timestamp and leaves the rest at its defaults (0, false).
+    valid: recording ? false : valid,
     target_group: false,
     touches_border: false,
     has_single_inner_contour: true,
     in_range: true,
     in_channel: true,
     inner_contour_count: 1,
-    object_id: 1 + (i % 2),
-    object_count: 1,
+    object_id: recording ? 0 : 1 + (i % 2),
+    object_count: recording ? 0 : 1,
     track_id: recording ? -1 : i,
     track_first_frame: "0",
     track_last_frame: "0",
@@ -113,13 +115,13 @@ function row(valid: boolean, i: number) {
     bbox_height: recording ? 0 : 10,
     centroid_x: 25,
     centroid_y: 15,
-    area: 80 + i,
-    area_um2: (80 + i) * 0.0625,
-    deformability: 0.05,
+    area: recording ? 0 : 80 + i,
+    area_um2: recording ? 0 : (80 + i) * 0.0625,
+    deformability: recording ? 0 : 0.05,
     area_ratio: 1,
-    ring_ratio: 20,
+    ring_ratio: recording ? 0 : 20,
     laplacian_variance: 1,
-    youngs_modulus: 1.5,
+    youngs_modulus: recording ? 0 : 1.5,
     brightness_q1: 1,
     brightness_q2: 2,
     brightness_q3: 3,
@@ -429,6 +431,29 @@ it("disables the views a record cannot show, with the reason", async () => {
   expect(buttons().map((b) => b.textContent)).toContain("Frames (12)");
 });
 
+it("shows a raw recording's frame and time only, never its unfilled values (#757 review)", async () => {
+  recording = true;
+  await mountOpen();
+  await act(async () => void (await panel.current!.openPath("/data/rec.h5")));
+  await settle();
+  const measured = card("Selected measurement");
+  // A recording's rows are frames: the name has no object.
+  expect(recordName()).toBe("frame 1000");
+  expect(factValue(measured, "Frame")).toBe("1000");
+  expect(factValue(measured, "Timestamp")).toBe("0 ns");
+  // The backend leaves the measurement fields of a recording's row at 0 and
+  // its validation false: none of that is shown as a value.
+  for (const label of ["Area", "Deformability", "E (stored)", "Ring ratio", "Validation", "Track", "Objects in frame"]) {
+    expect(factValue(measured, label), label).toBe("Not recorded");
+  }
+  expect(factValue(measured, "Analysis")).toBe("None (raw recording)");
+  const facts = Array.from(measured.querySelectorAll(".rv-record__body dd")).map((d) => d.textContent ?? "");
+  expect(facts.join(" | ")).not.toMatch(/\binvalid\b|µm²|px²|kPa|\bobject\b/);
+  await click(button("Next record"));
+  expect(recordName()).toBe("frame 1003");
+  expect(factValue(card("Selected measurement"), "Area")).toBe("Not recorded");
+});
+
 it("opens the viewer from Record details, the full frame and a table row", async () => {
   await mountOpen();
   await click(button("Record details"));
@@ -477,7 +502,7 @@ it("keeps the selection across sub-views; the scatter shows the valid set", asyn
 it("says what produced the stored results and sends Reprocess to Regenerate masks", async () => {
   await mountOpen();
   const stored = card("Stored vs reprocessed");
-  expect(factValue(stored, "Stored results")).toBe("core 2.1.0 · bundled · at acquisition");
+  expect(factValue(stored, "Stored results")).toBe("core 2.1.0 (bundled) recorded in this file");
   expect(factValue(stored, "Calibration used")).toBe("cal-0042 · px→µm 0.2500 (recorded)");
   expect(factValue(stored, "E-LUT")).toBe("Not available");
   expect(factValue(stored, "Reprocessing")).toBe("Reprocessing writes a new file; this view lists no history");

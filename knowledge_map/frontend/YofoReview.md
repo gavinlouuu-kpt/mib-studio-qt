@@ -468,8 +468,8 @@ record is shown as a value.
   the scatter from the invalid set moves to the valid set with nothing
   selected, and the invalid set from the scatter shows its frames.
 - **Selected measurement** (`inspect/InspectCards.tsx` `RecordCard`): the
-  record named `frame N · object M` (coordinator ruling on #717: files carry
-  no record id and none is invented; the kit's `RecordIdentity` needs one,
+  record named `frame N · object M`, a recording's `frame N` (coordinator
+  ruling on #717: files carry no record id and none is invented; the kit's `RecordIdentity` needs one,
   so the card uses its layout classes until #715 makes it optional), its
   place (`valid record i of n · run R · sample S`) and the run's declared
   provenance (experiment, snapshot version, calibration record, from the
@@ -478,19 +478,26 @@ record is shown as a value.
   around the record's bounding box on the client (`cropSquare`: 1.6 × the
   box, at least 24 px, shifted inside the image; `inspect/packetCrop.ts`
   draws it through a canvas into a data URL for the kit's `CellImage`,
-  which takes a URL). **Full frame** is the canvas the panel always drew
+  which takes a URL). The crop uses the bounding box as stored: capture
+  files with an ROI store it ROI-local next to full-frame images, so their
+  crops are off by the ROI origin until the convention ruling on #757
+  review 1 (no file records the coordinate space). **Full frame** is the canvas the panel always drew
   (the toolbar's overlay and ROI; double-click opens the viewer). Views a
   record cannot show are disabled with the reason (a recording has no
   objects, a set without masks has no Contour / Mask); a crop that cannot
   be drawn says so, and a set without images shows the kit's "Image not
   recorded". The stored values (`measurementFacts`: area, deformability,
   stored E, ring ratio, timestamp, validation, track, objects in frame, the
-  core) and **What is recorded?** (`recordedFacts`, from dataset presence:
+  core; a raw recording stores only the frame and timestamp, so the rest
+  reads **Not recorded**, never the row's unfilled 0 or "invalid", #757
+  review 1) and **What is recorded?** (`recordedFacts`, from dataset presence:
   measurement, full frame, mask / contour, image series). **Previous /
   Next record** step through the set (its rows when it stores no images,
   #649) and **Record details** opens the frame viewer.
-- **Stored vs reprocessed** (`StoredCard`): the core the stored results
-  came from (at acquisition), the run snapshot, the calibration and px→µm
+- **Stored vs reprocessed** (`StoredCard`): the core recorded in the file
+  (`core X (source) recorded in this file`; neutral, because a regenerated
+  file records the core that regenerated it and no marker tells it from a
+  capture, #757 review 1), the run snapshot, the calibration and px→µm
   (recorded or fallback, in the warn tone), the run accounting, and E-LUT
   **Not available** (the provenance is in the review contract from B3b,
   wired in B3c). "Reprocessing writes a new file; this view lists no

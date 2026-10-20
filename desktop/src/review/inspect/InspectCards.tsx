@@ -59,7 +59,7 @@ const CROP_SIZE = 132;
 export function RecordCard(props: RecordCardProps) {
   const { info, valid, position, total, row, view, onView, canvasRef, fitWindow, crop, imagesMissing } = props;
   const selected = position >= 0;
-  const label = row ? recordLabel(row) : selected ? `${info.recording_file ? "frame" : "record"} ${position + 1}` : "No record selected";
+  const label = row ? recordLabel(row, info.recording_file) : selected ? `${info.recording_file ? "frame" : "record"} ${position + 1}` : "No record selected";
   const where = selected ? recordWhere(info, valid, position, total) : "";
   const provenance = recordProvenance(info);
   const subtitle = selected ? (info.recording_file ? "Recorded frame · stored evidence" : "Stored evidence") : props.emptyHint;

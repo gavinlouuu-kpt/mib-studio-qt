@@ -9,9 +9,10 @@ import type { Fact } from "@mib/ui";
 import { metricNumber } from "../../metricFormat";
 import { OVERLAY, type OverlayMode, type ReviewInfo, type ReviewRow } from "../reviewBridge";
 
-/** The record's name everywhere in Inspect (coordinator ruling on #717). */
-export function recordLabel(row: Pick<ReviewRow, "frame_index" | "object_id">): string {
-  return `frame ${row.frame_index} · object ${row.object_id}`;
+/** The record's name everywhere in Inspect (coordinator ruling on #717). A
+ * raw recording's rows are frames, with no object. */
+export function recordLabel(row: Pick<ReviewRow, "frame_index" | "object_id">, recording = false): string {
+  return recording ? `frame ${row.frame_index}` : `frame ${row.frame_index} · object ${row.object_id}`;
 }
 
 /** How the record card shows the record's image. */
@@ -86,8 +87,20 @@ export function recordedFacts(info: ReviewInfo, valid: boolean, row: ReviewRow |
   ];
 }
 
-/** The selected record's stored values. */
+const NOT_RECORDED = { value: "Not recorded", tone: "unknown" } as const;
+
+/** The selected record's stored values. A raw recording stores only the
+ * frame index and timestamp: everything else is "Not recorded", never a 0
+ * or "invalid" (#757 review). */
 export function measurementFacts(row: ReviewRow, info: ReviewInfo): Fact[] {
+  if (info.recording_file) {
+    return [
+      { label: "Frame", value: row.frame_index },
+      { label: "Timestamp", value: `${row.timestamp_ns} ns` },
+      ...["Area", "Deformability", "E (stored)", "Ring ratio", "Validation", "Track", "Objects in frame"].map((label) => ({ label, ...NOT_RECORDED })),
+      { label: "Analysis", value: "None (raw recording)", tone: "unknown" as const },
+    ];
+  }
   const tracked = row.track_id >= 0;
   return [
     { label: "Area", value: `${metricNumber(row.area_um2, 2)} µm² · ${metricNumber(row.area, 1)} px²` },
@@ -143,8 +156,10 @@ export function storedFacts(info: ReviewInfo): Fact[] {
   const accounting = info.accounting_summary.replace(/^\s*·\s*/, "");
   return [
     {
+      // Neutral (#757 review): a regenerated file records the core that
+      // regenerated it, and no marker tells it from a capture yet (#754).
       label: "Stored results",
-      value: info.has_core_identity ? `core ${info.core_version}${info.core_source ? ` · ${info.core_source}` : ""} · at acquisition` : null,
+      value: info.has_core_identity ? `core ${info.core_version}${info.core_source ? ` (${info.core_source})` : ""} recorded in this file` : null,
     },
     { label: "Run snapshot", value: id?.has_snapshot ? `v${id.snapshot_version ?? "?"}${id.run_id ? ` · run ${id.run_id}` : ""}` : id?.snapshot_unreadable ? "Unreadable" : null },
     {

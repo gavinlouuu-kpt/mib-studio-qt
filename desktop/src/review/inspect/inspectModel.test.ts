@@ -82,6 +82,8 @@ describe("the record's name", () => {
   it("is its frame and object: files carry no record id, none is invented", () => {
     expect(recordLabel(row())).toBe("frame 82140 · object 2");
     expect(recordLabel({ frame_index: "18446744073709551615", object_id: 1 })).toBe("frame 18446744073709551615 · object 1");
+    // A raw recording's rows are frames, with no object.
+    expect(recordLabel(row({ object_id: 0 }), true)).toBe("frame 82140");
   });
 
   it("is placed in its set and run, with the run's declared provenance", () => {
@@ -163,9 +165,35 @@ describe("the cards' facts", () => {
     expect(fact(measurementFacts(row(), info({ has_core_identity: false })), "Analysis")?.value).toBe("stored · core not recorded");
   });
 
+  it("give a raw recording's frame and time only, never its unfilled values", () => {
+    // The backend fills a recording's row with the frame index and timestamp
+    // only; the rest stays at its defaults (0, invalid, untracked).
+    const blank = row({ valid: false, object_id: 0, object_count: 0, track_id: -1, area: 0, area_um2: 0, deformability: 0, ring_ratio: 0, youngs_modulus: 0 });
+    const facts = measurementFacts(blank, info({ recording_file: true }));
+    expect(facts.map((f) => f.label)).toEqual([
+      "Frame",
+      "Timestamp",
+      "Area",
+      "Deformability",
+      "E (stored)",
+      "Ring ratio",
+      "Validation",
+      "Track",
+      "Objects in frame",
+      "Analysis",
+    ]);
+    expect(fact(facts, "Frame")?.value).toBe("82140");
+    expect(fact(facts, "Timestamp")?.value).toBe("16428000000 ns");
+    for (const f of facts.slice(2, 9)) expect(f, String(f.label)).toMatchObject({ value: "Not recorded", tone: "unknown" });
+    expect(fact(facts, "Analysis")).toMatchObject({ value: "None (raw recording)", tone: "unknown" });
+    for (const f of facts) expect(String(f.value), String(f.label)).not.toMatch(/^0(\.0*)?\b|\binvalid\b|µm²|kPa/);
+  });
+
   it("say what produced the stored results, and how reprocessing works", () => {
     const facts = storedFacts(info());
-    expect(fact(facts, "Stored results")?.value).toBe("core 2.1.0 · bundled · at acquisition");
+    // Neutral: a regenerated file records the core that regenerated it, and
+    // no marker tells it from a capture, so "at acquisition" would be a claim.
+    expect(fact(facts, "Stored results")?.value).toBe("core 2.1.0 (bundled) recorded in this file");
     expect(fact(facts, "Run snapshot")?.value).toBe("v3 · run run-1");
     expect(fact(facts, "Calibration used")?.value).toBe("cal-0042 · px→µm 0.2500 (recorded)");
     expect(fact(facts, "E-LUT")).toMatchObject({ value: "Not available", tone: "unknown" });
