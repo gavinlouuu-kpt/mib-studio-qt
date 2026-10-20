@@ -44,14 +44,16 @@ namespace backend::review
         // none. `annotationUnreadable`: the block exists but is not a JSON object.
         std::optional<recording::ExperimentAnnotation> annotation;
         bool annotationUnreadable{false};
-        // @annotation_schema_version; nullopt when the attribute is missing.
+        // @annotation_schema_version; nullopt when the attribute is missing or
+        // unreadable (a recorded 0 stays 0).
         std::optional<std::uint32_t> annotationSchemaVersion;
     };
 
     // One file of the experiment library's identity probe (#717 B1a): header
     // attributes only, no images and no metadata rows. `ok` false = the file
     // could not be read (`message` says why); every other member is then
-    // absent. Counts and times are nullopt when the file records none.
+    // absent. Each count and time is read on its own, presence-aware: nullopt
+    // when its attribute is missing or unreadable, and a recorded 0 count is 0.
     struct RunProbe
     {
         std::string path;
@@ -62,7 +64,8 @@ namespace backend::review
         std::optional<std::uint64_t> startTimeNs;       // 0 / missing attribute = not recorded
         std::optional<std::uint64_t> endTimeNs;
         // /experiment_info total_valid_frames / total_invalid_frames, or
-        // /recording_info total_frames (valid) for a recording file.
+        // /recording_info total_recorded_frames (valid; no invalid count) for
+        // a recording file.
         std::optional<std::uint64_t> totalValid;
         std::optional<std::uint64_t> totalInvalid;
         // Run accounting (#367); nullopt for a file that predates it.

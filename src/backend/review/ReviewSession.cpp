@@ -134,27 +134,25 @@ namespace backend::review
                     return failed("Not an HDF5 file, or it cannot be opened (locked or unreadable): " + path);
                 }
                 probe.recordingFile = reader.isRecordingFile();
-                std::uint64_t start = 0;
-                std::uint64_t end = 0;
+                // Each attribute on its own, presence-aware (#717 B1a review):
+                // readExperimentInfo / readRecordingInfo default a missing
+                // count to 0, which would probe as a recorded 0.
+                const char *group = probe.recordingFile ? "/recording_info" : "/experiment_info";
                 if (probe.recordingFile)
                 {
-                    std::uint64_t total = 0;
-                    std::uint64_t filtered = 0;
-                    if (reader.readRecordingInfo(start, end, total, filtered)) probe.totalValid = total;
+                    probe.totalValid = reader.readScalarUintAttribute(group, "total_recorded_frames");
                 }
                 else
                 {
-                    std::size_t valid = 0;
-                    std::size_t invalid = 0;
-                    if (reader.readExperimentInfo(start, end, valid, invalid))
-                    {
-                        probe.totalValid = valid;
-                        probe.totalInvalid = invalid;
-                    }
+                    probe.totalValid = reader.readScalarUintAttribute(group, "total_valid_frames");
+                    probe.totalInvalid = reader.readScalarUintAttribute(group, "total_invalid_frames");
                 }
-                // A zero time is a missing attribute (the readers leave it unset), not 1970.
-                if (start != 0) probe.startTimeNs = start;
-                if (end != 0) probe.endTimeNs = end;
+                // A recorded 0 time is the writers' "no wall clock" (regenerating
+                // from frame timestamps writes start 0), not 1970: not recorded.
+                const auto start = reader.readScalarUintAttribute(group, "start_time_ns");
+                const auto end = reader.readScalarUintAttribute(group, "end_time_ns");
+                if (start && *start != 0) probe.startTimeNs = start;
+                if (end && *end != 0) probe.endTimeNs = end;
                 recording::RecordingAccountingSnapshot accounting;
                 if (reader.readRunAccounting(accounting)) probe.completion = accounting.completion;
                 processing::ProcessingCoreIdentity core;
@@ -501,17 +499,21 @@ namespace backend::review
             }
         }
         std::string annotation;
-        std::uint64_t annotationVersion = 0;
-        if (reader.readExperimentAnnotationJson(annotation, &annotationVersion))
+        if (reader.readExperimentAnnotationJson(annotation))
         {
             out.annotation = recording::parseExperimentAnnotation(annotation);
             if (!out.annotation)
             {
                 out.annotationUnreadable = true;
             }
-            else if (annotationVersion != 0 && annotationVersion <= 0xFFFFFFFFull)
+            else
             {
-                out.annotationSchemaVersion = static_cast<std::uint32_t>(annotationVersion);
+                // Presence-aware: readExperimentAnnotationJson reports a missing
+                // version as 0, so a recorded 0 and a missing one differ only here.
+                const auto version =
+                    reader.readScalarUintAttribute("/experiment_annotation", "annotation_schema_version");
+                if (version && *version <= 0xFFFFFFFFull)
+                    out.annotationSchemaVersion = static_cast<std::uint32_t>(*version);
             }
         }
         return out;

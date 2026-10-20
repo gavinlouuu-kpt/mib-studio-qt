@@ -13,7 +13,10 @@
 //  - a file without a snapshot or annotation reads every member absent: no
 //    zero ids, no empty strings, no version; a v1 snapshot is a snapshot
 //    with no identity; a v3 snapshot that declares nothing reads absent;
-//  - a file without times or counts probes them as absent.
+//  - a file without times or counts probes them as absent; each count is
+//    read on its own, so one missing count is absent while the other reads,
+//    a recorded 0 count stays 0 and a negative one is unreadable (experiment
+//    and recording files); a recorded 0 annotation_schema_version stays 0.
 //  Fault injection:
 //  - a snapshot or annotation that is not a JSON object reads as unreadable,
 //    not as legacy; a corrupt HDF5 file, a missing path, a directory and an
@@ -216,6 +219,39 @@ namespace
         hdf5.closeFile();
     }
 
+    // Edits one attribute of a written fixture with the HDF5 C API: deletes it,
+    // or rewrites it as an unsigned or a signed 64-bit scalar.
+    enum class Edit
+    {
+        Delete,
+        Unsigned,
+        Signed,
+    };
+    void editAttribute(const fs::path &path, const char *group, const char *name, Edit edit, long long value = 0)
+    {
+        hid_t file = H5Fopen(path.string().c_str(), H5F_ACC_RDWR, H5P_DEFAULT);
+        MIB_REQUIRE(file >= 0, "open fixture to edit " + path.string());
+        hid_t g = H5Gopen2(file, group, H5P_DEFAULT);
+        MIB_REQUIRE(g >= 0, std::string("open group ") + group);
+        if (H5Aexists(g, name) > 0) MIB_REQUIRE(H5Adelete(g, name) >= 0, std::string("delete ") + name);
+        if (edit != Edit::Delete)
+        {
+            hid_t space = H5Screate(H5S_SCALAR);
+            const hid_t type = edit == Edit::Unsigned ? H5T_NATIVE_UINT64 : H5T_NATIVE_INT64;
+            hid_t attr = H5Acreate2(g, name, type, space, H5P_DEFAULT, H5P_DEFAULT);
+            MIB_REQUIRE(attr >= 0, std::string("create ") + name);
+            const unsigned long long u = static_cast<unsigned long long>(value);
+            const long long sv = value;
+            MIB_REQUIRE(H5Awrite(attr, type, edit == Edit::Unsigned ? static_cast<const void *>(&u)
+                                                                   : static_cast<const void *>(&sv)) >= 0,
+                        std::string("write ") + name);
+            H5Aclose(attr);
+            H5Sclose(space);
+        }
+        H5Gclose(g);
+        H5Fclose(file);
+    }
+
     // Every member of a legacy identity is absent: nothing stands in for it.
     bool allAbsent(const RunIdentity &id)
     {
@@ -409,6 +445,73 @@ int main()
         MIB_EXPECT(s.probeRuns({}, probes, &err) && probes.empty(), "an empty list is an empty answer");
     }
     wd.mark("probe");
+
+    // ---- presence-aware counts (#746 review): missing is absent, 0 stays 0 ----
+    {
+        const fs::path noValid = td.path() / "no_valid_count.h5";
+        const fs::path noCounts = td.path() / "no_counts.h5";
+        const fs::path zeroCounts = td.path() / "zero_counts.h5";
+        const fs::path negative = td.path() / "negative_count.h5";
+        const fs::path recNoTotal = td.path() / "rec_no_total.h5";
+        const fs::path recZero = td.path() / "rec_zero.h5";
+        const fs::path annZero = td.path() / "annotation_v0.h5";
+        const fs::path annNoVersion = td.path() / "annotation_no_version.h5";
+        for (const auto &p : {noValid, noCounts, zeroCounts, negative})
+            writeExperiment(p, Snapshot::None, Annotation::None);
+        writeRecording(recNoTotal, 9);
+        writeRecording(recZero, 9);
+        writeExperiment(annZero, Snapshot::None, Annotation::Planned);
+        writeExperiment(annNoVersion, Snapshot::None, Annotation::Planned);
+        editAttribute(noValid, "/experiment_info", "total_valid_frames", Edit::Delete);
+        editAttribute(noCounts, "/experiment_info", "total_valid_frames", Edit::Delete);
+        editAttribute(noCounts, "/experiment_info", "total_invalid_frames", Edit::Delete);
+        editAttribute(zeroCounts, "/experiment_info", "total_valid_frames", Edit::Unsigned, 0);
+        editAttribute(zeroCounts, "/experiment_info", "total_invalid_frames", Edit::Unsigned, 0);
+        editAttribute(zeroCounts, "/experiment_info", "start_time_ns", Edit::Unsigned, 0);
+        editAttribute(negative, "/experiment_info", "total_invalid_frames", Edit::Signed, -1);
+        editAttribute(recNoTotal, "/recording_info", "total_recorded_frames", Edit::Delete);
+        editAttribute(recZero, "/recording_info", "total_recorded_frames", Edit::Unsigned, 0);
+        editAttribute(annZero, "/experiment_annotation", "annotation_schema_version", Edit::Unsigned, 0);
+        editAttribute(annNoVersion, "/experiment_annotation", "annotation_schema_version", Edit::Delete);
+
+        ReviewSession s;
+        std::vector<RunProbe> probes;
+        std::string err;
+        MIB_REQUIRE(s.probeRuns({noValid.string(), noCounts.string(), zeroCounts.string(), negative.string(),
+                                 recNoTotal.string(), recZero.string(), annZero.string(), annNoVersion.string()},
+                                probes, &err) &&
+                        probes.size() == 8,
+                    "probe the count fixtures: " + err);
+        MIB_EXPECT(probes[0].ok && !probes[0].totalValid && probes[0].totalInvalid == 4u,
+                   "a missing valid count is absent, the invalid count still read");
+        MIB_EXPECT(probes[1].ok && !probes[1].totalValid && !probes[1].totalInvalid &&
+                       probes[1].startTimeNs == 1000u && probes[1].endTimeNs == 5000u,
+                   "both counts missing: both absent, the times still read");
+        MIB_EXPECT(probes[2].ok && probes[2].totalValid == 0u && probes[2].totalInvalid == 0u,
+                   "recorded zero counts are present zeroes");
+        MIB_EXPECT(!probes[2].startTimeNs && probes[2].endTimeNs == 5000u,
+                   "a recorded 0 start time is the writers' no wall clock: not recorded");
+        MIB_EXPECT(probes[3].ok && probes[3].totalValid == 10u && !probes[3].totalInvalid,
+                   "a negative signed count is unreadable, not clipped to 0");
+        MIB_EXPECT(probes[4].ok && probes[4].recordingFile && !probes[4].totalValid && !probes[4].totalInvalid &&
+                       probes[4].startTimeNs == 10u && probes[4].endTimeNs == 20u,
+                   "a recording without total_recorded_frames: absent, times still read");
+        MIB_EXPECT(probes[5].ok && probes[5].recordingFile && probes[5].totalValid == 0u,
+                   "a recording's recorded 0 is a present zero");
+        MIB_EXPECT(probes[6].ok && probes[6].identity.annotation && probes[6].identity.annotationSchemaVersion == 0u,
+                   "a recorded annotation_schema_version 0 stays 0");
+        MIB_EXPECT(probes[7].ok && probes[7].identity.annotation && !probes[7].identity.annotationSchemaVersion,
+                   "a missing annotation_schema_version is absent");
+
+        // The open path reads the same identity rule.
+        MIB_REQUIRE(s.open(annZero.string()), "open the version-0 annotation");
+        MIB_EXPECT(s.metadata().runIdentity.annotationSchemaVersion == 0u, "open: a recorded 0 version stays 0");
+        MIB_REQUIRE(s.open(annNoVersion.string()), "open the versionless annotation");
+        MIB_EXPECT(s.metadata().runIdentity.annotation && !s.metadata().runIdentity.annotationSchemaVersion,
+                   "open: a missing version is absent");
+        s.close();
+    }
+    wd.mark("counts");
 
     // ---- a probe while a file is open ------------------------------------------
     {
