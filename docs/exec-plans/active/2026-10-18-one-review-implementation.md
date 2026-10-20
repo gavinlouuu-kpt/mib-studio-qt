@@ -208,7 +208,7 @@ the coordinator (ADR 0004/0011).
 | S3 | Export engine in `mib_review_core` | none | none | merged (#724) |
 | S4 | Charts JSON and saved-overlay builders | none (text only, D3) | none | merged (#726) |
 | S5 | The facade owns the ReviewSession | none (D1 (a): unchanged) | none | merged (#733) |
-| S6 | Parity harness: a MIB Studio half | none | none | planned |
+| S6 | Parity harness: a MIB Studio half | none | none | in review (#PRNUM) |
 | S7 | Facade jobs on ReviewJobs lanes | none | none | in review (#742) |
 | S8 | YOFO regenerate on the reanalysis engine | none | none (behaviour D6) | merged (#735) |
 | S9 | Transport-neutral review module | none | none | merged (#731) |
@@ -537,7 +537,7 @@ S12 takes 3 or higher. Additive; the bridge ABI is untouched.
   with `MIB_BRIDGE_NO_CMAKE=1`. `frontend.review_parity` needs the Qt build:
   left to CI's Linux Qt lane.
 
-### S6 — Parity harness: a MIB Studio half
+### S6 — Parity harness: a MIB Studio half (in review, #PRNUM)
 
 - **Moves:** `tools/review_parity/` gains a third half: cargo example
   `crates/mib-bridge/examples/review_parity_studio.rs` over `BackendBridge`
@@ -556,6 +556,75 @@ S12 takes 3 or higher. Additive; the bridge ABI is untouched.
   Linux GCC, 64-bit on MSVC and arm64 macOS, so ranges can differ in the last
   bits across platforms. Compare chart ranges with a tolerance, or pin them
   per platform (found in S4, #726).
+- **As built (2026-10-20):** `review_parity_studio.rs` runs each file twice
+  through the facade. *As opened* (`studio/charts_app.json`, summary `app`):
+  the live factor and ring range of a fresh backend (0.4886, 15–25), MIB
+  Studio's policy today, so D3 / D4 are measured. *Compared outputs*
+  (`charts.json`, `metrics.csv`, `all/`, `overlays/`): the live factor and range
+  are first set to the file's recorded ones, through `apply_processing_config_json`,
+  as the Qt dump sets its live config; they are read through the review bridge
+  (`ReviewSession`, TD-17's reader), and a file without them keeps the live
+  values (D3 / D4's fallback). The exports are the requests `exportControls.tsx`
+  builds with its defaults (frames both, all series, isoelastic overlays, keep
+  partial, the live factor), polled through `review_export_status_json`. The
+  overlays are `SavedReviewImage.tsx`'s request for valid / invalid frames 0,
+  middle and last × modes 0..4 × ROI off / on. Under `--features review-only`
+  the example is a stub that exits 2, so the review-only `cargo test` lanes
+  still build every example; Bridge CI's `cargo test` builds the real one. The
+  YOFO half also dumps `fetch_review_frame` overlays (`yofo/overlays/`, PGM /
+  PPM) for the same frames. `compare.py` keeps the Qt ↔ YOFO table as signed
+  off and adds MIB Studio ↔ Qt and MIB Studio ↔ YOFO tables. D2–D5 are ACCEPTED
+  only on these conditions:
+  - **D2:** the ROI-on renders differ only on pixels one of the two ROI
+    rectangles drew, each in its own style: yellow (255, 210, 0) 1 px, or
+    red 3 px. The ROI-off renders must be pixel-identical.
+  - **D3 / D4:** the as-opened charts used the live value.
+  - **D5:** Export All holds exactly `scatter_plot.tiff` and `histogram.tiff`
+    beyond the other half's byte-identical files.
+
+  The chart-range tolerance is `CHART_RANGE_REL` = 1e-12 of the range's
+  largest absolute end (about 4500 ulp; the padding differs by a few ulp at
+  most). Qt's ring range is read back from its bar labels at 0.05. Not
+  anticipated:
+  - (1) the facade returns RGB for an undrawn Mono8 frame, while YOFO keeps
+    Mono8 (S1's `KeepMono`). The renders are compared as displayed RGB.
+  - (2) on `population_3000`, YOFO's double `paddedExtent` and the shared long
+    double kernel differ by 1 ulp in the x and y minima. This is the S6 risk on
+    Linux itself, and the tolerance absorbs it.
+  - (3) a difference outside D2–D5 (below).
+  - (4) the Qt ↔ YOFO accounting row passes now: Qt's status line carries the
+    accounting suffix, so the 2026-10-04 acceptance no longer applies.
+  - (5) D4 is not exercised: every input records 15–25, the live default.
+- **Proof (#PRNUM):** the harness on the four sign-off inputs: the
+  `z-adjustment-50v` recording, `review_e2e_512x96_run.h5`,
+  `synthetic_fixture.h5` and `population_3000.h5`. Outputs and `run.log` are
+  in `/mnt/hdd/developer-data/mib-studio-qt/review-parity/out-2026-10-20-s6/`;
+  the 2026-10-04 `out/` is untouched.
+  - **Identical to Qt and YOFO:** metrics.csv; Export All apart from the chart
+    TIFFs (30878 / 587 / 45 / 3301 files); scatter point count and density
+    total; scatter axis extents; histogram bins; the compared histogram range
+    and px→µm.
+  - **Identical to YOFO:** the 30 ROI-off overlays per experiment file.
+  - **ACCEPTED:**
+    - D2: 30 of 30 ROI-on renders per experiment file, outline pixels only.
+    - D3: as-opened px→µm, 0.4886 against 0.25, on the two fixtures.
+    - D5: the two chart TIFFs on the three experiment files.
+  - **Finding, DIFF, not accepted:** the histogram y axis. MIB Studio's inline
+    tab tops it at the largest bin (`components/ReviewCharts.tsx` `maxBin`),
+    Qt at `applyNiceNumbers()` and YOFO at `ceil(1.1 × max)`. On the 512x96
+    run that is 64 / 80 / 71, on population 248 / 300 / 273, on the synthetic
+    fixture 8 / 10 / 9. So `run.sh` exits 1 on the experiment files until the
+    coordinator rules. The inline component goes in S14, and the module that
+    S13 mounts uses YOFO's rule.
+  - **Unit test:** `scripts.review_parity_compare`
+    (`tests/tools/test_review_parity_compare.py`) covers the PNG / PGM / PPM
+    decoders (every PNG filter type), the pinned tolerance (a few ulp pass,
+    1e-10 relative fails), the D2–D5 conditions both ways, an unaccepted bin
+    difference failing `main` and a dump without the studio half.
+  - **Mutations that fail the unit test:** no D2 style check; D3 or D4
+    accepted without the live check; D5 for any non-frame TIFF; a 1e-9
+    tolerance.
+  - **Decoders:** cross-checked against Pillow on 120 renders.
 
 ### S7 — Facade jobs on ReviewJobs lanes (in review, #742)
 
@@ -931,7 +1000,7 @@ bridge contract):
 - [x] 2026-10-19 — S3 export engine (`review.export_engine`, #724); `review::writeMetricsCsv` deleted (F14).
 - [x] 2026-10-19 — S4 charts JSON and saved-overlay builders (`review.charts_json`, #726).
 - [x] 2026-10-19 — S5 the facade owns the ReviewSession (`backend.facade_review_session`; D1 (a) via `AppBackend::setReviewSourceOpen`, gate text unchanged; #733).
-- [ ] S6 parity harness MIB Studio half
+- [x] 2026-10-20 — S6 parity harness MIB Studio half (`review_parity_studio.rs`, three-table `compare.py`, D2–D5 accepted until S13; the histogram y axis is an open finding; #PRNUM).
 - [x] 2026-10-19 — S7 facade jobs on ReviewJobs lanes (D7 per-host policy: `forReviewBridge` one job at a time until #722, `forFacade` both lanes; `backend.facade_review_jobs` with the pre-S7 oracle, `review.jobs_lanes`; #742)
 - [x] 2026-10-19 — S8 YOFO regenerate on the engine (D6; `review.jobs`, `review.reanalysis`, no clobber; the position-pairing fix; #735)
 - [x] 2026-10-19 — S9 transport-neutral review module (`reviewIpc` golden unchanged; import guard; `Transport.upload`; #731).
