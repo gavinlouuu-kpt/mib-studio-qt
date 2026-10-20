@@ -54,7 +54,7 @@ export interface RecordCardProps {
   emptyHint: ReactNode;
 }
 
-const CROP_SIZE = 168;
+const CROP_SIZE = 132;
 
 export function RecordCard(props: RecordCardProps) {
   const { info, valid, position, total, row, view, onView, canvasRef, fitWindow, crop, imagesMissing } = props;

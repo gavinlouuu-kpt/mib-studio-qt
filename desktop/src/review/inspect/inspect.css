@@ -21,7 +21,7 @@
 }
 .rv-inspect-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 400px);
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 420px);
   gap: var(--mib-space-4);
   align-items: start;
 }

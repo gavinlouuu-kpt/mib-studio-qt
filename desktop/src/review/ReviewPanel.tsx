@@ -596,7 +596,7 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
           </Button>
         )}
       </Toolbar>
-      <div className="toolbar rv-inspect-actions">
+      <div className="rv-inspect-actions" role="toolbar" aria-label="File and exports">
         <Button size="small" onClick={openFile} disabled={!ready} title={ready ? undefined : "Backend is not initialized"}>
           Select HDF File…
         </Button>
@@ -661,7 +661,7 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
           {noImagesNotice(info)}
         </Notice>
       )}
-      <div className="subtab-body rv-inspect-body">
+      <div className="rv-inspect-body">
         {!reviewing || !info ? (
           <div className="review-empty">
             <Notice
