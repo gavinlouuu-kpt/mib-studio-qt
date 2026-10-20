@@ -719,12 +719,13 @@ pub mod ffi {
         pub ring_ratio: f64,
         pub youngs_modulus: f64,
         pub pixel_to_micron: f64,
-        /// ABI 41 (#716 A6a): the start generation of the run that was active when the processing
-        /// path appended the row (0 = outside a run). With `(frame_index, object_id)` it names the
+        /// ABI 41 (#716 A6a): the start generation of the run that was active when the row's frame
+        /// entered processing (0 = outside a run). With `(frame_index, object_id)` it names the
         /// row for a live cell pin. Review metric rows leave it 0 (mib-app-commands omits it).
         pub start_generation: u64,
-        /// ABI 41: the capture epoch of the row's frame (frame indices restart when the capture
-        /// changes); part of the row's identity. 0 for review rows.
+        /// ABI 41: the capture epoch the row's frame entered processing with (frame indices
+        /// restart when the capture changes); part of the row's identity. 0 for a frame that
+        /// crossed a capture change (never a live cell) and for review rows.
         pub capture_epoch: u64,
     }
 

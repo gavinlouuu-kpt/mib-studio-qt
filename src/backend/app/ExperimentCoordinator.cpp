@@ -1434,9 +1434,9 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
     // Pulse records from before the run (manual/periodic test pulses, a
     // previous run's tail) are not this experiment's: discard them.
     (void)backend_.trigger().drainEvents();
-    // Live cell images (#716 A6a): monitoring rows appended from here on carry this run's start
-    // generation (a field under the ring's lock, no hot-path cost); 0 again when the run stops
-    // accumulating or this start is rolled back.
+    // Live cell images (#716 A6a): frames entering processing from here on carry this run's start
+    // generation to their monitoring rows (an atomic read at the frame's entry, no hot-path lock);
+    // 0 again when the run stops accumulating or this start is rolled back.
     proc.setMonitoringRunGeneration(run.startGeneration);
     proc.startExperiment();
     // The shared lifecycle must own a live consumer. Qt previously started it
@@ -1503,7 +1503,8 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
         SPDLOG_INFO("ExperimentCoordinator: PL results from '{}' (run id {})", provider->name(), runId);
     }
     activeRun_ = run;
-    // The live cell store's pins and strip belong to the latest run: dropped now (#716 A6a).
+    // A run start is a capture change for the live cell store: its strip is cleared and its pins,
+    // which belong to the latest run, are dropped now (#716 A6a review 3).
     if (auto* cells = backend_.monitoringCells()) cells->beginRun(run.startGeneration);
     wallHold_ = std::move(wallHold); // released at the terminal status of finalizeLocked
     lastRun_ = run;
