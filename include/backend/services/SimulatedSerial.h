@@ -178,7 +178,7 @@ public:
 
     std::unique_ptr<ISerialPort> makePort();
     std::vector<SerialPortInfo> enumerate() const;
-    std::vector<int> comPortNumbers() const; // "COMn" ports, for Tools::availableComPortNumbers
+    std::vector<int> comPortNumbers() const; // present "COMn" ports, for COM-number pickers
 
     std::vector<Event> events() const;
     std::vector<Event> events(Event::Kind kind) const;
@@ -219,7 +219,9 @@ private:
 };
 
 // Process-wide switch. While a rig is installed, makePlatformSerialPort(),
-// enumerateSerialPorts() and Tools::availableComPortNumbers() serve it.
+// and enumerateSerialPorts() serve it. Tools::availableComPortNumbers()
+// (portable core, no serial dependency) still reads the OS; COM-number
+// pickers ask the rig's comPortNumbers() instead.
 // install(nullptr) restores the OS ports. Ports made before stay bound to
 // the rig that made them.
 void install(std::shared_ptr<Rig> rig);

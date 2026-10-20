@@ -21,9 +21,10 @@ nlohmann)
 
 ## Responsibility
 
-- `serialsim::install(rig)` makes `makePlatformSerialPort()`,
-  `enumerateSerialPorts()` and `Tools::availableComPortNumbers()` serve the
-  rig; `install(nullptr)` restores the OS. Ports made earlier stay bound to
+- `serialsim::install(rig)` makes `makePlatformSerialPort()` and
+  `enumerateSerialPorts()` serve the rig (the pump settings dialog lists the
+  rig's `comPortNumbers()`; `Tools::availableComPortNumbers()` is portable
+  core and stays on the OS); `install(nullptr)` restores the OS. Ports made earlier stay bound to
   their rig.
 - `Rig`: `PortSpec` per port (USB identity, `presentAfterMs`,
   `openLatencyMs`, seeded `replyLatencyMs`, `silentAfterOpenMs`,

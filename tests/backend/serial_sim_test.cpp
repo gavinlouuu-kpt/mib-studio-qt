@@ -14,7 +14,6 @@
 //  - scenario JSON and MIB_SERIAL_MODE=sim install a rig; a broken scenario
 //    installs nothing; uninstall restores the OS ports.
 
-#include "backend/app/Tools.h"
 #include "backend/nanopositioner/INanopositionerBackend.h"
 #include "backend/services/ModbusRtu.h"
 #include "backend/services/PulseGeneratorService.h"
@@ -192,13 +191,13 @@ int main()
         serialsim::install(rig);
 
         MIB_EXPECT(backend::services::enumerateSerialPorts().empty(), "absent before it enumerates");
-        MIB_EXPECT(backend::Tools::availableComPortNumbers().empty(), "no COM numbers yet");
+        MIB_EXPECT(rig->comPortNumbers().empty(), "no COM numbers yet");
         auto early = rig->makePort();
         MIB_EXPECT(!early->openNamed("COM5", at(115200)), "open fails before it enumerates");
         const auto deadline = std::chrono::steady_clock::now() + 5s;
         while (backend::services::enumerateSerialPorts().empty() && std::chrono::steady_clock::now() < deadline)
             std::this_thread::sleep_for(10ms);
-        MIB_REQUIRE(backend::Tools::availableComPortNumbers() == std::vector<int>{5}, "COM5 appears");
+        MIB_REQUIRE(rig->comPortNumbers() == std::vector<int>{5}, "COM5 appears");
 
         auto port = rig->makePort();
         MIB_REQUIRE(port->openNamed("COM5", at(115200)), "opens once present");
@@ -293,7 +292,7 @@ int main()
         MIB_EXPECT(serialsim::installFromEnvironment(error) && serialsim::installed() &&
                        serialsim::installed()->seed() == 42,
                    "sim with no scenario installs the bench rig, seeded");
-        const auto bench = backend::Tools::availableComPortNumbers();
+        const auto bench = serialsim::installed()->comPortNumbers();
         MIB_EXPECT(std::find(bench.begin(), bench.end(), 4) != bench.end(), "bench COM4 enumerates at once");
         setEnv("MIB_SERIAL_MODE", "bogus");
         MIB_EXPECT(!serialsim::installFromEnvironment(error) && !error.empty(), "an unknown mode is an error");

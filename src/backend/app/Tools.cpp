@@ -1,5 +1,4 @@
 #include "backend/app/Tools.h"
-#include "backend/services/SimulatedSerial.h"
 
 #include <spdlog/spdlog.h>
 
@@ -103,7 +102,6 @@ uint64_t Tools::getAvailableSystemRAMBytes() {
 }
 
 std::vector<int> Tools::availableComPortNumbers() {
-    if (auto rig = services::serialsim::installed()) return rig->comPortNumbers();
 #ifdef _WIN32
     std::vector<int> ports;
     HKEY hKey = nullptr;
