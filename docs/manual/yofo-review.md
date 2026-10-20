@@ -39,8 +39,9 @@ closes, exports or changes a file.
 - **Overview**: per-run statistics. This is **not available yet**. It needs
   the statistics worker, which this version does not include, so the page
   says so and shows no numbers.
-- **Inspect**: frames, masks, the metrics table and charts of the open run,
-  with the export and regenerate actions on its toolbar.
+- **Inspect**: the open run's records: the scatter, the records table and
+  the frames, with the selected record's image and stored values beside
+  them, and the export and regenerate actions on its toolbar.
 - **Export**: a list of where each export is on Inspect's toolbar. The
   export page itself comes in a later version.
 
@@ -152,15 +153,38 @@ shows a single frame list, and only raw image export is available.
 ## Browse frames and charts
 
 Browsing happens on **Inspect**, and works as in MIB Studio's Review tab
-(see [Review & post-process](review-and-postprocess.md)):
+(see [Review & post-process](review-and-postprocess.md)). The first row of
+its toolbar chooses what to show, and which set:
 
-- **Frames** — thumbnails, the metrics table and the frame viewer, with
-  mask, contour and ROI overlays. Double-click a thumbnail or a table row
-  to open the viewer, then use **←/→** to step through frames.
-- **Charts** — the deformability-vs-area scatter and the ring-width
-  histogram. Click a point to show that cell, scroll to zoom and drag to
-  pan. Right-click for **Reset zoom** and **Compute core contour from full
-  run**.
+- **Scatter** — the deformability-vs-area scatter and the ring-width
+  histogram of the valid records. Click a point to inspect that record,
+  scroll to zoom and drag to pan. Right-click for **Reset zoom** and
+  **Compute core contour from full run**.
+- **Records** — the records table, 100 rows a page (**◀ / ▶**), with
+  **Columns…** to choose the columns.
+- **Frames** — the thumbnails above the records table.
+- **Valid Frames** / **Invalid Frames** — the set to browse (a recording
+  has one set, **Frames**).
+
+Whatever you choose, the selected record stays selected, and its card on
+the right shows:
+
+- its name, **frame N · object M** (files carry no record id), and the run
+  it belongs to;
+- its image: **Raw**, **Contour** or **Mask** show the cell cut out of its
+  frame, **Full frame** the whole frame with the overlay and ROI chosen on
+  the toolbar. A view the file cannot show is greyed out, with the reason
+  as a tooltip;
+- its stored values (area, deformability, E, track, …) and **What is
+  recorded?** for it;
+- **Previous record**, **Next record** and **Record details**, which opens
+  the frame viewer (also a double-click on a thumbnail, the full frame or a
+  table row); there, **←/→** step through frames.
+
+**Stored vs reprocessed** below it says which processing core and
+calibration produced the stored results. Nothing in Inspect changes them:
+**Reprocess into a new file…** opens **Regenerate masks**, which writes a
+new file. The E-LUT shows **Not available** in this version.
 
 The status bar shows the file, its frame accounting, and the
 pixel-to-micron factor in use.

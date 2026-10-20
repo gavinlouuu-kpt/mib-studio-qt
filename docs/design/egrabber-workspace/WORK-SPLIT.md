@@ -37,6 +37,14 @@ Status: active, 2026-10-18. Progress, 2026-10-20:
     unread files sit in their own groups. The open run's identity is on its card.
   - Missing kit pieces for R1 are listed on #715: grouped table rows (one DataTable per group for
     now), search, filter chips and the row menu.
+- **B3:** in progress (#717; scope and rulings on #717).
+  - B3b (develop, review ABI 3): E-LUT provenance in the identity, track rows, reprocess one
+    record.
+  - B3a (on this branch): R3 Inspect on the kit from today's commands: sub-views Scatter /
+    Records / Frames, the record card (frame · object, Raw / Contour / Mask crops and the full
+    frame, stored values, what is recorded), the Stored card, the scatter in the kit's colours.
+  - B3c (after the sync): wire the E-LUT, linked track records and stored-vs-reprocessed.
+    Regenerate provenance and Compare are #754. Kit requests for R3 are on #715.
 - **Kit:** DataTable, CellImage, OptionGroup and Notice are in #714; NumberField is requested
   (#730), and TextField, overflow and more than four colours (#738).
 
@@ -102,7 +110,7 @@ app-local markup until they land.
 | B0 | none | One review implementation (#512) | nothing | none |
 | B1 | R1 Open | Review shell on the kit (#269): in review (B1a #746 and B1b #747 merged; R1 grouping) | B0 | DataTable |
 | B2 | R2 Overview | S6; statistics from the #523 worker | B1, A2 | DataTable |
-| B3 | R3 Inspect | S6 | B1 | DataTable, CellImage |
+| B3 | R3 Inspect | S6: in progress (B3b develop, B3a this branch, then B3c) | B1 | DataTable, CellImage |
 | B4 | R6 Export | Parity (#269) | B1 | OptionGroup, DataTable |
 | B5 | Studio mount | S6 | B3 | none |
 

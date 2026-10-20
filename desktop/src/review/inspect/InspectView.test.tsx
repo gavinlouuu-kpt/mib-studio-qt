@@ -363,6 +363,9 @@ it("asks the backend for each image view's overlay and crops the record's box", 
   });
   await settle();
   expect(lastFrame()).toMatchObject({ overlay: 2, roiOverlay: false });
+  const roi = Array.from(host.querySelectorAll("label")).find((l) => l.textContent?.trim() === "ROI")!.querySelector("input")!;
+  await click(roi);
+  expect(lastFrame()).toEqual({ dataset: 0, index: "0", overlay: 2, roiOverlay: true });
 
   for (const [view, mode] of [["Contour", 1], ["Mask", 3], ["Raw", 0]] as const) {
     crops.length = 0;
@@ -381,7 +384,7 @@ it("asks the backend for each image view's overlay and crops the record's box", 
   await click(button("Next record"));
   expect(lastFrame()).toEqual({ dataset: 0, index: "1", overlay: 0, roiOverlay: false });
   await click(button("Full frame"));
-  expect(lastFrame()).toEqual({ dataset: 0, index: "1", overlay: 2, roiOverlay: false });
+  expect(lastFrame()).toEqual({ dataset: 0, index: "1", overlay: 2, roiOverlay: true });
   expect((host.querySelector(".canvas-wrap.preview") as HTMLElement).hidden).toBe(false);
 });
 

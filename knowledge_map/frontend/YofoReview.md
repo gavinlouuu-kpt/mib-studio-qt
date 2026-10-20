@@ -9,7 +9,7 @@ menus, exports and update flow below).
 
 **Source:** `desktop/review.html`, `desktop/src/review/` (`main.tsx`,
 `ReviewApp.tsx`, `ReviewPanel.tsx`, `RegenerateMasks.tsx`, `review.css`,
-`charts/`, `exports/`),
+`charts/`, `exports/`, `open/`, `inspect/`, `shell/`),
 `desktop/src-tauri/tauri.review.conf.json`, cargo feature `review-only` in
 `desktop/src-tauri/Cargo.toml` (features `studio` / `review-only`),
 `src/main.rs` + `src/review_app.rs`, `src/review.rs`, `src/review_packet.rs`,
@@ -57,7 +57,7 @@ to see the UI, or build a release binary.
 ## `ReviewPanel` (shared module)
 
 `src/review/ReviewPanel.tsx` owns the review state (file info, metrics
-page, selection, sub-tab) and the `"review"` / `"viewer"` slots of the
+page, selection, sub-view and set, the record card's image view) and the `"review"` / `"viewer"` slots of the
 host's `FramePullScheduler`, and imports `review.css` itself (the host page
 needs no stylesheet). The host supplies: `ready` (backend initialized), the
 scheduler, `fitWindow`, a `log` sink and three hooks — `beforeLoad` (MIB
@@ -145,12 +145,14 @@ The Qt tab's layout per set (Valid / Invalid, or "Frames" for a recording):
   ROI change. Cells follow the image aspect (`imageBand`: a 512×96 frame is a
   128×24 band of the letterboxed tile; the Qt KeepAspectRatio rule). Arrow
   keys move the selection, Enter opens the viewer.
-- **Preview + table** (`ReviewPanel.tsx`) — the selected frame at full
-  resolution with the backend overlay / ROI over the paged metrics table
-  (100 rows per page, `metricsColumns.ts`: every Qt column, default set,
-  "Columns…" chooser persisted in `localStorage` key `yofo.review.columns`;
-  recording files show index + timestamp only). Grid, table and preview
-  share one selection; the table pages to follow it.
+- **Record card + table** (`ReviewPanel.tsx`, `inspect/`) — the selected
+  record's image (the full frame at full resolution with the backend
+  overlay / ROI, or a crop, see R3 Inspect below) beside the paged records
+  table (kit `DataTable`, 100 rows per page, `metricsColumns.ts`: every Qt
+  column, default set, "Columns…" chooser persisted in `localStorage` key
+  `yofo.review.columns`; recording files show index + timestamp only).
+  Scatter, grid, table and record card share one selection; the table pages
+  to follow it.
 - **`FrameViewer.tsx`** — in-app overlay (scheduler slot "viewer"): frame
   prev/next (←/→, wraps), multi-image series (↑/↓; frame → series 1…n),
   zoom Fit / 1× / 2× / 4×, the frame's key metrics, Esc closes.
@@ -174,10 +176,16 @@ under Xvfb with the dev server running.
 ## Charts view (PR 3)
 
 Experiment files only (recording files carry no metrics). `charts/ChartsView.tsx`:
-scatter on the left, the panel's preview pane over the ring-width histogram
-on the right; clicking a point selects that valid cell (same selection as
-the Frames view, so the table page, preview and viewer follow); ←/→ step
-through the valid set. Both charts are `<canvas>` with no chart library.
+scatter on the left, an optional frame pane (`framePane`, omitted by R3
+Inspect, whose record card sits beside the view) over the ring-width
+histogram on the right; clicking a point selects that valid cell (same
+selection as the Frames view, so the table page, record card and viewer
+follow); ←/→ step through the valid set. Both charts are `<canvas>` with no
+chart library; since #717 B3a they draw with the kit's colours
+(`charts/chartPalette.ts`, the `tokens.css` values mirrored for the
+offscreen exports: valid records in the accent colour, the inspected
+record outlined in the inspect colour), on screen and in exported PNGs
+alike (charts are compared with Qt through their data, `tools/review_parity`).
 
 - **Data** — `fetch_review_scatter` (columnar: area µm² with the recorded
   factor, deformability, valid-set position, frame index, ring ratio);
@@ -433,13 +441,74 @@ exists.
 - **Overview (R2):** a "not available yet" `Notice`: the statistics come
   from the #523 worker (step B2), and the shell shows no number it does not
   have.
-- **Inspect:** today's `ReviewPanel`, unchanged (frames, charts, the
-  toolbar's exports and regenerate). It stays mounted (hidden) while another
+- **Inspect (R3, #717 B3a):** `ReviewPanel` on the kit, see **R3 Inspect**
+  below. It stays mounted (hidden) while another
   stage shows, so the open run, the selection and a running job survive a
   stage change. A launch file (`review_launch_path`, `?open=`) or a macOS
   open request (`review_take_open_request`) opens straight into Inspect.
 - **Export (R6):** a `Notice` and a `FactList` naming where each export is on
   Inspect's toolbar, with "Go to Inspect"; the export view itself is step B4.
+
+## R3 Inspect (#717 B3a)
+
+`ReviewPanel` laid out as the Penpot R3 board (`dcdbaa6b-9790-4e69-bea4-936747f588b1`)
+from the commands the review contract already has; nothing the file does not
+record is shown as a value.
+
+- **Toolbar** (kit `Toolbar`): the sub-views **Scatter** (experiment files:
+  `ChartsView` in a `Card`, valid records only), **Records** (the table
+  alone) and **Frames** (the thumbnail grid over the table; the default
+  after an open, as before), then the set: **Valid Frames (n)** /
+  **Invalid Frames (n)** (**Frames (n)** for a recording). A second row
+  keeps the file actions and every export (Select HDF File…, Close File,
+  Export Metrics to CSV…, Export All…, More…: Batch Metrics…, Batch Export
+  All…, Export Charts…, Regenerate masks…), the overlay select (all five
+  modes) and ROI, which apply to the thumbnails, the full frame and the
+  viewer. A sub-view only changes what is shown and keeps the selection;
+  the scatter from the invalid set moves to the valid set with nothing
+  selected, and the invalid set from the scatter shows its frames.
+- **Selected measurement** (`inspect/InspectCards.tsx` `RecordCard`): the
+  record named `frame N · object M` (coordinator ruling on #717: files carry
+  no record id and none is invented; the kit's `RecordIdentity` needs one,
+  so the card uses its layout classes until #715 makes it optional), its
+  place (`valid record i of n · run R · sample S`) and the run's declared
+  provenance (experiment, snapshot version, calibration record, from the
+  B1a identity). **Raw / Contour / Mask** ask `fetch_review_frame` for
+  overlay None / AllContour / AllMask without the ROI and cut the square
+  around the record's bounding box on the client (`cropSquare`: 1.6 × the
+  box, at least 24 px, shifted inside the image; `inspect/packetCrop.ts`
+  draws it through a canvas into a data URL for the kit's `CellImage`,
+  which takes a URL). **Full frame** is the canvas the panel always drew
+  (the toolbar's overlay and ROI; double-click opens the viewer). Views a
+  record cannot show are disabled with the reason (a recording has no
+  objects, a set without masks has no Contour / Mask); a crop that cannot
+  be drawn says so, and a set without images shows the kit's "Image not
+  recorded". The stored values (`measurementFacts`: area, deformability,
+  stored E, ring ratio, timestamp, validation, track, objects in frame, the
+  core) and **What is recorded?** (`recordedFacts`, from dataset presence:
+  measurement, full frame, mask / contour, image series). **Previous /
+  Next record** step through the set (its rows when it stores no images,
+  #649) and **Record details** opens the frame viewer.
+- **Stored vs reprocessed** (`StoredCard`): the core the stored results
+  came from (at acquisition), the run snapshot, the calibration and px→µm
+  (recorded or fallback, in the warn tone), the run accounting, and E-LUT
+  **Not available** (the provenance is in the review contract from B3b,
+  wired in B3c). "Reprocessing writes a new file; this view lists no
+  history" (#754 defers regenerate provenance and Compare); **Reprocess
+  into a new file…** opens the Regenerate masks dialog.
+- **Records** (kit `DataTable`, compact): the selected row in the inspect
+  colour (`aria-current`); a double-click on a row opens the viewer; ◀ / ▶
+  page (the kit has no paging, #715).
+- **Not shown** (rulings on #717): the analysis plan, populations, polygon
+  and E gates, method names, Open in window.
+- **Tests:** `inspect/inspectModel.test.ts` (names, crop square, view
+  availability, facts) and `inspect/InspectView.test.tsx` (the panel over a
+  mocked IPC: the overlay each view asks for and the crop rectangle, the
+  reasons, stepping, the viewer from Record details / full frame / a row,
+  sub-views keeping the selection, the Stored card and Reprocess, and every
+  pre-B3a control still reachable). `reviewIpc.golden.json` is unchanged:
+  the same commands and arguments flow as before (the test clicks
+  **Scatter** where it clicked **Charts**).
 
 ## CI
 
