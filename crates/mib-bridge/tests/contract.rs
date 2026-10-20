@@ -941,7 +941,8 @@ fn monitoring_cells_end_to_end() {
     // Before init: no listing, no pin, no image.
     let before: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_monitoring_cells()).unwrap();
     assert_eq!(before["valid"], false);
-    assert!(!bridge.pin_mut().fetch_monitoring_cell_image(0, 1, 1, 0, false).valid);
+    let none = bridge.pin_mut().fetch_monitoring_cell_image(0, 1, 1, 0, false);
+    assert!(!none.frame.valid && !none.capture_mismatch && none.message == "Backend not initialized", "{none:?}");
 
     assert!(bridge.pin_mut().initialize(&data_dir.to_string_lossy()));
     let empty: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_monitoring_cells()).unwrap();
@@ -980,12 +981,12 @@ fn monitoring_cells_end_to_end() {
     );
     assert_eq!((cell["capture_epoch"].clone(), listing["ring_capture_epoch"].clone()),
                (serde_json::json!(epoch.to_string()), serde_json::json!(epoch.to_string())));
-    let image = bridge.pin_mut().fetch_monitoring_cell_image(gen, epoch, frame, object, false);
+    let image = bridge.pin_mut().fetch_monitoring_cell_image(gen, epoch, frame, object, false).frame;
     assert!(image.valid && image.frame_index == frame, "{image:?}");
     assert_eq!((image.width, image.height), (cell["image"]["width"].as_u64().unwrap(), cell["image"]["height"].as_u64().unwrap()));
     assert_eq!(image.data.len() as u64, image.width * image.height);
     assert!(image.data.iter().any(|&p| p >= 200), "the crop holds the bright cell");
-    let mask = bridge.pin_mut().fetch_monitoring_cell_image(gen, epoch, frame, object, true);
+    let mask = bridge.pin_mut().fetch_monitoring_cell_image(gen, epoch, frame, object, true).frame;
     assert!(mask.valid && mask.width == image.width && mask.data.iter().any(|&p| p > 0), "the mask crop");
 
     // Pins: the reply JSON, idempotence, run rules, the count cap, unpin and clear.
@@ -1016,9 +1017,10 @@ fn monitoring_cells_end_to_end() {
     let full = pin(&mut bridge, 0, rows[0].frame_index, rows[0].object_id);
     assert_eq!(full["outcome"], 5, "LimitReached: {full}");
     let image = bridge.pin_mut().fetch_monitoring_cell_image(0, epoch, newest.frame_index, newest.object_id, false);
-    assert!(image.valid, "a pinned cell serves its image");
-    assert!(!bridge.pin_mut().fetch_monitoring_cell_image(0, epoch + 1, newest.frame_index, newest.object_id, false).valid,
-            "never across a capture");
+    assert!(image.frame.valid && !image.capture_mismatch && image.message.is_empty(), "a pinned cell serves its image");
+    let other = bridge.pin_mut().fetch_monitoring_cell_image(0, epoch + 1, newest.frame_index, newest.object_id, false);
+    assert!(!other.frame.valid && other.capture_mismatch && other.message.contains("image refused"),
+            "never across a capture: {other:?}");
     let unpin = bridge.pin_mut().monitoring_cell_unpin(0, epoch, newest.frame_index, newest.object_id);
     assert!(unpin.ok && unpin.message == "unpinned", "{unpin:?}");
     assert!(!bridge.pin_mut().monitoring_cell_unpin(0, epoch, newest.frame_index, newest.object_id).ok, "not pinned twice");
@@ -1026,6 +1028,22 @@ fn monitoring_cells_end_to_end() {
     assert!(clear.ok && clear.message == "cleared 15 pin(s)", "{clear:?}");
     let after: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_monitoring_cells()).unwrap();
     assert!(after["pins"].as_array().unwrap().is_empty() && after["stats"]["pin_bytes"] == "0", "{after}");
+
+    // Review round 2: another processing ROI is another capture, at the moment it is set. The pin
+    // and the strip cell of the old capture are refused at once, with the reason.
+    assert_eq!(pin(&mut bridge, 0, newest.frame_index, newest.object_id)["outcome"], 0);
+    assert!(bridge.pin_mut().set_processing_roi(0, 0, 64, 32).ok);
+    for (f, o, what) in [(newest.frame_index, newest.object_id, "pinned"), (frame, object, "strip")] {
+        let refused = bridge.pin_mut().fetch_monitoring_cell_image(0, epoch, f, o, false);
+        assert!(!refused.frame.valid && refused.capture_mismatch && refused.message.contains("the processing ROI changed"),
+                "the old {what} image is refused: {refused:?}");
+    }
+    let stale = pin(&mut bridge, 0, frame, object);
+    assert_eq!(stale["outcome"], 6, "{stale}");
+    let changed: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_monitoring_cells()).unwrap();
+    assert!(changed["pins"].as_array().unwrap().is_empty() && changed["ring_capture_epoch"] != epoch.to_string(), "{changed}");
+    assert_eq!((changed["last_capture_change"]["reason"].clone(), changed["last_capture_change"]["pins_dropped"].clone()),
+               (serde_json::json!("the processing ROI changed"), serde_json::json!(1)), "{changed}");
 
     assert!(bridge.pin_mut().stop_capture().ok);
     bridge.pin_mut().shutdown();

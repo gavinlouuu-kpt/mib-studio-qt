@@ -10,7 +10,7 @@ import {invoke} from "./transport";
 import { decodeFramePacket, decimalU64 } from "./framePacket";
 import { FRAME_PACKET } from "./bridgeContract";
 import { cellKeyArgs, decodeMonitoringCellPinReply, decodeMonitoringCells, type MonitoringCellKeyInput } from "./monitoringCells";
-export type { MonitoringCell, MonitoringCellKey, MonitoringCellKeyInput, MonitoringCellPinReply, MonitoringCellsListing, MonitoringCellsReply } from "./monitoringCells";
+export type { MonitoringCaptureChange, MonitoringCell, MonitoringCellKey, MonitoringCellKeyInput, MonitoringCellPinReply, MonitoringCellsListing, MonitoringCellsReply } from "./monitoringCells";
 import { discoverCameras, type PollOptions } from "./discovery";
 export type { FrameMeta, FramePacket } from "./framePacket";
 import { decodeEvents, decodeCommandResult, decodeExperimentReadiness, decodeExperimentStatus, decodeProcessingStats, wireU64, type CmdResult } from "./eventAdapter";
@@ -1008,7 +1008,9 @@ export const bridge = {
   monitoringCellUnpin: (key: MonitoringCellKeyInput) => invokeCommand("monitoring_cell_unpin", cellKeyArgs(key)),
   monitoringCellClearPins: () => invokeCommand("monitoring_cell_clear_pins"),
   /** The owned Mono8 crop ("image", pull kind 5) or its mask ("mask", 6) of a pinned or strip
-   *  cell; `valid: false` when the backend no longer holds it (the listing says why). */
+   *  cell of the current capture; `valid: false` when the backend no longer holds it (the listing
+   *  says why). Rejects with "CAPTURE_MISMATCH: <reason>" for an identity of another capture
+   *  (`monitoringCellCaptureMismatch` reads the reason): never served across a capture change. */
   fetchMonitoringCellImage: async (key: MonitoringCellKeyInput, layer: "image" | "mask" = "image") => {
     const kind = layer === "mask" ? FRAME_PACKET.pull_kinds.monitoring_cell_mask : FRAME_PACKET.pull_kinds.monitoring_cell_image;
     return decodeFramePacket(await invoke<ArrayBuffer>("fetch_monitoring_cell_packet", { ...cellKeyArgs(key), layer }), kind);

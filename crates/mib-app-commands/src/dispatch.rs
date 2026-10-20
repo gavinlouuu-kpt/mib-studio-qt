@@ -1236,9 +1236,10 @@ mod tests {
         let e = dispatch(&state, &host, "fetch_monitoring_cell_packet",
             json!({ "startGeneration": "0", "captureEpoch": "1", "frameIndex": "1", "objectId": 0, "layer": "rgb" })).unwrap_err();
         assert!(e.contains("Invalid layer"), "{e}");
-        // Not held: an empty packet of the requested kind.
+        // Not held (in the current capture): an empty packet of the requested kind.
+        let now = reply("fetch_monitoring_cells", Value::Null)["ring_capture_epoch"].clone();
         for (layer, kind) in [("image", 5), ("mask", 6)] {
-            let p = packet(json!({ "startGeneration": "0", "captureEpoch": "1", "frameIndex": "1", "objectId": 0, "layer": layer }));
+            let p = packet(json!({ "startGeneration": "0", "captureEpoch": now, "frameIndex": "1", "objectId": 0, "layer": layer }));
             assert_eq!((p.len(), header_u32(&p, 8), header_u32(&p, 12)), (crate::frame_packet::HEADER_BYTES, 0, kind));
         }
 
@@ -1292,6 +1293,11 @@ mod tests {
         let other = crate::monitoring_cell_pin(&state, "0".into(), next_epoch, cell["frame_index"].as_str().unwrap().into(),
                                                cell["object_id"].as_i64().unwrap() as i32).unwrap();
         assert_eq!((other["ok"].clone(), other["outcome"].clone()), (json!(false), json!(6)), "CaptureMismatch: {other}");
+        // An image of another capture is the CAPTURE_MISMATCH error with the reason, not a packet.
+        let mut other_id = id.clone();
+        other_id["captureEpoch"] = json!((epoch.parse::<u64>().unwrap() + 1).to_string());
+        let e = dispatch(&state, &host, "fetch_monitoring_cell_packet", other_id).unwrap_err();
+        assert!(e.starts_with(&format!("{}: image refused", crate::frame_packet::MONITORING_CELL_CAPTURE_MISMATCH)), "{e}");
         assert_eq!(reply("fetch_monitoring_cells", Value::Null)["pins"].as_array().unwrap().len(), 1);
         let u = reply("monitoring_cell_unpin", json!({ "startGeneration": cell["start_generation"],
                       "captureEpoch": cell["capture_epoch"], "frameIndex": cell["frame_index"], "objectId": cell["object_id"] }));
@@ -1300,7 +1306,18 @@ mod tests {
         assert_eq!((c["ok"].clone(), c["message"].clone()), (json!(true), json!("cleared 0 pin(s)")), "{c}");
         assert!(crate::monitoring_cell_clear_pins(&state).unwrap().ok);
 
+        // Review round 2: the camera stopping ends the capture at once; its cells are refused.
+        assert_eq!(reply("monitoring_cell_pin", pin_args.clone())["outcome"], json!(0));
         assert_eq!(reply("stop_capture", Value::Null)["ok"], json!(true));
+        let e = dispatch(&state, &host, "fetch_monitoring_cell_packet", id.clone()).unwrap_err();
+        assert!(e.starts_with("CAPTURE_MISMATCH: image refused") && e.contains("(the camera stopped)"), "{e}");
+        assert_eq!(reply("monitoring_cell_pin", pin_args.clone())["outcome"], json!(6));
+        let u = reply("monitoring_cell_unpin", json!({ "startGeneration": cell["start_generation"],
+                      "captureEpoch": cell["capture_epoch"], "frameIndex": cell["frame_index"], "objectId": cell["object_id"] }));
+        assert!(u["ok"] == json!(false) && u["message"].as_str().unwrap().contains("dropped"), "{u}");
+        let l = reply("fetch_monitoring_cells", Value::Null);
+        assert!(l["pins"].as_array().unwrap().is_empty() && l["last_capture_change"]["reason"] == json!("the camera stopped"), "{l}");
+
         state.bridge.lock().unwrap().pin_mut().shutdown();
         let _ = std::fs::remove_dir_all(&frames);
         let _ = std::fs::remove_dir_all(&data);

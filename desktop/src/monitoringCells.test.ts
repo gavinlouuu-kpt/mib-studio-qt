@@ -1,11 +1,14 @@
 // Bridge ABI 41 (#716 A6a): the live cell client against a mocked transport. Identities travel as
 // canonical decimal strings, malformed ones never reach the transport, the listing and pin replies
-// are checked against the contract, and the pixels come back as frame packets of kind 5 / 6.
+// are checked against the contract, and the pixels come back as frame packets of kind 5 / 6. An
+// image pull of another capture is the CAPTURE_MISMATCH error (review round 2).
 import { beforeEach, expect, it, vi } from "vitest";
 import cellGolden from "../../crates/mib-bridge/contract/fixtures/monitoring-cell-v2.json";
 import { bridge } from "./bridge";
-import { MONITORING_CELLS, MONITORING_CELL_PIN_OUTCOMES } from "./bridgeContract";
-import { cellKeyArgs, cellKeyString, decodeMonitoringCellPinReply, decodeMonitoringCells, pinOutcomeName } from "./monitoringCells";
+import { MONITORING_CELLS, MONITORING_CELL_ERROR_CODES, MONITORING_CELL_PIN_OUTCOMES } from "./bridgeContract";
+import {
+  cellKeyArgs, cellKeyString, decodeMonitoringCellPinReply, decodeMonitoringCells, monitoringCellCaptureMismatch, pinOutcomeName,
+} from "./monitoringCells";
 
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -23,6 +26,7 @@ const listing = (extra: Record<string, unknown> = {}) => ({
   valid: true, scope_start_generation: "18446744073709551615", ring_start_generation: "0", ring_capture_epoch: "3", revision: "17",
   strip: [cell("9007199254740993")],
   pins: [cell("12", { image: null, no_image_reason: "no image: the frame left the monitoring buffer before it was pinned" })],
+  last_capture_change: null,
   stats: { strip_cells: 1, strip_bytes: "2880", pins: 1, pin_bytes: "0" },
   caps: { strip_max_cells: 24, max_pins: 16 }, ...extra,
 });
@@ -48,6 +52,13 @@ it("fetches and checks the listing: exact identities, image xor reason", async (
   expect(l.pins[0].image).toBeNull();
   expect(l.pins[0].no_image_reason).toContain("left the monitoring buffer");
   expect(l.strip[0].ring_ratio).toBeNull();
+  expect(l.last_capture_change).toBeNull();
+  // After a capture change the listing says why, and what it dropped.
+  invoke.mockResolvedValueOnce(listing({ ring_capture_epoch: "4", strip: [], pins: [],
+    last_capture_change: { capture_epoch: "4", reason: "the camera stopped", pins_dropped: 2, strip_dropped: 7 } }));
+  const changed = await bridge.fetchMonitoringCells();
+  if (!changed.valid) throw new Error("valid listing expected");
+  expect(changed.last_capture_change).toEqual({ capture_epoch: "4", reason: "the camera stopped", pins_dropped: 2, strip_dropped: 7 });
   invoke.mockResolvedValueOnce({ valid: false });
   expect(await bridge.fetchMonitoringCells()).toEqual({ valid: false });
 });
@@ -62,6 +73,11 @@ it.each([
   ["a non-canonical generation", { scope_start_generation: "07" }],
   ["a cell without its capture epoch", { strip: [cell("1", { capture_epoch: undefined })] }],
   ["a listing without the ring's capture epoch", { ring_capture_epoch: 3 }],
+  ["a strip cell of another capture", { strip: [cell("1", { capture_epoch: "2" })] }],
+  ["a pin of another capture", { pins: [cell("1", { capture_epoch: "4" })] }],
+  ["a listing without last_capture_change", { last_capture_change: undefined }],
+  ["a capture change without its reason", { last_capture_change: { capture_epoch: "3", reason: 1, pins_dropped: 0, strip_dropped: 0 } }],
+  ["a capture change with a rounded epoch", { last_capture_change: { capture_epoch: 3, reason: "x", pins_dropped: 0, strip_dropped: 0 } }],
 ])("rejects %s", async (_why, extra) => {
   invoke.mockResolvedValueOnce(listing(extra));
   await expect(bridge.fetchMonitoringCells()).rejects.toThrow("MONITORING_CELLS_INVALID");
@@ -147,6 +163,19 @@ it("pulls the crop and the mask as frame packets of their own kinds", async () =
   invoke.mockResolvedValueOnce(empty);
   const none = await bridge.fetchMonitoringCellImage({ start_generation: "1", capture_epoch: "2", frame_index: "1", object_id: 0 });
   expect([none.valid, none.data.length]).toEqual([false, 0]);
+});
+
+it("reports an image of another capture as CAPTURE_MISMATCH with the plain reason", async () => {
+  expect(MONITORING_CELL_ERROR_CODES).toEqual({ capture_mismatch: "CAPTURE_MISMATCH" });
+  const reason = "image refused: frame 1 object 0 is from capture 2, but the current capture is 3 (the camera stopped)";
+  invoke.mockRejectedValueOnce(`CAPTURE_MISMATCH: ${reason}`); // both transports reject with the error string
+  const pull = bridge.fetchMonitoringCellImage({ start_generation: "0", capture_epoch: "2", frame_index: "1", object_id: 0 });
+  const error = await pull.then(() => null, (e: unknown) => e);
+  expect(monitoringCellCaptureMismatch(error)).toBe(reason);
+  expect(monitoringCellCaptureMismatch(new Error(`CAPTURE_MISMATCH: ${reason}`))).toBe(reason); // or an Error wrapping it
+  expect(monitoringCellCaptureMismatch("INVALID_ARGUMENTS: x")).toBeNull();
+  expect(monitoringCellCaptureMismatch(new Error("FRAME_PACKET_INVALID_FLAGS_OR_SOURCE"))).toBeNull();
+  expect(monitoringCellCaptureMismatch(undefined)).toBeNull();
 });
 
 it("decodes a listing straight from the decoder too", () => {

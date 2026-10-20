@@ -751,8 +751,15 @@ async fn live_cells_over_the_websocket() {
     let cleared = ok(call(&mut controller, id, "monitoring_cell_clear_pins", Value::Null, &mut events).await);
     assert_eq!(cleared["message"], json!("cleared 1 pin(s)"), "{cleared}");
 
+    // Review round 2: once the camera stops, the viewer's pull of that capture's cell is the
+    // CAPTURE_MISMATCH error with the reason, over the socket as over Tauri.
     id += 1;
     call(&mut controller, id, "stop_capture", Value::Null, &mut events).await.unwrap();
+    let mut args = identity.clone();
+    args["layer"] = json!("image");
+    id += 1;
+    let refused = call(&mut viewer, id, "fetch_monitoring_cell_packet", args, &mut events).await.unwrap_err();
+    assert!(refused.starts_with("CAPTURE_MISMATCH: image refused") && refused.contains("the camera stopped"), "{refused}");
     controller.close(None).await.unwrap();
     viewer.close(None).await.unwrap();
     server.state().bridge.lock().unwrap().pin_mut().shutdown();

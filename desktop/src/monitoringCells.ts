@@ -5,7 +5,7 @@
 // This module only types and checks what the commands return. Pixels never
 // travel in JSON: `bridge.fetchMonitoringCellImage` pulls a frame packet
 // (pull kind 5 = image, 6 = mask) by the cell's identity.
-import { MONITORING_CELLS, MONITORING_CELL_PIN_OUTCOMES } from "./bridgeContract";
+import { MONITORING_CELLS, MONITORING_CELL_ERROR_CODES, MONITORING_CELL_PIN_OUTCOMES } from "./bridgeContract";
 import { decimalU64 } from "./framePacket";
 
 /** A monitoring row's identity: the run active when it was detected (0 = outside a run), the
@@ -60,13 +60,24 @@ export interface MonitoringCell extends MonitoringCellKey {
   no_image_reason: string | null;
 }
 
+/** The last capture change the backend applied: pins belong to the capture that made them, so the
+ *  strip and the pins of the earlier capture were dropped at that moment. */
+export interface MonitoringCaptureChange {
+  /** The capture that began. */
+  capture_epoch: string;
+  /** Why, in plain words ("the camera stopped", "the processing ROI changed", ...). */
+  reason: string;
+  pins_dropped: number;
+  strip_dropped: number;
+}
+
 export interface MonitoringCellsListing {
   valid: true;
   /** The latest run started ("0" before the first); pins belong to it. */
   scope_start_generation: string;
   /** The strip's context: the active run, or "0" outside a run ... */
   ring_start_generation: string;
-  /** ... and the current capture: a pin must name it (else CaptureMismatch). */
+  /** The current capture: every listed cell is of it, and a pin must name it (else CaptureMismatch). */
   ring_capture_epoch: string;
   /** Bumps whenever the strip or the pins change. */
   revision: string;
@@ -74,6 +85,8 @@ export interface MonitoringCellsListing {
   strip: MonitoringCell[];
   /** In pin order. */
   pins: MonitoringCell[];
+  /** null when the capture has not changed since the backend started. */
+  last_capture_change: MonitoringCaptureChange | null;
   /** Counts bounded by a cap are numbers; bytes and counters are decimal strings. */
   stats: Record<string, number | string>;
   /** The backend's caps (bridge-contract.json `monitoring_cells`). */
@@ -202,17 +215,45 @@ export function decodeMonitoringCells(raw: unknown): MonitoringCellsReply {
   if (raw.strip.length > MONITORING_CELLS.strip_max_cells) invalid("strip over its cap");
   if (raw.pins.length > MONITORING_CELLS.max_pins) invalid("pins over their cap");
   if (!isObject(raw.stats) || !isObject(raw.caps)) invalid("stats / caps");
+  let change: MonitoringCaptureChange | null = null;
+  if (raw.last_capture_change !== null) {
+    if (!isObject(raw.last_capture_change)) invalid("last_capture_change");
+    const c = raw.last_capture_change;
+    if (typeof c.reason !== "string") invalid("last_capture_change.reason");
+    change = {
+      capture_epoch: decimal(c.capture_epoch, "last_capture_change.capture_epoch"),
+      reason: c.reason,
+      pins_dropped: integer(c.pins_dropped, "last_capture_change.pins_dropped"),
+      strip_dropped: integer(c.strip_dropped, "last_capture_change.strip_dropped"),
+    };
+  }
+  const ringCaptureEpoch = decimal(raw.ring_capture_epoch, "ring_capture_epoch");
+  const strip = raw.strip.map(decodeMonitoringCell);
+  const pins = raw.pins.map(decodeMonitoringCell);
+  // The backend lists cells of the current capture only: anything else is a contract breach.
+  if ([...strip, ...pins].some(c => c.capture_epoch !== ringCaptureEpoch)) invalid("a cell of another capture is listed");
   return {
     valid: true,
     scope_start_generation: decimal(raw.scope_start_generation, "scope_start_generation"),
     ring_start_generation: decimal(raw.ring_start_generation, "ring_start_generation"),
-    ring_capture_epoch: decimal(raw.ring_capture_epoch, "ring_capture_epoch"),
+    ring_capture_epoch: ringCaptureEpoch,
     revision: decimal(raw.revision, "revision"),
-    strip: raw.strip.map(decodeMonitoringCell),
-    pins: raw.pins.map(decodeMonitoringCell),
+    strip,
+    pins,
+    last_capture_change: change,
     stats: raw.stats as Record<string, number | string>,
     caps: raw.caps as Record<string, number>,
   };
+}
+
+/** The plain reason when `error` (a rejected fetchMonitoringCellImage) is the backend refusing an
+ *  identity of another capture than the current one (bridge-contract.json
+ *  `monitoring_cells.error_codes.capture_mismatch`); null for any other error. The cell is gone
+ *  for good: refresh the listing rather than retry. */
+export function monitoringCellCaptureMismatch(error: unknown): string | null {
+  const text = typeof error === "string" ? error : error instanceof Error ? error.message : null;
+  const prefix = `${MONITORING_CELL_ERROR_CODES.capture_mismatch}: `;
+  return text !== null && text.startsWith(prefix) ? text.slice(prefix.length) : null;
 }
 
 const PIN_OUTCOMES = new Set<number>(Object.values(MONITORING_CELL_PIN_OUTCOMES));

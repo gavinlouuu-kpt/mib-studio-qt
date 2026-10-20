@@ -43,6 +43,7 @@ struct BridgeEvent;
 struct BridgeExperimentStatus;
 struct BridgeExperimentReadiness;
 struct BridgeFrame;
+struct BridgeMonitoringCellImage;
 struct BridgeMonitoringSnapshot;
 struct BridgeProcessingStats;
 struct BridgeTriggerStatus;
