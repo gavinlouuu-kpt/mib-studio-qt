@@ -527,28 +527,35 @@ Additive over ABI 40. The backend now owns bounded copies of detected cells
 named by a stable identity, so the workspace Live view (A6b) can show a recent-cells strip and
 click-to-pin without the client holding pixels or racing ring eviction.
 
-- **Identity.** `(start_generation, frame_index, object_id)`. The monitoring ring tags every row
-  with the run active when it was appended (`ProcessingService::setMonitoringRunGeneration`, set by
-  [[ExperimentCoordinator]]; 0 = outside a run); frame indices restart each run, so the run's
-  `start_generation` (the same one `experiment_stop` names in ABI 40) disambiguates.
-  `BridgeMonitoringRow` gains `start_generation: u64`; the JSON `MonitoringRow` of
-  `fetch_monitoring_snapshot` gains `start_generation` (a canonical decimal string; omitted from
-  review rows, which have no run). Otherwise the snapshot is unchanged; internally it now reads POD
+- **Identity.** `(start_generation, capture_epoch, frame_index, object_id)`. The monitoring ring
+  tags every row with the run active when it was appended (`ProcessingService::setMonitoringRunGeneration`,
+  set by [[ExperimentCoordinator]]; 0 = outside a run; the same `start_generation` that
+  `experiment_stop` names in ABI 40) and with the **capture epoch** of its frame
+  (`ProcessingService::monitoringCaptureEpoch`): frame indices restart with a run, with a new
+  FrameStore (camera mode switch) and with a store resize, and the epoch moves on with each capture
+  change and never repeats. `BridgeMonitoringRow` gains `start_generation: u64` and
+  `capture_epoch: u64`; the JSON `MonitoringRow` of `fetch_monitoring_snapshot` gains both (canonical
+  decimal strings; omitted from review rows, which have no run). Internally the snapshot now reads POD
   rows through `visitMonitoringNewest` instead of copying the whole ring.
+- **Geometry.** Cell geometry (centroid, bbox, crop origin) and snapshot centroids are in the row
+  image's coordinates (the processing ROI) in both realtime modes: async-batch rows, measured on the
+  full frame, are translated by the ROI origin their ring tag records (contract `geometry`).
+  Before review round 1 of #749 the snapshot reported full-frame centroids in async-batch mode and
+  ROI centroids inline, and the cell crops were shifted in async-batch mode.
 - **cxx.** `fetch_monitoring_cells() -> String` (`{"valid":false}` before init),
-  `monitoring_cell_pin(expected_start_generation: u64, frame_index: u64, object_id: i32) -> String`,
-  `monitoring_cell_unpin(start_generation, frame_index, object_id) -> BridgeCommandResult`,
+  `monitoring_cell_pin(expected_start_generation: u64, capture_epoch: u64, frame_index: u64, object_id: i32) -> String`,
+  `monitoring_cell_unpin(start_generation, capture_epoch, frame_index, object_id) -> BridgeCommandResult`,
   `monitoring_cell_clear_pins() -> BridgeCommandResult`,
-  `fetch_monitoring_cell_image(start_generation, frame_index, object_id, mask: bool) -> BridgeFrame`
+  `fetch_monitoring_cell_image(start_generation, capture_epoch, frame_index, object_id, mask: bool) -> BridgeFrame`
   (Mono8, the owned crop; empty when not held). Facade: `BackendFacade::fetchMonitoringCellsJson`,
   `pinMonitoringCellJson`, `unpinMonitoringCell`, `clearMonitoringCellPins`,
   `fetchMonitoringCellImage`.
 - **Commands** (`mib-app-commands`, so Tauri and the WebSocket server alike):
   `fetch_monitoring_cells` (no args) → listing JSON; `monitoring_cell_pin`
-  (`expectedStartGeneration`, `frameIndex`: canonical decimal strings, `objectId`: integer) → pin
-  reply `{ok, outcome, message, cell, revision}`; `monitoring_cell_unpin` (`startGeneration`,
-  `frameIndex`, `objectId`) and `monitoring_cell_clear_pins` → `CmdResult`;
-  `fetch_monitoring_cell_packet` (`startGeneration`, `frameIndex`, `objectId`,
+  (`expectedStartGeneration`, `captureEpoch`, `frameIndex`: canonical decimal strings, `objectId`:
+  integer) → pin reply `{ok, outcome, message, cell, revision}`; `monitoring_cell_unpin`
+  (`startGeneration`, `captureEpoch`, `frameIndex`, `objectId`) and `monitoring_cell_clear_pins` →
+  `CmdResult`; `fetch_monitoring_cell_packet` (`startGeneration`, `captureEpoch`, `frameIndex`, `objectId`,
   `layer: "image" | "mask"`) → binary frame packet of the new **pull kinds 5
   (`monitoring_cell_image`) and 6 (`monitoring_cell_mask`)**, zero capture identities,
   `frame_index` / `timestamp_ns` of the row. Malformed identities or layers are error replies and
@@ -556,7 +563,10 @@ click-to-pin without the client holding pixels or racing ring eviction.
 - **Pin outcomes** (`monitoring_cell_pin_outcomes`): `Pinned` 0, `PinnedWithoutImage` 1,
   `AlreadyPinned` 2, `RunMismatch` 3 (`expectedStartGeneration` is neither 0 nor the latest run
   started, or the row belongs to another run, or a run started while the pin was taken),
-  `NotFound` 4, `LimitReached` 5. Pins and the strip are dropped when a run reaches Active.
+  `NotFound` 4, `LimitReached` 5, `CaptureMismatch` 6 (`captureEpoch` is not the current capture:
+  a cell is never served across a capture change, contract `capture_rules`). Pins and the strip are
+  dropped when a run reaches Active; the strip keeps only the current capture's cells; a pin taken
+  before a capture change keeps its own identity and pixels.
 - **Caps** (`monitoring_cells`, `static_assert`ed in `shim.cpp`, generated into
   `MONITORING_CELLS`): strip 24 cells / 4 MiB, pins 16 / 4 MiB, crop ≤ 256 px square (margin ≥ 8),
   row index 4096. Every reply is bounded by them.
@@ -569,12 +579,14 @@ click-to-pin without the client holding pixels or racing ring eviction.
   contract pull kind. New golden `contract/fixtures/monitoring-cell-v2.json` (Rust
   `monitoring_cell_packet_matches_shared_golden`, `framePacket.test.ts`).
 - **Tests:** `contract.rs` `monitoring_cells_end_to_end` (real detections from BMP blob frames
-  through the realtime path; strip, image/mask frames, outcomes 0/2/3/4/5, unpin, clear) and
+  through the realtime path; strip, image/mask frames, outcomes 0/2/3/4/5/6, unpin, clear) and
   `monitoring_cells_are_described`; `dispatch.rs` `monitoring_cells_through_dispatch`; `ws.rs`
   `live_cells_over_the_websocket` (viewer reads, viewer pins refused, controller pins shared) and
   the server's `live_cell_pins_are_control_only_but_reads_are_not`; C++ `backend.monitoring_cell_store`,
-  `e2e.monitoring_cells_facade`, `processing.monitoring_cell_concurrency` (TSan lane),
-  `performance.monitoring_cell_hot_path`; `monitoringCells.test.ts`.
+  `e2e.monitoring_cells_facade`, `processing.monitoring_cell_pipeline` (review round 1: crop pixels
+  with a nonzero ROI origin in both modes; capture identity across a FrameStore swap and a resize),
+  `processing.monitoring_cell_concurrency` (TSan lane), `performance.monitoring_cell_hot_path`;
+  `monitoringCells.test.ts`.
 
 ## ABI 40: the typed outcome in the reply, and the run a stop names (#741)
 

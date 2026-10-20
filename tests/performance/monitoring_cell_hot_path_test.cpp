@@ -1,9 +1,10 @@
 // monitoring_cell_hot_path_test (#716 A6a, bridge ABI 41) — what live cell
 // images cost the acquisition/processing path.
 //
-// The change on the hot path itself is one 8-byte store per monitoring append
-// (the run tag, into a preallocated array, under the lock the append already
-// holds). What remains is contention: readers of the monitoring ring hold the
+// The change on the hot path itself is one 24-byte store per monitoring append
+// (the row tag: run, capture epoch, geometry origin, into a preallocated array,
+// plus one compare of the frame's store generation, under the lock the append
+// already holds). What remains is contention: readers of the monitoring ring hold the
 // same lock. This measures it three ways, alternating windows with
 //   off    no reader;
 //   store  the live cell store at 500 Hz (refresh the strip, list it, copy

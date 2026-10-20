@@ -366,18 +366,29 @@ zero-fill it (NULL, core rebuilds the mask) and cores built before it ignore it.
   seam that fills the ring without the activity gate. `BatchPipelineStats`
   carries `queueCapacity` (configured `maxQueuedFrames`) so the density
   service can treat a quarter-full queue as load.
-- **Run tags and the cell visitor (bridge ABI 41, #716 A6a)** — each ring
-  slot also stores the `start_generation` of the run active when the row was
-  appended (a parallel preallocated `gens_` array; 0 = outside a run).
-  `setMonitoringRunGeneration(g)` sets the tag under `monitoringFramesMutex_`
-  ([[../architecture/ExperimentCoordinator]] sets it right before
-  `startExperiment()` and back to 0 after `endExperiment()` or a failed
-  start), and every `push_back` stores it under the lock it already holds:
-  one more 8-byte store, no allocation, no new lock. `clearMonitoringFrames`
-  zeroes the tags. `visitMonitoringNewest(maxRows, includeInvalid, visit)`
+- **Row tags and the cell visitor (bridge ABI 41, #716 A6a)** — each ring
+  slot also stores a `MonitoringRowTag` (a parallel preallocated `tags_`
+  array): the `start_generation` of the run active when the row was appended
+  (0 = outside a run), the **capture epoch** of its frame, and the row
+  image's **geometry origin**. `setMonitoringRunGeneration(g)` sets the run
+  tag under `monitoringFramesMutex_` ([[../architecture/ExperimentCoordinator]]
+  sets it right before `startExperiment()` and back to 0 after
+  `endExperiment()` or a failed start). The capture epoch
+  (`monitoringCaptureEpoch()`, starts at 1, never reused) moves on at every
+  `startRealtime()` (a new or restarted FrameStore: indices may restart) and at
+  the first append of a frame whose store generation differs from the
+  previous frame's (a resize renumbered the store). The geometry origin is
+  (0, 0) for inline rows (measured on the ROI image) and the ROI's top-left for
+  async-batch rows (measured on the full frame, kept as an ROI crop; the crop
+  now uses the ROI the worker measured with, `frame.previewRoi`, and the rows
+  are counted in the appended totals like inline rows). Every `push_back`
+  stores the tag under the lock it already holds: a 24-byte store and one
+  compare, no allocation, no new lock. `clearMonitoringFrames` zeroes the
+  tags. `visitMonitoringNewest(maxRows, includeInvalid, visit)`
   hands the newest rows (valid first, then invalid with what is left) with
   their tag to a visitor **under the ring lock** and returns a
-  `MonitoringRingView` (held / appended counts, the current tag). Visitors
+  `MonitoringRingView` (held / appended counts, the current run tag and
+  capture epoch). Visitors
   may only copy scalars and cv::Mat headers (refcount shares of frozen
   images); the bridge snapshot uses it for POD rows instead of copying the
   whole ring, and [[MonitoringCellStore]]'s source uses it to find rows and

@@ -136,7 +136,7 @@ fn monitoring_cells_are_described() {
                           ("cell", "no_image_reason"), ("pin_reply", "CaptureMismatch"), ("strip", "oldest evicted"),
                           ("crop", "crop_max_side"), ("run_rules", "dropped when a run starts"),
                           ("capture_rules", "never served across a capture change"),
-                          ("geometry", "ROI"), ("threading", "8-byte tag")] {
+                          ("geometry", "ROI"), ("threading", "24-byte tag")] {
         assert!(cells[key].as_str().is_some_and(|d| d.contains(needle)), "monitoring_cells.{key} mentions {needle}");
     }
     let kinds = &contract["frame_packet"]["pull_kinds"];

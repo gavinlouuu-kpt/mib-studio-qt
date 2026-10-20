@@ -427,14 +427,16 @@ the backend's live cell store ([[../services/MonitoringCellStore]]):
 `bridge.fetchMonitoringCells()` (`fetch_monitoring_cells` → the strip of recent
 cells and the pins, `MONITORING_CELLS_INVALID` on a reply that breaks the
 contract or its caps), `bridge.monitoringCellPin(key)` (args
-`{expectedStartGeneration, frameIndex, objectId}`, a pin reply with
-`outcome` from `MONITORING_CELL_PIN_OUTCOMES`; an unknown outcome is refused),
+`{expectedStartGeneration, captureEpoch, frameIndex, objectId}`, a pin reply with
+`outcome` from `MONITORING_CELL_PIN_OUTCOMES`, `CaptureMismatch` (6) when the key names an
+earlier capture; an unknown outcome is refused),
 `bridge.monitoringCellUnpin(key)` and `bridge.monitoringCellClearPins()` (a
 `CmdResult`), and `bridge.fetchMonitoringCellImage(key, "image" | "mask")`
 (`fetch_monitoring_cell_packet`, a frame packet of pull kind 5 / 6 decoded by
 `decodeFramePacket`; an empty packet when the layer is not held). The key is a
-listing cell or a monitoring snapshot row (`MonitoringRow.start_generation`,
-new in ABI 41); `cellKeyArgs` sends canonical decimal strings and throws
+listing cell or a monitoring snapshot row (`MonitoringRow.start_generation` and
+`capture_epoch`, new in ABI 41; centroids in ROI image coordinates); `cellKeyArgs` sends
+canonical decimal strings and throws
 `INVALID_U64` / `INVALID_OBJECT_ID` before anything is sent. Pin, unpin and
 clear are control commands on the remote server (`VIEWER_ONLY` for a viewer).
 No develop UI uses them; the workspace Live view (A6b) will. Guard:
