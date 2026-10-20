@@ -53,6 +53,135 @@ fn dataset_info(d: review_ffi::ReviewDatasetInfo) -> ReviewDatasetInfo {
     ReviewDatasetInfo { present: d.present, count: d.count, height: d.height, width: d.width, channels: d.channels }
 }
 
+/// u64 as a decimal string, `null` when absent.
+fn serialize_opt_u64<S: serde::Serializer>(value: &Option<u64>, serializer: S) -> Result<S::Ok, S::Error> {
+    match value {
+        Some(v) => serializer.serialize_str(&v.to_string()),
+        None => serializer.serialize_none(),
+    }
+}
+
+fn present<T>(has: bool, value: T) -> Option<T> {
+    if has { Some(value) } else { None }
+}
+
+#[derive(Serialize, Clone, Default)]
+pub struct KeyValue {
+    key: String,
+    value: String,
+}
+
+#[derive(Serialize, Clone, Default)]
+pub struct Concentration {
+    value: f64,
+    unit: String,
+}
+
+/// The planned annotation (review ABI 2): `null` members were not declared.
+#[derive(Serialize, Clone, Default)]
+pub struct RunAnnotation {
+    schema_version: Option<u32>,
+    sample: Option<String>,
+    condition: Option<String>,
+    experimental_unit: Option<String>,
+    concentration: Option<Concentration>,
+    channel: Option<String>,
+    medium: Option<String>,
+    temperature_c: Option<f64>,
+    notes: Option<String>,
+    free: Vec<KeyValue>,
+}
+
+#[derive(Serialize, Clone, Default)]
+pub struct RunOperator {
+    id: Option<String>,
+    name: Option<String>,
+}
+
+/// A file's run identity (review ABI 2, #717 B1a). Every member the file
+/// does not record is `null`; a legacy file has `has_snapshot` false and
+/// every member `null`. `*_unreadable`: present in the file but not a JSON
+/// object.
+#[derive(Serialize, Clone, Default)]
+pub struct RunIdentity {
+    has_snapshot: bool,
+    snapshot_unreadable: bool,
+    snapshot_version: Option<u32>,
+    run_id: Option<String>,
+    experiment_id: Option<String>,
+    run_index: Option<u32>,
+    sample_ref: Option<String>,
+    calibration_record_id: Option<String>,
+    operator: Option<RunOperator>,
+    annotation: Option<RunAnnotation>,
+    annotation_unreadable: bool,
+}
+
+pub fn run_identity(id: review_ffi::ReviewRunIdentity) -> RunIdentity {
+    let a = id.annotation;
+    let operator = (id.has_operator_id || id.has_operator_name).then(|| RunOperator {
+        id: present(id.has_operator_id, id.operator_id),
+        name: present(id.has_operator_name, id.operator_name),
+    });
+    RunIdentity {
+        has_snapshot: id.has_snapshot,
+        snapshot_unreadable: id.snapshot_unreadable,
+        snapshot_version: present(id.has_snapshot, id.snapshot_version),
+        run_id: present(id.has_run_id, id.run_id),
+        experiment_id: present(id.has_experiment_id, id.experiment_id),
+        run_index: present(id.has_run_index, id.run_index),
+        sample_ref: present(id.has_sample_ref, id.sample_ref),
+        calibration_record_id: present(id.has_calibration_record_id, id.calibration_record_id),
+        operator,
+        annotation_unreadable: a.unreadable,
+        annotation: a.present.then(|| RunAnnotation {
+            schema_version: present(a.has_schema_version, a.schema_version),
+            sample: present(a.has_sample, a.sample),
+            condition: present(a.has_condition, a.condition),
+            experimental_unit: present(a.has_experimental_unit, a.experimental_unit),
+            concentration: present(
+                a.has_concentration,
+                Concentration { value: a.concentration_value, unit: a.concentration_unit },
+            ),
+            channel: present(a.has_channel, a.channel),
+            medium: present(a.has_medium, a.medium),
+            temperature_c: present(a.has_temperature_c, a.temperature_c),
+            notes: present(a.has_notes, a.notes),
+            free: a.free.into_iter().map(|kv| KeyValue { key: kv.key, value: kv.value }).collect(),
+        }),
+    }
+}
+
+/// One file of `review_probe_runs`. `ok` false: `message` says why and
+/// everything else is absent.
+#[derive(Serialize, Clone, Default)]
+pub struct RunProbe {
+    path: String,
+    ok: bool,
+    message: String,
+    recording_file: bool,
+    identity: RunIdentity,
+    #[serde(serialize_with = "serialize_opt_u64")]
+    start_time_ns: Option<u64>,
+    #[serde(serialize_with = "serialize_opt_u64")]
+    end_time_ns: Option<u64>,
+    #[serde(serialize_with = "serialize_opt_u64")]
+    total_valid: Option<u64>,
+    #[serde(serialize_with = "serialize_opt_u64")]
+    total_invalid: Option<u64>,
+    /// Contract `run_completion_states`; `null` for a file without run accounting.
+    accounting_completion: Option<u32>,
+    core_version: Option<String>,
+}
+
+#[derive(Serialize, Clone, Default)]
+pub struct ReviewProbeRuns {
+    transport_version: u32,
+    ok: bool,
+    message: String,
+    runs: Vec<RunProbe>,
+}
+
 #[derive(Serialize, Clone, Default)]
 pub struct ReviewInfo {
     transport_version: u32,
@@ -115,6 +244,8 @@ pub struct ReviewInfo {
     has_recorded_config: bool,
     ring_ratio_min: f64,
     ring_ratio_max: f64,
+    /// Review ABI 2 (#717 B1a).
+    identity: RunIdentity,
 }
 
 #[derive(Serialize, Clone, Default)]
@@ -356,6 +487,39 @@ pub fn fetch_review_info(state: State<AppState>) -> Result<ReviewInfo, String> {
         has_recorded_config: m.has_recorded_config,
         ring_ratio_min: m.ring_ratio_min,
         ring_ratio_max: m.ring_ratio_max,
+        identity: run_identity(m.identity),
+    })
+}
+
+/// Review ABI 2 (#717 B1a): the experiment library's identity probe over
+/// `paths` (at most `review_probe.max_paths`): header attributes only, one
+/// result per path, per-file errors. Serialized with the open session's
+/// reads and the job lane in the backend (refused while a job runs).
+#[tauri::command]
+pub fn review_probe_runs(state: State<AppState>, paths: Vec<String>) -> Result<ReviewProbeRuns, String> {
+    let mut guard = state.review.lock().map_err(|e| e.to_string())?;
+    let r = guard.pin_mut().review_probe_runs(paths);
+    Ok(ReviewProbeRuns {
+        transport_version: review_packet::JSON_TRANSPORT_VERSION,
+        ok: r.ok,
+        message: r.message,
+        runs: r
+            .runs
+            .into_iter()
+            .map(|p| RunProbe {
+                path: p.path,
+                ok: p.ok,
+                message: p.message,
+                recording_file: p.recording_file,
+                identity: run_identity(p.identity),
+                start_time_ns: present(p.has_start_time, p.start_time_ns),
+                end_time_ns: present(p.has_end_time, p.end_time_ns),
+                total_valid: present(p.has_total_valid, p.total_valid),
+                total_invalid: present(p.has_total_invalid, p.total_invalid),
+                accounting_completion: present(p.has_accounting, p.accounting_completion),
+                core_version: present(p.has_core_version, p.core_version),
+            })
+            .collect(),
     })
 }
 
@@ -774,6 +938,50 @@ mod tests {
         assert_eq!(super::launch_path_from(args.into_iter()), p);
         assert_eq!(super::launch_path_from(vec!["notes.txt".to_string()].into_iter()), "");
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    #[serial]
+    fn run_identity_json_is_null_when_absent() {
+        // A legacy file: every member null, never 0 or "".
+        let legacy = serde_json::to_value(super::run_identity(review_ffi::ReviewRunIdentity::default())).unwrap();
+        assert_eq!(
+            legacy,
+            serde_json::json!({
+                "has_snapshot": false, "snapshot_unreadable": false, "snapshot_version": null, "run_id": null,
+                "experiment_id": null, "run_index": null, "sample_ref": null, "calibration_record_id": null,
+                "operator": null, "annotation": null, "annotation_unreadable": false
+            })
+        );
+        // Through the bridge: a v3 file and a legacy file, and the probe's JSON.
+        let dir = std::env::temp_dir();
+        let v3 = dir.join(format!("mib_desktop_identity_v3_{}.h5", std::process::id()));
+        let old = dir.join(format!("mib_desktop_identity_legacy_{}.h5", std::process::id()));
+        let _ = std::fs::remove_file(&v3);
+        let _ = std::fs::remove_file(&old);
+        let snapshot = r#"{"schema_version":3,"experiment_id":"5b1d6f8e-2c4a-4e7b-9a3d-0f1e2d3c4b5a","run_index":0,"sample_ref":"S-01","run_id":null}"#;
+        let annotation = r#"{"schema_version":1,"condition":"Vehicle","free":{"plate":"B"}}"#;
+        assert!(review_ffi::review_fixture_write_run(&v3.to_string_lossy(), snapshot, annotation));
+        assert!(review_ffi::review_fixture_write_run(&old.to_string_lossy(), "", ""));
+        let mut bridge = review_ffi::new_review_bridge();
+        assert!(bridge.pin_mut().review_open(&v3.to_string_lossy()).ok);
+        let id = serde_json::to_value(super::run_identity(bridge.pin_mut().fetch_review_info().identity)).unwrap();
+        assert_eq!(id["snapshot_version"], 3);
+        assert_eq!(id["run_index"], 0, "run 0 is a value, not absent");
+        assert_eq!(id["sample_ref"], "S-01");
+        assert!(id["run_id"].is_null() && id["calibration_record_id"].is_null() && id["operator"].is_null());
+        assert_eq!(id["annotation"]["condition"], "Vehicle");
+        assert!(id["annotation"]["sample"].is_null() && id["annotation"]["concentration"].is_null());
+        assert_eq!(id["annotation"]["free"], serde_json::json!([{"key": "plate", "value": "B"}]));
+        let probe = bridge.pin_mut().review_probe_runs(vec![old.to_string_lossy().into_owned(), String::new()]);
+        assert!(probe.ok);
+        let legacy = &probe.runs[0];
+        assert!(legacy.ok && !legacy.has_accounting);
+        assert_eq!(serde_json::to_value(super::run_identity(legacy.identity.clone())).unwrap()["has_snapshot"], false);
+        assert!(!probe.runs[1].ok);
+        assert!(bridge.pin_mut().review_close().ok);
+        let _ = std::fs::remove_file(&v3);
+        let _ = std::fs::remove_file(&old);
     }
 
     #[test]

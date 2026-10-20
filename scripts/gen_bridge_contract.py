@@ -147,6 +147,10 @@ def render_review(review: dict) -> str:
                            ("frame_packet", "REVIEW_FRAME_PACKET")]:
         lines.append(f"export const {name} = " + json.dumps(review[json_key], indent=2, ensure_ascii=False) + " as const;")
         lines.append("")
+    # Review ABI 2 (#717 B1a): the identity probe's bounds (numbers only; the prose stays in the JSON).
+    probe = {k: v for k, v in review["review_probe"].items() if isinstance(v, int)}
+    lines.append("export const REVIEW_PROBE = " + json.dumps(probe, indent=2) + " as const;")
+    lines.append("")
     return "\n".join(lines)
 
 
@@ -174,6 +178,11 @@ def check_review(review: dict) -> str | None:
         r"\{0x([0-9a-fA-F]{2}), 0x([0-9a-fA-F]{2}), 0x([0-9a-fA-F]{2})\}", block)]
     if stops != review["review_density"]["ramp_rgb"]:
         return "review_density.ramp_rgb differs from MonitoringDensity.h kStops"
+    # review_probe.max_paths must equal the C++ bound (ReviewTypes.h kReviewProbeMaxPaths).
+    types = (REPO_ROOT / "include/backend/review/ReviewTypes.h").read_text(encoding="utf-8")
+    bound = re.search(r"kReviewProbeMaxPaths\s*=\s*(\d+)", types)
+    if not bound or int(bound.group(1)) != review["review_probe"]["max_paths"]:
+        return "review_probe.max_paths differs from ReviewTypes.h kReviewProbeMaxPaths"
     return None
 
 

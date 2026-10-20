@@ -10,6 +10,8 @@
 // #512 S8 changed one flow on purpose: Regenerate masks lists the output
 // directory to propose a free name, and a new flow regenerates into an
 // existing file (refused by the backend, the dialog asks again).
+// #717 B1a (review ABI 2) added one call outside the panel: the identity
+// probe (`review_probe_runs`); no existing flow changed.
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -147,7 +149,9 @@ function job(kind: number, message: string) {
 function respond(cmd: string, args: Record<string, unknown>): unknown {
   switch (cmd) {
     case "review_abi_version":
-      return 1;
+      return 2;
+    case "review_probe_runs":
+      return { ok: true, message: "Probed", runs: (args.paths as string[]).map((path) => ({ path, ok: false, message: "No such file" })) };
     case "fetch_isoelastic_curves":
       return { source: "embedded", curves: [{ emodulus_kpa: 1, points: [[10, 0.01], [40, 0.03]] }] };
     case "review_launch_path":
@@ -525,6 +529,7 @@ it("sends the same commands, arguments, chart bytes and dialogs as before the tr
       await reviewBridge.takeOpenRequest();
       await reviewBridge.cancel("101");
       await reviewBridge.jobsBusy();
+      await reviewBridge.probeRuns(["/data/lib/run_01.h5", "/data/lib/legacy.h5"]);
       await stageCharts([{ name: "scatter_plot.tiff", bytes: new Uint8Array([1, 2, 3, 250]) }]);
       await stageCharts([]);
       await checkUpdate("stable");

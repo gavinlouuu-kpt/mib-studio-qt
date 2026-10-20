@@ -9,13 +9,70 @@
 
 #include "backend/processing/ProcessingService.h"
 #include "backend/recording/RecordingAccounting.h"
+#include "backend/recording/RunStartIdentity.h"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
 namespace backend::review
 {
+
+    // Review contract `review_probe.max_paths`: the most paths one identity
+    // probe accepts (the experiment library probes a folder in pages).
+    inline constexpr std::size_t kReviewProbeMaxPaths = 256;
+
+    // What a run file says about its own identity (#717 B1a), read from run
+    // snapshot v3 (#712, `/run_provenance @run_snapshot_json`) and the planned
+    // annotation (`/experiment_annotation`). Nothing is fabricated: a file
+    // that predates the snapshot or the annotation reads with `hasSnapshot` /
+    // `annotation` false / nullopt and every member nullopt, never 0 or "".
+    struct RunIdentity
+    {
+        // The file carries a run snapshot that parses as a JSON object.
+        bool hasSnapshot{false};
+        // The file carries a snapshot attribute that is not a JSON object:
+        // present but unreadable, which is not the same as a legacy file.
+        bool snapshotUnreadable{false};
+        // run_snapshot_json "schema_version" (1 for a snapshot that predates
+        // the field); meaningful only when hasSnapshot.
+        std::uint32_t snapshotVersion{0};
+        std::optional<std::string> runId;               // the run's UUID (v3)
+        recording::RunStartIdentity declared;           // experiment_id, run_index, sample_ref, ... (v3)
+        // /experiment_annotation as planned at Start; nullopt when the file has
+        // none. `annotationUnreadable`: the block exists but is not a JSON object.
+        std::optional<recording::ExperimentAnnotation> annotation;
+        bool annotationUnreadable{false};
+        // @annotation_schema_version; nullopt when the attribute is missing or
+        // unreadable (a recorded 0 stays 0).
+        std::optional<std::uint32_t> annotationSchemaVersion;
+    };
+
+    // One file of the experiment library's identity probe (#717 B1a): header
+    // attributes only, no images and no metadata rows. `ok` false = the file
+    // could not be read (`message` says why); every other member is then
+    // absent. Each count and time is read on its own, presence-aware: nullopt
+    // when its attribute is missing or unreadable, and a recorded 0 count is 0.
+    struct RunProbe
+    {
+        std::string path;
+        bool ok{false};
+        std::string message;
+        bool recordingFile{false};
+        RunIdentity identity;
+        std::optional<std::uint64_t> startTimeNs;       // 0 / missing attribute = not recorded
+        std::optional<std::uint64_t> endTimeNs;
+        // /experiment_info total_valid_frames / total_invalid_frames, or
+        // /recording_info total_recorded_frames (valid; no invalid count) for
+        // a recording file.
+        std::optional<std::uint64_t> totalValid;
+        std::optional<std::uint64_t> totalInvalid;
+        // Run accounting (#367); nullopt for a file that predates it.
+        std::optional<recording::RunCompletionState> completion;
+        // The processing core that wrote the file; nullopt when not recorded.
+        std::optional<std::string> coreVersion;
+    };
 
     // Contract `review_image_datasets` (ABI 9+).
     enum class ReviewDataset : std::uint32_t
@@ -90,6 +147,9 @@ namespace backend::review
         // Stored KDE records (JSON as written; empty when absent).
         std::string kdeAnalysisJson;
         std::string kdeLiveJson;
+        // Run identity from snapshot v3 and the annotation (#717 B1a); absent
+        // members for a legacy file.
+        RunIdentity runIdentity;
     };
 
     // One metrics row: the full FilterResult the Qt HdfMetricsModel shows.
