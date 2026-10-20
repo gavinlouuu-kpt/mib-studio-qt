@@ -698,18 +698,6 @@ namespace backend::review
         return impl_->session.probeRuns(paths, out, error);
     }
 
-    namespace
-    {
-        // The image-coordinate offset of an ROI as processBatch applies it
-        // (an empty ROI is the whole image; the origin is clamped into it).
-        cv::Point2d roiOrigin(const services::ProcessingService::Roi &roi, const cv::Size &image)
-        {
-            if (roi.w <= 0 || roi.h <= 0 || image.width <= 0 || image.height <= 0) return {0.0, 0.0};
-            return {static_cast<double>(std::clamp(roi.x, 0, image.width - 1)),
-                    static_cast<double>(std::clamp(roi.y, 0, image.height - 1))};
-        }
-    } // namespace
-
     bool ReviewJobs::reprocessRecord(bool valid, std::uint64_t index, ReprocessSettings settings, ReprocessResult &out,
                                      std::string *error)
     {
@@ -762,17 +750,15 @@ namespace backend::review
         }
         const auto found = frames.size();
         out.objectCountDiffers = in.stored.objectCount > 0 && found != static_cast<std::size_t>(in.stored.objectCount);
-        // Pair in image coordinates: each run's coordinates are its own ROI's.
-        const cv::Point2d storedOrigin = roiOrigin(in.recordedRoi, in.image.size());
-        const cv::Point2d usedOrigin = roiOrigin(in.roi, in.image.size());
-        const cv::Rect2d box(in.stored.bboxX + storedOrigin.x, in.stored.bboxY + storedOrigin.y, in.stored.bboxWidth,
-                             in.stored.bboxHeight);
-        const cv::Point2d centre(in.stored.centroidX + storedOrigin.x, in.stored.centroidY + storedOrigin.y);
+        // Pair them: stored records and processBatch both come from
+        // computeProcessedFrame, in image coordinates whatever the ROI.
+        const cv::Rect2d box(in.stored.bboxX, in.stored.bboxY, in.stored.bboxWidth, in.stored.bboxHeight);
+        const cv::Point2d centre(in.stored.centroidX, in.stored.centroidY);
         double best = std::numeric_limits<double>::infinity();
         for (std::size_t i = 0; i < out.reprocessed.size(); ++i)
         {
             const auto &r = out.reprocessed[i];
-            const cv::Point2d c(r.centroidX + usedOrigin.x, r.centroidY + usedOrigin.y);
+            const cv::Point2d c(r.centroidX, r.centroidY);
             const bool inside = c.x >= box.x && c.x <= box.x + box.width && c.y >= box.y && c.y <= box.y + box.height;
             if (!inside) continue;
             const double d = std::hypot(c.x - centre.x, c.y - centre.y);

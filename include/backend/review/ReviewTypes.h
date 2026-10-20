@@ -231,9 +231,9 @@ namespace backend::review
 
     // One record reprocessed (#717 B3b): the stored record next to what the
     // review session's processing kernel finds in the same frame now. Never
-    // written anywhere. Coordinates are those of each run's own ROI;
-    // `match` pairs them in image coordinates (the reprocessed object whose
-    // centroid is nearest the stored one, inside the stored bounding box).
+    // written anywhere. Both are in image coordinates (computeProcessedFrame,
+    // whatever the ROI); `match` is the reprocessed object whose centroid is
+    // nearest the stored one, inside the stored bounding box.
     struct ReprocessResult
     {
         ReprocessSettings settings{ReprocessSettings::Recorded};

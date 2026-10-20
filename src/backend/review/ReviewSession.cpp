@@ -659,7 +659,6 @@ namespace backend::review
         const auto &meta = impl_->meta;
         out.pixelToMicron = impl_->factor();
         out.stored = rowFromFrame(source[static_cast<std::size_t>(index)], index, out.pixelToMicron);
-        out.recordedRoi = meta.roi;
         cv::Mat image;
         if (!impl_->reader.readImageByIndex(impl_->imagesPath(valid), static_cast<std::size_t>(index), image) ||
             image.empty())

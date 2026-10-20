@@ -889,6 +889,12 @@ mib_add_backend_test_executable(review_run_identity_test review/review_run_ident
 mib_backend_test_link(review_run_identity_test PRIVATE Threads::Threads)
 add_test(NAME review.run_identity COMMAND $<TARGET_FILE:mib_backend_tests> review_run_identity_test)
 set_tests_properties(review.run_identity PROPERTIES LABELS "review;recording;backend;hdf5;concurrency;safety" TIMEOUT 180)
+# R3 Inspect's backend (#717 B3b, review ABI 3): the linked records of a track
+# and one record reprocessed next to its stored values, gated on the job lanes.
+mib_add_backend_test_executable(review_inspect_test review/review_inspect_test.cpp)
+mib_backend_test_link(review_inspect_test PRIVATE Threads::Threads)
+add_test(NAME review.inspect COMMAND $<TARGET_FILE:mib_backend_tests> review_inspect_test)
+set_tests_properties(review.inspect PROPERTIES LABELS "review;backend;hdf5;concurrency;safety" TIMEOUT 180)
 # One overlay kernel (#512 slice 1): review::composeOverlay is byte-identical
 # to the implementation it replaced and draws the Qt/facade kernel's pixels.
 mib_add_backend_test_executable(review_overlay_kernel_test review/review_overlay_kernel_test.cpp)

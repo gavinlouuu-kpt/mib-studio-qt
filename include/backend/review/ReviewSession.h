@@ -109,11 +109,10 @@ namespace backend::review
         struct ReprocessInputs
         {
             MetricRow stored;
-            services::ProcessingService::Roi recordedRoi{}; // the stored record's ROI
-            cv::Mat image;                                  // gray
+            cv::Mat image; // gray
             cv::Mat background;
             services::ProcessingConfig config{};
-            services::ProcessingService::Roi roi{};         // the ROI to process with
+            services::ProcessingService::Roi roi{}; // the ROI to process with
             bool usedRecordedSettings{false};
             std::string settingsLabel;
             double pixelToMicron{0.0};
