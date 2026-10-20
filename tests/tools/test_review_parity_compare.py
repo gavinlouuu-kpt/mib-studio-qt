@@ -169,6 +169,8 @@ class ReviewParityCompareTest(unittest.TestCase):
     def test_d3_needs_the_live_factor(self):
         self.edit("studio/charts_app.json", lambda v: v.update(pixel_to_micron=0.3))
         self.assertEqual(result(self.rows(), "MIB Studio ↔ Qt", "px→µm as opened"), "DIFF")
+        write(self.dir / "studio/charts_app.json", {"valid": False, "error": "No HDF file open"})
+        self.assertEqual(result(self.rows(), "MIB Studio ↔ Qt", "px→µm as opened"), "DIFF")
         self.edit("studio/summary.json", lambda v: v["compared"].update(pixel_to_micron=0.4886))
         self.assertEqual(result(self.rows(), "MIB Studio ↔ YOFO", "px→µm of the compared outputs"), "DIFF")
 

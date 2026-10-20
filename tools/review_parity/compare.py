@@ -303,7 +303,7 @@ def studio_rows(d: Path, studio: dict, other: dict) -> list[tuple[str, str, str]
     # As opened: MIB Studio's live factor and range (D3 / D4). Accepted only
     # when the facade really used its live value.
     live = app.get("pixel_to_micron")
-    used = charts_app.get("pixel_to_micron", live) if not recording else live
+    used = charts_app.get("pixel_to_micron") if not recording else live
     as_opened = f"studio live {live} / {name} {other['factor']}"
     check("px→µm as opened", live is not None and other["factor"] is not None and close(live, other["factor"]),
           as_opened, accepted=D3 if live is not None and used is not None and close(used, live) else "")
