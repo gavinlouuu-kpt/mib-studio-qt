@@ -208,7 +208,7 @@ the coordinator (ADR 0004/0011).
 | S3 | Export engine in `mib_review_core` | none | none | merged (#724) |
 | S4 | Charts JSON and saved-overlay builders | none (text only, D3) | none | merged (#726) |
 | S5 | The facade owns the ReviewSession | none (D1 (a): unchanged) | none | merged (#733) |
-| S6 | Parity harness: a MIB Studio half | none | none | in review (#PRNUM) |
+| S6 | Parity harness: a MIB Studio half | none | none | in review (#755) |
 | S7 | Facade jobs on ReviewJobs lanes | none | none | in review (#742) |
 | S8 | YOFO regenerate on the reanalysis engine | none | none (behaviour D6) | merged (#735) |
 | S9 | Transport-neutral review module | none | none | merged (#731) |
@@ -537,7 +537,7 @@ S12 takes 3 or higher. Additive; the bridge ABI is untouched.
   with `MIB_BRIDGE_NO_CMAKE=1`. `frontend.review_parity` needs the Qt build:
   left to CI's Linux Qt lane.
 
-### S6 — Parity harness: a MIB Studio half (in review, #PRNUM)
+### S6 — Parity harness: a MIB Studio half (in review, #755)
 
 - **Moves:** `tools/review_parity/` gains a third half: cargo example
   `crates/mib-bridge/examples/review_parity_studio.rs` over `BackendBridge`
@@ -598,7 +598,7 @@ S12 takes 3 or higher. Additive; the bridge ABI is untouched.
   - (4) the Qt ↔ YOFO accounting row passes now: Qt's status line carries the
     accounting suffix, so the 2026-10-04 acceptance no longer applies.
   - (5) D4 is not exercised: every input records 15–25, the live default.
-- **Proof (#PRNUM):** the harness on the four sign-off inputs: the
+- **Proof (#755):** the harness on the four sign-off inputs: the
   `z-adjustment-50v` recording, `review_e2e_512x96_run.h5`,
   `synthetic_fixture.h5` and `population_3000.h5`. Outputs and `run.log` are
   in `/mnt/hdd/developer-data/mib-studio-qt/review-parity/out-2026-10-20-s6/`;
@@ -1003,7 +1003,7 @@ bridge contract):
 - [x] 2026-10-19 — S3 export engine (`review.export_engine`, #724); `review::writeMetricsCsv` deleted (F14).
 - [x] 2026-10-19 — S4 charts JSON and saved-overlay builders (`review.charts_json`, #726).
 - [x] 2026-10-19 — S5 the facade owns the ReviewSession (`backend.facade_review_session`; D1 (a) via `AppBackend::setReviewSourceOpen`, gate text unchanged; #733).
-- [x] 2026-10-20 — S6 parity harness MIB Studio half (`review_parity_studio.rs`, three-table `compare.py`, D2–D5 accepted until S13; the histogram y axis is an open finding; #PRNUM).
+- [x] 2026-10-20 — S6 parity harness MIB Studio half (`review_parity_studio.rs`, three-table `compare.py`, D2–D5 accepted until S13; the histogram y axis is an open finding; #755).
 - [x] 2026-10-19 — S7 facade jobs on ReviewJobs lanes (D7 per-host policy: `forReviewBridge` one job at a time until #722, `forFacade` both lanes; `backend.facade_review_jobs` with the pre-S7 oracle, `review.jobs_lanes`; #742)
 - [x] 2026-10-19 — S8 YOFO regenerate on the engine (D6; `review.jobs`, `review.reanalysis`, no clobber; the position-pairing fix; #735)
 - [x] 2026-10-19 — S9 transport-neutral review module (`reviewIpc` golden unchanged; import guard; `Transport.upload`; #731).
