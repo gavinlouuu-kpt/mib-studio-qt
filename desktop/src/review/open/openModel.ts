@@ -7,7 +7,7 @@ import type { Fact, StateTone } from "@mib/ui";
 import { RUN_COMPLETION_STATES } from "../../bridgeContract";
 import { metricNumber } from "../../metricFormat";
 import { baseName, dirName, joinPath } from "../exports/exportHelpers";
-import type { ReviewInfo } from "../reviewBridge";
+import type { ReviewInfo, ReviewRunAnnotation, ReviewRunIdentity } from "../reviewBridge";
 
 /** A run file in a folder listing. */
 export interface FolderRun {
@@ -63,6 +63,51 @@ export function completionChip(hasAccounting: boolean, completion: number | null
   }
 }
 
+/** The planned annotation's members other than sample and condition (which
+ * have their own facts), as one line; null when it declares none of them. */
+function annotationExtras(a: ReviewRunAnnotation): string | null {
+  const parts = [
+    a.experimental_unit ? `unit ${a.experimental_unit}` : null,
+    a.concentration ? `${a.concentration.value} ${a.concentration.unit}` : null,
+    a.channel ? `channel ${a.channel}` : null,
+    a.medium ? `medium ${a.medium}` : null,
+    a.temperature_c !== null ? `${a.temperature_c} °C` : null,
+    a.notes,
+    ...a.free.map((kv) => `${kv.key} ${kv.value}`),
+  ].filter((v): v is string => !!v);
+  return parts.length ? parts.join(" · ") : null;
+}
+
+/** The open run's identity (review ABI 2, `fetch_review_info.identity`): what
+ * its run snapshot and planned annotation declare. A legacy file says so
+ * once (Run snapshot) and every other member is null. */
+export function identityFacts(identity: ReviewRunIdentity | undefined): Fact[] {
+  const id = identity;
+  const snapshot: Fact = !id
+    ? { label: "Run snapshot", value: null, tone: "unknown" }
+    : id.snapshot_unreadable
+      ? { label: "Run snapshot", value: "Present but unreadable", tone: "warn" }
+      : id.has_snapshot
+        ? { label: "Run snapshot", value: id.snapshot_version === null ? "Recorded" : `Version ${id.snapshot_version}` }
+        : { label: "Run snapshot", value: "Not recorded · legacy file", tone: "unknown" };
+  const operator = id?.operator ? [id.operator.name, id.operator.id].filter(Boolean).join(" · ") || null : null;
+  const sample = [id?.sample_ref, id?.annotation?.sample].filter((v): v is string => !!v);
+  return [
+    snapshot,
+    { label: "Experiment", value: id?.experiment_id ?? null },
+    { label: "Run", value: id?.run_index === null || id?.run_index === undefined ? null : `Run ${id.run_index}` },
+    { label: "Sample", value: sample.filter((v, i) => sample.indexOf(v) === i).join(" · ") || null },
+    { label: "Condition", value: id?.annotation?.condition ?? null },
+    {
+      label: "Annotation",
+      value: id?.annotation_unreadable ? "Present but unreadable" : id?.annotation ? annotationExtras(id.annotation) : null,
+      tone: id?.annotation_unreadable ? "warn" : undefined,
+    },
+    { label: "Calibration record", value: id?.calibration_record_id ?? null },
+    { label: "Operator (selected at Start)", value: operator },
+  ];
+}
+
 /** What the open run says about itself, for the Open run card. Each value
  * the file does not record is null (the FactList shows "Not reported"). */
 export function openRunFacts(info: ReviewInfo): Fact[] {
@@ -71,6 +116,7 @@ export function openRunFacts(info: ReviewInfo): Fact[] {
     { label: "File", value: baseName(info.file_path) || null },
     { label: "Folder", value: dirName(info.file_path) || null },
     { label: "Kind", value: recording ? "Raw recording (images only)" : "Experiment run" },
+    ...identityFacts(info.identity),
     {
       label: "Records",
       value: recording ? `${info.total_valid} frames` : `${info.total_valid} valid · ${info.total_invalid} invalid`,

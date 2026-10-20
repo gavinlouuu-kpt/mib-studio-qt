@@ -9,6 +9,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import ReviewApp from "./ReviewApp";
 import { LIBRARY_FOLDER_KEY } from "./open/OpenView";
+import type { ReviewRunAnnotation, ReviewRunIdentity, ReviewRunProbe } from "./reviewBridge";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -27,7 +28,106 @@ const folderFiles: Record<string, string[]> = {
   "/data/b": ["b1.h5"],
   "/data/c": ["c1.h5", "c2.h5", "c3.h5"],
   "/data/d": ["d1.h5"],
+  // R1 grouping: file names in another order than the declared run indices.
+  "/data/exp": ["alpha.h5", "beta.h5", "gamma.h5", "older.h5", "nox.h5", "unread.h5", "old.h5", "broken.h5"],
+  "/data/big": Array.from({ length: 300 }, (_, i) => `f${String(i + 1).padStart(3, "0")}.h5`),
 };
+
+// What each file's header says (review_probe_runs); a path without an entry
+// is a legacy file. Answers are taken when the probe is called.
+type ProbeFixture = Partial<Omit<ReviewRunProbe, "identity">> & { identity?: Partial<ReviewRunIdentity> };
+const absentIdentity = (): ReviewRunIdentity => ({
+  has_snapshot: false,
+  snapshot_unreadable: false,
+  snapshot_version: null,
+  run_id: null,
+  experiment_id: null,
+  run_index: null,
+  sample_ref: null,
+  calibration_record_id: null,
+  operator: null,
+  annotation: null,
+  annotation_unreadable: false,
+});
+const planned = (sample: string | null, condition: string | null): ReviewRunAnnotation => ({
+  schema_version: 1,
+  sample,
+  condition,
+  experimental_unit: "donor-4",
+  concentration: null,
+  channel: null,
+  medium: "PBS",
+  temperature_c: null,
+  notes: null,
+  free: [],
+});
+const EXP_A = "4f1c2a9e-0b3d-4c5e-8f7a-1b2c3d4e5f60";
+const EXP_B = "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d";
+const OCT14 = "1760400000000000000"; // 2026-10-14 (UTC)
+const OCT09 = "1759968000000000000"; // 2026-10-09 (UTC)
+function v3(experiment: string, runIndex: number, sampleRef: string, condition: string): Partial<ReviewRunIdentity> {
+  return {
+    has_snapshot: true,
+    snapshot_version: 3,
+    run_id: `run-${experiment.slice(0, 4)}-${runIndex}`,
+    experiment_id: experiment,
+    run_index: runIndex,
+    sample_ref: sampleRef,
+    calibration_record_id: "cal-0042",
+    operator: { id: null, name: "Gavin" },
+    annotation: planned(`Donor 4 · ${condition}`, condition),
+  };
+}
+const COMPLETE = 0;
+const LOSS = 2;
+function defaultProbes(): Record<string, ProbeFixture> {
+  const v3run = (identity: Partial<ReviewRunIdentity>, start: string, completion: number): ProbeFixture => ({
+    identity,
+    start_time_ns: start,
+    total_valid: "100",
+    total_invalid: "2",
+    accounting_completion: completion,
+    core_version: "2.1.0",
+  });
+  return {
+    "/data/lib/run_2.h5": v3run(v3(EXP_A, 2, "S-02", "Vehicle"), OCT14, COMPLETE),
+    "/data/lib/run_10.h5": v3run(v3(EXP_A, 10, "S-10", "CytoD 0.1"), OCT14, COMPLETE),
+    "/data/exp/alpha.h5": v3run(v3(EXP_A, 3, "S-03", "CytoD 1"), OCT14, LOSS),
+    "/data/exp/beta.h5": v3run(v3(EXP_A, 1, "S-01", "Vehicle"), OCT14, COMPLETE),
+    "/data/exp/gamma.h5": v3run(v3(EXP_A, 2, "S-02", "CytoD 0.1"), OCT14, COMPLETE),
+    "/data/exp/older.h5": v3run(v3(EXP_B, 1, "S-01", "Vehicle"), OCT09, COMPLETE),
+    "/data/exp/nox.h5": { identity: { has_snapshot: true, snapshot_version: 1 }, start_time_ns: OCT09, total_valid: "40", total_invalid: "1" },
+    "/data/exp/unread.h5": { identity: { snapshot_unreadable: true }, total_valid: "8", total_invalid: "0" },
+    "/data/exp/old.h5": { start_time_ns: OCT09, total_valid: "12", total_invalid: "3", core_version: "1.9.3" },
+    "/data/exp/broken.h5": {
+      ok: false,
+      message: "Not an HDF5 file, or it cannot be opened (locked or unreadable): /data/exp/broken.h5",
+      total_valid: null,
+      total_invalid: null,
+    },
+  };
+}
+let probeFixtures: Record<string, ProbeFixture> = {};
+let probeRefusal = "";
+let deferProbes = false;
+const pendingProbes: { paths: string[]; answer: () => void }[] = [];
+function probeOf(path: string): ReviewRunProbe {
+  const f = probeFixtures[path] ?? {};
+  return {
+    path,
+    ok: true,
+    message: "",
+    recording_file: false,
+    start_time_ns: null,
+    end_time_ns: null,
+    total_valid: "10",
+    total_invalid: "0",
+    accounting_completion: null,
+    core_version: null,
+    ...f,
+    identity: { ...absentIdentity(), ...(f.identity ?? {}) },
+  };
+}
 const listener = { id: 0 };
 const callbacks = new Map<number, (event: unknown) => void>();
 
@@ -82,6 +182,7 @@ function info() {
     has_recorded_config: true,
     ring_ratio_min: 15,
     ring_ratio_max: 25,
+    identity: open ? probeOf(opened).identity : absentIdentity(),
   };
 }
 
@@ -119,6 +220,14 @@ function respond(cmd: string, args: Record<string, unknown>): unknown {
       const names = dir === "/data/lib" ? ["run_10.h5", "run_2.h5", "legacy.h5", "notes.txt", ".run_3.h5.partial-7"] : (folderFiles[dir] ?? []);
       if (!deferDirs.has(dir)) return names;
       return new Promise<string[]>((resolve) => pendingLists.set(dir, [...(pendingLists.get(dir) ?? []), () => resolve(names)]));
+    }
+    case "review_probe_runs": {
+      const paths = args.paths as string[];
+      if (paths.length > 256) return { ok: false, message: `Too many files to probe at once: ${paths.length} (at most 256)`, runs: [] };
+      if (probeRefusal) return { ok: false, message: probeRefusal, runs: [] };
+      const answer = { ok: true, message: `Probed ${paths.length} file(s)`, runs: paths.map(probeOf) };
+      if (!deferProbes) return answer;
+      return new Promise((resolve) => pendingProbes.push({ paths, answer: () => resolve(answer) }));
     }
     case "review_open":
       if (refuse.has(String(args.path))) {
@@ -168,6 +277,10 @@ beforeEach(() => {
   folderPick = "/data/lib";
   deferDirs = new Set();
   pendingLists.clear();
+  probeFixtures = defaultProbes();
+  probeRefusal = "";
+  deferProbes = false;
+  pendingProbes.length = 0;
   listener.id = 0;
   callbacks.clear();
   const saved = new Map<string, string>();
@@ -273,8 +386,8 @@ it("lists a folder's run files and opens one into the review session", async () 
   await click(button("Open folder…"));
   expect(calls.find((c) => c.cmd === "plugin:dialog|open")?.args).toMatchObject({ options: { directory: true } });
   expect(calls.find((c) => c.cmd === "review_list_dir")?.args).toEqual({ dir: "/data/lib" });
-  const rows = Array.from(host.querySelectorAll(".mib-table tbody tr")).map((r) => r.querySelector("td")?.textContent);
-  expect(rows).toEqual(["legacy.h5", "run_2.h5", "run_10.h5"]);
+  // Grouped (run_2 and run_10 declare one experiment, by run index), the legacy file apart.
+  expect(fileRows()).toEqual(["run_2.h5", "run_10.h5", "legacy.h5"]);
   expect(localStorage.getItem(LIBRARY_FOLDER_KEY)).toBe("/data/lib");
 
   await click(button("Open run_2.h5"));
@@ -334,8 +447,9 @@ it("an empty folder or a cancelled choice says so", async () => {
 
 // #747 review: listings can finish out of order, and a row must never open a
 // file of a folder other than the one shown.
-const fileRows = () => Array.from(host.querySelectorAll(".mib-table tbody tr:not(.mib-table__empty-row)")).map((r) => r.querySelector("td")?.textContent ?? "");
-const libraryCard = () => Array.from(host.querySelectorAll(".mib-card")).find((c) => c.querySelector(".mib-card__title")?.textContent === "Runs in this folder")!;
+const fileRows = (scope: ParentNode = host) =>
+  Array.from(scope.querySelectorAll(".mib-table tbody tr:not(.mib-table__empty-row)")).map((r) => r.querySelector("td.mib-table__cell--emphasis")?.textContent ?? "");
+const libraryCard = () => Array.from(host.querySelectorAll(".mib-card")).find((c) => c.querySelector(".mib-card__title")?.textContent === "Experiments in this folder")!;
 const openButtons = () => Array.from(host.querySelectorAll("button")).filter((b) => b.getAttribute("aria-label")?.startsWith("Open "));
 async function chooseFolder(dir: string) {
   folderPick = dir;
@@ -406,6 +520,147 @@ it("a row shown while its folder is listed again opens nothing", async () => {
   await answerListing("/data/a");
   await click(button("Open a2.h5"));
   expect(calls.filter((c) => c.cmd === "review_open").map((c) => c.args.path)).toEqual(["/data/a/a2.h5"]);
+});
+
+// ---- R1 grouping (#717 B1b part 2): run identities from the files' headers ----
+const groups = () => Array.from(host.querySelectorAll("table.rv-group")) as HTMLTableElement[];
+const groupTitles = () => groups().map((g) => g.querySelector(".rv-group__title")?.textContent ?? "");
+const groupOf = (title: string) => {
+  const g = groups().find((t) => t.querySelector(".rv-group__title")?.textContent === title);
+  if (!g) throw new Error(`no group ${title} in: ${groupTitles().join(" | ")}`);
+  return g;
+};
+const cellOf = (table: HTMLTableElement, file: string, header: string) => {
+  const headers = Array.from(table.querySelectorAll("thead th")).map((th) => th.textContent);
+  const row = Array.from(table.querySelectorAll("tbody tr")).find((r) => r.querySelector("td.mib-table__cell--emphasis")?.textContent === file);
+  return row?.querySelectorAll("td")[headers.indexOf(header)]?.textContent ?? null;
+};
+const probeCalls = () => calls.filter((c) => c.cmd === "review_probe_runs").map((c) => c.args.paths as string[]);
+async function answerProbe() {
+  const waiting = pendingProbes.shift();
+  if (!waiting) throw new Error("no pending probe");
+  await act(async () => waiting.answer());
+  await settle();
+}
+
+it("groups a folder's runs by experiment and run index, legacy and unreadable files apart", async () => {
+  await mount();
+  await chooseFolder("/data/exp");
+  expect(probeCalls()).toEqual([folderFiles["/data/exp"].slice().sort().map((n) => `/data/exp/${n}`)]);
+  expect(groupTitles()).toEqual([
+    `Experiment ${EXP_A}`, // newest first
+    `Experiment ${EXP_B}`,
+    "Runs without an experiment",
+    "Legacy files · no run snapshot",
+    "Cannot be read",
+  ]);
+  const a = groupOf(`Experiment ${EXP_A}`);
+  expect(fileRows(a)).toEqual(["beta.h5", "gamma.h5", "alpha.h5"]); // run 1, 2, 3, not name order
+  expect(cellOf(a, "beta.h5", "Run")).toBe("Run 1");
+  expect(cellOf(a, "beta.h5", "Sample")).toBe("S-01 · Donor 4 · Vehicle");
+  expect(cellOf(a, "gamma.h5", "Condition")).toBe("CytoD 0.1");
+  expect(cellOf(a, "alpha.h5", "Records")).toBe("100 valid · 2 invalid");
+  expect(cellOf(a, "alpha.h5", "Core")).toBe("2.1.0");
+  expect(cellOf(a, "alpha.h5", "Calibration")).toBe("cal-0042");
+  expect(cellOf(a, "alpha.h5", "Status")).toBe("Partial · loss");
+  const caption = a.querySelector("caption")?.textContent ?? "";
+  expect(caption).toContain("3 runs · 3 samples");
+  expect(caption).toContain("conditions: Vehicle · CytoD 0.1 · CytoD 1");
+  expect(caption).toContain("core: 2.1.0");
+  expect(caption).toContain("1 of 3 runs · Partial · loss");
+
+  const none = groupOf("Runs without an experiment");
+  expect(fileRows(none)).toEqual(["nox.h5", "unread.h5"]);
+  expect(cellOf(none, "nox.h5", "Snapshot")).toBe("Snapshot v1");
+  expect(cellOf(none, "unread.h5", "Snapshot")).toBe("Snapshot unreadable");
+
+  // A legacy file shows what it does not record, and nothing in its place.
+  const legacy = groupOf("Legacy files · no run snapshot");
+  expect(fileRows(legacy)).toEqual(["old.h5"]);
+  expect(cellOf(legacy, "old.h5", "Sample")).toBe("Not recorded");
+  expect(cellOf(legacy, "old.h5", "Condition")).toBe("Not recorded");
+  expect(cellOf(legacy, "old.h5", "Calibration")).toBe("Not recorded");
+  expect(cellOf(legacy, "old.h5", "Status")).toBe("Accounting · not recorded");
+  expect(cellOf(legacy, "old.h5", "Records")).toBe("12 valid · 3 invalid");
+  expect(legacy.querySelector("caption")?.textContent).toContain("experiment, run, sample, condition and calibration are not recorded");
+
+  const broken = groupOf("Cannot be read");
+  expect(cellOf(broken, "broken.h5", "Why it cannot be read")).toContain("Not an HDF5 file, or it cannot be opened");
+  expect(libraryCard().textContent).toContain("2 experiments · 8 run files");
+  expect(host.textContent).toContain("does not read: an experiment shows the id its files declare");
+});
+
+it("opens a grouped run and shows the identity its file declares", async () => {
+  await mount();
+  await chooseFolder("/data/exp");
+  await click(button("Open beta.h5"));
+  expect(calls.filter((c) => c.cmd === "review_open").map((c) => c.args.path)).toEqual(["/data/exp/beta.h5"]);
+  expect(button("Open beta.h5").textContent).toBe("Opened");
+  expect(factValue("Run snapshot")).toBe("Version 3");
+  expect(factValue("Experiment")).toBe(EXP_A);
+  expect(factValue("Run")).toBe("Run 1");
+  expect(factValue("Sample")).toBe("S-01 · Donor 4 · Vehicle");
+  expect(factValue("Condition")).toBe("Vehicle");
+  expect(factValue("Annotation")).toBe("unit donor-4 · medium PBS");
+  expect(factValue("Calibration record")).toBe("cal-0042");
+  expect(factValue("Operator (selected at Start)")).toBe("Gavin");
+
+  await click(button("Open old.h5"));
+  expect(factValue("Run snapshot")).toBe("Not recorded · legacy file");
+  for (const label of ["Experiment", "Run", "Sample", "Condition", "Annotation", "Calibration record", "Operator (selected at Start)"])
+    expect(factValue(label)).toBe("Not reported");
+});
+
+it("probes a large folder in calls of at most 256 files", async () => {
+  await mount();
+  await chooseFolder("/data/big");
+  const sizes = probeCalls().map((p) => p.length);
+  expect(sizes).toEqual([256, 44]);
+  expect(probeCalls().flat()).toEqual(folderFiles["/data/big"].map((n) => `/data/big/${n}`));
+  expect(fileRows(groupOf("Legacy files · no run snapshot")).length).toBe(300);
+  expect(libraryCard().textContent).toContain("0 experiments · 300 run files");
+});
+
+it("shows the probe's progress, and a stale probe never fills a newer folder", async () => {
+  await mount();
+  deferProbes = true;
+  await chooseFolder("/data/big");
+  expect(libraryCard().textContent).toContain("Reading 0 of 300 files");
+  expect(groupTitles()).toEqual(["Reading run identities…"]);
+  await answerProbe();
+  expect(libraryCard().textContent).toContain("Reading 256 of 300 files");
+
+  // A folder change while the second call is out: its answer is dropped.
+  await chooseFolder("/data/exp");
+  await answerProbe(); // /data/big's late second call
+  expect(pendingProbes.length).toBe(1);
+  await answerProbe(); // /data/exp's call
+  expect(groupTitles()[0]).toBe(`Experiment ${EXP_A}`);
+  expect(fileRows().some((n) => n.startsWith("f"))).toBe(false);
+
+  // A refresh while a probe is out: the newer answer wins over the late older one.
+  await click(button("Refresh"));
+  probeFixtures["/data/exp/old.h5"] = { identity: v3(EXP_B, 2, "S-02", "CytoD 1"), start_time_ns: OCT09 };
+  await click(button("Refresh"));
+  expect(pendingProbes.length).toBe(2);
+  pendingProbes.reverse(); // the newer call answers first
+  await answerProbe();
+  expect(fileRows(groupOf(`Experiment ${EXP_B}`))).toEqual(["older.h5", "old.h5"]);
+  await answerProbe(); // the older refresh's answer, where old.h5 was legacy
+  expect(fileRows(groupOf(`Experiment ${EXP_B}`))).toEqual(["older.h5", "old.h5"]);
+  expect(groupTitles()).not.toContain("Legacy files · no run snapshot");
+});
+
+it("a refused probe says so and leaves the files listed and openable", async () => {
+  probeRefusal = "A review job is running; the files can be read when it finishes";
+  await mount();
+  await chooseFolder("/data/exp");
+  const notice = Array.from(host.querySelectorAll(".mib-notice")).find((n) => n.textContent?.includes("Run identities · not read"));
+  expect(notice?.textContent).toContain("A review job is running");
+  expect(groupTitles()).toEqual(["Not read"]);
+  expect(fileRows(groupOf("Not read")).length).toBe(8);
+  await click(button("Open beta.h5"));
+  expect(calls.filter((c) => c.cmd === "review_open").map((c) => c.args.path)).toEqual(["/data/exp/beta.h5"]);
 });
 
 it("opens the launch file straight into Inspect", async () => {
