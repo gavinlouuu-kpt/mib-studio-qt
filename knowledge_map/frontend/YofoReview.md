@@ -91,7 +91,9 @@ attribute that is not a JSON object. `reviewBridge.probeRuns(paths)`
 `REVIEW_PROBE.max_paths` (256, `reviewContract.ts`) paths per call, one
 `ReviewRunProbe` per path in order (identity, start/end time, counts,
 `accounting_completion`, `core_version`; `ok` false + `message` for a file
-that cannot be read), refused as a whole while a review job runs. The B1a
+that cannot be read), refused as a whole while a review job runs. A count
+the file does not record is `null` and a recorded 0 is `"0"`; a 0 time is
+`null`. The B1a
 PR adds the client only; R1 Open (B1b, on `feat/egrabber-workspace`) is its
 first user. `reviewIpc.golden.json` records the probe call.
 

@@ -82,7 +82,8 @@ the Qt [[../frontend/HdfReviewTab]] (`recordedPixelToMicron`, TD-17)
   snapshot without `schema_version`), `runId`, `declared`
   (`RunStartIdentity`: `experimentId`, `runIndex`, `sampleRef`,
   `selectedOperator`, `calibrationRecordId`), `annotation` (fixed members +
-  free key/values sorted by key) and `annotationSchemaVersion`. Absent is
+  free key/values sorted by key) and `annotationSchemaVersion` (read on its
+  own, presence-aware: missing is absent, a recorded 0 stays 0). Absent is
   `std::nullopt` / `false`, **never** 0 or ""; a legacy file reads every
   member absent. `snapshotUnreadable` / `annotationUnreadable`: the attribute
   exists but is not a JSON object, which is not the same as legacy.
@@ -90,9 +91,15 @@ the Qt [[../frontend/HdfReviewTab]] (`recordedPixelToMicron`, TD-17)
   for each path a short-lived reader of its own opens the file, reads only
   header attributes into a `RunProbe` (the `RunIdentity`, `startTimeNs` /
   `endTimeNs` with 0 read as not recorded, `totalValid` / `totalInvalid`
-  from `/experiment_info` or `totalValid` from `/recording_info`, the
-  accounting `completion`, the processing `coreVersion`) and closes it: no
-  images, no metadata rows. A missing path ("No such file"), a directory
+  from `/experiment_info` or `totalValid` from `/recording_info`
+  `total_recorded_frames`, the accounting `completion`, the processing
+  `coreVersion`) and closes it: no images, no metadata rows. Each count and
+  time is read on its own with `Hdf5Service::readScalarUintAttribute`
+  (#746 review), not through `readExperimentInfo` / `readRecordingInfo`,
+  which default a missing count to 0: a missing or unreadable count is
+  absent, a recorded 0 stays 0, a negative signed value is unreadable. A
+  recorded 0 time stays "not recorded" (the regenerate path writes 0 when it
+  has no wall clock). A missing path ("No such file"), a directory
   ("Not a file"), an empty path, a non-HDF5 or locked file ("Not an HDF5
   file, or it cannot be opened …") or a throwing read is a per-file error
   (`ok` false, every other member absent), never a failure of the call.

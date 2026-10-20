@@ -13,7 +13,10 @@ Track B (#717) step B1, the backend half of R1 Open (#269). Review ABI 1 → 2
 - `review_probe_runs(paths)` is the experiment library's header-only probe:
   identity, start/end time, counts, run accounting and core version per file,
   no images; at most 256 paths (`review_probe.max_paths`); a missing,
-  non-HDF5 or locked file is a per-file error.
+  non-HDF5 or locked file is a per-file error. Each count and time is read
+  on its own (`Hdf5Service::readScalarUintAttribute`, review round 1): a
+  missing count is absent and a recorded 0 stays 0, as does a recorded 0
+  `annotation_schema_version`.
 - HDF5 is built without thread safety (#722), so the probe reads each file
   under `ReviewSession`'s own mutex and holds the job lanes' mutex for the
   whole call (`ReviewJobs::probeRuns`), refusing while a job runs. The open

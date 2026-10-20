@@ -232,7 +232,9 @@ S12 takes 3 or higher. Additive; the bridge ABI is untouched.
   not a JSON object is "unreadable", not legacy.
 - **Probe:** `review_probe_runs(paths)`: header attributes only (identity,
   times, counts, accounting, core version), at most 256 paths
-  (`review_probe.max_paths`), per-file errors. Serialized with the session's
+  (`review_probe.max_paths`), per-file errors. Each count and time is read on
+  its own (review round 1): a missing count is absent, a recorded 0 stays 0.
+  Serialized with the session's
   HDF5 access (#722): each file under `ReviewSession`'s mutex, and the whole
   call under the job lanes' mutex (#512 S7) with a refusal while either lane is claimed
   (`ReviewJobs::probeRuns`), because jobs read outside the session's mutex.

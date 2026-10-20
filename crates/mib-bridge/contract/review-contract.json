@@ -8,7 +8,7 @@
   },
   "review_probe": {
     "max_paths": 256,
-    "semantics": "review_probe_runs(paths): header attributes only (identity, start/end time, counts, run accounting, processing core version), no images or metadata rows; one result per path in order; a file that cannot be read is a per-file error (ok false, message), never a failure of the call; refused as a whole above max_paths or while a review job runs; each file is read under the review session's own lock (HDF5 is not thread-safe, #722) and the open file is left as it was"
+    "semantics": "review_probe_runs(paths): header attributes only (identity, start/end time, counts, run accounting, processing core version), no images or metadata rows; each count and time is read on its own: a missing or unreadable count is null and a recorded 0 stays 0, while a recorded 0 time is null (not recorded); one result per path in order; a file that cannot be read is a per-file error (ok false, message), never a failure of the call; refused as a whole above max_paths or while a review job runs; each file is read under the review session's own lock (HDF5 is not thread-safe, #722) and the open file is left as it was"
   },
   "frame_packet": {
     "base": "bridge-contract.json frame_packet: the same magic, version, header layout, byte order and limits",
