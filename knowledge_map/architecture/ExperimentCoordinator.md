@@ -146,6 +146,10 @@ append only, never renumber.
    2026-09-08).
 5. `Hdf5Service::flush()`; `writeExperimentInfo(...)` (start/end wall-clock,
    run-wide successful valid/invalid writes, processing config, ROI, background, core identity);
+   for a host-science run, `writeObjectCoordinates(...)` (#756 review 2): `roi_local` when the
+   frozen `realtimeMode` is `inline` and the ROI has an area (the inline path validates the ROI's
+   mask: ROI-local boxes next to full-frame images and masks), `image` otherwise (async batch,
+   whole image); a PL-science run's rows come from the PL and nothing is written;
    `writeRunAccounting(experimentAccountingSnapshot())`;
    `writeAcquisitionProvenance(...)`; `writeConfigJson(getLastConfigJson())`;
    then, best effort, `writeKdeLiveJson(...)` with the last provisional KDE

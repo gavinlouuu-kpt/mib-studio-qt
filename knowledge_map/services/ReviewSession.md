@@ -38,7 +38,10 @@ identity and the identity probe, #717 B1a; labels
 `review;recording;backend;hdf5;concurrency;safety`),
 `tests/review/review_inspect_test.cpp` (`review.inspect`: track rows and
 reprocessing one record, #717 B3b; labels
-`review;backend;hdf5;concurrency;safety`)
+`review;backend;hdf5;concurrency;safety`),
+`tests/review/review_object_coordinates_test.cpp` (`review.object_coordinates`:
+the object coordinate space and the match through it, #756 review 2; labels
+`review;backend;hdf5;safety`)
 **Consumers:** `crates/mib-bridge/src/review_shim.cpp` (`ReviewBridge`, [[../architecture/Rust-Bridge]]),
 `BackendFacade` (`review_`, the facade's review source, #512 S5;
 `tests/backend/facade_review_session_test.cpp`, `backend.facade_review_session`),
@@ -525,16 +528,53 @@ rows are the objects found (the
 kernel's frame-level "no object" result, `objectCount` 0, is not one), with
 the record's frame index and no track, at most `kReviewReprocessMaxObjects`
 (64, `truncated`); `match` is the found object whose centroid is nearest the
-stored one inside the stored bounding box, compared as stored (offline
-results are image-relative; realtime ROI captures store ROI-local
-coordinates next to full-frame images, `ProcessingService.cpp` ROI path:
-the conversion is open on #756 review 1);
+stored one inside the stored bounding box, both in image coordinates: the
+reprocessed rows are, and the stored box and centroid are placed through
+the file's object coordinate space (`toImageSpace`, below). A file whose
+space is unknown is refused ("Record N cannot be matched: the file does not
+record whether its bounding boxes are relative to its ROI (which starts at
+x, y) or to the image, and its masks do not tell"); the result's `stored`
+row stays as stored;
 `objectCountDiffers` compares with a stored `objectCount` above 0. A kernel
 failure (no mask) is refused. `review.inspect` covers it, with the regenerate
 job held at its first progress event.
 The facade's session is read on the bridge's calling threads, as the shared
 handle was before S5 (now serialized by this mutex); HDF5 itself is still not
 thread-safe across readers (#722), which is why D1 keeps experiments out.
+
+## Object coordinate space (#756 review 2)
+
+The realtime inline path with an ROI validates the ROI's mask, so its rows'
+boxes and centroids are ROI-local, next to full-frame images and masks (the
+mask pasted at the ROI); `computeProcessedFrame` (async batch, regenerate,
+reanalysis, `processBatch`) reports image coordinates. No reader converted
+them before. `open` decides each experiment file's space once, under the
+session's mutex, into `ReviewMetadata::objectCoordinates` (space, source,
+the origin it implies), in the order of `backend/review/ObjectCoordinates.h`:
+
+1. `/experiment_info @object_coordinates` (written from #756 on, see
+   [[../data-model/HDF5-Storage]]); an unrecognised value does not decide;
+2. a run snapshot v3 of a host-science run (`science_placement` not `pl`):
+   an ROI with an area under `realtime_mode` `inline` is `roi_local`,
+   `async_batch` or no ROI is `image`, another mode does not decide;
+3. an ROI without area or at (0, 0): `image` (`roi_origin`): both placements
+   are the same, so the mask check (next) could never decide such a file;
+4. the mask check: up to 64 records with a box and a mask, spread over the
+   file (valid set, then invalid); each votes for the placement of its box
+   (as stored, or shifted by the ROI origin) that covers mask pixels and at
+   least twice as many as the other (`maskPlacementVote`); the file is that
+   space with at least 8 decisive votes agreeing at 90 % or more
+   (`maskCheckVerdict`);
+5. otherwise `Unknown`. A raw recording (no objects) and no file are
+   `Unknown` too.
+
+`toImageSpace(coordinates, bbox, centroid)` is the one conversion (false,
+nothing changed, for `Unknown`). The reprocess match uses it; the cell crop
+in R3 Inspect uses the same fields through `fetch_review_info` from B3c on.
+The steps run in the ruling's order except that the ROI-origin rule comes
+before the mask check (it decides exactly the files the check cannot), and
+the snapshot rule reads `realtime_mode`: an async-batch capture with an ROI
+stores image coordinates.
 
 ## Gotchas
 

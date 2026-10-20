@@ -96,6 +96,11 @@ a macro). Unit-tested by `tests/backend/hdf_write_queue_test.cpp`.
   Matching readers: `isRecordingFile()` (probes `/recording_info`),
   `readRecordingMetadata(frames)` (fills only index + timestampNs on each
   `ProcessedFrame`), `readRecordingInfo(start, end, total, filtered, ...)`.
+  `writeObjectCoordinates(space)` / `readScalarStringAttribute(groupPath,
+  name)` (#756 review 2): `/experiment_info @object_coordinates`
+  (`kObjectCoordinatesRoiLocal` / `kObjectCoordinatesImage`, after
+  `writeExperimentInfo`; a rewrite replaces it) and a presence-aware scalar
+  string read (`nullopt` when missing, not a scalar string, or unreadable).
   `readScalarUintAttribute(groupPath, name)` (#717 B1a review) reads one
   scalar integer attribute of a top-level group presence-aware: `nullopt`
   when the group or attribute is missing, not a scalar integer, unreadable or

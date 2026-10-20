@@ -337,6 +337,10 @@ ReviewInfo ReviewBridge::fetch_review_info() {
         const br::ReviewMetadata m = impl_->session.metadata();
         out.valid = true;
         out.file_open = m.fileOpen;
+        out.object_coordinates = rust::String(br::toString(m.objectCoordinates.space));
+        out.object_coordinates_source = rust::String(br::toString(m.objectCoordinates.source));
+        out.object_origin_x = m.objectCoordinates.originX;
+        out.object_origin_y = m.objectCoordinates.originY;
         if (!m.fileOpen) return out;
         out.file_path = rust::String(m.filePath);
         out.recording_file = m.recordingFile;
@@ -844,6 +848,9 @@ bool writeExperimentFixture(const std::string& path, const std::string& snapshot
         a.completion = backend::recording::RunCompletionState::Complete;
         a.reconciled = true;
         if (!hdf5.writeRunAccounting(a)) return false;
+        // A file from #756 on records its rows' coordinate space; the legacy
+        // variant (no provenance) does not, and its ROI is away from (0, 0).
+        if (!hdf5.writeObjectCoordinates(Hdf5Service::kObjectCoordinatesImage)) return false;
         backend::monitoring::KdeCoreRecord r;
         r.provisional = false;
         r.source = "full-run";

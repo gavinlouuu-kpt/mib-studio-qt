@@ -129,3 +129,23 @@ export const REVIEW_REPROCESS = {
   },
   "max_objects": 64
 } as const;
+
+export const REVIEW_OBJECT_COORDINATES = {
+  "attribute": "/experiment_info @object_coordinates",
+  "values": [
+    "roi_local",
+    "image",
+    "unknown"
+  ],
+  "sources": [
+    "attribute",
+    "snapshot",
+    "mask_check",
+    "roi_origin"
+  ],
+  "mask_check": {
+    "max_records": 64,
+    "min_decisive": 8,
+    "min_agreement_percent": 90
+  }
+} as const;

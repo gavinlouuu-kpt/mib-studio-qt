@@ -33,7 +33,25 @@ higher); the bridge ABI is untouched.
   UI change. R3 Inspect (B3a, on `feat/egrabber-workspace`) is the first
   user. Regenerate provenance and Compare are deferred to #754.
 
-Tests: `review.inspect` (new), `review.run_identity` (LUT and profile),
+Review round 2 (#756, coordinator ruling on the coordinate space):
+
+- `/experiment_info @object_coordinates` is written from now on:
+  `roi_local` by the capture path for an inline-realtime host run with an
+  ROI, `image` for async-batch and whole-image runs and by
+  `saveMasksToHdf5` (regenerate, reanalysis, the Qt batch dialog). PL-science
+  runs write none. The Qt `ExperimentController` is compiled but no longer
+  used, so it is unchanged.
+- At open the session decides each file's space (`ObjectCoordinates.h`):
+  attribute; v3 host snapshot (inline with an ROI: `roi_local`; async batch
+  or no ROI: `image`); ROI origin (0, 0) or no ROI area: `image`; a mask
+  check over up to 64 records (8 decisive, 90 % agreement); else `unknown`.
+- `fetch_review_info` carries `object_coordinates`,
+  `object_coordinates_source` and `object_origin_x` / `_y`; the contract
+  gains `review_object_coordinates` (`REVIEW_OBJECT_COORDINATES`).
+- The reprocess match places the stored record through `toImageSpace`;
+  an unknown space is refused with the reason.
+
+Tests: `review.object_coordinates` (new), `review.inspect` (new), `review.run_identity` (LUT and profile),
 `tests/review_bridge.rs` in both feature configurations, the Tauri identity
 JSON test and the `reviewIpc` golden. See [[ReviewSession]], [[YofoReview]]
 and [[Rust-Bridge]].

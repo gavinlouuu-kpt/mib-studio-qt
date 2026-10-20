@@ -895,6 +895,12 @@ mib_add_backend_test_executable(review_inspect_test review/review_inspect_test.c
 mib_backend_test_link(review_inspect_test PRIVATE Threads::Threads)
 add_test(NAME review.inspect COMMAND $<TARGET_FILE:mib_backend_tests> review_inspect_test)
 set_tests_properties(review.inspect PROPERTIES LABELS "review;backend;hdf5;concurrency;safety" TIMEOUT 180)
+# The object coordinate space of a file (#756 review 2): attribute, v3 snapshot,
+# ROI origin and the bounded mask check, unknown when nothing decides; the
+# one-record reprocess match placed through it, refused for unknown.
+mib_add_backend_test_executable(review_object_coordinates_test review/review_object_coordinates_test.cpp)
+add_test(NAME review.object_coordinates COMMAND $<TARGET_FILE:mib_backend_tests> review_object_coordinates_test)
+set_tests_properties(review.object_coordinates PROPERTIES LABELS "review;backend;hdf5;safety" TIMEOUT 180)
 # One overlay kernel (#512 slice 1): review::composeOverlay is byte-identical
 # to the implementation it replaced and draws the Qt/facade kernel's pixels.
 mib_add_backend_test_executable(review_overlay_kernel_test review/review_overlay_kernel_test.cpp)

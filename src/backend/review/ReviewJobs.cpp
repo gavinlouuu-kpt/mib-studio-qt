@@ -726,6 +726,7 @@ namespace backend::review
             sessionCore = impl_->processing->activeProcessingCoreIdentity();
             if (!impl_->session.reprocessInputs(valid, index, settings, in, error)) return false;
         }
+
         // Outside every lock: processBatch reads no file. It runs on a
         // processing instance of this call's own (the bundled core, as the
         // review session's), configured with this record's calibration, so
@@ -793,10 +794,11 @@ namespace backend::review
         // A stored count of 0 (nothing found, or a file older than the count)
         // is not compared.
         out.objectCountDiffers = in.stored.objectCount > 0 && found != static_cast<std::size_t>(in.stored.objectCount);
-        // Pair them: stored records and processBatch both come from
-        // computeProcessedFrame, in image coordinates whatever the ROI.
-        const cv::Rect2d box(in.stored.bboxX, in.stored.bboxY, in.stored.bboxWidth, in.stored.bboxHeight);
-        const cv::Point2d centre(in.stored.centroidX, in.stored.centroidY);
+        // Pair them in image coordinates: processBatch reports them whatever
+        // the ROI; the stored record is placed through the file's space.
+        cv::Rect2d box(in.stored.bboxX, in.stored.bboxY, in.stored.bboxWidth, in.stored.bboxHeight);
+        cv::Point2d centre(in.stored.centroidX, in.stored.centroidY);
+        toImageSpace(in.objectCoordinates, box, centre); // known: reprocessInputs refuses Unknown
         double best = std::numeric_limits<double>::infinity();
         for (std::size_t i = 0; i < out.reprocessed.size(); ++i)
         {

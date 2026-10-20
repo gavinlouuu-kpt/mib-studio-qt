@@ -114,7 +114,14 @@ next to the objects the session's kernel finds in the record's image now
 `core_source` naming what was used, `pixel_to_micron` the factor it ran
 and reports with, and `emodulus_recomputed` false (no E-LUT: the
 reprocessed E is `null`). It never writes a file and is refused
-while a review job runs. The B3b PR adds the client only; R3 Inspect (B3a,
+while a review job runs, or when the file's object coordinate space is
+unknown. `fetch_review_info` gains `object_coordinates` (`roi_local`,
+`image` or `unknown`), `object_coordinates_source` (`attribute`,
+`snapshot`, `mask_check`, `roi_origin`, or `""` when unknown) and
+`object_origin_x` / `object_origin_y`, the offset that places a stored box
+or centroid in image coordinates (#756 review 2; `REVIEW_OBJECT_COORDINATES`
+in the generated contract). A client never places a box when the space is
+`unknown`. The B3b PR adds the client only; R3 Inspect (B3a,
 on `feat/egrabber-workspace`) is its first user. `reviewIpc.golden.json`
 records the calls.
 

@@ -111,6 +111,14 @@ export interface ReviewInfo {
   roi_y: number;
   roi_w: number;
   roi_h: number;
+  /** Review ABI 3 (#756 review 2): the stored bounding boxes' and centroids'
+   * coordinate space; what decided it ("" when unknown); and the offset that
+   * places a stored box in image coordinates (the ROI origin for
+   * `roi_local`, else 0). Never place a box when it is `unknown`. */
+  object_coordinates: "roi_local" | "image" | "unknown";
+  object_coordinates_source: "attribute" | "snapshot" | "mask_check" | "roi_origin" | "";
+  object_origin_x: number;
+  object_origin_y: number;
   has_background: boolean;
   has_core_identity: boolean;
   core_version: string;

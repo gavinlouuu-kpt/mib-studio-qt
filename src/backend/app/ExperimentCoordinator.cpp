@@ -1855,6 +1855,19 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
             SPDLOG_ERROR("ExperimentCoordinator: metadata/provenance write failed");
             ok = false;
         } else {
+            // The coordinate space of the rows (#756 review 2): the inline
+            // realtime path with an ROI validates the ROI's mask, so its boxes
+            // and centroids are ROI-local next to full-frame images and masks;
+            // the async batch path (computeProcessedFrame) and a run without an
+            // ROI store image coordinates. A PL-science run's rows come from
+            // the PL: not recorded (readers fall back, see ObjectCoordinates.h).
+            if (app::hostProcessingAvailable()) {
+                const bool roiLocal = run.realtimeMode == "inline" && roi.w > 0 && roi.h > 0;
+                if (!hdf5.writeObjectCoordinates(roiLocal ? services::Hdf5Service::kObjectCoordinatesRoiLocal
+                                                          : services::Hdf5Service::kObjectCoordinatesImage)) {
+                    SPDLOG_ERROR("ExperimentCoordinator: object_coordinates could not be persisted");
+                }
+            }
             if (!hdf5.writeRunAccounting(accounting)) {
                 SPDLOG_ERROR("ExperimentCoordinator: run accounting could not be persisted");
                 ok = false;

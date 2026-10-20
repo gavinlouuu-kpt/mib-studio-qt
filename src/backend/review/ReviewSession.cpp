@@ -291,6 +291,84 @@ namespace backend::review
             reader.readKdeAnalysisJson(meta.kdeAnalysisJson);
             reader.readKdeLiveJson(meta.kdeLiveJson);
             meta.runIdentity = ReviewSession::readRunIdentity(reader);
+            if (!recording) meta.objectCoordinates = resolveObjectCoordinatesLocked();
+        }
+
+        // The file's object coordinate space (#756 review 2), in the order of
+        // ObjectCoordinates.h. Runs at open under the session's mutex: the
+        // mask check reads HDF5 (#722).
+        ObjectCoordinates resolveObjectCoordinatesLocked() const
+        {
+            ObjectSpaceEvidence evidence;
+            evidence.attribute =
+                reader.readScalarStringAttribute("/experiment_info", services::Hdf5Service::kObjectCoordinatesAttribute);
+            evidence.recordedRoi = meta.roi;
+            std::string snapshot;
+            if (reader.readRunSnapshotJson(snapshot))
+            {
+                const auto doc = nlohmann::json::parse(snapshot, nullptr, false);
+                if (doc.is_object())
+                {
+                    if (const auto v = doc.find("schema_version"); v != doc.end() && v->is_number_unsigned())
+                        evidence.snapshotVersion = v->get<std::uint32_t>();
+                    if (const auto r = doc.find("roi"); r != doc.end() && r->is_object())
+                    {
+                        const auto member = [&](const char *name, int &value) {
+                            const auto it = r->find(name);
+                            if (it == r->end() || !it->is_number_integer()) return false;
+                            value = it->get<int>();
+                            return true;
+                        };
+                        services::ProcessingService::Roi roi{};
+                        if (member("x", roi.x) && member("y", roi.y) && member("w", roi.w) && member("h", roi.h))
+                            evidence.snapshotRoi = roi;
+                    }
+                    if (const auto p = doc.find("science_placement"); p != doc.end() && p->is_string())
+                        evidence.snapshotPlScience = p->get<std::string>() == "pl";
+                    if (const auto m = doc.find("realtime_mode"); m != doc.end() && m->is_string())
+                        evidence.snapshotRealtimeMode = m->get<std::string>();
+                }
+            }
+            return resolveObjectCoordinates(evidence, [this] { return maskCheckLocked(); });
+        }
+
+        // Which placement of the stored boxes lands on the stored full-frame
+        // masks, over a bounded sample of the records that have both.
+        std::optional<ObjectSpace> maskCheckLocked() const
+        {
+            struct Candidate
+            {
+                bool valid;
+                std::size_t index;
+            };
+            std::vector<Candidate> candidates;
+            for (const bool valid : {true, false})
+            {
+                const DatasetInfo &masks = valid ? meta.validMasks : meta.invalidMasks;
+                if (!masks.present) continue;
+                const auto &frames = set(valid);
+                const std::size_t n = std::min<std::size_t>(frames.size(), static_cast<std::size_t>(masks.count));
+                for (std::size_t i = 0; i < n; ++i)
+                {
+                    const auto &v = frames[i].validation;
+                    if (v.bboxWidth > 0 && v.bboxHeight > 0) candidates.push_back({valid, i});
+                }
+            }
+            std::vector<std::optional<ObjectSpace>> votes;
+            for (const std::size_t position : maskCheckSample(candidates.size()))
+            {
+                const Candidate &c = candidates[position];
+                cv::Mat mask;
+                if (!reader.readImageByIndex(masksPath(c.valid), c.index, mask) || mask.empty())
+                {
+                    votes.emplace_back(std::nullopt);
+                    continue;
+                }
+                const auto &v = set(c.valid)[c.index].validation;
+                votes.push_back(maskPlacementVote(toGray(mask), cv::Rect2d(v.bboxX, v.bboxY, v.bboxWidth, v.bboxHeight),
+                                                  meta.roi.x, meta.roi.y));
+            }
+            return maskCheckVerdict(votes);
         }
 
         const std::vector<services::ProcessedFrame> &set(bool valid) const
@@ -667,6 +745,15 @@ namespace backend::review
         }
         out.image = grayLikeRegenerate(std::move(image));
         out.pixelToMicronFromFile = meta.pixelToMicronFromFile && meta.pixelToMicron > 0.0;
+        // The stored record is matched in image coordinates (#756 review 2):
+        // a file whose space nothing decides is refused, never matched by a
+        // guess.
+        out.objectCoordinates = meta.objectCoordinates;
+        if (out.objectCoordinates.space == ObjectSpace::Unknown)
+            return refuse("Record " + std::to_string(index) +
+                          " cannot be matched: the file does not record whether its bounding boxes are relative to "
+                          "its ROI (which starts at " + std::to_string(meta.roi.x) + ", " + std::to_string(meta.roi.y) +
+                          ") or to the image, and its masks do not tell");
         if (settings == ReprocessSettings::Recorded)
         {
             // The recorded calibration is a recorded processing input: area

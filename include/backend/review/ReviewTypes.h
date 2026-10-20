@@ -11,6 +11,7 @@
 #include "backend/recording/RecordingAccounting.h"
 #include "backend/recording/RunProvenanceRecord.h"
 #include "backend/recording/RunStartIdentity.h"
+#include "backend/review/ObjectCoordinates.h"
 
 #include <cstdint>
 #include <optional>
@@ -178,6 +179,10 @@ namespace backend::review
         // Run identity from snapshot v3 and the annotation (#717 B1a); absent
         // members for a legacy file.
         RunIdentity runIdentity;
+        // The space of the stored boxes and centroids, decided once at open
+        // (#756 review 2, ObjectCoordinates.h); Unknown for a raw recording,
+        // which stores no objects.
+        ObjectCoordinates objectCoordinates;
     };
 
     // One metrics row: the full FilterResult the Qt HdfMetricsModel shows.
@@ -254,12 +259,17 @@ namespace backend::review
         // E (and an E-gated target group) recomputed: false when no E-LUT
         // is loaded for reprocessing; the reprocessed rows' E is then NaN.
         bool emodulusRecomputed{false};
+        // The stored row as stored (its box and centroid in the file's
+        // object coordinate space, ReviewMetadata::objectCoordinates).
         MetricRow stored;
         // The objects found (none for an empty image: the kernel's
         // frame-level "no object" result is not one), at most
-        // kReviewReprocessMaxObjects.
+        // kReviewReprocessMaxObjects; image coordinates.
         std::vector<MetricRow> reprocessed;
-        std::optional<std::size_t> match; // index into `reprocessed`
+        // Index into `reprocessed`: the object whose centroid is nearest the
+        // stored one inside the stored box, both placed in image coordinates
+        // (toImageSpace).
+        std::optional<std::size_t> match;
         // The kernel found another number of objects than the stored record's
         // object count (a stored count of 0 is not compared).
         bool objectCountDiffers{false};

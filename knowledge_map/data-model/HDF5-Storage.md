@@ -20,6 +20,17 @@
   `processing_manifest_sha256`, `processing_release_tag`,
   `processing_core_source`, `processing_core_build_id`, and
   `processing_runtime_fingerprint`.
+  - `object_coordinates` (#756 review 2, UTF-8 string): the space of the
+    rows' bounding boxes and centroids. `roi_local`: relative to the
+    recorded ROI's origin, written by [[../architecture/ExperimentCoordinator]]
+    for an inline-realtime host run with an ROI (that path validates the
+    ROI's mask; images and masks stay full-frame, the mask pasted at the
+    ROI). `image`: image coordinates, written for async-batch and whole-image
+    runs and by `saveMasksToHdf5` (regenerate, reanalysis, the Qt batch
+    dialog; `computeProcessedFrame` validates the full-frame mask). Not
+    written for PL-science runs, nor by files before #756: readers decide
+    those as `backend/review/ObjectCoordinates.h` describes
+    ([[../services/ReviewSession]]).
 - `/valid_frames/` — per-field datasets (images, masks, metrics).
 - `/invalid_frames/` — same shape; populated only at
   `invalidFrameSamplingRate` sampling.

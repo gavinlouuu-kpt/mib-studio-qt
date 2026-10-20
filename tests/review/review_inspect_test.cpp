@@ -13,7 +13,7 @@
 //    values, and the result names the settings and the kernel;
 //  - a frame where the kernel finds another number of objects than the
 //    stored record says: every object returned, the stored one matched by
-//    position (image coordinates, with an offset recorded ROI), the
+//    position (image coordinates as the file records, with an offset ROI), the
 //    difference flagged; an object away from the stored one (outside its
 //    bounding box) is not matched;
 //  - default settings: the whole image, no background, labelled so;
@@ -65,8 +65,9 @@ using backend::services::ProcessingService;
 namespace
 {
     constexpr int kW = 180, kH = 96;
-    // The recorded ROI is offset from the image origin (coordinates stay
-    // image coordinates).
+    // The recorded ROI is offset from the image origin; the rows come from
+    // processBatch, image coordinates, and the files say so
+    // (`object_coordinates` "image", as regenerate writes it).
     const ProcessingService::Roi kRoi{10, 0, 170, 96};
 
     cv::Mat rings(std::initializer_list<int> xs)
@@ -137,6 +138,8 @@ namespace
         const cv::Mat black(kH, kW, CV_8UC1, cv::Scalar(0));
         MIB_REQUIRE(hdf5.writeExperimentInfo(1000, 5000, valid.size(), invalid.size(), permissive(), kRoi, &black),
                     "inspect info");
+        // Rows from processBatch: image coordinates, as regenerate records.
+        MIB_REQUIRE(hdf5.writeObjectCoordinates(Hdf5Service::kObjectCoordinatesImage), "inspect object_coordinates");
         MIB_REQUIRE(hdf5.writeRunSnapshotJson("{\"pixel_to_micron\":0.5}", "{}"), "snapshot");
         hdf5.closeFile();
     }
@@ -168,6 +171,7 @@ namespace
         MIB_REQUIRE(hdf5.openFile(path.string()) && hdf5.initializeDatasets(), "open calibrated");
         MIB_REQUIRE(hdf5.appendFrames({f}, {}), "append calibrated");
         MIB_REQUIRE(hdf5.writeExperimentInfo(1000, 5000, 1, 0, areaChecked(), kRoi, &black), "calibrated info");
+        MIB_REQUIRE(hdf5.writeObjectCoordinates(Hdf5Service::kObjectCoordinatesImage), "calibrated object_coordinates");
         MIB_REQUIRE(hdf5.writeRunSnapshotJson("{\"pixel_to_micron\":0.25}", "{}"), "calibrated snapshot");
         hdf5.closeFile();
     }

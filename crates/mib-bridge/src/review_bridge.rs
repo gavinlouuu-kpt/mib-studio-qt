@@ -194,6 +194,17 @@ pub mod review_ffi {
         pub roi_y: i32,
         pub roi_w: i32,
         pub roi_h: i32,
+        /// Review ABI 3 (#756 review 2): the space of the stored bounding
+        /// boxes and centroids, a contract `review_object_coordinates.values`
+        /// string ("roi_local", "image", "unknown"); what decided it
+        /// (`sources`: "attribute", "snapshot", "mask_check", "roi_origin";
+        /// empty when unknown); and the offset that places a stored box or
+        /// centroid in image coordinates (the ROI origin for roi_local, else
+        /// 0). Whatever needs the placement refuses an unknown space.
+        pub object_coordinates: String,
+        pub object_coordinates_source: String,
+        pub object_origin_x: i32,
+        pub object_origin_y: i32,
         pub has_background: bool,
         pub has_core_identity: bool,
         pub core_version: String,

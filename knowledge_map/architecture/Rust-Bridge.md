@@ -763,7 +763,10 @@ attach to):
 - **Calls:** `review_open/close`, `set_fallback_pixel_to_micron`,
   `fetch_review_info` (counts, ROI, datasets, series, multi-image window,
   accounting + summary text, recorded factor, KDE JSON, recorded
-  ring-ratio range, and since review ABI 2 the run `identity`),
+  ring-ratio range, since review ABI 2 the run `identity`, and since review
+  ABI 3 `object_coordinates` / `object_coordinates_source` /
+  `object_origin_x` / `object_origin_y`, #756 review 2: the stored boxes'
+  coordinate space, strings from the contract's `review_object_coordinates`),
   `review_probe_runs(paths)` (review ABI 2, #717 B1a: the experiment
   library's header-only identity probe → `ReviewProbeResult { ok, message,
   runs: Vec<ReviewRunProbe> }`, at most `review_probe.max_paths` = 256
@@ -829,7 +832,10 @@ attach to):
   `kReviewTrackRowsMax`), `review_reprocess_record` (`settings`,
   `max_objects`, `REVIEW_REPROCESS`, checked against the `ReprocessSettings`
   enum and `kReviewReprocessMaxObjects`; `review_shim.cpp` static_asserts
-  the same values),
+  the same values), `review_object_coordinates` (#756 review 2: `values`,
+  `sources`, the attribute and the `mask_check` bounds, rendered as
+  `REVIEW_OBJECT_COORDINATES`; the generator checks the bounds against
+  `ObjectCoordinates.h` and every string against `ObjectCoordinates.cpp`),
   `overlay_modes`,
   `review_density` (incl. `ramp_rgb`, checked against `MonitoringDensity.h`
   `kStops` by the generator), `review_pixel_formats`,

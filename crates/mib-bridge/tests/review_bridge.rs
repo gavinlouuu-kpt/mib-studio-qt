@@ -454,9 +454,27 @@ fn inspect_track_rows_and_reprocess_one_record() {
     let r = bridge.pin_mut().review_reprocess_record(true, 0, recorded);
     assert!(!r.ok && !r.message.is_empty() && r.reprocessed.is_empty());
 
+    // Nothing open: the object coordinate space is unknown (#756 review 2).
+    let closed = bridge.pin_mut().fetch_review_info();
+    assert_eq!((closed.object_coordinates.as_str(), closed.object_coordinates_source.as_str()), ("unknown", ""));
+    let spaces = &contract["review_object_coordinates"];
+    let values: Vec<&str> = spaces["values"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+    let sources: Vec<&str> = spaces["sources"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+    assert_eq!(values, ["roi_local", "image", "unknown"]);
+    assert_eq!(sources, ["attribute", "snapshot", "mask_check", "roi_origin"]);
+    assert_eq!(spaces["mask_check"]["max_records"].as_u64(), Some(64));
+    assert_eq!(spaces["mask_check"]["min_decisive"].as_u64(), Some(8));
+    assert_eq!(spaces["mask_check"]["min_agreement_percent"].as_u64(), Some(90));
+
     bridge.pin_mut().set_fallback_pixel_to_micron(0.9);
     assert!(bridge.pin_mut().review_open(&path.to_string_lossy()).ok);
     let before = std::fs::read(&path).unwrap();
+    // The fixture records image coordinates (its ROI starts at (4, 2)).
+    let info = bridge.pin_mut().fetch_review_info();
+    assert_eq!(
+        (info.object_coordinates.as_str(), info.object_coordinates_source.as_str(), info.object_origin_x, info.object_origin_y),
+        ("image", "attribute", 0, 0)
+    );
 
     // Track rows: the fixture tracks valid frame 2i as track i, invalid frame 2i+1 as track i.
     let rows = bridge.pin_mut().fetch_review_track_rows(true, 2, max_rows);
@@ -514,6 +532,24 @@ fn inspect_track_rows_and_reprocess_one_record() {
     // Never written: the file's bytes are what they were.
     assert!(bridge.pin_mut().review_close().ok);
     assert_eq!(std::fs::read(&path).unwrap(), before, "reprocessing writes nothing");
+
+    // A legacy file (no attribute, no snapshot), its ROI at (4, 2), no boxes
+    // for the mask check: unknown, and the match is refused (#756 review 2).
+    let legacy = fixture_path("inspect_legacy");
+    let _ = std::fs::remove_file(&legacy);
+    assert!(ffi::review_fixture_write_run(&legacy.to_string_lossy(), "", ""));
+    assert!(bridge.pin_mut().review_open(&legacy.to_string_lossy()).ok);
+    let info = bridge.pin_mut().fetch_review_info();
+    assert_eq!((info.object_coordinates.as_str(), info.object_coordinates_source.as_str()), ("unknown", ""));
+    let refused = bridge.pin_mut().review_reprocess_record(true, 0, recorded);
+    assert!(
+        !refused.ok && refused.message.contains("cannot be matched") && refused.message.contains("starts at 4, 2"),
+        "{}",
+        refused.message
+    );
+    assert!(bridge.pin_mut().review_close().ok);
+    let _ = std::fs::remove_file(&legacy);
+
     bridge.pin_mut().shutdown();
     let _ = std::fs::remove_file(&path);
 }

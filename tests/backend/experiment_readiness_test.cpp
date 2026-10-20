@@ -586,6 +586,11 @@ int main()
                        runJson.find("\"method\":{") != std::string::npos,
                    "snapshot JSON content");
         MIB_EXPECT(readinessJson.find("\"camera.session\"") != std::string::npos, "readiness JSON persisted");
+        // #756 review 2: the inline realtime path with an ROI stores ROI-local rows, and says so.
+        MIB_EXPECT(frozen.realtimeMode == "inline" &&
+                       reader.readScalarStringAttribute("/experiment_info", "object_coordinates") ==
+                           std::optional<std::string>("roi_local"),
+                   "an inline run with an ROI records object_coordinates = roi_local");
 
         // Snapshot v3 (#712), read back typed: the run's own id, the LUT the processing service
         // loaded, and the devices as this host has them (none connected: written as absent).

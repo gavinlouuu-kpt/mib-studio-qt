@@ -121,6 +121,9 @@ namespace backend::review
             // default) and whether the file records it.
             double processingPixelToMicron{0.0};
             bool pixelToMicronFromFile{false};
+            // The stored row's coordinate space (ReviewMetadata): `stored`
+            // is as stored; toImageSpace places it.
+            ObjectCoordinates objectCoordinates;
         };
         bool reprocessInputs(bool valid, std::uint64_t index, ReprocessSettings settings, ReprocessInputs &out,
                              std::string *error = nullptr) const;

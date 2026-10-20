@@ -378,6 +378,14 @@ bool saveMasksToHdf5(const std::vector<ProcessedFrame>& frames,
         out.closeFile();
         return false;
     }
+    // computeProcessedFrame validates the full-frame mask: image coordinates
+    // whatever the ROI (#756 review 2). Written: such a file has no run
+    // snapshot to tell it from a capture.
+    if (!out.writeObjectCoordinates(Hdf5Service::kObjectCoordinatesImage)) {
+        SPDLOG_ERROR("saveMasksToHdf5: object_coordinates write failed");
+        out.closeFile();
+        return false;
+    }
 
     if (!out.saveFrames(valid, invalid)) {
         SPDLOG_ERROR("saveMasksToHdf5: saveFrames failed");

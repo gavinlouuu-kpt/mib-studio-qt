@@ -158,6 +158,10 @@ def render_review(review: dict) -> str:
     reprocess = {k: v for k, v in review["review_reprocess_record"].items() if k != "semantics"}
     lines.append("export const REVIEW_REPROCESS = " + json.dumps(reprocess, indent=2) + " as const;")
     lines.append("")
+    # Review ABI 3 (#756 review 2): the object coordinate spaces, their sources and the mask check's bounds.
+    spaces = {k: v for k, v in review["review_object_coordinates"].items() if k != "semantics"}
+    lines.append("export const REVIEW_OBJECT_COORDINATES = " + json.dumps(spaces, indent=2) + " as const;")
+    lines.append("")
     return "\n".join(lines)
 
 
@@ -203,6 +207,21 @@ def check_review(review: dict) -> str | None:
     declared = {name.lower(): int(value) for name, value in re.findall(r"(\w+)\s*=\s*(\d+)", block)}
     if declared != settings:
         return "review_reprocess_record.settings differs from ReviewTypes.h ReprocessSettings"
+    # Review ABI 3 (#756 review 2): the mask check's bounds equal ObjectCoordinates.h, and every
+    # value and source is a string ObjectCoordinates.cpp writes.
+    spaces = review["review_object_coordinates"]
+    header = (REPO_ROOT / "include/backend/review/ObjectCoordinates.h").read_text(encoding="utf-8")
+    for member, const in (("max_records", "kObjectSpaceMaskCheckMaxRecords"),
+                          ("min_decisive", "kObjectSpaceMaskCheckMinDecisive"),
+                          ("min_agreement_percent", "kObjectSpaceMaskCheckMinAgreementPercent")):
+        bound = re.search(const + r"\s*=\s*(\d+)", header)
+        if not bound or int(bound.group(1)) != spaces["mask_check"][member]:
+            return f"review_object_coordinates.mask_check.{member} differs from ObjectCoordinates.h {const}"
+    source = (REPO_ROOT / "src/backend/review/ObjectCoordinates.cpp").read_text(encoding="utf-8")
+    written = set(re.findall(r'return "([a-z_]+)";', source))
+    for value in spaces["values"] + spaces["sources"]:
+        if value not in written:
+            return f"review_object_coordinates: {value!r} is not written by ObjectCoordinates.cpp"
     return None
 
 
