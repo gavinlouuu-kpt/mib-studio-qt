@@ -955,11 +955,14 @@ namespace backend
             captureService_->setCameraReadyCallback([this, bootTrigger](::camera::common::ICamera* cam,
                                                                         uint64_t generation) {
                 // A capture session opened or closed (#716 A6a review 2): monitoring cells of the
-                // previous one are never served again. A close may be reported twice (stop() and
-                // the capture thread); a second advance only skips an epoch value.
-                if (processingService_)
-                    processingService_->advanceMonitoringCapture(cam ? "the camera started a new capture session"
-                                                                     : "the camera stopped");
+                // previous one are never served again. A close is reported twice (stop() and the
+                // capture thread) for the same session: one capture change.
+                if (processingService_) {
+                    if (cam)
+                        processingService_->advanceMonitoringCapture("the camera started a new capture session");
+                    else if (monitoringClosedCaptureSession_.exchange(generation) != generation)
+                        processingService_->advanceMonitoringCapture("the camera stopped");
+                }
                 if (!bootTrigger) return;
                 if (triggerService_) {
                     triggerService_->setCamera(cam, generation);

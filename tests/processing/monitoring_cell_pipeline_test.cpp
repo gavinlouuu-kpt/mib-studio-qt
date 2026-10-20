@@ -1,7 +1,7 @@
-// monitoring_cell_pipeline_test (#716 A6a review round 1, bridge ABI 41)
+// monitoring_cell_pipeline_test (#716 A6a review rounds 1-2, bridge ABI 41)
 //
 // Live cell images through the real ProcessingService realtime loop (no fake
-// ring), for the two findings of review round 1:
+// ring), for the findings of review rounds 1 and 2:
 //   1. geometry: with an ROI whose origin is not (0, 0), every strip cell's
 //      crop holds its own object's pixels, in both realtime modes. Inline rows
 //      are measured on the ROI image; async-batch rows are measured on the full
@@ -9,13 +9,16 @@
 //      object carries a unique grey level (its marker); the test checks
 //      pixels, not sizes: all of the object's marker pixels are in the crop,
 //      none of the other object's, and the box centre is the marker.
-//   2. capture identity: capture A, then a new FrameStore (as a camera mode
-//      switch does) and capture B with the same frame indices and object ids,
-//      then a resize of B's store (indices renumbered, capture C). A pin of the
-//      new capture's identity gets the new capture's pixels, also while the
-//      strip still holds the old capture's entry for that frame; a pin naming
-//      an earlier capture is CaptureMismatch; the strip keeps only the current
-//      capture's cells; an earlier pin keeps its own pixels under its identity.
+//   2. capture identity, with the capture listener wired as AppBackend wires
+//      it: capture A, then a realtime restart on a replacement FrameStore (as
+//      a camera mode switch does) and capture B with the same frame indices
+//      and object ids, then a restart on B's store and a resize of it (indices
+//      renumbered, capture C, the append path's backstop). Pins belong to the
+//      capture that made them: at the restart, before any frame of B and
+//      before any refresh, A's strip image and A's pinned image (and mask) are
+//      refused with CaptureMismatch and A's copies are gone; a pin of B's
+//      identity gets B's pixels; after the resize B's pinned image is refused
+//      before the store applied the change, and the strip is C's only.
 
 #include "backend/playback/FrameStore.h"
 #include "backend/processing/ProcessingService.h"
@@ -217,6 +220,8 @@ void captureIdentity()
     proc.start(1);
     auto source = backend::services::makeProcessingCellSource(proc);
     MonitoringCellStore cells(*source);
+    proc.setMonitoringCaptureListener(
+        [&cells](uint64_t captureEpoch, const char* reason) { cells.captureChanged(captureEpoch, reason); });
 
     // Capture A.
     auto storeA = std::make_shared<FrameStore>(256);
@@ -231,14 +236,35 @@ void captureIdentity()
     const uint64_t fA = newestFrame(l); // in A's strip
     const int obj = l.strip.back().key.objectId; // one object per frame: the same id every frame
     const MonitoringCellKey pinA = l.strip.front().key;
-    MIB_REQUIRE(pinA.captureEpoch == eA && pinA.objectId == obj, "A's identity");
+    const MonitoringCellKey stripA = l.strip.back().key;
+    MIB_REQUIRE(pinA.captureEpoch == eA && pinA.objectId == obj && stripA != pinA, "A's identities");
     MIB_REQUIRE(cells.pin(pinA).outcome == Outcome::Pinned, "pin A's oldest strip cell");
+    const auto stripCellsA = cells.listing().strip.size();
+    cv::Mat px;
+    MIB_REQUIRE(cells.image(stripA, false, px) && cells.image(pinA, false, px), "A's images are served");
 
-    // Capture B: a new FrameStore (a camera mode switch), indices restart from the start.
+    // Capture B: a restart on a replacement FrameStore (a camera mode switch), indices restart.
     auto storeB = std::make_shared<FrameStore>(256);
     proc.startRealtime(storeB);
     const auto eB = proc.monitoringCaptureEpoch();
     MIB_EXPECT(eB > eA, "a new capture epoch");
+    // At once: no frame of B yet, no refresh. A's strip image and A's pinned image are refused.
+    px.release();
+    auto read = cells.image(stripA, false, px);
+    MIB_EXPECT(!read && read.captureMismatch && px.empty(), "A's strip image is refused: " + read.message);
+    read = cells.image(pinA, false, px);
+    MIB_EXPECT(!read && read.captureMismatch && px.empty(), "A's pinned image is refused: " + read.message);
+    read = cells.image(pinA, true, px);
+    MIB_EXPECT(!read && read.captureMismatch && px.empty(), "A's pinned mask is refused: " + read.message);
+    l = cells.listing();
+    MIB_EXPECT(l.strip.empty() && l.pins.empty() && l.stats.stripCells == 0 && l.stats.pins == 0 &&
+                   l.stats.pinBytes == 0 && l.stats.stripBytes == 0,
+               "A's copies were dropped at the restart");
+    MIB_EXPECT(l.lastCaptureChange && l.lastCaptureChange->captureEpoch == eB &&
+                   l.lastCaptureChange->pinsDropped == 1 && l.lastCaptureChange->stripDropped == stripCellsA &&
+                   l.lastCaptureChange->reason == "realtime processing started",
+               "the listing says why");
+    MIB_EXPECT(cells.pin(pinA).outcome == Outcome::CaptureMismatch, "A's pin identity is CaptureMismatch");
     const auto bDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
     while (!holds(ringRows(proc), {0, fA, obj, eB}) && std::chrono::steady_clock::now() < bDeadline) {
         push(*storeB, oneObject(kB), ++ts);
@@ -249,13 +275,12 @@ void captureIdentity()
     MIB_REQUIRE(holds(rows, {0, fA, obj, eB}) && holds(rows, {0, fA, obj, eA}),
                 "the ring holds frame " + std::to_string(fA) + " object " + std::to_string(obj) + " of both captures");
 
-    // No refresh yet: the strip still holds A's frame fA. B's identity must get B's pixels.
+    // B's identity of frame fA gets B's pixels.
     auto r = cells.pin({0, fA, obj, eB});
     MIB_REQUIRE(r.outcome == Outcome::Pinned, "B's frame pins: " + r.message);
-    cv::Mat px;
     MIB_REQUIRE(cells.image({0, fA, obj, eB}, false, px), "B's pin image");
     MIB_EXPECT(cv::countNonZero(px == kB) == kObjW * kObjH && cv::countNonZero(px == kA) == 0,
-               "B's pixels, never A's (the stale strip entry)");
+               "B's pixels, never A's");
     // A's identity now: refused, even though the ring still holds A's row.
     r = cells.pin({0, fA, obj, eA});
     MIB_EXPECT(r.outcome == Outcome::CaptureMismatch && !r.cell, "A's identity is CaptureMismatch: " + r.message);
@@ -267,28 +292,30 @@ void captureIdentity()
         MIB_EXPECT(c.key.captureEpoch == eB, "only B's cells");
         MIB_EXPECT(cells.image(c.key, false, px) && cv::countNonZero(px == kB) == kObjW * kObjH, "B's pixels");
     }
-    // A's earlier pin keeps A's pixels under A's identity.
-    MIB_EXPECT(cells.image(pinA, false, px) && cv::countNonZero(px == kA) == kObjW * kObjH &&
-                   cv::countNonZero(px == kB) == 0,
-               "A's pin is A's");
+    MIB_EXPECT(!cells.image(pinA, false, px), "A's pin stays refused");
 
-    // Capture C: B's store renumbers its frames (a resize below what it holds clears it and
-    // restarts the indices at 0) while the realtime loop keeps running.
+    // A restart on B's store is a new capture too: B's pin is dropped.
     proc.startRealtime(storeB);
     const auto eB2 = proc.monitoringCaptureEpoch();
+    MIB_EXPECT(eB2 > eB && cells.listing().pins.empty(), "the restart dropped B's pin");
     MIB_REQUIRE(feed(proc, *storeB, oneObject(kB), 6, ts), "B rows before the resize");
-    MonitoringCellKey bKey;
-    for (const auto& row : ringRows(proc))
-        if (row.first.captureEpoch == eB2) bKey = row.first;
-    MIB_REQUIRE(bKey.captureEpoch == eB2, "a B row of the running capture");
+    cells.refreshStrip();
+    l = cells.listing();
+    MIB_REQUIRE(!l.strip.empty() && l.strip.back().key.captureEpoch == eB2, "B's strip of the running capture");
+    const MonitoringCellKey bKey = l.strip.back().key;
+    MIB_REQUIRE(cells.pin(bKey).outcome == Outcome::Pinned, "pin B");
+    // Capture C: B's store renumbers its frames (a resize below what it holds clears it and
+    // restarts the indices at 0) while the realtime loop keeps running. Nothing notifies the
+    // store here (the facade's resize command does; this calls the store directly): the append
+    // path's backstop moves the epoch, and the read paths refuse B's identities at once.
     MIB_REQUIRE(storeB->resize(8), "resize");
     MIB_REQUIRE(feed(proc, *storeB, oneObject(kC), 6, ts), "capture C rows");
     proc.stopRealtime();
     proc.stop();
     const auto eC = proc.monitoringCaptureEpoch();
     MIB_EXPECT(eC > eB2, "a renumbering store is a new capture epoch, without a realtime restart");
-    r = cells.pin({0, fA, obj, eB});
-    MIB_EXPECT(r.outcome == Outcome::AlreadyPinned, "the existing B pin is found by its identity: " + r.message);
+    read = cells.image(bKey, false, px);
+    MIB_EXPECT(!read && read.captureMismatch, "B's pinned image after the resize is refused: " + read.message);
     r = cells.pin(bKey);
     MIB_EXPECT(r.outcome == Outcome::CaptureMismatch, "B's identity after the resize: " + r.message);
     cells.refreshStrip();
@@ -298,6 +325,8 @@ void captureIdentity()
         MIB_EXPECT(c.key.captureEpoch == eC && cells.image(c.key, false, px) &&
                        cv::countNonZero(px == kC) == kObjW * kObjH && cv::countNonZero(px == kB) == 0,
                    "only C's cells, with C's pixels");
+    MIB_EXPECT(l.pins.empty() && cells.listing().stats.pins == 0, "the refresh dropped B's pin");
+    proc.setMonitoringCaptureListener({});
 }
 
 } // namespace

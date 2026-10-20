@@ -14,13 +14,22 @@
 //      the run's;
 //   4. a row the ring evicted after a snapshot served it is pinned with its
 //      measurements and the reason, and no image is served for it;
-//   5. monitoring_clear clears the strip and keeps the pins; unpin and clear.
+//   5. monitoring_clear clears the strip and keeps the pins; unpin and clear;
+//   6. capture changes take effect at the moment they happen (review round 2),
+//      each with a strip cell and a pin of the old capture: another processing
+//      ROI, the camera stopping, and a MindVision switch to Overview with
+//      realtime stopped (a new frame buffer, no frame processed after it). At
+//      once, with no frame and no refresh in between, the old identities are
+//      refused for pin (CaptureMismatch) and image (with the reason), unpin
+//      says the pin was dropped, and the listing holds nothing of the old
+//      capture and says why.
 
 #include "backend/app/AppBackend.h"
 #include "backend/app/BackendFacade.h"
 #include "backend/app/ExperimentCoordinator.h"
 #include "backend/app/ExperimentReadiness.h"
 #include "backend/processing/ProcessingService.h"
+#include "backend/services/CaptureService.h"
 #include "backend/services/MonitoringCellStore.h"
 
 #include "support/assert.h"
@@ -35,6 +44,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <optional>
 #include <string>
@@ -162,6 +172,59 @@ bridge::BackendCommandResult startRun(bridge::BackendFacade& facade, const std::
 
 int outcome(const json& reply) { return reply.contains("outcome") ? reply["outcome"].get<int>() : -1; }
 
+bool contains(const std::string& text, const std::string& part) { return text.find(part) != std::string::npos; }
+
+// A strip cell and a pin of the current capture (outside a run): rows `first` and `first + 1`.
+std::uint64_t holdTwo(bridge::BackendFacade& facade, backend::services::ProcessingService& proc, std::uint64_t first)
+{
+    const auto epoch = proc.monitoringCaptureEpoch();
+    inject(proc, first, true, 30);
+    inject(proc, first + 1, true, 31);
+    const auto l = cells(facade);
+    MIB_REQUIRE(inList(l["strip"], first) && inList(l["strip"], first + 1), "both rows are strip cells: " + l.dump());
+    MIB_REQUIRE(outcome(pin(facade, 0, epoch, first + 1)) == 0, "pin the second");
+    bridge::BackendFrame frame;
+    MIB_REQUIRE(facade.fetchMonitoringCellImage(0, epoch, first, 0, false, frame) &&
+                    facade.fetchMonitoringCellImage(0, epoch, first + 1, 0, false, frame),
+                "both images are served before the change");
+    return epoch;
+}
+
+// Right after a capture change: nothing of the old capture is served, listed or pinned.
+void expectDropped(bridge::BackendFacade& facade, backend::services::ProcessingService& proc, std::uint64_t first,
+                   std::uint64_t oldEpoch, const std::string& reason, const std::string& what)
+{
+    const auto now = proc.monitoringCaptureEpoch();
+    MIB_EXPECT(now > oldEpoch, what + ": the capture moved on at once");
+    bridge::BackendFrame frame;
+    for (const std::uint64_t f : {first, first + 1}) { // the strip cell, then the pin
+        for (const bool mask : {false, true}) {
+            bool mismatch = false;
+            std::string why;
+            MIB_EXPECT(!facade.fetchMonitoringCellImage(0, oldEpoch, f, 0, mask, frame, &mismatch, &why) && mismatch &&
+                           contains(why, reason),
+                       what + ": the old " + (f == first ? "strip" : "pinned") + (mask ? " mask" : " image") +
+                           " is refused: " + why);
+        }
+        const auto r = pin(facade, 0, oldEpoch, f);
+        MIB_EXPECT(outcome(r) == 6 && r["ok"] == false && contains(r["message"].get<std::string>(), reason),
+                   what + ": the old identity is CaptureMismatch: " + r.dump());
+    }
+    const auto u = facade.unpinMonitoringCell(0, oldEpoch, first + 1, 0);
+    MIB_EXPECT(!u.ok && contains(u.message, "dropped"), what + ": unpin says it was dropped: " + u.message);
+    std::string text;
+    MIB_REQUIRE(facade.fetchMonitoringCellsJson(text), "listing");
+    const auto l = json::parse(text);
+    MIB_EXPECT(l["strip"].empty() && l["pins"].empty() && l["stats"]["pins"] == 0 && l["stats"]["pin_bytes"] == "0" &&
+                   l["ring_capture_epoch"] == std::to_string(now),
+               what + ": the listing holds nothing of the old capture: " + l.dump());
+    const auto& change = l["last_capture_change"];
+    MIB_EXPECT(change.is_object() && change["capture_epoch"] == std::to_string(now) &&
+                   contains(change["reason"].get<std::string>(), reason) && change["pins_dropped"] == 1 &&
+                   change["strip_dropped"].get<int>() >= 2,
+               what + ": the listing says why: " + l.dump());
+}
+
 } // namespace
 
 int main()
@@ -222,8 +285,13 @@ int main()
         std::size_t marked = 0;
         for (auto b : frame.data) marked += b == 255;
         MIB_EXPECT(marked == 24u * 20, "the mask crop marks the object");
-        MIB_EXPECT(!facade.fetchMonitoringCellImage(0, e1, kBase + 4, 0, false, frame), "not held: no packet");
-        MIB_EXPECT(!facade.fetchMonitoringCellImage(0, e1 + 1, kBase + 2, 0, false, frame), "another capture: no packet");
+        bool mismatch = true;
+        std::string why;
+        MIB_EXPECT(!facade.fetchMonitoringCellImage(0, e1, kBase + 4, 0, false, frame, &mismatch, &why) && !mismatch &&
+                       contains(why, "not held"),
+                   "not held: no packet, " + why);
+        MIB_EXPECT(!facade.fetchMonitoringCellImage(0, e1 + 1, kBase + 2, 0, false, frame, &mismatch, &why) && mismatch,
+                   "another capture: refused, " + why);
 
         auto r = pin(facade, 0, e1, kBase + 1);
         MIB_EXPECT(r["ok"] == true && outcome(r) == 0 && r["cell"]["frame_index"] == std::to_string(kBase + 1),
@@ -378,6 +446,43 @@ int main()
         MIB_REQUIRE(waitFor([&] { return backendApp.experiment().status().state == app::ExperimentRunState::Idle; },
                             std::chrono::seconds(20)),
                     "run 2 finalizes");
+
+        // ---- 6. capture changes, at the moment they happen ---------------------------------------
+        wd.mark("roi change");
+        MIB_REQUIRE(facade.dispatch(clear).ok, "monitoring_clear");
+        auto before = holdTwo(facade, proc, kBase + 300);
+        proc.setRealtimeRoi({0, 0, 256, 96}); // realtime still runs on the mock camera
+        expectDropped(facade, proc, kBase + 300, before, "the processing ROI changed", "ROI change");
+        before = proc.monitoringCaptureEpoch();
+        proc.setRealtimeRoi({0, 0, 256, 96});
+        MIB_EXPECT(proc.monitoringCaptureEpoch() == before, "the same ROI again is no change");
+
+        wd.mark("camera stop");
+        before = holdTwo(facade, proc, kBase + 310);
+        bridge::CameraCommand stopCapture;
+        stopCapture.action = bridge::CameraCommandAction::StopCapture;
+        MIB_REQUIRE(facade.dispatch(stopCapture).ok, "capture stop");
+        expectDropped(facade, proc, kBase + 310, before, "the camera stopped", "camera stop");
+
+        wd.mark("overview switch");
+        proc.stopRealtime(); // realtime stopped: no frame is processed after the switch
+        {
+            // A MindVision profile, selected as the Overview test does (SDK-free builds included).
+            const auto profile = td.path() / "mindvision.json";
+            std::ofstream(profile) << json{{"width", 512}, {"height", 96}, {"offset_x", 0}, {"offset_y", 0}}.dump();
+            std::string error;
+            MIB_REQUIRE(backendApp.stageMindVisionConfigFromFile(profile.string(), &error), error);
+            backendApp.setMindVisionCameraSelection(0, "Test camera");
+            MIB_REQUIRE(backendApp.stageMindVisionConfigFromFile(profile.string(), &error), error);
+            proc.setRealtimeRoi({0, 0, 512, 96}); // the profile's: the switch below changes no ROI
+            before = holdTwo(facade, proc, kBase + 320);
+            const auto storeBefore = backendApp.getFrameStore();
+            MIB_REQUIRE(backendApp.setMindVisionOverview(true, &error), error);
+            MIB_EXPECT(backendApp.getFrameStore() != storeBefore && !backendApp.capture().isRunning() &&
+                           !proc.isRealtimeRunning(),
+                       "a new frame buffer, nothing running");
+            expectDropped(facade, proc, kBase + 320, before, "switched to Overview", "Overview switch");
+        }
         facade.shutdown();
     }
     std::printf("monitoring_cells_facade_test: %s\n", mib::test::exitCode() == 0 ? "PASS" : "FAIL");

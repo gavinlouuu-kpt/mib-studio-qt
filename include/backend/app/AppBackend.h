@@ -633,6 +633,9 @@ namespace backend
         // destroyed before it; no thread of its own.
         std::unique_ptr<services::MonitoringCellSource> monitoringCellSource_;
         std::unique_ptr<services::MonitoringCellStore> monitoringCells_;
+        // The capture session whose close last advanced the monitoring capture: a close is
+        // reported twice (stop() and the capture thread) and is one capture change (#716 A6a).
+        std::atomic<std::uint64_t> monitoringClosedCaptureSession_{0};
 
         // Where pipeline-timing CSVs are dumped (set in initialize()).
         std::string pipelineTimingDir_;

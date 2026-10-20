@@ -18,12 +18,19 @@
 //   7. shares: the store gives every share of the ring's images back to the
 //      source once it has cropped (the production source drops them under the
 //      ring's lock), and image() hands out private copies, never a share;
-//   8. captures (review round 1): a capture change restarts frame indices, so
-//      the same (run, frame, object) recurs; the strip keeps only the current
-//      capture's cells, a pin naming an earlier capture is CaptureMismatch,
-//      a pin of the new capture gets the new capture's pixels even while the
-//      strip still holds the old capture's entry, and an earlier pin keeps
-//      serving its own pixels under its own identity.
+//   8. captures (review rounds 1-2): a capture change restarts frame indices,
+//      so the same (run, frame, object) recurs. Pins belong to the capture
+//      that made them. Before the store hears of the change (the append-path
+//      backstop), every read path already refuses the earlier capture's
+//      identities: image of a strip cell or a pin, pin (before AlreadyPinned),
+//      unpin, and the listing lists none of them; the first pin or refresh of
+//      the new capture drops them; a pin of the new capture gets the new
+//      capture's pixels;
+//   9. capture notifications (captureChanged, the listener path): the strip,
+//      the pins and the index of the earlier capture are dropped at once, the
+//      reason is kept for the listing and the refusals, late or repeated
+//      notifications change nothing, cells of a newer capture are kept, and a
+//      refresh under way when the capture changes admits nothing.
 
 #include "backend/services/MonitoringCellStore.h"
 
@@ -124,6 +131,8 @@ public:
         for (const auto& c : rows) releasedShares += (c.image.empty() ? 0 : 1) + (c.mask.empty() ? 0 : 1);
         MonitoringCellSource::releaseShares(rows);
     }
+
+    std::uint64_t currentCaptureEpoch() const override { return captureEpoch; }
 
     std::uint64_t generation{0};   // the ring's current run tag
     std::uint64_t captureEpoch{0}; // the ring's current capture epoch
@@ -544,47 +553,119 @@ void testSharesGoBack()
 
 void testCaptureChange()
 {
-    std::printf("capture change: identities recur, cells never cross\n");
+    std::printf("capture change before the store hears of it: identities recur, cells never cross\n");
     FakeRing ring;
-    MonitoringCellStore store(ring);
     ring.captureEpoch = 7; // capture A: frames 1..3, pixel value 10 * frame
+    MonitoringCellStore store(ring);
     for (std::uint64_t i = 1; i <= 3; ++i) ring.append(i, 0, true, static_cast<std::uint8_t>(10 * i));
     store.refreshStrip();
     MIB_REQUIRE(store.pin({0, 1, 0, 7}).outcome == Outcome::Pinned, "pin A's frame 1");
+    MIB_REQUIRE(store.listing().strip.size() == 3, "A's strip");
 
-    // Capture B (camera mode switch: a new frame buffer): the same indices, other pixels.
+    // Capture B (the append path's backstop moved the epoch: no notification): the same indices,
+    // other pixels. The store still holds A's strip and A's pin.
     ring.evictAll(); // the switch keeps nothing of A in this fake; the real ring may keep some
     ring.captureEpoch = 8;
     for (std::uint64_t i = 1; i <= 3; ++i) ring.append(i, 0, true, static_cast<std::uint8_t>(100 + i));
-    // Before any refresh the strip still holds A's frame 2: a pin of B's frame 2 must not take it.
-    auto r = store.pin({0, 2, 0, 8});
-    MIB_REQUIRE(r.outcome == Outcome::Pinned && r.cell && r.cell->key.captureEpoch == 8, r.message);
-    cv::Mat b;
-    MIB_REQUIRE(store.image({0, 2, 0, 8}, false, b), "B's pin has an image");
-    MIB_EXPECT(cv::countNonZero(b != 102) == 0, "B's frame 2 pixels, not A's (20)");
-    // A's identity after the switch: refused, nothing changes.
+    cv::Mat px;
+    auto read = store.image({0, 2, 0, 7}, false, px);
+    MIB_EXPECT(!read && read.captureMismatch && px.empty(), "A's strip image is refused at once: " + read.message);
+    MIB_EXPECT(read.message.find("capture 7") != std::string::npos &&
+                   read.message.find("current capture is 8") != std::string::npos,
+               read.message);
+    read = store.image({0, 1, 0, 7}, true, px);
+    MIB_EXPECT(!read && read.captureMismatch && px.empty(), "A's pinned mask is refused too: " + read.message);
+    auto l = store.listing();
+    MIB_EXPECT(l.ringCaptureEpoch == 8 && l.strip.empty() && l.pins.empty(), "nothing of A is listed");
+    auto r = store.pin({0, 1, 0, 7});
+    MIB_EXPECT(r.outcome == Outcome::CaptureMismatch && !r.cell,
+               "A's pinned identity is CaptureMismatch, not AlreadyPinned: " + r.message);
     r = store.pin({0, 3, 0, 7});
     MIB_EXPECT(r.outcome == Outcome::CaptureMismatch && !r.cell, "an earlier capture is refused: " + r.message);
-    MIB_EXPECT(r.message.find("capture 7") != std::string::npos && r.message.find("capture is 8") != std::string::npos,
-               r.message);
-    // The strip moves to B: A's cells leave it, B's enter with B's pixels.
+
+    // The first pin of B applies the change: A's copies go, B's pin gets B's pixels.
+    r = store.pin({0, 2, 0, 8});
+    MIB_REQUIRE(r.outcome == Outcome::Pinned && r.cell && r.cell->key.captureEpoch == 8, r.message);
+    MIB_REQUIRE(store.image({0, 2, 0, 8}, false, px), "B's pin has an image");
+    MIB_EXPECT(cv::countNonZero(px != 102) == 0, "B's frame 2 pixels, not A's (20)");
+    l = store.listing();
+    MIB_EXPECT(l.pins.size() == 1 && l.stats.pins == 1 && l.stats.stripCells == 0, "A's pin and strip are gone");
+    MIB_EXPECT(l.lastCaptureChange && l.lastCaptureChange->captureEpoch == 8 &&
+                   l.lastCaptureChange->pinsDropped == 1 && l.lastCaptureChange->stripDropped == 3,
+               "the change is reported");
+    const auto u = store.unpin({0, 1, 0, 7});
+    MIB_EXPECT(!u && u.captureMismatch && u.message.find("dropped") != std::string::npos, u.message);
+
+    // The strip moves to B with B's pixels.
     store.refreshStrip();
-    const auto l = store.listing();
+    l = store.listing();
     MIB_EXPECT(l.ringCaptureEpoch == 8 && l.strip.size() == 3, "the strip is B's");
     for (const auto& c : l.strip) {
         MIB_EXPECT(c.key.captureEpoch == 8, "only B's cells");
-        cv::Mat px;
         MIB_REQUIRE(store.image(c.key, false, px), "strip image");
         MIB_EXPECT(cv::countNonZero(px != static_cast<int>(100 + c.key.frameIndex)) == 0, "B's pixels");
     }
-    // A's earlier pin is still A's, under A's identity; B's frame 1 is another cell.
-    cv::Mat a;
-    MIB_REQUIRE(store.image({0, 1, 0, 7}, false, a), "A's pin survives");
-    MIB_EXPECT(cv::countNonZero(a != 10) == 0, "A's pixels under A's identity");
     MIB_REQUIRE(store.pin({0, 1, 0, 8}).outcome == Outcome::Pinned, "B's frame 1 is a new pin");
-    MIB_EXPECT(store.listing().pins.size() == 3, "A1, B2, B1");
-    MIB_EXPECT(store.unpin({0, 1, 0, 7}) && !store.unpin({0, 1, 0, 7}), "unpin names the capture");
-    MIB_EXPECT(store.image({0, 1, 0, 8}, false, a) && cv::countNonZero(a != 101) == 0, "B1 untouched by A1's unpin");
+    MIB_EXPECT(store.listing().pins.size() == 2, "B2, B1");
+}
+
+void testCaptureNotified()
+{
+    std::printf("capture notifications: dropped at the moment of the change\n");
+    FakeRing ring;
+    ring.captureEpoch = 1;
+    MonitoringCellStore store(ring);
+    for (std::uint64_t i = 1; i <= 4; ++i) ring.append(i, 0, true, 40);
+    store.refreshStrip();
+    MIB_REQUIRE(store.pin({0, 4, 0, 1}).outcome == Outcome::Pinned, "pin");
+    store.noteRows({{{0, 9, 0, 1}, MonitoringCellMetrics{}}});
+    MIB_REQUIRE(store.listing().stats.indexedRows > 0 && store.memoryStats().currentBytes > 0, "held");
+    const auto revision = store.listing().revision;
+
+    // ProcessingService moves the epoch, then notifies (no refresh, no read in between).
+    ring.captureEpoch = 2;
+    store.captureChanged(2, "the camera stopped");
+    auto l = store.listing();
+    MIB_EXPECT(l.strip.empty() && l.pins.empty() && l.stats.stripCells == 0 && l.stats.pins == 0 &&
+                   l.stats.indexedRows == 0 && store.memoryStats().currentBytes == 0,
+               "strip, pins and index dropped at once");
+    MIB_EXPECT(l.revision > revision && l.ringCaptureEpoch == 2, "the listing moved on");
+    MIB_REQUIRE(l.lastCaptureChange, "the change is reported");
+    MIB_EXPECT(l.lastCaptureChange->captureEpoch == 2 && l.lastCaptureChange->reason == "the camera stopped" &&
+                   l.lastCaptureChange->pinsDropped == 1 && l.lastCaptureChange->stripDropped == 4,
+               "with its reason and counts");
+    cv::Mat px;
+    const auto read = store.image({0, 4, 0, 1}, false, px);
+    MIB_EXPECT(!read && read.captureMismatch && read.message.find("(the camera stopped)") != std::string::npos,
+               "the refusal names the change: " + read.message);
+    const auto r = store.pin({0, 3, 0, 1});
+    MIB_EXPECT(r.outcome == Outcome::CaptureMismatch && r.message.find("the camera stopped") != std::string::npos,
+               r.message);
+
+    // Late and repeated notifications change nothing; a newer capture's cells are kept.
+    ring.captureEpoch = 3;
+    ring.evictAll();
+    ring.append(20, 0, true, 60);
+    store.refreshStrip(); // the backstop path: adopts 3, admits capture 3's cell
+    MIB_REQUIRE(store.listing().strip.size() == 1, "capture 3's cell");
+    store.captureChanged(3, "late notification of capture 3");
+    store.captureChanged(2, "a notification out of order");
+    l = store.listing();
+    MIB_EXPECT(l.strip.size() == 1 && l.lastCaptureChange && l.lastCaptureChange->captureEpoch == 3 &&
+                   l.lastCaptureChange->reason != "a notification out of order",
+               "nothing dropped, the latest change kept");
+
+    // A refresh under way when the capture changes admits nothing of the old capture.
+    ring.append(21, 0, true, 61);
+    ring.onNewest = [&] {
+        ring.captureEpoch = 4;
+        store.captureChanged(4, "the processing ROI changed");
+    };
+    store.refreshStrip();
+    ring.onNewest = nullptr;
+    l = store.listing();
+    MIB_EXPECT(l.strip.empty() && l.stats.stripCells == 0, "the stale batch is discarded and capture 3 dropped");
+    MIB_EXPECT(l.lastCaptureChange && l.lastCaptureChange->reason == "the processing ROI changed", "reason");
 }
 
 void testGeometryOrigin()
@@ -632,6 +713,7 @@ int main()
     testRowIndexBound();
     testSharesGoBack();
     testCaptureChange();
+    testCaptureNotified();
     testGeometryOrigin();
     testMemoryStats();
     std::printf("monitoring_cell_store_test: %s\n", mib::test::exitCode() == 0 ? "PASS" : "FAIL");
