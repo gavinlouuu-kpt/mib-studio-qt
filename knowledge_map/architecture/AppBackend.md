@@ -464,24 +464,31 @@ calls `beginRun` when a run reaches Active; the facade serves
 `clearMonitoringCellPins` / `fetchMonitoringCellImage` and feeds the rows
 `fetchMonitoringSnapshot` served into the store's bounded row index.
 
-**Capture changes (review round 2 of #749).** Pins belong to the capture that
-made them, so AppBackend moves the monitoring capture epoch on at the moment
-the capture changes and the store drops the old capture's cells right then:
-- `initialize()` points `ProcessingService::setMonitoringCaptureListener` at
-  the store's `captureChanged`; a re-initialize clears it on the old service
-  before the store is reset, and `shutdown()` clears it after processing has
-  stopped (it waits for a running notification, so the store may then go).
+**Capture changes (review rounds 2-3 of #749).** Pins belong to the capture
+that made them. [[../services/MonitoringCellStore]] is the one authority for the
+capture epoch (`advanceCapture`, which publishes the epoch into
+`ProcessingService` under the store's mutex), and every capture change goes
+through it, at the moment it happens:
+- `initialize()` sets `ProcessingService::setMonitoringCaptureAuthority` to the
+  store's `advanceCapture`, so the service's own changes (a realtime start or
+  stop, another ROI) go through the store; a re-initialize clears it on the old
+  service before the store is reset, and `shutdown()` clears it after
+  processing has stopped (it waits for a running call, so the store may then go).
 - `installFrameStore(store, reason)` is the one place a camera mode switch
   replaces the FrameStore (`setMindVisionOverview`, `setAravisOverview`,
   `releaseMindVisionOverviewStore`): capture, playback, then
-  `advanceMonitoringCapture(reason)`, even with realtime stopped.
-- The camera-ready callback is now wired whenever capture boots (the trigger
-  part only with the trigger service): a session opening advances the capture
-  ("the camera started a new capture session"), a close advances it once
-  ("the camera stopped"; the close is reported twice, from `stop()` and the
-  capture thread, and `monitoringClosedCaptureSession_` keeps it one change).
-- The facade's buffer `resize` advances it after `FrameStore::resize`
-  renumbered the frames; ROI changes advance it inside `ProcessingService`.
+  `monitoringCells_->advanceCapture(reason)`, even with realtime stopped.
+- The camera-ready callback is wired whenever capture boots (the trigger part
+  only with the trigger service): a session opening is a change ("the camera
+  started a new capture session", camera session floor = the new session), a
+  close is one change ("the camera stopped", floor = the session + 1; the close
+  is reported twice, from `stop()` and the capture thread, and
+  `monitoringClosedCaptureSession_` keeps it one change). With the floor, a
+  frame of the closed session still arriving or still in processing never
+  becomes a cell of the next capture.
+- The facade's buffer `resize` calls `advanceCapture` after `FrameStore::resize`
+  renumbered the frames (until then the renumbered frames enter with no
+  capture); [[ExperimentCoordinator]]'s `beginRun` is the run start's change.
 
 ## Memory budget snapshot (issue #370)
 

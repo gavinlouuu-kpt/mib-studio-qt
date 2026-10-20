@@ -528,14 +528,15 @@ named by a stable identity, so the workspace Live view (A6b) can show a recent-c
 click-to-pin without the client holding pixels or racing ring eviction.
 
 - **Identity.** `(start_generation, capture_epoch, frame_index, object_id)`. The monitoring ring
-  tags every row with the run active when it was appended (`ProcessingService::setMonitoringRunGeneration`,
-  set by [[ExperimentCoordinator]]; 0 = outside a run; the same `start_generation` that
-  `experiment_stop` names in ABI 40) and with the **capture epoch** of its frame
-  (`ProcessingService::monitoringCaptureEpoch`): frame indices restart with a run, with a new
-  FrameStore (camera mode switch) and with a store resize, and the epoch moves on at the moment of
-  each capture change (a realtime start, a camera mode switch even with realtime stopped, a camera
-  session opening or closing, another processing ROI, a buffer resize; review round 2 of #749) and
-  never repeats. `BridgeMonitoringRow` gains `start_generation: u64` and
+  tags every row with the run active when its frame entered processing
+  (`ProcessingService::setMonitoringRunGeneration`, set by [[ExperimentCoordinator]]; 0 = outside a
+  run; the same `start_generation` that `experiment_stop` names in ABI 40) and with the **capture
+  epoch** the frame entered with: frame indices restart with a run, with a new FrameStore (camera
+  mode switch) and with a store resize, and the live cell store, the one authority for the epoch,
+  moves it on at the moment of each capture change (a realtime start or stop, a camera mode switch
+  even with realtime stopped, a camera session opening or closing, another processing ROI, a buffer
+  resize, a run start; review rounds 2-3 of #749); it never repeats, and 0 marks a frame that
+  crossed a change (never a cell). `BridgeMonitoringRow` gains `start_generation: u64` and
   `capture_epoch: u64`; the JSON `MonitoringRow` of `fetch_monitoring_snapshot` gains both (canonical
   decimal strings; omitted from review rows, which have no run). Internally the snapshot now reads POD
   rows through `visitMonitoringNewest` instead of copying the whole ring.
@@ -567,15 +568,17 @@ click-to-pin without the client holding pixels or racing ring eviction.
   `monitoring_cells.error_codes.capture_mismatch`, generated as `MONITORING_CELL_CAPTURE_MISMATCH` /
   `MONITORING_CELL_ERROR_CODES`) for an identity of another capture. Malformed identities or layers
   are error replies and nothing reaches the backend (`parse_canonical_u64`). Pixels never travel in
-  JSON. The listing gains `last_capture_change` (`{capture_epoch, reason, pins_dropped,
-  strip_dropped}` or null) and lists only cells of `ring_capture_epoch`, the current capture.
+  JSON. The listing gains `last_capture_change` (`{capture_epoch, reason, pins_ended, pins_dropped,
+  strip_dropped}` or null); its strip holds only cells of `ring_capture_epoch`, the current capture,
+  and a pin of an ended capture is listed with its measurements only (image null, "no image:
+  capture E ended (reason); ..."), until `monitoring_cell_unpin` removes it.
 - **Pin outcomes** (`monitoring_cell_pin_outcomes`): `Pinned` 0, `PinnedWithoutImage` 1,
   `AlreadyPinned` 2, `RunMismatch` 3 (`expectedStartGeneration` is neither 0 nor the latest run
   started, or the row belongs to another run, or a run started while the pin was taken),
   `NotFound` 4, `LimitReached` 5, `CaptureMismatch` 6 (`captureEpoch` is not the current capture:
   a cell is never served across a capture change, contract `capture_rules`; checked before every
-  other rule). Pins and the strip are dropped when a run reaches Active and at the moment the
-  capture changes: pins belong to the capture that made them.
+  other rule). Pins belong to the capture that made them: at the moment the capture changes the
+  strip is cleared and the pins keep their measurements only; a run reaching Active drops them.
 - **Caps** (`monitoring_cells`, `static_assert`ed in `shim.cpp`, generated into
   `MONITORING_CELLS`): strip 24 cells / 4 MiB, pins 16 / 4 MiB, crop ≤ 256 px square (margin ≥ 8),
   row index 4096. Every reply is bounded by them.
@@ -589,14 +592,17 @@ click-to-pin without the client holding pixels or racing ring eviction.
   `monitoring_cell_packet_matches_shared_golden`, `framePacket.test.ts`).
 - **Tests:** `contract.rs` `monitoring_cells_end_to_end` (real detections from BMP blob frames
   through the realtime path; strip, image/mask frames, outcomes 0/2/3/4/5/6, unpin, clear; an ROI
-  change refuses the old pinned and strip images at once) and `monitoring_cells_are_described`;
-  `dispatch.rs` `monitoring_cells_through_dispatch` (`CAPTURE_MISMATCH` for another capture and
-  after a camera stop); `ws.rs` `live_cells_over_the_websocket` (viewer reads, viewer pins refused,
+  change refuses the old pinned and strip images at once and ends the pin) and
+  `monitoring_cells_are_described`; `dispatch.rs` `monitoring_cells_through_dispatch`
+  (`CAPTURE_MISMATCH` for another capture and after a camera stop, the ended pin listed and
+  unpinned); `ws.rs` `live_cells_over_the_websocket` (viewer reads, viewer pins refused,
   controller pins shared, `CAPTURE_MISMATCH` over the socket after a camera stop) and
   the server's `live_cell_pins_are_control_only_but_reads_are_not`; C++ `backend.monitoring_cell_store`,
-  `e2e.monitoring_cells_facade` (review round 2: each capture change refuses the old pin and image
-  at once), `processing.monitoring_cell_pipeline` (review round 1: crop pixels with a nonzero ROI
-  origin in both modes; capture identity across a FrameStore swap and a resize),
+  `e2e.monitoring_cells_facade` (review rounds 2-3: each capture change, a realtime stop with the
+  camera running among them, refuses the old pin and image at once and ends the pin),
+  `processing.monitoring_cell_pipeline` (review rounds 1-3: crop pixels with a nonzero ROI origin
+  in both modes; capture identity across a FrameStore swap and a resize; a frame held across an ROI
+  change; a stop while frames keep arriving; the camera session floor),
   `processing.monitoring_cell_concurrency` (TSan lane), `performance.monitoring_cell_hot_path`;
   `monitoringCells.test.ts`.
 

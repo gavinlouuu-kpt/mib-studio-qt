@@ -428,17 +428,20 @@ the backend's live cell store ([[../services/MonitoringCellStore]]):
 cells and the pins, `MONITORING_CELLS_INVALID` on a reply that breaks the
 contract or its caps), `bridge.monitoringCellPin(key)` (args
 `{expectedStartGeneration, captureEpoch, frameIndex, objectId}`, a pin reply with
-`outcome` from `MONITORING_CELL_PIN_OUTCOMES`, `CaptureMismatch` (6) when the key names an
-earlier capture; an unknown outcome is refused),
+`outcome` from `MONITORING_CELL_PIN_OUTCOMES`, `CaptureMismatch` (6) when the key names
+another capture than the current one; an unknown outcome is refused),
 `bridge.monitoringCellUnpin(key)` and `bridge.monitoringCellClearPins()` (a
 `CmdResult`), and `bridge.fetchMonitoringCellImage(key, "image" | "mask")`
 (`fetch_monitoring_cell_packet`, a frame packet of pull kind 5 / 6 decoded by
 `decodeFramePacket`; an empty packet when the layer is not held; a rejection
 `CAPTURE_MISMATCH: <reason>` for an identity of another capture, read with
 `monitoringCellCaptureMismatch(error)`: the cell is gone, refresh the listing).
-The listing carries `last_capture_change` (why the strip and the pins of the
-earlier capture were dropped, or null) and only cells of `ring_capture_epoch`
-(the decoder refuses anything else; review round 2 of #749). The key is a
+The listing carries `last_capture_change` (why the strip was cleared and the
+pins of the capture that ended kept their measurements only, with
+`pins_ended` / `pins_dropped` / `strip_dropped`, or null); its strip holds only
+cells of `ring_capture_epoch`, and a pin of another capture is listed without an
+image until it is unpinned (the decoder refuses anything else; review rounds
+2-3 of #749). The key is a
 listing cell or a monitoring snapshot row (`MonitoringRow.start_generation` and
 `capture_epoch`, new in ABI 41; centroids in ROI image coordinates); `cellKeyArgs` sends
 canonical decimal strings and throws
