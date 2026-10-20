@@ -234,14 +234,36 @@ public:
     // the run stops accumulating (or its start is rolled back).
     void setMonitoringRunGeneration(uint64_t startGeneration);
     uint64_t monitoringRunGeneration() const;
-    // The capture a monitoring row came from (#716 A6a review round 1). Frame
-    // indices restart when the realtime loop moves to another FrameStore
-    // (camera mode switch, Overview <-> Experiment) or the store renumbers
-    // them (resize), so the epoch moves on each time: startRealtime() bumps
-    // it, and so does the first append of a frame whose store generation
-    // differs from the previous one. Never reused; starts at 1. Under the
-    // ring's lock like the run tag: one compare and a store per append.
+    // The capture a monitoring row came from (#716 A6a review rounds 1-2).
+    // Starts at 1, only grows and is never reused (values may be skipped).
+    // It moves on at the moment the capture changes, before any frame of the
+    // new capture is processed:
+    //   - startRealtime() (a realtime start, possibly on another FrameStore);
+    //   - setRealtimeRoi() with another ROI, and a pending ROI being applied;
+    //   - advanceMonitoringCapture(), which AppBackend calls when it replaces
+    //     the FrameStore (camera mode switch, Overview <-> Experiment), when
+    //     the camera opens or closes a capture session, and the facade calls
+    //     after a frame buffer resize (FrameStore::resize renumbers frames).
+    // Each of those notifies the capture listener at once (the live cell
+    // store drops the strip and the pins of the old capture). As a backstop,
+    // the append path also moves it, without a notification, on the first
+    // row whose frame has another store generation or capture session than
+    // the previous row's (two compares under the ring's lock it holds): rows
+    // of two captures never share an epoch. Written under the ring's lock;
+    // read lock-free.
     uint64_t monitoringCaptureEpoch() const;
+    // Move the capture epoch on now and notify the listener (outside every
+    // lock but the listener's own). `reason` is a static string, in plain
+    // words ("the camera stopped"). Returns the new epoch.
+    uint64_t advanceMonitoringCapture(const char* reason);
+    // Called with (new epoch, reason) after each advance above except the
+    // append-path backstop, on the thread that made the change, under the
+    // listener's own mutex: setMonitoringCaptureListener({}) returns only once
+    // no notification is running, so the listener's target may then go away.
+    // Notifications of concurrent advances may arrive out of order; the
+    // target keeps the highest epoch.
+    using MonitoringCaptureListener = std::function<void(uint64_t captureEpoch, const char* reason)>;
+    void setMonitoringCaptureListener(MonitoringCaptureListener listener);
     // What every ring slot carries besides the frame (written at append, under
     // the ring's lock): the run tag, the capture epoch, and where the row's
     // image sits in the coordinate space of its geometry. Inline rows are
@@ -283,9 +305,10 @@ public:
     // ring already evicted the row), as an eviction does. Leaves `shares` empty.
     void releaseMonitoringShares(std::vector<cv::Mat>& shares) const;
     // Test seam: append to the monitoring ring as the realtime path does,
-    // without the activity gate. `frame.previewStoreGeneration` takes part in
-    // the capture epoch as a frame's store generation does; `geometryOrigin`
-    // is the tag an async-batch row gets (its ROI's top-left).
+    // without the activity gate. `frame.previewStoreGeneration` and
+    // `frame.previewCaptureSession` take part in the capture epoch as a
+    // frame's store generation and capture session do; `geometryOrigin` is
+    // the tag an async-batch row gets (its ROI's top-left).
     void appendMonitoringFrameForTests(const ProcessedFrame& frame, cv::Point geometryOrigin = {});
     void clearMonitoringFrames();
     // Monitoring observability (BE-5): totals appended since start/clear so a
@@ -717,10 +740,17 @@ private:
                                        const FilterResult& validation,
                                        const cv::Mat& originalImage,
                                        const cv::Mat& processedImage,
-                                       uint64_t storeGeneration);
+                                       uint64_t storeGeneration,
+                                       uint64_t captureSession);
     // The tag of a row appended now (caller holds monitoringFramesMutex_).
-    // storeGeneration 0 = no store (PL rows): the epoch is left as it is.
-    MonitoringRowTag monitoringTagLocked(uint64_t storeGeneration, cv::Point geometryOrigin);
+    // storeGeneration / captureSession 0 = unknown (PL rows, non-camera
+    // producers): that compare is skipped.
+    MonitoringRowTag monitoringTagLocked(uint64_t storeGeneration, uint64_t captureSession,
+                                         cv::Point geometryOrigin);
+    // Move the epoch on under the ring's lock (caller does not hold it) and
+    // return the new value; notifyMonitoringCapture then tells the listener.
+    uint64_t bumpMonitoringCapture();
+    void notifyMonitoringCapture(uint64_t captureEpoch, const char* reason);
     bool appendExperimentFrame(ProcessedFrame&& frame, bool isValid);
     void logDroppedExperimentFrames(const DroppedFrameCounts& dropped, size_t bufferedTotal, size_t maxBufferedFrames);
     FilterResult filterProcessedImage(const cv::Mat& processedImage, const cv::Rect& roi,
@@ -974,8 +1004,11 @@ private:
     static constexpr size_t MAX_MONITORING_FRAMES = 1000; // Keep last 1000 frames for monitoring
     std::atomic<bool> monitoringActive_{false}; // gating: no clones when no consumer is active
     uint64_t monitoringRunGeneration_{0}; // under monitoringFramesMutex_ (#716 A6a)
-    uint64_t monitoringCaptureEpoch_{1};  // under monitoringFramesMutex_; never reused
-    uint64_t monitoringStoreGeneration_{0}; // the last frame's store generation (0 = none since the bump)
+    std::atomic<uint64_t> monitoringCaptureEpoch_{1}; // written under monitoringFramesMutex_; never reused
+    uint64_t monitoringStoreGeneration_{0}; // the last row's store generation (0 = none since the bump)
+    uint64_t monitoringCaptureSession_{0};  // the last row's capture session (0 = none since the bump)
+    mutable std::mutex monitoringCaptureListenerMutex_; // held while the listener runs
+    MonitoringCaptureListener monitoringCaptureListener_;
     // Totals appended to the monitoring ring buffers since start/clear (BE-5)
     std::atomic<uint64_t> monitoringValidAppended_{0};
     std::atomic<uint64_t> monitoringInvalidAppended_{0};

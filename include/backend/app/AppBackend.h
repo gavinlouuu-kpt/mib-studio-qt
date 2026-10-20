@@ -564,6 +564,9 @@ namespace backend
         std::string lastMindVisionConfigPath_;
         std::string savedMindVisionConfigPath_;
         void releaseMindVisionOverviewStore();
+        // Replace the frame store capture and playback write and read (camera mode switches):
+        // frame indices restart, so the monitoring rows' capture moves on at once (#716 A6a review 2).
+        void installFrameStore(std::shared_ptr<playback::FrameStore> store, const char* reason);
         std::atomic<bool> mindVisionOverview_{false};
         size_t mindVisionExperimentCapacity_{5000};
         mutable std::mutex mindVisionSensorMutex_;

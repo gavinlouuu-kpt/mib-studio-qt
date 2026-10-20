@@ -231,8 +231,9 @@ public:
     BridgeCommandResult monitoring_cell_unpin(std::uint64_t start_generation, std::uint64_t capture_epoch,
                                               std::uint64_t frame_index, std::int32_t object_id);
     BridgeCommandResult monitoring_cell_clear_pins();
-    BridgeFrame fetch_monitoring_cell_image(std::uint64_t start_generation, std::uint64_t capture_epoch,
-                                            std::uint64_t frame_index, std::int32_t object_id, bool mask);
+    BridgeMonitoringCellImage fetch_monitoring_cell_image(std::uint64_t start_generation, std::uint64_t capture_epoch,
+                                                          std::uint64_t frame_index, std::int32_t object_id,
+                                                          bool mask);
     BridgeCommandResult trigger_set_pulse_duration(std::int32_t pulse_us);
     BridgeCommandResult trigger_manual_pulse();
     BridgeCommandResult trigger_periodic_start(std::int32_t interval_ms);

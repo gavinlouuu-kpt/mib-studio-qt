@@ -773,6 +773,17 @@ pub mod ffi {
         pub data: Vec<u8>,
     }
 
+    /// ABI 41 (#716 A6a review 2): one live cell image pull. `frame` is valid when the crop (or
+    /// mask) is served. Otherwise `message` says why in plain words, and `capture_mismatch` is set
+    /// when the identity named another capture than the current one: refused, whatever the store
+    /// still holds (the commands answer with a `CAPTURE_MISMATCH` error, not an empty packet).
+    #[derive(Debug, Clone, Default)]
+    pub struct BridgeMonitoringCellImage {
+        pub capture_mismatch: bool,
+        pub message: String,
+        pub frame: BridgeFrame,
+    }
+
     extern "Rust" {
         /// One bulk copy of C++ bytes into a Rust `Vec<u8>`. cxx's `rust::Vec::push_back`
         /// is an FFI call per element: filling a 509 KB full-field frame that way cost ~75 ms
@@ -1310,8 +1321,9 @@ pub mod ffi {
             object_id: i32,
         ) -> BridgeCommandResult;
         fn monitoring_cell_clear_pins(self: Pin<&mut BackendBridge>) -> BridgeCommandResult;
-        /// The owned Mono8 crop (`mask` false) or its mask of a pinned or strip cell; invalid when
-        /// not held or absent (the listing says why).
+        /// The owned Mono8 crop (`mask` false) or its mask of a pinned or strip cell of the current
+        /// capture; refused with `capture_mismatch` for another capture's identity, an invalid
+        /// frame with the reason when not held or absent.
         fn fetch_monitoring_cell_image(
             self: Pin<&mut BackendBridge>,
             start_generation: u64,
@@ -1319,7 +1331,7 @@ pub mod ffi {
             frame_index: u64,
             object_id: i32,
             mask: bool,
-        ) -> BridgeFrame;
+        ) -> BridgeMonitoringCellImage;
 
         /// Set the sorter trigger pulse duration in microseconds.
         fn trigger_set_pulse_duration(self: Pin<&mut BackendBridge>, pulse_us: i32)

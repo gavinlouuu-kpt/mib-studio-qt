@@ -1134,9 +1134,13 @@ namespace backend::bridge
         BackendCommandResult unpinMonitoringCell(std::uint64_t startGeneration, std::uint64_t captureEpoch,
                                                  std::uint64_t frameIndex, int objectId);
         BackendCommandResult clearMonitoringCellPins();
-        // The owned crop (mask = false) or its mask of a pinned or strip cell, as Mono8.
+        // The owned crop (mask = false) or its mask of a pinned or strip cell, as Mono8. False when it
+        // is not served: `captureMismatch` (when given) is then set if the identity names another
+        // capture than the current one (refused, whatever the store still holds), and `why` (when
+        // given) carries the plain reason.
         bool fetchMonitoringCellImage(std::uint64_t startGeneration, std::uint64_t captureEpoch,
-                                      std::uint64_t frameIndex, int objectId, bool mask, BackendFrame &out) const;
+                                      std::uint64_t frameIndex, int objectId, bool mask, BackendFrame &out,
+                                      bool *captureMismatch = nullptr, std::string *why = nullptr) const;
         bool fetchTriggerStatus(BackendTriggerStatus &out) const;
         // Asynchronous device discovery (issue #419, ABI 14): start a job on
         // the backend service, poll its bounded snapshot, cancel it. Camera

@@ -409,6 +409,8 @@ namespace backend
             processingService_->stopRealtime();
             processingService_->stopBatchPipeline();
             processingService_->stop();
+            // Nothing may notify the live cell store once it can be destroyed (member order).
+            processingService_->setMonitoringCaptureListener({});
         }
         // Release hardware during explicit shutdown, while the service graph
         // is still alive. Capture has ended its owned generator session and
@@ -499,11 +501,19 @@ namespace backend
         sqliteService_ = std::make_unique<services::SqliteService>();
         hdf5Service_ = std::make_unique<services::Hdf5Service>();
         captureService_ = std::make_unique<services::CaptureService>();
-        monitoringCells_.reset(); // its source reads the ring of the processing service replaced next
+        // The cell store's source reads the ring of the processing service replaced next; the old
+        // service stops notifying it first (this returns once no notification is running).
+        if (processingService_) processingService_->setMonitoringCaptureListener({});
+        monitoringCells_.reset();
         monitoringCellSource_.reset();
         processingService_ = std::make_unique<services::ProcessingService>();
         monitoringCellSource_ = services::makeProcessingCellSource(*processingService_);
         monitoringCells_ = std::make_unique<services::MonitoringCellStore>(*monitoringCellSource_);
+        // A capture change drops the cells of the old capture at once (#716 A6a review 2).
+        processingService_->setMonitoringCaptureListener(
+            [cells = monitoringCells_.get()](uint64_t captureEpoch, const char* reason) {
+                cells->captureChanged(captureEpoch, reason);
+            });
         experimentCoordinator_ = std::make_unique<app::ExperimentCoordinator>(*this);
         experimentCoordinator_->setApplicationIdentity(
             MIB_APPLICATION_VERSION, MIB_APPLICATION_BUILD_ID, MIB_APPLICATION_OS);
@@ -939,11 +949,18 @@ namespace backend
             }
         }
 
-        // Wire camera lifecycle to trigger service
-        if (bootCapture && bootTrigger)
+        // Wire camera lifecycle to the monitoring capture identity and the trigger service.
+        if (bootCapture)
         {
-            captureService_->setCameraReadyCallback([this](::camera::common::ICamera* cam,
-                                                           uint64_t generation) {
+            captureService_->setCameraReadyCallback([this, bootTrigger](::camera::common::ICamera* cam,
+                                                                        uint64_t generation) {
+                // A capture session opened or closed (#716 A6a review 2): monitoring cells of the
+                // previous one are never served again. A close may be reported twice (stop() and
+                // the capture thread); a second advance only skips an epoch value.
+                if (processingService_)
+                    processingService_->advanceMonitoringCapture(cam ? "the camera started a new capture session"
+                                                                     : "the camera stopped");
+                if (!bootTrigger) return;
                 if (triggerService_) {
                     triggerService_->setCamera(cam, generation);
                     if (cam) {
@@ -960,11 +977,11 @@ namespace backend
         else
         {
             captureService_->setCameraReadyCallback({});
-            if (triggerService_)
-            {
-                triggerService_->setCamera(nullptr);
-                triggerService_->stop();
-            }
+        }
+        if (!(bootCapture && bootTrigger) && triggerService_)
+        {
+            triggerService_->setCamera(nullptr);
+            triggerService_->stop();
         }
 
         // Wire background capture into an application callback without exposing Qt types.
@@ -2640,11 +2657,19 @@ namespace backend
         processingService_->stopRealtime();
         const size_t capacity = aravis ? (aravisExperimentCapacity_ ? aravisExperimentCapacity_ : 512)
                                        : mindVisionExperimentCapacity_;
-        frameStore_ = std::make_shared<playback::FrameStore>(capacity);
-        captureService_->setFrameStore(frameStore_);
-        playbackService_->setFrameStore(frameStore_);
+        installFrameStore(std::make_shared<playback::FrameStore>(capacity),
+                          "the camera left Overview (a new frame buffer)");
         mindVisionOverview_.store(false);
         aravisOverview_.store(false);
+    }
+
+    void AppBackend::installFrameStore(std::shared_ptr<playback::FrameStore> store, const char* reason) {
+        frameStore_ = std::move(store);
+        captureService_->setFrameStore(frameStore_);
+        playbackService_->setFrameStore(frameStore_);
+        // Frame indices restart in the new store: monitoring cells of the old one are never
+        // resolved against it (the live cell store drops its strip and pins now).
+        processingService_->advanceMonitoringCapture(reason);
     }
 
     AppBackend::MindVisionSensor AppBackend::mindVisionSensor() const {
@@ -2678,11 +2703,9 @@ namespace backend
             // bounds full-sensor preview memory. Existing store readers can finish
             // using their shared ownership; capture is joined before replacement.
             if (overview) mindVisionExperimentCapacity_ = frameStore_->capacity();
-            auto next = std::make_shared<playback::FrameStore>(
-                overview ? 8 : mindVisionExperimentCapacity_);
-            frameStore_ = std::move(next);
-            captureService_->setFrameStore(frameStore_);
-            playbackService_->setFrameStore(frameStore_);
+            installFrameStore(std::make_shared<playback::FrameStore>(overview ? 8 : mindVisionExperimentCapacity_),
+                              overview ? "the MindVision camera switched to Overview (a new frame buffer)"
+                                       : "the MindVision camera switched to Experiment (a new frame buffer)");
             mindVisionOverview_.store(overview);
             SPDLOG_INFO("MindVision mode staged: {}", overview ? "Overview" : "Experiment");
             return true;
@@ -2953,10 +2976,10 @@ namespace backend
         }
         // A new store keeps full-sensor images out of the experiment store and bounds
         // overview memory, as for MindVision.
-        frameStore_ = std::make_shared<playback::FrameStore>(
-            overview ? 8 : (aravisExperimentCapacity_ ? aravisExperimentCapacity_ : 512));
-        captureService_->setFrameStore(frameStore_);
-        playbackService_->setFrameStore(frameStore_);
+        installFrameStore(std::make_shared<playback::FrameStore>(
+                              overview ? 8 : (aravisExperimentCapacity_ ? aravisExperimentCapacity_ : 512)),
+                          overview ? "the Aravis camera switched to Overview (a new frame buffer)"
+                                   : "the Aravis camera switched to Experiment (a new frame buffer)");
         aravisOverview_.store(overview);
         installAravisFactory();
         SPDLOG_INFO("Aravis camera mode staged: {}", overview ? "Overview (full sensor)" : "Experiment window");

@@ -459,6 +459,10 @@ export const MONITORING_CELLS = {
   "row_index_max": 4096
 } as const;
 
+export const MONITORING_CELL_ERROR_CODES = {
+  "capture_mismatch": "CAPTURE_MISMATCH"
+} as const;
+
 export const EVENT_KIND_NAMES: Readonly<Record<number, string>> = {
   0: "FrameReady",
   1: "CameraStatus",

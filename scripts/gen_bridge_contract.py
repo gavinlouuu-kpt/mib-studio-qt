@@ -108,6 +108,10 @@ def render(contract: dict) -> str:
     caps = {k: v for k, v in contract["monitoring_cells"].items() if isinstance(v, int)}
     lines.append("export const MONITORING_CELLS = " + json.dumps(caps, indent=2) + " as const;")
     lines.append("")
+    # Review round 2: the error code a cell pull of another capture is refused with.
+    lines.append("export const MONITORING_CELL_ERROR_CODES = "
+                 + json.dumps(contract["monitoring_cells"]["error_codes"], indent=2) + " as const;")
+    lines.append("")
     # Reverse lookup for event kinds: numeric value -> stable name.
     lines.append("export const EVENT_KIND_NAMES: Readonly<Record<number, string>> = {")
     for name, value in contract["event_kinds"].items():
@@ -131,6 +135,9 @@ def render_rust(contract: dict) -> str:
     lines += ["pub const PULL_KINDS: &[u32] = &[" + ", ".join(str(v) for v in c["pull_kinds"].values()) + "];"]
     lines += [f"pub const JSON_TRANSPORT_VERSION: u32 = {contract['json_transport']['version']};",
               f"pub const MAX_EVENT_TEXT_BYTES: usize = {contract['json_transport']['max_event_text_bytes']};"]
+    # ABI 41 (#716 A6a review 2): a cell pull of another capture is this error, not an empty packet.
+    code = contract["monitoring_cells"]["error_codes"]["capture_mismatch"]
+    lines += [f"pub const MONITORING_CELL_CAPTURE_MISMATCH: &str = \"{code}\";"]
     return "\n".join(lines) + "\n"
 
 

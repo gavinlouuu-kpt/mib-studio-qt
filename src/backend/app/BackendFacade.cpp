@@ -1466,6 +1466,14 @@ namespace backend::bridge
         for (const auto &c : l.pins) pins.push_back(monitoringCellJson(c));
         const auto &st = l.stats;
         const auto &p = l.policy;
+        nlohmann::json change(nullptr);
+        if (l.lastCaptureChange)
+        {
+            change = {{"capture_epoch", dec(l.lastCaptureChange->captureEpoch)},
+                      {"reason", l.lastCaptureChange->reason},
+                      {"pins_dropped", l.lastCaptureChange->pinsDropped},
+                      {"strip_dropped", l.lastCaptureChange->stripDropped}};
+        }
         nlohmann::json doc{
             {"valid", true},
             {"scope_start_generation", dec(l.scopeGeneration)},
@@ -1474,6 +1482,7 @@ namespace backend::bridge
             {"revision", dec(l.revision)},
             {"strip", std::move(strip)},
             {"pins", std::move(pins)},
+            {"last_capture_change", std::move(change)},
             {"stats",
              {{"strip_cells", st.stripCells},
               {"strip_bytes", dec(st.stripBytes)},
@@ -1522,8 +1531,10 @@ namespace backend::bridge
     {
         auto *cells = initialized_ ? backend_.monitoringCells() : nullptr;
         if (!cells) return {false, BackendCommandType::Monitoring, "Backend not initialized"};
-        if (!cells->unpin({startGeneration, frameIndex, objectId, captureEpoch}))
+        const auto r = cells->unpin({startGeneration, frameIndex, objectId, captureEpoch});
+        if (!r)
         {
+            if (r.captureMismatch) return {false, BackendCommandType::Monitoring, r.message};
             return {false, BackendCommandType::Monitoring,
                     "not pinned: frame " + std::to_string(frameIndex) + " object " + std::to_string(objectId) +
                         " of start generation " + std::to_string(startGeneration) + ", capture " +
@@ -1542,13 +1553,24 @@ namespace backend::bridge
 
     bool BackendFacade::fetchMonitoringCellImage(std::uint64_t startGeneration, std::uint64_t captureEpoch,
                                                  std::uint64_t frameIndex, int objectId, bool mask,
-                                                 BackendFrame &out) const
+                                                 BackendFrame &out, bool *captureMismatch, std::string *why) const
     {
+        if (captureMismatch) *captureMismatch = false;
         auto *cells = initialized_ ? backend_.monitoringCells() : nullptr;
-        if (!cells) return false;
+        if (!cells)
+        {
+            if (why) *why = "Backend not initialized";
+            return false;
+        }
         cv::Mat image;
         services::MonitoringCellInfo info;
-        if (!cells->image({startGeneration, frameIndex, objectId, captureEpoch}, mask, image, &info)) return false;
+        const auto r = cells->image({startGeneration, frameIndex, objectId, captureEpoch}, mask, image, &info);
+        if (!r)
+        {
+            if (captureMismatch) *captureMismatch = r.captureMismatch;
+            if (why) *why = r.message;
+            return false;
+        }
         // `image` is a private, continuous copy (taken under the store's lock).
         out = BackendFrame{};
         out.frameIndex = frameIndex;
@@ -3764,6 +3786,8 @@ std::string BackendFacade::savePreviewBufferJson(const std::string& request) {
                 const auto ram=backend::Tools::getAvailableSystemRAMBytes();
                 if(ram==0 || estimate>ram/4*3) throw std::runtime_error("requested buffer exceeds available memory budget");
                 if(!backend_.playback().resize(capacity)) throw std::runtime_error("buffer resize failed");
+                // The store renumbered its frames: monitoring cells of the old numbering are never served again (#716 A6a).
+                backend_.processing().advanceMonitoringCapture("the frame buffer was resized (its frames were renumbered)");
                 result["ok"]=true; return;
             }
             if(!available) throw std::runtime_error("buffer is empty");

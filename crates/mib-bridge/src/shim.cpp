@@ -2377,18 +2377,31 @@ BridgeCommandResult BackendBridge::monitoring_cell_clear_pins() {
     }
 }
 
-BridgeFrame BackendBridge::fetch_monitoring_cell_image(std::uint64_t start_generation, std::uint64_t capture_epoch,
-                                                       std::uint64_t frame_index, std::int32_t object_id, bool mask) {
+BridgeMonitoringCellImage BackendBridge::fetch_monitoring_cell_image(std::uint64_t start_generation,
+                                                                     std::uint64_t capture_epoch,
+                                                                     std::uint64_t frame_index, std::int32_t object_id,
+                                                                     bool mask) {
+    BridgeMonitoringCellImage out{};
     try {
         backend::bridge::BackendFrame frame;
+        bool captureMismatch = false;
+        std::string why;
         if (!impl_->facade.fetchMonitoringCellImage(start_generation, capture_epoch, frame_index, object_id, mask,
-                                                    frame)) {
-            return BridgeFrame{}; // not held, or no image/mask: the listing says why
+                                                    frame, &captureMismatch, &why)) {
+            // Another capture's identity is refused; otherwise not held, or no image/mask.
+            out.capture_mismatch = captureMismatch;
+            out.message = rust::String(why);
+            return out;
         }
-        return toBridgeFrame(frame);
+        out.frame = toBridgeFrame(frame);
+    } catch (const std::exception& e) {
+        out = BridgeMonitoringCellImage{};
+        out.message = rust::String(std::string("fetch_monitoring_cell_image: ") + e.what());
     } catch (...) {
-        return BridgeFrame{};
+        out = BridgeMonitoringCellImage{};
+        out.message = rust::String("fetch_monitoring_cell_image: unknown error");
     }
+    return out;
 }
 
 BridgeCommandResult BackendBridge::trigger_set_pulse_duration(std::int32_t pulse_us) {

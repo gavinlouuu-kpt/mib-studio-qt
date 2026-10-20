@@ -1747,7 +1747,9 @@ pub fn monitoring_cell_clear_pins(state: &AppState) -> Result<CmdResult, String>
 
 /// The owned crop (`layer` "image", pull kind 5) or its mask ("mask", pull kind 6) of a pinned
 /// or strip cell as a frame packet; an empty packet (flags 0) when the cell or the layer is not
-/// held (the listing carries the reason).
+/// held (the listing carries the reason). An identity of another capture than the current one is
+/// refused with a `CAPTURE_MISMATCH: <plain reason>` error (bridge-contract.json
+/// `monitoring_cells.error_codes`), whatever the backend still holds.
 pub fn fetch_monitoring_cell_packet(
     state: &AppState,
     start_generation: String,
@@ -1762,11 +1764,14 @@ pub fn fetch_monitoring_cell_packet(
         "mask" => (true, frame_packet::PULL_KIND_MONITORING_CELL_MASK),
         _ => return Err("Invalid layer: expected \"image\" or \"mask\"".into()),
     };
-    let image = {
+    let pulled = {
         let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
         guard.pin_mut().fetch_monitoring_cell_image(generation, epoch, frame, object_id, mask)
     };
-    frame_packet::encode(image, kind)
+    if pulled.capture_mismatch {
+        return Err(format!("{}: {}", frame_packet::MONITORING_CELL_CAPTURE_MISMATCH, pulled.message));
+    }
+    frame_packet::encode(pulled.frame, kind)
 }
 
 /// Set the sorter trigger pulse duration (µs).

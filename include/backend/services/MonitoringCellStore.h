@@ -14,11 +14,18 @@
 //   - pins: rows the operator asked to keep, by identity (start generation,
 //     frame index, object id, capture epoch). A pin is refused for a run other
 //     than the latest one started (and run 0, "outside a run") and for any
-//     capture but the current one (frame indices restart when the capture
-//     changes, so an older capture's identity is never resolved against the
-//     new one); all pins are dropped when the next run starts (beginRun).
-//     The count and the bytes are capped and a full store refuses
-//     (LimitReached): a pin is never evicted to make room for another.
+//     capture but the current one; all pins are dropped when the next run
+//     starts (beginRun). The count and the bytes are capped and a full store
+//     refuses (LimitReached): a pin is never evicted to make room for another.
+// Pins belong to the capture that made them (#716 A6a review round 2). When
+// the capture changes (ProcessingService::monitoringCaptureEpoch: a camera
+// mode switch or another frame buffer, a camera session opening or closing,
+// another processing ROI, a realtime restart) the strip, the pins and the row
+// index of the old capture are dropped at once (captureChanged), and every
+// read path (pin, image, unpin, the listing) compares the identity's capture
+// with the current one first: an identity of another capture is refused with
+// CaptureMismatch and a plain reason, never resolved, even before the store
+// has heard of the change.
 // A row whose image is gone is never given a substitute: a pin of a row the
 // ring no longer holds keeps the row's measurements (from the bounded index
 // of rows the monitoring snapshot served) with a plain reason, and a row the
@@ -133,6 +140,8 @@ public:
         std::vector<MonitoringCellCandidate> rows;
     };
     virtual ~MonitoringCellSource() = default;
+    // The capture epoch rows get now; lock-free (the store reads it before taking its own lock).
+    virtual std::uint64_t currentCaptureEpoch() const = 0;
     // The newest valid rows, at most maxRows, oldest -> newest.
     virtual Rows newestValid(std::size_t maxRows) = 0;
     // Every held row (valid or not) with this frame index and object id, any
@@ -200,6 +209,23 @@ public:
         std::optional<MonitoringCellInfo> cell; // the pin (Pinned, PinnedWithoutImage, AlreadyPinned)
     };
 
+    // A read refused or served (image, unpin): the reason in plain words when not ok.
+    struct ReadResult {
+        bool ok{false};
+        bool captureMismatch{false}; // the identity names another capture than the current one
+        std::string message;
+        explicit operator bool() const { return ok; }
+    };
+
+    // The last capture change the store applied (captureChanged, or a refresh or pin that met
+    // rows of a newer capture first).
+    struct CaptureChange {
+        std::uint64_t captureEpoch{0}; // the capture that began
+        std::string reason;            // why, in plain words
+        std::size_t pinsDropped{0};
+        std::size_t stripDropped{0};
+    };
+
     struct Stats {
         std::size_t stripCells{0};
         std::uint64_t stripBytes{0};
@@ -217,10 +243,11 @@ public:
     struct Listing {
         std::uint64_t scopeGeneration{0}; // latest run started (0 before the first); pins belong to it
         std::uint64_t ringGeneration{0};  // the strip's context at the last refresh: run tag
-        std::uint64_t ringCaptureEpoch{0}; // ... and capture epoch
+        std::uint64_t ringCaptureEpoch{0}; // the current capture: every listed cell is of it
         std::uint64_t revision{0};        // bumps whenever the strip or the pins change
         std::vector<MonitoringCellInfo> strip; // oldest -> newest
         std::vector<MonitoringCellInfo> pins;  // in pin order
+        std::optional<CaptureChange> lastCaptureChange;
         Stats stats;
         Policy policy;
     };
@@ -235,6 +262,14 @@ public:
     void beginRun(std::uint64_t startGeneration);
     std::uint64_t scopeGeneration() const;
 
+    // The capture changed (ProcessingService's capture listener, at the moment
+    // of the change): every strip entry, pin and index row of an earlier
+    // capture is dropped now, and `reason` is kept for the refusals and the
+    // listing. A notification for an epoch at or below the one already applied
+    // is ignored (concurrent advances may be reported out of order). The
+    // copies are freed after the store's lock is released.
+    void captureChanged(std::uint64_t captureEpoch, const std::string& reason);
+
     // Bring the strip up to date with the ring (bounded: at most stripMaxCells
     // new crops). Called on read by the bridge, never from the hot path.
     void refreshStrip();
@@ -244,20 +279,25 @@ public:
     // `key.startGeneration` is the run the caller expects the row to belong to
     // (0 = outside a run) and `key.captureEpoch` the capture it was detected in.
     PinResult pin(const MonitoringCellKey& key);
-    bool unpin(const MonitoringCellKey& key);
+    // ok: the pin was removed. Not ok: it is not held; captureMismatch when the identity names
+    // another capture (its pins were dropped at the change).
+    ReadResult unpin(const MonitoringCellKey& key);
     std::size_t clearPins();
 
     // Rows the monitoring snapshot served (metadata only): what a pin of an
     // evicted row can still report. Bounded FIFO of kRowIndexMax rows.
     void noteRows(const std::vector<std::pair<MonitoringCellKey, MonitoringCellMetrics>>& rows);
 
+    // Only cells of the current capture are listed.
     Listing listing() const;
     // A private copy of the owned crop (or its mask) of a pinned or strip cell,
     // pins first, taken under the store's lock: no share of a store copy ever
     // leaves the store, so its last reference is always dropped by the thread
-    // that removed it under that lock. ≤ crop_max_side² bytes. False when not
-    // held or absent.
-    bool image(const MonitoringCellKey& key, bool mask, cv::Mat& out, MonitoringCellInfo* info = nullptr) const;
+    // that removed it under that lock. ≤ crop_max_side² bytes. Refused
+    // (captureMismatch) when the identity names another capture than the
+    // current one, whatever the store still holds; not ok with a reason when
+    // the cell or that layer is not held.
+    ReadResult image(const MonitoringCellKey& key, bool mask, cv::Mat& out, MonitoringCellInfo* info = nullptr) const;
 
     Stats stats() const;
     diagnostics::MemoryOwnerStats memoryStats() const;
@@ -279,6 +319,12 @@ private:
     Entry copyCandidate(const MonitoringCellCandidate& c, const std::string& noImageReason) const;
     const Entry* findLocked(const MonitoringCellKey& key, bool pinsFirst) const;
     void indexLocked(const MonitoringCellKey& key, const MonitoringCellMetrics& m);
+    // Apply a capture change (captureEpoch > capture_): move the strip entries and pins of earlier
+    // captures into `strip` / `pins` (freed by the caller once the lock is released).
+    void adoptCaptureLocked(std::uint64_t captureEpoch, const std::string& reason, std::deque<Entry>& strip,
+                            std::vector<Entry>& pins);
+    // "<what>: frame F object O is from capture E, but the current capture is C (why)..."
+    std::string captureRefusalLocked(const char* what, const MonitoringCellKey& key, std::uint64_t current) const;
     void trimStripLocked();
     void raisePeakLocked();
 
@@ -287,9 +333,11 @@ private:
 
     mutable std::mutex mutex_;
     std::uint64_t scope_{0};
-    std::uint64_t epoch_{0}; // bumps at beginRun / clearStrip: a refresh started before is dropped
+    std::uint64_t epoch_{0}; // bumps at beginRun / clearStrip / a capture change: a refresh started before is dropped
     std::uint64_t ringGeneration_{0};
     std::uint64_t ringCaptureEpoch_{0};
+    std::uint64_t capture_{0}; // the latest capture epoch applied (source's at construction)
+    std::optional<CaptureChange> lastChange_;
     std::uint64_t revision_{0};
     std::deque<Entry> strip_; // oldest -> newest
     std::vector<Entry> pins_;

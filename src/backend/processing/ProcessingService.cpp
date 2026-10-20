@@ -216,12 +216,9 @@ void ProcessingService::startRealtime(std::shared_ptr<backend::playback::FrameSt
     }
     rtStore_ = std::move(store);
     processingSession_.fetch_add(1);
-    {
-        // A (possibly new) store: its frame indices may repeat earlier ones.
-        std::scoped_lock monitoringLk(monitoringFramesMutex_);
-        ++monitoringCaptureEpoch_;
-        monitoringStoreGeneration_ = 0;
-    }
+    // A (possibly new) store whose frame indices may repeat earlier ones: a new capture for the
+    // monitoring rows (#716 A6a). The listener hears of it below, once the start is complete.
+    const uint64_t captureEpoch = bumpMonitoringCapture();
     {
         std::scoped_lock snapshotLock(snapshotMutex_);
         latestSnapshot_.reset();
@@ -236,6 +233,8 @@ void ProcessingService::startRealtime(std::shared_ptr<backend::playback::FrameSt
     realtimeThread_ = std::thread(&ProcessingService::realtimeLoop, this);
     backend::diagnostics::CrashStateMirror::instance().processing.realtimeRunning.store(true);
     SPDLOG_INFO("ProcessingService: realtime processing started");
+    coreLock.unlock();
+    notifyMonitoringCapture(captureEpoch, "realtime processing started");
 }
 
 bool ProcessingService::activateProcessingKernel(
@@ -445,10 +444,18 @@ ProcessingService::RealtimeBatchSettings ProcessingService::getRealtimeBatchSett
     return rtBatchSettings_;
 }
 
+namespace {
+bool sameRoi(const ProcessingService::Roi& a, const ProcessingService::Roi& b) {
+    return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
+}
+} // namespace
+
 void ProcessingService::setRealtimeRoi(const Roi& roi) {
+    bool changed = false;
     const auto apply = [&] {
         {
             std::scoped_lock lk(rtMutex_);
+            changed = !sameRoi(rtRoi_, roi);
             rtRoi_ = roi;
             pendingRoi_.reset();
             pendingRoiNotice_.clear();
@@ -464,6 +471,9 @@ void ProcessingService::setRealtimeRoi(const Roi& roi) {
     } else if (!experimentActive_.load(std::memory_order_acquire)) {
         apply();
     }
+    // Another ROI, another capture for the monitoring rows (#716 A6a review 2): a cell cropped
+    // from the old ROI's images is never served as one of the new ROI's.
+    if (changed) advanceMonitoringCapture("the processing ROI changed");
 }
 
 void ProcessingService::setPendingRealtimeRoi(const Roi& roi) {
@@ -500,8 +510,8 @@ bool ProcessingService::resolvePendingRoi(uint64_t frameWidth, uint64_t frameHei
         if (r.x >= 0 && r.y >= 0 && r.w > 0 && r.h > 0 &&
             static_cast<uint64_t>(r.x) + static_cast<uint64_t>(r.w) <= frameWidth &&
             static_cast<uint64_t>(r.y) + static_cast<uint64_t>(r.h) <= frameHeight) {
+            changed = !sameRoi(rtRoi_, r);
             rtRoi_ = r;
-            changed = true;
         } else {
             pendingRoiNotice_ = "The ROI " + std::to_string(r.w) + "x" + std::to_string(r.h) + "@" +
                                 std::to_string(r.x) + "," + std::to_string(r.y) + " does not fit the " +
@@ -516,6 +526,8 @@ bool ProcessingService::resolvePendingRoi(uint64_t frameWidth, uint64_t frameHei
         configVersion_.fetch_add(1, std::memory_order_release);
         refreshRealtimeBatchPipelineConfig();
         SPDLOG_INFO("ProcessingService: pending ROI applied on the first frame");
+        // Never during a run (above): a configuration change, once, not the per-frame path.
+        advanceMonitoringCapture("the pending processing ROI was applied");
     }
     return true;
 }
@@ -837,7 +849,8 @@ std::vector<ProcessingService::MonitoringPoint> ProcessingService::getMonitoring
 void ProcessingService::appendMonitoringFrameForTests(const ProcessedFrame& frame, cv::Point geometryOrigin) {
     std::scoped_lock lk(monitoringFramesMutex_);
     ProcessedFrame copy = frame;
-    const auto tag = monitoringTagLocked(frame.previewStoreGeneration, geometryOrigin);
+    const auto tag =
+        monitoringTagLocked(frame.previewStoreGeneration, frame.previewCaptureSession, geometryOrigin);
     if (frame.validation.isValid) {
         monitoringValidAppended_.fetch_add(1, std::memory_order_relaxed);
         monitoringValidFrames_.push_back(std::move(copy), tag);
@@ -848,18 +861,53 @@ void ProcessingService::appendMonitoringFrameForTests(const ProcessedFrame& fram
 }
 
 ProcessingService::MonitoringRowTag ProcessingService::monitoringTagLocked(uint64_t storeGeneration,
+                                                                          uint64_t captureSession,
                                                                           cv::Point geometryOrigin) {
+    // The backstop (see the header): a row whose frame comes from another store numbering or
+    // another camera session than the previous row's starts a new epoch. The explicit advances
+    // reset both to 0, so the first row after one adopts its frame's values without a second bump.
+    bool changed = false;
     if (storeGeneration != 0 && storeGeneration != monitoringStoreGeneration_) {
-        // The store renumbered its frames (resize): indices may repeat.
-        if (monitoringStoreGeneration_ != 0) ++monitoringCaptureEpoch_;
+        changed = monitoringStoreGeneration_ != 0;
         monitoringStoreGeneration_ = storeGeneration;
     }
-    return {monitoringRunGeneration_, monitoringCaptureEpoch_, geometryOrigin.x, geometryOrigin.y};
+    if (captureSession != 0 && captureSession != monitoringCaptureSession_) {
+        changed = changed || monitoringCaptureSession_ != 0;
+        monitoringCaptureSession_ = captureSession;
+    }
+    uint64_t epoch = monitoringCaptureEpoch_.load(std::memory_order_relaxed);
+    if (changed) monitoringCaptureEpoch_.store(++epoch, std::memory_order_release);
+    return {monitoringRunGeneration_, epoch, geometryOrigin.x, geometryOrigin.y};
 }
 
 uint64_t ProcessingService::monitoringCaptureEpoch() const {
+    return monitoringCaptureEpoch_.load(std::memory_order_acquire);
+}
+
+uint64_t ProcessingService::bumpMonitoringCapture() {
     std::scoped_lock lk(monitoringFramesMutex_);
-    return monitoringCaptureEpoch_;
+    const uint64_t epoch = monitoringCaptureEpoch_.load(std::memory_order_relaxed) + 1;
+    monitoringCaptureEpoch_.store(epoch, std::memory_order_release);
+    monitoringStoreGeneration_ = 0;
+    monitoringCaptureSession_ = 0;
+    return epoch;
+}
+
+void ProcessingService::notifyMonitoringCapture(uint64_t captureEpoch, const char* reason) {
+    std::scoped_lock lk(monitoringCaptureListenerMutex_);
+    if (monitoringCaptureListener_) monitoringCaptureListener_(captureEpoch, reason);
+}
+
+uint64_t ProcessingService::advanceMonitoringCapture(const char* reason) {
+    const uint64_t epoch = bumpMonitoringCapture();
+    SPDLOG_INFO("ProcessingService: monitoring capture {} begins: {}", epoch, reason);
+    notifyMonitoringCapture(epoch, reason);
+    return epoch;
+}
+
+void ProcessingService::setMonitoringCaptureListener(MonitoringCaptureListener listener) {
+    std::scoped_lock lk(monitoringCaptureListenerMutex_);
+    monitoringCaptureListener_ = std::move(listener);
 }
 
 void ProcessingService::clearMonitoringFrames() {
@@ -897,7 +945,7 @@ ProcessingService::MonitoringRingView ProcessingService::visitMonitoringNewest(
     view.validAppended = monitoringValidAppended_.load(std::memory_order_relaxed);
     view.invalidAppended = monitoringInvalidAppended_.load(std::memory_order_relaxed);
     view.runGeneration = monitoringRunGeneration_;
-    view.captureEpoch = monitoringCaptureEpoch_;
+    view.captureEpoch = monitoringCaptureEpoch_.load(std::memory_order_relaxed);
     if (!visit) return view;
     // Valid rows are favoured (the charts' emphasis), as fetchMonitoringSnapshot always did.
     const size_t takeValid = std::min(view.validHeld, maxRows);
@@ -2739,7 +2787,8 @@ void ProcessingService::appendRealtimeMonitoringFrame(uint64_t index, uint64_t t
                                                       const FilterResult& validation,
                                                       const cv::Mat& originalImage,
                                                       const cv::Mat& processedImage,
-                                                      uint64_t storeGeneration) {
+                                                      uint64_t storeGeneration,
+                                                      uint64_t captureSession) {
     if (!monitoringActive_.load(std::memory_order_relaxed)) return; // gating: no-op when inactive
     if (originalImage.empty() || processedImage.empty()) {
         return;
@@ -2754,7 +2803,7 @@ void ProcessingService::appendRealtimeMonitoringFrame(uint64_t index, uint64_t t
 
     std::scoped_lock monitoringLk(monitoringFramesMutex_);
     // Inline rows are measured on the ROI image itself: geometry origin (0, 0).
-    const auto tag = monitoringTagLocked(storeGeneration, {});
+    const auto tag = monitoringTagLocked(storeGeneration, captureSession, {});
     if (validation.isValid) {
         monitoringValidAppended_.fetch_add(1, std::memory_order_relaxed);
         monitoringValidFrames_.push_back(std::move(monitoringFrame), tag);
@@ -2772,7 +2821,7 @@ void ProcessingService::appendProviderMonitoringRow(uint64_t index, uint64_t tim
     row.timestampNs = timestampNs;
     row.validation = validation;
     std::scoped_lock monitoringLk(monitoringFramesMutex_);
-    const auto tag = monitoringTagLocked(0, {}); // no store, no image
+    const auto tag = monitoringTagLocked(0, 0, {}); // no store, no camera session, no image
     if (validation.isValid) {
         monitoringValidAppended_.fetch_add(1, std::memory_order_relaxed);
         monitoringValidFrames_.push_back(std::move(row), tag);
@@ -2902,7 +2951,8 @@ void ProcessingService::publishRealtimeBatchFrame(ProcessedFrame&& frame) {
         std::scoped_lock monitoringLk(monitoringFramesMutex_);
         // The row keeps an ROI crop but its geometry is in full-frame
         // coordinates: the tag records the crop's origin (#716 A6a).
-        const auto tag = monitoringTagLocked(frame.previewStoreGeneration, cvRoi.tl());
+        const auto tag =
+            monitoringTagLocked(frame.previewStoreGeneration, frame.previewCaptureSession, cvRoi.tl());
         // Counted like the inline path (they were not counted here before, so a
         // snapshot in async-batch mode could not see evictions).
         if (validation.isValid) {
@@ -3662,7 +3712,7 @@ void ProcessingService::realtimeInlineLoop() {
                 // Always accumulate frames for monitoring (with size limit)
                 for (const auto& objectValidation : validations) {
                     appendRealtimeMonitoringFrame(idx, f.timestamp, objectValidation, grayROI,
-                                                  mask, f.storeGeneration);
+                                                  mask, f.storeGeneration, f.captureSession);
                 }
 
                 // Throttled DEBUG: accumulation sizes and process memory
@@ -4130,7 +4180,7 @@ void ProcessingService::realtimeInlineLoop() {
                 cv::Mat roiMask = mask(cvRoi);
                 for (const auto& objectValidation : validations) {
                     appendRealtimeMonitoringFrame(idx, f.timestamp, objectValidation, roiOriginal,
-                                                  roiMask, f.storeGeneration);
+                                                  roiMask, f.storeGeneration, f.captureSession);
                 }
 
                 // Throttled DEBUG: accumulation sizes and process memory
@@ -4593,7 +4643,7 @@ void ProcessingService::realtimeInlineLoop() {
                 cv::Mat roiMask = mask(cvRoi);
                 for (const auto& objectValidation : validations) {
                     appendRealtimeMonitoringFrame(idx, f.timestamp, objectValidation, roiOriginal,
-                                                  roiMask, f.storeGeneration);
+                                                  roiMask, f.storeGeneration, f.captureSession);
                 }
 
                 // Throttled TRACE: accumulation sizes and process memory
