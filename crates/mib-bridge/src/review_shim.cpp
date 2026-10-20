@@ -20,6 +20,7 @@
 #include <cstring>
 #include <deque>
 #include <mutex>
+#include <optional>
 #include <random>
 #include <string>
 #include <vector>
@@ -50,6 +51,8 @@ static_assert(static_cast<std::uint32_t>(br::RegenerateSource::CurrentValid) == 
 static_assert(static_cast<std::uint32_t>(br::RegenerateSource::Folder) == 4);
 static_assert(static_cast<std::uint32_t>(backend::recording::RunCompletionState::Complete) == 0);
 static_assert(static_cast<std::uint32_t>(backend::recording::RunCompletionState::Unknown) == 4);
+// review-contract.json review_probe.max_paths (review ABI 2, #717 B1a).
+static_assert(br::kReviewProbeMaxPaths == 256);
 
 // Contract review_pixel_formats.
 constexpr std::uint64_t kPixelFormatMono8 = 0;
@@ -99,6 +102,86 @@ ReviewDatasetInfo toInfo(const br::DatasetInfo& in) {
     return out;
 }
 
+// Optional text -> presence flag + value; an absent value stays empty and
+// means nothing (the flag says so), never a stand-in.
+void setText(const std::optional<std::string>& in, bool& has, rust::String& out) {
+    has = in.has_value();
+    out = has ? rust::String(*in) : rust::String();
+}
+
+ReviewAnnotation toAnnotation(const br::RunIdentity& id) {
+    ReviewAnnotation out{};
+    out.unreadable = id.annotationUnreadable;
+    if (!id.annotation) return out;
+    const auto& a = *id.annotation;
+    out.present = true;
+    out.has_schema_version = id.annotationSchemaVersion.has_value();
+    out.schema_version = id.annotationSchemaVersion.value_or(0);
+    setText(a.sample, out.has_sample, out.sample);
+    setText(a.condition, out.has_condition, out.condition);
+    setText(a.experimentalUnit, out.has_experimental_unit, out.experimental_unit);
+    out.has_concentration = a.concentration.has_value();
+    if (a.concentration) {
+        out.concentration_value = a.concentration->value;
+        out.concentration_unit = rust::String(a.concentration->unit);
+    }
+    setText(a.channel, out.has_channel, out.channel);
+    setText(a.medium, out.has_medium, out.medium);
+    out.has_temperature_c = a.temperatureC.has_value();
+    out.temperature_c = a.temperatureC.value_or(0.0);
+    setText(a.notes, out.has_notes, out.notes);
+    for (const auto& [key, value] : a.free) {
+        ReviewKeyValue kv{};
+        kv.key = rust::String(key);
+        kv.value = rust::String(value);
+        out.free.push_back(std::move(kv));
+    }
+    return out;
+}
+
+ReviewRunIdentity toIdentity(const br::RunIdentity& id) {
+    ReviewRunIdentity out{};
+    out.has_snapshot = id.hasSnapshot;
+    out.snapshot_unreadable = id.snapshotUnreadable;
+    out.snapshot_version = id.hasSnapshot ? id.snapshotVersion : 0;
+    setText(id.runId, out.has_run_id, out.run_id);
+    const auto& d = id.declared;
+    setText(d.experimentId, out.has_experiment_id, out.experiment_id);
+    out.has_run_index = d.runIndex.has_value();
+    out.run_index = d.runIndex.value_or(0);
+    setText(d.sampleRef, out.has_sample_ref, out.sample_ref);
+    setText(d.calibrationRecordId, out.has_calibration_record_id, out.calibration_record_id);
+    if (d.selectedOperator) {
+        setText(d.selectedOperator->id, out.has_operator_id, out.operator_id);
+        setText(d.selectedOperator->name, out.has_operator_name, out.operator_name);
+    }
+    out.annotation = toAnnotation(id);
+    return out;
+}
+
+ReviewRunProbe toProbe(const br::RunProbe& p) {
+    ReviewRunProbe out{};
+    out.path = rust::String(p.path);
+    out.ok = p.ok;
+    out.message = rust::String(p.message);
+    out.recording_file = p.recordingFile;
+    out.identity = toIdentity(p.identity);
+    out.has_start_time = p.startTimeNs.has_value();
+    out.start_time_ns = p.startTimeNs.value_or(0);
+    out.has_end_time = p.endTimeNs.has_value();
+    out.end_time_ns = p.endTimeNs.value_or(0);
+    out.has_total_valid = p.totalValid.has_value();
+    out.total_valid = p.totalValid.value_or(0);
+    out.has_total_invalid = p.totalInvalid.has_value();
+    out.total_invalid = p.totalInvalid.value_or(0);
+    out.has_accounting = p.completion.has_value();
+    out.accounting_completion = p.completion ? static_cast<std::uint32_t>(*p.completion)
+                                             : static_cast<std::uint32_t>(backend::recording::RunCompletionState::Unknown);
+    out.has_core_version = p.coreVersion.has_value();
+    out.core_version = p.coreVersion ? rust::String(*p.coreVersion) : rust::String();
+    return out;
+}
+
 } // namespace
 
 constexpr std::size_t kEventQueueCapacity = 4096;
@@ -114,6 +197,13 @@ struct ReviewBridge::Impl {
     std::unique_ptr<br::ReviewJobs> jobs;
 
     Impl() {
+        // Lane policy (#512 D7 as amended 2026-10-19): YOFO Review keeps one
+        // job of any kind at a time, its own operation ids, and a job's lane
+        // free before its terminal event is queued. It does not gain the
+        // second lane (an export beside a regenerate / density / core job)
+        // until #722: HDF5 is built without thread safety and Hdf5Service has
+        // no process-wide lock. MIB Studio's facade runs both lanes at once
+        // (ReviewJobsOptions::forFacade).
         jobs = std::make_unique<br::ReviewJobs>(session, &processing, [this](const br::ReviewJobEvent& e) {
             // Runs on the job thread: convert + enqueue, bounded drop-oldest.
             ReviewEvent out{};
@@ -126,7 +216,7 @@ struct ReviewBridge::Impl {
             std::scoped_lock lock(eventMutex);
             events.push_back(std::move(out));
             while (events.size() > kEventQueueCapacity) events.pop_front();
-        });
+        }, br::ReviewJobsOptions::forReviewBridge());
     }
 
     ReviewResult started(std::uint64_t id, const std::string& error, const char* what) {
@@ -243,8 +333,43 @@ ReviewInfo ReviewBridge::fetch_review_info() {
         out.has_recorded_config = m.hasRecordedConfig;
         out.ring_ratio_min = m.ringRatioMin;
         out.ring_ratio_max = m.ringRatioMax;
+        out.identity = toIdentity(m.runIdentity);
     } catch (...) {
         out.valid = false;
+    }
+    return out;
+}
+
+ReviewProbeResult ReviewBridge::review_probe_runs(rust::Vec<rust::String> paths) {
+    ReviewProbeResult out{};
+    try {
+        // Refuse an oversized list before copying it.
+        if (paths.size() > br::kReviewProbeMaxPaths) {
+            out.message = rust::String("Too many files to probe at once: " + std::to_string(paths.size()) +
+                                       " (at most " + std::to_string(br::kReviewProbeMaxPaths) + ")");
+            return out;
+        }
+        std::vector<std::string> list;
+        list.reserve(paths.size());
+        for (const auto& p : paths) list.emplace_back(std::string(p));
+        std::vector<br::RunProbe> probes;
+        std::string error;
+        // Through the job lane: refused while a job runs, and holds the lane
+        // so none starts; each file under the session's mutex (#722).
+        if (!impl_->jobs->probeRuns(list, probes, &error)) {
+            out.message = rust::String(error.empty() ? std::string("Probe refused") : error);
+            return out;
+        }
+        out.ok = true;
+        out.message = rust::String("Probed " + std::to_string(probes.size()) + " file(s)");
+        out.runs.reserve(probes.size());
+        for (const auto& p : probes) out.runs.push_back(toProbe(p));
+    } catch (const std::exception& e) {
+        out = ReviewProbeResult{};
+        out.message = rust::String(std::string("review_probe_runs: ") + e.what());
+    } catch (...) {
+        out = ReviewProbeResult{};
+        out.message = rust::String("review_probe_runs: unknown error");
     }
     return out;
 }
@@ -561,10 +686,17 @@ std::unique_ptr<ReviewBridge> new_review_bridge() { return std::make_unique<Revi
 // review-contract.json `review_abi_version` (ADR 0014): YOFO Review's own
 // contract, independent of bridge_abi_version(). v1: ReviewSession-backed
 // info/rows/frames/series/thumbnails/scatter/core-record calls, overlay_modes,
-// review_pixel_formats and the review event queue.
-std::uint32_t review_bridge_abi_version() { return 1; }
+// review_pixel_formats and the review event queue. v2 (#717 B1a): the run
+// identity in fetch_review_info and review_probe_runs (review_probe).
+std::uint32_t review_bridge_abi_version() { return 2; }
 
-bool review_fixture_write_experiment(rust::Str path) {
+namespace {
+
+// The experiment fixture: 10 valid frames, 4 invalid, 3-image series, ROI.
+// `snapshot` / `annotation` are written verbatim when non-empty; with
+// `provenance`, run accounting and a stored KDE record as well.
+bool writeExperimentFixture(const std::string& path, const std::string& snapshot, const std::string& annotation,
+                            bool provenance) {
     try {
         using backend::services::Hdf5Service;
         using backend::services::ProcessedFrame;
@@ -605,13 +737,18 @@ bool review_fixture_write_experiment(rust::Str path) {
         for (int i = 0; i < 10; ++i) valid.push_back(make(static_cast<std::uint64_t>(i * 2), true, i != 3 && i != 7, true));
         for (int i = 0; i < 4; ++i) invalid.push_back(make(static_cast<std::uint64_t>(i * 2 + 1), false, false, false));
         Hdf5Service hdf5;
-        if (!hdf5.openFile(toStd(path))) return false;
+        if (!hdf5.openFile(path)) return false;
         if (!hdf5.initializeDatasets()) return false;
         if (!hdf5.appendFrames(valid, invalid)) return false;
         backend::services::ProcessingConfig cfg;
         backend::services::ProcessingService::Roi roi{4, 2, 20, 16};
         if (!hdf5.writeExperimentInfo(1000, 5000, valid.size(), invalid.size(), cfg, roi)) return false;
-        if (!hdf5.writeRunSnapshotJson("{\"schema\":1,\"pixel_to_micron\":0.25,\"profile_id\":\"fixture\"}", "{}")) return false;
+        if (!snapshot.empty() && !hdf5.writeRunSnapshotJson(snapshot, "{}")) return false;
+        if (!annotation.empty() && !hdf5.writeExperimentAnnotationJson(annotation)) return false;
+        if (!provenance) {
+            hdf5.closeFile();
+            return true;
+        }
         backend::recording::RecordingAccountingSnapshot a;
         a.admitted = 14;
         a.processed = 10;
@@ -633,6 +770,19 @@ bool review_fixture_write_experiment(rust::Str path) {
     } catch (...) {
         return false;
     }
+}
+
+} // namespace
+
+bool review_fixture_write_experiment(rust::Str path) {
+    return writeExperimentFixture(toStd(path), "{\"schema\":1,\"pixel_to_micron\":0.25,\"profile_id\":\"fixture\"}", "",
+                                  /*provenance=*/true);
+}
+
+bool review_fixture_write_run(rust::Str path, rust::Str snapshot_json, rust::Str annotation_json) {
+    // A legacy file (no snapshot) predates run accounting and the KDE record too.
+    const std::string snapshot = toStd(snapshot_json);
+    return writeExperimentFixture(toStd(path), snapshot, toStd(annotation_json), /*provenance=*/!snapshot.empty());
 }
 
 bool review_fixture_write_population(rust::Str path, std::uint32_t cells, std::uint64_t seed) {
