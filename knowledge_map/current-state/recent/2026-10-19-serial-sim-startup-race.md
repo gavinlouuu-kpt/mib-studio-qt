@@ -24,6 +24,11 @@ Fixed with [[services/SerialPortClaims]]:
   back-to-back probes cannot starve it.
 - The sweep joins a bus session another client is opening instead of racing it.
 
+The controller's bridge chip is not known for every unit, so nanopositioner discovery no longer
+stops at the CH340/CH341 filter. It probes the saved endpoint and the listed chips first. On the
+job's last attempt, and only if nothing identified, it also probes every other USB adapter and
+then ports without USB identity (see [[services/DeviceDiscoveryService]]).
+
 Guards: `backend.serial_sim` (the rig, services through it, scenario/env switch) and
 `backend.serial_startup_race`. The race test runs the real coordinator against seeded operator
 connects, with and without a configured pump port, across every chip in the catalog for the

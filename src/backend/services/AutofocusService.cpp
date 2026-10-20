@@ -204,11 +204,11 @@ bool AutofocusService::probeComPort(int comPort, int baudRate, unsigned char dev
 }
 
 std::vector<backend::nanopositioner::Endpoint> AutofocusService::availableEndpoints() {
+    // Every serial port, whatever its USB chip: the controller's bridge chip
+    // is not known for every unit. knownOeabtCandidate (CH340/CH341) still
+    // decides the probe order: NanopositionerProvider probes other adapters
+    // only when no candidate identified.
     auto endpoints = backend::nanopositioner::availableOeabtEndpoints();
-    endpoints.erase(
-        std::remove_if(endpoints.begin(), endpoints.end(),
-                       [](const auto& endpoint) { return !endpoint.knownOeabtCandidate; }),
-        endpoints.end());
 
     // The CoreMorrow vendor DLL opens COM ports itself, past ISerialPort, so
     // under simulated serial hardware it would reach the real ports.

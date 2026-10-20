@@ -7,7 +7,9 @@
 //  - NanopositionerProvider orders/filters by the preferred endpoint, probes
 //    every endpoint once, keeps unidentified adapters in the inventory, maps
 //    conflicting vendor claims to Ambiguous, cancels between endpoints, and a
-//    cancelled scan never disconnects an established AutofocusService;
+//    cancelled scan never disconnects an established AutofocusService; probes
+//    in stages so a controller on any USB chip is found, while adapters the
+//    OEABT filter does not list are probed only when no candidate identified;
 //  - PulseGeneratorProvider scans an explicit port/address scope over the
 //    shared Modbus bus with FC03 only (zero write commands), maps
 //    generator / foreign Modbus device / corrupt responses, busy and missing
@@ -23,6 +25,7 @@
 #include "support/fake_modbus_bench.h"
 #include "support/watchdog.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <memory>
@@ -295,6 +298,86 @@ int main()
         MIB_EXPECT(autofocus.isConnected() && state->writes.load() == 0,
                    "cancelled discovery never disconnects or moves the established device");
         autofocus.disconnect();
+    }
+
+    // ---- nanopositioner provider: probe stages (unknown bridge chip) ---------------------
+    {
+        watchdog.mark("nanopositioner stages");
+        auto ch340 = endpoint(np::BackendKind::Oeabt, "usb:1a86:7523:", "COM5"); // listed candidate
+        ch340.vendorId = 0x1a86;
+        auto ftdi = endpoint(np::BackendKind::Oeabt, "usb:0403:6001:A1", "COM7");
+        ftdi.knownOeabtCandidate = false;
+        ftdi.vendorId = 0x0403;
+        auto cp210x = endpoint(np::BackendKind::Oeabt, "usb:10c4:ea60:B2", "COM8");
+        cp210x.knownOeabtCandidate = false;
+        cp210x.vendorId = 0x10c4;
+        auto onboard = endpoint(np::BackendKind::Oeabt, "COM1", "COM1"); // no USB identity
+        onboard.knownOeabtCandidate = false;
+        std::vector<std::string> probed;
+        std::vector<std::string> answers;
+        NanopositionerProvider staged(
+            [&] { return std::vector{onboard, cp210x, ftdi, ch340}; },
+            [&](const np::Endpoint& ep) {
+                probed.push_back(ep.systemPath);
+                return std::find(answers.begin(), answers.end(), ep.systemPath) != answers.end();
+            });
+        DiscoveryRequest req;
+        req.kinds = {DeviceKind::Nanopositioner};
+        const auto identifiedAt = [](const ProviderResult& r) {
+            std::vector<std::string> out;
+            for (const auto& c : r.candidates)
+                if (c.identification == IdentificationStatus::Identified) out.push_back(c.endpoint.systemPath);
+            return out;
+        };
+
+        answers = {"COM5"};
+        auto r = staged.discover(req, context());
+        MIB_EXPECT(probed == std::vector<std::string>{"COM5"},
+                   "a listed CH34x controller answers: no other adapter is probed");
+        MIB_EXPECT(identifiedAt(r) == std::vector<std::string>{"COM5"}, "found on the CH340");
+
+        probed.clear();
+        answers = {"COM7"};
+        r = staged.discover(req, context());
+        MIB_EXPECT(identifiedAt(r) == std::vector<std::string>{"COM7"}, "a controller on an FTDI bridge is found");
+        MIB_EXPECT(probed.size() == 3 && probed[0] == "COM5", "candidates first, then every other USB adapter");
+        MIB_EXPECT(std::find(probed.begin(), probed.end(), "COM1") == probed.end(),
+                   "the port without USB identity is not probed once a USB adapter answered");
+
+        probed.clear();
+        answers = {"COM1"};
+        r = staged.discover(req, context());
+        MIB_EXPECT(identifiedAt(r) == std::vector<std::string>{"COM1"},
+                   "a controller on a port without USB identity is found last");
+        MIB_EXPECT(probed.size() == 4 && probed.back() == "COM1", "every stage ran, onboard last");
+
+        probed.clear();
+        answers = {"COM7", "COM8"};
+        r = staged.discover(req, context());
+        MIB_EXPECT(identifiedAt(r).size() == 2, "two controllers in one stage are both reported (no silent pick)");
+
+        // An early retry (attempt 1 of 3) stays on listed chips: the
+        // controller may simply not have enumerated yet.
+        probed.clear();
+        answers = {"COM7"};
+        auto early = context();
+        early.attempt = 1;
+        early.maxAttempts = 3;
+        r = staged.discover(req, early);
+        MIB_EXPECT(probed == std::vector<std::string>{"COM5"} && identifiedAt(r).empty(),
+                   "an early attempt probes only listed chips");
+        early.attempt = 3;
+        probed.clear();
+        r = staged.discover(req, early);
+        MIB_EXPECT(identifiedAt(r) == std::vector<std::string>{"COM7"}, "the last attempt widens to every chip");
+
+        probed.clear();
+        answers = {};
+        req.preferredNanopositioner = cp210x; // saved last time on a CP210x
+        r = staged.discover(req, context());
+        MIB_EXPECT(!probed.empty() && probed.front() == "COM8", "the saved endpoint is probed first, whatever its chip");
+        MIB_EXPECT(probed.size() == 4, "nothing answers: every port probed once, the run ends");
+        MIB_EXPECT(identifiedAt(r).empty(), "nothing identified");
     }
 
     // ---- pulse-generator provider ------------------------------------------------------

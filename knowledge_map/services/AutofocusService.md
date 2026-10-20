@@ -136,6 +136,10 @@ startup probe on that port instead of failing, and keeps the claim in
 connected port. Under [[SimulatedSerial]], `availableEndpoints()` offers no
 CoreMorrow endpoints (the vendor DLL would open real ports).
 
+`availableEndpoints()` lists every serial port (2026-10-20), not only the
+CH340/CH341 candidates. The discovery provider decides the probe order (see
+[[DeviceDiscoveryService]], probe stages).
+
 ## Gotchas
 
 - A NaN ring ratio (every Contract 2/3 object) used to pass the `<= 0.0`

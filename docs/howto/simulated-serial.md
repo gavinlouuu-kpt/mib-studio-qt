@@ -132,9 +132,11 @@ splitting replies). Explicit `vid`/`pid`/`description` fields override it.
 | `stm32-vcp`, `arduino-uno`, `rp2040` | 0483:5740, 2341:0043, 2e8a:000a | CDC-ACM boards |
 | `onboard` | none | motherboard COM port (no USB identity) |
 
-`backend.serial_startup_race` runs every chip as the pump adapter and as the
-generator adapter (rotated as the nanopositioner's), with the generator's
-`auto` sweep racing startup and the operator.
+`backend.serial_startup_race` runs every chip as the pump adapter, the
+generator adapter and the nanopositioner's adapter, with the generator's
+`auto` sweep racing startup and the operator. The nanopositioner must be
+found on any chip. When it is on a listed chip (CH340/CH341), no other
+adapter may receive the startup probe.
 
 ## What it found
 
@@ -145,6 +147,10 @@ generator adapter (rotated as the nanopositioner's), with the generator's
 - **Generator `auto` sweep.** It opens every USB adapter, whatever the chip,
   at 9600 baud. While it held the pump adapter, a pump Connect at 115200
   failed with "different settings". 14 of 33 runs of the chip matrix failed.
+- **Unknown controller chip.** Startup only looked for the nanopositioner on
+  CH340/CH341 adapters. Discovery now probes in stages: listed chips first,
+  then, on the last retry only, every other USB adapter and then ports
+  without USB identity.
 
 Both are fixed by in-process port claims (`SerialPortClaims.h`):
 

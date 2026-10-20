@@ -63,9 +63,14 @@ also runs with and without the pump port in config.json, with the sweep
 racing startup and the operator. Chip-dependent behaviour is all upstream of
 the claims:
 
-- **OEABT candidates.** The nanopositioner filter lists CH340/CH341 only. A
-  nanopositioner on another chip (CH343, CH9102, FTDI, CP210x, …) is never
-  probed and startup reports NotFound promptly.
+- **OEABT candidates.** The nanopositioner filter lists CH340/CH341. The
+  controller's chip is not known for every unit, so discovery probes in
+  stages ([[DeviceDiscoveryService]] provider): listed chips and the saved
+  endpoint first, then every other USB adapter, then ports without USB
+  identity. Later stages run only when nothing earlier identified, and only
+  on the job's last attempt, so a late-enumerating CH34x controller never
+  causes other adapters to be probed. A controller on any catalog chip is
+  connected at startup (`backend.serial_startup_race`).
 - **The sweep.** It considers USB adapters only (VID/PID present). An
   onboard UART is never swept.
 

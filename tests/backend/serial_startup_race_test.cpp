@@ -29,10 +29,12 @@
 //     probe: startup keeps retrying and connects once it is released;
 //  4. a stale process holds the pump bus: Connect fails fast as "busy", never
 //     hangs, and succeeds once the port is released;
-//  5. chip matrix: every chip as pump and generator adapter (and in rotation
-//     as the nanopositioner's), with the generator "auto" sweep running, with
-//     and without the pump port in config.json. A nanopositioner on a chip
-//     the OEABT filter does not list is reported NotFound, promptly.
+//  5. chip matrix: every chip as the pump, the generator and the
+//     nanopositioner adapter, with the generator "auto" sweep running, with
+//     and without the pump port in config.json. The controller's bridge chip
+//     is not known for every unit, so it must be found on any chip; when it
+//     is on a chip the OEABT filter lists (CH340/CH341), no other adapter may
+//     receive the startup probe.
 // Every scenario: no in-process contention, and shutdown releases every port.
 //
 // Usage: serial_startup_race_test [seeds=6] [firstSeed=1]. A failing seed
@@ -104,6 +106,7 @@ std::string label(const Spec& spec)
 
 // Whether the OEABT filter (SerialTransport::enumerateEndpoints) lists an
 // adapter with this chip, asked of the production code on a one-port rig.
+// Listed chips are probed first; others only when no listed one answered.
 bool oeabtCandidate(const serialsim::UsbSerialChip& chip)
 {
     auto probeRig = std::make_shared<serialsim::Rig>(1);
@@ -175,7 +178,8 @@ struct Result {
 bool run(uint64_t seed, const Spec& spec, mib::test::Watchdog& watchdog)
 {
     const Scenario scenario = spec.scenario;
-    const bool nanoFindable = oeabtCandidate(*spec.nanoChip);
+    const bool nanoListed = oeabtCandidate(*spec.nanoChip);
+    const bool generatorListed = oeabtCandidate(*spec.generatorChip);
     const bool generatorIsUsb = spec.generatorChip->vendorId != 0; // the sweep looks at USB adapters only
     auto rig = makeRig(seed, spec);
     serialsim::install(rig);
@@ -284,12 +288,15 @@ bool run(uint64_t seed, const Spec& spec, mib::test::Watchdog& watchdog)
     check(result.samplePump, "Sample pump connects on COM3");
     check(result.sheathPump, "Sheath pump connects on COM3");
     check(result.generator, "pulse generator connects on COM4");
-    if (nanoFindable) {
-        check(result.nano == NanoOutcome::Kind::Connected, "startup connects the nanopositioner");
-        check(serialsim::Rig::key(result.nanoPath) == "COM5", "the nanopositioner is the one on COM5");
-    } else {
-        // The OEABT filter does not list this chip: never probed, reported.
-        check(result.nano == NanoOutcome::Kind::NotFound, "an unlisted nanopositioner chip is reported NotFound");
+    check(result.nano == NanoOutcome::Kind::Connected, "startup connects the nanopositioner, whatever its chip");
+    check(serialsim::Rig::key(result.nanoPath) == "COM5", "the nanopositioner is the one on COM5");
+    if (nanoListed && !generatorListed) {
+        // The probe runs at 115200; everything else talks to the generator at
+        // 9600. An OEABT probe there means the fallback stage ran needlessly.
+        int probedGenerator = 0;
+        for (const auto& e : rig->events(serialsim::Event::Kind::BaudMismatch))
+            probedGenerator += e.port == "COM4" && e.detail.find("sent at 115200") != std::string::npos;
+        check(probedGenerator == 0, "a controller on a listed chip: no unlisted adapter is probed");
     }
     if (spec.generatorSweep && generatorIsUsb) {
         check(result.sweepFound && serialsim::Rig::key(result.sweepPort) == "COM4",
@@ -365,16 +372,16 @@ int main(int argc, char** argv)
         spec.scenario = scenario;
         once(firstSeed, spec);
     }
-    // Every chip as the pump adapter and as the generator adapter; the
-    // nanopositioner's chip rotates through the catalog too. Alternate rows
-    // leave the pump port out of config.json.
+    // Every chip as the pump, the generator and the nanopositioner adapter
+    // (three rotations of the catalog). Alternate rows leave the pump port
+    // out of config.json.
     const auto& chips = serialsim::commonUsbSerialChips();
     for (std::size_t i = 0; i < chips.size(); ++i) {
         Spec spec;
         spec.scenario = Scenario::ChipMatrix;
         spec.pumpChip = &chips[i];
         spec.generatorChip = &chips[(i + 5) % chips.size()];
-        spec.nanoChip = i % 3 == 0 ? &chips[(i / 3) % chips.size()] : serialsim::findUsbSerialChip("ch340");
+        spec.nanoChip = &chips[(i + 11) % chips.size()]; // every chip once as the controller's
         spec.pumpPortInConfig = i % 2 == 0;
         spec.generatorSweep = true;
         once(firstSeed + 100 + i, spec);

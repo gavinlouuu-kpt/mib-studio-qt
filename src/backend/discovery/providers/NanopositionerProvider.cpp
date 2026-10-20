@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <iterator>
 #include <utility>
 
 namespace backend::discovery {
@@ -24,6 +25,29 @@ std::unique_ptr<NanopositionerProvider> NanopositionerProvider::production()
 }
 
 namespace {
+
+// Probe stages. The controller's USB bridge chip is not known for every unit,
+// so every serial port is a possible endpoint, but adapters the OEABT filter
+// does not list are probed only when nothing earlier identified, and only on
+// the job's last attempt (a one-shot Refresh is its own last attempt). A
+// controller on the usual CH34x bridge, even one that enumerates late, then
+// never sends an identity command to other instruments' adapters.
+//   0: the saved endpoint (any chip), CH340/CH341 candidates, CoreMorrow;
+//   1: other USB serial adapters (FTDI, CP210x, PL2303, CH343/CH9102, CDC-ACM…);
+//   2: ports without a USB identity (a motherboard COM port, or a driver that
+//      does not expose VID/PID).
+// Ports held or reserved in this process are skipped by the probe itself
+// (SerialPortClaims.h).
+int probeStage(const nanopositioner::Endpoint& ep, const nanopositioner::Endpoint& preferred)
+{
+    const bool saved =
+        (!preferred.persistentId.empty() && ep.persistentId == preferred.persistentId) ||
+        (!preferred.systemPath.empty() && ep.systemPath == preferred.systemPath);
+    if (saved || ep.knownOeabtCandidate || ep.backend != nanopositioner::BackendKind::Oeabt) return 0;
+    if (ep.vendorId.value_or(0) != 0) return 1;
+    return 2;
+}
+constexpr int kProbeStages = 3;
 
 const char* vendorName(nanopositioner::BackendKind kind)
 {
@@ -68,14 +92,31 @@ ProviderResult NanopositionerProvider::discover(const DiscoveryRequest& request,
     }
 
     std::atomic<bool> cancelled{false};
-    const auto candidates = npd::discover(endpoints, [&](const nanopositioner::Endpoint& ep) {
+    const auto probe = [&](const nanopositioner::Endpoint& ep) {
         if (cancelled.load()) return false;
         if (context.cancelled && context.cancelled()) {
             cancelled.store(true);
             return false;
         }
         return probe_ && probe_(ep);
-    });
+    };
+    // Every endpoint of a stage is probed (two identified controllers stay
+    // ambiguous); a later stage runs only when this one identified nothing.
+    std::vector<npd::Candidate> candidates;
+    const int stages = context.attempt >= context.maxAttempts ? kProbeStages : 1;
+    for (int stage = 0; stage < stages && !cancelled.load(); ++stage) {
+        std::vector<nanopositioner::Endpoint> batch;
+        for (const auto& ep : endpoints) {
+            if (probeStage(ep, preferred) == stage) batch.push_back(ep);
+        }
+        if (batch.empty()) continue;
+        auto found = npd::discover(batch, probe);
+        const bool identified = std::any_of(found.begin(), found.end(),
+                                            [](const auto& c) { return !c.identifiedVendors.empty(); });
+        candidates.insert(candidates.end(), std::make_move_iterator(found.begin()),
+                          std::make_move_iterator(found.end()));
+        if (identified) break;
+    }
 
     for (const auto& c : candidates) {
         DiscoveredDevice d;

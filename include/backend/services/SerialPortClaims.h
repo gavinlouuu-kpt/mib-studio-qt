@@ -32,7 +32,8 @@
 namespace backend::services::portclaims {
 
 // How long a service waits for a probe on its port. An OEABT identity probe
-// takes up to ~2 s (two commands, 500 ms timeouts, one retry).
+// holds its port about 1 s (two commands, 500 ms timeouts); backend.serial_sim
+// checks a failed probe releases it well inside this bound.
 inline constexpr std::chrono::milliseconds kProbeYield{3000};
 
 class Claim;
