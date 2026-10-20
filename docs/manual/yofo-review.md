@@ -54,18 +54,63 @@ counts and the pixel-to-micron factor in use. **Log** opens the message log.
 To open a run from a folder:
 
 1. Click **Open folder…** and choose the folder where your runs are saved.
-2. YOFO Review lists the `.h5` and `.hdf5` files in the folder, in name
-   order. It reads only the file names: listing a folder opens no file.
+2. YOFO Review finds the `.h5` and `.hdf5` files in the folder. It reads
+   what each file's header says about its run, and groups the runs by
+   experiment. It does not load images, and it never changes a file.
 3. Click **Open** beside a run.
+
+**Experiments in this folder** shows one table per experiment, with its
+runs in run order (Run 1, Run 2, …). The experiment's header line gives:
+
+- the number of runs and samples;
+- the start dates;
+- the planned conditions;
+- the processing core;
+- the calibration record;
+- one status for how its runs ended.
+
+Each run's row gives:
+
+- the sample (sample sheet reference and name);
+- the condition;
+- when it started;
+- its valid and invalid record counts;
+- the processing core and calibration record;
+- how the run ended.
+
+An experiment is shown by the id its files record. Experiment names,
+methods and analysis plans are kept by the workspace, which YOFO Review does
+not read.
+
+Files that do not belong to an experiment have their own tables:
+
+- **Runs without an experiment**: the file has a run snapshot, but the
+  snapshot names no experiment. This is the case for older snapshots, and
+  for snapshots that cannot be read.
+- **Legacy files · no run snapshot**: files recorded before run identity
+  existed. Their experiment, run, sample, condition and calibration show as
+  **Not recorded**.
+- **Cannot be read**: each row gives the reason, for example a file that is
+  still being copied or is locked by another program.
 
 YOFO Review remembers the folder and lists it again the next time it starts.
 **Refresh** lists the folder again, for example after a run has finished
 saving.
 
-While a folder is being listed, the list says **Listing…**. When you choose
-another folder, the previous folder's runs disappear at once. During a
+While a folder is being listed, the list says **Listing…**. While the files'
+headers are being read, it says **Reading N of M files**. Large folders are
+read 256 files at a time, and you can open a run that is already shown at
+any point.
+
+When you choose another folder, the previous folder's runs disappear at once.
+Results that arrive late for a folder you have left are ignored. During a
 **Refresh** the runs stay in view, but you cannot open them until the
 listing is done.
+
+If the headers cannot be read at all, a yellow banner says why. For example,
+they cannot be read while an export or a mask regeneration is running. The
+files stay listed under **Not read**, and you can still open them. Click
+**Refresh** to try again.
 
 **Open file…** opens a single file from anywhere. **Close file** releases the
 open file, so you can move or delete it. Opening another file replaces the
@@ -74,6 +119,9 @@ current one.
 After a run opens, the **Open run** card shows what the file records:
 
 - its folder and kind (experiment run, or a raw recording with images only);
+- its identity: the run snapshot, experiment, run number, sample, condition,
+  the rest of the planned annotation, the calibration record, and the
+  operator selected at Start;
 - the valid and invalid record counts;
 - when it started and ended;
 - the pixel-to-micron factor, and whether the file recorded it or the
@@ -100,10 +148,6 @@ These open the file straight into **Inspect**.
 Files larger than 2 GB are fine: frames load as you browse. Recordings
 made in raw recording mode have no masks or metrics. For those, YOFO Review
 shows a single frame list, and only raw image export is available.
-
-The Open page does not yet group a folder's runs by experiment. Grouping by
-the experiment, run number and sample that newer files record comes in a
-later version.
 
 ## Browse frames and charts
 
