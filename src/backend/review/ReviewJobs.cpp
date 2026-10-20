@@ -731,13 +731,26 @@ namespace backend::review
         out.coreVersion = used.version;
         out.coreSource = used.source;
         out.stored = in.stored;
+        // One image in: a frame without a mask means the kernel failed on it.
+        if (frames.empty() || frames.front().processedImage.empty())
+        {
+            if (error) *error = "The processing kernel could not process record " + std::to_string(index);
+            out = ReprocessResult{};
+            out.settings = settings;
+            return false;
+        }
         const auto f = in.pixelToMicron;
+        std::size_t found = 0;
         for (const auto &frame : frames)
         {
+            // The frame-level result of an image with no object (objectCount
+            // 0, what regenerate stores for it) is not an object.
+            if (frame.validation.objectCount <= 0) continue;
+            ++found;
             if (out.reprocessed.size() >= kReviewReprocessMaxObjects)
             {
                 out.truncated = true;
-                break;
+                continue; // still counted
             }
             MetricRow row = ReviewSession::metricRow(frame, f);
             row.frameIndex = in.stored.frameIndex; // the record's frame, not the batch's local index
@@ -748,7 +761,8 @@ namespace backend::review
             row.trackObservationCount = 0;
             out.reprocessed.push_back(row);
         }
-        const auto found = frames.size();
+        // A stored count of 0 (nothing found, or a file older than the count)
+        // is not compared.
         out.objectCountDiffers = in.stored.objectCount > 0 && found != static_cast<std::size_t>(in.stored.objectCount);
         // Pair them: stored records and processBatch both come from
         // computeProcessedFrame, in image coordinates whatever the ROI.

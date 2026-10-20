@@ -248,12 +248,15 @@ namespace backend::review
         std::string coreVersion;
         std::string coreSource;
         MetricRow stored;
-        std::vector<MetricRow> reprocessed; // at most kReviewReprocessMaxObjects
-        std::optional<std::size_t> match;   // index into `reprocessed`
+        // The objects found (none for an empty image: the kernel's
+        // frame-level "no object" result is not one), at most
+        // kReviewReprocessMaxObjects.
+        std::vector<MetricRow> reprocessed;
+        std::optional<std::size_t> match; // index into `reprocessed`
         // The kernel found another number of objects than the stored record's
-        // object count.
+        // object count (a stored count of 0 is not compared).
         bool objectCountDiffers{false};
-        bool truncated{false};
+        bool truncated{false}; // more objects than kReviewReprocessMaxObjects
     };
 
     // A packed 8-bit image: Mono8 (channels 1) or RGB (channels 3), row
