@@ -323,7 +323,7 @@ def studio_rows(d: Path, studio: dict, other: dict) -> list[tuple[str, str, str]
         range_close(tuple(area), (other["x"]["min"], other["x"]["max"])) and \
         range_close(tuple(deform), (other["y"]["min"], other["y"]["max"]))
     check("scatter axis extents", ok,
-          f"studio x {area} y {deform} / {name} x {other['x']} y {other['y']} (tolerance {CHART_RANGE_REL:g} × max |end|)")
+          f"studio x {area} y {deform} / {name} x {other['x']} y {other['y']} (tolerance {CHART_RANGE_REL:g} of the largest end)")
 
     bins = [int(v) for v in charts.get("histogram", [])]
     check("histogram bins", bins == other["bins"], f"{len(bins)} bins, max {max(bins or [0])}")
