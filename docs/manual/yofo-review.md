@@ -28,24 +28,87 @@ YOFO Review and click **Open Anyway**. Later launches open normally.
 only and needs no administrator rights. The installer is not signed, so
 SmartScreen may warn: click **More info ▸ Run anyway**.
 
-## Open a file
+## The window
 
-- Double-click a `.h5` / `.hdf5` file (the installer registers YOFO Review
-  for both), or drag it onto the app icon.
-- Or use **File ▸ Open…** inside the app.
+Along the top are four stages: **Open**, **Overview**, **Inspect** and
+**Export**. Choosing a stage only changes what you see. It never opens,
+closes, exports or changes a file.
 
-Opening another file replaces the current one. **Close File** on the
-toolbar (or **File ▸ Close**) releases the file, so you can move or delete
-it.
+- **Open**: choose a folder of runs, open one, and read what the file
+  records about itself.
+- **Overview**: per-run statistics. This is **not available yet**. It needs
+  the statistics worker, which this version does not include, so the page
+  says so and shows no numbers.
+- **Inspect**: frames, masks, the metrics table and charts of the open run,
+  with the export and regenerate actions on its toolbar.
+- **Export**: a list of where each export is on Inspect's toolbar. The
+  export page itself comes in a later version.
+
+The header shows the open run. **Settings**, **Updates…** and **About** are
+at the top right, beside **Fit**, which switches the image scaling between
+fit-to-window and 1:1. The status bar at the bottom shows the file, its frame
+counts and the pixel-to-micron factor in use. **Log** opens the message log.
+
+## Open
+
+To open a run from a folder:
+
+1. Click **Open folder…** and choose the folder where your runs are saved.
+2. YOFO Review lists the `.h5` and `.hdf5` files in the folder, in name
+   order. It reads only the file names: listing a folder opens no file.
+3. Click **Open** beside a run.
+
+YOFO Review remembers the folder and lists it again the next time it starts.
+**Refresh** lists the folder again, for example after a run has finished
+saving.
+
+While a folder is being listed, the list says **Listing…**. When you choose
+another folder, the previous folder's runs disappear at once. During a
+**Refresh** the runs stay in view, but you cannot open them until the
+listing is done.
+
+**Open file…** opens a single file from anywhere. **Close file** releases the
+open file, so you can move or delete it. Opening another file replaces the
+current one.
+
+After a run opens, the **Open run** card shows what the file records:
+
+- its folder and kind (experiment run, or a raw recording with images only);
+- the valid and invalid record counts;
+- when it started and ended;
+- the pixel-to-micron factor, and whether the file recorded it or the
+  fallback is used;
+- the processing core that analysed it;
+- how the run ended (its run accounting).
+
+A value the file does not record is shown as **Not reported**. It is never
+guessed. Files from older versions have no run accounting, and the card says
+**Not recorded · legacy file** rather than showing a complete run. Click
+**Inspect <file>** to browse the run.
+
+If a file cannot be opened, a red banner names the file and gives the reason,
+and no file is left open.
+
+You can also open a file without going through the Open page:
+
+- Double-click a `.h5` or `.hdf5` file (the installer registers YOFO Review
+  for both).
+- Drag the file onto the app icon.
+
+These open the file straight into **Inspect**.
 
 Files larger than 2 GB are fine: frames load as you browse. Recordings
 made in raw recording mode have no masks or metrics. For those, YOFO Review
 shows a single frame list, and only raw image export is available.
 
+The Open page does not yet group a folder's runs by experiment. Grouping by
+the experiment, run number and sample that newer files record comes in a
+later version.
+
 ## Browse frames and charts
 
-Browsing works as in MIB Studio's Review tab (see
-[Review & post-process](review-and-postprocess.md)):
+Browsing happens on **Inspect**, and works as in MIB Studio's Review tab
+(see [Review & post-process](review-and-postprocess.md)):
 
 - **Frames** — thumbnails, the metrics table and the frame viewer, with
   mask, contour and ROI overlays. Double-click a thumbnail or a table row
@@ -60,7 +123,8 @@ pixel-to-micron factor in use.
 
 ## Export
 
-The toolbar has **Export Metrics to CSV…** and **Export All…**. **More…** holds
+Exports run from **Inspect**. Its toolbar has **Export Metrics to CSV…** and
+**Export All…**, and **More…** holds
 **Batch Metrics**, **Batch Export All**, **Export Charts** and
 **Regenerate masks**.
 
@@ -113,22 +177,22 @@ affected.
 
 Files record the pixel-to-micron factor they were taken with, and YOFO
 Review always uses it, for metrics, charts and exports (batches included).
-Older files that recorded no factor use the fallback set under **File ▸
-Preferences…** (default 0.4886 µm per pixel); the status bar then marks
-the factor "(fallback)".
+Older files that recorded no factor use the fallback set under
+**Settings** (default 0.4886 µm per pixel). The status bar and the Open run
+card then mark the factor as the fallback.
 
 ## Updates
 
 YOFO Review checks for a new version once at launch, and the status bar
-says when one is available. **Help ▸ Check for updates…** checks on
-demand and offers **Install and restart**.
+says when one is available. **Updates…** checks on demand and offers
+**Install and restart**.
 
 Before installing, the app verifies that the update was signed by the YOFO
 Review release key and that its checksum matches the published one. If
 either check fails, nothing is installed.
 
-Under **File ▸ Preferences…**, pick the update channel: **stable** (the
-default) or **beta** (pre-release builds, for testing).
+Under **Settings**, pick the update channel: **stable** (the default) or
+**beta** (pre-release builds, for testing).
 
 ## Differences from MIB Studio's Review tab
 
@@ -154,7 +218,7 @@ contours match. The visible differences:
   opened.
 - **Sizes look wrong**: check the pixel-to-micron factor in the status
   bar. "(fallback)" means the file recorded none; set the right value under
-  **File ▸ Preferences…**.
+  **Settings**.
 - **A regenerated file's frame indices or times do not match its images**:
   the file was probably written by review-v1.1.3-beta.1 or earlier. See
   [Regenerate masks](#regenerate-masks) and regenerate it again.
