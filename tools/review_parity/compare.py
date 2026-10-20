@@ -53,7 +53,7 @@ D5 = ("MIB Studio's review_export_json writes backend-rendered chart TIFFs into 
 
 
 def load(path: Path):
-    return json.loads(path.read_text()) if path.is_file() else None
+    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
 
 
 def close(a: float, b: float) -> bool:
@@ -464,8 +464,10 @@ def main(argv: list[str]) -> int:
     except FileNotFoundError as e:
         print(e)
         return 2
-    (d / "report.md").write_text(report)
-    print(report)
+    (d / "report.md").write_text(report, encoding="utf-8")
+    # The report has non-ASCII text (↔, µ, —); a cp1252 console must not fail on it.
+    encoding = sys.stdout.encoding or "utf-8"
+    print(report.encode(encoding, "replace").decode(encoding))
     return 1 if any(r == "DIFF" for _, _, r, _ in rows) else 0
 
 

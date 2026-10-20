@@ -61,7 +61,7 @@ TOP_ROW = range(W)  # pixels an ROI outline covers in these fixtures
 
 def write(path: Path, value) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value) if not isinstance(value, str) else value)
+    path.write_text(json.dumps(value, ensure_ascii=False) if not isinstance(value, str) else value, encoding="utf-8")
 
 
 def make_dumps(d: Path) -> None:
@@ -70,12 +70,12 @@ def make_dumps(d: Path) -> None:
     x, y = {"min": 6.1375, "max": 7.4875}, {"min": 0.082, "max": 0.29800000000000004}
     labels = [f"{15 + 0.5 * k:.1f}-{15 + 0.5 * (k + 1):.1f}" for k in range(20)]
     common = {"source": "/data/run.h5", "recording_file": False}
-    write(d / "qt/summary.json", {**common, "pixel_to_micron": 0.25, "status_text": "Valid: 8, Invalid: 2 · ok",
+    write(d / "qt/summary.json", {**common, "pixel_to_micron": 0.25, "status_text": "Valid: 8, Invalid: 2 · run complete — ok",
                                   "scatter": {"count": 8, "x": x, "y": y},
                                   "histogram": {"counts": bins, "labels": labels, "y": {"min": 0, "max": 5}},
                                   "core_status_text": "saved. Core 90%: 8 of 8 cells"})
     write(d / "yofo/summary.json", {**common, "pixel_to_micron": 0.25, "pixel_to_micron_from_file": True,
-                                    "accounting_summary": " · ok", "scatter_count": 8, "ring_ratio_min": 15.0,
+                                    "accounting_summary": " · run complete — ok", "scatter_count": 8, "ring_ratio_min": 15.0,
                                     "ring_ratio_max": 25.0, "core_message": "Core 90%: 8 of 8 cells"})
     write(d / "yofo/charts.json", {"scatter": {"count": 8, "x": dict(x), "y": dict(y)},
                                    "histogram": {"counts": bins, "labels": labels, "y": {"min": 0, "max": 5}}})
@@ -130,14 +130,14 @@ class ReviewParityCompareTest(unittest.TestCase):
 
     def edit(self, rel: str, change):
         path = self.dir / rel
-        value = json.loads(path.read_text())
+        value = json.loads(path.read_text(encoding="utf-8"))
         change(value)
-        path.write_text(json.dumps(value))
+        path.write_text(json.dumps(value), encoding="utf-8")
 
     def test_consistent_halves_pass_with_d2_d3_d5_accepted(self):
         rows = self.rows()
         self.assertEqual(compare.main([str(self.dir)]), 0)
-        self.assertTrue((self.dir / "report.md").is_file())
+        self.assertIn("MIB Studio ↔ YOFO Review", (self.dir / "report.md").read_text(encoding="utf-8"))
         for pair in ("MIB Studio ↔ Qt", "MIB Studio ↔ YOFO"):
             self.assertEqual(result(rows, pair, "px→µm as opened"), "ACCEPTED")
             self.assertEqual(result(rows, pair, "Export All chart files"), "ACCEPTED")
