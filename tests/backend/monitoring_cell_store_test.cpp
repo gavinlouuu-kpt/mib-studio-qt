@@ -654,7 +654,8 @@ void testCaptureChange()
     for (std::uint64_t i = 1; i <= 3; ++i) ring.append(i, 0, true, static_cast<std::uint8_t>(100 + i));
     store.refreshStrip();
     l = store.listing();
-    MIB_EXPECT(l.strip.size() == 3 && !inStrip(l, 4), "only B's rows enter the strip; A's late row does not");
+    MIB_EXPECT(l.strip.size() == 3 && l.stats.stripCells == 3 && !inStrip(l, 4),
+               "only B's rows enter the strip; A's late row does not");
     for (const auto& c : l.strip) {
         MIB_EXPECT(c.key.captureEpoch == 8, "only B's cells");
         MIB_REQUIRE(store.image(c.key, false, px), "strip image");
