@@ -451,6 +451,45 @@ the services. All `BackendCommandType` values are now explicit and pinned to
 AlreadyActive, Stop accepted, terminal Idle with the remainder committed,
 NotActive afterwards, Starting/Active/Stopping/Idle event sequence).
 
+## Live cell store (bridge ABI 41, #716 A6a)
+
+`initialize()` builds [[../services/MonitoringCellStore]] right after the
+`ProcessingService` (its source, `makeProcessingCellSource`, reads that
+service's monitoring ring, so a re-initialize resets the store and its source
+**before** replacing the processing service). `monitoringCells()` returns it
+(null before `initialize()`); the members are declared after the coordinator, so
+the store is destroyed before the ring it reads. [[ExperimentCoordinator]]
+calls `beginRun` when a run reaches Active; the facade serves
+`fetchMonitoringCellsJson` / `pinMonitoringCellJson` / `unpinMonitoringCell` /
+`clearMonitoringCellPins` / `fetchMonitoringCellImage` and feeds the rows
+`fetchMonitoringSnapshot` served into the store's bounded row index.
+
+**Capture changes (review rounds 2-3 of #749).** Pins belong to the capture
+that made them. [[../services/MonitoringCellStore]] is the one authority for the
+capture epoch (`advanceCapture`, which publishes the epoch into
+`ProcessingService` under the store's mutex), and every capture change goes
+through it, at the moment it happens:
+- `initialize()` sets `ProcessingService::setMonitoringCaptureAuthority` to the
+  store's `advanceCapture`, so the service's own changes (a realtime start or
+  stop, another ROI) go through the store; a re-initialize clears it on the old
+  service before the store is reset, and `shutdown()` clears it after
+  processing has stopped (it waits for a running call, so the store may then go).
+- `installFrameStore(store, reason)` is the one place a camera mode switch
+  replaces the FrameStore (`setMindVisionOverview`, `setAravisOverview`,
+  `releaseMindVisionOverviewStore`): capture, playback, then
+  `monitoringCells_->advanceCapture(reason)`, even with realtime stopped.
+- The camera-ready callback is wired whenever capture boots (the trigger part
+  only with the trigger service): a session opening is a change ("the camera
+  started a new capture session", camera session floor = the new session), a
+  close is one change ("the camera stopped", floor = the session + 1; the close
+  is reported twice, from `stop()` and the capture thread, and
+  `monitoringClosedCaptureSession_` keeps it one change). With the floor, a
+  frame of the closed session still arriving or still in processing never
+  becomes a cell of the next capture.
+- The facade's buffer `resize` calls `advanceCapture` after `FrameStore::resize`
+  renumbered the frames (until then the renumbered frames enter with no
+  capture); [[ExperimentCoordinator]]'s `beginRun` is the run start's change.
+
 ## Memory budget snapshot (issue #370)
 
 `memoryBudgetSnapshot()` assembles the [[../diagnostics/MemoryBudget]]
@@ -458,7 +497,8 @@ NotActive afterwards, Starting/Active/Stopping/Idle event sequence).
 platform helper), `capture.sdkBuffers` (Estimated from the telemetry
 input-buffer count × the latest frame payload while capture runs, otherwise
 Unknown — never a measured zero), `FrameStore::memoryStats()`, every
-`ProcessingService::memoryStats()` owner, and the streaming exporter entry.
+`ProcessingService::memoryStats()` owner, `monitoring.cellStore`
+([[../services/MonitoringCellStore]]), and the streaming exporter entry.
 Consumed by the [[../frontend/MainWindow]] Diagnostics dialog and the
 memory benchmark evidence.
 

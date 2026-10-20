@@ -12,6 +12,8 @@
   ADR 0008, design registry ADR 0009
 - [[MonitoringDensityService]] — live Monitoring scatter KDE + core contour on a
   lowest-priority worker with load back-off and a compute budget
+- [[MonitoringCellStore]] — live per-row cell images: a bounded strip of recent
+  crops and run-scoped pins that outlive the ring (bridge ABI 41)
 
 ## Persistence
 - [[Hdf5Service]] — batched write/read of experiment frames + metadata

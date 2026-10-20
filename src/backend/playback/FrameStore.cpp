@@ -274,6 +274,11 @@ bool FrameStore::getByWriteIndexROI(uint64_t writeIndex, int roiX, int roiY, int
     return true;
 }
 
+uint64_t FrameStore::storeGeneration() const {
+    std::shared_lock lk(structureMutex_);
+    return storeGeneration_;
+}
+
 uint64_t FrameStore::earliestAvailableIndex() const {
     const uint64_t w = totalWritten_.load();
     if (capacity_.load(std::memory_order_acquire) == 0 || w == 0) return 0;
