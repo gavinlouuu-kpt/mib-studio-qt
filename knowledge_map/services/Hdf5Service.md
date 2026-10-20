@@ -96,6 +96,12 @@ a macro). Unit-tested by `tests/backend/hdf_write_queue_test.cpp`.
   Matching readers: `isRecordingFile()` (probes `/recording_info`),
   `readRecordingMetadata(frames)` (fills only index + timestampNs on each
   `ProcessedFrame`), `readRecordingInfo(start, end, total, filtered, ...)`.
+  `readScalarUintAttribute(groupPath, name)` (#717 B1a review) reads one
+  scalar integer attribute of a top-level group presence-aware: `nullopt`
+  when the group or attribute is missing, not a scalar integer, unreadable or
+  negative; a recorded 0 is 0. The review probe reads its counts and times
+  with it; `readExperimentInfo` / `readRecordingInfo` keep their 0 defaults
+  for their callers.
   Recording info now persists `multi_image_enabled` (`uint8`) and
   `multi_image_count` (`uint64`) alongside start/end/totals so review mode can
   reconstruct multi-image windows from `/recorded_frames/images`.

@@ -677,6 +677,27 @@ namespace backend::review
         return r.id;
     }
 
+    bool ReviewJobs::probeRuns(const std::vector<std::string> &paths, std::vector<RunProbe> &out, std::string *error)
+    {
+        out.clear();
+        // The lanes' lock: a start claims its lane under it before the job's
+        // worker exists, and a lane stays claimed until its job's body has
+        // returned. Holding it for the whole probe keeps every job off the
+        // library while the probe reads; a claimed lane (either one) refuses
+        // the probe. Lock order: this mutex, then the session's (nothing takes
+        // them the other way round).
+        std::scoped_lock lock(impl_->mutex);
+        for (const auto &lane : impl_->lanes)
+        {
+            if (lane.busy)
+            {
+                if (error) *error = "A review job is running; the files can be read when it finishes";
+                return false;
+            }
+        }
+        return impl_->session.probeRuns(paths, out, error);
+    }
+
     std::string ReviewJobs::computedCoreJson() const
     {
         const std::string current = impl_->session.filePath();
