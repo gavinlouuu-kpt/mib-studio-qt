@@ -60,10 +60,23 @@ the facade copies pixels after the store lock is released), `stats`, `memoryStat
 - Nothing runs on the acquisition / processing path: the only change there is the 8-byte tag the
   ring stores per append, under the lock it already holds.
 - The ring lock is held only while the source copies scalars and cv::Mat headers; crops and clones
-  happen outside every lock; the store mutex is never held while the ring is read (lock order:
-  never store → ring).
+  happen outside every lock; then `releaseShares` drops the shares under the ring lock again
+  (`ProcessingService::releaseMonitoringShares`); the store mutex is never held while the ring is
+  read (lock order: never store → ring).
+- **Why the release goes back under the ring lock, and why `image()` copies.** cv::Mat's reference
+  count lives in the uninstrumented OpenCV library, so ThreadSanitizer cannot see that a buffer is
+  freed only after its last reader let go. The CI `thread` lane flagged exactly that: two image
+  pulls sharing one store copy, one reading while the other dropped the last share. The fix makes
+  the order visible as a lock order. Ring shares are dropped under the lock the ring's evictions
+  take. A store copy never leaves the store: `image()` hands out a private clone made under the
+  store mutex (≤ 64 KiB), and the store's own copies are freed only by the thread that removed
+  them under that mutex. Pinned by `backend.monitoring_cell_store` "shares go back" (no share of
+  a ring image stays with the store after a refresh or a pin, refused or not; two `image()` calls
+  give two private buffers).
 - Measured (`performance.monitoring_cell_hot_path`, 512x96 realtime loop, this host): ring lock hold
-  median ~1 µs for a strip read, ~6 µs for a pin lookup; append latency p50 unchanged (~105 ns), p99
+  median ~1 µs for a strip read, ~6 µs for a pin lookup, ~1.5 µs to give the shares back (36 µs
+  in the worst case, when the ring evicted all 24 rows meanwhile and the reader frees 48 buffers
+  under the lock, as an eviction would); append latency p50 unchanged (~105 ns), p99
   160–220 ns with a client polling vs 133–182 ns with none; realtime throughput ratio 0.996–1.019.
   `processing.monitoring_cell_concurrency` (TSan lane) races the real realtime loop against two strip
   clients, a snapshot reader, a pinner and a run switcher.

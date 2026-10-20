@@ -890,6 +890,11 @@ ProcessingService::MonitoringRingView ProcessingService::visitMonitoringNewest(
     return view;
 }
 
+void ProcessingService::releaseMonitoringShares(std::vector<cv::Mat>& shares) const {
+    std::scoped_lock lk(monitoringFramesMutex_);
+    shares.clear();
+}
+
 void ProcessingService::setProcessingConfig(const ProcessingConfig& config) {
     bool changesBackground;
     {

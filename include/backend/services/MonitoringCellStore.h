@@ -25,9 +25,14 @@
 // Threading: no method runs on the acquisition/processing path. The source
 // reads the ring under its lock and copies only scalars and cv::Mat headers
 // (refcount shares of the frozen images); crops and clones happen outside
-// every lock; the store's own mutex guards its collections and is never held
-// while calling the source. Owned copies are immutable once admitted, so a
-// reader may share them by refcount and copy pixels after unlocking.
+// every lock, and the shares then go back to the source, which drops them
+// under the ring's lock again (releaseShares). The store's own mutex guards
+// its collections and is never held while calling the source. Owned copies
+// are immutable once admitted and never shared outside the store: image()
+// hands out a private copy taken under the store's mutex. Both rules order
+// every free of a pixel buffer after its readers by a lock, the only
+// synchronisation ThreadSanitizer can see (cv::Mat's reference count lives in
+// the uninstrumented OpenCV library).
 
 #include "backend/diagnostics/MemoryBudget.h"
 #include "backend/processing/ProcessingTypes.h"
@@ -100,7 +105,7 @@ MonitoringCellMetrics monitoringCellMetrics(const FilterResult& v, std::uint64_t
 struct MonitoringCellCandidate {
     MonitoringCellKey key;
     MonitoringCellMetrics metrics;
-    cv::Mat image; // read-only share; empty when the row has no image (PL rows)
+    cv::Mat image; // read-only share; empty when the row has no image (PL rows); see releaseShares
     cv::Mat mask;  // read-only share of the processed mask; may be empty
 };
 
@@ -118,6 +123,10 @@ public:
     virtual Newest newestValid(std::size_t maxRows) = 0;
     // Every held row (valid or not) with this frame index and object id, any generation.
     virtual std::vector<MonitoringCellCandidate> find(std::uint64_t frameIndex, int objectId) = 0;
+    // The store calls this once it has cropped what it needs: drops the rows' image and mask
+    // shares (keys and metrics stay). The production source drops them under the ring's lock
+    // (ProcessingService::releaseMonitoringShares); the default just drops them.
+    virtual void releaseShares(std::vector<MonitoringCellCandidate>& rows);
 };
 
 // The production source: ProcessingService::visitMonitoringNewest over the monitoring ring.
@@ -224,8 +233,11 @@ public:
     void noteRows(const std::vector<std::pair<MonitoringCellKey, MonitoringCellMetrics>>& rows);
 
     Listing listing() const;
-    // The owned crop (or its mask) of a pinned or strip cell, pins first. The
-    // returned Mat shares the immutable copy; false when not held or absent.
+    // A private copy of the owned crop (or its mask) of a pinned or strip cell,
+    // pins first, taken under the store's lock: no share of a store copy ever
+    // leaves the store, so its last reference is always dropped by the thread
+    // that removed it under that lock. ≤ crop_max_side² bytes. False when not
+    // held or absent.
     bool image(const MonitoringCellKey& key, bool mask, cv::Mat& out, MonitoringCellInfo* info = nullptr) const;
 
     Stats stats() const;

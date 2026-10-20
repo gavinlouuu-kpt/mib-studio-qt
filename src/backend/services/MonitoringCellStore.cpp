@@ -258,6 +258,7 @@ void MonitoringCellStore::refreshStrip()
         if (std::find(held.begin(), held.end(), c.key) != held.end()) continue;
         fresh.push_back(copyCandidate(c, kNoImageResultsOnly)); // crop + clone, no lock held
     }
+    source_.releaseShares(newest.rows); // keys and metrics stay for the index below
     std::deque<Entry> dropped;
     {
         std::scoped_lock lk(mutex_);
@@ -369,13 +370,15 @@ MonitoringCellStore::PinResult MonitoringCellStore::pin(std::uint64_t expectedSt
     // The ring (headers under its lock), then an owned crop outside every lock.
     std::optional<Entry> copy;
     std::optional<std::uint64_t> otherGeneration;
-    for (const auto& c : source_.find(frameIndex, objectId)) {
+    auto found = source_.find(frameIndex, objectId);
+    for (const auto& c : found) {
         if (c.key.startGeneration == expectedStartGeneration) {
             copy = copyCandidate(c, kNoImageResultsOnly);
             break;
         }
         if (!otherGeneration) otherGeneration = c.key.startGeneration;
     }
+    source_.releaseShares(found);
     if (!copy) {
         std::optional<MonitoringCellMetrics> known;
         {
@@ -465,7 +468,7 @@ bool MonitoringCellStore::image(const MonitoringCellKey& key, bool mask, cv::Mat
     if (!e) return false;
     const cv::Mat& m = mask ? e->mask : e->image;
     if (m.empty()) return false;
-    out = m; // a share of the immutable copy; the caller copies pixels after unlocking
+    out = m.clone(); // a private copy, under the lock (see the header)
     if (info) *info = e->info;
     return true;
 }
@@ -491,6 +494,14 @@ diagnostics::MemoryOwnerStats MonitoringCellStore::memoryStats() const
     o.note = "owned crops of the live detected-cell strip and the pinned cells (bridge ABI 41); a strip shared by a "
              "pin is counted twice (upper bound)";
     return o;
+}
+
+void MonitoringCellSource::releaseShares(std::vector<MonitoringCellCandidate>& rows)
+{
+    for (auto& c : rows) {
+        c.image.release();
+        c.mask.release();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -529,6 +540,19 @@ public:
             });
         std::reverse(out.begin(), out.end()); // newest first
         return out;
+    }
+
+    void releaseShares(std::vector<MonitoringCellCandidate>& rows) override
+    {
+        std::vector<cv::Mat> shares;
+        shares.reserve(rows.size() * 2);
+        for (auto& c : rows) {
+            if (!c.image.empty()) shares.push_back(std::move(c.image));
+            if (!c.mask.empty()) shares.push_back(std::move(c.mask));
+            c.image = cv::Mat();
+            c.mask = cv::Mat();
+        }
+        if (!shares.empty()) processing_.releaseMonitoringShares(shares);
     }
 
 private:

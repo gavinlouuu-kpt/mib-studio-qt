@@ -14,7 +14,8 @@
 // 1. Throughput: rows the real realtime loop appends per second. Gate: the
 //    store's windows keep >= 85% of the off windows (median of rounds).
 // 2. Lock hold: the source calls the store makes (newest 24 valid rows; a
-//    full-ring find for a pin) against the legacy full copy. Gate: the strip
+//    full-ring find for a pin; giving the shares back, also in the worst case
+//    where the reader frees them) against the legacy full copy. Gate: the strip
 //    read holds the ring's lock for less time than the legacy copy.
 // 3. Append latency (printed): the monitoring append critical section timed
 //    on a dedicated ring, p50/p99/max per mode.
@@ -226,7 +227,7 @@ void lockHold()
         proc.appendMonitoringFrameForTests(f);
     }
     auto source = backend::services::makeProcessingCellSource(proc);
-    std::vector<double> strip, find, legacy, snapshot;
+    std::vector<double> strip, find, legacy, snapshot, release;
     struct Row { uint64_t gen, index; int object; double area, deformability; };
     for (int i = 0; i < 300; ++i) {
         auto t0 = Clock::now();
@@ -235,6 +236,13 @@ void lockHold()
         t0 = Clock::now();
         auto hit = source->find(1998 - 2 * (i % 900), 0);
         find.push_back(std::chrono::duration<double, std::micro>(Clock::now() - t0).count());
+        // The shares go back under the ring's lock (decrements; the ring still holds the rows).
+        const bool hadShares = !n.rows.empty() && !n.rows.front().image.empty();
+        t0 = Clock::now();
+        source->releaseShares(n.rows);
+        release.push_back(std::chrono::duration<double, std::micro>(Clock::now() - t0).count());
+        source->releaseShares(hit);
+        MIB_REQUIRE(hadShares && n.rows.front().image.empty(), "the source dropped the strip read's shares");
         t0 = Clock::now();
         auto all = proc.getMonitoringValidFrames();
         auto allInvalid = proc.getMonitoringInvalidFrames();
@@ -251,9 +259,36 @@ void lockHold()
                         allInvalid.size() == 1000,
                     "readers see the ring");
     }
-    std::printf("  us median/p99: strip read %.1f/%.1f, pin find %.1f/%.1f, snapshot rows (2000) %.1f/%.1f, "
-                "legacy full copy %.1f/%.1f\n",
-                median(strip), percentile(strip, 0.99), median(find), percentile(find, 0.99), median(snapshot),
+    // Worst case of the release: the ring evicted every row meanwhile, so the reader holds the last
+    // references and the frees (24 images + 24 masks of 512x96) happen under the ring's lock.
+    std::vector<double> releaseFrees;
+    for (int round = 0; round < 20; ++round) {
+        ProcessingService ring;
+        for (uint64_t i = 0; i < 1000; ++i) {
+            ProcessedFrame f;
+            f.index = i;
+            f.originalImage = cv::Mat(kH, kW, CV_8UC1, cv::Scalar(100)); // one buffer per row
+            f.processedImage = cv::Mat(kH, kW, CV_8UC1, cv::Scalar(0));
+            f.validation.isValid = true;
+            ring.appendMonitoringFrameForTests(f);
+        }
+        auto ringSource = backend::services::makeProcessingCellSource(ring);
+        auto n = ringSource->newestValid(MonitoringCellStore::kStripMaxCells);
+        for (uint64_t i = 1000; i < 2000; ++i) { // evict every row
+            ProcessedFrame f;
+            f.index = i;
+            f.originalImage = image;
+            f.validation.isValid = true;
+            ring.appendMonitoringFrameForTests(f);
+        }
+        const auto t0 = Clock::now();
+        ringSource->releaseShares(n.rows);
+        releaseFrees.push_back(std::chrono::duration<double, std::micro>(Clock::now() - t0).count());
+    }
+    std::printf("  us median/p99: strip read %.1f/%.1f, pin find %.1f/%.1f, share release %.1f/%.1f "
+                "(reader frees 48 buffers: %.1f/%.1f), snapshot rows (2000) %.1f/%.1f, legacy full copy %.1f/%.1f\n",
+                median(strip), percentile(strip, 0.99), median(find), percentile(find, 0.99), median(release),
+                percentile(release, 0.99), median(releaseFrees), percentile(releaseFrees, 0.99), median(snapshot),
                 percentile(snapshot, 0.99), median(legacy), percentile(legacy, 0.99));
     MIB_EXPECT(median(strip) < median(legacy), "the strip read holds the ring's lock less than the legacy copy");
     MIB_EXPECT(median(snapshot) < median(legacy), "snapshot rows hold the ring's lock less than the legacy copy");

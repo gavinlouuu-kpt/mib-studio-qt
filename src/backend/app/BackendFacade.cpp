@@ -1541,7 +1541,7 @@ namespace backend::bridge
         cv::Mat image;
         services::MonitoringCellInfo info;
         if (!cells->image({startGeneration, frameIndex, objectId}, mask, image, &info)) return false;
-        // The share is immutable; the pixels are copied here, after the store's lock.
+        // `image` is a private, continuous copy (taken under the store's lock).
         out = BackendFrame{};
         out.frameIndex = frameIndex;
         out.timestampNs = info.metrics.timestampNs;

@@ -91,8 +91,11 @@ timeout, avoiding the unbounded `FlushFileBuffers` wait. See
   the lock the append already holds. [[../services/MonitoringCellStore]] has no
   thread: the caller of `fetch_monitoring_cells` / `monitoring_cell_pin` reads
   the ring (lock held for scalars and cv::Mat headers only), crops outside every
-  lock and then takes the store mutex; the store mutex is never held while the
-  ring lock is taken.
+  lock, drops the shares under the ring lock again and then takes the store
+  mutex; the store mutex is never held while the ring lock is taken. Store
+  copies never leave the store (image pulls copy under the store mutex).
+  Both rules make "freed after the last reader" a lock order, which
+  ThreadSanitizer can check; cv::Mat's refcount (uninstrumented OpenCV) it cannot.
 - **Experiment accumulation** — bounded vectors collected while
   `experimentActive_ == true`, periodically flushed to HDF5 via
   `flushBufferedFrames`. The realtime thread drops sampled invalid frames first

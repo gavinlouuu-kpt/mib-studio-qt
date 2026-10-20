@@ -17,8 +17,10 @@ image. New commands (Tauri and the WebSocket server): `fetch_monitoring_cells`,
 a viewer gets `VIEWER_ONLY`) and `fetch_monitoring_cell_packet` (binary frame packets, new pull
 kinds 5 image / 6 mask; no pixels in JSON). Monitoring snapshot rows gain `start_generation`.
 Nothing new runs on the acquisition path: the ring stores one more 8-byte tag per append; readers
-hold the ring lock only for scalars and cv::Mat headers and crop outside every lock (measured: ~1
-µs hold per strip read, append p50 unchanged, realtime throughput ratio 0.996–1.019). The develop
+hold the ring lock only for scalars and cv::Mat headers, crop outside every lock and drop the shares
+under the ring lock again; image pulls copy under the store mutex, so every free follows its readers
+in a lock order ThreadSanitizer can see (measured: ~1 µs hold per strip read, ~1.5 µs per release,
+append p50 unchanged, realtime throughput ratio 0.996–1.019). The develop
 UI does not use the commands yet (the workspace Live view, A6b, will); `desktop/src/monitoringCells.ts`
 and the `bridge.ts` methods are the client. See [[architecture/Rust-Bridge]] (ABI 41),
 [[services/ProcessingService]], [[architecture/Desktop-Shell]], [[diagnostics/MemoryBudget]]

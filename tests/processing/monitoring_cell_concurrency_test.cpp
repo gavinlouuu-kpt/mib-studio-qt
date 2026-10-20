@@ -157,7 +157,7 @@ int main()
                             if (!cells.image(c.key, mask, image, &info)) continue; // evicted or unpinned meanwhile
                             if (image.cols != info.width || image.rows != info.height || image.type() != CV_8UC1)
                                 fail("an image does not match its listing");
-                            // Copy the pixels after the store's lock, as the facade does.
+                            // Read every pixel of the private copy, as the facade does.
                             std::vector<std::uint8_t> bytes(static_cast<size_t>(image.total()));
                             for (int r = 0; r < image.rows; ++r)
                                 std::copy(image.ptr(r), image.ptr(r) + image.cols, bytes.begin() + r * image.cols);

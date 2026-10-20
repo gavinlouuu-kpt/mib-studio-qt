@@ -14,7 +14,10 @@
 //   5. no image: an evicted row the snapshot reported keeps its measurements
 //      with the reason, a row without pixels (PL) likewise, an unknown row is
 //      NotFound; nothing is ever substituted;
-//   6. unpin / clear pins / clear strip (pins stay).
+//   6. unpin / clear pins / clear strip (pins stay);
+//   7. shares: the store gives every share of the ring's images back to the
+//      source once it has cropped (the production source drops them under the
+//      ring's lock), and image() hands out private copies, never a share.
 
 #include "backend/services/MonitoringCellStore.h"
 
@@ -106,8 +109,17 @@ public:
         return out;
     }
 
+    void releaseShares(std::vector<MonitoringCellCandidate>& rows) override
+    {
+        ++releaseCalls;
+        for (const auto& c : rows) releasedShares += (c.image.empty() ? 0 : 1) + (c.mask.empty() ? 0 : 1);
+        MonitoringCellSource::releaseShares(rows);
+    }
+
     std::uint64_t generation{0}; // the ring's current tag
     int newestCalls{0};
+    int releaseCalls{0};
+    int releasedShares{0};
     std::function<void()> onNewest; // runs inside the source call (a racing beginRun)
     std::function<void()> onFind;
 
@@ -128,6 +140,8 @@ const MonitoringCellInfo* inStrip(const MonitoringCellStore::Listing& l, std::ui
         if (c.key.frameIndex == frameIndex) return &c;
     return nullptr;
 }
+// The result points into the listing: never call it on a temporary (ASan caught one).
+const MonitoringCellInfo* inStrip(MonitoringCellStore::Listing&&, std::uint64_t) = delete;
 
 void testCropPolicy()
 {
@@ -319,7 +333,8 @@ void testPinSurvivesEviction()
     MIB_REQUIRE(store.pin(3, 50, 0).outcome == Outcome::Pinned, "pin a strip cell");
     for (std::uint64_t i = 51; i < 60; ++i) ring.append(i, 0, true, 1);
     store.refreshStrip();
-    MIB_EXPECT(!inStrip(store.listing(), 50), "evicted from the strip");
+    const auto afterTrim = store.listing();
+    MIB_EXPECT(!inStrip(afterTrim, 50), "evicted from the strip");
     MIB_EXPECT(store.image({3, 50, 0}, false, after) && cv::countNonZero(after != 50) == 0,
                "the pinned strip cell survives the strip's eviction");
 
@@ -434,7 +449,8 @@ void testNoImage()
     // A results-only row (the PL sends no pixels): metadata only, said so.
     ring.append(7, 2, true, 0, /*withImage=*/false);
     store.refreshStrip();
-    const auto* strip = inStrip(store.listing(), 7);
+    const auto resultsOnly = store.listing();
+    const auto* strip = inStrip(resultsOnly, 7);
     MIB_REQUIRE(strip, "a results-only cell is listed in the strip");
     MIB_EXPECT(!strip->hasImage && strip->noImageReason.find("without images") != std::string::npos,
                strip->noImageReason);
@@ -475,6 +491,47 @@ void testRowIndexBound()
     MIB_EXPECT(store.pin(0, 0, 0).outcome == Outcome::NotFound, "oldest rows fall out");
 }
 
+// Only the ring's own reference is left: no share of a ring image stays with the store.
+int refs(const cv::Mat& m) { return m.u ? m.u->refcount : 0; }
+
+void testSharesGoBack()
+{
+    std::printf("shares go back, private copies out\n");
+    FakeRing ring;
+    MonitoringCellStore store(ring);
+    for (std::uint64_t i = 1; i <= 3; ++i) ring.append(i, 0, true, static_cast<std::uint8_t>(10 * i));
+    store.refreshStrip();
+    MIB_EXPECT(ring.releaseCalls == 1 && ring.releasedShares == 6, "the strip refresh returned 3 images + 3 masks");
+    for (std::uint64_t i = 1; i <= 3; ++i)
+        MIB_EXPECT(refs(ring.held(i, 0)->image) == 1 && refs(ring.held(i, 0)->mask) == 1,
+                   "the store keeps no share of row " + std::to_string(i));
+    // Unchanged ring: the shares of rows already held go back too.
+    store.refreshStrip();
+    MIB_EXPECT(ring.releaseCalls == 2 && ring.releasedShares == 12, "every refresh returns its shares");
+
+    // A pin from the ring (an invalid row is never a strip cell) and a refused one.
+    ring.append(9, 1, false, 90);
+    auto r = store.pin(0, 9, 1);
+    MIB_REQUIRE(r.outcome == Outcome::Pinned, r.message);
+    MIB_EXPECT(ring.releaseCalls == 3 && ring.releasedShares == 14, "the pin returned the row's image + mask");
+    MIB_EXPECT(refs(ring.held(9, 1)->image) == 1, "the pin keeps an owned crop, not a share");
+    ring.append(10, 0, false, 1);
+    store.beginRun(4);
+    r = store.pin(4, 10, 0); // the row is tagged 0, not 4
+    MIB_EXPECT(r.outcome == Outcome::RunMismatch && ring.releaseCalls == 4, "a refused pin returns its shares");
+
+    // image(): a private copy each time; writing to it changes nothing in the store.
+    ring.generation = 4;
+    ring.append(11, 0, true, 110);
+    MIB_REQUIRE(store.pin(4, 11, 0).outcome == Outcome::Pinned, "pin");
+    cv::Mat a, b;
+    MIB_REQUIRE(store.image({4, 11, 0}, false, a) && store.image({4, 11, 0}, false, b), "image");
+    MIB_EXPECT(!sharesMemory(a, b) && refs(a) == 1 && refs(b) == 1, "two calls, two private copies");
+    a.setTo(0);
+    MIB_REQUIRE(store.image({4, 11, 0}, false, b), "image again");
+    MIB_EXPECT(cv::countNonZero(b != 110) == 0, "the store's copy is untouched by the caller");
+}
+
 void testMemoryStats()
 {
     FakeRing ring;
@@ -501,6 +558,7 @@ int main()
     testNoImage();
     testClear();
     testRowIndexBound();
+    testSharesGoBack();
     testMemoryStats();
     std::printf("monitoring_cell_store_test: %s\n", mib::test::exitCode() == 0 ? "PASS" : "FAIL");
     return mib::test::exitCode();

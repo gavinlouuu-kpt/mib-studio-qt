@@ -251,6 +251,15 @@ public:
     using MonitoringVisitor = std::function<void(const ProcessedFrame& frame, uint64_t runGeneration, bool valid)>;
     MonitoringRingView visitMonitoringNewest(size_t maxRows, bool includeInvalid,
                                              const MonitoringVisitor& visit) const;
+    // A visitor that took shares of ring images and read their pixels outside
+    // the lock gives the shares back here: they are dropped under the ring's
+    // lock, the lock the ring's evictions take, so a free by an eviction (or by
+    // the last reader) is ordered after every such reader's last access. The
+    // reference count itself lives in the uninstrumented OpenCV library, so
+    // this lock is the ordering ThreadSanitizer can see. Bounded: refcount
+    // decrements, plus a free when the reader holds the last reference (the
+    // ring already evicted the row), as an eviction does. Leaves `shares` empty.
+    void releaseMonitoringShares(std::vector<cv::Mat>& shares) const;
     // Test seam: append to the monitoring ring as the realtime path does,
     // without the activity gate or images.
     void appendMonitoringFrameForTests(const ProcessedFrame& frame);

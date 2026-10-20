@@ -381,7 +381,10 @@ zero-fill it (NULL, core rebuilds the mask) and cores built before it ignore it.
   may only copy scalars and cv::Mat headers (refcount shares of frozen
   images); the bridge snapshot uses it for POD rows instead of copying the
   whole ring, and [[MonitoringCellStore]]'s source uses it to find rows and
-  share their images, cropping outside the lock. `performance.monitoring_cell_hot_path`
+  share their images, cropping outside the lock and giving the shares back
+  through `releaseMonitoringShares(shares)`, which drops them under the ring
+  lock (so a free by an eviction or by the last reader follows every reader in
+  a lock order ThreadSanitizer can see; OpenCV's refcount is invisible to it). `performance.monitoring_cell_hot_path`
   measures the hold: ~1 µs for a 24-row strip read, ~24 µs for the 2000-row
   snapshot (the full-ring copy it replaced: 70–260 µs).
 - **Experiment accumulation** — the extracted, bounded
