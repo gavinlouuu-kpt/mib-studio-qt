@@ -119,6 +119,8 @@ fn main() {
         "has_recorded_config": info.has_recorded_config,
         "ring_ratio_min": info.ring_ratio_min,
         "ring_ratio_max": info.ring_ratio_max,
+        // The recorded ROI the overlays draw (D2 geometry in compare.py).
+        "roi": [info.roi_x, info.roi_y, info.roi_w, info.roi_h],
     });
 
     if !recording {

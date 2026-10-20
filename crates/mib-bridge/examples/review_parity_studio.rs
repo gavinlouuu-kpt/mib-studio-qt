@@ -10,6 +10,9 @@
 //!                    the overlay renders
 //!   charts_app.json  `fetch_review_charts_json` as opened: MIB Studio's live
 //!                    factor and range (decisions D3 / D4)
+//!   charts_d4.json   `fetch_review_charts_json` with the live ring-ratio range
+//!                    set to the recorded one widened by 5 on each side, so
+//!                    every input exercises D4 (the live range is binned)
 //!   charts.json      `fetch_review_charts_json` with the live factor and
 //!                    range set to the file's recorded ones (as the Qt dump
 //!                    sets its live config), so the compared outputs share
@@ -224,9 +227,26 @@ mod studio {
             failures.push(format!("charts as opened: {}", charts_app["error"]));
         }
 
+        let (ring_min, ring_max) = recorded.ring.unwrap_or((as_opened.ring_min, as_opened.ring_max));
+
+        // D4 probe: a live ring-ratio range other than the recorded one.
+        if !recording {
+            let (probe_min, probe_max) = (ring_min - 5.0, ring_max + 5.0);
+            let applied = bridge.pin_mut().apply_processing_config_json(
+                &json!({"image_processing": {"ring_ratio_min": probe_min, "ring_ratio_max": probe_max}}).to_string(),
+            );
+            if !applied.ok {
+                failures.push(format!("D4 probe refused: {}", applied.message));
+            }
+            summary["d4_probe"] = json!({"ring_ratio_min": probe_min, "ring_ratio_max": probe_max});
+            let probe = charts(&mut bridge, &out.join("charts_d4.json"));
+            if probe["valid"] != true {
+                failures.push(format!("charts, D4 probe: {}", probe["error"]));
+            }
+        }
+
         // Compared outputs: the live factor and range set to the recorded ones.
         let factor = recorded.factor.unwrap_or(as_opened.factor);
-        let (ring_min, ring_max) = recorded.ring.unwrap_or((as_opened.ring_min, as_opened.ring_max));
         let applied = bridge.pin_mut().apply_processing_config_json(
             &json!({
                 "pixel_to_micron": factor,

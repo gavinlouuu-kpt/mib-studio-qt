@@ -9,7 +9,7 @@ Writes ``<dir>/report.md`` with three tables (Qt ↔ YOFO, MIB Studio ↔ Qt,
 MIB Studio ↔ YOFO) and prints it. Exit 1 when a check differs that is not an
 accepted difference: the Qt ↔ YOFO decision log of
 docs/exec-plans/.../2026-10-01-standalone-review-app.md, and for MIB Studio
-decisions D2-D5 of docs/exec-plans/active/2026-10-18-one-review-implementation.md
+decisions D2-D5 and D10 of docs/exec-plans/active/2026-10-18-one-review-implementation.md
 (accepted until #512 S13).
 """
 from __future__ import annotations
@@ -41,7 +41,7 @@ LABEL_RESOLUTION = 0.05
 # (recording::renderReviewCharts).
 STUDIO_CHART_FILES = ("scatter_plot.tiff", "histogram.tiff")
 
-# MIB Studio's accepted differences: decisions D2-D5 of the #512 plan, until S13.
+# MIB Studio's accepted differences: decisions D2-D5 and D10 of the #512 plan, until S13.
 D2 = ("MIB Studio's render_review_overlay draws the ROI yellow 1 px unscaled, Qt and YOFO red 3 px scaled "
       "(decision D2, accepted until #512 S13)")
 D3 = ("MIB Studio's facade uses the live px→µm, Qt and YOFO each file's recorded factor "
@@ -50,6 +50,35 @@ D4 = ("MIB Studio's facade bins over the live ring-ratio range, YOFO over the re
       "(decision D4, accepted until #512 S13)")
 D5 = ("MIB Studio's review_export_json writes backend-rendered chart TIFFs into Export All; the module's "
       "shell snapshots are not exported by the Qt and YOFO halves (decision D5, accepted until #512 S13)")
+D10 = ("MIB Studio's inline histogram y axis ends at the largest bin, Qt applies nice numbers and YOFO "
+       "ceil(1.1 × max): display headroom only, the bins are identical (decision D10, coordinator ruling "
+       "2026-10-20, accepted until #512 S13)")
+
+
+def nice_number(x: float, ceiling: bool) -> float:
+    """Qt's AbstractDomain::niceNumber."""
+    z = 10 ** math.floor(math.log10(x))
+    q = x / z
+    if ceiling:
+        q = 1 if q <= 1 else 2 if q <= 2 else 5 if q <= 5 else 10
+    else:
+        q = 1 if q < 1.5 else 2 if q < 3 else 5 if q < 7 else 10
+    return q * z
+
+
+def histogram_y_top(half: str, max_bin: int) -> float:
+    """The histogram y-axis top each shell draws for its largest bin:
+    MIB Studio max(1, max) (desktop/src/components/ReviewCharts.tsx maxBin);
+    YOFO max(1, ceil(1.1 × max)) (Histogram.tsx); Qt the same, then
+    QValueAxis::applyNiceNumbers() with the default 5 ticks
+    (HdfReviewTab.cpp; Qt's AbstractDomain::looseNiceNumbers on [0, top])."""
+    if half == "studio":
+        return max(1, max_bin)
+    top = max(1, math.ceil(max_bin * 1.1))
+    if half == "yofo":
+        return top
+    step = nice_number(nice_number(top, True) / 4, False)
+    return math.ceil(top / step) * step
 
 
 def load(path: Path):
@@ -185,25 +214,55 @@ def changed_pixels(a: bytes, b: bytes, width: int) -> set[int]:
     return out
 
 
-# The two ROI styles of decision D2 (colour in RGB, band in px): MIB Studio's
-# facade (RoiStyle::Facade, cv::rectangle thickness 1) and Qt / ReviewSession
-# (drawRoiOverlay, cv::rectangle thickness 3). The band is the width OpenCV
-# rasterises (LINE_8): thickness 1 → 1 px, thickness 3 → 5 px with rounded
-# corners.
-STUDIO_ROI = ((255, 210, 0), 1)
-REVIEW_ROI = ((255, 0, 0), 5)
+# The two ROI styles of decision D2: colour (RGB) and the band's half-width
+# around the rectangle's 1 px path. MIB Studio's facade (RoiStyle::Facade):
+# cv::rectangle thickness 1, unscaled, clipped to the image. Qt and
+# ReviewSession (drawRoiOverlay): cv::rectangle thickness 3, which OpenCV
+# (LINE_8) rasterises as a 5 px band, ±2 px, with rounded corners.
+STUDIO_ROI = ((255, 210, 0), 0)
+REVIEW_ROI = ((255, 0, 0), 2)
 
 
-def rectangle_outline(pixels: set[int], rgb: bytes, width: int, style: tuple[tuple[int, int, int], int]) -> bool:
-    """`pixels` (those an ROI rectangle changed) all carry the style's colour
-    and lie within its band of their bounding box's border."""
-    if not pixels:
-        return True
-    colour, band = bytes(style[0]), style[1]
-    xs, ys = [p % width for p in pixels], [p // width for p in pixels]
-    x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
-    return all(rgb[p * 3:p * 3 + 3] == colour and
-               min(x - x0, x1 - x, y - y0, y1 - y) < band for p, x, y in zip(pixels, xs, ys))
+def studio_roi_rect(roi, width: int, height: int):
+    """RoiStyle::Facade's rectangle, (x0, y0, x1, y1) inclusive: Rect(roi) & the
+    image; None when there is none."""
+    x, y, w, h = roi
+    x0, y0, x1, y1 = max(x, 0), max(y, 0), min(x + w, width) - 1, min(y + h, height) - 1
+    return (x0, y0, x1, y1) if w > 0 and h > 0 and x1 >= x0 and y1 >= y0 else None
+
+
+def review_roi_rect(roi, width: int, height: int):
+    """drawRoiOverlay's rectangle on an overlay of the frame's size (scale 1),
+    (x0, y0, x1, y1) inclusive; None when there is none."""
+    x, y, w, h = roi
+    if w <= 0 or h <= 0:
+        return None
+    x, y = max(0, min(x, width - 1)), max(0, min(y, height - 1))
+    w, h = max(1, min(w, width - x)), max(1, min(h, height - y))
+    return (x, y, x + w - 1, y + h - 1)
+
+
+def ring_distance(x: int, y: int, rect) -> int:
+    """Chebyshev distance from pixel (x, y) to the 1 px path of `rect`."""
+    x0, y0, x1, y1 = rect
+    dx, dy = max(x0 - x, 0, x - x1), max(y0 - y, 0, y - y1)
+    return max(dx, dy) if dx or dy else min(x - x0, x1 - x, y - y0, y1 - y)
+
+
+def roi_drawn(on: bytes, off: bytes, width: int, rect, style) -> bool:
+    """One half drew its style's rectangle at `rect` (the recorded ROI): every
+    pixel of the rectangle's path in the style's colour, and every pixel the
+    ROI changed in that colour within the style's band. With no rectangle (no
+    ROI recorded, or one outside the image) nothing may change."""
+    changed = changed_pixels(on, off, width)
+    if rect is None:
+        return not changed
+    colour, half = bytes(style[0]), style[1]
+    x0, y0, x1, y1 = rect
+    path = {(x, y) for x in range(x0, x1 + 1) for y in (y0, y1)} | {(x, y) for y in range(y0, y1 + 1) for x in (x0, x1)}
+    if any(on[(y * width + x) * 3:(y * width + x) * 3 + 3] != colour for x, y in path):
+        return False
+    return all(on[p * 3:p * 3 + 3] == colour and ring_distance(p % width, p // width, rect) <= half for p in changed)
 
 
 def overlays(d: Path) -> tuple[dict[str, Path], dict[str, Path]]:
@@ -212,8 +271,9 @@ def overlays(d: Path) -> tuple[dict[str, Path], dict[str, Path]]:
     return studio, yofo
 
 
-def compare_overlays(d: Path) -> tuple[tuple[bool, str], tuple[str, str]]:
-    """(no-ROI check, detail), (ROI check result PASS/ACCEPTED/DIFF, detail)."""
+def compare_overlays(d: Path, roi) -> tuple[tuple[bool, str], tuple[str, str]]:
+    """(no-ROI check, detail), (ROI check result PASS/ACCEPTED/DIFF, detail).
+    `roi` is the recorded ROI [x, y, w, h] both halves report, or None."""
     studio, yofo = overlays(d)
     missing = sorted(set(studio) ^ set(yofo))
     images = {}
@@ -226,35 +286,89 @@ def compare_overlays(d: Path) -> tuple[tuple[bool, str], tuple[str, str]]:
     if missing:
         plain_detail += f"; only in one half: {missing[:5]}"
 
-    roi = [n for n in images if n.endswith("_roi1")]
-    differing, outside, largest = [], [], 0
-    for name in roi:
+    renders = [n for n in images if n.endswith("_roi1")]
+    differing, wrong, largest = [], [], 0
+    for name in renders:
         (sw, sh, son), (yw, yh, yon) = images[name]
         off = images.get(name[:-1] + "0")
-        if (sw, sh) != (yw, yh) or off is None:
-            outside.append(name)
+        if (sw, sh) != (yw, yh) or off is None or roi is None:
+            wrong.append(name)
             continue
+        # Each half drew its own style at the recorded ROI, and the halves
+        # differ only on pixels those rectangles drew.
+        drawn = (roi_drawn(son, off[0][2], sw, studio_roi_rect(roi, sw, sh), STUDIO_ROI)
+                 and roi_drawn(yon, off[1][2], yw, review_roi_rect(roi, yw, yh), REVIEW_ROI))
         diff = changed_pixels(son, yon, sw)
-        if not diff:
-            continue
-        differing.append(name)
-        largest = max(largest, len(diff))
-        # Pixels either half's ROI rectangle drew (ROI on vs off, per half),
-        # each in its own D2 style; anything else that differs is a finding.
-        studio_roi, yofo_roi = changed_pixels(son, off[0][2], sw), changed_pixels(yon, off[1][2], yw)
-        if not (diff <= studio_roi | yofo_roi and rectangle_outline(studio_roi, son, sw, STUDIO_ROI)
-                and rectangle_outline(yofo_roi, yon, yw, REVIEW_ROI)):
-            outside.append(name)
-    if not roi or outside or missing:
+        if not drawn or not diff <= changed_pixels(son, off[0][2], sw) | changed_pixels(yon, off[1][2], yw):
+            wrong.append(name)
+        elif diff:
+            differing.append(name)
+            largest = max(largest, len(diff))
+    where = f"recorded ROI {roi}" if roi and roi[2] > 0 and roi[3] > 0 else "no recorded ROI"
+    if not renders or wrong or missing:
         result = "DIFF"
-        detail = f"{len(roi)} renders" + (f"; differ off the ROI outlines: {outside[:5]}" if outside else "")
+        detail = f"{len(renders)} renders, {where}" + (
+            f"; not each half's ROI style at the recorded ROI: {wrong[:5]}" if wrong else "")
     elif differing:
         result = "ACCEPTED"
-        detail = (f"{len(differing)} of {len(roi)} renders differ, only on the ROI outlines "
-                  f"(at most {largest} px per render)")
+        detail = (f"{len(differing)} of {len(renders)} renders differ, only where each half drew its ROI style "
+                  f"at the {where} (at most {largest} px per render)")
     else:
-        result, detail = "PASS", f"{len(roi)} renders, pixel-identical (no recorded ROI drawn)"
+        result, detail = "PASS", f"{len(renders)} renders, pixel-identical ({where})"
     return (plain_ok, plain_detail), (result, detail)
+
+
+# --- chart references ------------------------------------------------------------
+
+def ring_histogram(ratios, lo: float, hi: float) -> list[int]:
+    """makeReviewChartData's ring-ratio bins: 0.5 wide over [lo, hi], positive
+    finite ratios clamped into the edge bins (YOFO's ringRatioHistogram too)."""
+    n = max(1, int((hi - lo) / 0.5))
+    bins = [0] * n
+    for r in ratios:
+        if r is None or not math.isfinite(r) or r <= 0:
+            continue
+        bins[min(n - 1, int((min(max(r, lo), hi) - lo) / 0.5))] += 1
+    return bins
+
+
+# reviewChartsJson bins in long double; a point this close (relative) to an
+# interior cell edge may fall on either side of it in double.
+DENSITY_EDGE = 1e-9
+
+
+def density_reference(areas, deforms, area_range, deform_range, resolution: int):
+    """reviewChartsJson's density cells {(x, y): count} for these points on the
+    given grid, and how many points lie within DENSITY_EDGE of an interior
+    cell edge."""
+    cells: dict[tuple[int, int], int] = {}
+    edge = 0
+
+    def cell(v: float, lo: float, hi: float) -> tuple[int, bool]:
+        t = (v - lo) / (hi - lo) * resolution
+        near = 0 < round(t) < resolution and abs(t - round(t)) <= DENSITY_EDGE * max(1.0, abs(t))
+        return min(max(int(t), 0), resolution - 1), near
+
+    for a, f in zip(areas, deforms):
+        if a is None or f is None or not (math.isfinite(a) and math.isfinite(f)):
+            continue
+        (x, nx), (y, ny) = cell(a, *area_range), cell(f, *deform_range)
+        cells[(x, y)] = cells.get((x, y), 0) + 1
+        edge += nx or ny
+    return cells, edge
+
+
+def charts_scale_by_factor(scaled: dict, base: dict) -> bool:
+    """`scaled` is `base` charted at another px→µm: area extents × (f / f_base)²,
+    deformability extents and point count unchanged."""
+    f, f_base = scaled.get("pixel_to_micron"), base.get("pixel_to_micron")
+    if not (f and f_base and scaled.get("area_range") and base.get("area_range")
+            and scaled.get("deform_range") and base.get("deform_range")):
+        return False
+    k = (f / f_base) ** 2
+    return (range_close(tuple(scaled["area_range"]), tuple(v * k for v in base["area_range"]))
+            and range_close(tuple(scaled["deform_range"]), tuple(base["deform_range"]))
+            and scaled.get("finite_points") == base.get("finite_points"))
 
 
 # --- the halves ----------------------------------------------------------------
@@ -281,13 +395,15 @@ def yofo_half(d: Path) -> dict:
     sc, h = c.get("scatter", {}), c.get("histogram", {})
     ring = (s["ring_ratio_min"], s["ring_ratio_max"]) if "ring_ratio_min" in s else None
     return {"name": "yofo", "recording": s.get("recording_file"), "factor": s.get("pixel_to_micron"),
-            "count": s.get("scatter_count"), "x": sc.get("x"), "y": sc.get("y"),
+            "count": s.get("scatter_count"), "x": sc.get("x"), "y": sc.get("y"), "roi": s.get("roi"),
             "bins": h.get("counts"), "ring": ring, "ring_resolution": 0.0,
             "y_max": (h.get("y") or {}).get("max"), "all": tree(d / "yofo/all"), "csv": d / "yofo/metrics.csv"}
 
 
 def studio_rows(d: Path, studio: dict, other: dict) -> list[tuple[str, str, str]]:
-    """MIB Studio against one other half."""
+    """MIB Studio against one other half. The reference points (ring ratios,
+    areas, deformabilities) are YOFO's scatter dump for both pairs; the Qt ↔
+    YOFO table holds them equal to Qt's."""
     rows: list[tuple[str, str, str]] = []
     name = other["name"]
 
@@ -298,15 +414,30 @@ def studio_rows(d: Path, studio: dict, other: dict) -> list[tuple[str, str, str]
     recording = bool(studio.get("recording_file"))
     app, compared = studio.get("app", {}), studio.get("compared", {})
     charts_app, charts = load(d / "studio/charts_app.json") or {}, load(d / "studio/charts.json") or {}
+    scatter = load(d / "yofo/scatter.json") or {}
     check("file kind", other["recording"] == recording, "recording" if recording else "experiment")
 
-    # As opened: MIB Studio's live factor and range (D3 / D4). Accepted only
-    # when the facade really used its live value.
+    # As opened: MIB Studio's live factor (D3). Accepted only when the live
+    # factor is the one the charts declare and the one they were computed
+    # with: area extents × (live / compared)² against the compared pass.
     live = app.get("pixel_to_micron")
-    used = charts_app.get("pixel_to_micron") if not recording else live
-    as_opened = f"studio live {live} / {name} {other['factor']}"
-    check("px→µm as opened", live is not None and other["factor"] is not None and close(live, other["factor"]),
-          as_opened, accepted=D3 if live is not None and used is not None and close(used, live) else "")
+    same_factor = live is not None and other["factor"] is not None and close(live, other["factor"])
+    if recording:
+        # A recording has no charts and its Export All holds images only, so no
+        # as-opened output depends on the factor.
+        check("px→µm as opened", same_factor,
+              f"studio live {live} / {name} {other['factor']} (no recording output depends on it)",
+              accepted=D3 if live is not None else "")
+    else:
+        declared = charts_app.get("pixel_to_micron") is not None and live is not None \
+            and close(charts_app["pixel_to_micron"], live)
+        applied = charts_scale_by_factor(charts_app, charts)
+        k = (live / compared["pixel_to_micron"]) ** 2 if live and compared.get("pixel_to_micron") else None
+        detail = (f"studio live {live} / {name} {other['factor']}; as-opened charts declare "
+                  f"{charts_app.get('pixel_to_micron')}, area extents {charts_app.get('area_range')} = compared × "
+                  f"{k:.6g}: {'yes' if applied else 'NO'}" if k else f"studio live {live} / {name} {other['factor']}")
+        check("px→µm as opened", same_factor and declared and applied, detail,
+              accepted=D3 if declared and applied else "")
     check("px→µm of the compared outputs",
           compared.get("pixel_to_micron") is not None and other["factor"] is not None
           and close(compared["pixel_to_micron"], other["factor"]),
@@ -338,9 +469,23 @@ def studio_rows(d: Path, studio: dict, other: dict) -> list[tuple[str, str, str]
 
     points = int(charts.get("finite_points", -1))
     check("scatter point count", points == other["count"], f"studio {points} / {name} {other['count']}")
-    density = sum(int(cell[2]) for cell in charts.get("density", []))
-    check("density cells hold every point", density == other["count"],
-          f"studio {density} in {len(charts.get('density', []))} cells / {name} {other['count']} points")
+    studio_cells = {(c[0], c[1]): int(c[2]) for c in charts.get("density", [])}
+    if name == "yofo":
+        # Placement: YOFO's points binned on MIB Studio's grid (its extents
+        # and resolution), cell by cell.
+        resolution = charts.get("resolution", 128)
+        reference, edge = ({}, 0)
+        if charts.get("area_range") and charts.get("deform_range") and scatter:
+            reference, edge = density_reference(scatter.get("area_um2", []), scatter.get("deformability", []),
+                                                charts["area_range"], charts["deform_range"], resolution)
+        l1 = sum(abs(studio_cells.get(k, 0) - reference.get(k, 0)) for k in set(studio_cells) | set(reference))
+        check("density cells", bool(reference) and l1 <= 2 * edge,
+              f"{len(studio_cells)} studio / {len(reference)} reference cells on the {resolution} × {resolution} grid, "
+              + ("identical" if l1 == 0 else f"{l1} points apart ({edge} within {DENSITY_EDGE:g} of a cell edge)"))
+    else:
+        total = sum(studio_cells.values())
+        check("density total", total == other["count"],
+              f"studio {total} in {len(studio_cells)} cells / {name} {other['count']} points (placement: the YOFO table)")
     area, deform = charts.get("area_range"), charts.get("deform_range")
     ok = bool(area and deform and other["x"] and other["y"]) and \
         range_close(tuple(area), (other["x"]["min"], other["x"]["max"])) and \
@@ -354,19 +499,48 @@ def studio_rows(d: Path, studio: dict, other: dict) -> list[tuple[str, str, str]
     def same_range(r) -> bool:
         return bool(r) and other["ring"] is not None and all(
             abs(x - y) <= max(other["ring_resolution"], 1e-12 * max(1.0, abs(y))) for x, y in zip(r, other["ring"]))
+
+    def binned_over(chart: dict, lo, hi) -> bool:
+        """`chart` declares [lo, hi] and its bins are YOFO's ring ratios binned over it."""
+        return (lo is not None and hi is not None and chart.get("ring_range") == [lo, hi]
+                and [int(v) for v in chart.get("histogram", [])] == ring_histogram(scatter.get("ring_ratio", []), lo, hi))
+
+    # As opened (D4): the live range is declared and binned. ACCEPTED only
+    # when it differs from the other half's; equal ranges do not exercise D4.
     ring, ring_app = charts.get("ring_range"), charts_app.get("ring_range")
-    live_ring = [app.get("ring_ratio_min"), app.get("ring_ratio_max")]
-    check("histogram range as opened", same_range(ring_app), f"studio live {ring_app} / {name} {other['ring']}",
-          accepted=D4 if ring_app and ring_app == live_ring else "")
+    live_lo, live_hi = app.get("ring_ratio_min"), app.get("ring_ratio_max")
+    live_binned = binned_over(charts_app, live_lo, live_hi)
+    if same_range(ring_app):
+        check("histogram range as opened", live_binned,
+              f"studio live {ring_app} / {name} {other['ring']}; D4 not exercised (the live range is the recorded one)"
+              + ("" if live_binned else "; the bins are not the live range's"))
+    else:
+        check("histogram range as opened", False,
+              f"studio live {ring_app} / {name} {other['ring']}; bins over the live range: {'yes' if live_binned else 'NO'}",
+              accepted=D4 if live_binned else "")
+    probe, charts_d4 = studio.get("d4_probe"), load(d / "studio/charts_d4.json")
+    if probe is not None or charts_d4 is not None:
+        lo, hi = (probe or {}).get("ring_ratio_min"), (probe or {}).get("ring_ratio_max")
+        probe_binned = charts_d4 is not None and binned_over(charts_d4, lo, hi)
+        check("histogram range, live ≠ recorded (D4 probe)", False,
+              f"studio live set to {[lo, hi]} / {name} {other['ring']}; bins over the live range: "
+              f"{'yes' if probe_binned else 'NO'}",
+              accepted=D4 if probe_binned and not same_range([lo, hi]) else "")
     check("histogram range of the compared outputs", same_range(ring), f"studio {ring} / {name} {other['ring']}")
     # MIB Studio's histogram y axis tops at max(1, largest bin)
     # (desktop/src/components/ReviewCharts.tsx, maxBin); not in the JSON.
-    studio_y = max([1, *bins])
+    # D10 only when the bins are identical and each top is its shell's rule.
+    studio_y = histogram_y_top("studio", max(bins or [0]))
+    headroom_only = (bins == other["bins"] and other["y_max"] is not None
+                     and close(other["y_max"], histogram_y_top(name, max(bins or [0]))))
     check("histogram y range", other["y_max"] is not None and close(studio_y, other["y_max"]),
-          f"studio 0–{studio_y} (ReviewCharts.tsx maxBin) / {name} 0–{other['y_max']}")
+          f"studio 0–{studio_y} (ReviewCharts.tsx maxBin) / {name} 0–{other['y_max']}",
+          accepted=D10 if headroom_only else "")
 
     if name == "yofo":
-        (plain_ok, plain_detail), (roi_result, roi_detail) = compare_overlays(d)
+        roi, yofo_roi = studio.get("roi"), other.get("roi")
+        check("recorded ROI", roi is not None and roi == yofo_roi, f"studio {roi} / yofo {yofo_roi}")
+        (plain_ok, plain_detail), (roi_result, roi_detail) = compare_overlays(d, roi if roi == yofo_roi else None)
         check("overlays, ROI off", plain_ok, plain_detail)
         rows.append(("overlays, ROI on", roi_result, f"{roi_detail} — {D2}" if roi_result == "ACCEPTED" else roi_detail))
     return rows
