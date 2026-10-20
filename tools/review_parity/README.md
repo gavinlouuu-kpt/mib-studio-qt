@@ -79,7 +79,7 @@ differs is a DIFF:
 
 | Decision | Check | Accepted when |
 |---|---|---|
-| D2 One ROI style | overlays, ROI on (studio ↔ YOFO) | the renders differ only on pixels one of the two ROI rectangles drew, each in its own style: MIB Studio yellow (255, 210, 0) 1 px, YOFO red 3 px, as a rectangle outline. The ROI-off renders must be pixel-identical. |
+| D2 One ROI style | overlays, ROI on (studio ↔ YOFO) | the renders differ only on pixels one of the two ROI rectangles drew, each in its own style and as a rectangle outline: MIB Studio yellow (255, 210, 0), a 1 px band; YOFO red, `cv::rectangle` thickness 3, which OpenCV (LINE_8) rasterises as a 5 px band with rounded corners. The ROI-off renders must be pixel-identical. |
 | D3 Factor policy | px→µm as opened | the as-opened charts used the live factor and it differs from the recorded one. The compared outputs must use the recorded factor. |
 | D4 Histogram range | histogram range as opened | the as-opened charts binned over the live range and it differs from the recorded one. |
 | D5 Exported chart files | Export All chart files | MIB Studio's Export All holds exactly `scatter_plot.tiff` and `histogram.tiff` (the backend-rendered charts) and the other half none; every other file must be byte-identical. |

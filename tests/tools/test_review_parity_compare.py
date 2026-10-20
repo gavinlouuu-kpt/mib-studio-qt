@@ -221,6 +221,19 @@ class ReviewParityCompareTest(unittest.TestCase):
         (self.dir / "yofo/overlays/valid_000000_m0_roi1.ppm").unlink()
         self.assertEqual(result(self.rows(), "MIB Studio ↔ YOFO", "overlays, ROI on"), "DIFF")
 
+    def test_rectangle_outline_bands(self):
+        # A ring as OpenCV rasterises cv::rectangle thickness 3: a 5 px band.
+        w, h = 20, 14
+        ring = {y * w + x for y in range(h) for x in range(w) if min(x, w - 1 - x, y, h - 1 - y) < 5}
+        rgb = bytearray(w * h * 3)
+        for p in ring | {7 * w + 10}:
+            rgb[p * 3:p * 3 + 3] = bytes(compare.REVIEW_ROI[0])
+        self.assertTrue(compare.rectangle_outline(ring, bytes(rgb), w, compare.REVIEW_ROI))
+        self.assertFalse(compare.rectangle_outline(ring | {7 * w + 10}, bytes(rgb), w, compare.REVIEW_ROI),
+                         "a red pixel inside the ring is not the rectangle")
+        self.assertFalse(compare.rectangle_outline(ring, bytes(rgb), w, compare.STUDIO_ROI),
+                         "a 5 px band is not MIB Studio's 1 px yellow line")
+
     def test_unaccepted_studio_difference_fails(self):
         self.edit("studio/charts.json", lambda v: v.update(histogram=["3", "0", "6"] + ["0"] * 17))
         rows = self.rows()

@@ -185,22 +185,25 @@ def changed_pixels(a: bytes, b: bytes, width: int) -> set[int]:
     return out
 
 
-# The two ROI styles of decision D2 (colour in RGB, line width in px):
-# MIB Studio's facade (RoiStyle::Facade) and Qt / ReviewSession (drawRoiOverlay).
+# The two ROI styles of decision D2 (colour in RGB, band in px): MIB Studio's
+# facade (RoiStyle::Facade, cv::rectangle thickness 1) and Qt / ReviewSession
+# (drawRoiOverlay, cv::rectangle thickness 3). The band is the width OpenCV
+# rasterises (LINE_8): thickness 1 → 1 px, thickness 3 → 5 px with rounded
+# corners.
 STUDIO_ROI = ((255, 210, 0), 1)
-REVIEW_ROI = ((255, 0, 0), 3)
+REVIEW_ROI = ((255, 0, 0), 5)
 
 
 def rectangle_outline(pixels: set[int], rgb: bytes, width: int, style: tuple[tuple[int, int, int], int]) -> bool:
     """`pixels` (those an ROI rectangle changed) all carry the style's colour
-    and lie within its line width of their bounding box's border."""
+    and lie within its band of their bounding box's border."""
     if not pixels:
         return True
-    colour, thickness = bytes(style[0]), style[1]
+    colour, band = bytes(style[0]), style[1]
     xs, ys = [p % width for p in pixels], [p // width for p in pixels]
     x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
     return all(rgb[p * 3:p * 3 + 3] == colour and
-               min(x - x0, x1 - x, y - y0, y1 - y) < thickness for p, x, y in zip(pixels, xs, ys))
+               min(x - x0, x1 - x, y - y0, y1 - y) < band for p, x, y in zip(pixels, xs, ys))
 
 
 def overlays(d: Path) -> tuple[dict[str, Path], dict[str, Path]]:

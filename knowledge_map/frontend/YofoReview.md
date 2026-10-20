@@ -361,7 +361,7 @@ These are identical to Qt and YOFO:
 
 Accepted until S13 (plan decisions):
 
-- **D2:** ROI-on overlays differ only on the two ROI outlines (MIB Studio yellow 1 px, YOFO red 3 px).
+- **D2:** ROI-on overlays differ only on the two ROI outlines (MIB Studio yellow 1 px; YOFO red, thickness 3, which OpenCV draws as a 5 px band).
 - **D3:** the as-opened px→µm on the two 0.25 µm/px fixtures (live 0.4886).
 - **D5:** Export All carries `scatter_plot.tiff` and `histogram.tiff`.
 - **D4:** not exercised; every input records 15–25, the live default.

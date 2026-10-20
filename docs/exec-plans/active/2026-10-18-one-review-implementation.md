@@ -576,8 +576,11 @@ S12 takes 3 or higher. Additive; the bridge ABI is untouched.
   off and adds MIB Studio ↔ Qt and MIB Studio ↔ YOFO tables. D2–D5 are ACCEPTED
   only on these conditions:
   - **D2:** the ROI-on renders differ only on pixels one of the two ROI
-    rectangles drew, each in its own style: yellow (255, 210, 0) 1 px, or
-    red 3 px. The ROI-off renders must be pixel-identical.
+    rectangles drew, each in its own style: yellow (255, 210, 0) in a 1 px
+    band, or red in the 5 px band OpenCV rasterises for thickness 3 (the
+    first harness run used 3 px and flagged the 32 × 24 fixture's rounded
+    corners; measured with `cv2.rectangle`, fixed before the final run). The
+    ROI-off renders must be pixel-identical.
   - **D3 / D4:** the as-opened charts used the live value.
   - **D5:** Export All holds exactly `scatter_plot.tiff` and `histogram.tiff`
     beyond the other half's byte-identical files.
