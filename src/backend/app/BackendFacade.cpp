@@ -1471,6 +1471,7 @@ namespace backend::bridge
         {
             change = {{"capture_epoch", dec(l.lastCaptureChange->captureEpoch)},
                       {"reason", l.lastCaptureChange->reason},
+                      {"pins_ended", l.lastCaptureChange->pinsEnded},
                       {"pins_dropped", l.lastCaptureChange->pinsDropped},
                       {"strip_dropped", l.lastCaptureChange->stripDropped}};
         }
@@ -3787,7 +3788,7 @@ std::string BackendFacade::savePreviewBufferJson(const std::string& request) {
                 if(ram==0 || estimate>ram/4*3) throw std::runtime_error("requested buffer exceeds available memory budget");
                 if(!backend_.playback().resize(capacity)) throw std::runtime_error("buffer resize failed");
                 // The store renumbered its frames: monitoring cells of the old numbering are never served again (#716 A6a).
-                backend_.processing().advanceMonitoringCapture("the frame buffer was resized (its frames were renumbered)");
+                if (auto *cells = backend_.monitoringCells()) cells->advanceCapture("the frame buffer was resized (its frames were renumbered)");
                 result["ok"]=true; return;
             }
             if(!available) throw std::runtime_error("buffer is empty");

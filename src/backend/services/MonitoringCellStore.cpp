@@ -3,6 +3,7 @@
 #include "backend/processing/ProcessingService.h"
 
 #include <opencv2/core.hpp>
+#include <spdlog/spdlog.h>
 
 #include <algorithm>
 #include <chrono>
@@ -35,11 +36,8 @@ std::string cellName(std::uint64_t frameIndex, int objectId)
 constexpr const char* kNoImageResultsOnly =
     "no image: this instrument reports cell measurements without images";
 constexpr const char* kNoImageFormat = "no image: the frame's pixel format is not 8- or 16-bit";
-// A refresh or a pin met rows of a newer capture before the store was told of it (the
-// append path's backstop moves the epoch without a notification).
-constexpr const char* kNewCaptureRows =
-    "rows of a new capture reached the monitoring buffer (the frame buffer renumbered its frames or a new camera "
-    "session began)";
+// The capture change of a run start (beginRun).
+constexpr const char* kRunStarted = "a run started";
 
 // 8-bit single channel view or copy of a monitoring image; empty when unsupported.
 cv::Mat toMono8(const cv::Mat& image)
@@ -87,9 +85,8 @@ MonitoringCellMetrics monitoringCellMetrics(const FilterResult& v, std::uint64_t
 MonitoringCellStore::MonitoringCellStore(MonitoringCellSource& source) : MonitoringCellStore(source, Policy{}) {}
 
 MonitoringCellStore::MonitoringCellStore(MonitoringCellSource& source, Policy policy)
-    : source_(source), policy_(policy), capture_(source.currentCaptureEpoch())
+    : source_(source), policy_(policy), current_(source.currentCaptureEpoch())
 {
-    ringCaptureEpoch_ = capture_;
 }
 
 cv::Rect MonitoringCellStore::cropRect(int imageWidth, int imageHeight, const MonitoringCellMetrics& m,
@@ -156,22 +153,17 @@ MonitoringCellStore::Entry MonitoringCellStore::copyCandidate(const MonitoringCe
 
 void MonitoringCellStore::beginRun(std::uint64_t startGeneration)
 {
-    std::deque<Entry> strip;
-    std::vector<Entry> pins;
+    std::vector<cv::Mat> freed; // released when this returns, after the lock
+    std::uint64_t epoch = 0;
+    std::size_t pins = 0;
     {
         std::scoped_lock lk(mutex_);
         scope_ = startGeneration;
-        ++epoch_;
-        ++revision_;
-        counters_.stripEvicted += strip_.size();
-        strip.swap(strip_);
-        pins.swap(pins_);
-        stripBytes_ = 0;
-        pinBytes_ = 0;
-        index_.clear();
-        indexOrder_.clear();
+        epoch = advanceLocked(kRunStarted, std::nullopt, true, freed);
+        pins = lastChange_->pinsDropped;
     }
-    // The copies are released here, outside the lock.
+    SPDLOG_INFO("MonitoringCellStore: capture {} begins: {} (run {}); {} pin(s) dropped", epoch, kRunStarted,
+                startGeneration, pins);
 }
 
 std::uint64_t MonitoringCellStore::scopeGeneration() const
@@ -180,67 +172,95 @@ std::uint64_t MonitoringCellStore::scopeGeneration() const
     return scope_;
 }
 
-void MonitoringCellStore::adoptCaptureLocked(std::uint64_t captureEpoch, const std::string& reason,
-                                             std::deque<Entry>& strip, std::vector<Entry>& pins)
+std::uint64_t MonitoringCellStore::advanceLocked(const std::string& reason,
+                                                 std::optional<std::uint64_t> cameraSessionFloor, bool dropPins,
+                                                 std::vector<cv::Mat>& freed)
 {
-    if (captureEpoch <= capture_) return;
-    capture_ = captureEpoch;
-    ringCaptureEpoch_ = captureEpoch;
+    // Never below what the source published (it may have moved on before this store existed).
+    const std::uint64_t ended = current_;
+    const std::uint64_t next = std::max(current_, source_.currentCaptureEpoch()) + 1;
+    // Atomic stores: a frame entering processing from now on carries `next`; one that entered
+    // before carries an earlier epoch and is refused at every insert below this mutex.
+    source_.publishCapture(next, cameraSessionFloor);
+    current_ = next;
     ++epoch_; // a refresh that read the old capture admits nothing
     ++revision_;
     CaptureChange change;
-    change.captureEpoch = captureEpoch;
+    change.captureEpoch = next;
     change.reason = reason;
-    const auto older = [captureEpoch](const Entry& e) { return e.info.key.captureEpoch < captureEpoch; };
-    for (auto it = strip_.begin(); it != strip_.end();) {
-        if (older(*it)) {
-            stripBytes_ -= std::min(stripBytes_, it->info.bytes);
-            strip.push_back(std::move(*it));
-            it = strip_.erase(it);
-            ++change.stripDropped;
-            ++counters_.stripEvicted;
-        } else {
-            ++it;
+    change.stripDropped = strip_.size();
+    counters_.stripEvicted += strip_.size();
+    const auto release = [&freed](Entry& e) {
+        if (!e.image.empty()) freed.push_back(std::move(e.image));
+        if (!e.mask.empty()) freed.push_back(std::move(e.mask));
+        e.image = cv::Mat();
+        e.mask = cv::Mat();
+    };
+    for (auto& e : strip_) release(e);
+    strip_.clear();
+    stripBytes_ = 0;
+    if (dropPins) {
+        change.pinsDropped = pins_.size();
+        for (auto& e : pins_) release(e);
+        pins_.clear();
+        pinBytes_ = 0;
+    } else {
+        // Pins belong to the capture that made them: those of the capture that ended keep their
+        // identity and measurements, never its pixels.
+        for (auto& e : pins_) {
+            if (e.info.key.captureEpoch != ended) continue; // ended before (or never had an image)
+            ++change.pinsEnded;
+            if (!e.info.hasImage) continue; // keeps its own reason (left the buffer, results only)
+            release(e);
+            pinBytes_ -= std::min(pinBytes_, e.info.bytes);
+            e.info.hasImage = false;
+            e.info.hasMask = false;
+            e.info.width = e.info.height = 0;
+            e.info.cropX = e.info.cropY = 0;
+            e.info.sourceWidth = e.info.sourceHeight = 0;
+            e.info.bytes = 0;
+            e.info.noImageReason = "no image: capture " + std::to_string(ended) + " ended (" + reason +
+                                   "); the pin keeps its measurements";
         }
     }
-    for (auto it = pins_.begin(); it != pins_.end();) {
-        if (older(*it)) {
-            pinBytes_ -= std::min(pinBytes_, it->info.bytes);
-            pins.push_back(std::move(*it));
-            it = pins_.erase(it);
-            ++change.pinsDropped;
-        } else {
-            ++it;
-        }
-    }
-    std::deque<MonitoringCellKey> kept;
-    for (const auto& k : indexOrder_) {
-        if (k.captureEpoch < captureEpoch)
-            index_.erase(k);
-        else
-            kept.push_back(k);
-    }
-    indexOrder_.swap(kept);
+    index_.clear();
+    indexOrder_.clear();
     lastChange_ = std::move(change);
+    return next;
 }
 
-void MonitoringCellStore::captureChanged(std::uint64_t captureEpoch, const std::string& reason)
+std::uint64_t MonitoringCellStore::advanceCapture(const std::string& reason,
+                                                  std::optional<std::uint64_t> cameraSessionFloor)
 {
-    std::deque<Entry> strip;
-    std::vector<Entry> pins;
+    std::vector<cv::Mat> freed; // released when this returns, after the lock
+    std::uint64_t epoch = 0;
+    std::size_t strip = 0, ended = 0;
     {
         std::scoped_lock lk(mutex_);
-        adoptCaptureLocked(captureEpoch, reason, strip, pins);
+        epoch = advanceLocked(reason, cameraSessionFloor, false, freed);
+        strip = lastChange_->stripDropped;
+        ended = lastChange_->pinsEnded;
     }
-    // The copies are released here, outside the lock.
+    SPDLOG_INFO("MonitoringCellStore: capture {} begins: {}; {} strip cell(s) dropped, {} pin(s) kept without images",
+                epoch, reason, strip, ended);
+    return epoch;
 }
 
-std::string MonitoringCellStore::captureRefusalLocked(const char* what, const MonitoringCellKey& key,
-                                                      std::uint64_t current) const
+std::uint64_t MonitoringCellStore::currentCapture() const
 {
-    std::string m = std::string(what) + ": " + cellName(key.frameIndex, key.objectId) + " is from capture " +
-                    std::to_string(key.captureEpoch) + ", but the current capture is " + std::to_string(current);
-    if (lastChange_ && lastChange_->captureEpoch == current)
+    std::scoped_lock lk(mutex_);
+    return current_;
+}
+
+std::string MonitoringCellStore::captureRefusalLocked(const char* what, const MonitoringCellKey& key) const
+{
+    std::string m = std::string(what) + ": " + cellName(key.frameIndex, key.objectId);
+    if (key.captureEpoch == 0)
+        m += " is of no capture (its frame crossed a capture change while it was processed)";
+    else
+        m += " is from capture " + std::to_string(key.captureEpoch);
+    m += ", but the current capture is " + std::to_string(current_);
+    if (lastChange_ && lastChange_->captureEpoch == current_)
         m += " (" + lastChange_->reason + ")";
     else
         m += " (the camera, its mode, the frame buffer or the processing ROI changed)";
@@ -315,10 +335,12 @@ void MonitoringCellStore::refreshStrip()
 {
     const auto t0 = Clock::now();
     std::uint64_t epoch = 0;
+    std::uint64_t current = 0;
     std::vector<MonitoringCellKey> held;
     {
         std::scoped_lock lk(mutex_);
         epoch = epoch_;
+        current = current_;
         held.reserve(strip_.size());
         for (const auto& e : strip_) held.push_back(e.info.key);
     }
@@ -327,35 +349,34 @@ void MonitoringCellStore::refreshStrip()
     const auto tSource = Clock::now();
     std::vector<Entry> fresh;
     fresh.reserve(newest.rows.size());
-    const auto inContext = [&newest](const MonitoringCellKey& k) {
-        return k.startGeneration == newest.ringGeneration && k.captureEpoch == newest.captureEpoch;
-    };
+    std::size_t otherCapture = 0;
+    const auto inRun = [&newest](const MonitoringCellKey& k) { return k.startGeneration == newest.ringGeneration; };
     for (const auto& c : newest.rows) {
-        if (!inContext(c.key)) continue; // another run or capture
+        if (!inRun(c.key)) continue; // another run's (or none's)
+        if (c.key.captureEpoch != current) { // its frame entered with another capture: never a cell
+            ++otherCapture;
+            continue;
+        }
         if (std::find(held.begin(), held.end(), c.key) != held.end()) continue;
         fresh.push_back(copyCandidate(c, kNoImageResultsOnly)); // crop + clone, no lock held
     }
     source_.releaseShares(newest.rows); // keys and metrics stay for the index below
-    std::deque<Entry> dropped;
-    std::vector<Entry> droppedPins;
+    std::deque<Entry> dropped; // freed when this returns, after the lock
     {
         std::scoped_lock lk(mutex_);
         ++counters_.refreshes;
         counters_.lastSourceUs = elapsedUs(t0, tSource);
-        if (epoch != epoch_ || newest.captureEpoch < capture_) {
-            // A run started, the ring was cleared or the capture changed meanwhile: this batch is stale.
+        if (epoch != epoch_) {
+            // A capture change (a run start among them) or a clear happened meanwhile: this batch is stale.
             counters_.lastRefreshUs = elapsedUs(t0, Clock::now());
             return;
         }
-        // Rows of a capture the store has not been told of yet: apply the change first.
-        adoptCaptureLocked(newest.captureEpoch, kNewCaptureRows, dropped, droppedPins);
-        if (ringGeneration_ != newest.ringGeneration || ringCaptureEpoch_ != newest.captureEpoch) {
+        if (ringGeneration_ != newest.ringGeneration) {
             ringGeneration_ = newest.ringGeneration;
-            ringCaptureEpoch_ = newest.captureEpoch;
             ++revision_;
         }
         for (auto it = strip_.begin(); it != strip_.end();) {
-            if (!inContext(it->info.key)) {
+            if (!inRun(it->info.key)) {
                 stripBytes_ -= std::min(stripBytes_, it->info.bytes);
                 dropped.push_back(std::move(*it));
                 it = strip_.erase(it);
@@ -366,17 +387,27 @@ void MonitoringCellStore::refreshStrip()
             }
         }
         for (auto& e : fresh) {
+            // The insert rule, under the mutex the capture changes take: the row's carried capture
+            // is the current one.
+            if (e.info.key.captureEpoch != current_) {
+                ++otherCapture;
+                continue;
+            }
             if (findLocked(e.info.key, false)) continue; // another refresh admitted it
             stripBytes_ += e.info.bytes;
             strip_.push_back(std::move(e));
             ++counters_.stripAdmitted;
             ++revision_;
         }
-        for (const auto& c : newest.rows) indexLocked(c.key, c.metrics);
+        for (const auto& c : newest.rows)
+            if (c.key.captureEpoch == current_) indexLocked(c.key, c.metrics);
         trimStripLocked();
         raisePeakLocked();
         counters_.lastRefreshUs = elapsedUs(t0, Clock::now());
     }
+    if (otherCapture)
+        SPDLOG_DEBUG("MonitoringCellStore: {} row(s) of another capture than {} not admitted to the strip",
+                     otherCapture, current);
 }
 
 MonitoringCellStore::PinResult MonitoringCellStore::pin(const MonitoringCellKey& key)
@@ -392,10 +423,14 @@ MonitoringCellStore::PinResult MonitoringCellStore::pin(const MonitoringCellKey&
     // Admission under the lock; the scope and the capture must still be the ones checked first.
     auto admit = [&](Entry&& e, std::uint64_t scope) -> PinResult {
         std::scoped_lock lk(mutex_);
-        if (capture_ != key.captureEpoch)
+        // The insert rule, under the mutex the capture changes take: the row's carried capture is
+        // the current one (a change since the check below refuses it).
+        if (e.info.key.captureEpoch != current_) {
+            SPDLOG_DEBUG("MonitoringCellStore: pin of frame {} object {} (capture {}) refused: capture {} began",
+                         key.frameIndex, key.objectId, e.info.key.captureEpoch, current_);
             return refuse(PinOutcome::CaptureMismatch,
-                          captureRefusalLocked("pin refused: the capture changed while the pin was taken", key,
-                                               capture_));
+                          captureRefusalLocked("pin refused: the capture changed while the pin was taken", key));
+        }
         if (scope_ != scope)
             return refuse(PinOutcome::RunMismatch, "pin refused: run " + std::to_string(scope_) +
                                                        " started while the pin was taken; pins now belong to it");
@@ -422,15 +457,11 @@ MonitoringCellStore::PinResult MonitoringCellStore::pin(const MonitoringCellKey&
     };
 
     // The capture first, before any other rule: an identity of another capture is never resolved.
-    std::deque<Entry> droppedStrip; // freed when pin() returns, after every lock below is released
-    std::vector<Entry> droppedPins;
-    const std::uint64_t current = source_.currentCaptureEpoch(); // lock-free, never under the store's lock
     std::uint64_t scope = 0;
     {
         std::scoped_lock lk(mutex_);
-        if (key.captureEpoch != current)
-            return refuse(PinOutcome::CaptureMismatch, captureRefusalLocked("pin refused", key, current));
-        adoptCaptureLocked(current, kNewCaptureRows, droppedStrip, droppedPins);
+        if (key.captureEpoch != current_)
+            return refuse(PinOutcome::CaptureMismatch, captureRefusalLocked("pin refused", key));
         scope = scope_;
         if (expectedStartGeneration != 0 && expectedStartGeneration != scope_) {
             return refuse(PinOutcome::RunMismatch,
@@ -449,14 +480,9 @@ MonitoringCellStore::PinResult MonitoringCellStore::pin(const MonitoringCellKey&
             return refuse(PinOutcome::LimitReached, "pin refused: " + std::to_string(policy_.maxPins) +
                                                         " cells are pinned (the limit); unpin one first");
     }
-    // The ring first (headers under its lock): it says which capture is current, and an
-    // identity of an earlier capture is never resolved (frame indices restart with a capture).
+    // The ring (headers under its lock): only a row whose frame carried this capture is this
+    // identity (frame indices restart with a capture); admit() rechecks the capture.
     auto found = source_.find(key.frameIndex, key.objectId);
-    if (key.captureEpoch != found.captureEpoch) { // the capture changed since the check above
-        source_.releaseShares(found.rows);
-        std::scoped_lock lk(mutex_);
-        return refuse(PinOutcome::CaptureMismatch, captureRefusalLocked("pin refused", key, found.captureEpoch));
-    }
     // The strip already holds an owned copy of this capture's row: share it (immutable), no new crop.
     {
         std::optional<Entry> fromStrip;
@@ -510,11 +536,10 @@ MonitoringCellStore::PinResult MonitoringCellStore::pin(const MonitoringCellKey&
 
 MonitoringCellStore::ReadResult MonitoringCellStore::unpin(const MonitoringCellKey& key)
 {
-    const std::uint64_t current = source_.currentCaptureEpoch();
     std::optional<Entry> released; // freed after the lock is released
     std::scoped_lock lk(mutex_);
     for (auto it = pins_.begin(); it != pins_.end(); ++it) {
-        if (it->info.key == key) {
+        if (it->info.key == key) { // a pin of an ended capture too: it is the operator's to remove
             pinBytes_ -= std::min(pinBytes_, it->info.bytes);
             released = std::move(*it);
             pins_.erase(it);
@@ -522,8 +547,8 @@ MonitoringCellStore::ReadResult MonitoringCellStore::unpin(const MonitoringCellK
             return {true, false, "unpinned"};
         }
     }
-    if (key.captureEpoch != current)
-        return {false, true, captureRefusalLocked("not pinned (dropped when the capture changed)", key, current)};
+    if (key.captureEpoch != current_)
+        return {false, true, captureRefusalLocked("not pinned (pins were dropped when a run started)", key)};
     return {false, false, {}};
 }
 
@@ -542,25 +567,30 @@ void MonitoringCellStore::noteRows(const std::vector<std::pair<MonitoringCellKey
 {
     std::scoped_lock lk(mutex_);
     for (const auto& [key, metrics] : rows)
-        if (key.captureEpoch >= capture_) indexLocked(key, metrics); // an earlier capture's row is never pinned
+        if (key.captureEpoch == current_) indexLocked(key, metrics); // another capture's row is never pinned
+}
+
+void MonitoringCellStore::setReadHookForTests(std::function<void(const char* where)> hook)
+{
+    std::scoped_lock lk(mutex_);
+    readHook_ = std::move(hook);
 }
 
 MonitoringCellStore::Listing MonitoringCellStore::listing() const
 {
     Listing out;
-    const std::uint64_t current = source_.currentCaptureEpoch(); // lock-free, never under the store's lock
-    std::scoped_lock lk(mutex_);
+    // One critical section: the current capture, then the cells (a capture change waits for it).
+    std::unique_lock lk(mutex_);
+    out.ringCaptureEpoch = current_;
+    if (readHook_) readHook_("listing");
     out.scopeGeneration = scope_;
     out.ringGeneration = ringGeneration_;
-    out.ringCaptureEpoch = current;
     out.revision = revision_;
-    // Cells of another capture are never listed, even before the store applied the change.
     out.strip.reserve(strip_.size());
     for (const auto& e : strip_)
-        if (e.info.key.captureEpoch == current) out.strip.push_back(e.info);
+        if (e.info.key.captureEpoch == out.ringCaptureEpoch) out.strip.push_back(e.info);
     out.pins.reserve(pins_.size());
-    for (const auto& e : pins_)
-        if (e.info.key.captureEpoch == current) out.pins.push_back(e.info);
+    for (const auto& e : pins_) out.pins.push_back(e.info); // an ended capture's pin has no image
     out.lastCaptureChange = lastChange_;
     out.stats = counters_;
     out.stats.stripCells = strip_.size();
@@ -576,22 +606,23 @@ MonitoringCellStore::Listing MonitoringCellStore::listing() const
 MonitoringCellStore::ReadResult MonitoringCellStore::image(const MonitoringCellKey& key, bool mask, cv::Mat& out,
                                                            MonitoringCellInfo* info) const
 {
-    const std::uint64_t current = source_.currentCaptureEpoch(); // lock-free, never under the store's lock
-    std::scoped_lock lk(mutex_);
+    // One critical section: the capture check, the lookup and the copy (a capture change waits for it).
+    std::unique_lock lk(mutex_);
     // The capture first: whatever the store still holds, another capture's cell is never served.
-    if (key.captureEpoch != current) return {false, true, captureRefusalLocked("image refused", key, current)};
+    if (key.captureEpoch != current_) return {false, true, captureRefusalLocked("image refused", key)};
     const Entry* e = findLocked(key, true);
     if (!e)
         return {false, false,
                 "not held: " + cellName(key.frameIndex, key.objectId) + " " + runName(key.startGeneration) +
                     " is neither pinned nor in the strip"};
-    const cv::Mat& m = mask ? e->mask : e->image;
-    if (m.empty())
+    const cv::Mat layer = mask ? e->mask : e->image; // a share of the owned copy, dropped under the lock
+    if (layer.empty())
         return {false, false,
                 !e->info.hasImage ? e->info.noImageReason
                                   : "no mask: " + cellName(key.frameIndex, key.objectId) + " has no processed mask"};
-    out = m.clone(); // a private copy, under the lock (see the header)
     if (info) *info = e->info;
+    if (readHook_) readHook_("image"); // resolved; the copy follows
+    out = layer.clone(); // a private copy, under the lock (see the header)
     return {true, false, {}};
 }
 
@@ -633,9 +664,14 @@ namespace {
 
 class ProcessingCellSource final : public MonitoringCellSource {
 public:
-    explicit ProcessingCellSource(const ProcessingService& processing) : processing_(processing) {}
+    explicit ProcessingCellSource(ProcessingService& processing) : processing_(processing) {}
 
     std::uint64_t currentCaptureEpoch() const override { return processing_.monitoringCaptureEpoch(); }
+
+    void publishCapture(std::uint64_t captureEpoch, std::optional<std::uint64_t> cameraSessionFloor) override
+    {
+        processing_.publishMonitoringCapture(captureEpoch, cameraSessionFloor); // atomic stores
+    }
 
     Rows newestValid(std::size_t maxRows) override
     {
@@ -646,7 +682,6 @@ public:
                 out.rows.push_back(candidate(f, tag));
             });
         out.ringGeneration = view.runGeneration;
-        out.captureEpoch = view.captureEpoch;
         return out;
     }
 
@@ -661,7 +696,6 @@ public:
             });
         std::reverse(out.rows.begin(), out.rows.end()); // newest first
         out.ringGeneration = view.runGeneration;
-        out.captureEpoch = view.captureEpoch;
         return out;
     }
 
@@ -688,12 +722,12 @@ private:
             f.originalImage, f.processedImage};
     }
 
-    const ProcessingService& processing_;
+    ProcessingService& processing_;
 };
 
 } // namespace
 
-std::unique_ptr<MonitoringCellSource> makeProcessingCellSource(const ProcessingService& processing)
+std::unique_ptr<MonitoringCellSource> makeProcessingCellSource(ProcessingService& processing)
 {
     return std::make_unique<ProcessingCellSource>(processing);
 }

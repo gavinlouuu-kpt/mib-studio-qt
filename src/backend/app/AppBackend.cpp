@@ -409,8 +409,8 @@ namespace backend
             processingService_->stopRealtime();
             processingService_->stopBatchPipeline();
             processingService_->stop();
-            // Nothing may notify the live cell store once it can be destroyed (member order).
-            processingService_->setMonitoringCaptureListener({});
+            // Nothing may call the live cell store once it can be destroyed (member order).
+            processingService_->setMonitoringCaptureAuthority({});
         }
         // Release hardware during explicit shutdown, while the service graph
         // is still alive. Capture has ended its owned generator session and
@@ -502,18 +502,17 @@ namespace backend
         hdf5Service_ = std::make_unique<services::Hdf5Service>();
         captureService_ = std::make_unique<services::CaptureService>();
         // The cell store's source reads the ring of the processing service replaced next; the old
-        // service stops notifying it first (this returns once no notification is running).
-        if (processingService_) processingService_->setMonitoringCaptureListener({});
+        // service stops calling it first (this returns once no call is running).
+        if (processingService_) processingService_->setMonitoringCaptureAuthority({});
         monitoringCells_.reset();
         monitoringCellSource_.reset();
         processingService_ = std::make_unique<services::ProcessingService>();
         monitoringCellSource_ = services::makeProcessingCellSource(*processingService_);
         monitoringCells_ = std::make_unique<services::MonitoringCellStore>(*monitoringCellSource_);
-        // A capture change drops the cells of the old capture at once (#716 A6a review 2).
-        processingService_->setMonitoringCaptureListener(
-            [cells = monitoringCells_.get()](uint64_t captureEpoch, const char* reason) {
-                cells->captureChanged(captureEpoch, reason);
-            });
+        // The store is the one authority for the capture epoch (#716 A6a review 3): the processing
+        // service's capture changes (realtime start and stop, another ROI) go through it.
+        processingService_->setMonitoringCaptureAuthority(
+            [cells = monitoringCells_.get()](const char* reason) { return cells->advanceCapture(reason); });
         experimentCoordinator_ = std::make_unique<app::ExperimentCoordinator>(*this);
         experimentCoordinator_->setApplicationIdentity(
             MIB_APPLICATION_VERSION, MIB_APPLICATION_BUILD_ID, MIB_APPLICATION_OS);
@@ -954,14 +953,15 @@ namespace backend
         {
             captureService_->setCameraReadyCallback([this, bootTrigger](::camera::common::ICamera* cam,
                                                                         uint64_t generation) {
-                // A capture session opened or closed (#716 A6a review 2): monitoring cells of the
-                // previous one are never served again. A close is reported twice (stop() and the
+                // A capture session opened or closed (#716 A6a review 2-3): monitoring cells of the
+                // previous one are never served again, and its frames still in processing never
+                // become cells (the session floor). A close is reported twice (stop() and the
                 // capture thread) for the same session: one capture change.
-                if (processingService_) {
+                if (monitoringCells_) {
                     if (cam)
-                        processingService_->advanceMonitoringCapture("the camera started a new capture session");
+                        monitoringCells_->advanceCapture("the camera started a new capture session", generation);
                     else if (monitoringClosedCaptureSession_.exchange(generation) != generation)
-                        processingService_->advanceMonitoringCapture("the camera stopped");
+                        monitoringCells_->advanceCapture("the camera stopped", generation + 1);
                 }
                 if (!bootTrigger) return;
                 if (triggerService_) {
@@ -2671,8 +2671,8 @@ namespace backend
         captureService_->setFrameStore(frameStore_);
         playbackService_->setFrameStore(frameStore_);
         // Frame indices restart in the new store: monitoring cells of the old one are never
-        // resolved against it (the live cell store drops its strip and pins now).
-        processingService_->advanceMonitoringCapture(reason);
+        // resolved against it (the live cell store clears its strip and ends its pins now).
+        if (monitoringCells_) monitoringCells_->advanceCapture(reason);
     }
 
     AppBackend::MindVisionSensor AppBackend::mindVisionSensor() const {
