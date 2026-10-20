@@ -374,16 +374,29 @@ zero-fill it (NULL, core rebuilds the mask) and cores built before it ignore it.
   tag under `monitoringFramesMutex_` ([[../architecture/ExperimentCoordinator]]
   sets it right before `startExperiment()` and back to 0 after
   `endExperiment()` or a failed start). The capture epoch
-  (`monitoringCaptureEpoch()`, starts at 1, never reused) moves on at every
-  `startRealtime()` (a new or restarted FrameStore: indices may restart) and at
-  the first append of a frame whose store generation differs from the
-  previous frame's (a resize renumbered the store). The geometry origin is
+  (`monitoringCaptureEpoch()`, an atomic written under the ring lock and read
+  lock-free; starts at 1, only grows, never reused) moves on **at the moment
+  the capture changes** (review round 2 of #749): `startRealtime()` (a new or
+  restarted FrameStore: indices may restart), `setRealtimeRoi()` with another
+  ROI and `resolvePendingRoi()` applying one, and
+  `advanceMonitoringCapture(reason)`, which [[../architecture/AppBackend]]
+  calls when it replaces the FrameStore (`installFrameStore`: MindVision /
+  Aravis Overview <-> Experiment) and when the camera opens or closes a
+  capture session, and the facade after a frame buffer resize. Each of those
+  calls the capture listener (`setMonitoringCaptureListener`, under its own
+  mutex, outside the ring lock) with the new epoch and a plain reason;
+  AppBackend points it at [[MonitoringCellStore]]`::captureChanged`, which
+  drops the old capture's strip and pins at once. As a backstop the append
+  path also moves the epoch, without a notification, on the first row whose
+  frame has another store generation or capture session than the previous
+  row's (the explicit advances reset both, so the first row after one adopts
+  its frame's values). The geometry origin is
   (0, 0) for inline rows (measured on the ROI image) and the ROI's top-left for
   async-batch rows (measured on the full frame, kept as an ROI crop; the crop
   now uses the ROI the worker measured with, `frame.previewRoi`, and the rows
   are counted in the appended totals like inline rows). Every `push_back`
-  stores the tag under the lock it already holds: a 24-byte store and one
-  compare, no allocation, no new lock. `clearMonitoringFrames` zeroes the
+  stores the tag under the lock it already holds: a 24-byte store and two
+  compares, no allocation, no new lock. `clearMonitoringFrames` zeroes the
   tags. `visitMonitoringNewest(maxRows, includeInvalid, visit)`
   hands the newest rows (valid first, then invalid with what is left) with
   their tag to a visitor **under the ring lock** and returns a

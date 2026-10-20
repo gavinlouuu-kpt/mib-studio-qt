@@ -97,6 +97,13 @@ timeout, avoiding the unbounded `FlushFileBuffers` wait. See
   copies never leave the store (image pulls copy under the store mutex).
   Both rules make "freed after the last reader" a lock order, which
   ThreadSanitizer can check; cv::Mat's refcount (uninstrumented OpenCV) it cannot.
+  A capture change (review round 2 of #749) moves the ring's capture epoch (an
+  atomic written under the ring lock, read lock-free) and then calls the
+  capture listener outside the ring lock, under the listener's own mutex, on
+  the thread that made the change; the listener takes the store mutex to drop
+  the old capture's copies (order: coordinator mutex → listener mutex → store
+  mutex, never the reverse). The append path's backstop moves the epoch
+  without calling anything.
 - **Experiment accumulation** — bounded vectors collected while
   `experimentActive_ == true`, periodically flushed to HDF5 via
   `flushBufferedFrames`. The realtime thread drops sampled invalid frames first

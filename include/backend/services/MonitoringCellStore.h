@@ -9,8 +9,8 @@
 //     (refreshStrip), oldest evicted first when the count or byte cap is
 //     exceeded; every eviction is counted. The strip follows the ring's
 //     current context: rows of the active run while one runs, rows detected
-//     outside a run otherwise, and only of the current capture (a row of
-//     another context is dropped at the next refresh).
+//     outside a run otherwise (a row of another run is dropped at the next
+//     refresh), and only of the current capture (see below).
 //   - pins: rows the operator asked to keep, by identity (start generation,
 //     frame index, object id, capture epoch). A pin is refused for a run other
 //     than the latest one started (and run 0, "outside a run") and for any

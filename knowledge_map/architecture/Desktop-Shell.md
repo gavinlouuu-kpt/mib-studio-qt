@@ -433,7 +433,12 @@ earlier capture; an unknown outcome is refused),
 `bridge.monitoringCellUnpin(key)` and `bridge.monitoringCellClearPins()` (a
 `CmdResult`), and `bridge.fetchMonitoringCellImage(key, "image" | "mask")`
 (`fetch_monitoring_cell_packet`, a frame packet of pull kind 5 / 6 decoded by
-`decodeFramePacket`; an empty packet when the layer is not held). The key is a
+`decodeFramePacket`; an empty packet when the layer is not held; a rejection
+`CAPTURE_MISMATCH: <reason>` for an identity of another capture, read with
+`monitoringCellCaptureMismatch(error)`: the cell is gone, refresh the listing).
+The listing carries `last_capture_change` (why the strip and the pins of the
+earlier capture were dropped, or null) and only cells of `ring_capture_epoch`
+(the decoder refuses anything else; review round 2 of #749). The key is a
 listing cell or a monitoring snapshot row (`MonitoringRow.start_generation` and
 `capture_epoch`, new in ABI 41; centroids in ROI image coordinates); `cellKeyArgs` sends
 canonical decimal strings and throws
