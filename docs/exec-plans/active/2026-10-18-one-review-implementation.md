@@ -588,16 +588,20 @@ S12 takes 3 or higher. Additive; the bridge ABI is untouched.
   the recorded one ± 5, so every input exercises D4. `compare.py` keeps the Qt
   ↔ YOFO table as signed off and adds MIB Studio ↔ Qt and MIB Studio ↔ YOFO
   tables. Each acceptance is checked against its effect, not only the declared
-  input (Codex review of #755). D2–D5 and D10 are ACCEPTED only under these
-  conditions:
-  - **D2:** both halves report the same recorded ROI, and each draws its own
-    style at that rectangle. MIB Studio draws yellow (255, 210, 0) on the
-    rectangle's 1 px path, `Rect & image`. YOFO draws red within ±2 px of the
-    path of `drawRoiOverlay`'s clamped rectangle; OpenCV rasterises thickness 3
-    as that 5 px band (measured with `cv2.rectangle`). Every path pixel must
-    carry the colour. A half that draws nothing, or draws elsewhere, is a
-    DIFF. The halves may differ only on those pixels, and no difference is a
-    PASS. The ROI-off renders must be pixel-identical.
+  input (two Codex reviews of #755). D2–D5 and D10 are ACCEPTED only under
+  these conditions:
+  - **D2:** both halves report the same recorded ROI, and each paints exactly
+    the band `cv::rectangle` paints for its own style: every band pixel in
+    its colour, no other pixel changed. MIB Studio: yellow (255, 210, 0),
+    thickness 1 on `Rect & image`, the 1 px path. YOFO: red, thickness 3 on
+    `drawRoiOverlay`'s clamped rectangle, which OpenCV (LINE_8) paints as a
+    5 px band with rounded outer corners. `compare.roi_band` models that band;
+    it matched `cv2.rectangle` on 6237 thickness-3 rectangles (clamped, small
+    and degenerate ones included), and the unit test checks it against cv2
+    goldens (`tests/tools/data/review_parity_roi_bands.json`). A half that
+    draws nothing, draws elsewhere, or draws an incomplete band is a DIFF. The
+    halves may differ only on those pixels, and no difference is a PASS. The
+    ROI-off renders must be pixel-identical.
   - **D3:** the as-opened charts declare the live factor, and their area
     extents equal the compared pass's × (live / compared)², with the
     deformability extents and the count unchanged.
@@ -612,8 +616,16 @@ S12 takes 3 or higher. Additive; the bridge ABI is untouched.
     rule reproduces the observed 80 / 300 / 10.
 
   The scatter density is compared cell by cell with YOFO's points binned on
-  MIB Studio's grid; a point within 1e-9 of a cell edge may fall on either
-  side. Against Qt only the total is compared.
+  MIB Studio's grid. Every point off a cell edge must be in its own cell; a
+  point within 1e-9 of an interior cell edge may be in either cell beside that
+  edge, and nowhere else (an assignment of the edge points to the cells'
+  surplus). Against Qt only the total is compared.
+
+  Each studio table starts with *expected artefacts*, which lists every dump
+  file and summary key its checks read and is a DIFF naming each absent one,
+  and *studio run*, a DIFF when the example recorded a failure or an export
+  did not complete. A missing D4 probe is a DIFF ("D4 probe missing"), not a
+  skipped row.
 
   The chart-range tolerance is `CHART_RANGE_REL` = 1e-12 of the range's
   largest absolute end (about 4500 ulp; the padding differs by a few ulp at
@@ -636,18 +648,24 @@ S12 takes 3 or higher. Additive; the bridge ABI is untouched.
   `z-adjustment-50v` recording, `review_e2e_512x96_run.h5`,
   `synthetic_fixture.h5` and `population_3000.h5`. `run.sh` exits 0. Outputs
   and `run.log` are in
-  `/mnt/hdd/developer-data/mib-studio-qt/review-parity/out-2026-10-20-s6-r2/`.
-  The first run, with the y-axis DIFF and the classifier before review, is in
-  `out-2026-10-20-s6/`; the 2026-10-04 `out/` is untouched.
+  `/mnt/hdd/developer-data/mib-studio-qt/review-parity/out-2026-10-20-s6-r3/`
+  (classifier after the second Codex review). The run after the first review
+  is `out-2026-10-20-s6-r2/`; the first run, with the y-axis DIFF and the
+  classifier before review, is `out-2026-10-20-s6/`; the 2026-10-04 `out/` is
+  untouched.
   - **Identical to Qt and YOFO:** metrics.csv; Export All apart from the chart
     TIFFs (30878 / 587 / 45 / 3301 files); scatter point count and density
     total; scatter axis extents; histogram bins; the compared histogram range
     and px→µm.
   - **Identical to YOFO:** the density cells (314 / 8 / 1735) and the 30
-    ROI-off overlays per experiment file.
+    ROI-off overlays per experiment file. No point of any input lies within
+    1e-9 of a cell edge, so every point is in its own cell.
+  - **Expected artefacts and studio run:** PASS on every file and pair (159
+    checks in all: 40 Qt ↔ YOFO, 55 MIB Studio ↔ Qt, 64 MIB Studio ↔ YOFO; no
+    DIFF).
   - **ACCEPTED:**
-    - D2: 30 of 30 ROI-on renders per experiment file, each style at the
-      recorded ROI: [0, 0, 512, 96], [4, 2, 20, 16] and [0, 0, 64, 48].
+    - D2: 30 of 30 ROI-on renders per experiment file, each style's full band
+      at the recorded ROI: [0, 0, 512, 96], [4, 2, 20, 16] and [0, 0, 64, 48].
     - D3: as-opened px→µm, 0.4886 against 0.25, on the two fixtures, with
       the area extents × 3.81968.
     - D4: the probe binned over [10, 30] on the three experiment files.
@@ -657,26 +675,36 @@ S12 takes 3 or higher. Additive; the bridge ABI is untouched.
       the synthetic fixture, with identical bins.
   - **Not exercised:** D4 as opened (every file records 15–25).
   - **Unit test:** `scripts.review_parity_compare`
-    (`tests/tools/test_review_parity_compare.py`, 12 cases) covers:
+    (`tests/tools/test_review_parity_compare.py`, 15 cases) covers:
     - the PNG / PGM / PPM decoders (every PNG filter type);
     - the pinned tolerance (a few ulp pass, 1e-10 relative fails);
-    - each acceptance both ways, including the refusals the review asked for:
-      a missing ROI, an ROI at an offset, a declared but unapplied live factor
-      or range (as opened and in the probe), every point moved into cell
-      (0, 0), and bins that differ (D10);
-    - the ROI geometry;
+    - each acceptance both ways, including the refusals the reviews asked
+      for: a missing ROI, an ROI at an offset, an incomplete band (a thin
+      1 px red rectangle, a 3 px band, a missing pixel, square corners), a
+      declared but unapplied live factor or range (as opened and in the
+      probe), every point moved into cell (0, 0), a non-edge point moved
+      (Codex's (10, 10) → (90, 90) beside an edge point, refused; an edge
+      flip, accepted), and bins that differ (D10);
+    - the ROI band model against the seven cv2 goldens, and the ROI geometry;
+    - absent dump files (the D4 probe, metrics.csv, charts, scatter dump,
+      overlays, `all/`), recorded failures and an export that failed;
     - an unaccepted bin difference failing `main`;
     - a dump without the studio half.
   - **Mutations that fail the unit test:**
-    - D2: no path check, no recorded-rectangle check, or an empty difference
-      taken as D2;
+    - D2: band colour not required, changes outside the band allowed, square
+      corners, or a 3 px band for thickness 3;
     - D3 without the applied check;
     - D4 without the binned check, or the not-exercised row without it;
-    - density by its total;
+    - density: any edge point excusing other moves, edge candidates on one
+      side only, no assignment, or by its total;
     - D10 without the bins check or without the other shell's rule;
-    - a 1e-9 tolerance;
-    - D5 for any non-frame TIFF.
+    - a 1e-9 or 1e-6 tolerance;
+    - D5 for any non-frame TIFF;
+    - the D4 probe row skipped when its evidence is missing, no artefact
+      list, overlays not listed, the studio run row always passing.
 
+    The density stray-cell check is an equivalent mutant: the assignment
+    implies it, and it is kept for its message.
     Tick count 6 instead of 5 in the Qt rule is an equivalent mutant: the nice
     step of r / 4 equals that of r / 5 for every nice range r.
   - **Decoders:** cross-checked against Pillow on 120 renders.

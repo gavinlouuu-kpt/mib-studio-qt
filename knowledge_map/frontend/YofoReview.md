@@ -354,11 +354,14 @@ three times:
 - with the live factor and range set to the recorded ones, as the Qt dump does.
   This pass produces the compared outputs.
 
-Every acceptance is checked by its effect (README there).
+Every acceptance is checked by its effect (README there). Each studio table
+also lists every dump file and summary key its checks read (*expected
+artefacts*) and the studio run's failures and export states (*studio run*);
+an absent one is a DIFF, never a skipped check.
 
 The run of 2026-10-20 used develop `1826a00b` + S6 and the four sign-off
 inputs. `run.sh` exits 0. Outputs are in
-`/mnt/hdd/developer-data/mib-studio-qt/review-parity/out-2026-10-20-s6-r2/`.
+`/mnt/hdd/developer-data/mib-studio-qt/review-parity/out-2026-10-20-s6-r3/`.
 These are identical to Qt and YOFO:
 
 - metrics.csv;
@@ -369,13 +372,17 @@ These are identical to Qt and YOFO:
 - histogram bins and range.
 
 Identical to YOFO: the density cells and the 30 ROI-off overlay renders per
-experiment file.
+experiment file. Only a point within 1e-9 of a cell edge may sit in the cell
+across that edge; every other point must be in its own cell. No point of the
+sign-off inputs is that close to an edge.
 
 Accepted until S13 (plan decisions):
 
-- **D2:** the ROI-on overlays differ only where each half drew its own style at
-  the recorded ROI. MIB Studio draws yellow 1 px; YOFO draws red at thickness
-  3, which OpenCV renders as a 5 px band.
+- **D2:** the ROI-on overlays differ only where each half painted exactly its
+  own style's band at the recorded ROI, every band pixel in its colour.
+  MIB Studio draws yellow at thickness 1; YOFO draws red at thickness 3, which
+  OpenCV paints as a 5 px band with rounded outer corners (`compare.roi_band`,
+  checked against `cv2.rectangle` goldens).
 - **D3:** the as-opened px→µm on the two 0.25 µm/px fixtures (live 0.4886), with
   the area extents scaled by (0.4886 / 0.25)².
 - **D4:** the probe's bins over [10, 30]. As opened, D4 is not exercised: every

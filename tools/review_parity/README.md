@@ -87,16 +87,28 @@ else that differs is a DIFF:
 
 | Decision | Check | Accepted when |
 |---|---|---|
-| D2 One ROI style | overlays, ROI on (studio ↔ YOFO) | Both halves report the same recorded ROI, and each draws its own style at that rectangle. MIB Studio: yellow (255, 210, 0) on the rectangle's 1 px path, `Rect(roi) & image`. YOFO: red within ±2 px of the path of `drawRoiOverlay`'s clamped rectangle; `cv::rectangle` thickness 3 is a 5 px band in OpenCV's LINE_8 raster. Every path pixel must carry the colour. A half that draws nothing, or draws elsewhere, is a DIFF. The halves may differ only on those pixels, and no difference at all is a PASS. The ROI-off renders must be pixel-identical. |
+| D2 One ROI style | overlays, ROI on (studio ↔ YOFO) | Both halves report the same recorded ROI, and each paints exactly the band `cv::rectangle` paints for its own style, every band pixel in its colour and no other pixel changed. MIB Studio: yellow (255, 210, 0), thickness 1 on `Rect(roi) & image`, the 1 px path. YOFO: red, thickness 3 on `drawRoiOverlay`'s clamped rectangle, which OpenCV (LINE_8) paints as a 5 px band with rounded outer corners (`compare.roi_band`; the model matched `cv2.rectangle` on 6237 thickness-3 rectangles, and the unit test checks it against cv2 goldens in `tests/tools/data/review_parity_roi_bands.json`). A half that draws nothing, draws elsewhere, or draws an incomplete band (a thin 1 px red rectangle, a 3 px band, a missing pixel) is a DIFF. The halves may differ only on those pixels, and no difference at all is a PASS. The ROI-off renders must be pixel-identical. |
 | D3 Factor policy | px→µm as opened | The as-opened charts declare the live factor, it differs from the recorded one, and their area extents equal the compared pass's × (live / compared)², with the deformability extents and the point count unchanged. The compared outputs must use the recorded factor. |
 | D4 Histogram range | histogram range as opened; histogram range, live ≠ recorded (D4 probe) | The chart declares the live range, it differs from the other half's, and its bins are YOFO's ring ratios binned over it (0.5 wide, clamped into the edge bins). With equal ranges the row reads "D4 not exercised" and still checks the bins. |
 | D5 Exported chart files | Export All chart files | MIB Studio's Export All holds exactly `scatter_plot.tiff` and `histogram.tiff` (the backend-rendered charts) and the other half none; every other file must be byte-identical. |
 | D10 Histogram y-axis headroom (coordinator ruling 2026-10-20) | histogram y range | The bins are identical, and each y top is its shell's rule: MIB Studio `max(1, max bin)` (`desktop/src/components/ReviewCharts.tsx`, `maxBin`), YOFO `max(1, ceil(1.1 × max))`, Qt `applyNiceNumbers()` over that (`HdfReviewTab.cpp`; Qt's `looseNiceNumbers` with 5 ticks). |
 
 **Density.** For studio ↔ YOFO, the 128 × 128 cells are compared cell by
-cell with YOFO's points binned on MIB Studio's grid (its extents). A point
-within 1e-9 of an interior cell edge may fall on either side, because the
-facade bins in long double. Studio ↔ Qt compares the total.
+cell with YOFO's points binned on MIB Studio's grid (its extents). Every point
+off a cell edge must be counted in its own cell. The facade bins in long
+double, so a point within 1e-9 of an interior cell edge may be counted in
+either cell beside that edge (per axis: 2 or 4 cells), and nowhere else; the
+check assigns those edge points to the cells' surplus over the exact points
+and fails when no assignment fills it. Studio ↔ Qt compares the total.
+
+**Expected artefacts.** Each MIB Studio table starts with two rows. *Expected
+artefacts* lists every dump file and summary key its checks read and is a
+DIFF naming each absent one: `studio/summary.json` keys, `charts_app.json`,
+`charts.json`, a non-empty `all/` on both halves, and for experiment files
+`charts_d4.json`, both `metrics.csv`, `yofo/scatter.json`, and every overlay
+either half lists. *Studio run* is a DIFF when `review_parity_studio`
+recorded a failure or an export did not complete. A missing D4 probe makes
+its row a DIFF ("D4 probe missing"), not a skipped check.
 
 **Chart-range tolerance.** `makeReviewChartData` pads the scatter extents in
 `long double` (80-bit on Linux GCC, 64-bit on MSVC and arm64 macOS), while
