@@ -159,6 +159,8 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
   const isRecording = !!info?.recording_file;
   const setTotal = !info ? 0 : Number(validSet ? info.valid_images.count || info.recorded_images.count : info.invalid_images.count);
   const rowTotal = Number(rows?.total ?? 0);
+  // Records of the set: its images, or its rows when it stores none (#649).
+  const recordTotal = Math.max(setTotal, rowTotal);
   const selectedRow: ReviewRow | null =
     rows && selected >= rowsOffset && selected < rowsOffset + rows.rows.length ? rows.rows[selected - rowsOffset] : null;
   const shownColumns = visibleColumns(columns, isRecording);
@@ -198,16 +200,18 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
   }, [columns]);
 
   const loadRows = useCallback(
-    async (valid: boolean, offset: number) => {
+    async (valid: boolean, offset: number): Promise<ReviewRows | null> => {
       try {
         const page = await reviewBridge.rows(valid, offset, METRICS_PAGE_SIZE);
         if (page.valid) {
           setRows(page);
           setRowsOffset(offset);
+          return page;
         }
       } catch (e) {
         log(`metrics page error: ${e}`);
       }
+      return null;
     },
     [log],
   );
@@ -330,8 +334,10 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
         const startTab = initialTab(fresh);
         setSubView("frames");
         setValidSet(startTab !== "invalid");
-        await loadRows(startTab !== "invalid", 0);
-        setSelected(setTotalFor(fresh, startTab !== "invalid") > 0 ? 0 : -1);
+        const page = await loadRows(startTab !== "invalid", 0);
+        // The first record, also in a file that stores records without
+        // images (its record card still has the stored values).
+        setSelected(setTotalFor(fresh, startTab !== "invalid") > 0 || Number(page?.total ?? 0) > 0 ? 0 : -1);
         return { ok: true, message: "" };
       } catch (e) {
         log(`open error: ${e}`);
@@ -492,7 +498,7 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
   const openViewer = () => selected >= 0 && setViewerOpen(true);
   const step = (delta: number) => {
     const next = selected + delta;
-    if (selected >= 0 && next >= 0 && next < setTotal) select(next);
+    if (selected >= 0 && next >= 0 && next < recordTotal) select(next);
   };
 
   // The records table: today's metric columns on the kit's DataTable, one
@@ -721,7 +727,7 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
                 info={info}
                 valid={validSet}
                 position={selected}
-                total={setTotal}
+                total={recordTotal}
                 row={selectedRow}
                 view={cellView}
                 onView={setCellView}
