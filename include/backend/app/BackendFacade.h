@@ -563,6 +563,14 @@ namespace backend::bridge
         double ringRatio{0.0};
         double youngsModulus{0.0};
         double pixelToMicronFactor{0.0};
+        // ABI 41 (#716 A6a): the start generation of the run that was active when
+        // the processing path appended the row (0 = outside a run). With
+        // (frameIndex, objectId) it names the row for a live cell pin. Review
+        // rows leave it 0 (the bridge omits it for them).
+        std::uint64_t startGeneration{0};
+        // The capture epoch of the row's frame (frame indices restart with a
+        // capture); with the above it names the row for a pin. Review rows: 0.
+        std::uint64_t captureEpoch{0};
     };
 
     // Bounded monitoring snapshot (BE-5). Totals/appended counts make ring
@@ -1112,6 +1120,27 @@ namespace backend::bridge
         // Bounded monitoring pull (BE-5): at most maxRows most-recent metric
         // rows across the valid+invalid ring buffers (metrics only, no images).
         bool fetchMonitoringSnapshot(BackendMonitoringSnapshot &out, std::size_t maxRows) const;
+        // Live cell images (#716 A6a, bridge ABI 41; bridge-contract.json
+        // monitoring_cells). The listing brings the strip up to date with the
+        // monitoring ring first (at most the strip cap of new crops), then
+        // describes the strip and the pins (metadata only, no pixels). A pin
+        // names a row by (start generation, capture epoch, frame index, object
+        // id); its reply is JSON {ok, outcome, message, cell, revision}. Pixels
+        // travel only through fetchMonitoringCellImage (the binary frame packet
+        // path).
+        bool fetchMonitoringCellsJson(std::string &out) const;
+        std::string pinMonitoringCellJson(std::uint64_t expectedStartGeneration, std::uint64_t captureEpoch,
+                                          std::uint64_t frameIndex, int objectId);
+        BackendCommandResult unpinMonitoringCell(std::uint64_t startGeneration, std::uint64_t captureEpoch,
+                                                 std::uint64_t frameIndex, int objectId);
+        BackendCommandResult clearMonitoringCellPins();
+        // The owned crop (mask = false) or its mask of a pinned or strip cell, as Mono8. False when it
+        // is not served: `captureMismatch` (when given) is then set if the identity names another
+        // capture than the current one (refused, whatever the store still holds), and `why` (when
+        // given) carries the plain reason.
+        bool fetchMonitoringCellImage(std::uint64_t startGeneration, std::uint64_t captureEpoch,
+                                      std::uint64_t frameIndex, int objectId, bool mask, BackendFrame &out,
+                                      bool *captureMismatch = nullptr, std::string *why = nullptr) const;
         bool fetchTriggerStatus(BackendTriggerStatus &out) const;
         // Asynchronous device discovery (issue #419, ABI 14): start a job on
         // the backend service, poll its bounded snapshot, cancel it. Camera

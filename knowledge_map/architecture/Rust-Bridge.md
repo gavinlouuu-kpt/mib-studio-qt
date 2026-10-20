@@ -180,8 +180,9 @@ via static_asserts in `shim.cpp`, Rust via `rust_enums_match_contract_json`,
 TypeScript via the generated `desktop/src/bridgeContract.ts`
 (`scripts/gen_bridge_contract.py --check` is a desktop-CI drift gate).
 
-The command/event set is a versioned schema: `bridge_abi_version()` returns `11`
-(v2 added the review commands — `load_recording`, `playback_seek_index`,
+The command/event set is a versioned schema: `bridge_abi_version()` returns the
+current version (`41` since #716 A6a; each later bump has its own `## ABI N` section below)
+(the early history:v2 added the review commands — `load_recording`, `playback_seek_index`,
 `fetch_frame_by_index`; v3 added the processing commands — `apply_processing`,
 `fetch_processing_stats`; v4 added operation state, `cancel_operation`,
 `queue_overflow_total`, the bounded queue, and the extended error sources;
@@ -518,6 +519,92 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
 - **Tests:** `contract.rs` `stage_commands_fail_safely_without_hardware`;
   `stage_motion_is_control_only_but_stop_is_not` in the server;
   `backend.stage_bridge_facade`.
+
+## ABI 41: per-row cell images for live Monitoring (#716 A6a)
+
+Additive over ABI 40. The backend now owns bounded copies of detected cells
+([[../services/MonitoringCellStore]]): a strip of the most recent cells and the operator's pins,
+named by a stable identity, so the workspace Live view (A6b) can show a recent-cells strip and
+click-to-pin without the client holding pixels or racing ring eviction.
+
+- **Identity.** `(start_generation, capture_epoch, frame_index, object_id)`. The monitoring ring
+  tags every row with the run active when its frame entered processing
+  (`ProcessingService::setMonitoringRunGeneration`, set by [[ExperimentCoordinator]]; 0 = outside a
+  run; the same `start_generation` that `experiment_stop` names in ABI 40) and with the **capture
+  epoch** the frame entered with: frame indices restart with a run, with a new FrameStore (camera
+  mode switch) and with a store resize, and the live cell store, the one authority for the epoch,
+  moves it on at the moment of each capture change (a realtime start or stop, a camera mode switch
+  even with realtime stopped, a camera session opening or closing, another processing ROI, a buffer
+  resize, a run start; review rounds 2-3 of #749); it never repeats, and 0 marks a frame that
+  crossed a change (never a cell). `BridgeMonitoringRow` gains `start_generation: u64` and
+  `capture_epoch: u64`; the JSON `MonitoringRow` of `fetch_monitoring_snapshot` gains both (canonical
+  decimal strings; omitted from review rows, which have no run). Internally the snapshot now reads POD
+  rows through `visitMonitoringNewest` instead of copying the whole ring.
+- **Geometry.** Cell geometry (centroid, bbox, crop origin) and snapshot centroids are in the row
+  image's coordinates (the processing ROI) in both realtime modes: async-batch rows, measured on the
+  full frame, are translated by the ROI origin their ring tag records (contract `geometry`).
+  Before review round 1 of #749 the snapshot reported full-frame centroids in async-batch mode and
+  ROI centroids inline, and the cell crops were shifted in async-batch mode.
+- **cxx.** `fetch_monitoring_cells() -> String` (`{"valid":false}` before init),
+  `monitoring_cell_pin(expected_start_generation: u64, capture_epoch: u64, frame_index: u64, object_id: i32) -> String`,
+  `monitoring_cell_unpin(start_generation, capture_epoch, frame_index, object_id) -> BridgeCommandResult`,
+  `monitoring_cell_clear_pins() -> BridgeCommandResult`,
+  `fetch_monitoring_cell_image(start_generation, capture_epoch, frame_index, object_id, mask: bool) -> BridgeMonitoringCellImage`
+  (`{capture_mismatch, message, frame}`: `frame` is the Mono8 owned crop, invalid with the reason in
+  `message` when not held; `capture_mismatch` when the identity names another capture, refused
+  whatever the store still holds). Facade: `BackendFacade::fetchMonitoringCellsJson`,
+  `pinMonitoringCellJson`, `unpinMonitoringCell`, `clearMonitoringCellPins`,
+  `fetchMonitoringCellImage`.
+- **Commands** (`mib-app-commands`, so Tauri and the WebSocket server alike):
+  `fetch_monitoring_cells` (no args) → listing JSON; `monitoring_cell_pin`
+  (`expectedStartGeneration`, `captureEpoch`, `frameIndex`: canonical decimal strings, `objectId`:
+  integer) → pin reply `{ok, outcome, message, cell, revision}`; `monitoring_cell_unpin`
+  (`startGeneration`, `captureEpoch`, `frameIndex`, `objectId`) and `monitoring_cell_clear_pins` →
+  `CmdResult`; `fetch_monitoring_cell_packet` (`startGeneration`, `captureEpoch`, `frameIndex`, `objectId`,
+  `layer: "image" | "mask"`) → binary frame packet of the new **pull kinds 5
+  (`monitoring_cell_image`) and 6 (`monitoring_cell_mask`)**, zero capture identities,
+  `frame_index` / `timestamp_ns` of the row; an empty packet when the cell or the layer is not held,
+  and the error reply **`CAPTURE_MISMATCH: <plain reason>`** (contract
+  `monitoring_cells.error_codes.capture_mismatch`, generated as `MONITORING_CELL_CAPTURE_MISMATCH` /
+  `MONITORING_CELL_ERROR_CODES`) for an identity of another capture. Malformed identities or layers
+  are error replies and nothing reaches the backend (`parse_canonical_u64`). Pixels never travel in
+  JSON. The listing gains `last_capture_change` (`{capture_epoch, reason, pins_ended, pins_dropped,
+  strip_dropped}` or null); its strip holds only cells of `ring_capture_epoch`, the current capture,
+  and a pin of an ended capture is listed with its measurements only (image null, "no image:
+  capture E ended (reason); ..."), until `monitoring_cell_unpin` removes it.
+- **Pin outcomes** (`monitoring_cell_pin_outcomes`): `Pinned` 0, `PinnedWithoutImage` 1,
+  `AlreadyPinned` 2, `RunMismatch` 3 (`expectedStartGeneration` is neither 0 nor the latest run
+  started, or the row belongs to another run, or a run started while the pin was taken),
+  `NotFound` 4, `LimitReached` 5, `CaptureMismatch` 6 (`captureEpoch` is not the current capture:
+  a cell is never served across a capture change, contract `capture_rules`; checked before every
+  other rule). Pins belong to the capture that made them: at the moment the capture changes the
+  strip is cleared and the pins keep their measurements only; a run reaching Active drops them.
+- **Caps** (`monitoring_cells`, `static_assert`ed in `shim.cpp`, generated into
+  `MONITORING_CELLS`): strip 24 cells / 4 MiB, pins 16 / 4 MiB, crop ≤ 256 px square (margin ≥ 8),
+  row index 4096. Every reply is bounded by them.
+- **Gating.** `monitoring_cell_pin`, `monitoring_cell_unpin` and `monitoring_cell_clear_pins` are
+  in the server's `CONTROL_COMMANDS` (a viewer gets `VIEWER_ONLY`): the pins are one shared,
+  bounded set per instrument, so a viewer must not evict the operator's. The listing and image
+  pulls are read-only and open to viewers.
+- **Generator.** `scripts/gen_bridge_contract.py` emits the pin outcomes, `MONITORING_CELLS` (TS)
+  and `PULL_KIND_*` / `PULL_KINDS` (Rust); the packet encoder and `framePacket.ts` accept every
+  contract pull kind. New golden `contract/fixtures/monitoring-cell-v2.json` (Rust
+  `monitoring_cell_packet_matches_shared_golden`, `framePacket.test.ts`).
+- **Tests:** `contract.rs` `monitoring_cells_end_to_end` (real detections from BMP blob frames
+  through the realtime path; strip, image/mask frames, outcomes 0/2/3/4/5/6, unpin, clear; an ROI
+  change refuses the old pinned and strip images at once and ends the pin) and
+  `monitoring_cells_are_described`; `dispatch.rs` `monitoring_cells_through_dispatch`
+  (`CAPTURE_MISMATCH` for another capture and after a camera stop, the ended pin listed and
+  unpinned); `ws.rs` `live_cells_over_the_websocket` (viewer reads, viewer pins refused,
+  controller pins shared, `CAPTURE_MISMATCH` over the socket after a camera stop) and
+  the server's `live_cell_pins_are_control_only_but_reads_are_not`; C++ `backend.monitoring_cell_store`,
+  `e2e.monitoring_cells_facade` (review rounds 2-3: each capture change, a realtime stop with the
+  camera running among them, refuses the old pin and image at once and ends the pin),
+  `processing.monitoring_cell_pipeline` (review rounds 1-3: crop pixels with a nonzero ROI origin
+  in both modes; capture identity across a FrameStore swap and a resize; a frame held across an ROI
+  change; a stop while frames keep arriving; the camera session floor),
+  `processing.monitoring_cell_concurrency` (TSan lane), `performance.monitoring_cell_hot_path`;
+  `monitoringCells.test.ts`.
 
 ## ABI 40: the typed outcome in the reply, and the run a stop names (#741)
 

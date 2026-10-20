@@ -39,6 +39,7 @@
 #include "backend/services/StageService.h"
 #include "backend/services/RfGeneratorService.h"
 #include "backend/services/MonitoringDensityService.h"
+#include "backend/services/MonitoringCellStore.h"
 #include "backend/discovery/DeviceDiscoveryService.h"
 #include "backend/discovery/StartupDiscoveryCoordinator.h"
 #include "backend/discovery/providers/CameraEnumerationProvider.h"
@@ -408,6 +409,8 @@ namespace backend
             processingService_->stopRealtime();
             processingService_->stopBatchPipeline();
             processingService_->stop();
+            // Nothing may call the live cell store once it can be destroyed (member order).
+            processingService_->setMonitoringCaptureAuthority({});
         }
         // Release hardware during explicit shutdown, while the service graph
         // is still alive. Capture has ended its owned generator session and
@@ -498,7 +501,18 @@ namespace backend
         sqliteService_ = std::make_unique<services::SqliteService>();
         hdf5Service_ = std::make_unique<services::Hdf5Service>();
         captureService_ = std::make_unique<services::CaptureService>();
+        // The cell store's source reads the ring of the processing service replaced next; the old
+        // service stops calling it first (this returns once no call is running).
+        if (processingService_) processingService_->setMonitoringCaptureAuthority({});
+        monitoringCells_.reset();
+        monitoringCellSource_.reset();
         processingService_ = std::make_unique<services::ProcessingService>();
+        monitoringCellSource_ = services::makeProcessingCellSource(*processingService_);
+        monitoringCells_ = std::make_unique<services::MonitoringCellStore>(*monitoringCellSource_);
+        // The store is the one authority for the capture epoch (#716 A6a review 3): the processing
+        // service's capture changes (realtime start and stop, another ROI) go through it.
+        processingService_->setMonitoringCaptureAuthority(
+            [cells = monitoringCells_.get()](const char* reason) { return cells->advanceCapture(reason); });
         experimentCoordinator_ = std::make_unique<app::ExperimentCoordinator>(*this);
         experimentCoordinator_->setApplicationIdentity(
             MIB_APPLICATION_VERSION, MIB_APPLICATION_BUILD_ID, MIB_APPLICATION_OS);
@@ -934,11 +948,22 @@ namespace backend
             }
         }
 
-        // Wire camera lifecycle to trigger service
-        if (bootCapture && bootTrigger)
+        // Wire camera lifecycle to the monitoring capture identity and the trigger service.
+        if (bootCapture)
         {
-            captureService_->setCameraReadyCallback([this](::camera::common::ICamera* cam,
-                                                           uint64_t generation) {
+            captureService_->setCameraReadyCallback([this, bootTrigger](::camera::common::ICamera* cam,
+                                                                        uint64_t generation) {
+                // A capture session opened or closed (#716 A6a review 2-3): monitoring cells of the
+                // previous one are never served again, and its frames still in processing never
+                // become cells (the session floor). A close is reported twice (stop() and the
+                // capture thread) for the same session: one capture change.
+                if (monitoringCells_) {
+                    if (cam)
+                        monitoringCells_->advanceCapture("the camera started a new capture session", generation);
+                    else if (monitoringClosedCaptureSession_.exchange(generation) != generation)
+                        monitoringCells_->advanceCapture("the camera stopped", generation + 1);
+                }
+                if (!bootTrigger) return;
                 if (triggerService_) {
                     triggerService_->setCamera(cam, generation);
                     if (cam) {
@@ -955,11 +980,11 @@ namespace backend
         else
         {
             captureService_->setCameraReadyCallback({});
-            if (triggerService_)
-            {
-                triggerService_->setCamera(nullptr);
-                triggerService_->stop();
-            }
+        }
+        if (!(bootCapture && bootTrigger) && triggerService_)
+        {
+            triggerService_->setCamera(nullptr);
+            triggerService_->stop();
         }
 
         // Wire background capture into an application callback without exposing Qt types.
@@ -2635,11 +2660,19 @@ namespace backend
         processingService_->stopRealtime();
         const size_t capacity = aravis ? (aravisExperimentCapacity_ ? aravisExperimentCapacity_ : 512)
                                        : mindVisionExperimentCapacity_;
-        frameStore_ = std::make_shared<playback::FrameStore>(capacity);
-        captureService_->setFrameStore(frameStore_);
-        playbackService_->setFrameStore(frameStore_);
+        installFrameStore(std::make_shared<playback::FrameStore>(capacity),
+                          "the camera left Overview (a new frame buffer)");
         mindVisionOverview_.store(false);
         aravisOverview_.store(false);
+    }
+
+    void AppBackend::installFrameStore(std::shared_ptr<playback::FrameStore> store, const char* reason) {
+        frameStore_ = std::move(store);
+        captureService_->setFrameStore(frameStore_);
+        playbackService_->setFrameStore(frameStore_);
+        // Frame indices restart in the new store: monitoring cells of the old one are never
+        // resolved against it (the live cell store clears its strip and ends its pins now).
+        if (monitoringCells_) monitoringCells_->advanceCapture(reason);
     }
 
     AppBackend::MindVisionSensor AppBackend::mindVisionSensor() const {
@@ -2673,11 +2706,9 @@ namespace backend
             // bounds full-sensor preview memory. Existing store readers can finish
             // using their shared ownership; capture is joined before replacement.
             if (overview) mindVisionExperimentCapacity_ = frameStore_->capacity();
-            auto next = std::make_shared<playback::FrameStore>(
-                overview ? 8 : mindVisionExperimentCapacity_);
-            frameStore_ = std::move(next);
-            captureService_->setFrameStore(frameStore_);
-            playbackService_->setFrameStore(frameStore_);
+            installFrameStore(std::make_shared<playback::FrameStore>(overview ? 8 : mindVisionExperimentCapacity_),
+                              overview ? "the MindVision camera switched to Overview (a new frame buffer)"
+                                       : "the MindVision camera switched to Experiment (a new frame buffer)");
             mindVisionOverview_.store(overview);
             SPDLOG_INFO("MindVision mode staged: {}", overview ? "Overview" : "Experiment");
             return true;
@@ -2948,10 +2979,10 @@ namespace backend
         }
         // A new store keeps full-sensor images out of the experiment store and bounds
         // overview memory, as for MindVision.
-        frameStore_ = std::make_shared<playback::FrameStore>(
-            overview ? 8 : (aravisExperimentCapacity_ ? aravisExperimentCapacity_ : 512));
-        captureService_->setFrameStore(frameStore_);
-        playbackService_->setFrameStore(frameStore_);
+        installFrameStore(std::make_shared<playback::FrameStore>(
+                              overview ? 8 : (aravisExperimentCapacity_ ? aravisExperimentCapacity_ : 512)),
+                          overview ? "the Aravis camera switched to Overview (a new frame buffer)"
+                                   : "the Aravis camera switched to Experiment (a new frame buffer)");
         aravisOverview_.store(overview);
         installAravisFactory();
         SPDLOG_INFO("Aravis camera mode staged: {}", overview ? "Overview (full sensor)" : "Experiment window");
@@ -3141,6 +3172,8 @@ namespace backend
     app::ExperimentCoordinator &AppBackend::experiment() { return *experimentCoordinator_; }
 
     services::MonitoringDensityService &AppBackend::monitoringDensity() { return *monitoringDensity_; }
+
+    services::MonitoringCellStore *AppBackend::monitoringCells() { return monitoringCells_.get(); }
 
     services::serialbus::SerialBusManager &AppBackend::serialBus() { return *serialBusManager_; }
 
@@ -3675,6 +3708,8 @@ namespace backend
         if (processingService_) {
             for (auto& o : processingService_->memoryStats().all()) s.owners.push_back(std::move(o));
         }
+        // 3b) Live cell images (#716 A6a): owned crops of the strip and the pins.
+        if (monitoringCells_) s.owners.push_back(monitoringCells_->memoryStats());
         // 4) Exporter jobs: streaming by design (issue #344), no retained pool.
         {
             diagnostics::MemoryOwnerStats o;
