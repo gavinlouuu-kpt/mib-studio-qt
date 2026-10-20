@@ -1306,17 +1306,23 @@ mod tests {
         assert_eq!((c["ok"].clone(), c["message"].clone()), (json!(true), json!("cleared 0 pin(s)")), "{c}");
         assert!(crate::monitoring_cell_clear_pins(&state).unwrap().ok);
 
-        // Review round 2: the camera stopping ends the capture at once; its cells are refused.
+        // Review rounds 2-3: the camera stopping ends the capture at once; its cells are refused and
+        // the pin keeps its measurements only, until it is unpinned.
         assert_eq!(reply("monitoring_cell_pin", pin_args.clone())["outcome"], json!(0));
         assert_eq!(reply("stop_capture", Value::Null)["ok"], json!(true));
         let e = dispatch(&state, &host, "fetch_monitoring_cell_packet", id.clone()).unwrap_err();
         assert!(e.starts_with("CAPTURE_MISMATCH: image refused") && e.contains("(the camera stopped)"), "{e}");
         assert_eq!(reply("monitoring_cell_pin", pin_args.clone())["outcome"], json!(6));
+        let l = reply("fetch_monitoring_cells", Value::Null);
+        let pins = l["pins"].as_array().unwrap();
+        assert!(pins.len() == 1 && pins[0]["capture_epoch"] == cell["capture_epoch"] && pins[0]["image"].is_null()
+                    && pins[0]["no_image_reason"].as_str().unwrap().contains("ended (the camera stopped)"), "{l}");
+        assert!(l["strip"].as_array().unwrap().is_empty() && l["last_capture_change"]["reason"] == json!("the camera stopped")
+                    && l["last_capture_change"]["pins_ended"] == json!(1), "{l}");
         let u = reply("monitoring_cell_unpin", json!({ "startGeneration": cell["start_generation"],
                       "captureEpoch": cell["capture_epoch"], "frameIndex": cell["frame_index"], "objectId": cell["object_id"] }));
-        assert!(u["ok"] == json!(false) && u["message"].as_str().unwrap().contains("dropped"), "{u}");
-        let l = reply("fetch_monitoring_cells", Value::Null);
-        assert!(l["pins"].as_array().unwrap().is_empty() && l["last_capture_change"]["reason"] == json!("the camera stopped"), "{l}");
+        assert_eq!((u["ok"].clone(), u["message"].clone()), (json!(true), json!("unpinned")), "the ended pin: {u}");
+        assert!(reply("fetch_monitoring_cells", Value::Null)["pins"].as_array().unwrap().is_empty());
 
         state.bridge.lock().unwrap().pin_mut().shutdown();
         let _ = std::fs::remove_dir_all(&frames);

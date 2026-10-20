@@ -1,7 +1,8 @@
 // Bridge ABI 41 (#716 A6a): the live cell client against a mocked transport. Identities travel as
 // canonical decimal strings, malformed ones never reach the transport, the listing and pin replies
 // are checked against the contract, and the pixels come back as frame packets of kind 5 / 6. An
-// image pull of another capture is the CAPTURE_MISMATCH error (review round 2).
+// image pull of another capture is the CAPTURE_MISMATCH error (review round 2); a pin of an ended
+// capture is listed with its measurements only (review round 3).
 import { beforeEach, expect, it, vi } from "vitest";
 import cellGolden from "../../crates/mib-bridge/contract/fixtures/monitoring-cell-v2.json";
 import { bridge } from "./bridge";
@@ -53,12 +54,16 @@ it("fetches and checks the listing: exact identities, image xor reason", async (
   expect(l.pins[0].no_image_reason).toContain("left the monitoring buffer");
   expect(l.strip[0].ring_ratio).toBeNull();
   expect(l.last_capture_change).toBeNull();
-  // After a capture change the listing says why, and what it dropped.
-  invoke.mockResolvedValueOnce(listing({ ring_capture_epoch: "4", strip: [], pins: [],
-    last_capture_change: { capture_epoch: "4", reason: "the camera stopped", pins_dropped: 2, strip_dropped: 7 } }));
+  // After a capture change the listing says why, and what it cleared; the pin of the capture that
+  // ended keeps its identity and measurements, without an image.
+  const ended = cell("12", { image: null, no_image_reason: "no image: capture 3 ended (the camera stopped); the pin keeps its measurements" });
+  invoke.mockResolvedValueOnce(listing({ ring_capture_epoch: "4", strip: [], pins: [ended],
+    last_capture_change: { capture_epoch: "4", reason: "the camera stopped", pins_ended: 1, pins_dropped: 0, strip_dropped: 7 } }));
   const changed = await bridge.fetchMonitoringCells();
   if (!changed.valid) throw new Error("valid listing expected");
-  expect(changed.last_capture_change).toEqual({ capture_epoch: "4", reason: "the camera stopped", pins_dropped: 2, strip_dropped: 7 });
+  expect(changed.last_capture_change).toEqual({ capture_epoch: "4", reason: "the camera stopped", pins_ended: 1, pins_dropped: 0, strip_dropped: 7 });
+  expect([changed.pins[0].capture_epoch, changed.pins[0].image, changed.pins[0].area]).toEqual(["3", null, 250]);
+  expect(changed.pins[0].no_image_reason).toContain("capture 3 ended (the camera stopped)");
   invoke.mockResolvedValueOnce({ valid: false });
   expect(await bridge.fetchMonitoringCells()).toEqual({ valid: false });
 });
@@ -74,10 +79,11 @@ it.each([
   ["a cell without its capture epoch", { strip: [cell("1", { capture_epoch: undefined })] }],
   ["a listing without the ring's capture epoch", { ring_capture_epoch: 3 }],
   ["a strip cell of another capture", { strip: [cell("1", { capture_epoch: "2" })] }],
-  ["a pin of another capture", { pins: [cell("1", { capture_epoch: "4" })] }],
+  ["a pin of another capture with an image", { pins: [cell("1", { capture_epoch: "2" })] }],
   ["a listing without last_capture_change", { last_capture_change: undefined }],
-  ["a capture change without its reason", { last_capture_change: { capture_epoch: "3", reason: 1, pins_dropped: 0, strip_dropped: 0 } }],
-  ["a capture change with a rounded epoch", { last_capture_change: { capture_epoch: 3, reason: "x", pins_dropped: 0, strip_dropped: 0 } }],
+  ["a capture change without its reason", { last_capture_change: { capture_epoch: "3", reason: 1, pins_ended: 0, pins_dropped: 0, strip_dropped: 0 } }],
+  ["a capture change with a rounded epoch", { last_capture_change: { capture_epoch: 3, reason: "x", pins_ended: 0, pins_dropped: 0, strip_dropped: 0 } }],
+  ["a capture change without its ended pins", { last_capture_change: { capture_epoch: "3", reason: "x", pins_dropped: 0, strip_dropped: 0 } }],
 ])("rejects %s", async (_why, extra) => {
   invoke.mockResolvedValueOnce(listing(extra));
   await expect(bridge.fetchMonitoringCells()).rejects.toThrow("MONITORING_CELLS_INVALID");

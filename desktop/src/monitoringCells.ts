@@ -8,9 +8,10 @@
 import { MONITORING_CELLS, MONITORING_CELL_ERROR_CODES, MONITORING_CELL_PIN_OUTCOMES } from "./bridgeContract";
 import { decimalU64 } from "./framePacket";
 
-/** A monitoring row's identity: the run active when it was detected (0 = outside a run), the
- *  capture its frame came from (frame indices restart when the capture changes; the epoch never
- *  repeats), its frame index and object id. u64 values are canonical decimal strings. */
+/** A monitoring row's identity: the run active when its frame entered processing (0 = outside a
+ *  run), the capture its frame entered with (frame indices restart when the capture changes; the
+ *  epoch never repeats; "0" = a frame that crossed a capture change, never a cell), its frame
+ *  index and object id. u64 values are canonical decimal strings. */
 export interface MonitoringCellKey {
   start_generation: string;
   capture_epoch: string;
@@ -60,13 +61,17 @@ export interface MonitoringCell extends MonitoringCellKey {
   no_image_reason: string | null;
 }
 
-/** The last capture change the backend applied: pins belong to the capture that made them, so the
- *  strip and the pins of the earlier capture were dropped at that moment. */
+/** The last capture change: pins belong to the capture that made them, so at that moment the strip
+ *  was cleared and the pins of the capture that ended kept their measurements only (a run start
+ *  drops the pins instead). */
 export interface MonitoringCaptureChange {
   /** The capture that began. */
   capture_epoch: string;
-  /** Why, in plain words ("the camera stopped", "the processing ROI changed", ...). */
+  /** Why, in plain words ("the camera stopped", "realtime processing stopped", ...). */
   reason: string;
+  /** Pins of the capture that ended, now listed without an image. */
+  pins_ended: number;
+  /** Pins removed (a run start). */
   pins_dropped: number;
   strip_dropped: number;
 }
@@ -77,13 +82,14 @@ export interface MonitoringCellsListing {
   scope_start_generation: string;
   /** The strip's context: the active run, or "0" outside a run ... */
   ring_start_generation: string;
-  /** The current capture: every listed cell is of it, and a pin must name it (else CaptureMismatch). */
+  /** The current capture: every strip cell is of it, and a pin must name it (else CaptureMismatch).
+   *  A pin of an ended capture is listed with its measurements only (image null, the reason said). */
   ring_capture_epoch: string;
   /** Bumps whenever the strip or the pins change. */
   revision: string;
   /** Oldest -> newest. */
   strip: MonitoringCell[];
-  /** In pin order. */
+  /** In pin order; a pin whose capture ended has no image until it is unpinned. */
   pins: MonitoringCell[];
   /** null when the capture has not changed since the backend started. */
   last_capture_change: MonitoringCaptureChange | null;
@@ -223,6 +229,7 @@ export function decodeMonitoringCells(raw: unknown): MonitoringCellsReply {
     change = {
       capture_epoch: decimal(c.capture_epoch, "last_capture_change.capture_epoch"),
       reason: c.reason,
+      pins_ended: integer(c.pins_ended, "last_capture_change.pins_ended"),
       pins_dropped: integer(c.pins_dropped, "last_capture_change.pins_dropped"),
       strip_dropped: integer(c.strip_dropped, "last_capture_change.strip_dropped"),
     };
@@ -230,8 +237,11 @@ export function decodeMonitoringCells(raw: unknown): MonitoringCellsReply {
   const ringCaptureEpoch = decimal(raw.ring_capture_epoch, "ring_capture_epoch");
   const strip = raw.strip.map(decodeMonitoringCell);
   const pins = raw.pins.map(decodeMonitoringCell);
-  // The backend lists cells of the current capture only: anything else is a contract breach.
-  if ([...strip, ...pins].some(c => c.capture_epoch !== ringCaptureEpoch)) invalid("a cell of another capture is listed");
+  // The strip holds cells of the current capture only, and a pin of another capture has no image:
+  // anything else is a contract breach.
+  if (strip.some(c => c.capture_epoch !== ringCaptureEpoch)) invalid("a strip cell of another capture is listed");
+  if (pins.some(c => c.capture_epoch !== ringCaptureEpoch && c.image !== null))
+    invalid("a pin of an ended capture is listed with an image");
   return {
     valid: true,
     scope_start_generation: decimal(raw.scope_start_generation, "scope_start_generation"),

@@ -139,6 +139,8 @@ fn monitoring_cells_are_described() {
                           ("capture_rules", "never served across a capture change"),
                           ("capture_rules", "Pins belong to the capture that made them"),
                           ("capture_rules", "the camera opening or closing"), ("capture_rules", "another processing ROI"),
+                          ("capture_rules", "a realtime stop"), ("capture_rules", "Tag at entry"),
+                          ("capture_rules", "One authority"), ("listing", "pins_ended"),
                           ("geometry", "ROI"), ("threading", "24-byte tag")] {
         assert!(cells[key].as_str().is_some_and(|d| d.contains(needle)), "monitoring_cells.{key} mentions {needle}");
     }
@@ -1034,8 +1036,9 @@ fn monitoring_cells_end_to_end() {
     let after: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_monitoring_cells()).unwrap();
     assert!(after["pins"].as_array().unwrap().is_empty() && after["stats"]["pin_bytes"] == "0", "{after}");
 
-    // Review round 2: another processing ROI is another capture, at the moment it is set. The pin
-    // and the strip cell of the old capture are refused at once, with the reason.
+    // Review rounds 2-3: another processing ROI is another capture, at the moment it is set. The
+    // pin and the strip cell of the old capture are refused at once, with the reason; the pin
+    // keeps its measurements only.
     assert_eq!(pin(&mut bridge, 0, newest.frame_index, newest.object_id)["outcome"], 0);
     assert!(bridge.pin_mut().set_processing_roi(0, 0, 64, 32).ok);
     for (f, o, what) in [(newest.frame_index, newest.object_id, "pinned"), (frame, object, "strip")] {
@@ -1046,9 +1049,16 @@ fn monitoring_cells_end_to_end() {
     let stale = pin(&mut bridge, 0, frame, object);
     assert_eq!(stale["outcome"], 6, "{stale}");
     let changed: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_monitoring_cells()).unwrap();
-    assert!(changed["pins"].as_array().unwrap().is_empty() && changed["ring_capture_epoch"] != epoch.to_string(), "{changed}");
-    assert_eq!((changed["last_capture_change"]["reason"].clone(), changed["last_capture_change"]["pins_dropped"].clone()),
-               (serde_json::json!("the processing ROI changed"), serde_json::json!(1)), "{changed}");
+    let pins = changed["pins"].as_array().unwrap();
+    assert!(pins.len() == 1 && pins[0]["image"].is_null() && pins[0]["capture_epoch"] == serde_json::json!(epoch.to_string())
+                && pins[0]["no_image_reason"].as_str().unwrap().contains("ended (the processing ROI changed)")
+                && changed["ring_capture_epoch"] != epoch.to_string() && changed["strip"].as_array().unwrap().is_empty(),
+            "{changed}");
+    assert_eq!((changed["last_capture_change"]["reason"].clone(), changed["last_capture_change"]["pins_ended"].clone(),
+                changed["last_capture_change"]["pins_dropped"].clone()),
+               (serde_json::json!("the processing ROI changed"), serde_json::json!(1), serde_json::json!(0)), "{changed}");
+    let unpin = bridge.pin_mut().monitoring_cell_unpin(0, epoch, newest.frame_index, newest.object_id);
+    assert!(unpin.ok && unpin.message == "unpinned", "the ended pin is unpinned: {unpin:?}");
 
     assert!(bridge.pin_mut().stop_capture().ok);
     bridge.pin_mut().shutdown();
