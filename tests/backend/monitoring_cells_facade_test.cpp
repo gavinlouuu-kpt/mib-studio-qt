@@ -17,8 +17,9 @@
 //   5. monitoring_clear clears the strip and keeps the pins; unpin and clear;
 //   6. capture changes take effect at the moment they happen (review round 2),
 //      each with a strip cell and a pin of the old capture: another processing
-//      ROI, the camera stopping, and a MindVision switch to Overview with
-//      realtime stopped (a new frame buffer, no frame processed after it). At
+//      ROI, the camera stopping, a frame buffer resize, and a MindVision switch
+//      to Overview with realtime stopped (a new frame buffer, no frame
+//      processed after it). At
 //      once, with no frame and no refresh in between, the old identities are
 //      refused for pin (CaptureMismatch) and image (with the reason), unpin
 //      says the pin was dropped, and the listing holds nothing of the old
@@ -341,6 +342,19 @@ int main()
                             std::chrono::seconds(15)),
                         "readiness passes with a running mock camera");
         }
+        // The camera opened a capture session (review round 2): the earlier capture's cells are gone.
+        // (Readiness may pass a moment before the capture thread reports the session open.)
+        MIB_EXPECT(waitFor(
+                       [&] {
+                           const auto c = cells(facade);
+                           return c["last_capture_change"].is_object() &&
+                                  c["last_capture_change"]["reason"] == "the camera started a new capture session";
+                       },
+                       std::chrono::seconds(5)),
+                   "a camera session opening is a capture change");
+        l = cells(facade);
+        MIB_EXPECT(proc.monitoringCaptureEpoch() > e1 && l["pins"].empty() && l["last_capture_change"]["pins_dropped"] == 3,
+                   "the opening dropped the earlier capture's pins: " + l.dump());
         // The realtime loop starts on the capture: a new capture epoch. Rows from before it are an
         // earlier capture (their frame indices could recur), so they can no longer be pinned.
         proc.setRealtimeEnabled(true);
@@ -463,6 +477,13 @@ int main()
         stopCapture.action = bridge::CameraCommandAction::StopCapture;
         MIB_REQUIRE(facade.dispatch(stopCapture).ok, "capture stop");
         expectDropped(facade, proc, kBase + 310, before, "the camera stopped", "camera stop");
+
+        wd.mark("buffer resize");
+        before = holdTwo(facade, proc, kBase + 315);
+        const auto resized =
+            json::parse(facade.savePreviewBufferJson(R"({"action":"resize","capacity":"64","confirm_clear":true})"));
+        MIB_REQUIRE(resized["ok"] == true, "resize: " + resized.dump());
+        expectDropped(facade, proc, kBase + 315, before, "the frame buffer was resized", "buffer resize");
 
         wd.mark("overview switch");
         proc.stopRealtime(); // realtime stopped: no frame is processed after the switch
