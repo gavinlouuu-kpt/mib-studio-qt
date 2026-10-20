@@ -54,6 +54,20 @@ function info(over: Partial<ReviewInfo> = {}): ReviewInfo {
     has_recorded_config: true,
     ring_ratio_min: 15,
     ring_ratio_max: 25,
+    // Review ABI 2 (#746): a legacy file, every identity member absent.
+    identity: {
+      has_snapshot: false,
+      snapshot_unreadable: false,
+      snapshot_version: null,
+      run_id: null,
+      experiment_id: null,
+      run_index: null,
+      sample_ref: null,
+      calibration_record_id: null,
+      operator: null,
+      annotation: null,
+      annotation_unreadable: false,
+    },
     ...over,
   };
 }
