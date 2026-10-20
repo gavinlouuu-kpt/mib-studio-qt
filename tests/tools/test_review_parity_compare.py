@@ -1,8 +1,10 @@
 """tools/review_parity/compare.py (#512 S6): the MIB Studio pairs, the chart-range
 tolerance and the accepted-difference handling (decisions D2-D5 and D10).
 Every acceptance is tested both ways: the difference it covers, and a
-regression it must refuse (a declared but unapplied live input, a missing or
-misplaced ROI, moved density cells, bins that differ)."""
+regression it must refuse (a declared but unapplied live input, a missing,
+misplaced or incomplete ROI, moved density cells, bins that differ, absent
+dump files). The expected ROI bands are cv2.rectangle goldens
+(tests/tools/data/review_parity_roi_bands.json), not compare.py's model."""
 import importlib.util
 import json
 import math
@@ -19,8 +21,9 @@ compare = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(compare)
 
 W, H = 24, 16          # overlay renders
-ROI = [6, 4, 10, 6]    # recorded ROI: the path is x 6..15, y 4..9
+ROI = [4, 3, 16, 10]   # recorded ROI: the path is x 4..19, y 3..12
 YELLOW, RED = compare.STUDIO_ROI[0], compare.REVIEW_ROI[0]
+GOLDENS = json.loads((ROOT / "tests/tools/data/review_parity_roi_bands.json").read_text(encoding="utf-8"))["cases"]
 
 
 def png(path: Path, rgb: bytes, width: int = W, height: int = H) -> None:
@@ -60,28 +63,52 @@ def paint(rgb: bytes, pixels, colour) -> bytes:
     return bytes(out)
 
 
-def band(roi, half: int) -> set[int]:
-    """Pixels within `half` (Chebyshev) of the ROI rectangle's 1 px path."""
-    x, y, w, h = roi
-    rect = (x, y, x + w - 1, y + h - 1)
-    return {py * W + px for py in range(H) for px in range(W) if compare.ring_distance(px, py, rect) <= half}
+def golden(roi, thickness: int, width: int = W, height: int = H) -> set[int]:
+    """The pixels cv2.rectangle painted for this case (pixel indices)."""
+    case, = [c for c in GOLDENS if c["roi"] == list(roi) and c["thickness"] == thickness
+             and (c["width"], c["height"]) == (width, height)]
+    return {y * width + x for y, row in enumerate(case["rows"]) for x, v in enumerate(row) if v == "#"}
+
+
+def shift(pixels, dx: int, dy: int) -> set[int]:
+    return {(p // W + dy) * W + p % W + dx for p in pixels}
+
+
+def box(x0: int, y0: int, x1: int, y1: int, half: int) -> set[int]:
+    """Every pixel within `half` of the path of (x0, y0, x1, y1), square
+    corners: [x0 - half, x1 + half] × [y0 - half, y1 + half] less the inside."""
+    return {y * W + x for y in range(y0 - half, y1 + half + 1) for x in range(x0 - half, x1 + half + 1)
+            if not (x0 + half < x < x1 - half and y0 + half < y < y1 - half)}
 
 
 GRAY = bytes(40 + (i * 7) % 150 for i in range(W * H))
 PLAIN = bytes(v for g in GRAY for v in (g, g, g))
-STUDIO_ON = paint(PLAIN, band(ROI, 0), YELLOW)   # RoiStyle::Facade: yellow, 1 px
-YOFO_ON = paint(PLAIN, band(ROI, 2), RED)        # drawRoiOverlay: red, 5 px band
+STUDIO_ON = paint(PLAIN, golden(ROI, 1), YELLOW)   # RoiStyle::Facade: yellow, thickness 1
+YOFO_ON = paint(PLAIN, golden(ROI, 3), RED)        # drawRoiOverlay: red, thickness 3 (a 5 px band)
 
 # Valid rows: 8 finite points (2 non-finite), recorded at 0.25 µm/px.
 AREAS = [6.25] * 5 + [7.375] * 3 + [None, None]
 DEFORMS = [0.1] * 5 + [0.28] * 3 + [0.2, None]
 RATIOS = [15.2] * 3 + [16.2] * 5 + [None, None]
 LIVE, RECORDED = 0.4886, 0.25
+OVERLAYS = ["valid_000000_m0_roi0", "valid_000000_m0_roi1"]
 
 
 def write(path: Path, value) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, ensure_ascii=False) if not isinstance(value, str) else value, encoding="utf-8")
+
+
+def cells_of(areas, deforms, area_range, deform_range, resolution: int = 128) -> dict:
+    """reviewChartsJson's density bin, written out here rather than taken from compare.py."""
+    out: dict = {}
+    for a, f in zip(areas, deforms):
+        if a is None or f is None:
+            continue
+        x = min(max(int((a - area_range[0]) / (area_range[1] - area_range[0]) * resolution), 0), resolution - 1)
+        y = min(max(int((f - deform_range[0]) / (deform_range[1] - deform_range[0]) * resolution), 0), resolution - 1)
+        out[(x, y)] = out.get((x, y), 0) + 1
+    return out
 
 
 def charts_for(factor: float, lo: float, hi: float) -> dict:
@@ -91,7 +118,7 @@ def charts_for(factor: float, lo: float, hi: float) -> dict:
     x, y = (6.25 * k, 7.375 * k), (0.1, 0.28)
     area_range = [x[0] - 0.1 * (x[1] - x[0]), x[1] + 0.1 * (x[1] - x[0])]
     deform_range = [y[0] - 0.1 * (y[1] - y[0]), y[1] + 0.1 * (y[1] - y[0])]
-    cells, _ = compare.density_reference(area, DEFORMS, area_range, deform_range, 128)
+    cells = cells_of(area, DEFORMS, area_range, deform_range)
     return {"valid": True, "pixel_to_micron": factor, "rows": "10", "finite_points": "8",
             "area_range": area_range, "deform_range": deform_range, "resolution": 128,
             "density": [[cx, cy, str(n)] for (cx, cy), n in sorted(cells.items())],
@@ -116,7 +143,7 @@ def make_dumps(d: Path) -> None:
     write(d / "yofo/summary.json", {**common, "pixel_to_micron": RECORDED, "pixel_to_micron_from_file": True,
                                     "accounting_summary": " · run complete — ok", "scatter_count": 8,
                                     "ring_ratio_min": 15.0, "ring_ratio_max": 25.0, "roi": ROI,
-                                    "core_message": "Core 90%: 8 of 8 cells"})
+                                    "core_message": "Core 90%: 8 of 8 cells", "overlays": OVERLAYS})
     write(d / "yofo/scatter.json", {"valid": True, "pixel_to_micron": RECORDED, "area_um2": AREAS,
                                     "deformability": DEFORMS, "ring_ratio": RATIOS})
     write(d / "yofo/charts.json", {"scatter": {"count": 8, "x": dict(x), "y": dict(y)},
@@ -132,7 +159,9 @@ def make_dumps(d: Path) -> None:
                                       "app": {"pixel_to_micron": LIVE, "ring_ratio_min": 15.0, "ring_ratio_max": 25.0},
                                       "d4_probe": {"ring_ratio_min": 10.0, "ring_ratio_max": 30.0},
                                       "compared": {"pixel_to_micron": RECORDED, "pixel_to_micron_from_file": True,
-                                                   "ring_ratio_min": 15.0, "ring_ratio_max": 25.0}})
+                                                   "ring_ratio_min": 15.0, "ring_ratio_max": 25.0},
+                                      "all_export": {"state": "completed"}, "metrics_export": {"state": "completed"},
+                                      "overlays": OVERLAYS, "failures": []})
     for half in ("qt", "yofo", "studio"):
         write(d / half / "metrics.csv", "frame,area\n1,2.5\n")
         write(d / half / "all/run/metrics.csv", "frame,area\n1,2.5\n")
@@ -255,6 +284,46 @@ class ReviewParityCompareTest(unittest.TestCase):
         self.edit("studio/charts.json", lambda v: v.update(density=[[c[0], c[1] + 1, c[2]] for c in v["density"]]))
         self.assertEqual(self.studio("density cells"), "DIFF")
 
+    def test_density_edge_points_move_only_across_their_edge(self):
+        # Codex's case: points 0, 1 and 0.5 on both axes over [-0.1, 1.1] at
+        # 128 cells. 0.5 lands on the edge between cells 63 and 64 (63.99… in
+        # double); 0 and 1 sit inside cells 10 and 117.
+        grid = {"area_range": [-0.1, 1.1], "deform_range": [-0.1, 1.1], "resolution": 128}
+        self.edit("yofo/scatter.json", lambda v: v.update(area_um2=[0.0, 1.0, 0.5], deformability=[0.0, 1.0, 0.5]))
+        self.assertEqual(cells_of([0.0, 1.0, 0.5], [0.0, 1.0, 0.5], grid["area_range"], grid["deform_range"]),
+                         {(10, 10): 1, (117, 117): 1, (63, 63): 1})
+
+        def studio(*cells):
+            self.edit("studio/charts.json", lambda v: v.update(grid, density=[[x, y, "1"] for x, y in cells]))
+            return self.studio("density cells")
+        self.assertEqual(studio((10, 10), (117, 117), (63, 63)), "PASS")
+        # The edge point across its edge (long double puts it at 64): accepted, on either axis.
+        self.assertEqual(studio((10, 10), (117, 117), (64, 64)), "PASS")
+        self.assertEqual(studio((10, 10), (117, 117), (63, 64)), "PASS")
+        # The non-edge point moved (10, 10) → (90, 90): refused, though one point is on an edge.
+        self.assertEqual(studio((90, 90), (117, 117), (64, 64)), "DIFF")
+        self.assertEqual(studio((11, 10), (117, 117), (63, 63)), "DIFF")
+        # The edge point two cells away, or counted twice.
+        self.assertEqual(studio((10, 10), (117, 117), (65, 64)), "DIFF")
+        self.edit("studio/charts.json", lambda v: v.update(density=[[10, 10, "1"], [117, 117, "1"], [63, 63, "1"],
+                                                                    [64, 64, "1"]]))
+        self.assertEqual(self.studio("density cells"), "DIFF")
+        # The non-edge point moved into the edge point's cell: the count fits, the placement does not.
+        self.edit("studio/charts.json", lambda v: v.update(density=[[63, 63, "2"], [117, 117, "1"]]))
+        self.assertEqual(self.studio("density cells"), "DIFF")
+        # Two edge points on different edges, both counted beside one of them.
+        self.edit("yofo/scatter.json", lambda v: v.update(area_um2=[0.5, 0.5], deformability=[0.0, 1.0]))
+        self.assertEqual(studio((64, 10), (63, 117)), "PASS")
+        self.edit("studio/charts.json", lambda v: v.update(density=[[63, 10, "2"]]))
+        self.assertEqual(self.studio("density cells"), "DIFF")
+        # Two edge points with overlapping candidates: one each side, or both on one side.
+        self.edit("yofo/scatter.json", lambda v: v.update(area_um2=[0.5, 0.5], deformability=[0.0, 0.0]))
+        self.assertEqual(studio((63, 10), (64, 10)), "PASS")
+        self.edit("studio/charts.json", lambda v: v.update(density=[[64, 10, "2"]]))
+        self.assertEqual(self.studio("density cells"), "PASS")
+        self.edit("studio/charts.json", lambda v: v.update(density=[[64, 10, "1"], [64, 11, "1"]]))
+        self.assertEqual(self.studio("density cells"), "DIFF")
+
     def test_d5_covers_only_the_chart_tiffs(self):
         write(self.dir / "studio/all/run/extra.tiff", "x")
         rows = self.rows()
@@ -269,25 +338,41 @@ class ReviewParityCompareTest(unittest.TestCase):
     def test_d2_needs_each_style_at_the_recorded_roi(self):
         studio_on = self.dir / "studio/overlays/valid_000000_m0_roi1.png"
         yofo_on = self.dir / "yofo/overlays/valid_000000_m0_roi1.ppm"
+        self.assertEqual(self.studio("overlays, ROI on"), "ACCEPTED")
         # MIB Studio stops drawing the ROI while YOFO still does.
         png(studio_on, PLAIN)
         self.assertEqual(self.studio("overlays, ROI on"), "DIFF")
         # A yellow rectangle in the wrong place.
-        png(studio_on, paint(PLAIN, band([7, 5, 10, 6], 0), YELLOW))
+        png(studio_on, paint(PLAIN, shift(golden(ROI, 1), 1, 1), YELLOW))
         self.assertEqual(self.studio("overlays, ROI on"), "DIFF")
         # A stray yellow pixel inside the rectangle.
         png(studio_on, paint(STUDIO_ON, [7 * W + 10], YELLOW))
         self.assertEqual(self.studio("overlays, ROI on"), "DIFF")
+        # MIB Studio's rectangle with one pixel missing.
+        png(studio_on, paint(STUDIO_ON, [3 * W + 10], PLAIN[(3 * W + 10) * 3:(3 * W + 10) * 3 + 3]))
+        self.assertEqual(self.studio("overlays, ROI on"), "DIFF")
         png(studio_on, STUDIO_ON)
         # YOFO's band offset, or in another colour.
-        ppm(yofo_on, paint(PLAIN, band([6, 5, 10, 6], 2), RED))
+        ppm(yofo_on, paint(PLAIN, shift(golden(ROI, 3), 0, 1), RED))
         self.assertEqual(self.studio("overlays, ROI on"), "DIFF")
-        ppm(yofo_on, paint(PLAIN, band(ROI, 2), (0, 255, 0)))
+        ppm(yofo_on, paint(PLAIN, golden(ROI, 3), (0, 255, 0)))
+        self.assertEqual(self.studio("overlays, ROI on"), "DIFF")
+        # Incomplete YOFO bands: a thin 1 px red rectangle at the ROI, a 3 px
+        # band, the band with one pixel missing, or square corners.
+        ppm(yofo_on, paint(PLAIN, golden(ROI, 1), RED))
+        self.assertEqual(self.studio("overlays, ROI on"), "DIFF")
+        ppm(yofo_on, paint(PLAIN, box(4, 3, 19, 12, 1), RED))
+        self.assertEqual(self.studio("overlays, ROI on"), "DIFF")
+        missing = sorted(golden(ROI, 3))[17]
+        ppm(yofo_on, paint(YOFO_ON, [missing], PLAIN[missing * 3:missing * 3 + 3]))
+        self.assertEqual(self.studio("overlays, ROI on"), "DIFF")
+        self.assertTrue(golden(ROI, 3) < box(4, 3, 19, 12, 2))
+        ppm(yofo_on, paint(PLAIN, box(4, 3, 19, 12, 2), RED))
         self.assertEqual(self.studio("overlays, ROI on"), "DIFF")
         ppm(yofo_on, YOFO_ON)
         self.assertEqual(self.studio("overlays, ROI on"), "ACCEPTED")
         # The halves disagree on the recorded ROI.
-        self.edit("yofo/summary.json", lambda v: v.update(roi=[6, 4, 10, 7]))
+        self.edit("yofo/summary.json", lambda v: v.update(roi=[4, 3, 16, 11]))
         self.assertEqual(self.studio("recorded ROI"), "DIFF")
         self.assertEqual(self.studio("overlays, ROI on"), "DIFF")
         # No recorded ROI: ROI on must equal ROI off on both sides, a PASS.
@@ -305,15 +390,24 @@ class ReviewParityCompareTest(unittest.TestCase):
         self.assertEqual(self.studio("overlays, ROI on"), "DIFF")
 
     def test_roi_geometry(self):
-        self.assertEqual(compare.studio_roi_rect(ROI, W, H), (6, 4, 15, 9))
-        self.assertEqual(compare.review_roi_rect(ROI, W, H), (6, 4, 15, 9))
+        self.assertEqual(compare.studio_roi_rect(ROI, W, H), (4, 3, 19, 12))
+        self.assertEqual(compare.review_roi_rect(ROI, W, H), (4, 3, 19, 12))
         # Clipped at the image: the facade intersects, drawRoiOverlay clamps.
         self.assertEqual(compare.studio_roi_rect([20, 12, 10, 10], W, H), (20, 12, 23, 15))
         self.assertEqual(compare.review_roi_rect([20, 12, 10, 10], W, H), (20, 12, 23, 15))
         self.assertIsNone(compare.studio_roi_rect([0, 0, 0, 0], W, H))
-        self.assertEqual(compare.ring_distance(6, 4, (6, 4, 15, 9)), 0)
-        self.assertEqual(compare.ring_distance(4, 4, (6, 4, 15, 9)), 2)
-        self.assertEqual(compare.ring_distance(10, 7, (6, 4, 15, 9)), 2)
+        self.assertIsNone(compare.review_roi_rect([0, 0, 0, 0], W, H))
+
+    def test_roi_band_matches_opencv(self):
+        # compare.roi_band against every cv2.rectangle golden: the facade's
+        # thickness 1 on Rect & image, drawRoiOverlay's thickness 3 on the
+        # clamped ROI.
+        self.assertEqual(len(GOLDENS), 7)
+        for case in GOLDENS:
+            width, height, roi, thickness = case["width"], case["height"], case["roi"], case["thickness"]
+            rect = (compare.review_roi_rect if thickness == 3 else compare.studio_roi_rect)(roi, width, height)
+            expected = {y * width + x for y, row in enumerate(case["rows"]) for x, v in enumerate(row) if v == "#"}
+            self.assertEqual(compare.roi_band(rect, width, height, thickness), expected, case["note"])
 
     def test_d10_needs_identical_bins_and_each_shells_rule(self):
         for pair in ("MIB Studio ↔ Qt", "MIB Studio ↔ YOFO"):
@@ -337,6 +431,46 @@ class ReviewParityCompareTest(unittest.TestCase):
         # Equal tops pass without the acceptance.
         self.edit("qt/summary.json", lambda v: v["histogram"]["y"].update(max=5))
         self.assertEqual(self.studio("histogram y range", "MIB Studio ↔ Qt"), "PASS")
+
+    def test_absent_dump_files_are_differences(self):
+        self.assertEqual(self.studio("expected artefacts"), "PASS")
+        self.assertEqual(self.studio("studio run"), "PASS")
+        # No D4 probe evidence: not a silent skip.
+        (self.dir / "studio/charts_d4.json").unlink()
+        for pair in ("MIB Studio ↔ Qt", "MIB Studio ↔ YOFO"):
+            self.assertEqual(self.studio("histogram range, live ≠ recorded (D4 probe)", pair), "DIFF")
+            self.assertEqual(self.studio("expected artefacts", pair), "DIFF")
+        detail = [t for p, c, _, t in self.rows() if c.startswith("histogram range, live")][0]
+        self.assertIn("D4 probe missing", detail)
+        write(self.dir / "studio/charts_d4.json", charts_for(LIVE, 10.0, 30.0))
+        self.edit("studio/summary.json", lambda v: v.pop("d4_probe"))
+        self.assertEqual(self.studio("histogram range, live ≠ recorded (D4 probe)"), "DIFF")
+        self.assertIn("studio/summary.json d4_probe",
+                      [t for p, c, _, t in self.rows() if c == "expected artefacts"][0])
+        self.assertEqual(compare.main([str(self.dir)]), 1)
+        # Each other absent artefact is named.
+        make = lambda: (shutil.rmtree(self.dir), self.dir.mkdir(), make_dumps(self.dir))
+        for rel in ("studio/metrics.csv", "studio/charts_app.json", "yofo/scatter.json",
+                    "studio/overlays/valid_000000_m0_roi1.png", "yofo/overlays/valid_000000_m0_roi0.pgm"):
+            make()
+            (self.dir / rel).unlink()
+            detail = [t for p, c, _, t in self.rows() if p.startswith("MIB Studio ↔ YOFO") and c == "expected artefacts"][0]
+            self.assertEqual(self.studio("expected artefacts"), "DIFF", rel)
+            self.assertIn(rel.replace(".pgm", ".p?m"), detail)
+        make()
+        shutil.rmtree(self.dir / "studio/all")
+        self.assertIn("studio/all/ (empty)", [t for p, c, _, t in self.rows() if c == "expected artefacts"][0])
+        # A failure the studio run recorded, or an export that did not complete.
+        make()
+        self.edit("studio/summary.json", lambda v: v.update(failures=["render_review_overlay x: empty"]))
+        self.assertEqual(self.studio("studio run"), "DIFF")
+        make()
+        self.edit("studio/summary.json", lambda v: v["metrics_export"].update(state="failed"))
+        self.assertEqual(self.studio("studio run"), "DIFF")
+        make()
+        self.edit("studio/summary.json", lambda v: v.pop("failures"))
+        self.assertEqual(self.studio("studio run"), "DIFF")
+        self.assertEqual(self.studio("expected artefacts"), "DIFF")
 
     def test_unaccepted_studio_difference_fails(self):
         self.edit("studio/charts.json", lambda v: v.update(histogram=["3", "0", "4"] + ["0"] * 17))

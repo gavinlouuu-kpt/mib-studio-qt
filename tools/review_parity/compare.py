@@ -42,8 +42,8 @@ LABEL_RESOLUTION = 0.05
 STUDIO_CHART_FILES = ("scatter_plot.tiff", "histogram.tiff")
 
 # MIB Studio's accepted differences: decisions D2-D5 and D10 of the #512 plan, until S13.
-D2 = ("MIB Studio's render_review_overlay draws the ROI yellow 1 px unscaled, Qt and YOFO red 3 px scaled "
-      "(decision D2, accepted until #512 S13)")
+D2 = ("MIB Studio's render_review_overlay draws the ROI yellow at thickness 1 unscaled, Qt and YOFO red at "
+      "thickness 3 scaled, which OpenCV paints as a 5 px band (decision D2, accepted until #512 S13)")
 D3 = ("MIB Studio's facade uses the live px→µm, Qt and YOFO each file's recorded factor "
       "(decision D3, accepted until #512 S13)")
 D4 = ("MIB Studio's facade bins over the live ring-ratio range, YOFO over the recorded one "
@@ -214,13 +214,13 @@ def changed_pixels(a: bytes, b: bytes, width: int) -> set[int]:
     return out
 
 
-# The two ROI styles of decision D2: colour (RGB) and the band's half-width
-# around the rectangle's 1 px path. MIB Studio's facade (RoiStyle::Facade):
-# cv::rectangle thickness 1, unscaled, clipped to the image. Qt and
-# ReviewSession (drawRoiOverlay): cv::rectangle thickness 3, which OpenCV
-# (LINE_8) rasterises as a 5 px band, ±2 px, with rounded corners.
-STUDIO_ROI = ((255, 210, 0), 0)
-REVIEW_ROI = ((255, 0, 0), 2)
+# The two ROI styles of decision D2: colour (RGB) and cv::rectangle thickness.
+# MIB Studio's facade (RoiStyle::Facade): thickness 1, unscaled, on Rect(roi) &
+# the image. Qt and ReviewSession (drawRoiOverlay): thickness 3 on the ROI
+# clamped to the image, which OpenCV (LINE_8) paints as a 5 px band with
+# rounded outer corners (roi_band).
+STUDIO_ROI = ((255, 210, 0), 1)
+REVIEW_ROI = ((255, 0, 0), 3)
 
 
 def studio_roi_rect(roi, width: int, height: int):
@@ -242,27 +242,44 @@ def review_roi_rect(roi, width: int, height: int):
     return (x, y, x + w - 1, y + h - 1)
 
 
-def ring_distance(x: int, y: int, rect) -> int:
-    """Chebyshev distance from pixel (x, y) to the 1 px path of `rect`."""
+# Half-width of the band cv::rectangle paints around a rectangle's 1 px path,
+# per thickness (measured with cv2.rectangle, see roi_band).
+ROI_BAND_HALF = {1: 0, 3: 2}
+
+
+def roi_band(rect, width: int, height: int, thickness: int) -> set[int]:
+    """Pixel indices cv::rectangle (LINE_8) paints for `rect` (x0, y0, x1, y1
+    inclusive) at `thickness` on a width × height image: the pixels within
+    ROI_BAND_HALF (Chebyshev) of the rectangle's 1 px path, less the outer
+    corner pixels whose offset (dx, dy) past both edges has dx² + dy² > 2.
+    The model matched cv2.rectangle (OpenCV 5.0) on every one of 6237
+    thickness-3 rectangles (clamped, small and degenerate ones included) and
+    on the thickness-1 ones; tests/tools/data/review_parity_roi_bands.json
+    holds cv2 goldens."""
+    half = ROI_BAND_HALF[thickness]
     x0, y0, x1, y1 = rect
-    dx, dy = max(x0 - x, 0, x - x1), max(y0 - y, 0, y - y1)
-    return max(dx, dy) if dx or dy else min(x - x0, x1 - x, y - y0, y1 - y)
+    out = set()
+    for y in range(max(0, y0 - half), min(height, y1 + half + 1)):
+        for x in range(max(0, x0 - half), min(width, x1 + half + 1)):
+            dx, dy = max(x0 - x, 0, x - x1), max(y0 - y, 0, y - y1)
+            if dx and dy and dx * dx + dy * dy > 2:
+                continue
+            distance = max(dx, dy) if dx or dy else min(x - x0, x1 - x, y - y0, y1 - y)
+            if distance <= half:
+                out.add(y * width + x)
+    return out
 
 
-def roi_drawn(on: bytes, off: bytes, width: int, rect, style) -> bool:
-    """One half drew its style's rectangle at `rect` (the recorded ROI): every
-    pixel of the rectangle's path in the style's colour, and every pixel the
-    ROI changed in that colour within the style's band. With no rectangle (no
-    ROI recorded, or one outside the image) nothing may change."""
+def roi_drawn(on: bytes, off: bytes, width: int, height: int, rect, style) -> bool:
+    """One half drew exactly its style's rectangle at `rect` (the recorded ROI):
+    every pixel of the band cv::rectangle paints in the style's colour, and no
+    pixel outside that band changed. With no rectangle (no ROI recorded, or
+    one outside the image) nothing may change."""
     changed = changed_pixels(on, off, width)
     if rect is None:
         return not changed
-    colour, half = bytes(style[0]), style[1]
-    x0, y0, x1, y1 = rect
-    path = {(x, y) for x in range(x0, x1 + 1) for y in (y0, y1)} | {(x, y) for y in range(y0, y1 + 1) for x in (x0, x1)}
-    if any(on[(y * width + x) * 3:(y * width + x) * 3 + 3] != colour for x, y in path):
-        return False
-    return all(on[p * 3:p * 3 + 3] == colour and ring_distance(p % width, p // width, rect) <= half for p in changed)
+    colour, band = bytes(style[0]), roi_band(rect, width, height, style[1])
+    return changed <= band and all(on[p * 3:p * 3 + 3] == colour for p in band)
 
 
 def overlays(d: Path) -> tuple[dict[str, Path], dict[str, Path]]:
@@ -296,8 +313,8 @@ def compare_overlays(d: Path, roi) -> tuple[tuple[bool, str], tuple[str, str]]:
             continue
         # Each half drew its own style at the recorded ROI, and the halves
         # differ only on pixels those rectangles drew.
-        drawn = (roi_drawn(son, off[0][2], sw, studio_roi_rect(roi, sw, sh), STUDIO_ROI)
-                 and roi_drawn(yon, off[1][2], yw, review_roi_rect(roi, yw, yh), REVIEW_ROI))
+        drawn = (roi_drawn(son, off[0][2], sw, sh, studio_roi_rect(roi, sw, sh), STUDIO_ROI)
+                 and roi_drawn(yon, off[1][2], yw, yh, review_roi_rect(roi, yw, yh), REVIEW_ROI))
         diff = changed_pixels(son, yon, sw)
         if not drawn or not diff <= changed_pixels(son, off[0][2], sw) | changed_pixels(yon, off[1][2], yw):
             wrong.append(name)
@@ -333,29 +350,72 @@ def ring_histogram(ratios, lo: float, hi: float) -> list[int]:
 
 
 # reviewChartsJson bins in long double; a point this close (relative) to an
-# interior cell edge may fall on either side of it in double.
+# interior cell edge may fall on either side of that edge in double.
 DENSITY_EDGE = 1e-9
 
 
-def density_reference(areas, deforms, area_range, deform_range, resolution: int):
-    """reviewChartsJson's density cells {(x, y): count} for these points on the
-    given grid, and how many points lie within DENSITY_EDGE of an interior
-    cell edge."""
-    cells: dict[tuple[int, int], int] = {}
-    edge = 0
+def density_candidates(areas, deforms, area_range, deform_range, resolution: int):
+    """reviewChartsJson's density placement of these points on the given grid:
+    ({(x, y): count} of the points with one possible cell, [candidate cells of
+    each other point]). A point within DENSITY_EDGE of an interior cell edge
+    may fall in either cell beside that edge, per axis: 2 or 4 candidates."""
+    exact: dict[tuple[int, int], int] = {}
+    ambiguous: list[tuple[tuple[int, int], ...]] = []
 
-    def cell(v: float, lo: float, hi: float) -> tuple[int, bool]:
+    def cells(v: float, lo: float, hi: float) -> tuple[int, ...]:
         t = (v - lo) / (hi - lo) * resolution
-        near = 0 < round(t) < resolution and abs(t - round(t)) <= DENSITY_EDGE * max(1.0, abs(t))
-        return min(max(int(t), 0), resolution - 1), near
+        k = round(t)
+        if 0 < k < resolution and abs(t - k) <= DENSITY_EDGE * max(1.0, abs(t)):
+            return (k - 1, k)
+        return (min(max(int(t), 0), resolution - 1),)
 
     for a, f in zip(areas, deforms):
         if a is None or f is None or not (math.isfinite(a) and math.isfinite(f)):
             continue
-        (x, nx), (y, ny) = cell(a, *area_range), cell(f, *deform_range)
-        cells[(x, y)] = cells.get((x, y), 0) + 1
-        edge += nx or ny
-    return cells, edge
+        options = tuple((x, y) for x in cells(a, *area_range) for y in cells(f, *deform_range))
+        if len(options) == 1:
+            exact[options[0]] = exact.get(options[0], 0) + 1
+        else:
+            ambiguous.append(options)
+    return exact, ambiguous
+
+
+def density_placed(cells: dict, exact: dict, ambiguous: list) -> tuple[bool, str]:
+    """`cells` ({(x, y): count}) holds every exact point in its cell and each
+    ambiguous point in one of its candidate cells, nothing else: the cells'
+    surplus over the exact points must be filled exactly by the ambiguous
+    points (a bipartite assignment by augmenting paths). Returns (ok, the reason
+    when not)."""
+    surplus = {k: cells.get(k, 0) - exact.get(k, 0) for k in set(cells) | set(exact)}
+    short = sorted(k for k, v in surplus.items() if v < 0)
+    if short:
+        return False, f"cells short of the points that can only fall there: {short[:5]}"
+    # Implied by the assignment below; checked first for its message.
+    reachable = {c for options in ambiguous for c in options}
+    stray = sorted(k for k, v in surplus.items() if v > 0 and k not in reachable)
+    if stray:
+        return False, f"points in cells no point can fall in: {stray[:5]}"
+    if sum(surplus.values()) != len(ambiguous):
+        return False, f"{sum(surplus.values())} points beyond the exact ones for {len(ambiguous)} edge points"
+    assigned: dict[tuple[int, int], list[int]] = {k: [] for k, v in surplus.items() if v > 0}
+
+    def place(point: int, seen: set) -> bool:
+        for c in ambiguous[point]:
+            if c in seen or c not in assigned:
+                continue
+            seen.add(c)
+            if len(assigned[c]) < surplus[c]:
+                assigned[c].append(point)
+                return True
+            for i, other in enumerate(assigned[c]):
+                if place(other, seen):
+                    assigned[c][i] = point
+                    return True
+        return False
+
+    if not all(place(i, set()) for i in range(len(ambiguous))):
+        return False, "no assignment of the edge points to their neighbouring cells fills the cells"
+    return True, ""
 
 
 def charts_scale_by_factor(scaled: dict, base: dict) -> bool:
@@ -400,6 +460,36 @@ def yofo_half(d: Path) -> dict:
             "y_max": (h.get("y") or {}).get("max"), "all": tree(d / "yofo/all"), "csv": d / "yofo/metrics.csv"}
 
 
+def missing_artefacts(d: Path, studio: dict, name: str) -> list[str]:
+    """Every artefact the MIB Studio rows against half `name` read that is
+    absent: review_parity_studio's summary keys and files, and the other
+    half's (with YOFO's scatter dump, the reference points of both pairs)."""
+    recording = bool(studio.get("recording_file"))
+    keys = ["recording_file", "roi", "app", "compared", "all_export", "failures"]
+    if not recording:
+        keys += ["d4_probe", "metrics_export", "overlays"]
+    missing = [f"studio/summary.json {k}" for k in keys if k not in studio]
+    files = ["studio/charts_app.json", "studio/charts.json"]
+    if not recording:
+        files += ["studio/charts_d4.json", "studio/metrics.csv", f"{name}/metrics.csv", "yofo/scatter.json"]
+        files += ["yofo/charts.json"] if name == "yofo" else []
+    missing += [f for f in files if not (d / f).is_file()]
+    missing += [f"{half}/all/ (empty)" for half in ("studio", name) if not tree(d / half / "all")]
+    if not recording:
+        other = load(d / f"{name}/summary.json") or {}
+        if name == "qt":
+            missing += [f"qt/summary.json {k}" for k in ("scatter", "histogram") if k not in other]
+        else:
+            missing += ["yofo/summary.json roi"] if "roi" not in other else []
+            names = sorted(set(studio.get("overlays") or []) | set(other.get("overlays") or []))
+            if not names:
+                missing.append("overlays (none listed)")
+            missing += [f"studio/overlays/{n}.png" for n in names if not (d / f"studio/overlays/{n}.png").is_file()]
+            missing += [f"yofo/overlays/{n}.p?m" for n in names
+                        if not any((d / f"yofo/overlays/{n}.{x}").is_file() for x in ("pgm", "ppm"))]
+    return missing
+
+
 def studio_rows(d: Path, studio: dict, other: dict) -> list[tuple[str, str, str]]:
     """MIB Studio against one other half. The reference points (ring ratios,
     areas, deformabilities) are YOFO's scatter dump for both pairs; the Qt ↔
@@ -416,6 +506,16 @@ def studio_rows(d: Path, studio: dict, other: dict) -> list[tuple[str, str, str]
     charts_app, charts = load(d / "studio/charts_app.json") or {}, load(d / "studio/charts.json") or {}
     scatter = load(d / "yofo/scatter.json") or {}
     check("file kind", other["recording"] == recording, "recording" if recording else "experiment")
+    missing = missing_artefacts(d, studio, name)
+    check("expected artefacts", not missing,
+          f"missing: {', '.join(missing[:8])}" + (f" and {len(missing) - 8} more" if len(missing) > 8 else "")
+          if missing else "every dump file and summary key the checks read is present")
+    failures = studio.get("failures")
+    exports = {k: (studio.get(k) or {}).get("state") for k in ("all_export", "metrics_export")
+               if k == "all_export" or not recording}
+    check("studio run", failures == [] and all(v == "completed" for v in exports.values()),
+          f"failures {failures if failures is not None else 'not recorded'}; exports "
+          + ", ".join(f"{k} {v}" for k, v in exports.items()))
 
     # As opened: MIB Studio's live factor (D3). Accepted only when the live
     # factor is the one the charts declare and the one they were computed
@@ -472,16 +572,20 @@ def studio_rows(d: Path, studio: dict, other: dict) -> list[tuple[str, str, str]
     studio_cells = {(c[0], c[1]): int(c[2]) for c in charts.get("density", [])}
     if name == "yofo":
         # Placement: YOFO's points binned on MIB Studio's grid (its extents
-        # and resolution), cell by cell.
+        # and resolution), cell by cell. Only a point on a cell edge may sit
+        # in the neighbouring cell across that edge.
         resolution = charts.get("resolution", 128)
-        reference, edge = ({}, 0)
-        if charts.get("area_range") and charts.get("deform_range") and scatter:
-            reference, edge = density_reference(scatter.get("area_um2", []), scatter.get("deformability", []),
-                                                charts["area_range"], charts["deform_range"], resolution)
-        l1 = sum(abs(studio_cells.get(k, 0) - reference.get(k, 0)) for k in set(studio_cells) | set(reference))
-        check("density cells", bool(reference) and l1 <= 2 * edge,
-              f"{len(studio_cells)} studio / {len(reference)} reference cells on the {resolution} × {resolution} grid, "
-              + ("identical" if l1 == 0 else f"{l1} points apart ({edge} within {DENSITY_EDGE:g} of a cell edge)"))
+        area_r, deform_r = charts.get("area_range"), charts.get("deform_range")
+        exact, ambiguous, placed, why = {}, [], False, "no studio grid or YOFO scatter dump"
+        if area_r and deform_r and scatter and area_r[1] > area_r[0] and deform_r[1] > deform_r[0]:
+            exact, ambiguous = density_candidates(scatter.get("area_um2", []), scatter.get("deformability", []),
+                                                  area_r, deform_r, resolution)
+            placed, why = density_placed(studio_cells, exact, ambiguous) if exact or ambiguous \
+                else (False, "no finite reference points")
+        check("density cells", placed,
+              f"{len(studio_cells)} studio cells on the {resolution} × {resolution} grid; {sum(exact.values())} "
+              f"reference points with one cell, {len(ambiguous)} within {DENSITY_EDGE:g} of a cell edge"
+              + (", each in its cell or across that edge" if placed else f"; {why}"))
     else:
         total = sum(studio_cells.values())
         check("density total", total == other["count"],
@@ -519,9 +623,13 @@ def studio_rows(d: Path, studio: dict, other: dict) -> list[tuple[str, str, str]
               f"studio live {ring_app} / {name} {other['ring']}; bins over the live range: {'yes' if live_binned else 'NO'}",
               accepted=D4 if live_binned else "")
     probe, charts_d4 = studio.get("d4_probe"), load(d / "studio/charts_d4.json")
-    if probe is not None or charts_d4 is not None:
-        lo, hi = (probe or {}).get("ring_ratio_min"), (probe or {}).get("ring_ratio_max")
-        probe_binned = charts_d4 is not None and binned_over(charts_d4, lo, hi)
+    if probe is None or charts_d4 is None:
+        check("histogram range, live ≠ recorded (D4 probe)", False,
+              "D4 probe missing: " + ", ".join(n for n, v in (("summary d4_probe", probe),
+                                                              ("studio/charts_d4.json", charts_d4)) if v is None))
+    else:
+        lo, hi = probe.get("ring_ratio_min"), probe.get("ring_ratio_max")
+        probe_binned = binned_over(charts_d4, lo, hi)
         check("histogram range, live ≠ recorded (D4 probe)", False,
               f"studio live set to {[lo, hi]} / {name} {other['ring']}; bins over the live range: "
               f"{'yes' if probe_binned else 'NO'}",
