@@ -48,6 +48,11 @@ sweep holds a probe claim and opens the port through the bus layer on the
 same thread. `backend.serial_sim` checks that a failed probe releases the
 port in less than `kProbeYield` (it measures about 1 s).
 
+The registry is never destroyed. A bus I/O thread that [[SerialBus]] detached
+after a stalled port call releases its claim when the call returns, which can
+be during process exit. A static registry would be destroyed under it (the
+TSan lane caught this in `backend.syringe_pump_fake_serial`).
+
 Ports are keyed like the bus layer (`key()`: basename, lowercase;
 `SerialBusManager::normalizeKey` delegates to it).
 

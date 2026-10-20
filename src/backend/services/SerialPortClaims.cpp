@@ -35,8 +35,10 @@ struct Registry {
 
 Registry& registry()
 {
-    static Registry r;
-    return r;
+    // Never destroyed: a bus I/O thread detached after a stalled port call
+    // releases its claim whenever the call returns, possibly during exit.
+    static Registry* r = new Registry;
+    return *r;
 }
 
 // `exceptThread`: ignore claims that thread holds.
