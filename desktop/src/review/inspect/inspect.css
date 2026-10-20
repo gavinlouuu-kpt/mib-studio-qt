@@ -1,0 +1,117 @@
+/* R3 Inspect on the @mib/ui kit (#717 B3a). Components and colours come from
+   the kit; this file only places them, with the kit's spacing tokens. */
+.rv-inspect-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--mib-space-2);
+  padding: 0 0 var(--mib-space-3);
+}
+.rv-inspect-toolbar .rv-toolbar-gap,
+.rv-inspect-actions .rv-toolbar-gap {
+  flex: 0 0 var(--mib-space-4);
+}
+.rv-inspect-actions select,
+.rv-inspect-actions label {
+  font-size: var(--mib-font-size-sm);
+}
+.rv-inspect-body > .mib-notice,
+.rv-inspect-actions + .mib-notice {
+  margin-bottom: var(--mib-space-3);
+}
+.rv-inspect-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 400px);
+  gap: var(--mib-space-4);
+  align-items: start;
+}
+.rv-inspect-main,
+.rv-inspect-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mib-space-4);
+  min-width: 0;
+}
+
+/* Scatter and Frames: fixed heights inside the cards (the canvases size
+   themselves to their box). */
+.rv-scatter-card .review-charts {
+  height: 460px;
+}
+.rv-frames-card .review-frames {
+  height: 360px;
+}
+.rv-records-card .table-panel {
+  max-height: 300px;
+  overflow: auto;
+}
+/* The Records sub-view: the table alone, taller. */
+.rv-inspect-main > .rv-records-card:only-child .table-panel {
+  max-height: 640px;
+}
+.rv-records-card .metrics-table .mib-table__row {
+  cursor: pointer;
+}
+
+/* The record card. */
+.rv-cell-views {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--mib-space-1);
+}
+.rv-record__body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--mib-space-3);
+  align-items: flex-start;
+}
+.rv-record__image {
+  display: flex;
+  flex: 0 0 auto;
+  max-width: 100%;
+}
+.rv-record__image:has(> .canvas-wrap:not([hidden])) {
+  flex: 1 1 100%;
+}
+.rv-record__image [hidden] {
+  display: none !important;
+}
+.rv-record__image .canvas-wrap.preview {
+  flex: 1 1 100%;
+  min-height: 120px;
+  max-height: 200px;
+  border-radius: var(--mib-radius-sm);
+}
+.rv-record__body > .mib-facts {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+.rv-crop-pending {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--mib-space-2);
+  text-align: center;
+  border-radius: var(--mib-radius-sm);
+  background: var(--mib-color-tile);
+  color: var(--mib-color-sub);
+  font-size: var(--mib-font-size-xs);
+}
+.rv-recorded__title {
+  margin: var(--mib-space-2) 0 var(--mib-space-2);
+  font-size: var(--mib-font-size-sm);
+  font-weight: var(--mib-font-weight-semibold);
+  color: var(--mib-color-ink);
+}
+.rv-stored-card .rv-note,
+.rv-record-card .rv-note {
+  margin: var(--mib-space-2) 0 0;
+  font-size: var(--mib-font-size-xs);
+  color: var(--mib-color-sub);
+}
+
+@media (max-width: 1100px) {
+  .rv-inspect-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
