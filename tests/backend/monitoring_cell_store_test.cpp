@@ -17,7 +17,13 @@
 //   6. unpin / clear pins / clear strip (pins stay);
 //   7. shares: the store gives every share of the ring's images back to the
 //      source once it has cropped (the production source drops them under the
-//      ring's lock), and image() hands out private copies, never a share.
+//      ring's lock), and image() hands out private copies, never a share;
+//   8. captures (review round 1): a capture change restarts frame indices, so
+//      the same (run, frame, object) recurs; the strip keeps only the current
+//      capture's cells, a pin naming an earlier capture is CaptureMismatch,
+//      a pin of the new capture gets the new capture's pixels even while the
+//      strip still holds the old capture's entry, and an earlier pin keeps
+//      serving its own pixels under its own identity.
 
 #include "backend/services/MonitoringCellStore.h"
 
@@ -56,7 +62,7 @@ public:
                                     bool withImage = true)
     {
         MonitoringCellCandidate c;
-        c.key = {generation, frameIndex, objectId};
+        c.key = {generation, frameIndex, objectId, captureEpoch};
         c.metrics.valid = valid;
         c.metrics.timestampNs = frameIndex * 1000;
         c.metrics.bboxX = 40;
@@ -88,11 +94,12 @@ public:
         return nullptr;
     }
 
-    Newest newestValid(std::size_t maxRows) override
+    Rows newestValid(std::size_t maxRows) override
     {
         ++newestCalls;
-        Newest out;
+        Rows out;
         out.ringGeneration = generation;
+        out.captureEpoch = captureEpoch;
         std::vector<MonitoringCellCandidate> valid;
         for (auto it = rows_.rbegin(); it != rows_.rend() && valid.size() < maxRows; ++it)
             if (it->metrics.valid) valid.push_back(*it);
@@ -100,11 +107,13 @@ public:
         if (onNewest) onNewest();
         return out;
     }
-    std::vector<MonitoringCellCandidate> find(std::uint64_t frameIndex, int objectId) override
+    Rows find(std::uint64_t frameIndex, int objectId) override
     {
-        std::vector<MonitoringCellCandidate> out;
+        Rows out;
+        out.ringGeneration = generation;
+        out.captureEpoch = captureEpoch;
         for (auto it = rows_.rbegin(); it != rows_.rend(); ++it)
-            if (it->key.frameIndex == frameIndex && it->key.objectId == objectId) out.push_back(*it);
+            if (it->key.frameIndex == frameIndex && it->key.objectId == objectId) out.rows.push_back(*it);
         if (onFind) onFind();
         return out;
     }
@@ -116,7 +125,8 @@ public:
         MonitoringCellSource::releaseShares(rows);
     }
 
-    std::uint64_t generation{0}; // the ring's current tag
+    std::uint64_t generation{0};   // the ring's current run tag
+    std::uint64_t captureEpoch{0}; // the ring's current capture epoch
     int newestCalls{0};
     int releaseCalls{0};
     int releasedShares{0};
@@ -306,7 +316,7 @@ void testPinSurvivesEviction()
     const cv::Mat ringImage = ring.held(10, 1)->image;
 
     // Pinned from the ring (the strip never saw it).
-    auto r = store.pin(3, 10, 1);
+    auto r = store.pin({3, 10, 1});
     MIB_REQUIRE(r.outcome == Outcome::Pinned, r.message);
     MIB_EXPECT(r.cell && r.cell->hasImage && r.cell->hasMask && r.cell->key == (MonitoringCellKey{3, 10, 1}),
                "the reply carries the pin");
@@ -330,7 +340,7 @@ void testPinSurvivesEviction()
     // A strip cell pinned, then evicted from the strip: the pin keeps it.
     ring.append(50, 0, true, 50);
     store.refreshStrip();
-    MIB_REQUIRE(store.pin(3, 50, 0).outcome == Outcome::Pinned, "pin a strip cell");
+    MIB_REQUIRE(store.pin({3, 50, 0}).outcome == Outcome::Pinned, "pin a strip cell");
     for (std::uint64_t i = 51; i < 60; ++i) ring.append(i, 0, true, 1);
     store.refreshStrip();
     const auto afterTrim = store.listing();
@@ -339,7 +349,7 @@ void testPinSurvivesEviction()
                "the pinned strip cell survives the strip's eviction");
 
     // Idempotent.
-    r = store.pin(3, 50, 0);
+    r = store.pin({3, 50, 0});
     MIB_EXPECT(r.outcome == Outcome::AlreadyPinned && r.cell, "AlreadyPinned returns the pin");
     MIB_EXPECT(store.listing().pins.size() == 2, "no duplicate");
 }
@@ -353,15 +363,15 @@ void testPinCaps()
     MonitoringCellStore store(ring, p);
     for (std::uint64_t i = 1; i <= 5; ++i) ring.append(i, 0, true, 1);
     for (std::uint64_t i = 1; i <= 3; ++i)
-        MIB_REQUIRE(store.pin(0, i, 0).outcome == Outcome::Pinned, "pin within the cap");
-    auto r = store.pin(0, 4, 0);
+        MIB_REQUIRE(store.pin({0, i, 0}).outcome == Outcome::Pinned, "pin within the cap");
+    auto r = store.pin({0, 4, 0});
     MIB_EXPECT(r.outcome == Outcome::LimitReached && !r.cell, "the count cap refuses");
     MIB_EXPECT(r.message.find("unpin one first") != std::string::npos, r.message);
     const auto pins = store.listing().pins;
     MIB_EXPECT(pins.size() == 3 && pins.front().key.frameIndex == 1, "an older pin is never evicted");
     MIB_EXPECT(store.unpin({0, 1, 0}), "unpin");
     MIB_EXPECT(!store.unpin({0, 1, 0}), "unpin twice: not pinned");
-    MIB_EXPECT(store.pin(0, 4, 0).outcome == Outcome::Pinned, "room again after an unpin");
+    MIB_EXPECT(store.pin({0, 4, 0}).outcome == Outcome::Pinned, "room again after an unpin");
 
     // Byte cap.
     FakeRing ring2;
@@ -370,8 +380,8 @@ void testPinCaps()
     MonitoringCellStore tight(ring2, bytes);
     ring2.append(1, 0, true, 1);
     ring2.append(2, 0, true, 1);
-    MIB_REQUIRE(tight.pin(0, 1, 0).outcome == Outcome::Pinned, "first fits");
-    r = tight.pin(0, 2, 0);
+    MIB_REQUIRE(tight.pin({0, 1, 0}).outcome == Outcome::Pinned, "first fits");
+    r = tight.pin({0, 2, 0});
     MIB_EXPECT(r.outcome == Outcome::LimitReached && r.message.find("bytes") != std::string::npos, r.message);
     MIB_EXPECT(tight.listing().stats.pinBytes <= bytes.pinMaxBytes, "byte cap holds");
 }
@@ -386,15 +396,15 @@ void testRunRules()
     store.beginRun(4);
     ring.append(2, 0, true, 2);
 
-    MIB_EXPECT(store.pin(4, 2, 0).outcome == Outcome::Pinned, "the run's row");
-    MIB_EXPECT(store.pin(0, 1, 0).outcome == Outcome::Pinned, "a row outside a run, as run 0");
-    auto r = store.pin(4, 1, 0);
+    MIB_EXPECT(store.pin({4, 2, 0}).outcome == Outcome::Pinned, "the run's row");
+    MIB_EXPECT(store.pin({0, 1, 0}).outcome == Outcome::Pinned, "a row outside a run, as run 0");
+    auto r = store.pin({4, 1, 0});
     MIB_EXPECT(r.outcome == Outcome::RunMismatch && r.message.find("outside a run") != std::string::npos,
                "a row of no run is not run 4's: " + r.message);
-    r = store.pin(3, 2, 0);
+    r = store.pin({3, 2, 0});
     MIB_EXPECT(r.outcome == Outcome::RunMismatch && r.message.find("not the latest run") != std::string::npos,
                "a stale generation: " + r.message);
-    r = store.pin(5, 2, 0);
+    r = store.pin({5, 2, 0});
     MIB_EXPECT(r.outcome == Outcome::RunMismatch, "a future generation: " + r.message);
 
     // The next run drops every pin; the old run's pins are refused from then on.
@@ -404,15 +414,15 @@ void testRunRules()
     MIB_EXPECT(l.pins.empty() && l.strip.empty() && l.scopeGeneration == 5, "dropped at the next run start");
     cv::Mat image;
     MIB_EXPECT(!store.image({4, 2, 0}, false, image), "no image of a dropped pin");
-    r = store.pin(4, 2, 0);
+    r = store.pin({4, 2, 0});
     MIB_EXPECT(r.outcome == Outcome::RunMismatch, "a pin for the previous run is refused: " + r.message);
     ring.append(3, 0, true, 3);
-    MIB_EXPECT(store.pin(5, 3, 0).outcome == Outcome::Pinned, "the new run's rows pin");
+    MIB_EXPECT(store.pin({5, 3, 0}).outcome == Outcome::Pinned, "the new run's rows pin");
 
     // A run starting while the pin is taken: refused, nothing admitted.
     ring.append(4, 0, true, 4);
     ring.onFind = [&] { store.beginRun(6); };
-    r = store.pin(5, 4, 0);
+    r = store.pin({5, 4, 0});
     ring.onFind = nullptr;
     MIB_EXPECT(r.outcome == Outcome::RunMismatch && store.listing().pins.empty(),
                "a pin racing a run start is refused: " + r.message);
@@ -431,7 +441,7 @@ void testNoImage()
     served.area = 321.5;
     store.noteRows({{{2, 1, 0}, served}});
     ring.evictAll();
-    auto r = store.pin(2, 1, 0);
+    auto r = store.pin({2, 1, 0});
     MIB_REQUIRE(r.outcome == Outcome::PinnedWithoutImage && r.cell, "evicted: pinned with its measurements");
     MIB_EXPECT(!r.cell->hasImage && !r.cell->hasMask && r.cell->bytes == 0, "no pixels");
     MIB_EXPECT(r.cell->metrics.area == 321.5, "the measurements the snapshot reported");
@@ -442,7 +452,7 @@ void testNoImage()
     MIB_EXPECT(!store.image({2, 1, 0}, false, image), "no image is served for it");
 
     // Unknown to the backend: refused, nothing invented.
-    r = store.pin(2, 999, 0);
+    r = store.pin({2, 999, 0});
     MIB_EXPECT(r.outcome == Outcome::NotFound && !r.cell, "NotFound: " + r.message);
     MIB_EXPECT(r.message.find("frame 999 object 0") != std::string::npos, r.message);
 
@@ -454,7 +464,7 @@ void testNoImage()
     MIB_REQUIRE(strip, "a results-only cell is listed in the strip");
     MIB_EXPECT(!strip->hasImage && strip->noImageReason.find("without images") != std::string::npos,
                strip->noImageReason);
-    r = store.pin(2, 7, 2);
+    r = store.pin({2, 7, 2});
     MIB_EXPECT(r.outcome == Outcome::PinnedWithoutImage, "results-only pin: " + r.message);
 }
 
@@ -465,8 +475,8 @@ void testClear()
     MonitoringCellStore store(ring);
     for (std::uint64_t i = 1; i <= 3; ++i) ring.append(i, 0, true, 1);
     store.refreshStrip();
-    MIB_REQUIRE(store.pin(0, 1, 0).outcome == Outcome::Pinned, "pin");
-    MIB_REQUIRE(store.pin(0, 2, 0).outcome == Outcome::Pinned, "pin");
+    MIB_REQUIRE(store.pin({0, 1, 0}).outcome == Outcome::Pinned, "pin");
+    MIB_REQUIRE(store.pin({0, 2, 0}).outcome == Outcome::Pinned, "pin");
     store.clearStrip(); // monitoring_clear
     auto l = store.listing();
     MIB_EXPECT(l.strip.empty() && l.pins.size() == 2 && l.stats.indexedRows == 0, "the strip clears, pins stay");
@@ -487,8 +497,8 @@ void testRowIndexBound()
     store.noteRows(rows);
     store.noteRows(rows); // duplicates do not grow it
     MIB_EXPECT(store.listing().stats.indexedRows == 10, "bounded FIFO");
-    MIB_EXPECT(store.pin(0, 24, 0).outcome == Outcome::PinnedWithoutImage, "newest rows are kept");
-    MIB_EXPECT(store.pin(0, 0, 0).outcome == Outcome::NotFound, "oldest rows fall out");
+    MIB_EXPECT(store.pin({0, 24, 0}).outcome == Outcome::PinnedWithoutImage, "newest rows are kept");
+    MIB_EXPECT(store.pin({0, 0, 0}).outcome == Outcome::NotFound, "oldest rows fall out");
 }
 
 // Only the ring's own reference is left: no share of a ring image stays with the store.
@@ -511,25 +521,87 @@ void testSharesGoBack()
 
     // A pin from the ring (an invalid row is never a strip cell) and a refused one.
     ring.append(9, 1, false, 90);
-    auto r = store.pin(0, 9, 1);
+    auto r = store.pin({0, 9, 1});
     MIB_REQUIRE(r.outcome == Outcome::Pinned, r.message);
     MIB_EXPECT(ring.releaseCalls == 3 && ring.releasedShares == 14, "the pin returned the row's image + mask");
     MIB_EXPECT(refs(ring.held(9, 1)->image) == 1, "the pin keeps an owned crop, not a share");
     ring.append(10, 0, false, 1);
     store.beginRun(4);
-    r = store.pin(4, 10, 0); // the row is tagged 0, not 4
+    r = store.pin({4, 10, 0}); // the row is tagged 0, not 4
     MIB_EXPECT(r.outcome == Outcome::RunMismatch && ring.releaseCalls == 4, "a refused pin returns its shares");
 
     // image(): a private copy each time; writing to it changes nothing in the store.
     ring.generation = 4;
     ring.append(11, 0, true, 110);
-    MIB_REQUIRE(store.pin(4, 11, 0).outcome == Outcome::Pinned, "pin");
+    MIB_REQUIRE(store.pin({4, 11, 0}).outcome == Outcome::Pinned, "pin");
     cv::Mat a, b;
     MIB_REQUIRE(store.image({4, 11, 0}, false, a) && store.image({4, 11, 0}, false, b), "image");
     MIB_EXPECT(!sharesMemory(a, b) && refs(a) == 1 && refs(b) == 1, "two calls, two private copies");
     a.setTo(0);
     MIB_REQUIRE(store.image({4, 11, 0}, false, b), "image again");
     MIB_EXPECT(cv::countNonZero(b != 110) == 0, "the store's copy is untouched by the caller");
+}
+
+void testCaptureChange()
+{
+    std::printf("capture change: identities recur, cells never cross\n");
+    FakeRing ring;
+    MonitoringCellStore store(ring);
+    ring.captureEpoch = 7; // capture A: frames 1..3, pixel value 10 * frame
+    for (std::uint64_t i = 1; i <= 3; ++i) ring.append(i, 0, true, static_cast<std::uint8_t>(10 * i));
+    store.refreshStrip();
+    MIB_REQUIRE(store.pin({0, 1, 0, 7}).outcome == Outcome::Pinned, "pin A's frame 1");
+
+    // Capture B (camera mode switch: a new frame buffer): the same indices, other pixels.
+    ring.evictAll(); // the switch keeps nothing of A in this fake; the real ring may keep some
+    ring.captureEpoch = 8;
+    for (std::uint64_t i = 1; i <= 3; ++i) ring.append(i, 0, true, static_cast<std::uint8_t>(100 + i));
+    // Before any refresh the strip still holds A's frame 2: a pin of B's frame 2 must not take it.
+    auto r = store.pin({0, 2, 0, 8});
+    MIB_REQUIRE(r.outcome == Outcome::Pinned && r.cell && r.cell->key.captureEpoch == 8, r.message);
+    cv::Mat b;
+    MIB_REQUIRE(store.image({0, 2, 0, 8}, false, b), "B's pin has an image");
+    MIB_EXPECT(cv::countNonZero(b != 102) == 0, "B's frame 2 pixels, not A's (20)");
+    // A's identity after the switch: refused, nothing changes.
+    r = store.pin({0, 3, 0, 7});
+    MIB_EXPECT(r.outcome == Outcome::CaptureMismatch && !r.cell, "an earlier capture is refused: " + r.message);
+    MIB_EXPECT(r.message.find("capture 7") != std::string::npos && r.message.find("capture is 8") != std::string::npos,
+               r.message);
+    // The strip moves to B: A's cells leave it, B's enter with B's pixels.
+    store.refreshStrip();
+    const auto l = store.listing();
+    MIB_EXPECT(l.ringCaptureEpoch == 8 && l.strip.size() == 3, "the strip is B's");
+    for (const auto& c : l.strip) {
+        MIB_EXPECT(c.key.captureEpoch == 8, "only B's cells");
+        cv::Mat px;
+        MIB_REQUIRE(store.image(c.key, false, px), "strip image");
+        MIB_EXPECT(cv::countNonZero(px != static_cast<int>(100 + c.key.frameIndex)) == 0, "B's pixels");
+    }
+    // A's earlier pin is still A's, under A's identity; B's frame 1 is another cell.
+    cv::Mat a;
+    MIB_REQUIRE(store.image({0, 1, 0, 7}, false, a), "A's pin survives");
+    MIB_EXPECT(cv::countNonZero(a != 10) == 0, "A's pixels under A's identity");
+    MIB_REQUIRE(store.pin({0, 1, 0, 8}).outcome == Outcome::Pinned, "B's frame 1 is a new pin");
+    MIB_EXPECT(store.listing().pins.size() == 3, "A1, B2, B1");
+    MIB_EXPECT(store.unpin({0, 1, 0, 7}) && !store.unpin({0, 1, 0, 7}), "unpin names the capture");
+    MIB_EXPECT(store.image({0, 1, 0, 8}, false, a) && cv::countNonZero(a != 101) == 0, "B1 untouched by A1's unpin");
+}
+
+void testGeometryOrigin()
+{
+    std::printf("geometry origin: full-frame boxes into image coordinates\n");
+    backend::services::FilterResult v;
+    v.bboxX = 140;
+    v.bboxY = 50;
+    v.bboxWidth = 20;
+    v.bboxHeight = 16;
+    v.centroidX = 150;
+    v.centroidY = 58;
+    const auto m = backend::services::monitoringCellMetrics(v, 0, {100, 40});
+    MIB_EXPECT(m.bboxX == 40 && m.bboxY == 10 && m.bboxWidth == 20 && m.bboxHeight == 16, "box in ROI coordinates");
+    MIB_EXPECT(m.centroidX == 50 && m.centroidY == 18, "centroid in ROI coordinates");
+    const auto inline_ = backend::services::monitoringCellMetrics(v, 0);
+    MIB_EXPECT(inline_.bboxX == 140 && inline_.centroidY == 58, "origin (0, 0) leaves inline rows as measured");
 }
 
 void testMemoryStats()
@@ -559,6 +631,8 @@ int main()
     testClear();
     testRowIndexBound();
     testSharesGoBack();
+    testCaptureChange();
+    testGeometryOrigin();
     testMemoryStats();
     std::printf("monitoring_cell_store_test: %s\n", mib::test::exitCode() == 0 ? "PASS" : "FAIL");
     return mib::test::exitCode();

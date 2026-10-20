@@ -949,6 +949,7 @@ pub fn fetch_review_metrics_page(
                 youngs_modulus: r.youngs_modulus,
                 pixel_to_micron: r.pixel_to_micron,
                 start_generation: None, // a review row belongs to no live run
+                capture_epoch: None,
             })
             .collect(),
     })
@@ -1600,6 +1601,10 @@ pub struct MonitoringRow {
     /// Monitoring snapshot rows only; omitted from review metric rows.
     #[serde(skip_serializing_if = "Option::is_none")]
     start_generation: Option<String>,
+    /// ABI 41: the capture epoch of the row's frame (frame indices restart when the capture
+    /// changes), a canonical decimal string; part of the row's identity. Snapshot rows only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    capture_epoch: Option<String>,
 }
 
 /// Bounded monitoring snapshot for the webview (schema v6, BE-5).
@@ -1678,18 +1683,27 @@ pub fn fetch_monitoring_snapshot(
                 youngs_modulus: r.youngs_modulus,
                 pixel_to_micron: r.pixel_to_micron,
                 start_generation: Some(r.start_generation.to_string()),
+                capture_epoch: Some(r.capture_epoch.to_string()),
             })
             .collect(),
     })
 }
 
-/// A live cell's identity from transport strings (`json_transport`: canonical decimal u64).
-fn cell_identity(start_generation: &str, frame_index: &str, name: &str) -> Result<(u64, u64), String> {
+/// A live cell's identity from transport strings (`json_transport`: canonical decimal u64):
+/// (start generation, capture epoch, frame index).
+fn cell_identity(
+    start_generation: &str,
+    capture_epoch: &str,
+    frame_index: &str,
+    name: &str,
+) -> Result<(u64, u64, u64), String> {
     let generation = parse_canonical_u64(start_generation)
         .ok_or_else(|| format!("Invalid {name}: a canonical decimal start generation is required"))?;
+    let epoch = parse_canonical_u64(capture_epoch)
+        .ok_or_else(|| "Invalid captureEpoch: a canonical decimal capture epoch is required".to_string())?;
     let frame = parse_canonical_u64(frame_index)
         .ok_or_else(|| "Invalid frameIndex: a canonical decimal frame index is required".to_string())?;
-    Ok((generation, frame))
+    Ok((generation, epoch, frame))
 }
 
 /// ABI 41 (#716 A6a): the live cell strip and pins (bridge-contract.json `monitoring_cells`).
@@ -1703,23 +1717,27 @@ pub fn fetch_monitoring_cells(state: &AppState) -> Result<serde_json::Value, Str
 pub fn monitoring_cell_pin(
     state: &AppState,
     expected_start_generation: String,
+    capture_epoch: String,
     frame_index: String,
     object_id: i32,
 ) -> Result<serde_json::Value, String> {
-    let (generation, frame) = cell_identity(&expected_start_generation, &frame_index, "expectedStartGeneration")?;
+    let (generation, epoch, frame) =
+        cell_identity(&expected_start_generation, &capture_epoch, &frame_index, "expectedStartGeneration")?;
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    serde_json::from_str(&guard.pin_mut().monitoring_cell_pin(generation, frame, object_id)).map_err(|e| e.to_string())
+    serde_json::from_str(&guard.pin_mut().monitoring_cell_pin(generation, epoch, frame, object_id))
+        .map_err(|e| e.to_string())
 }
 
 pub fn monitoring_cell_unpin(
     state: &AppState,
     start_generation: String,
+    capture_epoch: String,
     frame_index: String,
     object_id: i32,
 ) -> Result<CmdResult, String> {
-    let (generation, frame) = cell_identity(&start_generation, &frame_index, "startGeneration")?;
+    let (generation, epoch, frame) = cell_identity(&start_generation, &capture_epoch, &frame_index, "startGeneration")?;
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().monitoring_cell_unpin(generation, frame, object_id).into())
+    Ok(guard.pin_mut().monitoring_cell_unpin(generation, epoch, frame, object_id).into())
 }
 
 pub fn monitoring_cell_clear_pins(state: &AppState) -> Result<CmdResult, String> {
@@ -1733,11 +1751,12 @@ pub fn monitoring_cell_clear_pins(state: &AppState) -> Result<CmdResult, String>
 pub fn fetch_monitoring_cell_packet(
     state: &AppState,
     start_generation: String,
+    capture_epoch: String,
     frame_index: String,
     object_id: i32,
     layer: String,
 ) -> Result<Vec<u8>, String> {
-    let (generation, frame) = cell_identity(&start_generation, &frame_index, "startGeneration")?;
+    let (generation, epoch, frame) = cell_identity(&start_generation, &capture_epoch, &frame_index, "startGeneration")?;
     let (mask, kind) = match layer.as_str() {
         "image" => (false, frame_packet::PULL_KIND_MONITORING_CELL_IMAGE),
         "mask" => (true, frame_packet::PULL_KIND_MONITORING_CELL_MASK),
@@ -1745,7 +1764,7 @@ pub fn fetch_monitoring_cell_packet(
     };
     let image = {
         let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
-        guard.pin_mut().fetch_monitoring_cell_image(generation, frame, object_id, mask)
+        guard.pin_mut().fetch_monitoring_cell_image(generation, epoch, frame, object_id, mask)
     };
     frame_packet::encode(image, kind)
 }

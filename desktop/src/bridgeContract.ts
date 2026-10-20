@@ -230,6 +230,7 @@ export const MONITORING_CELL_PIN_OUTCOMES = {
   RunMismatch: 3,
   NotFound: 4,
   LimitReached: 5,
+  CaptureMismatch: 6,
 } as const;
 
 export const RUN_COMPLETION_STATES = {

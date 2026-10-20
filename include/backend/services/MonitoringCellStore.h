@@ -9,14 +9,16 @@
 //     (refreshStrip), oldest evicted first when the count or byte cap is
 //     exceeded; every eviction is counted. The strip follows the ring's
 //     current context: rows of the active run while one runs, rows detected
-//     outside a run otherwise (a row of another context is dropped at the next
-//     refresh).
+//     outside a run otherwise, and only of the current capture (a row of
+//     another context is dropped at the next refresh).
 //   - pins: rows the operator asked to keep, by identity (start generation,
-//     frame index, object id). A pin is refused for a run other than the
-//     latest one started (and run 0, "outside a run"); all pins are dropped
-//     when the next run starts (beginRun). The count and the bytes are capped
-//     and a full store refuses (LimitReached): a pin is never evicted to make
-//     room for another.
+//     frame index, object id, capture epoch). A pin is refused for a run other
+//     than the latest one started (and run 0, "outside a run") and for any
+//     capture but the current one (frame indices restart when the capture
+//     changes, so an older capture's identity is never resolved against the
+//     new one); all pins are dropped when the next run starts (beginRun).
+//     The count and the bytes are capped and a full store refuses
+//     (LimitReached): a pin is never evicted to make room for another.
 // A row whose image is gone is never given a substitute: a pin of a row the
 // ring no longer holds keeps the row's measurements (from the bounded index
 // of rows the monitoring snapshot served) with a plain reason, and a row the
@@ -55,14 +57,18 @@ class ProcessingService;
 
 // Identity of one monitoring row (one detected object), stable across
 // snapshots: the start generation of the run active when the processing path
-// appended the row (0 = outside a run), its frame index and its object id.
+// appended the row (0 = outside a run), its frame index, its object id, and
+// the capture epoch of its frame (ProcessingService::monitoringCaptureEpoch:
+// frame indices restart when the capture changes, the epoch never repeats).
 struct MonitoringCellKey {
     std::uint64_t startGeneration{0};
     std::uint64_t frameIndex{0};
     int objectId{-1};
+    std::uint64_t captureEpoch{0};
     bool operator==(const MonitoringCellKey& o) const
     {
-        return startGeneration == o.startGeneration && frameIndex == o.frameIndex && objectId == o.objectId;
+        return startGeneration == o.startGeneration && frameIndex == o.frameIndex && objectId == o.objectId &&
+               captureEpoch == o.captureEpoch;
     }
     bool operator!=(const MonitoringCellKey& o) const { return !(*this == o); }
 };
@@ -73,11 +79,14 @@ struct MonitoringCellKeyHash {
         std::uint64_t h = k.startGeneration * 0x9E3779B97F4A7C15ull;
         h ^= k.frameIndex + 0x9E3779B97F4A7C15ull + (h << 6) + (h >> 2);
         h ^= static_cast<std::uint64_t>(static_cast<std::uint32_t>(k.objectId)) + (h << 6) + (h >> 2);
+        h ^= k.captureEpoch + 0x9E3779B97F4A7C15ull + (h << 6) + (h >> 2);
         return static_cast<std::size_t>(h);
     }
 };
 
 // The row's measurements, as the monitoring snapshot reports them (metadata only).
+// Geometry (centroid, bounding box) is in the coordinates of the row's image,
+// the processing ROI, whichever realtime mode measured it.
 struct MonitoringCellMetrics {
     std::uint64_t timestampNs{0};
     bool valid{false};
@@ -98,7 +107,11 @@ struct MonitoringCellMetrics {
     double pixelToMicron{0.0}; // analysis-time factor; 0 = unknown
 };
 
-MonitoringCellMetrics monitoringCellMetrics(const FilterResult& v, std::uint64_t timestampNs);
+// `geometryOrigin`: where the row's image sits in the coordinate space of `v`'s
+// geometry (ProcessingService::MonitoringRowTag); subtracted from the centroid
+// and the bounding box, so the result is in image (ROI) coordinates.
+MonitoringCellMetrics monitoringCellMetrics(const FilterResult& v, std::uint64_t timestampNs,
+                                            cv::Point geometryOrigin = {});
 
 // A ring row as the source hands it over: identity, measurements and refcount
 // shares of its frozen images (headers only, taken under the ring's lock).
@@ -114,15 +127,17 @@ struct MonitoringCellCandidate {
 // implementation holds its lock only while copying headers.
 class MonitoringCellSource {
 public:
-    struct Newest {
-        std::uint64_t ringGeneration{0}; // the tag rows get now (the active run, or 0)
-        std::vector<MonitoringCellCandidate> rows; // oldest -> newest
+    struct Rows {
+        std::uint64_t ringGeneration{0}; // the run tag rows get now (the active run, or 0)
+        std::uint64_t captureEpoch{0};   // the capture epoch rows get now
+        std::vector<MonitoringCellCandidate> rows;
     };
     virtual ~MonitoringCellSource() = default;
-    // The newest valid rows, at most maxRows.
-    virtual Newest newestValid(std::size_t maxRows) = 0;
-    // Every held row (valid or not) with this frame index and object id, any generation.
-    virtual std::vector<MonitoringCellCandidate> find(std::uint64_t frameIndex, int objectId) = 0;
+    // The newest valid rows, at most maxRows, oldest -> newest.
+    virtual Rows newestValid(std::size_t maxRows) = 0;
+    // Every held row (valid or not) with this frame index and object id, any
+    // run or capture, newest first.
+    virtual Rows find(std::uint64_t frameIndex, int objectId) = 0;
     // The store calls this once it has cropped what it needs: drops the rows' image and mask
     // shares (keys and metrics stay). The production source drops them under the ring's lock
     // (ProcessingService::releaseMonitoringShares); the default just drops them.
@@ -177,6 +192,7 @@ public:
         RunMismatch = 3,        // another run's (or context's) row: refused, nothing changed
         NotFound = 4,           // the backend holds nothing for that identity: refused
         LimitReached = 5,       // the pin count or byte cap is full: refused, unpin first
+        CaptureMismatch = 6,    // the identity names an earlier capture: refused, nothing changed
     };
     struct PinResult {
         PinOutcome outcome{PinOutcome::NotFound};
@@ -200,7 +216,8 @@ public:
 
     struct Listing {
         std::uint64_t scopeGeneration{0}; // latest run started (0 before the first); pins belong to it
-        std::uint64_t ringGeneration{0};  // the strip's context at the last refresh
+        std::uint64_t ringGeneration{0};  // the strip's context at the last refresh: run tag
+        std::uint64_t ringCaptureEpoch{0}; // ... and capture epoch
         std::uint64_t revision{0};        // bumps whenever the strip or the pins change
         std::vector<MonitoringCellInfo> strip; // oldest -> newest
         std::vector<MonitoringCellInfo> pins;  // in pin order
@@ -224,7 +241,9 @@ public:
     // monitoring_clear: the ring was cleared, so is the strip (and the index).
     void clearStrip();
 
-    PinResult pin(std::uint64_t expectedStartGeneration, std::uint64_t frameIndex, int objectId);
+    // `key.startGeneration` is the run the caller expects the row to belong to
+    // (0 = outside a run) and `key.captureEpoch` the capture it was detected in.
+    PinResult pin(const MonitoringCellKey& key);
     bool unpin(const MonitoringCellKey& key);
     std::size_t clearPins();
 
@@ -270,6 +289,7 @@ private:
     std::uint64_t scope_{0};
     std::uint64_t epoch_{0}; // bumps at beginRun / clearStrip: a refresh started before is dropped
     std::uint64_t ringGeneration_{0};
+    std::uint64_t ringCaptureEpoch_{0};
     std::uint64_t revision_{0};
     std::deque<Entry> strip_; // oldest -> newest
     std::vector<Entry> pins_;

@@ -224,6 +224,7 @@ static_assert(static_cast<std::uint32_t>(mcs::O::AlreadyPinned) == 2);
 static_assert(static_cast<std::uint32_t>(mcs::O::RunMismatch) == 3);
 static_assert(static_cast<std::uint32_t>(mcs::O::NotFound) == 4);
 static_assert(static_cast<std::uint32_t>(mcs::O::LimitReached) == 5);
+static_assert(static_cast<std::uint32_t>(mcs::O::CaptureMismatch) == 6);
 static_assert(mcs::Store::kStripMaxCells == 24);
 static_assert(mcs::Store::kStripMaxBytes == 4194304);
 static_assert(mcs::Store::kMaxPins == 16);
@@ -848,6 +849,7 @@ BridgeMonitoringRow toMonitoringRow(const backend::bridge::MonitoringObjectRow& 
     r.youngs_modulus = row.youngsModulus;
     r.pixel_to_micron = row.pixelToMicronFactor;
     r.start_generation = row.startGeneration; // ABI 41; 0 for review rows (Rust omits it there)
+    r.capture_epoch = row.captureEpoch;
     return r;
 }
 
@@ -2326,6 +2328,7 @@ BridgeMonitoringSnapshot BackendBridge::fetch_monitoring_snapshot(std::uint64_t 
         r.youngs_modulus = row.youngsModulus;
     r.pixel_to_micron = row.pixelToMicronFactor;
         r.start_generation = row.startGeneration; // ABI 41 (#716 A6a): the row's run, 0 = outside a run
+        r.capture_epoch = row.captureEpoch;       // ... and the capture its frame came from
         out.rows.push_back(std::move(r));
     }
     return out;
@@ -2343,19 +2346,20 @@ rust::String BackendBridge::fetch_monitoring_cells() {
     }
 }
 
-rust::String BackendBridge::monitoring_cell_pin(std::uint64_t expected_start_generation, std::uint64_t frame_index,
-                                                std::int32_t object_id) {
+rust::String BackendBridge::monitoring_cell_pin(std::uint64_t expected_start_generation, std::uint64_t capture_epoch,
+                                                std::uint64_t frame_index, std::int32_t object_id) {
     try {
-        return rust::String(impl_->facade.pinMonitoringCellJson(expected_start_generation, frame_index, object_id));
+        return rust::String(
+            impl_->facade.pinMonitoringCellJson(expected_start_generation, capture_epoch, frame_index, object_id));
     } catch (...) {
         return rust::String(R"({"ok":false,"message":"monitoring_cell_pin failed","cell":null})");
     }
 }
 
-BridgeCommandResult BackendBridge::monitoring_cell_unpin(std::uint64_t start_generation, std::uint64_t frame_index,
-                                                         std::int32_t object_id) {
+BridgeCommandResult BackendBridge::monitoring_cell_unpin(std::uint64_t start_generation, std::uint64_t capture_epoch,
+                                                         std::uint64_t frame_index, std::int32_t object_id) {
     try {
-        return toBridgeResult(impl_->facade.unpinMonitoringCell(start_generation, frame_index, object_id));
+        return toBridgeResult(impl_->facade.unpinMonitoringCell(start_generation, capture_epoch, frame_index, object_id));
     } catch (const std::exception& e) {
         return errorResult(std::string("monitoring_cell_unpin: ") + e.what());
     } catch (...) {
@@ -2373,11 +2377,12 @@ BridgeCommandResult BackendBridge::monitoring_cell_clear_pins() {
     }
 }
 
-BridgeFrame BackendBridge::fetch_monitoring_cell_image(std::uint64_t start_generation, std::uint64_t frame_index,
-                                                       std::int32_t object_id, bool mask) {
+BridgeFrame BackendBridge::fetch_monitoring_cell_image(std::uint64_t start_generation, std::uint64_t capture_epoch,
+                                                       std::uint64_t frame_index, std::int32_t object_id, bool mask) {
     try {
         backend::bridge::BackendFrame frame;
-        if (!impl_->facade.fetchMonitoringCellImage(start_generation, frame_index, object_id, mask, frame)) {
+        if (!impl_->facade.fetchMonitoringCellImage(start_generation, capture_epoch, frame_index, object_id, mask,
+                                                    frame)) {
             return BridgeFrame{}; // not held, or no image/mask: the listing says why
         }
         return toBridgeFrame(frame);

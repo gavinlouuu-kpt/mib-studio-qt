@@ -616,13 +616,13 @@ fn fetch_monitoring_cells(state: State<AppState>) -> Result<serde_json::Value, S
 }
 
 #[tauri::command]
-fn monitoring_cell_pin(state: State<AppState>, expected_start_generation: String, frame_index: String, object_id: i32) -> Result<serde_json::Value, String> {
-    cmds::monitoring_cell_pin(&state, expected_start_generation, frame_index, object_id)
+fn monitoring_cell_pin(state: State<AppState>, expected_start_generation: String, capture_epoch: String, frame_index: String, object_id: i32) -> Result<serde_json::Value, String> {
+    cmds::monitoring_cell_pin(&state, expected_start_generation, capture_epoch, frame_index, object_id)
 }
 
 #[tauri::command]
-fn monitoring_cell_unpin(state: State<AppState>, start_generation: String, frame_index: String, object_id: i32) -> Result<cmds::CmdResult, String> {
-    cmds::monitoring_cell_unpin(&state, start_generation, frame_index, object_id)
+fn monitoring_cell_unpin(state: State<AppState>, start_generation: String, capture_epoch: String, frame_index: String, object_id: i32) -> Result<cmds::CmdResult, String> {
+    cmds::monitoring_cell_unpin(&state, start_generation, capture_epoch, frame_index, object_id)
 }
 
 #[tauri::command]
@@ -631,8 +631,8 @@ fn monitoring_cell_clear_pins(state: State<AppState>) -> Result<cmds::CmdResult,
 }
 
 #[tauri::command]
-fn fetch_monitoring_cell_packet(state: State<AppState>, start_generation: String, frame_index: String, object_id: i32, layer: String) -> Result<Response, String> {
-    cmds::fetch_monitoring_cell_packet(&state, start_generation, frame_index, object_id, layer).map(Response::new)
+fn fetch_monitoring_cell_packet(state: State<AppState>, start_generation: String, capture_epoch: String, frame_index: String, object_id: i32, layer: String) -> Result<Response, String> {
+    cmds::fetch_monitoring_cell_packet(&state, start_generation, capture_epoch, frame_index, object_id, layer).map(Response::new)
 }
 
 #[tauri::command]

@@ -176,9 +176,10 @@ int main()
         while (!stop.load(std::memory_order_relaxed)) {
             std::vector<std::pair<MonitoringCellKey, MonitoringCellMetrics>> rows;
             rows.reserve(2000);
-            proc.visitMonitoringNewest(2000, true, [&](const ProcessedFrame& f, uint64_t gen, bool) {
-                rows.push_back({{gen, f.index, f.validation.objectId},
-                                backend::services::monitoringCellMetrics(f.validation, f.timestampNs)});
+            proc.visitMonitoringNewest(2000, true, [&](const ProcessedFrame& f, const ProcessingService::MonitoringRowTag& tag, bool) {
+                rows.push_back({{tag.runGeneration, f.index, f.validation.objectId, tag.captureEpoch},
+                                backend::services::monitoringCellMetrics(f.validation, f.timestampNs,
+                                                                         {tag.geometryOriginX, tag.geometryOriginY})});
             });
             cells.noteRows(rows);
             {
@@ -202,7 +203,7 @@ int main()
                 keys = newestRows;
             }
             for (const auto& k : keys) {
-                const auto r = cells.pin(k.startGeneration, k.frameIndex, k.objectId);
+                const auto r = cells.pin(k);
                 if (r.outcome == Outcome::Pinned || r.outcome == Outcome::PinnedWithoutImage)
                     pinsTaken.fetch_add(1, std::memory_order_relaxed);
                 else if (r.outcome != Outcome::AlreadyPinned)

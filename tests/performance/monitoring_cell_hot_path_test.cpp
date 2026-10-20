@@ -122,7 +122,7 @@ private:
                 }
                 if ((++tick % 5) == 0 && !l.strip.empty()) {
                     const auto& k = l.strip.back().key;
-                    cells_.pin(k.startGeneration, k.frameIndex, k.objectId);
+                    cells_.pin(k);
                     cells_.unpin(k);
                 }
             } else if (m == Mode::Legacy) {
@@ -241,7 +241,7 @@ void lockHold()
         t0 = Clock::now();
         source->releaseShares(n.rows);
         release.push_back(std::chrono::duration<double, std::micro>(Clock::now() - t0).count());
-        source->releaseShares(hit);
+        source->releaseShares(hit.rows);
         MIB_REQUIRE(hadShares && n.rows.front().image.empty(), "the source dropped the strip read's shares");
         t0 = Clock::now();
         auto all = proc.getMonitoringValidFrames();
@@ -251,11 +251,12 @@ void lockHold()
         std::vector<Row> rows;
         rows.reserve(2000);
         t0 = Clock::now();
-        proc.visitMonitoringNewest(2000, true, [&rows](const ProcessedFrame& fr, uint64_t gen, bool) {
-            rows.push_back({gen, fr.index, fr.validation.objectId, fr.validation.area, fr.validation.deformability});
+        proc.visitMonitoringNewest(2000, true, [&rows](const ProcessedFrame& fr, const ProcessingService::MonitoringRowTag& tag, bool) {
+            rows.push_back({tag.runGeneration, fr.index, fr.validation.objectId, fr.validation.area,
+                            fr.validation.deformability});
         });
         snapshot.push_back(std::chrono::duration<double, std::micro>(Clock::now() - t0).count());
-        MIB_REQUIRE(n.rows.size() == MonitoringCellStore::kStripMaxCells && hit.size() == 1 && all.size() == 1000 &&
+        MIB_REQUIRE(n.rows.size() == MonitoringCellStore::kStripMaxCells && hit.rows.size() == 1 && all.size() == 1000 &&
                         allInvalid.size() == 1000,
                     "readers see the ring");
     }

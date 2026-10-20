@@ -749,34 +749,46 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
             #[derive(Deserialize)]
             struct A {
                 #[serde(rename = "expectedStartGeneration")] expected_start_generation: String,
+                #[serde(rename = "captureEpoch")] capture_epoch: String,
                 #[serde(rename = "frameIndex")] frame_index: String,
                 #[serde(rename = "objectId")] object_id: i32,
             }
             let a: A = args(value)?;
-            crate::monitoring_cell_pin(state, a.expected_start_generation, a.frame_index, a.object_id).and_then(json)
+            crate::monitoring_cell_pin(state, a.expected_start_generation, a.capture_epoch, a.frame_index, a.object_id)
+                .and_then(json)
         }
         "monitoring_cell_unpin" => {
             #[derive(Deserialize)]
             struct A {
                 #[serde(rename = "startGeneration")] start_generation: String,
+                #[serde(rename = "captureEpoch")] capture_epoch: String,
                 #[serde(rename = "frameIndex")] frame_index: String,
                 #[serde(rename = "objectId")] object_id: i32,
             }
             let a: A = args(value)?;
-            crate::monitoring_cell_unpin(state, a.start_generation, a.frame_index, a.object_id).and_then(json)
+            crate::monitoring_cell_unpin(state, a.start_generation, a.capture_epoch, a.frame_index, a.object_id)
+                .and_then(json)
         }
         "monitoring_cell_clear_pins" => crate::monitoring_cell_clear_pins(state).and_then(json),
         "fetch_monitoring_cell_packet" => {
             #[derive(Deserialize)]
             struct A {
                 #[serde(rename = "startGeneration")] start_generation: String,
+                #[serde(rename = "captureEpoch")] capture_epoch: String,
                 #[serde(rename = "frameIndex")] frame_index: String,
                 #[serde(rename = "objectId")] object_id: i32,
                 #[serde(rename = "layer")] layer: String,
             }
             let a: A = args(value)?;
-            crate::fetch_monitoring_cell_packet(state, a.start_generation, a.frame_index, a.object_id, a.layer)
-                .map(Reply::Binary)
+            crate::fetch_monitoring_cell_packet(
+                state,
+                a.start_generation,
+                a.capture_epoch,
+                a.frame_index,
+                a.object_id,
+                a.layer,
+            )
+            .map(Reply::Binary)
         }
         "trigger_set_pulse_duration" => {
             #[derive(Deserialize)]

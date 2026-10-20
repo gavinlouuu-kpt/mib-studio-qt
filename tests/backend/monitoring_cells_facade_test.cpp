@@ -8,8 +8,10 @@
 //      run's while it accumulates, 0 again after it stops);
 //   2. the listing JSON (strip, pins, caps, stats) and the image pull agree:
 //      the packet's size is the listed crop's, its pixels are the row's;
-//   3. Start drops the pins and the strip; a pin of the previous run is refused;
-//      a pre-run row is not the run's;
+//   3. a realtime start is a new capture: an earlier capture's identity is
+//      CaptureMismatch and its cells leave the strip; Start drops the pins and
+//      the strip; a pin of the previous run is refused; a pre-run row is not
+//      the run's;
 //   4. a row the ring evicted after a snapshot served it is pinned with its
 //      measurements and the reason, and no image is served for it;
 //   5. monitoring_clear clears the strip and keeps the pins; unpin and clear.
@@ -103,18 +105,25 @@ const json* inList(const json& list, std::uint64_t frameIndex)
     return nullptr;
 }
 
-json pin(bridge::BackendFacade& facade, std::uint64_t generation, std::uint64_t frameIndex)
+json pin(bridge::BackendFacade& facade, std::uint64_t generation, std::uint64_t epoch, std::uint64_t frameIndex)
 {
-    return json::parse(facade.pinMonitoringCellJson(generation, frameIndex, 0));
+    return json::parse(facade.pinMonitoringCellJson(generation, epoch, frameIndex, 0));
 }
 
-std::optional<std::string> snapshotGeneration(bridge::BackendFacade& facade, std::uint64_t frameIndex)
+std::optional<bridge::MonitoringObjectRow> snapshotRow(bridge::BackendFacade& facade, std::uint64_t frameIndex)
 {
     bridge::BackendMonitoringSnapshot s;
     MIB_REQUIRE(facade.fetchMonitoringSnapshot(s, 4000), "snapshot");
     for (const auto& r : s.rows)
-        if (r.frameIndex == frameIndex) return std::to_string(r.startGeneration);
+        if (r.frameIndex == frameIndex) return r;
     return std::nullopt;
+}
+
+std::optional<std::string> snapshotGeneration(bridge::BackendFacade& facade, std::uint64_t frameIndex)
+{
+    const auto r = snapshotRow(facade, frameIndex);
+    if (!r) return std::nullopt;
+    return std::to_string(r->startGeneration);
 }
 
 bridge::BackendCommandResult startRun(bridge::BackendFacade& facade, const std::string& path)
@@ -149,7 +158,7 @@ int main()
         {
             std::string text;
             MIB_EXPECT(!facade.fetchMonitoringCellsJson(text), "nothing before initialize");
-            MIB_EXPECT(!json::parse(facade.pinMonitoringCellJson(0, 1, 0))["ok"].get<bool>(), "pin before init");
+            MIB_EXPECT(!json::parse(facade.pinMonitoringCellJson(0, 1, 1, 0))["ok"].get<bool>(), "pin before init");
         }
         MIB_REQUIRE(facade.initialize(td.path().string()), "facade initialize");
         auto& proc = backendApp.processing();
@@ -159,6 +168,8 @@ int main()
         for (std::uint64_t i = 1; i <= 3; ++i) inject(proc, kBase + i, true, static_cast<std::uint8_t>(10 * i));
         inject(proc, kBase + 4, false, 99);
         MIB_EXPECT(snapshotGeneration(facade, kBase + 1) == std::string("0"), "a row outside a run is generation 0");
+        const auto e1 = proc.monitoringCaptureEpoch();
+        MIB_EXPECT(snapshotRow(facade, kBase + 1)->captureEpoch == e1 && e1 >= 1, "rows carry the capture epoch");
         auto l = cells(facade);
         MIB_EXPECT(l["valid"] == true && l["scope_start_generation"] == "0" && l["ring_start_generation"] == "0",
                    l.dump());
@@ -169,7 +180,8 @@ int main()
         MIB_REQUIRE(l["strip"].size() == 3, "three valid cells in the strip: " + l.dump());
         MIB_EXPECT(!inList(l["strip"], kBase + 4), "an invalid row is not a strip cell");
         const auto& cell = *inList(l["strip"], kBase + 2);
-        MIB_EXPECT(cell["start_generation"] == "0" && cell["object_id"] == 0 && cell["valid"] == true &&
+        MIB_EXPECT(cell["start_generation"] == "0" && cell["capture_epoch"] == std::to_string(e1) &&
+                       l["ring_capture_epoch"] == std::to_string(e1) && cell["object_id"] == 0 && cell["valid"] == true &&
                        cell["no_image_reason"].is_null() && cell["image"]["has_mask"] == true,
                    cell.dump());
         // box 24 x 20, margin max(8, 12) = 12: 48 x 44 around the box.
@@ -177,23 +189,24 @@ int main()
                        cell["image"]["crop_y"] == 18 && cell["image"]["source_width"] == 512,
                    cell["image"].dump());
         bridge::BackendFrame frame;
-        MIB_REQUIRE(facade.fetchMonitoringCellImage(0, kBase + 2, 0, false, frame), "image pull");
+        MIB_REQUIRE(facade.fetchMonitoringCellImage(0, e1, kBase + 2, 0, false, frame), "image pull");
         MIB_EXPECT(frame.width == 48 && frame.height == 44 && frame.strideBytes == 48 && frame.data.size() == 48u * 44 &&
                        frame.frameIndex == kBase + 2 && frame.pixelFormat == 0,
                    "the packet's geometry is the listed crop's");
         MIB_EXPECT(frame.data[0] == 20 && frame.data[frame.data.size() - 1] == 20, "the row's pixels");
-        MIB_REQUIRE(facade.fetchMonitoringCellImage(0, kBase + 2, 0, true, frame), "mask pull");
+        MIB_REQUIRE(facade.fetchMonitoringCellImage(0, e1, kBase + 2, 0, true, frame), "mask pull");
         std::size_t marked = 0;
         for (auto b : frame.data) marked += b == 255;
         MIB_EXPECT(marked == 24u * 20, "the mask crop marks the object");
-        MIB_EXPECT(!facade.fetchMonitoringCellImage(0, kBase + 4, 0, false, frame), "not held: no packet");
+        MIB_EXPECT(!facade.fetchMonitoringCellImage(0, e1, kBase + 4, 0, false, frame), "not held: no packet");
+        MIB_EXPECT(!facade.fetchMonitoringCellImage(0, e1 + 1, kBase + 2, 0, false, frame), "another capture: no packet");
 
-        auto r = pin(facade, 0, kBase + 1);
+        auto r = pin(facade, 0, e1, kBase + 1);
         MIB_EXPECT(r["ok"] == true && outcome(r) == 0 && r["cell"]["frame_index"] == std::to_string(kBase + 1),
                    r.dump());
-        r = pin(facade, 0, kBase + 1);
+        r = pin(facade, 0, e1, kBase + 1);
         MIB_EXPECT(r["ok"] == true && outcome(r) == 2, "AlreadyPinned: " + r.dump());
-        r = pin(facade, 0, kBase + 4); // an invalid row may be pinned too (from the scatter or the table)
+        r = pin(facade, 0, e1, kBase + 4); // an invalid row may be pinned too (from the scatter or the table)
         MIB_EXPECT(r["ok"] == true && outcome(r) == 0, r.dump());
 
         // ---- 3. a run: tags, pins dropped, stale refused ---------------------------------------
@@ -217,6 +230,19 @@ int main()
                             std::chrono::seconds(15)),
                         "readiness passes with a running mock camera");
         }
+        // The realtime loop starts on the capture: a new capture epoch. Rows from before it are an
+        // earlier capture (their frame indices could recur), so they can no longer be pinned.
+        proc.setRealtimeEnabled(true);
+        proc.startRealtime(backendApp.getFrameStore());
+        const auto e2 = proc.monitoringCaptureEpoch();
+        MIB_EXPECT(e2 > e1, "a realtime start is a new capture");
+        r = pin(facade, 0, e1, kBase + 3);
+        MIB_EXPECT(outcome(r) == 6 && r["ok"] == false && r["cell"].is_null(),
+                   "an earlier capture's identity is CaptureMismatch: " + r.dump());
+        r = pin(facade, 0, e2, kBase + 3);
+        MIB_EXPECT(outcome(r) == 4, "the current capture never saw that frame: " + r.dump());
+        MIB_EXPECT(cells(facade)["strip"].empty(), "the strip keeps only the current capture's cells");
+        inject(proc, kBase + 5, true, 40); // outside a run, this capture
         auto s1 = startRun(facade, (td.path() / "run1.h5").string());
         MIB_REQUIRE(s1.ok, "run 1 starts: " + s1.message);
         const auto run1 = backendApp.experiment().status().startGeneration;
@@ -226,18 +252,19 @@ int main()
         MIB_EXPECT(l["pins"].empty() && l["scope_start_generation"] == std::to_string(run1),
                    "Start dropped the pins: " + l.dump());
         MIB_EXPECT(l["strip"].empty(), "pre-run cells are not the run's strip: " + l.dump());
+        MIB_EXPECT(proc.monitoringCaptureEpoch() == e2, "the run kept the running capture");
         inject(proc, kBase + 10, true, 50);
         MIB_EXPECT(snapshotGeneration(facade, kBase + 10) == std::to_string(run1), "a run row carries the run");
         MIB_EXPECT(snapshotGeneration(facade, kBase + 1) == std::string("0"), "a pre-run row keeps 0");
         l = cells(facade);
         MIB_EXPECT(l["strip"].size() == 1 && l["strip"][0]["start_generation"] == std::to_string(run1), l.dump());
-        r = pin(facade, run1, kBase + 10);
+        r = pin(facade, run1, e2, kBase + 10);
         MIB_EXPECT(outcome(r) == 0, "the run's row pins: " + r.dump());
-        r = pin(facade, run1, kBase + 1);
+        r = pin(facade, run1, e2, kBase + 5);
         MIB_EXPECT(outcome(r) == 3 && r["ok"] == false &&
                        r["message"].get<std::string>().find("outside a run") != std::string::npos,
                    "a pre-run row is not the run's: " + r.dump());
-        r = pin(facade, run1 + 1, kBase + 10);
+        r = pin(facade, run1 + 1, e2, kBase + 10);
         MIB_EXPECT(outcome(r) == 3, "a future run is refused: " + r.dump());
 
         bridge::ExperimentCommand stop;
@@ -253,7 +280,7 @@ int main()
         l = cells(facade);
         MIB_EXPECT(l["pins"].size() == 1 && l["pins"][0]["frame_index"] == std::to_string(kBase + 10),
                    "pins outlive the run's end: " + l.dump());
-        MIB_EXPECT(facade.fetchMonitoringCellImage(run1, kBase + 10, 0, false, frame) && frame.data[0] == 50,
+        MIB_EXPECT(facade.fetchMonitoringCellImage(run1, e2, kBase + 10, 0, false, frame) && frame.data[0] == 50,
                    "the run's pin still serves its image");
 
         wd.mark("run 2");
@@ -263,7 +290,7 @@ int main()
         MIB_EXPECT(run2 > run1, "a newer generation");
         l = cells(facade);
         MIB_EXPECT(l["pins"].empty(), "the next Start drops run 1's pins");
-        r = pin(facade, run1, kBase + 10);
+        r = pin(facade, run1, e2, kBase + 10);
         MIB_EXPECT(outcome(r) == 3 && r["message"].get<std::string>().find("not the latest run") != std::string::npos,
                    "a stale client cannot pin into the new run: " + r.dump());
 
@@ -272,29 +299,31 @@ int main()
         inject(proc, kBase + 20, true, 70);
         MIB_REQUIRE(snapshotGeneration(facade, kBase + 20) == std::to_string(run2), "served by a snapshot");
         for (std::uint64_t i = 0; i < 1001; ++i) inject(proc, kBase + 100000 + i, true, 1); // the ring turns over
-        r = pin(facade, run2, kBase + 20);
+        r = pin(facade, run2, e2, kBase + 20);
         MIB_EXPECT(outcome(r) == 1 && r["ok"] == true && r["cell"]["image"].is_null(), "metadata only: " + r.dump());
         MIB_EXPECT(r["cell"]["area"] == 420.0 && r["cell"]["frame_index"] == std::to_string(kBase + 20),
                    "the measurements the snapshot reported");
         MIB_EXPECT(r["message"] == r["cell"]["no_image_reason"] &&
                        r["message"].get<std::string>().find("left the monitoring buffer") != std::string::npos,
                    "a plain reason: " + r.dump());
-        MIB_EXPECT(!facade.fetchMonitoringCellImage(run2, kBase + 20, 0, false, frame), "no image is invented");
-        r = pin(facade, run2, kBase + 77);
+        MIB_EXPECT(!facade.fetchMonitoringCellImage(run2, e2, kBase + 20, 0, false, frame), "no image is invented");
+        r = pin(facade, run2, e2, kBase + 77);
         MIB_EXPECT(outcome(r) == 4 && r["cell"].is_null(), "unknown row: NotFound " + r.dump());
 
         // ---- 5. monitoring_clear, unpin, clear --------------------------------------------------
         wd.mark("clear");
-        MIB_REQUIRE(pin(facade, run2, kBase + 100000 + 1000)["ok"] == true, "pin a held row");
+        MIB_REQUIRE(pin(facade, run2, e2, kBase + 100000 + 1000)["ok"] == true, "pin a held row");
         MIB_EXPECT(!cells(facade)["strip"].empty(), "a strip before the clear");
         bridge::MonitoringCommand clear;
         clear.action = bridge::MonitoringCommandAction::Clear;
         MIB_REQUIRE(facade.dispatch(clear).ok, "monitoring_clear");
         l = cells(facade);
         MIB_EXPECT(l["strip"].empty() && l["pins"].size() == 2, "the strip clears, the pins stay: " + l.dump());
-        auto u = facade.unpinMonitoringCell(run2, kBase + 20, 0);
+        auto u = facade.unpinMonitoringCell(run2, e2 + 1, kBase + 20, 0);
+        MIB_EXPECT(!u.ok, "unpin names the capture too: " + u.message);
+        u = facade.unpinMonitoringCell(run2, e2, kBase + 20, 0);
         MIB_EXPECT(u.ok && u.message == "unpinned", u.message);
-        u = facade.unpinMonitoringCell(run2, kBase + 20, 0);
+        u = facade.unpinMonitoringCell(run2, e2, kBase + 20, 0);
         MIB_EXPECT(!u.ok && u.message.find("not pinned") != std::string::npos, u.message);
         u = facade.clearMonitoringCellPins();
         MIB_EXPECT(u.ok && u.message == "cleared 1 pin(s)", u.message);

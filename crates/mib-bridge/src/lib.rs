@@ -723,6 +723,9 @@ pub mod ffi {
         /// path appended the row (0 = outside a run). With `(frame_index, object_id)` it names the
         /// row for a live cell pin. Review metric rows leave it 0 (mib-app-commands omits it).
         pub start_generation: u64,
+        /// ABI 41: the capture epoch of the row's frame (frame indices restart when the capture
+        /// changes); part of the row's identity. 0 for review rows.
+        pub capture_epoch: u64,
     }
 
     /// Bounded monitoring snapshot (schema v6, BE-5). Evictions are
@@ -1289,18 +1292,20 @@ pub mod ffi {
         /// most the strip cap of new crops, off the hot path), then lists it and the pins,
         /// metadata only. `{"valid": false}` before init.
         fn fetch_monitoring_cells(self: Pin<&mut BackendBridge>) -> String;
-        /// Pin the row `(expected_start_generation, frame_index, object_id)`: an owned copy that
-        /// survives the ring. JSON `{ok, outcome, message, cell, revision}`; `outcome` is a
-        /// `monitoring_cell_pin_outcomes` value.
+        /// Pin the row `(expected_start_generation, capture_epoch, frame_index, object_id)`: an
+        /// owned copy that survives the ring. JSON `{ok, outcome, message, cell, revision}`;
+        /// `outcome` is a `monitoring_cell_pin_outcomes` value.
         fn monitoring_cell_pin(
             self: Pin<&mut BackendBridge>,
             expected_start_generation: u64,
+            capture_epoch: u64,
             frame_index: u64,
             object_id: i32,
         ) -> String;
         fn monitoring_cell_unpin(
             self: Pin<&mut BackendBridge>,
             start_generation: u64,
+            capture_epoch: u64,
             frame_index: u64,
             object_id: i32,
         ) -> BridgeCommandResult;
@@ -1310,6 +1315,7 @@ pub mod ffi {
         fn fetch_monitoring_cell_image(
             self: Pin<&mut BackendBridge>,
             start_generation: u64,
+            capture_epoch: u64,
             frame_index: u64,
             object_id: i32,
             mask: bool,

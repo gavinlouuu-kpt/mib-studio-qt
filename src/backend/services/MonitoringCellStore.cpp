@@ -55,7 +55,7 @@ bool finite(double v) { return std::isfinite(v); }
 
 } // namespace
 
-MonitoringCellMetrics monitoringCellMetrics(const FilterResult& v, std::uint64_t timestampNs)
+MonitoringCellMetrics monitoringCellMetrics(const FilterResult& v, std::uint64_t timestampNs, cv::Point geometryOrigin)
 {
     MonitoringCellMetrics m;
     m.timestampNs = timestampNs;
@@ -63,10 +63,11 @@ MonitoringCellMetrics monitoringCellMetrics(const FilterResult& v, std::uint64_t
     m.targetGroup = v.isTargetGroup;
     m.objectCount = v.objectCount;
     m.trackId = v.trackId;
-    m.centroidX = v.centroidX;
-    m.centroidY = v.centroidY;
-    m.bboxX = v.bboxX;
-    m.bboxY = v.bboxY;
+    // Image (ROI) coordinates: an async-batch row was measured on the full frame.
+    m.centroidX = v.centroidX - geometryOrigin.x;
+    m.centroidY = v.centroidY - geometryOrigin.y;
+    m.bboxX = v.bboxX - geometryOrigin.x;
+    m.bboxY = v.bboxY - geometryOrigin.y;
     m.bboxWidth = v.bboxWidth;
     m.bboxHeight = v.bboxHeight;
     m.area = v.area;
@@ -253,8 +254,11 @@ void MonitoringCellStore::refreshStrip()
     const auto tSource = Clock::now();
     std::vector<Entry> fresh;
     fresh.reserve(newest.rows.size());
+    const auto inContext = [&newest](const MonitoringCellKey& k) {
+        return k.startGeneration == newest.ringGeneration && k.captureEpoch == newest.captureEpoch;
+    };
     for (const auto& c : newest.rows) {
-        if (c.key.startGeneration != newest.ringGeneration) continue; // another context
+        if (!inContext(c.key)) continue; // another run or capture
         if (std::find(held.begin(), held.end(), c.key) != held.end()) continue;
         fresh.push_back(copyCandidate(c, kNoImageResultsOnly)); // crop + clone, no lock held
     }
@@ -269,12 +273,13 @@ void MonitoringCellStore::refreshStrip()
             counters_.lastRefreshUs = elapsedUs(t0, Clock::now());
             return;
         }
-        if (ringGeneration_ != newest.ringGeneration) {
+        if (ringGeneration_ != newest.ringGeneration || ringCaptureEpoch_ != newest.captureEpoch) {
             ringGeneration_ = newest.ringGeneration;
+            ringCaptureEpoch_ = newest.captureEpoch;
             ++revision_;
         }
         for (auto it = strip_.begin(); it != strip_.end();) {
-            if (it->info.key.startGeneration != newest.ringGeneration) {
+            if (!inContext(it->info.key)) {
                 stripBytes_ -= std::min(stripBytes_, it->info.bytes);
                 dropped.push_back(std::move(*it));
                 it = strip_.erase(it);
@@ -298,11 +303,10 @@ void MonitoringCellStore::refreshStrip()
     }
 }
 
-MonitoringCellStore::PinResult MonitoringCellStore::pin(std::uint64_t expectedStartGeneration,
-                                                        std::uint64_t frameIndex, int objectId)
+MonitoringCellStore::PinResult MonitoringCellStore::pin(const MonitoringCellKey& key)
 {
-    const MonitoringCellKey key{expectedStartGeneration, frameIndex, objectId};
-    const std::string cell = cellName(frameIndex, objectId);
+    const std::uint64_t expectedStartGeneration = key.startGeneration;
+    const std::string cell = cellName(key.frameIndex, key.objectId);
     PinResult r;
     auto refuse = [&r](PinOutcome outcome, std::string message) {
         r.outcome = outcome;
@@ -358,27 +362,41 @@ MonitoringCellStore::PinResult MonitoringCellStore::pin(std::uint64_t expectedSt
             return refuse(PinOutcome::LimitReached, "pin refused: " + std::to_string(policy_.maxPins) +
                                                         " cells are pinned (the limit); unpin one first");
     }
-    // The strip already holds an owned copy: share it (immutable), no new crop.
+    // The ring first (headers under its lock): it says which capture is current, and an
+    // identity of an earlier capture is never resolved (frame indices restart with a capture).
+    auto found = source_.find(key.frameIndex, key.objectId);
+    if (key.captureEpoch != found.captureEpoch) {
+        source_.releaseShares(found.rows);
+        return refuse(PinOutcome::CaptureMismatch,
+                      "pin refused: " + cell + " is from capture " + std::to_string(key.captureEpoch) +
+                          ", but the current capture is " + std::to_string(found.captureEpoch) +
+                          " (the camera mode or frame buffer changed and frame indices restarted); a cell is "
+                          "never served across a capture change");
+    }
+    // The strip already holds an owned copy of this capture's row: share it (immutable), no new crop.
     {
         std::optional<Entry> fromStrip;
         {
             std::scoped_lock lk(mutex_);
             if (const auto* s = findLocked(key, false)) fromStrip = *s;
         }
-        if (fromStrip) return admit(std::move(*fromStrip), scope);
+        if (fromStrip) {
+            source_.releaseShares(found.rows);
+            return admit(std::move(*fromStrip), scope);
+        }
     }
-    // The ring (headers under its lock), then an owned crop outside every lock.
+    // An owned crop of the ring's row, outside every lock.
     std::optional<Entry> copy;
     std::optional<std::uint64_t> otherGeneration;
-    auto found = source_.find(frameIndex, objectId);
-    for (const auto& c : found) {
+    for (const auto& c : found.rows) {
+        if (c.key.captureEpoch != key.captureEpoch) continue; // another capture's frame: unrelated
         if (c.key.startGeneration == expectedStartGeneration) {
             copy = copyCandidate(c, kNoImageResultsOnly);
             break;
         }
         if (!otherGeneration) otherGeneration = c.key.startGeneration;
     }
-    source_.releaseShares(found);
+    source_.releaseShares(found.rows);
     if (!copy) {
         std::optional<MonitoringCellMetrics> known;
         {
@@ -445,6 +463,7 @@ MonitoringCellStore::Listing MonitoringCellStore::listing() const
     std::scoped_lock lk(mutex_);
     out.scopeGeneration = scope_;
     out.ringGeneration = ringGeneration_;
+    out.ringCaptureEpoch = ringCaptureEpoch_;
     out.revision = revision_;
     out.strip.reserve(strip_.size());
     for (const auto& e : strip_) out.strip.push_back(e.info);
@@ -513,32 +532,31 @@ class ProcessingCellSource final : public MonitoringCellSource {
 public:
     explicit ProcessingCellSource(const ProcessingService& processing) : processing_(processing) {}
 
-    Newest newestValid(std::size_t maxRows) override
+    Rows newestValid(std::size_t maxRows) override
     {
-        Newest out;
+        Rows out;
         out.rows.reserve(maxRows); // allocated before the lock is taken
         const auto view = processing_.visitMonitoringNewest(
-            maxRows, false, [&out](const ProcessedFrame& f, std::uint64_t gen, bool) {
-                out.rows.push_back(MonitoringCellCandidate{{gen, f.index, f.validation.objectId},
-                                                           monitoringCellMetrics(f.validation, f.timestampNs),
-                                                           f.originalImage, f.processedImage});
+            maxRows, false, [&out](const ProcessedFrame& f, const ProcessingService::MonitoringRowTag& tag, bool) {
+                out.rows.push_back(candidate(f, tag));
             });
         out.ringGeneration = view.runGeneration;
+        out.captureEpoch = view.captureEpoch;
         return out;
     }
 
-    std::vector<MonitoringCellCandidate> find(std::uint64_t frameIndex, int objectId) override
+    Rows find(std::uint64_t frameIndex, int objectId) override
     {
-        std::vector<MonitoringCellCandidate> out;
-        processing_.visitMonitoringNewest(
+        Rows out;
+        const auto view = processing_.visitMonitoringNewest(
             std::numeric_limits<std::size_t>::max(), true,
-            [&](const ProcessedFrame& f, std::uint64_t gen, bool) {
+            [&](const ProcessedFrame& f, const ProcessingService::MonitoringRowTag& tag, bool) {
                 if (f.index != frameIndex || f.validation.objectId != objectId) return;
-                out.push_back(MonitoringCellCandidate{{gen, f.index, f.validation.objectId},
-                                                      monitoringCellMetrics(f.validation, f.timestampNs),
-                                                      f.originalImage, f.processedImage});
+                out.rows.push_back(candidate(f, tag));
             });
-        std::reverse(out.begin(), out.end()); // newest first
+        std::reverse(out.rows.begin(), out.rows.end()); // newest first
+        out.ringGeneration = view.runGeneration;
+        out.captureEpoch = view.captureEpoch;
         return out;
     }
 
@@ -556,6 +574,15 @@ public:
     }
 
 private:
+    // Under the ring's lock: scalars and Mat headers; geometry into image (ROI) coordinates.
+    static MonitoringCellCandidate candidate(const ProcessedFrame& f, const ProcessingService::MonitoringRowTag& tag)
+    {
+        return MonitoringCellCandidate{
+            {tag.runGeneration, f.index, f.validation.objectId, tag.captureEpoch},
+            monitoringCellMetrics(f.validation, f.timestampNs, {tag.geometryOriginX, tag.geometryOriginY}),
+            f.originalImage, f.processedImage};
+    }
+
     const ProcessingService& processing_;
 };
 

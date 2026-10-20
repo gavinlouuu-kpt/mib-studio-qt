@@ -1334,7 +1334,8 @@ namespace backend::bridge
         // of both rings, and each row carries its run's start generation.
         out.rows.reserve(std::min<std::size_t>(maxRows, 2 * out.capacity));
         const auto view = processing.visitMonitoringNewest(
-            maxRows, true, [&out](const services::ProcessedFrame &frame, std::uint64_t generation, bool) {
+            maxRows, true,
+            [&out](const services::ProcessedFrame &frame, const services::ProcessingService::MonitoringRowTag &tag, bool) {
                 const auto &v = frame.validation;
                 MonitoringObjectRow row;
                 row.frameIndex = frame.index;
@@ -1344,15 +1345,18 @@ namespace backend::bridge
                 row.objectId = v.objectId;
                 row.objectCount = v.objectCount;
                 row.trackId = v.trackId;
-                row.centroidX = v.centroidX;
-                row.centroidY = v.centroidY;
+                // ROI image coordinates in both realtime modes (an async-batch
+                // row was measured on the full frame; its tag holds the ROI origin).
+                row.centroidX = v.centroidX - tag.geometryOriginX;
+                row.centroidY = v.centroidY - tag.geometryOriginY;
                 row.area = v.area;
                 row.deformability = v.deformability;
                 row.areaRatio = v.areaRatio;
                 row.ringRatio = v.ringRatio;
                 row.youngsModulus = v.youngsModulus;
                 row.pixelToMicronFactor = v.analysisPixelToMicronFactor;
-                row.startGeneration = generation;
+                row.startGeneration = tag.runGeneration;
+                row.captureEpoch = tag.captureEpoch;
                 out.rows.push_back(row);
                 out.latestTimestampNs = std::max(out.latestTimestampNs, frame.timestampNs);
             });
@@ -1383,7 +1387,7 @@ namespace backend::bridge
                 m.ringRatio = r.ringRatio;
                 m.youngsModulus = r.youngsModulus;
                 m.pixelToMicron = r.pixelToMicronFactor;
-                seen.push_back({{r.startGeneration, r.frameIndex, r.objectId}, m});
+                seen.push_back({{r.startGeneration, r.frameIndex, r.objectId, r.captureEpoch}, m});
             }
             cells->noteRows(seen);
         }
@@ -1405,6 +1409,7 @@ namespace backend::bridge
             const auto &m = c.metrics;
             nlohmann::json j{
                 {"start_generation", dec(c.key.startGeneration)},
+                {"capture_epoch", dec(c.key.captureEpoch)},
                 {"frame_index", dec(c.key.frameIndex)},
                 {"object_id", c.key.objectId},
                 {"timestamp_ns", dec(m.timestampNs)},
@@ -1465,6 +1470,7 @@ namespace backend::bridge
             {"valid", true},
             {"scope_start_generation", dec(l.scopeGeneration)},
             {"ring_start_generation", dec(l.ringGeneration)},
+            {"ring_capture_epoch", dec(l.ringCaptureEpoch)},
             {"revision", dec(l.revision)},
             {"strip", std::move(strip)},
             {"pins", std::move(pins)},
@@ -1492,7 +1498,7 @@ namespace backend::bridge
         return true;
     }
 
-    std::string BackendFacade::pinMonitoringCellJson(std::uint64_t expectedStartGeneration,
+    std::string BackendFacade::pinMonitoringCellJson(std::uint64_t expectedStartGeneration, std::uint64_t captureEpoch,
                                                      std::uint64_t frameIndex, int objectId)
     {
         auto *cells = initialized_ ? backend_.monitoringCells() : nullptr;
@@ -1500,7 +1506,7 @@ namespace backend::bridge
         {
             return nlohmann::json{{"ok", false}, {"message", "Backend not initialized"}, {"cell", nullptr}}.dump();
         }
-        const auto r = cells->pin(expectedStartGeneration, frameIndex, objectId);
+        const auto r = cells->pin({expectedStartGeneration, frameIndex, objectId, captureEpoch});
         nlohmann::json doc{
             {"ok", pinOk(r.outcome)},
             {"outcome", static_cast<std::uint32_t>(r.outcome)},
@@ -1511,16 +1517,17 @@ namespace backend::bridge
         return doc.dump();
     }
 
-    BackendCommandResult BackendFacade::unpinMonitoringCell(std::uint64_t startGeneration, std::uint64_t frameIndex,
-                                                            int objectId)
+    BackendCommandResult BackendFacade::unpinMonitoringCell(std::uint64_t startGeneration, std::uint64_t captureEpoch,
+                                                            std::uint64_t frameIndex, int objectId)
     {
         auto *cells = initialized_ ? backend_.monitoringCells() : nullptr;
         if (!cells) return {false, BackendCommandType::Monitoring, "Backend not initialized"};
-        if (!cells->unpin({startGeneration, frameIndex, objectId}))
+        if (!cells->unpin({startGeneration, frameIndex, objectId, captureEpoch}))
         {
             return {false, BackendCommandType::Monitoring,
                     "not pinned: frame " + std::to_string(frameIndex) + " object " + std::to_string(objectId) +
-                        " of start generation " + std::to_string(startGeneration)};
+                        " of start generation " + std::to_string(startGeneration) + ", capture " +
+                        std::to_string(captureEpoch)};
         }
         return {true, BackendCommandType::Monitoring, "unpinned"};
     }
@@ -1533,14 +1540,15 @@ namespace backend::bridge
         return {true, BackendCommandType::Monitoring, "cleared " + std::to_string(n) + " pin(s)"};
     }
 
-    bool BackendFacade::fetchMonitoringCellImage(std::uint64_t startGeneration, std::uint64_t frameIndex,
-                                                 int objectId, bool mask, BackendFrame &out) const
+    bool BackendFacade::fetchMonitoringCellImage(std::uint64_t startGeneration, std::uint64_t captureEpoch,
+                                                 std::uint64_t frameIndex, int objectId, bool mask,
+                                                 BackendFrame &out) const
     {
         auto *cells = initialized_ ? backend_.monitoringCells() : nullptr;
         if (!cells) return false;
         cv::Mat image;
         services::MonitoringCellInfo info;
-        if (!cells->image({startGeneration, frameIndex, objectId}, mask, image, &info)) return false;
+        if (!cells->image({startGeneration, frameIndex, objectId, captureEpoch}, mask, image, &info)) return false;
         // `image` is a private, continuous copy (taken under the store's lock).
         out = BackendFrame{};
         out.frameIndex = frameIndex;

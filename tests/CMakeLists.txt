@@ -355,6 +355,12 @@ mib_add_backend_test_executable(monitoring_cell_concurrency_test processing/moni
 mib_backend_test_link(monitoring_cell_concurrency_test PRIVATE Threads::Threads)
 add_test(NAME processing.monitoring_cell_concurrency COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_cell_concurrency_test)
 set_tests_properties(processing.monitoring_cell_concurrency PROPERTIES LABELS "backend;processing;monitoring;concurrency;stress" TIMEOUT 180)
+# #716 A6a review round 1: crops hold their own object in both realtime modes (ROI origin != 0);
+# identities never cross a capture change (FrameStore swap, resize). Real realtime loop.
+mib_add_backend_test_executable(monitoring_cell_pipeline_test processing/monitoring_cell_pipeline_test.cpp)
+mib_backend_test_link(monitoring_cell_pipeline_test PRIVATE Threads::Threads)
+add_test(NAME processing.monitoring_cell_pipeline COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_cell_pipeline_test)
+set_tests_properties(processing.monitoring_cell_pipeline PROPERTIES LABELS "backend;processing;monitoring;safety" TIMEOUT 180)
 # #716 A6a: what live cell images cost the hot path (ratio gates; sanitizer lanes skip `performance`).
 mib_add_backend_test_executable(monitoring_cell_hot_path_test performance/monitoring_cell_hot_path_test.cpp)
 mib_backend_test_link(monitoring_cell_hot_path_test PRIVATE Threads::Threads)
