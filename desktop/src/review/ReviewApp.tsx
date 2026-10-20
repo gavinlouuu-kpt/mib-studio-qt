@@ -6,10 +6,10 @@
 //
 // This shell owns what the panel does not: backend initialization, the stage
 // tabs, preferences (px→µm fallback), updates, the log drawer and the About
-// dialog. Inspect is today's `ReviewPanel`, unchanged (frames, charts, its
-// toolbar's exports and regenerate); it stays mounted while another stage
-// shows, so the open run, the selection and a running job survive a stage
-// change. Selecting a stage only changes what is shown. No camera, experiment
+// dialog. Inspect is `ReviewPanel`, laid out as R3 on the kit (#717 B3a:
+// Scatter / Records / Frames, the record card, its toolbar's exports and
+// regenerate); it stays mounted while another stage shows, so the open run,
+// the selection and a running job survive a stage change. Selecting a stage only changes what is shown. No camera, experiment
 // or hardware controls exist in this product.
 
 import { useCallback, useEffect, useRef, useState } from "react";

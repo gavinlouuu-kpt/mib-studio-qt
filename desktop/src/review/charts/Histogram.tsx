@@ -4,12 +4,13 @@
 // one), y axis to ceil(1.1 × max count).
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { niceTicks, ringRatioHistogram, type Histogram as HistogramData } from "./chartMath";
+import { CHART_PALETTE as P } from "./chartPalette";
 
 const MARGIN = { left: 48, top: 28, right: 12, bottom: 40 };
-const BAR = "#209fdf";
+const BAR = P.point; // kit accent (#717 B3a)
 
 export function drawHistogram(g: CanvasRenderingContext2D, w: number, h: number, hist: HistogramData): void {
-  g.fillStyle = "#fff";
+  g.fillStyle = P.background;
   g.fillRect(0, 0, w, h);
   const pw = w - MARGIN.left - MARGIN.right;
   const ph = h - MARGIN.top - MARGIN.bottom;
@@ -17,14 +18,14 @@ export function drawHistogram(g: CanvasRenderingContext2D, w: number, h: number,
   const sx = pw / (hist.max - hist.min);
   const sy = ph / yMax;
 
-  g.font = "11px system-ui, sans-serif";
+  g.font = `11px ${P.font}`;
   g.lineWidth = 1;
-  g.fillStyle = "#444";
+  g.fillStyle = P.tick;
   g.textAlign = "right";
   g.textBaseline = "middle";
   for (const t of niceTicks({ min: 0, max: yMax }, Math.max(2, Math.floor(ph / 40))).filter(Number.isInteger)) {
     const y = Math.round(MARGIN.top + ph - t * sy) + 0.5;
-    g.strokeStyle = "#e6e6e6";
+    g.strokeStyle = P.grid;
     g.beginPath();
     g.moveTo(MARGIN.left, y);
     g.lineTo(MARGIN.left + pw, y);
@@ -39,9 +40,9 @@ export function drawHistogram(g: CanvasRenderingContext2D, w: number, h: number,
     const bh = n * sy;
     g.fillRect(x + 0.5, MARGIN.top + ph - bh, Math.max(1, bw - 1), bh);
   });
-  g.strokeStyle = "#999";
+  g.strokeStyle = P.frame;
   g.strokeRect(MARGIN.left + 0.5, MARGIN.top + 0.5, pw, ph);
-  g.fillStyle = "#444";
+  g.fillStyle = P.tick;
   g.textAlign = "center";
   g.textBaseline = "top";
   // Six ticks over the fixed range (Qt setTickCount(6)).
@@ -49,11 +50,11 @@ export function drawHistogram(g: CanvasRenderingContext2D, w: number, h: number,
     const v = hist.min + ((hist.max - hist.min) * k) / 5;
     g.fillText(v.toFixed(1), MARGIN.left + (v - hist.min) * sx, MARGIN.top + ph + 4);
   }
-  g.fillStyle = "#222";
+  g.fillStyle = P.ink;
   g.textBaseline = "alphabetic";
-  g.font = "bold 13px system-ui, sans-serif";
+  g.font = `600 13px ${P.font}`;
   g.fillText("Ring Width Distribution", MARGIN.left + pw / 2, 18);
-  g.font = "12px system-ui, sans-serif";
+  g.font = `12px ${P.font}`;
   g.fillText("Ring ratio", MARGIN.left + pw / 2, h - 6);
   g.save();
   g.translate(12, MARGIN.top + ph / 2);
@@ -61,7 +62,7 @@ export function drawHistogram(g: CanvasRenderingContext2D, w: number, h: number,
   g.fillText("Frequency", 0, 0);
   g.restore();
   if (hist.maxCount === 0) {
-    g.fillStyle = "#888";
+    g.fillStyle = P.empty;
     g.fillText("No ring ratios", MARGIN.left + pw / 2, MARGIN.top + ph / 2);
   }
 }

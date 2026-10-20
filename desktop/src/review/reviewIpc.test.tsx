@@ -476,7 +476,7 @@ it("sends the same commands, arguments, chart bytes and dialogs as before the tr
 
   flows.push(
     await flow("charts and core contour", async () => {
-      await click(button("Charts"));
+      await click(button("Scatter"));
       await click(button("Compute core contour…"));
       await settle(400);
     }),
