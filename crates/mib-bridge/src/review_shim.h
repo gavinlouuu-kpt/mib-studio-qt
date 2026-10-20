@@ -22,6 +22,8 @@ struct ReviewEvent;
 struct ReviewChartSnapshot;
 struct ReviewDensity;
 struct ReviewProbeResult;
+struct ReviewTrackRows;
+struct ReviewReprocessResult;
 
 class ReviewBridge {
 public:
