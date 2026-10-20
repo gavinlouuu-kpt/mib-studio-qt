@@ -27,6 +27,9 @@
 //   4. stopping realtime ends the capture while the camera keeps producing
 //      frames: the strip is cleared, the old identities are refused, the pin
 //      keeps its measurements only ("capture E ended").
+//   5. the camera session floor: frames of a camera session that closed,
+//      still arriving or still in processing after the change, enter with no
+//      capture and never become cells of the next one; the next session's do.
 
 #include "backend/playback/FrameStore.h"
 #include "backend/processing/ProcessingService.h"
@@ -106,9 +109,10 @@ cv::Mat oneObject(int marker)
     return m;
 }
 
-void push(FrameStore& store, const cv::Mat& m, uint64_t ts)
+void push(FrameStore& store, const cv::Mat& m, uint64_t ts, uint64_t captureSession = 0)
 {
-    store.pushFrame(m.data, static_cast<size_t>(m.total()), kW, kH, static_cast<size_t>(kW), kMono8, ts);
+    store.pushFrame(m.data, static_cast<size_t>(m.total()), kW, kH, static_cast<size_t>(kW), kMono8, ts, 0,
+                    captureSession);
 }
 
 size_t validHeld(const ProcessingService& proc) { return proc.visitMonitoringNewest(0, false, {}).validHeld; }
@@ -526,6 +530,53 @@ void stopEndsTheCapture()
     camera.join();
 }
 
+// ---- 5. the camera session floor ---------------------------------------------------------
+void sessionFloor()
+{
+    std::printf("frames of a closed camera session never adopt the next capture\n");
+    constexpr int kOld = 60, kNew = 240;
+    auto store = std::make_shared<FrameStore>(256);
+    ProcessingService proc;
+    proc.start(1);
+    Wired wired(proc);
+    auto& cells = *wired.cells;
+    startProcessing(proc, Mode::Inline, store, false);
+    uint64_t ts = 0;
+    const auto feedSession = [&](int marker, uint64_t session, size_t rows) {
+        const auto before = proc.visitMonitoringNewest(0, false, {}).validAppended;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+        while (std::chrono::steady_clock::now() < deadline) {
+            push(*store, oneObject(marker), ++ts, session);
+            std::this_thread::sleep_for(std::chrono::milliseconds(3));
+            if (proc.visitMonitoringNewest(0, false, {}).validAppended - before >= rows) return true;
+        }
+        return false;
+    };
+    MIB_REQUIRE(feedSession(kOld, 5, 4), "session 5 rows");
+    // The camera closes session 5 (AppBackend: floor = session + 1).
+    const auto e = cells.advanceCapture("the camera stopped", 6);
+    MIB_REQUIRE(proc.monitoringCaptureEpoch() == e, "published");
+    // Late frames of session 5 (the camera's last frames, a slow consumer).
+    MIB_REQUIRE(feedSession(kOld, 5, 4), "late session 5 rows");
+    size_t late = 0;
+    proc.visitMonitoringNewest(2000, true, [&](const ProcessedFrame& f, const ProcessingService::MonitoringRowTag& t, bool) {
+        if (f.originalImage.empty()) return;
+        if (cv::countNonZero(f.originalImage == kOld) > 0 && t.captureEpoch >= e) ++late;
+    });
+    MIB_EXPECT(late == 0, "no row of session 5 carries the new capture (" + std::to_string(late) + " did)");
+    cells.refreshStrip();
+    MIB_EXPECT(cells.listing().strip.empty(), "no session 5 cell after the change");
+    // Session 6 opens: its frames are the new capture's cells.
+    MIB_REQUIRE(feedSession(kNew, 6, 4), "session 6 rows");
+    cells.refreshStrip();
+    const auto l = cells.listing();
+    MIB_EXPECT(!l.strip.empty(), "session 6 cells");
+    cv::Mat px;
+    for (const auto& c : l.strip)
+        MIB_EXPECT(c.key.captureEpoch == e && cells.image(c.key, false, px) && cv::countNonZero(px == kNew) == kObjW * kObjH,
+                   "only session 6's pixels");
+}
+
 } // namespace
 
 int main()
@@ -544,6 +595,8 @@ int main()
     heldAcrossAnRoiChange(Mode::AsyncBatch, "async batch");
     wd.mark("stop ends the capture");
     stopEndsTheCapture();
+    wd.mark("session floor");
+    sessionFloor();
     std::printf("monitoring_cell_pipeline_test: %s\n", mib::test::exitCode() == 0 ? "PASS" : "FAIL");
     return mib::test::exitCode();
 }
