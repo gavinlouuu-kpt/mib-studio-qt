@@ -711,7 +711,8 @@ async fn live_cells_over_the_websocket() {
     id += 1;
     let listing = ok(call(&mut viewer, id, "fetch_monitoring_cells", Value::Null, &mut events).await);
     let cell = listing["strip"].as_array().unwrap().last().cloned().expect("a strip cell");
-    let identity = json!({ "startGeneration": cell["start_generation"], "frameIndex": cell["frame_index"], "objectId": cell["object_id"] });
+    let identity = json!({ "startGeneration": cell["start_generation"], "captureEpoch": cell["capture_epoch"],
+                           "frameIndex": cell["frame_index"], "objectId": cell["object_id"] });
     for (layer, kind) in [("image", 5u32), ("mask", 6u32)] {
         let mut args = identity.clone();
         args["layer"] = json!(layer);
@@ -728,7 +729,8 @@ async fn live_cells_over_the_websocket() {
     // Pins need control.
     for cmd in ["monitoring_cell_pin", "monitoring_cell_unpin", "monitoring_cell_clear_pins"] {
         let args = match cmd {
-            "monitoring_cell_pin" => json!({ "expectedStartGeneration": cell["start_generation"], "frameIndex": cell["frame_index"], "objectId": cell["object_id"] }),
+            "monitoring_cell_pin" => json!({ "expectedStartGeneration": cell["start_generation"], "captureEpoch": cell["capture_epoch"],
+                     "frameIndex": cell["frame_index"], "objectId": cell["object_id"] }),
             "monitoring_cell_unpin" => identity.clone(),
             _ => Value::Null,
         };
@@ -738,7 +740,8 @@ async fn live_cells_over_the_websocket() {
     }
     id += 1;
     let pinned = ok(call(&mut controller, id, "monitoring_cell_pin",
-        json!({ "expectedStartGeneration": cell["start_generation"], "frameIndex": cell["frame_index"], "objectId": cell["object_id"] }),
+        json!({ "expectedStartGeneration": cell["start_generation"], "captureEpoch": cell["capture_epoch"],
+                     "frameIndex": cell["frame_index"], "objectId": cell["object_id"] }),
         &mut events).await);
     assert_eq!((pinned["ok"].clone(), pinned["outcome"].clone()), (json!(true), json!(0)), "{pinned}");
     id += 1;

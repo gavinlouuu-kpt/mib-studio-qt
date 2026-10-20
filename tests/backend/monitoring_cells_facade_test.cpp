@@ -91,6 +91,30 @@ void inject(backend::services::ProcessingService& proc, std::uint64_t frameIndex
     proc.appendMonitoringFrameForTests(f);
 }
 
+// An async-batch row: an ROI crop of the frame, its geometry in full-frame coordinates, tagged
+// with the ROI's origin. The object (255) sits at (200, 30) in the crop.
+void injectBatch(backend::services::ProcessingService& proc, std::uint64_t frameIndex, cv::Point roiOrigin)
+{
+    ProcessedFrame f;
+    f.index = frameIndex;
+    f.timestampNs = frameIndex * 10;
+    f.originalImage = cv::Mat(96, 512, CV_8UC1, cv::Scalar(5));
+    f.originalImage(cv::Rect(200, 30, 24, 20)).setTo(255);
+    f.processedImage = cv::Mat(96, 512, CV_8UC1, cv::Scalar(0));
+    f.processedImage(cv::Rect(200, 30, 24, 20)).setTo(255);
+    f.validation.isValid = true;
+    f.validation.objectId = 0;
+    f.validation.objectCount = 1;
+    f.validation.bboxX = 200 + roiOrigin.x;
+    f.validation.bboxY = 30 + roiOrigin.y;
+    f.validation.bboxWidth = 24;
+    f.validation.bboxHeight = 20;
+    f.validation.centroidX = 212 + roiOrigin.x;
+    f.validation.centroidY = 40 + roiOrigin.y;
+    f.validation.area = 480.0;
+    proc.appendMonitoringFrameForTests(f, roiOrigin);
+}
+
 json cells(bridge::BackendFacade& facade)
 {
     std::string text;
@@ -207,6 +231,25 @@ int main()
         r = pin(facade, 0, e1, kBase + 1);
         MIB_EXPECT(r["ok"] == true && outcome(r) == 2, "AlreadyPinned: " + r.dump());
         r = pin(facade, 0, e1, kBase + 4); // an invalid row may be pinned too (from the scatter or the table)
+        MIB_EXPECT(r["ok"] == true && outcome(r) == 0, r.dump());
+
+        // An async-batch row (geometry measured on the full frame, ROI origin (150, 8)): the
+        // snapshot and the cell report ROI coordinates, and the crop holds the object.
+        injectBatch(proc, kBase + 6, {150, 8});
+        const auto batchRow = snapshotRow(facade, kBase + 6);
+        MIB_REQUIRE(batchRow, "the batch row is in the snapshot");
+        MIB_EXPECT(batchRow->centroidX == 212 && batchRow->centroidY == 40, "snapshot centroid in ROI coordinates");
+        l = cells(facade);
+        const auto* batchCell = inList(l["strip"], kBase + 6);
+        MIB_REQUIRE(batchCell, "the batch row is a strip cell: " + l.dump());
+        MIB_EXPECT((*batchCell)["bbox"]["x"] == 200.0 && (*batchCell)["bbox"]["y"] == 30.0 &&
+                       (*batchCell)["centroid_x"] == 212.0 && (*batchCell)["image"]["crop_x"] == 188,
+                   "cell geometry in ROI coordinates: " + batchCell->dump());
+        MIB_REQUIRE(facade.fetchMonitoringCellImage(0, e1, kBase + 6, 0, false, frame), "batch crop");
+        std::size_t object = 0;
+        for (auto b : frame.data) object += b == 255;
+        MIB_EXPECT(object == 24u * 20, "the crop holds the whole object");
+        r = pin(facade, 0, e1, kBase + 6);
         MIB_EXPECT(r["ok"] == true && outcome(r) == 0, r.dump());
 
         // ---- 3. a run: tags, pins dropped, stale refused ---------------------------------------

@@ -8,10 +8,12 @@
 import { MONITORING_CELLS, MONITORING_CELL_PIN_OUTCOMES } from "./bridgeContract";
 import { decimalU64 } from "./framePacket";
 
-/** A monitoring row's identity: the run active when it was detected (0 = outside a run), its
- *  frame index and object id. u64 values are canonical decimal strings. */
+/** A monitoring row's identity: the run active when it was detected (0 = outside a run), the
+ *  capture its frame came from (frame indices restart when the capture changes; the epoch never
+ *  repeats), its frame index and object id. u64 values are canonical decimal strings. */
 export interface MonitoringCellKey {
   start_generation: string;
+  capture_epoch: string;
   frame_index: string;
   object_id: number;
 }
@@ -20,6 +22,7 @@ export interface MonitoringCellKey {
  *  JSON number) or the parts by hand. */
 export interface MonitoringCellKeyInput {
   start_generation: string | number | bigint;
+  capture_epoch: string | number | bigint;
   frame_index: string | number | bigint;
   object_id: number;
 }
@@ -36,7 +39,8 @@ export interface MonitoringCellImageInfo {
 }
 
 /** One cell: the row's measurements as recorded, and either the crop's geometry or the plain reason
- *  it has none. Non-finite numbers arrive as null. */
+ *  it has none. Non-finite numbers arrive as null. Centroid, bbox and crop_x / crop_y are in the
+ *  row image's coordinates (the processing ROI, source_width x source_height) in every mode. */
 export interface MonitoringCell extends MonitoringCellKey {
   timestamp_ns: string;
   valid: boolean;
@@ -60,8 +64,10 @@ export interface MonitoringCellsListing {
   valid: true;
   /** The latest run started ("0" before the first); pins belong to it. */
   scope_start_generation: string;
-  /** The strip's context: the active run, or "0" outside a run. */
+  /** The strip's context: the active run, or "0" outside a run ... */
   ring_start_generation: string;
+  /** ... and the current capture: a pin must name it (else CaptureMismatch). */
+  ring_capture_epoch: string;
   /** Bumps whenever the strip or the pins change. */
   revision: string;
   /** Oldest -> newest. */
@@ -79,7 +85,8 @@ export type MonitoringCellsReply = MonitoringCellsListing | { valid: false };
 export type MonitoringCellPinOutcome = (typeof MONITORING_CELL_PIN_OUTCOMES)[keyof typeof MONITORING_CELL_PIN_OUTCOMES];
 
 export interface MonitoringCellPinReply {
-  /** Pinned, PinnedWithoutImage or AlreadyPinned. */
+  /** Pinned, PinnedWithoutImage or AlreadyPinned. CaptureMismatch: the identity names an earlier
+   *  capture (the camera mode or frame buffer changed); refresh the listing and pick again. */
   ok: boolean;
   /** Absent when the backend never evaluated the pin (e.g. before init). */
   outcome?: MonitoringCellPinOutcome;
@@ -123,6 +130,7 @@ export function cellKeyArgs(key: MonitoringCellKeyInput, generationName = "start
     throw new Error("INVALID_OBJECT_ID: expected a 32-bit integer");
   return {
     [generationName]: decimalU64(key.start_generation),
+    captureEpoch: decimalU64(key.capture_epoch),
     frameIndex: decimalU64(key.frame_index),
     objectId: key.object_id,
   } as Record<string, string | number>;
@@ -130,7 +138,7 @@ export function cellKeyArgs(key: MonitoringCellKeyInput, generationName = "start
 
 /** A stable string for client-side caches and React keys. */
 export function cellKeyString(key: MonitoringCellKeyInput): string {
-  return `${decimalU64(key.start_generation)}:${decimalU64(key.frame_index)}:${key.object_id}`;
+  return `${decimalU64(key.start_generation)}:${decimalU64(key.capture_epoch)}:${decimalU64(key.frame_index)}:${key.object_id}`;
 }
 
 export function decodeMonitoringCell(raw: unknown): MonitoringCell {
@@ -158,6 +166,7 @@ export function decodeMonitoringCell(raw: unknown): MonitoringCell {
   if ((image === null) === (reason === null)) invalid("exactly one of image and no_image_reason");
   return {
     start_generation: decimal(raw.start_generation, "start_generation"),
+    capture_epoch: decimal(raw.capture_epoch, "capture_epoch"),
     frame_index: decimal(raw.frame_index, "frame_index"),
     object_id: integer(raw.object_id, "object_id"),
     timestamp_ns: decimal(raw.timestamp_ns, "timestamp_ns"),
@@ -197,6 +206,7 @@ export function decodeMonitoringCells(raw: unknown): MonitoringCellsReply {
     valid: true,
     scope_start_generation: decimal(raw.scope_start_generation, "scope_start_generation"),
     ring_start_generation: decimal(raw.ring_start_generation, "ring_start_generation"),
+    ring_capture_epoch: decimal(raw.ring_capture_epoch, "ring_capture_epoch"),
     revision: decimal(raw.revision, "revision"),
     strip: raw.strip.map(decodeMonitoringCell),
     pins: raw.pins.map(decodeMonitoringCell),

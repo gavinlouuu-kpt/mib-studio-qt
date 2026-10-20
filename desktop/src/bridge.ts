@@ -502,9 +502,13 @@ export interface MonitoringRow {
   youngs_modulus: number;
   pixel_to_micron?: number; // exact analysis-time factor; absent/0 = unknown
   /** Bridge ABI 41 (#716 A6a): the run active when the row was detected ("0" = outside a run), a
-   *  canonical decimal string. With `(frame_index, object_id)` it names the row for
-   *  `monitoringCellPin`. Absent from review metric rows and from an older backend. */
+   *  canonical decimal string. With `capture_epoch` and `(frame_index, object_id)` it names the row
+   *  for `monitoringCellPin`. Absent from review metric rows and from an older backend. */
   start_generation?: string;
+  /** Bridge ABI 41: the capture the row's frame came from (frame indices restart when the capture
+   *  changes), a canonical decimal string; part of the row's identity. Centroids are in the ROI
+   *  image's coordinates. Absent from review metric rows. */
+  capture_epoch?: string;
 }
 
 /** Bounded monitoring snapshot (bridge schema v6, BE-5). Evicted rows are

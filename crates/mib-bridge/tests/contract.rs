@@ -132,10 +132,11 @@ fn monitoring_cells_are_described() {
                          ("row_index_max", 4096)] {
         assert_eq!(cells[key], serde_json::json!(value), "monitoring_cells.{key} (pinned in shim.cpp)");
     }
-    for (key, needle) in [("identity", "start_generation"), ("commands", "VIEWER_ONLY"), ("listing", "revision"),
-                          ("cell", "no_image_reason"), ("pin_reply", "never evicted"), ("strip", "oldest evicted"),
+    for (key, needle) in [("identity", "capture_epoch"), ("commands", "captureEpoch"), ("listing", "ring_capture_epoch"),
+                          ("cell", "no_image_reason"), ("pin_reply", "CaptureMismatch"), ("strip", "oldest evicted"),
                           ("crop", "crop_max_side"), ("run_rules", "dropped when a run starts"),
-                          ("threading", "8-byte tag")] {
+                          ("capture_rules", "never served across a capture change"),
+                          ("geometry", "ROI"), ("threading", "8-byte tag")] {
         assert!(cells[key].as_str().is_some_and(|d| d.contains(needle)), "monitoring_cells.{key} mentions {needle}");
     }
     let kinds = &contract["frame_packet"]["pull_kinds"];
@@ -940,7 +941,7 @@ fn monitoring_cells_end_to_end() {
     // Before init: no listing, no pin, no image.
     let before: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_monitoring_cells()).unwrap();
     assert_eq!(before["valid"], false);
-    assert!(!bridge.pin_mut().fetch_monitoring_cell_image(0, 1, 0, false).valid);
+    assert!(!bridge.pin_mut().fetch_monitoring_cell_image(0, 1, 1, 0, false).valid);
 
     assert!(bridge.pin_mut().initialize(&data_dir.to_string_lossy()));
     let empty: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_monitoring_cells()).unwrap();
@@ -962,6 +963,8 @@ fn monitoring_cells_end_to_end() {
         std::thread::sleep(Duration::from_millis(50));
     };
     assert!(rows.iter().all(|r| r.start_generation == 0), "outside a run every row is generation 0");
+    let epoch = rows[0].capture_epoch;
+    assert!(epoch >= 1 && rows.iter().all(|r| r.capture_epoch == epoch), "one capture, one epoch");
 
     // The strip: owned crops with their masks, metadata only in JSON.
     let listing: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_monitoring_cells()).unwrap();
@@ -975,17 +978,19 @@ fn monitoring_cells_end_to_end() {
         cell["frame_index"].as_str().unwrap().parse::<u64>().unwrap(),
         cell["object_id"].as_i64().unwrap() as i32,
     );
-    let image = bridge.pin_mut().fetch_monitoring_cell_image(gen, frame, object, false);
+    assert_eq!((cell["capture_epoch"].clone(), listing["ring_capture_epoch"].clone()),
+               (serde_json::json!(epoch.to_string()), serde_json::json!(epoch.to_string())));
+    let image = bridge.pin_mut().fetch_monitoring_cell_image(gen, epoch, frame, object, false);
     assert!(image.valid && image.frame_index == frame, "{image:?}");
     assert_eq!((image.width, image.height), (cell["image"]["width"].as_u64().unwrap(), cell["image"]["height"].as_u64().unwrap()));
     assert_eq!(image.data.len() as u64, image.width * image.height);
     assert!(image.data.iter().any(|&p| p >= 200), "the crop holds the bright cell");
-    let mask = bridge.pin_mut().fetch_monitoring_cell_image(gen, frame, object, true);
+    let mask = bridge.pin_mut().fetch_monitoring_cell_image(gen, epoch, frame, object, true);
     assert!(mask.valid && mask.width == image.width && mask.data.iter().any(|&p| p > 0), "the mask crop");
 
     // Pins: the reply JSON, idempotence, run rules, the count cap, unpin and clear.
     let pin = |b: &mut cxx::UniquePtr<ffi::BackendBridge>, g: u64, f: u64, o: i32| -> serde_json::Value {
-        serde_json::from_str(&b.pin_mut().monitoring_cell_pin(g, f, o)).unwrap()
+        serde_json::from_str(&b.pin_mut().monitoring_cell_pin(g, epoch, f, o)).unwrap()
     };
     let newest = rows.last().unwrap();
     let r = pin(&mut bridge, 0, newest.frame_index, newest.object_id);
@@ -997,6 +1002,10 @@ fn monitoring_cells_end_to_end() {
     assert!(stale["cell"].is_null());
     let unknown = pin(&mut bridge, 0, u64::MAX, 0);
     assert_eq!(unknown["outcome"], 4, "NotFound: {unknown}");
+    let other: serde_json::Value = serde_json::from_str(
+        &bridge.pin_mut().monitoring_cell_pin(0, epoch + 1, newest.frame_index, newest.object_id)).unwrap();
+    assert_eq!((other["ok"].clone(), other["outcome"].clone()), (serde_json::json!(false), serde_json::json!(6)),
+               "CaptureMismatch: {other}");
     let mut taken = 1;
     for row in rows.iter().rev().skip(1) {
         let r = pin(&mut bridge, 0, row.frame_index, row.object_id);
@@ -1006,11 +1015,13 @@ fn monitoring_cells_end_to_end() {
     assert_eq!(taken, 16, "sixteen pins");
     let full = pin(&mut bridge, 0, rows[0].frame_index, rows[0].object_id);
     assert_eq!(full["outcome"], 5, "LimitReached: {full}");
-    let image = bridge.pin_mut().fetch_monitoring_cell_image(0, newest.frame_index, newest.object_id, false);
+    let image = bridge.pin_mut().fetch_monitoring_cell_image(0, epoch, newest.frame_index, newest.object_id, false);
     assert!(image.valid, "a pinned cell serves its image");
-    let unpin = bridge.pin_mut().monitoring_cell_unpin(0, newest.frame_index, newest.object_id);
+    assert!(!bridge.pin_mut().fetch_monitoring_cell_image(0, epoch + 1, newest.frame_index, newest.object_id, false).valid,
+            "never across a capture");
+    let unpin = bridge.pin_mut().monitoring_cell_unpin(0, epoch, newest.frame_index, newest.object_id);
     assert!(unpin.ok && unpin.message == "unpinned", "{unpin:?}");
-    assert!(!bridge.pin_mut().monitoring_cell_unpin(0, newest.frame_index, newest.object_id).ok, "not pinned twice");
+    assert!(!bridge.pin_mut().monitoring_cell_unpin(0, epoch, newest.frame_index, newest.object_id).ok, "not pinned twice");
     let clear = bridge.pin_mut().monitoring_cell_clear_pins();
     assert!(clear.ok && clear.message == "cleared 15 pin(s)", "{clear:?}");
     let after: serde_json::Value = serde_json::from_str(&bridge.pin_mut().fetch_monitoring_cells()).unwrap();
@@ -1067,7 +1078,8 @@ fn rust_enums_match_contract_json() {
         ("experiment_stop_outcomes", &[("Accepted", 0), ("NotActive", 1), ("Busy", 2), ("RunMismatch", 3)]),
         // ABI 41 (#716 A6a): pinned in C++ by static_asserts in shim.cpp.
         ("monitoring_cell_pin_outcomes", &[("Pinned", 0), ("PinnedWithoutImage", 1), ("AlreadyPinned", 2),
-                                           ("RunMismatch", 3), ("NotFound", 4), ("LimitReached", 5)]),
+                                           ("RunMismatch", 3), ("NotFound", 4), ("LimitReached", 5),
+                                           ("CaptureMismatch", 6)]),
         ("run_completion_states", &[("Complete", 0), ("IntentionallyPartial", 1), ("IncompleteLoss", 2), ("Failed", 3), ("Unknown", 4)]),
         ("readiness_gate_statuses", &[("Pass", 0), ("Warn", 1), ("Fail", 2), ("Unavailable", 3), ("NotRequired", 4)]),
         // ABI 14 discovery groups (#419): pinned in C++ by static_asserts in shim.cpp.

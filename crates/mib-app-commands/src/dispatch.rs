@@ -1217,20 +1217,28 @@ mod tests {
         // Strict arguments: nothing reaches the backend on a malformed identity or layer.
         for bad in ["", "07", "+1", "1.0", "18446744073709551616"] {
             let e = dispatch(&state, &host, "monitoring_cell_pin",
-                json!({ "expectedStartGeneration": bad, "frameIndex": "1", "objectId": 0 })).unwrap_err();
+                json!({ "expectedStartGeneration": bad, "captureEpoch": "1", "frameIndex": "1", "objectId": 0 })).unwrap_err();
             assert!(e.contains("Invalid expectedStartGeneration"), "{bad:?}: {e}");
             let e = dispatch(&state, &host, "monitoring_cell_unpin",
-                json!({ "startGeneration": "0", "frameIndex": bad, "objectId": 0 })).unwrap_err();
+                json!({ "startGeneration": "0", "captureEpoch": "1", "frameIndex": bad, "objectId": 0 })).unwrap_err();
             assert!(e.contains("Invalid frameIndex"), "{bad:?}: {e}");
+            let e = dispatch(&state, &host, "fetch_monitoring_cell_packet",
+                json!({ "startGeneration": "0", "captureEpoch": bad, "frameIndex": "1", "objectId": 0, "layer": "image" }))
+                .unwrap_err();
+            assert!(e.contains("Invalid captureEpoch"), "{bad:?}: {e}");
         }
-        assert!(dispatch(&state, &host, "monitoring_cell_pin", json!({ "expectedStartGeneration": 0, "frameIndex": "1", "objectId": 0 }))
+        assert!(dispatch(&state, &host, "monitoring_cell_pin",
+            json!({ "expectedStartGeneration": 0, "captureEpoch": "1", "frameIndex": "1", "objectId": 0 }))
             .unwrap_err().starts_with("INVALID_ARGUMENTS"), "identities travel as strings");
+        assert!(dispatch(&state, &host, "monitoring_cell_pin",
+            json!({ "expectedStartGeneration": "0", "frameIndex": "1", "objectId": 0 }))
+            .unwrap_err().starts_with("INVALID_ARGUMENTS"), "the capture epoch is required");
         let e = dispatch(&state, &host, "fetch_monitoring_cell_packet",
-            json!({ "startGeneration": "0", "frameIndex": "1", "objectId": 0, "layer": "rgb" })).unwrap_err();
+            json!({ "startGeneration": "0", "captureEpoch": "1", "frameIndex": "1", "objectId": 0, "layer": "rgb" })).unwrap_err();
         assert!(e.contains("Invalid layer"), "{e}");
         // Not held: an empty packet of the requested kind.
         for (layer, kind) in [("image", 5), ("mask", 6)] {
-            let p = packet(json!({ "startGeneration": "0", "frameIndex": "1", "objectId": 0, "layer": layer }));
+            let p = packet(json!({ "startGeneration": "0", "captureEpoch": "1", "frameIndex": "1", "objectId": 0, "layer": layer }));
             assert_eq!((p.len(), header_u32(&p, 8), header_u32(&p, 12)), (crate::frame_packet::HEADER_BYTES, 0, kind));
         }
 
@@ -1250,11 +1258,13 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(50));
         };
         assert!(rows.iter().all(|r| r["start_generation"] == json!("0")), "rows carry start_generation as a string");
+        assert!(rows.iter().all(|r| r["capture_epoch"].as_str().is_some_and(|e| e != "0")),
+                "rows carry capture_epoch as a string");
 
         let listing = reply("fetch_monitoring_cells", Value::Null);
         let cell = listing["strip"].as_array().unwrap().last().cloned().expect("a strip cell");
-        let id = json!({ "startGeneration": cell["start_generation"], "frameIndex": cell["frame_index"],
-                         "objectId": cell["object_id"], "layer": "image" });
+        let id = json!({ "startGeneration": cell["start_generation"], "captureEpoch": cell["capture_epoch"],
+                         "frameIndex": cell["frame_index"], "objectId": cell["object_id"], "layer": "image" });
         let p = packet(id.clone());
         assert_eq!(&p[..4], b"MIBF");
         assert_eq!((header_u32(&p, 8), header_u32(&p, 12)), (1, 5), "a valid cell image packet");
@@ -1269,17 +1279,22 @@ mod tests {
         assert_eq!((header_u32(&m, 12), header_u64(&m, 32)), (6, header_u64(&p, 32)), "the mask: kind 6, same crop");
 
         // Pins through dispatch and through the Tauri functions alike.
-        let pin_args = json!({ "expectedStartGeneration": cell["start_generation"], "frameIndex": cell["frame_index"],
-                               "objectId": cell["object_id"] });
+        let pin_args = json!({ "expectedStartGeneration": cell["start_generation"], "captureEpoch": cell["capture_epoch"],
+                               "frameIndex": cell["frame_index"], "objectId": cell["object_id"] });
         let r = reply("monitoring_cell_pin", pin_args.clone());
         assert_eq!((r["ok"].clone(), r["outcome"].clone()), (json!(true), json!(0)), "{r}");
         assert_eq!(reply("monitoring_cell_pin", pin_args.clone())["outcome"], json!(2));
-        let tauri = crate::monitoring_cell_pin(&state, "3".into(), cell["frame_index"].as_str().unwrap().into(),
+        let epoch = cell["capture_epoch"].as_str().unwrap().to_string();
+        let tauri = crate::monitoring_cell_pin(&state, "3".into(), epoch.clone(), cell["frame_index"].as_str().unwrap().into(),
                                                cell["object_id"].as_i64().unwrap() as i32).unwrap();
         assert_eq!((tauri["ok"].clone(), tauri["outcome"].clone()), (json!(false), json!(3)), "{tauri}");
+        let next_epoch = (epoch.parse::<u64>().unwrap() + 1).to_string();
+        let other = crate::monitoring_cell_pin(&state, "0".into(), next_epoch, cell["frame_index"].as_str().unwrap().into(),
+                                               cell["object_id"].as_i64().unwrap() as i32).unwrap();
+        assert_eq!((other["ok"].clone(), other["outcome"].clone()), (json!(false), json!(6)), "CaptureMismatch: {other}");
         assert_eq!(reply("fetch_monitoring_cells", Value::Null)["pins"].as_array().unwrap().len(), 1);
         let u = reply("monitoring_cell_unpin", json!({ "startGeneration": cell["start_generation"],
-                      "frameIndex": cell["frame_index"], "objectId": cell["object_id"] }));
+                      "captureEpoch": cell["capture_epoch"], "frameIndex": cell["frame_index"], "objectId": cell["object_id"] }));
         assert_eq!((u["ok"].clone(), u["message"].clone()), (json!(true), json!("unpinned")), "{u}");
         let c = reply("monitoring_cell_clear_pins", Value::Null);
         assert_eq!((c["ok"].clone(), c["message"].clone()), (json!(true), json!("cleared 0 pin(s)")), "{c}");
