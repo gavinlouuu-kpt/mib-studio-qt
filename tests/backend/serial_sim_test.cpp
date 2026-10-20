@@ -29,6 +29,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
 #include <string>
@@ -228,6 +229,33 @@ int main()
         serialsim::install(nullptr);
     }
 
+    // ---- a probe holds a non-OEABT port for less than services wait ----------
+    {
+        watchdog.mark("probe hold");
+        auto rig = std::make_shared<serialsim::Rig>(4);
+        serialsim::PortSpec gen;
+        gen.systemName = "COM4";
+        serialsim::applyChip(gen, *serialsim::findUsbSerialChip("ch341")); // an OEABT candidate
+        rig->addPort(gen);
+        rig->addDevice("COM4", serialsim::makePulseGenerator(1)); // silent at 115200
+        serialsim::install(rig);
+        backend::nanopositioner::Endpoint endpoint;
+        endpoint.backend = backend::nanopositioner::BackendKind::Oeabt;
+        endpoint.systemPath = backend::services::enumerateSerialPorts().at(0).systemLocation;
+        endpoint.knownOeabtCandidate = true;
+        std::string error;
+        const auto t0 = std::chrono::steady_clock::now();
+        const bool found = backend::nanopositioner::probeNanopositionerEndpoint(endpoint, error);
+        const auto held = std::chrono::steady_clock::now() - t0;
+        std::printf("serial_sim: failed OEABT probe held COM4 for %lld ms\n",
+                    static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(held).count()));
+        MIB_EXPECT(!found, "a pulse generator is not an OEABT controller");
+        MIB_EXPECT(held < backend::services::portclaims::kProbeYield,
+                   "a failed probe releases the port before a waiting service gives up");
+        MIB_EXPECT(rig->holders("COM4") == 0, "the probe closed the port");
+        serialsim::install(nullptr);
+    }
+
     // ---- scheduled unplug ------------------------------------------------------
     {
         watchdog.mark("scheduled unplug");
@@ -279,6 +307,35 @@ int main()
             threw = std::string(e.what()).find("toaster") != std::string::npos;
         }
         MIB_EXPECT(threw, "an unknown device type is refused by name");
+
+        // The chip catalog: unique ids and USB identities, onboard UART last.
+        const auto& chips = serialsim::commonUsbSerialChips();
+        MIB_EXPECT(chips.size() >= 15, "the catalog covers the common bridges");
+        for (std::size_t i = 0; i < chips.size(); ++i) {
+            for (std::size_t j = i + 1; j < chips.size(); ++j) {
+                MIB_EXPECT(std::string(chips[i].id) != chips[j].id, "chip ids are unique");
+                MIB_EXPECT(chips[i].vendorId == 0 || chips[i].vendorId != chips[j].vendorId ||
+                               chips[i].productId != chips[j].productId,
+                           std::string("one VID:PID per chip: ") + chips[i].id + " / " + chips[j].id);
+            }
+        }
+        const auto chipRig = serialsim::loadScenario(R"json({"ports": [
+            {"name": "COM11", "chip": "CP2102"},
+            {"name": "COM12", "chip": "ft232r", "description": "FT232R (relabelled)"}]})json");
+        const auto chipPorts = chipRig->enumerate();
+        MIB_EXPECT(chipPorts.size() == 2 && chipPorts[0].vendorId == 0x10c4 && chipPorts[0].productId == 0xea60 &&
+                       chipPorts[0].manufacturer == "Silicon Labs",
+                   "\"chip\" gives a port the bridge's identity (case-insensitive)");
+        MIB_EXPECT(chipPorts[1].vendorId == 0x0403 && chipPorts[1].description == "FT232R (relabelled)",
+                   "explicit fields override the chip's");
+        threw = false;
+        try {
+            serialsim::loadScenario(R"({"ports": [{"name": "COM1", "chip": "zx81"}]})");
+        } catch (const std::runtime_error& e) {
+            threw = std::string(e.what()).find("zx81") != std::string::npos &&
+                    std::string(e.what()).find("ch340") != std::string::npos;
+        }
+        MIB_EXPECT(threw, "an unknown chip is refused, listing the known ones");
 
         std::string error;
         setEnv("MIB_SERIAL_MODE", nullptr);

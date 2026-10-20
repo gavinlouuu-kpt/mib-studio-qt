@@ -87,11 +87,21 @@ std::shared_ptr<Rig> loadScenario(const std::string& jsonText, std::optional<uin
             PortSpec spec;
             spec.systemName = node.at("name").get<std::string>();
             const std::string where = "port " + spec.systemName;
+            if (node.contains("chip")) {
+                const auto chipId = node.at("chip").get<std::string>();
+                const auto* chip = findUsbSerialChip(chipId);
+                if (!chip) {
+                    std::string known;
+                    for (const auto& c : commonUsbSerialChips()) known += std::string(known.empty() ? "" : ", ") + c.id;
+                    fail(where, "unknown chip \"" + chipId + "\" (" + known + ")");
+                }
+                applyChip(spec, *chip); // explicit fields below override it
+            }
             spec.description = node.value("description", spec.description);
             spec.manufacturer = node.value("manufacturer", spec.manufacturer);
             spec.serialNumber = node.value("serial", std::string{});
-            spec.vendorId = hexId(node, "vid", where);
-            spec.productId = hexId(node, "pid", where);
+            if (node.contains("vid")) spec.vendorId = hexId(node, "vid", where);
+            if (node.contains("pid")) spec.productId = hexId(node, "pid", where);
             spec.presentAfterMs = node.value("presentAfterMs", 0);
             spec.openLatencyMs = node.value("openLatencyMs", 0);
             if (node.contains("replyLatencyMs")) {
@@ -101,7 +111,7 @@ std::shared_ptr<Rig> loadScenario(const std::string& jsonText, std::optional<uin
                 spec.replyLatencyMaxMs = range[1].get<int>();
             }
             spec.silentAfterOpenMs = node.value("silentAfterOpenMs", 0);
-            spec.fragmentReplies = node.value("fragmentReplies", false);
+            spec.fragmentReplies = node.value("fragmentReplies", spec.fragmentReplies);
             spec.staleHolderUntilMs = node.value("staleHolderUntilMs", 0);
             if (node.contains("unplugged")) {
                 for (const auto& window : node.at("unplugged")) {

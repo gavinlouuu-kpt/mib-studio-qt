@@ -170,6 +170,9 @@ public:
     // sessions opened afterwards.
     void setSerialPortFactory(SerialPortFactory factory);
 
+    // True while a live session holds `portName` (acquire() would share it).
+    bool hasSession(const std::string& portName);
+
     std::shared_ptr<ModbusBusSession> acquire(const std::string& portName,
                                               const SerialSettings& settings,
                                               BusError* error = nullptr,

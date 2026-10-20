@@ -8,6 +8,7 @@
 #include <map>
 #include <mutex>
 #include <set>
+#include <thread>
 
 namespace backend::services::portclaims {
 
@@ -20,6 +21,8 @@ struct Entry {
     Kind kind;
     std::string owner;
     std::string port; // key
+    std::thread::id thread; // the claiming thread (a probe does not block its own thread)
+    bool busSession{false};
 };
 
 struct Registry {
@@ -36,10 +39,12 @@ Registry& registry()
     return r;
 }
 
-bool hasLocked(const Registry& r, const std::string& k, Kind kind, std::string* who = nullptr)
+// `exceptThread`: ignore claims that thread holds.
+bool hasLocked(const Registry& r, const std::string& k, Kind kind, std::string* who = nullptr,
+               std::thread::id exceptThread = std::thread::id())
 {
     for (const auto& [id, e] : r.claims) {
-        if (e.port == k && e.kind == kind) {
+        if (e.port == k && e.kind == kind && (exceptThread == std::thread::id() || e.thread != exceptThread)) {
             if (who) *who = e.owner;
             return true;
         }
@@ -92,43 +97,67 @@ void Claim::release()
     id_ = 0;
 }
 
-Claim tryProbe(const std::string& port, const std::string& owner, std::string* why)
+Claim tryProbe(const std::string& port, const std::string& owner, std::string* why,
+               std::chrono::milliseconds waitForProbes, Holder* heldBy)
 {
     const std::string k = key(port);
+    const auto self = std::this_thread::get_id();
     auto& r = registry();
-    std::lock_guard<std::mutex> lock(r.mutex);
-    std::string who;
-    if (hasLocked(r, k, Kind::Service, &who) || hasLocked(r, k, Kind::Probe, &who)) {
-        if (why) *why = port + " is in use by " + who;
-        return Claim{};
-    }
-    for (const auto& [reserver, keys] : r.reserved) {
-        if (keys.count(k)) {
-            if (why) *why = port + " is reserved for " + reserver;
+    std::unique_lock<std::mutex> lock(r.mutex);
+    if (heldBy) *heldBy = Holder::None;
+    const auto refusedBy = [&]() {
+        for (const auto& [id, e] : r.claims) {
+            if (e.port == k && e.kind == Kind::Service) {
+                if (why) *why = port + " is in use by " + e.owner;
+                if (heldBy) *heldBy = e.busSession ? Holder::BusSession : Holder::Service;
+                return true;
+            }
+        }
+        for (const auto& [reserver, keys] : r.reserved) {
+            if (keys.count(k)) {
+                if (why) *why = port + " is reserved for " + reserver;
+                if (heldBy) *heldBy = Holder::Reserved;
+                return true;
+            }
+        }
+        return false;
+    };
+    if (refusedBy()) return Claim{};
+    std::string prober;
+    if (hasLocked(r, k, Kind::Probe, &prober, self)) {
+        const bool freed = waitForProbes.count() > 0 &&
+                           r.released.wait_for(lock, waitForProbes, [&] { return !hasLocked(r, k, Kind::Probe, nullptr, self); });
+        if (!freed) {
+            if (why) *why = port + " is being probed by " + prober;
+            if (heldBy) *heldBy = Holder::Probe;
             return Claim{};
         }
+        if (refusedBy()) return Claim{}; // a service took it meanwhile
     }
     const uint64_t id = r.nextId++;
-    r.claims[id] = Entry{id, Kind::Probe, owner, k};
+    r.claims[id] = Entry{id, Kind::Probe, owner, k, self, false};
     return Claim{id};
 }
 
-Claim claimForService(const std::string& port, const std::string& owner, std::chrono::milliseconds maxWait)
+Claim claimForService(const std::string& port, const std::string& owner, std::chrono::milliseconds maxWait,
+                      bool busSession)
 {
     const std::string k = key(port);
+    const auto self = std::this_thread::get_id();
     auto& r = registry();
     std::unique_lock<std::mutex> lock(r.mutex);
+    // Registered first: from here on tryProbe refuses new probes on the port.
+    const uint64_t id = r.nextId++;
+    r.claims[id] = Entry{id, Kind::Service, owner, k, self, busSession};
     std::string prober;
-    if (hasLocked(r, k, Kind::Probe, &prober)) {
-        SPDLOG_INFO("SerialPortClaims: {} waits for the {} probe on {}", owner, prober, port);
-        const bool freed = r.released.wait_for(lock, maxWait, [&] { return !hasLocked(r, k, Kind::Probe); });
+    if (hasLocked(r, k, Kind::Probe, &prober, self)) {
+        SPDLOG_INFO("SerialPortClaims: {} waits for the {} on {}", owner, prober, port);
+        const bool freed = r.released.wait_for(lock, maxWait, [&] { return !hasLocked(r, k, Kind::Probe, nullptr, self); });
         if (!freed) {
-            SPDLOG_WARN("SerialPortClaims: the {} probe still holds {} after {} ms; {} opens anyway",
+            SPDLOG_WARN("SerialPortClaims: the {} still holds {} after {} ms; {} opens anyway",
                         prober, port, maxWait.count(), owner);
         }
     }
-    const uint64_t id = r.nextId++;
-    r.claims[id] = Entry{id, Kind::Service, owner, k};
     return Claim{id};
 }
 
@@ -142,6 +171,34 @@ void setReserved(const std::string& owner, const std::vector<std::string>& ports
     }
     if (keys.empty()) r.reserved.erase(owner);
     else r.reserved[owner] = std::move(keys);
+}
+
+bool isReserved(const std::string& port, std::string* forWhom)
+{
+    const std::string k = key(port);
+    auto& r = registry();
+    std::lock_guard<std::mutex> lock(r.mutex);
+    for (const auto& [reserver, keys] : r.reserved) {
+        if (keys.count(k)) {
+            if (forWhom) *forWhom = reserver;
+            return true;
+        }
+    }
+    return false;
+}
+
+Holder holder(const std::string& port)
+{
+    const std::string k = key(port);
+    auto& r = registry();
+    std::lock_guard<std::mutex> lock(r.mutex);
+    Holder found = Holder::None;
+    for (const auto& [id, e] : r.claims) {
+        if (e.port != k) continue;
+        if (e.kind == Kind::Service) return e.busSession ? Holder::BusSession : Holder::Service;
+        found = Holder::Probe;
+    }
+    return found;
 }
 
 std::string describe(const std::string& port)

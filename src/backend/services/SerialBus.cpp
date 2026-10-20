@@ -618,6 +618,13 @@ std::string SerialBusManager::normalizeKey(const std::string& portName)
     return portclaims::key(portName);
 }
 
+bool SerialBusManager::hasSession(const std::string& portName)
+{
+    std::scoped_lock lock(mutex_);
+    const auto it = sessions_.find(normalizeKey(portName));
+    return it != sessions_.end() && !it->second.session.expired();
+}
+
 std::shared_ptr<ModbusBusSession> SerialBusManager::acquire(const std::string& portName,
                                                             const SerialSettings& settings,
                                                             BusError* error,
@@ -625,19 +632,15 @@ std::shared_ptr<ModbusBusSession> SerialBusManager::acquire(const std::string& p
 {
     using Clock = std::chrono::steady_clock;
     const std::string key = normalizeKey(portName);
-    // A discovery probe of this process may be on the port right now (the
-    // startup nanopositioner probe opens CH340 adapters, the common RS485
-    // dongle). Before opening a new session, wait for it, unlocked, rather
-    // than fail with "busy" (SerialPortClaims.h). Sharing a live session
-    // needs no claim.
-    bool opensNewSession = false;
-    {
-        std::scoped_lock probeCheck(mutex_);
-        const auto it = sessions_.find(key);
-        opensNewSession = it == sessions_.end() || it->second.session.expired();
-    }
-    portclaims::Claim claim;
-    if (opensNewSession) claim = portclaims::claimForService(portName, "serial bus " + portName);
+    // A discovery probe of this process may be on the port right now: the
+    // startup nanopositioner probe (CH34x adapters, the common RS485 dongle) or
+    // the pulse generator's "auto" sweep (every USB adapter, any chip, at its
+    // own baud). Wait for it, unlocked, rather than fail with "busy" or with
+    // "different settings" against the probe's short-lived session
+    // (SerialPortClaims.h). A probe on this thread is not waited for. The
+    // claim is kept only if this call opens a new session.
+    auto claim = portclaims::claimForService(portName, "serial bus " + portName, portclaims::kProbeYield,
+                                             /*busSession=*/true);
 
     // A session that is gone may still be closing its port. Its destructor
     // decides within kShutdownJoinMs: closed (the reservation is released) or
@@ -690,8 +693,6 @@ std::shared_ptr<ModbusBusSession> SerialBusManager::acquire(const std::string& p
     }
 
     auto* raw = new ModbusBusSession(portName, settings, factory_, shutdownJoinMs_);
-    // A live session vanished after the check above: claim without waiting.
-    if (!claim) claim = portclaims::claimForService(portName, "serial bus " + portName, std::chrono::milliseconds(0));
     raw->io_->claim = std::move(claim); // released when its I/O thread closed the port
     BusError openError = BusError::PortUnavailable;
     std::string detail;

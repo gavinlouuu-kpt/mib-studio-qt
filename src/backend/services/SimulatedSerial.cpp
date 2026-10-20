@@ -701,15 +701,61 @@ std::shared_ptr<Rig> installed()
     return gInstalled;
 }
 
+const std::vector<UsbSerialChip>& commonUsbSerialChips()
+{
+    static const std::vector<UsbSerialChip> chips{
+        {"ch340", 0x1a86, 0x7523, "wch.cn", "USB-SERIAL CH340", 2, false},
+        {"ch341", 0x1a86, 0x5523, "wch.cn", "USB-SERIAL CH341", 2, false},
+        {"ch343", 0x1a86, 0x55d3, "wch.cn", "USB-Enhanced-SERIAL CH343", 1, false},
+        {"ch9102", 0x1a86, 0x55d4, "wch.cn", "USB-Enhanced-SERIAL CH9102", 1, false},
+        {"ft232r", 0x0403, 0x6001, "FTDI", "FT232R USB UART", 16, true},
+        {"ft231x", 0x0403, 0x6015, "FTDI", "FT231X USB UART", 16, true},
+        {"ft232h", 0x0403, 0x6014, "FTDI", "Single RS232-HS", 16, true},
+        {"ft2232h", 0x0403, 0x6010, "FTDI", "Dual RS232-HS", 16, true},
+        {"ft4232h", 0x0403, 0x6011, "FTDI", "Quad RS232-HS", 16, true},
+        {"cp2102", 0x10c4, 0xea60, "Silicon Labs", "CP2102 USB to UART Bridge Controller", 1, false},
+        {"cp2105", 0x10c4, 0xea70, "Silicon Labs", "CP2105 Dual USB to UART Bridge Controller", 1, false},
+        {"cp2108", 0x10c4, 0xea71, "Silicon Labs", "CP2108 Quad USB to UART Bridge Controller", 1, false},
+        {"pl2303", 0x067b, 0x2303, "Prolific Technology Inc.", "USB-Serial Controller", 2, true},
+        {"pl2303gc", 0x067b, 0x23a3, "Prolific Technology Inc.", "USB-Serial Controller GC", 2, true},
+        {"mcp2221", 0x04d8, 0x00dd, "Microchip Technology Inc.", "MCP2221 USB-I2C/UART Combo", 1, false},
+        {"stm32-vcp", 0x0483, 0x5740, "STMicroelectronics", "STM32 Virtual ComPort", 1, false},
+        {"arduino-uno", 0x2341, 0x0043, "Arduino (www.arduino.cc)", "Arduino Uno", 1, false},
+        {"rp2040", 0x2e8a, 0x000a, "Raspberry Pi", "Pico", 1, false},
+        {"onboard", 0x0000, 0x0000, "(Standard port types)", "Communications Port", 0, false},
+    };
+    return chips;
+}
+
+const UsbSerialChip* findUsbSerialChip(const std::string& id)
+{
+    std::string wanted = id;
+    std::transform(wanted.begin(), wanted.end(), wanted.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    for (const auto& chip : commonUsbSerialChips()) {
+        if (wanted == chip.id) return &chip;
+    }
+    return nullptr;
+}
+
+void applyChip(PortSpec& spec, const UsbSerialChip& chip)
+{
+    spec.vendorId = chip.vendorId;
+    spec.productId = chip.productId;
+    spec.manufacturer = chip.manufacturer;
+    spec.description = chip.description;
+    spec.replyLatencyMinMs = std::max(spec.replyLatencyMinMs, chip.latencyTimerMs / 2);
+    spec.replyLatencyMaxMs = std::max(spec.replyLatencyMaxMs, spec.replyLatencyMinMs + chip.latencyTimerMs);
+    spec.fragmentReplies = spec.fragmentReplies || chip.splitsReplies;
+}
+
 std::shared_ptr<Rig> makeBenchRig(uint64_t seed)
 {
     auto rig = std::make_shared<Rig>(seed);
 
     PortSpec rs485;
     rs485.systemName = "COM3";
-    rs485.description = "USB-SERIAL CH340 (RS485 pump bus)";
-    rs485.vendorId = 0x1a86;
-    rs485.productId = 0x7523;
+    applyChip(rs485, *findUsbSerialChip("ch340")); // the common USB-RS485 dongle
     rs485.presentAfterMs = 300;
     rs485.openLatencyMs = 15;
     rs485.replyLatencyMinMs = 2;
@@ -720,9 +766,7 @@ std::shared_ptr<Rig> makeBenchRig(uint64_t seed)
 
     PortSpec generator;
     generator.systemName = "COM4";
-    generator.description = "FT232R USB UART (pulse generator)";
-    generator.vendorId = 0x0403;
-    generator.productId = 0x6001;
+    applyChip(generator, *findUsbSerialChip("ft232r"));
     generator.serialNumber = "SIMPG001";
     generator.openLatencyMs = 10;
     rig->addPort(generator);
@@ -730,9 +774,7 @@ std::shared_ptr<Rig> makeBenchRig(uint64_t seed)
 
     PortSpec nano;
     nano.systemName = "COM5";
-    nano.description = "USB-SERIAL CH340 (OEABT nanopositioner)";
-    nano.vendorId = 0x1a86;
-    nano.productId = 0x7523;
+    applyChip(nano, *findUsbSerialChip("ch340"));
     nano.presentAfterMs = 1200; // enumerates late: the first startup attempt misses it
     nano.openLatencyMs = 25;
     nano.silentAfterOpenMs = 150;
@@ -744,9 +786,7 @@ std::shared_ptr<Rig> makeBenchRig(uint64_t seed)
 
     PortSpec stage;
     stage.systemName = "COM6";
-    stage.description = "FT231X USB UART (ZC300 Z stage)";
-    stage.vendorId = 0x0403;
-    stage.productId = 0x6015;
+    applyChip(stage, *findUsbSerialChip("ft231x"));
     stage.serialNumber = "SIMZC300";
     rig->addPort(stage);
     rig->addDevice("COM6", makeZc300(1));

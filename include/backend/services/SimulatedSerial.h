@@ -130,6 +130,29 @@ struct PortSpec {
     int staleHolderUntilMs{0};
 };
 
+// A USB-serial bridge chip as the OS reports it, so a simulated adapter looks
+// like the real one to every identity check (OEABT candidate filter, the
+// generator sweep's "USB adapters only" rule, persisted VID/PID/serial).
+struct UsbSerialChip {
+    const char* id;           // scenario key: "ch340", "ft232r", "cp2102", ...
+    uint16_t vendorId;        // 0 for an onboard UART (no USB identity)
+    uint16_t productId;
+    const char* manufacturer; // as Windows / Linux sysfs report it
+    const char* description;
+    int latencyTimerMs;       // reply delivery granularity (FTDI default 16 ms)
+    bool splitsReplies;       // delivers a reply in more than one read
+};
+
+// The bridges common on lab benches: WCH (CH340/CH341/CH343/CH9102), FTDI
+// (FT232R, FT-X, FT232H, FT2232H, FT4232H), Silicon Labs (CP2102/CP2104,
+// CP2105, CP2108), Prolific (PL2303, PL2303GC), Microchip MCP2221, CDC-ACM
+// boards (STM32 VCP, Arduino, RP2040), and an onboard UART.
+const std::vector<UsbSerialChip>& commonUsbSerialChips();
+const UsbSerialChip* findUsbSerialChip(const std::string& id);
+// Give `spec` the chip's identity and timing (description keeps any suffix
+// the caller set after the chip's name).
+void applyChip(PortSpec& spec, const UsbSerialChip& chip);
+
 struct Event {
     enum class Kind {
         Opened,

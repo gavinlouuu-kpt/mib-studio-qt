@@ -8,10 +8,17 @@
 // and replies, and keeps a ledger of every open, so a race that only showed
 // on the Windows bench fails here, on Linux CI and under TSan.
 //
-// The pump RS485 adapter is a CH340, the common USB-RS485 dongle, so it is an
-// OEABT candidate by USB identity. Before the port claims
-// (SerialPortClaims.h) the startup probe held it for ~2 s and the operator's
-// pump Connect failed with ACCESS_DENIED on every seed.
+// Two discovery paths open adapters the operator is about to connect:
+//  - the startup nanopositioner probe opens every OEABT candidate (CH34x by
+//    USB identity, so a CH340 USB-RS485 pump dongle too). Before the port
+//    claims (SerialPortClaims.h) it held the pump port ~2 s and the pump
+//    Connect failed with ACCESS_DENIED on every seed;
+//  - the pulse generator's "auto" sweep (illuminated live view) opens every
+//    USB adapter whatever its chip, at 9600 baud.
+// So the adapters are drawn from serialsim::commonUsbSerialChips() (WCH,
+// FTDI, Silicon Labs, Prolific, Microchip, CDC-ACM boards, onboard UART): the
+// chip matrix runs every chip as the pump adapter and as the generator
+// adapter, with the sweep racing startup and the operator.
 //
 // Scenarios:
 //  1. config.json names the pump port: the probe never touches the pump bus;
@@ -21,7 +28,11 @@
 //     instance that died without closing it, #417) until it has refused a
 //     probe: startup keeps retrying and connects once it is released;
 //  4. a stale process holds the pump bus: Connect fails fast as "busy", never
-//     hangs, and succeeds once the port is released.
+//     hangs, and succeeds once the port is released;
+//  5. chip matrix: every chip as pump and generator adapter (and in rotation
+//     as the nanopositioner's), with the generator "auto" sweep running, with
+//     and without the pump port in config.json. A nanopositioner on a chip
+//     the OEABT filter does not list is reported NotFound, promptly.
 // Every scenario: no in-process contention, and shutdown releases every port.
 //
 // Usage: serial_startup_race_test [seeds=6] [firstSeed=1]. A failing seed
@@ -29,8 +40,10 @@
 
 #include "backend/app/AppBackend.h"
 #include "backend/discovery/StartupDiscoveryCoordinator.h"
+#include "backend/nanopositioner/INanopositionerBackend.h"
 #include "backend/services/AutofocusService.h"
 #include "backend/services/PulseGeneratorService.h"
+#include "backend/services/SerialBus.h"
 #include "backend/services/SimulatedSerial.h"
 #include "backend/services/SyringePumpService.h"
 
@@ -56,7 +69,7 @@ using namespace std::chrono_literals;
 
 namespace {
 
-enum class Scenario { ConfiguredPumpPort, NoPumpConfig, StaleNanopositionerHolder, StalePumpBusHolder };
+enum class Scenario { ConfiguredPumpPort, NoPumpConfig, StaleNanopositionerHolder, StalePumpBusHolder, ChipMatrix };
 
 const char* name(Scenario s)
 {
@@ -65,51 +78,82 @@ const char* name(Scenario s)
     case Scenario::NoPumpConfig: return "no pump config";
     case Scenario::StaleNanopositionerHolder: return "stale holder on the nanopositioner port";
     case Scenario::StalePumpBusHolder: return "stale holder on the pump bus";
+    case Scenario::ChipMatrix: return "chip matrix";
     }
     return "?";
 }
 
+struct Spec {
+    Scenario scenario{Scenario::ConfiguredPumpPort};
+    const serialsim::UsbSerialChip* pumpChip{serialsim::findUsbSerialChip("ch340")};
+    const serialsim::UsbSerialChip* generatorChip{serialsim::findUsbSerialChip("ft232r")};
+    const serialsim::UsbSerialChip* nanoChip{serialsim::findUsbSerialChip("ch340")};
+    bool pumpPortInConfig{true};
+    bool generatorSweep{false}; // illuminated live view resolving port "auto"
+};
+
+std::string label(const Spec& spec)
+{
+    std::string out = name(spec.scenario);
+    if (spec.scenario == Scenario::ChipMatrix) {
+        out += std::string(": pump ") + spec.pumpChip->id + ", generator " + spec.generatorChip->id +
+               ", nanopositioner " + spec.nanoChip->id + (spec.pumpPortInConfig ? "" : ", no pump config");
+    }
+    return out;
+}
+
+// Whether the OEABT filter (SerialTransport::enumerateEndpoints) lists an
+// adapter with this chip, asked of the production code on a one-port rig.
+bool oeabtCandidate(const serialsim::UsbSerialChip& chip)
+{
+    auto probeRig = std::make_shared<serialsim::Rig>(1);
+    serialsim::PortSpec spec;
+    spec.systemName = "COM9";
+    serialsim::applyChip(spec, chip);
+    probeRig->addPort(spec);
+    serialsim::install(probeRig);
+    bool candidate = false;
+    for (const auto& endpoint : backend::nanopositioner::availableOeabtEndpoints())
+        candidate |= endpoint.knownOeabtCandidate;
+    serialsim::install(nullptr);
+    return candidate;
+}
+
 // The bench of makeBenchRig, with startup delays scaled to the test's
-// shortened coordinator timing.
-std::shared_ptr<serialsim::Rig> makeRig(uint64_t seed, Scenario scenario)
+// shortened coordinator timing and the adapters' chips from `spec`.
+std::shared_ptr<serialsim::Rig> makeRig(uint64_t seed, const Spec& spec)
 {
     auto rig = std::make_shared<serialsim::Rig>(seed);
 
     serialsim::PortSpec rs485;
     rs485.systemName = "COM3";
-    rs485.description = "USB-SERIAL CH340 (RS485 pump bus)";
-    rs485.vendorId = 0x1a86;
-    rs485.productId = 0x7523;
     rs485.openLatencyMs = 15;
     rs485.replyLatencyMinMs = 1;
     rs485.replyLatencyMaxMs = 8;
-    if (scenario == Scenario::StalePumpBusHolder) rs485.staleHolderUntilMs = -1;
+    serialsim::applyChip(rs485, *spec.pumpChip);
+    if (spec.scenario == Scenario::StalePumpBusHolder) rs485.staleHolderUntilMs = -1;
     rig->addPort(rs485);
     rig->addDevice("COM3", serialsim::makeDlspPump(1));
     rig->addDevice("COM3", serialsim::makeDlspPump(2));
 
     serialsim::PortSpec generator;
     generator.systemName = "COM4";
-    generator.description = "FT232R USB UART (pulse generator)";
-    generator.vendorId = 0x0403;
-    generator.productId = 0x6001;
     generator.serialNumber = "SIMPG001";
     generator.openLatencyMs = 10;
+    serialsim::applyChip(generator, *spec.generatorChip);
     rig->addPort(generator);
     rig->addDevice("COM4", serialsim::makePulseGenerator(1));
 
     serialsim::PortSpec nano;
     nano.systemName = "COM5";
-    nano.description = "USB-SERIAL CH340 (OEABT nanopositioner)";
-    nano.vendorId = 0x1a86;
-    nano.productId = 0x7523;
     nano.presentAfterMs = 250; // misses the first attempt
     nano.openLatencyMs = 20;
     nano.silentAfterOpenMs = 40;
     nano.replyLatencyMinMs = 2;
     nano.replyLatencyMaxMs = 15;
     nano.fragmentReplies = true;
-    if (scenario == Scenario::StaleNanopositionerHolder) nano.staleHolderUntilMs = -1; // until the test releases it
+    serialsim::applyChip(nano, *spec.nanoChip);
+    if (spec.scenario == Scenario::StaleNanopositionerHolder) nano.staleHolderUntilMs = -1; // until the test releases it
     rig->addPort(nano);
     rig->addDevice("COM5", std::make_shared<serialsim::OeabtDevice>());
     return rig;
@@ -123,14 +167,21 @@ struct Result {
     std::chrono::milliseconds staleRefusalTook{0};
     std::optional<NanoOutcome::Kind> nano;
     std::string nanoPath;
+    bool sweepFound{false};
+    std::string sweepPort;
+    std::string sweepError;
 };
 
-bool run(uint64_t seed, Scenario scenario, mib::test::Watchdog& watchdog)
+bool run(uint64_t seed, const Spec& spec, mib::test::Watchdog& watchdog)
 {
-    auto rig = makeRig(seed, scenario);
+    const Scenario scenario = spec.scenario;
+    const bool nanoFindable = oeabtCandidate(*spec.nanoChip);
+    const bool generatorIsUsb = spec.generatorChip->vendorId != 0; // the sweep looks at USB adapters only
+    auto rig = makeRig(seed, spec);
     serialsim::install(rig);
     std::mt19937_64 rng(seed * 7919u + static_cast<uint64_t>(scenario));
     const auto operatorDelay = std::chrono::milliseconds(std::uniform_int_distribution<int>(0, 700)(rng));
+    const auto sweepDelay = std::chrono::milliseconds(std::uniform_int_distribution<int>(0, 500)(rng));
 
     Result result;
     {
@@ -139,7 +190,7 @@ bool run(uint64_t seed, Scenario scenario, mib::test::Watchdog& watchdog)
         MIB_REQUIRE(backend.initialize(dir.path().string()), "backend initializes");
         // AppConfigWatcher hands config.json to the backend before the shell
         // starts discovery; this one names the pump bus.
-        backend.setLastConfigJson(scenario == Scenario::NoPumpConfig
+        backend.setLastConfigJson(scenario == Scenario::NoPumpConfig || !spec.pumpPortInConfig
                                       ? std::string("{}")
                                       : std::string(R"({"pump_sample_com_port": 3, "pump_sheath_com_port": 3})"));
 
@@ -179,6 +230,22 @@ bool run(uint64_t seed, Scenario scenario, mib::test::Watchdog& watchdog)
             });
         }
 
+        // Camera start with illuminated live view on port "auto": the sweep
+        // opens every USB adapter, racing startup and the operator.
+        std::thread sweep;
+        if (spec.generatorSweep) {
+            sweep = std::thread([&] {
+                std::this_thread::sleep_for(sweepDelay);
+                backend::services::PulseGeneratorService::Config cfg;
+                cfg.portName = "auto";
+                cfg.modbusAddress = 1;
+                cfg.serial.baudRate = 9600;
+                result.sweepFound = backend.pulseGenerator().discoverLiveView(
+                    cfg, 0, backend::services::serialbus::availablePorts(), &result.sweepError);
+                result.sweepPort = cfg.portName;
+            });
+        }
+
         watchdog.mark("startup");
         coordinator.start();
         std::thread operatorThread([&] {
@@ -197,6 +264,7 @@ bool run(uint64_t seed, Scenario scenario, mib::test::Watchdog& watchdog)
         });
         operatorThread.join();
         if (staleProcess.joinable()) staleProcess.join();
+        if (sweep.joinable()) sweep.join();
         watchdog.mark("operator connected");
         {
             std::unique_lock<std::mutex> lock(m);
@@ -210,14 +278,25 @@ bool run(uint64_t seed, Scenario scenario, mib::test::Watchdog& watchdog)
 
     bool ok = true;
     const auto check = [&](bool cond, const std::string& what) {
-        MIB_EXPECT(cond, "seed " + std::to_string(seed) + " [" + name(scenario) + "]: " + what);
+        MIB_EXPECT(cond, "seed " + std::to_string(seed) + " [" + label(spec) + "]: " + what);
         ok = ok && cond;
     };
     check(result.samplePump, "Sample pump connects on COM3");
     check(result.sheathPump, "Sheath pump connects on COM3");
     check(result.generator, "pulse generator connects on COM4");
-    check(result.nano == NanoOutcome::Kind::Connected, "startup connects the nanopositioner");
-    check(serialsim::Rig::key(result.nanoPath) == "COM5", "the nanopositioner is the one on COM5");
+    if (nanoFindable) {
+        check(result.nano == NanoOutcome::Kind::Connected, "startup connects the nanopositioner");
+        check(serialsim::Rig::key(result.nanoPath) == "COM5", "the nanopositioner is the one on COM5");
+    } else {
+        // The OEABT filter does not list this chip: never probed, reported.
+        check(result.nano == NanoOutcome::Kind::NotFound, "an unlisted nanopositioner chip is reported NotFound");
+    }
+    if (spec.generatorSweep && generatorIsUsb) {
+        check(result.sweepFound && serialsim::Rig::key(result.sweepPort) == "COM4",
+              "the auto sweep finds the generator on COM4: " + result.sweepError);
+    } else if (spec.generatorSweep) {
+        check(!result.sweepFound, "the auto sweep never opens an onboard (non-USB) port");
+    }
 
     int inProcessContention = 0;
     int staleRefusals = 0;
@@ -229,10 +308,13 @@ bool run(uint64_t seed, Scenario scenario, mib::test::Watchdog& watchdog)
         if (e.kind == serialsim::Event::Kind::OpenDenied && stale) ++staleRefusals;
     }
     check(inProcessContention == 0, "no two owners in this process wanted one port at once");
-    if (scenario != Scenario::NoPumpConfig) {
+    if (scenario != Scenario::NoPumpConfig && spec.pumpPortInConfig) {
         int foreignOnPumpBus = 0;
         for (const auto& e : rig->events(serialsim::Event::Kind::ForeignFrame)) foreignOnPumpBus += e.port == "COM3";
-        check(foreignOnPumpBus == 0, "the probe never writes onto the reserved pump bus");
+        check(foreignOnPumpBus == 0, "no probe or sweep writes onto the reserved pump bus");
+        int sweepOnPumpBus = 0;
+        for (const auto& e : rig->events(serialsim::Event::Kind::BaudMismatch)) sweepOnPumpBus += e.port == "COM3";
+        check(sweepOnPumpBus == 0, "the 9600-baud sweep never opens the reserved pump bus");
     }
     if (scenario == Scenario::StaleNanopositionerHolder) {
         check(staleRefusals > 0, "the stale holder refused the first probes");
@@ -247,7 +329,7 @@ bool run(uint64_t seed, Scenario scenario, mib::test::Watchdog& watchdog)
     }
     if (!ok) {
         std::fprintf(stderr, "seed %llu [%s] (operator at +%lldms) ledger: %s\n",
-                     static_cast<unsigned long long>(seed), name(scenario),
+                     static_cast<unsigned long long>(seed), label(spec).c_str(),
                      static_cast<long long>(operatorDelay.count()), rig->summary().c_str());
     }
     serialsim::install(nullptr);
@@ -263,18 +345,39 @@ int main(int argc, char** argv)
     mib::test::Watchdog watchdog(60);
     int runs = 0;
     int failed = 0;
+    const auto once = [&](uint64_t seed, const Spec& spec) {
+        ++runs;
+        failed += run(seed, spec, watchdog) ? 0 : 1;
+    };
     for (int i = 0; i < seeds; ++i) {
         const uint64_t seed = firstSeed + static_cast<uint64_t>(i);
         for (const auto scenario : {Scenario::ConfiguredPumpPort, Scenario::NoPumpConfig}) {
-            ++runs;
-            failed += run(seed, scenario, watchdog) ? 0 : 1;
+            Spec spec;
+            spec.scenario = scenario;
+            spec.generatorSweep = i % 2 == 1; // every other seed races the sweep too
+            once(seed, spec);
         }
     }
     // The stale-holder scenarios are about ordering against a fixed event,
     // not jitter: one seed each.
     for (const auto scenario : {Scenario::StaleNanopositionerHolder, Scenario::StalePumpBusHolder}) {
-        ++runs;
-        failed += run(firstSeed, scenario, watchdog) ? 0 : 1;
+        Spec spec;
+        spec.scenario = scenario;
+        once(firstSeed, spec);
+    }
+    // Every chip as the pump adapter and as the generator adapter; the
+    // nanopositioner's chip rotates through the catalog too. Alternate rows
+    // leave the pump port out of config.json.
+    const auto& chips = serialsim::commonUsbSerialChips();
+    for (std::size_t i = 0; i < chips.size(); ++i) {
+        Spec spec;
+        spec.scenario = Scenario::ChipMatrix;
+        spec.pumpChip = &chips[i];
+        spec.generatorChip = &chips[(i + 5) % chips.size()];
+        spec.nanoChip = i % 3 == 0 ? &chips[(i / 3) % chips.size()] : serialsim::findUsbSerialChip("ch340");
+        spec.pumpPortInConfig = i % 2 == 0;
+        spec.generatorSweep = true;
+        once(firstSeed + 100 + i, spec);
     }
     std::printf("serial_startup_race: %d/%d runs clean\n", runs - failed, runs);
     return mib::test::exitCode();
