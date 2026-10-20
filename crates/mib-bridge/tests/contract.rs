@@ -133,12 +133,17 @@ fn monitoring_cells_are_described() {
         assert_eq!(cells[key], serde_json::json!(value), "monitoring_cells.{key} (pinned in shim.cpp)");
     }
     for (key, needle) in [("identity", "capture_epoch"), ("commands", "captureEpoch"), ("listing", "ring_capture_epoch"),
+                          ("listing", "last_capture_change"), ("commands", "CAPTURE_MISMATCH"),
                           ("cell", "no_image_reason"), ("pin_reply", "CaptureMismatch"), ("strip", "oldest evicted"),
                           ("crop", "crop_max_side"), ("run_rules", "dropped when a run starts"),
                           ("capture_rules", "never served across a capture change"),
+                          ("capture_rules", "Pins belong to the capture that made them"),
+                          ("capture_rules", "the camera opening or closing"), ("capture_rules", "another processing ROI"),
                           ("geometry", "ROI"), ("threading", "24-byte tag")] {
         assert!(cells[key].as_str().is_some_and(|d| d.contains(needle)), "monitoring_cells.{key} mentions {needle}");
     }
+    // Review round 2: the error an image pull of another capture is refused with.
+    assert_eq!(cells["error_codes"]["capture_mismatch"], serde_json::json!("CAPTURE_MISMATCH"));
     let kinds = &contract["frame_packet"]["pull_kinds"];
     assert_eq!((kinds["monitoring_cell_image"].clone(), kinds["monitoring_cell_mask"].clone()),
                (serde_json::json!(5), serde_json::json!(6)));
