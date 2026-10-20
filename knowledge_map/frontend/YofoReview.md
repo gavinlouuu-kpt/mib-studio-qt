@@ -373,29 +373,63 @@ panel. Selecting a stage only changes what is shown: no backend call
 (`ReviewApp.test.tsx` checks it). No camera, experiment or hardware state
 exists.
 
-- **Open (R1, `review/open/OpenView.tsx`, `openModel.ts`).** Open folder…
-  (directory dialog) lists the folder with `review_list_dir`: `.h5` /
-  `.hdf5` names only, hidden work files (`.<name>.partial-…`) dropped,
-  natural order, in a `DataTable` with an Open button per row; the folder is
-  remembered (`yofo.review.libraryFolder`) and listed again at start. Open
-  file…, Refresh and Close file sit beside it. The rows are kept with the
-  folder they were listed for (#747 review): a folder change drops the old
-  rows at once; each listing takes a generation, and an answer for a
-  superseded one is dropped, so out-of-order answers never show under
-  another folder; while a listing is out, the card shows "Listing…" and the
-  Open buttons are disabled, and `openRun` also refuses a row from another
-  folder or one shown during a listing. Opening calls the panel's
-  `openPath` (`review_open`), stays on Open and shows the **Open run** card:
-  a `FactList` of what the file records (file, folder, kind, records,
-  started / ended, px→µm recorded or fallback, processing core, run
-  accounting) with the accounting as one `StateChip`; a value the file does
-  not record shows "Not reported", a legacy file's accounting "Not recorded ·
-  legacy file", never Complete. A refused open is a blocked `Notice` with the
-  backend's words, and nothing is open afterwards (the panel's `openPath` now
-  returns `{ ok, message }` and clears its info on failure: the backend has
-  already closed the previous file). The grouping by experiment (snapshot v3
-  identities through `review_probe_runs`, B1a on `develop`) is wired after
-  the workspace branch syncs review ABI 2.
+- **Open (R1, `review/open/OpenView.tsx`, `openModel.ts`, `libraryModel.ts`).**
+  Open folder… (directory dialog) lists the folder with `review_list_dir`
+  (`.h5` / `.hdf5` names only, hidden work files `.<name>.partial-…`
+  dropped). Then it probes the files' headers with `review_probe_runs`
+  (review ABI 2) in calls of at most `REVIEW_PROBE.max_paths` (256,
+  `probeChunks`), one after another; the card shows "Reading N of M files"
+  meanwhile. The folder is remembered (`yofo.review.libraryFolder`) and
+  listed again at start. Open file…, Refresh and Close file sit beside it.
+  - **Grouping (`groupRuns`, B1b part 2).** One group per declared
+    `experiment_id`, newest first by its runs' recorded starts (experiments
+    without one after, by id), runs by `run_index` (runs declaring none
+    after, by name). Then, each by file name:
+    - "Runs without an experiment": a snapshot (v1, an undeclared v3, or an
+      unreadable one) without an `experiment_id`;
+    - "Legacy files · no run snapshot";
+    - "Cannot be read": `ok` false, the probe's per-file message on the row;
+    - "Not read" / "Reading run identities…": no probe yet, or the probe was
+      refused, with a warn `Notice` giving the backend's words; the rows stay
+      openable.
+  - **Tables.** The kit has no grouped table rows (#715), so each group is
+    its own `DataTable`, its `caption` the group header (`GroupCaption`). An
+    experiment's header carries runs · samples, start dates, conditions, core,
+    calibration and one status chip (`groupSummary`: the worst state, "k of
+    n runs · …" when mixed). Run rows show Run, File, Sample (`sample_ref` ·
+    annotation sample), Condition, Started, Records, Core, Calibration, the
+    accounting chip and Open. The "Runs without an experiment" group shows
+    Snapshot in place of Run. Every table's missing value is "Not recorded".
+    Experiment names, methods and plans are not in the files; a note says the
+    workspace store holds them, and an experiment shows its id.
+  - **Ordering guard (#747 review, extended to the probe).** The rows are
+    kept with the folder they were listed for. A folder change drops the old
+    rows at once. Each listing takes a generation, and both the names' answer
+    and every probe answer of a superseded generation are dropped, so a late
+    answer never fills a newer folder, nor a refresh's newer result. While
+    the names are out, the card shows "Listing…" and the Open buttons are
+    disabled. While the probe is out they stay enabled, since opening and
+    probing are serialized by the review bridge. `openRun` also refuses a row
+    from another folder or one shown during a listing. An unmount (#753
+    review) supersedes the listing in flight: its cleanup bumps the
+    generation and clears an `alive` ref, so a pending probe call's answer
+    starts no further call, and a folder dialog answering afterwards lists
+    nothing. A stage change does not unmount Open (the shell only hides
+    it), so a probe goes on in the background and returning starts nothing
+    new.
+  - **Open run card.** Opening calls the panel's `openPath` (`review_open`),
+    stays on Open and shows a `FactList` of what the file records: file,
+    folder and kind; then `identityFacts(info.identity)` (Run snapshot,
+    Experiment, Run, Sample, Condition, the rest of the annotation,
+    Calibration record, the operator selected at Start; a legacy file says
+    "Not recorded · legacy file" once and every other member is null); then
+    records, started / ended, px→µm recorded or fallback, processing core and
+    run accounting, with the accounting as one `StateChip`. A value the file
+    does not record shows "Not reported", and a legacy file's accounting
+    "Not recorded · legacy file", never Complete. A refused open is a blocked
+    `Notice` with the backend's words, and nothing is open afterwards (the
+    panel's `openPath` returns `{ ok, message }` and clears its info on
+    failure: the backend has already closed the previous file).
 - **Overview (R2):** a "not available yet" `Notice`: the statistics come
   from the #523 worker (step B2), and the shell shows no number it does not
   have.
