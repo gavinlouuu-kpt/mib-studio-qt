@@ -14,7 +14,8 @@
 //  - a frame where the kernel finds another number of objects than the
 //    stored record says: every object returned, the stored one matched by
 //    position (image coordinates, with an offset recorded ROI), the
-//    difference flagged;
+//    difference flagged; an object away from the stored one (outside its
+//    bounding box) is not matched;
 //  - default settings: the whole image, no background, labelled so;
 //  - a frame where the kernel now finds nothing: no objects (the frame-level
 //    "no object" result is not one), no match, the difference flagged;
@@ -110,7 +111,8 @@ namespace
 
     // Valid: 0 one ring (track 7), 1 two rings stored as one record (track 7),
     // 2 one ring (track 9), 3 one ring (untracked), 4 one ring stored with a
-    // blank image (untracked). Invalid: 0 one ring (track 7).
+    // blank image (untracked), 5 a ring at x 60 stored with an image whose
+    // ring is at x 140 (untracked). Invalid: 0 one ring (track 7).
     void writeInspect(ProcessingService &kernel, const fs::path &path)
     {
         std::vector<ProcessedFrame> valid{
@@ -119,6 +121,7 @@ namespace
             record(kernel, rings({90}), rings({90}), 12, 9),
             record(kernel, rings({120}), rings({120}), 13, -1),
             record(kernel, rings({60}), rings({}), 15, -1),
+            record(kernel, rings({60}), rings({140}), 16, -1),
         };
         ProcessedFrame bad = record(kernel, rings({70}), rings({70}), 14, 7);
         bad.validation.isValid = false;
@@ -316,9 +319,16 @@ int main()
                    "a blank frame: nothing found: " + std::to_string(r.reprocessed.size()));
         MIB_EXPECT(r.stored.frameIndex == 15 && r.stored.objectCount == 1, "the stored record is still served");
 
+        // One object now, but away from the stored one: the same count, no
+        // match (only an object inside the stored bounding box pairs).
+        MIB_REQUIRE(jobs.reprocessRecord(true, 5, ReprocessSettings::Recorded, r, &err), "reprocess 5: " + err);
+        MIB_EXPECT(r.reprocessed.size() == 1 && r.reprocessed[0].centroidX > 120.0 && !r.objectCountDiffers,
+                   "one object, at x 140: " + std::to_string(r.reprocessed.size()));
+        MIB_EXPECT(!r.match.has_value(), "outside the stored bounding box: not matched");
+
         // Refusals.
-        MIB_EXPECT(!jobs.reprocessRecord(true, 5, ReprocessSettings::Recorded, r, &err) &&
-                       err == "No record 5 in the valid set (5 records)",
+        MIB_EXPECT(!jobs.reprocessRecord(true, 6, ReprocessSettings::Recorded, r, &err) &&
+                       err == "No record 6 in the valid set (6 records)",
                    "outside the set: " + err);
         MIB_EXPECT(!jobs.reprocessRecord(true, 0, static_cast<ReprocessSettings>(7), r, &err) &&
                        err == "Unknown reprocess settings",
