@@ -208,6 +208,10 @@ export interface ReviewReprocess {
   settings_label: string;
   core_version: string;
   core_source: string;
+  /** The px→µm factor the reprocessing ran and reports with (named in settings_label). */
+  pixel_to_micron: number;
+  /** False without an E-LUT: the reprocessed rows' E is then null (not recomputed). */
+  emodulus_recomputed: boolean;
   stored: ReviewRow | null;
   reprocessed: ReviewRow[];
   match_index: number | null;

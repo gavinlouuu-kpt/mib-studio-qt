@@ -492,6 +492,8 @@ ReviewReprocessResult ReviewBridge::review_reprocess_record(bool valid, std::uin
         out.settings_label = rust::String(r.settingsLabel);
         out.core_version = rust::String(r.coreVersion);
         out.core_source = rust::String(r.coreSource);
+        out.pixel_to_micron = r.pixelToMicron;
+        out.emodulus_recomputed = r.emodulusRecomputed;
         out.stored = toRow(r.stored);
         for (const auto& row : r.reprocessed) out.reprocessed.push_back(toRow(row));
         out.has_match = r.match.has_value();

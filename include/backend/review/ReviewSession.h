@@ -115,7 +115,12 @@ namespace backend::review
             services::ProcessingService::Roi roi{}; // the ROI to process with
             bool usedRecordedSettings{false};
             std::string settingsLabel;
-            double pixelToMicron{0.0};
+            double pixelToMicron{0.0}; // the stored rows' factor (recorded or fallback)
+            // The factor to process with (Recorded: the file's, or the
+            // fallback when it records none; 0 for Default: the processing
+            // default) and whether the file records it.
+            double processingPixelToMicron{0.0};
+            bool pixelToMicronFromFile{false};
         };
         bool reprocessInputs(bool valid, std::uint64_t index, ReprocessSettings settings, ReprocessInputs &out,
                              std::string *error = nullptr) const;

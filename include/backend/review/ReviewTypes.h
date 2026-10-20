@@ -247,6 +247,13 @@ namespace backend::review
         // not necessarily the one that recorded the file).
         std::string coreVersion;
         std::string coreSource;
+        // The px→µm factor the reprocessing ran and reports with: Recorded,
+        // the file's (or the fallback when it records none); Default, the
+        // processing default. Named in settingsLabel.
+        double pixelToMicron{0.0};
+        // E (and an E-gated target group) recomputed: false when no E-LUT
+        // is loaded for reprocessing; the reprocessed rows' E is then NaN.
+        bool emodulusRecomputed{false};
         MetricRow stored;
         // The objects found (none for an empty image: the kernel's
         // frame-level "no object" result is not one), at most

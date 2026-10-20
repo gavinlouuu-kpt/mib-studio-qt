@@ -666,8 +666,12 @@ namespace backend::review
             return refuse("Record " + std::to_string(index) + " has no stored image to reprocess");
         }
         out.image = grayLikeRegenerate(std::move(image));
+        out.pixelToMicronFromFile = meta.pixelToMicronFromFile && meta.pixelToMicron > 0.0;
         if (settings == ReprocessSettings::Recorded)
         {
+            // The recorded calibration is a recorded processing input: area
+            // validity and the target group are in µm² (#756 review).
+            out.processingPixelToMicron = out.pixelToMicron;
             services::ProcessingConfig recorded;
             if (impl_->reader.readRecordedProcessingConfig(recorded))
             {

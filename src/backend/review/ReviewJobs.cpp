@@ -21,6 +21,7 @@
 #include <condition_variable>
 #include <exception>
 #include <filesystem>
+#include <iomanip>
 #include <limits>
 #include <map>
 #include <random>
@@ -704,6 +705,7 @@ namespace backend::review
         out = ReprocessResult{};
         out.settings = settings;
         ReviewSession::ReprocessInputs in;
+        processing::ProcessingCoreIdentity sessionCore;
         {
             // The probe's rule: no job holds a lane while the inputs are read
             // (lock order: the lanes' mutex, then the session's).
@@ -721,13 +723,40 @@ namespace backend::review
                 if (error) *error = "No processing kernel is available to reprocess with";
                 return false;
             }
+            sessionCore = impl_->processing->activeProcessingCoreIdentity();
             if (!impl_->session.reprocessInputs(valid, index, settings, in, error)) return false;
         }
-        // Outside every lock: processBatch reads no file.
+        // Outside every lock: processBatch reads no file. It runs on a
+        // processing instance of this call's own (the bundled core, as the
+        // review session's), configured with this record's calibration, so
+        // nothing a job or another call reads is changed (#756 review).
+        services::ProcessingService local;
+        const auto localCore = local.activeProcessingCoreIdentity();
+        if (localCore != sessionCore)
+        {
+            if (error)
+                *error = "Reprocessing one record runs the bundled processing core " + localCore.version +
+                         "; the review session's active core is " + sessionCore.version + " (" + sessionCore.source + ")";
+            out = ReprocessResult{};
+            out.settings = settings;
+            return false;
+        }
+        if (in.processingPixelToMicron > 0.0) local.setPixelToMicronFactor(in.processingPixelToMicron);
+        const double f = local.getPixelToMicronFactor();
+        out.pixelToMicron = f;
+        out.emodulusRecomputed = local.eModulusLut().isLoaded();
+        {
+            std::ostringstream label;
+            label << in.settingsLabel << "; px→µm " << std::fixed << std::setprecision(4) << f << ' '
+                  << (settings == ReprocessSettings::Default ? "default"
+                      : in.pixelToMicronFromFile          ? "recorded"
+                                                          : "fallback: the file records none");
+            if (!out.emodulusRecomputed) label << "; E not recomputed (no E-LUT loaded)";
+            out.settingsLabel = label.str();
+        }
         processing::ProcessingCoreIdentity used;
-        const auto frames = impl_->processing->processBatch({in.image}, in.config, in.background, in.roi, {}, &used);
+        const auto frames = local.processBatch({in.image}, in.config, in.background, in.roi, {}, &used);
         out.usedRecordedSettings = in.usedRecordedSettings;
-        out.settingsLabel = in.settingsLabel;
         out.coreVersion = used.version;
         out.coreSource = used.source;
         out.stored = in.stored;
@@ -739,7 +768,6 @@ namespace backend::review
             out.settings = settings;
             return false;
         }
-        const auto f = in.pixelToMicron;
         std::size_t found = 0;
         for (const auto &frame : frames)
         {
@@ -759,6 +787,7 @@ namespace backend::review
             row.trackFirstFrame = 0;
             row.trackLastFrame = 0;
             row.trackObservationCount = 0;
+            if (!out.emodulusRecomputed) row.youngsModulus = std::numeric_limits<double>::quiet_NaN();
             out.reprocessed.push_back(row);
         }
         // A stored count of 0 (nothing found, or a file older than the count)

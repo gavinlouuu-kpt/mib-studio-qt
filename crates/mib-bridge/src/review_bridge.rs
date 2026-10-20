@@ -305,6 +305,11 @@ pub mod review_ffi {
         pub settings_label: String,
         pub core_version: String,
         pub core_source: String,
+        /// The px→µm factor the reprocessing ran and reports with.
+        pub pixel_to_micron: f64,
+        /// E (and an E-gated target group) recomputed; false without an
+        /// E-LUT, and the reprocessed rows' E is then NaN.
+        pub emodulus_recomputed: bool,
         pub stored: ReviewRow,
         pub reprocessed: Vec<ReviewRow>,
         pub has_match: bool,
