@@ -27,10 +27,12 @@ namespace backend
 namespace backend::review
 {
     class ReviewSession;
+    class ReviewJobs;
 }
 
 namespace backend::bridge
 {
+    struct BackendFacadeTestAccess; // test-only (defined in BackendFacade.cpp)
 
     // Values are part of the bridge contract
     // (crates/mib-bridge/contract/bridge-contract.json, ADR 0004) and are
@@ -202,6 +204,10 @@ namespace backend::bridge
         // record, annotation); empty = nothing declared. Parsed by recording::parseStartRequestJson.
         std::string startRequestJson;
         bool cancelled{false};                  // Stop
+        // Stop (ABI 40, #741): the start generation of the run the client means to stop. Set: a
+        // different or no held run is refused with ExperimentStopOutcome::RunMismatch and nothing
+        // is stopped (ExperimentCoordinator::requestStop). Unset: stops whatever run is active.
+        std::optional<std::uint64_t> expectedStartGeneration;
     };
 
     // Monitoring accumulation control (BE-5): visibility-gated enable/disable
@@ -1043,6 +1049,10 @@ namespace backend::bridge
         void shutdown();
         bool isInitialized() const;
 
+        // Called synchronously on backend threads (operation events from the
+        // command or job thread). It may call shutdown() or cancel an
+        // operation but must not destroy this facade; the bridge's sink only
+        // converts and enqueues (ADR 0003).
         void setEventSink(EventSink sink);
         BackendCommandResult dispatch(const BackendCommand &command);
 
@@ -1248,6 +1258,7 @@ namespace backend::bridge
         bool fetchExperimentStatus(app::ExperimentStatus &out) const;
 
     private:
+        friend struct BackendFacadeTestAccess;
         BackendCommandResult handleCameraCommand(const CameraCommand &command);
         BackendCommandResult handleRecordingCommand(const RecordingCommand &command);
         BackendCommandResult handleProcessingSettingsCommand(const ProcessingSettingsCommand &command);
@@ -1318,17 +1329,27 @@ namespace backend::bridge
         // refused while it is (decision D1 (a), #722). Never reassigned; shared
         // so the review bridge can attach to it later (S10).
         const std::shared_ptr<review::ReviewSession> review_;
-        // Export jobs run detached; joined at shutdown.
-        std::vector<std::thread> reviewJobThreads_;
-        std::mutex reviewJobsMutex_;
-        mutable std::mutex exportMutex_;
-        mutable std::mutex reanalysisMutex_;
-        bool reanalysisActive_{false};
-        std::thread reanalysisThread_;
-        std::string reanalysisStatusJson_{"{\"state\":\"idle\"}"};
-        bool exportActive_{false};
-        std::thread exportThread_;
-        std::string exportStatusJson_{"{\"state\":\"idle\"}"};
+        // Pump address scans and stage-operation waiters (tracked operations
+        // that are not review jobs); joined at shutdown.
+        std::vector<std::thread> operationWorkers_;
+        std::mutex operationWorkersMutex_;
+        // The review jobs (#512 S7): `review_export_json` and
+        // `review_reanalysis_json` on ReviewJobs' two lanes with the facade's
+        // policy (ReviewJobsOptions::forFacade): one export and one
+        // reanalysis at the same time, as before #512 (at risk until #722),
+        // as the facade's own operations (beginOperation: the Export /
+        // Reanalysis kinds, cancel_operation, shutdown cancellation). The
+        // lanes hold the status snapshots. Declared after everything its
+        // workers call back into, so it is destroyed (and joined) first.
+        const std::unique_ptr<review::ReviewJobs> reviewJobs_;
+    };
+
+    // Test-only: the facade's review lanes (#512 S7), so tests wait for a
+    // lane's release (review::ReviewJobsTestAccess::waitIdle) instead of
+    // sleeping.
+    struct BackendFacadeTestAccess
+    {
+        static review::ReviewJobs &reviewJobs(BackendFacade &facade);
     };
 
 } // namespace backend::bridge

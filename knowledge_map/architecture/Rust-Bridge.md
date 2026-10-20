@@ -347,6 +347,14 @@ reconciliation even if operation events are missed. Full general resnapshot,
 frame source/session/config identities and native cross-shell acceptance remain
 open; this addition does not close #372/#246.
 
+Since #512 S7 the facade's export (`review_export_json`) and reanalysis
+(`review_reanalysis_json`) run on `review::ReviewJobs`' two lanes with the
+facade's policy (`ReviewJobsOptions::forFacade`): one export and one
+reanalysis at a time each, both at once as before, operation ids and cancel
+flags from `beginOperation`, the status JSON held by each lane. Same commands,
+events, status strings and refusals (no contract change); see
+[[../services/ReviewSession]].
+
 ABI 16 adds preview-buffer range/save JSON. Latest-frame facade pulls now fetch
 the exact queried committed index, never a later frame under an earlier label;
 concurrent frame-identity stress regression covers index/timestamp/pixel agreement.
@@ -489,7 +497,8 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
   off, camera released; `mode.idle` reads true until the next switch).
 - **Pumps on client loss (#711):** as the last step of the pass, after the
   recording stop and the PZ7035 safe state (pump commands do serial I/O under
-  the bridge lock, and serial I/O is not yet bounded, #720), every connected pump
+  the bridge lock; since #720 it is bounded, about a second per command on a
+  stalled adapter, but it still goes last), every connected pump
   (Sample and Sheath slots, DLSP syringe or Tushui peristaltic) gets
   `pump_stop` and then `pump_stop_purge`, whatever its `run_status` says: the
   snapshot is only as fresh as the last poll, and the DLSP purges through
@@ -500,10 +509,58 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
   the same pass. Tests: `client_loss_stops_every_connected_pump_and_its_purge`
   and `client_loss_reports_a_pump_that_fails_to_stop` (`stop_pumps` with fake
   status and stop calls), `client_loss_stops_and_saves` (`ws.rs`, real
-  backend, no pump connected: nothing sent).
+  backend, no pump connected: nothing sent), and
+  `client_loss_with_a_stalled_pump_still_stops_and_saves` (`ws.rs`, Linux,
+  #720: a fake dLSP pump on a pty whose output is stopped with
+  `tcflow(TCOOFF)`; the pass finishes in about 2.5 s, the recording is saved,
+  the next client's `pump_stop` answers in about 1 s with "Pump stop failed:
+  write failed: serial write timed out ...", and works again after `TCOON`).
 - **Tests:** `contract.rs` `stage_commands_fail_safely_without_hardware`;
   `stage_motion_is_control_only_but_stop_is_not` in the server;
   `backend.stage_bridge_facade`.
+
+## ABI 40: the typed outcome in the reply, and the run a stop names (#741)
+
+Two additive gaps from the workspace queue and Plan (#716): a caller had to recognise a refused
+start by its message prefix, and a stop could hit another client's run that replaced its own
+inside one poll window.
+
+- **Reply outcome.** `BridgeCommandResult` gains `has_start_outcome` / `start_outcome: u32` and
+  `has_stop_outcome` / `stop_outcome: u32`, copied in `toBridgeResult` from
+  `BackendCommandResult.experimentStartOutcome` / `experimentStopOutcome` (`errorResult` sets
+  both flags false). The JSON `CmdResult` (Tauri and the WebSocket server alike) gains
+  `start_outcome` / `stop_outcome`, JSON numbers like `command`, present only on an
+  `experiment_start` (resp. `experiment_stop` / `experiment_cancel`) reply the backend evaluated
+  and omitted everywhere else, so every other reply is byte for byte as before. A refused start
+  request is `start_outcome: 7` (`InvalidRequest`); the message keeps `invalid start request: …`.
+  Contract group `experiment_command_reply`.
+- **Expected run on stop.** `experiment_stop(has_expected_start_generation, expected_start_generation: u64)`
+  (cxx); `expectedStartGeneration` in `dispatch.rs` (so also the WebSocket server), Tauri arg
+  `expected_start_generation`, `bridge.experimentStop(expectedStartGeneration?)`. It is an
+  optional **canonical decimal string** (the transport's u64 encoding), parsed strictly by
+  `mib_app_commands::parse_canonical_u64` (no sign, no leading zero, no whitespace; Rust's
+  `u64::from_str` alone takes `+7` and `007`): anything else is an error reply and nothing is
+  sent; absent or null = not given = exactly ABI 39. The check is in
+  `ExperimentCoordinator::requestStop(cancelled, expected, refusal)`, under the coordinator
+  mutex in the same critical section that accepts the stop (see [[ExperimentCoordinator]]): no
+  run held (Idle, Failed, Starting) or one with another `start_generation` (Active, Stopping, a
+  failed run still finalizing) is stop outcome **`RunMismatch` (3)**, `ok: false`, message
+  `stop refused: expected run <E>, but <run <N> is active | … is stopping | … failed and is
+  finalizing | a new run is starting | no run is active>; nothing was stopped`, and nothing
+  changes. A match gives the outcome without the argument (`accepted` / `busy` / `notActive`).
+  `experiment_cancel` and the server's client-loss stop do not take it. Contract group
+  `experiment_stop_request`; `RunMismatch` pinned by a `static_assert` in `shim.cpp`, by
+  `rust_enums_match_contract_json` and generated into `EXPERIMENT_STOP_OUTCOMES`.
+- **Tests:** `contract.rs` `experiment_lifecycle_end_to_end` (NotReady / InvalidRequest /
+  Started / AlreadyActive codes, three stale stops refused while the run continues, the matching
+  stop accepted, NotActive / RunMismatch after it) and
+  `experiment_command_reply_and_stop_request_are_described`; `dispatch.rs`
+  `experiment_outcomes_and_expected_generation_through_dispatch` (both host paths, malformed
+  generations) and `canonical_u64_is_strict`; `ws.rs`
+  `experiment_stop_names_its_run_over_the_websocket` (a real mock run); C++
+  `e2e.experiment_stop_generation` (every start outcome through the facade, the stop semantics,
+  and a stress test of stale stops racing six start/stop cycles); `eventAdapter.test.ts`,
+  `eventTransport.test.ts`.
 
 ## ABI 39: what the client declares when it starts a run (#712 PR 2, ADR 0015 items 1, 4, 5, 7)
 
@@ -719,7 +776,10 @@ attach to):
   `review_export_charts` (kind `ExportCharts` = 6),
   `review_compute_core` + `fetch_review_computed_core_json`,
   `review_request_density` + `fetch_review_density` (contract
-  `review_density` constants), `review_jobs_busy`,
+  `review_density` constants), `review_jobs_busy`; the jobs run one at a
+  time whatever their kind (`ReviewJobsOptions::forReviewBridge()`, explicit
+  in `review_shim.cpp`, #512 D7 as amended: no second lane until HDF5 is
+  thread-safe, #722),
   `review_bridge_abi_version()` (`review-contract.json` `review_abi_version`,
   independent of `bridge_abi_version()`),
   and the fixtures `review_fixture_write_experiment(path)` and

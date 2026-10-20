@@ -212,6 +212,8 @@ static_assert(backend::recording::kExperimentAnnotationSchemaVersion == 1);
 static_assert(static_cast<std::uint32_t>(backend::app::ExperimentStopOutcome::Accepted) == 0);
 static_assert(static_cast<std::uint32_t>(backend::app::ExperimentStopOutcome::NotActive) == 1);
 static_assert(static_cast<std::uint32_t>(backend::app::ExperimentStopOutcome::Busy) == 2);
+// ABI 40 (#741): a stop that named another run (expected_start_generation) than the one held.
+static_assert(static_cast<std::uint32_t>(backend::app::ExperimentStopOutcome::RunMismatch) == 3);
 static_assert(static_cast<std::uint32_t>(backend::recording::RunCompletionState::Complete) == 0);
 static_assert(static_cast<std::uint32_t>(backend::recording::RunCompletionState::IntentionallyPartial) == 1);
 static_assert(static_cast<std::uint32_t>(backend::recording::RunCompletionState::IncompleteLoss) == 2);
@@ -297,6 +299,12 @@ BridgeCommandResult toBridgeResult(const backend::bridge::BackendCommandResult& 
     out.command = static_cast<std::uint32_t>(r.command);
     out.message = rust::String(r.message);
     out.operation_id = r.operationId;
+    // ABI 40 (#741): the typed experiment outcomes, values pinned above (experiment_start_outcomes,
+    // experiment_stop_outcomes). Absent for every other command.
+    out.has_start_outcome = r.experimentStartOutcome.has_value();
+    out.start_outcome = r.experimentStartOutcome ? static_cast<std::uint32_t>(*r.experimentStartOutcome) : 0;
+    out.has_stop_outcome = r.experimentStopOutcome.has_value();
+    out.stop_outcome = r.experimentStopOutcome ? static_cast<std::uint32_t>(*r.experimentStopOutcome) : 0;
     return out;
 }
 
@@ -306,6 +314,10 @@ BridgeCommandResult errorResult(const std::string& message) {
     out.command = static_cast<std::uint32_t>(backend::bridge::BackendCommandType::Camera);
     out.message = rust::String(message);
     out.operation_id = 0;
+    out.has_start_outcome = false;   // never reached the coordinator: no typed outcome (ABI 40)
+    out.start_outcome = 0;
+    out.has_stop_outcome = false;
+    out.stop_outcome = 0;
     return out;
 }
 
@@ -761,10 +773,13 @@ BridgeCommandResult BackendBridge::experiment_acknowledge_fault(std::uint64_t ex
     }
 }
 
-BridgeCommandResult BackendBridge::experiment_stop() {
+BridgeCommandResult BackendBridge::experiment_stop(bool has_expected_start_generation,
+                                                   std::uint64_t expected_start_generation) {
     try {
         backend::bridge::ExperimentCommand cmd;
         cmd.action = backend::bridge::ExperimentCommandAction::Stop;
+        // ABI 40 (#741): stop only this run; any other (or none) is RunMismatch and nothing stops.
+        if (has_expected_start_generation) cmd.expectedStartGeneration = expected_start_generation;
         return toBridgeResult(impl_->facade.dispatch(cmd));
     } catch (const std::exception& e) {
         return errorResult(std::string("experiment_stop: ") + e.what());
@@ -2503,12 +2518,14 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // method, re-applied at startup); v33-v38 see the contract test; v39 the
 // experiment_start startRequest (#712: experiment/run/sample identity, selected
 // operator, calibration record id, planned annotation; outcome InvalidRequest
-// and the experiment_start_request bounds). All additive over v1 except that removal (ADR
+// and the experiment_start_request bounds); v40 the typed start / stop outcome in
+// the command result and experiment_stop's expected start generation (#741, stop
+// outcome RunMismatch). All additive over v1 except that removal (ADR
 // 0003/0004). Must match
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 39; }
+std::uint32_t bridge_abi_version() { return 40; }
 
 } // namespace mib_bridge
 

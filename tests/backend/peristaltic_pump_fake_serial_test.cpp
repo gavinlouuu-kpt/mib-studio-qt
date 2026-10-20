@@ -10,7 +10,9 @@
 //  - start sets continuous turns before run; purge runs at the purge speed
 //    and stop restores the flow speed and direction;
 //  - poll maps run state and direction, integrates delivered volume;
-//  - disconnect stops a running pump.
+//  - disconnect stops a running pump;
+//  - a stop over a stalled adapter fails at its timeout, names it, and is not
+//    delivered late (#720).
 
 #include "backend/services/SerialBus.h"
 #include "backend/services/SyringePumpService.h"
@@ -24,6 +26,7 @@
 #include <cmath>
 #include <cstdio>
 #include <memory>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -184,7 +187,26 @@ int main()
         MIB_EXPECT(f.readback.valid && !f.readback.lastPollOk && f.readback.at == at,
                    "a failed poll keeps the older readback, marked");
     }
+    // A stalled adapter (#720): the stop never leaves the driver queue. It
+    // fails at the drain timeout, says so, and is not delivered late; the
+    // running pump gets the stop once the adapter recovers.
+    {
+        bench.outputStalls = true;
+        const auto t0 = std::chrono::steady_clock::now();
+        MIB_EXPECT(!svc.stop(PumpId::Sample), "a stop over a stalled adapter fails");
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - t0).count();
+        std::printf("stalled stop: failed after %lld ms\n", static_cast<long long>(ms));
+        MIB_EXPECT(ms < backend::services::serialbus::ModbusBusSession::transactBudgetMs(1000) + 5000,
+                   "within its bound, not for ever");
+        const auto why = svc.lastBusError(PumpId::Sample);
+        MIB_EXPECT(why.find("timed out") != std::string::npos, "the failure names the timeout: " + why);
+        MIB_EXPECT(wire.read(104) == 1, "the discarded stop never reached the pump");
+        bench.outputStalls = false;
+        watchdog.mark("stalled stop");
+    }
     MIB_EXPECT(svc.stop(PumpId::Sample), "stop accepted");
+    MIB_EXPECT(svc.lastBusError(PumpId::Sample).empty(), "a successful command clears the failure");
     MIB_EXPECT(wire.read(104) == 0, "stop writes run state 0");
 
     // Purge: fixed purge speed, stop restores the flow setpoint and direction.

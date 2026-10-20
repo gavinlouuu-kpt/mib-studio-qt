@@ -23,3 +23,18 @@ it("sends exact cancellation and seek IDs without numeric conversion",async()=>{
   expect(invoke).toHaveBeenCalledWith("seek_index",{frameIndex:"9007199254740993"});
   expect(()=>bridge.cancelOperation(9007199254740992)).toThrow("INVALID_U64");
 });
+// Bridge ABI 40 (#741): experimentStop names the run as a canonical decimal start generation, or
+// sends no argument at all (as before).
+it("sends the expected start generation exactly, and nothing without one",async()=>{
+  invoke.mockResolvedValue({transport_version:1,ok:false,command:6,message:"stop refused: expected run 18446744073709551615, but no run is active; nothing was stopped",operation_id:"0",stop_outcome:3});
+  const refused=await bridge.experimentStop("18446744073709551615");
+  expect(invoke).toHaveBeenLastCalledWith("experiment_stop",{expectedStartGeneration:"18446744073709551615"});
+  expect(refused.stop_outcome).toBe(3);
+  await bridge.experimentStop(7);
+  expect(invoke).toHaveBeenLastCalledWith("experiment_stop",{expectedStartGeneration:"7"});
+  await bridge.experimentStop();
+  expect(invoke.mock.lastCall?.[0]).toBe("experiment_stop");
+  expect(invoke.mock.lastCall?.[1]).toBeUndefined();
+  expect(()=>bridge.experimentStop("07")).toThrow("INVALID_U64");
+  expect(()=>bridge.experimentStop(9007199254740992)).toThrow("INVALID_U64");
+});

@@ -776,7 +776,13 @@ export const bridge = {
         ? { outputPath, acknowledgeDiscardRing }
         : { outputPath, acknowledgeDiscardRing, startRequestJson },
     ),
-  experimentStop: () => invokeCommand("experiment_stop"),
+  // expectedStartGeneration (ABI 40, #741): stop only the run with this start_generation (the
+  // fetchExperimentStatus value). Another run, or none, is refused with stop_outcome
+  // EXPERIMENT_STOP_OUTCOMES.RunMismatch and nothing is stopped. Omitted: stops whatever run is active.
+  experimentStop: (expectedStartGeneration?: number | string | bigint) =>
+    expectedStartGeneration === undefined
+      ? invokeCommand("experiment_stop")
+      : invokeCommand("experiment_stop", { expectedStartGeneration: decimalU64(expectedStartGeneration) }),
   fetchCaptureLifecycle: () => invoke<CaptureLifecycle>("fetch_capture_lifecycle"),
   experimentAcknowledgeFault: (expectedRun: string, faultRevision: string, code: string, message: string, confirmed: boolean) => invokeCommand("experiment_acknowledge_fault", {expectedRun, faultRevision, code, message, confirmed}),
   experimentCancel: () => invokeCommand("experiment_cancel"),

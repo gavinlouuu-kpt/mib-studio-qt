@@ -73,6 +73,27 @@
   hands the finalization to the worker; `Busy` while Starting/Stopping or a
   stop is already queued; `NotActive` when there is no run. Completion is
   observed through `status()` / the status callback (`terminal == true`).
+- `requestStop(cancelled, expectedStartGeneration, refusal)` (#741, bridge ABI
+  40, `experiment_stop`'s `expectedStartGeneration`) stops only the named run.
+  The check runs first, under `mutex_`, in the critical section that sets
+  `stopRequested_`: never check-then-act. The run *held* is `activeRun_`, set
+  from the Active entry until the end of finalization (Active, Stopping, or
+  Failed while a fatal finalization runs); a Starting run is never held (its
+  generation is published only once it is Active, so no client can name it).
+  Nothing held, or a held run with another `startGeneration`:
+  `RunMismatch` (3), `refusal` gets `stop refused: expected run <E>, but run
+  <N> is active | is stopping | failed and is finalizing | a new run is
+  starting | no run is active; nothing was stopped`, nothing changes. A match
+  falls through to the one-argument outcome. A stale generation can never stop
+  a newer run: an accepted stop is consumed by the finalization of the run it
+  named (the worker finalizes the run it holds), `start()` is refused until
+  that finalization ends and clears any stop flag at the Active entry. Without
+  a generation (every C++ caller, the Qt window, the server's client-loss stop)
+  nothing changed. The facade returns the refusal as the message and the
+  outcome as `experimentStopOutcome`, which the bridge carries as `stop_outcome`
+  (the start outcome likewise as `start_outcome`). Guard:
+  `e2e.experiment_stop_generation` (semantics, every start outcome through the
+  facade, a stress test of stale stops racing start/stop cycles).
 - `onFatalSaveError(message)` (wired from
   `ProcessingService::setFlushErrorCallback` by [[AppBackend]]) marks the run
   `Failed` and runs the same finalization so the file is closed and readable.
@@ -279,7 +300,8 @@ service snapshots (`lifecycleSnapshot()`, `telemetrySnapshot()`,
 `getProcessingConfig()`, …) and never takes a service lock while holding one
 of its own for long. Safe to call from a UI timer. `start()` holds the mutex
 across the HDF5 open + provenance write, which is why a second caller gets
-`Busy` instead of racing.
+`Busy` instead of racing. The expected-run check of `requestStop` (#741) is
+taken under the same mutex as the stop it guards.
 
 ## Gotchas
 
