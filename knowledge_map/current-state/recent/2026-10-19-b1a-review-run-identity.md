@@ -19,6 +19,11 @@ Track B (#717) step B1, the backend half of R1 Open (#269). Review ABI 1 → 2
   whole call (`ReviewJobs::probeRuns`), refusing while a job runs. The open
   file is left as it was, also when it is probed itself.
 - `reviewBridge.ts` gains the types and `probeRuns`; no UI change.
+- `backend.facade_review_jobs` (#742) failed on MSVC, its first run there:
+  the trace replaced the raw directory but not its JSON-escaped form, so a
+  Windows path in a status snapshot kept its directory. It now replaces both,
+  and on POSIX the fixture directories carry a backslash so every lane checks
+  the escaping.
 
 Tests: `review.run_identity`, `tests/review_bridge.rs` (both feature
 configurations), the Tauri identity JSON test and the `reviewIpc` golden. See
