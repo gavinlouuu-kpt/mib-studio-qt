@@ -9,6 +9,11 @@
 //!   metrics.csv   Export Metrics (experiment files)
 //!   all/          Export All (all series images) without chart snapshots
 //!   core.json     the full-run core record ComputeCore produces (fraction 0.9)
+//!   overlays/     `fetch_review_frame` with the overlay composed, as the
+//!                 Images view shows it: valid / invalid frames 0, middle,
+//!                 last × overlay modes 0..4 × ROI off / on, as PGM (Mono8)
+//!                 or PPM (RGB8); compared with MIB Studio's
+//!                 `render_review_overlay` (`review_parity_studio.rs`, #512 S6)
 //!
 //! ```text
 //! cargo run --features review-only --example review_parity -- <source.h5> <out> [--fallback 0.4886]
@@ -22,6 +27,36 @@ use serde_json::json;
 
 /// YOFO Review's default fallback px→µm (`DEFAULT_PX_TO_UM`, ReviewApp.tsx).
 const DEFAULT_FALLBACK: f64 = 0.4886;
+
+/// `review_pixel_formats` (review-contract.json).
+const MONO8: u64 = 0;
+const RGB8: u64 = 35127316;
+
+/// Frames rendered per class: first, middle, last (as review_parity_studio.rs).
+fn sample_indices(count: u64) -> Vec<u64> {
+    let mut v: Vec<u64> = if count == 0 { Vec::new() } else { vec![0, count / 2, count - 1] };
+    v.dedup();
+    v
+}
+
+/// One frame as binary PGM (Mono8) or PPM (RGB8), rows unpadded.
+fn write_netpbm(path: &Path, frame: &ffi::ReviewFrame) -> Result<(), String> {
+    let (magic, channels) = match frame.pixel_format {
+        MONO8 => ("P5", 1u64),
+        RGB8 => ("P6", 3u64),
+        other => return Err(format!("pixel format {other}")),
+    };
+    let row = (frame.width * channels) as usize;
+    let stride = frame.stride_bytes as usize;
+    if stride < row || frame.data.len() < stride * frame.height as usize {
+        return Err("short frame".into());
+    }
+    let mut bytes = format!("{magic}\n{} {}\n255\n", frame.width, frame.height).into_bytes();
+    for y in 0..frame.height as usize {
+        bytes.extend_from_slice(&frame.data[y * stride..y * stride + row]);
+    }
+    std::fs::write(path, bytes).map_err(|e| e.to_string())
+}
 
 fn wait(bridge: &mut cxx::UniquePtr<ffi::ReviewBridge>, started: &ffi::ReviewResult, what: &str) -> Result<String, String> {
     if !started.ok {
@@ -122,6 +157,41 @@ fn main() {
     let r = bridge.pin_mut().review_export_all(&all.to_string_lossy(), true, 0, u64::MAX, Vec::new());
     if let Err(e) = wait(&mut bridge, &r, "export all") {
         failures.push(e);
+    }
+
+    if !recording {
+        // review_image_datasets: ValidImage 0, InvalidImage 1.
+        let dir = out.join("overlays");
+        std::fs::create_dir_all(&dir).expect("create overlays/");
+        let mut rendered = Vec::new();
+        for (valid, dataset, images, masks) in [
+            (true, 0u32, &info.valid_images, &info.valid_masks),
+            (false, 1u32, &info.invalid_images, &info.invalid_masks),
+        ] {
+            if !images.present {
+                continue;
+            }
+            let modes: Vec<u32> = if masks.present { (0..=4).collect() } else { vec![0] };
+            for index in sample_indices(images.count) {
+                for &mode in &modes {
+                    for roi in [false, true] {
+                        let name = format!("{}_{index:06}_m{mode}_roi{}", if valid { "valid" } else { "invalid" }, u8::from(roi));
+                        let frame = bridge.pin_mut().fetch_review_frame(dataset, index, mode, roi);
+                        let ext = if frame.pixel_format == MONO8 { "pgm" } else { "ppm" };
+                        let written = if frame.valid {
+                            write_netpbm(&dir.join(format!("{name}.{ext}")), &frame)
+                        } else {
+                            Err("not valid".to_string())
+                        };
+                        match written {
+                            Ok(()) => rendered.push(json!(name)),
+                            Err(e) => failures.push(format!("fetch_review_frame {name}: {e}")),
+                        }
+                    }
+                }
+            }
+        }
+        summary["overlays"] = json!(rendered);
     }
 
     summary["failures"] = json!(failures);
