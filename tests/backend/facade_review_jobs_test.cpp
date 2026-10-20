@@ -418,7 +418,15 @@ namespace
         // Caller holds `m`.
         std::string norm(std::string s)
         {
-            for (std::size_t pos; (pos = s.find(dir)) != std::string::npos;) s.replace(pos, dir.size(), "<DIR>");
+            // Status JSON carries the directory JSON-escaped: on Windows its
+            // backslashes are doubled, so replace that spelling too.
+            const std::string quoted = json(dir).dump();
+            const std::string escaped = quoted.substr(1, quoted.size() - 2);
+            auto replaceAll = [&s](const std::string &d) {
+                for (std::size_t pos; !d.empty() && (pos = s.find(d)) != std::string::npos;) s.replace(pos, d.size(), "<DIR>");
+            };
+            replaceAll(escaped);
+            replaceAll(dir);
             s = std::regex_replace(s, std::regex(R"(\.partial-[A-Za-z0-9_-]+)"), ".partial-<J>");
             s = std::regex_replace(s, std::regex(R"re("job_id":"[^"]*")re"), "\"job_id\":\"<J>\"");
             std::string out;
