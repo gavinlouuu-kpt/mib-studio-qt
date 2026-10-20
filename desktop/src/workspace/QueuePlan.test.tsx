@@ -8,8 +8,10 @@ import { act, StrictMode, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import { EXPERIMENT_STATES as S, JSON_TRANSPORT, READINESS_GATE_STATUSES as G, RUN_COMPLETION_STATES as C } from "../bridgeContract";
+import { EXPERIMENT_START_OUTCOMES as O, EXPERIMENT_STATES as S, EXPERIMENT_STOP_OUTCOMES as SO, JSON_TRANSPORT, READINESS_GATE_STATUSES as G,
+  RUN_COMPLETION_STATES as C } from "../bridgeContract";
 import type { ExperimentStatus } from "../eventAdapter";
+import { startExperiment } from "../experimentStart";
 import type { PreflightInput } from "../preflight";
 import type { AlignFacts } from "./alignControls";
 import type { ExperimentSubView } from "./ExperimentView";
@@ -41,7 +43,7 @@ let host: HTMLDivElement, root: Root;
 /** The file the mock's dialog gives each sample: /data/s1.h5 for S1. */
 const fileFor = (json: string) => `/data/${String(JSON.parse(json).sample_ref).toLowerCase()}.h5`;
 let runStart = vi.fn(async (json: string, _stillWanted?: () => boolean): Promise<PlanStartResult> => ({ kind: "started", path: fileFor(json), notice: "" }));
-let stop = vi.fn(async (): Promise<StopReply> => ({ ok: true, message: "stop accepted" }));
+let stop = vi.fn(async (_expectedStartGeneration: string): Promise<StopReply> => ({ ok: true, message: "stop accepted" }));
 const onCameraMode = vi.fn(async () => {});
 /** The test's handles on the harness's backend facts. */
 let setStatus: (s: ExperimentStatus | null) => void = () => {};
@@ -104,7 +106,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.resetAllMocks();
   runStart = vi.fn(async (json: string, _stillWanted?: () => boolean): Promise<PlanStartResult> => ({ kind: "started", path: fileFor(json), notice: "" }));
-  stop = vi.fn(async (): Promise<StopReply> => ({ ok: true, message: "stop accepted" }));
+  stop = vi.fn(async (_expectedStartGeneration: string): Promise<StopReply> => ({ ok: true, message: "stop accepted" }));
   const saved = new Map<string, string>();
   vi.stubGlobal("localStorage", { getItem: (k: string) => saved.get(k) ?? null, setItem: (k: string, v: string) => void saved.set(k, v), removeItem: (k: string) => void saved.delete(k) });
   vi.mocked(invoke).mockImplementation(async (cmd: string) => {
@@ -488,5 +490,136 @@ describe("a control loss withdraws a pending Start (#739 review)", () => {
     await act(async () => release());
     expect(sent).toHaveLength(1);
     expect(JSON.parse(sent[0])).toMatchObject({ run_index: 1, sample_ref: "S1" });
+  });
+});
+
+// Bridge ABI 40 (#741): the start reply's code decides the row's state through the real Start flow;
+// Next sample names the row's own run, and a RunMismatch stops nothing and sends nothing more.
+describe("the start and stop outcome codes (ABI 40)", () => {
+  /** The real Start flow (experimentStart.ts) answered by a backend reply with this code. */
+  const startAnswering = (code: number, message: string) => vi.fn(async (json: string, stillWanted?: () => boolean): Promise<PlanStartResult> => startExperiment({
+    fetchRingStatus: async () => null, confirm: async () => true, pickFile: async () => fileFor(json),
+    fetchReadiness: async () => ({ valid: true, ready: true, gates: [] }),
+    start: async () => ({ ok: code === O.Started, message, start_outcome: code }),
+  }, json, stillWanted));
+
+  it.each([["StaleReadiness", O.StaleReadiness], ["AlreadyActive", O.AlreadyActive], ["Busy", O.Busy], ["InvalidRequest", O.InvalidRequest]] as const)(
+    "%s refuses: nothing recorded, the row editable, Start again sends the same run index", async (name, code) => {
+      runStart = startAnswering(code, `refused ${name}`);
+      await twoSamples();
+      await press($("queue-start"), "Start S1");
+      expect(stateOf("S1")).toBe("Not started");
+      expect($("queue-step")!.textContent).toContain(code === O.InvalidRequest ? `refused ${name}. No file was created.` : `/data/s1.h5: refused ${name}`);
+      expect($("queue-next-run-index")!.textContent).toBe("1");
+      await selectRow("S1");
+      expect(($("plan-condition") as HTMLInputElement).disabled).toBe(false);
+      runStart = startAnswering(O.Started, "started");
+      await render();
+      await press(button("Start S1"), "Start S1");
+      expect(JSON.parse(runStart.mock.calls[0][0])).toMatchObject({ run_index: 1, sample_ref: "S1" });
+    });
+
+  it.each([["NotReady", O.NotReady], ["StorageFailed", O.StorageFailed], ["ProvenanceFailed", O.ProvenanceFailed]] as const)(
+    "%s locks: the file may exist, run 1 is used for good, Retry sends run 2", async (name, code) => {
+      runStart = startAnswering(code, `failed ${name}`);
+      await twoSamples();
+      await press($("queue-start"), "Start S1");
+      expect(stateOf("S1")).toBe("Not started · file may exist");
+      const step = $("queue-step")!.textContent!;
+      expect(step).toContain("Not started · S1, run 1 · its file may exist · /data/s1.h5");
+      expect(step).toContain(`The backend did not start the run (failed ${name})`);
+      expect(step).toContain("Check whether the backend left the run's file on disk");
+      expect(host.querySelector("[data-testid=plan-sheet-table] tbody tr")!.children[0].textContent).toBe("1?");
+      await selectRow("S1");
+      expect(($("plan-condition") as HTMLInputElement).disabled).toBe(true);
+      expect($("queue-next-run-index")!.textContent).toBe("2");
+      await press(button("Retry S1 as run 2"), "Retry");
+      expect(runStart).toHaveBeenCalledTimes(2);
+      expect(JSON.parse(runStart.mock.calls[1][0])).toMatchObject({ run_index: 2, sample_ref: "S1" });
+    });
+
+  it("Started runs the row; Next sample and Stop last sample send exactly each row's own start_generation", async () => {
+    runStart = startAnswering(O.Started, "started");
+    await twoSamples();
+    await press($("queue-start"), "Start S1");
+    expect(stateOf("S1")).toBe("Running");
+    await report({ state: S.Active, start_generation: "7", output_path: "/data/s1.h5" });
+    await press(button("Next sample"), "Next sample");
+    await report({ state: S.Idle, terminal: true, finalization_ok: true, start_generation: "7", output_path: "/data/s1.h5" });
+    await press(button("Confirm closed"), "Confirm closed");
+    await press(button("Start S2"), "Start S2");
+    await report({ state: S.Active, start_generation: "18446744073709551615", output_path: "/data/s2.h5" });
+    await press(button("Stop last sample"), "Stop last sample");
+    expect(stop.mock.calls).toEqual([["7"], ["18446744073709551615"]]);
+  });
+
+  const MISMATCH = (held: string) => ({ ok: false, message: `stop refused: expected run 1, but ${held}; nothing was stopped`, stop_outcome: SO.RunMismatch });
+
+  it("RunMismatch: nothing was stopped, S1 is interrupted with the backend's reason, and nothing more is sent", async () => {
+    stop = vi.fn(async (_g: string) => MISMATCH("run 2 is active"));
+    await twoSamples();
+    await press($("queue-start"), "Start S1");
+    await report({ state: S.Active, start_generation: "1", output_path: "/data/s1.h5" });
+    await press(button("Next sample"), "Next sample");
+    expect(stop.mock.calls).toEqual([["1"]]);
+    expect(stateOf("S1")).toBe("Interrupted · not stopped");
+    const step = () => $("queue-step")!.textContent!;
+    expect(step()).toContain("S1 · not stopped · run 1 is not the backend's active run");
+    expect(step()).toContain("stop refused: expected run 1, but run 2 is active; nothing was stopped");
+    expect(step()).toContain("Check how run 1 ended (its file /data/s1.h5)");
+    expect(button("Next sample")).toBeUndefined();
+    // The other run is reported, then ends: S1 keeps the backend's reason and is never confirmed.
+    await report({ state: S.Active, start_generation: "2", output_path: "/data/theirs.h5" });
+    expect(step()).toContain("stop refused: expected run 1, but run 2 is active");
+    await report({ state: S.Idle, terminal: true, finalization_ok: true, start_generation: "2", output_path: "/data/theirs.h5" });
+    await advance(10_000);
+    expect(stateOf("S1")).toBe("Interrupted · not stopped");
+    expect(button("Confirm closed")).toBeUndefined();
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(runStart).toHaveBeenCalledTimes(1);
+    // The operator's choices: retry as a new run, skip or end.
+    expect(button("Retry S1 as run 2")).toBeDefined();
+    expect(button("Skip S1")).toBeDefined();
+    expect(button("End queue")).toBeDefined();
+  });
+
+  it("RunMismatch because S1's run already ended: a late Active read changes nothing; S1's own terminal status is followed to its close", async () => {
+    stop = vi.fn(async (_g: string) => MISMATCH("no run is active"));
+    await twoSamples();
+    await press($("queue-start"), "Start S1");
+    await report({ state: S.Active, start_generation: "1", output_path: "/data/s1.h5" });
+    await press(button("Next sample"), "Next sample");
+    expect(stateOf("S1")).toBe("Interrupted · not stopped");
+    await report({ state: S.Active, start_generation: "1", output_path: "/data/s1.h5" }); // an older read
+    expect(stateOf("S1")).toBe("Interrupted · not stopped");
+    expect(button("Next sample")).toBeUndefined();
+    await report({ state: S.Idle, terminal: true, finalization_ok: true, start_generation: "1", output_path: "/data/s1.h5" });
+    expect(stateOf("S1")).toBe("Finalized · confirm close");
+    await press(button("Confirm closed"), "Confirm closed");
+    expect(stateOf("S1")).toBe("Closed");
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([["Busy", SO.Busy], ["NotActive", SO.NotActive]] as const)("%s keeps today's handling: the stop was not accepted, Next sample sends it again with the generation", async (name, code) => {
+    stop = vi.fn(async (_g: string) => ({ ok: false, message: name, stop_outcome: code }));
+    await twoSamples();
+    await press($("queue-start"), "Start S1");
+    await report({ state: S.Active, start_generation: "1", output_path: "/data/s1.h5" });
+    await press(button("Next sample"), "Next sample");
+    expect(stateOf("S1")).toBe("Running · stop not accepted");
+    expect($("queue-step")!.textContent).toContain(`S1 · the stop was not accepted${name}`);
+    await press(button("Next sample"), "Next sample");
+    expect(stop.mock.calls).toEqual([["1"], ["1"]]);
+  });
+
+  it("an accepted stop with stop_outcome Accepted is followed like one without a code", async () => {
+    stop = vi.fn(async (_g: string) => ({ ok: true, message: "Accepted", stop_outcome: SO.Accepted }));
+    await twoSamples();
+    await press($("queue-start"), "Start S1");
+    await report({ state: S.Active, start_generation: "1", output_path: "/data/s1.h5" });
+    await press(button("Next sample"), "Next sample");
+    expect(stateOf("S1")).toBe("Stopping · draining");
+    await report({ state: S.Idle, terminal: true, finalization_ok: true, start_generation: "1", output_path: "/data/s1.h5" });
+    expect(stateOf("S1")).toBe("Finalized · confirm close");
   });
 });

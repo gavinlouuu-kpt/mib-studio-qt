@@ -15,7 +15,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import App from "../App";
-import { BRIDGE_ABI_VERSION, COMMAND_TYPES, EXPERIMENT_STATES, JSON_TRANSPORT, READINESS_GATE_STATUSES as G, RUN_COMPLETION_STATES } from "../bridgeContract";
+import { BRIDGE_ABI_VERSION, COMMAND_TYPES, EXPERIMENT_START_OUTCOMES, EXPERIMENT_STATES, EXPERIMENT_STOP_OUTCOMES as S, JSON_TRANSPORT,
+  READINESS_GATE_STATUSES as G, RUN_COMPLETION_STATES } from "../bridgeContract";
 import { DESKTOP_CAPABILITIES } from "../platformCapabilities";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -60,8 +61,11 @@ let device = { overview: false, mode: "unknown", runX: 0, runY: 0, runSet: false
 let holdNextGeometry = false;
 /** A host that can start a run (A5): the camera streams and the pinned core is active. */
 let canStart = false;
-/** The backend's answer to experiment_start. */
-let startReply: { ok: boolean; message: string } = { ok: true, message: "experiment started" };
+/** The backend's answer to experiment_start (ABI 40: with its start outcome code). */
+let startReply: { ok: boolean; message: string; start_outcome?: number } = { ok: true, message: "experiment started", start_outcome: EXPERIMENT_START_OUTCOMES.Started };
+/** Set to answer as a backend without the ABI 40 outcome codes: no start_outcome or stop_outcome in
+ *  the replies, and experiment_stop ignores expectedStartGeneration (stops whatever run is active). */
+let noOutcomeCodes = false;
 /** Set to make every experiment status read fail once experiment_start was sent. */
 let statusFailsAfterStart = false;
 /** Set to make the mock backend run experiments (A5 queue): a start makes a run Active (a new
@@ -116,14 +120,29 @@ function respond(variant: Variant, cmd: string, args?: unknown): unknown {
         gates: [{ id: "storage.output", status: G.Unavailable, reason: "no output path chosen yet", remediation: "choose an HDF5 destination" }] };
     case "experiment_start": startSent = true;
       if (statefulRuns && startReply.ok) run = { generation: run.generation + 1, state: EXPERIMENT_STATES.Active, flushing: false, terminal: false, ok: false, path: String(a.outputPath) };
+      if (noOutcomeCodes) return { ...cmdResult(COMMAND_TYPES.Experiment), ok: startReply.ok, message: startReply.message };
       return { ...cmdResult(COMMAND_TYPES.Experiment), ...startReply };
     // With running experiments the shell's 500 ms status poll must get through (it reads the
     // processing stats first).
     case "fetch_processing_stats": return statefulRuns
       ? { transport_version: JSON_TRANSPORT.version, valid: false, algo_fps1s: null, valid_fps1s: null, invalid_fps1s: null, pixel_to_micron: null } : null;
-    case "experiment_stop":
-      if (statefulRuns && run.state === EXPERIMENT_STATES.Active) Object.assign(run, { state: EXPERIMENT_STATES.Stopping, flushing: true });
-      return cmdResult(COMMAND_TYPES.Experiment);
+    case "experiment_stop": {
+      if (!statefulRuns) return cmdResult(COMMAND_TYPES.Experiment);
+      // As ExperimentCoordinator::requestStop: a named run is compared with the run the backend holds
+      // (Active, or Stopping until its finalization ends) before anything else.
+      const reply = (outcome: number, message: string) => ({ ...cmdResult(COMMAND_TYPES.Experiment), ok: outcome === S.Accepted, message,
+        ...(noOutcomeCodes ? {} : { stop_outcome: outcome }) });
+      const held = run.state === EXPERIMENT_STATES.Active || run.state === EXPERIMENT_STATES.Stopping;
+      const expected = noOutcomeCodes ? undefined : a.expectedStartGeneration;
+      if (expected !== undefined && (!held || String(run.generation) !== expected)) {
+        return reply(S.RunMismatch, `stop refused: expected run ${String(expected)}, but ${held
+          ? `run ${run.generation} is ${run.state === EXPERIMENT_STATES.Active ? "active" : "stopping"}` : "no run is active"}; nothing was stopped`);
+      }
+      if (run.state === EXPERIMENT_STATES.Stopping) return reply(S.Busy, "Busy");
+      if (run.state !== EXPERIMENT_STATES.Active) return reply(S.NotActive, "NotActive");
+      Object.assign(run, { state: EXPERIMENT_STATES.Stopping, flushing: true });
+      return reply(S.Accepted, "Accepted");
+    }
     case "poll_events_exact": return { transport_version: JSON_TRANSPORT.version, events: [] };
     case "set_camera_overview": device.overview = !!a.overview; return cmdResult(COMMAND_TYPES.Camera);
     case "save_camera_roi": return cmdResult(COMMAND_TYPES.Camera);
@@ -164,7 +183,8 @@ beforeEach(() => {
   holdNextGeometry = false;
   heldGeometry.length = 0;
   canStart = false;
-  startReply = { ok: true, message: "experiment started" };
+  startReply = { ok: true, message: "experiment started", start_outcome: EXPERIMENT_START_OUTCOMES.Started };
+  noOutcomeCodes = false;
   statusFailsAfterStart = false;
   statefulRuns = false;
   holdStartReadiness = false;
@@ -438,9 +458,13 @@ describe("Experiment · Plan Start run (desktop)", () => {
     expect(classic).toEqual([{ cmd: "experiment_start", args: { outputPath: "/data/classic.h5", acknowledgeDiscardRing: false } }]);
   });
 
-  it("the backend's InvalidRequest is shown next to the sheet, no run is claimed, and the plan is kept", async () => {
+  it.each([
+    ["by its start outcome code (ABI 40)", false],
+    ["by the message prefix, from a reply without a code", true],
+  ])("the backend's InvalidRequest, %s, is shown next to the sheet, no run is claimed, and the plan is kept", async (_how, withoutCode) => {
     canStart = true;
-    startReply = { ok: false, message: "invalid start request: annotation.condition: 300 bytes, at most 256" };
+    noOutcomeCodes = withoutCode;
+    startReply = { ok: false, message: "invalid start request: annotation.condition: 300 bytes, at most 256", start_outcome: EXPERIMENT_START_OUTCOMES.InvalidRequest };
     await boot("desktop");
     await openPlan();
     const id = host.querySelector("[data-testid=plan-experiment-id]")!.textContent!;
@@ -455,6 +479,23 @@ describe("Experiment · Plan Start run (desktop)", () => {
     expect(host.querySelector("[data-testid=plan-experiment-id]")!.textContent).toBe(id);
     expect(host.querySelector<HTMLInputElement>("[data-testid=plan-condition]")!.value).toBe("Vehicle");
     expect(buttonByText("Start run")!.disabled).toBe(false);
+  });
+
+  it("a StorageFailed reply (the backend may have opened the file) locks the plan; it is not sent again", async () => {
+    canStart = true;
+    startReply = { ok: false, message: "failed to initialize datasets", start_outcome: EXPERIMENT_START_OUTCOMES.StorageFailed };
+    await boot("desktop");
+    await openPlan();
+    await typeInto("[data-testid=plan-condition]", "Vehicle");
+    vi.mocked(save).mockResolvedValueOnce("/data/run.h5");
+    await click(buttonByText("Start run"), "Start run");
+    await advance(3000);
+    expect(log.filter((e) => e.cmd === "experiment_start")).toHaveLength(1);
+    expect(byTestId("plan-outcome")!.textContent).toContain("Not started · its file may exist · /data/run.h5");
+    expect(byTestId("plan-outcome")!.textContent).toContain("failed to initialize datasets");
+    expect(host.querySelector("[data-testid=plan-sheet] [data-testid=plan-refusal]")).toBeNull();
+    expect(buttonByText("Start run")!.disabled).toBe(true);
+    expect(buttonByText("New plan")).toBeDefined();
   });
 });
 
@@ -617,11 +658,92 @@ describe("the sample queue over the mocked transport (desktop)", () => {
     expect(acts()).toEqual([
       { cmd: "experiment_start", args: { outputPath: "/data/s1.h5", acknowledgeDiscardRing: false,
         startRequestJson: `{"experiment_id":"${id}","run_index":1,"sample_ref":"S1","annotation":{"condition":"Vehicle"}}` } },
-      { cmd: "experiment_stop", args: undefined },
+      { cmd: "experiment_stop", args: { expectedStartGeneration: "1" } }, // only S1's run (ABI 40)
       { cmd: "experiment_start", args: { outputPath: "/data/s2.h5", acknowledgeDiscardRing: false,
         startRequestJson: `{"experiment_id":"${id}","run_index":2,"sample_ref":"S2","annotation":{"condition":"Cytochalasin D"}}` } },
-      { cmd: "experiment_stop", args: undefined },
+      { cmd: "experiment_stop", args: { expectedStartGeneration: "2" } },
     ]);
+  });
+
+  async function runningS1() {
+    canStart = true;
+    statefulRuns = true;
+    await boot("desktop");
+    await openPlan();
+    await chooseQueue();
+    await typeInto("[data-testid=plan-condition]", "Vehicle");
+    await click(byTestId("queue-add"), "+ Sample");
+    await advance(3000);
+    log.splice(0);
+    vi.mocked(save).mockResolvedValueOnce("/data/s1.h5");
+    await click(byTestId("queue-start"), "Start S1");
+    await advance(3000);
+    expect(byTestId("queue-step")!.textContent).toContain("S1 running · run 1 · /data/s1.h5");
+  }
+  const acts = () => log.filter((e) => ACTUATING.includes(e.cmd));
+  const stops = () => log.filter((e) => e.cmd === "experiment_stop");
+
+  it("Next sample names S1's run: when another run is active by then, the backend stops nothing and S1 is interrupted; nothing more is sent", async () => {
+    await runningS1();
+    // Between the last status read and the press, another client stops S1 and starts its own run.
+    run = { generation: 2, state: EXPERIMENT_STATES.Active, flushing: false, terminal: false, ok: false, path: "/data/theirs.h5" };
+    await click(buttonByText("Next sample"), "Next sample");
+    await advance(3000);
+    expect(stops()).toEqual([{ cmd: "experiment_stop", args: { expectedStartGeneration: "1" } }]);
+    expect(run).toMatchObject({ generation: 2, state: EXPERIMENT_STATES.Active }); // their run was not stopped
+    expect(byTestId("queue-state-S1")!.textContent).toBe("Interrupted · not stopped");
+    const step = byTestId("queue-step")!.textContent!;
+    expect(step).toContain("S1 · not stopped · run 1 is not the backend's active run");
+    expect(step).toContain("stop refused: expected run 1, but run 2 is active; nothing was stopped");
+    expect(buttonByText("Next sample")).toBeUndefined();
+    // Nothing more: no stop without the generation, no stop of their run, no start.
+    await advance(10_000);
+    finalizeRun(); // their run ends: not S1's to confirm
+    await advance(10_000);
+    expect(acts().map((e) => e.cmd)).toEqual(["experiment_start", "experiment_stop"]);
+    expect(buttonByText("Confirm closed")).toBeUndefined();
+    expect(byTestId("queue-state-S1")!.textContent).toBe("Interrupted · not stopped");
+  });
+
+  it("S1's run that ended by itself before Next sample: the backend refuses the stop (no run is active) and the queue follows S1 to its close", async () => {
+    await runningS1();
+    Object.assign(run, { state: EXPERIMENT_STATES.Idle, flushing: false, terminal: false, ok: false }); // ended, not yet reported terminal
+    await click(buttonByText("Next sample"), "Next sample");
+    expect(stops()).toEqual([{ cmd: "experiment_stop", args: { expectedStartGeneration: "1" } }]);
+    expect(byTestId("queue-step")!.textContent).toContain("stop refused: expected run 1, but no run is active");
+    finalizeRun();
+    await advance(3000);
+    expect(byTestId("queue-step")!.textContent).toContain("S1 finalized · the backend closed /data/s1.h5");
+    expect(stops()).toHaveLength(1);
+  });
+
+  it("the classic Stop Experiment is not tied to a row: it sends no generation; the queue follows S1 to its close", async () => {
+    await runningS1();
+    await click(buttonByText("Classic view"), "Classic view");
+    await click(host.querySelector('button[aria-label^="Experiment:"]'), "classic Experiment tab");
+    await advance(1000);
+    await click(buttonByText("Stop Experiment"), "classic Stop Experiment");
+    expect(stops()).toEqual([{ cmd: "experiment_stop", args: undefined }]);
+    finalizeRun();
+    await advance(3000);
+    await click(buttonByText("Workspace preview"), "workspace toggle");
+    await click(host.querySelectorAll(".mib-stages__tab")[2], "Experiment");
+    expect(byTestId("queue-step")!.textContent).toContain("S1 finalized · the backend closed /data/s1.h5");
+    expect(stops()).toHaveLength(1);
+  });
+
+  it("a stop reply without stop_outcome (a backend before ABI 40) is handled as before: accepted, then S1 is followed to its close", async () => {
+    noOutcomeCodes = true;
+    startReply = { ok: true, message: "experiment started" };
+    await runningS1();
+    await click(buttonByText("Next sample"), "Next sample");
+    await advance(3000);
+    expect(stops()).toEqual([{ cmd: "experiment_stop", args: { expectedStartGeneration: "1" } }]);
+    expect(byTestId("queue-step")!.textContent).toContain("Stopping S1");
+    finalizeRun();
+    await advance(3000);
+    expect(byTestId("queue-step")!.textContent).toContain("S1 finalized · the backend closed /data/s1.h5");
+    expect(stops()).toHaveLength(1);
   });
 });
 

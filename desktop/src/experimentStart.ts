@@ -4,12 +4,51 @@
 // `stillWanted` (the workspace's Plan) is asked after every step the operator answers or waits for (the discard question,
 // the file dialog, readiness) and immediately before experiment_start: once it says no (the client lost control while the
 // Start was pending, #716 A5 review) the flow sends nothing more and reports "withdrawn"; the operator presses Start again.
-import { READINESS_GATE_STATUSES } from "./bridgeContract";
+// The start reply's `start_outcome` (bridge ABI 40, #741) decides what the reply means, not its message: `startReplyState`.
+import { EXPERIMENT_START_OUTCOMES as O, READINESS_GATE_STATUSES } from "./bridgeContract";
 import { startDiscardNotice, type RingStatus } from "./ringPlayback";
 
 export interface StartGate { id: string; status: number; reason: string; remediation?: string }
 export interface StartReadiness { valid: boolean; ready: boolean; gates: StartGate[] }
-export interface StartResult { ok: boolean; message: string }
+/** The start reply: `start_outcome` is the backend's EXPERIMENT_START_OUTCOMES value (ABI 40), absent
+ *  from an older backend (ABI 39 and before), which answers with ok and message only. */
+export interface StartResult { ok: boolean; message: string; start_outcome?: number }
+
+/** What a start reply means for the run's identity (#736 rules): started (the run exists), refused
+ *  (nothing was recorded: the identity and the run index may be sent again) or unknown (the run, or
+ *  its file, may exist: the identity and the run index are used for good). */
+export type StartReplyState = "started" | "refused" | "unknown";
+
+/** Each start outcome code's state (bridge ABI 40, #741). The codes the backend returns only before
+ *  it begins the run (ExperimentCoordinator::start, before Starting: no start generation, no file) are
+ *  refused. The codes it can also return after it opened the run's HDF5 file are unknown, because
+ *  the file, with the identity in its snapshot, may be left behind:
+ *  - StorageFailed: initializeDatasets failing closes the file without removing it.
+ *  - ProvenanceFailed: the snapshot or annotation write failing removes the file, best effort.
+ *  - NotReady: mostly a readiness refusal before anything, but on the PZ7035 also "execution
+ *    provider did not start" after the file and snapshot were written (the file is removed best
+ *    effort, a pzrec run aborted). The code alone cannot tell the two apart, so it locks. */
+export const START_OUTCOME_STATES: Readonly<Record<number, StartReplyState>> = {
+  [O.Started]: "started",
+  [O.NotReady]: "unknown",
+  [O.StaleReadiness]: "refused",
+  [O.AlreadyActive]: "refused",
+  [O.StorageFailed]: "unknown",
+  [O.ProvenanceFailed]: "unknown",
+  [O.Busy]: "refused",
+  [O.InvalidRequest]: "refused",
+};
+
+/** The state of a start reply that was read. Without a code (an older backend) ok decides, as
+ *  before ABI 40. A code this table does not know, or a code that contradicts ok, is unknown: the
+ *  run may exist. */
+export function startReplyState(res: StartResult): StartReplyState {
+  if (res.start_outcome === undefined) return res.ok ? "started" : "refused";
+  const state = START_OUTCOME_STATES[res.start_outcome];
+  if (state === undefined) return "unknown";
+  if ((state === "started") !== res.ok) return "unknown";
+  return state;
+}
 
 export interface StartDeps {
   /** A fresh ring status (not the polled snapshot, which can be seconds old or missing for another client). */
@@ -24,11 +63,15 @@ export interface StartDeps {
 export type StartOutcome =
   | { kind: "cancelled" }
   | { kind: "not-ready"; message: string }
-  | { kind: "refused"; path: string; message: string }
+  /** The backend refused the start before it began the run (`code`: its start outcome, absent from
+   *  an older backend): nothing was recorded. */
+  | { kind: "refused"; path: string; message: string; code?: number }
   | { kind: "started"; path: string; notice: string }
-  /** The start request was sent but no reply was decoded (transport error): the backend may have
-   *  started the run, so its identity must be treated as used. */
-  | { kind: "unknown"; path: string; message: string }
+  /** The run may exist, so its identity must be treated as used. Without `code`: the start request
+   *  was sent but no reply was decoded (transport error). With `code`: the reply was read and says
+   *  not started, but with a code the backend can return after it opened the run's file
+   *  (START_OUTCOME_STATES). */
+  | { kind: "unknown"; path: string; message: string; code?: number }
   /** Nothing was sent: the Start was withdrawn while it was pending (`stillWanted` said no). */
   | { kind: "withdrawn" };
 
@@ -60,6 +103,8 @@ export async function startExperiment(deps: StartDeps, startRequestJson?: string
   } catch (e) {
     return { kind: "unknown", path: picked, message: String(e) };
   }
-  if (!res.ok) return { kind: "refused", path: picked, message: res.message };
-  return { kind: "started", path: picked, notice };
+  const state = startReplyState(res);
+  if (state === "started") return { kind: "started", path: picked, notice };
+  const code = res.start_outcome === undefined ? {} : { code: res.start_outcome };
+  return { kind: state, path: picked, message: res.message, ...code };
 }

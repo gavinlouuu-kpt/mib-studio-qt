@@ -2,7 +2,8 @@
 // leaving the workspace. The plan is local: creating or editing it sends nothing. Only `start`
 // (single sample) and the queue's buttons act, and only through the caller's commands (App's
 // `runExperimentStart`, the classic `experimentStart.ts` flow with the plan's startRequestJson, and
-// App's stop, the classic `experiment_stop`).
+// App's stop, `experiment_stop` with the row's start generation as expectedStartGeneration, ABI 40).
+// The start reply's code decides started / refused / unknown (experimentStart.ts startReplyState).
 //
 // - The experiment id is minted when the plan is created and kept while the plan is edited and
 //   while a Start is refused or cancelled (no run was recorded). A single-sample plan is locked once
@@ -46,13 +47,16 @@ export interface PlanStarted {
   path: string;
   notice: string;
   runIndex: number;
-  /** "started": the backend accepted the start. "unknown": the request was sent but its reply was
-   *  lost, so the run may exist: the identity is treated as used all the same. */
+  /** "started": the backend accepted the start. "unknown": the run may exist, so the identity is
+   *  treated as used all the same: the reply was lost, or (`code`) it said not started with a code
+   *  the backend can return after it opened the run's file. */
   outcome: "started" | "unknown";
+  code?: number;
 }
 
-/** The stop command's reply (the classic `experiment_stop`). */
-export interface StopReply { ok: boolean; message: string }
+/** The stop command's reply (`experiment_stop`); `stop_outcome` is its EXPERIMENT_STOP_OUTCOMES value
+ *  (ABI 40), absent from an older backend. */
+export interface StopReply { ok: boolean; message: string; stop_outcome?: number }
 
 /** Why the queue pauses when this client no longer controls the instrument. */
 export const CONTROL_LOST_REASON = "this client lost control of the instrument (another client took control, or the connection dropped)";
@@ -103,8 +107,9 @@ export interface PlanController {
 export interface PlanOptions {
   /** The experiment status App polls (observed by the queue). */
   status?: ExperimentStatus | null;
-  /** Stop the active run (the classic `experiment_stop`), resolving with its reply. */
-  stop?: () => Promise<StopReply>;
+  /** Stop the row's run: `experiment_stop` with this start generation (canonical decimal) as
+   *  expectedStartGeneration (ABI 40), so the backend stops nothing when another run is active. */
+  stop?: (expectedStartGeneration: string) => Promise<StopReply>;
   /** Whether this client controls the instrument (false pauses a queue in progress). */
   controlHeld?: boolean;
 }
@@ -126,7 +131,7 @@ function writeOperators(list: OperatorChoice[]) {
   }
 }
 
-const noStop = async (): Promise<StopReply> => ({ ok: false, message: "stopping is not available here" });
+const noStop = async (_expectedStartGeneration: string): Promise<StopReply> => ({ ok: false, message: "stopping is not available here" });
 
 /** The caller's Start flow: the startRequestJson, and whether the Start is still wanted (asked
  *  after each step and immediately before experiment_start; false withdraws it). */
@@ -207,7 +212,8 @@ export function usePlan(runStart: RunStart, options: PlanOptions = {}): PlanCont
       // did, this identity is recorded in that run and is not sent again.
       if (out.kind === "started" || out.kind === "unknown") {
         startedRef.current = true;
-        setStarted({ path: out.path, notice: out.kind === "started" ? out.notice : "", runIndex, outcome: out.kind });
+        const code = out.kind === "unknown" && out.code !== undefined ? { code: out.code } : {};
+        setStarted({ path: out.path, notice: out.kind === "started" ? out.notice : "", runIndex, outcome: out.kind, ...code });
       }
       if (out.kind === "started") remember();
       return out;
@@ -260,22 +266,25 @@ export function usePlan(runStart: RunStart, options: PlanOptions = {}): PlanCont
     const index = currentIndex(order(), q);
     if (index < 0) return;
     const ref = draftRef.current.rows[index].ref;
-    // experiment_stop stops whatever run is active: only when the status shows this row's own run.
-    if (!ownRunActive(rowState(q, ref), statusRef.current)) return;
+    // Only when the status shows this row's own run active; and the stop names that run (its start
+    // generation), so the backend refuses it, stopping nothing, if another run replaced it since.
+    const row = rowState(q, ref);
+    if (!ownRunActive(row, statusRef.current)) return;
+    const generation = row.attempts[row.attempts.length - 1].generation!;
     dispatch({ type: "stop", ref });
     if (!queueRef.current.rows[ref]?.stopPending) return; // the machine refused it
     pending.current = true;
     setQueuePending("stop");
     let reply: StopReply;
     try {
-      reply = await stopRef.current();
+      reply = await stopRef.current(generation);
     } catch (e) {
       reply = { ok: false, message: `no reply to the stop (${String(e)})` };
     } finally {
       pending.current = false;
       setQueuePending(null);
     }
-    dispatch({ type: "stop-result", ref, ok: reply.ok, message: reply.message });
+    dispatch({ type: "stop-result", ref, ok: reply.ok, message: reply.message, ...(reply.stop_outcome === undefined ? {} : { code: reply.stop_outcome }) });
     dispatch({ type: "status", status: statusRef.current });
   }, [dispatch]);
 

@@ -15,10 +15,19 @@
 // another file means another run took over this instrument (another client, the classic view): the
 // row is "interrupted", and the queue never stops or confirms that run.
 //
-// Identity rules (#736): a row's start reply alone decides started / refused / unknown. A started
-// or unknown attempt uses its run_index for good: the next Start always sends `nextRunIndex`, which
-// only grows, so a run_index is never sent twice. A refused start recorded nothing and keeps the
-// index. A row with any started or unknown attempt is locked (no edit, move or removal).
+// Identity rules (#736): a row's start reply alone decides started / refused / unknown, by its start
+// outcome code (bridge ABI 40, #741; experimentStart.ts START_OUTCOME_STATES), or by ok without one
+// (an older backend). A started or unknown attempt uses its run_index for good: the next Start always
+// sends `nextRunIndex`, which only grows, so a run_index is never sent twice. A refused start recorded
+// nothing and keeps the index. A row with any started or unknown attempt is locked (no edit, move or
+// removal). An unknown attempt with a code was answered "not started", but by a code the backend can
+// return after it opened the run's file: the file may be left behind, so it locks like a lost reply.
+//
+// Next sample stops only the row's own run (ABI 40): usePlan sends the row's start_generation as
+// expectedStartGeneration. A stop outcome RunMismatch means the backend's run is not the row's (another
+// run is active, or none is): nothing was stopped, the row is "interrupted" with the backend's reason,
+// and the queue sends nothing more for it. A later status that shows the row's own run ending still
+// applies (its own generation and file), so a run that ended by itself is followed to its close.
 //
 // A lost controlling client pauses the queue (`paused`): every action is refused until the
 // operator resumes it, and resuming sends nothing. Status observations still apply while paused,
@@ -26,7 +35,7 @@
 //
 // Pure module: no React or transport imports.
 
-import { EXPERIMENT_STATES } from "../bridgeContract";
+import { EXPERIMENT_STATES, EXPERIMENT_STOP_OUTCOMES } from "../bridgeContract";
 import type { ExperimentStatus } from "../eventAdapter";
 import { describeRunOutcome, type OutcomeSeverity } from "../runOutcome";
 import { invalidRequestReason, type PlanDraft } from "./planModel";
@@ -55,6 +64,9 @@ export interface RunAttempt {
   generationBefore: string;
   /** The run's start_generation once a status reports it. */
   generation: string | null;
+  /** An unknown attempt's start outcome code when its reply was read (not started, but its file
+   *  may exist); absent when the reply was lost, and for a started attempt. */
+  code?: number;
 }
 
 /** How the row's run ended, as the backend reported it (terminal status). */
@@ -160,8 +172,9 @@ export type QueueEvent =
   | { type: "start-result"; ref: string; runIndex: number; generationBefore: string; result: PlanStartResult }
   /** The operator pressed Next sample (or Stop last sample). */
   | { type: "stop"; ref: string }
-  /** The stop request's reply: accepted, refused (with the backend's message), or none (threw). */
-  | { type: "stop-result"; ref: string; ok: boolean; message: string }
+  /** The stop request's reply: accepted, refused (with the backend's message and its stop outcome
+   *  code, absent from an older backend), or none (threw). */
+  | { type: "stop-result"; ref: string; ok: boolean; message: string; code?: number }
   /** A fresh experiment status read. */
   | { type: "status"; status: ExperimentStatus | null }
   /** The operator confirmed the finalized run's close. */
@@ -187,7 +200,7 @@ function withRow(q: QueueState, ref: string, row: QueueRow): QueueState {
 function startFailure(ref: string, runIndex: number, r: PlanStartResult): QueueFailure | null {
   switch (r.kind) {
     case "refused": {
-      const invalid = invalidRequestReason(r.message);
+      const invalid = invalidRequestReason(r.message, r.code);
       return invalid
         ? { step: "start", tone: "blocked", title: `Not started · the backend refused ${ref}'s sheet row`, text: `${invalid.label}: ${invalid.text}. No file was created. Correct the row and press Start again.` }
         : { step: "start", tone: "blocked", title: `Not started · the backend refused the Start of ${ref}`, text: `${r.path ? `${r.path}: ` : ""}${r.message}` };
@@ -196,7 +209,10 @@ function startFailure(ref: string, runIndex: number, r: PlanStartResult): QueueF
     case "error": return { step: "start", tone: "blocked", title: `Not started · an error before the start was sent`, text: r.message };
     case "busy": return { step: "start", tone: "warn", title: `Not started · a start request is already pending`, text: "Wait for it to finish, then press Start again." };
     case "withdrawn": return { step: "start", tone: "warn", title: `Not started · control was lost while the Start of ${ref} was pending`, text: "Nothing was sent. Press Start again once the queue is resumed." };
-    case "unknown": return {
+    case "unknown": return r.code !== undefined ? {
+      step: "start", tone: "unknown", title: `Not started · ${ref}, run ${runIndex} · its file may exist${r.path ? ` · ${r.path}` : ""}`,
+      text: `The backend did not start the run (${r.message}), but it can answer this way after it opened the run's file, so run ${runIndex} is not sent again. Skip the sample, or retry it as run ${runIndex + 1}.`,
+    } : {
       step: "start", tone: "unknown", title: `Start outcome not known · ${ref}, run ${runIndex}${r.path ? ` · ${r.path}` : ""}`,
       text: `The start request was sent but no reply was read (${r.message}). The run may have started, so run ${runIndex} is not sent again. Skip the sample, or retry it as run ${runIndex + 1}.`,
     };
@@ -221,9 +237,12 @@ function interrupted(ref: string, row: QueueRow, last: RunAttempt, s: Experiment
   };
 }
 
+/** A row whose Next sample the backend refused as RunMismatch: it still watches for its own run. */
+const stopMismatched = (row: QueueRow): boolean => row.phase === "interrupted" && row.failure?.step === "stop";
+
 /** The status read applied to the row's started run (see the header: own file, newer generation). */
 function observe(ref: string, row: QueueRow, s: ExperimentStatus): QueueRow {
-  if (row.phase !== "running" && row.phase !== "stopping") return row;
+  if (row.phase !== "running" && row.phase !== "stopping" && !stopMismatched(row)) return row;
   const last = row.attempts[row.attempts.length - 1];
   if (!last || last.outcome !== "started") return row;
   const gen = big(s.start_generation);
@@ -238,7 +257,8 @@ function observe(ref: string, row: QueueRow, s: ExperimentStatus): QueueRow {
   } else {
     const seen = big(last.generation);
     if (seen === null || gen < seen) return row; // an older read answering late
-    if (gen > seen || !mine) return interrupted(ref, row, last, s); // a later run: this run's end was not seen
+    // A later run: this run's end was not seen. After a refused stop the row already says so, with the backend's reason.
+    if (gen > seen || !mine) return stopMismatched(row) ? row : interrupted(ref, row, last, s);
   }
   const attempts = [...row.attempts.slice(0, -1), attempt];
   const outputPath = s.output_path;
@@ -253,6 +273,7 @@ function observe(ref: string, row: QueueRow, s: ExperimentStatus): QueueRow {
       failure: ok ? null : { step: "run", tone: "blocked", title: `${ref} · run ${attempt.runIndex} failed`, text: why },
     };
   }
+  if (stopMismatched(row) && !(s.state === EXPERIMENT_STATES.Stopping || s.flushing)) return row; // an older read: the backend said this run is not active
   if (s.state === EXPERIMENT_STATES.Stopping || s.flushing) {
     // Stopping, whoever stopped it (Next sample, the classic Stop, the server's safe stop): a stop
     // that was said to fail is moot now.
@@ -290,6 +311,7 @@ export function reduceQueue(q: QueueState, e: QueueEvent, order: readonly string
       const r = e.result;
       if (r.kind === "started" || r.kind === "unknown") {
         const attempt: RunAttempt = { runIndex: e.runIndex, outcome: r.kind, path: r.path, generationBefore: e.generationBefore, generation: null };
+        if (r.kind === "unknown" && r.code !== undefined) attempt.code = r.code;
         const next = { ...q, nextRunIndex: Math.max(q.nextRunIndex, e.runIndex + 1) };
         return withRow(next, e.ref, {
           ...row, attempts: [...row.attempts, attempt], before: null, end: null, outputPath: "",
@@ -314,6 +336,17 @@ export function reduceQueue(q: QueueState, e: QueueEvent, order: readonly string
       const row = rowState(q, e.ref);
       if (!row.stopPending) return q;
       if (e.ok || row.phase !== "stopping") return withRow(q, e.ref, { ...row, stopPending: false });
+      if (e.code === EXPERIMENT_STOP_OUTCOMES.RunMismatch) {
+        // The backend's run is not this row's (another run is active, or none is): nothing was
+        // stopped. The queue never sends the stop again for this row, with or without the generation.
+        const last = row.attempts[row.attempts.length - 1];
+        return withRow(q, e.ref, {
+          ...row, stopPending: false, phase: "interrupted",
+          failure: { step: "stop", tone: "unknown", title: `${e.ref} · not stopped · run ${last?.runIndex ?? "?"} is not the backend's active run`,
+            text: `The backend refused Next sample for this row's run: ${e.message}. The queue stops only its own run, so nothing was stopped and nothing more is sent. `
+              + `Check how run ${last?.runIndex ?? "?"} ended (its file ${last ? recordedPath(last.path) : "(unknown)"}) before going on.` },
+        });
+      }
       // Not accepted (or no reply): the run is taken as still running until a status says otherwise.
       return withRow(q, e.ref, {
         ...row, stopPending: false, phase: "running",
@@ -324,7 +357,7 @@ export function reduceQueue(q: QueueState, e: QueueEvent, order: readonly string
       // The row whose run is running or stopping (at most one; it can outlive an ended queue).
       const status = e.status;
       if (!status?.valid) return q;
-      const ref = order.find((r) => { const p = rowState(q, r).phase; return p === "running" || p === "stopping"; });
+      const ref = order.find((r) => { const row = rowState(q, r); return row.phase === "running" || row.phase === "stopping" || stopMismatched(row); });
       if (ref === undefined) return q;
       const row = rowState(q, ref);
       const next = observe(ref, row, status);
@@ -373,18 +406,28 @@ export function canEnd(order: readonly string[], q: QueueState): boolean {
 
 export type ChipTone = "confirmed" | "warn" | "blocked" | "unknown" | "unsupported" | "info" | "neutral";
 
+/** An unknown row whose last start reply was read (a code that locks, START_OUTCOME_STATES), not lost. */
+export function notStarted(row: QueueRow): boolean {
+  const last = row.attempts[row.attempts.length - 1];
+  return row.phase === "unknown" && last?.outcome === "unknown" && last.code !== undefined;
+}
+
+/** An interrupted row: another run was reported, or the backend refused its Next sample as RunMismatch
+ *  (its run was not the active one: another run was, or none). */
+const interruptedText = (row: QueueRow): string => (stopMismatched(row) ? "Interrupted · not stopped" : "Interrupted · another run");
+
 /** A row's state as the queue table shows it. */
 export function rowChip(row: QueueRow, ended: boolean): { tone: ChipTone; text: string } {
   switch (row.phase) {
     case "planned": return ended ? { tone: "neutral", text: "Not run" } : { tone: "neutral", text: "Planned" };
     case "starting": return { tone: "info", text: "Starting" };
     case "refused": return { tone: "blocked", text: "Not started" };
-    case "unknown": return { tone: "unknown", text: "Unknown · reply lost" };
+    case "unknown": return notStarted(row) ? { tone: "unknown", text: "Not started · file may exist" } : { tone: "unknown", text: "Unknown · reply lost" };
     case "running": return row.failure ? { tone: "warn", text: "Running · stop not accepted" } : { tone: "info", text: "Running" };
     case "stopping": return { tone: "info", text: "Stopping · draining" };
     case "finalized": return { tone: "info", text: "Finalized · confirm close" };
     case "failed": return { tone: "blocked", text: "Failed" };
-    case "interrupted": return { tone: "unknown", text: "Interrupted · another run" };
+    case "interrupted": return { tone: "unknown", text: interruptedText(row) };
     case "closed": return row.end?.severity && row.end.severity !== "ok" && row.end.severity !== "partial"
       ? { tone: "warn", text: "Closed · see outcome" } : { tone: "confirmed", text: "Closed" };
     case "skipped": return { tone: "neutral", text: row.attempts.length ? "Skipped · after a run" : "Skipped" };
@@ -418,12 +461,12 @@ export function lifecycle(row: QueueRow): LifecycleStep[] {
     planned: [0, "current"],
     starting: [1, "current"],
     refused: [1, "failed", { tone: "blocked", text: "Not started" }],
-    unknown: [1, "current", { tone: "unknown", text: "Unknown · reply lost" }],
+    unknown: [1, "current", notStarted(row) ? { tone: "unknown", text: "Not started · file may exist" } : { tone: "unknown", text: "Unknown · reply lost" }],
     running: [2, "current", row.failure ? { tone: "warn", text: "Stop not accepted" } : undefined],
     stopping: [3, "current"],
     finalized: [5, "current"],
     failed: [4, "failed", { tone: "blocked", text: "Failed" }],
-    interrupted: [2, "failed", { tone: "unknown", text: "Interrupted · another run" }],
+    interrupted: [2, "failed", { tone: "unknown", text: interruptedText(row) }],
     closed: [5, "done"],
     skipped: [0, "pending", { tone: "neutral", text: "Skipped" }],
   };

@@ -9,13 +9,13 @@
 // UTF-8, as the backend counts them), and refuses an over-bound value with the limit named; it
 // never truncates. An empty field is not declared: its key is left out, never sent as "". Spaces
 // around a value are not part of it. The backend checks the same request again and stays the
-// authority: a refusal there (InvalidRequest, "invalid start request: <key>: <why>") is shown with
-// `invalidRequestReason`.
+// authority: a refusal there (start outcome InvalidRequest, bridge ABI 40; message "invalid start
+// request: <key>: <why>") is shown with `invalidRequestReason`.
 //
 // Pure module: no React or transport imports (the kit types are types only).
 
 import type { ConditionSlot } from "@mib/ui";
-import { EXPERIMENT_START_REQUEST as B } from "../bridgeContract";
+import { EXPERIMENT_START_OUTCOMES, EXPERIMENT_START_REQUEST as B } from "../bridgeContract";
 
 export type SampleFormat = "single" | "queue";
 
@@ -431,7 +431,8 @@ export function concentrationText(row: Pick<SampleRow, "concentrationValue" | "c
 // ---- the backend's answer ------------------------------------------------------------------------
 
 /** The prefix of the backend's InvalidRequest message (start outcome 7; the contract's
- *  `experiment_start_request` document): "invalid start request: <key>: <why>". */
+ *  `experiment_start_request` document): "invalid start request: <key>: <why>". Since ABI 40 the
+ *  start outcome code says it is one; the prefix is read for that only without a code. */
 export const INVALID_REQUEST_PREFIX = "invalid start request: ";
 
 export interface InvalidRequestReason {
@@ -443,9 +444,14 @@ export interface InvalidRequestReason {
   text: string;
 }
 
-/** The backend's refusal of the start request in plain words, or null for any other message. */
-export function invalidRequestReason(message: string): InvalidRequestReason | null {
-  if (!message.startsWith(INVALID_REQUEST_PREFIX)) return null;
+/** The backend's refusal of the start request in plain words, or null for any other refusal.
+ *  `code` is the reply's start outcome (ABI 40): InvalidRequest decides it, any other code rules it
+ *  out. Without a code (an older backend) the message prefix decides, as before. The message gives
+ *  the key and the reason either way. */
+export function invalidRequestReason(message: string, code?: number): InvalidRequestReason | null {
+  if (code !== undefined && code !== EXPERIMENT_START_OUTCOMES.InvalidRequest) return null;
+  if (!message.startsWith(INVALID_REQUEST_PREFIX))
+    return code === undefined ? null : { key: "", label: KEY_LABELS.startRequest, text: message };
   const rest = message.slice(INVALID_REQUEST_PREFIX.length);
   const m = /^(annotation\.free\[".*?"\]|annotation\.free key|[A-Za-z_.]+): ([\s\S]*)$/.exec(rest);
   if (!m) return { key: "", label: KEY_LABELS.startRequest, text: rest };

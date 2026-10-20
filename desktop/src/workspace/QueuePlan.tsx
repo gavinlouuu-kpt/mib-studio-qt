@@ -30,6 +30,7 @@ import {
   canRemove,
   currentIndex,
   lifecycle,
+  notStarted,
   ownRunActive,
   plannedRunIndex,
   queueBegun,
@@ -88,7 +89,7 @@ export function QueuePlan({ plan, lockedReason, verdict, blockers, cameraMode, o
     { key: "run", header: "Run", numeric: true, width: "56px", cell: (r) => {
       const st = rowState(q, r.ref);
       if (st.attempts.length) return st.attempts.map((a) => (
-        <span key={a.runIndex} title={a.outcome === "unknown" ? "Reply lost: this run may exist; its index is not used again" : "Started"}>{a.outcome === "unknown" ? `${a.runIndex}?` : a.runIndex}</span>
+        <span key={a.runIndex} title={a.outcome === "started" ? "Started" : a.code !== undefined ? "Not started, but its file may exist; its index is not used again" : "Reply lost: this run may exist; its index is not used again"}>{a.outcome === "unknown" ? `${a.runIndex}?` : a.runIndex}</span>
       )).reduce<ReactNode[]>((acc, el, i) => (i ? [...acc, ", ", el] : [el]), []);
       const planned = plannedRunIndex(order, q, order.indexOf(r.ref));
       return planned === null ? "" : <span className="ws-detail" title="Planned: the run index is assigned at Start">{planned}</span>;
@@ -167,7 +168,7 @@ export function QueuePlan({ plan, lockedReason, verdict, blockers, cameraMode, o
         break;
       case "refused": case "unknown": case "failed": case "interrupted":
         if (curState.failure) notice = { tone: curState.failure.tone, title: curState.failure.title,
-          text: `${curState.failure.text}${curState.phase === "failed" && file ? ` The file is kept: ${file}.` : ""} ${choiceText(curState.phase, curRow.ref, q.nextRunIndex)}` };
+          text: `${curState.failure.text}${curState.phase === "failed" && file ? ` The file is kept: ${file}.` : ""} ${choiceText(curState.phase, curRow.ref, q.nextRunIndex, notStarted(curState))}` };
         break;
       default:
         break;
@@ -308,7 +309,8 @@ export function QueuePlan({ plan, lockedReason, verdict, blockers, cameraMode, o
 }
 
 /** What the operator can do at a failure, in plain words. */
-function choiceText(phase: "refused" | "unknown" | "failed" | "interrupted", ref: string, nextRunIndex: number): string {
+function choiceText(phase: "refused" | "unknown" | "failed" | "interrupted", ref: string, nextRunIndex: number, notStartedRun = false): string {
+  if (phase === "unknown" && notStartedRun) return `Check whether the backend left the run's file on disk, then retry ${ref} as run ${nextRunIndex}, skip it, or end the queue.`;
   switch (phase) {
     case "interrupted": return `Retry ${ref} as run ${nextRunIndex} once the other run is over, skip ${ref}, or end the queue.`;
     case "refused": return `Correct ${ref} if needed and press Start ${ref} again, skip it, or end the queue.`;

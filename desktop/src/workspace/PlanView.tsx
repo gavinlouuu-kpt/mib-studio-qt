@@ -2,7 +2,8 @@
 // the run's identity and the selected operator. A single sample has an explicit "Start run"; a
 // sample queue is the guided flow of QueuePlan. Editing the plan sends nothing; "Start run" runs the
 // classic Start flow (pick the file, ask before a stopped Run's frames are discarded, readiness with
-// the chosen file, start) with the plan's startRequestJson (bridge ABI 39). Prepare's verdict still
+// the chosen file, start) with the plan's startRequestJson (bridge ABI 39); the reply's start outcome
+// code decides what it means (ABI 40, experimentStart.ts startReplyState). Prepare's verdict still
 // governs: while Prepare's checklist blocks, Start is disabled with Prepare's own words
 // (prepareVerdict, confirmBlockers). On the PZ7035 the Plan offers the explicit switch to Run.
 import { Button, Card, ConditionSwatch, DataTable, FactList, Notice, StateChip, type DataTableColumn } from "@mib/ui";
@@ -46,9 +47,11 @@ export function resultNotice(r: PlanStartResult | null): NoticeText | null {
   if (!r) return null;
   switch (r.kind) {
     case "started": return { tone: "confirmed", title: `Run ${SINGLE_SAMPLE_RUN_INDEX} started · ${r.path}`, text: `Its identity and the planned annotation are recorded in the file.${r.notice ? ` ${r.notice}` : ""} Monitor and stop it in the classic view.` };
-    case "unknown": return { tone: "blocked", title: `Start outcome not known${r.path ? ` · ${r.path}` : ""}`, text: `The start request was sent but no reply was read (${r.message}). The run may have started: check it in the classic view. This plan's identity is not sent again.` };
+    case "unknown": return r.code !== undefined
+      ? { tone: "blocked", title: `Not started · its file may exist${r.path ? ` · ${r.path}` : ""}`, text: `The backend did not start the run (${r.message}), but it can answer this way after it opened the run's file. This plan's identity is not sent again: check the file, then make a new plan.` }
+      : { tone: "blocked", title: `Start outcome not known${r.path ? ` · ${r.path}` : ""}`, text: `The start request was sent but no reply was read (${r.message}). The run may have started: check it in the classic view. This plan's identity is not sent again.` };
     case "not-ready": return { tone: "warn", title: "Not started · readiness with the chosen file", text: r.message };
-    case "refused": return invalidRequestReason(r.message) ? null : { tone: "blocked", title: "Not started · the backend refused the Start", text: `${r.path}: ${r.message}` };
+    case "refused": return invalidRequestReason(r.message, r.code) ? null : { tone: "blocked", title: "Not started · the backend refused the Start", text: `${r.path}: ${r.message}` };
     case "error": return { tone: "blocked", title: "Not started · an error before the start was sent", text: r.message };
     case "busy": return { tone: "info", title: "Not started · a start request is already pending", text: "Wait for it to finish." };
     case "withdrawn": return { tone: "warn", title: "Not started · control was lost while the Start was pending", text: "Nothing was sent. Press Start run again." };
@@ -71,8 +74,8 @@ function SinglePlan({ plan, lockedReason, verdict, blockers, cameraMode, onCamer
   const row = draft.rows[0];
   const build = buildStartRequest(draft, 0, SINGLE_SAMPLE_RUN_INDEX);
   const locked = !!started || starting;
-  const blocks = startBlocks({ started: started?.outcome ?? null, starting, verdict, blockers, lockedReason, issues: build.issues, cameraReason: cameraMode?.startReason });
-  const refusal = plan.result?.kind === "refused" ? invalidRequestReason(plan.result.message) : null;
+  const blocks = startBlocks({ started: started?.outcome ?? null, notStarted: started?.code !== undefined, starting, verdict, blockers, lockedReason, issues: build.issues, cameraReason: cameraMode?.startReason });
+  const refusal = plan.result?.kind === "refused" ? invalidRequestReason(plan.result.message, plan.result.code) : null;
   const outcome = resultNotice(plan.result);
   const refresh = refreshNotice(plan.result);
   const slots = conditionSlots(draft.rows);

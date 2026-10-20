@@ -983,7 +983,10 @@ export default function App() {
         return refreshError ? { ...outcome, refreshError } : outcome;
       }
       if (outcome.kind === "unknown") {
-        append(`experiment start error (outcome not known): ${outcome.message}`);
+        // A reply that was read but locks the identity (its code can follow an opened file) is still a
+        // refusal for the classic Start; only a lost reply is "not known".
+        if (outcome.code !== undefined) { setReadinessMessage(`${outcome.path}: ${outcome.message}`); append(`experiment start failed: ${outcome.message}`); }
+        else append(`experiment start error (outcome not known): ${outcome.message}`);
         const refreshError = await refreshStatus();
         return refreshError ? { ...outcome, refreshError } : outcome;
       }
@@ -997,11 +1000,13 @@ export default function App() {
     } finally { experimentPending.current = false; setExperimentRequestBusy(false); }
   }, [append]);
   const onStartExperiment = useCallback(() => { void runExperimentStart(); }, [runExperimentStart]);
-  // The workspace's sample queue stops a run with the classic Stop's command and is told its reply
-  // (the queue then follows the drain and finalize in the polled status).
-  const stopForPlan = useCallback(async (): Promise<StopReply> => {
-    const res = await bridge.experimentStop();
-    append(res.ok ? "experiment stop requested (sample queue)" : `experiment stop failed: ${res.message}`);
+  // The workspace's sample queue stops its row's run and is told the reply (the queue then follows
+  // the drain and finalize in the polled status). The stop names that run (ABI 40, #741): with another
+  // run active the backend refuses it (stop outcome RunMismatch) and stops nothing. The classic Stop
+  // below is tied to no row and sends no generation.
+  const stopForPlan = useCallback(async (expectedStartGeneration: string): Promise<StopReply> => {
+    const res = await bridge.experimentStop(expectedStartGeneration);
+    append(res.ok ? `experiment stop requested (sample queue, run generation ${expectedStartGeneration})` : `experiment stop failed (sample queue): ${res.message}`);
     try { setExpStatus(await bridge.fetchExperimentStatus()); } catch (e) { append(`experiment status refresh error: ${e}`); }
     return res;
   }, [append]);
