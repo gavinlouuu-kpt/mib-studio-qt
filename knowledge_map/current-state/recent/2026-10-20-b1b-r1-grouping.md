@@ -20,7 +20,8 @@ Track B (#717) step B1, the second half of R1 Open (#269), on
   chip. Experiment names and methods are not in the files and are not shown.
 - **Ordering guard.** The #747 folder-generation guard now also drops probe
   answers of a superseded listing, so a late probe never fills a newer
-  folder or overwrites a newer refresh.
+  folder or overwrites a newer refresh. In review round 1 an unmount also
+  supersedes the listing, so no further probe call is sent after it.
 - **Open run card.** It shows the open file's identity from
   `fetch_review_info.identity`: snapshot, experiment, run, sample, condition,
   annotation, calibration record and operator. A legacy file says "Not

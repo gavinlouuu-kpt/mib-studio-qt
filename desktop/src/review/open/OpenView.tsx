@@ -145,10 +145,22 @@ export function OpenView({ ready, info, onOpenPath, onOpenFile, onClose, onInspe
   // The current folder and listing for openRun, which may run from a render
   // that is already stale; set where the state changes.
   const current = useRef({ folder, listing: "" });
+  // Mounted: an unmount supersedes the listing in flight, so its probe chain
+  // stops after the call already sent, and nothing starts afterwards (#753
+  // review). Declared before the listing effect, so a remount (StrictMode)
+  // is alive again before it lists.
+  const alive = useRef(false);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+      generation.current++;
+    };
+  }, []);
 
   const list = useCallback(
     async (dir: string) => {
-      if (!dir) return;
+      if (!dir || !alive.current) return;
       const mine = ++generation.current;
       current.current = { folder: dir, listing: dir };
       setListing(dir);

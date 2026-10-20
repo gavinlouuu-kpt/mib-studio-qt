@@ -107,6 +107,9 @@ function defaultProbes(): Record<string, ProbeFixture> {
     },
   };
 }
+// A folder dialog that answers when the test says so (null: answers at once).
+let pendingDialog: ((picked: string | null) => void) | null = null;
+let deferDialog = false;
 let probeFixtures: Record<string, ProbeFixture> = {};
 let probeRefusal = "";
 let deferProbes = false;
@@ -252,6 +255,7 @@ function respond(cmd: string, args: Record<string, unknown>): unknown {
     case "review_jobs_busy":
       return false;
     case "plugin:dialog|open":
+      if (deferDialog) return new Promise((resolve) => (pendingDialog = resolve));
       return folderPick;
     default:
       throw new Error(`unexpected command ${cmd}`);
@@ -281,6 +285,8 @@ beforeEach(() => {
   probeRefusal = "";
   deferProbes = false;
   pendingProbes.length = 0;
+  deferDialog = false;
+  pendingDialog = null;
   listener.id = 0;
   callbacks.clear();
   const saved = new Map<string, string>();
@@ -649,6 +655,46 @@ it("shows the probe's progress, and a stale probe never fills a newer folder", a
   await answerProbe(); // the older refresh's answer, where old.h5 was legacy
   expect(fileRows(groupOf(`Experiment ${EXP_B}`))).toEqual(["older.h5", "old.h5"]);
   expect(groupTitles()).not.toContain("Legacy files · no run snapshot");
+});
+
+it("an unmount stops the probe chain after the call already sent (#753 review)", async () => {
+  await mount();
+  deferProbes = true;
+  await chooseFolder("/data/big");
+  expect(probeCalls().map((p) => p.length)).toEqual([256]);
+  await act(async () => root.unmount());
+  root = createRoot(host); // afterEach unmounts this one
+  await answerProbe(); // the first call answers after the unmount
+  await settle(1000);
+  expect(probeCalls().map((p) => p.length)).toEqual([256]); // no second call
+  expect(pendingProbes.length).toBe(0);
+});
+
+it("a folder chosen after the view unmounted is not listed or probed", async () => {
+  await mount();
+  deferDialog = true;
+  const pick = button("Open folder…");
+  await act(async () => void pick.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+  expect(pendingDialog).not.toBeNull();
+  await act(async () => root.unmount());
+  root = createRoot(host);
+  await act(async () => pendingDialog?.("/data/exp"));
+  await settle(1000);
+  expect(calls.some((c) => c.cmd === "review_list_dir")).toBe(false);
+  expect(probeCalls()).toEqual([]);
+});
+
+it("a stage change keeps the library mounted, so its probe goes on in the background", async () => {
+  await mount();
+  deferProbes = true;
+  await chooseFolder("/data/big");
+  await click(stageTab("Inspect"));
+  await answerProbe();
+  expect(probeCalls().map((p) => p.length)).toEqual([256, 44]);
+  await answerProbe();
+  await click(stageTab("Open"));
+  expect(probeCalls().length).toBe(2); // coming back starts nothing new
+  expect(libraryCard().textContent).toContain("0 experiments · 300 run files");
 });
 
 it("a refused probe says so and leaves the files listed and openable", async () => {

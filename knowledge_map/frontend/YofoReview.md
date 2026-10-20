@@ -410,7 +410,13 @@ exists.
     the names are out, the card shows "Listing…" and the Open buttons are
     disabled. While the probe is out they stay enabled, since opening and
     probing are serialized by the review bridge. `openRun` also refuses a row
-    from another folder or one shown during a listing.
+    from another folder or one shown during a listing. An unmount (#753
+    review) supersedes the listing in flight: its cleanup bumps the
+    generation and clears an `alive` ref, so a pending probe call's answer
+    starts no further call, and a folder dialog answering afterwards lists
+    nothing. A stage change does not unmount Open (the shell only hides
+    it), so a probe goes on in the background and returning starts nothing
+    new.
   - **Open run card.** Opening calls the panel's `openPath` (`review_open`),
     stays on Open and shows a `FactList` of what the file records: file,
     folder and kind; then `identityFacts(info.identity)` (Run snapshot,
