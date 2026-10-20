@@ -356,7 +356,13 @@ exists.
   `.hdf5` names only, hidden work files (`.<name>.partial-…`) dropped,
   natural order, in a `DataTable` with an Open button per row; the folder is
   remembered (`yofo.review.libraryFolder`) and listed again at start. Open
-  file…, Refresh and Close file sit beside it. Opening calls the panel's
+  file…, Refresh and Close file sit beside it. The rows are kept with the
+  folder they were listed for (#747 review): a folder change drops the old
+  rows at once; each listing takes a generation, and an answer for a
+  superseded one is dropped, so out-of-order answers never show under
+  another folder; while a listing is out, the card shows "Listing…" and the
+  Open buttons are disabled, and `openRun` also refuses a row from another
+  folder or one shown during a listing. Opening calls the panel's
   `openPath` (`review_open`), stays on Open and shows the **Open run** card:
   a `FactList` of what the file records (file, folder, kind, records,
   started / ended, px→µm recorded or fallback, processing core, run

@@ -19,6 +19,15 @@ let launchPath = "";
 let pendingOpen = "";
 let refuse = new Set<string>();
 let folderPick: string | null = "/data/lib";
+// Folders whose listing waits until the test resolves it (out of order on purpose).
+let deferDirs = new Set<string>();
+const pendingLists = new Map<string, Array<(names: string[]) => void>>();
+const folderFiles: Record<string, string[]> = {
+  "/data/a": ["a1.h5", "a2.h5"],
+  "/data/b": ["b1.h5"],
+  "/data/c": ["c1.h5", "c2.h5", "c3.h5"],
+  "/data/d": ["d1.h5"],
+};
 const listener = { id: 0 };
 const callbacks = new Map<number, (event: unknown) => void>();
 
@@ -105,8 +114,12 @@ function respond(cmd: string, args: Record<string, unknown>): unknown {
       return { configured: false, channel: String(args.channel), current: "1.2.0", available: false, version: "", notes: "", date: "" };
     case "review_set_pixel_to_micron":
       return null;
-    case "review_list_dir":
-      return args.dir === "/data/lib" ? ["run_10.h5", "run_2.h5", "legacy.h5", "notes.txt", ".run_3.h5.partial-7"] : [];
+    case "review_list_dir": {
+      const dir = String(args.dir);
+      const names = dir === "/data/lib" ? ["run_10.h5", "run_2.h5", "legacy.h5", "notes.txt", ".run_3.h5.partial-7"] : (folderFiles[dir] ?? []);
+      if (!deferDirs.has(dir)) return names;
+      return new Promise<string[]>((resolve) => pendingLists.set(dir, [...(pendingLists.get(dir) ?? []), () => resolve(names)]));
+    }
     case "review_open":
       if (refuse.has(String(args.path))) {
         opened = "";
@@ -153,6 +166,8 @@ beforeEach(() => {
   pendingOpen = "";
   refuse = new Set();
   folderPick = "/data/lib";
+  deferDirs = new Set();
+  pendingLists.clear();
   listener.id = 0;
   callbacks.clear();
   const saved = new Map<string, string>();
@@ -315,6 +330,82 @@ it("an empty folder or a cancelled choice says so", async () => {
   folderPick = "/data/empty";
   await click(button("Open folder…"));
   expect(host.textContent).toContain("No .h5 or .hdf5 files in this folder.");
+});
+
+// #747 review: listings can finish out of order, and a row must never open a
+// file of a folder other than the one shown.
+const fileRows = () => Array.from(host.querySelectorAll(".mib-table tbody tr:not(.mib-table__empty-row)")).map((r) => r.querySelector("td")?.textContent ?? "");
+const libraryCard = () => Array.from(host.querySelectorAll(".mib-card")).find((c) => c.querySelector(".mib-card__title")?.textContent === "Runs in this folder")!;
+const openButtons = () => Array.from(host.querySelectorAll("button")).filter((b) => b.getAttribute("aria-label")?.startsWith("Open "));
+async function chooseFolder(dir: string) {
+  folderPick = dir;
+  await click(button("Open folder…"));
+}
+async function answerListing(dir: string) {
+  const waiting = pendingLists.get(dir)?.shift();
+  if (!waiting) throw new Error(`no pending listing for ${dir}`);
+  await act(async () => waiting([]));
+  await settle();
+}
+
+it("a folder change drops the old folder's rows at once and ignores a superseded listing", async () => {
+  await mount();
+  await chooseFolder("/data/a");
+  expect(fileRows()).toEqual(["a1.h5", "a2.h5"]);
+
+  // B and then C are chosen while both listings are still out.
+  deferDirs = new Set(["/data/b", "/data/c"]);
+  await chooseFolder("/data/b");
+  expect(fileRows()).toEqual([]); // A's rows are gone at once
+  expect(openButtons()).toEqual([]);
+  expect(libraryCard().textContent).toContain("Listing…");
+  expect(libraryCard().textContent).toContain("/data/b");
+  await chooseFolder("/data/c");
+  expect(libraryCard().textContent).toContain("/data/c");
+
+  // B answers first, but C is the folder shown: B's names never appear.
+  await answerListing("/data/b");
+  expect(fileRows()).toEqual([]);
+  expect(libraryCard().textContent).toContain("Listing…");
+  await answerListing("/data/c");
+  expect(fileRows()).toEqual(["c1.h5", "c2.h5", "c3.h5"]);
+  expect(libraryCard().textContent).toContain("3 run files");
+
+  // The other order: D is chosen after C, D answers first, then C's late answer.
+  deferDirs = new Set(["/data/c", "/data/d"]);
+  await click(button("Refresh")); // C again, still out
+  await chooseFolder("/data/d");
+  await answerListing("/data/d");
+  expect(fileRows()).toEqual(["d1.h5"]);
+  await answerListing("/data/c");
+  expect(fileRows()).toEqual(["d1.h5"]);
+  expect(libraryCard().textContent).toContain("/data/d");
+  expect(libraryCard().textContent).toContain("1 run file");
+  expect(calls.some((c) => c.cmd === "review_open")).toBe(false);
+});
+
+it("a row shown while its folder is listed again opens nothing", async () => {
+  await mount();
+  await chooseFolder("/data/c");
+  deferDirs = new Set(["/data/c"]);
+  await click(button("Refresh"));
+  // The rows stay while the refresh is out, disabled.
+  expect(fileRows()).toEqual(["c1.h5", "c2.h5", "c3.h5"]);
+  expect(openButtons().every((b) => b.disabled)).toBe(true);
+  expect(button("Refresh").disabled).toBe(true);
+  await click(button("Open c2.h5"));
+  expect(calls.some((c) => c.cmd === "review_open")).toBe(false);
+
+  // And a folder change while the old rows are up removes them before any click.
+  deferDirs = new Set(["/data/a"]);
+  await answerListing("/data/c");
+  expect(openButtons().every((b) => !b.disabled)).toBe(true);
+  await chooseFolder("/data/a");
+  expect(() => button("Open c2.h5")).toThrow();
+  expect(calls.some((c) => c.cmd === "review_open")).toBe(false);
+  await answerListing("/data/a");
+  await click(button("Open a2.h5"));
+  expect(calls.filter((c) => c.cmd === "review_open").map((c) => c.args.path)).toEqual(["/data/a/a2.h5"]);
 });
 
 it("opens the launch file straight into Inspect", async () => {

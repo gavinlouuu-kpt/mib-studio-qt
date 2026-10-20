@@ -11,7 +11,10 @@ the backend.
   with `review_open` and shows an **Open run** `FactList`/`Card` of what the
   file records, with the run accounting as a `StateChip`. Missing values read
   "Not reported", and a legacy file's accounting reads "Not recorded · legacy
-  file". A refused open is a blocked `Notice`. The panel's `openPath` now
+  file". A refused open is a blocked `Notice`. Review round 1: rows belong
+  to the folder they were listed for. A folder change drops the old rows,
+  a superseded listing's answer is ignored, and while a listing is out the
+  card says "Listing…" and no row opens. The panel's `openPath` now
   returns `{ ok, message }` and leaves nothing open after a failure, as the
   backend does.
 - **Overview** says it is not available yet: statistics come from the #523

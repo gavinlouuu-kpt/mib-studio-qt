@@ -8,7 +8,7 @@
 // arrives once the workspace branch carries review ABI 2; until then the
 // folder is a plain list of files.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Card, DataTable, FactList, Notice, StateChip, Toolbar, type DataTableColumn } from "@mib/ui";
 import { open } from "../../transport/dialogs";
 import { baseName } from "../exports/exportHelpers";
@@ -51,25 +51,45 @@ export interface OpenViewProps {
   log: (line: string) => void;
 }
 
+/** A folder's run files, kept with the folder they were listed for. */
+interface Listed {
+  folder: string;
+  runs: FolderRun[];
+}
+
 export function OpenView({ ready, info, onOpenPath, onOpenFile, onClose, onInspect, log }: OpenViewProps) {
   const [folder, setFolder] = useState(loadFolder);
-  const [runs, setRuns] = useState<FolderRun[] | null>(null);
-  const [listing, setListing] = useState(false);
+  const [listed, setListed] = useState<Listed | null>(null);
+  // The folder being listed ("" when idle).
+  const [listing, setListing] = useState("");
   const [opening, setOpening] = useState("");
   const [failure, setFailure] = useState<{ name: string; message: string } | null>(null);
+  // Each listing takes the next generation; an answer for an older one is
+  // dropped (#747 review): listings can finish out of order.
+  const generation = useRef(0);
+  // The current folder and listing for openRun, which may run from a render
+  // that is already stale; set where the state changes.
+  const current = useRef({ folder, listing: "" });
 
   const list = useCallback(
     async (dir: string) => {
       if (!dir) return;
-      setListing(true);
+      const mine = ++generation.current;
+      current.current = { folder: dir, listing: dir };
+      setListing(dir);
+      // Another folder's rows go at once, so none stays selectable under
+      // this folder's heading; a refresh keeps them, disabled, until it answers.
+      setListed((prev) => (prev && prev.folder === dir ? prev : null));
+      let runs: FolderRun[] = [];
       try {
-        setRuns(runFilesIn(dir, await reviewBridge.listDir(dir)));
+        runs = runFilesIn(dir, await reviewBridge.listDir(dir));
       } catch (e) {
-        log(`folder listing error: ${e}`);
-        setRuns([]);
-      } finally {
-        setListing(false);
+        if (mine === generation.current) log(`folder listing error: ${e}`);
       }
+      if (mine !== generation.current) return; // superseded by a later listing
+      current.current = { folder: dir, listing: "" };
+      setListed({ folder: dir, runs });
+      setListing("");
     },
     [log],
   );
@@ -90,7 +110,10 @@ export function OpenView({ ready, info, onOpenPath, onOpenFile, onClose, onInspe
   }, [folder, list]);
 
   const openRun = useCallback(
-    async (run: FolderRun) => {
+    async (run: FolderRun, from: string) => {
+      // A row from another folder, or one shown while its folder is listed
+      // again, opens nothing (the buttons are disabled then as well).
+      if (from !== current.current.folder || current.current.listing !== "") return;
       setOpening(run.path);
       setFailure(null);
       try {
@@ -104,6 +127,8 @@ export function OpenView({ ready, info, onOpenPath, onOpenFile, onClose, onInspe
   );
 
   const openPath = info?.file_open ? info.file_path : "";
+  const shown = listed && listed.folder === folder ? listed : null;
+  const busy = listing !== "";
   const columns: DataTableColumn<FolderRun>[] = [
     { key: "name", header: "File", emphasis: true },
     {
@@ -125,9 +150,11 @@ export function OpenView({ ready, info, onOpenPath, onOpenFile, onClose, onInspe
         <Button
           size="small"
           variant={run.path === openPath ? "selected" : "secondary"}
-          disabled={!ready || opening !== "" || run.path === openPath}
+          disabled={!ready || busy || opening !== "" || run.path === openPath}
           aria-label={`Open ${run.name}`}
-          onClick={() => void openRun(run)}
+          onClick={() => {
+            if (shown) void openRun(run, shown.folder);
+          }}
         >
           {opening === run.path ? "Opening…" : run.path === openPath ? "Opened" : "Open"}
         </Button>
@@ -146,7 +173,7 @@ export function OpenView({ ready, info, onOpenPath, onOpenFile, onClose, onInspe
         <Button onClick={() => void onOpenFile()} disabled={!ready}>
           Open file…
         </Button>
-        <Button onClick={() => void list(folder)} disabled={!ready || !folder || listing}>
+        <Button onClick={() => void list(folder)} disabled={!ready || !folder || busy}>
           Refresh
         </Button>
         <Button onClick={() => void onClose()} disabled={!info?.file_open}>
@@ -168,19 +195,23 @@ export function OpenView({ ready, info, onOpenPath, onOpenFile, onClose, onInspe
           title="Runs in this folder"
           subtitle={folder ? `${folder} · names only; opening a run never modifies it` : "Choose a folder of runs (.h5 / .hdf5) with Open folder…"}
           status={
-            runs ? (
+            busy ? (
+              <StateChip tone="unknown" size="small">
+                Listing…
+              </StateChip>
+            ) : shown ? (
               <StateChip tone="neutral" size="small">
-                {`${runs.length} run file${runs.length === 1 ? "" : "s"}`}
+                {`${shown.runs.length} run file${shown.runs.length === 1 ? "" : "s"}`}
               </StateChip>
             ) : null
           }
         >
           <DataTable
             columns={columns}
-            rows={runs ?? []}
+            rows={shown?.runs ?? []}
             rowKey={(run) => run.path}
             selectedKey={openPath || undefined}
-            empty={!folder ? "No folder chosen yet." : listing ? "Listing…" : "No .h5 or .hdf5 files in this folder."}
+            empty={!folder ? "No folder chosen yet." : busy ? "Listing…" : "No .h5 or .hdf5 files in this folder."}
             density="compact"
           />
         </Card>

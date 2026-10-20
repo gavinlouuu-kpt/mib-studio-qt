@@ -62,6 +62,11 @@ YOFO Review remembers the folder and lists it again the next time it starts.
 **Refresh** lists the folder again, for example after a run has finished
 saving.
 
+While a folder is being listed, the list says **Listing…**. When you choose
+another folder, the previous folder's runs disappear at once. During a
+**Refresh** the runs stay in view, but you cannot open them until the
+listing is done.
+
 **Open file…** opens a single file from anywhere. **Close file** releases the
 open file, so you can move or delete it. Opening another file replaces the
 current one.
