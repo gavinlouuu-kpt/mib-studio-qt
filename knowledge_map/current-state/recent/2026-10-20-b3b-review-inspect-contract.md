@@ -18,9 +18,13 @@ higher); the bridge ABI is untouched.
   with recorded settings (config, ROI, background) or default settings
   (default config, whole image, no background). `settings_label`,
   `core_version` and `core_source` say what was used; `match_index` pairs
-  the stored object with the nearest found one inside its bounding box (both
-  in image coordinates); `object_count_differs` flags another number of
-  objects. The kernel's frame-level "no object" result is not returned as an
+  the stored object with the nearest found one inside its bounding box (as
+  stored; realtime ROI captures store ROI-local coordinates, open on review
+  round 1); `object_count_differs` flags another number of objects. Review
+  round 1: it runs at the file's recorded px→µm (`pixel_to_micron`; the
+  default for default settings) on a processing instance of its own, so
+  area validity matches the recording and no job's instance changes; no
+  E-LUT is loaded, so E is not recomputed (`emodulus_recomputed` false). The kernel's frame-level "no object" result is not returned as an
   object. It never writes. HDF5 is not thread-safe (#722): the inputs are
   read under the job lanes' mutex and the session's
   (`ReviewSession::reprocessInputs`), `processBatch` runs outside every

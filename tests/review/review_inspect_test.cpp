@@ -23,7 +23,12 @@
 //    the session's mutex, #722) and served once it ends; refused for a
 //    record whose frame has no stored image, a raw recording, an index
 //    outside the set, an unknown settings value and without a kernel;
-//  - nothing is written: the file's bytes are unchanged.
+//  - nothing is written: the file's bytes are unchanged;
+//  - the file's calibration (#756 review): a record valid at its recorded
+//    0.25 µm/px stays valid and equal (it is invalid at the 0.4886 default),
+//    on a processing instance of the call's own (the session's kernel keeps
+//    its factor); default settings use and name the default factor; E is
+//    not recomputed without an E-LUT.
 // Watchdog guarded.
 #include "backend/processing/ProcessingService.h"
 #include "backend/recording/Hdf5Service.h"
@@ -136,6 +141,37 @@ namespace
         hdf5.closeFile();
     }
 
+    // A calibrated run (#756 review): px→µm 0.25 and an area range of
+    // 10–40 µm². The cell (~290 px², ~18 µm² at 0.25) is valid as recorded
+    // and invalid at the processing default 0.4886 (~69 µm²).
+    ProcessingConfig areaChecked()
+    {
+        ProcessingConfig config = permissive();
+        config.enable_area_range_check = true;
+        config.area_threshold_min = 10;
+        config.area_threshold_max = 40;
+        return config;
+    }
+
+    void writeCalibrated(const fs::path &path)
+    {
+        ProcessingService recorder;
+        recorder.setPixelToMicronFactor(0.25);
+        const cv::Mat black(kH, kW, CV_8UC1, cv::Scalar(0));
+        auto found = recorder.processBatch({rings({60})}, areaChecked(), black, kRoi);
+        MIB_REQUIRE(found.size() == 1 && found.front().validation.isValid, "valid at 0.25 µm/px");
+        ProcessedFrame f = found.front();
+        f.index = 20;
+        f.timestampNs = 2'000'000;
+        f.validation.trackId = -1;
+        Hdf5Service hdf5;
+        MIB_REQUIRE(hdf5.openFile(path.string()) && hdf5.initializeDatasets(), "open calibrated");
+        MIB_REQUIRE(hdf5.appendFrames({f}, {}), "append calibrated");
+        MIB_REQUIRE(hdf5.writeExperimentInfo(1000, 5000, 1, 0, areaChecked(), kRoi, &black), "calibrated info");
+        MIB_REQUIRE(hdf5.writeRunSnapshotJson("{\"pixel_to_micron\":0.25}", "{}"), "calibrated snapshot");
+        hdf5.closeFile();
+    }
+
     void writeRecording(const fs::path &path)
     {
         Hdf5Service hdf5;
@@ -225,6 +261,8 @@ int main()
     writeInspect(kernel, noImages);
     dropImages(noImages);
     writeRecording(recording);
+    const fs::path calibrated = td.path() / "calibrated.h5";
+    writeCalibrated(calibrated);
 
     // ---- track rows -------------------------------------------------------------
     {
@@ -276,8 +314,12 @@ int main()
 
         // Recorded settings, one cell: the stored record back, one to one.
         MIB_REQUIRE(jobs.reprocessRecord(true, 0, ReprocessSettings::Recorded, r, &err), "reprocess 0: " + err);
-        MIB_EXPECT(r.usedRecordedSettings && r.settingsLabel == "recorded settings (config, ROI, background)",
+        // The fixture's snapshot records px→µm 0.5: the reprocessing runs and reports with it.
+        MIB_EXPECT(r.usedRecordedSettings &&
+                       r.settingsLabel == "recorded settings (config, ROI, background); px→µm 0.5000 recorded; "
+                                          "E not recomputed (no E-LUT loaded)",
                    "recorded settings named: " + r.settingsLabel);
+        MIB_EXPECT(r.pixelToMicron == 0.5 && !r.emodulusRecomputed, "the recorded factor, no E-LUT");
         MIB_EXPECT(!r.coreVersion.empty(), "the kernel that reprocessed it is named");
         MIB_EXPECT(r.reprocessed.size() == 1 && r.match == std::optional<std::size_t>(0) && !r.objectCountDiffers,
                    "one object, matched: " + std::to_string(r.reprocessed.size()));
@@ -302,8 +344,10 @@ int main()
         // image coordinates whatever the ROI), measured differently.
         MIB_REQUIRE(jobs.reprocessRecord(true, 0, ReprocessSettings::Default, r, &err), "reprocess default: " + err);
         MIB_EXPECT(!r.usedRecordedSettings && r.settings == ReprocessSettings::Default &&
-                       r.settingsLabel == "default settings (whole image, no background)",
+                       r.settingsLabel == "default settings (whole image, no background); px→µm 0.4886 default; "
+                                          "E not recomputed (no E-LUT loaded)",
                    "default settings named: " + r.settingsLabel);
+        MIB_EXPECT(std::abs(r.pixelToMicron - 0.4886) < 1e-12, "the processing default factor");
         MIB_EXPECT(r.stored.frameIndex == 10, "the same record");
         MIB_REQUIRE(r.reprocessed.size() == 1 && r.match == std::optional<std::size_t>(0),
                     "the default run finds and matches the cell: " + std::to_string(r.reprocessed.size()));
@@ -374,5 +418,40 @@ int main()
                    "no file: " + err);
     }
     wd.mark("reprocess");
+
+    // ---- reprocess with the file's calibration (#756 review) --------------------------
+    {
+        // The session's kernel keeps the processing default; the record must
+        // still be reprocessed at the file's 0.25 µm/px.
+        MIB_REQUIRE(std::abs(kernel.getPixelToMicronFactor() - 0.4886) < 1e-12, "the session kernel's default factor");
+        const cv::Mat black(kH, kW, CV_8UC1, cv::Scalar(0));
+        const auto atDefault = kernel.processBatch({rings({60})}, areaChecked(), black, kRoi);
+        MIB_REQUIRE(atDefault.size() == 1 && !atDefault.front().validation.isValid,
+                    "the fixture flips: invalid at the default factor");
+        ReviewSession s;
+        MIB_REQUIRE(s.open(calibrated.string()), "open calibrated");
+        ReviewJobs jobs(s, &kernel, [](const ReviewJobEvent &) {});
+        ReprocessResult r;
+        std::string err;
+        MIB_REQUIRE(jobs.reprocessRecord(true, 0, ReprocessSettings::Recorded, r, &err), "reprocess calibrated: " + err);
+        MIB_EXPECT(r.pixelToMicron == 0.25 && r.settingsLabel.find("px→µm 0.2500 recorded") != std::string::npos,
+                   "the recorded factor named: " + r.settingsLabel);
+        MIB_REQUIRE(r.reprocessed.size() == 1 && r.match == std::optional<std::size_t>(0), "one object, matched");
+        MIB_EXPECT(r.reprocessed[0].valid && r.stored.valid, "valid at the file's calibration, as recorded");
+        MIB_EXPECT(same(r.stored, r.reprocessed[0]), "the same values: area validity in the file's µm²");
+        MIB_EXPECT(std::isnan(r.reprocessed[0].youngsModulus) && !r.emodulusRecomputed, "E not recomputed: no E-LUT");
+        MIB_EXPECT(std::abs(kernel.getPixelToMicronFactor() - 0.4886) < 1e-12,
+                   "the session's kernel is not reconfigured (a job may share it)");
+        // Default settings: the processing default factor, said so.
+        MIB_REQUIRE(jobs.reprocessRecord(true, 0, ReprocessSettings::Default, r, &err), "default calibrated: " + err);
+        MIB_EXPECT(std::abs(r.pixelToMicron - 0.4886) < 1e-12 && r.settingsLabel.find("px→µm 0.4886 default") != std::string::npos,
+                   "the default factor named: " + r.settingsLabel);
+        // The session fallback never replaces a factor the file records.
+        s.setFallbackPixelToMicron(0.3);
+        MIB_REQUIRE(s.open(inspect.string()), "open inspect (records 0.5)");
+        MIB_REQUIRE(jobs.reprocessRecord(true, 0, ReprocessSettings::Recorded, r, &err), "inspect again: " + err);
+        MIB_EXPECT(r.pixelToMicron == 0.5, "a recorded factor wins over the fallback");
+    }
+    wd.mark("calibration");
     return mib::test::exitCode();
 }

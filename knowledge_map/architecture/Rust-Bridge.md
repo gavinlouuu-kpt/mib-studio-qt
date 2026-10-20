@@ -777,8 +777,11 @@ attach to):
   `review_reprocess_record(valid, index, settings)` (review ABI 3: one
   record's stored row next to what the session's kernel finds in its image
   now → `ReviewReprocessResult { ok, message, settings,
-  used_recorded_settings, settings_label, core_version, core_source, stored,
-  reprocessed, has_match, match_index, object_count_differs, truncated }`;
+  used_recorded_settings, settings_label, core_version, core_source,
+  pixel_to_micron, emodulus_recomputed, stored, reprocessed, has_match,
+  match_index, object_count_differs, truncated }`; it runs at the file's
+  recorded px→µm (or the default, for default settings) on an instance of
+  its own;
   `settings` a `review_reprocess_record.settings` value (recorded 0,
   default 1), at most `max_objects` = 64 rows; never writes; refused while a
   job runs; through `ReviewJobs::reprocessRecord`, see

@@ -111,7 +111,9 @@ settings)` (`review_reprocess_record`, `settings` from
 next to the objects the session's kernel finds in the record's image now
 (`reprocessed`, at most 64, `match_index` or `null`,
 `object_count_differs`), with `settings_label`, `core_version` and
-`core_source` naming what was used. It never writes a file and is refused
+`core_source` naming what was used, `pixel_to_micron` the factor it ran
+and reports with, and `emodulus_recomputed` false (no E-LUT: the
+reprocessed E is `null`). It never writes a file and is refused
 while a review job runs. The B3b PR adds the client only; R3 Inspect (B3a,
 on `feat/egrabber-workspace`) is its first user. `reviewIpc.golden.json`
 records the calls.

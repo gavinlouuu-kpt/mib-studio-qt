@@ -492,11 +492,17 @@ fn inspect_track_rows_and_reprocess_one_record() {
         assert!(!r.has_match || (r.match_index as usize) < r.reprocessed.len());
         assert!(r.reprocessed.iter().all(|x| x.frame_index == stored.frame_index && x.track_id == -1), "the record's frame, untracked");
         assert_eq!(r.object_count_differs, r.reprocessed.len() as i64 != stored.object_count as i64);
+        // The calibration it ran with (#756 review): the file's 0.25 µm/px
+        // as recorded, the processing default otherwise; no E-LUT, no E.
+        let expected = if settings == recorded { 0.25 } else { 0.4886 };
+        assert!((r.pixel_to_micron - expected).abs() < 1e-12, "{} {}", r.pixel_to_micron, r.settings_label);
+        assert!(!r.emodulus_recomputed && r.reprocessed.iter().all(|x| x.youngs_modulus.is_nan()));
     }
-    assert!(bridge.pin_mut().review_reprocess_record(true, 0, recorded).settings_label.starts_with("recorded settings"));
+    let r = bridge.pin_mut().review_reprocess_record(true, 0, recorded);
+    assert!(r.settings_label.starts_with("recorded settings") && r.settings_label.contains("px→µm 0.2500 recorded"), "{}", r.settings_label);
     assert_eq!(
         bridge.pin_mut().review_reprocess_record(true, 0, default).settings_label,
-        "default settings (whole image, no background)"
+        "default settings (whole image, no background); px→µm 0.4886 default; E not recomputed (no E-LUT loaded)"
     );
 
     // Refusals: beyond the set, unknown settings.

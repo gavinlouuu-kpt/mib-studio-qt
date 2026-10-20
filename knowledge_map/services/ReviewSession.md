@@ -512,12 +512,23 @@ lanes' mutex it refuses while either lane is claimed ("A review job is
 running; …", export jobs read HDF5 outside the session mutex too) and reads
 its inputs through `reprocessInputs` (the session's mutex); then
 `ProcessingService::processBatch` runs on the one image outside every lock
-(it reads no file). It writes nothing. The rows are the objects found (the
+(it reads no file), on a `ProcessingService` of the call's own (#756
+review 1): the bundled core, refused when the session's active core is
+another, configured with the record's calibration (`Recorded`: the file's
+px→µm, or the session's fallback when it records none; `Default`: the
+processing default), so the instance a job uses is never reconfigured.
+Area validity and the target group are in µm², so the factor decides them;
+`pixelToMicron` and `settingsLabel` say which applied. No E-LUT is loaded
+for it: `emodulusRecomputed` is false and the reprocessed rows' E is NaN
+(an E-gated target group is not recomputed either). It writes nothing. The
+rows are the objects found (the
 kernel's frame-level "no object" result, `objectCount` 0, is not one), with
 the record's frame index and no track, at most `kReviewReprocessMaxObjects`
 (64, `truncated`); `match` is the found object whose centroid is nearest the
-stored one inside the stored bounding box (both in image coordinates:
-`computeProcessedFrame` reports them so whatever the ROI);
+stored one inside the stored bounding box, compared as stored (offline
+results are image-relative; realtime ROI captures store ROI-local
+coordinates next to full-frame images, `ProcessingService.cpp` ROI path:
+the conversion is open on #756 review 1);
 `objectCountDiffers` compares with a stored `objectCount` above 0. A kernel
 failure (no mask) is refused. `review.inspect` covers it, with the regenerate
 job held at its first progress event.
