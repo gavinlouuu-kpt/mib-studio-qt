@@ -4,6 +4,8 @@
 import { describe, expect, it } from "vitest";
 import type { ReviewInfo, ReviewRow, ReviewRunIdentity } from "../reviewBridge";
 import {
+  CROP_NEEDS_SPACE,
+  cropNeedsCoordinateSpace,
   cropOverlay,
   cropSquare,
   cropUnavailable,
@@ -133,6 +135,19 @@ describe("the crop", () => {
     expect(cropUnavailable("contour", noMasks, true, row())).toBe("No masks are recorded in this set");
     expect(cropUnavailable("mask", noMasks, true, row())).toBe("No masks are recorded in this set");
     expect(cropUnavailable("mask", noMasks, false, row())).toBeNull();
+  });
+
+  it("is not offered while the file's coordinate space is unknown (ROI origin not 0, 0)", () => {
+    const moved = info({ roi_x: 16, roi_y: 0, roi_w: 200, roi_h: 60 });
+    for (const view of ["raw", "contour", "mask"] as const) expect(cropUnavailable(view, moved, true, row()), view).toBe(CROP_NEEDS_SPACE);
+    expect(CROP_NEEDS_SPACE).toBe("Cell crop needs the file's coordinate space (B3c)");
+    expect(cropUnavailable("full", moved, true, row())).toBeNull();
+    expect(cropNeedsCoordinateSpace(info({ roi_x: 0, roi_y: 8, roi_w: 200, roi_h: 60 }))).toBe(true);
+    // At the origin, or with no ROI, both placements are the same.
+    expect(cropNeedsCoordinateSpace(info({ roi_x: 0, roi_y: 0, roi_w: 200, roi_h: 60 }))).toBe(false);
+    expect(cropNeedsCoordinateSpace(info({ roi_x: 16, roi_y: 8, roi_w: 0, roi_h: 0 }))).toBe(false);
+    expect(cropNeedsCoordinateSpace(info({ recording_file: true, roi_x: 16, roi_y: 8, roi_w: 200, roi_h: 60 }))).toBe(false);
+    expect(cropNeedsCoordinateSpace(null)).toBe(false);
   });
 });
 

@@ -56,9 +56,23 @@ export function cropSquare(
 }
 
 /** Why a crop view cannot be chosen for this record, or null when it can. */
+/** Why no cell crop is offered while the file's object coordinate space is
+ * not known to the client (coordinator ruling on #757, round 2). */
+export const CROP_NEEDS_SPACE = "Cell crop needs the file's coordinate space (B3c)";
+
+/** A capture with an ROI away from the image origin may store its bounding
+ * boxes ROI-local next to full-frame images, and nothing the client reads
+ * yet says which: the crop would land beside the cell. At origin (0, 0) both
+ * placements are the same. B3c reads `object_coordinates` from the review
+ * contract instead. */
+export function cropNeedsCoordinateSpace(info: ReviewInfo | null): boolean {
+  return !!info && !info.recording_file && info.roi_w > 0 && info.roi_h > 0 && (info.roi_x !== 0 || info.roi_y !== 0);
+}
+
 export function cropUnavailable(view: CellView, info: ReviewInfo | null, valid: boolean, row: ReviewRow | null): string | null {
   if (view === "full") return null;
   if (!info || info.recording_file) return "Recording files carry no objects";
+  if (cropNeedsCoordinateSpace(info)) return CROP_NEEDS_SPACE;
   if (!row || cropSquare(row, 1e9, 1e9) === null) return "No bounding box is recorded for this record";
   if (view !== "raw" && !(valid ? info.valid_masks : info.invalid_masks).present) return "No masks are recorded in this set";
   return null;

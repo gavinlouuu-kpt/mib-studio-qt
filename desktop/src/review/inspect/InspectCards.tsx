@@ -18,6 +18,8 @@ import { Button, Card, CellImage, FactList, StateChip } from "@mib/ui";
 import type { ReviewInfo, ReviewRow } from "../reviewBridge";
 import {
   CELL_VIEWS,
+  CROP_NEEDS_SPACE,
+  cropNeedsCoordinateSpace,
   cropUnavailable,
   measurementFacts,
   recordedFacts,
@@ -127,6 +129,7 @@ export function RecordCard(props: RecordCardProps) {
           );
         })}
       </div>
+      {selected && cropNeedsCoordinateSpace(info) ? <p className="rv-note rv-crop-note">{CROP_NEEDS_SPACE}</p> : null}
       <div className="rv-record__body">
         <div className="rv-record__image">
           <div

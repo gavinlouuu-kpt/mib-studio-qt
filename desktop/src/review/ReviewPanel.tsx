@@ -52,7 +52,7 @@ import {
 import { ThumbnailGrid } from "./ThumbnailGrid";
 import { Button, Card, DataTable, Notice, Toolbar, type DataTableColumn } from "@mib/ui";
 import { RecordCard, StoredCard, type CropState } from "./inspect/InspectCards";
-import { cropOverlay, cropSquare, type CellView } from "./inspect/inspectModel";
+import { cropNeedsCoordinateSpace, cropOverlay, cropSquare, type CellView } from "./inspect/inspectModel";
 import { cropPacketToDataUrl } from "./inspect/packetCrop";
 import "./review.css";
 import "./inspect/inspect.css";
@@ -157,6 +157,9 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
 
   const reviewing = !!info?.file_open;
   const isRecording = !!info?.recording_file;
+  // No cell crop: a recording has no objects, and a file whose stored boxes
+  // may be ROI-local (ROI origin not 0, 0) waits for B3c (#757 round 2).
+  const cropBlocked = isRecording || cropNeedsCoordinateSpace(info);
   const setTotal = !info ? 0 : Number(validSet ? info.valid_images.count || info.recorded_images.count : info.invalid_images.count);
   const rowTotal = Number(rows?.total ?? 0);
   // Records of the set: its images, or its rows when it stores none (#649).
@@ -235,11 +238,12 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
     scheduler.request("review", () => reviewBridge.frame(dataset, selected, mode, false));
   }, [reviewing, selected, setTotal, validSet, overlay, roiOverlay, cellView, cropKey, scheduler]);
 
-  // A view a record cannot show (a raw recording has no objects to crop)
-  // falls back to the full frame.
+  // A view a record cannot show (a raw recording has no objects to crop; a
+  // file whose object coordinate space the client cannot tell, #757) falls
+  // back to the full frame.
   useEffect(() => {
-    if (isRecording && cellView !== "full") setCellView("full");
-  }, [isRecording, cellView]);
+    if (cropBlocked && cellView !== "full") setCellView("full");
+  }, [cropBlocked, cellView]);
 
   // The table page follows the selection.
   const select = useCallback(

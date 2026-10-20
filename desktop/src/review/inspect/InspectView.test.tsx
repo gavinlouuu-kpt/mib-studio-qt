@@ -22,6 +22,8 @@ let masks = true;
 let images = true;
 let recording = false;
 let canvasWorks = true;
+/** The recorded ROI's origin; (0, 0) unless a test moves it. */
+let roiOrigin = { x: 0, y: 0 };
 
 const W = 64, H = 48, VALID = 12, INVALID = 3;
 const ds = (count: number, present = count > 0) => ({ present, count: String(count), height: H, width: W, channels: 1 });
@@ -38,8 +40,8 @@ function info() {
     total_valid: open ? String(VALID) : "0",
     total_invalid: open && !recording ? String(INVALID) : "0",
     filtered_frames: "0",
-    roi_x: 0,
-    roi_y: 0,
+    roi_x: roiOrigin.x,
+    roi_y: roiOrigin.y,
     roi_w: W,
     roi_h: H,
     has_background: false,
@@ -250,6 +252,7 @@ beforeEach(() => {
   images = true;
   recording = false;
   canvasWorks = true;
+  roiOrigin = { x: 0, y: 0 };
   const saved = new Map<string, string>();
   vi.stubGlobal("localStorage", {
     getItem: (k: string) => saved.get(k) ?? null,
@@ -388,6 +391,41 @@ it("asks the backend for each image view's overlay and crops the record's box", 
   await click(button("Full frame"));
   expect(lastFrame()).toEqual({ dataset: 0, index: "1", overlay: 2, roiOverlay: true });
   expect((host.querySelector(".canvas-wrap.preview") as HTMLElement).hidden).toBe(false);
+});
+
+it("offers no cell crop while the file's coordinate space is unknown to it (ROI origin not 0, 0)", async () => {
+  await mountOpen();
+  await click(button("Raw"));
+  expect(button("Raw").getAttribute("aria-pressed")).toBe("true");
+  // A capture whose ROI starts at (16, 8): its boxes may be ROI-local next to
+  // full-frame images, so a crop could land beside the cell. Never a wrong
+  // crop: Full frame only, with the reason, until B3c (#757 round 2).
+  roiOrigin = { x: 16, y: 8 };
+  crops.length = 0;
+  await act(async () => void (await panel.current!.openPath("/data/roi.h5")));
+  await settle();
+  const measured = card("Selected measurement");
+  for (const view of ["Raw", "Contour", "Mask"]) {
+    expect(button(view).disabled, view).toBe(true);
+    expect(button(view).title, view).toBe("Cell crop needs the file's coordinate space (B3c)");
+  }
+  expect(button("Full frame").disabled).toBe(false);
+  expect(button("Full frame").getAttribute("aria-pressed")).toBe("true");
+  expect(measured.querySelector(".rv-crop-note")?.textContent).toBe("Cell crop needs the file's coordinate space (B3c)");
+  expect((host.querySelector(".canvas-wrap.preview") as HTMLElement).hidden).toBe(false);
+  expect(measured.querySelector(".mib-cell__img")).toBeNull();
+  // Nothing is cut: every frame asked for is the full frame's.
+  expect(crops).toEqual([]);
+  expect(lastFrame()).toEqual({ dataset: 0, index: "0", overlay: 0, roiOverlay: false });
+  await click(button("Next record"));
+  expect(crops).toEqual([]);
+  expect(button("Raw").disabled).toBe(true);
+  // At the origin both placements are the same: the crop is offered again.
+  roiOrigin = { x: 0, y: 0 };
+  await act(async () => void (await panel.current!.openPath("/data/origin.h5")));
+  await settle();
+  expect(button("Raw").disabled).toBe(false);
+  expect(card("Selected measurement").querySelector(".rv-crop-note")).toBeNull();
 });
 
 it("says so when a crop cannot be drawn, and when the image was not recorded", async () => {

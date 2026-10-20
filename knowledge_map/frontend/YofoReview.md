@@ -478,13 +478,17 @@ record is shown as a value.
   around the record's bounding box on the client (`cropSquare`: 1.6 × the
   box, at least 24 px, shifted inside the image; `inspect/packetCrop.ts`
   draws it through a canvas into a data URL for the kit's `CellImage`,
-  which takes a URL). The crop uses the bounding box as stored: capture
-  files with an ROI store it ROI-local next to full-frame images, so their
-  crops are off by the ROI origin until the convention ruling on #757
-  review 1 (no file records the coordinate space). **Full frame** is the canvas the panel always drew
+  which takes a URL). The crop uses the bounding box as stored, so it is
+  offered only where that cannot be wrong: capture files with an ROI may
+  store boxes ROI-local next to full-frame images, and until B3c reads the
+  file's `object_coordinates` from the review contract (#756), a file whose
+  ROI origin is not (0, 0) shows **Full frame** only, with "Cell crop needs
+  the file's coordinate space (B3c)" (`cropNeedsCoordinateSpace`, ruling on
+  #757 round 2). **Full frame** is the canvas the panel always drew
   (the toolbar's overlay and ROI; double-click opens the viewer). Views a
   record cannot show are disabled with the reason (a recording has no
-  objects, a set without masks has no Contour / Mask); a crop that cannot
+  objects, a file with a moved ROI waits for B3c, a set without masks has
+  no Contour / Mask); a crop that cannot
   be drawn says so, and a set without images shows the kit's "Image not
   recorded". The stored values (`measurementFacts`: area, deformability,
   stored E, ring ratio, timestamp, validation, track, objects in frame, the
