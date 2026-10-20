@@ -11,7 +11,9 @@
 // directory to propose a free name, and a new flow regenerates into an
 // existing file (refused by the backend, the dialog asks again).
 // #717 B1a (review ABI 2) added one call outside the panel: the identity
-// probe (`review_probe_runs`); no existing flow changed.
+// probe (`review_probe_runs`); no existing flow changed. #717 B3b (review ABI
+// 3) added two: the linked records of a track (`fetch_review_track_rows`)
+// and one record reprocessed (`review_reprocess_record`).
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -149,7 +151,24 @@ function job(kind: number, message: string) {
 function respond(cmd: string, args: Record<string, unknown>): unknown {
   switch (cmd) {
     case "review_abi_version":
-      return 2;
+      return 3;
+    case "fetch_review_track_rows":
+      return { ok: true, message: "", total: "2", truncated: false, positions: ["3", "7"], rows: [] };
+    case "review_reprocess_record":
+      return {
+        ok: true,
+        message: "Reprocessed record 3",
+        settings: args.settings,
+        used_recorded_settings: args.settings === 0,
+        settings_label: args.settings === 0 ? "recorded settings (config, ROI, background)" : "default settings (whole image, no background)",
+        core_version: "2.1.0",
+        core_source: "bundled",
+        stored: null,
+        reprocessed: [],
+        match_index: null,
+        object_count_differs: false,
+        truncated: false,
+      };
     case "review_probe_runs":
       return { ok: true, message: "Probed", runs: (args.paths as string[]).map((path) => ({ path, ok: false, message: "No such file" })) };
     case "fetch_isoelastic_curves":
@@ -530,6 +549,9 @@ it("sends the same commands, arguments, chart bytes and dialogs as before the tr
       await reviewBridge.cancel("101");
       await reviewBridge.jobsBusy();
       await reviewBridge.probeRuns(["/data/lib/run_01.h5", "/data/lib/legacy.h5"]);
+      await reviewBridge.trackRows(true, 4, 256);
+      await reviewBridge.reprocessRecord(true, "3", 0);
+      await reviewBridge.reprocessRecord(false, 2, 1);
       await stageCharts([{ name: "scatter_plot.tiff", bytes: new Uint8Array([1, 2, 3, 250]) }]);
       await stageCharts([]);
       await checkUpdate("stable");

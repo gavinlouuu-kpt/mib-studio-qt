@@ -41,6 +41,8 @@ public:
     ReviewInfo fetch_review_info();
     ReviewProbeResult review_probe_runs(rust::Vec<rust::String> paths);
     ReviewRows fetch_review_rows(bool valid, std::uint64_t offset, std::uint64_t count);
+    ReviewTrackRows fetch_review_track_rows(bool valid, std::int32_t track_id, std::uint32_t max);
+    ReviewReprocessResult review_reprocess_record(bool valid, std::uint64_t index, std::uint32_t settings);
     ReviewFrame fetch_review_frame(std::uint32_t dataset, std::uint64_t index, std::uint32_t overlay,
                                    bool roi_overlay);
     std::uint64_t fetch_review_series_count(std::uint64_t index);

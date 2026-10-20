@@ -52,6 +52,23 @@ export interface ReviewRunIdentity {
   operator: { id: string | null; name: string | null } | null;
   annotation: ReviewRunAnnotation | null;
   annotation_unreadable: boolean;
+  /** Review ABI 3 (#717 B3b): snapshot v3 `emodulus_lut`; `null` when the
+   * snapshot records none. */
+  emodulus_lut: ReviewEModulusLut | null;
+  /** The snapshot's `profile_id`, the only "method" a file records. */
+  profile_id: string | null;
+}
+
+/** The E-modulus LUT a run used (snapshot v3). `loaded` false: the run had
+ * no LUT, so its E values were unavailable. `null` members were not recorded. */
+export interface ReviewEModulusLut {
+  loaded: boolean;
+  lut_id: string | null;
+  revision: string | null;
+  source: string | null;
+  sha256: string | null;
+  catalog_sha256: string | null;
+  checksum_status: string | null;
 }
 
 /** One file of `review_probe_runs`: header attributes only. `ok` false =
@@ -165,6 +182,37 @@ export interface ReviewRow {
   brightness_q2: number;
   brightness_q3: number;
   brightness_q4: number;
+}
+
+/** Review ABI 3 (#717 B3b): the records of a set sharing a track id (the
+ * linked records of one cell), at most REVIEW_TRACK_ROWS.max_rows. `positions`
+ * are decimal-string set indices parallel to `rows`; `ok` false = refused. */
+export interface ReviewTrackRows {
+  ok: boolean;
+  message: string;
+  total: string;
+  truncated: boolean;
+  positions: string[];
+  rows: ReviewRow[];
+}
+
+/** Review ABI 3 (#717 B3b): one record reprocessed next to its stored row;
+ * never written. `settings` is a REVIEW_REPROCESS.settings value;
+ * `match_index` points into `reprocessed` (`null`: no object matches).
+ * `ok` false = refused (`message`), `stored` null. */
+export interface ReviewReprocess {
+  ok: boolean;
+  message: string;
+  settings: number;
+  used_recorded_settings: boolean;
+  settings_label: string;
+  core_version: string;
+  core_source: string;
+  stored: ReviewRow | null;
+  reprocessed: ReviewRow[];
+  match_index: number | null;
+  object_count_differs: boolean;
+  truncated: boolean;
 }
 
 export interface ReviewRows {
@@ -290,6 +338,33 @@ export const reviewBridge = {
   },
   rows: (valid: boolean, offset: number | string, count: number) =>
     invoke<ReviewRows>("fetch_review_rows", { valid, offset: decimalU64(offset), count }),
+  /** Review ABI 3 (#717 B3b): the linked records of one cell (its track),
+   * from the metadata read at open. */
+  trackRows: async (valid: boolean, trackId: number, max: number): Promise<ReviewTrackRows> => {
+    const r = await invoke<ReviewTrackRows>("fetch_review_track_rows", { valid, trackId, max });
+    return {
+      ok: !!r.ok,
+      message: String(r.message ?? ""),
+      total: decimalU64(r.total ?? "0"),
+      truncated: !!r.truncated,
+      positions: (r.positions ?? []).map((p) => decimalU64(p)),
+      rows: r.rows ?? [],
+    };
+  },
+  /** Review ABI 3 (#717 B3b): reprocess one record with the review kernel and
+   * return it next to the stored row. Never writes; refused while a review
+   * job runs. */
+  reprocessRecord: async (valid: boolean, index: number | string, settings: number): Promise<ReviewReprocess> => {
+    const r = await invoke<ReviewReprocess>("review_reprocess_record", { valid, index: decimalU64(index), settings });
+    return {
+      ...r,
+      ok: !!r.ok,
+      message: String(r.message ?? ""),
+      stored: r.ok ? (r.stored ?? null) : null,
+      reprocessed: r.reprocessed ?? [],
+      match_index: r.match_index ?? null,
+    };
+  },
   frame: (dataset: number, index: number | string, overlay: OverlayMode = OVERLAY.None, roiOverlay = false) =>
     pull("fetch_review_frame", PULL_REVIEW, { dataset, index: decimalU64(index), overlay, roiOverlay }),
   seriesCount: async (index: number | string) =>

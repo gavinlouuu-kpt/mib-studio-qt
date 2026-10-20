@@ -1,14 +1,26 @@
 {
   "$comment": "YOFO Review's own contract (ADR 0014, plan 2026-10-01-standalone-review-app): the review bridge (crates/mib-bridge/src/review_bridge.rs, review_shim.cpp) and the YOFO Review shell. Separate from bridge-contract.json, the MIB Studio backend bridge ABI, which it never changes. C++ ties to these values via static_asserts in review_shim.cpp; Rust via tests/review_bridge.rs; TypeScript via the generated desktop/src/review/reviewContract.ts and desktop/src-tauri/src/review_packet_contract.rs (scripts/gen_bridge_contract.py --check fails CI on drift). Additive changes only: append values, never renumber or repurpose.",
-  "review_abi_version": 2,
+  "review_abi_version": 3,
   "run_identity": {
-    "source": "run snapshot v3 (#712, /run_provenance @run_snapshot_json) and the planned annotation (/experiment_annotation @annotation_json, @annotation_schema_version); fetch_review_info.identity for the open file, review_probe_runs per file (review ABI 2, #717 B1a)",
-    "members": "snapshot_version, run_id, experiment_id, run_index, sample_ref, calibration_record_id, operator (id, name), annotation (sample, condition, experimental_unit, concentration {value, unit}, channel, medium, temperature_c, notes, free key/values sorted by key, schema_version)",
+    "source": "run snapshot v3 (#712, /run_provenance @run_snapshot_json) and the planned annotation (/experiment_annotation @annotation_json, @annotation_schema_version); fetch_review_info.identity for the open file, review_probe_runs per file (review ABI 2, #717 B1a; emodulus_lut and profile_id since review ABI 3, #717 B3b)",
+    "members": "snapshot_version, run_id, experiment_id, run_index, sample_ref, calibration_record_id, operator (id, name), annotation (sample, condition, experimental_unit, concentration {value, unit}, channel, medium, temperature_c, notes, free key/values sorted by key, schema_version), emodulus_lut (loaded, lut_id, revision, source, sha256, catalog_sha256, checksum_status; snapshot v3), profile_id (the snapshot's profile_id, a non-empty string)",
     "absent_semantics": "a member the file does not record is absent: has_* false over the review bridge, null in the shell's JSON; never 0, false or an empty string. A legacy file without a snapshot has has_snapshot false and every member absent; a snapshot or annotation that is not a JSON object is reported unreadable, not absent"
   },
   "review_probe": {
     "max_paths": 256,
     "semantics": "review_probe_runs(paths): header attributes only (identity, start/end time, counts, run accounting, processing core version), no images or metadata rows; each count and time is read on its own: a missing or unreadable count is null and a recorded 0 stays 0, while a recorded 0 time is null (not recorded); one result per path in order; a file that cannot be read is a per-file error (ok false, message), never a failure of the call; refused as a whole above max_paths or while a review job runs; each file is read under the review session's own lock (HDF5 is not thread-safe, #722) and the open file is left as it was"
+  },
+  "review_track_rows": {
+    "max_rows": 256,
+    "semantics": "fetch_review_track_rows(valid, track_id, max): the records of the valid or invalid set whose track_id equals track_id (the linked records of one cell), in set order, at most max rows (max above max_rows is refused); positions are their indices in the set, parallel to rows; total counts every match and truncated says total > rows; served from the metadata read at open under the review session's lock, no HDF5 read; refused (ok false, message) for a negative track_id, a raw recording or no open file"
+  },
+  "review_reprocess_record": {
+    "settings": {
+      "recorded": 0,
+      "default": 1
+    },
+    "max_objects": 64,
+    "semantics": "review_reprocess_record(valid, index, settings): the record's stored row next to what the review session's processing kernel finds in the same stored image now; never written anywhere. settings recorded = the file's recorded config, ROI and background (the defaults, said in settings_label, when the file records no config); default = the default config, the whole image, no background. core_version / core_source name the kernel that reprocessed it. reprocessed holds at most max_objects rows (truncated); match_index (has_match) is the reprocessed object whose centroid, in image coordinates, is nearest the stored one inside the stored bounding box; object_count_differs when the kernel found another number of objects than the stored object_count. The inputs are read under the job lanes' lock and the review session's lock (HDF5 is not thread-safe, #722); processing runs outside every lock. Refused (ok false, message) while a review job runs, for a raw recording, an index outside the set, a record without a stored image, or an unknown settings value"
   },
   "frame_packet": {
     "base": "bridge-contract.json frame_packet: the same magic, version, header layout, byte order and limits",

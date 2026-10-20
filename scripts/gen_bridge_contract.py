@@ -151,6 +151,13 @@ def render_review(review: dict) -> str:
     probe = {k: v for k, v in review["review_probe"].items() if isinstance(v, int)}
     lines.append("export const REVIEW_PROBE = " + json.dumps(probe, indent=2) + " as const;")
     lines.append("")
+    # Review ABI 3 (#717 B3b): linked-records and one-record reprocess bounds and settings.
+    track = {k: v for k, v in review["review_track_rows"].items() if isinstance(v, int)}
+    lines.append("export const REVIEW_TRACK_ROWS = " + json.dumps(track, indent=2) + " as const;")
+    lines.append("")
+    reprocess = {k: v for k, v in review["review_reprocess_record"].items() if k != "semantics"}
+    lines.append("export const REVIEW_REPROCESS = " + json.dumps(reprocess, indent=2) + " as const;")
+    lines.append("")
     return "\n".join(lines)
 
 
@@ -183,6 +190,19 @@ def check_review(review: dict) -> str | None:
     bound = re.search(r"kReviewProbeMaxPaths\s*=\s*(\d+)", types)
     if not bound or int(bound.group(1)) != review["review_probe"]["max_paths"]:
         return "review_probe.max_paths differs from ReviewTypes.h kReviewProbeMaxPaths"
+    # Review ABI 3 (#717 B3b): the track-rows and reprocess bounds and the settings enum.
+    for key, member, const in (("review_track_rows", "max_rows", "kReviewTrackRowsMax"),
+                               ("review_reprocess_record", "max_objects", "kReviewReprocessMaxObjects")):
+        bound = re.search(const + r"\s*=\s*(\d+)", types)
+        if not bound or int(bound.group(1)) != review[key][member]:
+            return f"{key}.{member} differs from ReviewTypes.h {const}"
+    settings = review["review_reprocess_record"]["settings"]
+    if sorted(settings.values()) != list(range(len(settings))):
+        return "review_reprocess_record.settings values must be contiguous from 0"
+    block = types.split("enum class ReprocessSettings", 1)[1].split("};", 1)[0]
+    declared = {name.lower(): int(value) for name, value in re.findall(r"(\w+)\s*=\s*(\d+)", block)}
+    if declared != settings:
+        return "review_reprocess_record.settings differs from ReviewTypes.h ReprocessSettings"
     return None
 
 

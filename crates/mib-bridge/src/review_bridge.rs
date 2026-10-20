@@ -112,6 +112,36 @@ pub mod review_ffi {
         pub has_operator_name: bool,
         pub operator_name: String,
         pub annotation: ReviewAnnotation,
+        /// Review ABI 3 (#717 B3b): the E-modulus LUT the run used (snapshot
+        /// v3 `emodulus_lut`); `has_emodulus_lut` false when it records none.
+        pub has_emodulus_lut: bool,
+        pub emodulus_lut: ReviewEModulusLut,
+        /// The snapshot's `profile_id`, the only "method" a file records.
+        pub has_profile_id: bool,
+        pub profile_id: String,
+    }
+
+    /// Snapshot v3 `emodulus_lut` (#717 B3b). `loaded` false: the run had no
+    /// LUT (E values were unavailable). Each `has_*` false = not recorded.
+    #[derive(Debug, Clone, Default)]
+    pub struct ReviewEModulusLut {
+        pub loaded: bool,
+        pub has_lut_id: bool,
+        pub lut_id: String,
+        pub has_revision: bool,
+        pub revision: String,
+        /// "r2-public-catalog" | "local-cache" | "bundled-fallback"
+        pub has_source: bool,
+        pub source: String,
+        /// Of the loaded bytes.
+        pub has_sha256: bool,
+        pub sha256: String,
+        /// The catalog's declared hash.
+        pub has_catalog_sha256: bool,
+        pub catalog_sha256: String,
+        /// The catalog's "verified" | "unknown".
+        pub has_checksum_status: bool,
+        pub checksum_status: String,
     }
 
     /// One file of the identity probe (`review_probe_runs`). `ok` false: the
@@ -247,6 +277,42 @@ pub mod review_ffi {
         pub brightness_q4: f64,
     }
 
+    /// `fetch_review_track_rows` (#717 B3b): the records of a set that share
+    /// a track id, in set order. `positions` are their indices in the set
+    /// (what `fetch_review_frame` / `fetch_review_rows` take), parallel to
+    /// `rows`; `total` counts every match. `ok` false: refused (`message`).
+    #[derive(Debug, Clone, Default)]
+    pub struct ReviewTrackRows {
+        pub ok: bool,
+        pub message: String,
+        pub total: u64,
+        pub truncated: bool,
+        pub positions: Vec<u64>,
+        pub rows: Vec<ReviewRow>,
+    }
+
+    /// `review_reprocess_record` (#717 B3b): one record's stored row next to
+    /// what the review session's kernel finds in its frame now. Never
+    /// written. `settings` is a `review_reprocess_record.settings` value;
+    /// `match_index` (with `has_match`) points into `reprocessed`. `ok`
+    /// false: refused (`message`), nothing else set.
+    #[derive(Debug, Clone, Default)]
+    pub struct ReviewReprocessResult {
+        pub ok: bool,
+        pub message: String,
+        pub settings: u32,
+        pub used_recorded_settings: bool,
+        pub settings_label: String,
+        pub core_version: String,
+        pub core_source: String,
+        pub stored: ReviewRow,
+        pub reprocessed: Vec<ReviewRow>,
+        pub has_match: bool,
+        pub match_index: u32,
+        pub object_count_differs: bool,
+        pub truncated: bool,
+    }
+
     #[derive(Debug, Clone, Default)]
     pub struct ReviewRows {
         pub valid: bool,
@@ -365,6 +431,26 @@ pub mod review_ffi {
             offset: u64,
             count: u64,
         ) -> ReviewRows;
+        /// Review ABI 3 (#717 B3b): the records sharing `track_id` (linked
+        /// records of one cell), at most `review_track_rows.max_rows`; from
+        /// the metadata read at open (no HDF5 read).
+        fn fetch_review_track_rows(
+            self: Pin<&mut ReviewBridge>,
+            valid: bool,
+            track_id: i32,
+            max: u32,
+        ) -> ReviewTrackRows;
+        /// Review ABI 3 (#717 B3b): one record reprocessed next to its stored
+        /// values; never writes. `settings` is a
+        /// `review_reprocess_record.settings` value. Inputs are read under
+        /// the job lanes' and the session's locks, processing runs outside
+        /// them; refused while a review job runs.
+        fn review_reprocess_record(
+            self: Pin<&mut ReviewBridge>,
+            valid: bool,
+            index: u64,
+            settings: u32,
+        ) -> ReviewReprocessResult;
         /// One image with the overlay composed in the backend. `dataset` is a
         /// `review_image_datasets` value, `overlay` an `overlay_modes` value.
         fn fetch_review_frame(

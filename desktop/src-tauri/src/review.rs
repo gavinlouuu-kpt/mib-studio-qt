@@ -115,6 +115,24 @@ pub struct RunIdentity {
     operator: Option<RunOperator>,
     annotation: Option<RunAnnotation>,
     annotation_unreadable: bool,
+    /// Review ABI 3 (#717 B3b): snapshot v3 `emodulus_lut`; `null` when the
+    /// snapshot records none.
+    emodulus_lut: Option<EModulusLut>,
+    /// The snapshot's `profile_id` (the only "method" a file records).
+    profile_id: Option<String>,
+}
+
+/// Snapshot v3 `emodulus_lut` (review ABI 3). `loaded` false: the run had no
+/// LUT (E values were unavailable); `null` members were not recorded.
+#[derive(Serialize, Clone, Default)]
+pub struct EModulusLut {
+    loaded: bool,
+    lut_id: Option<String>,
+    revision: Option<String>,
+    source: Option<String>,
+    sha256: Option<String>,
+    catalog_sha256: Option<String>,
+    checksum_status: Option<String>,
 }
 
 pub fn run_identity(id: review_ffi::ReviewRunIdentity) -> RunIdentity {
@@ -149,6 +167,19 @@ pub fn run_identity(id: review_ffi::ReviewRunIdentity) -> RunIdentity {
             notes: present(a.has_notes, a.notes),
             free: a.free.into_iter().map(|kv| KeyValue { key: kv.key, value: kv.value }).collect(),
         }),
+        emodulus_lut: id.has_emodulus_lut.then(|| {
+            let l = id.emodulus_lut;
+            EModulusLut {
+                loaded: l.loaded,
+                lut_id: present(l.has_lut_id, l.lut_id),
+                revision: present(l.has_revision, l.revision),
+                source: present(l.has_source, l.source),
+                sha256: present(l.has_sha256, l.sha256),
+                catalog_sha256: present(l.has_catalog_sha256, l.catalog_sha256),
+                checksum_status: present(l.has_checksum_status, l.checksum_status),
+            }
+        }),
+        profile_id: present(id.has_profile_id, id.profile_id),
     }
 }
 
@@ -523,6 +554,43 @@ pub fn review_probe_runs(state: State<AppState>, paths: Vec<String>) -> Result<R
     })
 }
 
+fn review_row(r: review_ffi::ReviewRow) -> ReviewRow {
+    ReviewRow {
+        frame_index: r.frame_index,
+        timestamp_ns: r.timestamp_ns,
+        valid: r.valid,
+        target_group: r.target_group,
+        touches_border: r.touches_border,
+        has_single_inner_contour: r.has_single_inner_contour,
+        in_range: r.in_range,
+        in_channel: r.in_channel,
+        inner_contour_count: r.inner_contour_count,
+        object_id: r.object_id,
+        object_count: r.object_count,
+        track_id: r.track_id,
+        track_first_frame: r.track_first_frame,
+        track_last_frame: r.track_last_frame,
+        track_observation_count: r.track_observation_count,
+        bbox_x: r.bbox_x,
+        bbox_y: r.bbox_y,
+        bbox_width: r.bbox_width,
+        bbox_height: r.bbox_height,
+        centroid_x: r.centroid_x,
+        centroid_y: r.centroid_y,
+        area: r.area,
+        area_um2: r.area_um2,
+        deformability: r.deformability,
+        area_ratio: r.area_ratio,
+        ring_ratio: r.ring_ratio,
+        laplacian_variance: finite(r.laplacian_variance),
+        youngs_modulus: r.youngs_modulus,
+        brightness_q1: r.brightness_q1,
+        brightness_q2: r.brightness_q2,
+        brightness_q3: r.brightness_q3,
+        brightness_q4: r.brightness_q4,
+    }
+}
+
 #[tauri::command]
 pub fn fetch_review_rows(
     state: State<AppState>,
@@ -538,44 +606,92 @@ pub fn fetch_review_rows(
         valid: p.valid,
         total: p.total,
         offset: p.offset,
-        rows: p
-            .rows
-            .into_iter()
-            .map(|r| ReviewRow {
-                frame_index: r.frame_index,
-                timestamp_ns: r.timestamp_ns,
-                valid: r.valid,
-                target_group: r.target_group,
-                touches_border: r.touches_border,
-                has_single_inner_contour: r.has_single_inner_contour,
-                in_range: r.in_range,
-                in_channel: r.in_channel,
-                inner_contour_count: r.inner_contour_count,
-                object_id: r.object_id,
-                object_count: r.object_count,
-                track_id: r.track_id,
-                track_first_frame: r.track_first_frame,
-                track_last_frame: r.track_last_frame,
-                track_observation_count: r.track_observation_count,
-                bbox_x: r.bbox_x,
-                bbox_y: r.bbox_y,
-                bbox_width: r.bbox_width,
-                bbox_height: r.bbox_height,
-                centroid_x: r.centroid_x,
-                centroid_y: r.centroid_y,
-                area: r.area,
-                area_um2: r.area_um2,
-                deformability: r.deformability,
-                area_ratio: r.area_ratio,
-                ring_ratio: r.ring_ratio,
-                laplacian_variance: finite(r.laplacian_variance),
-                youngs_modulus: r.youngs_modulus,
-                brightness_q1: r.brightness_q1,
-                brightness_q2: r.brightness_q2,
-                brightness_q3: r.brightness_q3,
-                brightness_q4: r.brightness_q4,
-            })
-            .collect(),
+        rows: p.rows.into_iter().map(review_row).collect(),
+    })
+}
+
+/// Review ABI 3 (#717 B3b): the records sharing a track id. `positions` are
+/// decimal-string set indices, parallel to `rows`.
+#[derive(Serialize, Clone, Default)]
+pub struct ReviewTrackRows {
+    transport_version: u32,
+    ok: bool,
+    message: String,
+    #[serde(serialize_with = "serialize_u64")]
+    total: u64,
+    truncated: bool,
+    positions: Vec<String>,
+    rows: Vec<ReviewRow>,
+}
+
+/// Linked records of one cell (`review_track_rows.max_rows` at most), from the
+/// metadata read at open.
+#[tauri::command]
+pub fn fetch_review_track_rows(
+    state: State<AppState>,
+    valid: bool,
+    track_id: i32,
+    max: u32,
+) -> Result<ReviewTrackRows, String> {
+    let mut guard = state.review.lock().map_err(|e| e.to_string())?;
+    let r = guard.pin_mut().fetch_review_track_rows(valid, track_id, max);
+    Ok(ReviewTrackRows {
+        transport_version: review_packet::JSON_TRANSPORT_VERSION,
+        ok: r.ok,
+        message: r.message,
+        total: r.total,
+        truncated: r.truncated,
+        positions: r.positions.iter().map(u64::to_string).collect(),
+        rows: r.rows.into_iter().map(review_row).collect(),
+    })
+}
+
+/// Review ABI 3 (#717 B3b): one record reprocessed next to its stored row.
+/// `match_index` is `null` when no reprocessed object matches.
+#[derive(Serialize, Clone, Default)]
+pub struct ReviewReprocess {
+    transport_version: u32,
+    ok: bool,
+    message: String,
+    settings: u32,
+    used_recorded_settings: bool,
+    settings_label: String,
+    core_version: String,
+    core_source: String,
+    stored: Option<ReviewRow>,
+    reprocessed: Vec<ReviewRow>,
+    match_index: Option<u32>,
+    object_count_differs: bool,
+    truncated: bool,
+}
+
+/// Reprocess one record (`settings`: `review_reprocess_record.settings`);
+/// never writes, refused while a review job runs.
+#[tauri::command]
+pub fn review_reprocess_record(
+    state: State<AppState>,
+    valid: bool,
+    index: String,
+    settings: u32,
+) -> Result<ReviewReprocess, String> {
+    let index = parse_u64(&index)?;
+    let mut guard = state.review.lock().map_err(|e| e.to_string())?;
+    let r = guard.pin_mut().review_reprocess_record(valid, index, settings);
+    let ok = r.ok;
+    Ok(ReviewReprocess {
+        transport_version: review_packet::JSON_TRANSPORT_VERSION,
+        ok,
+        message: r.message,
+        settings: r.settings,
+        used_recorded_settings: r.used_recorded_settings,
+        settings_label: r.settings_label,
+        core_version: r.core_version,
+        core_source: r.core_source,
+        stored: ok.then(|| review_row(r.stored)),
+        reprocessed: r.reprocessed.into_iter().map(review_row).collect(),
+        match_index: present(r.has_match, r.match_index),
+        object_count_differs: r.object_count_differs,
+        truncated: r.truncated,
     })
 }
 
@@ -950,7 +1066,8 @@ mod tests {
             serde_json::json!({
                 "has_snapshot": false, "snapshot_unreadable": false, "snapshot_version": null, "run_id": null,
                 "experiment_id": null, "run_index": null, "sample_ref": null, "calibration_record_id": null,
-                "operator": null, "annotation": null, "annotation_unreadable": false
+                "operator": null, "annotation": null, "annotation_unreadable": false,
+                "emodulus_lut": null, "profile_id": null
             })
         );
         // Through the bridge: a v3 file and a legacy file, and the probe's JSON.
@@ -959,7 +1076,7 @@ mod tests {
         let old = dir.join(format!("mib_desktop_identity_legacy_{}.h5", std::process::id()));
         let _ = std::fs::remove_file(&v3);
         let _ = std::fs::remove_file(&old);
-        let snapshot = r#"{"schema_version":3,"experiment_id":"5b1d6f8e-2c4a-4e7b-9a3d-0f1e2d3c4b5a","run_index":0,"sample_ref":"S-01","run_id":null}"#;
+        let snapshot = r#"{"schema_version":3,"experiment_id":"5b1d6f8e-2c4a-4e7b-9a3d-0f1e2d3c4b5a","run_index":0,"sample_ref":"S-01","run_id":null,"profile_id":"cell-mechanics","emodulus_lut":{"loaded":true,"lut_id":"lut-v2","revision":null,"sha256":"41b9"}}"#;
         let annotation = r#"{"schema_version":1,"condition":"Vehicle","free":{"plate":"B"}}"#;
         assert!(review_ffi::review_fixture_write_run(&v3.to_string_lossy(), snapshot, annotation));
         assert!(review_ffi::review_fixture_write_run(&old.to_string_lossy(), "", ""));
@@ -973,6 +1090,13 @@ mod tests {
         assert_eq!(id["annotation"]["condition"], "Vehicle");
         assert!(id["annotation"]["sample"].is_null() && id["annotation"]["concentration"].is_null());
         assert_eq!(id["annotation"]["free"], serde_json::json!([{"key": "plate", "value": "B"}]));
+        // Review ABI 3 (#717 B3b): the LUT and the profile, absent members null.
+        assert_eq!(id["profile_id"], "cell-mechanics");
+        assert_eq!(
+            id["emodulus_lut"],
+            serde_json::json!({"loaded": true, "lut_id": "lut-v2", "revision": null, "source": null,
+                               "sha256": "41b9", "catalog_sha256": null, "checksum_status": null})
+        );
         let probe = bridge.pin_mut().review_probe_runs(vec![old.to_string_lossy().into_owned(), String::new()]);
         assert!(probe.ok);
         let legacy = &probe.runs[0];

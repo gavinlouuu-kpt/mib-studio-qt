@@ -46,6 +46,19 @@ namespace backend::review
             return gray;
         }
 
+        // A frame with more than one channel becomes Mono8 exactly as the
+        // regenerate engine converts HDF input (Reanalysis.cpp,
+        // grayLikeLoadFromHdf5), so a one-record reprocess sees what a
+        // regenerate of the file would.
+        cv::Mat grayLikeRegenerate(cv::Mat frame)
+        {
+            if (frame.empty() || frame.type() == CV_8UC1) return frame;
+            cv::Mat gray;
+            if (frame.channels() == 3) cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
+            else frame.convertTo(gray, CV_8UC1);
+            return gray;
+        }
+
         MetricRow rowFromFrame(const services::ProcessedFrame &frame, std::uint64_t position,
                                double pixelToMicron)
         {
@@ -479,6 +492,11 @@ namespace backend::review
         return f > 0.0 ? f : 0.0;
     }
 
+    MetricRow ReviewSession::metricRow(const services::ProcessedFrame &frame, double pixelToMicron)
+    {
+        return rowFromFrame(frame, 0, pixelToMicron);
+    }
+
     RunIdentity ReviewSession::readRunIdentity(const services::Hdf5Service &reader)
     {
         RunIdentity out;
@@ -492,6 +510,16 @@ namespace backend::review
                 out.snapshotVersion = parsed.schemaVersion;
                 out.runId = parsed.v3.runId;
                 out.declared = parsed.v3.identity;
+                out.eModulusLut = parsed.v3.eModulusLut;
+                // profile_id is not part of the typed record: read it from
+                // the same document, a non-empty string only (#717 B3b).
+                const auto doc = nlohmann::json::parse(snapshot, nullptr, false);
+                if (doc.is_object())
+                {
+                    const auto it = doc.find("profile_id");
+                    if (it != doc.end() && it->is_string() && !it->get<std::string>().empty())
+                        out.profileId = it->get<std::string>();
+                }
             }
             else
             {
@@ -579,6 +607,94 @@ namespace backend::review
         rows.reserve(static_cast<std::size_t>(end - offset));
         const double f = impl_->factor();
         for (std::uint64_t i = offset; i < end; ++i) rows.push_back(rowFromFrame(source[i], i, f));
+        return true;
+    }
+
+    bool ReviewSession::trackRows(bool valid, int trackId, std::size_t max, TrackRows &out,
+                                  std::string *error) const
+    {
+        out = TrackRows{};
+        auto refuse = [error](std::string message) {
+            if (error) *error = std::move(message);
+            return false;
+        };
+        if (max > kReviewTrackRowsMax)
+            return refuse("Too many rows requested: " + std::to_string(max) + " (at most " +
+                          std::to_string(kReviewTrackRowsMax) + ")");
+        if (trackId < 0) return refuse("This record is not tracked, so it has no linked records");
+        std::scoped_lock lock(impl_->mutex);
+        if (!impl_->open) return refuse("No review file is open");
+        if (impl_->recording) return refuse("A raw recording has no records");
+        const auto &source = impl_->set(valid);
+        const double f = impl_->factor();
+        for (std::uint64_t i = 0; i < source.size(); ++i)
+        {
+            if (source[i].validation.trackId != trackId) continue;
+            ++out.total;
+            if (out.rows.size() >= max) continue;
+            out.positions.push_back(i);
+            out.rows.push_back(rowFromFrame(source[i], i, f));
+        }
+        out.truncated = out.total > out.rows.size();
+        return true;
+    }
+
+    bool ReviewSession::reprocessInputs(bool valid, std::uint64_t index, ReprocessSettings settings,
+                                        ReprocessInputs &out, std::string *error) const
+    {
+        out = ReprocessInputs{};
+        auto refuse = [error](std::string message) {
+            if (error) *error = std::move(message);
+            return false;
+        };
+        if (settings != ReprocessSettings::Recorded && settings != ReprocessSettings::Default)
+            return refuse("Unknown reprocess settings");
+        std::scoped_lock lock(impl_->mutex);
+        if (!impl_->open) return refuse("No review file is open");
+        if (impl_->recording) return refuse("A raw recording has no stored records to reprocess");
+        const auto &source = impl_->set(valid);
+        if (index >= source.size())
+            return refuse("No record " + std::to_string(index) + " in the " + (valid ? "valid" : "invalid") +
+                          " set (" + std::to_string(source.size()) + " records)");
+        const auto &meta = impl_->meta;
+        out.pixelToMicron = impl_->factor();
+        out.stored = rowFromFrame(source[static_cast<std::size_t>(index)], index, out.pixelToMicron);
+        out.recordedRoi = meta.roi;
+        cv::Mat image;
+        if (!impl_->reader.readImageByIndex(impl_->imagesPath(valid), static_cast<std::size_t>(index), image) ||
+            image.empty())
+        {
+            return refuse("Record " + std::to_string(index) + " has no stored image to reprocess");
+        }
+        out.image = grayLikeRegenerate(std::move(image));
+        if (settings == ReprocessSettings::Recorded)
+        {
+            services::ProcessingConfig recorded;
+            if (impl_->reader.readRecordedProcessingConfig(recorded))
+            {
+                out.config = recorded;
+                out.roi = meta.roi;
+                cv::Mat background;
+                if (impl_->reader.readBackgroundImage(background) && !background.empty())
+                    out.background = grayLikeRegenerate(std::move(background));
+                out.usedRecordedSettings = true;
+                out.settingsLabel = out.background.empty() ? "recorded settings (config, ROI; the file records no background)"
+                                                           : "recorded settings (config, ROI, background)";
+            }
+            else
+            {
+                out.settingsLabel = "default settings: the file records none";
+            }
+        }
+        else
+        {
+            out.settingsLabel = "default settings (whole image, no background)";
+        }
+        if (!out.background.empty() && out.background.size() != out.image.size())
+        {
+            // As the regenerate engine refuses it: a background of another size.
+            return refuse("The recorded background does not match the record's image size");
+        }
         return true;
     }
 
