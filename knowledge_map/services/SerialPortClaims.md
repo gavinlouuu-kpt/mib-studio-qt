@@ -13,27 +13,61 @@ before), `backend.serial_sim`
 
 ## Why
 
-Found by the simulated rig ([[SimulatedSerial]]) on its first run.
-`StartupDiscoveryCoordinator` probes every CH340 adapter for an OEABT
-nanopositioner (VID 1a86 is an OEABT candidate). A CH340 USB-RS485 dongle
-carrying the pumps is one of them. The probe held the pump port for ~2 s per
-attempt (two identity commands, 500 ms timeouts, one retry) and wrote
-`/1&\r` onto the RS485 bus. A pump Connect in that window failed with
-ACCESS_DENIED on Windows. On Linux it silently shared the tty. The PL
-instrument had already turned serial discovery off for this reason
-(`plScienceSerialBlockReason`). The desktop path still raced.
+Found by the simulated rig ([[SimulatedSerial]]). Two discovery paths open
+serial adapters the operator is about to connect:
+
+- **Startup nanopositioner probe.** `StartupDiscoveryCoordinator` probes every
+  OEABT candidate, which the filter defines by USB identity as the WCH
+  CH340/CH341 family. A CH340 USB-RS485 dongle carrying the pumps is one. Each
+  probe holds the port about 1 s (two identity commands, 500 ms timeouts) and
+  writes `/1&\r` onto the RS485 bus. A pump Connect in that window failed
+  with ACCESS_DENIED on Windows (on Linux it silently shared the tty), on
+  every seed. The PL instrument had turned serial discovery off for this
+  reason (`plScienceSerialBlockReason`).
+- **Pulse-generator `auto` sweep** ([[PulseGeneratorService]]
+  `discoverLiveView`, illuminated live view on port `"auto"`). It opens
+  **every USB adapter whatever its chip** at 9600 baud. While it held an
+  adapter, a pump Connect at 115200 failed with "different settings", and a
+  nanopositioner connect failed busy. 14 of 33 race runs failed across the
+  chip matrix before the fix.
 
 ## Rules
 
 | Holder | API | Effect |
 |---|---|---|
-| Bus session ([[SerialBus]] `acquire`, new session only) | `claimForService` | Waits up to `kProbeYield` (3 s), unlocked, for a probe on the port; held for the session's life |
+| Bus session ([[SerialBus]] `acquire`) | `claimForService(…, busSession=true)` | Registered first, then waits up to `kProbeYield` (3 s), unlocked, for another thread's probe on the port; kept for the session's life if it opens one |
 | Connected nanopositioner ([[AutofocusService]] `connect`) | `claimForService` | Same; released in `disconnect()` |
-| Nanopositioner probe (`probeNanopositionerEndpoint`) | `tryProbe` | Refused (probe fails, logged "skips …") when a service or another probe holds the port, or it is reserved |
-| config.json `pump_sample_com_port` / `pump_sheath_com_port` | `setReserved` (from `AppBackend::setLastConfigJson`) | Probes skip `COM<n>` even before the pumps connect |
+| Nanopositioner probe (`probeNanopositionerEndpoint`) | `tryProbe` | Refused (probe fails, logged "skips …") when a service or another probe holds the port, or it is reserved; the startup retries take it later |
+| Generator `auto` sweep (`discoverLiveView`) | `isReserved`, `tryProbe(…, kProbeYield, &holder)` | Skips reserved ports; waits for another probe; shares a live bus session; joins a bus session another client is opening (waits for it to exist, never opens its own in that window); a port an exclusive service holds is "busy" |
+| config.json `pump_sample_com_port` / `pump_sheath_com_port` | `setReserved` (from `AppBackend::setLastConfigJson`) | Probes and the sweep skip `COM<n>` even before the pumps connect |
+
+A service registers its claim **before** it waits. Without that, probes
+retrying back to back (startup attempts, the sweep) could take the port in
+turns and starve it past the 3 s bound. A probe never waits for itself: the
+sweep holds a probe claim and opens the port through the bus layer on the
+same thread. `backend.serial_sim` checks that a failed probe releases the
+port in less than `kProbeYield` (it measures about 1 s).
 
 Ports are keyed like the bus layer (`key()`: basename, lowercase;
 `SerialBusManager::normalizeKey` delegates to it).
+
+## Chips
+
+The rules never look at the chip. `backend.serial_startup_race` runs every
+bridge in `serialsim::commonUsbSerialChips()` as the pump adapter and as the
+generator adapter, rotated as the nanopositioner's. The catalog covers WCH
+CH340/CH341/CH343/CH9102, FTDI FT232R/FT231X/FT232H/FT2232H/FT4232H, Silicon
+Labs CP2102/CP2105/CP2108, Prolific PL2303/PL2303GC, Microchip MCP2221,
+CDC-ACM (STM32 VCP, Arduino Uno, RP2040) and an onboard UART. The matrix
+also runs with and without the pump port in config.json, with the sweep
+racing startup and the operator. Chip-dependent behaviour is all upstream of
+the claims:
+
+- **OEABT candidates.** The nanopositioner filter lists CH340/CH341 only. A
+  nanopositioner on another chip (CH343, CH9102, FTDI, CP210x, …) is never
+  probed and startup reports NotFound promptly.
+- **The sweep.** It considers USB adapters only (VID/PID present). An
+  onboard UART is never swept.
 
 ## Limits
 
@@ -42,10 +76,11 @@ Ports are keyed like the bus layer (`key()`: basename, lowercase;
   OS code. The bus reports it as `PortBusy`, promptly. The startup
   coordinator's retries pick the port up once it is released
   (`backend.serial_startup_race` stale-holder scenarios).
-- With no pump port in config.json, the probe can still identify the RS485
-  bus before the pumps connect: one ASCII frame per attempt reaches the bus.
-  Modbus RTU slaves discard it (bad CRC), and a pump Connect waits for the
-  probe, so nothing fails.
-- The pulse-generator port is not in config.json. It is usually an FTDI
-  adapter, not an OEABT candidate. If it is a CH340 and not yet connected,
-  it gets the same treatment as an unconfigured pump bus.
+- An unreserved, not-yet-connected adapter can still receive a probe's or
+  the sweep's frames: an ASCII identity command, or a Modbus read at 9600.
+  Modbus RTU slaves discard ASCII (bad CRC) and do not hear 9600 on a
+  115200 bus. A Connect waits for the probe, so nothing fails. Naming the
+  pump port in config.json keeps both off the pump bus entirely.
+- The pulse-generator port is not in config.json. The startup probe can
+  reach it when it is a CH34x and not yet connected, like an unconfigured
+  pump bus.

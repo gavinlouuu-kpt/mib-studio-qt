@@ -59,3 +59,21 @@ nlohmann)
   endpoints, because that vendor DLL opens COM ports itself.
 - A test that installs a rig must `install(nullptr)` before it ends; the
   global outlives `AppBackend`.
+
+## Chip catalog (2026-10-19)
+
+`commonUsbSerialChips()` / `findUsbSerialChip(id)` / `applyChip(spec, chip)`
+give a port a real bridge's USB identity, as Windows and Linux report it, and
+its timing (FTDI 16 ms latency timer; FTDI and PL2303 split replies).
+Covered bridges:
+- WCH CH340/CH341/CH343/CH9102;
+- FTDI FT232R/FT231X/FT232H/FT2232H/FT4232H;
+- Silicon Labs CP2102/CP2105/CP2108;
+- Prolific PL2303/PL2303GC;
+- Microchip MCP2221;
+- CDC-ACM STM32 VCP, Arduino Uno and RP2040;
+- an onboard UART (no USB identity).
+
+Scenarios name a chip with `"chip"`, and explicit fields override it.
+`backend.serial_startup_race` runs the race matrix over the whole catalog.
+`backend.serial_sim` checks the catalog for unique ids and VID:PIDs.

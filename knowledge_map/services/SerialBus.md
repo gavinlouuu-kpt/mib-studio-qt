@@ -183,3 +183,16 @@ released with the port reservation, when the I/O thread has closed the port
 existing session takes no new claim. `normalizeKey` delegates to
 `portclaims::key` (same rules), so bus and claim keys cannot drift.
 Regression: `backend.serial_startup_race` ([[SimulatedSerial]]).
+
+### Claims always taken in `acquire` (2026-10-19, later)
+
+`acquire` now takes its `claimForService(…, busSession=true)` on every call:
+- The claim is registered before the wait, so new probes are refused.
+- It waits for **another thread's** probe on the port.
+- It is kept only if this call opens a new session.
+
+Sharing a live session no longer skips the wait. A probe's short-lived
+session at other settings (the generator `auto` sweep at 9600) would
+otherwise make a 115200 pump Connect fail with "different settings".
+`hasSession(port)` tells the sweep whether a live session exists, which it
+then shares.

@@ -63,7 +63,7 @@ offered under the simulation.
   "exclusiveOpen": true,
   "ports": [
     {
-      "name": "COM3", "description": "USB-SERIAL CH340", "vid": "1a86", "pid": "7523",
+      "name": "COM3", "chip": "ch340",
       "presentAfterMs": 300, "openLatencyMs": 15, "replyLatencyMs": [2, 12],
       "silentAfterOpenMs": 0, "fragmentReplies": false,
       "staleHolderUntilMs": 0,
@@ -74,12 +74,15 @@ offered under the simulation.
         {"type": "modbus", "address": 9, "baud": 115200, "holding": {"0": 1}, "input": {"5": 77}}
       ]
     },
-    {"name": "COM5", "vid": "1a86", "pid": "7523", "devices": [{"type": "oeabt"}]}
+    {"name": "COM5", "chip": "ch341", "devices": [{"type": "oeabt"}]},
+    {"name": "COM7", "vid": "0403", "pid": "6001", "description": "FT232R USB UART", "devices": [{"type": "pulse-generator"}]}
   ]
 }
 ```
 
-Device types: `dlsp-pump`, `tushui-pump`, `pulse-generator` (default 9600),
+A port's identity is `chip` (see **Chips** below) or explicit `vid`/`pid`/
+`description`/`manufacturer`/`serial`; explicit fields win. Device types:
+`dlsp-pump`, `tushui-pump`, `pulse-generator` (default 9600),
 `zc300` (`serial`), `oeabt`, `modbus` (generic register bank; `holding` and
 `input` map wire addresses to values). `exclusiveOpen: false` mimics POSIX and
 records second opens as `SharedOpen`. `staleHolderUntilMs: -1` holds the port
@@ -108,12 +111,48 @@ Run several seeds and print `rig->summary()` for a failing one. Examples:
 `tests/backend/serial_startup_race_test.cpp` (startup against the operator's
 connects, stale holders).
 
+## Chips
+
+Real adapters differ in USB identity and timing, and identity decides who
+probes them. `serialsim::commonUsbSerialChips()` lists the bridges common on
+lab benches. A port takes one with `"chip"` in a scenario, or
+`serialsim::applyChip(spec, *findUsbSerialChip("cp2102"))` in a test. That
+sets the VID/PID, manufacturer and description as Windows / Linux report
+them, and the chip's timing (FTDI's 16 ms latency timer, PL2303 and FTDI
+splitting replies). Explicit `vid`/`pid`/`description` fields override it.
+
+| id | VID:PID | Bridge |
+|---|---|---|
+| `ch340`, `ch341` | 1a86:7523, 1a86:5523 | WCH CH340 / CH341 (the OEABT filter's candidates) |
+| `ch343`, `ch9102` | 1a86:55d3, 1a86:55d4 | WCH CH343 / CH9102 |
+| `ft232r`, `ft231x`, `ft232h`, `ft2232h`, `ft4232h` | 0403:6001, 6015, 6014, 6010, 6011 | FTDI |
+| `cp2102`, `cp2105`, `cp2108` | 10c4:ea60, ea70, ea71 | Silicon Labs CP210x (`cp2102` also covers CP2104/CP2109) |
+| `pl2303`, `pl2303gc` | 067b:2303, 067b:23a3 | Prolific |
+| `mcp2221` | 04d8:00dd | Microchip MCP2221 |
+| `stm32-vcp`, `arduino-uno`, `rp2040` | 0483:5740, 2341:0043, 2e8a:000a | CDC-ACM boards |
+| `onboard` | none | motherboard COM port (no USB identity) |
+
+`backend.serial_startup_race` runs every chip as the pump adapter and as the
+generator adapter (rotated as the nanopositioner's), with the generator's
+`auto` sweep racing startup and the operator.
+
 ## What it found
 
-On its first run, the startup nanopositioner probe opened a CH340 RS485 pump
-adapter (CH340 is an OEABT candidate by USB identity). It held the port for
-~2 s and wrote ASCII onto the pump bus. A pump Connect in that window failed
-with "port busy", on every seed. Fixed by in-process port claims
-(`SerialPortClaims.h`). Probes skip ports a service holds or that config.json
-assigns to the pumps. A service waits for a probe on its port instead of
-failing. See [the vault note](../../knowledge_map/services/SerialPortClaims.md).
+- **Startup nanopositioner probe.** On its first run, the probe opened a
+  CH340 RS485 pump adapter (CH340 is an OEABT candidate by USB identity). It
+  held the port about 1 s per attempt and wrote ASCII onto the pump bus. A
+  pump Connect in that window failed with "port busy", on every seed.
+- **Generator `auto` sweep.** It opens every USB adapter, whatever the chip,
+  at 9600 baud. While it held the pump adapter, a pump Connect at 115200
+  failed with "different settings". 14 of 33 runs of the chip matrix failed.
+
+Both are fixed by in-process port claims (`SerialPortClaims.h`):
+
+- Probes and the sweep skip ports a service holds or that config.json assigns
+  to the pumps.
+- A service registers and then waits for a probe on its port instead of
+  failing.
+- The sweep joins a bus session another client is opening rather than racing
+  it.
+
+See [the vault note](../../knowledge_map/services/SerialPortClaims.md).

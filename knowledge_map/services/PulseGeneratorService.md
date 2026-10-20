@@ -143,3 +143,19 @@ syringe volume. Ports the bus cannot open because another program holds them
 (`LinkError::PortBusy`), modules whose requested channel is unset, and
 non-generator responders are each named in the error. Manual `scanBus`
 classification is unchanged. Discovery never writes.
+
+### The `auto` sweep is a probe (2026-10-19)
+
+`discoverLiveView` opens every USB adapter, whatever its chip. It now follows
+[[SerialPortClaims]]:
+- It skips ports config.json reserves for the pumps.
+- It takes a probe claim, waiting up to `kProbeYield` for another probe.
+- It shares a live bus session, such as the generator connected earlier.
+- It joins a bus session another client is opening: it waits for the session
+  to exist and never opens its own in that window.
+- A port an exclusive service holds, such as the nanopositioner, is reported
+  busy.
+
+Before this, while the sweep held the pump adapter at 9600, a pump Connect at
+115200 failed with "different settings". The race showed across the chip
+matrix of `backend.serial_startup_race` ([[SimulatedSerial]]).

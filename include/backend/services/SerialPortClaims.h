@@ -3,19 +3,22 @@
 // nanopositioner) and discovery probes that open a port for a moment to
 // identify what is behind it.
 //
-// Without it, the startup nanopositioner probe opened every CH340 adapter,
-// including a CH340 USB-RS485 dongle carrying the pumps. It held the port for
-// about 2 s and wrote ASCII onto the RS485 bus. A pump Connect in that window
-// failed with ACCESS_DENIED on Windows, and silently shared the tty on Linux.
-// Found by the simulated rig (SimulatedSerial.h,
-// backend.serial_startup_race).
+// Without it, two discovery paths took ports the operator was connecting,
+// whatever the adapter's chip (found by the simulated rig, SimulatedSerial.h,
+// backend.serial_startup_race):
+//  - the startup nanopositioner probe opens every CH34x adapter, including a
+//    CH340 USB-RS485 pump dongle, for about 1 s per attempt, writing ASCII
+//    onto the bus: a pump Connect then failed with ACCESS_DENIED (Windows);
+//  - the pulse generator's "auto" sweep opens every USB adapter at 9600: a
+//    pump Connect at 115200 then failed with "different settings".
 //
 // Rules:
 //  - a probe never opens a port a service holds or that is reserved;
-//  - a service waits (bounded) for a probe on its port to finish, then opens;
-//    it never fails because of our own probe;
+//  - a service registers, then waits (bounded) for probes on its port to
+//    finish, and opens; it never fails because of our own probe, and new
+//    probes cannot take the port while it waits;
 //  - reservations name ports configured for other devices (config.json
-//    pump ports), so a probe skips the pump bus even before the pumps connect.
+//    pump ports), so probes skip the pump bus even before the pumps connect.
 // The registry only covers this process. A port another process holds (or a
 // handle a crashed instance never closed) still fails at open with the OS
 // "busy" code, which callers report as PortBusy.
