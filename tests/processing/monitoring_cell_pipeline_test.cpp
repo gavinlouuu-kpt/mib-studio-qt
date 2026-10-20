@@ -394,7 +394,7 @@ void heldAcrossAnRoiChange(Mode mode, const char* name)
 
     // Hold the next frame whose rows are about to be appended.
     std::mutex m;
-    std::condition_variable cv;
+    std::condition_variable wake;
     bool holding = false, release = false;
     uint64_t held = 0;
     std::atomic<bool> armed{true};
@@ -403,8 +403,8 @@ void heldAcrossAnRoiChange(Mode mode, const char* name)
         std::unique_lock lk(m);
         held = frameIndex;
         holding = true;
-        cv.notify_all();
-        cv.wait_for(lk, std::chrono::seconds(20), [&] { return release; });
+        wake.notify_all();
+        wake.wait_for(lk, std::chrono::seconds(20), [&] { return release; });
     });
     {
         std::unique_lock lk(m);
@@ -426,7 +426,7 @@ void heldAcrossAnRoiChange(Mode mode, const char* name)
         std::scoped_lock lk(m);
         release = true;
     }
-    cv.notify_all();
+    wake.notify_all();
     // The held frame's rows reach the ring.
     std::vector<std::pair<MonitoringCellKey, ProcessingService::MonitoringRowTag>> heldRows;
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
