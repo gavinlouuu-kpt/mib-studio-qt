@@ -185,6 +185,24 @@ def changed_pixels(a: bytes, b: bytes, width: int) -> set[int]:
     return out
 
 
+# The two ROI styles of decision D2 (colour in RGB, line width in px):
+# MIB Studio's facade (RoiStyle::Facade) and Qt / ReviewSession (drawRoiOverlay).
+STUDIO_ROI = ((255, 210, 0), 1)
+REVIEW_ROI = ((255, 0, 0), 3)
+
+
+def rectangle_outline(pixels: set[int], rgb: bytes, width: int, style: tuple[tuple[int, int, int], int]) -> bool:
+    """`pixels` (those an ROI rectangle changed) all carry the style's colour
+    and lie within its line width of their bounding box's border."""
+    if not pixels:
+        return True
+    colour, thickness = bytes(style[0]), style[1]
+    xs, ys = [p % width for p in pixels], [p // width for p in pixels]
+    x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
+    return all(rgb[p * 3:p * 3 + 3] == colour and
+               min(x - x0, x1 - x, y - y0, y1 - y) < thickness for p, x, y in zip(pixels, xs, ys))
+
+
 def overlays(d: Path) -> tuple[dict[str, Path], dict[str, Path]]:
     studio = {p.stem: p for p in sorted((d / "studio/overlays").glob("*.png"))}
     yofo = {p.stem: p for p in sorted((d / "yofo/overlays").glob("*.p[gp]m"))}
@@ -218,9 +236,11 @@ def compare_overlays(d: Path) -> tuple[tuple[bool, str], tuple[str, str]]:
             continue
         differing.append(name)
         largest = max(largest, len(diff))
-        # Pixels either half's ROI rectangle drew: ROI on vs off, per half.
-        outline = changed_pixels(son, off[0][2], sw) | changed_pixels(yon, off[1][2], yw)
-        if not diff <= outline:
+        # Pixels either half's ROI rectangle drew (ROI on vs off, per half),
+        # each in its own D2 style; anything else that differs is a finding.
+        studio_roi, yofo_roi = changed_pixels(son, off[0][2], sw), changed_pixels(yon, off[1][2], yw)
+        if not (diff <= studio_roi | yofo_roi and rectangle_outline(studio_roi, son, sw, STUDIO_ROI)
+                and rectangle_outline(yofo_roi, yon, yw, REVIEW_ROI)):
             outside.append(name)
     if not roi or outside or missing:
         result = "DIFF"

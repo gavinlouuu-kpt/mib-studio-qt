@@ -1576,6 +1576,16 @@ if(Python3_Interpreter_FOUND)
         TIMEOUT 30
     )
 
+    # #512 S6: tools/review_parity/compare.py — the MIB Studio pairs, the chart-range tolerance and decisions D2-D5.
+    add_test(
+        NAME scripts.review_parity_compare
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/tools/test_review_parity_compare.py
+    )
+    set_tests_properties(scripts.review_parity_compare PROPERTIES
+        LABELS "scripts;review"
+        TIMEOUT 30
+    )
+
     add_test(
         NAME scripts.compare_metrics
         COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test_compare_metrics.py
