@@ -1,7 +1,8 @@
-// monitoring_cell_pipeline_test (#716 A6a review rounds 1-2, bridge ABI 41)
+// monitoring_cell_pipeline_test (#716 A6a review rounds 1-3, bridge ABI 41)
 //
 // Live cell images through the real ProcessingService realtime loop (no fake
-// ring), for the findings of review rounds 1 and 2:
+// ring), with the live cell store wired as AppBackend wires it (the one
+// capture authority), for the findings of review rounds 1 to 3:
 //   1. geometry: with an ROI whose origin is not (0, 0), every strip cell's
 //      crop holds its own object's pixels, in both realtime modes. Inline rows
 //      are measured on the ROI image; async-batch rows are measured on the full
@@ -9,16 +10,23 @@
 //      object carries a unique grey level (its marker); the test checks
 //      pixels, not sizes: all of the object's marker pixels are in the crop,
 //      none of the other object's, and the box centre is the marker.
-//   2. capture identity, with the capture listener wired as AppBackend wires
-//      it: capture A, then a realtime restart on a replacement FrameStore (as
-//      a camera mode switch does) and capture B with the same frame indices
-//      and object ids, then a restart on B's store and a resize of it (indices
-//      renumbered, capture C, the append path's backstop). Pins belong to the
-//      capture that made them: at the restart, before any frame of B and
-//      before any refresh, A's strip image and A's pinned image (and mask) are
-//      refused with CaptureMismatch and A's copies are gone; a pin of B's
-//      identity gets B's pixels; after the resize B's pinned image is refused
-//      before the store applied the change, and the strip is C's only.
+//   2. capture identity: capture A, then a realtime restart on a replacement
+//      FrameStore (as a camera mode switch does) and capture B with the same
+//      frame indices and object ids, then a restart on B's store and a resize
+//      of it (indices renumbered). Pins belong to the capture that made them:
+//      at the restart, before any frame of B and before any refresh, A's
+//      strip image and A's pinned image (and mask) are refused with
+//      CaptureMismatch and A's pin keeps its measurements only; a pin of B's
+//      identity gets B's pixels; after the resize, the renumbered frames are
+//      never cells until the change is made (the facade's resize command
+//      makes it), and then only with C's pixels.
+//   3. tag at entry (review round 3): a frame held between its entry and its
+//      completion (the append hook) while the ROI changes, then released, in
+//      both realtime modes: its rows carry the capture it entered with, it
+//      never enters the strip and its identity is refused.
+//   4. stopping realtime ends the capture while the camera keeps producing
+//      frames: the strip is cleared, the old identities are refused, the pin
+//      keeps its measurements only ("capture E ended").
 
 #include "backend/playback/FrameStore.h"
 #include "backend/processing/ProcessingService.h"
@@ -31,9 +39,12 @@
 #include <opencv2/core.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <memory>
+#include <mutex>
 #include <set>
 #include <string>
 #include <thread>
@@ -125,6 +136,24 @@ std::vector<std::pair<MonitoringCellKey, ProcessingService::MonitoringRowTag>> r
     return out;
 }
 
+// The live cell store wired to a service as AppBackend wires it: the one capture authority.
+struct Wired {
+    ProcessingService& proc;
+    std::unique_ptr<backend::services::MonitoringCellSource> source;
+    std::unique_ptr<MonitoringCellStore> cells;
+    explicit Wired(ProcessingService& p)
+        : proc(p), source(backend::services::makeProcessingCellSource(p)),
+          cells(std::make_unique<MonitoringCellStore>(*source))
+    {
+        proc.setMonitoringCaptureAuthority([c = cells.get()](const char* reason) { return c->advanceCapture(reason); });
+    }
+    ~Wired()
+    {
+        proc.stopRealtime();
+        proc.setMonitoringCaptureAuthority({});
+    }
+};
+
 void startProcessing(ProcessingService& proc, Mode mode, const std::shared_ptr<FrameStore>& store, bool roi)
 {
     proc.setProcessingConfig(lenient());
@@ -144,15 +173,13 @@ void geometry(Mode mode, const char* name)
     auto store = std::make_shared<FrameStore>(256);
     ProcessingService proc;
     proc.start(1);
+    Wired wired(proc);
+    auto& cells = *wired.cells;
     startProcessing(proc, mode, store, true);
     uint64_t ts = 0;
     const bool fed = feed(proc, *store, twoObjects(kMarkerA, kMarkerB), 8, ts);
-    proc.stopRealtime();
-    proc.stop();
     MIB_REQUIRE(fed, std::string("the realtime loop appended valid rows (") + name + ")");
-
-    auto source = backend::services::makeProcessingCellSource(proc);
-    MonitoringCellStore cells(*source);
+    // Realtime keeps running (stopping it ends the capture); no more frames arrive.
     cells.refreshStrip();
     const auto l = cells.listing();
     MIB_REQUIRE(l.strip.size() >= 2, std::string("strip cells: ") + std::to_string(l.strip.size()));
@@ -218,18 +245,16 @@ void captureIdentity()
     constexpr int kA = 90, kB = 200, kC = 150;
     ProcessingService proc;
     proc.start(1);
-    auto source = backend::services::makeProcessingCellSource(proc);
-    MonitoringCellStore cells(*source);
-    proc.setMonitoringCaptureListener(
-        [&cells](uint64_t captureEpoch, const char* reason) { cells.captureChanged(captureEpoch, reason); });
+    Wired wired(proc);
+    auto& cells = *wired.cells;
 
     // Capture A.
     auto storeA = std::make_shared<FrameStore>(256);
     startProcessing(proc, Mode::Inline, storeA, false);
+    const auto eA = proc.monitoringCaptureEpoch();
+    MIB_EXPECT(eA == cells.currentCapture(), "the store published the epoch the loop tags with");
     uint64_t ts = 0;
     MIB_REQUIRE(feed(proc, *storeA, oneObject(kA), 12, ts), "capture A rows");
-    proc.stopRealtime();
-    const auto eA = proc.monitoringCaptureEpoch();
     cells.refreshStrip();
     auto l = cells.listing();
     MIB_REQUIRE(!l.strip.empty() && l.ringCaptureEpoch == eA, "A's strip");
@@ -239,15 +264,15 @@ void captureIdentity()
     const MonitoringCellKey stripA = l.strip.back().key;
     MIB_REQUIRE(pinA.captureEpoch == eA && pinA.objectId == obj && stripA != pinA, "A's identities");
     MIB_REQUIRE(cells.pin(pinA).outcome == Outcome::Pinned, "pin A's oldest strip cell");
-    const auto stripCellsA = cells.listing().strip.size();
     cv::Mat px;
     MIB_REQUIRE(cells.image(stripA, false, px) && cells.image(pinA, false, px), "A's images are served");
 
     // Capture B: a restart on a replacement FrameStore (a camera mode switch), indices restart.
+    proc.stopRealtime(); // ends A
     auto storeB = std::make_shared<FrameStore>(256);
     proc.startRealtime(storeB);
     const auto eB = proc.monitoringCaptureEpoch();
-    MIB_EXPECT(eB > eA, "a new capture epoch");
+    MIB_EXPECT(eB > eA && eB == cells.currentCapture(), "a new capture epoch, published by the store");
     // At once: no frame of B yet, no refresh. A's strip image and A's pinned image are refused.
     px.release();
     auto read = cells.image(stripA, false, px);
@@ -257,11 +282,10 @@ void captureIdentity()
     read = cells.image(pinA, true, px);
     MIB_EXPECT(!read && read.captureMismatch && px.empty(), "A's pinned mask is refused: " + read.message);
     l = cells.listing();
-    MIB_EXPECT(l.strip.empty() && l.pins.empty() && l.stats.stripCells == 0 && l.stats.pins == 0 &&
-                   l.stats.pinBytes == 0 && l.stats.stripBytes == 0,
-               "A's copies were dropped at the restart");
+    MIB_EXPECT(l.strip.empty() && l.stats.stripCells == 0 && l.stats.pinBytes == 0 && l.stats.stripBytes == 0 &&
+                   l.pins.size() == 1 && l.pins[0].key == pinA && !l.pins[0].hasImage,
+               "A's copies were released; A's pin keeps its measurements");
     MIB_EXPECT(l.lastCaptureChange && l.lastCaptureChange->captureEpoch == eB &&
-                   l.lastCaptureChange->pinsDropped == 1 && l.lastCaptureChange->stripDropped == stripCellsA &&
                    l.lastCaptureChange->reason == "realtime processing started",
                "the listing says why");
     MIB_EXPECT(cells.pin(pinA).outcome == Outcome::CaptureMismatch, "A's pin identity is CaptureMismatch");
@@ -270,7 +294,6 @@ void captureIdentity()
         push(*storeB, oneObject(kB), ++ts);
         std::this_thread::sleep_for(std::chrono::milliseconds(3));
     }
-    proc.stopRealtime();
     auto rows = ringRows(proc);
     MIB_REQUIRE(holds(rows, {0, fA, obj, eB}) && holds(rows, {0, fA, obj, eA}),
                 "the ring holds frame " + std::to_string(fA) + " object " + std::to_string(obj) + " of both captures");
@@ -284,7 +307,7 @@ void captureIdentity()
     // A's identity now: refused, even though the ring still holds A's row.
     r = cells.pin({0, fA, obj, eA});
     MIB_EXPECT(r.outcome == Outcome::CaptureMismatch && !r.cell, "A's identity is CaptureMismatch: " + r.message);
-    // The strip moves to B.
+    // The strip is B's.
     cells.refreshStrip();
     l = cells.listing();
     MIB_EXPECT(l.ringCaptureEpoch == eB && !l.strip.empty(), "B's strip");
@@ -294,30 +317,54 @@ void captureIdentity()
     }
     MIB_EXPECT(!cells.image(pinA, false, px), "A's pin stays refused");
 
-    // A restart on B's store is a new capture too: B's pin is dropped.
+    // A restart on B's store is a new capture too: B's pin is ended.
+    proc.stopRealtime();
     proc.startRealtime(storeB);
     const auto eB2 = proc.monitoringCaptureEpoch();
-    MIB_EXPECT(eB2 > eB && cells.listing().pins.empty(), "the restart dropped B's pin");
+    l = cells.listing();
+    bool bEnded = false;
+    for (const auto& p : l.pins) bEnded = bEnded || (p.key.captureEpoch == eB && !p.hasImage);
+    MIB_EXPECT(eB2 > eB && bEnded, "the restart ended B's pin");
     MIB_REQUIRE(feed(proc, *storeB, oneObject(kB), 6, ts), "B rows before the resize");
     cells.refreshStrip();
     l = cells.listing();
     MIB_REQUIRE(!l.strip.empty() && l.strip.back().key.captureEpoch == eB2, "B's strip of the running capture");
     const MonitoringCellKey bKey = l.strip.back().key;
     MIB_REQUIRE(cells.pin(bKey).outcome == Outcome::Pinned, "pin B");
-    // Capture C: B's store renumbers its frames (a resize below what it holds clears it and
-    // restarts the indices at 0) while the realtime loop keeps running. Nothing notifies the
-    // store here (the facade's resize command does; this calls the store directly): the append
-    // path's backstop moves the epoch, and the read paths refuse B's identities at once.
+    // B's store renumbers its frames (a resize below what it holds clears it and restarts the
+    // indices at 0) while the realtime loop keeps running. Nothing tells the store yet (the
+    // facade's resize command does, below): the renumbered frames are of another store
+    // generation than the one the epoch was bound to, so they enter with no capture and are
+    // never cells; every cell still served is one of B's, by B's identity.
     MIB_REQUIRE(storeB->resize(8), "resize");
-    MIB_REQUIRE(feed(proc, *storeB, oneObject(kC), 6, ts), "capture C rows");
-    proc.stopRealtime();
-    proc.stop();
-    const auto eC = proc.monitoringCaptureEpoch();
-    MIB_EXPECT(eC > eB2, "a renumbering store is a new capture epoch, without a realtime restart");
+    const auto appendedBefore = proc.visitMonitoringNewest(0, false, {}).validAppended;
+    MIB_REQUIRE(feed(proc, *storeB, oneObject(kC), 6, ts), "renumbered rows");
+    MIB_EXPECT(proc.monitoringCaptureEpoch() == eB2, "no capture change without the call");
+    size_t renumbered = 0;
+    proc.visitMonitoringNewest(2000, true, [&](const ProcessedFrame& f, const ProcessingService::MonitoringRowTag& t, bool) {
+        if (f.originalImage.empty()) return;
+        if (cv::countNonZero(f.originalImage == kC) > 0) {
+            ++renumbered;
+            MIB_EXPECT(t.captureEpoch == 0, "a renumbered frame enters with no capture (frame " +
+                                                std::to_string(f.index) + ", epoch " + std::to_string(t.captureEpoch) + ")");
+        }
+    });
+    MIB_EXPECT(renumbered > 0 && proc.visitMonitoringNewest(0, false, {}).validAppended > appendedBefore,
+               "the renumbered frames are monitoring rows");
+    cells.refreshStrip();
+    l = cells.listing();
+    for (const auto& c : l.strip)
+        MIB_EXPECT(c.key.captureEpoch == eB2 && cells.image(c.key, false, px) && cv::countNonZero(px == kC) == 0,
+                   "no renumbered frame is a cell");
+    MIB_EXPECT(cells.image(bKey, false, px) && cv::countNonZero(px == kB) == kObjW * kObjH, "B's pin is B's");
+    // Capture C: the facade's resize command makes the change.
+    const auto eC = cells.advanceCapture("the frame buffer was resized (its frames were renumbered)");
+    MIB_EXPECT(eC > eB2 && proc.monitoringCaptureEpoch() == eC, "published");
     read = cells.image(bKey, false, px);
-    MIB_EXPECT(!read && read.captureMismatch, "B's pinned image after the resize is refused: " + read.message);
+    MIB_EXPECT(!read && read.captureMismatch, "B's pinned image after the change is refused: " + read.message);
     r = cells.pin(bKey);
-    MIB_EXPECT(r.outcome == Outcome::CaptureMismatch, "B's identity after the resize: " + r.message);
+    MIB_EXPECT(r.outcome == Outcome::CaptureMismatch, "B's identity after the change: " + r.message);
+    MIB_REQUIRE(feed(proc, *storeB, oneObject(kC), 6, ts), "capture C rows");
     cells.refreshStrip();
     l = cells.listing();
     MIB_EXPECT(l.ringCaptureEpoch == eC && !l.strip.empty(), "C's strip");
@@ -325,8 +372,158 @@ void captureIdentity()
         MIB_EXPECT(c.key.captureEpoch == eC && cells.image(c.key, false, px) &&
                        cv::countNonZero(px == kC) == kObjW * kObjH && cv::countNonZero(px == kB) == 0,
                    "only C's cells, with C's pixels");
-    MIB_EXPECT(l.pins.empty() && cells.listing().stats.pins == 0, "the refresh dropped B's pin");
-    proc.setMonitoringCaptureListener({});
+}
+
+// ---- 3. tag at entry: a frame held between its entry and its completion --------------------
+void heldAcrossAnRoiChange(Mode mode, const char* name)
+{
+    std::printf("a frame held mid-processing while the ROI changes, %s mode\n", name);
+    auto store = std::make_shared<FrameStore>(256);
+    ProcessingService proc;
+    proc.start(1);
+    Wired wired(proc);
+    auto& cells = *wired.cells;
+    startProcessing(proc, mode, store, true); // ROI A: (kRoiX, kRoiY, kRoiW, kRoiH)
+    uint64_t ts = 0;
+    MIB_REQUIRE(feed(proc, *store, twoObjects(kMarkerA, kMarkerB), 4, ts), "rows of ROI A");
+    const auto eA = proc.monitoringCaptureEpoch();
+
+    // Hold the next frame whose rows are about to be appended.
+    std::mutex m;
+    std::condition_variable cv;
+    bool holding = false, release = false;
+    uint64_t held = 0;
+    std::atomic<bool> armed{true};
+    proc.setMonitoringAppendHookForTests([&](uint64_t frameIndex) {
+        if (!armed.exchange(false)) return;
+        std::unique_lock lk(m);
+        held = frameIndex;
+        holding = true;
+        cv.notify_all();
+        cv.wait_for(lk, std::chrono::seconds(20), [&] { return release; });
+    });
+    {
+        std::unique_lock lk(m);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+        while (!holding && std::chrono::steady_clock::now() < deadline) {
+            lk.unlock();
+            push(*store, twoObjects(kMarkerA, kMarkerB), ++ts);
+            std::this_thread::sleep_for(std::chrono::milliseconds(3));
+            lk.lock();
+        }
+        MIB_REQUIRE(holding, std::string(name) + ": a frame is held before its rows are appended");
+    }
+    // The ROI changes while the frame is held: a new capture, at once.
+    proc.setRealtimeRoi({kRoiX + 10, kRoiY, kRoiW - 10, kRoiH});
+    const auto eB = proc.monitoringCaptureEpoch();
+    MIB_REQUIRE(eB > eA && cells.currentCapture() == eB, "the ROI change is a capture change");
+    proc.setMonitoringAppendHookForTests({});
+    {
+        std::scoped_lock lk(m);
+        release = true;
+    }
+    cv.notify_all();
+    // The held frame's rows reach the ring.
+    std::vector<std::pair<MonitoringCellKey, ProcessingService::MonitoringRowTag>> heldRows;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    while (heldRows.empty() && std::chrono::steady_clock::now() < deadline) {
+        for (const auto& r : ringRows(proc))
+            if (r.first.frameIndex == held) heldRows.push_back(r);
+        if (heldRows.empty()) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    MIB_REQUIRE(!heldRows.empty(), std::string(name) + ": the held frame's rows were appended");
+    for (const auto& r : heldRows)
+        MIB_EXPECT(r.first.captureEpoch == eA, std::string(name) + ": the held frame carries the capture it entered with (" +
+                                                   std::to_string(r.first.captureEpoch) + ", entered in " +
+                                                   std::to_string(eA) + ", now " + std::to_string(eB) + ")");
+    // Frames of ROI B become cells; the held frame never does.
+    MonitoringCellStore::Listing l;
+    const auto bDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    while (std::chrono::steady_clock::now() < bDeadline) {
+        push(*store, twoObjects(kMarkerA, kMarkerB), ++ts);
+        std::this_thread::sleep_for(std::chrono::milliseconds(3));
+        cells.refreshStrip();
+        l = cells.listing();
+        if (l.strip.size() >= 2) break;
+    }
+    MIB_EXPECT(l.strip.size() >= 2 && l.ringCaptureEpoch == eB, std::string(name) + ": ROI B's strip");
+    for (const auto& c : l.strip) {
+        MIB_EXPECT(c.key.frameIndex != held, std::string(name) + ": the held frame never enters the strip");
+        MIB_EXPECT(c.key.captureEpoch == eB && c.sourceWidth == kRoiW - 10, std::string(name) + ": cells of ROI B");
+    }
+    for (const auto& r : heldRows) {
+        const MonitoringCellKey asEntered = r.first;
+        MonitoringCellKey asNow = r.first;
+        asNow.captureEpoch = eB;
+        auto p = cells.pin(asEntered);
+        MIB_EXPECT(p.outcome == Outcome::CaptureMismatch, std::string(name) + ": its key is refused: " + p.message);
+        p = cells.pin(asNow);
+        MIB_EXPECT(p.outcome == Outcome::NotFound, std::string(name) + ": it is no frame of ROI B: " + p.message);
+        cv::Mat px;
+        const auto read = cells.image(asEntered, false, px);
+        MIB_EXPECT(!read && read.captureMismatch && px.empty(), std::string(name) + ": no image: " + read.message);
+    }
+}
+
+// ---- 4. stopping realtime ends the capture (the camera keeps producing) --------------------
+void stopEndsTheCapture()
+{
+    std::printf("stopping realtime ends the capture while frames keep arriving\n");
+    auto store = std::make_shared<FrameStore>(256);
+    ProcessingService proc;
+    proc.start(1);
+    Wired wired(proc);
+    auto& cells = *wired.cells;
+    startProcessing(proc, Mode::Inline, store, false);
+    std::atomic<bool> producing{true};
+    std::atomic<uint64_t> ts{0};
+    std::thread camera([&] { // the camera keeps running throughout
+        while (producing) {
+            push(*store, oneObject(170), ++ts);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    });
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    MonitoringCellStore::Listing l;
+    while (std::chrono::steady_clock::now() < deadline) {
+        cells.refreshStrip();
+        l = cells.listing();
+        if (l.strip.size() >= 2) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    MIB_REQUIRE(l.strip.size() >= 2, "strip cells while realtime runs");
+    const auto e = l.ringCaptureEpoch;
+    const auto pinned = l.strip.front().key, stripped = l.strip.back().key;
+    MIB_REQUIRE(cells.pin(pinned).outcome == Outcome::Pinned, "pin");
+    cv::Mat px;
+    MIB_REQUIRE(cells.image(pinned, false, px) && cells.image(stripped, false, px), "served while it runs");
+
+    proc.stopRealtime(); // the camera is still producing
+    MIB_EXPECT(proc.monitoringCaptureEpoch() > e && cells.currentCapture() > e, "the stop is a capture change");
+    for (const auto& k : {pinned, stripped}) {
+        for (const bool mask : {false, true}) {
+            px.release();
+            const auto read = cells.image(k, mask, px);
+            MIB_EXPECT(!read && read.captureMismatch && px.empty() &&
+                           read.message.find("realtime processing stopped") != std::string::npos,
+                       "an old key is refused after the stop: " + read.message);
+        }
+        MIB_EXPECT(cells.pin(k).outcome == Outcome::CaptureMismatch, "and cannot be pinned");
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(50)); // frames keep arriving, unprocessed
+    cells.refreshStrip();
+    l = cells.listing();
+    MIB_EXPECT(l.strip.empty() && l.stats.stripBytes == 0, "the strip is cleared");
+    MIB_REQUIRE(l.pins.size() == 1, "the pin stays");
+    MIB_EXPECT(l.pins[0].key == pinned && !l.pins[0].hasImage && l.stats.pinBytes == 0 &&
+                   l.pins[0].noImageReason.find("capture " + std::to_string(e) +
+                                                " ended (realtime processing stopped)") != std::string::npos,
+               "metadata only, capture ended: " + l.pins[0].noImageReason);
+    MIB_EXPECT(l.lastCaptureChange && l.lastCaptureChange->reason == "realtime processing stopped" &&
+                   l.lastCaptureChange->pinsEnded == 1,
+               "the listing says why");
+    producing = false;
+    camera.join();
 }
 
 } // namespace
@@ -341,6 +538,12 @@ int main()
     geometry(Mode::AsyncBatch, "async batch");
     wd.mark("capture identity");
     captureIdentity();
+    wd.mark("held across an ROI change, inline");
+    heldAcrossAnRoiChange(Mode::Inline, "inline");
+    wd.mark("held across an ROI change, async batch");
+    heldAcrossAnRoiChange(Mode::AsyncBatch, "async batch");
+    wd.mark("stop ends the capture");
+    stopEndsTheCapture();
     std::printf("monitoring_cell_pipeline_test: %s\n", mib::test::exitCode() == 0 ? "PASS" : "FAIL");
     return mib::test::exitCode();
 }

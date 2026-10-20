@@ -8,22 +8,24 @@
 //      run's while it accumulates, 0 again after it stops);
 //   2. the listing JSON (strip, pins, caps, stats) and the image pull agree:
 //      the packet's size is the listed crop's, its pixels are the row's;
-//   3. a realtime start is a new capture: an earlier capture's identity is
-//      CaptureMismatch and its cells leave the strip; Start drops the pins and
-//      the strip; a pin of the previous run is refused; a pre-run row is not
-//      the run's;
+//   3. a camera session opening and a realtime start are new captures: an
+//      earlier capture's identity is CaptureMismatch, its cells leave the
+//      strip and its pins keep their measurements only; Start is a capture
+//      change too and drops the pins and the strip; a pin of the previous run
+//      is refused; a pre-run row is not the run's;
 //   4. a row the ring evicted after a snapshot served it is pinned with its
 //      measurements and the reason, and no image is served for it;
 //   5. monitoring_clear clears the strip and keeps the pins; unpin and clear;
-//   6. capture changes take effect at the moment they happen (review round 2),
-//      each with a strip cell and a pin of the old capture: another processing
-//      ROI, the camera stopping, a frame buffer resize, and a MindVision switch
-//      to Overview with realtime stopped (a new frame buffer, no frame
-//      processed after it). At
-//      once, with no frame and no refresh in between, the old identities are
-//      refused for pin (CaptureMismatch) and image (with the reason), unpin
-//      says the pin was dropped, and the listing holds nothing of the old
-//      capture and says why.
+//   6. capture changes take effect at the moment they happen (review rounds
+//      2-3), each with a strip cell and a pin of the old capture: another
+//      processing ROI, realtime stopping while the camera keeps running, the
+//      camera stopping, a frame buffer resize, and a MindVision switch to
+//      Overview with realtime stopped (a new frame buffer, no frame processed
+//      after it). At once, with no frame and no refresh in between, the old
+//      identities are refused for pin (CaptureMismatch) and image (with the
+//      reason), the strip is empty, the pin is listed with its measurements
+//      only ("capture E ended (reason)"), the listing says why, and unpin
+//      removes the ended pin.
 
 #include "backend/app/AppBackend.h"
 #include "backend/app/BackendFacade.h"
@@ -191,9 +193,10 @@ std::uint64_t holdTwo(bridge::BackendFacade& facade, backend::services::Processi
     return epoch;
 }
 
-// Right after a capture change: nothing of the old capture is served, listed or pinned.
-void expectDropped(bridge::BackendFacade& facade, backend::services::ProcessingService& proc, std::uint64_t first,
-                   std::uint64_t oldEpoch, const std::string& reason, const std::string& what)
+// Right after a capture change: nothing of the old capture is served or pinned, the strip is
+// empty, and the pin is listed with its measurements only.
+void expectEnded(bridge::BackendFacade& facade, backend::services::ProcessingService& proc, std::uint64_t first,
+                 std::uint64_t oldEpoch, const std::string& reason, const std::string& what)
 {
     const auto now = proc.monitoringCaptureEpoch();
     MIB_EXPECT(now > oldEpoch, what + ": the capture moved on at once");
@@ -211,19 +214,28 @@ void expectDropped(bridge::BackendFacade& facade, backend::services::ProcessingS
         MIB_EXPECT(outcome(r) == 6 && r["ok"] == false && contains(r["message"].get<std::string>(), reason),
                    what + ": the old identity is CaptureMismatch: " + r.dump());
     }
-    const auto u = facade.unpinMonitoringCell(0, oldEpoch, first + 1, 0);
-    MIB_EXPECT(!u.ok && contains(u.message, "dropped"), what + ": unpin says it was dropped: " + u.message);
     std::string text;
     MIB_REQUIRE(facade.fetchMonitoringCellsJson(text), "listing");
-    const auto l = json::parse(text);
-    MIB_EXPECT(l["strip"].empty() && l["pins"].empty() && l["stats"]["pins"] == 0 && l["stats"]["pin_bytes"] == "0" &&
+    auto l = json::parse(text);
+    MIB_EXPECT(l["strip"].empty() && l["stats"]["strip_cells"] == 0 && l["stats"]["pin_bytes"] == "0" &&
                    l["ring_capture_epoch"] == std::to_string(now),
-               what + ": the listing holds nothing of the old capture: " + l.dump());
+               what + ": the strip holds nothing of the old capture: " + l.dump());
+    MIB_EXPECT(l["pins"].size() == 1 && l["pins"][0]["capture_epoch"] == std::to_string(oldEpoch) &&
+                   l["pins"][0]["image"].is_null() &&
+                   contains(l["pins"][0]["no_image_reason"].get<std::string>(),
+                            "capture " + std::to_string(oldEpoch) + " ended (") &&
+                   contains(l["pins"][0]["no_image_reason"].get<std::string>(), reason),
+               what + ": the pin keeps its measurements only: " + l.dump());
     const auto& change = l["last_capture_change"];
     MIB_EXPECT(change.is_object() && change["capture_epoch"] == std::to_string(now) &&
-                   contains(change["reason"].get<std::string>(), reason) && change["pins_dropped"] == 1 &&
-                   change["strip_dropped"].get<int>() >= 2,
+                   contains(change["reason"].get<std::string>(), reason) && change["pins_ended"] == 1 &&
+                   change["pins_dropped"] == 0 && change["strip_dropped"].get<int>() >= 2,
                what + ": the listing says why: " + l.dump());
+    const auto u = facade.unpinMonitoringCell(0, oldEpoch, first + 1, 0);
+    MIB_EXPECT(u.ok && u.message == "unpinned", what + ": unpin removes the ended pin: " + u.message);
+    MIB_REQUIRE(facade.fetchMonitoringCellsJson(text), "listing");
+    l = json::parse(text);
+    MIB_EXPECT(l["pins"].empty(), what + ": unpinned: " + l.dump());
 }
 
 } // namespace
@@ -353,8 +365,14 @@ int main()
                        std::chrono::seconds(5)),
                    "a camera session opening is a capture change");
         l = cells(facade);
-        MIB_EXPECT(proc.monitoringCaptureEpoch() > e1 && l["pins"].empty() && l["last_capture_change"]["pins_dropped"] == 3,
-                   "the opening dropped the earlier capture's pins: " + l.dump());
+        bool allEnded = l["pins"].size() == 3;
+        for (const auto& p : l["pins"])
+            allEnded = allEnded && p["image"].is_null() && p["capture_epoch"] == std::to_string(e1) &&
+                       contains(p["no_image_reason"].get<std::string>(),
+                                "ended (the camera started a new capture session)");
+        MIB_EXPECT(proc.monitoringCaptureEpoch() > e1 && allEnded && l["last_capture_change"]["pins_ended"] == 3 &&
+                       l["strip"].empty(),
+                   "the opening ended the earlier capture's pins (measurements only): " + l.dump());
         // The realtime loop starts on the capture: a new capture epoch. Rows from before it are an
         // earlier capture (their frame indices could recur), so they can no longer be pinned.
         proc.setRealtimeEnabled(true);
@@ -377,19 +395,24 @@ int main()
         MIB_EXPECT(l["pins"].empty() && l["scope_start_generation"] == std::to_string(run1),
                    "Start dropped the pins: " + l.dump());
         MIB_EXPECT(l["strip"].empty(), "pre-run cells are not the run's strip: " + l.dump());
-        MIB_EXPECT(proc.monitoringCaptureEpoch() == e2, "the run kept the running capture");
+        const auto e3 = proc.monitoringCaptureEpoch();
+        MIB_EXPECT(e3 > e2 && l["last_capture_change"]["reason"] == "a run started" &&
+                       l["last_capture_change"]["pins_dropped"] == 3 && l["last_capture_change"]["pins_ended"] == 0,
+                   "a run start is a capture change that drops the (ended) pins: " + l.dump());
         inject(proc, kBase + 10, true, 50);
         MIB_EXPECT(snapshotGeneration(facade, kBase + 10) == std::to_string(run1), "a run row carries the run");
         MIB_EXPECT(snapshotGeneration(facade, kBase + 1) == std::string("0"), "a pre-run row keeps 0");
         l = cells(facade);
         MIB_EXPECT(l["strip"].size() == 1 && l["strip"][0]["start_generation"] == std::to_string(run1), l.dump());
-        r = pin(facade, run1, e2, kBase + 10);
+        r = pin(facade, run1, e3, kBase + 10);
         MIB_EXPECT(outcome(r) == 0, "the run's row pins: " + r.dump());
         r = pin(facade, run1, e2, kBase + 5);
-        MIB_EXPECT(outcome(r) == 3 && r["ok"] == false &&
-                       r["message"].get<std::string>().find("outside a run") != std::string::npos,
-                   "a pre-run row is not the run's: " + r.dump());
-        r = pin(facade, run1 + 1, e2, kBase + 10);
+        MIB_EXPECT(outcome(r) == 6 && r["ok"] == false &&
+                       r["message"].get<std::string>().find("a run started") != std::string::npos,
+                   "a pre-run row is of the capture before the run: " + r.dump());
+        r = pin(facade, run1, e3, kBase + 5);
+        MIB_EXPECT(outcome(r) == 4, "and is no row of the run's capture: " + r.dump());
+        r = pin(facade, run1 + 1, e3, kBase + 10);
         MIB_EXPECT(outcome(r) == 3, "a future run is refused: " + r.dump());
 
         bridge::ExperimentCommand stop;
@@ -405,7 +428,8 @@ int main()
         l = cells(facade);
         MIB_EXPECT(l["pins"].size() == 1 && l["pins"][0]["frame_index"] == std::to_string(kBase + 10),
                    "pins outlive the run's end: " + l.dump());
-        MIB_EXPECT(facade.fetchMonitoringCellImage(run1, e2, kBase + 10, 0, false, frame) && frame.data[0] == 50,
+        MIB_EXPECT(proc.monitoringCaptureEpoch() == e3, "a run's end is no capture change (realtime keeps running)");
+        MIB_EXPECT(facade.fetchMonitoringCellImage(run1, e3, kBase + 10, 0, false, frame) && frame.data[0] == 50,
                    "the run's pin still serves its image");
 
         wd.mark("run 2");
@@ -414,8 +438,13 @@ int main()
         const auto run2 = backendApp.experiment().status().startGeneration;
         MIB_EXPECT(run2 > run1, "a newer generation");
         l = cells(facade);
-        MIB_EXPECT(l["pins"].empty(), "the next Start drops run 1's pins");
-        r = pin(facade, run1, e2, kBase + 10);
+        MIB_EXPECT(l["pins"].empty() && l["last_capture_change"]["pins_dropped"] == 1,
+                   "the next Start drops run 1's pins: " + l.dump());
+        const auto e4 = proc.monitoringCaptureEpoch();
+        MIB_EXPECT(e4 > e3, "run 2's capture");
+        r = pin(facade, run1, e3, kBase + 10);
+        MIB_EXPECT(outcome(r) == 6, "run 1's capture ended: " + r.dump());
+        r = pin(facade, run1, e4, kBase + 10);
         MIB_EXPECT(outcome(r) == 3 && r["message"].get<std::string>().find("not the latest run") != std::string::npos,
                    "a stale client cannot pin into the new run: " + r.dump());
 
@@ -424,31 +453,31 @@ int main()
         inject(proc, kBase + 20, true, 70);
         MIB_REQUIRE(snapshotGeneration(facade, kBase + 20) == std::to_string(run2), "served by a snapshot");
         for (std::uint64_t i = 0; i < 1001; ++i) inject(proc, kBase + 100000 + i, true, 1); // the ring turns over
-        r = pin(facade, run2, e2, kBase + 20);
+        r = pin(facade, run2, e4, kBase + 20);
         MIB_EXPECT(outcome(r) == 1 && r["ok"] == true && r["cell"]["image"].is_null(), "metadata only: " + r.dump());
         MIB_EXPECT(r["cell"]["area"] == 420.0 && r["cell"]["frame_index"] == std::to_string(kBase + 20),
                    "the measurements the snapshot reported");
         MIB_EXPECT(r["message"] == r["cell"]["no_image_reason"] &&
                        r["message"].get<std::string>().find("left the monitoring buffer") != std::string::npos,
                    "a plain reason: " + r.dump());
-        MIB_EXPECT(!facade.fetchMonitoringCellImage(run2, e2, kBase + 20, 0, false, frame), "no image is invented");
-        r = pin(facade, run2, e2, kBase + 77);
+        MIB_EXPECT(!facade.fetchMonitoringCellImage(run2, e4, kBase + 20, 0, false, frame), "no image is invented");
+        r = pin(facade, run2, e4, kBase + 77);
         MIB_EXPECT(outcome(r) == 4 && r["cell"].is_null(), "unknown row: NotFound " + r.dump());
 
         // ---- 5. monitoring_clear, unpin, clear --------------------------------------------------
         wd.mark("clear");
-        MIB_REQUIRE(pin(facade, run2, e2, kBase + 100000 + 1000)["ok"] == true, "pin a held row");
+        MIB_REQUIRE(pin(facade, run2, e4, kBase + 100000 + 1000)["ok"] == true, "pin a held row");
         MIB_EXPECT(!cells(facade)["strip"].empty(), "a strip before the clear");
         bridge::MonitoringCommand clear;
         clear.action = bridge::MonitoringCommandAction::Clear;
         MIB_REQUIRE(facade.dispatch(clear).ok, "monitoring_clear");
         l = cells(facade);
         MIB_EXPECT(l["strip"].empty() && l["pins"].size() == 2, "the strip clears, the pins stay: " + l.dump());
-        auto u = facade.unpinMonitoringCell(run2, e2 + 1, kBase + 20, 0);
+        auto u = facade.unpinMonitoringCell(run2, e4 + 1, kBase + 20, 0);
         MIB_EXPECT(!u.ok, "unpin names the capture too: " + u.message);
-        u = facade.unpinMonitoringCell(run2, e2, kBase + 20, 0);
+        u = facade.unpinMonitoringCell(run2, e4, kBase + 20, 0);
         MIB_EXPECT(u.ok && u.message == "unpinned", u.message);
-        u = facade.unpinMonitoringCell(run2, e2, kBase + 20, 0);
+        u = facade.unpinMonitoringCell(run2, e4, kBase + 20, 0);
         MIB_EXPECT(!u.ok && u.message.find("not pinned") != std::string::npos, u.message);
         u = facade.clearMonitoringCellPins();
         MIB_EXPECT(u.ok && u.message == "cleared 1 pin(s)", u.message);
@@ -466,27 +495,34 @@ int main()
         MIB_REQUIRE(facade.dispatch(clear).ok, "monitoring_clear");
         auto before = holdTwo(facade, proc, kBase + 300);
         proc.setRealtimeRoi({0, 0, 256, 96}); // realtime still runs on the mock camera
-        expectDropped(facade, proc, kBase + 300, before, "the processing ROI changed", "ROI change");
+        expectEnded(facade, proc, kBase + 300, before, "the processing ROI changed", "ROI change");
         before = proc.monitoringCaptureEpoch();
         proc.setRealtimeRoi({0, 0, 256, 96});
         MIB_EXPECT(proc.monitoringCaptureEpoch() == before, "the same ROI again is no change");
+
+        wd.mark("realtime stop");
+        MIB_REQUIRE(backendApp.capture().isRunning() && proc.isRealtimeRunning(), "the camera and realtime run");
+        before = holdTwo(facade, proc, kBase + 305);
+        proc.stopRealtime(); // ends the capture; the camera keeps running
+        MIB_EXPECT(backendApp.capture().isRunning() && !proc.isRealtimeRunning(), "only realtime stopped");
+        expectEnded(facade, proc, kBase + 305, before, "realtime processing stopped", "realtime stop");
 
         wd.mark("camera stop");
         before = holdTwo(facade, proc, kBase + 310);
         bridge::CameraCommand stopCapture;
         stopCapture.action = bridge::CameraCommandAction::StopCapture;
         MIB_REQUIRE(facade.dispatch(stopCapture).ok, "capture stop");
-        expectDropped(facade, proc, kBase + 310, before, "the camera stopped", "camera stop");
+        expectEnded(facade, proc, kBase + 310, before, "the camera stopped", "camera stop");
 
         wd.mark("buffer resize");
         before = holdTwo(facade, proc, kBase + 315);
         const auto resized =
             json::parse(facade.savePreviewBufferJson(R"({"action":"resize","capacity":"64","confirm_clear":true})"));
         MIB_REQUIRE(resized["ok"] == true, "resize: " + resized.dump());
-        expectDropped(facade, proc, kBase + 315, before, "the frame buffer was resized", "buffer resize");
+        expectEnded(facade, proc, kBase + 315, before, "the frame buffer was resized", "buffer resize");
 
         wd.mark("overview switch");
-        proc.stopRealtime(); // realtime stopped: no frame is processed after the switch
+        MIB_EXPECT(!proc.isRealtimeRunning(), "realtime stopped: no frame is processed after the switch");
         {
             // A MindVision profile, selected as the Overview test does (SDK-free builds included).
             const auto profile = td.path() / "mindvision.json";
@@ -502,7 +538,7 @@ int main()
             MIB_EXPECT(backendApp.getFrameStore() != storeBefore && !backendApp.capture().isRunning() &&
                            !proc.isRealtimeRunning(),
                        "a new frame buffer, nothing running");
-            expectDropped(facade, proc, kBase + 320, before, "switched to Overview", "Overview switch");
+            expectEnded(facade, proc, kBase + 320, before, "switched to Overview", "Overview switch");
         }
         facade.shutdown();
     }
