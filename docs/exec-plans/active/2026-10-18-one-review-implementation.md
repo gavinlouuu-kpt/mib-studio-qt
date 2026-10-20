@@ -137,6 +137,8 @@ D7, D8 and D9 were accepted as recommended on 2026-10-18; D7 is amended below. O
 2026-10-19 Gavin delegated D1, D3, D4 and D6: D3, D4 and D6 are accepted as recommended,
 and D1 is ruled (a), against the recommendation, because HDF5 is built without thread
 safety (#722). No slice waits on a decision; S13 still needs S10–S12.
+On 2026-10-20 the coordinator added D10, an accepted difference that S6 found
+and that lasts until S13.
 
 - **D1 Experiments while a review file is open** (F7, gates S5). (a) Keep
   today's behaviour: the facade tells the readiness gate a review source is
@@ -191,6 +193,15 @@ safety (#722). No slice waits on a decision; S13 still needs S10–S12.
   Recommended: the Qt tab calls the same Qt-free kernels and is otherwise
   untouched (ADR 0011 fixes-only); recorded here and in ADR 0014's
   amendment at close-out.
+- **D10 Histogram y-axis headroom** (found by S6, #755). **Accepted until S13,
+  coordinator ruling 2026-10-20.** MIB Studio's inline Review tab ends the
+  histogram y axis at the largest bin (`desktop/src/components/ReviewCharts.tsx`
+  `maxBin`). Qt applies `applyNiceNumbers()` over `ceil(1.1 × max)`, and YOFO
+  uses `ceil(1.1 × max)`. This is display headroom only; the bins and counts
+  are identical. `tools/review_parity/compare.py` accepts it only when the
+  bins are identical and each top is its shell's rule. S13 removes it when
+  MIB Studio mounts the shared module. (The ruling called it D6, but D6 is
+  "One regenerate semantics" above, so it is D10 here.)
 
 ## Slices
 
@@ -572,18 +583,37 @@ S12 takes 3 or higher. Additive; the bridge ABI is untouched.
   the example is a stub that exits 2, so the review-only `cargo test` lanes
   still build every example; Bridge CI's `cargo test` builds the real one. The
   YOFO half also dumps `fetch_review_frame` overlays (`yofo/overlays/`, PGM /
-  PPM) for the same frames. `compare.py` keeps the Qt ↔ YOFO table as signed
-  off and adds MIB Studio ↔ Qt and MIB Studio ↔ YOFO tables. D2–D5 are ACCEPTED
-  only on these conditions:
-  - **D2:** the ROI-on renders differ only on pixels one of the two ROI
-    rectangles drew, each in its own style: yellow (255, 210, 0) in a 1 px
-    band, or red in the 5 px band OpenCV rasterises for thickness 3 (the
-    first harness run used 3 px and flagged the 32 × 24 fixture's rounded
-    corners; measured with `cv2.rectangle`, fixed before the final run). The
-    ROI-off renders must be pixel-identical.
-  - **D3 / D4:** the as-opened charts used the live value.
+  PPM) for the same frames, and its summary carries the recorded ROI. A third
+  studio pass, the *D4 probe* (`charts_d4.json`), sets the live ring range to
+  the recorded one ± 5, so every input exercises D4. `compare.py` keeps the Qt
+  ↔ YOFO table as signed off and adds MIB Studio ↔ Qt and MIB Studio ↔ YOFO
+  tables. Each acceptance is checked against its effect, not only the declared
+  input (Codex review of #755). D2–D5 and D10 are ACCEPTED only under these
+  conditions:
+  - **D2:** both halves report the same recorded ROI, and each draws its own
+    style at that rectangle. MIB Studio draws yellow (255, 210, 0) on the
+    rectangle's 1 px path, `Rect & image`. YOFO draws red within ±2 px of the
+    path of `drawRoiOverlay`'s clamped rectangle; OpenCV rasterises thickness 3
+    as that 5 px band (measured with `cv2.rectangle`). Every path pixel must
+    carry the colour. A half that draws nothing, or draws elsewhere, is a
+    DIFF. The halves may differ only on those pixels, and no difference is a
+    PASS. The ROI-off renders must be pixel-identical.
+  - **D3:** the as-opened charts declare the live factor, and their area
+    extents equal the compared pass's × (live / compared)², with the
+    deformability extents and the count unchanged.
+  - **D4:** the chart declares the live range, and its bins equal YOFO's ring
+    ratios binned over that range. With equal ranges the as-opened row reads
+    "D4 not exercised" and still checks the bins.
   - **D5:** Export All holds exactly `scatter_plot.tiff` and `histogram.tiff`
     beyond the other half's byte-identical files.
+  - **D10:** the bins are identical, and each y top is its shell's rule: MIB
+    Studio max(1, max bin), YOFO max(1, ceil(1.1 × max)), Qt
+    `applyNiceNumbers()` over that (Qt's `looseNiceNumbers`, 5 ticks). The Qt
+    rule reproduces the observed 80 / 300 / 10.
+
+  The scatter density is compared cell by cell with YOFO's points binned on
+  MIB Studio's grid; a point within 1e-9 of a cell edge may fall on either
+  side. Against Qt only the total is compared.
 
   The chart-range tolerance is `CHART_RANGE_REL` = 1e-12 of the range's
   largest absolute end (about 4500 ulp; the padding differs by a few ulp at
@@ -594,39 +624,61 @@ S12 takes 3 or higher. Additive; the bridge ABI is untouched.
   - (2) on `population_3000`, YOFO's double `paddedExtent` and the shared long
     double kernel differ by 1 ulp in the x and y minima. This is the S6 risk on
     Linux itself, and the tolerance absorbs it.
-  - (3) a difference outside D2–D5 (below).
+  - (3) a difference outside D2–D5, the histogram y axis. The coordinator
+    ruled it D10 (above).
   - (4) the Qt ↔ YOFO accounting row passes now: Qt's status line carries the
     accounting suffix, so the 2026-10-04 acceptance no longer applies.
-  - (5) D4 is not exercised: every input records 15–25, the live default.
+  - (5) D4 is not exercised as opened: every input records 15–25, the live
+    default. Hence the D4 probe.
+  - (6) the Windows lane's default cp1252 encoding: `compare.py` reads and
+    writes UTF-8.
 - **Proof (#755):** the harness on the four sign-off inputs: the
   `z-adjustment-50v` recording, `review_e2e_512x96_run.h5`,
-  `synthetic_fixture.h5` and `population_3000.h5`. Outputs and `run.log` are
-  in `/mnt/hdd/developer-data/mib-studio-qt/review-parity/out-2026-10-20-s6/`;
-  the 2026-10-04 `out/` is untouched.
+  `synthetic_fixture.h5` and `population_3000.h5`. `run.sh` exits 0. Outputs
+  and `run.log` are in
+  `/mnt/hdd/developer-data/mib-studio-qt/review-parity/out-2026-10-20-s6-r2/`.
+  The first run, with the y-axis DIFF and the classifier before review, is in
+  `out-2026-10-20-s6/`; the 2026-10-04 `out/` is untouched.
   - **Identical to Qt and YOFO:** metrics.csv; Export All apart from the chart
     TIFFs (30878 / 587 / 45 / 3301 files); scatter point count and density
     total; scatter axis extents; histogram bins; the compared histogram range
     and px→µm.
-  - **Identical to YOFO:** the 30 ROI-off overlays per experiment file.
+  - **Identical to YOFO:** the density cells (314 / 8 / 1735) and the 30
+    ROI-off overlays per experiment file.
   - **ACCEPTED:**
-    - D2: 30 of 30 ROI-on renders per experiment file, outline pixels only.
-    - D3: as-opened px→µm, 0.4886 against 0.25, on the two fixtures.
+    - D2: 30 of 30 ROI-on renders per experiment file, each style at the
+      recorded ROI: [0, 0, 512, 96], [4, 2, 20, 16] and [0, 0, 64, 48].
+    - D3: as-opened px→µm, 0.4886 against 0.25, on the two fixtures, with
+      the area extents × 3.81968.
+    - D4: the probe binned over [10, 30] on the three experiment files.
     - D5: the two chart TIFFs on the three experiment files.
-  - **Finding, DIFF, not accepted:** the histogram y axis. MIB Studio's inline
-    tab tops it at the largest bin (`components/ReviewCharts.tsx` `maxBin`),
-    Qt at `applyNiceNumbers()` and YOFO at `ceil(1.1 × max)`. On the 512x96
-    run that is 64 / 80 / 71, on population 248 / 300 / 273, on the synthetic
-    fixture 8 / 10 / 9. So `run.sh` exits 1 on the experiment files until the
-    coordinator rules. The inline component goes in S14, and the module that
-    S13 mounts uses YOFO's rule.
+    - D10: the histogram y axis. MIB Studio / Qt / YOFO tops are 64 / 80 /
+      71 on the 512x96 run, 248 / 300 / 273 on population and 8 / 10 / 9 on
+      the synthetic fixture, with identical bins.
+  - **Not exercised:** D4 as opened (every file records 15–25).
   - **Unit test:** `scripts.review_parity_compare`
-    (`tests/tools/test_review_parity_compare.py`) covers the PNG / PGM / PPM
-    decoders (every PNG filter type), the pinned tolerance (a few ulp pass,
-    1e-10 relative fails), the D2–D5 conditions both ways, an unaccepted bin
-    difference failing `main` and a dump without the studio half.
-  - **Mutations that fail the unit test:** no D2 style check; D3 or D4
-    accepted without the live check; D5 for any non-frame TIFF; a 1e-9
-    tolerance.
+    (`tests/tools/test_review_parity_compare.py`, 12 cases) covers:
+    - the PNG / PGM / PPM decoders (every PNG filter type);
+    - the pinned tolerance (a few ulp pass, 1e-10 relative fails);
+    - each acceptance both ways, including the refusals the review asked for:
+      a missing ROI, an ROI at an offset, a declared but unapplied live factor
+      or range (as opened and in the probe), every point moved into cell
+      (0, 0), and bins that differ (D10);
+    - the ROI geometry;
+    - an unaccepted bin difference failing `main`;
+    - a dump without the studio half.
+  - **Mutations that fail the unit test:**
+    - D2: no path check, no recorded-rectangle check, or an empty difference
+      taken as D2;
+    - D3 without the applied check;
+    - D4 without the binned check, or the not-exercised row without it;
+    - density by its total;
+    - D10 without the bins check or without the other shell's rule;
+    - a 1e-9 tolerance;
+    - D5 for any non-frame TIFF.
+
+    Tick count 6 instead of 5 in the Qt rule is an equivalent mutant: the nice
+    step of r / 4 equals that of r / 5 for every nice range r.
   - **Decoders:** cross-checked against Pillow on 120 renders.
 
 ### S7 — Facade jobs on ReviewJobs lanes (in review, #742)
@@ -1003,7 +1055,7 @@ bridge contract):
 - [x] 2026-10-19 — S3 export engine (`review.export_engine`, #724); `review::writeMetricsCsv` deleted (F14).
 - [x] 2026-10-19 — S4 charts JSON and saved-overlay builders (`review.charts_json`, #726).
 - [x] 2026-10-19 — S5 the facade owns the ReviewSession (`backend.facade_review_session`; D1 (a) via `AppBackend::setReviewSourceOpen`, gate text unchanged; #733).
-- [x] 2026-10-20 — S6 parity harness MIB Studio half (`review_parity_studio.rs`, three-table `compare.py`, D2–D5 accepted until S13; the histogram y axis is an open finding; #755).
+- [x] 2026-10-20 — S6 parity harness MIB Studio half (`review_parity_studio.rs`, three-table `compare.py`, D2–D5 and D10 accepted until S13, each checked by its effect; `run.sh` exits 0; #755).
 - [x] 2026-10-19 — S7 facade jobs on ReviewJobs lanes (D7 per-host policy: `forReviewBridge` one job at a time until #722, `forFacade` both lanes; `backend.facade_review_jobs` with the pre-S7 oracle, `review.jobs_lanes`; #742)
 - [x] 2026-10-19 — S8 YOFO regenerate on the engine (D6; `review.jobs`, `review.reanalysis`, no clobber; the position-pairing fix; #735)
 - [x] 2026-10-19 — S9 transport-neutral review module (`reviewIpc` golden unchanged; import guard; `Transport.upload`; #731).

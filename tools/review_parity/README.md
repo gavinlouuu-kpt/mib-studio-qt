@@ -61,44 +61,57 @@ What is compared, and what is not:
 
 ## The MIB Studio half (#512 S6)
 
-The studio half runs each file twice through the facade:
+The studio half charts each file three times through the facade:
 
 - **As opened** (`studio/charts_app.json`, `summary.json` `app`): the live
   px→µm and ring-ratio range of a freshly initialized backend (0.4886, 15–25),
   which is what MIB Studio's charts and exports use today.
+- **D4 probe** (`studio/charts_d4.json`, `summary.json` `d4_probe`): the live
+  ring-ratio range set to the recorded one ± 5, so that every input exercises
+  D4. The sign-off inputs all record 15–25, the live default.
 - **Compared outputs** (`studio/charts.json`, `metrics.csv`, `all/`,
   `overlays/`; `summary.json` `compared`): the live factor and range are first
-  set to the file's recorded ones (read through the review bridge, the reader
-  the Qt tab and YOFO use; a file without them keeps the live values), the way
-  the Qt dump sets its live config. The outputs then share the other halves'
-  inputs, so any difference is in the implementation, not in the factor or
-  range policy.
+  set to the file's recorded ones. Those are read through the review bridge,
+  the reader the Qt tab and YOFO use; a file without them keeps the live
+  values. This is the way the Qt dump sets its live config. The outputs then
+  share the other halves' inputs, so any difference is in the implementation,
+  not in the factor or range policy.
 
-Accepted until #512 S13 (decisions D2–D5 of the plan); anything else that
-differs is a DIFF:
+The reference points for the D3, D4 and density checks are YOFO's
+`yofo/scatter.json` (area, deformability, ring ratio per valid row); the
+Qt ↔ YOFO table holds them equal to Qt's.
+
+These differences are accepted until #512 S13 (plan decisions D2–D5 and D10).
+Each one is checked by its effect, not only by the input it declares; anything
+else that differs is a DIFF:
 
 | Decision | Check | Accepted when |
 |---|---|---|
-| D2 One ROI style | overlays, ROI on (studio ↔ YOFO) | the renders differ only on pixels one of the two ROI rectangles drew, each in its own style and as a rectangle outline: MIB Studio yellow (255, 210, 0), a 1 px band; YOFO red, `cv::rectangle` thickness 3, which OpenCV (LINE_8) rasterises as a 5 px band with rounded corners. The ROI-off renders must be pixel-identical. |
-| D3 Factor policy | px→µm as opened | the as-opened charts used the live factor and it differs from the recorded one. The compared outputs must use the recorded factor. |
-| D4 Histogram range | histogram range as opened | the as-opened charts binned over the live range and it differs from the recorded one. |
+| D2 One ROI style | overlays, ROI on (studio ↔ YOFO) | Both halves report the same recorded ROI, and each draws its own style at that rectangle. MIB Studio: yellow (255, 210, 0) on the rectangle's 1 px path, `Rect(roi) & image`. YOFO: red within ±2 px of the path of `drawRoiOverlay`'s clamped rectangle; `cv::rectangle` thickness 3 is a 5 px band in OpenCV's LINE_8 raster. Every path pixel must carry the colour. A half that draws nothing, or draws elsewhere, is a DIFF. The halves may differ only on those pixels, and no difference at all is a PASS. The ROI-off renders must be pixel-identical. |
+| D3 Factor policy | px→µm as opened | The as-opened charts declare the live factor, it differs from the recorded one, and their area extents equal the compared pass's × (live / compared)², with the deformability extents and the point count unchanged. The compared outputs must use the recorded factor. |
+| D4 Histogram range | histogram range as opened; histogram range, live ≠ recorded (D4 probe) | The chart declares the live range, it differs from the other half's, and its bins are YOFO's ring ratios binned over it (0.5 wide, clamped into the edge bins). With equal ranges the row reads "D4 not exercised" and still checks the bins. |
 | D5 Exported chart files | Export All chart files | MIB Studio's Export All holds exactly `scatter_plot.tiff` and `histogram.tiff` (the backend-rendered charts) and the other half none; every other file must be byte-identical. |
+| D10 Histogram y-axis headroom (coordinator ruling 2026-10-20) | histogram y range | The bins are identical, and each y top is its shell's rule: MIB Studio `max(1, max bin)` (`desktop/src/components/ReviewCharts.tsx`, `maxBin`), YOFO `max(1, ceil(1.1 × max))`, Qt `applyNiceNumbers()` over that (`HdfReviewTab.cpp`; Qt's `looseNiceNumbers` with 5 ticks). |
+
+**Density.** For studio ↔ YOFO, the 128 × 128 cells are compared cell by
+cell with YOFO's points binned on MIB Studio's grid (its extents). A point
+within 1e-9 of an interior cell edge may fall on either side, because the
+facade bins in long double. Studio ↔ Qt compares the total.
 
 **Chart-range tolerance.** `makeReviewChartData` pads the scatter extents in
-`long double` (80-bit on Linux GCC, 64-bit on MSVC and arm64 macOS) and YOFO's
-`chartMath.paddedExtent` in `double`, so the same data can give neighbouring
-doubles (on `population_3000` the x and y minima differ by 1 ulp). Ranges
-involving MIB Studio pass when every end agrees within `CHART_RANGE_REL` =
-1e-12 of the range's largest absolute end: about 4500 ulp, while the padding
-is three operations and differs by a few ulp at most. Qt's ring-ratio range is
-read back from its bar labels, so it is compared at their resolution (0.05).
-The Qt ↔ YOFO table keeps its 2026-10-04 tolerance (relative 1e-9).
+`long double` (80-bit on Linux GCC, 64-bit on MSVC and arm64 macOS), while
+YOFO's `chartMath.paddedExtent` pads in `double`. So the same data can give
+neighbouring doubles; on `population_3000` the x and y minima differ by 1 ulp.
+Ranges involving MIB Studio pass when every end agrees within
+`CHART_RANGE_REL` = 1e-12 of the range's largest absolute end. That is about
+4500 ulp, while the padding is three operations and differs by a few ulp at
+most. Qt's ring-ratio range is read back from its bar labels, so it is
+compared at their resolution (0.05). The Qt ↔ YOFO table keeps its 2026-10-04
+tolerance (relative 1e-9).
 
-**MIB Studio's histogram y axis** tops at `max(1, largest bin)`
-(`desktop/src/components/ReviewCharts.tsx`, `maxBin`); compare.py derives it
-from the bins, as the YOFO TS dump derives YOFO's. It is not one of D2–D5.
+Not compared for MIB Studio:
 
-Not compared for MIB Studio: overlays against Qt (the Qt dump has no overlay
-hook in the frozen tab; `frontend.review_parity` pins the Qt QImage to the
-facade PNG without ROI), the accounting and status text, and the core record
-(MIB Studio's tab computes none).
+- overlays against Qt: the Qt dump has no overlay hook in the frozen tab, and
+  `frontend.review_parity` pins the Qt QImage to the facade PNG without ROI;
+- the accounting and status text;
+- the core record, which MIB Studio's tab does not compute.

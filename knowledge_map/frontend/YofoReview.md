@@ -338,37 +338,55 @@ accounting text for recording files.
 
 `tools/review_parity/` has a third half since #512 S6:
 `crates/mib-bridge/examples/review_parity_studio.rs` drives MIB Studio's
-facade commands over `BackendBridge` (`load_recording`,
-`fetch_review_charts_json`, `review_export_json` metrics_csv / all with
-`exportControls.tsx`'s defaults, `render_review_overlay`). YOFO's half also
-dumps `fetch_review_frame` overlays (`yofo/overlays/`) for the overlay
-comparison. The studio half charts each file as opened (the live 0.4886 and
-15–25), then sets the live factor and ring range to the recorded ones, as the
-Qt dump does, and produces the compared outputs.
+facade commands over `BackendBridge`:
 
-Run on 2026-10-20 (develop `1826a00b` + S6) on the four sign-off inputs, the
-outputs are in
-`/mnt/hdd/developer-data/mib-studio-qt/review-parity/out-2026-10-20-s6/`.
+- `load_recording`;
+- `fetch_review_charts_json`;
+- `review_export_json` metrics_csv / all, with `exportControls.tsx`'s defaults;
+- `render_review_overlay`.
+
+YOFO's half also dumps `fetch_review_frame` overlays (`yofo/overlays/`) and
+the recorded ROI for the overlay comparison. The studio half charts each file
+three times:
+
+- as opened (the live 0.4886 and 15–25);
+- with the live ring range set to the recorded one ± 5 (the D4 probe);
+- with the live factor and range set to the recorded ones, as the Qt dump does.
+  This pass produces the compared outputs.
+
+Every acceptance is checked by its effect (README there).
+
+The run of 2026-10-20 used develop `1826a00b` + S6 and the four sign-off
+inputs. `run.sh` exits 0. Outputs are in
+`/mnt/hdd/developer-data/mib-studio-qt/review-parity/out-2026-10-20-s6-r2/`.
 These are identical to Qt and YOFO:
 
 - metrics.csv;
 - Export All, apart from the chart TIFFs (30878 / 587 / 45 / 3301 files);
-- scatter point count and density total;
-- scatter axis extents (on `population_3000`, YOFO's double padding is 1 ulp
-  off the shared kernel's long double; the 1e-12 tolerance takes it);
-- histogram bins and range;
-- the 30 ROI-off overlay renders per experiment file, against YOFO.
+- scatter point count;
+- scatter axis extents. On `population_3000`, YOFO's double padding is 1 ulp
+  off the shared kernel's long double; the 1e-12 tolerance absorbs it.
+- histogram bins and range.
+
+Identical to YOFO: the density cells and the 30 ROI-off overlay renders per
+experiment file.
 
 Accepted until S13 (plan decisions):
 
-- **D2:** ROI-on overlays differ only on the two ROI outlines (MIB Studio yellow 1 px; YOFO red, thickness 3, which OpenCV draws as a 5 px band).
-- **D3:** the as-opened px→µm on the two 0.25 µm/px fixtures (live 0.4886).
+- **D2:** the ROI-on overlays differ only where each half drew its own style at
+  the recorded ROI. MIB Studio draws yellow 1 px; YOFO draws red at thickness
+  3, which OpenCV renders as a 5 px band.
+- **D3:** the as-opened px→µm on the two 0.25 µm/px fixtures (live 0.4886), with
+  the area extents scaled by (0.4886 / 0.25)².
+- **D4:** the probe's bins over [10, 30]. As opened, D4 is not exercised: every
+  input records 15–25, the live default.
 - **D5:** Export All carries `scatter_plot.tiff` and `histogram.tiff`.
-- **D4:** not exercised; every input records 15–25, the live default.
-
-**Open finding, not accepted:** MIB Studio's histogram y axis tops at the
-largest bin (`components/ReviewCharts.tsx` `maxBin`: 64 on the 512x96 run),
-Qt's at `applyNiceNumbers()` (80) and YOFO's at `ceil(1.1 × max)` (71).
+- **D10:** the histogram y axis. This is the coordinator's ruling of 2026-10-20
+  (named D6 in the ruling; the plan's D6 is the regenerate semantics).
+  MIB Studio's inline tab tops it at the largest bin
+  (`components/ReviewCharts.tsx` `maxBin`: 64 on the 512x96 run). Qt applies
+  `applyNiceNumbers()` (80), and YOFO uses `ceil(1.1 × max)` (71). This is
+  display headroom only; the bins are identical.
 
 The Qt ↔ YOFO table is unchanged from 2026-10-04, except for the accounting
 text. Qt's status line now carries the accounting suffix too, so that row
