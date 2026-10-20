@@ -35,7 +35,10 @@ reanalysis engine without an `AppBackend`, #512 S2),
 export engine without an `AppBackend`, #512 S3),
 `tests/review/review_run_identity_test.cpp` (`review.run_identity`: run
 identity and the identity probe, #717 B1a; labels
-`review;recording;backend;hdf5;concurrency;safety`)
+`review;recording;backend;hdf5;concurrency;safety`),
+`tests/review/review_inspect_test.cpp` (`review.inspect`: track rows and
+reprocessing one record, #717 B3b; labels
+`review;backend;hdf5;concurrency;safety`)
 **Consumers:** `crates/mib-bridge/src/review_shim.cpp` (`ReviewBridge`, [[../architecture/Rust-Bridge]]),
 `BackendFacade` (`review_`, the facade's review source, #512 S5;
 `tests/backend/facade_review_session_test.cpp`, `backend.facade_review_session`),
@@ -86,7 +89,12 @@ the Qt [[../frontend/HdfReviewTab]] (`recordedPixelToMicron`, TD-17)
   own, presence-aware: missing is absent, a recorded 0 stays 0). Absent is
   `std::nullopt` / `false`, **never** 0 or ""; a legacy file reads every
   member absent. `snapshotUnreadable` / `annotationUnreadable`: the attribute
-  exists but is not a JSON object, which is not the same as legacy.
+  exists but is not a JSON object, which is not the same as legacy. Review
+  ABI 3 (#717 B3b) adds `eModulusLut` (the snapshot's
+  `recording::EModulusLutRecord`: `lutId`, `revision`, `source`, `sha256`,
+  `catalogSha256`, `checksumStatus`; absent when the snapshot records none
+  or `loaded` false) and `profileId` (the snapshot's `profile_id`, any
+  version, a non-empty string only).
 - `probeRuns(paths, out, &error)` (#717 B1a, R1 Open's experiment library):
   for each path a short-lived reader of its own opens the file, reads only
   header attributes into a `RunProbe` (the `RunIdentity`, `startTimeNs` /
@@ -114,7 +122,31 @@ the Qt [[../frontend/HdfReviewTab]] (`recordedPixelToMicron`, TD-17)
   for the whole probe (no job starts) and refuses while one runs ("A review
   job is running; …").
 - `metricsPage(valid, offset, count)` → `MetricRow` with **every**
-  FilterResult column the Qt `HdfMetricsModel` shows plus `areaUm2`.
+  FilterResult column the Qt `HdfMetricsModel` shows plus `areaUm2`. The
+  static `metricRow(frame, pixelToMicron)` is the same conversion for a
+  frame from elsewhere (the reprocessed objects).
+- `trackRows(valid, trackId, max, out, &error)` (#717 B3b, R3 Inspect's
+  linked records): the records of one set whose `trackId` equals `trackId`,
+  in set order, with their set `positions` (parallel to `rows`), at most
+  `max`; `total` counts every match and `truncated` says `total > rows`.
+  Served from the metadata read at open, under the session's mutex, no HDF5
+  read. Refused: `max` above `kReviewTrackRowsMax` (256, review contract
+  `review_track_rows.max_rows`), a negative track id ("This record is not
+  tracked …"), a raw recording, no open file. An unknown track is an empty
+  answer, not a refusal.
+- `reprocessInputs(valid, index, settings, out, &error)` (#717 B3b): what
+  `ReviewJobs::reprocessRecord` needs to reprocess one record, read under the
+  session's mutex: the stored `MetricRow`, the record's frame as gray
+  (`grayLikeRegenerate`, the same conversion as Reanalysis), and per
+  `ReprocessSettings` the inputs: `Recorded` = the file's recorded config,
+  ROI and background (`readRecordedProcessingConfig`; without one, the
+  defaults, said in the label), `Default` = `ProcessingConfig{}`, the whole
+  image and no background. `settingsLabel` names them ("recorded settings
+  (config, ROI, background)", "… the file records no background", "default
+  settings: the file records none", "default settings (whole image, no
+  background)"). Refused: an unknown settings value, no file, a raw
+  recording, an index outside the set, a frame with no stored image, a
+  recorded background of another size.
 - `framesPage(valid, offset, count, frames, total)` (#512 S5): the same page
   as the metadata-only `ProcessedFrame`s read at open (no pixels), for hosts
   with their own row type (the facade's `MonitoringObjectRow`); same bounds
@@ -475,6 +507,20 @@ through `ReviewJobs::probeRuns`, holds the lanes' mutex for the whole call
 and refuses while either lane is claimed, so it never runs beside a session
 read or a job. `review.run_identity` probes from one thread while another
 reads frames and rows.
+`ReviewJobs::reprocessRecord` (#717 B3b) follows the same rule: under the
+lanes' mutex it refuses while either lane is claimed ("A review job is
+running; …", export jobs read HDF5 outside the session mutex too) and reads
+its inputs through `reprocessInputs` (the session's mutex); then
+`ProcessingService::processBatch` runs on the one image outside every lock
+(it reads no file). It writes nothing. The rows are the objects found (the
+kernel's frame-level "no object" result, `objectCount` 0, is not one), with
+the record's frame index and no track, at most `kReviewReprocessMaxObjects`
+(64, `truncated`); `match` is the found object whose centroid is nearest the
+stored one inside the stored bounding box (both in image coordinates:
+`computeProcessedFrame` reports them so whatever the ROI);
+`objectCountDiffers` compares with a stored `objectCount` above 0. A kernel
+failure (no mask) is refused. `review.inspect` covers it, with the regenerate
+job held at its first progress event.
 The facade's session is read on the bridge's calling threads, as the shared
 handle was before S5 (now serialized by this mutex); HDF5 itself is still not
 thread-safe across readers (#722), which is why D1 keeps experiments out.

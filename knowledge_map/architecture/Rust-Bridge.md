@@ -770,7 +770,19 @@ attach to):
   paths, per-file errors, refused while a job runs; it goes through
   `ReviewJobs::probeRuns`, so it is serialized with the session's reads and
   the job lane, see [[../services/ReviewSession]]),
-  `fetch_review_rows` (full-column `ReviewRow`s), `fetch_review_frame(dataset,
+  `fetch_review_rows` (full-column `ReviewRow`s),
+  `fetch_review_track_rows(valid, track_id, max)` (review ABI 3, #717 B3b:
+  one track's records → `ReviewTrackRows { ok, message, total, truncated,
+  positions, rows }`, `max` at most `review_track_rows.max_rows` = 256),
+  `review_reprocess_record(valid, index, settings)` (review ABI 3: one
+  record's stored row next to what the session's kernel finds in its image
+  now → `ReviewReprocessResult { ok, message, settings,
+  used_recorded_settings, settings_label, core_version, core_source, stored,
+  reprocessed, has_match, match_index, object_count_differs, truncated }`;
+  `settings` a `review_reprocess_record.settings` value (recorded 0,
+  default 1), at most `max_objects` = 64 rows; never writes; refused while a
+  job runs; through `ReviewJobs::reprocessRecord`, see
+  [[../services/ReviewSession]]), `fetch_review_frame(dataset,
   index, overlay, roi)` → `ReviewFrame` Mono8 or **RGB8**
   (`review_pixel_formats`), `fetch_review_series_count/frame`,
   `fetch_review_thumbnails` (one frame of `size × (size·count)`),
@@ -794,8 +806,9 @@ attach to):
   empty = none, a legacy file) and
   `review_fixture_write_population(path, cells, seed)` (two seeded
   populations for the Charts view; `examples/review_fixture --population N`).
-- **Run identity (review ABI 2).** cxx structs carry no `Option`, so
-  `ReviewRunIdentity`, `ReviewAnnotation` and `ReviewRunProbe` pair every
+- **Run identity (review ABI 2; E-LUT and profile since 3).** cxx structs
+  carry no `Option`, so `ReviewRunIdentity` (with `ReviewEModulusLut` and
+  `profile_id` since review ABI 3), `ReviewAnnotation` and `ReviewRunProbe` pair every
   value with a `has_*` flag (an absent value is empty / zero and means
   nothing); `review.rs` turns each pair into an `Option`, so the shell's
   JSON has `null` for absent and never a 0 or "" stand-in (`ReviewInfo.identity`,
@@ -803,11 +816,17 @@ attach to):
   absent; `snapshot_unreadable` / `annotation.unreadable` for an attribute
   that is not a JSON object.
 - **Contract.** YOFO Review has its own versioned contract,
-  `contract/review-contract.json` (`review_abi_version` 2 since #717 B1a;
-  v1 was the ReviewSession surface), so the shared
+  `contract/review-contract.json` (`review_abi_version` 3 since #717 B3b,
+  2 since B1a; v1 was the ReviewSession surface; 4 and above are reserved
+  for later steps on #717), so the shared
   `bridge-contract.json` is never touched for it: `run_identity` and
   `review_probe` (prose + `max_paths`, rendered as `REVIEW_PROBE` and
   checked against `ReviewTypes.h` `kReviewProbeMaxPaths` by the generator),
+  `review_track_rows` (`max_rows`, `REVIEW_TRACK_ROWS`, checked against
+  `kReviewTrackRowsMax`), `review_reprocess_record` (`settings`,
+  `max_objects`, `REVIEW_REPROCESS`, checked against the `ReprocessSettings`
+  enum and `kReviewReprocessMaxObjects`; `review_shim.cpp` static_asserts
+  the same values),
   `overlay_modes`,
   `review_density` (incl. `ramp_rgb`, checked against `MonitoringDensity.h`
   `kStops` by the generator), `review_pixel_formats`,
