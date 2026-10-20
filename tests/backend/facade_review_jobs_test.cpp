@@ -418,7 +418,11 @@ namespace
         // Caller holds `m`.
         std::string norm(std::string s)
         {
-            for (std::size_t pos; (pos = s.find(dir)) != std::string::npos;) s.replace(pos, dir.size(), "<DIR>");
+            // JSON escapes the path's backslashes on Windows: replace that form first (on POSIX it is `dir`).
+            std::string escaped;
+            for (const char c : dir) escaped += c == '\\' ? std::string("\\\\") : std::string(1, c);
+            for (const auto& form : {escaped, dir})
+                for (std::size_t pos; (pos = s.find(form)) != std::string::npos;) s.replace(pos, form.size(), "<DIR>");
             s = std::regex_replace(s, std::regex(R"(\.partial-[A-Za-z0-9_-]+)"), ".partial-<J>");
             s = std::regex_replace(s, std::regex(R"re("job_id":"[^"]*")re"), "\"job_id\":\"<J>\"");
             std::string out;
