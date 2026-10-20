@@ -915,6 +915,15 @@
     "args": {}
    },
    {
+    "cmd": "review_probe_runs",
+    "args": {
+     "paths": [
+      "/data/lib/run_01.h5",
+      "/data/lib/legacy.h5"
+     ]
+    }
+   },
+   {
     "cmd": "review_clear_charts",
     "args": {}
    },

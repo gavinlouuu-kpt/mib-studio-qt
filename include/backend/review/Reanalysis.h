@@ -131,6 +131,10 @@ namespace backend::review
     // Never throws; the outcome carries the terminal state.
     ReanalysisOutcome runReanalysis(const ReanalysisRequest &request, services::ProcessingService &kernel,
                                     const ReanalysisCancelFlag &cancel, const ReanalysisProgressFn &onProgress);
+    // What `runReanalysis` returns when the flag is set before it starts
+    // (nothing read or written): the review job that a shutdown overtook
+    // before it ran (ReviewJobs, #742 review round 2).
+    ReanalysisOutcome reanalysisCancelledBeforeStart();
 
     // `fetch_review_reanalysis_preview`: one Mono8 source frame read by an
     // independent reader (source_kind / source_path / dataset / index).

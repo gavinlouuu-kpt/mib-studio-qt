@@ -118,6 +118,10 @@ namespace backend::review
     ExportBatchOutcome runExportBatch(const recording::HdfExportRequest &request,
                                       const std::vector<std::string> &sources, const ExportCancelFlag &cancel,
                                       const ExportBatchProgressFn &onProgress, const ExportRunOptions &options = {});
+    // What `runExportBatch` returns when the flag is set before its first
+    // source (no file touched): the review job that a shutdown overtook
+    // before it ran (ReviewJobs, #742 review round 2).
+    ExportBatchOutcome exportBatchCancelledBeforeStart(std::size_t sourceCount);
 
     // Status snapshots of `review_export_json` (operation ids and counters as
     // decimal strings, `file_index` / `file_count` as numbers).

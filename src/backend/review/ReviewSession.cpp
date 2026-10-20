@@ -2,6 +2,7 @@
 
 #include "backend/processing/ProcessingTypes.h"
 #include "backend/recording/Hdf5Service.h"
+#include "backend/recording/RunProvenanceRecord.h"
 #include "backend/review/OverlayCompose.h"
 
 #include <nlohmann/json.hpp>
@@ -11,6 +12,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <filesystem>
 #include <sstream>
 
 namespace backend::review
@@ -102,6 +104,74 @@ namespace backend::review
             cv::resize(src, scaled, cv::Size(w, h), 0, 0, cv::INTER_AREA);
             scaled.copyTo(tile(cv::Rect((size - w) / 2, (size - h) / 2, w, h)));
             return tile;
+        }
+
+        // One file of the identity probe (#717 B1a), with its own short-lived
+        // reader: header attributes only. The caller serializes it with the
+        // session's HDF5 access (ReviewSession::probeRuns).
+        RunProbe probeOne(const std::string &path)
+        {
+            RunProbe probe;
+            probe.path = path;
+            auto failed = [&path](std::string message) {
+                RunProbe out;
+                out.path = path;
+                out.message = std::move(message);
+                return out;
+            };
+            if (path.empty()) return failed("No file path");
+            std::error_code ec;
+            const auto status = std::filesystem::status(std::filesystem::u8path(path), ec);
+            if (status.type() == std::filesystem::file_type::not_found) return failed("No such file: " + path);
+            if (ec) return failed("Cannot read " + path + ": " + ec.message());
+            if (status.type() != std::filesystem::file_type::regular) return failed("Not a file: " + path);
+            services::Hdf5Service reader;
+            try
+            {
+                if (!reader.loadFile(path))
+                {
+                    reader.closeFile();
+                    return failed("Not an HDF5 file, or it cannot be opened (locked or unreadable): " + path);
+                }
+                probe.recordingFile = reader.isRecordingFile();
+                // Each attribute on its own, presence-aware (#717 B1a review):
+                // readExperimentInfo / readRecordingInfo default a missing
+                // count to 0, which would probe as a recorded 0.
+                const char *group = probe.recordingFile ? "/recording_info" : "/experiment_info";
+                if (probe.recordingFile)
+                {
+                    probe.totalValid = reader.readScalarUintAttribute(group, "total_recorded_frames");
+                }
+                else
+                {
+                    probe.totalValid = reader.readScalarUintAttribute(group, "total_valid_frames");
+                    probe.totalInvalid = reader.readScalarUintAttribute(group, "total_invalid_frames");
+                }
+                // A recorded 0 time is the writers' "no wall clock" (regenerating
+                // from frame timestamps writes start 0), not 1970: not recorded.
+                const auto start = reader.readScalarUintAttribute(group, "start_time_ns");
+                const auto end = reader.readScalarUintAttribute(group, "end_time_ns");
+                if (start && *start != 0) probe.startTimeNs = start;
+                if (end && *end != 0) probe.endTimeNs = end;
+                recording::RecordingAccountingSnapshot accounting;
+                if (reader.readRunAccounting(accounting)) probe.completion = accounting.completion;
+                processing::ProcessingCoreIdentity core;
+                if (reader.readProcessingCoreIdentity(core) && !core.version.empty()) probe.coreVersion = core.version;
+                probe.identity = ReviewSession::readRunIdentity(reader);
+                probe.ok = true;
+            }
+            catch (const std::exception &e)
+            {
+                reader.closeFile();
+                return failed("Failed to read " + path + ": " + e.what());
+            }
+            catch (...)
+            {
+                reader.closeFile();
+                return failed("Failed to read " + path);
+            }
+            reader.closeFile();
+            return probe;
         }
     } // namespace
 
@@ -207,6 +277,7 @@ namespace backend::review
             }
             reader.readKdeAnalysisJson(meta.kdeAnalysisJson);
             reader.readKdeLiveJson(meta.kdeLiveJson);
+            meta.runIdentity = ReviewSession::readRunIdentity(reader);
         }
 
         const std::vector<services::ProcessedFrame> &set(bool valid) const
@@ -406,6 +477,71 @@ namespace backend::review
         if (!j.is_object() || !j.contains("pixel_to_micron") || !j["pixel_to_micron"].is_number()) return 0.0;
         const double f = j["pixel_to_micron"].get<double>();
         return f > 0.0 ? f : 0.0;
+    }
+
+    RunIdentity ReviewSession::readRunIdentity(const services::Hdf5Service &reader)
+    {
+        RunIdentity out;
+        std::string snapshot;
+        if (reader.readRunSnapshotJson(snapshot))
+        {
+            recording::RecordedRunProvenance parsed;
+            if (recording::parseRunProvenance(snapshot, parsed))
+            {
+                out.hasSnapshot = true;
+                out.snapshotVersion = parsed.schemaVersion;
+                out.runId = parsed.v3.runId;
+                out.declared = parsed.v3.identity;
+            }
+            else
+            {
+                out.snapshotUnreadable = true;
+            }
+        }
+        std::string annotation;
+        if (reader.readExperimentAnnotationJson(annotation))
+        {
+            out.annotation = recording::parseExperimentAnnotation(annotation);
+            if (!out.annotation)
+            {
+                out.annotationUnreadable = true;
+            }
+            else
+            {
+                // Presence-aware: readExperimentAnnotationJson reports a missing
+                // version as 0, so a recorded 0 and a missing one differ only here.
+                const auto version =
+                    reader.readScalarUintAttribute("/experiment_annotation", "annotation_schema_version");
+                if (version && *version <= 0xFFFFFFFFull)
+                    out.annotationSchemaVersion = static_cast<std::uint32_t>(*version);
+            }
+        }
+        return out;
+    }
+
+    bool ReviewSession::probeRuns(const std::vector<std::string> &paths, std::vector<RunProbe> &out,
+                                  std::string *error) const
+    {
+        out.clear();
+        if (paths.size() > kReviewProbeMaxPaths)
+        {
+            if (error)
+            {
+                *error = "Too many files to probe at once: " + std::to_string(paths.size()) + " (at most " +
+                         std::to_string(kReviewProbeMaxPaths) + ")";
+            }
+            return false;
+        }
+        out.reserve(paths.size());
+        for (const auto &path : paths)
+        {
+            // The session's own lock, per file (#722): no session read, open or
+            // close interleaves with the probe's HDF5 calls, and the open file
+            // stays as it was.
+            std::scoped_lock lock(impl_->mutex);
+            out.push_back(probeOne(path));
+        }
+        return true;
     }
 
     ReviewMetadata ReviewSession::metadata() const
