@@ -24,6 +24,8 @@ import {
   reprocessComparison,
   reprocessMatchText,
   reprocessUnavailable,
+  storedEText,
+  storedENotComputed,
   storedFacts,
   trackSummary,
 } from "./inspectModel";
@@ -379,8 +381,17 @@ describe("the record reprocessed", () => {
     expect(reprocessMatchText(result({}))).toBe("Matched object 1 of 1 object found (centroid nearest the stored one, inside the stored box)");
     // Image-space files are shown as stored.
     expect(reprocessComparison(result({}), info()).find((l) => l.label === "Box (image x, y · w×h)")?.stored).toBe("0, 0 · 20×30");
-    // A recomputed E is shown.
-    expect(reprocessComparison(result({ emodulus_recomputed: true, reprocessed: [{ ...found, youngs_modulus: 1.5 }] }), info()).find((l) => l.label === "E")?.reprocessed).toBe("1.50 kPa");
+    // A recomputed E is shown with the caveat that the reprocess reply names no
+    // LUT (#764 item 2: the app's current one, not necessarily the run's).
+    const recomputed = result({ emodulus_recomputed: true, reprocessed: [{ ...found, youngs_modulus: 1.5 }] });
+    expect(reprocessComparison(recomputed, info()).find((l) => l.label === "E")?.reprocessed).toBe(
+      "1.50 kPa, computed with the app's current E-LUT, which may differ from the run's",
+    );
+    expect(reprocessMatchText(recomputed)).toBe(
+      "Matched object 1 of 1 object found (centroid nearest the stored one, inside the stored box); its E was computed with the app's current E-LUT, which may differ from the run's",
+    );
+    // Not recomputed: no E to compare, so no caveat on the match line.
+    expect(reprocessMatchText(result({}))).not.toContain("E-LUT");
   });
 
   it("says when nothing matches, and leaves the reprocessed side empty", () => {
@@ -412,5 +423,32 @@ describe("the record reprocessed", () => {
     );
     expect(reprocessUnavailable(info(), true, true, false)).toBe("No stored image to reprocess in this set");
     expect(reprocessUnavailable(info(), true, false, true)).toBe("A review job is running; reprocess the record when it finishes");
+  });
+});
+
+describe("a stored E of a run without an E-LUT (coordinator ruling on #774, option b)", () => {
+  const noLut = info({ identity: identity({ emodulus_lut: { ...LUT, loaded: false, lut_id: null, revision: null, source: null, sha256: null, catalog_sha256: null, checksum_status: null } }) });
+  const stored0 = row({ youngs_modulus: 0 });
+
+  it("reads not computed, never 0.00 kPa, where the run recorded no LUT loaded", () => {
+    expect(storedENotComputed(noLut)).toBe(true);
+    expect(storedEText(stored0, noLut)).toBe("Not computed (no E-LUT loaded)");
+    expect(fact(measurementFacts(stored0, noLut), "E (stored)")).toMatchObject({ value: "Not computed (no E-LUT loaded)", tone: "unknown" });
+    const r: ReviewReprocess = {
+      ok: true, message: "", settings: 0, used_recorded_settings: true, settings_label: "", core_version: "2.1.0", core_source: "bundled",
+      pixel_to_micron: 0.25, emodulus_recomputed: false, stored: stored0, reprocessed: [stored0], match_index: 0, object_count_differs: false, truncated: false,
+    };
+    expect(reprocessComparison(r, noLut).find((l) => l.label === "E")?.stored).toBe("Not computed (no E-LUT loaded)");
+  });
+
+  it("keeps a legacy file's E as stored, and a loaded LUT's E as its value", () => {
+    // No snapshot: emodulus_lut is null, nothing is guessed (no option c).
+    const legacy = info({ identity: identity({ has_snapshot: false, snapshot_version: null, emodulus_lut: null }) });
+    expect(storedENotComputed(legacy)).toBe(false);
+    expect(storedEText(stored0, legacy)).toBe("0.00 kPa");
+    expect(fact(measurementFacts(stored0, legacy), "E (stored)")?.value).toBe("0.00 kPa");
+    expect(storedEText(row(), info({ identity: identity({ emodulus_lut: LUT }) }))).toBe("1.42 kPa");
+    expect(storedEText(row({ youngs_modulus: Number.NaN }), legacy)).toBeNull();
+    expect(storedENotComputed(null)).toBe(false);
   });
 });

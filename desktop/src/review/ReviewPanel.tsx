@@ -57,7 +57,7 @@ import { REVIEW_REPROCESS, REVIEW_TRACK_ROWS } from "./reviewContract";
 import { ThumbnailGrid } from "./ThumbnailGrid";
 import { Button, Card, DataTable, Notice, Toolbar, type DataTableColumn } from "@mib/ui";
 import { RecordCard, StoredCard, TrackCard, type Asked, type CropState } from "./inspect/InspectCards";
-import { cropOverlay, objectOffset, recordCrop, reprocessUnavailable, type CellView } from "./inspect/inspectModel";
+import { cropOverlay, objectOffset, recordCrop, reprocessUnavailable, storedENotComputed, type CellView } from "./inspect/inspectModel";
 import { cropPacketToDataUrl } from "./inspect/packetCrop";
 import "./review.css";
 import "./inspect/inspect.css";
@@ -585,10 +585,19 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
   // opens the viewer as before.
   type PageRow = { row: ReviewRow; index: number };
   const pageRows: PageRow[] = (rows?.rows ?? []).map((row, k) => ({ row, index: rowsOffset + k }));
+  // A run without an E-LUT stores E as 0: not a value (coordinator ruling, #774).
+  const eNotComputed = storedENotComputed(info);
   const tableColumns: DataTableColumn<PageRow>[] = shownColumns.map((c) => ({
     key: c.id,
     header: c.label,
-    cell: (r) => c.format(r.row),
+    cell: (r) =>
+      c.id === "youngs_modulus" && eNotComputed ? (
+        <span className="rv-e-not-computed" title="No E-LUT was loaded for this run">
+          not computed
+        </span>
+      ) : (
+        c.format(r.row)
+      ),
     emphasis: c.id === "frame_index",
   }));
   const setName = isRecording ? "Frames" : validSet ? "Valid records" : "Invalid records";
@@ -867,6 +876,7 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
           overlay={isRecording ? OVERLAY.None : overlay}
           roiOverlay={!isRecording && roiOverlay}
           row={selectedRow}
+          eNotComputed={eNotComputed}
           onIndexChange={select}
           onClose={() => setViewerOpen(false)}
           log={log}

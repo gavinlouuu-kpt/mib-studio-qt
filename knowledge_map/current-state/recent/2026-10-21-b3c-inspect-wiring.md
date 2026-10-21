@@ -24,6 +24,13 @@ wired to the review ABI 3 commands that B3b (#756) added. UI only, under
   navigation, selection, a sub-view, the set or a stage change; writes
   nothing; refusals are said plainly; a late reply is dropped. **Reprocess
   into a new file…** and the #754 wording are unchanged.
+- Coordinator rulings on #774: a run whose snapshot records no E-LUT
+  loaded shows its stored E as "Not computed (no E-LUT loaded)" (record
+  card, comparison, records table, frame viewer), never "0.00 kPa"; legacy
+  files keep E as stored. The reprocess reply names no E-LUT (it uses the
+  app's current one, #764 item 2), so a recomputed E and the match line say
+  it was "computed with the app's current E-LUT, which may differ from the
+  run's". Track rows stay on their button.
 - `reviewIpc.golden.json` gains one flow, "linked records and reprocess one
   record" (the two buttons' calls); no other flow changed.
 - Docs: vault `frontend/YofoReview` (R3 Inspect), the manual

@@ -682,6 +682,56 @@ it("gives the run's E-LUT and profile as recorded (review ABI 3)", async () => {
   expect(factValue(card("Stored vs reprocessed"), "E-LUT")).toBe("none loaded (the run had no E values)");
 });
 
+it("shows a stored E as not computed where the run had no E-LUT, and as stored in a legacy file (#774 ruling)", async () => {
+  lut = { loaded: false, lut_id: null, revision: null, source: null, sha256: null, catalog_sha256: null, checksum_status: null };
+  await mountOpen();
+  const measured = card("Selected measurement");
+  expect(factValue(measured, "E (stored)")).toBe("Not computed (no E-LUT loaded)");
+  // The records table's E column, and the comparison's Stored column.
+  await click(button("Records"));
+  const header = Array.from(host.querySelectorAll(".metrics-table th")).findIndex((th) => th.textContent === "E (kPa)");
+  expect(header).toBeGreaterThanOrEqual(0);
+  const eCells = Array.from(host.querySelectorAll(".metrics-table tbody tr")).map((tr) => tr.querySelectorAll("td")[header]?.textContent);
+  expect(new Set(eCells)).toEqual(new Set(["not computed"]));
+  await click(button("Reprocess this record", card("Stored vs reprocessed")));
+  const eRow = Array.from(card("Stored vs reprocessed").querySelectorAll('[data-testid="reprocess-result"] tbody tr')).find((r) => r.querySelector("td")?.textContent === "E")!;
+  expect(eRow.querySelectorAll("td")[1].textContent).toBe("Not computed (no E-LUT loaded)");
+  // The frame viewer's metrics line.
+  await click(button("Record details"));
+  expect(host.querySelector(".viewer-metrics")?.textContent).toContain("E not computed (no E-LUT loaded)");
+  await act(async () => void window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
+  await settle();
+  expect(host.textContent).not.toMatch(/1\.50 kPa/);
+  // A legacy file (no snapshot, no emodulus_lut): E as stored.
+  lut = null;
+  await act(async () => void (await panel.current!.openPath("/data/legacy.h5")));
+  await settle();
+  expect(factValue(card("Selected measurement"), "E (stored)")).toBe("1.50 kPa");
+});
+
+it("says a recomputed E used the app's current E-LUT, which the reply does not name (#764 item 2)", async () => {
+  reprocessAnswer = (args) => {
+    const stored = row(!!args.valid, Number(args.index));
+    return {
+      ok: true, message: "", settings: args.settings, used_recorded_settings: true, settings_label: "recorded settings (config, ROI, background)",
+      core_version: "2.1.0", core_source: "bundled", pixel_to_micron: 0.25, emodulus_recomputed: true,
+      stored, reprocessed: [{ ...stored, youngs_modulus: 1.7 }], match_index: 0, object_count_differs: false, truncated: false,
+    };
+  };
+  await mountOpen();
+  await click(button("Reprocess this record", card("Stored vs reprocessed")));
+  const result = card("Stored vs reprocessed").querySelector('[data-testid="reprocess-result"]')!;
+  const eRow = Array.from(result.querySelectorAll("tbody tr")).find((r) => r.querySelector("td")?.textContent === "E")!;
+  expect(Array.from(eRow.querySelectorAll("td")).map((td) => td.textContent)).toEqual([
+    "E",
+    "1.50 kPa",
+    "1.70 kPa, computed with the app's current E-LUT, which may differ from the run's",
+  ]);
+  expect(result.querySelector('[data-testid="reprocess-match"]')?.textContent).toContain(
+    "; its E was computed with the app's current E-LUT, which may differ from the run's",
+  );
+});
+
 it("reads the selected record's linked records only when asked, and says when the cap cut them", async () => {
   await mountOpen();
   const linked = () => card("Linked cell records");

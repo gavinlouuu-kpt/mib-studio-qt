@@ -644,6 +644,14 @@ not record is shown as a value.
   E-LUT id and revision ("profile not recorded" / "E-LUT not recorded" for
   a v3 snapshot without them, "no E-LUT loaded" when the run had none; a
   legacy file only says it has no snapshot).
+- **Stored E of a run without an E-LUT** (coordinator ruling on #774,
+  option b; `storedENotComputed` / `storedEText`): where the identity's
+  `emodulus_lut` is present with `loaded` false, the stored E (which such
+  runs store as 0) reads "Not computed (no E-LUT loaded)" in the record
+  card, the comparison's Stored column, the records table's E column ("not
+  computed") and the frame viewer's metrics line, never "0.00 kPa". A legacy
+  file (no snapshot, `emodulus_lut` null) keeps its E as stored; nothing is
+  guessed.
 - **Linked cell records** (`TrackCard`, B3c; experiment files): the
   selected record's track. **Show linked records** sends
   `fetch_review_track_rows(valid, track_id, 256)` and lists the track's
@@ -672,8 +680,12 @@ not record is shown as a value.
   in image coordinates with the stored box placed through the space,
   objects in frame), the match line (`reprocessMatchText`: matched object k
   of n, or "No match" with why), a count difference, and the settings label
-  and core; "nothing is written". E without a LUT reads "not recomputed (no
-  E-LUT loaded)". Refusals read "Not reprocessed: <backend message>" (a
+  and core; "nothing is written". A reprocessed E without a LUT reads "not
+  recomputed (no E-LUT loaded)". The reply names no E-LUT, and reprocessing
+  uses the app's live or bundled LUT, not the run's (#764 item 2), so a
+  recomputed E reads "x kPa, computed with the app's current E-LUT, which
+  may differ from the run's" and the match line carries the same caveat
+  (`REPROCESSED_E_CAVEAT`). Refusals read "Not reprocessed: <backend message>" (a
   claimed job lane, no stored image, an unknown space, a kernel failure).
   Cases the backend would refuse are said under the button before any call
   (`reprocessUnavailable`: no selection, a recording, an unknown space, no

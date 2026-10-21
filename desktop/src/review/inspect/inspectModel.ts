@@ -138,6 +138,30 @@ export function objectSpaceFact(info: ReviewInfo): Fact {
   };
 }
 
+/** The run recorded that it had no E-LUT loaded (snapshot v3
+ * `emodulus_lut.loaded` false): its stored E values are not measurements
+ * (they read 0), so E is shown as not computed. A legacy file (no snapshot,
+ * `emodulus_lut` null) keeps its values as stored: nothing is guessed
+ * (coordinator ruling on #774, option b). */
+export function storedENotComputed(info: ReviewInfo | null | undefined): boolean {
+  const lut = info?.identity?.emodulus_lut ?? null;
+  return !!lut && lut.loaded === false;
+}
+
+export const E_NOT_COMPUTED = "Not computed (no E-LUT loaded)";
+
+/** A stored E for display: not computed for a run without a LUT, else the
+ * value in kPa, or null when it is missing (NaN). */
+export function storedEText(row: Pick<ReviewRow, "youngs_modulus">, info: ReviewInfo | null | undefined): string | null {
+  if (storedENotComputed(info)) return E_NOT_COMPUTED;
+  const e = row.youngs_modulus;
+  return typeof e === "number" && Number.isFinite(e) ? `${metricNumber(e, 2)} kPa` : null;
+}
+
+/** The reprocess reply names no E-LUT (#764 item 2: it uses the app's live
+ * or bundled LUT, not the run's), so a recomputed E carries this caveat. */
+export const REPROCESSED_E_CAVEAT = "computed with the app's current E-LUT, which may differ from the run's";
+
 const saved = (present: boolean, detail?: string): Pick<Fact, "value" | "tone"> =>
   present ? { value: detail ? `Saved · ${detail}` : "Saved", tone: "confirmed" } : { value: "Not recorded", tone: "unknown" };
 
@@ -179,7 +203,7 @@ export function measurementFacts(row: ReviewRow, info: ReviewInfo): Fact[] {
   return [
     { label: "Area", value: `${metricNumber(row.area_um2, 2)} µm² · ${metricNumber(row.area, 1)} px²` },
     { label: "Deformability", value: metricNumber(row.deformability, 4) },
-    { label: "E (stored)", value: Number.isFinite(row.youngs_modulus) ? `${metricNumber(row.youngs_modulus, 2)} kPa` : null },
+    { label: "E (stored)", value: storedEText(row, info), tone: storedENotComputed(info) ? "unknown" : undefined },
     { label: "Ring ratio", value: metricNumber(row.ring_ratio, 3) },
     { label: "Timestamp", value: `${row.timestamp_ns} ns` },
     {
@@ -336,7 +360,7 @@ export function reprocessComparison(r: ReviewReprocess, info: ReviewInfo): Compa
   const e = (row: ReviewRow | null, recomputed: boolean): string | null => {
     if (!row) return null;
     if (!recomputed) return "not recomputed (no E-LUT loaded)";
-    return num(row.youngs_modulus, 2) !== null ? `${num(row.youngs_modulus, 2)} kPa` : null;
+    return num(row.youngs_modulus, 2) !== null ? `${num(row.youngs_modulus, 2)} kPa, ${REPROCESSED_E_CAVEAT}` : null;
   };
   return [
     { label: "Area (px²)", stored: num(s.area, 1), reprocessed: m ? num(m.area, 1) : null },
@@ -344,7 +368,7 @@ export function reprocessComparison(r: ReviewReprocess, info: ReviewInfo): Compa
     { label: "Deformability", stored: num(s.deformability, 4), reprocessed: m ? num(m.deformability, 4) : null },
     { label: "Area ratio", stored: num(s.area_ratio, 3), reprocessed: m ? num(m.area_ratio, 3) : null },
     { label: "Ring ratio", stored: num(s.ring_ratio, 3), reprocessed: m ? num(m.ring_ratio, 3) : null },
-    { label: "E", stored: num(s.youngs_modulus, 2) !== null ? `${num(s.youngs_modulus, 2)} kPa` : null, reprocessed: e(m, r.emodulus_recomputed) },
+    { label: "E", stored: storedEText(s, info), reprocessed: e(m, r.emodulus_recomputed) },
     { label: "Validation", stored: validation(s), reprocessed: m ? validation(m) : null },
     { label: "Box (image x, y · w×h)", stored: box(s, offset.dx, offset.dy), reprocessed: m ? box(m, 0, 0) : null },
     { label: "Centroid (image)", stored: centre(s, offset.dx, offset.dy), reprocessed: m ? centre(m, 0, 0) : null },
@@ -361,9 +385,14 @@ export function reprocessMatchText(r: ReviewReprocess): string {
   if (r.truncated) {
     return r.match_index === null
       ? `No match among the first ${n} objects returned (the kernel found more); one not returned may lie inside the stored box`
-      : `Matched object ${r.match_index + 1} of the first ${n} objects returned (the kernel found more; a nearer one may not be returned)`;
+      : `Matched object ${r.match_index + 1} of the first ${n} objects returned (the kernel found more; a nearer one may not be returned)${eCaveat(r)}`;
   }
   const found = n === 1 ? "1 object" : `${n} objects`;
   if (r.match_index === null) return `No match: the kernel found ${found}, none with its centroid inside the stored box`;
-  return `Matched object ${r.match_index + 1} of ${found} found (centroid nearest the stored one, inside the stored box)`;
+  return `Matched object ${r.match_index + 1} of ${found} found (centroid nearest the stored one, inside the stored box)${eCaveat(r)}`;
+}
+
+/** The match line's E caveat: a recomputed E used the app's current E-LUT. */
+function eCaveat(r: ReviewReprocess): string {
+  return r.emodulus_recomputed ? `; its E was ${REPROCESSED_E_CAVEAT}` : "";
 }
