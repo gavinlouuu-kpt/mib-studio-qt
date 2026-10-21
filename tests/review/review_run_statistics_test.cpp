@@ -30,6 +30,7 @@
 #include "support/tempdir.h"
 #include "support/watchdog.h"
 
+#include <hdf5.h>
 #include <nlohmann/json.hpp>
 
 #include <atomic>
@@ -234,8 +235,10 @@ int main()
         const auto host = withAttribute(legacy, "regen_host.h5", lut("host", true));
         auto s = statsOf(readRunStatistics(host.string(), "on_demand"));
         MIB_EXPECT(s["emodulus"]["status"] == "computed" && s["emodulus"]["lut"]["provenance"] == "host" &&
-                       s["emodulus"]["lut"]["sha256"] == std::string(64, 'd') && s["emodulus"]["n"] == "14",
-                   "a regenerated file's host record: " + s["emodulus"].dump());
+                       s["emodulus"]["lut"]["sha256"] == std::string(64, 'd') && s["emodulus"]["n"] == "0" &&
+                       s["emodulus"]["median_kpa"].is_null(),
+                   "a regenerated file's host record (the legacy rows store E 0: no value): " +
+                       s["emodulus"].dump());
         MIB_EXPECT(s["identity"]["has_snapshot"] == false, "regenerated: no snapshot");
         MIB_EXPECT(runStatisticsJson(*readRunStatistics(host.string(), "x").stats) == rowPathJson(host),
                    "the column path and the row path agree on a regenerated file");
@@ -247,8 +250,120 @@ int main()
         s = statsOf(readRunStatistics(unknown.string(), "on_demand"));
         MIB_EXPECT(s["emodulus"]["status"] == "not_recorded" && s["emodulus"]["lut"].is_null(),
                    "an unknown provenance is not a record: " + s["emodulus"].dump());
-        const auto both = withAttribute(v3, "v3_attribute.h5", lut("host", true));
-        s = statsOf(readRunStatistics(both.string(), "on_demand"));
+    }
+    {
+        // Never a fabricated value (Codex round 1): a target group without a boolean `enabled` or
+        // with a member of the wrong type is not recorded (null, never false); a recorded group's
+        // unrecorded bounds are null.
+        wd.mark("honest target group");
+        const auto withConfig = [&](const char *name, const json &group) {
+            const fs::path to = file(name);
+            fs::copy_file(v3, to, fs::copy_options::overwrite_existing);
+            backend::services::Hdf5Service w;
+            MIB_REQUIRE(w.openFileForUpdate(to.string()) &&
+                            w.writeConfigJson(json({{"image_processing", {{"target_group", group}}}}).dump()),
+                        "config");
+            w.closeFile();
+            return statsOf(readRunStatistics(to.string(), "on_demand"));
+        };
+        for (const auto &[name, group] :
+             std::vector<std::pair<const char *, json>>{{"tg_empty.h5", json::object()},
+                                                        {"tg_text.h5", {{"enabled", "yes"}}},
+                                                        {"tg_badbound.h5", {{"enabled", true}, {"area_min", "10"}}}})
+        {
+            const auto s = withConfig(name, group);
+            MIB_EXPECT(s["target_group"]["declared"].is_null() && s["target_group"]["n"].is_null() &&
+                           s["target_group"]["bounds"].is_null(),
+                       std::string(name) + ": not recorded: " + s["target_group"].dump());
+        }
+        const auto s = withConfig("tg_only_enabled.h5", {{"enabled", true}});
+        MIB_EXPECT(s["target_group"]["declared"] == true && s["target_group"]["n"] == "8" &&
+                       s["target_group"]["bounds"]["area_um2_min"].is_null() &&
+                       s["target_group"]["bounds"]["emodulus_gated"].is_null() &&
+                       s["target_group"]["bounds"]["emodulus_kpa_min"].is_null(),
+                   "unrecorded bounds are null: " + s["target_group"].dump());
+        const auto off = withConfig("tg_off.h5", {{"enabled", false}});
+        MIB_EXPECT(off["target_group"]["declared"] == false && off["target_group"]["n"].is_null(),
+                   "a recorded false stays false: " + off["target_group"].dump());
+    }
+    {
+        // A valid set without isTargetGroup or timestampNs: the group's n and the event rate are
+        // not recorded (computeRunStatistics on a header that says so).
+        wd.mark("missing members");
+        backend::services::Hdf5Service reader;
+        MIB_REQUIRE(reader.loadFile(v3.string()), "v3");
+        auto header = readRunStatisticsHeader(reader);
+        RunStatisticsRows rows;
+        MIB_REQUIRE(readRunStatisticsRows(reader, rows, nullptr), "rows");
+        reader.closeFile();
+        header.targetGroupFieldRecorded = false;
+        header.timestampFieldRecorded = false;
+        const auto s = json::parse(runStatisticsJson(computeRunStatistics(std::move(rows), header)));
+        MIB_EXPECT(s["target_group"]["declared"] == true && s["target_group"]["n"].is_null() &&
+                       s["target_group"]["of"].is_null() && s["target_group"]["percent"].is_null(),
+                   "no isTargetGroup member: " + s["target_group"].dump());
+        MIB_EXPECT(s["event_rate"]["status"] == "not_recorded" && s["event_rate"]["per_s"].is_null(),
+                   "no timestampNs member: " + s["event_rate"].dump());
+
+        // A valid set whose compound lacks area: an error, never area 0.
+        const fs::path partial = file("partial_compound.h5");
+        {
+            const hid_t f = H5Fcreate(partial.string().c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
+            MIB_REQUIRE(f >= 0, "create");
+            const hid_t g = H5Gcreate2(f, "/valid_frames", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+            struct Row
+            {
+                std::uint64_t timestampNs;
+                double deformability;
+                std::uint8_t isValid;
+            };
+            const hid_t t = H5Tcreate(H5T_COMPOUND, sizeof(Row));
+            H5Tinsert(t, "timestampNs", HOFFSET(Row, timestampNs), H5T_NATIVE_UINT64);
+            H5Tinsert(t, "deformability", HOFFSET(Row, deformability), H5T_NATIVE_DOUBLE);
+            H5Tinsert(t, "isValid", HOFFSET(Row, isValid), H5T_NATIVE_UINT8);
+            const hsize_t dims[1] = {3};
+            const hid_t space = H5Screate_simple(1, dims, nullptr);
+            const hid_t d = H5Dcreate2(g, "metadata", t, space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+            const Row data[3] = {{1, 0.1, 1}, {2, 0.2, 1}, {3, 0.3, 1}};
+            MIB_REQUIRE(d >= 0 && H5Dwrite(d, t, H5S_ALL, H5S_ALL, H5P_DEFAULT, data) >= 0, "write");
+            H5Dclose(d);
+            H5Sclose(space);
+            H5Tclose(t);
+            H5Gclose(g);
+            H5Fclose(f);
+        }
+        const auto r = readRunStatistics(partial.string(), "on_demand");
+        MIB_EXPECT(r.status == RunStatisticsStatus::Error && !r.stats &&
+                       r.message.find("not a supported metadata schema") != std::string::npos,
+                   "a compound without area: " + r.message);
+    }
+    {
+        // The contract version only when a marker is recorded (the legacy Contract 1 is inferred).
+        const auto s = statsOf(readRunStatistics(legacy.string(), "on_demand"));
+        backend::services::Hdf5Service reader;
+        MIB_REQUIRE(reader.loadFile(legacy.string()), "legacy");
+        int contract = 0;
+        bool recorded = true;
+        MIB_REQUIRE(reader.readRecordedProcessingContract(contract, &recorded), "contract");
+        reader.closeFile();
+        MIB_EXPECT(recorded ? s["identity"]["contract_version"] == contract : s["identity"]["contract_version"].is_null(),
+                   "contract_version follows a recorded marker only: " + s["identity"].dump());
+    }
+    {
+        const auto lut = [](const char *provenance) {
+            return json({{"loaded", true}, {"lut_id", "lut-v2"}, {"revision", "2"}, {"source", "r2-public-catalog"},
+                         {"sha256", std::string(64, 'd')}, {"catalog_sha256", nullptr},
+                         {"checksum_status", "verified"}, {"provenance", provenance}})
+                .dump();
+        };
+        const fs::path both = file("v3_attribute.h5");
+        fs::copy_file(v3, both, fs::copy_options::overwrite_existing);
+        {
+            backend::services::Hdf5Service w;
+            MIB_REQUIRE(w.openFileForUpdate(both.string()) && w.writeEModulusLutJson(lut("host")), "attribute");
+            w.closeFile();
+        }
+        const auto s = statsOf(readRunStatistics(both.string(), "on_demand"));
         MIB_EXPECT(s["emodulus"]["lut"]["provenance"] == "snapshot" &&
                        s["emodulus"]["lut"]["sha256"] == std::string(64, 'a'),
                    "the snapshot record wins: " + s["emodulus"]["lut"].dump());

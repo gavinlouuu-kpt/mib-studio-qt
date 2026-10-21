@@ -100,8 +100,9 @@ public:
     // logged). The reader serializes that read with HDF5 users outside the coordinator: the
     // facade installs one that runs it under its review lanes' lock and session mutex
     // (review::ReviewJobs::runStatistics, #722), which defers it while a review job runs (the
-    // numbers are then computed on demand when the instrument is idle). Without one the file is
-    // read directly, as the calibration derivation reads it. The reader is called with its own
+    // numbers are then computed on demand when the instrument is idle). Without one nothing
+    // serializes the read (a native shell's own HDF5 users), so the pass defers the file and
+    // reads nothing; it is computed on demand. The reader is called with its own
     // lock held, so clearing it (nullptr, the facade's teardown) waits for a call in progress.
     using ClosedRunStatisticsReader = std::function<review::RunStatisticsResult(const std::string& path)>;
     void setClosedRunStatisticsReader(ClosedRunStatisticsReader reader);

@@ -2221,8 +2221,11 @@ void ExperimentCoordinator::quickLookAtClose(const RunConfigurationSnapshot& run
         review::RunStatisticsResult result;
         {
             std::lock_guard<std::mutex> lock(closedRunStatisticsMutex_);
+            // Only through the installed reader (the facade's review lanes and session mutex):
+            // HDF5 is not thread-safe (#722), and without it nothing serialises this read
+            // against another HDF5 user, so the file is left for an on-demand read.
             result = closedRunStatisticsReader_ ? closedRunStatisticsReader_(run.outputPath)
-                                                : review::readRunStatistics(run.outputPath, "close");
+                                                : review::deferredRunStatistics(run.outputPath);
         }
         const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
         if (result.status == review::RunStatisticsStatus::Computed && result.stats) {

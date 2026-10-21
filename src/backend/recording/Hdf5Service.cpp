@@ -3209,8 +3209,9 @@ namespace backend::services {
         return true;
     }
 
-    bool Hdf5Service::readRecordedProcessingContract(int& contract) const
+    bool Hdf5Service::readRecordedProcessingContract(int& contract, bool* recorded) const
     {
+        if (recorded) *recorded = false;
         if (!isFileOpen()) return false;
 
         // Contract metadata was added after the first recording files. Those
@@ -3269,6 +3270,7 @@ namespace backend::services {
             if (!ok) return false;
         }
         contract = discovered.value_or(1);
+        if (recorded) *recorded = discovered.has_value();
         return true;
     }
 

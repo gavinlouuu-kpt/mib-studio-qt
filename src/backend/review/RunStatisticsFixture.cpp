@@ -139,7 +139,8 @@ namespace backend::review
                     {"area_min", 10},
                     {"area_max", 30},
                     {"deformability_min", 0.0},
-                    {"deformability_max", 0.2}}}}}};
+                    {"deformability_max", 0.2},
+                    {"emodulus_enabled", false}}}}}};
             if (!hdf5.writeConfigJson(configDoc.dump())) return fail(error, "config json");
             if (!hdf5.writeRunSnapshotJson(snapshotJson(variant), "{}")) return fail(error, "snapshot");
             recording::RecordingAccountingSnapshot a;

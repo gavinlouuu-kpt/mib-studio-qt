@@ -109,8 +109,9 @@ public:
     bool readRecordedProcessingConfig(ProcessingConfig& config) const;
     // Reads persisted processing contract markers
     // across the file. Missing markers are legacy Contract 1; malformed or
-    // conflicting markers return false.
-    bool readRecordedProcessingContract(int& contract) const;
+    // conflicting markers return false. `recorded` (optional) says whether any
+    // marker exists (false: the Contract 1 is the legacy inference).
+    bool readRecordedProcessingContract(int& contract, bool* recorded = nullptr) const;
     // The pixel-to-micron factor (µm per pixel) the file's objects were
     // analysed at, as `/experiment_info @pixel_to_micron` (a scalar double;
     // #758). batch_masks::saveMasksToHdf5 writes it for regenerated and

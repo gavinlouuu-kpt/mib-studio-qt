@@ -43,7 +43,7 @@ function wire(members: Record<string, unknown>): string {
 
 describe("review identity E-LUT provenance (review ABI 5, #783)", () => {
   it("pins the contract", () => {
-    expect(REVIEW_ABI_VERSION).toBe(5);
+    expect(REVIEW_ABI_VERSION).toBeGreaterThanOrEqual(5); // 5 added the provenance; 6 is #716 A7a (runQuickLook.test.ts pins it)
     expect(REVIEW_EMODULUS_LUT_PROVENANCES).toEqual(["snapshot", "recorded", "host"]);
   });
 

@@ -1,5 +1,6 @@
 #include "backend/review/RunStatistics.h"
 
+#include "backend/processing/ProcessingConfigJson.h"
 #include "backend/processing/ProcessingTypes.h"
 #include "backend/recording/Hdf5Service.h"
 #include "backend/review/ReviewSession.h"
@@ -156,17 +157,22 @@ namespace backend::review
             if (s.targetGroupDeclared && *s.targetGroupDeclared && h.config)
             {
                 const auto &c = *h.config;
-                bounds = {{"area_um2_min", c.target_group_area_min},
-                          {"area_um2_max", c.target_group_area_max},
-                          {"deformability_min", c.target_group_deformability_min},
-                          {"deformability_max", c.target_group_deformability_max},
-                          {"emodulus_gated", c.enable_target_group_emodulus},
-                          {"emodulus_kpa_min",
-                           c.enable_target_group_emodulus ? json(c.target_group_emodulus_min) : json(nullptr)},
-                          {"emodulus_kpa_max",
-                           c.enable_target_group_emodulus ? json(c.target_group_emodulus_max) : json(nullptr)}};
+                const auto recorded = [&](const char *key, const json &value) {
+                    return std::find(h.targetGroupKeys.begin(), h.targetGroupKeys.end(), key) != h.targetGroupKeys.end()
+                               ? value
+                               : json(nullptr);
+                };
+                const json gated = recorded("emodulus_enabled", c.enable_target_group_emodulus);
+                const bool eGated = gated.is_boolean() && gated.get<bool>();
+                bounds = {{"area_um2_min", recorded("area_min", c.target_group_area_min)},
+                          {"area_um2_max", recorded("area_max", c.target_group_area_max)},
+                          {"deformability_min", recorded("deformability_min", c.target_group_deformability_min)},
+                          {"deformability_max", recorded("deformability_max", c.target_group_deformability_max)},
+                          {"emodulus_gated", gated},
+                          {"emodulus_kpa_min", eGated ? recorded("emodulus_min", c.target_group_emodulus_min) : json(nullptr)},
+                          {"emodulus_kpa_max", eGated ? recorded("emodulus_max", c.target_group_emodulus_max) : json(nullptr)}};
             }
-            const bool declared = s.targetGroupDeclared && *s.targetGroupDeclared;
+            const bool declared = s.targetGroupDeclared && *s.targetGroupDeclared && h.targetGroupFieldRecorded;
             o["target_group"] = {
                 {"declared", s.targetGroupDeclared ? json(*s.targetGroupDeclared) : json(nullptr)},
                 {"n", declared ? json(decimal(s.targetGroupN)) : json(nullptr)},
@@ -370,7 +376,7 @@ namespace backend::review
 
         // Target group: the run's declared group, as recorded (no polygon, Q2 a).
         if (header.config) s.targetGroupDeclared = header.config->enable_target_group;
-        if (s.targetGroupDeclared && *s.targetGroupDeclared)
+        if (s.targetGroupDeclared && *s.targetGroupDeclared && header.targetGroupFieldRecorded)
         {
             s.targetGroupN = rows.targetGroupRows_;
             if (s.validRows > 0)
@@ -379,7 +385,7 @@ namespace backend::review
         }
 
         // Event rate on the declared clock: valid rows / (last - first timestamp).
-        if (header.ticksPerSecond == 0) s.eventRateStatus = "not_recorded";
+        if (header.ticksPerSecond == 0 || !header.timestampFieldRecorded) s.eventRateStatus = "not_recorded";
         else if (s.validRows < 2 || !rows.haveTimestamp_ || rows.timestampMax_ <= rows.timestampMin_)
             s.eventRateStatus = "too_short";
         else
@@ -420,8 +426,16 @@ namespace backend::review
         {
             h.metadataPresent = true;
             std::vector<std::string> names;
-            if (reader.readMetadataFieldNames(true, names))
-                h.eFieldRecorded = std::find(names.begin(), names.end(), "youngsModulus") != names.end();
+            const bool read = reader.readMetadataFieldNames(true, names);
+            const auto has = [&](const char *member) {
+                return read && std::find(names.begin(), names.end(), member) != names.end();
+            };
+            h.eFieldRecorded = has("youngsModulus");
+            h.areaFieldRecorded = has("area");
+            h.deformabilityFieldRecorded = has("deformability");
+            h.validFieldRecorded = has("isValid");
+            h.targetGroupFieldRecorded = has("isTargetGroup");
+            h.timestampFieldRecorded = has("timestampNs");
         }
         else if (present)
         {
@@ -435,20 +449,24 @@ namespace backend::review
             if (reader.readAcquisitionProvenance(descriptor, telemetry) && descriptor.isValid())
                 h.ticksPerSecond = descriptor.ticksPerSecond;
         }
+        // The target group is recorded only in the config document (#758): without one the
+        // file does not say whether the run declared one. It counts as recorded only with a
+        // boolean `enabled` and every recorded member of its type; otherwise null, never false.
+        if (const auto doc = reader.readScalarStringAttribute("/experiment_info", "config_json"))
         {
-            services::ProcessingConfig config;
-            // The target group is recorded only in the config document (#758):
-            // without one the file does not say whether the run declared one.
-            bool groupRecorded = false;
-            if (const auto doc = reader.readScalarStringAttribute("/experiment_info", "config_json"))
-            {
-                const auto root = nlohmann::json::parse(*doc, nullptr, false);
-                if (root.is_object())
-                    if (const auto p = root.find("image_processing"); p != root.end() && p->is_object())
-                        if (const auto t = p->find("target_group"); t != p->end() && t->is_object())
-                            groupRecorded = true;
-            }
-            if (groupRecorded && reader.readRecordedProcessingConfig(config)) h.config = config;
+            const auto root = nlohmann::json::parse(*doc, nullptr, false);
+            if (root.is_object())
+                if (const auto p = root.find("image_processing"); p != root.end() && p->is_object())
+                    if (const auto t = p->find("target_group"); t != p->end() && t->is_object())
+                        if (const auto e = t->find("enabled"); e != t->end() && e->is_boolean())
+                        {
+                            services::ProcessingConfig parsed;
+                            if (processing::config_json::fromJson(nlohmann::json{{"target_group", *t}}, parsed))
+                            {
+                                h.config = parsed;
+                                for (const auto &item : t->items()) h.targetGroupKeys.push_back(item.key());
+                            }
+                        }
         }
         processing::ProcessingCoreIdentity core;
         if (reader.readProcessingCoreIdentity(core) && !core.version.empty()) h.coreVersion = core.version;
@@ -475,8 +493,10 @@ namespace backend::review
         }
         if (!h.contractVersion)
         {
+            // Only a recorded marker: the reader's legacy default (Contract 1) is an inference.
             int contract = 0;
-            if (reader.readRecordedProcessingContract(contract)) h.contractVersion = contract;
+            bool recorded = false;
+            if (reader.readRecordedProcessingContract(contract, &recorded) && recorded) h.contractVersion = contract;
         }
         const auto start = reader.readScalarUintAttribute("/experiment_info", "start_time_ns");
         const auto end = reader.readScalarUintAttribute("/experiment_info", "end_time_ns");
@@ -618,6 +638,15 @@ namespace backend::review
                 reader.closeFile();
                 r.status = RunStatisticsStatus::NotAvailable;
                 r.message = kRunStatisticsRawMessage;
+                return r;
+            }
+            if (header.metadataPresent &&
+                (!header.areaFieldRecorded || !header.deformabilityFieldRecorded || !header.validFieldRecorded))
+            {
+                // Never a fabricated 0: the column reader leaves a member the compound lacks at 0.
+                reader.closeFile();
+                r.message = "The run file's valid-object metadata records no area, deformability or isValid "
+                            "member: not a supported metadata schema";
                 return r;
             }
             RunStatisticsRows rows;

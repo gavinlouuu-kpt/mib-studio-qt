@@ -120,6 +120,14 @@ the pass never takes it there.
 - The run's own file at close: the pass reads it after `closeFile()`; a review job holding a lane
   at that moment defers it (nothing cached), and the first on-demand call when the instrument is
   idle computes it.
+- Without the facade's reader (a native shell) the pass reads nothing: no lock would serialise it
+  against that shell's own HDF5 users (#722).
+- Never a fabricated 0: a valid set whose compound lacks `area`, `deformability` or `isValid` is
+  an error; without `isTargetGroup` the group's n, of and % are null (declared stays as recorded);
+  without `timestampNs` the event rate is `not_recorded`. The target group counts as declared only
+  with a boolean `image_processing.target_group.enabled` and every recorded member of its type;
+  a bound the document does not record is null. The contract version is reported only when a
+  marker is recorded (the reader's legacy Contract 1 is an inference, not a record).
 - Opening a file the review session already holds with a second reader is fine (HDF5 shares the
   file); the session keeps reading its own handle (tested).
 - The file's modification time keys the cache only (std::filesystem's clock has no portable epoch

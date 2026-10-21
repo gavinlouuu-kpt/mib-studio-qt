@@ -214,8 +214,9 @@ append only, never renumber.
    read goes through the reader the facade installs
    (`setClosedRunStatisticsReader` → `ReviewJobs::runStatistics`: the review
    lanes' lock and the session's mutex, #722); a review job holding a lane
-   defers it to on demand (nothing cached, logged). Without a facade the file is
-   read directly, as the calibration derivation reads it. Nothing is written;
+   defers it to on demand (nothing cached, logged). Without a facade (a native
+   shell with HDF5 users of its own) nothing serializes the read, so the file is
+   deferred to on demand and nothing is read. Nothing is written;
    it never fails the run; its time is logged.
 7. Restore the realtime mode if Start switched it.
 8. Terminal status: `terminal=true`, `completion` from the reconciled

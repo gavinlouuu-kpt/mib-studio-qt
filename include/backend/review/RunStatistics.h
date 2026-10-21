@@ -119,8 +119,22 @@ namespace backend::review
         bool hasAccounting{false};
         recording::RecordingAccountingSnapshot accounting;
         std::uint64_t ticksPerSecond{0}; // the declared timestamp clock; 0 = not recorded
-        // The recorded processing config (nullopt: the file records none).
+        // The recorded target group (nullopt: the file's config document records none, or
+        // `image_processing.target_group` without a boolean `enabled`, or with a member of the
+        // wrong type). Only the target-group members are read from it.
         std::optional<services::ProcessingConfig> config;
+        // The `image_processing.target_group` members the document records: a bound it does not
+        // record is reported null, never the struct default.
+        std::vector<std::string> targetGroupKeys;
+        // The valid set's compound members (true for an absent valid set: no row lacks them). A
+        // file whose valid set lacks area, deformability or isValid is an error (never a
+        // fabricated 0); without isTargetGroup the group's n is not recorded; without
+        // timestampNs the event rate is not recorded.
+        bool areaFieldRecorded{true};
+        bool deformabilityFieldRecorded{true};
+        bool validFieldRecorded{true};
+        bool targetGroupFieldRecorded{true};
+        bool timestampFieldRecorded{true};
         std::optional<std::string> coreVersion;
         std::optional<int> contractVersion;
         std::optional<std::string> methodRevisionId;     // snapshot method.revision_id (a central method)
