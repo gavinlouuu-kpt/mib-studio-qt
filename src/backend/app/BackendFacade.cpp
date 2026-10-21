@@ -1552,14 +1552,28 @@ namespace backend::bridge
         {
             // One idle transaction (the coordinator's lock, which Start takes): the factor is read,
             // compared and set with no Start in between, and never during a run.
+            bool recording = false;
             const bool idle = backend_.experiment().withIdleConfiguration([&] {
+                // Raw recording starts under this same lock: no factor or record change beside it.
+                if (backend_.isFrameRecording())
+                {
+                    recording = true;
+                    return;
+                }
                 auto &processing = backend_.processing();
                 const double current = processing.getPixelToMicronFactor();
                 result = store->apply(recordId, expectedCurrentFactor, current, currentCalibrationIdentity(backend_),
                                       app::WallClock::nowNs() / 1'000'000ull);
                 if (result.ok()) processing.setPixelToMicronFactor(*result.newFactor);
             });
-            if (!idle)
+            if (recording)
+            {
+                result = {};
+                result.recordId = recordId;
+                result.outcome = app::CalibrationApplyOutcome::RunActive;
+                result.message = "raw recording is active: calibration_apply is refused until it stops; nothing was applied";
+            }
+            else if (!idle)
             {
                 result = {};
                 result.recordId = recordId;

@@ -361,6 +361,19 @@ int main()
         unknown.spec.policy = CalibrationPolicy::Warn;
         MIB_EXPECT(evaluateCalibrationGate(unknown).gate.status == GateStatus::Warn, "... a warning under warn");
 
+        // A source that could not be resolved is an unknown identity (Codex round 1).
+        RunConfigurationSnapshot c;
+        c.camera.effective = "unavailable";
+        c.roiW = 0;
+        MIB_EXPECT(!calibrationIdentityOf(c).known(), "an unavailable camera is unknown");
+        c.camera.effective = "mock";
+        c.camera.label = "frames";
+        MIB_EXPECT(calibrationIdentityOf(c).known() && calibrationIdentityOf(c).camera == "mock:frames" &&
+                       calibrationIdentityOf(c).roi == "full",
+                   "a resolved source with a full-frame ROI");
+        c.roiPending = true;
+        MIB_EXPECT(!calibrationIdentityOf(c).known(), "a pending ROI is unknown");
+
         auto broken = in;
         broken.spec.policy = CalibrationPolicy::Required;
         broken.storeError = "unreadable";
@@ -468,6 +481,38 @@ int main()
             MIB_EXPECT(store.apply("cal-2", *a2.newFactor, *a2.newFactor, identityA(), t0 + 70).outcome ==
                            CalibrationApplyOutcome::NotApplicable,
                        "an invalidated record is not applied again");
+        }
+        {
+            // A stored record is never trusted for its status alone (Codex round 1): a "proposed"
+            // record whose results fail the evidence gates (a hand-edited or corrupt store) is
+            // refused as insufficient and is never in effect.
+            const auto edited = td.path() / "edited.json";
+            auto weak = derivedRecord("cal-weak", beads(300, 15.0, 0.03), 0.4886, identityA(), t0);
+            weak.derivation.results.validObjects = 50; // the gates still say pass
+            weak.sequence = 1;
+            {
+                std::ofstream out(edited, std::ios::binary);
+                out << R"({"kind":"mib.instrument_calibration","schema_version":1,"versions":[)"
+                    << calibrationRecordToJson(weak) << "]}";
+            }
+            CalibrationStore store(edited);
+            MIB_REQUIRE(store.error().empty(), "the edited store loads: " + store.error());
+            MIB_EXPECT(!store.latest("cal-weak")->applicable(), "not applicable");
+            const auto r = store.apply("cal-weak", 0.4886, 0.4886, identityA(), t0 + 1);
+            MIB_EXPECT(r.outcome == CalibrationApplyOutcome::Insufficient && !store.applied(),
+                       "a record whose evidence fails is refused whatever its stored status: " + r.message);
+            auto appliedWeak = weak;
+            appliedWeak.status = CalibrationStatus::Applied;
+            appliedWeak.appliedNewFactor = *weak.proposedFactor();
+            CalibrationGateInput in;
+            in.spec.policy = CalibrationPolicy::Required;
+            in.applied = appliedWeak;
+            in.current = identityA();
+            in.currentFactor = *weak.proposedFactor();
+            in.nowUnixMs = t0 + 1;
+            const auto g = evaluateCalibrationGate(in);
+            MIB_EXPECT(g.gate.status == GateStatus::Fail && !g.inEffectRecordId,
+                       "an applied record with failing evidence is never in effect");
         }
         {
             // Persistence: a reload sees every version in order.

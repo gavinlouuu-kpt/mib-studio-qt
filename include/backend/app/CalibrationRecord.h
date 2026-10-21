@@ -202,7 +202,12 @@ struct CalibrationRecord {
     std::optional<double> appliedNewFactor;
     std::string supersededBy;       // on a superseded version: the record that replaced it
 
-    bool applicable() const { return status == CalibrationStatus::Proposed; }
+    // The record's own evidence passes the minimum-evidence gates, re-checked from its results
+    // (never trusted from the stored status alone): every gate passed, at least
+    // kCalibrationMinValidObjects valid objects, a diameter CV within the method's limit and a
+    // finite positive proposal. A stored record that fails it is never applied or in effect.
+    bool evidenceSufficient() const;
+    bool applicable() const { return status == CalibrationStatus::Proposed && evidenceSufficient(); }
     std::optional<double> proposedFactor() const { return derivation.results.proposedPixelToMicron; }
 };
 

@@ -50,7 +50,9 @@
   coordinator's idle transaction (`withIdleConfiguration`, the lock Start takes): read the
   current factor, refuse unless the record is `proposed` (or `applied` but no longer in effect: an
   explicit re-apply), of the current known identity, and `expected_current_factor` matches the
-  current factor (relative 1e-9); then append the previous applied record's `superseded` version
+  current factor (relative 1e-9), and refused while raw recording runs; the record's evidence is
+  re-checked from its stored results (`evidenceSufficient`: gates, ≥ 200 objects, CV within the
+  limit, a positive proposal), never trusted from its status alone; then append the previous applied record's `superseded` version
   and this record's `applied` version in one write, and only then
   `ProcessingService::setPixelToMicronFactor`. Nothing changes a method: the applied config.json
   text (the method's provenance hash) is untouched. Nothing applies on its own, not even at
@@ -59,7 +61,9 @@
   An applied record is *in effect* when its identity is the current one and its factor is the
   current factor; that id goes into the run snapshot. Invalidation is hard: a known identity that
   differs from the applied record's appends its `invalidated` version (once). Age is soft (Warn).
-  An unknown identity never invalidates and never confirms.
+  An unknown identity (no camera source, an unresolved one such as `unavailable`, a pending ROI)
+  never invalidates and never confirms. An applied record whose stored evidence fails the re-check
+  is never in effect.
 
 ## Key APIs
 

@@ -340,6 +340,19 @@ int main()
                    "the applied record is in effect");
         const auto list = json::parse(facade.calibrationRecordsListJson());
         MIB_EXPECT(list["applied_record_id"] == id && list["in_effect_record_id"] == id, list.dump());
+
+        // Raw recording runs with the experiment idle: apply is still refused beside it (Codex round 1).
+        std::string recordWhy;
+        if (backendApp.startFrameRecording((td.path() / "raw.h5").string(), &recordWhy)) {
+            const auto rev = store->revision();
+            const auto during = json::parse(facade.applyCalibrationJson(id, applied));
+            MIB_EXPECT(during["outcome"] == static_cast<int>(app::CalibrationApplyOutcome::RunActive) &&
+                           store->revision() == rev && proc.getPixelToMicronFactor() == applied,
+                       "apply is refused during raw recording: " + during.dump());
+            backendApp.stopFrameRecording();
+        } else {
+            MIB_EXPECT(false, "raw recording could not start: " + recordWhy);
+        }
     }
 
     // ---- Start identity --------------------------------------------------------------------
@@ -404,6 +417,33 @@ int main()
         MIB_EXPECT(store->revision() == rev, "an invalidation is appended once");
         const auto reapply = json::parse(facade.applyCalibrationJson(id, proc.getPixelToMicronFactor()));
         MIB_EXPECT(reapply["ok"] == false, "an invalidated record is not applied again");
+    }
+
+    // ---- a record applied after the preflight: the mismatch, not a stale preflight ---------
+    {
+        wd.mark("mismatch before stale");
+        const auto identity = identityFromList(json::parse(facade.calibrationRecordsListJson()));
+        const uint64_t now = app::WallClock::nowNs() / 1000000;
+        std::string why;
+        MIB_REQUIRE(store->addDerived(proposedRecord("cal-test-0002", identity, now), &why), why);
+        MIB_REQUIRE(store->addDerived(proposedRecord("cal-test-0003", identity, now + 1), &why), why);
+        const double f = proc.getPixelToMicronFactor();
+        const auto first = json::parse(facade.applyCalibrationJson("cal-test-0002", f));
+        MIB_REQUIRE(first["ok"] == true, first.dump());
+        const auto path = (td.path() / "stale_and_mismatch.h5").string();
+        const auto preflight = readiness(facade, path);
+        MIB_REQUIRE(preflight.calibrationRecordId == std::string("cal-test-0002"), "cal-test-0002 in effect");
+        const auto second = json::parse(facade.applyCalibrationJson("cal-test-0003", first["new_factor"].get<double>()));
+        MIB_REQUIRE(second["ok"] == true && second["superseded_record_id"] == "cal-test-0002", second.dump());
+        bridge::ExperimentCommand start;
+        start.action = bridge::ExperimentCommandAction::Start;
+        start.outputPath = path;
+        start.readinessGeneration = preflight.generation; // stale now
+        start.startRequestJson = R"({"calibration_record_id":"cal-test-0002"})";
+        const auto refused = facade.dispatch(start);
+        MIB_EXPECT(!refused.ok && refused.message.find("mismatch") != std::string::npos &&
+                       refused.message.find("cal-test-0003") != std::string::npos && !std::filesystem::exists(path),
+                   "a superseded declaration is the mismatch: " + refused.message);
     }
 
     facade.shutdown();

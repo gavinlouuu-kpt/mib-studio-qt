@@ -1350,17 +1350,10 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
     // mismatch means the preflight is stale (reconnect, config/background/
     // core/ROI/output change, or new fault).
     result.readiness = evaluateLocked(path, request.profileId);
-    if (request.readinessGeneration != result.readiness.generation) {
-        result.outcome = ExperimentStartOutcome::StaleReadiness;
-        result.message = "readiness generation " + std::to_string(request.readinessGeneration) +
-                         " is stale (current " + std::to_string(result.readiness.generation) +
-                         "); re-run the preflight";
-        SPDLOG_WARN("ExperimentCoordinator: start refused — {}", result.message);
-        restoreModeOnFailure();
-        return result;
-    }
     // A declared calibration record must be the applied record in effect (#716 A4a): the snapshot
-    // records the backend's applied record, never a client's claim. Undeclared is fine.
+    // records the backend's applied record, never a client's claim. Undeclared is fine. Checked
+    // against this fresh evaluation before the generation, so a record applied after the preflight
+    // is reported as the mismatch it is, not as a stale preflight.
     if (const auto& declaredRecord = request.declared.identity.calibrationRecordId;
         declaredRecord && declaredRecord != result.readiness.calibrationRecordId) {
         result.outcome = ExperimentStartOutcome::InvalidRequest;
@@ -1369,6 +1362,15 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
                               ? "the applied record is \"" + *result.readiness.calibrationRecordId + "\""
                               : std::string("no calibration record is applied and in effect")) +
                          " (mismatch)";
+        SPDLOG_WARN("ExperimentCoordinator: start refused — {}", result.message);
+        restoreModeOnFailure();
+        return result;
+    }
+    if (request.readinessGeneration != result.readiness.generation) {
+        result.outcome = ExperimentStartOutcome::StaleReadiness;
+        result.message = "readiness generation " + std::to_string(request.readinessGeneration) +
+                         " is stale (current " + std::to_string(result.readiness.generation) +
+                         "); re-run the preflight";
         SPDLOG_WARN("ExperimentCoordinator: start refused — {}", result.message);
         restoreModeOnFailure();
         return result;

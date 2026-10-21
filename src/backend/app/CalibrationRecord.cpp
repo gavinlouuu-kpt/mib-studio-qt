@@ -214,7 +214,9 @@ CalibrationIdentity calibrationIdentityOf(const RunConfigurationSnapshot& c)
 {
     CalibrationIdentity id;
     const auto& source = c.camera.effective;
-    if (!source.empty() && source != "unknown" && source != "none")
+    // No source, or one that could not be resolved ("unavailable": the selected kind is not built
+    // in), is an unknown identity: it never invalidates or confirms a record.
+    if (!source.empty() && source != "unknown" && source != "none" && source != "unavailable")
         id.camera = c.camera.label.empty() ? source : source + ":" + c.camera.label;
     if (!c.roiPending) {
         id.roi = (c.roiW > 0 && c.roiH > 0) ? std::to_string(c.roiX) + "," + std::to_string(c.roiY) + "," +
@@ -431,6 +433,16 @@ std::string newCalibrationRecordId(uint64_t unixMs)
     return std::string("cal-") + stamp + "-" + profiles::generateUuidV4().substr(0, 8);
 }
 
+bool CalibrationRecord::evidenceSufficient() const
+{
+    const auto& r = derivation.results;
+    const auto minimum = std::max<uint64_t>(minValidObjects, kCalibrationMinValidObjects);
+    return derivation.sufficient() && r.validObjects >= minimum && r.cvDiameterPercent &&
+           std::isfinite(*r.cvDiameterPercent) && reference.maxCvPercent > 0.0 &&
+           *r.cvDiameterPercent <= reference.maxCvPercent && r.proposedPixelToMicron &&
+           std::isfinite(*r.proposedPixelToMicron) && *r.proposedPixelToMicron > 0.0;
+}
+
 bool sameCalibrationFactor(double a, double b)
 {
     if (!std::isfinite(a) || !std::isfinite(b)) return false;
@@ -642,7 +654,8 @@ CalibrationGateResult evaluateCalibrationGate(const CalibrationGateInput& in)
     double ageHours = 0.0;
     if (in.applied) {
         const auto& a = *in.applied;
-        if (!in.current.known()) appliedState = "identity-unknown";
+        if (!a.evidenceSufficient()) appliedState = "evidence-insufficient";
+        else if (!in.current.known()) appliedState = "identity-unknown";
         else if (a.identity != in.current) appliedState = "identity-changed";
         else if (!a.appliedNewFactor || !sameCalibrationFactor(*a.appliedNewFactor, in.currentFactor))
             appliedState = "factor-changed";
@@ -698,6 +711,11 @@ CalibrationGateResult evaluateCalibrationGate(const CalibrationGateInput& in)
         g.status = blocking;
         g.reason = "no calibration record is applied" + (in.invalidatedNote.empty() ? std::string() : " (" + in.invalidatedNote + ")");
         g.remediation = fixNone;
+    } else if (appliedState == "evidence-insufficient") {
+        g.status = blocking;
+        g.reason = "the applied record's stored evidence does not pass the minimum-evidence gates";
+        g.remediation = runIt;
+        g.detail = appliedText();
     } else if (appliedState == "identity-unknown") {
         g.status = policy == CalibrationPolicy::Required ? GateStatus::Unavailable : GateStatus::Warn;
         g.reason = "the camera or ROI identity is unknown, so the applied record cannot be confirmed";

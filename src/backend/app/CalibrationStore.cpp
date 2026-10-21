@@ -290,9 +290,10 @@ CalibrationApplyResult CalibrationStore::apply(const std::string& recordId, doub
         r.message = "no calibration record " + recordId;
         return r;
     }
-    if (rec->status == CalibrationStatus::Insufficient) {
+    if (rec->status == CalibrationStatus::Insufficient || !rec->evidenceSufficient()) {
         r.outcome = CalibrationApplyOutcome::Insufficient;
-        r.message = "record " + recordId + " is insufficient (it failed a minimum-evidence gate) and can never be applied";
+        r.message = "record " + recordId +
+                    " is insufficient (its evidence fails a minimum-evidence gate) and can never be applied";
         return r;
     }
     const bool reapply = rec->status == CalibrationStatus::Applied && rec->appliedNewFactor &&

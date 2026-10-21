@@ -68,7 +68,8 @@
      the presented preflight). A declared `calibration_record_id` that is not
      the applied calibration record in effect at this evaluation (#716 A4a,
      ABI 42; also one declared while none is in effect) → `InvalidRequest`
-     ("… (mismatch)"), nothing opened. Not ready → `NotReady`. LatestFrame
+     ("… (mismatch)"), nothing opened; checked before the generation, so a
+     record applied after the preflight is the mismatch, not `StaleReadiness`. Not ready → `NotReady`. LatestFrame
      without acknowledgement → `NotReady`.
   3. Freeze the `RunConfigurationSnapshot` from the evaluated candidate
      (start generation, host + wall-clock start time, output path), then the
