@@ -449,6 +449,9 @@ export function reprocessMatchText(r: ReviewReprocess, info?: ReviewInfo | null)
 /** The match line's E note: which E-LUT a recomputed E used (review ABI 4),
  * the B3c caveat for an older backend, and a different LUT said plainly. */
 function eCaveat(r: ReviewReprocess, info: ReviewInfo | null | undefined): string {
+  // Only about an E the matched object has: a missing value is not "computed".
+  const matched = r.match_index !== null ? r.reprocessed[r.match_index] : undefined;
+  if (!matched || num(matched.youngs_modulus, 2) === null) return "";
   const lut = reprocessLut(r, info);
   switch (lut.kind) {
     case "not_recomputed": return "";
@@ -461,4 +464,4 @@ function eCaveat(r: ReviewReprocess, info: ReviewInfo | null | undefined): strin
 
 /** Whether the match line should be in the warn tone for its E note. */
 export const reprocessLutDiffers = (r: ReviewReprocess, info: ReviewInfo | null | undefined): boolean =>
-  r.match_index !== null && reprocessLut(r, info).kind === "different";
+  eCaveat(r, info) !== "" && reprocessLut(r, info).kind === "different";

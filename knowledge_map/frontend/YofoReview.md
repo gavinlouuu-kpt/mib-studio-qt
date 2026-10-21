@@ -712,7 +712,8 @@ a value.
   sha256 (case-insensitive): the same hash adds ", the run's"; another hash,
   or a run that loaded none, marks the E row "different E-LUT: not comparable
   (the run's: sha256 …)" (`DIFFERENT_LUT`, warn tone) and the match line
-  says "not the run's (…): E is not comparable" in the warn tone. Since #778
+  says "not the run's (…): E is not comparable" in the warn tone (the match
+  line's E note appears only when the matched object has an E value). Since #778
   the backend uses the run's LUT or refuses, so that should be rare; it is
   checked, not assumed. A backend before review ABI 4 sends neither field
   (`reprocessRecord` keeps them `undefined`; the bridge's "" becomes `null`):

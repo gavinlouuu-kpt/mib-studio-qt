@@ -447,6 +447,11 @@ describe("the record reprocessed", () => {
       expect(reprocessLut(other, noneLoaded)).toMatchObject({ kind: "different", run: "none loaded" });
       // No match: no E row to mark.
       expect(eLine(named({ match_index: null }), runLut)?.warn).toBeUndefined();
+      // A matched object without an E value: the match line claims no computed E.
+      const noValue = named({ emodulus_lut: other.emodulus_lut, emodulus_lut_sha256: OTHER, reprocessed: [{ ...found, youngs_modulus: Number.NaN }] });
+      expect(reprocessMatchText(noValue, runLut)).toBe("Matched object 1 of 1 object found (centroid nearest the stored one, inside the stored box)");
+      expect(reprocessLutDiffers(noValue, runLut)).toBe(false);
+      expect(eLine(noValue, runLut)).toMatchObject({ reprocessed: null });
     });
 
     it("not recomputed: says so, never names a LUT", () => {
