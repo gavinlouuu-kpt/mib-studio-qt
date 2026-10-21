@@ -208,6 +208,7 @@ mib_link_hdf5(mib_processing PUBLIC)
 add_library(mib_review_core STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/review/ReviewSession.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/review/OverlayCompose.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/review/ObjectCoordinates.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/review/ReviewCharts.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/review/ReviewJobs.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/review/Reanalysis.cpp
@@ -219,6 +220,7 @@ add_library(mib_review_core STATIC
     ${PROJECT_SOURCE_DIR}/include/backend/review/ExportEngine.h
     ${PROJECT_SOURCE_DIR}/include/backend/review/ReviewTypes.h
     ${PROJECT_SOURCE_DIR}/include/backend/review/OverlayCompose.h
+    ${PROJECT_SOURCE_DIR}/include/backend/review/ObjectCoordinates.h
 )
 set_target_properties(mib_review_core PROPERTIES
     ARCHIVE_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
@@ -267,6 +269,8 @@ set_target_properties(oeabt_core PROPERTIES
 add_library(oeabt_serial STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/nanopositioner/oeabt/SerialTransport.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/SerialBus.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/services/SimulatedSerial.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/services/SerialPortClaims.cpp
 )
 target_include_directories(oeabt_serial PUBLIC ${PROJECT_SOURCE_DIR}/include)
 target_link_libraries(oeabt_serial PUBLIC oeabt_core spdlog::spdlog)
@@ -506,6 +510,7 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/services/SyringePumpService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/PulseGeneratorService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/StageConfig.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/services/SimulatedSerialScenario.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/StageService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/discovery/providers/Zc300Provider.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/RfGeneratorService.cpp

@@ -167,6 +167,9 @@ describe("job tracking", () => {
     expect(outputPathOf(job({ phase: "completed", message: "/out/run" }))).toBe("/out/run");
     const regen = job({ kind: REVIEW_OPERATION_KINDS.RegenerateMasks, phase: "completed", message: "/o/x.h5 (300 images: 3 valid, 297 invalid)" });
     expect(outputPathOf(regen)).toBe("/o/x.h5");
+    // #758: the message also names the factor the objects were validated at.
+    const withFactor = job({ kind: REVIEW_OPERATION_KINDS.RegenerateMasks, phase: "completed", message: "/o/x.h5 (4 images: 4 valid, 0 invalid; px→µm 0.2500 fallback: the file records none)" });
+    expect(outputPathOf(withFactor)).toBe("/o/x.h5");
     const batch = job({ kind: REVIEW_OPERATION_KINDS.BatchExport, phase: "completed", message: "exported 1 of 2 file(s); failed: b.h5: cannot open" });
     expect(outcomeText(batch)).toBe("Exported 1 of 2 file(s); 1 failed.");
     expect(outputPathOf(batch)).toBe("");

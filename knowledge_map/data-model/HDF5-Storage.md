@@ -14,12 +14,29 @@
   serialized `ProcessingConfig` (`processing_config_*`, including the declared
   contract, difference threshold, all object gates and the channel band;
   read back by `readRecordedProcessingConfig`), ROI, optional `background` image,
-  `config_json` (raw JSON string), plus processing-core provenance:
+  `config_json` (raw JSON string: a capture's runtime config document, a
+  regenerated / reanalysed file's `{"image_processing": …,
+  "pixel_to_micron_factor": …}`; its `image_processing.target_group` is the
+  recorded target group, which no `processing_config_*` attribute carries,
+  #758), `pixel_to_micron` (double, regenerated / reanalysed files only since
+  #758: the µm per pixel their objects were validated at; captures record
+  theirs in the run snapshot), plus processing-core provenance:
   `processing_core_version`, `processing_contract_version`,
   `processing_engine_abi_version`, `processing_core_sha256`,
   `processing_manifest_sha256`, `processing_release_tag`,
   `processing_core_source`, `processing_core_build_id`, and
   `processing_runtime_fingerprint`.
+  - `object_coordinates` (#756 review 2, UTF-8 string): the space of the
+    rows' bounding boxes and centroids. `roi_local`: relative to the
+    recorded ROI's origin, written by [[../architecture/ExperimentCoordinator]]
+    for an inline-realtime host run with an ROI (that path validates the
+    ROI's mask; images and masks stay full-frame, the mask pasted at the
+    ROI). `image`: image coordinates, written for async-batch and whole-image
+    runs and by `saveMasksToHdf5` (regenerate, reanalysis, the Qt batch
+    dialog; `computeProcessedFrame` validates the full-frame mask). Not
+    written for PL-science runs, nor by files before #756: readers decide
+    those as `backend/review/ObjectCoordinates.h` describes
+    ([[../services/ReviewSession]]).
 - `/valid_frames/` — per-field datasets (images, masks, metrics).
 - `/invalid_frames/` — same shape; populated only at
   `invalidFrameSamplingRate` sampling.

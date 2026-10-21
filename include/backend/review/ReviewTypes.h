@@ -9,7 +9,9 @@
 
 #include "backend/processing/ProcessingService.h"
 #include "backend/recording/RecordingAccounting.h"
+#include "backend/recording/RunProvenanceRecord.h"
 #include "backend/recording/RunStartIdentity.h"
+#include "backend/review/ObjectCoordinates.h"
 
 #include <cstdint>
 #include <optional>
@@ -22,6 +24,26 @@ namespace backend::review
     // Review contract `review_probe.max_paths`: the most paths one identity
     // probe accepts (the experiment library probes a folder in pages).
     inline constexpr std::size_t kReviewProbeMaxPaths = 256;
+
+    // Review contract `review_track_rows.max_rows` (#717 B3b): the most rows
+    // one linked-records query returns.
+    inline constexpr std::size_t kReviewTrackRowsMax = 256;
+
+    // Review contract `review_reprocess_record.max_objects` (#717 B3b): the
+    // most reprocessed objects one record's reprocess returns.
+    inline constexpr std::size_t kReviewReprocessMaxObjects = 64;
+
+    // Review contract `review_reprocess_record.settings`: which processing
+    // inputs a one-record reprocess uses. Append, never renumber.
+    enum class ReprocessSettings : std::uint32_t
+    {
+        // The file's recorded config, ROI and background (the regenerate
+        // default); the defaults when the file records no config.
+        Recorded = 0,
+        // The default config, the whole image as ROI, no background (the
+        // regenerate "default settings").
+        Default = 1,
+    };
 
     // What a run file says about its own identity (#717 B1a), read from run
     // snapshot v3 (#712, `/run_provenance @run_snapshot_json`) and the planned
@@ -47,6 +69,13 @@ namespace backend::review
         // @annotation_schema_version; nullopt when the attribute is missing or
         // unreadable (a recorded 0 stays 0).
         std::optional<std::uint32_t> annotationSchemaVersion;
+        // The E-modulus LUT the run used (snapshot v3 `emodulus_lut`, #717
+        // B3b); nullopt when the snapshot records none (before v3, or null).
+        // `loaded` false: the run had no LUT (E values were unavailable).
+        std::optional<recording::EModulusLutRecord> eModulusLut;
+        // The snapshot's `profile_id` (the only "method" a file records);
+        // nullopt when missing, not a string, or empty.
+        std::optional<std::string> profileId;
     };
 
     // One file of the experiment library's identity probe (#717 B1a): header
@@ -150,6 +179,10 @@ namespace backend::review
         // Run identity from snapshot v3 and the annotation (#717 B1a); absent
         // members for a legacy file.
         RunIdentity runIdentity;
+        // The space of the stored boxes and centroids, decided once at open
+        // (#756 review 2, ObjectCoordinates.h); Unknown for a raw recording,
+        // which stores no objects.
+        ObjectCoordinates objectCoordinates;
     };
 
     // One metrics row: the full FilterResult the Qt HdfMetricsModel shows.
@@ -187,6 +220,60 @@ namespace backend::review
         double brightnessQ2{0.0};
         double brightnessQ3{0.0};
         double brightnessQ4{0.0};
+    };
+
+    // One linked-records query (#717 B3b): the records of a set that share a
+    // track id, in set order. `positions` are their indices in the set (the
+    // index fetch_review_frame and metricsPage take), parallel to `rows`;
+    // `total` counts every match, so `truncated` = total > rows.size().
+    struct TrackRows
+    {
+        std::vector<std::uint64_t> positions;
+        std::vector<MetricRow> rows;
+        std::uint64_t total{0};
+        bool truncated{false};
+    };
+
+    // One record reprocessed (#717 B3b): the stored record next to what the
+    // review session's processing kernel finds in the same frame now. Never
+    // written anywhere. Both are in image coordinates (computeProcessedFrame,
+    // whatever the ROI); `match` is the reprocessed object whose centroid is
+    // nearest the stored one, inside the stored bounding box.
+    struct ReprocessResult
+    {
+        ReprocessSettings settings{ReprocessSettings::Recorded};
+        // The recorded config, ROI and background were used (false for
+        // Default, and for Recorded on a file that records no config).
+        bool usedRecordedSettings{false};
+        // Which inputs were used, in words, e.g. "recorded settings (config,
+        // ROI, background)" or "default settings: the file records none".
+        std::string settingsLabel;
+        // The kernel that reprocessed it (the review session's bundled core,
+        // not necessarily the one that recorded the file).
+        std::string coreVersion;
+        std::string coreSource;
+        // The px→µm factor the reprocessing ran and reports with: Recorded,
+        // the file's (or the fallback when it records none); Default, the
+        // processing default. Named in settingsLabel.
+        double pixelToMicron{0.0};
+        // E (and an E-gated target group) recomputed: false when no E-LUT
+        // is loaded for reprocessing; the reprocessed rows' E is then NaN.
+        bool emodulusRecomputed{false};
+        // The stored row as stored (its box and centroid in the file's
+        // object coordinate space, ReviewMetadata::objectCoordinates).
+        MetricRow stored;
+        // The objects found (none for an empty image: the kernel's
+        // frame-level "no object" result is not one), at most
+        // kReviewReprocessMaxObjects; image coordinates.
+        std::vector<MetricRow> reprocessed;
+        // Index into `reprocessed`: the object whose centroid is nearest the
+        // stored one inside the stored box, both placed in image coordinates
+        // (toImageSpace).
+        std::optional<std::size_t> match;
+        // The kernel found another number of objects than the stored record's
+        // object count (a stored count of 0 is not compared).
+        bool objectCountDiffers{false};
+        bool truncated{false}; // more objects than kReviewReprocessMaxObjects
     };
 
     // A packed 8-bit image: Mono8 (channels 1) or RGB (channels 3), row

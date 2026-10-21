@@ -336,8 +336,8 @@ int main()
         const auto *gate = readiness.gate("storage.hdf5");
         if (readiness.ready || !gate || gate->status != backend::app::GateStatus::Fail ||
             gate->reason != "an HDF5 file is already open" ||
-            gate->remediation != "finish or close the current file first" || !gate->detail.empty()) {
-            std::cerr << "a review file must fail storage.hdf5 with the pre-S5 text\n";
+            gate->remediation != backend::app::kCloseReviewFile || !gate->detail.empty()) {
+            std::cerr << "a review file must fail storage.hdf5, saying how to close it\n";
             facade.shutdown(); return 102;
         }
         bridge::ExperimentCommand start;
@@ -347,8 +347,8 @@ int main()
         const auto refused = facade.dispatch(start);
         if (refused.ok || !refused.experimentStartOutcome ||
             *refused.experimentStartOutcome != backend::app::ExperimentStartOutcome::NotReady ||
-            refused.message != "stop raw recording and close the existing HDF5 file before starting an experiment") {
-            std::cerr << "Start beside a review file must be refused with the pre-S5 message: " << refused.message
+            refused.message != std::string("an HDF5 file is already open: ") + backend::app::kCloseReviewFile + " before starting an experiment") {
+            std::cerr << "Start beside a review file must be refused, saying how to close it: " << refused.message
                       << "\n";
             facade.shutdown(); return 103;
         }
@@ -357,7 +357,8 @@ int main()
         rawProbe.filePath = (dataDir / "raw_probe.h5").string();
         const auto rawRefused = facade.dispatch(rawProbe);
         if (rawRefused.ok || backend.isFrameRecording() ||
-            rawRefused.message != "Close the existing HDF5 file before starting raw recording; its writer will not be replaced") {
+            rawRefused.message != std::string("an HDF5 file is already open: ") + backend::app::kCloseReviewFile +
+                                      " before starting raw recording") {
             std::cerr << "raw recording beside a review file must be refused: " << rawRefused.message << "\n";
             facade.shutdown(); return 104;
         }

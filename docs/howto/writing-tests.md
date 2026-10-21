@@ -215,6 +215,17 @@ fail-fast (`0xc0000409`) and the Windows crash dialog holds the process until
 the CTest timeout. Register new frontend tests with the `frontend.` prefix so
 the helper picks them up.
 
+### Serial hardware races (simulated rig)
+
+For anything that opens COM ports (pumps, generator, stage, nanopositioner,
+discovery probes), drive the real `AppBackend` against a
+`serialsim::Rig` ([`simulated-serial.md`](simulated-serial.md)). The rig
+opens exclusively on Linux too, adds startup timing faults and stale holders,
+and records every open. Run several seeds, assert
+`rig->contentionCount() == 0` and that every port is released at teardown,
+and print `rig->summary()` for a failing seed. See
+`tests/backend/serial_startup_race_test.cpp`.
+
 ## Mandatory rules
 
 - **Watchdog, never a naked `join()`/`wait()`.** A deadlocked test must fail

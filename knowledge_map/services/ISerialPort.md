@@ -90,6 +90,14 @@ the same for POSIX.
 - `makeSerialPortForPathForTesting(path, baud)` — POSIX-only test seam that
   opens an explicit device path (e.g. a pty slave); returns nullptr on Windows.
 
+## Simulated serial hardware (2026-10-19)
+
+While a [[SimulatedSerial]] rig is installed (`serialsim::install`, or
+`MIB_SERIAL_MODE=sim` through `AppBackend::initialize`), both platform files
+return the rig's port from `makePlatformSerialPort()` and its ports from
+`enumerateSerialPorts()`, so every caller is simulated without a factory
+seam of its own. Nothing changes when no rig is installed.
+
 ## Gotchas
 
 - POSIX `waitForReadyRead` uses `select()`; reads and writes are non-blocking

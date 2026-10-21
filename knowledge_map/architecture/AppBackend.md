@@ -186,7 +186,12 @@ profile catalog:
   by default, with `MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL` as an override.
 - Remote payloads are verified with SHA-256 before replacing the local cache.
 - The active LUT path is logged with source, revision, checksum status, and
-  remote update outcome.
+  remote update outcome. The path is the file `EModulusLut` actually read
+  (`ProcessingService::eModulusLutIdentity().path`), with `(requested …)`
+  when it differs: `EModulusLut::resolvePath` also tries `resources/…`
+  relative to the working directory, so a server whose data directory is in
+  `/tmp` loads the checkout's bundled file while the request named
+  `/tmp/resources/…`, and the log named the latter (#763 F24).
 - After the load, `AppBackend` hands the catalog's description of the loaded
   file to `ProcessingService::setEModulusLutCatalogIdentity` (#712): the
   catalog's `lutId` / revision / source / checksum status, or, when the bundled
@@ -383,7 +388,25 @@ no contour processing.
   not thread-safe, #722; see [[ExperimentCoordinator]]). Recording retains busy
   ownership until Stop has joined its worker; failures must be stopped before
   another writer can start. Callers can request a diagnostic error string.
-- `startFrameRecording(hdf5Path)`, `stopFrameRecording()`, `isFrameRecording()`
+- `startFrameRecording(hdf5Path)`, `stopFrameRecording()`, `isFrameRecording()`.
+  The path is a client path (#762): empty is refused, `.h5` is appended, and
+  `resolveClientPath` puts a relative path under the storage root (one that
+  leaves it is refused with the reason). The open-file refusal says "an HDF5
+  file is already open: Close the file in Review (Review → Close File) before
+  starting raw recording" (F2 of #763).
+- `storageRoot()` (#762): `app::storageRootOf(dataDir_)`, the data directory
+  absolute with symlinks resolved ("" before `initialize`); reported as
+  `fetch_instrument_status` `storage.path`. `resolveClientPath(requested)` is
+  `app::resolveClientPath(requested, storageRoot())` (`app/RecordingTarget.h`):
+  the one rule for a path a client gives a writer (experiment Start and
+  readiness, raw recording, review exports, Regenerate masks, preview buffer
+  save). Empty refused; absolute unchanged; relative joined to the root and
+  `weakly_canonical`, refused when it leaves the root (compared by component)
+  or goes through a dangling symlink. Strings in and out are UTF-8
+  (`app::utf8ToPath` / `app::pathToUtf8`), an absolute request byte for byte.
+  A symlink swapped in between the check and the open is outside the threat
+  model (a client path, not a local writer of the root); Start re-checks right
+  before its open. Test: `e2e.client_output_path`.
 - Counters: `frameRecordingCount()`, `frameRecordingFiltered()`
 - Uses a dedicated `frameRecordingThread_`. Empty frames are dropped via
   `ProcessingService::isFrameEmptyWithActiveKernel` after the
@@ -507,6 +530,18 @@ memory benchmark evidence.
 `setLastConfigJson(json)` / `getLastConfigJson()` — raw JSON captured by the
 config watcher, stored as a string attribute on `/experiment_info` in HDF5
 (see `Hdf5Service::writeConfigJson`).
+
+`setLastConfigJson` also reserves `pump_sample_com_port` /
+`pump_sheath_com_port` (`COM<n>`) in [[../services/SerialPortClaims]], so the
+startup nanopositioner probe never opens the pump RS485 bus (2026-10-19).
+
+## Simulated serial hardware (2026-10-19)
+
+`initialize()` calls `serialsim::installFromEnvironment` before any service
+exists (unless a test already installed a rig). `MIB_SERIAL_MODE=sim`
+replaces every COM port in the process with the [[../services/SimulatedSerial]]
+rig. An unreadable scenario or unknown mode fails `initialize()` rather than
+fall back to real ports.
 
 ## Saved illuminated Live View (#413)
 

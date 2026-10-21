@@ -1,9 +1,12 @@
 find_package(Python3 COMPONENTS Interpreter QUIET)
 
 if(WIN32)
-    add_executable(serial_port_win32_timeout_test backend/serial_port_win32_timeout_test.cpp)
+    # The platform port defers to an installed simulated rig, so the rig
+    # compiles in too (SimulatedSerial.cpp).
+    add_executable(serial_port_win32_timeout_test backend/serial_port_win32_timeout_test.cpp
+        ${PROJECT_SOURCE_DIR}/src/backend/services/SimulatedSerial.cpp)
     target_include_directories(serial_port_win32_timeout_test PRIVATE ${PROJECT_SOURCE_DIR}/include ${PROJECT_SOURCE_DIR}/tests)
-    target_link_libraries(serial_port_win32_timeout_test PRIVATE setupapi advapi32)
+    target_link_libraries(serial_port_win32_timeout_test PRIVATE setupapi advapi32 spdlog::spdlog)
     add_test(NAME backend.serial_port_win32_timeout COMMAND serial_port_win32_timeout_test)
     set_tests_properties(backend.serial_port_win32_timeout PROPERTIES LABELS "backend;serial;fault-injection" TIMEOUT 15)
 else()
@@ -11,7 +14,8 @@ else()
     # faked and a pty for the rest. It compiles SerialPortPosix.cpp itself,
     # so it cannot join the shared runner (duplicate platform-port symbols).
     find_package(Threads REQUIRED)
-    add_executable(serial_port_posix_timeout_test backend/serial_port_posix_timeout_test.cpp)
+    add_executable(serial_port_posix_timeout_test backend/serial_port_posix_timeout_test.cpp
+        ${PROJECT_SOURCE_DIR}/src/backend/services/SimulatedSerial.cpp) # the port defers to an installed rig
     target_include_directories(serial_port_posix_timeout_test PRIVATE ${PROJECT_SOURCE_DIR}/include ${PROJECT_SOURCE_DIR}/tests)
     target_link_libraries(serial_port_posix_timeout_test PRIVATE spdlog::spdlog Threads::Threads)
     add_test(NAME backend.serial_port_posix_timeout COMMAND serial_port_posix_timeout_test)
@@ -361,6 +365,11 @@ mib_add_backend_test_executable(monitoring_cell_pipeline_test processing/monitor
 mib_backend_test_link(monitoring_cell_pipeline_test PRIVATE Threads::Threads)
 add_test(NAME processing.monitoring_cell_pipeline COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_cell_pipeline_test)
 set_tests_properties(processing.monitoring_cell_pipeline PROPERTIES LABELS "backend;processing;monitoring;safety" TIMEOUT 180)
+# #763 F17: the realtime rates fall to 0 when frames stop and on stopRealtime.
+mib_add_backend_test_executable(realtime_rates_decay_test processing/realtime_rates_decay_test.cpp)
+mib_backend_test_link(realtime_rates_decay_test PRIVATE Threads::Threads)
+add_test(NAME processing.realtime_rates_decay COMMAND $<TARGET_FILE:mib_backend_tests> realtime_rates_decay_test)
+set_tests_properties(processing.realtime_rates_decay PROPERTIES LABELS "backend;processing;realtime" TIMEOUT 120)
 # #716 A6a: what live cell images cost the hot path (ratio gates; sanitizer lanes skip `performance`).
 mib_add_backend_test_executable(monitoring_cell_hot_path_test performance/monitoring_cell_hot_path_test.cpp)
 mib_backend_test_link(monitoring_cell_hot_path_test PRIVATE Threads::Threads)
@@ -392,6 +401,18 @@ mib_add_backend_test_executable(serial_bus_pty_test backend/serial_bus_pty_test.
 mib_backend_test_link(serial_bus_pty_test PRIVATE Threads::Threads)
 add_test(NAME backend.serial_bus_pty COMMAND $<TARGET_FILE:mib_backend_tests> serial_bus_pty_test)
 set_tests_properties(backend.serial_bus_pty PROPERTIES LABELS "backend" TIMEOUT 60)
+
+# Simulated serial hardware (SimulatedSerial.h): the rig itself, and startup
+# racing the operator's connects through the real AppBackend. The `backend`
+# label keeps both in the TSan/ASan lane.
+mib_add_backend_test_executable(serial_sim_test backend/serial_sim_test.cpp)
+mib_backend_test_link(serial_sim_test PRIVATE Threads::Threads)
+add_test(NAME backend.serial_sim COMMAND $<TARGET_FILE:mib_backend_tests> serial_sim_test)
+set_tests_properties(backend.serial_sim PROPERTIES LABELS "backend;serial;fault-injection" TIMEOUT 60)
+mib_add_backend_test_executable(serial_startup_race_test backend/serial_startup_race_test.cpp)
+mib_backend_test_link(serial_startup_race_test PRIVATE Threads::Threads)
+add_test(NAME backend.serial_startup_race COMMAND $<TARGET_FILE:mib_backend_tests> serial_startup_race_test)
+set_tests_properties(backend.serial_startup_race PROPERTIES LABELS "backend;serial;discovery;concurrency;stress" TIMEOUT 360)
 
 mib_add_backend_test_executable(mindvision_overview_mode_test backend/mindvision_overview_mode_test.cpp)
 mib_backend_test_link(mindvision_overview_mode_test PRIVATE Threads::Threads)
@@ -519,6 +540,11 @@ mib_add_backend_test_executable(facade_review_jobs_test backend/facade_review_jo
 mib_backend_test_link(facade_review_jobs_test PRIVATE Threads::Threads)
 add_test(NAME backend.facade_review_jobs COMMAND $<TARGET_FILE:mib_backend_tests> facade_review_jobs_test)
 set_tests_properties(backend.facade_review_jobs PROPERTIES LABELS "backend;bridge;review;recording;hdf5;concurrency;stress" TIMEOUT 300)
+# #758: the facade's review_reanalysis_json validates at the HDF source's
+# recorded factor (the live one as the fallback) and never changes the live one.
+mib_add_backend_test_executable(facade_reanalysis_pixel_factor_test backend/facade_reanalysis_pixel_factor_test.cpp)
+add_test(NAME backend.facade_reanalysis_pixel_factor COMMAND $<TARGET_FILE:mib_backend_tests> facade_reanalysis_pixel_factor_test)
+set_tests_properties(backend.facade_reanalysis_pixel_factor PROPERTIES LABELS "backend;bridge;review;recording;hdf5;roundtrip" TIMEOUT 120)
 
 # BE-4 (#274): backend-owned experiment lifecycle state machine — pipeline e2e
 # over the facade command surface plus fault-injection (fatal save error,
@@ -532,6 +558,14 @@ mib_add_backend_test_executable(experiment_stop_generation_test backend/experime
 mib_backend_test_link(experiment_stop_generation_test PRIVATE Threads::Threads)
 add_test(NAME e2e.experiment_stop_generation COMMAND $<TARGET_FILE:mib_backend_tests> experiment_stop_generation_test)
 set_tests_properties(e2e.experiment_stop_generation PROPERTIES LABELS "backend;bridge;e2e;concurrency;stress;safety" TIMEOUT 180)
+
+# #762 (and F2 of #763): a relative output path a client gives a writer (experiment Start and its
+# readiness probes, raw recording, review export, Regenerate, preview save) resolves under the
+# storage root; escapes (`..`, symlinks) are refused; absolute paths are unchanged.
+mib_add_backend_test_executable(client_output_path_test backend/client_output_path_test.cpp)
+mib_backend_test_link(client_output_path_test PRIVATE Threads::Threads)
+add_test(NAME e2e.client_output_path COMMAND $<TARGET_FILE:mib_backend_tests> client_output_path_test)
+set_tests_properties(e2e.client_output_path PROPERTIES LABELS "backend;bridge;e2e;recording;hdf5;safety" TIMEOUT 180)
 
 mib_add_backend_test_executable(mindvision_selection_state_test backend/mindvision_selection_state_test.cpp)
 add_test(NAME backend.mindvision_selection_state COMMAND $<TARGET_FILE:mib_backend_tests> mindvision_selection_state_test)
@@ -914,6 +948,18 @@ mib_add_backend_test_executable(review_run_identity_test review/review_run_ident
 mib_backend_test_link(review_run_identity_test PRIVATE Threads::Threads)
 add_test(NAME review.run_identity COMMAND $<TARGET_FILE:mib_backend_tests> review_run_identity_test)
 set_tests_properties(review.run_identity PROPERTIES LABELS "review;recording;backend;hdf5;concurrency;safety" TIMEOUT 180)
+# R3 Inspect's backend (#717 B3b, review ABI 3): the linked records of a track
+# and one record reprocessed next to its stored values, gated on the job lanes.
+mib_add_backend_test_executable(review_inspect_test review/review_inspect_test.cpp)
+mib_backend_test_link(review_inspect_test PRIVATE Threads::Threads)
+add_test(NAME review.inspect COMMAND $<TARGET_FILE:mib_backend_tests> review_inspect_test)
+set_tests_properties(review.inspect PROPERTIES LABELS "review;backend;hdf5;concurrency;safety" TIMEOUT 180)
+# The object coordinate space of a file (#756 review 2): attribute, v3 snapshot,
+# ROI origin and the bounded mask check, unknown when nothing decides; the
+# one-record reprocess match placed through it, refused for unknown.
+mib_add_backend_test_executable(review_object_coordinates_test review/review_object_coordinates_test.cpp)
+add_test(NAME review.object_coordinates COMMAND $<TARGET_FILE:mib_backend_tests> review_object_coordinates_test)
+set_tests_properties(review.object_coordinates PROPERTIES LABELS "review;backend;hdf5;safety" TIMEOUT 180)
 # One overlay kernel (#512 slice 1): review::composeOverlay is byte-identical
 # to the implementation it replaced and draws the Qt/facade kernel's pixels.
 mib_add_backend_test_executable(review_overlay_kernel_test review/review_overlay_kernel_test.cpp)
@@ -924,6 +970,14 @@ set_tests_properties(review.overlay_kernel PROPERTIES LABELS "review;backend;inv
 mib_add_backend_test_executable(review_reanalysis_test review/review_reanalysis_test.cpp)
 add_test(NAME review.reanalysis COMMAND $<TARGET_FILE:mib_backend_tests> review_reanalysis_test)
 set_tests_properties(review.reanalysis PROPERTIES LABELS "review;recording;backend;hdf5;safety" TIMEOUT 120)
+# #758: reanalysis / regenerate validate at the source's own pixel-to-micron
+# factor, passed per call (processBatch inputs, the engine, YOFO's regenerate
+# job, a batch of sources with different factors, a live caller beside a job,
+# the run's own channel band); the output records the factor.
+mib_add_backend_test_executable(review_reanalysis_pixel_factor_test review/review_reanalysis_pixel_factor_test.cpp)
+mib_backend_test_link(review_reanalysis_pixel_factor_test PRIVATE Threads::Threads)
+add_test(NAME review.reanalysis_pixel_factor COMMAND $<TARGET_FILE:mib_backend_tests> review_reanalysis_pixel_factor_test)
+set_tests_properties(review.reanalysis_pixel_factor PROPERTIES LABELS "review;recording;backend;hdf5;roundtrip;concurrency;safety" TIMEOUT 240)
 # Export engine in mib_review_core (#512 slice 3): parse, single + batch round
 # trips, continue-on-failure / stop-on-cancel, write faults with and without
 # keep_partial_on_failure, both cancel polling modes, status JSON byte for byte.

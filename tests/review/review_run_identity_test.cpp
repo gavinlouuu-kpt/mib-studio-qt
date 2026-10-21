@@ -179,11 +179,19 @@ namespace
             v3.identity.sampleRef = "S-03";
             v3.identity.calibrationRecordId = "cal-0042";
             v3.identity.selectedOperator = rec::OperatorRecord{std::nullopt, std::string("Gavin")};
-            doc = "{\"schema_version\":3,\"pixel_to_micron\":0.25,\"profile_id\":\"p\"," + rec::runProvenanceV3Members(v3) + "}";
+            rec::EModulusLutRecord lut;
+            lut.loaded = true;
+            lut.lutId = "lut-v2";
+            lut.source = "r2-public-catalog";
+            lut.sha256 = "41b9c0de";
+            lut.checksumStatus = "verified"; // revision and catalog hash not recorded
+            v3.eModulusLut = lut;
+            doc = "{\"schema_version\":3,\"pixel_to_micron\":0.25,\"profile_id\":\"cell-mechanics\"," +
+                  rec::runProvenanceV3Members(v3) + "}";
             break;
         }
         case Snapshot::V3Undeclared:
-            doc = "{\"schema_version\":3,\"pixel_to_micron\":0.25,\"profile_id\":\"p\"," +
+            doc = "{\"schema_version\":3,\"pixel_to_micron\":0.25,\"profile_id\":\"\"," +
                   rec::runProvenanceV3Members(rec::RunProvenanceV3{}) + "}";
             break;
         case Snapshot::NotJson:
@@ -257,7 +265,8 @@ namespace
     {
         const auto &d = id.declared;
         return !id.hasSnapshot && !id.snapshotUnreadable && id.snapshotVersion == 0 && !id.runId && d.empty() &&
-               !id.annotation && !id.annotationUnreadable && !id.annotationSchemaVersion;
+               !id.annotation && !id.annotationUnreadable && !id.annotationSchemaVersion && !id.eModulusLut &&
+               !id.profileId;
     }
 
     bool declaredAsWritten(const RunIdentity &id)
@@ -359,6 +368,15 @@ int main()
         const auto id = s.metadata().runIdentity;
         MIB_EXPECT(declaredAsWritten(id), "v3 identity reads back as written");
         MIB_EXPECT(annotationAsWritten(id), "the annotation reads back as written, free keys sorted");
+        // Review ABI 3 (#717 B3b): the LUT and the profile, absent members absent.
+        MIB_REQUIRE(id.eModulusLut.has_value(), "the E-modulus LUT is read");
+        MIB_EXPECT(id.eModulusLut->loaded && id.eModulusLut->lutId == std::string("lut-v2") &&
+                       id.eModulusLut->source == std::string("r2-public-catalog") &&
+                       id.eModulusLut->sha256 == std::string("41b9c0de") &&
+                       id.eModulusLut->checksumStatus == std::string("verified"),
+                   "the LUT reads back as written");
+        MIB_EXPECT(!id.eModulusLut->revision && !id.eModulusLut->catalogSha256, "unrecorded LUT members stay absent");
+        MIB_EXPECT(id.profileId == std::string("cell-mechanics"), "the profile id is read");
 
         MIB_REQUIRE(s.open(legacy.string()), "open legacy");
         MIB_EXPECT(allAbsent(s.metadata().runIdentity), "a legacy file reads every identity member absent");
@@ -367,11 +385,13 @@ int main()
         const auto old = s.metadata().runIdentity;
         MIB_EXPECT(old.hasSnapshot && old.snapshotVersion == 1 && !old.runId && old.declared.empty() && !old.annotation,
                    "a v1 snapshot is a snapshot without an identity");
+        MIB_EXPECT(!old.eModulusLut && old.profileId == std::string("p"), "v1: no LUT record, its profile id read");
 
         MIB_REQUIRE(s.open(undeclared.string()), "open undeclared v3");
         const auto none = s.metadata().runIdentity;
         MIB_EXPECT(none.hasSnapshot && none.snapshotVersion == 3 && !none.runId && none.declared.empty(),
                    "a v3 snapshot that declares nothing reads absent, not as zero or empty");
+        MIB_EXPECT(!none.eModulusLut && !none.profileId, "a null LUT and an empty profile id read absent");
 
         MIB_REQUIRE(s.open(badSnapshot.string()), "a file with an unreadable snapshot still opens");
         const auto bad = s.metadata().runIdentity;

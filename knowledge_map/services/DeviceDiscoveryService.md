@@ -144,6 +144,37 @@ camera, nanopositioner, and pulse-generator providers. It therefore exercises
 startup selection and cancellation without relying on an SDK fallback or
 touching camera hardware.
 
+### Probes yield to services (2026-10-19)
+
+`probeNanopositionerEndpoint` takes a [[SerialPortClaims]] probe claim on the
+endpoint's port and refuses it (probe fails, logged "skips …") when a bus
+session or the connected nanopositioner holds the port, or config.json
+reserves it for the pumps. Before this, a CH340 USB-RS485 pump dongle (an
+OEABT candidate by VID) was probed for about 1 s per startup attempt and a
+pump Connect in that window failed busy. `backend.serial_startup_race` drives the
+real coordinator against the [[SimulatedSerial]] bench, with seeded operator
+connects and stale holders.
+
+### Probe stages: any bridge chip (2026-10-20)
+
+`AutofocusService::availableEndpoints` now lists every serial port, keeping
+`knownOeabtCandidate` (CH340/CH341) as a flag. `NanopositionerProvider`
+probes in stages:
+1. the saved endpoint (any chip), the listed candidates and CoreMorrow;
+2. every other USB serial adapter (FTDI, CP210x, PL2303, CH343/CH9102,
+   CDC-ACM…);
+3. ports without a USB identity.
+
+A stage runs only when the previous one identified nothing. Stages 2 and 3
+run only on the job's last attempt (`ProviderContext::maxAttempts`); a
+one-shot Refresh is its own last attempt. Within a stage every endpoint is
+probed, so two controllers stay ambiguous. A controller whose bridge chip is
+unknown is therefore found, at the latest on the last startup retry. A
+controller on a listed chip that enumerates late never causes other
+instruments' adapters to receive the identity command. Tests: the stage cases
+in `backend.device_discovery_providers`, and the chip matrix in
+`backend.serial_startup_race` (every catalog chip as the controller's).
+
 ## Gotchas
 
 - Never call `shutdownDiscovery()` from inside an observer/provider (it

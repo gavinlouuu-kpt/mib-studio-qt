@@ -2,6 +2,7 @@
 
 #include "backend/nanopositioner/INanopositionerBackend.h"
 #include "backend/services/AutofocusFocusScore.h"
+#include "backend/services/SerialPortClaims.h"
 
 #include <atomic>
 #include <chrono>
@@ -140,6 +141,7 @@ private:
     unsigned char deviceAddress_{1};
     mutable std::mutex deviceMutex_;
     std::unique_ptr<backend::nanopositioner::INanopositionerBackend> device_;
+    portclaims::Claim portClaim_; // keeps discovery probes off the connected port (deviceMutex_)
     BackendFactory backendFactory_;
     backend::nanopositioner::Endpoint endpoint_;
     std::atomic<bool> activeControlSession_{false};

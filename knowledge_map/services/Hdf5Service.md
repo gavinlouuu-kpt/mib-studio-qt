@@ -96,6 +96,11 @@ a macro). Unit-tested by `tests/backend/hdf_write_queue_test.cpp`.
   Matching readers: `isRecordingFile()` (probes `/recording_info`),
   `readRecordingMetadata(frames)` (fills only index + timestampNs on each
   `ProcessedFrame`), `readRecordingInfo(start, end, total, filtered, ...)`.
+  `writeObjectCoordinates(space)` / `readScalarStringAttribute(groupPath,
+  name)` (#756 review 2): `/experiment_info @object_coordinates`
+  (`kObjectCoordinatesRoiLocal` / `kObjectCoordinatesImage`, after
+  `writeExperimentInfo`; a rewrite replaces it) and a presence-aware scalar
+  string read (`nullopt` when missing, not a scalar string, or unreadable).
   `readScalarUintAttribute(groupPath, name)` (#717 B1a review) reads one
   scalar integer attribute of a top-level group presence-aware: `nullopt`
   when the group or attribute is missing, not a scalar integer, unreadable or
@@ -150,7 +155,21 @@ frame coordinates). Recording callers pass
 `ProcessingService::getEffectiveProcessingConfig()`, which adds the detected
 band. The write is mandatory, like core provenance. `readRecordedProcessingConfig`
 reads every `processing_config_*` attribute back into a `ProcessingConfig`;
-attributes an older file lacks keep the caller's values.
+attributes an older file lacks keep the caller's values. The target group has
+no attribute: since #758 the reader takes it from the `@config_json` document
+(`image_processing.target_group`, via `config_json::fromJson`), so a
+regenerate with the recorded settings selects the target group the capture
+used; a file without the document (or a malformed one) keeps the caller's
+values (the default: off), as before.
+
+`writeAnalysisPixelToMicron(factor)` / `readAnalysisPixelToMicron()` (#758)
+store `/experiment_info @pixel_to_micron`, a scalar double: the µm per pixel a
+regenerated or reanalysed file's objects were validated at
+(`batch_masks::saveMasksToHdf5` writes it). The writer refuses a factor that
+is not finite and positive and needs `writeExperimentInfo` first; the reader
+returns `nullopt` when it is missing, not a finite positive float scalar, or
+unreadable. `ReviewSession::recordedPixelToMicron` reads it when the file has
+no run snapshot factor.
 
 `readRecordedProcessingContract` is the narrow export-reader path. It checks
 the root, `/experiment_info`, `/recording_info`, and `/run_provenance` groups,
@@ -274,6 +293,17 @@ the run info; legacy files return `false` with an Unsupported descriptor.
 
 ## Gotchas
 
+- **Probe without printing an error stack (#763 F20).** A failed `H5Aopen`,
+  `H5Dopen2` or `H5Gopen2` prints an `HDF5-DIAG` stack to stderr even when
+  the caller handles it, and HDF5 1.10's `H5Lexists` fails (and prints) when
+  an intermediate group is missing ("/recorded_frames/images" on an
+  experiment file). Writers that create-or-update an attribute use
+  `openOrCreateAttribute` (`H5Aexists` first; before, a finalize printed 31
+  stacks: the accounting flags, the timestamp and telemetry provenance and
+  `config_json`), every link check is `linkExists` (each path component in
+  turn, same result convention as `H5Lexists`), and the series readers check
+  the dataset before opening it. Add new probes the same way rather than
+  `H5Aopen`-then-create or a bare nested `H5Lexists`.
 - `openFile(path)` creates the destination's parent directory tree
   (`std::filesystem::create_directories`) before `H5Fcreate`. HDF5 cannot
   create intermediate directories, so without this a save to a folder that

@@ -55,6 +55,10 @@ function info(over: Partial<ReviewInfo> = {}): ReviewInfo {
     ring_ratio_min: 15,
     ring_ratio_max: 25,
     // Review ABI 2 (#746): a legacy file, every identity member absent.
+    object_coordinates: "unknown",
+    object_coordinates_source: "",
+    object_origin_x: 0,
+    object_origin_y: 0,
     identity: {
       has_snapshot: false,
       snapshot_unreadable: false,
@@ -67,6 +71,8 @@ function info(over: Partial<ReviewInfo> = {}): ReviewInfo {
       operator: null,
       annotation: null,
       annotation_unreadable: false,
+      emodulus_lut: null,
+      profile_id: null,
     },
     ...over,
   };

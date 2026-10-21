@@ -171,3 +171,28 @@ used (bounded `waitFor*`), and closed and destroyed only on that thread
 waits up to `transactBudgetMs(timeoutMs)` for the result; any thread may call
 it, and callers are serialized by the session's call mutex (always innermost —
 services take their own state mutex first).
+
+## Port claims in `acquire` (2026-10-19)
+
+Opening a **new** session takes a [[SerialPortClaims]] service claim first,
+outside the registry lock. When a discovery probe of this process is on the
+port, `acquire` waits for it (at most `portclaims::kProbeYield`, 3 s) instead
+of failing `PortBusy`. The claim lives in the session's I/O state and is
+released with the port reservation, when the I/O thread has closed the port
+(so a stalled, detached thread still keeps probes off it). Sharing an
+existing session takes no new claim. `normalizeKey` delegates to
+`portclaims::key` (same rules), so bus and claim keys cannot drift.
+Regression: `backend.serial_startup_race` ([[SimulatedSerial]]).
+
+### Claims always taken in `acquire` (2026-10-19, later)
+
+`acquire` now takes its `claimForService(…, busSession=true)` on every call:
+- The claim is registered before the wait, so new probes are refused.
+- It waits for **another thread's** probe on the port.
+- It is kept only if this call opens a new session.
+
+Sharing a live session no longer skips the wait. A probe's short-lived
+session at other settings (the generator `auto` sweep at 9600) would
+otherwise make a 115200 pump Connect fail with "different settings".
+`hasSession(port)` tells the sweep whether a live session exists, which it
+then shares.

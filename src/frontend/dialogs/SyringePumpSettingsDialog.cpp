@@ -22,6 +22,7 @@
 #include "backend/app/Tools.h"
 #include "backend/services/SyringePumpService.h"
 #include "backend/services/AutofocusService.h"
+#include "backend/services/SimulatedSerial.h"
 
 using json = nlohmann::json;
 using PumpId = backend::services::SyringePumpService::PumpId;
@@ -156,6 +157,8 @@ void SyringePumpSettingsDialog::populateComPorts() {
     ui->sheathComPortCombo->clear();
 
     std::vector<int> ports = backend::Tools::availableComPortNumbers();
+    // MIB_SERIAL_MODE=sim: offer the simulated rig's COM ports, not the OS's.
+    if (const auto rig = backend::services::serialsim::installed()) ports = rig->comPortNumbers();
 
     // Exclude ports in use by autofocus
     int autofocusPort = -1;

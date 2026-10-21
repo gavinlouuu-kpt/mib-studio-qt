@@ -20,6 +20,8 @@ const absent = (): ReviewRunIdentity => ({
   operator: null,
   annotation: null,
   annotation_unreadable: false,
+  emodulus_lut: null,
+  profile_id: null,
 });
 
 function probe(path: string, identity: Partial<ReviewRunIdentity> = {}, over: Partial<ReviewRunProbe> = {}): ReviewRunProbe {

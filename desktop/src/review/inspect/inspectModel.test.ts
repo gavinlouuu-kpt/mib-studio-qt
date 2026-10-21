@@ -30,6 +30,8 @@ const identity = (over: Partial<ReviewRunIdentity> = {}): ReviewRunIdentity => (
   operator: null,
   annotation: null,
   annotation_unreadable: false,
+  emodulus_lut: null,
+  profile_id: null,
   ...over,
 });
 function info(over: Partial<ReviewInfo> = {}): ReviewInfo {

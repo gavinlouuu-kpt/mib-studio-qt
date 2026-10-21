@@ -97,6 +97,34 @@ the file does not record is `null` and a recorded 0 is `"0"`; a 0 time is
 PR adds the client only; R1 Open (B1b, on `feat/egrabber-workspace`) is its
 first user. `reviewIpc.golden.json` records the probe call.
 
+**Inspect commands (review ABI 3, #717 B3b).** `identity.emodulus_lut` is
+the run's E-modulus LUT provenance (`lut_id`, `revision`, `source`,
+`sha256`, `catalog_sha256`, `checksum_status`, each `null` when not
+recorded; the whole member `null` when the snapshot records no loaded LUT)
+and `identity.profile_id` the snapshot's profile. `reviewBridge.trackRows(valid,
+trackId, max)` (`fetch_review_track_rows`) returns one track's records
+(`positions` as decimal strings, parallel to `rows`; `total`, `truncated`;
+`max` at most `REVIEW_TRACK_ROWS.max_rows` = 256), refused for an untracked
+record (`track_id` -1). `reviewBridge.reprocessRecord(valid, index,
+settings)` (`review_reprocess_record`, `settings` from
+`REVIEW_REPROCESS.settings`: recorded 0, default 1) returns the stored row
+next to the objects the session's kernel finds in the record's image now
+(`reprocessed`, at most 64, `match_index` or `null`,
+`object_count_differs`), with `settings_label`, `core_version` and
+`core_source` naming what was used, `pixel_to_micron` the factor it ran
+and reports with, and `emodulus_recomputed` false (no E-LUT: the
+reprocessed E is `null`). It never writes a file and is refused
+while a review job runs, or when the file's object coordinate space is
+unknown. `fetch_review_info` gains `object_coordinates` (`roi_local`,
+`image` or `unknown`), `object_coordinates_source` (`attribute`,
+`snapshot`, `mask_check`, `roi_origin`, or `""` when unknown) and
+`object_origin_x` / `object_origin_y`, the offset that places a stored box
+or centroid in image coordinates (#756 review 2; `REVIEW_OBJECT_COORDINATES`
+in the generated contract). A client never places a box when the space is
+`unknown`. The B3b PR adds the client only; R3 Inspect (B3a,
+on `feat/egrabber-workspace`) is its first user. `reviewIpc.golden.json`
+records the calls.
+
 ### Transport (#512 S9)
 
 The module reaches the backend, the dialogs and the opener only through
@@ -132,6 +160,36 @@ remotely. Serving them is S11 of
 [`2026-10-18-one-review-implementation.md`](../../docs/exec-plans/active/2026-10-18-one-review-implementation.md):
 the review commands in `mib-app-commands` and a binary request path for
 `review_stage_chart`. S10 is the bridge attaching to the facade's session.
+
+**Until then the page says so (#763 F7).** `yofo-studio-server` answers each
+review command with the string `UNKNOWN_COMMAND: <name>` (the dispatcher's
+error, which `wsTransport` rejects with). Every `reviewBridge` call goes
+through `gateReviewCommand` (`reviewAvailability.ts`): the first
+UNKNOWN_COMMAND marks the review commands unavailable on that connection
+(S11 registers them as one set), and later review calls are refused locally
+with `ReviewUnavailableError` (no request, no server log); a reply marks them
+available, which is all that happens in the Tauri shells. The answer holds
+for one connection: the server may be restarted or upgraded with the page
+open. `watchReviewConnection` (on `transport.session`) turns "unavailable"
+into "checking" when the connection is lost or a new one has another client
+id (a handover is not a new connection), and so does the notice's **Retry**.
+While checking, `ReviewApp` probes `review_abi_version` again, retrying with
+backoff (1 s doubling to 30 s) while the server cannot be reached; only a
+reply enables the panel and the job poll again, and UNKNOWN_COMMAND leaves
+them off with nothing more sent on that connection. The boot probe
+(`review_abi_version`) decides it before any file is opened: `ReviewApp`
+shows `REVIEW_UNAVAILABLE_TEXT` (role `alert`), passes `ready` false to the
+panel (Open and the jobs stay disabled), skips the `?open=` / launch file and
+the Tauri open-file listener (none in a browser; it threw `transformCallback`
+as an uncaught page error), and logs "review commands are not served by this
+server" once. `useReviewJobs` does not poll while they are unavailable, stops
+at the first UNKNOWN_COMMAND answer with one log line, and logs any other
+repeated poll error once instead of five times a second. Pinned by
+`reviewAvailability.test.tsx` (a real `wsTransport` over a fake server that
+knows only the boot commands, then restarts with or without them; Retry). Before this the page showed the backend as
+ready, an empty folder, and the same error at 5 Hz. On the workspace branch
+the R1 shell's "Backend ready" chip and the Open view's folder listing take
+the same state (`useReviewAvailability`) after the develop sync.
 
 ## Frames view (PR 2)
 
@@ -283,6 +341,15 @@ cells render with density ready in ~2–3 s.
   `useReviewJobs.start` takes `{onRefused, onStarted}` hooks, so a refusal goes
   back to the dialog instead of the job dialog. An output created while the
   job runs fails the job and is left untouched.
+  **Pixel-to-micron factor (#758):** with the recorded settings objects are
+  validated (area range, target group) at the file's recorded factor, or the
+  fallback preference when it records none; with default settings and for AVI
+  / folder sources at 0.4886 µm/px. The output records the factor, so it
+  reopens at it (no "(fallback)"), and the job message ends with
+  "px→µm F recorded | default | fallback: the file records none". The
+  recorded target group comes from the file's config document. Before #758
+  every regenerate validated at 0.4886 and, with recorded settings, selected
+  no target group; the pending release notice says which files to regenerate.
 
 ## Differences from the Qt tab (parity sign-off, 2026-10-04)
 
@@ -336,7 +403,10 @@ accounting text for recording files.
   of 1049 records named another frame. Files regenerated with YOFO Review up to
   review-v1.1.3-beta.1 carry that mis-paired per-record metadata; the
   data-integrity follow-up is #737. YOFO also gained the facade's no-clobber
-  publish: an existing output is refused, not replaced.
+  publish: an existing output is refused, not replaced. Since #758 all three
+  validate at the source's own factor (an HDF source's recorded one; YOFO's
+  fallback preference or default, the facade's and Qt's live factor
+  otherwise), passed per call, never set on the shared kernel.
 - **Regenerate gating:** YOFO enables Regenerate masks once a file is ready;
   Qt requires data.
 - **Core fraction:** YOFO uses the stored record's fraction, else 0.9; Qt uses
@@ -444,7 +514,11 @@ shell. **Preferences** holds the fallback px→µm (`localStorage`
 `yofo.review.pixelToMicron`, default 0.4886 like the Qt tab) passed to the
 panel. Selecting a stage only changes what is shown: no backend call
 (`ReviewApp.test.tsx` checks it). No camera, experiment or hardware state
-exists.
+exists. Against a server without the review commands it shows the
+unavailable notice (with Retry) above the stages, the backend chip reads
+"Review not served by this server" ("Backend · checking review" during a
+recheck), and Open and Inspect stay disabled with no listing sent (see
+**Transport**, #763 F7).
 
 - **Open (R1, `review/open/OpenView.tsx`, `openModel.ts`, `libraryModel.ts`).**
   Open folder… (directory dialog) lists the folder with `review_list_dir`

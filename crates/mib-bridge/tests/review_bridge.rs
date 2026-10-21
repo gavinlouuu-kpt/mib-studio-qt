@@ -279,6 +279,10 @@ fn v3_snapshot(experiment_id: Option<&str>, run_index: Option<u32>, sample_ref: 
         "sample_ref": sample_ref,
         "operator": {"id": null, "name": "Gavin", "assurance": "selected"},
         "calibration_record_id": "cal-0042",
+        "emodulus_lut": {
+            "loaded": true, "lut_id": "lut-v2", "revision": "2", "source": "r2-public-catalog",
+            "sha256": "41b9c0de", "catalog_sha256": "41b9c0de", "checksum_status": "verified",
+        },
     })
     .to_string()
 }
@@ -294,6 +298,8 @@ fn assert_identity_absent(id: &ffi::ReviewRunIdentity, what: &str) {
     assert!(!id.has_sample_ref && id.sample_ref.is_empty(), "{what}: sample ref");
     assert!(!id.has_calibration_record_id && !id.has_operator_id && !id.has_operator_name, "{what}: calibration / operator");
     assert!(!id.annotation.present && !id.annotation.unreadable && id.annotation.free.is_empty(), "{what}: annotation");
+    assert!(!id.has_emodulus_lut && !id.emodulus_lut.loaded && id.emodulus_lut.lut_id.is_empty(), "{what}: E-LUT");
+    assert!(!id.has_profile_id && id.profile_id.is_empty(), "{what}: profile");
 }
 
 fn assert_identity_declared(id: &ffi::ReviewRunIdentity, run_index: u32, sample_ref: &str) {
@@ -304,6 +310,13 @@ fn assert_identity_declared(id: &ffi::ReviewRunIdentity, run_index: u32, sample_
     assert!(id.has_sample_ref && id.sample_ref == sample_ref);
     assert!(id.has_calibration_record_id && id.calibration_record_id == "cal-0042");
     assert!(!id.has_operator_id && id.has_operator_name && id.operator_name == "Gavin");
+    // Review ABI 3 (#717 B3b): the E-LUT provenance and the profile.
+    assert!(id.has_profile_id && id.profile_id == "fixture");
+    let l = &id.emodulus_lut;
+    assert!(id.has_emodulus_lut && l.loaded);
+    assert!(l.has_lut_id && l.lut_id == "lut-v2" && l.has_revision && l.revision == "2");
+    assert!(l.has_source && l.source == "r2-public-catalog" && l.has_checksum_status && l.checksum_status == "verified");
+    assert!(l.has_sha256 && l.sha256 == "41b9c0de" && l.has_catalog_sha256 && l.catalog_sha256 == "41b9c0de");
     let a = &id.annotation;
     assert!(a.present && !a.unreadable && a.has_schema_version && a.schema_version == 1);
     assert!(a.has_sample && a.sample == "Donor 4" && a.has_condition && a.condition == "CytoD 0.1");
@@ -320,7 +333,7 @@ fn assert_identity_declared(id: &ffi::ReviewRunIdentity, run_index: u32, sample_
 fn run_identity_in_info_and_the_probe() {
     let contract: serde_json::Value =
         serde_json::from_str(include_str!("../contract/review-contract.json")).unwrap();
-    assert_eq!(ffi::review_bridge_abi_version(), 2, "review ABI 2 (#717 B1a)");
+    assert_eq!(ffi::review_bridge_abi_version(), 3, "review ABI 3 (#717 B3b; the identity since 2)");
     let max_paths = contract["review_probe"]["max_paths"].as_u64().unwrap() as usize;
     assert_eq!(max_paths, 256);
 
@@ -393,6 +406,7 @@ fn run_identity_in_info_and_the_probe() {
     // The population fixture writes a snapshot without schema_version: v1, no identity.
     let v1 = &probe.runs[6].identity;
     assert!(probe.runs[6].ok && v1.has_snapshot && v1.snapshot_version == 1 && !v1.has_experiment_id && !v1.has_run_index);
+    assert!(!v1.has_emodulus_lut, "v1 records no E-LUT");
     let info = bridge.pin_mut().fetch_review_info();
     assert!(info.file_open && info.file_path == s(&v3), "the open file is left as it was");
     assert_identity_declared(&info.identity, 2, "S-03");
@@ -412,4 +426,132 @@ fn run_identity_in_info_and_the_probe() {
     for p in [&v3, &run4, &legacy, &unreadable, &corrupt, &population] {
         let _ = std::fs::remove_file(p);
     }
+}
+
+// ---- Review ABI 3 (#717 B3b): track rows and reprocessing one record ------------------------
+
+#[test]
+#[serial]
+fn inspect_track_rows_and_reprocess_one_record() {
+    let contract: serde_json::Value =
+        serde_json::from_str(include_str!("../contract/review-contract.json")).unwrap();
+    let max_rows = contract["review_track_rows"]["max_rows"].as_u64().unwrap() as u32;
+    assert_eq!(max_rows, 256);
+    let recorded = contract["review_reprocess_record"]["settings"]["recorded"].as_u64().unwrap() as u32;
+    let default = contract["review_reprocess_record"]["settings"]["default"].as_u64().unwrap() as u32;
+    assert_eq!((recorded, default), (0, 1));
+    assert_eq!(contract["review_reprocess_record"]["max_objects"].as_u64().unwrap(), 64);
+
+    let path = fixture_path("inspect");
+    let _ = std::fs::remove_file(&path);
+    assert!(ffi::review_fixture_write_experiment(&path.to_string_lossy()), "fixture write failed");
+    let mut bridge = ffi::new_review_bridge();
+    assert!(bridge.pin_mut().initialize(""));
+
+    // Nothing open: both refuse.
+    let rows = bridge.pin_mut().fetch_review_track_rows(true, 2, 8);
+    assert!(!rows.ok && !rows.message.is_empty() && rows.rows.is_empty());
+    let r = bridge.pin_mut().review_reprocess_record(true, 0, recorded);
+    assert!(!r.ok && !r.message.is_empty() && r.reprocessed.is_empty());
+
+    // Nothing open: the object coordinate space is unknown (#756 review 2).
+    let closed = bridge.pin_mut().fetch_review_info();
+    assert_eq!((closed.object_coordinates.as_str(), closed.object_coordinates_source.as_str()), ("unknown", ""));
+    let spaces = &contract["review_object_coordinates"];
+    let values: Vec<&str> = spaces["values"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+    let sources: Vec<&str> = spaces["sources"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+    assert_eq!(values, ["roi_local", "image", "unknown"]);
+    assert_eq!(sources, ["attribute", "snapshot", "mask_check", "roi_origin"]);
+    assert_eq!(spaces["mask_check"]["max_records"].as_u64(), Some(64));
+    assert_eq!(spaces["mask_check"]["min_decisive"].as_u64(), Some(8));
+    assert_eq!(spaces["mask_check"]["min_agreement_percent"].as_u64(), Some(90));
+    assert_eq!(spaces["mask_check"]["min_box_iou_percent"].as_u64(), Some(80));
+    assert_eq!(spaces["mask_check"]["area_tolerance_percent"].as_u64(), Some(15));
+
+    bridge.pin_mut().set_fallback_pixel_to_micron(0.9);
+    assert!(bridge.pin_mut().review_open(&path.to_string_lossy()).ok);
+    let before = std::fs::read(&path).unwrap();
+    // The fixture records image coordinates (its ROI starts at (4, 2)).
+    let info = bridge.pin_mut().fetch_review_info();
+    assert_eq!(
+        (info.object_coordinates.as_str(), info.object_coordinates_source.as_str(), info.object_origin_x, info.object_origin_y),
+        ("image", "attribute", 0, 0)
+    );
+
+    // Track rows: the fixture tracks valid frame 2i as track i, invalid frame 2i+1 as track i.
+    let rows = bridge.pin_mut().fetch_review_track_rows(true, 2, max_rows);
+    assert!(rows.ok, "{}", rows.message);
+    assert_eq!((rows.total, rows.truncated, rows.positions.clone()), (1, false, vec![2]));
+    let page = bridge.pin_mut().fetch_review_rows(true, 2, 1);
+    let (a, b) = (&rows.rows[0], &page.rows[0]);
+    assert_eq!((a.frame_index, a.object_id, a.track_id), (b.frame_index, b.object_id, b.track_id));
+    assert!(a.area == b.area && a.area_um2 == b.area_um2 && a.deformability == b.deformability, "the same row as a page");
+    let invalid = bridge.pin_mut().fetch_review_track_rows(false, 1, max_rows);
+    assert!(invalid.ok && invalid.positions == vec![1] && invalid.rows[0].frame_index == 3, "the invalid set by its own positions");
+    let none = bridge.pin_mut().fetch_review_track_rows(true, 77, max_rows);
+    assert!(none.ok && none.total == 0 && none.rows.is_empty() && !none.truncated);
+    let untracked = bridge.pin_mut().fetch_review_track_rows(true, -1, max_rows);
+    assert!(!untracked.ok && untracked.message.contains("not tracked"), "{}", untracked.message);
+    let over = bridge.pin_mut().fetch_review_track_rows(true, 2, max_rows + 1);
+    assert!(!over.ok && over.message.contains("257") && over.message.contains("256"), "{}", over.message);
+    let zero = bridge.pin_mut().fetch_review_track_rows(true, 2, 0);
+    assert!(zero.ok && zero.total == 1 && zero.rows.is_empty() && zero.truncated, "max 0 counts only");
+
+    // Reprocess: the stored row is the record's own; the settings are named;
+    // a match, when there is one, points into the reprocessed rows.
+    for settings in [recorded, default] {
+        let r = bridge.pin_mut().review_reprocess_record(true, 4, settings);
+        assert!(r.ok, "{}", r.message);
+        assert_eq!(r.settings, settings);
+        assert_eq!(r.used_recorded_settings, settings == recorded, "the fixture records its config");
+        assert!(r.message.starts_with("Reprocessed record 4 with ") && r.message.contains(&r.settings_label), "{}", r.message);
+        assert!(!r.core_version.is_empty() && !r.core_source.is_empty(), "the core is named");
+        let stored = &bridge.pin_mut().fetch_review_rows(true, 4, 1).rows[0];
+        assert_eq!((r.stored.frame_index, r.stored.object_id, r.stored.area), (stored.frame_index, stored.object_id, stored.area));
+        assert!(r.reprocessed.len() <= 64 && (!r.truncated || r.reprocessed.len() == 64));
+        assert!(!r.has_match || (r.match_index as usize) < r.reprocessed.len());
+        assert!(r.reprocessed.iter().all(|x| x.frame_index == stored.frame_index && x.track_id == -1), "the record's frame, untracked");
+        assert_eq!(r.object_count_differs, r.reprocessed.len() as i64 != stored.object_count as i64);
+        // The calibration it ran with (#756 review): the file's 0.25 µm/px
+        // as recorded, the processing default otherwise; no E-LUT, no E.
+        let expected = if settings == recorded { 0.25 } else { 0.4886 };
+        assert!((r.pixel_to_micron - expected).abs() < 1e-12, "{} {}", r.pixel_to_micron, r.settings_label);
+        assert!(!r.emodulus_recomputed && r.reprocessed.iter().all(|x| x.youngs_modulus.is_nan()));
+    }
+    let r = bridge.pin_mut().review_reprocess_record(true, 0, recorded);
+    assert!(r.settings_label.starts_with("recorded settings") && r.settings_label.contains("px→µm 0.2500 recorded"), "{}", r.settings_label);
+    assert_eq!(
+        bridge.pin_mut().review_reprocess_record(true, 0, default).settings_label,
+        "default settings (whole image, no background); px→µm 0.4886 default; E not recomputed (no E-LUT loaded)"
+    );
+
+    // Refusals: beyond the set, unknown settings.
+    let beyond = bridge.pin_mut().review_reprocess_record(true, 10, recorded);
+    assert!(!beyond.ok && beyond.message.contains("10 records"), "{}", beyond.message);
+    let unknown = bridge.pin_mut().review_reprocess_record(true, 0, 2);
+    assert!(!unknown.ok && unknown.message == "Unknown reprocess settings", "{}", unknown.message);
+
+    // Never written: the file's bytes are what they were.
+    assert!(bridge.pin_mut().review_close().ok);
+    assert_eq!(std::fs::read(&path).unwrap(), before, "reprocessing writes nothing");
+
+    // A legacy file (no attribute, no snapshot), its ROI at (4, 2), no boxes
+    // for the mask check: unknown, and the match is refused (#756 review 2).
+    let legacy = fixture_path("inspect_legacy");
+    let _ = std::fs::remove_file(&legacy);
+    assert!(ffi::review_fixture_write_run(&legacy.to_string_lossy(), "", ""));
+    assert!(bridge.pin_mut().review_open(&legacy.to_string_lossy()).ok);
+    let info = bridge.pin_mut().fetch_review_info();
+    assert_eq!((info.object_coordinates.as_str(), info.object_coordinates_source.as_str()), ("unknown", ""));
+    let refused = bridge.pin_mut().review_reprocess_record(true, 0, recorded);
+    assert!(
+        !refused.ok && refused.message.contains("cannot be matched") && refused.message.contains("starts at 4, 2"),
+        "{}",
+        refused.message
+    );
+    assert!(bridge.pin_mut().review_close().ok);
+    let _ = std::fs::remove_file(&legacy);
+
+    bridge.pin_mut().shutdown();
+    let _ = std::fs::remove_file(&path);
 }

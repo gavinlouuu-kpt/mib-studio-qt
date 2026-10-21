@@ -44,6 +44,7 @@ import { noImagesNotice } from "./review/noImages";
 import {openUrl, revealItemInDir, setRemoteDefaultDir} from "./transport/dialogs";
 import {
   bridge,
+  isFrameReplyRace,
   mono8ToImageData,
   type AutofocusStatus,
   type BridgeEvent,
@@ -110,6 +111,7 @@ import type { ExperimentSubView } from "./workspace/ExperimentView";
 import type { FrameSink } from "./workspace/AlignView";
 import type { RoiKind } from "./workspace/alignControls";
 import type { WriteResult } from "./workspace/quickControlModel";
+import { VIEWER_ONLY_REASON, ViewerGate, useViewerOnly, viewerReason } from "./components/ViewerGate";
 import "./App.css";
 
 const H5_FILTER = [{ name: "HDF5", extensions: ["h5"] }];
@@ -535,12 +537,14 @@ export default function App() {
 
   useEffect(() => {
     const scheduler = framePulls.current;
+    // A pull discarded by this client while the source changes (opening a recording in Review) is
+    // not an error; the next pull is unaffected (#763 F20).
     const live = scheduler.mount("live", p => {
       const drawn = draw(p, activeLiveCanvas());
       // A frame only the workspace shows still counts in the display rate (not while it is frozen).
       if (alignFrameSink.current?.(p) && !drawn) countDisplayed(p);
-    }, e => append(`frame error: ${e}`));
-    const review = scheduler.mount("review", p => draw(p, reviewCanvasRef.current), e => append(`review frame error: ${e}`));
+    }, e => { if (!isFrameReplyRace(e)) append(`frame error: ${e}`); });
+    const review = scheduler.mount("review", p => draw(p, reviewCanvasRef.current), e => { if (!isFrameReplyRace(e)) append(`review frame error: ${e}`); });
     return () => { live(); review(); };
   }, [draw, activeLiveCanvas, append, countDisplayed]);
 
@@ -1016,9 +1020,14 @@ export default function App() {
         return refreshError ? { ...outcome, refreshError } : outcome;
       }
       if (outcome.kind === "started") {
-        append(`experiment started → ${outcome.path}`);
+        // One status read: it names the backend's path (a relative one is resolved under the data
+        // directory, #762), and its failure is the refresh error, never the outcome.
+        let status: Awaited<ReturnType<typeof bridge.fetchExperimentStatus>> | null = null;
+        let refreshError = "";
+        try { status = await bridge.fetchExperimentStatus(); setExpStatus(status); }
+        catch (e) { append(`experiment status refresh error: ${e}`); refreshError = String(e); }
+        append(`experiment started → ${status?.output_path || outcome.path}`);
         if (outcome.notice) { setStartNotice(outcome.notice); append(outcome.notice); }
-        const refreshError = await refreshStatus();
         return refreshError ? { ...outcome, refreshError } : outcome;
       }
       return outcome;
@@ -1414,6 +1423,9 @@ export default function App() {
   // PZ7035: the PL runs the experiment, so what matters is the backend's Run mode, not a live
   // camera stream (Run stops the producer); a missing window or a refused switch says why.
   const runModeBlock = instrumentModes ? runModeBlockReason({windowPlaced: cameraWin.placed, modeError, runMode}) : undefined;
+  // #763 F19: a browser that does not control the instrument gets its control commands refused
+  // (VIEWER_ONLY); the controls that send them are disabled (ViewerGate) instead of failing in the log.
+  const viewerOnly = useViewerOnly();
   const startExperimentReason = !ready || !cores.initialized
     ? "Backend is not initialized"
     : instrumentModes && runModeBlock
@@ -1664,7 +1676,7 @@ export default function App() {
         <Menu
           label="File"
           items={[
-            { label: "Open Recording…", onClick: openReviewFromMenu },
+            { label: "Open Recording…", onClick: openReviewFromMenu, pending: viewerOnly ? VIEWER_ONLY_REASON : undefined },
             // The browser cannot open a folder on the instrument: the item would only throw (#651 G10).
             ...(isRemote ? [] : [{
               label: "Open Data Folder",
@@ -1925,7 +1937,7 @@ export default function App() {
               })}
             </div>
             <div className="spacer" />
-            <div className="camera-actions">
+            <div className="camera-actions"><ViewerGate>
               <button onClick={onStartCamera} disabled={!!startCameraReason} title={startCameraReason}>
                 Start Camera
               </button>
@@ -1942,7 +1954,7 @@ export default function App() {
               >
                 Stop Camera
               </button>
-            </div>
+            </ViewerGate></div>
           </div>
 
           {ready && (
@@ -1973,20 +1985,22 @@ export default function App() {
             </div>
           )}
 
+          <ViewerGate>
           <CaptureRecovery ready={ready} blocked={expActive || !!expStatus?.flushing || (expState === EXPERIMENT_STATES.Failed && !expStatus?.terminal) || recording || cameraScript.busy} onRetry={onStartCamera} onConfigure={() => setTab("connect")} />
           <ExperimentRecovery ready={ready} status={expStatus} onStatus={setExpStatus} />
           {caps.reanalysis && <ReanalysisStatus model={reanalysis}/>}
           <ExportStatus model={reviewExport} />
+          </ViewerGate>
           <div className="tab-body">
             {modeNotice && <ClassicModeNotice notice={modeNotice} busy={classicModeBusy} onApply={() => void applyClassicMode()} />}
             <PanelErrorBoundary>{() => <>
-            <div hidden={tab !== "connect"}>
+            <div hidden={tab !== "connect"}><ViewerGate>
               <HardwareControls ready={ready} experimentActive={expActive} append={append} capabilities={caps}
                 mode={operatingMode} armed={triggerArmed} onDisarm={() => setTriggerArmed(false)} onSelectionChanged={refreshCameraState} />
               {/* Z stage (#464): hidden on the PZ7035 until the board has a serial path for it. */}
               {!pz7035 && <StageControls ready={ready} experimentActive={expActive} append={append}
                 mode={operatingMode} armed={triggerArmed} onDisarm={() => setTriggerArmed(false)} />}
-            </div>
+            </ViewerGate></div>
             {/* ---- Connect ---- */}
             {tab === "connect" && (
               <>
@@ -2036,7 +2050,7 @@ export default function App() {
                       <div>No framegrabbers found (EGrabber SDK/hardware required).</div>
                     )}
                   </div>
-                  <div className="toolbar" style={{ marginTop: 8 }}>
+                  <div className="toolbar" style={{ marginTop: 8 }}><ViewerGate>
                     <button onClick={refreshCameraState} disabled={!ready}>Refresh</button>
                     <button
                       onClick={onConnectPicked}
@@ -2050,7 +2064,7 @@ export default function App() {
                         Configure Mock…
                       </button>
                     </div>
-                  </div>
+                  </ViewerGate></div>
                   <p className="path-label">
                     Found {(discovery?.framegrabbers ?? []).length} framegrabber(s),{" "}
                     {(discovery?.cameras ?? []).filter((c) => c.camera_type === 0).length} eGrabber camera(s),{" "}
@@ -2137,14 +2151,14 @@ export default function App() {
                   <p className="pending-note" role="status" data-testid="stopped-banner">
                     Run is stopped to review buffered frames. Resume Run to switch to Align.{" "}
                     {ring?.hold_note && <><span className="warn" data-testid="hold-note">{ring.hold_note}</span>{" "}</>}
-                    <button onClick={() => void resumeFromBanner()} disabled={experimentRequestBusy} title={experimentRequestBusy ? "An experiment is starting" : undefined}>Resume Run (discards the buffered frames)</button>{" "}
+                    <button onClick={() => void resumeFromBanner()} disabled={experimentRequestBusy || viewerOnly} title={viewerReason(viewerOnly, experimentRequestBusy ? "An experiment is starting" : undefined)}>Resume Run (discards the buffered frames)</button>{" "}
                     <button onClick={() => setTab("experiment")}>Back to the playback</button>
                   </p>
                 )}
                 <div className="toolbar">
                   <button onClick={() => setFitWindow((f) => !f)}>{fitWindow ? "Fit: Window" : "Fit: 1:1"}</button>
 
-                  {cameraGeometry?.supported ? (
+                  <ViewerGate>{cameraGeometry?.supported ? (
                     <>
                       {/* Camera window (ROI 1, sensor coordinates), placed on the full sensor. */}
                       {(["x", "y", "width", "height"] as const).map((key) => (
@@ -2187,7 +2201,7 @@ export default function App() {
                       Apply ROI
                     </button>
                     </>
-                  ) : null}
+                  ) : null}</ViewerGate>
                 </div>
                 {cameraGeometry?.supported && (
                   <div className="camera-alignment-status" aria-label="Camera mode">
@@ -2247,7 +2261,7 @@ export default function App() {
                   </div>
                 </div>
 
-                {caps.egrabber_script && <CameraScriptControls model={cameraScript} />}
+                {caps.egrabber_script && <ViewerGate><CameraScriptControls model={cameraScript} /></ViewerGate>}
                 <p className="mono">
                   {lastMeta
                     ? `#${lastMeta.frame_index} ${lastMeta.width}×${lastMeta.height} stride=${lastMeta.stride_bytes} bytes=${lastMeta.byte_len}`
@@ -2279,6 +2293,7 @@ export default function App() {
                     <span className="mono">
                       ROI: {Number(roiFields.w) > 0 ? `${roiFields.w} × ${roiFields.h} @ (${roiFields.x}, ${roiFields.y})` : "full frame"}
                     </span>
+                    <ViewerGate>
                     <button onClick={onStartExperiment} disabled={!!startExperimentReason} title={startExperimentReason}>
                       Start Experiment
                     </button>
@@ -2289,10 +2304,11 @@ export default function App() {
                     >
                       Stop Experiment
                     </button>
+                    </ViewerGate>
                   </div>
                 </div>
 
-                {instrumentModes && <RunRateControl status={runFpsStatus} />}
+                {instrumentModes && <ViewerGate><RunRateControl status={runFpsStatus} /></ViewerGate>}
                 {instrumentModes && <RunWindowNotice tab="experiment" windowPlaced={cameraWin.placed} modeError={modeError}
                   onPlaceWindow={() => setTab("overview")} onRetry={() => setModeRetry((n) => n + 1)} />}
                 {readinessMessage && <p role="alert">Experiment readiness: {readinessMessage}</p>}
@@ -2333,7 +2349,7 @@ export default function App() {
                         {" · "}<label><input type="checkbox" checked={showRunMask} onChange={(e) => setShowRunMask(e.target.checked)} /> U-Net mask</label>
                         {faultNote && <>{" · "}<span className="warn" role="status" data-testid="fault-cleared">{faultNote}</span></>}
                         {ring?.available && !runFrozen && !expActive && (
-                          <>{" · "}<button onClick={() => void onStopRun()} title={`Stop: hold the last ${ring.capacity_frames.toLocaleString("en-US")} frames for playback`}>Stop</button></>
+                          <>{" · "}<button onClick={() => void onStopRun()} disabled={viewerOnly} title={viewerReason(viewerOnly, `Stop: hold the last ${ring.capacity_frames.toLocaleString("en-US")} frames for playback`)}>Stop</button></>
                         )}
                       </p>
                     )}
@@ -2342,7 +2358,7 @@ export default function App() {
                     )}
                     {instrumentModes && operatingMode === "service" && (runMode || instrument?.mode?.name === "align") && (
                       <InstrumentLedControls mode={runMode ? "run" : "align"} alignBands={instrument?.mode?.align_source === "bands"} limits={caps.led_limits?.[runMode ? "run" : "align"]}
-                        current={instrument?.led} disabled={!ready || expActive} apply={bridge.setInstrumentLed} append={append} />
+                        current={instrument?.led} disabled={!ready || expActive || viewerOnly} apply={bridge.setInstrumentLed} append={append} />
                     )}
                     <div className="toolbar" style={{ marginTop: 6 }}>
 
@@ -2351,6 +2367,7 @@ export default function App() {
                         <span className="chip"><span className="swatch" style={{ background: "#1a7f37" }} /> Valid</span>
                         <span className="chip"><span className="swatch" style={{ background: "#b42318" }} /> Invalid</span>
                       </span>}
+                      <ViewerGate>
                       <ProcessingSetupControls ready={ready} running={running} experimentActive={expActive}
                         hostProcessing={hostProcessing} hostBackground={!!caps.host_background} backgroundSet={backgroundSet}
                         autoBackgroundEnabled={autoBackgroundEnabled} append={append} refresh={refreshConfig}
@@ -2361,13 +2378,14 @@ export default function App() {
                       {caps.frame_buffer && <button onClick={onToggleRecord} disabled={!running} title={running ? "Record raw frames to an HDF5 file" : "Camera is not running"}>
                         {recording ? "Stop Recording" : "Record"}
                       </button>}
+                      </ViewerGate>
                       <button onClick={() => setFitWindow((f) => !f)}>{fitWindow ? "Fit: Window" : "Fit: 1:1"}</button>
                     </div>
-                    {caps.frame_buffer && <PreviewBufferControls model={previewBuffer} />}
+                    {caps.frame_buffer && <ViewerGate><PreviewBufferControls model={previewBuffer} /></ViewerGate>}
                     {hostProcessing ? (
                       <>
                         <ProcessedPreview ready={ready} active={tab === "experiment" && expTab === "preview"} />
-                        <BackgroundCalibrationControls ready={ready} experimentActive={expActive} onPublished={() => void refreshConfig()} />
+                        <ViewerGate><BackgroundCalibrationControls ready={ready} experimentActive={expActive} onPublished={() => void refreshConfig()} /></ViewerGate>
                       </>
                     ) : (
                       <p className="mono" role="status">Processing runs on the PL for every frame. While an experiment runs its results are counted and recorded (see the sidebar and the Monitoring tab); this view shows the camera's previews.</p>
@@ -2391,7 +2409,7 @@ export default function App() {
                             <button onClick={async()=>{if((!configDirty&&!quickDraft.dirty)||await confirm("Discard unsaved live configuration edits and reload?"))void refreshConfig(true);}} disabled={!ready} title="Reload the live config from the backend">
                               Reload
                             </button>
-                            <button className="btn" onClick={onApplyConfigJson} disabled={!ready || !configDirty || liveDraft.runtimeChanged} title={configDirty ? "Merge-apply the edited document" : "No edits to apply"}>
+                            <button className="btn" onClick={onApplyConfigJson} disabled={!ready || !configDirty || liveDraft.runtimeChanged || viewerOnly} title={viewerReason(viewerOnly, configDirty ? "Merge-apply the edited document" : "No edits to apply")}>
                               Apply
                             </button>
                             {hostProcessing && <span className="mono right" title="Active processing core identity (backend-owned trust)">
@@ -2401,9 +2419,11 @@ export default function App() {
                                 : ""}
                             </span>}
                           </div>
+                          <ViewerGate>
                           {caps.core_updates && <CoreManagementPanel model={cores} updatesBlocked={running || recording || expActive || scriptDocument.busy || mindvisionDocument.busy || reviewSourceBusy || experimentRequestBusy || cameraScript.busy || checkedConfig.busy || profiles.busy || profiles.remote.busy || reviewExport.busy || reanalysis.busy || previewBuffer.busy || scriptDocument.dirty || mindvisionDocument.dirty || configDirty || quickDraft.dirty || checkedConfig.dirty || profiles.dirty} />}
                           <ProfilesPanel model={profiles} egrabberScript={caps.egrabber_script} autofocus={caps.autofocus} />
                           <ConfigDocumentEditor model={checkedConfig} />
+                          </ViewerGate>
                           <div className="config-grid">
                             <div className="config-group" style={{ flex: 2 }}>
                               <h5>Live config document (merge-applied on Apply)</h5>
@@ -2446,7 +2466,7 @@ export default function App() {
                                     onChange={(e) => quickDraft.edit(JSON.stringify({enabled:procEnabled,factor:e.target.value}))}
                                   />
                                 </label>
-                                <button className="btn" onClick={onApplyProcessing} disabled={!ready || quickDraft.runtimeChanged} title={ready ? undefined : "Backend is not initialized"}>
+                                <button className="btn" onClick={onApplyProcessing} disabled={!ready || quickDraft.runtimeChanged || viewerOnly} title={viewerReason(viewerOnly, ready ? undefined : "Backend is not initialized")}>
                                   Apply
                                 </button>
                               </div>
@@ -2462,8 +2482,8 @@ export default function App() {
                           </div>
                         </>
                       )}
-                      {configTab === "script" && instrumentModes && <CameraDocumentEditor model={pzCameraDocument}/>}
-                      {configTab === "script" && caps.egrabber_script && <><CameraScriptControls model={cameraScript} /><CameraDocumentEditor model={scriptDocument}/><CameraDocumentEditor model={mindvisionDocument}/></>}
+                      {configTab === "script" && instrumentModes && <ViewerGate><CameraDocumentEditor model={pzCameraDocument}/></ViewerGate>}
+                      {configTab === "script" && caps.egrabber_script && <ViewerGate><CameraScriptControls model={cameraScript} /><CameraDocumentEditor model={scriptDocument}/><CameraDocumentEditor model={mindvisionDocument}/></ViewerGate>}
                     </div>
                   </>
                 )}
@@ -2473,6 +2493,7 @@ export default function App() {
                 {expTab === "monitoring" && (
                   <>
                     <div className="toolbar">
+                      <ViewerGate>
                       <button
                         onClick={async () => {
                           const res = await bridge.monitoringClear();
@@ -2482,10 +2503,11 @@ export default function App() {
                       >
                         Clear Buffer
                       </button>
+                      </ViewerGate>
                       {/* UX-9: trigger tests are commissioning controls, gated
                           behind Service mode; a running periodic test stays
                           stoppable in Operator mode as a safety fallback. */}
-                      {caps.trigger && (operatingMode === "service" ? (
+                      <ViewerGate>{caps.trigger && (operatingMode === "service" ? (
                         <>
                           <label className="arm-toggle" title="Arm the hardware-actuating trigger controls">
                             <input
@@ -2581,7 +2603,7 @@ export default function App() {
                         <span className="commissioning-hint mono">
                           Trigger tests are in Service / Commissioning mode
                         </span>
-                      ))}
+                      ))}</ViewerGate>
                       <span className="mono right">
                         {caps.trigger ? `triggers ${trigStatus?.trigger_count ?? 0} · ` : ""}buffered v{monSnapshot?.valid_held ?? 0}/i
                         {monSnapshot?.invalid_held ?? 0} · evicted{" "}
@@ -2650,6 +2672,7 @@ export default function App() {
             {tab === "review" && (
               <>
                 <div className="toolbar">
+                  <ViewerGate>
                   <button onClick={onSelectHdf} disabled={!ready || reviewSourceBusy} title={ready ? undefined : "Backend is not initialized"}>
                     Select HDF File…
                   </button>
@@ -2673,6 +2696,7 @@ export default function App() {
                   <button disabled={!reviewMeta?.file_open || reviewMeta.recording_file || reviewExport.busy || reviewSourceBusy} onClick={() => void reviewExport.start("charts")}>Export Charts…</button>
                   <button disabled={!ready || reviewExport.busy || reviewSourceBusy} onClick={() => void reviewExport.start("metrics_csv", undefined, true)}>Batch Metrics…</button>
                   <button disabled={!ready || reviewExport.busy || reviewSourceBusy} onClick={() => void reviewExport.start("all", undefined, true)}>Batch Export All…</button>
+                  </ViewerGate>
 
                   <span className="legend">
                     <span className="chip"><span className="swatch" style={{ background: "#2b6cb0" }} /> Target</span>
@@ -2719,7 +2743,7 @@ export default function App() {
                 <div className="subtab-body">
                   <RunOutcomeNotice outcome={reviewOutcome} />
                   <ReviewExportOptions model={reviewExport}/>
-                  {caps.reanalysis && <ReanalysisControls model={reanalysis} metadata={reviewMeta} blocked={reviewExport.busy || reviewSourceBusy || !ready}/>}
+                  {caps.reanalysis && <ViewerGate><ReanalysisControls model={reanalysis} metadata={reviewMeta} blocked={reviewExport.busy || reviewSourceBusy || !ready}/></ViewerGate>}
                   {reviewTab === "charts" && <ReviewCharts sourcePath={reviewMeta?.file_path ?? ""}/>}
                   <div className="review-split" style={reviewTab === "charts" ? { display: "none" } : undefined}>
                     <div className="frames">

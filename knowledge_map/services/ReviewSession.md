@@ -35,7 +35,13 @@ reanalysis engine without an `AppBackend`, #512 S2),
 export engine without an `AppBackend`, #512 S3),
 `tests/review/review_run_identity_test.cpp` (`review.run_identity`: run
 identity and the identity probe, #717 B1a; labels
-`review;recording;backend;hdf5;concurrency;safety`)
+`review;recording;backend;hdf5;concurrency;safety`),
+`tests/review/review_inspect_test.cpp` (`review.inspect`: track rows and
+reprocessing one record, #717 B3b; labels
+`review;backend;hdf5;concurrency;safety`),
+`tests/review/review_object_coordinates_test.cpp` (`review.object_coordinates`:
+the object coordinate space and the match through it, #756 review 2; labels
+`review;backend;hdf5;safety`)
 **Consumers:** `crates/mib-bridge/src/review_shim.cpp` (`ReviewBridge`, [[../architecture/Rust-Bridge]]),
 `BackendFacade` (`review_`, the facade's review source, #512 S5;
 `tests/backend/facade_review_session_test.cpp`, `backend.facade_review_session`),
@@ -73,7 +79,11 @@ the Qt [[../frontend/HdfReviewTab]] (`recordedPixelToMicron`, TD-17)
   without it use `setFallbackPixelToMicron()` (the host's live/preferred
   factor; `fallbackPixelToMicron()` reads it back); `pixelToMicronFromFile`
   says which applied. The static `recordedPixelToMicron(reader)` is that
-  read (0 when absent), shared with the Qt tab and the batch job.
+  read (0 when absent), shared with the Qt tab, the batch job and the
+  reanalysis engine. A file without a run snapshot factor falls back to
+  `/experiment_info @pixel_to_micron`, the factor a regenerated or
+  reanalysed file was validated at (#758), so such a file reopens at it
+  instead of the fallback.
 - `metadata().runIdentity` → `RunIdentity` (#717 B1a, review ABI 2): what
   the file says about its own run, read at open by the static
   `readRunIdentity(reader)` from run snapshot v3 (#712, parsed with
@@ -86,7 +96,12 @@ the Qt [[../frontend/HdfReviewTab]] (`recordedPixelToMicron`, TD-17)
   own, presence-aware: missing is absent, a recorded 0 stays 0). Absent is
   `std::nullopt` / `false`, **never** 0 or ""; a legacy file reads every
   member absent. `snapshotUnreadable` / `annotationUnreadable`: the attribute
-  exists but is not a JSON object, which is not the same as legacy.
+  exists but is not a JSON object, which is not the same as legacy. Review
+  ABI 3 (#717 B3b) adds `eModulusLut` (the snapshot's
+  `recording::EModulusLutRecord`: `lutId`, `revision`, `source`, `sha256`,
+  `catalogSha256`, `checksumStatus`; absent when the snapshot records none
+  or `loaded` false) and `profileId` (the snapshot's `profile_id`, any
+  version, a non-empty string only).
 - `probeRuns(paths, out, &error)` (#717 B1a, R1 Open's experiment library):
   for each path a short-lived reader of its own opens the file, reads only
   header attributes into a `RunProbe` (the `RunIdentity`, `startTimeNs` /
@@ -114,7 +129,31 @@ the Qt [[../frontend/HdfReviewTab]] (`recordedPixelToMicron`, TD-17)
   for the whole probe (no job starts) and refuses while one runs ("A review
   job is running; …").
 - `metricsPage(valid, offset, count)` → `MetricRow` with **every**
-  FilterResult column the Qt `HdfMetricsModel` shows plus `areaUm2`.
+  FilterResult column the Qt `HdfMetricsModel` shows plus `areaUm2`. The
+  static `metricRow(frame, pixelToMicron)` is the same conversion for a
+  frame from elsewhere (the reprocessed objects).
+- `trackRows(valid, trackId, max, out, &error)` (#717 B3b, R3 Inspect's
+  linked records): the records of one set whose `trackId` equals `trackId`,
+  in set order, with their set `positions` (parallel to `rows`), at most
+  `max`; `total` counts every match and `truncated` says `total > rows`.
+  Served from the metadata read at open, under the session's mutex, no HDF5
+  read. Refused: `max` above `kReviewTrackRowsMax` (256, review contract
+  `review_track_rows.max_rows`), a negative track id ("This record is not
+  tracked …"), a raw recording, no open file. An unknown track is an empty
+  answer, not a refusal.
+- `reprocessInputs(valid, index, settings, out, &error)` (#717 B3b): what
+  `ReviewJobs::reprocessRecord` needs to reprocess one record, read under the
+  session's mutex: the stored `MetricRow`, the record's frame as gray
+  (`grayLikeRegenerate`, the same conversion as Reanalysis), and per
+  `ReprocessSettings` the inputs: `Recorded` = the file's recorded config,
+  ROI and background (`readRecordedProcessingConfig`; without one, the
+  defaults, said in the label), `Default` = `ProcessingConfig{}`, the whole
+  image and no background. `settingsLabel` names them ("recorded settings
+  (config, ROI, background)", "… the file records no background", "default
+  settings: the file records none", "default settings (whole image, no
+  background)"). Refused: an unknown settings value, no file, a raw
+  recording, an index outside the set, a frame with no stored image, a
+  recorded background of another size.
 - `framesPage(valid, offset, count, frames, total)` (#512 S5): the same page
   as the metadata-only `ProcessedFrame`s read at open (no pixels), for hosts
   with their own row type (the facade's `MonitoringObjectRow`); same bounds
@@ -263,12 +302,17 @@ bridge never starts them. The two export cancel models stay as they were:
   rebased to the first selected frame and clamped at 0. The optional
   synthetic background is the median of the first 32 frames. The whole
   file is valid rows then invalid rows. The job has no frame or byte budget.
-  The recorded config (read here), ROI and background are used by default.
-  Otherwise the request's config and ROI apply and the background is
-  cleared. An existing output is refused at start ("Output already exists;
-  choose a new file"). An output created mid-run fails the job and stays
-  untouched; the partial file is removed. Terminal messages:
-  "<path> (N images: V valid, I invalid)", "nothing written" on cancel, or the
+  The recorded config (read here, its target group from `@config_json`), ROI,
+  background and pixel-to-micron factor (#758: the file's recorded one, the
+  session's `fallbackPixelToMicron()` when it records none) are used by
+  default. Otherwise the request's config and ROI apply, the background is
+  cleared and objects are validated at the default 0.4886 µm/px, as for AVI
+  and folder sources. The factor goes to the engine per request; the bundled
+  kernel's own factor is never set. An existing output is refused at start
+  ("Output already exists; choose a new file"). An output created mid-run
+  fails the job and stays untouched; the partial file is removed. Terminal
+  messages: "<path> (N images: V valid, I invalid; px→µm F recorded | default
+  | fallback: the file records none)", "nothing written" on cancel, or the
   engine's error.
 - `startComputeCore(fraction)`: `computeFullRunCoreRecord` over the scatter
   (recorded factor, fixed seed); `computedCoreJson()` hands the record to the
@@ -358,6 +402,24 @@ Parsing never sets them, so the facade keeps the defaults:
   as `batch_masks::loadFromHdf5` converts them (BGR → gray; YOFO, whose
   pre-S8 reader did this; #735 review).
 - `ReanalysisOutcome::valid` counts the valid records (YOFO's message).
+- **Pixel-to-micron factor (#758).** `useRecordedPixelToMicron` (default on):
+  an HDF source's recorded factor (`ReviewSession::recordedPixelToMicron`)
+  wins; `pixelToMicron` (default 0.4886) applies when the source records
+  none, to folder / AVI sources and with the flag off. Not in the JSON
+  request: the facade sets its live factor as the fallback
+  (`ReviewReanalysis.cpp`), YOFO's job the session fallback (recorded
+  settings) or the default with the flag off (default settings). The engine
+  passes the factor and the channel band detected from the run's own
+  background to `processBatch` as `BatchAnalysisInputs`
+  (`ProcessingService::offlineAnalysisInputs`): the kernel's live factor and
+  band are never read or set, so a reanalysis beside a live run (the facade's
+  kernel is the live service) or after another source cannot pick up the
+  wrong one. `ReanalysisOutcome::pixelToMicron` / `pixelToMicronRecorded`
+  report what was used; the output records it (`/experiment_info
+  @pixel_to_micron`) with the applied config document (`@config_json`). Before
+  #758 YOFO Review validated at 0.4886 and MIB Studio / the Qt dialog at the
+  live factor, whatever the source recorded (pending release notice in
+  `docs/release-notes/README.md`).
 
 The functions:
 
@@ -379,7 +441,12 @@ The functions:
 - `loadReanalysisPreview(json, image, index)`: one Mono8 source frame through
   an independent reader.
 - `reanalysis{Loading,Progress,Terminal,StartFailed}StatusJson`: the
-  contract's status snapshots, byte for byte as the facade wrote them.
+  contract's status snapshots, byte for byte as the facade wrote them, plus
+  one key: the terminal snapshot's `valid_objects` (of `objects`, the valid
+  records; #763 F18). Only the terminal snapshot carries `objects`; it has
+  no `phase` / `completed` / `total`, which is why MIB Studio's status line
+  read "Reanalysis: completed /" (`reanalysisStatusLine` in
+  `desktop/src/reanalysisControls.tsx` now words each state).
 
 ## Export engine (`ExportEngine.h`, #512 S3)
 
@@ -440,12 +507,13 @@ session is open (`AppBackend::setReviewSourceOpen`, set in the same
 transaction from `isOpen()` by a scope guard that also runs when an exception
 leaves the transaction, so the flag equals `isOpen()` on every exit; cleared
 by close, a failed load, shutdown and the destructor). While it is, experiment readiness fails `storage.hdf5` with the
-text a file in the shared handle produced ("an HDF5 file is already open",
-"finish or close the current file first"), Start is refused with "stop raw
-recording and close the existing HDF5 file before starting an experiment"
-and raw recording with "Close the existing HDF5 file before starting raw
-recording; its writer will not be replaced": HDF5 is built without thread
-safety (#722), so a review reader must not run beside the 5 kHz writer. See
+text a file in the shared handle produces ("an HDF5 file is already open",
+"Close the file in Review (Review → Close File)"), Start is refused with "an
+HDF5 file is already open: Close the file in Review (Review → Close File)
+before starting an experiment" and raw recording with the same instruction
+"… before starting raw recording" (F2 of #763: the refusal says how to clear
+it): HDF5 is built without thread safety (#722), so a review reader must not
+run beside the 5 kHz writer. See
 [[../architecture/ExperimentCoordinator]]. Shutdown closes the session after
 the export / reanalysis jobs are joined.
 
@@ -475,9 +543,86 @@ through `ReviewJobs::probeRuns`, holds the lanes' mutex for the whole call
 and refuses while either lane is claimed, so it never runs beside a session
 read or a job. `review.run_identity` probes from one thread while another
 reads frames and rows.
+`ReviewJobs::reprocessRecord` (#717 B3b) follows the same rule: under the
+lanes' mutex it refuses while either lane is claimed ("A review job is
+running; …", export jobs read HDF5 outside the session mutex too) and reads
+its inputs through `reprocessInputs` (the session's mutex); then
+`ProcessingService::processBatch` runs on the one image outside every lock
+(it reads no file), on a `ProcessingService` of the call's own (#756
+review 1): the bundled core, refused when the session's active core is
+another, configured with the record's calibration (`Recorded`: the file's
+px→µm, or the session's fallback when it records none; `Default`: the
+processing default), so the instance a job uses is never reconfigured.
+Area validity and the target group are in µm², so the factor decides them;
+`pixelToMicron` and `settingsLabel` say which applied. No E-LUT is loaded
+for it: `emodulusRecomputed` is false and the reprocessed rows' E is NaN
+(an E-gated target group is not recomputed either). It writes nothing. The
+rows are the objects found (the
+kernel's frame-level "no object" result, `objectCount` 0, is not one), with
+the record's frame index and no track, at most `kReviewReprocessMaxObjects`
+(64, `truncated`); `match` is the found object whose centroid is nearest the
+stored one inside the stored bounding box, both in image coordinates: the
+reprocessed rows are, and the stored box and centroid are placed through
+the file's object coordinate space (`toImageSpace`, below). A file whose
+space is unknown is refused ("Record N cannot be matched: the file does not
+record whether its bounding boxes are relative to its ROI (which starts at
+x, y) or to the image, and its masks do not tell"); the result's `stored`
+row stays as stored;
+`objectCountDiffers` compares with a stored `objectCount` above 0. A kernel
+failure (no mask) is refused. `review.inspect` covers it, with the regenerate
+job held at its first progress event.
 The facade's session is read on the bridge's calling threads, as the shared
 handle was before S5 (now serialized by this mutex); HDF5 itself is still not
 thread-safe across readers (#722), which is why D1 keeps experiments out.
+
+## Object coordinate space (#756 review 2)
+
+The realtime inline path with an ROI validates the ROI's mask, so its rows'
+boxes and centroids are ROI-local, next to full-frame images and masks (the
+mask pasted at the ROI); `computeProcessedFrame` (async batch, regenerate,
+reanalysis, `processBatch`) reports image coordinates. No reader converted
+them before. `open` decides each experiment file's space once, under the
+session's mutex, into `ReviewMetadata::objectCoordinates` (space, source,
+the origin it implies), in the order of `backend/review/ObjectCoordinates.h`:
+
+1. `/experiment_info @object_coordinates` (written from #756 on, see
+   [[../data-model/HDF5-Storage]]); an unrecognised value does not decide;
+2. a run snapshot v3 of a host-science run (`science_placement` not `pl`):
+   an ROI with an area under `realtime_mode` `inline` is `roi_local`,
+   `async_batch` or no ROI is `image`, another mode does not decide;
+3. an ROI without area or at (0, 0): `image` (`roi_origin`): both placements
+   are the same, so the mask check (next) could never decide such a file;
+4. the mask check, by object identity (Codex round 2 on #756: a pixel
+   count let dense debris at the wrong placement outvote a thin cell
+   outline): up to 64 records with a box and a mask, the valid set spread
+   over first and the invalid set (rejected objects, often debris) only to
+   fill the rest. Each record is placed as stored and shifted by the ROI
+   origin; a placement fits when an 8-connected mask component overlapping
+   it (traced on the calling thread from the box's pixels; OpenCV's parallel
+   labelling hands buffers between TBB threads the thread sanitizer cannot
+   follow) has a bounding box with IoU ≥ 0.8 and, where the record has an area,
+   a convex-hull area within 15 % of it: a hole's for a Contract 1
+   inner-contour object (the science measures the hole and boxes the
+   outline, so the component needs a hole), the outline's otherwise
+   (`storedObjectAt`). The box test runs on the component's box alone, and
+   only a component that passes it is drawn for the contour test, one at a
+   time. A placement where more than 4 components pass the box test is
+   undecided: look-alikes are no evidence, and each one costs a bitmap the
+   size of the box. A record is decisive only when exactly one placement
+   fits and neither is undecided (`maskPlacementVote`): debris or a second
+   cell at the other placement makes it indecisive, never a wrong vote. The file is that space
+   with at least 8 decisive votes agreeing at 90 % or more
+   (`maskCheckVerdict`);
+5. otherwise `Unknown`. A raw recording (no objects) and no file are
+   `Unknown` too.
+
+`toImageSpace(coordinates, bbox, centroid)` is the one conversion (false,
+nothing changed, for `Unknown`). The reprocess match uses it; the cell crop
+in R3 Inspect uses the same fields through `fetch_review_info` from B3c on.
+The steps run in the ruling's order except that the ROI-origin rule comes
+before the mask check (it decides exactly the files the check cannot), and
+the snapshot rule reads `realtime_mode`: an async-batch capture with an ROI
+stores image coordinates.
 
 ## Gotchas
 

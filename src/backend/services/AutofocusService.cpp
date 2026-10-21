@@ -1,6 +1,7 @@
 #include "backend/services/AutofocusService.h"
 #include "backend/services/AutofocusMath.h"
 #include "backend/app/Tools.h"
+#include "backend/services/SimulatedSerial.h"
 #include "backend/diagnostics/CrashStateMirror.h"
 
 #include <spdlog/spdlog.h>
@@ -85,6 +86,9 @@ bool AutofocusService::connect(const backend::nanopositioner::Endpoint& requeste
         return false;
     }
 
+    // Waits for a startup probe on this port to finish instead of failing busy.
+    auto claim = portclaims::claimForService(backend::nanopositioner::endpointPortName(endpoint),
+                                             "nanopositioner");
     std::string error;
     if (!device->connect(endpoint, error)) {
         SPDLOG_ERROR("AutofocusService: {} connection failed for {}: {}",
@@ -105,6 +109,7 @@ bool AutofocusService::connect(const backend::nanopositioner::Endpoint& requeste
     {
         std::scoped_lock deviceLock(deviceMutex_);
         device_ = std::move(device);
+        portClaim_ = std::move(claim);
         endpoint_ = endpoint;
         endpoint_.systemPath = device_->connectedEndpoint();
     }
@@ -172,6 +177,7 @@ void AutofocusService::disconnect() {
             device_->disconnect();
             device_.reset();
         }
+        portClaim_.release();
     }
     connected_.store(false);
     activeControlSession_.store(false);
@@ -198,12 +204,15 @@ bool AutofocusService::probeComPort(int comPort, int baudRate, unsigned char dev
 }
 
 std::vector<backend::nanopositioner::Endpoint> AutofocusService::availableEndpoints() {
+    // Every serial port, whatever its USB chip: the controller's bridge chip
+    // is not known for every unit. knownOeabtCandidate (CH340/CH341) still
+    // decides the probe order: NanopositionerProvider probes other adapters
+    // only when no candidate identified.
     auto endpoints = backend::nanopositioner::availableOeabtEndpoints();
-    endpoints.erase(
-        std::remove_if(endpoints.begin(), endpoints.end(),
-                       [](const auto& endpoint) { return !endpoint.knownOeabtCandidate; }),
-        endpoints.end());
 
+    // The CoreMorrow vendor DLL opens COM ports itself, past ISerialPort, so
+    // under simulated serial hardware it would reach the real ports.
+    if (serialsim::installed()) return endpoints;
     for (int port : backend::Tools::availableComPortNumbers()) {
         endpoints.push_back(legacyCoremorEndpoint(port, 115200, 1));
     }

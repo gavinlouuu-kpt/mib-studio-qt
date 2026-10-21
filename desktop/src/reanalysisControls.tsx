@@ -139,9 +139,35 @@ function SourcePreview({frame,roi,onRoi,disabled}:{frame:FramePacket;roi:string;
   return <><p>{frame.width}×{frame.height}. Drag on the image to set the local ROI.</p><canvas ref={canvas} style={{maxWidth:"100%",touchAction:"none"}} aria-label="Reanalysis source preview" onPointerDown={event=>{if(disabled)return;origin.current=position(event);event.currentTarget.setPointerCapture(event.pointerId);}} onPointerUp={event=>{if(disabled || !origin.current)return;const end=position(event),start=origin.current;origin.current=null;const x=Math.min(start[0],end[0]),y=Math.min(start[1],end[1]),w=Math.abs(end[0]-start[0]),h=Math.abs(end[1]-start[1]);if(w && h)onRoi(`${x},${y},${w},${h}`);}}/></>;
 }
 
+/** The status line (#763 F18). The backend's terminal status carries no
+ * phase or progress, so printing those fields gave "Reanalysis: completed /";
+ * each state now says what it knows: progress while running, the records
+ * written when completed (the file is the "Output:" line), and plainly when a
+ * completed job names no file. */
+export function reanalysisStatusLine(status:ReviewExportStatus,pending:boolean):string{
+  if(pending)return "Reanalysis: request pending";
+  const count=(v:string|undefined)=>v!==undefined && v!=="" && Number.isFinite(Number(v))?Number(v):null;
+  switch(status.state){
+    case "running":{
+      if(status.phase==="loading")return "Reanalysis: running · loading the source";
+      const done=count(status.completed),total=count(status.total);
+      return done!==null && total!==null?`Reanalysis: running · ${done} of ${total} frames processed`:"Reanalysis: running";
+    }
+    case "completed":{
+      const objects=count(status.objects),valid=count(status.valid_objects);
+      const records=objects===null?"":valid===null?` · ${objects} records`:` · ${objects} records (${valid} valid, ${Math.max(0,objects-valid)} invalid)`;
+      // The path itself is the "Output:" line below the status.
+      return status.final_path?`Reanalysis: completed${records}`:`Reanalysis: completed${records}, but the backend named no output file`;
+    }
+    case "cancelled":return "Reanalysis: cancelled";
+    case "failed":return "Reanalysis: failed";
+    default:return "Reanalysis: idle";
+  }
+}
+
 export function ReanalysisStatus({model}:{model:ReturnType<typeof useReanalysis>}){
   if(model.status.state==="idle" && !model.error && !model.pending)return null;
-  return <section aria-label="Reanalysis status"><p role="status">Reanalysis: {model.pending?"request pending":model.status.state} {model.status.phase} {model.status.completed}/{model.status.total}</p>
+  return <section aria-label="Reanalysis status"><p role="status">{reanalysisStatusLine(model.status,model.pending)}</p>
     {model.status.state==="running" && <button disabled={model.pending} onClick={()=>void model.cancel()}>Cancel Reanalysis</button>}
     {model.status.final_path && <p>Output: {model.status.final_path}. Open this file in Review to inspect regenerated masks.</p>}
     {model.status.retained_partial_path && <p>Temporary file retained: {model.status.retained_partial_path}</p>}

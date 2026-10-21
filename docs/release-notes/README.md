@@ -62,3 +62,48 @@ once a release carries it.
   The user manual (`docs/manual/yofo-review.md`, Regenerate masks) already carries the
   notice. The release body in `.github/workflows/review-release.yml` is generic, so add the
   notice to the GitHub Release by hand when the release is cut.
+
+- **YOFO Review and MIB Studio: notice for regenerated and reanalysed files (#758).** The
+  next release of each product must state, in its GitHub release notes and in the updater
+  notes they link to:
+  - **What was wrong:** Regenerate masks and reanalysis checked each object's area range and
+    target group at a fixed pixel-to-micron factor, not at the factor the source file was
+    recorded with. The regenerated file also recorded no factor, so review opened it at the
+    fallback factor.
+    - YOFO Review used 0.4886 µm per pixel. With the recorded settings it also selected no
+      target group, because the recorded target group was never read.
+    - MIB Studio (Qt: Review ▸ Regenerate masks; the desktop app: Regenerate masks /
+      reanalyse) used the factor set in the app at the time.
+  - **Which files:** files regenerated or reanalysed from an HDF5 recording:
+    - by YOFO Review up to and including review-v1.1.3-beta.1 (its only release so far),
+      when the recording's factor is not 0.4886 µm per pixel, or with the recorded settings
+      when the recording used a target group;
+    - by MIB Studio Qt from v1.0.0 up to and including v1.2.0-beta.1108951d (the latest
+      pre-release), when the recording's factor differs from the factor set in the app;
+    - by MIB Studio desktop builds since 2026-09-23 (not released yet), on the same
+      condition.
+  - **What was not affected:** images, masks and background; the original recordings.
+  - **What to do:** regenerate or reanalyse affected files again from the original
+    recording with the new release. The new file records the factor it was checked at.
+
+  The user manuals (`docs/manual/yofo-review.md` and `docs/manual/review-and-postprocess.md`,
+  Regenerate masks) already carry the notice. The release body in
+  `.github/workflows/review-release.yml` is generic, so add the notice to the GitHub Release
+  by hand when the release is cut.
+
+- **YOFO Studio (browser UI): where files without a full path were saved (#762).** The
+  next release with `yofo-studio-server` must state:
+  - **What was wrong:** in the browser, a file name without a full path (the Start prompt's
+    default `experiment.h5`, or a name typed into a save prompt for a recording, an export,
+    Regenerate masks or a preview save) was written to the server's working directory, not
+    to its data directory, so Files did not list it. The readiness check wrote its probe
+    files there too.
+  - **What changed:** such a path is now saved under the data directory, and the save
+    prompt opens on `<data directory>/<name>` and says where the file goes. A path that
+    would leave the data directory (`..`, or a link to elsewhere) is refused with the
+    reason. Full paths are saved where they point, as before.
+  - **What to do:** look for runs from earlier versions in the directory the server was
+    started from (for a systemd unit, its `WorkingDirectory`, `/` by default) and move them
+    into the data directory.
+  - **Also:** while a file is open in Review, Start is still refused (HDF5 is not
+    thread-safe); the message now says to close it in Review (Review → Close File).

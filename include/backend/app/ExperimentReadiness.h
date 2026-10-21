@@ -202,8 +202,14 @@ enum class ExperimentStartOutcome {
     StorageFailed = 4,      // HDF5 open/init failed (rolled back)
     ProvenanceFailed = 5,   // run snapshot could not be persisted (rolled back)
     Busy = 6,               // another start/stop transaction is in progress
-    InvalidRequest = 7,     // the start request's declared identity/annotation is refused (#712, ABI 39)
+    InvalidRequest = 7,     // the start request's declared identity/annotation is refused (#712, ABI 39),
+                            // or its output path is empty or leaves the storage root (#762)
 };
+
+// How the operator frees the HDF5 library when a file is open for review (F2 of #763): the
+// storage.hdf5 gate, Start's refusal and raw recording's refusal all say it. HDF5 is built without
+// thread safety (#722), so the refusal itself stays (D1 (a)). UTF-8 "→" spelled as bytes.
+inline constexpr const char* kCloseReviewFile = "Close the file in Review (Review \xE2\x86\x92 Close File)";
 
 inline const char* toString(ExperimentStartOutcome o)
 {

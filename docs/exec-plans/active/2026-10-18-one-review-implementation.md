@@ -207,7 +207,7 @@ and that lasts until S13.
 
 One PR each, in order. "Contract" names the bridge contract
 (`bridge-contract.json`, ABI 38 on develop) and the review contract
-(`review-contract.json`, `review_abi_version` 1; 2 since B1a, below). Every slice keeps
+(`review-contract.json`, `review_abi_version` 1; 2 since B1a, 3 since B3b, below). Every slice keeps
 `python3 scripts/check_docs.py` and `python3 scripts/gen_bridge_contract.py --check`
 green and lands its vault updates. ABI numbers in the proposals are left to
 the coordinator (ADR 0004/0011).
@@ -254,6 +254,41 @@ S12 takes 3 or higher. Additive; the bridge ABI is untouched.
   threads, the lane gate); `tests/review_bridge.rs` in both feature
   configurations; the Tauri JSON test; the `reviewIpc` golden gains the probe
   call. No UI change; B1b uses it on `feat/egrabber-workspace`.
+
+### B3b — Inspect commands in the review contract (track B step B3; not a #512 slice)
+
+R3 Inspect's backend (#717 B3, #269), on `develop` because it bumps the
+review ABI; review ABI 3 was reserved for B3b by the coordinator on #717
+(2026-10-20), so S12 takes 4 or higher. Additive; the bridge ABI is
+untouched.
+
+- **E-LUT and profile:** `RunIdentity::eModulusLut` (run snapshot v3's
+  `emodulus_lut`: LUT id, revision, source, sha256, catalog sha256, checksum
+  status) and `profileId` (`profile_id`), `has_*` / `null` when absent.
+- **Track rows:** `fetch_review_track_rows(valid, track_id, max)`: one
+  track's records with their set positions, `max` at most 256
+  (`review_track_rows.max_rows`), `total` and `truncated`; from the
+  metadata read at open, no HDF5 read; refused for an untracked record.
+- **Reprocess one record:** `review_reprocess_record(valid, index,
+  settings)`, `settings` recorded (config, ROI, background) or default
+  (default config, whole image, no background): the stored row next to the
+  objects the session's kernel finds in the record's stored image now, the
+  stored one matched by position, `object_count_differs`, at most 64 rows;
+  `settings_label` and the core version / source say what was used. It never
+  writes. The inputs are read under the lanes' mutex and the session's
+  (#722), `processBatch` runs outside every lock, and it is refused while
+  either job lane is claimed (the export lane reads HDF5 outside the
+  session's mutex too, so the processing lane alone would not be enough).
+  Item 4 of the B3 scope (regenerate provenance, Compare) is deferred to
+  #754.
+- **Proof:** `review.inspect` (track rows; reprocess one-to-one, a second
+  object in the frame, nothing found, an object outside the stored box,
+  recorded vs default settings, refused during a held regenerate job and
+  served after it, a frame missing its image, no write) and
+  `review.run_identity` (the LUT and profile); `tests/review_bridge.rs` in
+  both feature configurations; the Tauri JSON test; the `reviewIpc` golden
+  gains the two calls. No UI change; B3a uses it on
+  `feat/egrabber-workspace`.
 
 ### S1 — One overlay kernel (merged, #721)
 
@@ -991,7 +1026,7 @@ Same ABI bump as S10 if they land together. Exact proposed change:
 
 ### S12 — MIB Studio's options in the review contract (proposed; not implemented)
 
-Needs a reserved `review_abi_version` (3 or higher: B1a took 2). Exact proposed change (JSON
+Needs a reserved `review_abi_version` (4 or higher: B1a took 2, B3b 3). Exact proposed change (JSON
 passthrough, reusing the S2 / S3 parsers so the shapes stay those of the
 bridge contract):
 
@@ -1088,6 +1123,7 @@ bridge contract):
 - [x] 2026-10-19 — S8 YOFO regenerate on the engine (D6; `review.jobs`, `review.reanalysis`, no clobber; the position-pairing fix; #735)
 - [x] 2026-10-19 — S9 transport-neutral review module (`reviewIpc` golden unchanged; import guard; `Transport.upload`; #731).
 - [x] 2026-10-19 — B1a run identity in the review contract (review ABI 2, `review.run_identity`; track B step B1, not a slice).
+- [x] 2026-10-20 — B3b inspect commands in the review contract (review ABI 3, `review.inspect`; track B step B3, not a slice).
 - [ ] S10 attachable review bridge (ABI)
 - [ ] S11 review commands in the studio command layer (ABI)
 - [ ] S12 MIB Studio's options in the review contract (review ABI)

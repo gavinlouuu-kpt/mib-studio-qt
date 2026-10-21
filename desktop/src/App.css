@@ -771,6 +771,15 @@ button.btn:disabled,
   cursor: not-allowed;
 }
 
+/* ViewerGate (#763 F19): a fieldset that only carries `disabled` for a viewer; no box. */
+fieldset.viewer-gate {
+  display: contents;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-inline-size: 0;
+}
+
 .toolbar {
   display: flex;
   align-items: center;

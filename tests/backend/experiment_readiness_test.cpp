@@ -12,7 +12,8 @@
 //  - Unwritable output storage blocks Start.
 //  - A file open for review (#512 S5, decision D1 (a)) fails storage.hdf5
 //    exactly as a file in the shared handle does; Start and raw recording are
-//    refused with unchanged messages, and allowed again once it closes.
+//    refused with the same messages, which say how to close the file (F2 of
+//    #763), and allowed again once it closes.
 //  - Concurrent Start requests: exactly one Started, the rest typed.
 //  - The frozen RunConfigurationSnapshot is immutable for the run's duration
 //    and is persisted to HDF5 (readable after close).
@@ -406,10 +407,11 @@ int main()
     // ---- 5b. A file open for review (#512 S5, decision D1 (a)) ---------------
     // The facade's ReviewSession reads a review file with its own reader, not
     // the shared handle. AppBackend::setReviewSourceOpen keeps the pre-S5
-    // refusals byte for byte: the storage.hdf5 gate a file in the shared
-    // handle fails, the same Start message and the same raw-recording error
-    // (HDF5 is built without thread safety, #722). Lifting it makes the
-    // instrument ready again (section 6 then starts a run).
+    // refusals: the storage.hdf5 gate a file in the shared handle fails, the
+    // same Start message and the same raw-recording error (HDF5 is built
+    // without thread safety, #722), each saying how to close the file (F2 of
+    // #763). Lifting it makes the instrument ready again (section 6 then
+    // starts a run).
     {
         wd.mark("review source");
         const auto ready = coord.evaluateReadiness(out1);
@@ -436,8 +438,8 @@ int main()
         MIB_EXPECT(!review.ready, "a review source blocks readiness");
         MIB_EXPECT(reviewGate && reviewGate->id == "storage.hdf5" && reviewGate->status == GateStatus::Fail &&
                        reviewGate->reason == "an HDF5 file is already open" &&
-                       reviewGate->remediation == "finish or close the current file first" && reviewGate->detail.empty(),
-                   "review source: the storage.hdf5 gate text is unchanged");
+                       reviewGate->remediation == backend::app::kCloseReviewFile && reviewGate->detail.empty(),
+                   "review source: the storage.hdf5 gate says how to close the file (F2 of #763)");
         MIB_EXPECT(reviewGate && reviewGate->id == sharedGate->id && reviewGate->status == sharedGate->status &&
                        reviewGate->reason == sharedGate->reason && reviewGate->remediation == sharedGate->remediation &&
                        reviewGate->detail == sharedGate->detail,
@@ -452,9 +454,8 @@ int main()
         const auto refused = coord.start(req);
         MIB_EXPECT(refused.outcome == ExperimentStartOutcome::NotReady && sharedStart.outcome == refused.outcome &&
                        refused.message == sharedStart.message &&
-                       refused.message ==
-                           "stop raw recording and close the existing HDF5 file before starting an experiment",
-                   "review source: Start refused with the pre-S5 message: " + refused.message);
+                       refused.message == std::string("an HDF5 file is already open: ") + backend::app::kCloseReviewFile + " before starting an experiment",
+                   "review source: Start refused, saying how to close the file: " + refused.message);
         MIB_EXPECT(!backend.hdf5().isFileOpen() && coord.state() == backend::app::ExperimentRunState::Idle,
                    "the refused Start has no side effects");
         std::string reviewRawError;
@@ -462,9 +463,9 @@ int main()
                        !backend.isFrameRecording(),
                    "review source: raw recording refused");
         MIB_EXPECT(reviewRawError == sharedRawError &&
-                       reviewRawError == "Close the existing HDF5 file before starting raw recording; its writer "
-                                         "will not be replaced",
-                   "review source: the raw-recording error is unchanged: " + reviewRawError);
+                       reviewRawError == std::string("an HDF5 file is already open: ") + backend::app::kCloseReviewFile +
+                                             " before starting raw recording",
+                   "review source: the raw-recording error says how to close the file: " + reviewRawError);
 
         backend.setReviewSourceOpen(false);
         const auto again = coord.evaluateReadiness(out1);
@@ -586,6 +587,11 @@ int main()
                        runJson.find("\"method\":{") != std::string::npos,
                    "snapshot JSON content");
         MIB_EXPECT(readinessJson.find("\"camera.session\"") != std::string::npos, "readiness JSON persisted");
+        // #756 review 2: the inline realtime path with an ROI stores ROI-local rows, and says so.
+        MIB_EXPECT(frozen.realtimeMode == "inline" &&
+                       reader.readScalarStringAttribute("/experiment_info", "object_coordinates") ==
+                           std::optional<std::string>("roi_local"),
+                   "an inline run with an ROI records object_coordinates = roi_local");
 
         // Snapshot v3 (#712), read back typed: the run's own id, the LUT the processing service
         // loaded, and the devices as this host has them (none connected: written as absent).

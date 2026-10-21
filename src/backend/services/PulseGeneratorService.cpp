@@ -4,7 +4,9 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <thread>
 
 namespace backend::services {
 
@@ -483,6 +485,46 @@ bool PulseGeneratorService::discoverLiveView(
         // what the platform port opens; the location form is only a display hint.
         const auto name = port.systemName.empty() ? port.systemLocation : port.systemName;
         if (name.empty() || seen(name)) continue;
+        // The sweep opens every USB adapter whatever its chip, so it is a probe
+        // (SerialPortClaims.h): it never opens the pump ports config.json
+        // reserves, waits for another probe on a port instead of calling it
+        // busy, and makes a pump or nanopositioner connect wait for it. A live
+        // bus session (the generator itself, connected earlier) is shared as
+        // before; its settings decide (a different baud is "busy").
+        std::string reservedFor;
+        if (portclaims::isReserved(name, &reservedFor)) {
+            SPDLOG_INFO("PulseGeneratorService: auto discovery skips {} (reserved for {})", name, reservedFor);
+            continue;
+        }
+        portclaims::Claim probe;
+        if (!busManager_.hasSession(name)) {
+            std::string why;
+            portclaims::Holder heldBy = portclaims::Holder::None;
+            probe = portclaims::tryProbe(name, "pulse-generator auto discovery probe", &why,
+                                         portclaims::kProbeYield, &heldBy);
+            // Another bus client is opening this port right now (the operator
+            // connecting the generator, or the pumps). Join its session once it
+            // exists: the scan then shares it, or reports "busy" at other
+            // settings. Never open a session of our own in that window, or a
+            // 9600-baud sweep would take the pump bus from a 115200 Connect.
+            if (!probe && heldBy == portclaims::Holder::BusSession) {
+                const auto deadline = std::chrono::steady_clock::now() + portclaims::kProbeYield;
+                while (!busManager_.hasSession(name) &&
+                       portclaims::holder(name) == portclaims::Holder::BusSession &&
+                       std::chrono::steady_clock::now() < deadline) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                }
+                if (!busManager_.hasSession(name)) {
+                    SPDLOG_INFO("PulseGeneratorService: auto discovery skips {}: another client is opening it", name);
+                    busy.push_back(name);
+                    continue;
+                }
+            } else if (!probe) {
+                SPDLOG_INFO("PulseGeneratorService: auto discovery skips {}", why);
+                busy.push_back(name);
+                continue;
+            }
+        }
         LinkError linkError = LinkError::None;
         const auto hits = scanBus(name, config.serial, config.modbusAddress,
                                   config.modbusAddress, cancel, 250, &linkError);

@@ -167,6 +167,13 @@ JTAG RAM root) and are lost at power-off. With the science on the PL:
 It clears by itself once the destination is on a persistent filesystem (the
 SATA disk). The decision is merge coordination's, 2026-10-06.
 
+The same header holds the storage root (#762): `storageRootOf(dataDir)` is
+what `fetch_instrument_status` reports as `storage.path` (absolute, symlinks
+resolved), and `resolveClientPath` puts a relative output path a client gives
+(experiment Start, raw recording, exports, Regenerate, preview save) under it,
+so a browser Start never writes into the server's working directory (on the
+board, the firmware filesystem). See [[../architecture/AppBackend]].
+
 Test: `backend.instrument_modes`. It covers the write order, no access while
 the PL is blank, the cell path never on while the camera streams, the
 snapped window, the gates, and the Service-mode LED.
