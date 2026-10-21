@@ -21,6 +21,12 @@ Status: active, 2026-10-18. Progress, 2026-10-20:
   - #750: the queue and Plan switched to ABI 40 (#741 part 2). They branch on the start outcome code;
     a code that can follow an opened file locks the identity. Next sample names the row's run,
     and a RunMismatch marks the row interrupted and sends nothing more.
+- **A6:** in review.
+  - A6a (#749, ABI 41, merged on `develop` and synced here in #759): backend-owned live cell images,
+    a bounded strip and pins, with one capture authority.
+  - A6b (`feat/a6b-live-view`, in review): O4 Experiment · Live on the kit. It has the cell strip,
+    scatter click-to-pin, the pinned cell with a modal viewer, ended pins and "Clear ended pins",
+    the run's status and lifecycle, and separate stops. Kit requests for O4 are on #715.
 - **A0 follow-up:** #740 (#720) bounds serial write, drain and transact, with a bounded session
   teardown.
 - **B0:** #512 S1–S5, S8 and S9 merged (#721, #724, #726, #733, #735, #731). All nine #512

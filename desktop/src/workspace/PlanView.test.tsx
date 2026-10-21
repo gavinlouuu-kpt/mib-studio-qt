@@ -43,7 +43,7 @@ function Harness({ over = {}, lockedReason = "" }: { over?: Partial<WorkspacePro
     preflightInput: READY_INPUT, zStage: null, signature: "sig", confirmedFor: "", onConfirm: () => {}, confirmLockedReason: "",
     experimentActive: false, onRefreshChecks: () => {}, onOpenSetup: () => {},
     align: { facts: FACTS, subscribeFrames: () => () => {}, onSwitchMode: async () => {}, writeRoi: vi.fn(), lockedReason: "" },
-    experiment: { plan, lockedReason, view, onView: setView }, ...over,
+    experiment: { plan, lockedReason, view, onView: setView, live: { snapshot: null, running: false, experimentActive: false, hostProcessing: true, subscribeFrames: () => {}, onStopAcquisition: async () => {}, onStopRun: async () => ({ ok: false, message: "not in this test" }) } }, ...over,
   };
   return <Workspace {...props} />;
 }

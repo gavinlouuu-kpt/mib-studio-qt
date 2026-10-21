@@ -65,7 +65,10 @@ The repo root `src/` is the C++ tree, so the whole Tauri app lives under
   (requested → readback machine), `alignControls.ts` (which controls an instrument offers);
   O3 Experiment · Plan (#716 A5): `ExperimentView.tsx` (sub-views Plan / Live / Summary),
   `PlanView.tsx`, `planModel.ts` (pure: sheet, identity, `buildStartRequest`, bounds, refusals)
-  and `usePlan.ts` (the plan held by App, remembered operators).
+  and `usePlan.ts` (the plan held by App, remembered operators); O4 Experiment · Live (#716 A6b):
+  `LiveView.tsx`, `liveModel.ts` (pure: names, ended pins, pin outcomes, scatter and its click
+  mapping, status lifecycle, the stops), `useLiveCells.ts` (the cell store's reads, crops and pin
+  commands) and `liveImages.ts` (a crop or mask packet as an image URL).
   See "Opt-in workspace" below.
 - `desktop/src/experimentCounters.ts` — operator saved counts by class, pending
   saves derived with exact u64 arithmetic, policy drops and writer failures
@@ -148,8 +151,8 @@ LED on a service setting. Tests: `workflow.test.ts` (#548), `preflight.test.ts` 
 
 `desktop/src/workspace/Workspace.tsx` is the four-stage Prepare / Align / Experiment /
 Review shell on the `@mib/ui` kit (`AppShell`, `StageTabs`, `Toolbar`, `Card`, `FactList`,
-`StateChip`, `Button`, `Notice`, `DataTable`, `OptionGroup`, `ConditionSwatch`, `Stepper`), the Operation
-app's steps A1, A3 and A5 (#716). The kit stylesheets are imported once, there; `workspace.css`
+`StateChip`, `Button`, `Notice`, `DataTable`, `OptionGroup`, `ConditionSwatch`, `Stepper`, `CellImage`,
+`CellStrip`, `AreaDeformChart`, `StatTile`), the Operation app's steps A1, A3, A5 and A6b (#716). The kit stylesheets are imported once, there; `workspace.css`
 only places cards with the kit's spacing tokens (and styles the app-local number and text fields
 of the quick controls and the sample sheet, until the kit has them).
 
@@ -163,10 +166,12 @@ of the quick controls and the sample sheet, until the kit has them).
   Align with its LED; Experiment to Run). Stages only change what is shown. In Align the
   same switch is a button the operator presses ("Show the full sensor" / "Switch to Align").
   Experiment opens on its Plan, where a run starts only on "Start run" (or a sample queue's
-  Start), stops only on the queue's "Next sample", and the camera goes to the mode a run records in
-  only on the Plan's "Switch to Run" (PZ7035) or "Show the experiment window" (desktop); its Live and Summary
-  sub-views, and the Review stage, say "Not yet in the workspace" and offer "Back to the classic
-  view".
+  Start), stops only on the queue's "Next sample" (or Live's "Stop & finalize run"), and the camera
+  goes to the mode a run records in only on the Plan's "Switch to Run" (PZ7035) or "Show the
+  experiment window" (desktop). Its Live sub-view reads and turns monitoring on while shown (the
+  classic Monitoring tab's visibility gate), and pins, stops or stops the camera only on a button.
+  Its Summary sub-view, and the Review stage, say "Not yet in the workspace" and offer "Back to the
+  classic view".
   Prepare's "Camera / Focus / Pump setup" leave for the classic Connect tab, which only reads.
   The classic startup landing is skipped when the workspace is already open.
 - **Prepare (O1)** shows the checklist by subsystem (camera and acquisition, focus, fluidics,
@@ -435,9 +440,89 @@ of the quick controls and the sample sheet, until the kit has them).
     It never resumes on its own: "Resume queue" needs control again and sends nothing, and the
     operator then presses the step (e.g. Confirm closed) again. Without control, Start says why.
   - Not in this step: per-run auto-stop (a backend stop condition with its own ABI number),
-    "base on previous experiment", the queue's duration/size preview, Live, Summary and Quick look.
+    "base on previous experiment", the queue's duration/size preview, Summary and Quick look. Live is
+    the next bullet.
     A backend restart that remounts the browser app (a new boot id) starts a new plan: the queue is
     local by design, the recorded files stay.
+- **Experiment · Live (O4, P4; #716 A6b).** `LiveView.tsx` on the reviewed board O4, over the live
+  cell store of ABI 41 (A6a, [[../services/MonitoringCellStore]]) and today's commands; no new bridge
+  command. `liveModel.ts` holds the pure rules, `useLiveCells.ts` the cells' reads, crops and pin
+  commands, and `liveImages.ts` draws a packet for the kit.
+  - **Layout, as the board.** The toolbar: Plan · Live · Summary, then **Stop acquisition**,
+    **Freeze display** and **Stop & finalize run**. Then Live cells (the live frame and the strip)
+    beside Area–Deformability; Pinned cell beside Recording and run status; Sample queue beside Run
+    lifecycle. One column when narrow.
+  - **Reads only while shown.** `App` widens the monitoring visibility gate (BE-5) to the
+    workspace's Live (`workspaceLiveVisible`), with the 500 ms snapshot poll while shown (200 rows;
+    the sorter trigger's status only for the classic tab). The switch is the instrument's, shared by
+    every client: `monitoring_set_active(true)` while Live or the classic Monitoring tab is shown;
+    `false` when neither is, but only once the run status has been read and shows no run in progress
+    (`runInProgress`: Starting, Active, Stopping or flushing, not terminal). During a run nothing is
+    sent on leaving, so the controller moving to Plan or Prepare never cuts the feed viewer clients
+    watch; when the run ends off Live, `false` follows. Only the controlling client sends it (a
+    viewer only reads). The command only sets `ProcessingService`'s monitoring flag, which gates the
+    monitoring rings' appends (and so the cell strip fed from them); it does not touch acquisition,
+    recording, persistence or the run, and turning it off clears nothing. Live reads `fetch_monitoring_cells`
+    once a second (the backend refreshes its strip on that read) and pulls each shown cell's crop
+    once (`fetch_monitoring_cell_packet`, kind 5; the mask, kind 6, only for the Mask overlay), at
+    most two at a time, for the 12 newest strip cells and the pins; a cell that leaves the listing is
+    forgotten. The live frame is the one the classic preview already pulls (`subscribeFrames`, the
+    same single sink Align uses), painted once per animation frame at most.
+  - **The strip** is the kit's `CellStrip` / `CellImage`, newest first. A live cell has no record id
+    yet, so it is named by frame and object ("F41118·O1"). A crop still loading is an empty box (the
+    kit's missing state says "Image not recorded", which would be untrue; a loading state is asked on
+    #715); a cell without an image (the PZ7035's PL reports results only) or a crop refused as another
+    capture's (`CAPTURE_MISMATCH`, never retried, the listing read again) shows the kit's missing
+    state with the reason as its tooltip.
+  - **Click-to-pin** from the strip or the scatter, only by the controlling client: one
+    `monitoring_cell_pin` with the cell's or row's identity; the reply's outcome is said in plain
+    words with the backend's message (`pinNotice`: Pinned, PinnedWithoutImage, AlreadyPinned,
+    RunMismatch, NotFound, LimitReached with "ended pins count toward the limit too",
+    CaptureMismatch "pick a cell of the current capture"). The scatter is the kit's `AreaDeformChart`
+    with the classic chart's rows (valid, area in µm² with each row's own analysis-time px→µm; the
+    uncalibrated ones are counted), axes widened in whole steps when a point lies beyond 300 µm² /
+    0.20. A click maps to the nearest point within 8 px through the kit's plot margins
+    (`CHART_MARGIN`; `liveModel.test.ts` renders the kit chart and checks every point lands where the
+    mapping says) until the kit offers point selection (#715). A row without an identity (an older
+    backend) is not pinnable: nothing is sent and the view says so. Nor is an identity of another
+    capture or run than the listing's (`pinIdentityRefusal`, the backend's own CaptureMismatch /
+    RunMismatch rule): refused before anything is sent, with the reason.
+  - **The pinned cell**: the selected pin (the newest, or the last one pinned) with its crop, facts
+    (area µm², deformability, E, the image's state, run and capture), ◀ / ▶ through the pins, **Open
+    in window** (a modal dialog over the workspace, with Raw / Mask, ◀ Previous / Next ▶, the arrow
+    keys and Escape; not a second window, which would need a new Tauri window and capability in the
+    shared `src-tauri`), **Unpin**, **Clear ended pins (N)** (one `monitoring_cell_unpin` per pin of
+    an ended capture; there is no backend command for "ended only"; control is rechecked before each,
+    and a control loss cancels the rest for good, even if control comes back before the next one:
+    the operator presses again) and **Clear all pins**. The count
+    chip says "N of 16 pins" and "N ended". A pin without an image (an ended capture's, or a row that
+    had left the buffer) shows an app-local box with the reason, never a picture; its measurements
+    stay. Pins are one shared, bounded set per instrument: without control the strip's crops are not
+    buttons, the scatter takes no click, the pin buttons are disabled with the reason, and the hook
+    sends nothing even when asked.
+  - **Freeze display** holds the live frame, the strip and the scatter as they were (no crop is
+    pulled for the held strip); pins and the run status keep updating; nothing is sent. A listing
+    of another capture or latest run drops the held strip and its crops even while frozen, and the
+    frozen notice says the capture changed; the scatter stays held, and its earlier capture's points
+    are refused as above.
+  - **The stops are separate.** "Stop & finalize run" (`stopTarget`): in a queue that has begun,
+    only the queue's own row, through `queue.stopCurrent` (as Next sample: `experiment_stop` with the
+    row's `start_generation`), never while the queue is paused, and never another run (that one is
+    stopped in the classic view); otherwise the run the status shows Active, by its
+    `start_generation` (App's `stopForLive`, ABI 40), a RunMismatch reply said and nothing more
+    sent. "Stop acquisition" is the classic Stop Camera (`onStopCamera`, a recording clip first),
+    disabled while a run is active ("the camera never stops under a run") or the camera is not
+    running. Both need control.
+  - **Run status and lifecycle.** The run's file, a state chip and the backend's counts (valid and
+    invalid saved, pending, dropped, failed to save). The queue's tiles show each row's chip; the
+    lifecycle is the queue's own (`lifecycle`, with Confirm closed for a finalized row and "Go to
+    Plan" for the next Start, which stays in the Plan with its file dialog and readiness) or, for
+    any other run, `statusLifecycle`: Starting → Running → Stopping · drain → Finalized, a step done
+    only once the status reports the next one. A control loss pauses the queue (the paused notice
+    and Resume are in Live too); nothing resumes on its own and resuming sends nothing.
+  - Not in this step: the population selection card (live populations are P5 / #523), Mark chapter
+    (chapters are deferred, ADR 0015), Inspect (Review), the stop-condition progress (per-run
+    auto-stop is not built) and the footer's camera / display / transport / writer line.
 - **Gate (P1, extended for P3).** `workspace/navigation.test.tsx` runs the whole App over a
   mocked transport, desktop and PZ7035: opening the workspace, visiting every stage, leaving,
   coming back and Camera setup add no command to the idle app's steady state except two reads,
@@ -461,7 +546,15 @@ of the quick controls and the sample sheet, until the kit has them).
   reads recover); with the core status read held, several periods send one read, not a pile, the
   read after the stale bound is the only extra one, and the stalled older reply arriving last
   does not overwrite the newer state; Live and Summary send neither the gates nor the checklist
-  reads, and Plan resumes them. For the sample queue (A5, desktop and PZ7035): choosing the queue,
+  reads, and Plan resumes them. Since A6b, showing Live adds only its reads and the monitoring
+  switch (`LIVE_COMMANDS`: `monitoring_set_active`, `fetch_monitoring_snapshot`,
+  `fetch_monitoring_cells`, `fetch_monitoring_cell_packet`), and monitoring is off again once Live
+  is left with no run in progress. With S1 running, leaving Live for Plan, Prepare or the classic
+  view sends no `monitoring_set_active(false)` (nor does leaving the classic Monitoring tab); S1's
+  end off Live sends it once; a viewer sends none at all, and on taking control it follows the view.
+  With S1 running, Live's control loss pauses the queue and sends nothing (Stop & finalize
+  and Stop acquisition disabled), control back keeps it paused, Resume sends nothing, and Stop &
+  finalize then sends exactly `experiment_stop` with S1's generation; Confirm closed sends nothing. For the sample queue (A5, desktop and PZ7035): choosing the queue,
   adding, typing, moving and removing samples and switching sub-views send nothing that acts (only
   the path-less readiness read), and the queue survives leaving the workspace; on a desktop host
   whose mock runs experiments, two samples send exactly `experiment_start` (S1, run 1),
@@ -866,8 +959,9 @@ listing cell or a monitoring snapshot row (`MonitoringRow.start_generation` and
 canonical decimal strings and throws
 `INVALID_U64` / `INVALID_OBJECT_ID` before anything is sent. Pin, unpin and
 clear are control commands on the remote server (`VIEWER_ONLY` for a viewer).
-No develop UI uses them; the workspace Live view (A6b) will. Guard:
-`monitoringCells.test.ts`, `framePacket.test.ts` (the cell golden).
+The workspace's Experiment · Live (A6b, "Opt-in workspace" above) uses them. Guard:
+`monitoringCells.test.ts`, `framePacket.test.ts` (the cell golden); for Live, `liveModel.test.ts`,
+`LiveView.test.tsx` and `navigation.test.tsx`.
 
 ## Central profile registry (ABI 25, issue #398)
 

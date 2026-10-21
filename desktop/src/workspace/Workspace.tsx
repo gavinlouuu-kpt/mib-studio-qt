@@ -4,9 +4,11 @@
 // can act on hardware (Camera & Alignment switches the PZ7035 to Align and its LED on; Experiment
 // to Run). Selecting a stage here only changes what is shown; it never starts capture, switches a
 // camera mode, moves a motor or stage, enables light, runs a pump or installs an update. Prepare
-// (O1), Align (O2) and Experiment · Plan (O3, A5) have content; in Align a mode switch or a write
-// happens only on a button, and in Plan a run starts, stops or switches to Run only on a button
-// ("Start run", the sample queue's steps, "Switch to Run" / "Show the experiment window").
+// (O1), Align (O2), Experiment · Plan (O3, A5) and Experiment · Live (O4, A6b) have content; in Align
+// a mode switch or a write happens only on a button, in Plan a run starts, stops or switches to Run
+// only on a button ("Start run", the sample queue's steps, "Switch to Run" / "Show the experiment
+// window"), and in Live a pin, a run stop or a camera stop happens only on a button (showing Live
+// reads, and turns monitoring on as the classic Monitoring tab does).
 //
 // The kit stylesheets are imported once, here, at the workspace entry.
 import "@mib/ui/fonts.css";
@@ -15,7 +17,7 @@ import "./workspace.css";
 import { AppShell, Button, Notice, StateChip, Toolbar } from "@mib/ui";
 import { derivePreflight } from "../preflight";
 import { AlignView, type AlignViewProps } from "./AlignView";
-import { ExperimentView, type ExperimentSubView } from "./ExperimentView";
+import { ExperimentView, type ExperimentSubView, type ExperimentViewProps } from "./ExperimentView";
 import { PrepareView, type PrepareViewProps } from "./PrepareView";
 import { confirmBlockers, prepareVerdict } from "./prepareModel";
 import type { PlanCameraMode } from "./planModel";
@@ -25,7 +27,7 @@ import { usePrepareReadiness } from "./usePrepareReadiness";
 export const WORKSPACE_STAGES = ["Prepare", "Align", "Experiment", "Review"] as const;
 
 /** Whether the workspace shows Prepare's verdict, and so polls Prepare's checklist and gates:
- *  in Prepare and in Experiment's Plan, not in its Live or Summary placeholders (#736 review). */
+ *  in Prepare and in Experiment's Plan, not in its Live view or Summary placeholder (#736 review). */
 export const workspaceReadsPrepare = (stage: number, experimentView: ExperimentSubView): boolean =>
   stage === 0 || (stage === 2 && experimentView === "Plan");
 
@@ -54,6 +56,8 @@ export interface WorkspaceProps extends Omit<PrepareViewProps, "readiness" | "re
   experiment: {
     plan: PlanController; lockedReason: string; view: ExperimentSubView; onView: (view: ExperimentSubView) => void;
     cameraMode?: PlanCameraMode | null; onCameraMode?: () => Promise<unknown>;
+    /** O4 Experiment · Live (A6b): what App reads and does for it (monitoring is on while it is shown). */
+    live: ExperimentViewProps["live"];
   };
 }
 
@@ -98,7 +102,7 @@ export function Workspace({ brand, source, method, stage, onStage, onExit, servi
         <AlignView {...align} onClassic={onExit} />
       ) : stage === 2 ? (
         <ExperimentView plan={experiment.plan} lockedReason={experiment.lockedReason} view={experiment.view} onView={experiment.onView}
-          cameraMode={experiment.cameraMode} onCameraMode={experiment.onCameraMode}
+          cameraMode={experiment.cameraMode} onCameraMode={experiment.onCameraMode} live={experiment.live}
           verdict={verdict} blockers={confirmBlockers(report)} onClassic={onExit} />
       ) : (
         <div className="ws-view" data-testid={`workspace-${WORKSPACE_STAGES[stage]?.toLowerCase() ?? "stage"}`}>

@@ -60,7 +60,7 @@ function Harness({ cameraMode = null }: { cameraMode?: PlanCameraMode | null }) 
     preflightInput: READY_INPUT, zStage: null, signature: "sig", confirmedFor: "", onConfirm: () => {}, confirmLockedReason: "",
     experimentActive: false, onRefreshChecks: () => {}, onOpenSetup: () => {},
     align: { facts: FACTS, subscribeFrames: () => () => {}, onSwitchMode: async () => {}, writeRoi: vi.fn(), lockedReason: "" },
-    experiment: { plan, lockedReason: "", view, onView: setView, cameraMode, onCameraMode },
+    experiment: { plan, lockedReason: "", view, onView: setView, cameraMode, onCameraMode, live: { snapshot: null, running: false, experimentActive: false, hostProcessing: true, subscribeFrames: () => {}, onStopAcquisition: async () => {}, onStopRun: async () => ({ ok: false, message: "not in this test" }) } },
   };
   return <Workspace {...props} />;
 }

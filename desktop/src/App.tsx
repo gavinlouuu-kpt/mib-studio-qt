@@ -34,6 +34,7 @@ import { startExperiment, type StartOutcome } from "./experimentStart";
 import { SerialReads } from "./serialReads";
 import { usePlan, type PlanStartResult, type StopReply } from "./workspace/usePlan";
 import { planCameraMode } from "./workspace/planModel";
+import { runInProgress } from "./workspace/liveModel";
 import { useHoldsControl } from "./transport/useControlRole";
 import { downloadUrl } from "./filesView";
 import { serverOrigin, tokenFromLocation } from "./transport/auth";
@@ -562,25 +563,29 @@ export default function App() {
   }, [ready, tick]);
 
   // Monitoring is visibility-gated (BE-5): accumulation and its per-frame
-  // image clones run only while the Monitoring view is actually shown.
-  const monitoringVisible = tab === "experiment" && expTab === "monitoring";
+  // image clones run only while a monitoring view is actually shown: the classic
+  // Monitoring tab, or the workspace's Experiment · Live (O4, #716 A6b), which reads
+  // the snapshot for its scatter but not the sorter trigger's status. The switch
+  // itself is sent below (it waits for the control role and the run status); this
+  // effect only polls while a monitoring view is shown.
+  const classicMonitoringVisible = tab === "experiment" && expTab === "monitoring";
+  const workspaceLiveVisible = workspaceStage === 2 && experimentView === "Live";
+  const monitoringVisible = classicMonitoringVisible || workspaceLiveVisible;
   useEffect(() => {
-    if (!ready) return;
-    bridge.monitoringSetActive(monitoringVisible).catch(() => {});
-    if (!monitoringVisible) return;
+    if (!ready || !monitoringVisible) return;
     let polling = false, disposed = false;
     const id = window.setInterval(async () => {
       if (polling) return; polling = true;
       try {
         const snapshot = await bridge.fetchMonitoringSnapshot(200);
-        const trigger = await bridge.fetchTriggerStatus();
-        if (!disposed) { setMonSnapshot(snapshot); setTrigStatus(trigger); }
+        const trigger = classicMonitoringVisible ? await bridge.fetchTriggerStatus() : null;
+        if (!disposed) { setMonSnapshot(snapshot); if (trigger) setTrigStatus(trigger); }
       } catch {
         /* backend gone — next tick will surface it */
       } finally { polling = false; }
     }, 500);
     return () => { disposed = true; window.clearInterval(id); };
-  }, [monitoringVisible, ready]);
+  }, [monitoringVisible, classicMonitoringVisible, ready]);
 
   const toggleSidebar = useCallback(() => {
     setSidebarCollapsed((c) => {
@@ -1010,8 +1015,28 @@ export default function App() {
     try { setExpStatus(await bridge.fetchExperimentStatus()); } catch (e) { append(`experiment status refresh error: ${e}`); }
     return res;
   }, [append]);
+  // The workspace's Live view stops the run the status shows active, by its start generation (ABI 40):
+  // with another run active by then the backend refuses it (stop outcome RunMismatch) and stops nothing.
+  const stopForLive = useCallback(async (expectedStartGeneration: string): Promise<StopReply> => {
+    const res = await bridge.experimentStop(expectedStartGeneration);
+    append(res.ok ? `experiment stop requested (Live, run generation ${expectedStartGeneration})` : `experiment stop failed (Live): ${res.message}`);
+    try { setExpStatus(await bridge.fetchExperimentStatus()); } catch (e) { append(`experiment status refresh error: ${e}`); }
+    return res;
+  }, [append]);
   // Who controls the instrument: a browser that loses control pauses the sample queue (#711).
   const controlHeld = useHoldsControl();
+  // The monitoring switch (BE-5; #716 A6b ruling). It is the instrument's, shared by every client,
+  // and only gates the monitoring rings and the cell strip they feed (never acquisition, recording
+  // or the run). On while a monitoring view is shown here. Off when none is, but only once the run
+  // status has been read and shows no run in progress: during a run it is left as it is, so the
+  // controller moving to Plan or Prepare never cuts the feed viewer clients watch, and after the
+  // run it follows the view again. Only the controlling client sends it.
+  const monitoringRunInProgress = runInProgress(expStatus);
+  const monitoringWanted: boolean | null = monitoringVisible ? true : expStatus !== null && !monitoringRunInProgress ? false : null;
+  useEffect(() => {
+    if (!ready || !controlHeld || monitoringWanted === null) return;
+    bridge.monitoringSetActive(monitoringWanted).catch(() => {});
+  }, [ready, controlHeld, monitoringWanted]);
   // The workspace's Experiment plan (O3): local until its buttons (Start run, the queue's steps).
   const plan = usePlan(runExperimentStart, { status: expStatus, stop: stopForPlan, controlHeld });
 
@@ -1738,7 +1763,11 @@ export default function App() {
                 experimentActive: expActive, runFrozen: !!instrument?.ring?.run_frozen, modeError: modeError?.mode === "run" ? modeError.message : "",
                 fullSensor: !instrumentModes && cameraGeometry?.supported && cameraGeometry.overview
                   ? { width: cameraGeometry.sensor_width, height: cameraGeometry.sensor_height } : null }),
-              onCameraMode: switchPlanCameraMode }}
+              onCameraMode: switchPlanCameraMode,
+              // O4 Live: the monitoring snapshot polled while it is shown, the live preview's frames,
+              // and the two separate stops (the classic Stop Camera; experiment_stop naming the run).
+              live: { snapshot: workspaceLiveVisible ? monSnapshot : null, running, experimentActive: expActive, hostProcessing,
+                subscribeFrames: subscribeAlignFrames, onStopAcquisition: onStopCamera, onStopRun: stopForLive } }}
           />
         </div>
       )}
