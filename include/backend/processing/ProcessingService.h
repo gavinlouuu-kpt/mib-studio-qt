@@ -65,6 +65,10 @@ class ProcessingService {
 public:
     using Job = std::function<void()>;
 
+    // The pixel-to-micron factor (µm per pixel) a service starts with, and the
+    // one YOFO Review's "default settings" process at.
+    static constexpr double kDefaultPixelToMicronFactor = 0.4886;
+
     struct Roi {
         int x{0}, y{0}, w{0}, h{0};
     };
@@ -225,9 +229,112 @@ public:
         double deformability{0.0};
     };
     std::vector<MonitoringPoint> getMonitoringValidPoints() const;
+    // Live cell images (#716 A6a, bridge ABI 41). Every monitoring ring slot
+    // carries the start generation of the experiment run that was active when
+    // its frame entered processing (0 = outside a run), read with the frame's
+    // capture (below) and carried to the append. ExperimentCoordinator sets it
+    // before the run's accumulation starts and resets it to 0 when the run
+    // stops accumulating (or its start is rolled back). Lock-free.
+    void setMonitoringRunGeneration(uint64_t startGeneration);
+    uint64_t monitoringRunGeneration() const;
+    // The capture a monitoring row came from (#716 A6a review rounds 1-3).
+    //
+    // One authority: the live cell store (MonitoringCellStore::advanceCapture)
+    // owns the current capture epoch. Under its own mutex it moves the epoch
+    // on, clears its strip, ends its pins (metadata only) and publishes the
+    // new value here (publishMonitoringCapture). Every capture change goes
+    // through that one call: a realtime start or stop and an ROI change (from
+    // this service, through the authority below), a FrameStore replacement or
+    // camera mode switch, a camera session opening or closing and a frame
+    // buffer resize (AppBackend, the facade), and a run start (the
+    // coordinator). The epoch starts at 1, only grows and is never reused; 0
+    // is never a capture.
+    //
+    // Tag at entry: a frame's capture is decided once, when the frame enters
+    // processing, from what is read for that frame there. The published epoch
+    // is read together with the ROI (under rtMutex_, where an ROI change also
+    // moves the epoch), the FrameStore's generation is bound to the epoch when
+    // it moves, and the frame must be of that generation and of a camera
+    // session at or above the published floor. A frame that fails either
+    // check (another frame numbering, a closed camera session) and an async
+    // batch frame measured with another ROI than the one read at its entry
+    // are tagged 0: still monitoring rows (the charts count them), never
+    // cells. The tag travels with the frame and its results; nothing assigns
+    // "the current epoch" when a frame completes. The store compares the
+    // carried epoch with its current one under its mutex on every insert and
+    // every read, so a frame that entered before a change never becomes a
+    // cell after it.
+    uint64_t monitoringCaptureEpoch() const; // the published epoch, lock-free
+    // The authority's publication: the new epoch and, for a camera session
+    // change, the lowest camera session whose frames still belong to a
+    // capture (the floor never goes down). Atomic stores only: the store
+    // calls this under its mutex. The floor is stored before the epoch, and
+    // a loop reads the epoch before the floor.
+    void publishMonitoringCapture(uint64_t captureEpoch, std::optional<uint64_t> cameraSessionFloor = std::nullopt);
+    // Who moves the epoch on: set once the live cell store exists (AppBackend)
+    // and cleared before it goes away. Called with a static reason in plain
+    // words, under the authority's own mutex (set...({}) returns once no call
+    // runs), and possibly under rtMutex_ (an ROI change moves the epoch with
+    // the ROI): the authority takes no lock of this service. Returns the new
+    // epoch. Lock order: rtMutex_ -> the authority's mutex -> the store's.
+    using MonitoringCaptureAuthority = std::function<uint64_t(const char* reason)>;
+    void setMonitoringCaptureAuthority(MonitoringCaptureAuthority authority);
+    // A capture change: through the authority, or (none set: a service on its
+    // own, as in tests) by moving the published epoch on here.
+    uint64_t requestMonitoringCaptureChange(const char* reason);
+    // Test seam (review round 3): called on the processing thread with the
+    // frame index right before a processed frame's rows are appended to the
+    // monitoring ring (inline and async batch), outside every lock, so a test
+    // can hold a frame between its entry and its completion. One relaxed load
+    // per append while unset.
+    void setMonitoringAppendHookForTests(std::function<void(uint64_t frameIndex)> hook);
+    // What every ring slot carries besides the frame (written at append, under
+    // the ring's lock): the run tag, the capture epoch, and where the row's
+    // image sits in the coordinate space of its geometry. Inline rows are
+    // measured on the ROI image itself (origin 0, 0); async-batch rows are
+    // measured on the full frame and keep an ROI crop of it (origin = the ROI's
+    // top-left), so readers subtract the origin to get image coordinates.
+    struct MonitoringRowTag {
+        uint64_t runGeneration{0};
+        uint64_t captureEpoch{0};
+        int32_t geometryOriginX{0};
+        int32_t geometryOriginY{0};
+    };
+    // Read the ring without copying ProcessedFrames: under the ring's lock,
+    // visit the newest `maxRows` rows (valid rows first, then invalid ones
+    // with the remaining budget when `includeInvalid`), oldest -> newest
+    // within each ring. The visitor runs under the lock the processing thread
+    // takes to append, so it must only copy scalars and cv::Mat headers
+    // (refcount shares of the frozen images), never pixels. Returns the ring
+    // counters read under the same lock.
+    struct MonitoringRingView {
+        size_t validHeld{0};
+        size_t invalidHeld{0};
+        uint64_t validAppended{0};
+        uint64_t invalidAppended{0};
+        uint64_t runGeneration{0}; // the run tag a frame entering now gets
+        uint64_t captureEpoch{0};  // the published capture epoch
+    };
+    using MonitoringVisitor =
+        std::function<void(const ProcessedFrame& frame, const MonitoringRowTag& tag, bool valid)>;
+    MonitoringRingView visitMonitoringNewest(size_t maxRows, bool includeInvalid,
+                                             const MonitoringVisitor& visit) const;
+    // A visitor that took shares of ring images and read their pixels outside
+    // the lock gives the shares back here: they are dropped under the ring's
+    // lock, the lock the ring's evictions take, so a free by an eviction (or by
+    // the last reader) is ordered after every such reader's last access. The
+    // reference count itself lives in the uninstrumented OpenCV library, so
+    // this lock is the ordering ThreadSanitizer can see. Bounded: refcount
+    // decrements, plus a free when the reader holds the last reference (the
+    // ring already evicted the row), as an eviction does. Leaves `shares` empty.
+    void releaseMonitoringShares(std::vector<cv::Mat>& shares) const;
     // Test seam: append to the monitoring ring as the realtime path does,
-    // without the activity gate or images.
-    void appendMonitoringFrameForTests(const ProcessedFrame& frame);
+    // without the activity gate. A frame that carries a capture
+    // (frame.monitoringCaptureEpoch != 0) keeps its carried run and capture
+    // tags, as a processed frame does; any other frame enters now (the
+    // published epoch and the current run). `geometryOrigin` is the tag an
+    // async-batch row gets (its ROI's top-left).
+    void appendMonitoringFrameForTests(const ProcessedFrame& frame, cv::Point geometryOrigin = {});
     void clearMonitoringFrames();
     // Monitoring observability (BE-5): totals appended since start/clear so a
     // consumer can compute ring-buffer evictions (appended - currently held).
@@ -485,6 +592,21 @@ public:
     };
     using BatchProgressCallback = std::function<void(const BatchProgress&)>;
 
+    // Analysis inputs of one processBatch call that otherwise come from the
+    // service's live state (#758). An unset member keeps the live value: the
+    // factor setPixelToMicronFactor set, the channel band detected from the
+    // published background (getChannelBand). Offline reanalysis sets both, so
+    // a job validates at its own source's calibration and never reads or
+    // changes what a live run or another job uses.
+    struct BatchAnalysisInputs {
+        // µm per pixel for area validity, the target group and the reported
+        // analysisPixelToMicronFactor; must be finite and > 0 when set.
+        std::optional<double> pixelToMicronFactor;
+        // Frame coordinates; h == 0 is no band (the config's channel_band_*
+        // then apply as given). Used only with auto_roi_from_background.
+        std::optional<Roi> channelBand;
+    };
+
     // Process each image in order and emit one ProcessedFrame per detected
     // object candidate. Multiple records can share the same source index and
     // timestamp. Does not modify realtime config, monitoring buffers,
@@ -495,7 +617,8 @@ public:
         const cv::Mat& background = cv::Mat{},
         const Roi& roi = Roi{0, 0, 0, 0},
         BatchProgressCallback progress = {},
-        backend::processing::ProcessingCoreIdentity* processingCore = nullptr);
+        backend::processing::ProcessingCoreIdentity* processingCore = nullptr,
+        const BatchAnalysisInputs& inputs = {});
 
     struct BatchPipelineConfig {
         std::string previewRecipeSha256;
@@ -602,6 +725,18 @@ public:
     // detection is disabled or the background is unusable. Pure w.r.t. service
     // state (does not apply the result); exposed for reuse and testing.
     Roi computeAutoRoiFromBackground(const cv::Mat& backgroundGray) const;
+    // The same detection with `config`'s auto-ROI settings instead of the
+    // service's (#758: an offline run detects the band from the background it
+    // uses). Empty when auto_roi_from_background is off or no background.
+    static Roi detectChannelBand(const cv::Mat& backgroundGray, const ProcessingConfig& config);
+    // What an offline run (reanalysis, regenerate masks, #758) passes to
+    // processBatch instead of the live state: `pixelToMicronFactor` and the
+    // band detectChannelBand finds in `background`. With
+    // auto_roi_from_background on, `config`'s channel_band_* become that band
+    // (0 when none), as getEffectiveProcessingConfig fills them, so the config
+    // the output records is the one applied. Pure.
+    static BatchAnalysisInputs offlineAnalysisInputs(ProcessingConfig& config, const cv::Mat& background,
+                                                     double pixelToMicronFactor);
 
     // Channel band detected from the latest background, in frame coordinates.
     // Empty (h == 0) when auto_roi_from_background is off or no background.
@@ -615,6 +750,11 @@ private:
 
     struct QueuedBatchFrame {
         uint64_t storeGeneration{0}, captureSession{0};
+        // Monitoring entry (#716 A6a review 3): run and capture read at the
+        // enqueue, with the ROI read with them; the worker keeps the capture
+        // only when it measures the frame with that ROI.
+        uint64_t monitoringRunGeneration{0}, monitoringCaptureEpoch{0};
+        Roi monitoringRoi{};
         cv::Mat gray;
         uint64_t index{0};
         uint64_t timestampNs{0};
@@ -653,23 +793,60 @@ private:
                                           double pixelToMicronFactor);
     void appendProviderMonitoringRow(uint64_t index, uint64_t timestampNs, const FilterResult& validation);
     void accumulateProviderIdentification(const backend::processing::ProviderFrame& frame);
+    // The run and capture a frame's monitoring rows carry, decided when the
+    // frame entered processing (#716 A6a review 3). captureEpoch 0: never a cell.
+    struct MonitoringEntry {
+        uint64_t runGeneration{0};
+        uint64_t captureEpoch{0};
+    };
+    // A realtime loop's view of the capture: the published epoch as last read
+    // with the ROI under rtMutex_, the ROI read with it, and the FrameStore
+    // generation bound to the epoch when it moved (read after the epoch).
+    struct MonitoringEntryCache {
+        uint64_t captureEpoch{0};
+        uint64_t storeGeneration{0};
+        Roi roi{};
+    };
+    // Bind a freshly read epoch (and the ROI read with it under rtMutex_):
+    // when the epoch moved, rtStore_'s generation is read now, after it.
+    void bindMonitoringEntry(MonitoringEntryCache& cache, uint64_t captureEpoch, const Roi& roi) const;
+    // A fetched frame's entry: the cached epoch when the frame is of the bound
+    // store generation and of a camera session at or above the floor, else 0;
+    // the run generation read now.
+    MonitoringEntry monitoringEntryFor(const MonitoringEntryCache& cache, uint64_t storeGeneration,
+                                       uint64_t captureSession) const;
+    void runMonitoringAppendHook(uint64_t frameIndex);
     void appendRealtimeMonitoringFrame(uint64_t index,
                                        uint64_t timestampNs,
                                        const FilterResult& validation,
                                        const cv::Mat& originalImage,
-                                       const cv::Mat& processedImage);
+                                       const cv::Mat& processedImage,
+                                       const MonitoringEntry& entry);
+    // The realtime batch loop's enqueue: the frame carries its entry and the ROI read with it.
+    bool enqueueRealtimeBatchFrame(const backend::playback::Frame& frame, uint64_t index,
+                                   const MonitoringEntry& entry, const Roi& entryRoi);
+    bool enqueueBatchFrameImpl(const cv::Mat& grayImage, uint64_t index, uint64_t timestampNs,
+                               uint64_t hostTimestampUs, uint64_t storeGeneration, uint64_t captureSession,
+                               const MonitoringEntry& entry, const Roi& entryRoi);
     bool appendExperimentFrame(ProcessedFrame&& frame, bool isValid);
     void logDroppedExperimentFrames(const DroppedFrameCounts& dropped, size_t bufferedTotal, size_t maxBufferedFrames);
     FilterResult filterProcessedImage(const cv::Mat& processedImage, const cv::Rect& roi,
                                       const ProcessingConfig& config, const cv::Mat& originalImage,
-                                      const cv::Mat& background = cv::Mat());
+                                      const cv::Mat& background = cv::Mat(),
+                                      const BatchAnalysisInputs& inputs = {});
     // maskOrigin is the frame position of the mask's (0,0), so the frame-space
     // channel band can be expressed in the mask's coordinates. `background`
     // matches originalImage; an ABI v2 core needs it to run its own science.
+    // `inputs` replaces the live factor / channel band where set (#758).
     std::vector<FilterResult> filterProcessedObjects(const cv::Mat& processedImage, const cv::Rect& roi,
                                                      const ProcessingConfig& config, const cv::Mat& originalImage,
                                                      cv::Point maskOrigin = {},
-                                                     const cv::Mat& background = cv::Mat());
+                                                     const cv::Mat& background = cv::Mat(),
+                                                     const BatchAnalysisInputs& inputs = {});
+    // computeProcessedFrame with per-call analysis inputs (processBatch).
+    ProcessedFrame computeProcessedFrameWith(const cv::Mat& grayInput, const cv::Mat& backgroundGray,
+                                             const ProcessingConfig& config, const Roi& roi, uint64_t index,
+                                             uint64_t timestampNs, const BatchAnalysisInputs& inputs);
     // Batch track matching routed through the selected kernel; -1 = new track.
     int matchTrackWithActiveKernel(const std::vector<BatchTrack>& tracks,
                                    const std::vector<bool>& matchedThisFrame,
@@ -829,10 +1006,11 @@ private:
     class FrameRingBuffer {
     public:
         explicit FrameRingBuffer(size_t capacity = 1000)
-            : capacity_(capacity), data_(capacity) {}
+            : capacity_(capacity), data_(capacity), tags_(capacity) {}
 
         void clear() {
             for (auto& f : data_) f = ProcessedFrame{}; // release retained images
+            std::fill(tags_.begin(), tags_.end(), MonitoringRowTag{});
             size_ = 0;
             head_ = 0;
             bytes_ = 0;
@@ -845,13 +1023,16 @@ private:
         uint64_t peakBytes() const { return peakBytes_; }
         uint64_t replaced() const { return replaced_; }
 
-        void push_back(ProcessedFrame&& frame) {
+        // `tag`: the slot's MonitoringRowTag (#716 A6a); a 24-byte store in
+        // the preallocated parallel array, under the caller's lock.
+        void push_back(ProcessedFrame&& frame, const MonitoringRowTag& tag) {
             const uint64_t incoming = processedFrameBytes(frame);
             if (size_ == capacity_) {
                 bytes_ -= std::min(bytes_, processedFrameBytes(data_[head_]));
                 ++replaced_;
             }
             data_[head_] = std::move(frame);
+            tags_[head_] = tag;
             bytes_ += incoming;
             if (bytes_ > peakBytes_) peakBytes_ = bytes_;
             head_ = (head_ + 1) % capacity_;
@@ -869,6 +1050,17 @@ private:
             }
         }
 
+        // Visit the newest `count` entries, oldest -> newest, with their tags.
+        template <class F>
+        void forEachNewest(size_t count, F&& visit) const {
+            const size_t n = std::min(count, size_);
+            const size_t start = (head_ + capacity_ - n) % capacity_;
+            for (size_t i = 0; i < n; ++i) {
+                const size_t at = (start + i) % capacity_;
+                visit(data_[at], tags_[at]);
+            }
+        }
+
         // Copy out as oldest -> newest
         std::vector<ProcessedFrame> toVector() const {
             std::vector<ProcessedFrame> out;
@@ -883,6 +1075,7 @@ private:
     private:
         size_t capacity_{0};
         std::vector<ProcessedFrame> data_;
+        std::vector<MonitoringRowTag> tags_; // per slot, parallel to data_
         size_t size_{0};
         size_t head_{0}; // next write position
         uint64_t bytes_{0};
@@ -894,6 +1087,14 @@ private:
     FrameRingBuffer monitoringInvalidFrames_{1000};
     static constexpr size_t MAX_MONITORING_FRAMES = 1000; // Keep last 1000 frames for monitoring
     std::atomic<bool> monitoringActive_{false}; // gating: no clones when no consumer is active
+    std::atomic<uint64_t> monitoringRunGeneration_{0}; // read at a frame's entry (#716 A6a)
+    std::atomic<uint64_t> monitoringCaptureEpoch_{1};  // published by the capture authority; never reused
+    std::atomic<uint64_t> monitoringSessionFloor_{0};  // camera sessions below it are closed
+    mutable std::mutex monitoringCaptureAuthorityMutex_; // held while the authority runs
+    MonitoringCaptureAuthority monitoringCaptureAuthority_;
+    std::atomic<bool> monitoringAppendHookArmed_{false};
+    std::mutex monitoringAppendHookMutex_;
+    std::function<void(uint64_t)> monitoringAppendHook_;
     // Totals appended to the monitoring ring buffers since start/clear (BE-5)
     std::atomic<uint64_t> monitoringValidAppended_{0};
     std::atomic<uint64_t> monitoringInvalidAppended_{0};
@@ -965,7 +1166,7 @@ private:
     std::atomic<uint64_t> idReasonCounts_[8]{};
     
     // Pixel to micron conversion factor (default: 0.4886)
-    std::atomic<double> pixelToMicronFactor_{0.4886};
+    std::atomic<double> pixelToMicronFactor_{kDefaultPixelToMicronFactor};
 
     // Young's modulus LUT (read-only after loading, thread-safe)
     EModulusLut eModulusLut_;

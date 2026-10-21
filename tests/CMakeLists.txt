@@ -342,6 +342,31 @@ mib_add_backend_test_executable(monitoring_density_contention_test performance/m
 add_test(NAME performance.monitoring_density_contention COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_density_contention_test)
 set_tests_properties(performance.monitoring_density_contention PROPERTIES LABELS "backend;monitoring;performance" TIMEOUT 120)
 
+# #716 A6a (bridge ABI 41): the live cell store (strip, pins, run rules, no-image reasons) on a scripted ring.
+mib_add_backend_test_executable(monitoring_cell_store_test backend/monitoring_cell_store_test.cpp)
+add_test(NAME backend.monitoring_cell_store COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_cell_store_test)
+set_tests_properties(backend.monitoring_cell_store PROPERTIES LABELS "backend;monitoring;bridge;invariant;safety" TIMEOUT 60)
+# #716 A6a: live cell images through the facade with the real coordinator (run tags, Start drops pins).
+mib_add_backend_test_executable(monitoring_cells_facade_test backend/monitoring_cells_facade_test.cpp)
+add_test(NAME e2e.monitoring_cells_facade COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_cells_facade_test)
+set_tests_properties(e2e.monitoring_cells_facade PROPERTIES LABELS "backend;bridge;e2e;monitoring;safety" TIMEOUT 180)
+# #716 A6a: the store over the real ring while the realtime loop appends (TSan lane: concurrency/stress).
+mib_add_backend_test_executable(monitoring_cell_concurrency_test processing/monitoring_cell_concurrency_test.cpp)
+mib_backend_test_link(monitoring_cell_concurrency_test PRIVATE Threads::Threads)
+add_test(NAME processing.monitoring_cell_concurrency COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_cell_concurrency_test)
+set_tests_properties(processing.monitoring_cell_concurrency PROPERTIES LABELS "backend;processing;monitoring;concurrency;stress" TIMEOUT 180)
+# #716 A6a review round 1: crops hold their own object in both realtime modes (ROI origin != 0);
+# identities never cross a capture change (FrameStore swap, resize). Real realtime loop.
+mib_add_backend_test_executable(monitoring_cell_pipeline_test processing/monitoring_cell_pipeline_test.cpp)
+mib_backend_test_link(monitoring_cell_pipeline_test PRIVATE Threads::Threads)
+add_test(NAME processing.monitoring_cell_pipeline COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_cell_pipeline_test)
+set_tests_properties(processing.monitoring_cell_pipeline PROPERTIES LABELS "backend;processing;monitoring;safety" TIMEOUT 180)
+# #716 A6a: what live cell images cost the hot path (ratio gates; sanitizer lanes skip `performance`).
+mib_add_backend_test_executable(monitoring_cell_hot_path_test performance/monitoring_cell_hot_path_test.cpp)
+mib_backend_test_link(monitoring_cell_hot_path_test PRIVATE Threads::Threads)
+add_test(NAME performance.monitoring_cell_hot_path COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_cell_hot_path_test)
+set_tests_properties(performance.monitoring_cell_hot_path PROPERTIES LABELS "backend;monitoring;performance" TIMEOUT 180)
+
 mib_add_backend_test_executable(pr4_monitoring_snapshot_test backend/pr4_monitoring_snapshot_test.cpp)
 add_test(NAME backend.pr4_monitoring_snapshot COMMAND $<TARGET_FILE:mib_backend_tests> pr4_monitoring_snapshot_test)
 set_tests_properties(backend.pr4_monitoring_snapshot PROPERTIES LABELS "backend;processing;monitoring" TIMEOUT 30)
@@ -494,6 +519,11 @@ mib_add_backend_test_executable(facade_review_jobs_test backend/facade_review_jo
 mib_backend_test_link(facade_review_jobs_test PRIVATE Threads::Threads)
 add_test(NAME backend.facade_review_jobs COMMAND $<TARGET_FILE:mib_backend_tests> facade_review_jobs_test)
 set_tests_properties(backend.facade_review_jobs PROPERTIES LABELS "backend;bridge;review;recording;hdf5;concurrency;stress" TIMEOUT 300)
+# #758: the facade's review_reanalysis_json validates at the HDF source's
+# recorded factor (the live one as the fallback) and never changes the live one.
+mib_add_backend_test_executable(facade_reanalysis_pixel_factor_test backend/facade_reanalysis_pixel_factor_test.cpp)
+add_test(NAME backend.facade_reanalysis_pixel_factor COMMAND $<TARGET_FILE:mib_backend_tests> facade_reanalysis_pixel_factor_test)
+set_tests_properties(backend.facade_reanalysis_pixel_factor PROPERTIES LABELS "backend;bridge;review;recording;hdf5;roundtrip" TIMEOUT 120)
 
 # BE-4 (#274): backend-owned experiment lifecycle state machine — pipeline e2e
 # over the facade command surface plus fault-injection (fatal save error,
@@ -911,6 +941,14 @@ set_tests_properties(review.overlay_kernel PROPERTIES LABELS "review;backend;inv
 mib_add_backend_test_executable(review_reanalysis_test review/review_reanalysis_test.cpp)
 add_test(NAME review.reanalysis COMMAND $<TARGET_FILE:mib_backend_tests> review_reanalysis_test)
 set_tests_properties(review.reanalysis PROPERTIES LABELS "review;recording;backend;hdf5;safety" TIMEOUT 120)
+# #758: reanalysis / regenerate validate at the source's own pixel-to-micron
+# factor, passed per call (processBatch inputs, the engine, YOFO's regenerate
+# job, a batch of sources with different factors, a live caller beside a job,
+# the run's own channel band); the output records the factor.
+mib_add_backend_test_executable(review_reanalysis_pixel_factor_test review/review_reanalysis_pixel_factor_test.cpp)
+mib_backend_test_link(review_reanalysis_pixel_factor_test PRIVATE Threads::Threads)
+add_test(NAME review.reanalysis_pixel_factor COMMAND $<TARGET_FILE:mib_backend_tests> review_reanalysis_pixel_factor_test)
+set_tests_properties(review.reanalysis_pixel_factor PROPERTIES LABELS "review;recording;backend;hdf5;roundtrip;concurrency;safety" TIMEOUT 240)
 # Export engine in mib_review_core (#512 slice 3): parse, single + batch round
 # trips, continue-on-failure / stop-on-cancel, write faults with and without
 # keep_partial_on_failure, both cancel polling modes, status JSON byte for byte.
@@ -1585,6 +1623,16 @@ if(Python3_Interpreter_FOUND)
     )
     set_tests_properties(scripts.publish_review_update PROPERTIES
         LABELS "scripts;release"
+        TIMEOUT 30
+    )
+
+    # #512 S6: tools/review_parity/compare.py — the MIB Studio pairs, the chart-range tolerance and decisions D2-D5.
+    add_test(
+        NAME scripts.review_parity_compare
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/tools/test_review_parity_compare.py
+    )
+    set_tests_properties(scripts.review_parity_compare PROPERTIES
+        LABELS "scripts;review"
         TIMEOUT 30
     )
 

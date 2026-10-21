@@ -102,13 +102,26 @@ public:
         backend::processing::ProcessingCoreIdentity& processingCore) const;
     // Reads the processing_config_* attributes of /experiment_info into
     // `config`. Attributes a file predates keep their struct defaults, so
-    // legacy files read as the Contract-1 config they ran. Returns false when
-    // the group is missing.
+    // legacy files read as the Contract-1 config they ran. The target group,
+    // which no attribute carries, comes from the recorded config document
+    // (`@config_json` image_processing.target_group; #758), else keeps the
+    // default (off). Returns false when the group is missing.
     bool readRecordedProcessingConfig(ProcessingConfig& config) const;
     // Reads persisted processing contract markers
     // across the file. Missing markers are legacy Contract 1; malformed or
     // conflicting markers return false.
     bool readRecordedProcessingContract(int& contract) const;
+    // The pixel-to-micron factor (µm per pixel) the file's objects were
+    // analysed at, as `/experiment_info @pixel_to_micron` (a scalar double;
+    // #758). batch_masks::saveMasksToHdf5 writes it for regenerated and
+    // reanalysed outputs; a capture records its factor in the run snapshot
+    // instead (ReviewSession::recordedPixelToMicron reads both). The writer
+    // refuses a factor that is not finite and positive, and needs
+    // writeExperimentInfo() first. The reader returns nullopt when the
+    // attribute is missing, not a finite positive scalar, or unreadable.
+    static constexpr const char* kAnalysisPixelToMicronAttribute = "pixel_to_micron";
+    bool writeAnalysisPixelToMicron(double factor);
+    std::optional<double> readAnalysisPixelToMicron() const;
 
     // Names of members present in the persisted compound metadata type. This
     // lets field-aware exporters distinguish an absent metric from an older

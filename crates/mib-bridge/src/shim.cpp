@@ -12,6 +12,7 @@
 #include "backend/profiles/ProfileRegistryWorker.h"
 #include "backend/recording/RunStartIdentity.h"
 #include "backend/services/CameraControlService.h"
+#include "backend/services/MonitoringCellStore.h"
 #include "backend/services/SyringePumpService.h"
 #include "backend/stage/StageTypes.h"
 
@@ -214,6 +215,23 @@ static_assert(static_cast<std::uint32_t>(backend::app::ExperimentStopOutcome::No
 static_assert(static_cast<std::uint32_t>(backend::app::ExperimentStopOutcome::Busy) == 2);
 // ABI 40 (#741): a stop that named another run (expected_start_generation) than the one held.
 static_assert(static_cast<std::uint32_t>(backend::app::ExperimentStopOutcome::RunMismatch) == 3);
+// ABI 41 (#716 A6a): live cell pin outcomes and the store's caps (monitoring_cell_pin_outcomes,
+// monitoring_cells in bridge-contract.json).
+namespace mcs { using Store = backend::services::MonitoringCellStore; using O = Store::PinOutcome; }
+static_assert(static_cast<std::uint32_t>(mcs::O::Pinned) == 0);
+static_assert(static_cast<std::uint32_t>(mcs::O::PinnedWithoutImage) == 1);
+static_assert(static_cast<std::uint32_t>(mcs::O::AlreadyPinned) == 2);
+static_assert(static_cast<std::uint32_t>(mcs::O::RunMismatch) == 3);
+static_assert(static_cast<std::uint32_t>(mcs::O::NotFound) == 4);
+static_assert(static_cast<std::uint32_t>(mcs::O::LimitReached) == 5);
+static_assert(static_cast<std::uint32_t>(mcs::O::CaptureMismatch) == 6);
+static_assert(mcs::Store::kStripMaxCells == 24);
+static_assert(mcs::Store::kStripMaxBytes == 4194304);
+static_assert(mcs::Store::kMaxPins == 16);
+static_assert(mcs::Store::kPinMaxBytes == 4194304);
+static_assert(mcs::Store::kCropMaxSide == 256);
+static_assert(mcs::Store::kCropMinMargin == 8);
+static_assert(mcs::Store::kRowIndexMax == 4096);
 static_assert(static_cast<std::uint32_t>(backend::recording::RunCompletionState::Complete) == 0);
 static_assert(static_cast<std::uint32_t>(backend::recording::RunCompletionState::IntentionallyPartial) == 1);
 static_assert(static_cast<std::uint32_t>(backend::recording::RunCompletionState::IncompleteLoss) == 2);
@@ -830,6 +848,8 @@ BridgeMonitoringRow toMonitoringRow(const backend::bridge::MonitoringObjectRow& 
     r.ring_ratio = row.ringRatio;
     r.youngs_modulus = row.youngsModulus;
     r.pixel_to_micron = row.pixelToMicronFactor;
+    r.start_generation = row.startGeneration; // ABI 41; 0 for review rows (Rust omits it there)
+    r.capture_epoch = row.captureEpoch;
     return r;
 }
 
@@ -2307,7 +2327,79 @@ BridgeMonitoringSnapshot BackendBridge::fetch_monitoring_snapshot(std::uint64_t 
         r.ring_ratio = row.ringRatio;
         r.youngs_modulus = row.youngsModulus;
     r.pixel_to_micron = row.pixelToMicronFactor;
+        r.start_generation = row.startGeneration; // ABI 41 (#716 A6a): the row's run, 0 = outside a run
+        r.capture_epoch = row.captureEpoch;       // ... and the capture its frame came from
         out.rows.push_back(std::move(r));
+    }
+    return out;
+}
+
+// ABI 41 (#716 A6a): live cell images. JSON documents (bridge-contract.json monitoring_cells);
+// the pixels go through the frame packet path (pull kinds monitoring_cell_image / _mask).
+rust::String BackendBridge::fetch_monitoring_cells() {
+    try {
+        std::string json;
+        if (!impl_->facade.fetchMonitoringCellsJson(json)) return rust::String(R"({"valid":false})");
+        return rust::String(json);
+    } catch (...) {
+        return rust::String(R"({"valid":false})");
+    }
+}
+
+rust::String BackendBridge::monitoring_cell_pin(std::uint64_t expected_start_generation, std::uint64_t capture_epoch,
+                                                std::uint64_t frame_index, std::int32_t object_id) {
+    try {
+        return rust::String(
+            impl_->facade.pinMonitoringCellJson(expected_start_generation, capture_epoch, frame_index, object_id));
+    } catch (...) {
+        return rust::String(R"({"ok":false,"message":"monitoring_cell_pin failed","cell":null})");
+    }
+}
+
+BridgeCommandResult BackendBridge::monitoring_cell_unpin(std::uint64_t start_generation, std::uint64_t capture_epoch,
+                                                         std::uint64_t frame_index, std::int32_t object_id) {
+    try {
+        return toBridgeResult(impl_->facade.unpinMonitoringCell(start_generation, capture_epoch, frame_index, object_id));
+    } catch (const std::exception& e) {
+        return errorResult(std::string("monitoring_cell_unpin: ") + e.what());
+    } catch (...) {
+        return errorResult("monitoring_cell_unpin: unknown error");
+    }
+}
+
+BridgeCommandResult BackendBridge::monitoring_cell_clear_pins() {
+    try {
+        return toBridgeResult(impl_->facade.clearMonitoringCellPins());
+    } catch (const std::exception& e) {
+        return errorResult(std::string("monitoring_cell_clear_pins: ") + e.what());
+    } catch (...) {
+        return errorResult("monitoring_cell_clear_pins: unknown error");
+    }
+}
+
+BridgeMonitoringCellImage BackendBridge::fetch_monitoring_cell_image(std::uint64_t start_generation,
+                                                                     std::uint64_t capture_epoch,
+                                                                     std::uint64_t frame_index, std::int32_t object_id,
+                                                                     bool mask) {
+    BridgeMonitoringCellImage out{};
+    try {
+        backend::bridge::BackendFrame frame;
+        bool captureMismatch = false;
+        std::string why;
+        if (!impl_->facade.fetchMonitoringCellImage(start_generation, capture_epoch, frame_index, object_id, mask,
+                                                    frame, &captureMismatch, &why)) {
+            // Another capture's identity is refused; otherwise not held, or no image/mask.
+            out.capture_mismatch = captureMismatch;
+            out.message = rust::String(why);
+            return out;
+        }
+        out.frame = toBridgeFrame(frame);
+    } catch (const std::exception& e) {
+        out = BridgeMonitoringCellImage{};
+        out.message = rust::String(std::string("fetch_monitoring_cell_image: ") + e.what());
+    } catch (...) {
+        out = BridgeMonitoringCellImage{};
+        out.message = rust::String("fetch_monitoring_cell_image: unknown error");
     }
     return out;
 }
@@ -2520,12 +2612,13 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // operator, calibration record id, planned annotation; outcome InvalidRequest
 // and the experiment_start_request bounds); v40 the typed start / stop outcome in
 // the command result and experiment_stop's expected start generation (#741, stop
-// outcome RunMismatch). All additive over v1 except that removal (ADR
+// outcome RunMismatch); v41 live cell images (#716 A6a: monitoring rows carry their
+// run's start generation, the bounded cell strip and pins, frame packet pull kinds 5/6). All additive over v1 except that removal (ADR
 // 0003/0004). Must match
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 40; }
+std::uint32_t bridge_abi_version() { return 41; }
 
 } // namespace mib_bridge
 

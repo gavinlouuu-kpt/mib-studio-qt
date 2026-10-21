@@ -28,6 +28,7 @@
 #include <filesystem>
 #include <iterator>
 #include <limits>
+#include <stdexcept>
 #include <tuple>
 #include <utility>
 #include <cmath>
@@ -216,6 +217,9 @@ void ProcessingService::startRealtime(std::shared_ptr<backend::playback::FrameSt
     }
     rtStore_ = std::move(store);
     processingSession_.fetch_add(1);
+    // A (possibly new) store whose frame indices may repeat earlier ones: a new capture for the
+    // monitoring rows (#716 A6a), before the loop reads its first frame.
+    requestMonitoringCaptureChange("realtime processing started");
     {
         std::scoped_lock snapshotLock(snapshotMutex_);
         latestSnapshot_.reset();
@@ -366,6 +370,9 @@ void ProcessingService::stopRealtime() {
     if (realtimeThread_.joinable()) realtimeThread_.join();
     backend::diagnostics::CrashStateMirror::instance().processing.realtimeRunning.store(false);
     SPDLOG_INFO("ProcessingService: realtime processing stopped");
+    // Stopping realtime ends the capture (#716 A6a review 3): the live cell store clears its
+    // strip and keeps its pins' measurements only; images after the run belong to Review.
+    if (wasRunning) requestMonitoringCaptureChange("realtime processing stopped");
 }
 
 void ProcessingService::setRealtimeEnabled(bool on) {
@@ -439,14 +446,25 @@ ProcessingService::RealtimeBatchSettings ProcessingService::getRealtimeBatchSett
     return rtBatchSettings_;
 }
 
+namespace {
+bool sameRoi(const ProcessingService::Roi& a, const ProcessingService::Roi& b) {
+    return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
+}
+} // namespace
+
 void ProcessingService::setRealtimeRoi(const Roi& roi) {
     const auto apply = [&] {
         {
             std::scoped_lock lk(rtMutex_);
+            const bool changed = !sameRoi(rtRoi_, roi);
             rtRoi_ = roi;
             pendingRoi_.reset();
             pendingRoiNotice_.clear();
             roiPending_.store(false, std::memory_order_release);
+            // Another ROI, another capture (#716 A6a review 3): the epoch moves on under the lock
+            // the realtime loops read the ROI and the epoch under, so a frame entering with the
+            // old ROI carries the old epoch and one entering with the new ROI the new epoch.
+            if (changed) requestMonitoringCaptureChange("the processing ROI changed");
         }
         configVersion_.fetch_add(1, std::memory_order_release);
         refreshRealtimeBatchPipelineConfig();
@@ -494,8 +512,10 @@ bool ProcessingService::resolvePendingRoi(uint64_t frameWidth, uint64_t frameHei
         if (r.x >= 0 && r.y >= 0 && r.w > 0 && r.h > 0 &&
             static_cast<uint64_t>(r.x) + static_cast<uint64_t>(r.w) <= frameWidth &&
             static_cast<uint64_t>(r.y) + static_cast<uint64_t>(r.h) <= frameHeight) {
+            changed = !sameRoi(rtRoi_, r);
             rtRoi_ = r;
-            changed = true;
+            // With the ROI, under the same lock (see setRealtimeRoi). Never during a run (above).
+            if (changed) requestMonitoringCaptureChange("the pending processing ROI was applied");
         } else {
             pendingRoiNotice_ = "The ROI " + std::to_string(r.w) + "x" + std::to_string(r.h) + "@" +
                                 std::to_string(r.x) + "," + std::to_string(r.y) + " does not fit the " +
@@ -828,16 +848,93 @@ std::vector<ProcessingService::MonitoringPoint> ProcessingService::getMonitoring
     return out;
 }
 
-void ProcessingService::appendMonitoringFrameForTests(const ProcessedFrame& frame) {
-    std::scoped_lock lk(monitoringFramesMutex_);
+void ProcessingService::appendMonitoringFrameForTests(const ProcessedFrame& frame, cv::Point geometryOrigin) {
+    // A frame that carries a capture keeps its tags (as a processed frame does); any other enters now.
+    MonitoringRowTag tag{frame.monitoringRunGeneration, frame.monitoringCaptureEpoch, geometryOrigin.x,
+                         geometryOrigin.y};
+    if (frame.monitoringCaptureEpoch == 0) {
+        tag.captureEpoch = monitoringCaptureEpoch_.load(std::memory_order_acquire);
+        tag.runGeneration = monitoringRunGeneration_.load(std::memory_order_acquire);
+    }
     ProcessedFrame copy = frame;
+    std::scoped_lock lk(monitoringFramesMutex_);
     if (frame.validation.isValid) {
         monitoringValidAppended_.fetch_add(1, std::memory_order_relaxed);
-        monitoringValidFrames_.push_back(std::move(copy));
+        monitoringValidFrames_.push_back(std::move(copy), tag);
     } else {
         monitoringInvalidAppended_.fetch_add(1, std::memory_order_relaxed);
-        monitoringInvalidFrames_.push_back(std::move(copy));
+        monitoringInvalidFrames_.push_back(std::move(copy), tag);
     }
+}
+
+uint64_t ProcessingService::monitoringCaptureEpoch() const {
+    return monitoringCaptureEpoch_.load(std::memory_order_acquire);
+}
+
+void ProcessingService::publishMonitoringCapture(uint64_t captureEpoch, std::optional<uint64_t> cameraSessionFloor) {
+    // The floor first: a loop that reads the new epoch then reads at least this floor.
+    if (cameraSessionFloor) {
+        uint64_t floor = monitoringSessionFloor_.load(std::memory_order_relaxed);
+        while (*cameraSessionFloor > floor &&
+               !monitoringSessionFloor_.compare_exchange_weak(floor, *cameraSessionFloor, std::memory_order_release,
+                                                              std::memory_order_relaxed)) {
+        }
+    }
+    // Never backwards (the authority is the only writer once it is set).
+    uint64_t epoch = monitoringCaptureEpoch_.load(std::memory_order_relaxed);
+    while (captureEpoch > epoch &&
+           !monitoringCaptureEpoch_.compare_exchange_weak(epoch, captureEpoch, std::memory_order_release,
+                                                          std::memory_order_relaxed)) {
+    }
+}
+
+void ProcessingService::setMonitoringCaptureAuthority(MonitoringCaptureAuthority authority) {
+    std::scoped_lock lk(monitoringCaptureAuthorityMutex_);
+    monitoringCaptureAuthority_ = std::move(authority);
+}
+
+uint64_t ProcessingService::requestMonitoringCaptureChange(const char* reason) {
+    std::scoped_lock lk(monitoringCaptureAuthorityMutex_);
+    if (monitoringCaptureAuthority_) return monitoringCaptureAuthority_(reason);
+    const uint64_t epoch = monitoringCaptureEpoch_.fetch_add(1, std::memory_order_acq_rel) + 1;
+    SPDLOG_DEBUG("ProcessingService: monitoring capture {} begins (no live cell store): {}", epoch, reason);
+    return epoch;
+}
+
+void ProcessingService::setMonitoringAppendHookForTests(std::function<void(uint64_t frameIndex)> hook) {
+    std::scoped_lock lk(monitoringAppendHookMutex_);
+    monitoringAppendHookArmed_.store(static_cast<bool>(hook), std::memory_order_relaxed);
+    monitoringAppendHook_ = std::move(hook);
+}
+
+void ProcessingService::runMonitoringAppendHook(uint64_t frameIndex) {
+    if (!monitoringAppendHookArmed_.load(std::memory_order_relaxed)) return;
+    std::function<void(uint64_t)> hook;
+    {
+        std::scoped_lock lk(monitoringAppendHookMutex_);
+        hook = monitoringAppendHook_;
+    }
+    if (hook) hook(frameIndex);
+}
+
+void ProcessingService::bindMonitoringEntry(MonitoringEntryCache& cache, uint64_t captureEpoch, const Roi& roi) const {
+    cache.roi = roi;
+    if (captureEpoch == cache.captureEpoch) return;
+    cache.captureEpoch = captureEpoch;
+    // Read after the epoch: a resize that renumbered the frames before this epoch began is seen.
+    cache.storeGeneration = rtStore_ ? rtStore_->storeGeneration() : 0;
+}
+
+ProcessingService::MonitoringEntry ProcessingService::monitoringEntryFor(const MonitoringEntryCache& cache,
+                                                                        uint64_t storeGeneration,
+                                                                        uint64_t captureSession) const {
+    MonitoringEntry e;
+    e.runGeneration = monitoringRunGeneration_.load(std::memory_order_acquire);
+    // Read after the epoch the cache holds: at least the floor published with it.
+    const uint64_t floor = monitoringSessionFloor_.load(std::memory_order_acquire);
+    if (storeGeneration == cache.storeGeneration && (captureSession == 0 || captureSession >= floor))
+        e.captureEpoch = cache.captureEpoch;
+    return e;
 }
 
 void ProcessingService::clearMonitoringFrames() {
@@ -852,6 +949,46 @@ void ProcessingService::clearMonitoringFrames() {
 
 void ProcessingService::setMonitoringActive(bool active) {
     monitoringActive_.store(active, std::memory_order_relaxed);
+}
+
+void ProcessingService::setMonitoringRunGeneration(uint64_t startGeneration) {
+    // Read when a frame enters processing and carried to its rows: a row is tagged with the
+    // generation in force when its frame entered, never a later one.
+    monitoringRunGeneration_.store(startGeneration, std::memory_order_release);
+}
+
+uint64_t ProcessingService::monitoringRunGeneration() const {
+    return monitoringRunGeneration_.load(std::memory_order_acquire);
+}
+
+ProcessingService::MonitoringRingView ProcessingService::visitMonitoringNewest(
+    size_t maxRows, bool includeInvalid, const MonitoringVisitor& visit) const {
+    MonitoringRingView view;
+    std::scoped_lock lk(monitoringFramesMutex_);
+    view.validHeld = monitoringValidFrames_.size();
+    view.invalidHeld = monitoringInvalidFrames_.size();
+    view.validAppended = monitoringValidAppended_.load(std::memory_order_relaxed);
+    view.invalidAppended = monitoringInvalidAppended_.load(std::memory_order_relaxed);
+    view.runGeneration = monitoringRunGeneration_.load(std::memory_order_acquire);
+    view.captureEpoch = monitoringCaptureEpoch_.load(std::memory_order_acquire);
+    if (!visit) return view;
+    // Valid rows are favoured (the charts' emphasis), as fetchMonitoringSnapshot always did.
+    const size_t takeValid = std::min(view.validHeld, maxRows);
+    monitoringValidFrames_.forEachNewest(takeValid, [&visit](const ProcessedFrame& f, const MonitoringRowTag& tag) {
+        visit(f, tag, true);
+    });
+    if (includeInvalid) {
+        const size_t remaining = maxRows > takeValid ? maxRows - takeValid : 0;
+        monitoringInvalidFrames_.forEachNewest(remaining, [&visit](const ProcessedFrame& f, const MonitoringRowTag& tag) {
+            visit(f, tag, false);
+        });
+    }
+    return view;
+}
+
+void ProcessingService::releaseMonitoringShares(std::vector<cv::Mat>& shares) const {
+    std::scoped_lock lk(monitoringFramesMutex_);
+    shares.clear();
 }
 
 void ProcessingService::setProcessingConfig(const ProcessingConfig& config) {
@@ -1644,6 +1781,15 @@ ProcessedFrame ProcessingService::computeProcessedFrame(const cv::Mat& grayInput
                                                         const ProcessingConfig& config,
                                                         const Roi& roiIn, uint64_t index,
                                                         uint64_t timestampNs) {
+    return computeProcessedFrameWith(grayInput, backgroundGray, config, roiIn, index, timestampNs, {});
+}
+
+ProcessedFrame ProcessingService::computeProcessedFrameWith(const cv::Mat& grayInput,
+                                                            const cv::Mat& backgroundGray,
+                                                            const ProcessingConfig& config,
+                                                            const Roi& roiIn, uint64_t index,
+                                                            uint64_t timestampNs,
+                                                            const BatchAnalysisInputs& inputs) {
     auto operation = acquireProcessingCoreOperation();
 
     ProcessedFrame out;
@@ -1688,7 +1834,7 @@ ProcessedFrame ProcessingService::computeProcessedFrame(const cv::Mat& grayInput
     }
 
     // Validation + contour/metric extraction (same helper as realtime)
-    out.validation = filterProcessedImage(mask, cvRoi, config, gray, backgroundGray);
+    out.validation = filterProcessedImage(mask, cvRoi, config, gray, backgroundGray, inputs);
     out.processedImage = std::move(mask);
     return out;
 }
@@ -1697,7 +1843,12 @@ std::vector<ProcessedFrame>
 ProcessingService::processBatch(const std::vector<cv::Mat>& grayImages,
                                 const ProcessingConfig& config, const cv::Mat& background,
                                 const Roi& roi, BatchProgressCallback progress,
-                                backend::processing::ProcessingCoreIdentity* processingCore) {
+                                backend::processing::ProcessingCoreIdentity* processingCore,
+                                const BatchAnalysisInputs& inputs) {
+    if (inputs.pixelToMicronFactor &&
+        !(std::isfinite(*inputs.pixelToMicronFactor) && *inputs.pixelToMicronFactor > 0.0)) {
+        throw std::invalid_argument("processBatch: pixel-to-micron factor must be finite and positive");
+    }
 
     auto operation = acquireProcessingCoreOperation();
     if (processingCore) *processingCore = operation.identity();
@@ -1741,8 +1892,8 @@ ProcessingService::processBatch(const std::vector<cv::Mat>& grayImages,
     if (progress) progress(BatchProgress{0, total});
 
     for (size_t i = 0; i < total; ++i) {
-        ProcessedFrame base = computeProcessedFrame(grayImages[i], background, config, roi,
-                                                    static_cast<uint64_t>(i), 0);
+        ProcessedFrame base = computeProcessedFrameWith(grayImages[i], background, config, roi,
+                                                        static_cast<uint64_t>(i), 0, inputs);
         if (base.originalImage.empty() || base.processedImage.empty()) {
             results.emplace_back(std::move(base));
             if (progress) progress(BatchProgress{i + 1, total});
@@ -1765,7 +1916,7 @@ ProcessingService::processBatch(const std::vector<cv::Mat>& grayImages,
         const cv::Rect cvRoi(normalizedRoi.x, normalizedRoi.y, normalizedRoi.w, normalizedRoi.h);
 
         auto objectResults = filterProcessedObjects(base.processedImage, cvRoi, config,
-                                                    base.originalImage, {}, background);
+                                                    base.originalImage, {}, background, inputs);
         if (objectResults.empty()) {
             results.emplace_back(std::move(base));
         } else {
@@ -1912,6 +2063,15 @@ void ProcessingService::stopBatchPipeline() {
 bool ProcessingService::enqueueBatchFrame(const cv::Mat& grayImage, uint64_t index,
                                           uint64_t timestampNs, uint64_t hostTimestampUs,
                                           uint64_t storeGeneration, uint64_t captureSession) {
+    // Not through the realtime loop: no monitoring entry, so never a live cell.
+    return enqueueBatchFrameImpl(grayImage, index, timestampNs, hostTimestampUs, storeGeneration, captureSession,
+                                 {}, {});
+}
+
+bool ProcessingService::enqueueBatchFrameImpl(const cv::Mat& grayImage, uint64_t index, uint64_t timestampNs,
+                                              uint64_t hostTimestampUs, uint64_t storeGeneration,
+                                              uint64_t captureSession, const MonitoringEntry& entry,
+                                              const Roi& entryRoi) {
     if (!batchRunning_.load(std::memory_order_acquire) || grayImage.empty()) {
         return false;
     }
@@ -1945,8 +2105,9 @@ bool ProcessingService::enqueueBatchFrame(const cv::Mat& grayImage, uint64_t ind
             return false;
         }
 
-        batchQueue_.push(QueuedBatchFrame{storeGeneration, captureSession, std::move(gray), index,
-                                          timestampNs, hostTimestampUs});
+        batchQueue_.push(QueuedBatchFrame{storeGeneration, captureSession, entry.runGeneration,
+                                          entry.captureEpoch, entryRoi, std::move(gray), index, timestampNs,
+                                          hostTimestampUs});
         batchQueueBytes_.add(frameBytes, 1);
         batchFramesAccepted_.fetch_add(1, std::memory_order_relaxed);
 
@@ -1974,8 +2135,21 @@ bool ProcessingService::enqueueBatchFrame(const backend::playback::Frame& frame,
     if (gray.empty()) {
         return false;
     }
-    return enqueueBatchFrame(gray, index, frame.timestamp, frame.hostTimestampUs,
-                             frame.storeGeneration, frame.captureSession);
+    return enqueueBatchFrameImpl(gray, index, frame.timestamp, frame.hostTimestampUs, frame.storeGeneration,
+                                 frame.captureSession, {}, {});
+}
+
+bool ProcessingService::enqueueRealtimeBatchFrame(const backend::playback::Frame& frame, uint64_t index,
+                                                  const MonitoringEntry& entry, const Roi& entryRoi) {
+    if (frame.width == 0 || frame.height == 0 || frame.data.empty()) {
+        return false;
+    }
+    cv::Mat gray = makeGrayCopy(frame);
+    if (gray.empty()) {
+        return false;
+    }
+    return enqueueBatchFrameImpl(gray, index, frame.timestamp, frame.hostTimestampUs, frame.storeGeneration,
+                                 frame.captureSession, entry, entryRoi);
 }
 
 ProcessingService::BatchPipelineStats ProcessingService::getBatchPipelineStats() const {
@@ -2059,6 +2233,11 @@ void ProcessingService::batchWorkerLoop() {
                 base.hostTimestampUs = item.hostTimestampUs;
                 base.previewStoreGeneration = item.storeGeneration;
                 base.previewCaptureSession = item.captureSession;
+                // The capture of the frame's entry holds only for the ROI read with it: a frame
+                // measured with another ROI (the config refreshed after an ROI change) is never a
+                // cell (#716 A6a review 3).
+                base.monitoringRunGeneration = item.monitoringRunGeneration;
+                base.monitoringCaptureEpoch = sameRoi(config.roi, item.monitoringRoi) ? item.monitoringCaptureEpoch : 0;
                 base.previewRecipeSha256 = config.previewRecipeSha256;
                 base.previewRoi = cv::Rect(config.roi.x, config.roi.y, config.roi.w, config.roi.h);
                 if (base.originalImage.empty() || base.processedImage.empty()) {
@@ -2099,6 +2278,8 @@ void ProcessingService::batchWorkerLoop() {
                     objectFrame.hostTimestampUs = base.hostTimestampUs;
                     objectFrame.previewStoreGeneration = base.previewStoreGeneration;
                     objectFrame.previewCaptureSession = base.previewCaptureSession;
+                    objectFrame.monitoringRunGeneration = base.monitoringRunGeneration;
+                    objectFrame.monitoringCaptureEpoch = base.monitoringCaptureEpoch;
                     objectFrame.previewRecipeSha256 = base.previewRecipeSha256;
                     objectFrame.previewRoi = cvRoi;
                     objectFrame.originalImage = base.originalImage;   // shared, read-only (issue #370)
@@ -2167,6 +2348,11 @@ ProcessingService::computeAutoRoiFromBackground(const cv::Mat& backgroundGray) c
         std::scoped_lock lk(configMutex_);
         config = processingConfig_;
     }
+    return detectChannelBand(backgroundGray, config);
+}
+
+ProcessingService::Roi ProcessingService::detectChannelBand(const cv::Mat& backgroundGray,
+                                                            const ProcessingConfig& config) {
     if (!config.auto_roi_from_background || backgroundGray.empty()) {
         return Roi{}; // disabled / no background: empty ROI == full frame
     }
@@ -2176,6 +2362,20 @@ ProcessingService::computeAutoRoiFromBackground(const cv::Mat& backgroundGray) c
     const backend::processing::ChannelRoi detected =
         backend::processing::detectChannelRoi(backgroundGray, params);
     return Roi{detected.x, detected.y, detected.w, detected.h};
+}
+
+ProcessingService::BatchAnalysisInputs
+ProcessingService::offlineAnalysisInputs(ProcessingConfig& config, const cv::Mat& background,
+                                         double pixelToMicronFactor) {
+    BatchAnalysisInputs inputs;
+    inputs.pixelToMicronFactor = pixelToMicronFactor;
+    const Roi band = detectChannelBand(background, config);
+    inputs.channelBand = band.h > 0 ? band : Roi{};
+    if (config.auto_roi_from_background) {
+        config.channel_band_y = band.h > 0 ? band.y : 0;
+        config.channel_band_h = band.h > 0 ? band.h : 0;
+    }
+    return inputs;
 }
 
 ProcessingService::Roi ProcessingService::getChannelBand() const {
@@ -2379,13 +2579,15 @@ std::vector<FilterResult> ProcessingService::filterProcessedObjects(const cv::Ma
                                                                     const ProcessingConfig& config,
                                                                     const cv::Mat& originalImage,
                                                                     cv::Point maskOrigin,
-                                                                    const cv::Mat& background) {
+                                                                    const cv::Mat& background,
+                                                                    const BatchAnalysisInputs& inputs) {
     // The service owns the detected channel band (frame coordinates); express
-    // it in the mask's coordinates for the object filter.
+    // it in the mask's coordinates for the object filter. A call's own band
+    // (offline reanalysis, #758) replaces it.
     ProcessingConfig bandConfig;
     const ProcessingConfig* effectiveConfig = &config;
     if (config.auto_roi_from_background) {
-        const Roi band = getChannelBand();
+        const Roi band = inputs.channelBand ? *inputs.channelBand : getChannelBand();
         if (band.h > 0) {
             bandConfig = config;
             bandConfig.channel_band_y = band.y - maskOrigin.y;
@@ -2396,7 +2598,11 @@ std::vector<FilterResult> ProcessingService::filterProcessedObjects(const cv::Ma
     // Version-sensitive science is owned by the selected kernel (A7). The
     // caller already holds a CoreOperationLease, so the kernel cannot swap
     // between the mask call and this analysis call.
-    const double pixelToMicronFactor = pixelToMicronFactor_.load(std::memory_order_relaxed);
+    // The call's factor (offline reanalysis at its source's calibration, #758)
+    // or the live one, read once.
+    const double pixelToMicronFactor = inputs.pixelToMicronFactor
+                                           ? *inputs.pixelToMicronFactor
+                                           : pixelToMicronFactor_.load(std::memory_order_relaxed);
     const backend::EModulusLut* eModulusLut = eModulusLut_.isLoaded() ? &eModulusLut_ : nullptr;
     std::shared_ptr<backend::processing::IProcessingKernel> kernel;
     {
@@ -2421,9 +2627,10 @@ FilterResult ProcessingService::filterProcessedImage(const cv::Mat& processedIma
                                                      const cv::Rect& roi,
                                                      const ProcessingConfig& config,
                                                      const cv::Mat& originalImage,
-                                                     const cv::Mat& background) {
+                                                     const cv::Mat& background,
+                                                     const BatchAnalysisInputs& inputs) {
     auto results = filterProcessedObjects(processedImage, roi, config, originalImage, {},
-                                          background);
+                                          background, inputs);
     if (results.empty()) {
         return {};
     }
@@ -2674,11 +2881,13 @@ void ProcessingService::resetIdentificationCounters() {
 void ProcessingService::appendRealtimeMonitoringFrame(uint64_t index, uint64_t timestampNs,
                                                       const FilterResult& validation,
                                                       const cv::Mat& originalImage,
-                                                      const cv::Mat& processedImage) {
+                                                      const cv::Mat& processedImage,
+                                                      const MonitoringEntry& entry) {
     if (!monitoringActive_.load(std::memory_order_relaxed)) return; // gating: no-op when inactive
     if (originalImage.empty() || processedImage.empty()) {
         return;
     }
+    runMonitoringAppendHook(index); // test seam; one relaxed load
 
     ProcessedFrame monitoringFrame;
     monitoringFrame.index = index;
@@ -2687,13 +2896,16 @@ void ProcessingService::appendRealtimeMonitoringFrame(uint64_t index, uint64_t t
     monitoringFrame.originalImage = originalImage; // shallow refcount share (frozen-mats invariant)
     monitoringFrame.processedImage = processedImage; // shallow refcount share
 
+    // The run and capture of the frame's entry (#716 A6a review 3), never the current ones. Inline
+    // rows are measured on the ROI image itself: geometry origin (0, 0).
+    const MonitoringRowTag tag{entry.runGeneration, entry.captureEpoch, 0, 0};
     std::scoped_lock monitoringLk(monitoringFramesMutex_);
     if (validation.isValid) {
         monitoringValidAppended_.fetch_add(1, std::memory_order_relaxed);
-        monitoringValidFrames_.push_back(std::move(monitoringFrame));
+        monitoringValidFrames_.push_back(std::move(monitoringFrame), tag);
     } else {
         monitoringInvalidAppended_.fetch_add(1, std::memory_order_relaxed);
-        monitoringInvalidFrames_.push_back(std::move(monitoringFrame));
+        monitoringInvalidFrames_.push_back(std::move(monitoringFrame), tag);
     }
 }
 
@@ -2704,13 +2916,16 @@ void ProcessingService::appendProviderMonitoringRow(uint64_t index, uint64_t tim
     row.index = index;
     row.timestampNs = timestampNs;
     row.validation = validation;
+    // The PL's results enter here: the run and the capture now (no image, so never a crop).
+    const MonitoringRowTag tag{monitoringRunGeneration_.load(std::memory_order_acquire),
+                               monitoringCaptureEpoch_.load(std::memory_order_acquire), 0, 0};
     std::scoped_lock monitoringLk(monitoringFramesMutex_);
     if (validation.isValid) {
         monitoringValidAppended_.fetch_add(1, std::memory_order_relaxed);
-        monitoringValidFrames_.push_back(std::move(row));
+        monitoringValidFrames_.push_back(std::move(row), tag);
     } else {
         monitoringInvalidAppended_.fetch_add(1, std::memory_order_relaxed);
-        monitoringInvalidFrames_.push_back(std::move(row));
+        monitoringInvalidFrames_.push_back(std::move(row), tag);
     }
 }
 
@@ -2804,7 +3019,14 @@ void ProcessingService::publishRealtimeBatchFrame(ProcessedFrame&& frame) {
 
     // Monitoring (gated — skip when no consumer is active; ROI clones outside lock)
     if (monitoringActive_.load(std::memory_order_relaxed)) {
+        // The ROI the worker measured the frame with (it may have changed since).
         Roi roi = getRealtimeRoi();
+        if (frame.previewRoi.area() > 0) {
+            roi.x = frame.previewRoi.x;
+            roi.y = frame.previewRoi.y;
+            roi.w = frame.previewRoi.width;
+            roi.h = frame.previewRoi.height;
+        }
         if (roi.w <= 0 || roi.h <= 0) {
             roi.x = 0;
             roi.y = 0;
@@ -2823,12 +3045,20 @@ void ProcessingService::publishRealtimeBatchFrame(ProcessedFrame&& frame) {
         monitoringFrame.validation = validation;
         monitoringFrame.originalImage = frame.originalImage(cvRoi).clone();
         monitoringFrame.processedImage = frame.processedImage(cvRoi).clone();
+        runMonitoringAppendHook(frameIndex); // test seam; one relaxed load
 
+        // The run and capture the frame carried from its entry (#716 A6a review 3). The row keeps
+        // an ROI crop but its geometry is in full-frame coordinates: the tag records the crop's origin.
+        const MonitoringRowTag tag{frame.monitoringRunGeneration, frame.monitoringCaptureEpoch, cvRoi.x, cvRoi.y};
         std::scoped_lock monitoringLk(monitoringFramesMutex_);
+        // Counted like the inline path (they were not counted here before, so a
+        // snapshot in async-batch mode could not see evictions).
         if (validation.isValid) {
-            monitoringValidFrames_.push_back(std::move(monitoringFrame));
+            monitoringValidAppended_.fetch_add(1, std::memory_order_relaxed);
+            monitoringValidFrames_.push_back(std::move(monitoringFrame), tag);
         } else {
-            monitoringInvalidFrames_.push_back(std::move(monitoringFrame));
+            monitoringInvalidAppended_.fetch_add(1, std::memory_order_relaxed);
+            monitoringInvalidFrames_.push_back(std::move(monitoringFrame), tag);
         }
     }
 
@@ -2969,6 +3199,9 @@ void ProcessingService::realtimeBatchLoop() {
     uint64_t lastProcessedTotal = 0;
     uint64_t lastAlgoMicrosTotal = 0;
 
+    // The capture frames enter with (#716 A6a review 3): refreshed whenever the published epoch moves.
+    MonitoringEntryCache monitoringEntryCache;
+
     SPDLOG_INFO("ProcessingService: realtime async batch loop started");
     if (initialConfig.processing.auto_background_enabled) {
         SPDLOG_WARN(
@@ -3061,13 +3294,28 @@ void ProcessingService::realtimeBatchLoop() {
                     continue; // not counted — retried from the same `last`
                 }
                 countDroppedToLatest();
+                // The frame enters processing here: its capture is the published epoch read with
+                // the ROI (both under rtMutex_; an ROI change moves the epoch under it), carried
+                // with the frame to the worker, which keeps it only for that ROI.
+                if (monitoringCaptureEpoch_.load(std::memory_order_acquire) != monitoringEntryCache.captureEpoch) {
+                    Roi roi;
+                    uint64_t epoch = 0;
+                    {
+                        std::scoped_lock lk(rtMutex_);
+                        roi = rtRoi_;
+                        epoch = monitoringCaptureEpoch_.load(std::memory_order_acquire);
+                    }
+                    bindMonitoringEntry(monitoringEntryCache, epoch, roi);
+                }
+                const MonitoringEntry entry =
+                    monitoringEntryFor(monitoringEntryCache, frame.storeGeneration, frame.captureSession);
                 // Experiment accounting (issue #367): a frame is admitted when
                 // it is handed to the batch queue; a rejected frame is a
                 // processing-side loss and terminates immediately. Outcomes
                 // for accepted frames are counted when the batch callback
                 // publishes them (same rule as the inline loop).
                 noteRealtimeAdmitted(idx);
-                const bool accepted = enqueueBatchFrame(frame, idx);
+                const bool accepted = enqueueRealtimeBatchFrame(frame, idx, entry, monitoringEntryCache.roi);
                 if (accepted) {
                     ++queuedSinceSummary;
                 } else {
@@ -3208,24 +3456,33 @@ void ProcessingService::realtimeInlineLoop() {
         experimentDrainRequested_.store(false, std::memory_order_release);
     };
 
-    // Hoisted config/roi/bg: refresh only when configVersion_ changes (P7)
+    // Hoisted config/roi/bg: refresh only when configVersion_ changes (P7) or the monitoring
+    // capture moves on (#716 A6a review 3).
     uint64_t lastRtConfigVer = std::numeric_limits<uint64_t>::max();
     Roi rtCachedRoi{};
     std::shared_ptr<cv::Mat> rtCachedBg;
     ProcessingConfig rtCachedConfig;
     std::string rtCachedRecipe;
+    // The capture frames enter with: the published epoch read with rtCachedRoi under rtMutex_
+    // (an ROI change moves the epoch under it), so every frame processed with that ROI carries
+    // that epoch, and the store generation bound to it.
+    MonitoringEntryCache rtMonitoringEntry;
 
     while (rtRunning_.load()) {
         drainExperimentSeries();
         // Refresh config/roi/background only when something changed
         const uint64_t curRtConfigVer = configVersion_.load(std::memory_order_acquire);
         if (curRtConfigVer != lastRtConfigVer ||
+            monitoringCaptureEpoch_.load(std::memory_order_acquire) != rtMonitoringEntry.captureEpoch ||
             (processedPreviewEnabled_.load() && rtCachedRecipe.empty())) {
+            uint64_t monitoringEpoch = 0;
             {
                 std::scoped_lock lk(rtMutex_);
                 rtCachedRoi = rtRoi_;
                 rtCachedBg = rtBgGray_;
+                monitoringEpoch = monitoringCaptureEpoch_.load(std::memory_order_acquire);
             }
+            bindMonitoringEntry(rtMonitoringEntry, monitoringEpoch, rtCachedRoi);
             {
                 std::scoped_lock lk(configMutex_);
                 rtCachedConfig = processingConfig_;
@@ -3333,6 +3590,9 @@ void ProcessingService::realtimeInlineLoop() {
                 if (f.width == 0 || f.height == 0 || f.data.empty()) {
                     continue; // not counted — retried from the same `last`
                 }
+                // The frame enters processing: its monitoring run and capture (#716 A6a review 3).
+                const MonitoringEntry monitoringEntry =
+                    monitoringEntryFor(rtMonitoringEntry, f.storeGeneration, f.captureSession);
                 // Frame readable: every exit past this point advances
                 // rtLastProcessed_, so the dropped range is counted exactly once.
                 countDroppedToLatest();
@@ -3580,7 +3840,7 @@ void ProcessingService::realtimeInlineLoop() {
                 // Always accumulate frames for monitoring (with size limit)
                 for (const auto& objectValidation : validations) {
                     appendRealtimeMonitoringFrame(idx, f.timestamp, objectValidation, grayROI,
-                                                  mask);
+                                                  mask, monitoringEntry);
                 }
 
                 // Throttled DEBUG: accumulation sizes and process memory
@@ -3800,6 +4060,9 @@ void ProcessingService::realtimeInlineLoop() {
                 if (f.width == 0 || f.height == 0 || f.data.empty()) {
                     continue; // not counted — retried from the same `last`
                 }
+                // The frame enters processing: its monitoring run and capture (#716 A6a review 3).
+                const MonitoringEntry monitoringEntry =
+                    monitoringEntryFor(rtMonitoringEntry, f.storeGeneration, f.captureSession);
                 // Frame readable: every exit past this point advances
                 // rtLastProcessed_, so the dropped range is counted exactly once.
                 countDroppedToLatest();
@@ -4048,7 +4311,7 @@ void ProcessingService::realtimeInlineLoop() {
                 cv::Mat roiMask = mask(cvRoi);
                 for (const auto& objectValidation : validations) {
                     appendRealtimeMonitoringFrame(idx, f.timestamp, objectValidation, roiOriginal,
-                                                  roiMask);
+                                                  roiMask, monitoringEntry);
                 }
 
                 // Throttled DEBUG: accumulation sizes and process memory
@@ -4225,6 +4488,9 @@ void ProcessingService::realtimeInlineLoop() {
                 if (f.width == 0 || f.height == 0 || f.data.empty()) {
                     continue;
                 }
+                // The frame enters processing: its monitoring run and capture (#716 A6a review 3).
+                const MonitoringEntry monitoringEntry =
+                    monitoringEntryFor(rtMonitoringEntry, f.storeGeneration, f.captureSession);
                 cv::Mat gray = makeGrayCopy(f);
                 if (gray.empty()) {
                     rtLastProcessed_.store(idx);
@@ -4511,7 +4777,7 @@ void ProcessingService::realtimeInlineLoop() {
                 cv::Mat roiMask = mask(cvRoi);
                 for (const auto& objectValidation : validations) {
                     appendRealtimeMonitoringFrame(idx, f.timestamp, objectValidation, roiOriginal,
-                                                  roiMask);
+                                                  roiMask, monitoringEntry);
                 }
 
                 // Throttled TRACE: accumulation sizes and process memory

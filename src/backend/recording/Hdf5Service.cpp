@@ -1,5 +1,6 @@
 #include "backend/recording/Hdf5Service.h"
 #include "backend/diagnostics/CrashStateMirror.h"
+#include "backend/processing/ProcessingConfigJson.h"
 #include "backend/processing/ProcessingContract.h"
 #include "backend/processing/ProcessingService.h"
 #include "backend/recording/RunProvenanceRecord.h"
@@ -11,6 +12,7 @@
 // HDF5 C API (more widely available than C++ API)
 #include <hdf5.h>
 #include <hdf5_hl.h>
+#include <nlohmann/json.hpp>
 
 #include <atomic>
 #include <vector>
@@ -24,6 +26,7 @@
 #include <algorithm>
 #include <optional>
 #include <limits>
+#include <cmath>
 
 namespace backend::services
 {
@@ -49,6 +52,43 @@ namespace backend::services
             const int rank = H5Sget_simple_extent_ndims(space);
             H5Sclose(space);
             return rank >= 0 && points == 1;
+        }
+
+        // A scalar string attribute of an open group (variable or fixed
+        // length, at most 16 MiB); nullopt when absent or unreadable.
+        std::optional<std::string> readGroupStringAttribute(hid_t group, const char* name)
+        {
+            if (group < 0 || H5Aexists(group, name) <= 0) return std::nullopt;
+            hid_t attribute = H5Aopen(group, name, H5P_DEFAULT);
+            if (attribute < 0) return std::nullopt;
+            std::optional<std::string> out;
+            hid_t type = H5Aget_type(attribute);
+            if (type >= 0 && H5Tget_class(type) == H5T_STRING && isScalarAttribute(attribute) &&
+                H5Aget_storage_size(attribute) <= 16u * 1024u * 1024u)
+            {
+                if (H5Tis_variable_str(type) > 0)
+                {
+                    char* pointer = nullptr;
+                    if (H5Aread(attribute, type, &pointer) >= 0) out = std::string(pointer ? pointer : "");
+                    if (pointer) H5free_memory(pointer);
+                }
+                else
+                {
+                    const size_t size = H5Tget_size(type);
+                    if (size > 0 && size <= 16u * 1024u * 1024u)
+                    {
+                        std::vector<char> buffer(size + 1, '\0');
+                        if (H5Aread(attribute, type, buffer.data()) >= 0)
+                        {
+                            const auto end = std::find(buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(size), '\0');
+                            out = std::string(buffer.begin(), end);
+                        }
+                    }
+                }
+            }
+            if (type >= 0) H5Tclose(type);
+            H5Aclose(attribute);
+            return out;
         }
 
     }
@@ -2865,6 +2905,63 @@ namespace backend::services
         return out;
     }
 
+    bool Hdf5Service::writeAnalysisPixelToMicron(double factor)
+    {
+        if (!isFileOpen()) return false;
+        if (!std::isfinite(factor) || factor <= 0.0)
+        {
+            SPDLOG_ERROR("writeAnalysisPixelToMicron: factor {} is not finite and positive", factor);
+            return false;
+        }
+        if (H5Lexists(impl_->fileId_, "/experiment_info", H5P_DEFAULT) <= 0)
+        {
+            SPDLOG_WARN("Cannot write pixel_to_micron: /experiment_info group does not exist");
+            return false;
+        }
+        hid_t groupId = H5Gopen2(impl_->fileId_, "/experiment_info", H5P_DEFAULT);
+        if (groupId < 0) return false;
+        if (H5Aexists(groupId, kAnalysisPixelToMicronAttribute) > 0)
+            H5Adelete(groupId, kAnalysisPixelToMicronAttribute);
+        hid_t scalarSpace = H5Screate(H5S_SCALAR);
+        hid_t attr = H5Acreate2(groupId, kAnalysisPixelToMicronAttribute, H5T_NATIVE_DOUBLE, scalarSpace,
+                                H5P_DEFAULT, H5P_DEFAULT);
+        bool ok = false;
+        if (attr >= 0)
+        {
+            ok = H5Awrite(attr, H5T_NATIVE_DOUBLE, &factor) >= 0;
+            H5Aclose(attr);
+        }
+        H5Sclose(scalarSpace);
+        H5Gclose(groupId);
+        if (ok && !flush()) SPDLOG_WARN("writeAnalysisPixelToMicron: post-write flush failed");
+        if (!ok) SPDLOG_ERROR("Failed to write /experiment_info @pixel_to_micron");
+        return ok;
+    }
+
+    std::optional<double> Hdf5Service::readAnalysisPixelToMicron() const
+    {
+        if (!isFileOpen() || H5Lexists(impl_->fileId_, "/experiment_info", H5P_DEFAULT) <= 0) return std::nullopt;
+        hid_t group = H5Gopen2(impl_->fileId_, "/experiment_info", H5P_DEFAULT);
+        if (group < 0) return std::nullopt;
+        std::optional<double> out;
+        if (H5Aexists(group, kAnalysisPixelToMicronAttribute) > 0)
+        {
+            hid_t attribute = H5Aopen(group, kAnalysisPixelToMicronAttribute, H5P_DEFAULT);
+            if (attribute >= 0)
+            {
+                hid_t type = H5Aget_type(attribute);
+                double value = 0.0;
+                if (type >= 0 && H5Tget_class(type) == H5T_FLOAT && isScalarAttribute(attribute) &&
+                    H5Aread(attribute, H5T_NATIVE_DOUBLE, &value) >= 0 && std::isfinite(value) && value > 0.0)
+                    out = value;
+                if (type >= 0) H5Tclose(type);
+                H5Aclose(attribute);
+            }
+        }
+        H5Gclose(group);
+        return out;
+    }
+
     bool Hdf5Service::readProcessingCoreIdentity(
         backend::processing::ProcessingCoreIdentity& processingCore) const
     {
@@ -3006,6 +3103,40 @@ namespace backend::services {
         readScalar("multi_image_enabled", H5T_NATIVE_UINT8, &multiImage);
         config.multi_image_enabled = multiImage != 0;
         readInt("multi_image_count", config.multi_image_count);
+
+        // The target group has no processing_config_* attribute: it is read
+        // from the config document the file records (`@config_json`
+        // image_processing.target_group; captures write the runtime document,
+        // batch_masks::saveMasksToHdf5 the config it applied, #758). Absent or
+        // malformed: the struct default (no target group), as before.
+        if (const auto document = readGroupStringAttribute(group, "config_json"))
+        {
+            const auto root = nlohmann::json::parse(*document, nullptr, false);
+            if (root.is_object())
+            {
+                const auto processing = root.find("image_processing");
+                if (processing != root.end() && processing->is_object())
+                {
+                    const auto target = processing->find("target_group");
+                    if (target != processing->end() && target->is_object())
+                    {
+                        ProcessingConfig parsed = config;
+                        if (backend::processing::config_json::fromJson(nlohmann::json{{"target_group", *target}},
+                                                                       parsed))
+                        {
+                            config.enable_target_group = parsed.enable_target_group;
+                            config.target_group_area_min = parsed.target_group_area_min;
+                            config.target_group_area_max = parsed.target_group_area_max;
+                            config.target_group_deformability_min = parsed.target_group_deformability_min;
+                            config.target_group_deformability_max = parsed.target_group_deformability_max;
+                            config.enable_target_group_emodulus = parsed.enable_target_group_emodulus;
+                            config.target_group_emodulus_min = parsed.target_group_emodulus_min;
+                            config.target_group_emodulus_max = parsed.target_group_emodulus_max;
+                        }
+                    }
+                }
+            }
+        }
 
         H5Gclose(group);
         return true;

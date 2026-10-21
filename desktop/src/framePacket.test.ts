@@ -1,4 +1,5 @@
 import golden from "../../crates/mib-bridge/contract/fixtures/frame-v2.json";
+import cellGolden from "../../crates/mib-bridge/contract/fixtures/monitoring-cell-v2.json";
 import { expect, it } from "vitest";
 import { decodeFramePacket, decimalU64 } from "./framePacket";
 import { FRAME_PACKET } from "./bridgeContract";
@@ -48,4 +49,21 @@ it('carries exact acquisition/store epochs only for live raw frames',()=>{
  const b=fixture();const d=new DataView(b);d.setBigUint64(72,9007199254740993n,true);d.setBigUint64(88,18446744073709551615n,true);
  const p=decodeFramePacket(b,1);expect(p.session_id).toBe('9007199254740993');expect(p.store_generation).toBe('18446744073709551615');expect(p.config_revision).toBeNull();
  d.setUint32(12,3,true);expect(()=>decodeFramePacket(b,3)).toThrow('UNSUPPORTED_IDENTITY');
+});
+// Bridge ABI 41 (#716 A6a): a monitoring cell crop (pull kind 5) and its mask (6), the golden the
+// Rust encoder test also produces. Backend-owned copies: no capture identities.
+it("decodes the monitoring cell golden and keeps the kinds apart",()=>{
+  const bytes=()=>Uint8Array.from(cellGolden.hex.match(/../g)!,h=>parseInt(h,16));
+  expect(FRAME_PACKET.pull_kinds).toMatchObject({monitoring_cell_image:5,monitoring_cell_mask:6});
+  const p=decodeFramePacket(bytes().buffer,FRAME_PACKET.pull_kinds.monitoring_cell_image);
+  expect([p.pull_kind,p.frame_index,p.timestamp_ns,p.width,p.height]).toEqual([5,cellGolden.frame_index,cellGolden.timestamp_ns,cellGolden.width,cellGolden.height]);
+  expect(Array.from(p.data)).toEqual(cellGolden.pixels);
+  expect(p.session_id).toBeNull(); expect(p.store_generation).toBeNull();
+  expect(()=>decodeFramePacket(bytes().buffer,6)).toThrow("FRAME_PACKET_INVALID_FLAGS_OR_SOURCE");
+  const mask=bytes(); new DataView(mask.buffer).setUint32(12,6,true);
+  expect(decodeFramePacket(mask.buffer,6).pull_kind).toBe(6);
+  const unknown=bytes(); new DataView(unknown.buffer).setUint32(12,7,true);
+  expect(()=>decodeFramePacket(unknown.buffer,7)).toThrow("FRAME_PACKET_INVALID_FLAGS_OR_SOURCE");
+  const identity=bytes(); new DataView(identity.buffer).setBigUint64(72,1n,true);
+  expect(()=>decodeFramePacket(identity.buffer,5)).toThrow("UNSUPPORTED_IDENTITY");
 });

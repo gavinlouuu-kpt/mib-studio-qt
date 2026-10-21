@@ -366,14 +366,65 @@ zero-fill it (NULL, core rebuilds the mask) and cores built before it ignore it.
   seam that fills the ring without the activity gate. `BatchPipelineStats`
   carries `queueCapacity` (configured `maxQueuedFrames`) so the density
   service can treat a quarter-full queue as load.
-- **Experiment accumulation** — bounded `std::deque<ProcessedFrame>` populated
-  while `experimentActive_` is true. Deque gives O(1) `pop_front()` when the
-  bounded backlog is full under high frame rates. `flushBufferedFrames(Hdf5Service&)`
-  moves frames into an `ExperimentBatch` via `std::make_move_iterator` (O(1)
-  per Mat, refcount transfer), submits to a 3-slot [[Hdf5Service]] `HdfWriteQueue`
-  the rings only fill while that tab is visible. Stored frames share cv::Mat
-  refcounts with the processing loop (no per-frame clone); consumers are
-  read-only.
+- **Row tags and the cell visitor (bridge ABI 41, #716 A6a)** — each ring
+  slot also stores a `MonitoringRowTag` (a parallel preallocated `tags_`
+  array): the `start_generation` of the run active when the row's frame
+  entered processing (0 = outside a run), the **capture epoch** the frame
+  entered with, and the row image's **geometry origin**.
+  `setMonitoringRunGeneration(g)` sets the run tag (an atomic;
+  [[../architecture/ExperimentCoordinator]] sets it right before
+  `startExperiment()` and back to 0 after `endExperiment()` or a failed
+  start). **The capture epoch (review rounds 2-3 of #749)** has one
+  authority, [[MonitoringCellStore]]`::advanceCapture`: it moves the epoch
+  on under the store's mutex and publishes it here
+  (`publishMonitoringCapture(epoch[, cameraSessionFloor])`, atomic stores;
+  `monitoringCaptureEpoch()` reads the published value, starts at 1, never
+  reused). This service's own capture changes go through
+  `requestMonitoringCaptureChange(reason)`, which calls the authority
+  AppBackend sets (`setMonitoringCaptureAuthority`, under its own mutex; a
+  service without one moves the published epoch itself): `startRealtime()`
+  (a new or restarted FrameStore: indices may restart), **`stopRealtime()`**
+  (stopping realtime ends the capture), and another ROI, from
+  `setRealtimeRoi()` or `resolvePendingRoi()` **while `rtMutex_` is held**,
+  so the ROI and the epoch change together. **Tag at entry:** each realtime
+  loop keeps a `MonitoringEntryCache`; when the published epoch moves it
+  re-reads the ROI and the epoch together under `rtMutex_` (the inline
+  loop's settings refresh) and binds the FrameStore's `storeGeneration()`
+  read after it. Per fetched frame `monitoringEntryFor` gives the frame's
+  `MonitoringEntry` (run generation, capture epoch): the cached epoch if the
+  frame is of the bound store generation and of a camera session at or
+  above the published floor, else 0. Inline loops pass the entry to
+  `appendRealtimeMonitoringFrame`; the async-batch loop enqueues it with the
+  ROI read with it (`QueuedBatchFrame`), and the worker keeps the epoch only
+  when it measures the frame with that ROI, carrying it in
+  `ProcessedFrame::monitoringRunGeneration` / `monitoringCaptureEpoch` to
+  `publishRealtimeBatchFrame`. Nothing assigns the current epoch when a frame
+  completes (round 2 did, so a frame held across an ROI change entered the
+  new capture, and a closed camera session's late frame adopted the next).
+  PL provider rows (no image) take the current values at append.
+  `setMonitoringAppendHookForTests(hook)` is a test seam called with the
+  frame index right before a processed frame's rows are appended (one
+  relaxed load when unset). The geometry origin is
+  (0, 0) for inline rows (measured on the ROI image) and the ROI's top-left for
+  async-batch rows (measured on the full frame, kept as an ROI crop; the crop
+  now uses the ROI the worker measured with, `frame.previewRoi`, and the rows
+  are counted in the appended totals like inline rows). Every `push_back`
+  stores the tag under the lock it already holds: a 24-byte store and two
+  compares, no allocation, no new lock. `clearMonitoringFrames` zeroes the
+  tags. `visitMonitoringNewest(maxRows, includeInvalid, visit)`
+  hands the newest rows (valid first, then invalid with what is left) with
+  their tag to a visitor **under the ring lock** and returns a
+  `MonitoringRingView` (held / appended counts, the current run tag and the
+  published capture epoch). Visitors
+  may only copy scalars and cv::Mat headers (refcount shares of frozen
+  images); the bridge snapshot uses it for POD rows instead of copying the
+  whole ring, and [[MonitoringCellStore]]'s source uses it to find rows and
+  share their images, cropping outside the lock and giving the shares back
+  through `releaseMonitoringShares(shares)`, which drops them under the ring
+  lock (so a free by an eviction or by the last reader follows every reader in
+  a lock order ThreadSanitizer can see; OpenCV's refcount is invisible to it). `performance.monitoring_cell_hot_path`
+  measures the hold: ~1 µs for a 24-row strip read, ~24 µs for the 2000-row
+  snapshot (the full-ring copy it replaced: 70–260 µs).
 - **Experiment accumulation** — the extracted, bounded
   `ExperimentFrameBuffer` (`experimentBuffer_`, issue #370 —
   [[../diagnostics/MemoryBudget]]) populated while `experimentActive_` is
@@ -515,12 +566,30 @@ TIFFs — use:
   rings, no experiment accumulation, no callbacks, no auto-background).
   Returns a `ProcessedFrame` with a full-size mask (zero outside ROI).
 - `ProcessingService::processBatch(grayImages, config, background, roi, progressCb,
-  processingCore)`
+  processingCore, inputs = {})`
   — wraps `computeProcessedFrame` over a vector of grayscale `cv::Mat`
   inputs, returns `std::vector<ProcessedFrame>`. Progress is reported via
   `BatchProgressCallback(BatchProgress{done, total})`. The optional identity
   output records the exact core held for the whole operation; activation is
   blocked until the call returns.
+- **Per-call analysis inputs (#758).** `BatchAnalysisInputs{pixelToMicronFactor,
+  channelBand}` (both `std::optional`) replace, for that call only, what
+  object analysis otherwise reads from the live service: the factor
+  `setPixelToMicronFactor` set (area validity, the target group, the stamped
+  `analysisPixelToMicronFactor`) and the band `getChannelBand()` detected from
+  the published background. Unset members keep the live values; a factor that
+  is not finite and positive throws `std::invalid_argument`.
+  `offlineAnalysisInputs(config, background, factor)` builds them for an
+  offline run: the factor, the band `detectChannelBand(background, config)`
+  finds in the run's own background (the static form of
+  `computeAutoRoiFromBackground`, with the config's auto-ROI settings), and,
+  with `auto_roi_from_background` on, that band written into the config's
+  `channel_band_*` (0 when none, as `getEffectiveProcessingConfig`), so the
+  config an output records is the one applied. Offline reanalysis (the review
+  engine, YOFO's regenerate, the Qt dialog) always passes them: the live
+  factor and band are never set by a job, so a job cannot race a live run or
+  another job, and one source's factor never reaches the next.
+  `kDefaultPixelToMicronFactor` (0.4886) names the start value.
 
   When `multi_image_enabled` and `multi_image_count > 1`, each newly retained
   valid track also carries the trigger image plus the available following
@@ -542,7 +611,8 @@ Input/output adapters live in [[BatchMaskSources]] —
 button that drives this via `BatchMaskDialog`.
 
 Batch calls do **not** touch realtime state or monitoring buffers, so
-they're safe to run concurrently with live capture. Dynamic cores allocate or
+they're safe to run concurrently with live capture. Without
+`BatchAnalysisInputs` they do read the live factor and channel band. Dynamic cores allocate or
 reuse separate ABI contexts for concurrent calls.
 
 ## Async batch processing (capture decoupling)

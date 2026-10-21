@@ -1,0 +1,17 @@
+{
+  "$comment": "ABI 41 (#716 A6a): a monitoring cell crop as a frame packet (pull kind monitoring_cell_image = 5): Mono8 (pixel_format 0, as review images), zero capture identities. Encoded by crates/mib-app-commands/src/frame_packet.rs and decoded by desktop/src/framePacket.ts; both tests compare against this hex.",
+  "hex": "4d4942460200600001000000050000000100000000002000ffffffffffffffff030000000000000002000000000000000000000000000000030000000000000006000000000000000000000000000000000000000000000000000000000000000b16212c3742",
+  "pull_kind": 5,
+  "frame_index": "9007199254740993",
+  "timestamp_ns": "18446744073709551615",
+  "width": 3,
+  "height": 2,
+  "pixels": [
+    11,
+    22,
+    33,
+    44,
+    55,
+    66
+  ]
+}

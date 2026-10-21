@@ -59,7 +59,9 @@ namespace backend::review
         double pixelToMicron() const;
         double fallbackPixelToMicron() const;
         // TD-17: the factor `reader`'s open file was recorded with (run
-        // snapshot `pixel_to_micron`); 0 when the file records none.
+        // snapshot `pixel_to_micron`), else the factor a regenerated or
+        // reanalysed file was analysed at (`/experiment_info
+        // @pixel_to_micron`, #758); 0 when the file records neither.
         static double recordedPixelToMicron(const services::Hdf5Service &reader);
         // #717 B1a: the run identity of `reader`'s open file (snapshot v3 +
         // /experiment_annotation). Attributes only; absent members for a

@@ -87,6 +87,26 @@ timeout, avoiding the unbounded `FlushFileBuffers` wait. See
   UI reads latest via `getLatestSnapshot`.
 - **Monitoring ring buffers** — fixed 1000-frame ring for live charts in
   [[../frontend/ExperimentMonitoringTab]]; active whenever realtime is on.
+  Each slot carries its run's `start_generation`, its capture epoch and its
+  geometry origin (bridge ABI 41), stored under the lock the append already
+  holds. [[../services/MonitoringCellStore]] has no
+  thread: the caller of `fetch_monitoring_cells` / `monitoring_cell_pin` reads
+  the ring (lock held for scalars and cv::Mat headers only), crops outside every
+  lock, drops the shares under the ring lock again and then takes the store
+  mutex; the store mutex is never held while the ring lock is taken. Store
+  copies never leave the store (image pulls copy under the store mutex).
+  Both rules make "freed after the last reader" a lock order, which
+  ThreadSanitizer can check; cv::Mat's refcount (uninstrumented OpenCV) it cannot.
+  A capture change (review rounds 2-3 of #749) is one critical section of the
+  store mutex on the thread that made it: the epoch moves on, is published to
+  `ProcessingService` (atomic stores, the only call out under that mutex), the
+  strip is cleared and the pins ended. `ProcessingService`'s own changes reach
+  it through the capture authority (its own mutex), an ROI change while
+  `rtMutex_` is held (order: coordinator mutex → `rtMutex_` → authority mutex
+  → store mutex, never the reverse). A frame's capture is read when it enters
+  processing (an atomic load; with the ROI under `rtMutex_` when it moved) and
+  carried; the store compares it with the current one under its mutex on
+  every insert, and every read checks and copies in one critical section.
 - **Experiment accumulation** — bounded vectors collected while
   `experimentActive_ == true`, periodically flushed to HDF5 via
   `flushBufferedFrames`. The realtime thread drops sampled invalid frames first

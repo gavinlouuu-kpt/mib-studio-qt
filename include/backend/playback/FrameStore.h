@@ -133,6 +133,11 @@ public:
     // Ring capacity
     size_t capacity() const { return capacity_.load(std::memory_order_acquire); }
 
+    // The identity epoch new frames get (Frame::storeGeneration): starts at 1,
+    // incremented by a resize that renumbers the frames. Takes the structural
+    // lock shared (not for the per-frame path).
+    uint64_t storeGeneration() const;
+
     // Save frames to disk as TIFF images
     // Saves all available frames if range not specified
     // filterFn: optional function that returns true if frame should be skipped (empty frames)

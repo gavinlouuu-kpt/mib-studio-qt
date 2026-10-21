@@ -1,7 +1,9 @@
 // Reanalysis engine (#512 slice 2): moved verbatim from
 // src/backend/app/ReviewReanalysis.cpp (BackendFacade); see Reanalysis.h.
-// Slice 8 added the D6 options YOFO Review's regenerate masks runs with.
+// Slice 8 added the D6 options YOFO Review's regenerate masks runs with;
+// #758 the source's own pixel-to-micron factor, passed per call.
 #include "backend/review/Reanalysis.h"
+#include "backend/review/ReviewSession.h"
 
 #include "backend/processing/BatchMaskSources.h"
 #include "backend/processing/ProcessingConfigJson.h"
@@ -15,6 +17,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cmath>
 #include <filesystem>
 #include <limits>
 #include <stdexcept>
@@ -164,19 +167,24 @@ namespace backend::review
         const std::uint64_t count = request.count;
         const std::uint64_t maxFrames = request.maxFrames;
         const std::uint64_t maxInputBytes = request.maxInputBytes;
-        const auto &config = request.config;
 
         ReanalysisOutcome outcome;
         std::filesystem::path partial;
         bool published = false;
         std::string error, warning, retained;
         size_t produced = 0, valid = 0;
+        double usedFactor = 0.0;
+        bool factorRecorded = false;
         try
         {
             const auto checkCancel = [&] {
                 if (cancel->load(std::memory_order_acquire)) throw std::runtime_error(kReanalysisCancelled);
             };
             checkCancel();
+            if (!std::isfinite(request.pixelToMicron) || request.pixelToMicron <= 0.0)
+                throw std::runtime_error("Pixel-to-micron factor must be finite and positive");
+            // #758: the source's own factor, never the kernel's live one.
+            double factor = request.pixelToMicron;
             std::vector<services::ProcessedFrame> metadata;
             std::vector<cv::Mat> images;
             services::ProcessingService::Roi roi{0, 0, 0, 0};
@@ -259,6 +267,14 @@ namespace backend::review
                     throw std::runtime_error("Source ROI metadata is missing");
                 reader.readBackgroundImage(background);
                 hasOriginalCore = reader.readProcessingCoreIdentity(originalCore);
+                if (request.useRecordedPixelToMicron)
+                {
+                    if (const double recorded = ReviewSession::recordedPixelToMicron(reader); recorded > 0.0)
+                    {
+                        factor = recorded;
+                        factorRecorded = true;
+                    }
+                }
                 images.reserve(selected);
                 metadata.reserve(selected);
                 for (size_t i = start; i < start + selected; ++i)
@@ -305,6 +321,12 @@ namespace backend::review
                                  : services::batch_masks::buildSyntheticBackground(
                                        images, [cancel] { return cancel->load(std::memory_order_acquire); });
             const auto selected = images.size();
+            // The analysis inputs of this run (#758): its factor and the
+            // channel band of its background, per call; `config` records the
+            // band applied.
+            services::ProcessingConfig config = request.config;
+            const auto inputs = services::ProcessingService::offlineAnalysisInputs(config, background, factor);
+            usedFactor = factor;
             processing::ProcessingCoreIdentity usedCore;
             auto frames = kernel.processBatch(
                 images, config, background, roi,
@@ -312,7 +334,7 @@ namespace backend::review
                     checkCancel();
                     if (onProgress) onProgress(progress.done, progress.total);
                 },
-                &usedCore);
+                &usedCore, inputs);
             checkCancel();
             if (hasOriginalCore && originalCore != usedCore)
                 warning = "Source processing core differs; output records the active processing core.";
@@ -342,7 +364,7 @@ namespace backend::review
                       ("." + std::filesystem::path(output).filename().string() + ".partial-" +
                        recording::HdfExportService::newJobId());
             if (!services::batch_masks::saveMasksToHdf5(frames, partial.string(), config, roi.x, roi.y, roi.w, roi.h,
-                                                        background, kind == "hdf", &usedCore))
+                                                        background, kind == "hdf", &usedCore, factor))
                 throw std::runtime_error("Failed to save regenerated HDF");
             checkCancel();
             // Atomic no-clobber publication; supports NTFS/FAT on Windows and
@@ -385,6 +407,8 @@ namespace backend::review
         outcome.retainedPartialPath = std::move(retained);
         outcome.produced = produced;
         outcome.valid = valid;
+        outcome.pixelToMicron = usedFactor;
+        outcome.pixelToMicronRecorded = usedFactor > 0.0 && factorRecorded;
         return outcome;
     }
 

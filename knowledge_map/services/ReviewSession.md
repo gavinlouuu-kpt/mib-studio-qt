@@ -79,7 +79,11 @@ the Qt [[../frontend/HdfReviewTab]] (`recordedPixelToMicron`, TD-17)
   without it use `setFallbackPixelToMicron()` (the host's live/preferred
   factor; `fallbackPixelToMicron()` reads it back); `pixelToMicronFromFile`
   says which applied. The static `recordedPixelToMicron(reader)` is that
-  read (0 when absent), shared with the Qt tab and the batch job.
+  read (0 when absent), shared with the Qt tab, the batch job and the
+  reanalysis engine. A file without a run snapshot factor falls back to
+  `/experiment_info @pixel_to_micron`, the factor a regenerated or
+  reanalysed file was validated at (#758), so such a file reopens at it
+  instead of the fallback.
 - `metadata().runIdentity` → `RunIdentity` (#717 B1a, review ABI 2): what
   the file says about its own run, read at open by the static
   `readRunIdentity(reader)` from run snapshot v3 (#712, parsed with
@@ -298,12 +302,17 @@ bridge never starts them. The two export cancel models stay as they were:
   rebased to the first selected frame and clamped at 0. The optional
   synthetic background is the median of the first 32 frames. The whole
   file is valid rows then invalid rows. The job has no frame or byte budget.
-  The recorded config (read here), ROI and background are used by default.
-  Otherwise the request's config and ROI apply and the background is
-  cleared. An existing output is refused at start ("Output already exists;
-  choose a new file"). An output created mid-run fails the job and stays
-  untouched; the partial file is removed. Terminal messages:
-  "<path> (N images: V valid, I invalid)", "nothing written" on cancel, or the
+  The recorded config (read here, its target group from `@config_json`), ROI,
+  background and pixel-to-micron factor (#758: the file's recorded one, the
+  session's `fallbackPixelToMicron()` when it records none) are used by
+  default. Otherwise the request's config and ROI apply, the background is
+  cleared and objects are validated at the default 0.4886 µm/px, as for AVI
+  and folder sources. The factor goes to the engine per request; the bundled
+  kernel's own factor is never set. An existing output is refused at start
+  ("Output already exists; choose a new file"). An output created mid-run
+  fails the job and stays untouched; the partial file is removed. Terminal
+  messages: "<path> (N images: V valid, I invalid; px→µm F recorded | default
+  | fallback: the file records none)", "nothing written" on cancel, or the
   engine's error.
 - `startComputeCore(fraction)`: `computeFullRunCoreRecord` over the scatter
   (recorded factor, fixed seed); `computedCoreJson()` hands the record to the
@@ -393,6 +402,24 @@ Parsing never sets them, so the facade keeps the defaults:
   as `batch_masks::loadFromHdf5` converts them (BGR → gray; YOFO, whose
   pre-S8 reader did this; #735 review).
 - `ReanalysisOutcome::valid` counts the valid records (YOFO's message).
+- **Pixel-to-micron factor (#758).** `useRecordedPixelToMicron` (default on):
+  an HDF source's recorded factor (`ReviewSession::recordedPixelToMicron`)
+  wins; `pixelToMicron` (default 0.4886) applies when the source records
+  none, to folder / AVI sources and with the flag off. Not in the JSON
+  request: the facade sets its live factor as the fallback
+  (`ReviewReanalysis.cpp`), YOFO's job the session fallback (recorded
+  settings) or the default with the flag off (default settings). The engine
+  passes the factor and the channel band detected from the run's own
+  background to `processBatch` as `BatchAnalysisInputs`
+  (`ProcessingService::offlineAnalysisInputs`): the kernel's live factor and
+  band are never read or set, so a reanalysis beside a live run (the facade's
+  kernel is the live service) or after another source cannot pick up the
+  wrong one. `ReanalysisOutcome::pixelToMicron` / `pixelToMicronRecorded`
+  report what was used; the output records it (`/experiment_info
+  @pixel_to_micron`) with the applied config document (`@config_json`). Before
+  #758 YOFO Review validated at 0.4886 and MIB Studio / the Qt dialog at the
+  live factor, whatever the source recorded (pending release notice in
+  `docs/release-notes/README.md`).
 
 The functions:
 

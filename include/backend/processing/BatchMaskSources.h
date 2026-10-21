@@ -79,13 +79,16 @@ size_t saveMaskImages(const std::vector<ProcessedFrame>& frames,
 // Partition `frames` into valid/invalid based on `validation.isValid` and
 // write them to a new HDF5 file at `outputPath` via Hdf5Service::saveFrames().
 // Also writes `experiment_info` so the file round-trips through HdfReviewTab.
-// Returns true on success.
+// `pixelToMicron` > 0 is the factor the frames were analysed at: written as
+// `/experiment_info @pixel_to_micron` (#758), which review reads as the
+// file's recorded factor; 0 records none. Returns true on success.
 bool saveMasksToHdf5(const std::vector<ProcessedFrame>& frames,
                      const std::string& outputPath,
                      const ProcessingConfig& config,
                      int roiX, int roiY, int roiW, int roiH,
                      const cv::Mat& background,
                      bool useFrameTimestamps = false,
-                     const backend::processing::ProcessingCoreIdentity* processingCore = nullptr);
+                     const backend::processing::ProcessingCoreIdentity* processingCore = nullptr,
+                     double pixelToMicron = 0.0);
 
 } // namespace backend::services::batch_masks
