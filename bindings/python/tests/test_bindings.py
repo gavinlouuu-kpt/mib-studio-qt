@@ -178,6 +178,56 @@ class TestProcessBatchCalibration:
             mp.process_batch([make_ring_frame()], make_smoke_config(), pixel_to_micron=bad)
 
 
+class TestComputeProcessedFrameCalibration:
+    """#779: compute_processed_frame(pixel_to_micron=) maps to the core's
+    per-call BatchAnalysisInputs as process_batch does; omitted, the
+    behaviour is unchanged."""
+
+    @staticmethod
+    def _area_gated_config(area_px: float) -> dict:
+        # The area range admits the ring at 0.25 µm/px but not at 0.4886.
+        at25 = area_px * 0.25 * 0.25
+        config = make_smoke_config()
+        config.update(enable_area_range_check=True, area_threshold_min=int(at25 / 2),
+                      area_threshold_max=int(math.ceil(at25 * 2)))
+        assert area_px * 0.4886 * 0.4886 > config["area_threshold_max"]
+        return config
+
+    def test_omitted_factor_is_the_processing_default(self) -> None:
+        frame = make_ring_frame()
+        omitted = mp.compute_processed_frame(frame, config=make_smoke_config())
+        explicit = mp.compute_processed_frame(frame, config=make_smoke_config(),
+                                              pixel_to_micron=0.4886)
+        assert omitted == explicit
+        assert omitted["area_um2"] == pytest.approx(omitted["area"] * 0.4886 * 0.4886)
+
+    def test_factor_decides_area_validity_and_area_um2(self) -> None:
+        frame = make_ring_frame()
+        area_px = mp.compute_processed_frame(frame, config=make_smoke_config())["area"]
+        config = self._area_gated_config(area_px)
+        calibrated = mp.compute_processed_frame(frame, config=config, pixel_to_micron=0.25)
+        default = mp.compute_processed_frame(frame, config=config)
+        assert calibrated["is_valid"] is True
+        assert calibrated["area_um2"] == pytest.approx(area_px * 0.25 * 0.25)
+        assert default["is_valid"] is False  # validated at 0.4886, as before
+        assert default["area_um2"] == pytest.approx(area_px * 0.4886 * 0.4886)
+
+    def test_factor_agrees_with_process_batch(self) -> None:
+        frame = make_ring_frame()
+        area_px = mp.compute_processed_frame(frame, config=make_smoke_config())["area"]
+        config = self._area_gated_config(area_px)
+        single = mp.compute_processed_frame(frame, config=config, pixel_to_micron=0.25)
+        batch = mp.process_batch([frame], config, pixel_to_micron=0.25)[0]
+        for key in ("is_valid", "frame_type", "area", "area_um2", "in_range"):
+            assert single[key] == batch[key], key
+
+    @pytest.mark.parametrize("bad", [0.0, -0.5, float("nan"), float("inf")])
+    def test_factor_must_be_finite_and_positive(self, bad: float) -> None:
+        with pytest.raises(ValueError):
+            mp.compute_processed_frame(make_ring_frame(), config=make_smoke_config(),
+                                       pixel_to_micron=bad)
+
+
 class TestEModulusLut:
     def test_lookup_returns_nan_before_load(self) -> None:
         lut = mp.EModulusLut()
