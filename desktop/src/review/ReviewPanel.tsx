@@ -21,8 +21,10 @@ import { noImagesNotice } from "./noImages";
 // virtualised thumbnail grid, and under both the paged records table; the
 // Records sub-view shows the table alone. The right column is the selected
 // record (`inspect/InspectCards.tsx`: frame and object, Raw / Contour / Mask
-// crops or the full frame, stored values, what is recorded) over what the
-// stored results came from. Selection is shared by scatter, grid, table and
+// crops placed through the file's object coordinate space or the full frame,
+// stored values, what is recorded), its linked records (the track, read when
+// asked) and what the stored results came from, with the record reprocessed
+// on request (B3c; never on navigation, never written). Selection is shared by scatter, grid, table and
 // record card; Record details, a double-click on the full frame or a
 // thumbnail, or Enter opens the frame viewer (series, zoom, prev/next).
 // Export dialogs with progress / cancel / series range are in `exports/`.
@@ -46,13 +48,16 @@ import {
   reviewBridge,
   type OverlayMode,
   type ReviewInfo,
+  type ReviewReprocess,
   type ReviewRow,
   type ReviewRows,
+  type ReviewTrackRows,
 } from "./reviewBridge";
+import { REVIEW_REPROCESS, REVIEW_TRACK_ROWS } from "./reviewContract";
 import { ThumbnailGrid } from "./ThumbnailGrid";
 import { Button, Card, DataTable, Notice, Toolbar, type DataTableColumn } from "@mib/ui";
-import { RecordCard, StoredCard, type CropState } from "./inspect/InspectCards";
-import { cropNeedsCoordinateSpace, cropOverlay, cropSquare, type CellView } from "./inspect/inspectModel";
+import { RecordCard, StoredCard, TrackCard, type Asked, type CropState } from "./inspect/InspectCards";
+import { cropOverlay, objectOffset, recordCrop, reprocessUnavailable, storedENotComputed, type CellView } from "./inspect/inspectModel";
 import { cropPacketToDataUrl } from "./inspect/packetCrop";
 import "./review.css";
 import "./inspect/inspect.css";
@@ -150,6 +155,15 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
   const [overlay, setOverlay] = useState<OverlayMode>(OVERLAY.None);
   const [roiOverlay, setRoiOverlay] = useState(false);
   const [columns, setColumns] = useState<string[]>(loadColumns);
+  // B3c: answers to the record's buttons, each kept with the key of what it
+  // was asked for (file, set, track or record) and shown only while that is
+  // still what the card shows. Nothing here is sent on navigation.
+  // `seq` numbers each request: only the latest one's reply is taken, so an
+  // older reply for the same record never replaces a newer one.
+  const [track, setTrack] = useState<{ key: string; seq: number; answer: Asked<ReviewTrackRows> } | null>(null);
+  const [reprocess, setReprocess] = useState<{ key: string; seq: number; answer: Asked<ReviewReprocess> } | null>(null);
+  const requestSeq = useRef(0);
+  const [reprocessSettings, setReprocessSettings] = useState<number>(REVIEW_REPROCESS.settings.recorded);
   const [showColumns, setShowColumns] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rowsRef = useRef<ReviewRows | null>(null);
@@ -157,9 +171,9 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
 
   const reviewing = !!info?.file_open;
   const isRecording = !!info?.recording_file;
-  // No cell crop: a recording has no objects, and a file whose stored boxes
-  // may be ROI-local (ROI origin not 0, 0) waits for B3c (#757 round 2).
-  const cropBlocked = isRecording || cropNeedsCoordinateSpace(info);
+  // No cell crop: a recording has no objects, and a file whose object
+  // coordinate space is unknown cannot place its boxes (B3c, ruling on #717).
+  const cropBlocked = isRecording || (!!info && !objectOffset(info));
   const setTotal = !info ? 0 : Number(validSet ? info.valid_images.count || info.recorded_images.count : info.invalid_images.count);
   const rowTotal = Number(rows?.total ?? 0);
   // Records of the set: its images, or its rows when it stores none (#649).
@@ -173,14 +187,21 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
   cellViewRef.current = cellView;
   const selectedRowRef = useRef(selectedRow);
   selectedRowRef.current = selectedRow;
-  const cropKey = cropView && selectedRow ? `${selectedRow.frame_index}:${selectedRow.object_id}:${selectedRow.bbox_x},${selectedRow.bbox_y},${selectedRow.bbox_width},${selectedRow.bbox_height}` : "";
+  const infoRef = useRef(info);
+  infoRef.current = info;
+  const offset = objectOffset(info);
+  const cropKey =
+    cropView && selectedRow && offset
+      ? `${selectedRow.frame_index}:${selectedRow.object_id}:${selectedRow.bbox_x},${selectedRow.bbox_y},${selectedRow.bbox_width},${selectedRow.bbox_height}@${offset.dx},${offset.dy}`
+      : "";
 
   // Draw only the pixels owned by this exact immutable pull response: the
   // full frame into the canvas, or the record's crop as the CellImage's URL.
   const draw = useCallback((p: FramePacket) => {
     if (cellViewRef.current !== "full") {
       const row = selectedRowRef.current;
-      const rect = p.valid && row ? cropSquare(row, p.width, p.height) : null;
+      // The stored box placed in image coordinates (the packet is the full frame).
+      const rect = p.valid && row ? recordCrop(row, infoRef.current, p.width, p.height) : null;
       const src = rect ? cropPacketToDataUrl(p, rect) : null;
       setCrop(src ? { status: "ready", src } : { status: "failed" });
       return;
@@ -202,10 +223,17 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
     }
   }, [columns]);
 
+  // Only the latest page request fills the table (B3c, Codex round 3): a
+  // page of another set or file that lands late would otherwise become the
+  // selected row, and the record's buttons would ask about the wrong record.
+  // A reset (open, close, set change) retires every page in flight.
+  const rowsSeq = useRef(0);
   const loadRows = useCallback(
     async (valid: boolean, offset: number): Promise<ReviewRows | null> => {
+      const seq = ++rowsSeq.current;
       try {
         const page = await reviewBridge.rows(valid, offset, METRICS_PAGE_SIZE);
+        if (seq !== rowsSeq.current) return null;
         if (page.valid) {
           setRows(page);
           setRowsOffset(offset);
@@ -257,6 +285,7 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
   );
 
   const resetView = useCallback(() => {
+    rowsSeq.current++;
     scheduler.invalidate("review");
     scheduler.invalidate("viewer");
     setRows(null);
@@ -505,15 +534,70 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
     if (selected >= 0 && next >= 0 && next < recordTotal) select(next);
   };
 
+  // ---- the record's buttons (B3c) ---------------------------------------------
+  // Each answer is kept with the key of what was asked and shown only while
+  // the card still shows that: a reply that lands after the operator moved on
+  // is dropped (`*KeyRef` is the key now), never shown against another record,
+  // and a reply to anything but the latest request (`seq`) is ignored.
+  // The px→µm factor in use is part of both keys: a fallback change (a file
+  // without a recorded factor) drops answers whose µm² values used the old
+  // one (Codex round 2); nothing is re-sent on its own.
+  const factorKey = info ? `${info.pixel_to_micron}` : "";
+  const trackKey = reviewing && selectedRow && selectedRow.track_id >= 0 ? `${fileKey}|${factorKey}|${validSet}|${selectedRow.track_id}` : "";
+  const recordKey = reviewing && selected >= 0 ? `${fileKey}|${factorKey}|${validSet}|${selected}` : "";
+  const trackKeyRef = useRef(trackKey);
+  trackKeyRef.current = trackKey;
+  const recordKeyRef = useRef(recordKey);
+  recordKeyRef.current = recordKey;
+  const showTrack = async () => {
+    if (!trackKey || !selectedRow) return;
+    const key = trackKey;
+    const seq = ++requestSeq.current;
+    setTrack({ key, seq, answer: { status: "pending" } });
+    let answer: Asked<ReviewTrackRows>;
+    try {
+      const t = await reviewBridge.trackRows(validSet, selectedRow.track_id, REVIEW_TRACK_ROWS.max_rows);
+      answer = t.ok ? { status: "ready", value: t } : { status: "refused", message: t.message };
+    } catch (e) {
+      answer = { status: "refused", message: String(e) };
+    }
+    // Moved on meanwhile: the reply is dropped and nothing stays pending.
+    setTrack((cur) => (cur?.seq !== seq ? cur : trackKeyRef.current === key ? { key, seq, answer } : null));
+  };
+  const reprocessReason = reprocessUnavailable(info, selected >= 0, imagesMissingFor(info, validSet), jobs.busy);
+  const reprocessRecord = async () => {
+    if (!recordKey || reprocessReason !== null) return;
+    const key = recordKey;
+    const seq = ++requestSeq.current;
+    setReprocess({ key, seq, answer: { status: "pending" } });
+    let answer: Asked<ReviewReprocess>;
+    try {
+      const r = await reviewBridge.reprocessRecord(validSet, selected, reprocessSettings);
+      answer = r.ok && r.stored ? { status: "ready", value: r } : { status: "refused", message: r.message || "The backend gave no reason" };
+    } catch (e) {
+      answer = { status: "refused", message: String(e) };
+    }
+    setReprocess((cur) => (cur?.seq !== seq ? cur : recordKeyRef.current === key ? { key, seq, answer } : null));
+  };
+
   // The records table: today's metric columns on the kit's DataTable, one
   // page at a time (the kit has no paging, #715); a double-click on a row
   // opens the viewer as before.
   type PageRow = { row: ReviewRow; index: number };
   const pageRows: PageRow[] = (rows?.rows ?? []).map((row, k) => ({ row, index: rowsOffset + k }));
+  // A run without an E-LUT stores E as 0: not a value (coordinator ruling, #774).
+  const eNotComputed = storedENotComputed(info);
   const tableColumns: DataTableColumn<PageRow>[] = shownColumns.map((c) => ({
     key: c.id,
     header: c.label,
-    cell: (r) => c.format(r.row),
+    cell: (r) =>
+      c.id === "youngs_modulus" && eNotComputed ? (
+        <span className="rv-e-not-computed" title="No E-LUT was loaded for this run">
+          not computed
+        </span>
+      ) : (
+        c.format(r.row)
+      ),
     emphasis: c.id === "frame_index",
   }));
   const setName = isRecording ? "Frames" : validSet ? "Valid records" : "Invalid records";
@@ -564,7 +648,7 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
   );
 
   const counts = (valid: boolean) => (reviewing ? ` (${setTotalFor(info, valid)})` : "");
-  const imagesMissing = !!info && !(validSet ? (isRecording ? info.recorded_images : info.valid_images) : info.invalid_images).present;
+  const imagesMissing = imagesMissingFor(info, validSet);
 
   return (
     <>
@@ -744,7 +828,26 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
                 onDetails={openViewer}
                 emptyHint={subView === "scatter" ? "Click a point to inspect its record" : "Select a record"}
               />
-              <StoredCard info={info} onReprocess={() => setShowRegenerate(true)} reprocessDisabled={!ready || jobs.busy} />
+              {!isRecording && (
+                <TrackCard
+                  valid={validSet}
+                  row={selectedRow}
+                  position={selected}
+                  track={track && track.key === trackKey ? track.answer : null}
+                  onShow={() => void showTrack()}
+                  onSelect={select}
+                />
+              )}
+              <StoredCard
+                info={info}
+                onReprocess={() => setShowRegenerate(true)}
+                reprocessDisabled={!ready || jobs.busy}
+                onReprocessRecord={() => void reprocessRecord()}
+                reprocessRecordUnavailable={reprocessReason}
+                reprocessSettings={reprocessSettings}
+                onReprocessSettings={setReprocessSettings}
+                reprocess={reprocess && reprocess.key === recordKey ? reprocess.answer : null}
+              />
             </div>
           </div>
         )}
@@ -773,6 +876,7 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
           overlay={isRecording ? OVERLAY.None : overlay}
           roiOverlay={!isRecording && roiOverlay}
           row={selectedRow}
+          eNotComputed={eNotComputed}
           onIndexChange={select}
           onClose={() => setViewerOpen(false)}
           log={log}
@@ -781,6 +885,11 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
     </>
   );
 });
+
+/** The shown set stores no images (a file written without them, #649). */
+function imagesMissingFor(info: ReviewInfo | null, valid: boolean): boolean {
+  return !!info && !(valid ? (info.recording_file ? info.recorded_images : info.valid_images) : info.invalid_images).present;
+}
 
 function imageDims(info: ReviewInfo | null, valid: boolean): { w: number; h: number } {
   if (!info) return { w: 0, h: 0 };

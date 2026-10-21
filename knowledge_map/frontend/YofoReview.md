@@ -121,9 +121,8 @@ unknown. `fetch_review_info` gains `object_coordinates` (`roi_local`,
 `object_origin_x` / `object_origin_y`, the offset that places a stored box
 or centroid in image coordinates (#756 review 2; `REVIEW_OBJECT_COORDINATES`
 in the generated contract). A client never places a box when the space is
-`unknown`. The B3b PR adds the client only; R3 Inspect (B3a,
-on `feat/egrabber-workspace`) is its first user. `reviewIpc.golden.json`
-records the calls.
+`unknown`. The B3b PR added the client only; R3 Inspect uses all of it from
+B3c on (see **R3 Inspect** below). `reviewIpc.golden.json` records the calls.
 
 ### Transport (#512 S9)
 
@@ -588,11 +587,12 @@ recheck), and Open and Inspect stay disabled with no listing sent (see
 - **Export (R6):** a `Notice` and a `FactList` naming where each export is on
   Inspect's toolbar, with "Go to Inspect"; the export view itself is step B4.
 
-## R3 Inspect (#717 B3a)
+## R3 Inspect (#717 B3a, B3c)
 
 `ReviewPanel` laid out as the Penpot R3 board (`dcdbaa6b-9790-4e69-bea4-936747f588b1`)
-from the commands the review contract already has; nothing the file does not
-record is shown as a value.
+(B3a), wired to the review ABI 3 commands in B3c (object coordinate space,
+E-LUT and profile, track rows, reprocess one record); nothing the file does
+not record is shown as a value.
 
 - **Toolbar** (kit `Toolbar`): the sub-views **Scatter** (experiment files:
   `ChartsView` in a `Card`, valid records only), **Records** (the table
@@ -617,17 +617,20 @@ record is shown as a value.
   around the record's bounding box on the client (`cropSquare`: 1.6 × the
   box, at least 24 px, shifted inside the image; `inspect/packetCrop.ts`
   draws it through a canvas into a data URL for the kit's `CellImage`,
-  which takes a URL). The crop uses the bounding box as stored, so it is
-  offered only where that cannot be wrong: capture files with an ROI may
-  store boxes ROI-local next to full-frame images, and until B3c reads the
-  file's `object_coordinates` from the review contract (#756), a file whose
-  ROI origin is not (0, 0) shows **Full frame** only, with "Cell crop needs
-  the file's coordinate space (B3c)" (`cropNeedsCoordinateSpace`, ruling on
-  #757 round 2). **Full frame** is the canvas the panel always drew
+  which takes a URL). The crop places the stored box through the file's
+  object coordinate space (`fetch_review_info` `object_coordinates`,
+  coordinator ruling on #717 of 2026-10-21; `objectOffset` / `placedBox` /
+  `recordCrop`): `roi_local` at box + (`object_origin_x`, `object_origin_y`),
+  `image` as stored. For `unknown` no crop is cut: Raw / Contour / Mask are
+  disabled and the card says "No cell crop: the file does not record whether
+  its bounding boxes are relative to its ROI or to the image, and its masks
+  do not tell" (`CROP_UNKNOWN_SPACE`). `cropSquare` keeps the square inside
+  the image, and a placed box wholly outside the image is not cut at an
+  edge. **Full frame** is the canvas the panel always drew
   (the toolbar's overlay and ROI; double-click opens the viewer). Views a
   record cannot show are disabled with the reason (a recording has no
-  objects, a file with a moved ROI waits for B3c, a set without masks has
-  no Contour / Mask); a crop that cannot
+  objects, a file whose space is unknown gives no crop, a set without masks
+  has no Contour / Mask); a crop that cannot
   be drawn says so, and a set without images shows the kit's "Image not
   recorded". The stored values (`measurementFacts`: area, deformability,
   stored E, ring ratio, timestamp, validation, track, objects in frame, the
@@ -637,28 +640,87 @@ record is shown as a value.
   measurement, full frame, mask / contour, image series). **Previous /
   Next record** step through the set (its rows when it stores no images,
   #649) and **Record details** opens the frame viewer.
+  The provenance line also carries the snapshot's `profile_id` and the
+  E-LUT id and revision ("profile not recorded" / "E-LUT not recorded" for
+  a v3 snapshot without them, "no E-LUT loaded" when the run had none; a
+  legacy file only says it has no snapshot).
+- **Stored E of a run without an E-LUT** (coordinator ruling on #774,
+  option b; `storedENotComputed` / `storedEText`): where the identity's
+  `emodulus_lut` is present with `loaded` false, the stored E (which such
+  runs store as 0) reads "Not computed (no E-LUT loaded)" in the record
+  card, the comparison's Stored column, the records table's E column ("not
+  computed") and the frame viewer's metrics line, never "0.00 kPa". A legacy
+  file (no snapshot, `emodulus_lut` null) keeps its E as stored; nothing is
+  guessed.
+- **Linked cell records** (`TrackCard`, B3c; experiment files): the
+  selected record's track. **Show linked records** sends
+  `fetch_review_track_rows(valid, track_id, 256)` and lists the track's
+  records in the set (position, frame, object, area, deformability,
+  validation; a row selects its record). When the cap truncated the track
+  the summary says so ("Track T: N records in the valid set; the first 256
+  are shown"). An untracked record has no button; a refusal reads "Not
+  read: …". The rows stay shown while the selection stays on that track and
+  are never read on navigation.
 - **Stored vs reprocessed** (`StoredCard`): the core recorded in the file
   (`core X (source) recorded in this file`; neutral, because a regenerated
   file records the core that regenerated it and no marker tells it from a
   capture, #757 review 1), the run snapshot, the calibration and px→µm
-  (recorded or fallback, in the warn tone), the run accounting, and E-LUT
-  **Not available** (the provenance is in the review contract from B3b,
-  wired in B3c). "Reprocessing writes a new file; this view lists no
-  history" (#754 defers regenerate provenance and Compare); **Reprocess
-  into a new file…** opens the Regenerate masks dialog.
+  (recorded or fallback, in the warn tone), **Profile** and **E-LUT**
+  (`profileFact`, `lutFact`: id, revision, source, sha256 prefix, checksum
+  status as recorded; "Not recorded" when absent, never a value),
+  **Object coordinates** (`objectSpaceFact`: the space and what decided it,
+  from `object_coordinates_source`: the file's attribute, the run snapshot,
+  the mask check, or the ROI at the origin; unknown in the warn tone), and
+  the run accounting. **This record, reprocessed now** (B3c): a settings
+  choice (recorded / default) and **Reprocess this record**, which alone
+  sends `review_reprocess_record(valid, index, settings)`; it is never sent
+  on selection, stepping, a sub-view, the set or a stage change. The answer
+  is shown as a Stored / Reprocessed table (`reprocessComparison`: area,
+  deformability, area ratio, ring ratio, E, validation, the box and centroid
+  in image coordinates with the stored box placed through the space,
+  objects in frame), the match line (`reprocessMatchText`: matched object k
+  of n, or "No match" with why), a count difference, and the settings label
+  and core; "nothing is written". A reprocessed E without a LUT reads "not
+  recomputed (no E-LUT loaded)". The reply names no E-LUT, and reprocessing
+  uses the app's live or bundled LUT, not the run's (#764 item 2), so a
+  recomputed E reads "x kPa, computed with the app's current E-LUT, which
+  may differ from the run's" and the match line carries the same caveat
+  (`REPROCESSED_E_CAVEAT`). Refusals read "Not reprocessed: <backend message>" (a
+  claimed job lane, no stored image, an unknown space, a kernel failure).
+  Cases the backend would refuse are said under the button before any call
+  (`reprocessUnavailable`: no selection, a recording, an unknown space, no
+  stored images, a running job). An answer is kept with its file, the
+  px→µm factor in use, the set and the record (the linked records with the
+  track), and a request sequence number: a reply that lands after the
+  operator moved on is dropped and leaves nothing pending, an older reply
+  never replaces a newer one, and a fallback px→µm change drops answers
+  computed with the old factor without re-sending (Codex rounds 1 and 2).
+  Records pages carry a sequence too (`loadRows`, Codex round 3): only the
+  latest request fills the table, and a reset (open, close, set change)
+  retires pages in flight, so a late page of the other set or file never
+  becomes the selected record the buttons ask about.
+  "Reprocessing writes a new file; this view lists no history" (#754 defers
+  regenerate provenance and Compare); **Reprocess into a new file…** opens
+  the Regenerate masks dialog, unchanged.
 - **Records** (kit `DataTable`, compact): the selected row in the inspect
   colour (`aria-current`); a double-click on a row opens the viewer; ◀ / ▶
   page (the kit has no paging, #715).
 - **Not shown** (rulings on #717): the analysis plan, populations, polygon
   and E gates, method names, Open in window.
-- **Tests:** `inspect/inspectModel.test.ts` (names, crop square, view
-  availability, facts) and `inspect/InspectView.test.tsx` (the panel over a
-  mocked IPC: the overlay each view asks for and the crop rectangle, the
-  reasons, stepping, the viewer from Record details / full frame / a row,
-  sub-views keeping the selection, the Stored card and Reprocess, and every
-  pre-B3a control still reachable). `reviewIpc.golden.json` is unchanged:
-  the same commands and arguments flow as before (the test clicks
-  **Scatter** where it clicked **Charts**).
+- **Tests:** `inspect/inspectModel.test.ts` (names, crop square and its
+  placement for `roi_local` / `image` / `unknown` with a moved ROI, view
+  availability, facts, E-LUT and profile, track truncation, the comparison
+  and match text, when reprocessing is offered) and
+  `inspect/InspectView.test.tsx` (the panel over a mocked IPC: the overlay
+  each view asks for and the crop rectangle in each space, the reasons,
+  stepping, the viewer from Record details / full frame / a row, sub-views
+  keeping the selection, the Stored card's E-LUT / profile / space, linked
+  records with the cap, reprocess only on its button with every refusal and
+  a late reply dropped, no new IPC on selection / sub-view / set changes,
+  and every pre-B3a control still reachable). `ReviewApp.test.tsx` checks a
+  stage change with a run open sends nothing. `reviewIpc.golden.json`
+  gained one flow in B3c ("linked records and reprocess one record": the
+  two buttons' calls); every other flow is unchanged.
 
 ## CI
 

@@ -13,7 +13,9 @@
 // #717 B1a (review ABI 2) added one call outside the panel: the identity
 // probe (`review_probe_runs`); no existing flow changed. #717 B3b (review ABI
 // 3) added two: the linked records of a track (`fetch_review_track_rows`)
-// and one record reprocessed (`review_reprocess_record`).
+// and one record reprocessed (`review_reprocess_record`). #717 B3c sends
+// both from the panel, only on their buttons: one new flow ("linked records
+// and reprocess one record"); no existing flow changed.
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -67,6 +69,10 @@ function info() {
     roi_y: 0,
     roi_w: 512,
     roi_h: 96,
+    object_coordinates: open ? "image" : "unknown",
+    object_coordinates_source: open ? "roi_origin" : "",
+    object_origin_x: 0,
+    object_origin_y: 0,
     has_background: true,
     has_core_identity: true,
     core_version: "1.2.0",
@@ -163,7 +169,9 @@ function respond(cmd: string, args: Record<string, unknown>): unknown {
         settings_label: args.settings === 0 ? "recorded settings (config, ROI, background)" : "default settings (whole image, no background)",
         core_version: "2.1.0",
         core_source: "bundled",
-        stored: null,
+        pixel_to_micron: 0.5,
+        emodulus_recomputed: false,
+        stored: row(Number(args.index)),
         reprocessed: [],
         match_index: null,
         object_count_differs: false,
@@ -536,6 +544,13 @@ it("sends the same commands, arguments, chart bytes and dialogs as before the tr
       expect(refused.querySelector('[role="alert"]')).toBeNull();
       await click(button("Regenerate", refused));
       await finishJob("Regenerate masks");
+    }),
+  );
+
+  flows.push(
+    await flow("linked records and reprocess one record", async () => {
+      await click(button("Show linked records"));
+      await click(button("Reprocess this record"));
     }),
   );
 

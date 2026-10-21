@@ -174,8 +174,10 @@ the right shows:
 - its image: **Raw**, **Contour** or **Mask** show the cell cut out of its
   frame, **Full frame** the whole frame with the overlay and ROI chosen on
   the toolbar. A view the file cannot show is greyed out, with the reason
-  as a tooltip. In a file recorded with an ROI that does not start at the
-  image corner, this version shows the full frame only;
+  as a tooltip. The cut-out follows how the file stores its object
+  positions (relative to the ROI, or to the whole image; **Stored vs
+  reprocessed** says which, and how that was decided). When the file does
+  not say and its masks do not tell, only the full frame is shown;
 - its stored values (area, deformability, E, track, …) and **What is
   recorded?** for it. A raw recording stores only each frame's index and
   time, so its other values read **Not recorded**;
@@ -183,10 +185,20 @@ the right shows:
   the frame viewer (also a double-click on a thumbnail, the full frame or a
   table row); there, **←/→** step through frames.
 
-**Stored vs reprocessed** below it names the processing core and
-calibration recorded in the file. Nothing in Inspect changes them:
-**Reprocess into a new file…** opens **Regenerate masks**, which writes a
-new file. The E-LUT shows **Not available** in this version.
+**Linked cell records** lists the other records of the selected record's
+track when you press **Show linked records** (at most 256; the card says
+when a track has more). Click a row to select that record.
+
+**Stored vs reprocessed** names the processing core, calibration, profile
+and E-modulus LUT recorded in the file (**Not recorded** when the file does
+not say), and how its object positions are stored. **Reprocess this
+record** runs the processing core on the selected record's stored image,
+with the recorded or the default settings, and shows the stored and the
+reprocessed values side by side. It writes nothing, and runs only when you
+press it. If it cannot run (a job is running, the record has no stored
+image, or the file does not say how its positions are stored), it says why.
+Nothing in Inspect changes the file: **Reprocess into a new file…** opens
+**Regenerate masks**, which writes a new file.
 
 The status bar shows the file, its frame accounting, and the
 pixel-to-micron factor in use.

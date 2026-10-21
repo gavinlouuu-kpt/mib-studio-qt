@@ -1,13 +1,23 @@
-// R3 Inspect's facts (#717 B3a, #269): what the record card and the Stored
-// card say about the selected record, from the commands the review contract
-// already has (`fetch_review_info`, `fetch_review_rows`). Pure; tested in
+// R3 Inspect's facts (#717 B3a, #269; B3c wires review ABI 3): what the
+// record card, the linked records and the Stored card say about the selected
+// record, from `fetch_review_info`, `fetch_review_rows`,
+// `fetch_review_track_rows` and `review_reprocess_record`. Pure; tested in
 // inspectModel.test.ts. Nothing here computes a value the file does not
 // record: a missing fact is `null` (the kit shows it as missing), never a
 // stand-in, and no record id is invented (files carry none: a record is
 // named by its frame and object).
 import type { Fact } from "@mib/ui";
 import { metricNumber } from "../../metricFormat";
-import { OVERLAY, type OverlayMode, type ReviewInfo, type ReviewRow } from "../reviewBridge";
+import {
+  OVERLAY,
+  type OverlayMode,
+  type ReviewEModulusLut,
+  type ReviewInfo,
+  type ReviewReprocess,
+  type ReviewRow,
+  type ReviewRunIdentity,
+  type ReviewTrackRows,
+} from "../reviewBridge";
 
 /** The record's name everywhere in Inspect (coordinator ruling on #717). A
  * raw recording's rows are frames, with no object. */
@@ -36,9 +46,10 @@ export interface CropRect {
   size: number;
 }
 
-/** The square around a record's bounding box, with a margin, inside the
- * image (CellImage shows a square crop). Null without a bounding box: the
- * record cannot be cropped (raw recordings, files without metrics). */
+/** The square around a bounding box (in image coordinates), with a margin,
+ * inside the image (CellImage shows a square crop). Null without a bounding
+ * box (raw recordings, files without metrics) or when the box lies wholly
+ * outside the image. */
 export function cropSquare(
   row: Pick<ReviewRow, "bbox_x" | "bbox_y" | "bbox_width" | "bbox_height">,
   width: number,
@@ -48,6 +59,8 @@ export function cropSquare(
 ): CropRect | null {
   const { bbox_x: bx, bbox_y: by, bbox_width: bw, bbox_height: bh } = row;
   if (![bx, by, bw, bh].every(Number.isFinite) || bw <= 0 || bh <= 0 || width <= 0 || height <= 0) return null;
+  // A box wholly outside the image is not cut at the nearest edge (B3c).
+  if (bx >= width || by >= height || bx + bw <= 0 || by + bh <= 0) return null;
   const size = Math.max(1, Math.min(width, height, Math.round(Math.max(minSize, Math.max(bw, bh) * margin))));
   const cx = bx + bw / 2;
   const cy = by + bh / 2;
@@ -55,28 +68,99 @@ export function cropSquare(
   return { x: clamp(cx, width), y: clamp(cy, height), size };
 }
 
-/** Why a crop view cannot be chosen for this record, or null when it can. */
-/** Why no cell crop is offered while the file's object coordinate space is
- * not known to the client (coordinator ruling on #757, round 2). */
-export const CROP_NEEDS_SPACE = "Cell crop needs the file's coordinate space (B3c)";
-
-/** A capture with an ROI away from the image origin may store its bounding
- * boxes ROI-local next to full-frame images, and nothing the client reads
- * yet says which: the crop would land beside the cell. At origin (0, 0) both
- * placements are the same. B3c reads `object_coordinates` from the review
- * contract instead. */
-export function cropNeedsCoordinateSpace(info: ReviewInfo | null): boolean {
-  return !!info && !info.recording_file && info.roi_w > 0 && info.roi_h > 0 && (info.roi_x !== 0 || info.roi_y !== 0);
+/** The offset that places a stored bounding box or centroid in image
+ * coordinates, from the file's object coordinate space (review ABI 3,
+ * coordinator ruling on #717 of 2026-10-21): the ROI origin for
+ * `roi_local`, nothing for `image`. Null when nothing may be placed: a raw
+ * recording (no objects), an `unknown` space, or no info. */
+export function objectOffset(info: ReviewInfo | null): { dx: number; dy: number } | null {
+  if (!info || info.recording_file) return null;
+  if (info.object_coordinates === "image") return { dx: 0, dy: 0 };
+  if (info.object_coordinates === "roi_local") {
+    const dx = info.object_origin_x;
+    const dy = info.object_origin_y;
+    return Number.isFinite(dx) && Number.isFinite(dy) ? { dx, dy } : null;
+  }
+  return null;
 }
 
+type Box = Pick<ReviewRow, "bbox_x" | "bbox_y" | "bbox_width" | "bbox_height">;
+
+/** The record's stored box in image coordinates (null: it cannot be placed). */
+export function placedBox(row: Box, info: ReviewInfo | null): Box | null {
+  const offset = objectOffset(info);
+  if (!offset) return null;
+  return { bbox_x: row.bbox_x + offset.dx, bbox_y: row.bbox_y + offset.dy, bbox_width: row.bbox_width, bbox_height: row.bbox_height };
+}
+
+/** The crop square of a record in the frame packet: its box placed in image
+ * coordinates, then `cropSquare` (kept inside the image). */
+export function recordCrop(row: Box, info: ReviewInfo | null, width: number, height: number): CropRect | null {
+  const box = placedBox(row, info);
+  return box ? cropSquare(box, width, height) : null;
+}
+
+/** Why no cell crop is offered for a file whose space nothing decides. */
+export const CROP_UNKNOWN_SPACE =
+  "No cell crop: the file does not record whether its bounding boxes are relative to its ROI or to the image, and its masks do not tell";
+
+/** Why a crop view cannot be chosen for this record, or null when it can. */
 export function cropUnavailable(view: CellView, info: ReviewInfo | null, valid: boolean, row: ReviewRow | null): string | null {
   if (view === "full") return null;
   if (!info || info.recording_file) return "Recording files carry no objects";
-  if (cropNeedsCoordinateSpace(info)) return CROP_NEEDS_SPACE;
+  if (!objectOffset(info)) return CROP_UNKNOWN_SPACE;
   if (!row || cropSquare(row, 1e9, 1e9) === null) return "No bounding box is recorded for this record";
   if (view !== "raw" && !(valid ? info.valid_masks : info.invalid_masks).present) return "No masks are recorded in this set";
   return null;
 }
+
+const SPACE_SOURCE: Record<ReviewInfo["object_coordinates_source"], string> = {
+  attribute: "recorded in the file (@object_coordinates)",
+  snapshot: "decided by the run snapshot",
+  mask_check: "decided by checking the stored masks",
+  roi_origin: "the ROI starts at (0, 0) or has no area, so both placements are the same",
+  "": "",
+};
+
+/** The file's object coordinate space and what decided it (Stored card). */
+export function objectSpaceFact(info: ReviewInfo): Fact {
+  const label = "Object coordinates";
+  if (info.recording_file) return { label, value: "None (raw recording)", tone: "unknown" };
+  const source = SPACE_SOURCE[info.object_coordinates_source] ?? "";
+  const by = source ? ` · ${source}` : "";
+  if (info.object_coordinates === "roi_local" && objectOffset(info))
+    return { label, value: `ROI-local, placed at the ROI origin (${info.object_origin_x}, ${info.object_origin_y})${by}` };
+  if (info.object_coordinates === "image") return { label, value: `image${by}` };
+  return {
+    label,
+    value: "Unknown: the file does not record it and its masks do not tell, so no crop is cut and no record is reprocessed",
+    tone: "warn",
+  };
+}
+
+/** The run recorded that it had no E-LUT loaded (snapshot v3
+ * `emodulus_lut.loaded` false): its stored E values are not measurements
+ * (they read 0), so E is shown as not computed. A legacy file (no snapshot,
+ * `emodulus_lut` null) keeps its values as stored: nothing is guessed
+ * (coordinator ruling on #774, option b). */
+export function storedENotComputed(info: ReviewInfo | null | undefined): boolean {
+  const lut = info?.identity?.emodulus_lut ?? null;
+  return !!lut && lut.loaded === false;
+}
+
+export const E_NOT_COMPUTED = "Not computed (no E-LUT loaded)";
+
+/** A stored E for display: not computed for a run without a LUT, else the
+ * value in kPa, or null when it is missing (NaN). */
+export function storedEText(row: Pick<ReviewRow, "youngs_modulus">, info: ReviewInfo | null | undefined): string | null {
+  if (storedENotComputed(info)) return E_NOT_COMPUTED;
+  const e = row.youngs_modulus;
+  return typeof e === "number" && Number.isFinite(e) ? `${metricNumber(e, 2)} kPa` : null;
+}
+
+/** The reprocess reply names no E-LUT (#764 item 2: it uses the app's live
+ * or bundled LUT, not the run's), so a recomputed E carries this caveat. */
+export const REPROCESSED_E_CAVEAT = "computed with the app's current E-LUT, which may differ from the run's";
 
 const saved = (present: boolean, detail?: string): Pick<Fact, "value" | "tone"> =>
   present ? { value: detail ? `Saved · ${detail}` : "Saved", tone: "confirmed" } : { value: "Not recorded", tone: "unknown" };
@@ -119,7 +203,7 @@ export function measurementFacts(row: ReviewRow, info: ReviewInfo): Fact[] {
   return [
     { label: "Area", value: `${metricNumber(row.area_um2, 2)} µm² · ${metricNumber(row.area, 1)} px²` },
     { label: "Deformability", value: metricNumber(row.deformability, 4) },
-    { label: "E (stored)", value: Number.isFinite(row.youngs_modulus) ? `${metricNumber(row.youngs_modulus, 2)} kPa` : null },
+    { label: "E (stored)", value: storedEText(row, info), tone: storedENotComputed(info) ? "unknown" : undefined },
     { label: "Ring ratio", value: metricNumber(row.ring_ratio, 3) },
     { label: "Timestamp", value: `${row.timestamp_ns} ns` },
     {
@@ -151,17 +235,52 @@ export function recordWhere(info: ReviewInfo, valid: boolean, position: number, 
     .join(" · ");
 }
 
-/** The provenance line: experiment, snapshot, calibration (what the file declares). */
-export function recordProvenance(info: ReviewInfo): string {
-  const id = info.identity;
-  if (!id) return "";
+/** The E-LUT in a few words, or null when the identity records none. */
+function lutWords(lut: ReviewEModulusLut | null): string | null {
+  if (!lut) return null;
+  if (!lut.loaded) return "none loaded (the run had no E values)";
   return [
-    id.experiment_id ? `experiment ${id.experiment_id.slice(0, 8)}…` : null,
-    id.has_snapshot ? `snapshot v${id.snapshot_version ?? "?"}` : id.snapshot_unreadable ? "snapshot unreadable" : "no run snapshot (legacy file)",
-    id.calibration_record_id ? `calibration ${id.calibration_record_id}` : null,
+    lut.lut_id ?? "id not recorded",
+    lut.revision ? `revision ${lut.revision}` : null,
+    lut.source,
+    lut.sha256 ? `sha256 ${lut.sha256.slice(0, 12)}…` : null,
+    lut.checksum_status ? `checksum ${lut.checksum_status}` : null,
   ]
     .filter(Boolean)
     .join(" · ");
+}
+
+/** The provenance line: experiment, snapshot, calibration, profile and E-LUT
+ * (what the file declares; a v3 snapshot member it lacks reads "not
+ * recorded"; a legacy file says it has no snapshot, nothing more). */
+export function recordProvenance(info: ReviewInfo): string {
+  const id = info.identity;
+  if (!id) return "";
+  const snapshot = id.has_snapshot;
+  const lut = id.emodulus_lut ?? null;
+  return [
+    id.experiment_id ? `experiment ${id.experiment_id.slice(0, 8)}…` : null,
+    snapshot ? `snapshot v${id.snapshot_version ?? "?"}` : id.snapshot_unreadable ? "snapshot unreadable" : "no run snapshot (legacy file)",
+    id.calibration_record_id ? `calibration ${id.calibration_record_id}` : null,
+    id.profile_id ? `profile ${id.profile_id}` : snapshot ? "profile not recorded" : null,
+    lut ? (lut.loaded ? `E-LUT ${lut.lut_id ?? "id not recorded"}${lut.revision ? ` rev ${lut.revision}` : ""}` : "no E-LUT loaded") : snapshot ? "E-LUT not recorded" : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+const NOT_RECORDED_FACT = { value: "Not recorded", tone: "unknown" } as const;
+
+/** The run's E-LUT provenance (snapshot v3, review ABI 3). */
+export function lutFact(id: ReviewRunIdentity | null | undefined): Fact {
+  const lut = id?.emodulus_lut ?? null;
+  if (!lut) return { label: "E-LUT", ...NOT_RECORDED_FACT };
+  return { label: "E-LUT", value: lutWords(lut), tone: !lut.loaded ? "warn" : lut.checksum_status === "verified" ? "confirmed" : undefined };
+}
+
+/** The run's profile id: the only "method" a file records. */
+export function profileFact(id: ReviewRunIdentity | null | undefined): Fact {
+  return id?.profile_id ? { label: "Profile", value: id.profile_id } : { label: "Profile", ...NOT_RECORDED_FACT };
 }
 
 /** The Stored card: what produced the stored results, and how reprocessing works. */
@@ -181,8 +300,99 @@ export function storedFacts(info: ReviewInfo): Fact[] {
       value: `${id?.calibration_record_id ? `${id.calibration_record_id} · ` : ""}px→µm ${metricNumber(info.pixel_to_micron, 4)} ${info.pixel_to_micron_from_file ? "(recorded)" : "(fallback: the file records none)"}`,
       tone: info.pixel_to_micron_from_file ? undefined : "warn",
     },
-    { label: "E-LUT", value: "Not available", tone: "unknown" },
+    profileFact(id),
+    lutFact(id),
+    objectSpaceFact(info),
     { label: "Run accounting", value: accounting || null },
     { label: "Reprocessing", value: "Reprocessing writes a new file; this view lists no history" },
   ];
+}
+
+/** What the linked records show above their rows. */
+export function trackSummary(t: ReviewTrackRows, trackId: number, valid: boolean): string {
+  const set = valid ? "valid" : "invalid";
+  const total = t.total;
+  const shown = t.rows.length;
+  return t.truncated
+    ? `Track ${trackId}: ${total} records in the ${set} set; the first ${shown} are shown (at most 256 per request)`
+    : `Track ${trackId}: ${total} ${total === "1" ? "record" : "records"} in the ${set} set`;
+}
+
+/** Why "Reprocess this record" cannot be sent, or null when it can. The
+ * backend refuses the same cases; these are said before a call is made. */
+export function reprocessUnavailable(
+  info: ReviewInfo | null,
+  selected: boolean,
+  imagesMissing: boolean,
+  jobsBusy: boolean,
+): string | null {
+  if (!info || !selected) return "Select a record to reprocess";
+  if (info.recording_file) return "Recording files carry no objects";
+  if (info.object_coordinates !== "roi_local" && info.object_coordinates !== "image")
+    return "Not offered: the file does not record whether its bounding boxes are relative to its ROI or to the image, and its masks do not tell, so the record cannot be matched";
+  if (imagesMissing) return "No stored image to reprocess in this set";
+  if (jobsBusy) return "A review job is running; reprocess the record when it finishes";
+  return null;
+}
+
+export interface CompareLine {
+  label: string;
+  stored: string | null;
+  reprocessed: string | null;
+}
+
+const num = (v: number | null | undefined, digits: number): string | null =>
+  typeof v === "number" && Number.isFinite(v) ? v.toFixed(digits) : null;
+
+/** Stored next to reprocessed, value by value. The stored box and centroid
+ * are placed in image coordinates (the reprocessed ones are reported so);
+ * an E not recomputed reads so, never 0. */
+export function reprocessComparison(r: ReviewReprocess, info: ReviewInfo): CompareLine[] {
+  const s = r.stored;
+  if (!s) return [];
+  const m = r.match_index !== null ? (r.reprocessed[r.match_index] ?? null) : null;
+  const offset = objectOffset(info) ?? { dx: 0, dy: 0 };
+  const box = (row: ReviewRow, dx: number, dy: number) =>
+    `${num(row.bbox_x + dx, 0)}, ${num(row.bbox_y + dy, 0)} · ${num(row.bbox_width, 0)}×${num(row.bbox_height, 0)}`;
+  const centre = (row: ReviewRow, dx: number, dy: number) => `${num(row.centroid_x + dx, 1)}, ${num(row.centroid_y + dy, 1)}`;
+  const validation = (row: ReviewRow) => `${row.valid ? "valid" : "invalid"}${row.target_group ? " · target group" : ""}`;
+  const found = r.truncated ? `more than ${r.reprocessed.length}` : String(r.reprocessed.length);
+  const e = (row: ReviewRow | null, recomputed: boolean): string | null => {
+    if (!row) return null;
+    if (!recomputed) return "not recomputed (no E-LUT loaded)";
+    return num(row.youngs_modulus, 2) !== null ? `${num(row.youngs_modulus, 2)} kPa, ${REPROCESSED_E_CAVEAT}` : null;
+  };
+  return [
+    { label: "Area (px²)", stored: num(s.area, 1), reprocessed: m ? num(m.area, 1) : null },
+    { label: "Area (µm²)", stored: num(s.area_um2, 2), reprocessed: m ? num(m.area_um2, 2) : null },
+    { label: "Deformability", stored: num(s.deformability, 4), reprocessed: m ? num(m.deformability, 4) : null },
+    { label: "Area ratio", stored: num(s.area_ratio, 3), reprocessed: m ? num(m.area_ratio, 3) : null },
+    { label: "Ring ratio", stored: num(s.ring_ratio, 3), reprocessed: m ? num(m.ring_ratio, 3) : null },
+    { label: "E", stored: storedEText(s, info), reprocessed: e(m, r.emodulus_recomputed) },
+    { label: "Validation", stored: validation(s), reprocessed: m ? validation(m) : null },
+    { label: "Box (image x, y · w×h)", stored: box(s, offset.dx, offset.dy), reprocessed: m ? box(m, 0, 0) : null },
+    { label: "Centroid (image)", stored: centre(s, offset.dx, offset.dy), reprocessed: m ? centre(m, 0, 0) : null },
+    { label: "Objects in frame", stored: s.object_count > 0 ? String(s.object_count) : null, reprocessed: found },
+  ];
+}
+
+/** One line on the match: which found object is compared, or why none is.
+ * The backend returns at most 64 objects and matches among those only, so a
+ * truncated answer says the match is among the returned ones. */
+export function reprocessMatchText(r: ReviewReprocess): string {
+  const n = r.reprocessed.length;
+  if (n === 0) return "No match: the kernel found no object in the record's stored image";
+  if (r.truncated) {
+    return r.match_index === null
+      ? `No match among the first ${n} objects returned (the kernel found more); one not returned may lie inside the stored box`
+      : `Matched object ${r.match_index + 1} of the first ${n} objects returned (the kernel found more; a nearer one may not be returned)${eCaveat(r)}`;
+  }
+  const found = n === 1 ? "1 object" : `${n} objects`;
+  if (r.match_index === null) return `No match: the kernel found ${found}, none with its centroid inside the stored box`;
+  return `Matched object ${r.match_index + 1} of ${found} found (centroid nearest the stored one, inside the stored box)${eCaveat(r)}`;
+}
+
+/** The match line's E caveat: a recomputed E used the app's current E-LUT. */
+function eCaveat(r: ReviewReprocess): string {
+  return r.emodulus_recomputed ? `; its E was ${REPROCESSED_E_CAVEAT}` : "";
 }
