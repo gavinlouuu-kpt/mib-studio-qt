@@ -65,6 +65,10 @@ class ProcessingService {
 public:
     using Job = std::function<void()>;
 
+    // The pixel-to-micron factor (µm per pixel) a service starts with, and the
+    // one YOFO Review's "default settings" process at.
+    static constexpr double kDefaultPixelToMicronFactor = 0.4886;
+
     struct Roi {
         int x{0}, y{0}, w{0}, h{0};
     };
@@ -588,6 +592,21 @@ public:
     };
     using BatchProgressCallback = std::function<void(const BatchProgress&)>;
 
+    // Analysis inputs of one processBatch call that otherwise come from the
+    // service's live state (#758). An unset member keeps the live value: the
+    // factor setPixelToMicronFactor set, the channel band detected from the
+    // published background (getChannelBand). Offline reanalysis sets both, so
+    // a job validates at its own source's calibration and never reads or
+    // changes what a live run or another job uses.
+    struct BatchAnalysisInputs {
+        // µm per pixel for area validity, the target group and the reported
+        // analysisPixelToMicronFactor; must be finite and > 0 when set.
+        std::optional<double> pixelToMicronFactor;
+        // Frame coordinates; h == 0 is no band (the config's channel_band_*
+        // then apply as given). Used only with auto_roi_from_background.
+        std::optional<Roi> channelBand;
+    };
+
     // Process each image in order and emit one ProcessedFrame per detected
     // object candidate. Multiple records can share the same source index and
     // timestamp. Does not modify realtime config, monitoring buffers,
@@ -598,7 +617,8 @@ public:
         const cv::Mat& background = cv::Mat{},
         const Roi& roi = Roi{0, 0, 0, 0},
         BatchProgressCallback progress = {},
-        backend::processing::ProcessingCoreIdentity* processingCore = nullptr);
+        backend::processing::ProcessingCoreIdentity* processingCore = nullptr,
+        const BatchAnalysisInputs& inputs = {});
 
     struct BatchPipelineConfig {
         std::string previewRecipeSha256;
@@ -705,6 +725,18 @@ public:
     // detection is disabled or the background is unusable. Pure w.r.t. service
     // state (does not apply the result); exposed for reuse and testing.
     Roi computeAutoRoiFromBackground(const cv::Mat& backgroundGray) const;
+    // The same detection with `config`'s auto-ROI settings instead of the
+    // service's (#758: an offline run detects the band from the background it
+    // uses). Empty when auto_roi_from_background is off or no background.
+    static Roi detectChannelBand(const cv::Mat& backgroundGray, const ProcessingConfig& config);
+    // What an offline run (reanalysis, regenerate masks, #758) passes to
+    // processBatch instead of the live state: `pixelToMicronFactor` and the
+    // band detectChannelBand finds in `background`. With
+    // auto_roi_from_background on, `config`'s channel_band_* become that band
+    // (0 when none), as getEffectiveProcessingConfig fills them, so the config
+    // the output records is the one applied. Pure.
+    static BatchAnalysisInputs offlineAnalysisInputs(ProcessingConfig& config, const cv::Mat& background,
+                                                     double pixelToMicronFactor);
 
     // Channel band detected from the latest background, in frame coordinates.
     // Empty (h == 0) when auto_roi_from_background is off or no background.
@@ -800,14 +832,21 @@ private:
     void logDroppedExperimentFrames(const DroppedFrameCounts& dropped, size_t bufferedTotal, size_t maxBufferedFrames);
     FilterResult filterProcessedImage(const cv::Mat& processedImage, const cv::Rect& roi,
                                       const ProcessingConfig& config, const cv::Mat& originalImage,
-                                      const cv::Mat& background = cv::Mat());
+                                      const cv::Mat& background = cv::Mat(),
+                                      const BatchAnalysisInputs& inputs = {});
     // maskOrigin is the frame position of the mask's (0,0), so the frame-space
     // channel band can be expressed in the mask's coordinates. `background`
     // matches originalImage; an ABI v2 core needs it to run its own science.
+    // `inputs` replaces the live factor / channel band where set (#758).
     std::vector<FilterResult> filterProcessedObjects(const cv::Mat& processedImage, const cv::Rect& roi,
                                                      const ProcessingConfig& config, const cv::Mat& originalImage,
                                                      cv::Point maskOrigin = {},
-                                                     const cv::Mat& background = cv::Mat());
+                                                     const cv::Mat& background = cv::Mat(),
+                                                     const BatchAnalysisInputs& inputs = {});
+    // computeProcessedFrame with per-call analysis inputs (processBatch).
+    ProcessedFrame computeProcessedFrameWith(const cv::Mat& grayInput, const cv::Mat& backgroundGray,
+                                             const ProcessingConfig& config, const Roi& roi, uint64_t index,
+                                             uint64_t timestampNs, const BatchAnalysisInputs& inputs);
     // Batch track matching routed through the selected kernel; -1 = new track.
     int matchTrackWithActiveKernel(const std::vector<BatchTrack>& tracks,
                                    const std::vector<bool>& matchedThisFrame,
@@ -1127,7 +1166,7 @@ private:
     std::atomic<uint64_t> idReasonCounts_[8]{};
     
     // Pixel to micron conversion factor (default: 0.4886)
-    std::atomic<double> pixelToMicronFactor_{0.4886};
+    std::atomic<double> pixelToMicronFactor_{kDefaultPixelToMicronFactor};
 
     // Young's modulus LUT (read-only after loading, thread-safe)
     EModulusLut eModulusLut_;

@@ -566,12 +566,30 @@ TIFFs — use:
   rings, no experiment accumulation, no callbacks, no auto-background).
   Returns a `ProcessedFrame` with a full-size mask (zero outside ROI).
 - `ProcessingService::processBatch(grayImages, config, background, roi, progressCb,
-  processingCore)`
+  processingCore, inputs = {})`
   — wraps `computeProcessedFrame` over a vector of grayscale `cv::Mat`
   inputs, returns `std::vector<ProcessedFrame>`. Progress is reported via
   `BatchProgressCallback(BatchProgress{done, total})`. The optional identity
   output records the exact core held for the whole operation; activation is
   blocked until the call returns.
+- **Per-call analysis inputs (#758).** `BatchAnalysisInputs{pixelToMicronFactor,
+  channelBand}` (both `std::optional`) replace, for that call only, what
+  object analysis otherwise reads from the live service: the factor
+  `setPixelToMicronFactor` set (area validity, the target group, the stamped
+  `analysisPixelToMicronFactor`) and the band `getChannelBand()` detected from
+  the published background. Unset members keep the live values; a factor that
+  is not finite and positive throws `std::invalid_argument`.
+  `offlineAnalysisInputs(config, background, factor)` builds them for an
+  offline run: the factor, the band `detectChannelBand(background, config)`
+  finds in the run's own background (the static form of
+  `computeAutoRoiFromBackground`, with the config's auto-ROI settings), and,
+  with `auto_roi_from_background` on, that band written into the config's
+  `channel_band_*` (0 when none, as `getEffectiveProcessingConfig`), so the
+  config an output records is the one applied. Offline reanalysis (the review
+  engine, YOFO's regenerate, the Qt dialog) always passes them: the live
+  factor and band are never set by a job, so a job cannot race a live run or
+  another job, and one source's factor never reaches the next.
+  `kDefaultPixelToMicronFactor` (0.4886) names the start value.
 
   When `multi_image_enabled` and `multi_image_count > 1`, each newly retained
   valid track also carries the trigger image plus the available following
@@ -593,7 +611,8 @@ Input/output adapters live in [[BatchMaskSources]] —
 button that drives this via `BatchMaskDialog`.
 
 Batch calls do **not** touch realtime state or monitoring buffers, so
-they're safe to run concurrently with live capture. Dynamic cores allocate or
+they're safe to run concurrently with live capture. Without
+`BatchAnalysisInputs` they do read the live factor and channel band. Dynamic cores allocate or
 reuse separate ABI contexts for concurrent calls.
 
 ## Async batch processing (capture decoupling)

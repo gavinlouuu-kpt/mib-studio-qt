@@ -21,6 +21,7 @@
 #include <condition_variable>
 #include <exception>
 #include <filesystem>
+#include <iomanip>
 #include <limits>
 #include <map>
 #include <random>
@@ -966,7 +967,13 @@ namespace backend::review
             return 0;
         }
         const bool recordingFile = impl_->session.isRecordingFile();
-        return impl_->startOwn(ReviewJobKind::RegenerateMasks, [impl = impl_.get(), req, source, recordingFile](std::uint64_t id, auto flag) {
+        // #758: objects are validated at the open file's recorded factor with
+        // recorded settings (this fallback when it records none, as the file
+        // is shown when opened), at the default with default settings and for
+        // AVI / folder sources. The engine reads it from the source and
+        // passes it per call: the shared kernel's own factor is never set.
+        const double fallback = impl_->session.fallbackPixelToMicron();
+        return impl_->startOwn(ReviewJobKind::RegenerateMasks, [impl = impl_.get(), req, source, recordingFile, fallback](std::uint64_t id, auto flag) {
             // YOFO Review's regenerate on the shared reanalysis engine
             // (backend/review/Reanalysis.h) with its D6 options: timestamps
             // rebased to the first selected frame, a median-of-32 synthetic
@@ -983,6 +990,8 @@ namespace backend::review
             r.syntheticBackground = req.synthesizeBackground;
             r.config = req.config;
             r.roi = req.roi;
+            r.useRecordedPixelToMicron = false;
+            r.pixelToMicron = services::ProcessingService::kDefaultPixelToMicronFactor;
             if (req.source == RegenerateSource::Avi || req.source == RegenerateSource::Folder)
             {
                 r.sourceKind = req.source == RegenerateSource::Avi ? "avi" : "folder";
@@ -1022,6 +1031,11 @@ namespace backend::review
                 // files and "not recorded" use the request's.
                 r.overrideRoi = !req.useRecordedConfig || recordingFile;
                 r.clearBackground = !req.useRecordedConfig;
+                if (req.useRecordedConfig)
+                {
+                    r.useRecordedPixelToMicron = true;
+                    r.pixelToMicron = fallback;
+                }
             }
             const auto onProgress = [&](std::uint64_t done, std::uint64_t total) {
                 if ((done % 25) == 0 || done == total)
@@ -1034,9 +1048,16 @@ namespace backend::review
                 outcome.retainedPartialPath.empty() ? "" : "; partial output kept at " + outcome.retainedPartialPath;
             if (outcome.published)
             {
+                // The factor the objects were validated at, as the reprocess
+                // label names it (#758); the output records it too.
                 std::ostringstream msg;
                 msg << req.outputPath << " (" << outcome.produced << " images: " << outcome.valid << " valid, "
-                    << (outcome.produced - outcome.valid) << " invalid)";
+                    << (outcome.produced - outcome.valid) << " invalid; px→µm " << std::fixed
+                    << std::setprecision(4) << outcome.pixelToMicron << ' '
+                    << (!r.useRecordedPixelToMicron       ? "default"
+                        : outcome.pixelToMicronRecorded ? "recorded"
+                                                        : "fallback: the file records none")
+                    << ")";
                 return Outcome{ReviewJobState::Completed, msg.str()};
             }
             if (outcome.cancelled)
