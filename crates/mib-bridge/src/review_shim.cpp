@@ -42,6 +42,11 @@ static_assert(static_cast<std::uint32_t>(br::OverlayMode::AllContour) == 1);
 static_assert(static_cast<std::uint32_t>(br::OverlayMode::OuterInnerColorCoded) == 2);
 static_assert(static_cast<std::uint32_t>(br::OverlayMode::AllMask) == 3);
 static_assert(static_cast<std::uint32_t>(br::OverlayMode::FilteredMask) == 4);
+// review-contract.json review_track_rows / review_reprocess_record (#717 B3b).
+static_assert(br::kReviewTrackRowsMax == 256);
+static_assert(br::kReviewReprocessMaxObjects == 64);
+static_assert(static_cast<std::uint32_t>(br::ReprocessSettings::Recorded) == 0);
+static_assert(static_cast<std::uint32_t>(br::ReprocessSettings::Default) == 1);
 static_assert(static_cast<std::uint32_t>(br::ReviewJobKind::ExportMetrics) == 0);
 static_assert(static_cast<std::uint32_t>(br::ReviewJobKind::Density) == 5);
 static_assert(static_cast<std::uint32_t>(br::ReviewJobKind::ExportCharts) == 6);
@@ -109,6 +114,43 @@ void setText(const std::optional<std::string>& in, bool& has, rust::String& out)
     out = has ? rust::String(*in) : rust::String();
 }
 
+ReviewRow toRow(const br::MetricRow& r) {
+    ReviewRow row{};
+    row.frame_index = r.frameIndex;
+    row.timestamp_ns = r.timestampNs;
+    row.valid = r.valid;
+    row.target_group = r.targetGroup;
+    row.touches_border = r.touchesBorder;
+    row.has_single_inner_contour = r.hasSingleInnerContour;
+    row.in_range = r.inRange;
+    row.in_channel = r.inChannel;
+    row.inner_contour_count = r.innerContourCount;
+    row.object_id = r.objectId;
+    row.object_count = r.objectCount;
+    row.track_id = r.trackId;
+    row.track_first_frame = r.trackFirstFrame;
+    row.track_last_frame = r.trackLastFrame;
+    row.track_observation_count = r.trackObservationCount;
+    row.bbox_x = r.bboxX;
+    row.bbox_y = r.bboxY;
+    row.bbox_width = r.bboxWidth;
+    row.bbox_height = r.bboxHeight;
+    row.centroid_x = r.centroidX;
+    row.centroid_y = r.centroidY;
+    row.area = r.area;
+    row.area_um2 = r.areaUm2;
+    row.deformability = r.deformability;
+    row.area_ratio = r.areaRatio;
+    row.ring_ratio = r.ringRatio;
+    row.laplacian_variance = r.laplacianVariance;
+    row.youngs_modulus = r.youngsModulus;
+    row.brightness_q1 = r.brightnessQ1;
+    row.brightness_q2 = r.brightnessQ2;
+    row.brightness_q3 = r.brightnessQ3;
+    row.brightness_q4 = r.brightnessQ4;
+    return row;
+}
+
 ReviewAnnotation toAnnotation(const br::RunIdentity& id) {
     ReviewAnnotation out{};
     out.unreadable = id.annotationUnreadable;
@@ -156,6 +198,18 @@ ReviewRunIdentity toIdentity(const br::RunIdentity& id) {
         setText(d.selectedOperator->name, out.has_operator_name, out.operator_name);
     }
     out.annotation = toAnnotation(id);
+    out.has_emodulus_lut = id.eModulusLut.has_value();
+    if (id.eModulusLut) {
+        const auto& l = *id.eModulusLut;
+        out.emodulus_lut.loaded = l.loaded;
+        setText(l.lutId, out.emodulus_lut.has_lut_id, out.emodulus_lut.lut_id);
+        setText(l.revision, out.emodulus_lut.has_revision, out.emodulus_lut.revision);
+        setText(l.source, out.emodulus_lut.has_source, out.emodulus_lut.source);
+        setText(l.sha256, out.emodulus_lut.has_sha256, out.emodulus_lut.sha256);
+        setText(l.catalogSha256, out.emodulus_lut.has_catalog_sha256, out.emodulus_lut.catalog_sha256);
+        setText(l.checksumStatus, out.emodulus_lut.has_checksum_status, out.emodulus_lut.checksum_status);
+    }
+    setText(id.profileId, out.has_profile_id, out.profile_id);
     return out;
 }
 
@@ -283,6 +337,10 @@ ReviewInfo ReviewBridge::fetch_review_info() {
         const br::ReviewMetadata m = impl_->session.metadata();
         out.valid = true;
         out.file_open = m.fileOpen;
+        out.object_coordinates = rust::String(br::toString(m.objectCoordinates.space));
+        out.object_coordinates_source = rust::String(br::toString(m.objectCoordinates.source));
+        out.object_origin_x = m.objectCoordinates.originX;
+        out.object_origin_y = m.objectCoordinates.originY;
         if (!m.fileOpen) return out;
         out.file_path = rust::String(m.filePath);
         out.recording_file = m.recordingFile;
@@ -386,45 +444,74 @@ ReviewRows ReviewBridge::fetch_review_rows(bool valid, std::uint64_t offset, std
         out.total = total;
         out.offset = offset;
         out.rows.reserve(rows.size());
-        for (const auto& r : rows) {
-            ReviewRow row{};
-            row.frame_index = r.frameIndex;
-            row.timestamp_ns = r.timestampNs;
-            row.valid = r.valid;
-            row.target_group = r.targetGroup;
-            row.touches_border = r.touchesBorder;
-            row.has_single_inner_contour = r.hasSingleInnerContour;
-            row.in_range = r.inRange;
-            row.in_channel = r.inChannel;
-            row.inner_contour_count = r.innerContourCount;
-            row.object_id = r.objectId;
-            row.object_count = r.objectCount;
-            row.track_id = r.trackId;
-            row.track_first_frame = r.trackFirstFrame;
-            row.track_last_frame = r.trackLastFrame;
-            row.track_observation_count = r.trackObservationCount;
-            row.bbox_x = r.bboxX;
-            row.bbox_y = r.bboxY;
-            row.bbox_width = r.bboxWidth;
-            row.bbox_height = r.bboxHeight;
-            row.centroid_x = r.centroidX;
-            row.centroid_y = r.centroidY;
-            row.area = r.area;
-            row.area_um2 = r.areaUm2;
-            row.deformability = r.deformability;
-            row.area_ratio = r.areaRatio;
-            row.ring_ratio = r.ringRatio;
-            row.laplacian_variance = r.laplacianVariance;
-            row.youngs_modulus = r.youngsModulus;
-            row.brightness_q1 = r.brightnessQ1;
-            row.brightness_q2 = r.brightnessQ2;
-            row.brightness_q3 = r.brightnessQ3;
-            row.brightness_q4 = r.brightnessQ4;
-            out.rows.push_back(std::move(row));
-        }
+        for (const auto& r : rows) out.rows.push_back(toRow(r));
     } catch (...) {
         out.valid = false;
         out.rows.clear();
+    }
+    return out;
+}
+
+ReviewTrackRows ReviewBridge::fetch_review_track_rows(bool valid, std::int32_t track_id, std::uint32_t max) {
+    ReviewTrackRows out{};
+    try {
+        br::TrackRows rows;
+        std::string error;
+        if (!impl_->session.trackRows(valid, track_id, max, rows, &error)) {
+            out.message = rust::String(error);
+            return out;
+        }
+        out.ok = true;
+        out.total = rows.total;
+        out.truncated = rows.truncated;
+        for (const auto p : rows.positions) out.positions.push_back(p);
+        for (const auto& r : rows.rows) out.rows.push_back(toRow(r));
+    } catch (const std::exception& e) {
+        out = ReviewTrackRows{};
+        out.message = rust::String(std::string("fetch_review_track_rows: ") + e.what());
+    } catch (...) {
+        out = ReviewTrackRows{};
+        out.message = rust::String("fetch_review_track_rows: unknown error");
+    }
+    return out;
+}
+
+ReviewReprocessResult ReviewBridge::review_reprocess_record(bool valid, std::uint64_t index, std::uint32_t settings) {
+    ReviewReprocessResult out{};
+    out.settings = settings;
+    if (settings > static_cast<std::uint32_t>(br::ReprocessSettings::Default)) {
+        out.message = rust::String("Unknown reprocess settings");
+        return out;
+    }
+    try {
+        br::ReprocessResult r;
+        std::string error;
+        if (!impl_->jobs->reprocessRecord(valid, index, static_cast<br::ReprocessSettings>(settings), r, &error)) {
+            out.message = rust::String(error);
+            return out;
+        }
+        out.ok = true;
+        out.message = rust::String("Reprocessed record " + std::to_string(index) + " with " + r.settingsLabel);
+        out.used_recorded_settings = r.usedRecordedSettings;
+        out.settings_label = rust::String(r.settingsLabel);
+        out.core_version = rust::String(r.coreVersion);
+        out.core_source = rust::String(r.coreSource);
+        out.pixel_to_micron = r.pixelToMicron;
+        out.emodulus_recomputed = r.emodulusRecomputed;
+        out.stored = toRow(r.stored);
+        for (const auto& row : r.reprocessed) out.reprocessed.push_back(toRow(row));
+        out.has_match = r.match.has_value();
+        out.match_index = static_cast<std::uint32_t>(r.match.value_or(0));
+        out.object_count_differs = r.objectCountDiffers;
+        out.truncated = r.truncated;
+    } catch (const std::exception& e) {
+        out = ReviewReprocessResult{};
+        out.settings = settings;
+        out.message = rust::String(std::string("review_reprocess_record: ") + e.what());
+    } catch (...) {
+        out = ReviewReprocessResult{};
+        out.settings = settings;
+        out.message = rust::String("review_reprocess_record: unknown error");
     }
     return out;
 }
@@ -687,8 +774,11 @@ std::unique_ptr<ReviewBridge> new_review_bridge() { return std::make_unique<Revi
 // contract, independent of bridge_abi_version(). v1: ReviewSession-backed
 // info/rows/frames/series/thumbnails/scatter/core-record calls, overlay_modes,
 // review_pixel_formats and the review event queue. v2 (#717 B1a): the run
-// identity in fetch_review_info and review_probe_runs (review_probe).
-std::uint32_t review_bridge_abi_version() { return 2; }
+// identity in fetch_review_info and review_probe_runs (review_probe). v3
+// (#717 B3b): emodulus_lut and profile_id in the identity,
+// fetch_review_track_rows (review_track_rows) and review_reprocess_record
+// (review_reprocess_record).
+std::uint32_t review_bridge_abi_version() { return 3; }
 
 namespace {
 
@@ -758,6 +848,9 @@ bool writeExperimentFixture(const std::string& path, const std::string& snapshot
         a.completion = backend::recording::RunCompletionState::Complete;
         a.reconciled = true;
         if (!hdf5.writeRunAccounting(a)) return false;
+        // A file from #756 on records its rows' coordinate space; the legacy
+        // variant (no provenance) does not, and its ROI is away from (0, 0).
+        if (!hdf5.writeObjectCoordinates(Hdf5Service::kObjectCoordinatesImage)) return false;
         backend::monitoring::KdeCoreRecord r;
         r.provisional = false;
         r.source = "full-run";

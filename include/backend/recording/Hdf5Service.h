@@ -132,6 +132,22 @@ public:
     // Precondition: writeExperimentInfo() must have been called first.
     bool writeConfigJson(const std::string& jsonContent);
 
+    // The coordinate space of the stored bounding boxes and centroids
+    // (#756 review 2): `/experiment_info @object_coordinates`, a UTF-8 string,
+    // kObjectCoordinatesRoiLocal when the rows are relative to the recorded
+    // ROI's origin (the realtime capture path with an ROI) and
+    // kObjectCoordinatesImage when they are image coordinates. Precondition:
+    // writeExperimentInfo() was called. Files before #756 lack it.
+    static constexpr const char* kObjectCoordinatesAttribute = "object_coordinates";
+    static constexpr const char* kObjectCoordinatesRoiLocal = "roi_local";
+    static constexpr const char* kObjectCoordinatesImage = "image";
+    bool writeObjectCoordinates(const std::string& space);
+
+    // One scalar string attribute of the top-level group `groupPath`,
+    // presence-aware: nullopt when the group or the attribute is missing, not
+    // a scalar string, or unreadable.
+    std::optional<std::string> readScalarStringAttribute(const char* groupPath, const char* name) const;
+
     // Read background image saved for the run (if present). Returns false if not open, dataset missing, or read fails.
     bool readBackgroundImage(cv::Mat& out) const;
 

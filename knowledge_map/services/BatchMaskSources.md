@@ -41,7 +41,10 @@ core as [[ProcessingService]].
   `mask_00000.png`, `mask_00001.png`, ...
 - `saveMasksToHdf5(frames, outputPath, config, roiX, roiY, roiW, roiH, background, useFrameTimestamps = false, processingCore = nullptr, pixelToMicron = 0)`
   — opens a fresh HDF5 file, writes `experiment_info` (so the file
-  round-trips through [[../frontend/HdfReviewTab]]), then partitions
+  round-trips through [[../frontend/HdfReviewTab]]) and
+  `object_coordinates = image` (#756 review 2: `computeProcessedFrame`
+  validates the full-frame mask, so the rows are image coordinates whatever
+  the ROI; refused if it cannot be written), then partitions
   `frames` into valid/invalid by `validation.isValid` and writes them via
   `Hdf5Service::saveFrames()`. When `useFrameTimestamps` is true,
   `experiment_info` start/end timestamps come from the already normalised

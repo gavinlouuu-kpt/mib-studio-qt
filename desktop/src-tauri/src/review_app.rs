@@ -55,6 +55,8 @@ pub fn run() {
             review::review_set_pixel_to_micron,
             review::fetch_review_info,
             review::review_probe_runs,
+            review::fetch_review_track_rows,
+            review::review_reprocess_record,
             review::fetch_review_rows,
             review::fetch_review_frame,
             review::fetch_review_series_count,

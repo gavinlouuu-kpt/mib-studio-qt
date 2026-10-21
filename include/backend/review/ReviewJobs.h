@@ -326,6 +326,17 @@ namespace backend::review
         // thread-safe (#722). Synchronous; per-file errors are in `out`.
         bool probeRuns(const std::vector<std::string> &paths, std::vector<RunProbe> &out,
                        std::string *error = nullptr);
+        // #717 B3b: one record reprocessed with the processing kernel, next
+        // to its stored values (ReprocessResult). Never writes. The inputs
+        // (stored row, image, recorded config / ROI / background) are read by
+        // ReviewSession::reprocessInputs under the lanes' lock and the
+        // session's mutex, like the probe; processBatch then runs outside
+        // every lock (it touches no HDF5 and is thread-safe). Refused (false,
+        // `error`) while either lane is claimed (a regenerate job uses the
+        // kernel, and every job reads HDF5 outside the session's mutex), when
+        // there is no processing service, and for what reprocessInputs refuses.
+        bool reprocessRecord(bool valid, std::uint64_t index, ReprocessSettings settings, ReprocessResult &out,
+                             std::string *error = nullptr);
         // The record the last ComputeCore / Density job produced for the file
         // the session holds now (JSON, empty when none or computed for
         // another file); the shell saves it through ReviewSession.

@@ -166,6 +166,17 @@ def render_review(review: dict) -> str:
     probe = {k: v for k, v in review["review_probe"].items() if isinstance(v, int)}
     lines.append("export const REVIEW_PROBE = " + json.dumps(probe, indent=2) + " as const;")
     lines.append("")
+    # Review ABI 3 (#717 B3b): linked-records and one-record reprocess bounds and settings.
+    track = {k: v for k, v in review["review_track_rows"].items() if isinstance(v, int)}
+    lines.append("export const REVIEW_TRACK_ROWS = " + json.dumps(track, indent=2) + " as const;")
+    lines.append("")
+    reprocess = {k: v for k, v in review["review_reprocess_record"].items() if k != "semantics"}
+    lines.append("export const REVIEW_REPROCESS = " + json.dumps(reprocess, indent=2) + " as const;")
+    lines.append("")
+    # Review ABI 3 (#756 review 2): the object coordinate spaces, their sources and the mask check's bounds.
+    spaces = {k: v for k, v in review["review_object_coordinates"].items() if k != "semantics"}
+    lines.append("export const REVIEW_OBJECT_COORDINATES = " + json.dumps(spaces, indent=2) + " as const;")
+    lines.append("")
     return "\n".join(lines)
 
 
@@ -198,6 +209,36 @@ def check_review(review: dict) -> str | None:
     bound = re.search(r"kReviewProbeMaxPaths\s*=\s*(\d+)", types)
     if not bound or int(bound.group(1)) != review["review_probe"]["max_paths"]:
         return "review_probe.max_paths differs from ReviewTypes.h kReviewProbeMaxPaths"
+    # Review ABI 3 (#717 B3b): the track-rows and reprocess bounds and the settings enum.
+    for key, member, const in (("review_track_rows", "max_rows", "kReviewTrackRowsMax"),
+                               ("review_reprocess_record", "max_objects", "kReviewReprocessMaxObjects")):
+        bound = re.search(const + r"\s*=\s*(\d+)", types)
+        if not bound or int(bound.group(1)) != review[key][member]:
+            return f"{key}.{member} differs from ReviewTypes.h {const}"
+    settings = review["review_reprocess_record"]["settings"]
+    if sorted(settings.values()) != list(range(len(settings))):
+        return "review_reprocess_record.settings values must be contiguous from 0"
+    block = types.split("enum class ReprocessSettings", 1)[1].split("};", 1)[0]
+    declared = {name.lower(): int(value) for name, value in re.findall(r"(\w+)\s*=\s*(\d+)", block)}
+    if declared != settings:
+        return "review_reprocess_record.settings differs from ReviewTypes.h ReprocessSettings"
+    # Review ABI 3 (#756 review 2): the mask check's bounds equal ObjectCoordinates.h, and every
+    # value and source is a string ObjectCoordinates.cpp writes.
+    spaces = review["review_object_coordinates"]
+    header = (REPO_ROOT / "include/backend/review/ObjectCoordinates.h").read_text(encoding="utf-8")
+    for member, const in (("max_records", "kObjectSpaceMaskCheckMaxRecords"),
+                          ("min_decisive", "kObjectSpaceMaskCheckMinDecisive"),
+                          ("min_agreement_percent", "kObjectSpaceMaskCheckMinAgreementPercent"),
+                          ("min_box_iou_percent", "kObjectSpaceMaskCheckMinBoxIouPercent"),
+                          ("area_tolerance_percent", "kObjectSpaceMaskCheckAreaTolerancePercent")):
+        bound = re.search(const + r"\s*=\s*(\d+)", header)
+        if not bound or int(bound.group(1)) != spaces["mask_check"][member]:
+            return f"review_object_coordinates.mask_check.{member} differs from ObjectCoordinates.h {const}"
+    source = (REPO_ROOT / "src/backend/review/ObjectCoordinates.cpp").read_text(encoding="utf-8")
+    written = set(re.findall(r'return "([a-z_]+)";', source))
+    for value in spaces["values"] + spaces["sources"]:
+        if value not in written:
+            return f"review_object_coordinates: {value!r} is not written by ObjectCoordinates.cpp"
     return None
 
 

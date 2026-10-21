@@ -208,6 +208,7 @@ mib_link_hdf5(mib_processing PUBLIC)
 add_library(mib_review_core STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/review/ReviewSession.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/review/OverlayCompose.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/review/ObjectCoordinates.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/review/ReviewCharts.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/review/ReviewJobs.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/review/Reanalysis.cpp
@@ -219,6 +220,7 @@ add_library(mib_review_core STATIC
     ${PROJECT_SOURCE_DIR}/include/backend/review/ExportEngine.h
     ${PROJECT_SOURCE_DIR}/include/backend/review/ReviewTypes.h
     ${PROJECT_SOURCE_DIR}/include/backend/review/OverlayCompose.h
+    ${PROJECT_SOURCE_DIR}/include/backend/review/ObjectCoordinates.h
 )
 set_target_properties(mib_review_core PROPERTIES
     ARCHIVE_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"

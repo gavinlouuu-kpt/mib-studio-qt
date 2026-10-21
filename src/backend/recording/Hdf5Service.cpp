@@ -2149,6 +2149,81 @@ namespace backend::services
         return ok;
     }
 
+    bool Hdf5Service::writeObjectCoordinates(const std::string& space)
+    {
+        if (!isFileOpen()) return false;
+        if (H5Lexists(impl_->fileId_, "/experiment_info", H5P_DEFAULT) <= 0)
+        {
+            SPDLOG_WARN("Cannot write object_coordinates: /experiment_info group does not exist");
+            return false;
+        }
+        hid_t groupId = H5Gopen2(impl_->fileId_, "/experiment_info", H5P_DEFAULT);
+        if (groupId < 0) return false;
+        hid_t strType = H5Tcopy(H5T_C_S1);
+        H5Tset_size(strType, H5T_VARIABLE);
+        H5Tset_cset(strType, H5T_CSET_UTF8);
+        hid_t scalarSpace = H5Screate(H5S_SCALAR);
+        if (H5Aexists(groupId, kObjectCoordinatesAttribute) > 0) H5Adelete(groupId, kObjectCoordinatesAttribute);
+        hid_t attr = H5Acreate2(groupId, kObjectCoordinatesAttribute, strType, scalarSpace, H5P_DEFAULT, H5P_DEFAULT);
+        bool ok = false;
+        if (attr >= 0)
+        {
+            const char* ptr = space.c_str();
+            ok = (H5Awrite(attr, strType, &ptr) >= 0);
+            H5Aclose(attr);
+        }
+        H5Sclose(scalarSpace);
+        H5Tclose(strType);
+        H5Gclose(groupId);
+        if (ok && !flush()) SPDLOG_WARN("writeObjectCoordinates: post-write flush failed");
+        if (!ok) SPDLOG_ERROR("Failed to write /experiment_info @object_coordinates");
+        return ok;
+    }
+
+    std::optional<std::string> Hdf5Service::readScalarStringAttribute(const char* groupPath, const char* name) const
+    {
+        if (!isFileOpen() || !groupPath || !name) return std::nullopt;
+        if (H5Lexists(impl_->fileId_, groupPath, H5P_DEFAULT) <= 0) return std::nullopt;
+        hid_t group = H5Gopen2(impl_->fileId_, groupPath, H5P_DEFAULT);
+        if (group < 0) return std::nullopt;
+        std::optional<std::string> out;
+        if (H5Aexists(group, name) > 0)
+        {
+            hid_t attribute = H5Aopen(group, name, H5P_DEFAULT);
+            if (attribute >= 0)
+            {
+                hid_t type = H5Aget_type(attribute);
+                if (type >= 0 && H5Tget_class(type) == H5T_STRING && isScalarAttribute(attribute) &&
+                    H5Aget_storage_size(attribute) <= 1024 * 1024)
+                {
+                    if (H5Tis_variable_str(type) > 0)
+                    {
+                        char* pointer = nullptr;
+                        if (H5Aread(attribute, type, &pointer) >= 0) out = std::string(pointer ? pointer : "");
+                        if (pointer) H5free_memory(pointer);
+                    }
+                    else
+                    {
+                        const size_t size = H5Tget_size(type);
+                        if (size > 0 && size <= 1024 * 1024)
+                        {
+                            std::vector<char> buffer(size + 1, '\0');
+                            if (H5Aread(attribute, type, buffer.data()) >= 0)
+                            {
+                                const auto end = std::find(buffer.begin(), buffer.begin() + size, '\0');
+                                out = std::string(buffer.begin(), end);
+                            }
+                        }
+                    }
+                }
+                if (type >= 0) H5Tclose(type);
+                H5Aclose(attribute);
+            }
+        }
+        H5Gclose(group);
+        return out;
+    }
+
     bool Hdf5Service::loadFile(const std::string& filePath)
     {
         if (impl_->isOpen_)

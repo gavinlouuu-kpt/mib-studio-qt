@@ -924,6 +924,30 @@
     }
    },
    {
+    "cmd": "fetch_review_track_rows",
+    "args": {
+     "valid": true,
+     "trackId": 4,
+     "max": 256
+    }
+   },
+   {
+    "cmd": "review_reprocess_record",
+    "args": {
+     "valid": true,
+     "index": "3",
+     "settings": 0
+    }
+   },
+   {
+    "cmd": "review_reprocess_record",
+    "args": {
+     "valid": false,
+     "index": "2",
+     "settings": 1
+    }
+   },
+   {
     "cmd": "review_clear_charts",
     "args": {}
    },
