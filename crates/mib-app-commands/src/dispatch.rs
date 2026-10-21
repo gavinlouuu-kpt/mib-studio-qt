@@ -1451,4 +1451,52 @@ mod tests {
         state.bridge.lock().unwrap().pin_mut().shutdown();
         let _ = std::fs::remove_dir_all(&data);
     }
+    // ABI 43 (#776): the readiness report carries the applied method's calibration declarations
+    // through dispatch (the WebSocket's path) and the Tauri function: measurement / none with
+    // declared false before any method, a calibration method's purpose and reference after a real
+    // profile apply, and nothing stale after switching back.
+    #[test]
+    #[serial]
+    fn readiness_reports_the_applied_method_calibration() {
+        let data = std::env::temp_dir().join(format!("mib_dispatch_method_calibration_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&data);
+        let state = AppState::new();
+        let host = TestHost(data.to_string_lossy().into_owned());
+        assert_eq!(dispatch(&state, &host, "init", json!({ "dataDir": "" })).unwrap(), Reply::Json(json!(true)));
+        let reply = |name: &str, args: Value| match dispatch(&state, &host, name, args) {
+            Ok(Reply::Json(r)) => r,
+            other => panic!("{name}: {other:?}"),
+        };
+        let out = data.join("probe.h5").to_string_lossy().into_owned();
+        let undeclared = json!({ "declared": false, "purpose": "measurement", "calibration_policy": "none",
+            "calibration_max_age_hours": 24.0, "calibration_reference": null, "error": null });
+        let r = reply("fetch_experiment_readiness", json!({ "outputPath": out }));
+        assert_eq!(r["method_calibration"], undeclared, "no method applied: {r}");
+
+        let base = data.join("profiles").to_string_lossy().into_owned();
+        let profile = |request: Value| reply("profile_command", json!({ "base": base, "request": request.to_string() }));
+        for (name, document) in [
+            ("beads", r#"{"config_schema_version":1,"purpose":"calibration","calibration_reference":{"nominal_diameter_um":7.32,"diameter_tolerance_um":0.1}}"#),
+            ("cells", r#"{"config_schema_version":1,"buffer_threshold":64}"#),
+        ] {
+            let created = profile(json!({ "operation": "create", "name": name, "document_json": document }));
+            assert_eq!(created["ok"], json!(true), "{created}");
+        }
+        let apply = |name: &str| {
+            let read = profile(json!({ "operation": "read", "name": name }));
+            let applied = profile(json!({ "operation": "apply", "name": name, "baseline": read["profile"]["revision"] }));
+            assert_eq!(applied["ok"], json!(true), "apply {name}: {applied}");
+            reply("fetch_experiment_readiness", json!({ "outputPath": out }))["method_calibration"].clone()
+        };
+        let beads = json!({ "declared": true, "purpose": "calibration", "calibration_policy": "none",
+            "calibration_max_age_hours": 24.0, "error": null, "calibration_reference": { "nominal_diameter_um": 7.32,
+            "diameter_tolerance_um": 0.1, "nominal_e_kpa": null, "max_cv_percent": 10.0 } });
+        assert_eq!(apply("beads"), beads, "the calibration method");
+        assert_eq!(apply("cells"), undeclared, "a method without declarations: nothing stale");
+        assert_eq!(apply("beads"), beads, "and back");
+        let tauri = serde_json::to_value(crate::fetch_experiment_readiness(&state, out.clone()).unwrap()).unwrap();
+        assert_eq!(tauri["method_calibration"], beads, "the Tauri function serialises the same report");
+        state.bridge.lock().unwrap().pin_mut().shutdown();
+        let _ = std::fs::remove_dir_all(&data);
+    }
 }

@@ -289,8 +289,51 @@ pub struct ReadinessGate {
     remediation: String,
 }
 
+/// A calibration method's reference sample (ABI 43, #776; the method document's
+/// `calibration_reference`). `nominal_e_kpa` is null when the method does not declare one.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct MethodCalibrationReference {
+    nominal_diameter_um: f64,
+    diameter_tolerance_um: f64,
+    nominal_e_kpa: Option<f64>,
+    max_cv_percent: f64,
+}
+
+/// The applied method's calibration declarations in the readiness report (ABI 43, #776;
+/// bridge-contract.json `calibration_records.method_calibration`). The member names are the
+/// method document's. No method applied, or one that declares nothing: `declared` false,
+/// measurement / none / the default age, reference null. `error` is null unless the applied
+/// declarations could not be read.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct MethodCalibration {
+    declared: bool,
+    purpose: String,
+    calibration_policy: String,
+    calibration_max_age_hours: f64,
+    calibration_reference: Option<MethodCalibrationReference>,
+    error: Option<String>,
+}
+
+impl From<ffi::BridgeMethodCalibration> for MethodCalibration {
+    fn from(m: ffi::BridgeMethodCalibration) -> Self {
+        MethodCalibration {
+            declared: m.declared,
+            purpose: m.purpose,
+            calibration_policy: m.calibration_policy,
+            calibration_max_age_hours: m.calibration_max_age_hours,
+            calibration_reference: m.has_reference.then(|| MethodCalibrationReference {
+                nominal_diameter_um: m.nominal_diameter_um,
+                diameter_tolerance_um: m.diameter_tolerance_um,
+                nominal_e_kpa: m.has_nominal_e_kpa.then_some(m.nominal_e_kpa),
+                max_cv_percent: m.max_cv_percent,
+            }),
+            error: (!m.error.is_empty()).then_some(m.error),
+        }
+    }
+}
+
 /// Experiment readiness evaluation for the webview (ABI 13).
-#[derive(Serialize, Clone, Default)]
+#[derive(Serialize, Clone)]
 pub struct ExperimentReadiness {
     transport_version: u32,
     valid: bool,
@@ -298,6 +341,8 @@ pub struct ExperimentReadiness {
     #[serde(serialize_with = "event_transport::serialize_u64")]
     generation: u64,
     gates: Vec<ReadinessGate>,
+    /// ABI 43 (#776): the applied method's calibration declarations, always present.
+    method_calibration: MethodCalibration,
 }
 
 /// Evaluate experiment readiness for a destination (ABI 13).
@@ -314,6 +359,7 @@ pub fn fetch_experiment_readiness(state: &AppState, output_path: String) -> Resu
             .into_iter()
             .map(|g| ReadinessGate { id: g.id, status: g.status, reason: g.reason, remediation: g.remediation })
             .collect(),
+        method_calibration: r.method_calibration.into(),
     })
 }
 

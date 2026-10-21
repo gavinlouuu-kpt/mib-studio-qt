@@ -2560,16 +2560,39 @@ BridgeExperimentStatus BackendBridge::fetch_experiment_status() {
     return out;
 }
 
+namespace {
+// ABI 43 (#776): the applied method's calibration declarations (calibration_records.method_calibration).
+BridgeMethodCalibration toBridgeMethodCalibration(const backend::app::CalibrationMethodSpec& spec, const std::string& error) {
+    BridgeMethodCalibration out{};
+    out.declared = spec.declared;
+    out.purpose = rust::String(backend::app::toString(spec.purpose));
+    out.calibration_policy = rust::String(backend::app::toString(spec.policy));
+    out.calibration_max_age_hours = spec.maxAgeHours;
+    out.has_reference = spec.reference.has_value();
+    if (spec.reference) {
+        out.nominal_diameter_um = spec.reference->nominalDiameterUm;
+        out.diameter_tolerance_um = spec.reference->diameterToleranceUm;
+        out.has_nominal_e_kpa = spec.reference->nominalEKpa.has_value();
+        out.nominal_e_kpa = spec.reference->nominalEKpa.value_or(0.0);
+        out.max_cv_percent = spec.reference->maxCvPercent;
+    }
+    out.error = rust::String(error);
+    return out;
+}
+} // namespace
+
 BridgeExperimentReadiness BackendBridge::fetch_experiment_readiness(rust::Str output_path) {
     BridgeExperimentReadiness out{};
     backend::app::ExperimentReadinessSnapshot readiness;
     if (!impl_->facade.fetchExperimentReadiness(readiness, toStd(output_path))) {
         out.valid = false;
+        out.method_calibration = toBridgeMethodCalibration(backend::app::CalibrationMethodSpec{}, std::string());
         return out;
     }
     out.valid = true;
     out.ready = readiness.ready;
     out.generation = readiness.generation;
+    out.method_calibration = toBridgeMethodCalibration(readiness.methodCalibration, readiness.methodCalibrationError);
     for (const auto& g : readiness.gates) {
         BridgeReadinessGate gate{};
         gate.id = rust::String(g.id);
@@ -2663,12 +2686,13 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // and the experiment_start_request bounds); v40 the typed start / stop outcome in
 // the command result and experiment_stop's expected start generation (#741, stop
 // outcome RunMismatch); v41 live cell images (#716 A6a: monitoring rows carry their
-// run's start generation, the bounded cell strip and pins, frame packet pull kinds 5/6). All additive over v1 except that removal (ADR
+// run's start generation, the bounded cell strip and pins, frame packet pull kinds 5/6); v42 calibration records
+// (#716 A4a); v43 the readiness report's method_calibration (#776). All additive over v1 except that removal (ADR
 // 0003/0004). Must match
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 42; }
+std::uint32_t bridge_abi_version() { return 43; }
 
 } // namespace mib_bridge
 

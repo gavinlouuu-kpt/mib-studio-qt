@@ -6,11 +6,13 @@
 > record** from that run's own file; the operator applies its pixel-to-micron proposal
 > explicitly; the `calibration.record` readiness gate checks it per the method's policy.
 
-**Source:** `include/backend/app/CalibrationRecord.h`, `src/backend/app/CalibrationRecord.cpp`
-(method spec, derivation, record JSON, gate), `include/backend/app/CalibrationStore.h`,
+**Source:** `include/backend/app/CalibrationMethodSpec.h` (the method's declarations),
+`include/backend/app/CalibrationRecord.h`, `src/backend/app/CalibrationRecord.cpp`
+(method spec parsing, derivation, record JSON, gate), `include/backend/app/CalibrationStore.h`,
 `src/backend/app/CalibrationStore.cpp` (the append-only store and apply).
 **Related:** [[../architecture/ExperimentCoordinator]] (gate, Start check, derivation at close),
-[[../architecture/AppBackend]] (owner), [[../architecture/Rust-Bridge]] (ABI 42 commands),
+[[../architecture/AppBackend]] (owner), [[../architecture/Rust-Bridge]] (ABI 42 commands, ABI 43
+`method_calibration`),
 [[../architecture/Desktop-Shell]], [[../data-model/HDF5-Storage]] (`calibration_record_id`),
 [[ProfileRegistryService]] (the method document), [[ProcessingService]] (the factor).
 
@@ -36,6 +38,21 @@
   - applying processing settings only (`ProcessingSettingsCommand`,
     `applyProcessingConfigTransaction`) keeps the current method's declarations unchanged;
   - the retired Qt shell's `AppConfigWatcher` stores the watched file's full text.
+- **What the readiness report says about the method** (#776, bridge ABI 43). Every readiness
+  evaluation carries the applied method's declarations exactly as its `calibration.record` gate
+  read them (`ExperimentReadinessSnapshot::methodCalibration` / `methodCalibrationError`, from
+  `CalibrationGateResult::spec` / `specError`), so the workspace reads one document. On the bridge
+  it is the report's `method_calibration`: `declared`, `purpose`, `calibration_policy`,
+  `calibration_max_age_hours`, `calibration_reference {nominal_diameter_um,
+  diameter_tolerance_um, nominal_e_kpa | null, max_cv_percent}` (non-null exactly for a
+  calibration method, the CV default filled in) and `error`. With no method applied, or a method
+  that declares none of the four members, it says so explicitly: `declared` false, measurement,
+  none, 24 h, no reference, never missing members. `declared` is set by
+  `parseCalibrationMethodSpec` when any member is present and not null. Because every apply path
+  replaces the declarations (above), the report never shows an earlier method's. It is a separate
+  member, not the gate's detail: a readiness gate on the bridge is `{id, status, reason,
+  remediation}`, with no structured details. The types live in `CalibrationMethodSpec.h` (split
+  from `CalibrationRecord.h` so `ExperimentReadiness.h` can hold them).
 - **Derivation** (`readCalibrationEvidence` + the pure `deriveCalibration`). The run's valid
   objects (metadata only, as the normal core recorded them). Per object with a finite positive
   area: equivalent diameter `2*sqrt(area/pi)` px. Median, raw MAD and CV (sample SD / mean);
@@ -114,4 +131,7 @@ a run / stale / insufficient, Start identity mismatch, a changed factor, ROI inv
 bead round trip), `e2e.calibration_profile_apply` (the declarations through the real apply
 paths: a profile with `required` blocks Start, a calibration profile derives its record, a
 measurement profile without declarations inherits nothing, processing settings keep them, the
-central method text is verbatim), and the bridge tests listed in [[../architecture/Rust-Bridge]] (ABI 42).
+central method text is verbatim; since #776 also the readiness report's method calibration after
+each apply: no method, a policy, a calibration method's reference, nothing stale after switching),
+and the bridge tests listed in [[../architecture/Rust-Bridge]] (ABI 42, ABI 43).
+`backend.calibration_record` also pins `declared` (absent, null and explicit-default members).

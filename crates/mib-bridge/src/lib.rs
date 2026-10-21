@@ -175,6 +175,29 @@ pub mod ffi {
         pub remediation: String,
     }
 
+    /// The applied method's calibration declarations (ABI 43, #776; bridge-contract.json
+    /// `calibration_records.method_calibration`), as the readiness evaluation's
+    /// `calibration.record` gate read them. `purpose` is "measurement" | "calibration",
+    /// `calibration_policy` "none" | "warn" | "required". No method applied, or one that declares
+    /// nothing: `declared` false with the defaults (measurement, none, 24 h, no reference). The
+    /// reference members are meaningful only when `has_reference` (a calibration method);
+    /// `nominal_e_kpa` only when `has_nominal_e_kpa`. `error` is non-empty when the applied
+    /// declarations could not be read (the values are then the defaults; the gate fails closed).
+    #[derive(Debug, Clone, Default)]
+    pub struct BridgeMethodCalibration {
+        pub declared: bool,
+        pub purpose: String,
+        pub calibration_policy: String,
+        pub calibration_max_age_hours: f64,
+        pub has_reference: bool,
+        pub nominal_diameter_um: f64,
+        pub diameter_tolerance_um: f64,
+        pub has_nominal_e_kpa: bool,
+        pub nominal_e_kpa: f64,
+        pub max_cv_percent: f64,
+        pub error: String,
+    }
+
     /// Experiment readiness evaluation (ABI 13): the generation is what a
     /// Start must present; the backend refuses a stale one.
     #[derive(Debug, Clone, Default)]
@@ -183,6 +206,9 @@ pub mod ffi {
         pub ready: bool,
         pub generation: u64,
         pub gates: Vec<BridgeReadinessGate>,
+        /// ABI 43 (#776): the applied method's calibration declarations (always filled, also
+        /// when `valid` is false: then the defaults).
+        pub method_calibration: BridgeMethodCalibration,
     }
 
     /// Device-discovery request (schema v14, issue #419). `kinds` are

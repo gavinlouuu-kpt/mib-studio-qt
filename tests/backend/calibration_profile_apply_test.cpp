@@ -11,6 +11,11 @@
 //  - applying processing settings only (ProcessingSettingsCommand) keeps the current method's
 //    declarations unchanged;
 //  - the central method path (applyConfigDocument) applies the method's full text verbatim.
+//
+// #776 (bridge ABI 43): the readiness report's method calibration (purpose, policy, max age,
+// reference) follows each apply: a calibration method reports its own, a method without
+// declarations (or no method at all) reports measurement / none with `declared` false, and
+// switching between them leaves nothing stale.
 
 #include "backend/app/AppBackend.h"
 #include "backend/app/BackendFacade.h"
@@ -119,9 +124,32 @@ bool noDeclarations(backend::AppBackend& b)
     return true;
 }
 
+// The readiness report's method calibration as JSON (#776), so a failure prints it.
+json methodCalibration(const app::ExperimentReadinessSnapshot& r)
+{
+    const auto& m = r.methodCalibration;
+    json ref = nullptr;
+    if (m.reference)
+        ref = {{"nominal_diameter_um", m.reference->nominalDiameterUm},
+               {"diameter_tolerance_um", m.reference->diameterToleranceUm},
+               {"nominal_e_kpa", m.reference->nominalEKpa ? json(*m.reference->nominalEKpa) : json(nullptr)},
+               {"max_cv_percent", m.reference->maxCvPercent}};
+    return {{"declared", m.declared},
+            {"purpose", app::toString(m.purpose)},
+            {"calibration_policy", app::toString(m.policy)},
+            {"calibration_max_age_hours", m.maxAgeHours},
+            {"calibration_reference", ref},
+            {"error", r.methodCalibrationError}};
+}
+
+const json kUndeclared = json::parse(R"({"declared":false,"purpose":"measurement","calibration_policy":"none",
+    "calibration_max_age_hours":24.0,"calibration_reference":null,"error":""})");
+
 const char* kGated = R"({"config_schema_version":1,"calibration_policy":"required","calibration_max_age_hours":12})";
 const char* kCalibration =
     R"({"config_schema_version":1,"purpose":"calibration","calibration_reference":{"nominal_diameter_um":7.32,"diameter_tolerance_um":0.1,"max_cv_percent":4}})";
+const char* kCalibrationWithE =
+    R"({"config_schema_version":1,"purpose":"calibration","calibration_max_age_hours":6,"calibration_reference":{"nominal_diameter_um":6,"diameter_tolerance_um":0.2,"nominal_e_kpa":1.5}})";
 const char* kMeasurement = R"({"config_schema_version":1,"buffer_threshold":64})";
 
 } // namespace
@@ -187,10 +215,22 @@ int main()
                     std::string("only the calibration gate may block after applying ") + name);
     };
 
+    // ---- no method applied: measurement / none, declared false (#776) ----------------------
+    {
+        wd.mark("no method");
+        MIB_EXPECT(backendApp.getLastConfigJson().empty(), "nothing applied yet");
+        const auto r = readiness(facade, probe);
+        MIB_EXPECT(methodCalibration(r) == kUndeclared, "no method: " + methodCalibration(r).dump());
+    }
+
     // ---- a measurement method that requires a record: the gate follows its policy ------------
     {
         wd.mark("required");
         applyThenCapture("gated");
+        MIB_EXPECT(methodCalibration(readiness(facade, probe)) ==
+                       json::parse(R"({"declared":true,"purpose":"measurement","calibration_policy":"required",
+                           "calibration_max_age_hours":12.0,"calibration_reference":null,"error":""})"),
+                   "#776: the report names the policy: " + methodCalibration(readiness(facade, probe)).dump());
         MIB_EXPECT(declarations(backendApp) == json::parse(R"({"purpose":null,"calibration_policy":"required",
                        "calibration_max_age_hours":12,"calibration_reference":null})"),
                    "the declarations reach the applied text verbatim: " + declarations(backendApp).dump());
@@ -231,6 +271,12 @@ int main()
                        declarations(backendApp).dump());
         const auto r = readiness(facade, probe);
         MIB_EXPECT(gateStatus(r) == GateStatus::NotRequired && r.ready, "a calibration method needs no applied record");
+        MIB_EXPECT(methodCalibration(r) ==
+                       json::parse(R"({"declared":true,"purpose":"calibration","calibration_policy":"none",
+                           "calibration_max_age_hours":24.0,"error":"","calibration_reference":{"nominal_diameter_um":7.32,
+                           "diameter_tolerance_um":0.1,"nominal_e_kpa":null,"max_cv_percent":4.0}})"),
+                   "#776: the calibration method's purpose and reference, no policy from 'gated': " +
+                       methodCalibration(r).dump());
         const auto path = (td.path() / "calibration_run.h5").string();
         const auto started = startRun(facade, path);
         MIB_REQUIRE(started.ok, "the calibration run starts: " + started.message);
@@ -255,6 +301,8 @@ int main()
         const auto* g = r.gate("calibration.record");
         MIB_EXPECT(g && g->status == GateStatus::NotRequired && g->reason == "the method's calibration policy is none" && r.ready,
                    "measurement, policy none: " + (g ? g->reason : std::string()));
+        MIB_EXPECT(methodCalibration(r) == kUndeclared,
+                   "#776: declared false, nothing stale from 'calibration': " + methodCalibration(r).dump());
         const auto path = (td.path() / "measurement_run.h5").string();
         const auto started = startRun(facade, path);
         MIB_REQUIRE(started.ok, "the measurement run starts: " + started.message);
@@ -271,6 +319,10 @@ int main()
         MIB_EXPECT(d["purpose"].is_null() && d["calibration_reference"].is_null() && d["calibration_policy"] == "required",
                    "the gated method is a measurement method again: " + d.dump());
         MIB_EXPECT(gateStatus(readiness(facade, probe)) == GateStatus::Fail, "and its policy blocks");
+        const auto m = methodCalibration(readiness(facade, probe));
+        MIB_EXPECT(m["purpose"] == "measurement" && m["calibration_reference"].is_null() &&
+                       m["calibration_policy"] == "required" && m["declared"] == true,
+                   "#776: no purpose or reference carried over: " + m.dump());
     }
 
     // ---- the central method path applies the method's full text verbatim -------------------
@@ -282,12 +334,20 @@ int main()
         MIB_REQUIRE(report.ok, "apply: " + report.error);
         MIB_EXPECT(backendApp.getLastConfigJson() == kMeasurement && noDeclarations(backendApp),
                    "the applied text is the method's own: " + backendApp.getLastConfigJson());
-        const auto calibration = app::applyConfigDocument(backendApp, kCalibration);
+        MIB_EXPECT(methodCalibration(readiness(facade, probe)) == kUndeclared,
+                   "#776: the central measurement text declares nothing: " + methodCalibration(readiness(facade, probe)).dump());
+        const auto calibration = app::applyConfigDocument(backendApp, kCalibrationWithE);
         MIB_REQUIRE(calibration.ok, "apply: " + calibration.error);
-        MIB_EXPECT(backendApp.getLastConfigJson() == kCalibration, "verbatim");
+        MIB_EXPECT(backendApp.getLastConfigJson() == kCalibrationWithE, "verbatim");
+        const auto m = methodCalibration(readiness(facade, probe));
+        MIB_EXPECT(m["purpose"] == "calibration" && m["calibration_max_age_hours"] == 6.0 &&
+                       m["calibration_reference"] == json::parse(R"({"nominal_diameter_um":6.0,"diameter_tolerance_um":0.2,
+                           "nominal_e_kpa":1.5,"max_cv_percent":10.0})"),
+                   "#776: the central method's reference, the CV default filled in: " + m.dump());
         const auto malformed = app::applyConfigDocument(backendApp, R"({"purpose":"calibration"})");
-        MIB_EXPECT(!malformed.ok && backendApp.getLastConfigJson() == kCalibration,
+        MIB_EXPECT(!malformed.ok && backendApp.getLastConfigJson() == kCalibrationWithE,
                    "a declaration the strict parse refuses applies nothing: " + malformed.error);
+        MIB_EXPECT(methodCalibration(readiness(facade, probe)) == m, "#776: and the report is unchanged");
     }
 
     facade.shutdown();
