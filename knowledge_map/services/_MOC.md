@@ -17,6 +17,9 @@
 - [[CalibrationRecords]] — the calibration run: method purpose / policy, record
   derivation at close, the append-only instrument store, explicit apply, the
   `calibration.record` gate (bridge ABI 42)
+- [[RunQuickLook]] — per-run statistics of closed HDF5 runs (one shared function in
+  `mib_review_core`): the pass at close, the in-memory LRU, `run_quick_look` (bridge ABI 44) and
+  Review's twin `review_run_statistics` (review ABI 6)
 
 ## Persistence
 - [[Hdf5Service]] — batched write/read of experiment frames + metadata

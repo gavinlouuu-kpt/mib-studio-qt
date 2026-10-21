@@ -854,3 +854,41 @@ async fn readiness_reports_the_method_calibration_over_the_websocket() {
     server.state().bridge.lock().unwrap().pin_mut().shutdown();
     let _ = std::fs::remove_dir_all(&data);
 }
+
+// Run quick look (#716 A7a, ABI 44): a viewer (not the controlling client) reads the statistics
+// over the WebSocket, with a reference and its deltas; a malformed request is an error reply; the
+// read never writes the file and never takes control.
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn run_quick_look_over_the_websocket() {
+    use mib_bridge::review_ffi;
+    let (server, addr, data) = start("quick_look").await;
+    let v3 = data.join("v3.h5").to_string_lossy().into_owned();
+    let even = data.join("even.h5").to_string_lossy().into_owned();
+    assert!(review_ffi::review_fixture_write_quick_look(&v3, 0) && review_ffi::review_fixture_write_quick_look(&even, 3));
+    let before = std::fs::read(&v3).unwrap();
+    let mut controller = connect(addr).await;
+    let mut viewer = connect(addr).await;
+    let mut events = Vec::new();
+    call(&mut controller, 1, "init", json!({ "dataDir": "" }), &mut events).await.unwrap();
+    assert_eq!(server.controller(), Some(1));
+    let ok = |r: Result<Reply, String>| match r {
+        Ok(Reply::Json(v)) => v,
+        other => panic!("{other:?}"),
+    };
+    let reference = json!({ "path": even, "run_id": review_ffi::review_fixture_quick_look_run_id(3) });
+    let r = ok(call(&mut viewer, 2, "run_quick_look", json!({ "paths": [v3], "reference": reference }), &mut events).await);
+    assert_eq!(r["ok"], json!(true), "a viewer reads: {r}");
+    assert_eq!(r["runs"][0]["status"], json!("computed"), "{r}");
+    assert_eq!(r["runs"][0]["statistics"]["counts"]["valid"], json!("21"));
+    assert_eq!(r["reference"]["confirmed"], json!(true));
+    assert!(r["runs"][0]["delta"]["deformability_median"]["value"].is_number(), "{r}");
+    let refused = call(&mut viewer, 3, "run_quick_look", json!({ "paths": [] }), &mut events).await.unwrap_err();
+    assert!(refused.contains("Invalid paths"), "{refused}");
+    assert_eq!(server.controller(), Some(1), "a read never takes control");
+    assert_eq!(std::fs::read(&v3).unwrap(), before, "nothing written");
+    controller.close(None).await.unwrap();
+    viewer.close(None).await.unwrap();
+    server.state().bridge.lock().unwrap().pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(&data);
+}

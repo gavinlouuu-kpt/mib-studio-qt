@@ -207,6 +207,17 @@ append only, never renumber.
    is still `Stopping`/`Failed`, so no review reader can open beside it (the
    facade opens review sources only inside the idle transaction; HDF5 is not
    thread-safe, #722); it never changes the run outcome.
+   Then, for every run with a file (#716 A7a), the **run quick look**
+   (`quickLookAtClose`): the closed file's statistics
+   ([[../services/RunQuickLook]]) into AppBackend's in-memory cache, before the
+   terminal status, so a client that sees the terminal status finds them. The
+   read goes through the reader the facade installs
+   (`setClosedRunStatisticsReader` → `ReviewJobs::runStatistics`: the review
+   lanes' lock and the session's mutex, #722); a review job holding a lane
+   defers it to on demand (nothing cached, logged). Without a facade (a native
+   shell with HDF5 users of its own) nothing serializes the read, so the file is
+   deferred to on demand and nothing is read. Nothing is written;
+   it never fails the run; its time is logged.
 7. Restore the realtime mode if Start switched it.
 8. Terminal status: `terminal=true`, `completion` from the reconciled
    accounting (`Failed` for a fatal save error), `finalizationOk=false` if
@@ -247,7 +258,7 @@ thresholds, so a slow trickle of large frames never sits unwritten.
 | `camera.geometry` | no frame received yet | — |
 | `processing.roi` | — | no ROI (full frame) |
 | `processing.core` | pinned core not active | — |
-| `method.revision` (#398 M2) | applied config.json is a cached central revision that is revoked or not published/superseded (`NotRequired` for a local method or no config) | central revision not validated on this instrument/context, a failed local validation, or unknown instrument |
+| `method.revision` (#398 M2) | applied config.json is a cached central revision that is revoked or not published/superseded (`NotRequired` for a local method or no config; a local method applied from a local profile names it in the detail, "modified after apply" when settings changed since, #783) | central revision not validated on this instrument/context, a failed local validation, or unknown instrument |
 | `calibration.pixelToMicron` | factor not positive | — |
 | `calibration.record` (#716 A4a; the declarations it read are the report's `method_calibration`, #776 ABI 43) | the applied method's `calibration_policy` is `required` and no applied record is in effect (none applied, the factor changed since the apply, or derived under another setup); `Unavailable` when the camera/ROI identity is unknown or the store cannot be read; a malformed method fails closed. `NotRequired` for policy `none` (legacy methods) and for a calibration method itself. An identity change first appends the applied record's `invalidated` version (hard, once). Fix names the real action: "run the calibration method", "apply proposed record <id> (calibration_apply)…", or "re-apply record <id>…" | policy `warn` with the same conditions; the applied record is older than `calibration_max_age_hours` (soft: also under `required`); its age cannot be determined (clock behind) |
 | `processing.background` | — | no background image |

@@ -5,7 +5,7 @@
 //! as lossless JSON.
 
 use mib_bridge::review_ffi;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::ipc::Response;
 use tauri::State;
 
@@ -115,9 +115,16 @@ pub struct RunIdentity {
     operator: Option<RunOperator>,
     annotation: Option<RunAnnotation>,
     annotation_unreadable: bool,
-    /// Review ABI 3 (#717 B3b): snapshot v3 `emodulus_lut`; `null` when the
-    /// snapshot records none.
+    /// Review ABI 3 (#717 B3b): snapshot v3 `emodulus_lut`, else (review ABI
+    /// 5, #783) a regenerated file's `@emodulus_lut_json`; `null` when the
+    /// file records neither.
     emodulus_lut: Option<EModulusLut>,
+    /// Review ABI 5 (#783): where `emodulus_lut` comes from: "snapshot" (run
+    /// snapshot v3), or a regenerated file's `@emodulus_lut_json`
+    /// provenance, "recorded" (carried over from the source run) or "host"
+    /// (the host's LUT at regeneration); `null` exactly when `emodulus_lut`
+    /// is.
+    emodulus_lut_provenance: Option<String>,
     /// The snapshot's `profile_id` (the only "method" a file records).
     profile_id: Option<String>,
 }
@@ -179,6 +186,7 @@ pub fn run_identity(id: review_ffi::ReviewRunIdentity) -> RunIdentity {
                 checksum_status: present(l.has_checksum_status, l.checksum_status),
             }
         }),
+        emodulus_lut_provenance: present(id.has_emodulus_lut_provenance, id.emodulus_lut_provenance),
         profile_id: present(id.has_profile_id, id.profile_id),
     }
 }
@@ -529,6 +537,37 @@ pub fn fetch_review_info(state: State<AppState>) -> Result<ReviewInfo, String> {
         ring_ratio_max: m.ring_ratio_max,
         identity: run_identity(m.identity),
     })
+}
+
+/// Review ABI 6 (#716 A7a): the reference run of `review_run_statistics`, as bridge-contract.json
+/// `run_quick_look` names it (`run_id` required, null for a file that records none).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct QuickLookReference {
+    pub path: String,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_generation: Option<String>,
+}
+
+/// Review ABI 6 (#716 A7a): the run quick look's twin for B2 R2: the per-run statistics of `paths`
+/// (1 to `review_run_statistics.max_paths`) and an optional reference with run - reference deltas,
+/// the JSON document of bridge-contract.json `run_quick_look`, computed by the same C++ function.
+/// The backend checks the request's bounds (a refused request replies `ok` false); each file is
+/// deferred while a review job runs; nothing is written.
+#[tauri::command]
+pub fn review_run_statistics(
+    state: State<AppState>,
+    paths: Vec<String>,
+    reference: Option<QuickLookReference>,
+) -> Result<serde_json::Value, String> {
+    let mut request = serde_json::json!({ "paths": paths });
+    if let Some(r) = reference {
+        request["reference"] = serde_json::to_value(r).map_err(|e| e.to_string())?;
+    }
+    let mut guard = state.review.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().review_run_statistics(&request.to_string())).map_err(|e| e.to_string())
 }
 
 /// Review ABI 2 (#717 B1a): the experiment library's identity probe over
@@ -1086,7 +1125,7 @@ mod tests {
                 "has_snapshot": false, "snapshot_unreadable": false, "snapshot_version": null, "run_id": null,
                 "experiment_id": null, "run_index": null, "sample_ref": null, "calibration_record_id": null,
                 "operator": null, "annotation": null, "annotation_unreadable": false,
-                "emodulus_lut": null, "profile_id": null
+                "emodulus_lut": null, "emodulus_lut_provenance": null, "profile_id": null
             })
         );
         // Through the bridge: a v3 file and a legacy file, and the probe's JSON.
@@ -1116,6 +1155,19 @@ mod tests {
             serde_json::json!({"loaded": true, "lut_id": "lut-v2", "revision": null, "source": null,
                                "sha256": "41b9", "catalog_sha256": null, "checksum_status": null})
         );
+        assert_eq!(id["emodulus_lut_provenance"], "snapshot", "review ABI 5 (#783)");
+        // Review ABI 5 (#783): a regenerated file's record, named by its provenance.
+        let regen = dir.join(format!("mib_desktop_identity_regen_{}.h5", std::process::id()));
+        let _ = std::fs::remove_file(&regen);
+        let lut = r#"{"loaded":true,"lut_id":"lut-v2","revision":null,"sha256":"41b9","provenance":"host"}"#;
+        assert!(review_ffi::review_fixture_write_regenerated(&regen.to_string_lossy(), lut));
+        assert!(bridge.pin_mut().review_open(&regen.to_string_lossy()).ok);
+        let id = serde_json::to_value(super::run_identity(bridge.pin_mut().fetch_review_info().identity)).unwrap();
+        assert_eq!(id["has_snapshot"], false);
+        assert_eq!(id["emodulus_lut"]["lut_id"], "lut-v2");
+        assert_eq!(id["emodulus_lut_provenance"], "host");
+        assert!(id["profile_id"].is_null());
+        let _ = std::fs::remove_file(&regen);
         let probe = bridge.pin_mut().review_probe_runs(vec![old.to_string_lossy().into_owned(), String::new()]);
         assert!(probe.ok);
         let legacy = &probe.runs[0];

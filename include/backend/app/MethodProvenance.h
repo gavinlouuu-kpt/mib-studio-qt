@@ -38,13 +38,30 @@ MethodProvenance resolveMethodProvenance(const std::string& appliedConfigCanonic
                                          const profiles::MethodContext& context,
                                          const std::string& instrumentName);
 
+// #783: a local method (source "local") applied from a local profile names it. Reads the
+// `profile_selection` object ProfileStore::apply writes into the applied config text
+// (`appliedConfigJson`, AppBackend::getLastConfigJson): name, path, revision, profile_id (string
+// members only; anything else is ignored). Leaves `method` unchanged for any other source, for a
+// config without a selection, or one that is not JSON.
+// The selection's `applied_config_sha256` (written by ProfileStore::apply) must equal
+// localProfileAppliedConfigSha256 of the current text; otherwise (a settings apply changed the text
+// after the profile, or no fingerprint) `localProfileModified` is set: the profile is named, its
+// revision is not claimed for the applied config.
+void attachLocalProfile(MethodProvenance& method, const std::string& appliedConfigJson);
+
+// The canonical SHA-256 (profiles::canonicalConfigSha256) of an applied config text without its
+// `profile_selection` member; empty when the text is not a JSON object.
+std::string localProfileAppliedConfigSha256(const std::string& appliedConfigJson);
+
 ReadinessGate methodRevisionGate(const MethodProvenance& method);
 
 // Stable comparable summary of everything the gate depends on (readiness
 // invalidation input).
 std::string methodInvalidationKey(const MethodProvenance& method);
 
-// The JSON object written as "method" in run_snapshot_json.
+// The JSON object written as "method" in run_snapshot_json. A local method also carries
+// `local_profile` {name, path, revision, profile_id, modified_after_apply} (#783), null when no
+// profile names it.
 std::string methodProvenanceToJson(const MethodProvenance& method);
 
 } // namespace backend::app

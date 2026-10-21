@@ -3,7 +3,7 @@
 // YOFO Review's own contract (ADR 0014); the MIB Studio bridge contract is
 // ../bridgeContract.ts.
 
-export const REVIEW_ABI_VERSION = 4;
+export const REVIEW_ABI_VERSION = 6;
 
 export const OVERLAY_MODES = {
   None: 0,
@@ -130,6 +130,11 @@ export const REVIEW_REPROCESS = {
   "max_objects": 64
 } as const;
 
+export const REVIEW_RUN_STATISTICS = {
+  "max_paths": 32,
+  "path_max_bytes": 4096
+} as const;
+
 export const REVIEW_OBJECT_COORDINATES = {
   "attribute": "/experiment_info @object_coordinates",
   "values": [
@@ -151,3 +156,9 @@ export const REVIEW_OBJECT_COORDINATES = {
     "area_tolerance_percent": 15
   }
 } as const;
+
+export const REVIEW_EMODULUS_LUT_PROVENANCES = [
+  "snapshot",
+  "recorded",
+  "host"
+] as const;

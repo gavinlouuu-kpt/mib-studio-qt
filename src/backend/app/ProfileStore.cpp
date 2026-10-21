@@ -3,6 +3,7 @@
 #include "backend/app/ConfigDocumentApply.h"
 #include "backend/app/StartupConfiguration.h"
 #include "backend/app/AppBackend.h"
+#include "backend/app/MethodProvenance.h"
 #include "backend/processing/ProcessingService.h"
 #include "backend/processing/ProcessingConfigJson.h"
 #include <cmath>
@@ -174,11 +175,17 @@ J apply(AppBackend& backend, const J& snapshot) {
         provenance.erase(key);
         if (root.contains(key)) provenance[key] = root.at(key);
     }
+    // The applied text as this profile left it (#783): a later settings apply that keeps the
+    // selection but changes the text no longer matches, so the run's method names the profile as
+    // modified after apply instead of claiming its revision (attachLocalProfile).
+    provenance.erase("profile_selection");
+    const auto appliedSha256 = localProfileAppliedConfigSha256(provenance.dump());
     provenance["profile_selection"] = {{"name", snapshot.at("name")},
                                        {"path", snapshot.at("path")},
                                        {"revision", snapshot.at("revision")},
                                        {"profile_id", snapshot.at("profile_id")},
-                                       {"display_fps", staged.displayFps}};
+                                       {"display_fps", staged.displayFps},
+                                       {"applied_config_sha256", appliedSha256}};
     const auto provenanceBytes = provenance.dump();
     commitStagedConfig(backend, staged);
     backend.setLastConfigJson(provenanceBytes);
@@ -250,7 +257,10 @@ std::string profileStoreCommand(AppBackend& backend, const std::string& baseStri
             result["selection"] = selectionRead(base);
             auto runtime =
                 J::parse(backend.getLastConfigJson().empty() ? "{}" : backend.getLastConfigJson());
-            result["active_profile"] = runtime.value("profile_selection", J(nullptr));
+            auto active = runtime.value("profile_selection", J(nullptr));
+            // The fingerprint is backend provenance (#783), not part of this reply.
+            if (active.is_object()) active.erase("applied_config_sha256");
+            result["active_profile"] = active;
         } else if (op == "restore") {
             const auto selection = selectionRead(base);
             if (selection.is_null()) {

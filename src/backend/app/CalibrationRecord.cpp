@@ -2,6 +2,7 @@
 
 #include "backend/profiles/InstrumentIdentity.h"
 #include "backend/recording/Hdf5Service.h"
+#include "backend/review/RunStatistics.h"
 
 #include <nlohmann/json.hpp>
 
@@ -24,16 +25,8 @@ bool fail(std::string* why, const std::string& text)
     return false;
 }
 
-double median(std::vector<double> v)
-{
-    const auto n = v.size();
-    const auto mid = v.begin() + static_cast<std::ptrdiff_t>(n / 2);
-    std::nth_element(v.begin(), mid, v.end());
-    const double upper = *mid;
-    if (n % 2 == 1) return upper;
-    const double lower = *std::max_element(v.begin(), mid);
-    return (lower + upper) / 2.0;
-}
+// One median for every per-run number (#716 A7a): the run quick look's (review/RunStatistics.h).
+using backend::review::median;
 
 // A number member, finite and in [lo, hi] (exclusive lower bound when `lowOpen`).
 bool readNumber(const json& o, const char* key, double lo, double hi, bool lowOpen, double& out, std::string* why,

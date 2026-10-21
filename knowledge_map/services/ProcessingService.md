@@ -573,6 +573,10 @@ TIFFs — use:
   morphology → `filterProcessedImage`. Zero side-effects (no monitoring
   rings, no experiment accumulation, no callbacks, no auto-background).
   Returns a `ProcessedFrame` with a full-size mask (zero outside ROI).
+  An overload with a trailing `const BatchAnalysisInputs& inputs` (#779)
+  applies them as `processBatch` does (a set factor must be finite and > 0,
+  else `std::invalid_argument`); the wheel's
+  `compute_processed_frame(pixel_to_micron=)` uses it.
 - `ProcessingService::processBatch(grayImages, config, background, roi, progressCb,
   processingCore, inputs = {})`
   — wraps `computeProcessedFrame` over a vector of grayscale `cv::Mat`
@@ -603,7 +607,8 @@ TIFFs — use:
   group use it (a reanalysed source run's own LUT, see
   [[ReviewSession]]); set to null, no E (E 0, as a run without a LUT);
   unset, the service's own. The wheel's `process_batch(pixel_to_micron=)`
-  maps onto `pixelToMicronFactor` (omitted: unchanged).
+  and, since #779, `compute_processed_frame(pixel_to_micron=)` map onto
+  `pixelToMicronFactor` (omitted: unchanged).
 
   When `multi_image_enabled` and `multi_image_count > 1`, each newly retained
   valid track also carries the trigger image plus the available following

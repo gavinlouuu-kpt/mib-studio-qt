@@ -652,6 +652,16 @@ fn calibration_apply(state: State<AppState>, record_id: String, expected_current
     cmds::calibration_apply(&state, record_id, expected_current_factor)
 }
 
+// ABI 44 (#716 A7a): the run quick look, a read (it never writes or actuates anything).
+#[tauri::command]
+fn run_quick_look(
+    state: State<AppState>,
+    paths: Vec<String>,
+    reference: Option<cmds::QuickLookReference>,
+) -> Result<serde_json::Value, String> {
+    cmds::run_quick_look(&state, paths, reference)
+}
+
 #[tauri::command]
 fn trigger_set_pulse_duration(state: State<AppState>, pulse_us: i32) -> Result<cmds::CmdResult, String> {
     cmds::trigger_set_pulse_duration(&state, pulse_us)
@@ -930,6 +940,7 @@ pub fn run() {
             calibration_records_list,
             calibration_record_get,
             calibration_apply,
+            run_quick_look,
             trigger_set_pulse_duration,
             trigger_manual_pulse,
             trigger_periodic_start,

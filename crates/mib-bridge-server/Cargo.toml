@@ -27,3 +27,5 @@ serde_json = "1"
 [dev-dependencies]
 tokio-tungstenite = "0.28"
 serial_test = "3"
+# The run quick look's parity fixture writer (review_ffi::review_fixture_write_quick_look, #716 A7a).
+mib-bridge = { path = "../mib-bridge" }

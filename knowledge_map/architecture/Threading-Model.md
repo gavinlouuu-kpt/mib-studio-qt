@@ -89,6 +89,21 @@ coordinator worker's derivation at close (coordinator mutex released, state stil
 `Stopping`/`Failed`, so the facade cannot open a review reader meanwhile: HDF5 is not thread-safe,
 #722), and the facade's list / get (store mutex only).
 
+## Run quick look (bridge ABI 44)
+
+[[../services/RunQuickLook]] adds no thread. `RunStatisticsCache` has one mutex and never calls
+out while holding it. Its HDF5 reads are serialized with every other reader (#722): at close the
+coordinator worker (coordinator mutex released) calls the facade-installed reader under its own
+`closedRunStatisticsMutex_`, which runs `ReviewJobs::runStatistics` (the lanes' mutex, refused as
+`Deferred` while a lane is claimed) and `ReviewSession::runStatistics` (the session's mutex). On
+demand, `BackendFacade::runQuickLookJson` reads a miss only inside the coordinator's idle
+transaction, with no raw recording, through the same lane and session gate, one file per
+transaction. Lock order: coordinator mutex → lanes' mutex → session mutex;
+`closedRunStatisticsMutex_` → lanes' mutex → session mutex. The facade's teardown clears the
+reader under `closedRunStatisticsMutex_`, so it waits out a call in progress. Cache hits take only
+the cache mutex. Guards: `review.run_statistics` (the LRU under threads, the TSan lane),
+`e2e.run_quick_look`.
+
 ## Experiment vs Monitoring vs Realtime
 
 `ProcessingService` has three accumulation modes:

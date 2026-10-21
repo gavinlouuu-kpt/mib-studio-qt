@@ -1078,6 +1078,23 @@ generation; the classic Stop Experiment sends none). Guards:
 `experimentStart.test.ts`, `queueModel.test.ts`, `QueuePlan.test.tsx`,
 `PlanView.test.tsx`, `navigation.test.tsx`.
 
+**Run quick look (ABI 44, #716 A7a).** `runQuickLook.ts` types and checks the
+reply of [[../services/RunQuickLook]]; `bridge.runQuickLook(paths, reference?)`
+(`run_quick_look`) and `reviewBridge.runStatistics` share it. Per run:
+`status` (`computed | deferred | not_available | error`), `computed_at`
+(`close | on_demand`), `from_cache`, `file`, `statistics` (counts as decimal
+strings; area µm² null without a recorded factor; E status and numbers only
+when computed; the declared target group; the event rate; descriptive flags;
+the display-only overlay) and `delta` (only with a confirmed reference; each
+median a value or a withheld reason; `differs` flags). Anything off contract is
+refused (`RUN_QUICK_LOOK_REPLY_INVALID`); `runQuickLookArgs` throws before
+sending for a malformed request (`INVALID_PATHS`, `INVALID_REFERENCE_*`). A read
+on the remote server for every client. No develop UI: the Summary (O5) and
+Quick look (O6) come with A7b on the workspace branch. Guards:
+`runQuickLook.test.ts` (the golden reply
+`crates/mib-bridge/contract/fixtures/run-quick-look-v1.json`, which
+`review_bridge.rs` pins to the backend's output).
+
 **The applied method's calibration declarations (ABI 43, #776).**
 `bridge.fetchExperimentReadiness()` now returns `method_calibration`
 (`MethodCalibration` in `calibrationRecords.ts`, decoded strictly by
@@ -1349,6 +1366,10 @@ the config/script/metadata aggregate revision still matches. No scripts, device 
 or hardware actuation are performed by restore. `selection` separately returns the saved
 startup choice and actual runtime `profile_selection` provenance; a saved choice alone
 is never evidence of application. External edits fail closed for explicit review/reapply.
+The runtime `profile_selection` also carries `applied_config_sha256` (#783: the canonical hash
+of the applied text without the selection), which the run's method provenance uses to tell an
+exact profile from one whose settings changed after the apply; `selection` leaves it out of
+`active_profile`, so that reply is unchanged.
 
 **One startup pointer (#398 M2c, bridge ABI 32).** Since central methods can be applied
 too, the startup choice is the last thing applied, whichever kind: `app/StartupConfiguration`

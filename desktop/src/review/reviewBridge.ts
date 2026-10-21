@@ -10,10 +10,11 @@
 // availability gate (`reviewAvailability.ts`, #763 F7): once the server has
 // answered UNKNOWN_COMMAND, review calls are refused locally.
 import { invoke as transportInvoke, upload, type TransportUnsupportedError } from "../transport";
-import { REVIEW_FRAME_PACKET, REVIEW_PIXEL_FORMATS } from "./reviewContract";
+import { REVIEW_EMODULUS_LUT_PROVENANCES, REVIEW_FRAME_PACKET, REVIEW_PIXEL_FORMATS } from "./reviewContract";
 import { decimalU64, type FramePacket } from "../framePacket";
 import { decodeReviewPacket } from "./reviewPacket";
 import { gateReviewCommand } from "./reviewAvailability";
+import { decodeRunQuickLookReply, runQuickLookArgs, type RunQuickLookReference, type RunQuickLookReply } from "../runQuickLook";
 
 function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   return gateReviewCommand(cmd, () => transportInvoke<T>(cmd, args));
@@ -59,11 +60,37 @@ export interface ReviewRunIdentity {
   operator: { id: string | null; name: string | null } | null;
   annotation: ReviewRunAnnotation | null;
   annotation_unreadable: boolean;
-  /** Review ABI 3 (#717 B3b): snapshot v3 `emodulus_lut`; `null` when the
-   * snapshot records none. */
+  /** Review ABI 3 (#717 B3b): snapshot v3 `emodulus_lut`; since review ABI 5
+   * (#783), else a regenerated file's `@emodulus_lut_json` (a file without a
+   * snapshot may carry it). `null` when the file records neither. */
   emodulus_lut: ReviewEModulusLut | null;
+  /** Review ABI 5 (#783): where `emodulus_lut` comes from; `null` exactly
+   * when `emodulus_lut` is (and from a backend before review ABI 5, which
+   * does not send the member). See `decodeReviewEModulusLutProvenance`. */
+  emodulus_lut_provenance?: ReviewEModulusLutProvenance | null;
   /** The snapshot's `profile_id`, the only "method" a file records. */
   profile_id: string | null;
+}
+
+/** Contract `run_identity.emodulus_lut_provenances` (review ABI 5, #783):
+ * `snapshot` = the run snapshot v3 record (the run's own); `recorded` = a
+ * regenerated file's record carried over from its source run; `host` = a
+ * regenerated file's record of the host's E-LUT at regeneration (the source
+ * recorded none). */
+export type ReviewEModulusLutProvenance = (typeof REVIEW_EMODULUS_LUT_PROVENANCES)[number];
+
+/** The identity's `emodulus_lut_provenance` as a contract value. `null` when
+ * the file records no E-LUT, when a backend before review ABI 5 sent no
+ * member, or for a value this shell does not know (never guessed as one it
+ * does); a provenance without an `emodulus_lut` is not trusted either. */
+export function decodeReviewEModulusLutProvenance(
+  identity: Pick<ReviewRunIdentity, "emodulus_lut" | "emodulus_lut_provenance"> | null | undefined,
+): ReviewEModulusLutProvenance | null {
+  if (!identity || identity.emodulus_lut == null) return null;
+  const value: unknown = identity.emodulus_lut_provenance;
+  return typeof value === "string" && (REVIEW_EMODULUS_LUT_PROVENANCES as readonly string[]).includes(value)
+    ? (value as ReviewEModulusLutProvenance)
+    : null;
 }
 
 /** The E-modulus LUT a run used (snapshot v3). `loaded` false: the run had
@@ -362,6 +389,11 @@ export const reviewBridge = {
     const r = await invoke<ReviewProbeResult>("review_probe_runs", { paths });
     return { ok: !!r.ok, message: String(r.message ?? ""), runs: r.runs ?? [] };
   },
+  /** Review ABI 6 (#716 A7a): the run quick look's twin for B2 R2: per-run statistics and
+   * run - reference deltas, the same document as the backend bridge's `run_quick_look` (one C++
+   * function). Each file is deferred while a review job runs; nothing is written. */
+  runStatistics: async (paths: string[], reference?: RunQuickLookReference | null): Promise<RunQuickLookReply> =>
+    decodeRunQuickLookReply(await invoke<unknown>("review_run_statistics", runQuickLookArgs(paths, reference))),
   rows: (valid: boolean, offset: number | string, count: number) =>
     invoke<ReviewRows>("fetch_review_rows", { valid, offset: decimalU64(offset), count }),
   /** Review ABI 3 (#717 B3b): the linked records of one cell (its track),
