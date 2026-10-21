@@ -34,6 +34,7 @@ import { startExperiment, type StartOutcome } from "./experimentStart";
 import { SerialReads } from "./serialReads";
 import { usePlan, type PlanStartResult, type StopReply } from "./workspace/usePlan";
 import { planCameraMode } from "./workspace/planModel";
+import { runInProgress } from "./workspace/liveModel";
 import { useHoldsControl } from "./transport/useControlRole";
 import { downloadUrl } from "./filesView";
 import { serverOrigin, tokenFromLocation } from "./transport/auth";
@@ -564,14 +565,14 @@ export default function App() {
   // Monitoring is visibility-gated (BE-5): accumulation and its per-frame
   // image clones run only while a monitoring view is actually shown: the classic
   // Monitoring tab, or the workspace's Experiment · Live (O4, #716 A6b), which reads
-  // the snapshot for its scatter but not the sorter trigger's status.
+  // the snapshot for its scatter but not the sorter trigger's status. The switch
+  // itself is sent below (it waits for the control role and the run status); this
+  // effect only polls while a monitoring view is shown.
   const classicMonitoringVisible = tab === "experiment" && expTab === "monitoring";
   const workspaceLiveVisible = workspaceStage === 2 && experimentView === "Live";
   const monitoringVisible = classicMonitoringVisible || workspaceLiveVisible;
   useEffect(() => {
-    if (!ready) return;
-    bridge.monitoringSetActive(monitoringVisible).catch(() => {});
-    if (!monitoringVisible) return;
+    if (!ready || !monitoringVisible) return;
     let polling = false, disposed = false;
     const id = window.setInterval(async () => {
       if (polling) return; polling = true;
@@ -1024,6 +1025,18 @@ export default function App() {
   }, [append]);
   // Who controls the instrument: a browser that loses control pauses the sample queue (#711).
   const controlHeld = useHoldsControl();
+  // The monitoring switch (BE-5; #716 A6b ruling). It is the instrument's, shared by every client,
+  // and only gates the monitoring rings and the cell strip they feed (never acquisition, recording
+  // or the run). On while a monitoring view is shown here. Off when none is, but only once the run
+  // status has been read and shows no run in progress: during a run it is left as it is, so the
+  // controller moving to Plan or Prepare never cuts the feed viewer clients watch, and after the
+  // run it follows the view again. Only the controlling client sends it.
+  const monitoringRunInProgress = runInProgress(expStatus);
+  const monitoringWanted: boolean | null = monitoringVisible ? true : expStatus !== null && !monitoringRunInProgress ? false : null;
+  useEffect(() => {
+    if (!ready || !controlHeld || monitoringWanted === null) return;
+    bridge.monitoringSetActive(monitoringWanted).catch(() => {});
+  }, [ready, controlHeld, monitoringWanted]);
   // The workspace's Experiment plan (O3): local until its buttons (Start run, the queue's steps).
   const plan = usePlan(runExperimentStart, { status: expStatus, stop: stopForPlan, controlHeld });
 

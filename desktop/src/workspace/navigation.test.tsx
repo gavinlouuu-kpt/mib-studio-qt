@@ -47,7 +47,8 @@ const ACTUATING = [
 ];
 
 /** What showing Experiment · Live (O4, A6b) adds: monitoring on while it is shown and off when it is
- *  left (the classic Monitoring tab's visibility gate, BE-5), and reads. None of them acts on hardware. */
+ *  left with no run in progress (the classic Monitoring tab's visibility gate, BE-5), and reads. None
+ *  of them acts on hardware. */
 const LIVE_COMMANDS = ["monitoring_set_active", "fetch_monitoring_snapshot", "fetch_monitoring_cells", "fetch_monitoring_cell_packet"];
 /** The last monitoring switch sent: Live turns monitoring off again when it is left. */
 const lastMonitoring = (entries: { cmd: string; args: unknown }[]) => entries.filter((e) => e.cmd === "monitoring_set_active").pop()?.args;
@@ -761,6 +762,78 @@ describe("the sample queue over the mocked transport (desktop)", () => {
     await click(buttonByText("Plan"), "Plan");
     expect(byTestId("queue-step")!.textContent).toContain("Swap the tube for S2");
     expect(acts()).toHaveLength(1); // S2 waits for its Start in the Plan
+  });
+
+  const switches = () => log.filter((e) => e.cmd === "monitoring_set_active").map((e) => e.args);
+
+  it("Live (A6b ruling): leaving Live during a run sends no monitoring_set_active(false), whether to Plan, Prepare or the classic view; once the run ends off Live it is turned off", async () => {
+    await runningS1();
+    log.splice(0);
+    await click(buttonByText("Live"), "Live");
+    await advance(1000);
+    expect(switches()).toEqual([{ active: true }]);
+    // The controller moves to Plan, then Prepare, then the classic view: the run is still active.
+    await click(buttonByText("Plan"), "Plan");
+    await advance(3000);
+    await click(host.querySelectorAll(".mib-stages__tab")[0], "Prepare");
+    await advance(3000);
+    await click(buttonByText("Classic view"), "Classic view");
+    await advance(3000);
+    expect(switches()).toEqual([{ active: true }]); // never turned off under the run
+    // Stopping is still the run: nothing until it is terminal.
+    Object.assign(run, { state: EXPERIMENT_STATES.Stopping, flushing: true });
+    await advance(3000);
+    expect(switches()).toEqual([{ active: true }]);
+    finalizeRun();
+    await advance(3000);
+    expect(switches()).toEqual([{ active: true }, { active: false }]); // the run ended off Live: it follows the view again
+    await advance(6000);
+    expect(switches()).toHaveLength(2); // once
+    // Back on Live it is on again; leaving with no run turns it off at once.
+    await click(buttonByText("Workspace preview"), "workspace toggle");
+    await click(host.querySelectorAll(".mib-stages__tab")[2], "Experiment");
+    await click(buttonByText("Live"), "Live");
+    await click(buttonByText("Plan"), "Plan");
+    expect(switches()).toEqual([{ active: true }, { active: false }, { active: true }, { active: false }]);
+  });
+
+  it("the classic Monitoring tab follows the same rule: leaving it during a run sends no off; the run's end does", async () => {
+    await runningS1();
+    await click(buttonByText("Classic view"), "Classic view");
+    await click(host.querySelector('button[aria-label^="Experiment:"]'), "classic Experiment tab");
+    log.splice(0);
+    await click(buttonByText("Monitoring"), "classic Monitoring tab");
+    await click(buttonByText("Preview"), "classic Preview tab");
+    await advance(3000);
+    expect(switches()).toEqual([{ active: true }]);
+    finalizeRun();
+    await advance(3000);
+    expect(switches()).toEqual([{ active: true }, { active: false }]);
+  });
+
+  it("Live (A6b ruling): a viewer client never sends the monitoring switch: not at start-up, on Live, leaving it, nor when a run ends; holding control again, it follows the view", async () => {
+    control.held = false;
+    statefulRuns = true;
+    await boot("desktop");
+    // Another client's run.
+    run = { generation: 1, state: EXPERIMENT_STATES.Active, flushing: false, terminal: false, ok: false, path: "/data/theirs.h5" };
+    await openPlan();
+    await click(buttonByText("Live"), "Live");
+    await advance(3000);
+    expect(byTestId("workspace-live")).not.toBeNull();
+    expect(log.some((e) => e.cmd === "fetch_monitoring_snapshot")).toBe(true); // the viewer reads the feed
+    await click(buttonByText("Plan"), "Plan");
+    await advance(3000);
+    finalizeRun();
+    await advance(3000);
+    await click(buttonByText("Live"), "Live");
+    await click(buttonByText("Plan"), "Plan");
+    await advance(3000);
+    expect(switches()).toEqual([]);
+    // Holding control again (off Live, no run): it follows the view.
+    await setControl(true);
+    await advance(1000);
+    expect(switches()).toEqual([{ active: false }]);
   });
 
   it("the classic Stop Experiment is not tied to a row: it sends no generation; the queue follows S1 to its close", async () => {

@@ -39,6 +39,14 @@ let mismatched = new Set<string>();
 /** Set to hold every crop pull until the test releases them. */
 let holdPulls = false;
 const heldPulls: (() => void)[] = [];
+/** The mock answers at most this many crop pulls in a test; later ones never settle. A loop that pulls
+ *  the same crops again (or retries a refused one) then stops at this bound instead of running the
+ *  worker out of memory, and the pull-count assertions fail on it (see also afterEach). */
+const PULL_BUDGET = 100;
+let pullCount = 0;
+/** Set to hold every unpin until the test releases it. */
+let holdUnpins = false;
+const heldUnpins: (() => void)[] = [];
 const cmd = (message = "ok") => ({ transport_version: JSON_TRANSPORT.version, ok: true, command: 10, message, operation_id: "0" });
 
 function packet(kind: number, width = 4, height = 3): ArrayBuffer {
@@ -56,6 +64,7 @@ function respond(command: string, args: Record<string, unknown> = {}): unknown {
   switch (command) {
     case "fetch_monitoring_cells": return listing;
     case "fetch_monitoring_cell_packet": {
+      if (++pullCount > PULL_BUDGET) return new Promise(() => {});
       const frame = String(args.frameIndex);
       const answer = () => {
         if (mismatched.has(frame)) throw `CAPTURE_MISMATCH: image refused: frame ${frame} object 1 is from capture 3, but the current capture is 4 (the camera stopped)`;
@@ -66,7 +75,15 @@ function respond(command: string, args: Record<string, unknown> = {}): unknown {
     }
     case "monitoring_cell_pin": return { ok: true, outcome: P.Pinned, message: "pinned", revision: "9",
       cell: cell(String(args.frameIndex), { start_generation: String(args.expectedStartGeneration), capture_epoch: String(args.captureEpoch) }), ...pinReply };
-    case "monitoring_cell_unpin": return cmd("unpinned");
+    case "monitoring_cell_unpin": {
+      // As the backend: the pin leaves the listing.
+      const unpinned = () => {
+        setListing({ pins: (listing.pins as { frame_index: string }[]).filter((p) => p.frame_index !== String(args.frameIndex)) });
+        return cmd("unpinned");
+      };
+      if (holdUnpins) return new Promise((resolve) => heldUnpins.push(() => resolve(unpinned())));
+      return unpinned();
+    }
     case "monitoring_cell_clear_pins": return cmd("cleared 2 pin(s)");
     default: throw new Error(`unexpected command ${command}`);
   }
@@ -75,6 +92,8 @@ function respond(command: string, args: Record<string, unknown> = {}): unknown {
 const calls = () => vi.mocked(invoke).mock.calls.map(([c, a]) => ({ cmd: c, args: a as Record<string, unknown> }));
 const sent = (name: string) => calls().filter((c) => c.cmd === name);
 const CONTROL = ["monitoring_cell_pin", "monitoring_cell_unpin", "monitoring_cell_clear_pins"];
+/** "At most n crop pulls": the bound a pull-once rule allows for the cells and reads of a test. */
+const pullsAtMost = (n: number, what: string) => expect(sent("fetch_monitoring_cell_packet").length, what).toBeLessThanOrEqual(n);
 
 // ---- the view ----
 const status = (over: Partial<ExperimentStatus> = {}): ExperimentStatus => ({
@@ -134,11 +153,16 @@ beforeEach(() => {
   mismatched = new Set();
   holdPulls = false;
   heldPulls.length = 0;
+  pullCount = 0;
+  holdUnpins = false;
+  heldUnpins.length = 0;
   stopReply = { ok: true, message: "Accepted", stop_outcome: EXPERIMENT_STOP_OUTCOMES.Accepted };
   setup = {};
   host = document.createElement("div"); document.body.append(host); root = createRoot(host);
 });
 afterEach(async () => {
+  // No test may reach the mock's pull budget: a crop is pulled once.
+  expect(pullCount, "crop pulls in this test").toBeLessThan(PULL_BUDGET);
   await act(async () => root.unmount());
   host.remove();
   vi.useRealTimers();
@@ -157,6 +181,7 @@ describe("the detected-cell strip", () => {
     // Later reads of the same listing pull nothing again; a new cell is pulled once.
     await advance(3000);
     expect(sent("fetch_monitoring_cells").length).toBeGreaterThanOrEqual(3);
+    pullsAtMost(3, "3 cells over 4 reads");
     expect(sent("fetch_monitoring_cell_packet")).toHaveLength(3);
     setListing({ strip: [cell("101"), cell("102"), cell("103"), cell("104")] });
     await advance(1100);
@@ -179,6 +204,16 @@ describe("the detected-cell strip", () => {
     expect(sent("fetch_monitoring_cell_packet")).toHaveLength(STRIP_SHOWN);
   });
 
+  it("pulls each crop and mask once: at most two pulls per shown cell over ten reads", async () => {
+    setListing({ strip: Array.from({ length: 20 }, (_, i) => cell(String(300 + i))) });
+    await render();
+    await click(button("Mask"));
+    await advance(10_000);
+    expect(sent("fetch_monitoring_cells").length).toBeGreaterThanOrEqual(10);
+    pullsAtMost(2 * STRIP_SHOWN, `${STRIP_SHOWN} cells (image and mask) over 10 reads`);
+    expect(sent("fetch_monitoring_cell_packet")).toHaveLength(2 * STRIP_SHOWN);
+  });
+
   it("pulls the masks only for the Mask overlay, and draws the crop with its mask", async () => {
     await render();
     await advance(100);
@@ -199,6 +234,7 @@ describe("the detected-cell strip", () => {
     const reads = sent("fetch_monitoring_cells").length;
     expect(reads).toBeGreaterThanOrEqual(2); // the first read, and one after the refusal
     await advance(2000);
+    pullsAtMost(3, "3 cells, one refused, over 3 reads");
     expect(sent("fetch_monitoring_cell_packet").filter((p) => p.args.frameIndex === "102")).toHaveLength(1); // never retried
   });
 });
@@ -261,6 +297,44 @@ describe("pins", () => {
     ]);
     expect($("live-pin-notice")!.textContent).toContain("Cleared 2 ended pins");
     expect(sent("monitoring_cell_clear_pins")).toEqual([]);
+  });
+
+  it("Clear ended pins: a control loss during the first unpin cancels the rest, and control coming back does not resume it", async () => {
+    const ended = (f: string) => cell(f, { image: null, no_image_reason: ENDED });
+    setListing({ ring_capture_epoch: "4", strip: [], pins: [ended("1"), ended("2"), ended("3")] });
+    holdUnpins = true;
+    await render();
+    await advance(100);
+    await click($("live-clear-ended"));
+    expect(sent("monitoring_cell_unpin").map((c) => c.args.frameIndex)).toEqual(["1"]);
+    // Control is lost while the first unpin is on its way, then comes back before its reply.
+    await render({ ...setup, controlHeld: false });
+    await render({ ...setup, controlHeld: true });
+    heldUnpins.shift()!();
+    await advance(3000);
+    expect(sent("monitoring_cell_unpin").map((c) => c.args.frameIndex)).toEqual(["1"]); // nothing more
+    expect($("live-pin-notice")!.textContent).toContain("Stopped · cleared 1 of 3 ended pins");
+    expect($("live-pin-notice")!.textContent).toContain("does not resume by itself");
+    expect($("live-ended-count")!.textContent).toBe("2 ended");
+    // The operator presses again: the remaining two, one at a time.
+    holdUnpins = false;
+    await click($("live-clear-ended"));
+    expect(sent("monitoring_cell_unpin").map((c) => c.args.frameIndex)).toEqual(["1", "2", "3"]);
+    expect($("live-pin-notice")!.textContent).toContain("Cleared 2 ended pins");
+  });
+
+  it("Clear ended pins: a control loss that is still lost at the next unpin also stops the batch", async () => {
+    const ended = (f: string) => cell(f, { image: null, no_image_reason: ENDED });
+    setListing({ ring_capture_epoch: "4", strip: [], pins: [ended("1"), ended("2")] });
+    holdUnpins = true;
+    await render();
+    await advance(100);
+    await click($("live-clear-ended"));
+    await render({ ...setup, controlHeld: false });
+    heldUnpins.shift()!();
+    await advance(3000);
+    expect(sent("monitoring_cell_unpin").map((c) => c.args.frameIndex)).toEqual(["1"]);
+    expect($("live-pin-notice")!.textContent).toContain("Stopped · cleared 1 of 2 ended pins");
   });
 
   it("steps through the pins and opens the larger viewer (a modal); Escape closes it", async () => {
@@ -362,6 +436,36 @@ describe("the cells hook without control", () => {
   });
 });
 
+describe("the cells hook refuses an identity of another capture or run", () => {
+  it("sends no pin for a cell of an earlier capture or of another run, and says why", async () => {
+    const probe: { cells: LiveCells | null } = { cells: null };
+    function Probe() { probe.cells = useLiveCells({ active: true, controlHeld: true, frozen: false, masks: false, toUrl }); return null; }
+    const key = (capture: string, run = "0") => ({ start_generation: run, capture_epoch: capture, frame_index: "9", object_id: 1 });
+    setListing({ ring_capture_epoch: "4", scope_start_generation: "6", ring_start_generation: "6", strip: [] });
+    await act(async () => root.render(<Probe />));
+    await advance(100);
+    await act(async () => { await probe.cells!.pin(key("3")); });
+    expect(probe.cells!.notice!.title).toBe("Not sent · F9·O1 is not of the current capture");
+    expect(probe.cells!.notice!.text).toContain("It is of capture 3; the current capture is 4");
+    await act(async () => { await probe.cells!.pin(key("4", "5")); });
+    expect(probe.cells!.notice!.text).toContain("It was detected in run 5; the latest run started is run 6");
+    expect(sent("monitoring_cell_pin")).toEqual([]);
+    // Of the current capture: sent (outside a run, or of the latest run).
+    await act(async () => { await probe.cells!.pin(key("4", "6")); });
+    await act(async () => { await probe.cells!.pin(key("4")); });
+    expect(sent("monitoring_cell_pin").map((c) => [c.args.captureEpoch, c.args.expectedStartGeneration])).toEqual([["4", "6"], ["4", "0"]]);
+  });
+
+  it("sends no pin before the first listing", async () => {
+    const probe: { cells: LiveCells | null } = { cells: null };
+    function Probe() { probe.cells = useLiveCells({ active: false, controlHeld: true, frozen: false, masks: false, toUrl }); return null; }
+    await act(async () => root.render(<Probe />));
+    await act(async () => { await probe.cells!.pin({ start_generation: "0", capture_epoch: "3", frame_index: "9", object_id: 1 }); });
+    expect(sent("monitoring_cell_pin")).toEqual([]);
+    expect(probe.cells!.notice!.text).toContain("The live cells have not been read yet");
+  });
+});
+
 describe("Freeze display", () => {
   it("holds the strip and the scatter shown; pins keep updating; nothing is sent", async () => {
     await render({ snapshot: snapshotOf([row(10)]) });
@@ -378,6 +482,49 @@ describe("Freeze display", () => {
     expect(stripNames()[0]).toBe("F104·O1");
     expect($("live-scatter-note")!.textContent).toContain("2 valid rows");
     expect(calls().filter((c) => CONTROL.includes(c.cmd))).toEqual([]);
+  });
+
+  it("a capture change drops the frozen strip and its crops; a cell or point of the earlier capture is not pinned: nothing is sent, the reason is said", async () => {
+    await render({ snapshot: snapshotOf([row(10), row(20)]) });
+    await advance(100);
+    expect(stripNames()).toEqual(["F103·O1", "F102·O1", "F101·O1"]);
+    await click($("live-freeze"));
+    // The camera restarts: capture 4 begins with its own cells.
+    setListing({ ring_capture_epoch: "4", strip: [cell("201", { capture_epoch: "4" })],
+      last_capture_change: { capture_epoch: "4", reason: "the camera stopped", pins_ended: 0, pins_dropped: 0, strip_dropped: 3 } });
+    await advance(1100);
+    expect(stripNames()).toEqual([]); // the held cells are gone, and so is any way to click them
+    expect(host.querySelector('[aria-label="Cell F101·O1"]')).toBeNull();
+    expect(stripCells()).toHaveLength(0);
+    expect($("live-strip")!.textContent).toContain("The frozen cells were of an earlier capture: dropped.");
+    const frozen = $("live-frozen")!;
+    expect(frozen.getAttribute("data-changed")).toBe("true");
+    expect(frozen.textContent).toContain("the capture changed");
+    expect(frozen.textContent).toContain("capture 3 ended; capture 4 began (the camera stopped)");
+    expect(sent("fetch_monitoring_cell_packet").map((p) => p.args.frameIndex)).toEqual(["103", "102", "101"]); // nothing pulled while frozen
+    // The frozen scatter still shows capture 3's rows: a click on one sends nothing and says why.
+    const points = liveScatter(snapshotOf([row(10), row(20)])).points;
+    const p = chartPosition(points[1], chartDomain(points), 560, 300);
+    await act(async () => { $("live-chart")!.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: p.x, clientY: p.y })); });
+    await advance(50);
+    expect(sent("monitoring_cell_pin")).toEqual([]);
+    expect($("live-pin-notice")!.textContent).toContain("Not sent · F20·O1 is not of the current capture");
+    expect($("live-pin-notice")!.textContent).toContain("It is of capture 3; the current capture is 4 (the camera stopped)");
+    // Resuming follows the current capture's strip.
+    await click($("live-freeze"));
+    expect(stripNames()).toEqual(["F201·O1"]);
+    expect(calls().filter((c) => CONTROL.includes(c.cmd))).toEqual([]);
+  });
+
+  it("a new run (pins of the latest run only) drops the frozen strip too", async () => {
+    await render();
+    await advance(100);
+    await click($("live-freeze"));
+    setListing({ scope_start_generation: "7", ring_start_generation: "7", ring_capture_epoch: "5", strip: [],
+      last_capture_change: { capture_epoch: "5", reason: "run 7 started", pins_ended: 0, pins_dropped: 0, strip_dropped: 3 } });
+    await advance(1100);
+    expect(stripNames()).toEqual([]);
+    expect($("live-frozen")!.getAttribute("data-changed")).toBe("true");
   });
 
   it("stops showing live frames while frozen", async () => {

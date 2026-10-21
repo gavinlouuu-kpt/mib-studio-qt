@@ -16,12 +16,16 @@ import {
   chartDomain,
   chartPosition,
   endedPins,
+  frozenChangeText,
   isEndedPin,
+  listingScope,
   liveScatter,
   nearestPoint,
   pinCap,
+  pinIdentityRefusal,
   pinNotice,
   runCounts,
+  scopeChanged,
   statusLifecycle,
   stopAcquisitionReason,
   stopTarget,
@@ -77,6 +81,35 @@ describe("names and the strip", () => {
     expect(endedPins(l).map((p) => p.frame_index)).toEqual(["1"]);
     expect(pinCap(l)).toBe(16);
     expect(pinCap(null)).toBe(16);
+  });
+});
+
+describe("the current capture and run (pins, the frozen strip)", () => {
+  const change = { capture_epoch: "4", reason: "the camera stopped", pins_ended: 1, pins_dropped: 0, strip_dropped: 3 };
+  const key = (capture: string | number | bigint, run: string | number | bigint = "0") => ({ start_generation: run, capture_epoch: capture, frame_index: "9", object_id: 1 });
+
+  it("sends a pin only for the listing's capture, of the latest run or of none (the backend's rule)", () => {
+    const l = listing({ ring_capture_epoch: "4", scope_start_generation: "6", ring_start_generation: "6", last_capture_change: change });
+    expect(pinIdentityRefusal(key("4", "6"), l)).toBe("");
+    expect(pinIdentityRefusal(key(4n, 6n), l)).toBe("");
+    expect(pinIdentityRefusal(key("4"), l)).toBe(""); // outside a run: the backend checks no run
+    expect(pinIdentityRefusal(key("3", "6"), l)).toBe("It is of capture 3; the current capture is 4 (the camera stopped). Nothing was sent: pick a cell of the current capture.");
+    expect(pinIdentityRefusal(key("4", "5"), l)).toBe("It was detected in run 5; the latest run started is run 6, and pins belong to it. Nothing was sent.");
+    expect(pinIdentityRefusal(key("3"), listing())).toBe("");
+    expect(pinIdentityRefusal(key("3", "2"), listing())).toContain("the latest run started is none");
+    expect(pinIdentityRefusal(key("3"), null)).toContain("Nothing was sent");
+  });
+
+  it("a frozen strip of another capture or run is dropped, and says which", () => {
+    const held = listingScope(listing());
+    expect(scopeChanged(held, listing())).toBe(false);
+    expect(scopeChanged(held, listing({ revision: "9", strip: [cell("5")] }))).toBe(false); // new cells, same capture
+    const camera = listing({ ring_capture_epoch: "4", last_capture_change: change });
+    expect(scopeChanged(held, camera)).toBe(true);
+    expect(frozenChangeText(held, camera)).toContain("capture 3 ended; capture 4 began (the camera stopped)");
+    const run = listing({ scope_start_generation: "7" });
+    expect(scopeChanged(held, run)).toBe(true);
+    expect(frozenChangeText(held, run)).toContain("run 7 started");
   });
 });
 

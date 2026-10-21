@@ -47,6 +47,39 @@ export const stripShown = (l: MonitoringCellsListing | null): MonitoringCell[] =
 export const isEndedPin = (pin: MonitoringCell, l: MonitoringCellsListing): boolean => pin.capture_epoch !== l.ring_capture_epoch;
 export const endedPins = (l: MonitoringCellsListing | null): MonitoringCell[] => (l ? l.pins.filter((p) => isEndedPin(p, l)) : []);
 
+/** The capture and run a listing names: a cell of another is never sent (pin) or shown (a frozen strip). */
+export interface CellScope { epoch: string; scope: string }
+export const listingScope = (l: MonitoringCellsListing): CellScope => ({ epoch: l.ring_capture_epoch, scope: l.scope_start_generation });
+/** A listing of another capture or another latest run than `s`. */
+export const scopeChanged = (s: CellScope, l: MonitoringCellsListing): boolean => s.epoch !== l.ring_capture_epoch || s.scope !== l.scope_start_generation;
+
+/** The capture change that began the listing's capture, in plain words ("" when it does not say). */
+const changeReason = (l: MonitoringCellsListing): string =>
+  l.last_capture_change && l.last_capture_change.capture_epoch === l.ring_capture_epoch ? ` (${l.last_capture_change.reason})` : "";
+
+/** Why a cell identity is not sent as a pin ("" when it may be): it must be of the listing's capture,
+ *  and of the latest run started or of none (the backend's own rule; it would refuse with
+ *  CaptureMismatch or RunMismatch). Without a listing the current capture is not known. */
+export function pinIdentityRefusal(key: MonitoringCellKeyInput, l: MonitoringCellsListing | null): string {
+  if (!l) return "The live cells have not been read yet, so the current capture is not known. Nothing was sent.";
+  const epoch = String(key.capture_epoch), run = String(key.start_generation);
+  if (epoch !== l.ring_capture_epoch) {
+    return `It is of capture ${epoch}; the current capture is ${l.ring_capture_epoch}${changeReason(l)}. Nothing was sent: pick a cell of the current capture.`;
+  }
+  if (run !== "0" && run !== l.scope_start_generation) {
+    return `It was detected in run ${run}; the latest run started is ${l.scope_start_generation === "0" ? "none" : `run ${l.scope_start_generation}`}, and pins belong to it. Nothing was sent.`;
+  }
+  return "";
+}
+
+/** The frozen strip's cells were of an earlier capture or run: they are dropped, never shown or pinned. */
+export function frozenChangeText(held: CellScope, l: MonitoringCellsListing): string {
+  const what = held.epoch !== l.ring_capture_epoch
+    ? `capture ${held.epoch} ended; capture ${l.ring_capture_epoch} began${changeReason(l)}`
+    : `run ${l.scope_start_generation} started`;
+  return `The frozen cells are dropped: ${what}. Their crops were of the earlier capture, so they are not shown or pinned. Resume display to follow the strip of the current capture.`;
+}
+
 /** The pin cap as the listing reports it (the contract's when absent). */
 export const pinCap = (l: MonitoringCellsListing | null): number => {
   const cap = l?.caps.max_pins;

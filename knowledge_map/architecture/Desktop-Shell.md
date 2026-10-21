@@ -453,9 +453,16 @@ of the quick controls and the sample sheet, until the kit has them).
     beside Area–Deformability; Pinned cell beside Recording and run status; Sample queue beside Run
     lifecycle. One column when narrow.
   - **Reads only while shown.** `App` widens the monitoring visibility gate (BE-5) to the
-    workspace's Live (`workspaceLiveVisible`): `monitoring_set_active` true while it is shown and
-    false when it is left, as the classic Monitoring tab does, and the 500 ms snapshot poll (200
-    rows; the sorter trigger's status only for the classic tab). Live reads `fetch_monitoring_cells`
+    workspace's Live (`workspaceLiveVisible`), with the 500 ms snapshot poll while shown (200 rows;
+    the sorter trigger's status only for the classic tab). The switch is the instrument's, shared by
+    every client: `monitoring_set_active(true)` while Live or the classic Monitoring tab is shown;
+    `false` when neither is, but only once the run status has been read and shows no run in progress
+    (`runInProgress`: Starting, Active, Stopping or flushing, not terminal). During a run nothing is
+    sent on leaving, so the controller moving to Plan or Prepare never cuts the feed viewer clients
+    watch; when the run ends off Live, `false` follows. Only the controlling client sends it (a
+    viewer only reads). The command only sets `ProcessingService`'s monitoring flag, which gates the
+    monitoring rings' appends (and so the cell strip fed from them); it does not touch acquisition,
+    recording, persistence or the run, and turning it off clears nothing. Live reads `fetch_monitoring_cells`
     once a second (the backend refreshes its strip on that read) and pulls each shown cell's crop
     once (`fetch_monitoring_cell_packet`, kind 5; the mask, kind 6, only for the Mask overlay), at
     most two at a time, for the 12 newest strip cells and the pins; a cell that leaves the listing is
@@ -477,20 +484,27 @@ of the quick controls and the sample sheet, until the kit has them).
     0.20. A click maps to the nearest point within 8 px through the kit's plot margins
     (`CHART_MARGIN`; `liveModel.test.ts` renders the kit chart and checks every point lands where the
     mapping says) until the kit offers point selection (#715). A row without an identity (an older
-    backend) is not pinnable: nothing is sent and the view says so.
+    backend) is not pinnable: nothing is sent and the view says so. Nor is an identity of another
+    capture or run than the listing's (`pinIdentityRefusal`, the backend's own CaptureMismatch /
+    RunMismatch rule): refused before anything is sent, with the reason.
   - **The pinned cell**: the selected pin (the newest, or the last one pinned) with its crop, facts
     (area µm², deformability, E, the image's state, run and capture), ◀ / ▶ through the pins, **Open
     in window** (a modal dialog over the workspace, with Raw / Mask, ◀ Previous / Next ▶, the arrow
     keys and Escape; not a second window, which would need a new Tauri window and capability in the
     shared `src-tauri`), **Unpin**, **Clear ended pins (N)** (one `monitoring_cell_unpin` per pin of
-    an ended capture; there is no backend command for "ended only") and **Clear all pins**. The count
+    an ended capture; there is no backend command for "ended only"; control is rechecked before each,
+    and a control loss cancels the rest for good, even if control comes back before the next one:
+    the operator presses again) and **Clear all pins**. The count
     chip says "N of 16 pins" and "N ended". A pin without an image (an ended capture's, or a row that
     had left the buffer) shows an app-local box with the reason, never a picture; its measurements
     stay. Pins are one shared, bounded set per instrument: without control the strip's crops are not
     buttons, the scatter takes no click, the pin buttons are disabled with the reason, and the hook
     sends nothing even when asked.
   - **Freeze display** holds the live frame, the strip and the scatter as they were (no crop is
-    pulled for the held strip); pins and the run status keep updating; nothing is sent.
+    pulled for the held strip); pins and the run status keep updating; nothing is sent. A listing
+    of another capture or latest run drops the held strip and its crops even while frozen, and the
+    frozen notice says the capture changed; the scatter stays held, and its earlier capture's points
+    are refused as above.
   - **The stops are separate.** "Stop & finalize run" (`stopTarget`): in a queue that has begun,
     only the queue's own row, through `queue.stopCurrent` (as Next sample: `experiment_stop` with the
     row's `start_generation`), never while the queue is paused, and never another run (that one is
@@ -535,7 +549,10 @@ of the quick controls and the sample sheet, until the kit has them).
   reads, and Plan resumes them. Since A6b, showing Live adds only its reads and the monitoring
   switch (`LIVE_COMMANDS`: `monitoring_set_active`, `fetch_monitoring_snapshot`,
   `fetch_monitoring_cells`, `fetch_monitoring_cell_packet`), and monitoring is off again once Live
-  is left. With S1 running, Live's control loss pauses the queue and sends nothing (Stop & finalize
+  is left with no run in progress. With S1 running, leaving Live for Plan, Prepare or the classic
+  view sends no `monitoring_set_active(false)` (nor does leaving the classic Monitoring tab); S1's
+  end off Live sends it once; a viewer sends none at all, and on taking control it follows the view.
+  With S1 running, Live's control loss pauses the queue and sends nothing (Stop & finalize
   and Stop acquisition disabled), control back keeps it paused, Resume sends nothing, and Stop &
   finalize then sends exactly `experiment_stop` with S1's generation; Confirm closed sends nothing. For the sample queue (A5, desktop and PZ7035): choosing the queue,
   adding, typing, moving and removing samples and switching sub-views send nothing that acts (only

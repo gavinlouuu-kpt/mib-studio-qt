@@ -6,9 +6,16 @@
 //   at most two at a time, only for the cells shown (the newest STRIP_SHOWN strip cells and the pins)
 //   and only once per cell: a crop never changes. A cell that leaves the listing is forgotten.
 // - Freeze display holds the strip shown (no new crops are pulled for it); the pins keep updating.
+//   A listing of another capture or another latest run drops the held strip and its crops even while
+//   frozen (the frozen state then says the capture changed): an earlier capture's cell is never shown
+//   as live or pinned.
 // - Pins are shared by every client of the instrument, so pin, unpin and clear are control commands
 //   (VIEWER_ONLY on the WebSocket server): without control nothing is sent and the view says why.
-//   A pin is sent only on a click; the reply's outcome decides what the view says.
+//   A pin is sent only on a click, and only for an identity of the listing's capture and of the latest
+//   run (or of none): any other is refused before anything is sent. The reply's outcome decides what
+//   the view says.
+// - "Clear ended pins" is one unpin per ended pin. A control loss cancels the batch: no further unpin
+//   is sent, and it never resumes by itself (control coming back does not restart it).
 // - A cell of an earlier capture is refused (`CAPTURE_MISMATCH` for an image pull, `CaptureMismatch`
 //   for a pin): the view says so and reads the listing again, and never retries the same identity.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -21,7 +28,8 @@ import {
   type MonitoringCellKeyInput,
   type MonitoringCellsListing,
 } from "../monitoringCells";
-import { cellName, endedPins, pinNotice, stripShown, type LiveNotice } from "./liveModel";
+import { cellName, endedPins, frozenChangeText, listingScope, pinIdentityRefusal, pinNotice, scopeChanged, stripShown, type CellScope,
+  type LiveNotice } from "./liveModel";
 
 export type CellLayer = "image" | "mask";
 
@@ -54,8 +62,10 @@ export interface LiveCells {
   listing: MonitoringCellsListing | null;
   /** Why the last read failed or the store is unavailable; "" when it answered. */
   readError: string;
-  /** The strip as shown: newest first, held while frozen. */
+  /** The strip as shown: newest first, held while frozen (empty once the capture changed). */
   strip: MonitoringCell[];
+  /** Frozen, and the capture or run changed since: why the held strip was dropped; "" otherwise. */
+  frozenChange: string;
   pictures: ReadonlyMap<string, CellPicture>;
   /** The last pin, unpin or clear, in plain words. */
   notice: LiveNotice | null;
@@ -81,7 +91,8 @@ type Wanted = Map<string, { cell: MonitoringCell; mask: boolean }>;
 export function useLiveCells({ active, controlHeld, frozen, masks, toUrl, intervalMs = 1000 }: LiveCellsOptions): LiveCells {
   const [listing, setListing] = useState<MonitoringCellsListing | null>(null);
   const [readError, setReadError] = useState("");
-  const [held, setHeld] = useState<MonitoringCell[] | null>(null);
+  /** The strip held by Freeze display, with the capture and run it was of (null before any listing). */
+  const [held, setHeld] = useState<{ cells: MonitoringCell[]; scope: CellScope | null } | null>(null);
   const [pictures, setPictures] = useState<ReadonlyMap<string, CellPicture>>(() => new Map());
   const [notice, setNotice] = useState<LiveNotice | null>(null);
   const [busy, setBusy] = useState(false);
@@ -89,6 +100,14 @@ export function useLiveCells({ active, controlHeld, frozen, masks, toUrl, interv
   const busyRef = useRef(false);
   const controlRef = useRef(controlHeld);
   controlRef.current = controlHeld;
+  // Bumped on every control loss: a batch of commands started under an earlier value is cancelled
+  // (it never resumes, even when control comes back before it would have sent the next command).
+  const controlLosses = useRef(0);
+  const controlSeen = useRef(controlHeld);
+  if (controlSeen.current !== controlHeld) {
+    controlSeen.current = controlHeld;
+    if (!controlHeld) controlLosses.current += 1;
+  }
   const toUrlRef = useRef(toUrl);
   toUrlRef.current = toUrl;
   const listingRef = useRef(listing);
@@ -121,9 +140,15 @@ export function useLiveCells({ active, controlHeld, frozen, masks, toUrl, interv
     return () => window.clearInterval(id);
   }, [active, intervalMs, read]);
 
-  // Freeze display holds the strip shown when it was pressed.
-  useEffect(() => { setHeld(frozen ? stripShown(listingRef.current) : null); }, [frozen]);
-  const strip = useMemo(() => held ?? stripShown(listing), [held, listing]);
+  // Freeze display holds the strip shown when it was pressed, for as long as the listing is of the
+  // same capture and run: a change drops it (and so its crops), even while frozen.
+  useEffect(() => {
+    const l = listingRef.current;
+    setHeld(frozen ? { cells: stripShown(l), scope: l ? listingScope(l) : null } : null);
+  }, [frozen]);
+  const heldChanged = !!(held?.scope && listing && scopeChanged(held.scope, listing));
+  const strip = useMemo(() => (held ? (heldChanged ? [] : held.cells) : stripShown(listing)), [held, heldChanged, listing]);
+  const frozenChange = held?.scope && listing && heldChanged ? frozenChangeText(held.scope, listing) : "";
   const pins = listing?.pins;
 
   // ---- the crops: pulled once per cell, two at a time ----
@@ -198,6 +223,12 @@ export function useLiveCells({ active, controlHeld, frozen, masks, toUrl, interv
   const pin = useCallback(async (key: MonitoringCellKeyInput) => {
     if (!guard()) return;
     const name = cellName(key);
+    const refusal = pinIdentityRefusal(key, listingRef.current);
+    if (refusal) {
+      setNotice({ tone: "warn", title: `Not sent · ${name} is not of the current capture`, text: refusal });
+      release();
+      return;
+    }
     try {
       const reply = await bridge.monitoringCellPin(key);
       if (!mounted.current) return;
@@ -225,14 +256,18 @@ export function useLiveCells({ active, controlHeld, frozen, masks, toUrl, interv
     }
   }, [guard, release, read]);
 
-  /** One unpin per ended pin (there is no backend command for "ended only"). */
+  /** One unpin per ended pin (there is no backend command for "ended only"). Control is checked
+   *  before every unpin; a control loss since the batch began cancels the rest. */
   const clearEnded = useCallback(async () => {
     const ended = endedPins(listingRef.current);
     if (!ended.length || !guard()) return;
-    let cleared = 0;
+    const losses = controlLosses.current;
+    const ours = () => mounted.current && controlRef.current && controlLosses.current === losses;
+    let cleared = 0, cancelled = false;
     const failures: string[] = [];
     try {
       for (const p of ended) {
+        if (!ours()) { cancelled = true; break; }
         try {
           const r = await bridge.monitoringCellUnpin(p);
           if (r.ok) cleared += 1; else failures.push(`${cellName(p)}: ${r.message}`);
@@ -240,7 +275,9 @@ export function useLiveCells({ active, controlHeld, frozen, masks, toUrl, interv
           failures.push(`${cellName(p)}: ${plain(e)}`);
         }
       }
-      if (mounted.current) setNotice(failures.length
+      if (mounted.current) setNotice(cancelled
+        ? { tone: "warn", title: `Stopped · cleared ${cleared} of ${ended.length} ended pins`, text: `This client lost control, so no further unpin was sent, and the batch does not resume by itself. With control, press Clear ended pins again.${failures.length ? ` ${failures.join("; ")}` : ""}` }
+        : failures.length
         ? { tone: "warn", title: `Cleared ${cleared} of ${ended.length} ended pins`, text: failures.join("; ") }
         : { tone: "info", title: `Cleared ${cleared} ended ${cleared === 1 ? "pin" : "pins"}`, text: "Pins of the current capture are kept." });
     } finally {
@@ -264,5 +301,5 @@ export function useLiveCells({ active, controlHeld, frozen, masks, toUrl, interv
 
   const inform = useCallback((n: LiveNotice) => setNotice(n), []);
   const dismiss = useCallback(() => setNotice(null), []);
-  return { listing, readError, strip, pictures, notice, busy, lastPinned, pin, unpin, clearEnded, clearAll, inform, dismiss };
+  return { listing, readError, strip, frozenChange, pictures, notice, busy, lastPinned, pin, unpin, clearEnded, clearAll, inform, dismiss };
 }

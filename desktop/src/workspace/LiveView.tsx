@@ -5,9 +5,10 @@
 // actions. The pure rules are in liveModel.ts and the cells' reads in useLiveCells.ts.
 //
 // Nothing acts on navigation. Showing the view reads (the cells, the monitoring snapshot App polls
-// while Live is shown, the frames the live preview already pulls) and turns monitoring on, as the
-// classic Monitoring tab does: accumulation runs only while a monitoring view is shown. A pin,
-// unpin or clear is sent on a click only, and only by the controlling client. "Stop & finalize run"
+// while Live is shown, the frames the live preview already pulls) and, from the controlling client,
+// turns monitoring on, as the classic Monitoring tab does. Leaving it turns monitoring off only when
+// no run is in progress (App's monitoring switch). A pin, unpin or clear is sent on a click only,
+// and only by the controlling client. "Stop & finalize run"
 // stops one named run: the sample queue's own row (through the queue, as Next sample does), or the
 // run the status shows active, by its start generation (ABI 40). "Stop acquisition" stops the
 // camera and never runs under a run. "Freeze display" holds what is shown; acquisition, processing
@@ -198,8 +199,8 @@ export function LiveView({ tabs, plan, snapshot, running, experimentActive, host
         </Button>
       </Toolbar>
       <div className="ws-body" data-testid="live-body">
-        <LiveNotices controlHeld={controlHeld} paused={q.paused} snapshot={snapshot} hostProcessing={hostProcessing} frozen={frozen} readError={cells.readError}
-          stopNotice={stopNotice} onResume={queue.resume} />
+        <LiveNotices controlHeld={controlHeld} paused={q.paused} snapshot={snapshot} hostProcessing={hostProcessing} frozen={frozen} frozenChange={cells.frozenChange}
+          readError={cells.readError} stopNotice={stopNotice} onResume={queue.resume} />
         {cells.notice ? (
           <Notice tone={cells.notice.tone} title={cells.notice.title} data-testid="live-pin-notice" actions={<Button size="small" onClick={cells.dismiss}>Dismiss</Button>}>
             {cells.notice.text}
@@ -217,7 +218,7 @@ export function LiveView({ tabs, plan, snapshot, running, experimentActive, host
             <span className="ws-plan-label">{controlHeld ? "Detected cells · newest first · click to pin" : "Detected cells · newest first"}</span>
             <CellStrip cells={stripItems} pinnedId={pinned && listing && !isEndedPin(pinned, listing) ? pinnedName : undefined}
               onPin={controlHeld ? pinFromStrip : undefined} size={64} data-testid="live-strip"
-              empty={listing ? "No cells detected in this capture yet." : "The live cells have not been read yet."} />
+              empty={cells.frozenChange ? "The frozen cells were of an earlier capture: dropped." : listing ? "No cells detected in this capture yet." : "The live cells have not been read yet."} />
             <p className="ws-note">{`The backend keeps the ${listing?.caps.strip_max_cells ?? 24} newest cells of this capture as copies (at most ${mib(listing?.caps.strip_max_bytes)} MiB); the oldest is evicted first, and the strip is cleared when the capture changes. A pin keeps its own copy.`}</p>
           </Card>
 
@@ -264,8 +265,8 @@ function LiveFrameCaption({ listing }: { listing: MonitoringCellsListing | null 
   return <>{`Capture ${listing.ring_capture_epoch} · ${run} · newest detected cells below`}</>;
 }
 
-function LiveNotices({ controlHeld, paused, snapshot, hostProcessing, frozen, readError, stopNotice, onResume }: {
-  controlHeld: boolean; paused: string | null; snapshot: MonitoringSnapshot | null; hostProcessing: boolean; frozen: boolean; readError: string;
+function LiveNotices({ controlHeld, paused, snapshot, hostProcessing, frozen, frozenChange, readError, stopNotice, onResume }: {
+  controlHeld: boolean; paused: string | null; snapshot: MonitoringSnapshot | null; hostProcessing: boolean; frozen: boolean; frozenChange: string; readError: string;
   stopNotice: LiveNotice | null; onResume: () => void;
 }) {
   return <>
@@ -284,7 +285,7 @@ function LiveNotices({ controlHeld, paused, snapshot, hostProcessing, frozen, re
       <Notice tone="info" title={controlHeld ? "Monitoring is being turned on" : "Monitoring is off on the instrument"} data-testid="live-monitoring-off">
         {controlHeld
           ? "Monitoring runs while a monitoring view (this one, or the classic Monitoring tab) is shown; the next read shows its rows."
-          : "Only the controlling client turns monitoring on: it runs while that client shows Live or the classic Monitoring tab."}
+          : "Only the controlling client turns monitoring on: it runs while that client shows Live or the classic Monitoring tab, and once on it stays on until the run in progress ends."}
       </Notice>
     ) : null}
     {!hostProcessing ? (
@@ -292,7 +293,11 @@ function LiveNotices({ controlHeld, paused, snapshot, hostProcessing, frozen, re
         The PL measures every frame and reports results only, so cells and pins carry their measurements and the reason, never an image.
       </Notice>
     ) : null}
-    {frozen ? (
+    {frozen && frozenChange ? (
+      <Notice tone="warn" title="Display frozen · the capture changed" data-testid="live-frozen" data-changed="true">
+        {`${frozenChange} The live frame and the scatter stay held; a point of the earlier capture is not pinned. Acquisition, processing and recording go on; pins and the run status keep updating.`}
+      </Notice>
+    ) : frozen ? (
       <Notice tone="info" title="Display frozen" data-testid="live-frozen">
         The live frame, the cell strip and the scatter are held as they were. Acquisition, processing and recording go on; pins and the run status keep updating.
       </Notice>
