@@ -9,6 +9,13 @@
 //    key/values, sorted) read back as written, through open() and the probe;
 //  - the probe's header facts: start/end time, counts, run accounting, the
 //    processing core version; a recording file's counts and times.
+//  E-LUT provenance (review ABI 5, #783):
+//  - a v3 file's E-LUT record is named "snapshot"; a regenerated file (no
+//    snapshot) carries its `@emodulus_lut_json` record with its provenance,
+//    "recorded" (the source run's, also loaded false) or "host"; a snapshot
+//    record wins over the attribute; a file regenerated before #764 and an
+//    attribute that is not a record read absent, through open() and the probe;
+//    the record is the one recording::readFileEModulusLut reads.
 //  Legacy read (absent, never fabricated):
 //  - a file without a snapshot or annotation reads every member absent: no
 //    zero ids, no empty strings, no version; a v1 snapshot is a snapshot
@@ -266,7 +273,7 @@ namespace
         const auto &d = id.declared;
         return !id.hasSnapshot && !id.snapshotUnreadable && id.snapshotVersion == 0 && !id.runId && d.empty() &&
                !id.annotation && !id.annotationUnreadable && !id.annotationSchemaVersion && !id.eModulusLut &&
-               !id.profileId;
+               !id.eModulusLutProvenance && !id.profileId;
     }
 
     bool declaredAsWritten(const RunIdentity &id)
@@ -287,6 +294,38 @@ namespace
                a.experimentalUnit == std::string("donor-4") && a.concentration && a.concentration->value == 0.1 &&
                a.concentration->unit == "uM" && a.channel == std::string("30 um") && a.medium == std::string("PBS") &&
                a.temperatureC == 22.5 && a.notes == std::string("first run of the day") && a.free == sortedFree;
+    }
+
+    // Writes `/experiment_info @emodulus_lut_json` into a written fixture, as
+    // saveMasksToHdf5 does for a regenerated file (#764).
+    void writeLutAttribute(const fs::path &path, const std::string &json)
+    {
+        Hdf5Service hdf5;
+        MIB_REQUIRE(hdf5.openFileForUpdate(path.string()), "open fixture for update");
+        MIB_REQUIRE(hdf5.writeEModulusLutJson(json), "write @emodulus_lut_json");
+        hdf5.closeFile();
+    }
+
+    rec::EModulusLutRecord hostLut()
+    {
+        rec::EModulusLutRecord lut;
+        lut.loaded = true;
+        lut.lutId = "host-lut";
+        lut.revision = "bundled";
+        lut.sha256 = "8a86b2beef4f";
+        return lut;
+    }
+
+    // What recording::readFileEModulusLut reads for the file: the identity
+    // names the same record (its provenance aside: readFileEModulusLut says
+    // "recorded" for a snapshot record).
+    std::optional<rec::ProvenancedEModulusLut> fileRecord(const fs::path &path)
+    {
+        Hdf5Service hdf5;
+        MIB_REQUIRE(hdf5.loadFile(path.string()), "open for reading");
+        auto r = rec::readFileEModulusLut(hdf5);
+        hdf5.closeFile();
+        return r;
     }
 
     long long openFiles() { return H5Fget_obj_count(H5F_OBJ_ALL, H5F_OBJ_FILE); }
@@ -377,6 +416,7 @@ int main()
                    "the LUT reads back as written");
         MIB_EXPECT(!id.eModulusLut->revision && !id.eModulusLut->catalogSha256, "unrecorded LUT members stay absent");
         MIB_EXPECT(id.profileId == std::string("cell-mechanics"), "the profile id is read");
+        MIB_EXPECT(id.eModulusLutProvenance == std::string("snapshot"), "review ABI 5: the snapshot's own record");
 
         MIB_REQUIRE(s.open(legacy.string()), "open legacy");
         MIB_EXPECT(allAbsent(s.metadata().runIdentity), "a legacy file reads every identity member absent");
@@ -391,7 +431,8 @@ int main()
         const auto none = s.metadata().runIdentity;
         MIB_EXPECT(none.hasSnapshot && none.snapshotVersion == 3 && !none.runId && none.declared.empty(),
                    "a v3 snapshot that declares nothing reads absent, not as zero or empty");
-        MIB_EXPECT(!none.eModulusLut && !none.profileId, "a null LUT and an empty profile id read absent");
+        MIB_EXPECT(!none.eModulusLut && !none.eModulusLutProvenance && !none.profileId,
+                   "a null LUT and an empty profile id read absent");
 
         MIB_REQUIRE(s.open(badSnapshot.string()), "a file with an unreadable snapshot still opens");
         const auto bad = s.metadata().runIdentity;
@@ -403,6 +444,101 @@ int main()
         MIB_EXPECT(allAbsent(s.metadata().runIdentity), "closed: nothing");
     }
     wd.mark("open");
+
+    // ---- E-LUT provenance (review ABI 5, #783) ----------------------------------
+    {
+        const fs::path regenRecorded = td.path() / "regen_recorded.h5";
+        const fs::path regenHost = td.path() / "regen_host.h5";
+        const fs::path regenNoLut = td.path() / "regen_no_lut.h5";
+        const fs::path regenPre764 = td.path() / "regen_pre764.h5";
+        const fs::path regenBad = td.path() / "regen_bad.h5";
+        const fs::path both = td.path() / "snapshot_and_attribute.h5";
+        rec::EModulusLutRecord runLut;
+        runLut.loaded = true;
+        runLut.lutId = "lut-v2";
+        runLut.source = "r2-public-catalog";
+        runLut.sha256 = "41b9c0de";
+        runLut.checksumStatus = "verified";
+        rec::EModulusLutRecord noLut; // loaded false, nothing else
+        writeExperiment(regenRecorded, Snapshot::None, Annotation::None);
+        writeLutAttribute(regenRecorded, rec::eModulusLutRecordJson(runLut, rec::kEModulusLutProvenanceRecorded));
+        writeExperiment(regenHost, Snapshot::None, Annotation::None);
+        writeLutAttribute(regenHost, rec::eModulusLutRecordJson(hostLut(), rec::kEModulusLutProvenanceHost));
+        writeExperiment(regenNoLut, Snapshot::None, Annotation::None);
+        writeLutAttribute(regenNoLut, rec::eModulusLutRecordJson(noLut, rec::kEModulusLutProvenanceRecorded));
+        writeExperiment(regenPre764, Snapshot::None, Annotation::None);
+        writeExperiment(regenBad, Snapshot::None, Annotation::None);
+        writeLutAttribute(regenBad, "{\"loaded\":true,\"lut_id\":\"x\",\"provenance\":\"guessed\"}");
+        // Never written by the backend (a file has one or the other); the snapshot wins.
+        writeExperiment(both, Snapshot::V3Declared, Annotation::None);
+        writeLutAttribute(both, rec::eModulusLutRecordJson(hostLut(), rec::kEModulusLutProvenanceHost));
+
+        ReviewSession s;
+        MIB_REQUIRE(s.open(regenRecorded.string()), "open regenerated (recorded)");
+        auto id = s.metadata().runIdentity;
+        MIB_EXPECT(!id.hasSnapshot && !id.snapshotUnreadable && !id.runId && id.declared.empty() && !id.profileId,
+                   "a regenerated file has no snapshot identity");
+        MIB_REQUIRE(id.eModulusLut.has_value(), "the regenerated file's E-LUT record is read");
+        MIB_EXPECT(id.eModulusLut->loaded && id.eModulusLut->lutId == std::string("lut-v2") &&
+                       id.eModulusLut->sha256 == std::string("41b9c0de") && !id.eModulusLut->revision,
+                   "the carried-over record reads back as written");
+        MIB_EXPECT(id.eModulusLutProvenance == std::string("recorded"), "provenance recorded");
+        MIB_EXPECT(s.metadata().eModulusLutRecord && s.metadata().eModulusLutRecord->lut.lutId == id.eModulusLut->lutId,
+                   "the identity and the reprocess record agree");
+
+        MIB_REQUIRE(s.open(regenHost.string()), "open regenerated (host)");
+        id = s.metadata().runIdentity;
+        MIB_EXPECT(id.eModulusLut && id.eModulusLut->lutId == std::string("host-lut") &&
+                       id.eModulusLut->revision == std::string("bundled") &&
+                       id.eModulusLutProvenance == std::string("host"),
+                   "a host record is named host");
+
+        MIB_REQUIRE(s.open(regenNoLut.string()), "open regenerated (loaded false)");
+        id = s.metadata().runIdentity;
+        MIB_EXPECT(id.eModulusLut && !id.eModulusLut->loaded && !id.eModulusLut->lutId && !id.eModulusLut->sha256 &&
+                       id.eModulusLutProvenance == std::string("recorded"),
+                   "a carried-over loaded false stays loaded false, recorded");
+
+        MIB_REQUIRE(s.open(regenPre764.string()), "open regenerated before #764");
+        MIB_EXPECT(allAbsent(s.metadata().runIdentity), "regenerated before #764: as before, absent");
+        MIB_REQUIRE(s.open(regenBad.string()), "open with an attribute that is not a record");
+        MIB_EXPECT(allAbsent(s.metadata().runIdentity), "an unknown provenance is not a record: absent");
+
+        MIB_REQUIRE(s.open(both.string()), "open snapshot + attribute");
+        id = s.metadata().runIdentity;
+        MIB_EXPECT(declaredAsWritten(id) && id.eModulusLut && id.eModulusLut->lutId == std::string("lut-v2") &&
+                       id.eModulusLutProvenance == std::string("snapshot"),
+                   "the snapshot record wins over the attribute");
+        s.close();
+
+        // The same record recording::readFileEModulusLut reads, for each file.
+        for (const auto &path : {regenRecorded, regenHost, regenNoLut, regenPre764, regenBad, both, legacy, v3})
+        {
+            const auto file = fileRecord(path);
+            ReviewSession one;
+            MIB_REQUIRE(one.open(path.string()), "open " + path.filename().string());
+            const auto &mine = one.metadata().runIdentity;
+            MIB_EXPECT(file.has_value() == mine.eModulusLut.has_value(), "same presence: " + path.filename().string());
+            if (file && mine.eModulusLut)
+                MIB_EXPECT(file->lut.lutId == mine.eModulusLut->lutId && file->lut.loaded == mine.eModulusLut->loaded &&
+                               file->lut.sha256 == mine.eModulusLut->sha256,
+                           "same record: " + path.filename().string());
+        }
+
+        // The probe reads it per file, header attributes only.
+        std::vector<RunProbe> probes;
+        std::string err;
+        MIB_REQUIRE(s.probeRuns({regenRecorded.string(), regenHost.string(), regenPre764.string(), v3.string(),
+                                 legacy.string()},
+                                probes, &err),
+                    "probe: " + err);
+        MIB_EXPECT(probes[0].identity.eModulusLutProvenance == std::string("recorded") &&
+                       probes[1].identity.eModulusLutProvenance == std::string("host") &&
+                       !probes[2].identity.eModulusLut && !probes[2].identity.eModulusLutProvenance &&
+                       probes[3].identity.eModulusLutProvenance == std::string("snapshot") && allAbsent(probes[4].identity),
+                   "the probe names each file's record");
+    }
+    wd.mark("elut provenance");
 
     // ---- the probe: header facts, per-file errors -----------------------------
     {

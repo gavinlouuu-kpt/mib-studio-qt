@@ -11,6 +11,11 @@
 //    localValidationFor reports the newest matching validation;
 //  - the invalidation key moves with every gate input; the JSON block
 //    round-trips every provenance field.
+//  - (#783) attachLocalProfile: a local method names the profile_selection of
+//    the applied config text (name, path, revision, profile_id); nothing for a
+//    central or no method, a text without a selection, not JSON, or members of
+//    the wrong type; the JSON block's local_profile (null without one) and the
+//    gate's detail name it.
 #include "backend/app/MethodApply.h"
 #include "backend/app/MethodProvenance.h"
 #include "backend/profiles/ProfileRegistryWorker.h"
@@ -281,6 +286,61 @@ int main() {
                    "other instrument: none");
         MIB_EXPECT(localValidationFor(snap, r1, kInstrument, "").state == LocalValidationState::None,
                    "unknown context: none");
+    }
+    // #783: a local profile names the method.
+    {
+        const std::string rev(64, 'f');
+        const std::string applied = Json{{"buffer_threshold", 64},
+                                         {"profile_selection",
+                                          {{"name", "Beads 7 um"},
+                                           {"path", "/profiles/Beads 7 um/config.json"},
+                                           {"revision", rev},
+                                           {"profile_id", "beads-7"},
+                                           {"display_fps", 30}}}}
+                                        .dump();
+        auto local = resolveMethodProvenance(std::string(64, 'z'), registry({}), context(), "MIB-01");
+        attachLocalProfile(local, applied);
+        MIB_EXPECT(local.source == "local" && local.hasLocalProfile() && local.localProfileName == "Beads 7 um" &&
+                       local.localProfilePath == "/profiles/Beads 7 um/config.json" && local.localProfileRevision == rev &&
+                       local.localProfileId == "beads-7",
+                   "a local method names its profile");
+        const auto j = Json::parse(methodProvenanceToJson(local));
+        MIB_EXPECT(j.at("local_profile") == Json({{"name", "Beads 7 um"},
+                                                  {"path", "/profiles/Beads 7 um/config.json"},
+                                                  {"revision", rev},
+                                                  {"profile_id", "beads-7"}}) &&
+                       j.at("config_canonical_sha256") == std::string(64, 'z'),
+                   "the snapshot's method block names it beside the config hash: " + j.dump());
+        const auto g = methodRevisionGate(local);
+        MIB_EXPECT(g.status == GateStatus::NotRequired &&
+                       g.detail == "config zzzzzzzzzzzz; local profile \"Beads 7 um\" revision ffffffffffff",
+                   "the gate's detail names it: " + g.detail);
+
+        auto bare = resolveMethodProvenance(std::string(64, 'z'), registry({}), context(), "MIB-01");
+        attachLocalProfile(bare, R"({"buffer_threshold":64})");
+        MIB_EXPECT(!bare.hasLocalProfile() && bare.localProfilePath.empty() && bare.localProfileRevision.empty(),
+                   "a text without a selection names no profile");
+        MIB_EXPECT(Json::parse(methodProvenanceToJson(bare)).at("local_profile").is_null(), "local_profile null");
+        attachLocalProfile(bare, "not json {");
+        attachLocalProfile(bare, R"({"profile_selection":"x"})");
+        attachLocalProfile(bare, R"({"profile_selection":{"name":7,"revision":null}})");
+        MIB_EXPECT(!bare.hasLocalProfile(), "not JSON, not an object, or members of the wrong type: nothing");
+        attachLocalProfile(bare, R"({"profile_selection":{"profile_id":"only-id"}})");
+        MIB_EXPECT(bare.hasLocalProfile() && bare.localProfileId == "only-id" && bare.localProfileName.empty(),
+                   "a profile_id alone names it");
+        MIB_EXPECT(Json::parse(methodProvenanceToJson(bare)).at("local_profile") ==
+                       Json({{"name", nullptr}, {"path", nullptr}, {"revision", nullptr}, {"profile_id", "only-id"}}),
+                   "absent members are null, never empty strings");
+
+        auto central = resolveMethodProvenance(kConfig, registry({revision("r1", 1, CentralState::Published)}),
+                                               context(), "MIB-01");
+        attachLocalProfile(central, applied);
+        MIB_EXPECT(central.source == "central" && !central.hasLocalProfile() &&
+                       !Json::parse(methodProvenanceToJson(central)).contains("local_profile"),
+                   "a central revision is named by the registry, not a profile");
+        auto none = resolveMethodProvenance("", registry({}), context(), "MIB-01");
+        attachLocalProfile(none, applied);
+        MIB_EXPECT(none.source == "none" && !none.hasLocalProfile(), "no method: nothing");
     }
     return mib::test::exitCode();
 }

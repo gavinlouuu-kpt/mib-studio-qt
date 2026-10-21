@@ -299,6 +299,7 @@ fn assert_identity_absent(id: &ffi::ReviewRunIdentity, what: &str) {
     assert!(!id.has_calibration_record_id && !id.has_operator_id && !id.has_operator_name, "{what}: calibration / operator");
     assert!(!id.annotation.present && !id.annotation.unreadable && id.annotation.free.is_empty(), "{what}: annotation");
     assert!(!id.has_emodulus_lut && !id.emodulus_lut.loaded && id.emodulus_lut.lut_id.is_empty(), "{what}: E-LUT");
+    assert!(!id.has_emodulus_lut_provenance && id.emodulus_lut_provenance.is_empty(), "{what}: E-LUT provenance");
     assert!(!id.has_profile_id && id.profile_id.is_empty(), "{what}: profile");
 }
 
@@ -314,6 +315,8 @@ fn assert_identity_declared(id: &ffi::ReviewRunIdentity, run_index: u32, sample_
     assert!(id.has_profile_id && id.profile_id == "fixture");
     let l = &id.emodulus_lut;
     assert!(id.has_emodulus_lut && l.loaded);
+    // Review ABI 5 (#783): the snapshot's own record.
+    assert!(id.has_emodulus_lut_provenance && id.emodulus_lut_provenance == "snapshot");
     assert!(l.has_lut_id && l.lut_id == "lut-v2" && l.has_revision && l.revision == "2");
     assert!(l.has_source && l.source == "r2-public-catalog" && l.has_checksum_status && l.checksum_status == "verified");
     assert!(l.has_sha256 && l.sha256 == "41b9c0de" && l.has_catalog_sha256 && l.catalog_sha256 == "41b9c0de");
@@ -333,7 +336,11 @@ fn assert_identity_declared(id: &ffi::ReviewRunIdentity, run_index: u32, sample_
 fn run_identity_in_info_and_the_probe() {
     let contract: serde_json::Value =
         serde_json::from_str(include_str!("../contract/review-contract.json")).unwrap();
-    assert_eq!(ffi::review_bridge_abi_version(), 4, "review ABI 4 (#764; the identity since 2, the E-LUT and profile since 3)");
+    assert_eq!(
+        ffi::review_bridge_abi_version(),
+        5,
+        "review ABI 5 (#783; the identity since 2, the E-LUT and profile since 3, the E-LUT provenance since 5)"
+    );
     let max_paths = contract["review_probe"]["max_paths"].as_u64().unwrap() as usize;
     assert_eq!(max_paths, 256);
 
@@ -406,7 +413,7 @@ fn run_identity_in_info_and_the_probe() {
     // The population fixture writes a snapshot without schema_version: v1, no identity.
     let v1 = &probe.runs[6].identity;
     assert!(probe.runs[6].ok && v1.has_snapshot && v1.snapshot_version == 1 && !v1.has_experiment_id && !v1.has_run_index);
-    assert!(!v1.has_emodulus_lut, "v1 records no E-LUT");
+    assert!(!v1.has_emodulus_lut && !v1.has_emodulus_lut_provenance, "v1 records no E-LUT");
     let info = bridge.pin_mut().fetch_review_info();
     assert!(info.file_open && info.file_path == s(&v3), "the open file is left as it was");
     assert_identity_declared(&info.identity, 2, "S-03");
@@ -430,6 +437,86 @@ fn run_identity_in_info_and_the_probe() {
 
 // ---- Review ABI 3 (#717 B3b): track rows and reprocessing one record ------------------------
 
+
+// ---- Review ABI 5 (#783): a regenerated file's E-LUT record in the identity ------------------
+
+/// A regenerated file's `@emodulus_lut_json` as saveMasksToHdf5 writes it.
+fn regenerated_lut(provenance: &str, loaded: bool) -> String {
+    if loaded {
+        serde_json::json!({
+            "loaded": true, "lut_id": "lut-v2", "revision": "2", "source": "r2-public-catalog",
+            "sha256": "41b9c0de", "catalog_sha256": null, "checksum_status": "verified",
+            "provenance": provenance,
+        })
+    } else {
+        serde_json::json!({"loaded": false, "provenance": provenance})
+    }
+    .to_string()
+}
+
+#[test]
+#[serial]
+fn regenerated_file_identity_names_its_elut_record() {
+    let recorded = fixture_path("identity_regen_recorded");
+    let host = fixture_path("identity_regen_host");
+    let none = fixture_path("identity_regen_none");
+    let pre764 = fixture_path("identity_regen_pre764");
+    let bad = fixture_path("identity_regen_bad");
+    let snap = fixture_path("identity_regen_snapshot");
+    for p in [&recorded, &host, &none, &pre764, &bad, &snap] {
+        let _ = std::fs::remove_file(p);
+    }
+    let s = |p: &std::path::PathBuf| p.to_string_lossy().into_owned();
+    assert!(ffi::review_fixture_write_regenerated(&s(&recorded), &regenerated_lut("recorded", true)));
+    assert!(ffi::review_fixture_write_regenerated(&s(&host), &regenerated_lut("host", true)));
+    assert!(ffi::review_fixture_write_regenerated(&s(&none), &regenerated_lut("recorded", false)));
+    assert!(ffi::review_fixture_write_regenerated(&s(&pre764), ""));
+    // Another provenance is not a record (parseEModulusLutRecordJson refuses it): absent.
+    assert!(ffi::review_fixture_write_regenerated(&s(&bad), &regenerated_lut("guessed", true)));
+    assert!(ffi::review_fixture_write_run(&s(&snap), &v3_snapshot(Some(EXPERIMENT_ID), Some(2), Some("S-03")), ANNOTATION));
+
+    let mut bridge = ffi::new_review_bridge();
+    assert!(bridge.pin_mut().initialize(""));
+
+    // A regenerated file has no snapshot; its E-LUT record is the one member it carries.
+    assert!(bridge.pin_mut().review_open(&s(&recorded)).ok);
+    let id = bridge.pin_mut().fetch_review_info().identity;
+    assert!(!id.has_snapshot && !id.has_run_id && !id.has_profile_id, "regenerated: no snapshot identity");
+    assert!(id.has_emodulus_lut && id.emodulus_lut.loaded && id.emodulus_lut.lut_id == "lut-v2");
+    assert!(id.emodulus_lut.has_sha256 && id.emodulus_lut.sha256 == "41b9c0de");
+    assert!(!id.emodulus_lut.has_catalog_sha256, "a null member stays absent");
+    assert!(id.has_emodulus_lut_provenance && id.emodulus_lut_provenance == "recorded");
+
+    assert!(bridge.pin_mut().review_open(&s(&host)).ok);
+    let id = bridge.pin_mut().fetch_review_info().identity;
+    assert!(id.has_emodulus_lut && id.emodulus_lut.loaded);
+    assert!(id.has_emodulus_lut_provenance && id.emodulus_lut_provenance == "host");
+
+    assert!(bridge.pin_mut().review_open(&s(&none)).ok);
+    let id = bridge.pin_mut().fetch_review_info().identity;
+    assert!(id.has_emodulus_lut && !id.emodulus_lut.loaded && !id.emodulus_lut.has_lut_id, "loaded false, carried over");
+    assert!(id.emodulus_lut_provenance == "recorded");
+
+    // Regenerated before #764 (no attribute) and an unreadable attribute: as before, absent.
+    for (path, what) in [(&pre764, "before #764"), (&bad, "unknown provenance")] {
+        assert!(bridge.pin_mut().review_open(&s(path)).ok);
+        assert_identity_absent(&bridge.pin_mut().fetch_review_info().identity, what);
+    }
+
+    // The probe reads the same record per file, and the snapshot's own record says "snapshot".
+    let probe = bridge.pin_mut().review_probe_runs(vec![s(&recorded), s(&host), s(&pre764), s(&snap)]);
+    assert!(probe.ok, "{}", probe.message);
+    let provenance: Vec<String> = probe.runs.iter().map(|r| r.identity.emodulus_lut_provenance.clone()).collect();
+    assert_eq!(provenance, vec!["recorded", "host", "", "snapshot"]);
+    assert!(!probe.runs[2].identity.has_emodulus_lut_provenance);
+    assert_identity_declared(&probe.runs[3].identity, 2, "S-03");
+
+    assert!(bridge.pin_mut().review_close().ok);
+    bridge.pin_mut().shutdown();
+    for p in [&recorded, &host, &none, &pre764, &bad, &snap] {
+        let _ = std::fs::remove_file(p);
+    }
+}
 #[test]
 #[serial]
 fn inspect_track_rows_and_reprocess_one_record() {

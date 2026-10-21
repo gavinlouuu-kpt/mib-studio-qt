@@ -16,6 +16,13 @@
 // reference) follows each apply: a calibration method reports its own, a method without
 // declarations (or no method at all) reports measurement / none with `declared` false, and
 // switching between them leaves nothing stale.
+//
+// #783: a local profile identifies the method. The readiness candidate's method names the applied
+// profile (name, config.json path, revision, profile_id from ProfileStore's profile_selection);
+// the run snapshot carries it in method.local_profile and as profile_id (the client declares
+// none); the calibration record derived under it names it (method_id = profile_id, revision_id =
+// revision, display_name = name, config_sha256). A method text no profile names (the central
+// path's verbatim text, matching no cached revision) records no profile and an empty profile_id.
 
 #include "backend/app/AppBackend.h"
 #include "backend/app/BackendFacade.h"
@@ -25,6 +32,7 @@
 #include "backend/app/ExperimentCoordinator.h"
 #include "backend/app/ExperimentReadiness.h"
 #include "backend/processing/ProcessingService.h"
+#include "backend/recording/Hdf5Service.h"
 
 #include "support/assert.h"
 #include "support/tempdir.h"
@@ -38,6 +46,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <string>
 #include <thread>
 
@@ -152,6 +161,17 @@ const char* kCalibrationWithE =
     R"({"config_schema_version":1,"purpose":"calibration","calibration_max_age_hours":6,"calibration_reference":{"nominal_diameter_um":6,"diameter_tolerance_um":0.2,"nominal_e_kpa":1.5}})";
 const char* kMeasurement = R"({"config_schema_version":1,"buffer_threshold":64})";
 
+// The run snapshot document of a closed run file.
+json runSnapshot(const std::string& path)
+{
+    backend::services::Hdf5Service reader;
+    MIB_REQUIRE(reader.loadFile(path), "open " + path);
+    std::string snapshot;
+    MIB_REQUIRE(reader.readRunSnapshotJson(snapshot), "run snapshot of " + path);
+    reader.closeFile();
+    return json::parse(snapshot);
+}
+
 } // namespace
 
 int main()
@@ -189,9 +209,11 @@ int main()
         const auto created = command({{"operation", "create"}, {"name", name}, {"document_json", document}});
         MIB_REQUIRE(created["ok"] == true && created["saved"] == true, std::string("create ") + name + ": " + created.dump());
     }
+    std::map<std::string, std::string> revisions; // profile name -> revision when last applied
     auto applyProfile = [&](const char* name) {
         const auto read = command({{"operation", "read"}, {"name", name}});
         MIB_REQUIRE(read["ok"] == true, read.dump());
+        revisions[name] = read["profile"]["revision"].get<std::string>();
         const auto applied =
             command({{"operation", "apply"}, {"name", name}, {"baseline", read["profile"]["revision"]}});
         MIB_REQUIRE(applied["ok"] == true && applied["applied"] == true, std::string("apply ") + name + ": " + applied.dump());
@@ -287,6 +309,39 @@ int main()
         MIB_EXPECT(rec["source"]["file"] == path && rec["inputs"]["nominal_diameter_um"] == 7.32 &&
                        rec["method"]["source"] == "local",
                    "the record is derived from the applied method's reference: " + rec.dump());
+
+        // #783: the local profile identifies the method in the readiness, the snapshot and the record.
+        const auto profilePath = (std::filesystem::path(base) / "calibration" / "config.json").string();
+        const auto& revision = revisions["calibration"];
+        MIB_REQUIRE(revision.size() == 64, "the profile's revision is a sha256: " + revision);
+        const auto& m = r.candidate.method;
+        MIB_EXPECT(m.source == "local" && m.localProfileName == "calibration" && m.localProfilePath == profilePath &&
+                       m.localProfileRevision == revision && m.localProfileId == "calibration" &&
+                       r.candidate.profileId == "calibration",
+                   "#783: the candidate names the applied profile");
+        const auto* methodGate = r.gate("method.revision");
+        MIB_EXPECT(methodGate && methodGate->status == GateStatus::NotRequired &&
+                       methodGate->detail.find("local profile \"calibration\" revision " + revision.substr(0, 12)) !=
+                           std::string::npos,
+                   "#783: the method gate's detail names the profile: " + (methodGate ? methodGate->detail : std::string()));
+        const auto snapshot = runSnapshot(path);
+        MIB_EXPECT(snapshot["schema_version"] == 3 && snapshot["profile_id"] == "calibration",
+                   "#783: the snapshot's profile_id is the profile's: " + snapshot["profile_id"].dump());
+        MIB_EXPECT(snapshot["method"]["source"] == "local" &&
+                       snapshot["method"]["local_profile"] ==
+                           json({{"name", "calibration"}, {"path", profilePath}, {"revision", revision},
+                                 {"profile_id", "calibration"}}) &&
+                       snapshot["method"]["config_canonical_sha256"].get<std::string>().size() == 64,
+                   "#783: the snapshot's method block names the profile and the config hash: " +
+                       snapshot["method"].dump());
+        MIB_EXPECT(rec["method"]["method_id"] == "calibration" && rec["method"]["display_name"] == "calibration" &&
+                       rec["method"]["revision_id"] == revision && rec["method"]["revision_number"] == 0 &&
+                       rec["method"]["config_sha256"] == snapshot["method"]["config_canonical_sha256"],
+                   "#783: the record names the local profile's method: " + rec["method"].dump());
+        // The record survives a store round trip unchanged (calibrationRecordFromJson keeps the members).
+        const auto got = json::parse(facade.calibrationRecordGetJson(rec["record_id"].get<std::string>()));
+        MIB_EXPECT(got["found"] == true && got["record"]["method"] == rec["method"],
+                   "#783: the stored record reads back with the profile: " + got.dump());
     }
 
     // ---- a measurement method without declarations: none carried over ----------------------
@@ -334,6 +389,14 @@ int main()
         MIB_REQUIRE(report.ok, "apply: " + report.error);
         MIB_EXPECT(backendApp.getLastConfigJson() == kMeasurement && noDeclarations(backendApp),
                    "the applied text is the method's own: " + backendApp.getLastConfigJson());
+        {
+            // #783: no profile names this method (a text matching no cached revision): none is
+            // recorded, and the profile_id stays empty; the config hash is what identifies it.
+            const auto c = readiness(facade, probe).candidate;
+            MIB_EXPECT(c.method.source == "local" && !c.method.hasLocalProfile() && c.method.localProfilePath.empty() &&
+                           c.profileId.empty() && !c.method.configCanonicalSha256.empty(),
+                       "#783: a local text without a profile names none");
+        }
         MIB_EXPECT(methodCalibration(readiness(facade, probe)) == kUndeclared,
                    "#776: the central measurement text declares nothing: " + methodCalibration(readiness(facade, probe)).dump());
         const auto calibration = app::applyConfigDocument(backendApp, kCalibrationWithE);

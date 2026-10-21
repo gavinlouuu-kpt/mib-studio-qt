@@ -86,6 +86,16 @@ struct MethodProvenance {
     std::string validatorId;
     std::string validatedAtUtc;
     std::string validationEvidenceSha256; // test-run file hash from the evidence
+    // The local profile the applied config came from (#783; source == "local" only): the
+    // `profile_selection` ProfileStore::apply records in the applied config text (its name,
+    // config.json path, revision = sha256 of the profile's files, and profile_id = its metadata
+    // profile_id or its name). All empty when the local config names no profile (e.g. a config
+    // applied from Settings or the retired Qt watcher). attachLocalProfile fills them.
+    std::string localProfileName;
+    std::string localProfilePath;
+    std::string localProfileRevision;
+    std::string localProfileId;
+    bool hasLocalProfile() const { return !localProfileName.empty() || !localProfileId.empty(); }
 };
 
 // Frozen identities/settings of one run. Owned by the coordinator; the UI
@@ -126,7 +136,9 @@ struct RunConfigurationSnapshot {
     uint64_t processingConfigVersion{0};
     std::string processingConfigSha256;  // canonical serialization of ProcessingConfig
     std::string configJsonSha256;        // raw config.json as last applied
-    std::string profileId;               // frontend-supplied profile identity (may be empty)
+    // The profile identity: the frontend-supplied one; when it supplies none, the applied local
+    // profile's profile_id (#783, method.localProfileId); empty when neither names one.
+    std::string profileId;
     MethodProvenance method;             // central revision / local method (#398 M2)
     double pixelToMicron{0.0};
 

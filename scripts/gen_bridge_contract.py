@@ -185,6 +185,10 @@ def render_review(review: dict) -> str:
     spaces = {k: v for k, v in review["review_object_coordinates"].items() if k != "semantics"}
     lines.append("export const REVIEW_OBJECT_COORDINATES = " + json.dumps(spaces, indent=2) + " as const;")
     lines.append("")
+    # Review ABI 5 (#783): where the identity's E-LUT record comes from.
+    provenances = review["run_identity"]["emodulus_lut_provenances"]
+    lines.append("export const REVIEW_EMODULUS_LUT_PROVENANCES = " + json.dumps(provenances, indent=2) + " as const;")
+    lines.append("")
     return "\n".join(lines)
 
 
@@ -247,6 +251,19 @@ def check_review(review: dict) -> str | None:
     for value in spaces["values"] + spaces["sources"]:
         if value not in written:
             return f"review_object_coordinates: {value!r} is not written by ObjectCoordinates.cpp"
+    # Review ABI 5 (#783): the E-LUT provenances are the strings the C++ names
+    # (ReviewTypes.h kEModulusLutProvenanceSnapshot; RunProvenanceRecord.h
+    # kEModulusLutProvenanceRecorded / kEModulusLutProvenanceHost).
+    record = (REPO_ROOT / "include/backend/recording/RunProvenanceRecord.h").read_text(encoding="utf-8")
+    named = []
+    for const, text in (("kEModulusLutProvenanceSnapshot", types), ("kEModulusLutProvenanceRecorded", record),
+                        ("kEModulusLutProvenanceHost", record)):
+        m = re.search(const + r'\s*=\s*"([a-z_]+)"', text)
+        if not m:
+            return f"run_identity.emodulus_lut_provenances: {const} not found"
+        named.append(m.group(1))
+    if review["run_identity"]["emodulus_lut_provenances"] != named:
+        return f"run_identity.emodulus_lut_provenances differs from the C++ constants {named}"
     return None
 
 

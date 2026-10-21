@@ -121,7 +121,25 @@ none (a file before snapshot v3). It never writes a file and is refused
 while a review job runs, when the file's object coordinate space is
 unknown, or when the run's recorded E-LUT has no hash or is not available
 here. The UI on `feat/egrabber-workspace` (#774) still caveats the
-reprocessed E; B3d can switch that caveat to the named LUT. `fetch_review_info` gains `object_coordinates` (`roi_local`,
+reprocessed E; B3d can switch that caveat to the named LUT.
+
+**E-LUT provenance (review ABI 5, #783).** `identity.emodulus_lut` also
+reads a regenerated file's `/experiment_info @emodulus_lut_json` when there
+is no snapshot record (the snapshot record wins), so the Stored card no
+longer says "Not recorded" for a regenerated file; such an identity has
+`has_snapshot` false and only this member (with its provenance) set.
+`identity.emodulus_lut_provenance` names the source:
+`REVIEW_EMODULUS_LUT_PROVENANCES` (`reviewContract.ts`) `snapshot` (the run
+snapshot v3 record), `recorded` ("carried over from the source run") or
+`host` ("host LUT at regeneration"); `null` exactly when `emodulus_lut` is.
+The TS member is optional (a backend before review ABI 5 sends none);
+`decodeReviewEModulusLutProvenance(identity)` returns a contract value or
+`null` (absent, an older backend, an unknown value, or a provenance without
+a record). The probe carries it per file. No UI change here: the workspace
+branch wires the words and B3d's comparison. Tests:
+`reviewIdentity.test.ts`, `review_bridge.rs`
+`regenerated_file_identity_names_its_elut_record`, `review.rs`
+`run_identity_json_is_null_when_absent`. `fetch_review_info` gains `object_coordinates` (`roi_local`,
 `image` or `unknown`), `object_coordinates_source` (`attribute`,
 `snapshot`, `mask_check`, `roi_origin`, or `""` when unknown) and
 `object_origin_x` / `object_origin_y`, the offset that places a stored box

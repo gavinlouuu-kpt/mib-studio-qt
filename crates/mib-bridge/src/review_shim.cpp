@@ -209,6 +209,7 @@ ReviewRunIdentity toIdentity(const br::RunIdentity& id) {
         setText(l.catalogSha256, out.emodulus_lut.has_catalog_sha256, out.emodulus_lut.catalog_sha256);
         setText(l.checksumStatus, out.emodulus_lut.has_checksum_status, out.emodulus_lut.checksum_status);
     }
+    setText(id.eModulusLutProvenance, out.has_emodulus_lut_provenance, out.emodulus_lut_provenance);
     setText(id.profileId, out.has_profile_id, out.profile_id);
     return out;
 }
@@ -780,8 +781,11 @@ std::unique_ptr<ReviewBridge> new_review_bridge() { return std::make_unique<Revi
 // (#717 B3b): emodulus_lut and profile_id in the identity,
 // fetch_review_track_rows (review_track_rows) and review_reprocess_record
 // (review_reprocess_record). v4 (#764): review_reprocess_record names the
-// E-LUT it used (emodulus_lut, emodulus_lut_sha256): the run's own.
-std::uint32_t review_bridge_abi_version() { return 4; }
+// E-LUT it used (emodulus_lut, emodulus_lut_sha256): the run's own. v5
+// (#783): the identity's emodulus_lut also reads a regenerated file's
+// @emodulus_lut_json, named by emodulus_lut_provenance (snapshot | recorded |
+// host).
+std::uint32_t review_bridge_abi_version() { return 5; }
 
 namespace {
 
@@ -879,6 +883,23 @@ bool review_fixture_write_run(rust::Str path, rust::Str snapshot_json, rust::Str
     // A legacy file (no snapshot) predates run accounting and the KDE record too.
     const std::string snapshot = toStd(snapshot_json);
     return writeExperimentFixture(toStd(path), snapshot, toStd(annotation_json), /*provenance=*/!snapshot.empty());
+}
+
+bool review_fixture_write_regenerated(rust::Str path, rust::Str emodulus_lut_json) {
+    // A regenerated file: no run snapshot, the experiment fixture's frames and,
+    // when non-empty, `/experiment_info @emodulus_lut_json` as given (#764).
+    const std::string lut = toStd(emodulus_lut_json);
+    if (!writeExperimentFixture(toStd(path), "", "", /*provenance=*/false)) return false;
+    if (lut.empty()) return true;
+    try {
+        backend::services::Hdf5Service hdf5;
+        if (!hdf5.openFileForUpdate(toStd(path))) return false;
+        const bool ok = hdf5.writeEModulusLutJson(lut);
+        hdf5.closeFile();
+        return ok;
+    } catch (...) {
+        return false;
+    }
 }
 
 bool review_fixture_write_population(rust::Str path, std::uint32_t cells, std::uint64_t seed) {

@@ -135,7 +135,12 @@
   sha, `config.json` sha, profile, pixel-to-micron, background
   generation/sha, trigger binding, output path, application identity, and the
   `method` block naming the exact central revision + content hash + local
-  validation, or a local method) and
+  validation, or a local method; since #783 a local method also carries
+  `local_profile {name, path, revision, profile_id}`, the local profile
+  `ProfileStore::apply` recorded as `profile_selection` in the applied
+  config text, `null` when no profile names it; `profile_id` is the
+  client-supplied profile identity, else that local profile's `profile_id`,
+  else `""`; older files lack `local_profile` and read as before) and
   the readiness evaluation (`readiness_json`, per-gate status/reason) as
   attributes on `/run_provenance`. Written at Start, before any frame;
   `readRunSnapshotJson` returns false (never a fabricated snapshot) for

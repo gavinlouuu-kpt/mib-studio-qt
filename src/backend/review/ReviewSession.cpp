@@ -629,6 +629,23 @@ namespace backend::review
                 out.snapshotUnreadable = true;
             }
         }
+        // The E-LUT record of the stored E (review ABI 5, #783): the
+        // snapshot's own record wins; else a regenerated file's
+        // `@emodulus_lut_json` with its provenance (recorded | host), the
+        // order of recording::readFileEModulusLut. A file without either (a
+        // capture before v3, a file regenerated before #764) reads absent.
+        if (out.eModulusLut)
+        {
+            out.eModulusLutProvenance = kEModulusLutProvenanceSnapshot;
+        }
+        else if (const auto attribute = reader.readEModulusLutJson())
+        {
+            if (auto record = recording::parseEModulusLutRecordJson(*attribute))
+            {
+                out.eModulusLut = std::move(record->lut);
+                out.eModulusLutProvenance = std::move(record->provenance);
+            }
+        }
         std::string annotation;
         if (reader.readExperimentAnnotationJson(annotation))
         {

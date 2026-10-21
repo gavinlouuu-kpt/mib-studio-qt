@@ -33,6 +33,14 @@ namespace backend::review
     // most reprocessed objects one record's reprocess returns.
     inline constexpr std::size_t kReviewReprocessMaxObjects = 64;
 
+    // Review contract `run_identity.emodulus_lut_provenances` (review ABI 5,
+    // #783): where `RunIdentity::eModulusLut` comes from. "snapshot": the run
+    // snapshot v3 `emodulus_lut` (the run's own record); "recorded" / "host":
+    // a regenerated file's `/experiment_info @emodulus_lut_json` with that
+    // provenance (recording::kEModulusLutProvenanceRecorded / ...Host: the
+    // source run's record carried over, or the host's LUT at regeneration).
+    inline constexpr const char *kEModulusLutProvenanceSnapshot = "snapshot";
+
     // Review contract `review_reprocess_record.settings`: which processing
     // inputs a one-record reprocess uses. Append, never renumber.
     enum class ReprocessSettings : std::uint32_t
@@ -50,6 +58,8 @@ namespace backend::review
     // annotation (`/experiment_annotation`). Nothing is fabricated: a file
     // that predates the snapshot or the annotation reads with `hasSnapshot` /
     // `annotation` false / nullopt and every member nullopt, never 0 or "".
+    // One member is read without a snapshot: a regenerated file's E-LUT
+    // record (`@emodulus_lut_json`, review ABI 5, #783).
     struct RunIdentity
     {
         // The file carries a run snapshot that parses as a JSON object.
@@ -69,10 +79,18 @@ namespace backend::review
         // @annotation_schema_version; nullopt when the attribute is missing or
         // unreadable (a recorded 0 stays 0).
         std::optional<std::uint32_t> annotationSchemaVersion;
-        // The E-modulus LUT the run used (snapshot v3 `emodulus_lut`, #717
-        // B3b); nullopt when the snapshot records none (before v3, or null).
-        // `loaded` false: the run had no LUT (E values were unavailable).
+        // The E-modulus LUT record of the file's stored E: the snapshot v3
+        // `emodulus_lut` (#717 B3b), else a regenerated file's
+        // `/experiment_info @emodulus_lut_json` (review ABI 5, #783; the
+        // snapshot record wins, as in recording::readFileEModulusLut); nullopt
+        // when the file records neither. `loaded` false: no LUT (E values were
+        // unavailable).
         std::optional<recording::EModulusLutRecord> eModulusLut;
+        // Where eModulusLut comes from (review ABI 5, #783):
+        // kEModulusLutProvenanceSnapshot, or the attribute's provenance
+        // (recording::kEModulusLutProvenanceRecorded / ...Host); nullopt
+        // exactly when eModulusLut is.
+        std::optional<std::string> eModulusLutProvenance;
         // The snapshot's `profile_id` (the only "method" a file records);
         // nullopt when missing, not a string, or empty.
         std::optional<std::string> profileId;
