@@ -1,4 +1,5 @@
 #include "backend/app/ProfileStore.h"
+#include "backend/app/CalibrationRecord.h"
 #include "backend/app/ConfigDocumentApply.h"
 #include "backend/app/StartupConfiguration.h"
 #include "backend/app/AppBackend.h"
@@ -166,6 +167,13 @@ J apply(AppBackend& backend, const J& snapshot) {
                             "safe_shutdown_voltage", "focus_direction"})
         if (root.contains(key)) provenance[key] = root.at(key);
     if (root.contains("stage")) provenance["stage"] = root.at("stage");
+    // The method's calibration declarations (#716 A4a) are this profile's own, never the
+    // previous method's: stageConfigDocument's strict parse accepted them, so they are copied
+    // verbatim, and an absent member is removed (absent = measurement, policy none).
+    for (const auto* key : kCalibrationDeclarationKeys) {
+        provenance.erase(key);
+        if (root.contains(key)) provenance[key] = root.at(key);
+    }
     provenance["profile_selection"] = {{"name", snapshot.at("name")},
                                        {"path", snapshot.at("path")},
                                        {"revision", snapshot.at("revision")},
