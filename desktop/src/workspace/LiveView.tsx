@@ -45,6 +45,7 @@ import {
   cellOnChart,
   cellWhere,
   chartDomain,
+  droppedPinsNotice,
   endedPins,
   isEndedPin,
   liveScatter,
@@ -54,11 +55,12 @@ import {
   runInProgress,
   statusLifecycle,
   stopAcquisitionReason,
+  stopRequestStale,
   stopTarget,
   type LiveNotice,
 } from "./liveModel";
 import { conditionSlots, type SampleRow } from "./planModel";
-import { currentIndex, lifecycle, queueBegun, recordedPath, rowChip, rowState, type LifecycleStep } from "./queueModel";
+import { currentIndex, lifecycle, queueBegun, recordedPath, rowChip, rowState, singleRunChip, type LifecycleStep } from "./queueModel";
 import { useLiveCells, VIEWER_PIN_REASON, type CellPicture, type PacketToUrl } from "./useLiveCells";
 import type { PlanController, StopReply } from "./usePlan";
 
@@ -148,7 +150,11 @@ export function LiveView({ tabs, plan, snapshot, running, experimentActive, host
   const curState = curRow ? rowState(q, curRow.ref) : null;
   const paused = q.paused !== null;
   const [stopping, setStopping] = useState(false);
-  const [stopNotice, setStopNotice] = useState<LiveNotice | null>(null);
+  // The last stop's outcome; `generation` on an accepted stop, which goes once that run is over (#763 F13).
+  const [stopNotice, setStopNotice] = useState<(LiveNotice & { generation?: string }) | null>(null);
+  useEffect(() => {
+    if (stopNotice?.generation !== undefined && stopRequestStale(stopNotice.generation, status)) setStopNotice(null);
+  }, [stopNotice, status]);
   const target = stopTarget({ controlHeld, pending: stopping || queue.pending !== null, status, queue: begun ? { row: curState, paused } : null });
   const acquisitionReason = stopAcquisitionReason(controlHeld, running, experimentActive);
   const [acquisitionPending, setAcquisitionPending] = useState(false);
@@ -161,7 +167,7 @@ export function LiveView({ tabs, plan, snapshot, running, experimentActive, host
     try {
       const reply = await onStopRun(target.generation);
       setStopNotice(reply.ok
-        ? { tone: "info", title: `Stop requested · run generation ${target.generation}`, text: "The backend drains and finalizes it; the lifecycle below follows the status." }
+        ? { tone: "info", title: `Stop requested · run generation ${target.generation}`, text: "The backend drains and finalizes it; the lifecycle below follows the status.", generation: target.generation }
         : reply.stop_outcome === EXPERIMENT_STOP_OUTCOMES.RunMismatch
           ? { tone: "unknown", title: "Not stopped · that run is no longer the active one", text: `${reply.message}. Nothing was stopped.` }
           : { tone: "warn", title: "Not stopped", text: reply.message });
@@ -181,6 +187,9 @@ export function LiveView({ tabs, plan, snapshot, running, experimentActive, host
   const pinFromStrip = (name: string) => { const c = cells.strip.find((s) => cellName(s) === name); if (c) void cells.pin(c); };
   const pinnedName = pinned ? cellName(pinned) : undefined;
   const ended = endedPins(listing);
+  // A run start cleared the pins (#763 F15): said while its capture is current, until dismissed.
+  const dropped = droppedPinsNotice(listing);
+  const [droppedDismissed, setDroppedDismissed] = useState("");
 
   return (
     <div className="ws-view" data-testid="workspace-live">
@@ -204,6 +213,12 @@ export function LiveView({ tabs, plan, snapshot, running, experimentActive, host
         {cells.notice ? (
           <Notice tone={cells.notice.tone} title={cells.notice.title} data-testid="live-pin-notice" actions={<Button size="small" onClick={cells.dismiss}>Dismiss</Button>}>
             {cells.notice.text}
+          </Notice>
+        ) : null}
+        {dropped && dropped.epoch !== droppedDismissed ? (
+          <Notice tone={dropped.tone} title={dropped.title} data-testid="live-pins-dropped"
+            actions={<Button size="small" onClick={() => setDroppedDismissed(dropped.epoch)}>Dismiss</Button>}>
+            {dropped.text}
           </Notice>
         ) : null}
 
@@ -519,7 +534,7 @@ function QueueCard({ plan, cur, begun }: { plan: PlanController; cur: number; be
       <div className="ws-live__samples">
         {rows.map((r, i) => {
           const st = queueMode ? rowState(q, r.ref) : null;
-          const chip = st ? rowChip(st, q.ended) : plan.started ? { tone: "info" as const, text: plan.started.outcome === "started" ? "Started" : "Start outcome not known" } : { tone: "neutral" as const, text: "Planned" };
+          const chip = st ? rowChip(st, q.ended) : singleRunChip(plan.started, plan.queue.status);
           const slot = slots.get(r.condition.trim());
           const what = r.sample.trim() || r.condition.trim();
           return (

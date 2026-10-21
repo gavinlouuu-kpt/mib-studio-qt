@@ -33,6 +33,26 @@ export interface StartBlock {
   tone: "blocked" | "unknown" | "warn" | "info";
   title: string;
   text: string;
+  /** One line per issue, shown as a list instead of `text` (the sheet's issues; #763 F21). */
+  lines?: string[];
+}
+
+/** A Start block's Notice body: its lines as a list, one per issue, or its text. */
+export function StartBlockText({ block }: { block: StartBlock }) {
+  if (!block.lines?.length) return <>{block.text}</>;
+  return <ul className="ws-issue-list">{block.lines.map((l, i) => <li key={i}>{l}</li>)}</ul>;
+}
+
+/** An issue's text as a sentence of its own (the model words it to follow a label). */
+export const issueSentence = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1);
+
+/** The issues of one field or key/value row, one message per issue (never run together). */
+function IssueLines({ id, texts }: { id?: string; texts: string[] }) {
+  return (
+    <span id={id} className="ws-plan-issue" role="alert">
+      {texts.map((t, i) => <span key={i} className="ws-plan-issue__line">{t}</span>)}
+    </span>
+  );
 }
 
 /** Every reason Start run is unavailable, in plain words (empty = it is available). */
@@ -48,8 +68,10 @@ export function startBlocks(p: { started: "started" | "unknown" | null; notStart
     out.push({ id: "prepare", tone: p.blockers?.tone ?? "blocked", title: `Start is unavailable · Prepare: ${p.verdict.title}`, text: p.blockers?.lines.length ? `${p.blockers.lines.join(". ")}.` : p.verdict.detail });
   if (p.lockedReason) out.push({ id: "locked", tone: "info", title: "Start is unavailable", text: `${p.lockedReason.replace(/\.$/, "")}.` });
   if (p.cameraReason) out.push({ id: "camera", tone: "blocked", title: "Start is unavailable · camera mode", text: `${p.cameraReason}. Show the experiment window first (the button above).` });
-  if (p.issues.length)
-    out.push({ id: "sheet", tone: "blocked", title: `Start is unavailable · the plan has ${p.issues.length === 1 ? "1 issue" : `${p.issues.length} issues`}`, text: p.issues.map(issueLine).join(" ") });
+  if (p.issues.length) {
+    const lines = p.issues.map(issueLine);
+    out.push({ id: "sheet", tone: "blocked", title: `Start is unavailable · the plan has ${p.issues.length === 1 ? "1 issue" : `${p.issues.length} issues`}`, text: lines.join(" "), lines });
+  }
   return out;
 }
 
@@ -74,7 +96,7 @@ export function Field(p: {
         ? <textarea {...common} rows={3} onChange={(e) => p.onChange(e.target.value)} />
         : <input {...common} type="text" inputMode={p.numeric ? "decimal" : undefined} autoComplete="off" onChange={(e) => p.onChange(e.target.value)} />}
       {invalid
-        ? <span id={`${id}-note`} className="ws-plan-issue" role="alert">{p.issues.map((i) => i.text).join(" ")}</span>
+        ? <IssueLines id={`${id}-note`} texts={p.issues.map((i) => issueSentence(i.text))} />
         : p.hint ? <span id={`${id}-note`} className="ws-detail">{p.hint}</span> : null}
     </div>
   );
@@ -109,11 +131,11 @@ export function SampleEditor({ row, issues, disabled, onRow }: { row: SampleRow;
               <input type="text" aria-label={`Value ${i + 1}`} placeholder="value" value={e.value} disabled={disabled} aria-invalid={rowIssues.length > 0 || undefined} autoComplete="off"
                 onChange={(ev) => { const value = ev.target.value; onRow((r) => ({ ...r, free: r.free.map((x, j) => (j === i ? { ...x, value } : x)) })); }} />
               <Button size="small" disabled={disabled} aria-label={`Remove key/value ${i + 1}`} onClick={() => onRow((r) => ({ ...r, free: r.free.filter((_, j) => j !== i) }))}>Remove</Button>
-              {rowIssues.length ? <span className="ws-plan-issue" role="alert">{rowIssues.map((x) => `${x.label}: ${x.text}`).join(" ")}</span> : null}
+              {rowIssues.length ? <IssueLines texts={rowIssues.map((x) => `${x.label}: ${x.text}`)} /> : null}
             </div>
           );
         })}
-        {issuesFor(issues, ["annotation.free"]).map((x) => <span key={x.text} className="ws-plan-issue" role="alert">{x.text}</span>)}
+        {issuesFor(issues, ["annotation.free"]).map((x) => <span key={x.text} className="ws-plan-issue" role="alert">{issueSentence(x.text)}</span>)}
         <div>
           <Button size="small" disabled={disabled || row.free.length >= B.max_free_entries}
             title={row.free.length >= B.max_free_entries ? `At most ${B.max_free_entries} key/values` : undefined}
@@ -155,12 +177,12 @@ export function OperatorFields({ plan, issues, locked }: { plan: PlanController;
     <>
       <div className="ws-plan-form ws-plan-form--single">
         <Field label="Operator" value={draft.operator.name} onChange={setOperator("name")} issues={issues("name")} disabled={locked} testId="plan-operator-name"
-          hint="Type a name, or pick one remembered below" />
+          hint={plan.operators.length ? "Type a name, or pick one remembered below: a remembered name is only a suggestion until you pick it" : "Type a name"} />
         <Field label="Operator id" value={draft.operator.id} onChange={setOperator("id")} issues={issues("id")} disabled={locked} testId="plan-operator-id" hint="Optional" />
       </div>
       {plan.operators.length ? (
         <div className="ws-plan-operators" data-testid="plan-operators">
-          <span className="ws-detail">Remembered:</span>
+          <span className="ws-detail">Remembered · pick to select:</span>
           {plan.operators.map((o) => (
             <Button key={`${o.name}\u0000${o.id}`} size="small" disabled={locked} variant={sameOperator(o, draft.operator) ? "selected" : "secondary"}
               onClick={() => plan.edit((d) => ({ ...d, operator: { ...o } }))}>{operatorText(o)}</Button>
@@ -168,7 +190,8 @@ export function OperatorFields({ plan, issues, locked }: { plan: PlanController;
         </div>
       ) : null}
       <p className="ws-note" data-testid="plan-operator-note">
-        The operator you select is recorded as selected (assurance "selected"). It is not a sign-in and not authentication. Names are remembered on this computer only.
+        The operator you type or pick in this plan is recorded as selected (assurance "selected"); with none, the run records no operator. It is not a
+        sign-in and not authentication. Names are remembered on this computer only, and a remembered name is never selected for you.
       </p>
     </>
   );

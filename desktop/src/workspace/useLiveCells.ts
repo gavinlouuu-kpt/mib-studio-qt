@@ -16,6 +16,8 @@
 //   the view says.
 // - "Clear ended pins" is one unpin per ended pin. A control loss cancels the batch: no further unpin
 //   is sent, and it never resumes by itself (control coming back does not restart it).
+// - A notice that describes a pin ("Pinned · F…") is withdrawn once that pin has ended or gone
+//   (its capture ended, or it was unpinned); a notice of an action's outcome stays until the next.
 // - A cell of an earlier capture is refused (`CAPTURE_MISMATCH` for an image pull, `CaptureMismatch`
 //   for a pin): the view says so and reads the listing again, and never retries the same identity.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -28,8 +30,8 @@ import {
   type MonitoringCellKeyInput,
   type MonitoringCellsListing,
 } from "../monitoringCells";
-import { cellName, endedPins, frozenChangeText, listingScope, pinIdentityRefusal, pinNotice, scopeChanged, stripShown, type CellScope,
-  type LiveNotice } from "./liveModel";
+import { cellName, endedPins, frozenChangeText, listingScope, pinIdentityRefusal, pinNotice, pinNoticeStale, pinNoticeSubject, scopeChanged, stripShown,
+  type CellScope, type LiveNotice, type PinNoticeSubject } from "./liveModel";
 
 export type CellLayer = "image" | "mask";
 
@@ -94,7 +96,10 @@ export function useLiveCells({ active, controlHeld, frozen, masks, toUrl, interv
   /** The strip held by Freeze display, with the capture and run it was of (null before any listing). */
   const [held, setHeld] = useState<{ cells: MonitoringCell[]; scope: CellScope | null } | null>(null);
   const [pictures, setPictures] = useState<ReadonlyMap<string, CellPicture>>(() => new Map());
-  const [notice, setNotice] = useState<LiveNotice | null>(null);
+  // The last notice, and the pin it describes (null for an action's outcome): see pinNoticeStale.
+  const [said, setSaid] = useState<{ notice: LiveNotice; about: PinNoticeSubject | null } | null>(null);
+  const setNotice = useCallback((n: LiveNotice | null, about: PinNoticeSubject | null = null) => setSaid(n ? { notice: n, about } : null), []);
+  const notice = said?.notice ?? null;
   const [busy, setBusy] = useState(false);
   const [lastPinned, setLastPinned] = useState<string | null>(null);
   const busyRef = useRef(false);
@@ -150,6 +155,10 @@ export function useLiveCells({ active, controlHeld, frozen, masks, toUrl, interv
   const strip = useMemo(() => (held ? (heldChanged ? [] : held.cells) : stripShown(listing)), [held, heldChanged, listing]);
   const frozenChange = held?.scope && listing && heldChanged ? frozenChangeText(held.scope, listing) : "";
   const pins = listing?.pins;
+  // "Pinned · F…" goes once its pin has ended or gone (#763 F13).
+  useEffect(() => {
+    if (said?.about && pinNoticeStale(said.about, listing)) setSaid((cur) => (cur === said ? null : cur));
+  }, [said, listing]);
 
   // ---- the crops: pulled once per cell, two at a time ----
   const inFlight = useRef(new Set<string>());
@@ -232,7 +241,7 @@ export function useLiveCells({ active, controlHeld, frozen, masks, toUrl, interv
     try {
       const reply = await bridge.monitoringCellPin(key);
       if (!mounted.current) return;
-      setNotice(pinNotice(name, reply));
+      setNotice(pinNotice(name, reply), pinNoticeSubject(reply));
       if (reply.cell) setLastPinned(cellKeyString(reply.cell));
     } catch (e) {
       if (mounted.current) setNotice({ tone: "blocked", title: `Not pinned · ${name}`, text: plain(e) });
@@ -240,7 +249,7 @@ export function useLiveCells({ active, controlHeld, frozen, masks, toUrl, interv
       release();
       await read();
     }
-  }, [guard, release, read]);
+  }, [guard, release, read, setNotice]);
 
   const unpin = useCallback(async (key: MonitoringCellKeyInput) => {
     if (!guard()) return;
@@ -299,7 +308,7 @@ export function useLiveCells({ active, controlHeld, frozen, masks, toUrl, interv
     }
   }, [guard, release, read]);
 
-  const inform = useCallback((n: LiveNotice) => setNotice(n), []);
-  const dismiss = useCallback(() => setNotice(null), []);
+  const inform = useCallback((n: LiveNotice) => setNotice(n), [setNotice]);
+  const dismiss = useCallback(() => setNotice(null), [setNotice]);
   return { listing, readError, strip, frozenChange, pictures, notice, busy, lastPinned, pin, unpin, clearEnded, clearAll, inform, dismiss };
 }

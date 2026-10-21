@@ -184,7 +184,13 @@ of the quick controls and the sample sheet, until the kit has them).
   gates as current). Gate rows show a plain label (`GATE_LABELS`, one table for every backend
   gate id; an unmapped id is shown as itself) with the raw id as secondary text and title, the
   state and reason as a chip, and the remediation ("Fix: …"). Tones: Pass → confirmed,
-  Warn → warn, Fail → blocked, Unavailable → unknown, NotRequired → neutral.
+  Warn → warn, Fail → blocked, Unavailable → unknown, NotRequired → neutral. Two remediations are
+  the workspace's own words (`GATE_REMEDIATIONS`, `gateRemediation`; #763): `camera.session`
+  ("in the classic view, press Start Camera …"; the backend names the Qt app's Start Live View, and
+  the workspace never starts the camera) and `processing.background` ("Set Background first …":
+  Background calibration with no background set finds no empty frame when every frame has cells).
+  Chips, facts and "Fix:" lines wrap inside their card (`min-width: 0`, a `fit-content(45%)` label
+  column; #763 F10).
 - **One verdict** (`prepareVerdict`), the same words in the header chip and the "Ready to
   operate?" card, combining the checklist and the gates. It never contradicts the Confirm
   button, which the checklist alone drives:
@@ -193,7 +199,9 @@ of the quick controls and the sample sheet, until the kit has them).
   - **Readiness paused · a run is active**: the gates are not read and Confirm is locked.
   - **Ready to confirm · Start blocked: <labels>** (warn tone): the checklist passes, but a gate
     other than the pending destination is Fail or Unavailable. Start refuses both. With the
-    gates not read: "Ready to confirm · gates not read yet" (unknown tone).
+    gates not read: "Ready to confirm · gates not read yet" (unknown tone). Once the operator
+    confirmed readiness for this setup, the same states read **Confirmed · Start blocked: …** /
+    "Confirmed · gates not read yet" (#763 F9).
   - **Ready with warnings**: nothing blocks, but a check or gate warns.
   - **Ready**.
   
@@ -209,6 +217,9 @@ of the quick controls and the sample sheet, until the kit has them).
     `confirmBlockers`).
   - When it is available but a gate refuses Start, a warn Notice says so ("Start will be
     refused until: Processing core — activate the pinned core"; `startRefusalText`).
+  - It is advisory (#763 F23 ruling): it is kept per browser tab (`sessionStorage`, it survives a
+    reload of the tab) and Start does not require it. Without it, Plan's Start card and the Queue
+    card show "Not confirmed in this browser tab" beside Start, with that note (`startConfirmation`).
 - **Align (O2, P3; #716 A3).** Penpot board O2 (`7832aa3b-faed-4e2c-ae5c-0b72f1e4fecb`, read at
   revn 218). Two cards: the live image and the quick controls.
   - **The image is the classic preview's stream.** App's `live` frame view hands every packet it
@@ -232,7 +243,9 @@ of the quick controls and the sample sheet, until the kit has them).
     geometry read after the save), the PZ7035 Run window (placed, applied by the switch to Run;
     readback `restoredRunWindow` of `fetch_instrument_status.mode`) or the processing ROI
     (`set_processing_roi`, the classic Apply ROI's `applyProcessingRoi`; readback the applied
-    config's `roi`). Exposure and frame rate are read-only readbacks of
+    config's `roi`). Writing the processing ROI applies the processing settings, as Apply ROI does,
+    so it also starts realtime processing when the settings enable it, and the live cells begin a
+    new capture; the card says so (`PROCESSING_ROI_WRITE`, #763 F16). Exposure and frame rate are read-only readbacks of
     `fetch_camera_geometry.session` (Aravis; "Unavailable · not reported" otherwise), the
     PZ7035 Run rate and exposure read-only from `fetch_run_fps` (set in the camera document),
     gain "Unavailable · not bridged". `alignControls.ts` derives the rows from the capabilities.
@@ -292,7 +305,8 @@ of the quick controls and the sample sheet, until the kit has them).
     `max_free_entries` free entries, a half-filled or repeated key/value row, and
     `max_request_bytes` of the text as sent. Each refusal names the field and the limit next to
     the field and in the Start card ("Condition: too long: 257 bytes, at most 256. Shorten it;
-    nothing is cut off."); nothing is truncated. Spaces around a value are not part of it; an
+    nothing is cut off."), one message per issue: a line of its own under the field, a list item in
+    the Start card (#763 F21); nothing is truncated. Spaces around a value are not part of it; an
     empty field is not declared and its key is left out, never sent as `""` or `null`. The
     backend checks the same request again and stays the authority.
   - **Identity** (`buildStartRequest`, one ordered serializer so the text is exact):
@@ -303,7 +317,10 @@ of the quick controls and the sample sheet, until the kit has them).
     The operator is the one the operator selected or typed (#393 phase 1), recorded by the
     backend with assurance "selected"; the card says it is not authentication. Operators are
     remembered on this machine (`localStorage` `mib.workspace.operators`, most recent first, at
-    most 8) when a run starts with them, and the last one is the next plan's default.
+    most 8) when a run starts with them. A remembered operator is only a suggestion (#763 F6): the
+    plan a page load creates names no operator, the remembered ones are offered unselected, and an
+    operator is sent only once it was typed or picked in this page's Plan (the contract has no
+    other assurance value, so nothing else is recorded as "selected").
   - **Start run** (the one primary action) runs App's `runExperimentStart`, the classic Start
     flow (`experimentStart.ts`: ask before a stopped Run's frames are discarded, pick the file,
     readiness with it, start) with the plan's `startRequestJson`; the classic Start button runs
@@ -342,7 +359,9 @@ of the quick controls and the sample sheet, until the kit has them).
     known" and locks the plan; a locking code says "Not started · its file may exist" with the
     backend's message and locks the plan too (its identity may be in a file left behind). A started run locks the plan ("Run 1
     started · <path>"): its identity is in that run, so a single-sample plan has no second run;
-    "New plan" mints a new id and keeps the operator and the format.
+    "New plan" mints a new id and keeps the operator (typed or picked in this page's Plan) and the
+    format. The outcome points to Live, where the run is followed and stopped, with "Go to Live"
+    (#763 F12).
   - **The camera mode a run records in (A5, #739 review).** `planCameraMode` (`planModel.ts`) and
     the Start (or Queue) card's kit `Notice` "Camera · <mode>" offer the classic Experiment tab's
     entry switch as a button: App's `switchPlanCameraMode` calls the shared
@@ -513,8 +532,18 @@ of the quick controls and the sample sheet, until the kit has them).
     sent. "Stop acquisition" is the classic Stop Camera (`onStopCamera`, a recording clip first),
     disabled while a run is active ("the camera never stops under a run") or the camera is not
     running. Both need control.
+  - **Notices follow the state (#763 F13, F15).** "Stop requested · run generation N" goes once the
+    status shows that run terminal or another run (`stopRequestStale`); a refused stop stays until
+    the next stop. A notice that describes a pin ("Pinned · F…") goes once that pin's capture ended
+    or a listing at least as new as the pin's reply no longer holds it (`pinNoticeStale`). A run
+    start drops every pin (pins belong to the latest run); while the capture that run began is
+    current, Live says how many were cleared ("1 pin cleared · run generation 4 started",
+    `droppedPinsNotice` from `last_capture_change.pins_dropped`), until dismissed.
   - **Run status and lifecycle.** The run's file, a state chip and the backend's counts (valid and
-    invalid saved, pending, dropped, failed to save). The queue's tiles show each row's chip; the
+    invalid saved, pending, dropped, failed to save). The queue's tiles show each row's chip (a
+    single sample's follows its run in the status, `followSingleRun` / `singleRunChip`: Running,
+    Stopping · draining, then Finalized · file closed or Failed, kept after another run starts;
+    #763 F14); the
     lifecycle is the queue's own (`lifecycle`, with Confirm closed for a finalized row and "Go to
     Plan" for the next Start, which stays in the Plan with its file dialog and readiness) or, for
     any other run, `statusLifecycle`: Starting → Running → Stopping · drain → Finalized, a step done

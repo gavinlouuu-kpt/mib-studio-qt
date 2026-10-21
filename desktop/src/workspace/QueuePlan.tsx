@@ -22,8 +22,9 @@ import {
   nextSampleRef,
   type SampleRow,
 } from "./planModel";
-import { FormatCard, NOT_DECLARED, OperatorFields, CameraModeNotice, SampleEditor, startBlocks, type StartBlock } from "./planParts";
+import { FormatCard, NOT_DECLARED, OperatorFields, CameraModeNotice, SampleEditor, StartBlockText, startBlocks, type StartBlock } from "./planParts";
 import type { PlanViewProps } from "./PlanView";
+import { startConfirmation } from "./prepareModel";
 import {
   canEnd,
   canMove,
@@ -50,7 +51,7 @@ const rowFile = (st: QueueRow) => st.end?.outputPath || st.outputPath || st.atte
 
 type NoticeText = { tone: "confirmed" | "warn" | "blocked" | "unknown" | "info"; title: string; text: string };
 
-export function QueuePlan({ plan, lockedReason, verdict, blockers, cameraMode, onCameraMode }: PlanViewProps) {
+export function QueuePlan({ plan, lockedReason, verdict, blockers, cameraMode, onCameraMode, confirmation }: PlanViewProps) {
   const { draft, queue } = plan;
   const q = queue.state;
   const order = draft.rows.map((r) => r.ref);
@@ -71,6 +72,7 @@ export function QueuePlan({ plan, lockedReason, verdict, blockers, cameraMode, o
   const selBuild = buildStartRequest(draft, selIndex, plannedRunIndex(order, q, selIndex) ?? q.nextRunIndex);
   const curBuild = curRow ? buildStartRequest(draft, cur, q.nextRunIndex) : null;
   const slots = conditionSlots(draft.rows);
+  const confirm = confirmation ? startConfirmation(confirmation) : null;
 
   const editRow = (ref: string) => (change: (r: SampleRow) => SampleRow) => plan.edit((d) => ({ ...d, rows: d.rows.map((r) => (r.ref === ref ? change(r) : r)) }));
   const addRow = () => {
@@ -226,6 +228,7 @@ export function QueuePlan({ plan, lockedReason, verdict, blockers, cameraMode, o
       subtitle="Guided: every step is a button you press. Nothing advances, stops or starts on its own."
       status={<>
         <StateChip tone={verdict.tone} title={verdict.detail || undefined}>{`Prepare: ${verdict.title}`}</StateChip>
+        {confirm ? <StateChip tone={confirm.tone} data-testid="plan-confirmation">{confirm.chip}</StateChip> : null}
         <StateChip tone={paused ? "warn" : "neutral"} data-testid="queue-progress">{paused ? "Paused" : curRow ? `${curRow.ref} · ${cur + 1} of ${order.length}` : begun ? "Finished" : "Not started"}</StateChip>
       </>}
       actions={<>
@@ -257,10 +260,11 @@ export function QueuePlan({ plan, lockedReason, verdict, blockers, cameraMode, o
           ) : null}
           {finished ? <Notice tone={finished.tone} title={finished.title} data-testid="queue-finished">{finished.text}</Notice> : null}
           {blocks.map((b) => (
-            <Notice key={b.id} tone={b.tone} title={b.title} data-testid={`plan-blocked-${b.id}`}>{b.text}</Notice>
+            <Notice key={b.id} tone={b.tone} title={b.title} data-testid={`plan-blocked-${b.id}`}><StartBlockText block={b} /></Notice>
           ))}
         </div>
       </div>
+      {confirm ? <p className="ws-note" data-testid="plan-confirmation-note">{confirm.note}</p> : null}
       <p className="ws-note">{`Each Start sends this experiment id, the row's ref as sample_ref and the next run index; a sample change is a new run with its own file. ${KEY_LABELS.startRequest} is checked again by the backend.`}</p>
     </Card>
   );

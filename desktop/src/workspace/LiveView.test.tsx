@@ -15,7 +15,7 @@ import type { ExperimentStatus } from "../eventAdapter";
 import { chartDomain, chartPosition, liveScatter, STRIP_SHOWN } from "./liveModel";
 import { LiveView } from "./LiveView";
 import { useLiveCells, type LiveCells } from "./useLiveCells";
-import { usePlan, type StopReply } from "./usePlan";
+import { usePlan, type PlanController, type StopReply } from "./usePlan";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
@@ -583,4 +583,104 @@ it("on the PZ7035 says the cells carry measurements, not images", async () => {
   expect($("live-pl")).not.toBeNull();
   expect(stripCells()[0].textContent).toContain("Image not recorded");
   expect(sent("fetch_monitoring_cell_packet")).toEqual([]);
+});
+
+describe("click-through polish (#763)", () => {
+  it("F13: Stop requested goes once the status shows that run finalized; a refusal stays", async () => {
+    const active = status({ state: EXPERIMENT_STATES.Active, start_generation: "5", output_path: "/data/run.h5" });
+    await render({ status: active, experimentActive: true });
+    await advance(100);
+    await click($("live-stop-run"));
+    expect($("live-stop-notice")!.textContent).toContain("Stop requested · run generation 5");
+    await render({ status: status({ state: EXPERIMENT_STATES.Stopping, flushing: true, start_generation: "5", output_path: "/data/run.h5" }), experimentActive: true });
+    expect($("live-stop-notice")!.textContent).toContain("Stop requested · run generation 5"); // still draining
+    await render({ status: status({ terminal: true, finalization_ok: true, start_generation: "5", output_path: "/data/run.h5" }) });
+    expect($("live-stop-notice")).toBeNull();
+    // A refused stop is an outcome, not a state: it stays until the next stop.
+    await render({ status: active, experimentActive: true });
+    stopReply = { ok: false, message: "stop refused: expected run 5, but run 6 is active; nothing was stopped", stop_outcome: EXPERIMENT_STOP_OUTCOMES.RunMismatch };
+    await click($("live-stop-run"));
+    await render({ status: status({ state: EXPERIMENT_STATES.Active, start_generation: "6", output_path: "/data/other.h5" }), experimentActive: true });
+    expect($("live-stop-notice")!.textContent).toContain("Not stopped · that run is no longer the active one");
+    expect(onStopRun).toHaveBeenCalledTimes(2);
+  });
+
+  it("F13: Pinned · F… goes once that pin's capture ended (Stop acquisition, an ROI change) or it was unpinned", async () => {
+    await render();
+    await advance(100);
+    await click(host.querySelector('[aria-label="Cell F102·O1"]'));
+    expect($("live-pin-notice")!.textContent).toContain("Pinned · F102·O1");
+    // A listing read before the pin's reply (revision 9) does not clear it.
+    expect(Number(listing.revision)).toBeLessThan(9);
+    await advance(1100);
+    expect($("live-pin-notice")!.textContent).toContain("Pinned · F102·O1");
+    listing = { ...listing, pins: [cell("102")], revision: "10" }; // the listing after the pin
+    await advance(1100);
+    expect($("live-pin-notice")!.textContent).toContain("Pinned · F102·O1");
+    // The camera stopped: capture 4 began, the pin ended.
+    setListing({ ring_capture_epoch: "4", strip: [], pins: [cell("102", { image: null, no_image_reason: ENDED })],
+      last_capture_change: { capture_epoch: "4", reason: "the camera stopped", pins_ended: 1, pins_dropped: 0, strip_dropped: 3 } });
+    await advance(1100);
+    expect($("live-pin-notice")).toBeNull();
+    expect(calls().filter((c) => CONTROL.includes(c.cmd))).toHaveLength(1); // only the pin itself was sent
+  });
+
+  it("F13: Pinned · F… also goes once a newer listing no longer holds the pin (unpinned by another client)", async () => {
+    await render();
+    await advance(100);
+    await click(host.querySelector('[aria-label="Cell F102·O1"]'));
+    listing = { ...listing, pins: [], revision: "12" }; // newer than the pin's reply (9), without it
+    await advance(1100);
+    expect($("live-pin-notice")).toBeNull();
+  });
+
+  it("F15: a run start that cleared the pins is said, once per capture, and can be dismissed", async () => {
+    setListing({ scope_start_generation: "7", ring_start_generation: "7", ring_capture_epoch: "8", strip: [], pins: [],
+      last_capture_change: { capture_epoch: "8", reason: "a run started", pins_ended: 0, pins_dropped: 1, strip_dropped: 4 } });
+    await render();
+    await advance(100);
+    const notice = $("live-pins-dropped")!;
+    expect(notice.textContent).toContain("1 pin cleared · run generation 7 started");
+    expect(notice.textContent).toContain("Pins belong to the latest run started");
+    await click([...notice.querySelectorAll("button")].find((b) => b.textContent === "Dismiss"));
+    expect($("live-pins-dropped")).toBeNull();
+    await advance(2200);
+    expect($("live-pins-dropped")).toBeNull(); // dismissed for this capture
+    // A later capture change that dropped nothing says nothing.
+    setListing({ ring_capture_epoch: "9", last_capture_change: { capture_epoch: "9", reason: "a run started", pins_ended: 0, pins_dropped: 0, strip_dropped: 0 } });
+    await advance(1100);
+    expect($("live-pins-dropped")).toBeNull();
+    // The next run that drops pins is said again.
+    setListing({ ring_capture_epoch: "10", scope_start_generation: "8", last_capture_change: { capture_epoch: "10", reason: "a run started", pins_ended: 0, pins_dropped: 2, strip_dropped: 0 } });
+    await advance(1100);
+    expect($("live-pins-dropped")!.textContent).toContain("2 pins cleared · run generation 8 started");
+    expect(calls().filter((c) => CONTROL.includes(c.cmd))).toEqual([]); // the notice sends nothing
+  });
+
+  it("F14: the single sample's card follows its run to Finalized, and keeps the end after another run starts", async () => {
+    let plan: PlanController | null = null;
+    function Single({ st }: { st: ExperimentStatus }) {
+      const p = usePlan(async () => ({ kind: "started", path: "/data/single", notice: "" }), { status: st, controlHeld: true });
+      plan = p;
+      return <LiveView tabs={null} plan={p} snapshot={null} running experimentActive={st.state === EXPERIMENT_STATES.Active} hostProcessing
+        subscribeFrames={subscribeFrames} onStopAcquisition={onStopAcquisition} onStopRun={onStopRun} onView={onView} toUrl={toUrl} />;
+    }
+    const show = (st: ExperimentStatus) => act(async () => root.render(<Single st={st} />));
+    const chip = () => $("live-sample-S1")!.querySelector(".mib-chip")!.textContent;
+    // An earlier run's end on the same file is not this run's.
+    await show(status({ terminal: true, finalization_ok: true, start_generation: "4", output_path: "/data/single.h5" }));
+    expect(chip()).toBe("Planned");
+    await act(async () => { await plan!.start("{}", 1); });
+    expect(chip()).toBe("Started");
+    await show(status({ terminal: true, finalization_ok: true, start_generation: "4", output_path: "/data/single.h5" }));
+    expect(chip()).toBe("Started");
+    await show(status({ state: EXPERIMENT_STATES.Active, start_generation: "5", output_path: "/data/single.h5" }));
+    expect(chip()).toBe("Running");
+    await show(status({ state: EXPERIMENT_STATES.Stopping, flushing: true, start_generation: "5", output_path: "/data/single.h5" }));
+    expect(chip()).toBe("Stopping · draining");
+    await show(status({ terminal: true, finalization_ok: true, start_generation: "5", output_path: "/data/single.h5" }));
+    expect(chip()).toBe("Finalized · file closed");
+    await show(status({ state: EXPERIMENT_STATES.Active, start_generation: "6", output_path: "/data/other.h5" }));
+    expect(chip()).toBe("Finalized · file closed");
+  });
 });

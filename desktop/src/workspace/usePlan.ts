@@ -17,7 +17,11 @@
 //   pressed, is checked by the Start flow after every answer and immediately before
 //   experiment_start. A withdrawn Start sends nothing; the operator presses Start again.
 // - The selected operator (#393 phase 1) is remembered locally, in localStorage, when a run
-//   starts with it, and is the next plan's default. It is a selection, not authentication.
+//   starts with it. It is a selection, not authentication, and the backend records it with
+//   assurance "selected". A remembered operator is only a suggestion (#763 F6): the plan App
+//   creates (at every page load) starts with no operator, and one is sent only once the operator
+//   typed it or picked it from the remembered list in this page's Plan. "New plan" keeps the
+//   operator selected in the plan before it, which was itself typed or picked here.
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ExperimentStatus } from "../eventAdapter";
 import type { StartOutcome } from "../experimentStart";
@@ -30,7 +34,7 @@ import {
   type OperatorChoice,
   type PlanDraft,
 } from "./planModel";
-import { currentIndex, editKeepsRecorded, newQueue, ownRunActive, queueInProgress, reduceQueue, rowState, type QueueEvent, type QueueState } from "./queueModel";
+import { currentIndex, editKeepsRecorded, followSingleRun, newQueue, ownRunActive, queueInProgress, reduceQueue, rowState, type QueueEvent, type QueueState } from "./queueModel";
 
 /** Where the remembered operators are kept (this machine only). */
 export const OPERATORS_STORAGE_KEY = "mib.workspace.operators";
@@ -52,6 +56,13 @@ export interface PlanStarted {
    *  the backend can return after it opened the run's file. */
   outcome: "started" | "unknown";
   code?: number;
+  /** start_generation of the last status read before the Start (null when none was read): the run
+   *  is the first newer one on its file (queueModel followSingleRun, #763 F14). */
+  generationBefore?: string | null;
+  /** The run's start_generation once a status on its file reports it. */
+  generation?: string;
+  /** How the run ended, once a status reports it terminal. */
+  end?: { ok: boolean; cancelled: boolean };
 }
 
 /** The stop command's reply (`experiment_stop`); `stop_outcome` is its EXPERIMENT_STOP_OUTCOMES value
@@ -97,8 +108,9 @@ export interface PlanController {
   starting: boolean;
   /** Run the Start flow with this startRequestJson (single sample). */
   start: (startRequestJson: string, runIndex: number) => Promise<PlanStartResult | null>;
-  /** A new plan: a new experiment id, an empty sheet, the last operator, the same format.
-   *  Ignored while a queue is in progress. */
+  /** A new plan: a new experiment id, an empty sheet, the operator selected in this plan (typed or
+   *  picked in this page's Plan, never a remembered one by itself), the same format. Ignored while
+   *  a queue is in progress. */
   newPlan: () => void;
   /** The guided sample queue. */
   queue: QueueController;
@@ -141,7 +153,8 @@ export function usePlan(runStart: RunStart, options: PlanOptions = {}): PlanCont
   const status = options.status ?? null;
   const controlHeld = options.controlHeld ?? true;
   const [operators, setOperators] = useState<OperatorChoice[]>(readOperators);
-  const [draft, setDraft] = useState<PlanDraft>(() => newPlanDraft(mintExperimentId(), operators[0]));
+  // No operator until one is typed or picked: the remembered list only suggests (#763 F6).
+  const [draft, setDraft] = useState<PlanDraft>(() => newPlanDraft(mintExperimentId()));
   const [result, setResult] = useState<PlanStartResult | null>(null);
   const [started, setStarted] = useState<PlanStarted | null>(null);
   const [starting, setStarting] = useState(false);
@@ -176,6 +189,8 @@ export function usePlan(runStart: RunStart, options: PlanOptions = {}): PlanCont
 
   // The queue observes every status read (backend facts apply even while paused).
   useEffect(() => { dispatch({ type: "status", status }); }, [status, dispatch]);
+  // So does the single sample's run: its generation, and how it ended (#763 F14).
+  useEffect(() => { setStarted((st) => (st ? followSingleRun(st, status) : st)); }, [status]);
   // A lost controlling client pauses a queue in progress; it never resumes on its own.
   // A control loss also withdraws any pending Start (the epoch the Start flow checks).
   useEffect(() => {
@@ -205,6 +220,7 @@ export function usePlan(runStart: RunStart, options: PlanOptions = {}): PlanCont
     setStarting(true);
     setResult(null);
     const epoch = controlEpoch.current;
+    const generationBefore = statusRef.current?.valid ? statusRef.current.start_generation : null;
     try {
       const out = await runStart(json, () => controlEpoch.current === epoch && controlRef.current);
       setResult(out);
@@ -213,7 +229,7 @@ export function usePlan(runStart: RunStart, options: PlanOptions = {}): PlanCont
       if (out.kind === "started" || out.kind === "unknown") {
         startedRef.current = true;
         const code = out.kind === "unknown" && out.code !== undefined ? { code: out.code } : {};
-        setStarted({ path: out.path, notice: out.kind === "started" ? out.notice : "", runIndex, outcome: out.kind, ...code });
+        setStarted({ path: out.path, notice: out.kind === "started" ? out.notice : "", runIndex, outcome: out.kind, ...code, generationBefore });
       }
       if (out.kind === "started") remember();
       return out;

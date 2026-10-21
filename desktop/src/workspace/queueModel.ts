@@ -39,7 +39,7 @@ import { EXPERIMENT_STATES, EXPERIMENT_STOP_OUTCOMES } from "../bridgeContract";
 import type { ExperimentStatus } from "../eventAdapter";
 import { describeRunOutcome, type OutcomeSeverity } from "../runOutcome";
 import { invalidRequestReason, type PlanDraft } from "./planModel";
-import type { PlanStartResult } from "./usePlan";
+import type { PlanStarted, PlanStartResult } from "./usePlan";
 
 export type RowPhase =
   | "planned"   // nothing sent for this row (or a Start that was cancelled)
@@ -494,4 +494,42 @@ export function editKeepsRecorded(prev: PlanDraft, next: PlanDraft, q: QueueStat
     if (JSON.stringify(next.rows[i]) !== JSON.stringify(row)) return false;
   }
   return true;
+}
+
+// ---- the single-sample run (#763 F14) ------------------------------------------------------------
+
+/** The single-sample plan's run, followed in the experiment status (as a queue row's is): a status
+ *  is the run's when it names the run's file and either its generation (once seen) or one newer
+ *  than the read before its Start. Without that read, only a run in progress is taken as it, so an
+ *  earlier run's end on the same path is never shown as this one's. Returns `st` itself when the
+ *  status says nothing new about the run; the end, once read, stays. */
+export function followSingleRun(st: PlanStarted, s: ExperimentStatus | null): PlanStarted {
+  if (st.outcome !== "started" || st.end || !st.path || !s?.valid || s.output_path !== recordedPath(st.path)) return st;
+  const gen = big(s.start_generation);
+  if (gen === null) return st;
+  const terminal = s.terminal && (s.state === EXPERIMENT_STATES.Idle || s.state === EXPERIMENT_STATES.Failed);
+  if (st.generation !== undefined) {
+    if (s.start_generation !== st.generation) return st;
+  } else if (st.generationBefore !== undefined && st.generationBefore !== null) {
+    const before = big(st.generationBefore);
+    if (before === null || gen <= before) return st;
+  } else if (terminal) {
+    return st;
+  }
+  const generation = s.start_generation;
+  if (!terminal) return generation === st.generation ? st : { ...st, generation };
+  const ok = s.finalization_ok && s.state !== EXPERIMENT_STATES.Failed && !s.fault_code;
+  return { ...st, generation, end: { ok, cancelled: s.cancelled } };
+}
+
+/** The single sample's state on Live's queue card: its end once the status reported it, else what
+ *  the status shows of its run, else what its start reply said. */
+export function singleRunChip(st: PlanStarted | null, s: ExperimentStatus | null): { tone: ChipTone; text: string } {
+  if (!st) return { tone: "neutral", text: "Planned" };
+  if (st.end) return st.end.ok ? { tone: "confirmed", text: st.end.cancelled ? "Finalized · cancelled" : "Finalized · file closed" } : { tone: "blocked", text: "Failed" };
+  if (st.outcome !== "started") return { tone: "unknown", text: "Start outcome not known" };
+  const ours = st.generation !== undefined && !!s?.valid && s.start_generation === st.generation && s.output_path === recordedPath(st.path);
+  if (ours && (s!.state === EXPERIMENT_STATES.Stopping || s!.flushing)) return { tone: "info", text: "Stopping · draining" };
+  if (ours && s!.state === EXPERIMENT_STATES.Active) return { tone: "info", text: "Running" };
+  return { tone: "info", text: "Started" };
 }

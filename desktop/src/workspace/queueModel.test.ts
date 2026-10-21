@@ -23,11 +23,13 @@ import {
   rowState,
   ownRunActive,
   recordedPath,
+  followSingleRun,
+  singleRunChip,
   type QueueEvent,
   type QueueState,
   type RowPhase,
 } from "./queueModel";
-import type { PlanStartResult } from "./usePlan";
+import type { PlanStarted, PlanStartResult } from "./usePlan";
 
 const ORDER = ["S1", "S2", "S3"];
 const status = (over: Partial<ExperimentStatus> = {}): ExperimentStatus => ({
@@ -563,5 +565,46 @@ describe("the outcome codes (ABI 40)", () => {
     ]);
     expect(rowState(q, "S1").failure!.title).toBe("Not started · the backend refused the Start of S1");
     expect(q.nextRunIndex).toBe(1);
+  });
+});
+
+describe("the single-sample run, followed in the status (#763 F14)", () => {
+  const started = (over: Partial<PlanStarted> = {}): PlanStarted => ({ path: "/data/run", notice: "", runIndex: 1, outcome: "started", generationBefore: "4", ...over });
+  const on = (over: Partial<ExperimentStatus>) => status({ output_path: RUN, ...over });
+
+  it("takes the first newer run on its file, then follows only that generation to its end", () => {
+    let st = started();
+    expect(followSingleRun(st, on({ terminal: true, finalization_ok: true, start_generation: "4" }))).toBe(st); // the run before the Start
+    expect(followSingleRun(st, status({ state: S.Active, start_generation: "5", output_path: "/data/other.h5" }))).toBe(st); // another file
+    st = followSingleRun(st, on({ state: S.Active, start_generation: "5" }));
+    expect(st.generation).toBe("5");
+    expect(singleRunChip(st, on({ state: S.Active, start_generation: "5" }))).toEqual({ tone: "info", text: "Running" });
+    expect(singleRunChip(st, on({ state: S.Stopping, flushing: true, start_generation: "5" }))).toEqual({ tone: "info", text: "Stopping · draining" });
+    expect(followSingleRun(st, on({ terminal: true, finalization_ok: true, start_generation: "6" }))).toBe(st); // a later run on the same file
+    st = followSingleRun(st, on({ terminal: true, finalization_ok: true, start_generation: "5" }));
+    expect(st.end).toEqual({ ok: true, cancelled: false });
+    expect(singleRunChip(st, status({ state: S.Active, start_generation: "6", output_path: "/data/other.h5" }))).toEqual({ tone: "confirmed", text: "Finalized · file closed" });
+    expect(followSingleRun(st, on({ state: S.Failed, terminal: true, start_generation: "5" }))).toBe(st); // the end stays
+  });
+
+  it("a failed or cancelled end is said as such", () => {
+    const failed = followSingleRun(started({ generation: "5" }), on({ state: S.Failed, terminal: true, start_generation: "5" }));
+    expect(singleRunChip(failed, null)).toEqual({ tone: "blocked", text: "Failed" });
+    const cancelled = followSingleRun(started({ generation: "5" }), on({ terminal: true, finalization_ok: true, cancelled: true, start_generation: "5" }));
+    expect(singleRunChip(cancelled, null)).toEqual({ tone: "confirmed", text: "Finalized · cancelled" });
+  });
+
+  it("without a status read before its Start, a terminal status is never taken for it until its run was seen in progress", () => {
+    let st = started({ generationBefore: null });
+    expect(followSingleRun(st, on({ terminal: true, finalization_ok: true, start_generation: "3" }))).toBe(st);
+    st = followSingleRun(st, on({ state: S.Active, start_generation: "5" }));
+    expect(followSingleRun(st, on({ terminal: true, finalization_ok: true, start_generation: "5" })).end).toEqual({ ok: true, cancelled: false });
+  });
+
+  it("an unknown start, or none, is said as before", () => {
+    expect(singleRunChip(null, null)).toEqual({ tone: "neutral", text: "Planned" });
+    expect(singleRunChip(started({ outcome: "unknown" }), null)).toEqual({ tone: "unknown", text: "Start outcome not known" });
+    expect(followSingleRun(started({ outcome: "unknown" }), on({ terminal: true, finalization_ok: true, start_generation: "5" })).end).toBeUndefined();
+    expect(singleRunChip(started(), null)).toEqual({ tone: "info", text: "Started" });
   });
 });

@@ -28,7 +28,7 @@ export function ExperimentView({ view: sub, onView: setSub, onClassic, live, ...
   return (
     <div className="ws-view" data-testid="workspace-experiment">
       <Toolbar title="Experiment plan">{tabs}</Toolbar>
-      {sub === "Plan" ? <PlanView {...plan} /> : (
+      {sub === "Plan" ? <PlanView {...plan} onShowLive={() => setSub("Live")} /> : (
         <div className="ws-body">
           <Notice tone="info" title="Not yet in the workspace · Summary" data-testid="workspace-experiment-summary"
             actions={<Button onClick={onClassic}>Back to the classic view</Button>}>

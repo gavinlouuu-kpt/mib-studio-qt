@@ -19,7 +19,7 @@ import { derivePreflight } from "../preflight";
 import { AlignView, type AlignViewProps } from "./AlignView";
 import { ExperimentView, type ExperimentSubView, type ExperimentViewProps } from "./ExperimentView";
 import { PrepareView, type PrepareViewProps } from "./PrepareView";
-import { confirmBlockers, prepareVerdict } from "./prepareModel";
+import { confirmBlockers, confirmationState, prepareVerdict } from "./prepareModel";
 import type { PlanCameraMode } from "./planModel";
 import type { PlanController } from "./usePlan";
 import { usePrepareReadiness } from "./usePrepareReadiness";
@@ -66,9 +66,11 @@ export function Workspace({ brand, source, method, stage, onStage, onExit, servi
   // run is active (the gates would only say "running"). Always without a path.
   const showsVerdict = workspaceReadsPrepare(stage, experiment.view);
   const readiness = usePrepareReadiness(showsVerdict && !prepare.experimentActive);
-  // One verdict from the checklist and the gates, the same words in the header and in Prepare.
+  // One verdict from the checklist, the gates and the operator's confirmation, the same words in
+  // the header, in Prepare and beside Start.
   const report = derivePreflight(prepare.preflightInput);
-  const verdict = prepareVerdict(report, readiness.snapshot, readiness.error, prepare.experimentActive);
+  const confirmation = confirmationState(prepare.signature, prepare.confirmedFor, report.criticalPassed);
+  const verdict = prepareVerdict(report, readiness.snapshot, readiness.error, prepare.experimentActive, confirmation === "confirmed");
   return (
     <AppShell
       className="ws-shell"
@@ -103,7 +105,7 @@ export function Workspace({ brand, source, method, stage, onStage, onExit, servi
       ) : stage === 2 ? (
         <ExperimentView plan={experiment.plan} lockedReason={experiment.lockedReason} view={experiment.view} onView={experiment.onView}
           cameraMode={experiment.cameraMode} onCameraMode={experiment.onCameraMode} live={experiment.live}
-          verdict={verdict} blockers={confirmBlockers(report)} onClassic={onExit} />
+          verdict={verdict} blockers={confirmBlockers(report)} confirmation={confirmation} onClassic={onExit} />
       ) : (
         <div className="ws-view" data-testid={`workspace-${WORKSPACE_STAGES[stage]?.toLowerCase() ?? "stage"}`}>
           <Toolbar title={WORKSPACE_STAGES[stage]}>
