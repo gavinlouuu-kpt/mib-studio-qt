@@ -223,6 +223,12 @@ std::string utcIsoFromUnixMs(uint64_t unixMs);
 // True when two factors are the same within kCalibrationFactorRelativeTolerance.
 bool sameCalibrationFactor(double a, double b);
 
+// The one "in effect" rule (the gate, the snapshot and the list all use it): `applied` is Applied,
+// its stored evidence passes the re-check, the current identity is known and equal to its
+// identity, and its applied factor is the current factor.
+bool calibrationRecordInEffect(const CalibrationRecord& applied, const CalibrationIdentity& current,
+                               double currentFactor);
+
 // --- the readiness gate `calibration.record` ------------------------------------------------
 struct CalibrationGateInput {
     CalibrationMethodSpec spec;          // of the method currently applied

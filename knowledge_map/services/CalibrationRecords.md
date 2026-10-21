@@ -59,7 +59,8 @@
   startup.
 - **Gate** (`evaluateCalibrationGate`, see the table in [[../architecture/ExperimentCoordinator]]).
   An applied record is *in effect* when its identity is the current one and its factor is the
-  current factor; that id goes into the run snapshot. Invalidation is hard: a known identity that
+  current factor (`calibrationRecordInEffect`, the one rule the gate, the snapshot and the list
+  use); that id goes into the run snapshot. Invalidation is hard: a known identity that
   differs from the applied record's appends its `invalidated` version (once). Age is soft (Warn).
   An unknown identity (no camera source, an unresolved one such as `unavailable`, a pending ROI)
   never invalidates and never confirms. An applied record whose stored evidence fails the re-check

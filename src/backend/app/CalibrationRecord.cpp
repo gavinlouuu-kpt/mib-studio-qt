@@ -443,6 +443,14 @@ bool CalibrationRecord::evidenceSufficient() const
            std::isfinite(*r.proposedPixelToMicron) && *r.proposedPixelToMicron > 0.0;
 }
 
+bool calibrationRecordInEffect(const CalibrationRecord& applied, const CalibrationIdentity& current,
+                               double currentFactor)
+{
+    return applied.status == CalibrationStatus::Applied && applied.evidenceSufficient() && current.known() &&
+           applied.identity == current && applied.appliedNewFactor &&
+           sameCalibrationFactor(*applied.appliedNewFactor, currentFactor);
+}
+
 bool sameCalibrationFactor(double a, double b)
 {
     if (!std::isfinite(a) || !std::isfinite(b)) return false;
@@ -660,7 +668,7 @@ CalibrationGateResult evaluateCalibrationGate(const CalibrationGateInput& in)
         else if (!a.appliedNewFactor || !sameCalibrationFactor(*a.appliedNewFactor, in.currentFactor))
             appliedState = "factor-changed";
         else appliedState = "in-effect";
-        if (appliedState == "in-effect") {
+        if (appliedState == "in-effect" && calibrationRecordInEffect(a, in.current, in.currentFactor)) {
             out.inEffectRecordId = a.recordId;
             if (in.nowUnixMs < a.statusAtUnixMs) {
                 ageState = "unknown";

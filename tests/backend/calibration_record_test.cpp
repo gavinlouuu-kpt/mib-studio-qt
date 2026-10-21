@@ -320,6 +320,12 @@ int main()
         in.proposed.clear();
 
         in.applied = applied;
+        // The gate's in-effect id and the shared rule (the list's) agree in every case below.
+        auto agrees = [&](const CalibrationGateInput& x) {
+            const auto g = evaluateCalibrationGate(x);
+            const bool rule = x.applied && calibrationRecordInEffect(*x.applied, x.current, x.currentFactor);
+            return g.inEffectRecordId.has_value() == rule;
+        };
         auto pass = run(CalibrationPolicy::Required);
         MIB_EXPECT(pass.gate.status == GateStatus::Pass && pass.inEffectRecordId == std::optional<std::string>("cal-A"),
                    "a fresh applied record in effect passes");
@@ -373,6 +379,9 @@ int main()
                    "a resolved source with a full-frame ROI");
         c.roiPending = true;
         MIB_EXPECT(!calibrationIdentityOf(c).known(), "a pending ROI is unknown");
+
+        for (const auto* x : {&in, &old, &behind, &changedFactor, &unknown})
+            MIB_EXPECT(agrees(*x), "gate and list agree on what is in effect");
 
         auto broken = in;
         broken.spec.policy = CalibrationPolicy::Required;
@@ -511,8 +520,9 @@ int main()
             in.currentFactor = *weak.proposedFactor();
             in.nowUnixMs = t0 + 1;
             const auto g = evaluateCalibrationGate(in);
-            MIB_EXPECT(g.gate.status == GateStatus::Fail && !g.inEffectRecordId,
-                       "an applied record with failing evidence is never in effect");
+            MIB_EXPECT(g.gate.status == GateStatus::Fail && !g.inEffectRecordId &&
+                           !calibrationRecordInEffect(appliedWeak, identityA(), *weak.proposedFactor()),
+                       "an applied record with failing evidence is never in effect (gate and list agree)");
         }
         {
             // Persistence: a reload sees every version in order.

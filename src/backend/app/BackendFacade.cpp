@@ -1489,8 +1489,7 @@ namespace backend::bridge
         const auto applied = store->applied();
         const auto identity = currentCalibrationIdentity(backend_);
         const double factor = backend_.processing().getPixelToMicronFactor();
-        const bool inEffect = applied && identity.known() && applied->identity == identity && applied->appliedNewFactor &&
-                              app::sameCalibrationFactor(*applied->appliedNewFactor, factor);
+        const bool inEffect = applied && app::calibrationRecordInEffect(*applied, identity, factor);
         nlohmann::json list = nlohmann::json::array();
         for (const auto &r : records) list.push_back(nlohmann::json::parse(app::calibrationRecordToJson(r)));
         const auto error = store->error();
