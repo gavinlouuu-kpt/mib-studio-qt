@@ -38,7 +38,7 @@ it("distinguishes command acceptance from a terminal operation notification",()=
 });
 // Bridge ABI 40 (#741): experiment replies carry their typed outcome; the message is unchanged.
 it("decodes the typed start and stop outcomes of experiment replies",()=>{
-  expect(BRIDGE_ABI_VERSION).toBe(41); // ABI 41 (#716 A6a): live cell images, monitoringCells.test.ts
+  expect(BRIDGE_ABI_VERSION).toBe(42); // ABI 42 (#716 A4a): calibration records, calibrationRecords.test.ts
   expect(EXPERIMENT_START_OUTCOMES).toMatchObject({Started:0,NotReady:1,StaleReadiness:2,AlreadyActive:3,StorageFailed:4,ProvenanceFailed:5,Busy:6,InvalidRequest:7});
   expect(EXPERIMENT_STOP_OUTCOMES).toEqual({Accepted:0,NotActive:1,Busy:2,RunMismatch:3});
   const base={transport_version:1,ok:false,command:6,operation_id:"0"};

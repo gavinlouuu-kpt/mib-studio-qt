@@ -1142,6 +1142,14 @@ namespace backend::bridge
                                       std::uint64_t frameIndex, int objectId, bool mask, BackendFrame &out,
                                       bool *captureMismatch = nullptr, std::string *why = nullptr) const;
         bool fetchTriggerStatus(BackendTriggerStatus &out) const;
+        // Calibration records (#716 A4a, bridge ABI 42; bridge-contract.json calibration_records).
+        // The list and get are reads: they never apply, invalidate or change anything. Apply is the
+        // one explicit compare-and-set of the pixel-to-micron factor (app/CalibrationStore.h),
+        // refused unless the experiment is idle (it runs inside the coordinator's idle
+        // transaction); only the WebSocket server's controlling client may send it.
+        std::string calibrationRecordsListJson() const;
+        std::string calibrationRecordGetJson(const std::string &recordId) const;
+        std::string applyCalibrationJson(const std::string &recordId, double expectedCurrentFactor);
         // Asynchronous device discovery (issue #419, ABI 14): start a job on
         // the backend service, poll its bounded snapshot, cancel it. Camera
         // snapshots additionally carry the synthetic mock entry (camera type

@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "backend/app/BackgroundFrame.h"
+#include "backend/app/CalibrationStore.h"
 #include "backend/processing/EModulusLutCatalog.h" // HttpGetFn seam (ADR 0002)
 #include "backend/app/ExperimentReadiness.h"
 #include "backend/app/RecordingTarget.h" // ClientPath (#762)
@@ -301,6 +302,11 @@ namespace backend
         // method validations and run provenance are keyed by it. Empty id
         // before initialize() or when the data dir is unwritable.
         const profiles::InstrumentIdentity &instrumentIdentity() const { return instrumentIdentity_; }
+        // The instrument's calibration records (#716 A4a, bridge ABI 42): the append-only store
+        // <dataDir>/instrument_calibration.json (app/CalibrationStore.h). Created by initialize();
+        // null before. Records are derived by the coordinator when a run of a calibration method
+        // closes and applied only by calibration_apply (BackendFacade::applyCalibrationJson).
+        app::CalibrationStore *calibrationStore() const { return calibrationStore_.get(); }
         // The local context a method validation binds to: this instrument,
         // the active processing core build and the effective camera source.
         profiles::MethodContext methodContext() const;
@@ -562,6 +568,7 @@ namespace backend
         profiles::RegistryHttpTransport profileRegistryTransport_;
         std::unique_ptr<profiles::ProfileRegistryWorker> profileRegistry_;
         profiles::InstrumentIdentity instrumentIdentity_;
+        std::unique_ptr<app::CalibrationStore> calibrationStore_;
 
         // Shell-injected LUT fetch config (ADR 0002).
         HttpGetFn lutHttpGet_;

@@ -79,6 +79,16 @@ timeout, avoiding the unbounded `FlushFileBuffers` wait. See
   hook. Trigger pending-request metadata rides under the existing
   `triggerMutex_`.
 
+## Calibration store (bridge ABI 42)
+
+[[../services/CalibrationRecords]]' `CalibrationStore` has one mutex and no thread; it never calls
+out while holding it. Callers: readiness evaluation and Start (under the coordinator mutex: order
+coordinator mutex → store mutex), `calibration_apply` (inside the coordinator's idle transaction,
+the same order; the factor is read, compared and set there, so no Start interleaves), the
+coordinator worker's derivation at close (coordinator mutex released, state still
+`Stopping`/`Failed`, so the facade cannot open a review reader meanwhile: HDF5 is not thread-safe,
+#722), and the facade's list / get (store mutex only).
+
 ## Experiment vs Monitoring vs Realtime
 
 `ProcessingService` has three accumulation modes:

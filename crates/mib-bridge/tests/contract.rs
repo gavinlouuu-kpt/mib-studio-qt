@@ -118,7 +118,66 @@ fn abi_version_is_stable() {
     // v41 (#716 A6a) live cell images: monitoring rows carry their run's start_generation; the
     // bounded cell strip and pins (fetch_monitoring_cells, monitoring_cell_pin / _unpin /
     // _clear_pins, fetch_monitoring_cell_image); frame packet pull kinds 5 and 6.
-    assert_eq!(ffi::bridge_abi_version(), 41);
+    // v42 (#716 A4a) calibration records: calibration_records_list, calibration_record_get,
+    // calibration_apply (calibration_record_statuses, calibration_apply_outcomes); the readiness
+    // gate calibration.record; the startRequest calibration_record_id becomes a check against the
+    // applied record in effect (InvalidRequest on a mismatch), and the snapshot records the backend's.
+    assert_eq!(ffi::bridge_abi_version(), 42);
+}
+
+// ABI 42 (#716 A4a): the contract describes the calibration records, their bounds and rules.
+#[test]
+fn calibration_records_are_described() {
+    let contract: serde_json::Value =
+        serde_json::from_str(include_str!("../contract/bridge-contract.json")).unwrap();
+    let c = &contract["calibration_records"];
+    for (key, value) in [("record_id_max_bytes", 128), ("min_valid_objects", 200), ("default_max_cv_percent", 10),
+                         ("default_max_age_hours", 24), ("rate_window_seconds", 1), ("rate_min_windows", 3),
+                         ("store_max_versions", 2048)] {
+        assert_eq!(c[key], serde_json::json!(value), "calibration_records.{key} (pinned in shim.cpp)");
+    }
+    for (key, needle) in [("commands", "calibration_apply"), ("commands", "VIEWER_ONLY"), ("commands", "never apply"),
+                          ("method_document", "calibration_policy"), ("method_document", "purpose"),
+                          ("derivation", "not recorded"), ("derivation", "Insufficient"), ("derivation", "own file"),
+                          ("record", "append-only"), ("apply_reply", "previous vs new"), ("apply_reply", "StaleFactor"),
+                          ("readiness_gate", "calibration.record"), ("readiness_gate", "Invalidation is hard"),
+                          ("readiness_gate", "Age is soft"), ("start_identity", "InvalidRequest"),
+                          ("list_reply", "in_effect_record_id")] {
+        assert!(c[key].as_str().is_some_and(|d| d.contains(needle)), "calibration_records.{key} mentions {needle}");
+    }
+}
+
+// ABI 42 (#716 A4a): the calibration commands through cxx: list, get and apply before and after
+// init, and no change from reads or refused applies.
+#[test]
+#[serial]
+fn calibration_records_end_to_end() {
+    let data_dir = std::env::temp_dir().join(format!("mib_bridge_calibration_data_{}", std::process::id()));
+    let mut bridge = ffi::new_backend_bridge();
+    let before: serde_json::Value = serde_json::from_str(&bridge.pin_mut().calibration_records_list()).unwrap();
+    assert_eq!(before["valid"], false);
+    let applied: serde_json::Value =
+        serde_json::from_str(&bridge.pin_mut().calibration_apply("cal-1", 0.5)).unwrap();
+    assert_eq!((applied["ok"].clone(), applied["outcome"].clone()), (serde_json::json!(false), serde_json::json!(7)),
+               "StoreFailed before init: {applied}");
+
+    assert!(bridge.pin_mut().initialize(&data_dir.to_string_lossy()));
+    let list: serde_json::Value = serde_json::from_str(&bridge.pin_mut().calibration_records_list()).unwrap();
+    assert_eq!(list["valid"], true, "{list}");
+    assert!(list["records"].as_array().unwrap().is_empty() && list["applied_record_id"].is_null(), "{list}");
+    assert_eq!(list["current_identity"]["chip"], "not tracked");
+    let got: serde_json::Value = serde_json::from_str(&bridge.pin_mut().calibration_record_get("cal-none")).unwrap();
+    assert_eq!(got["found"], false, "{got}");
+    let refused: serde_json::Value =
+        serde_json::from_str(&bridge.pin_mut().calibration_apply("cal-none", 0.4886)).unwrap();
+    assert_eq!(refused["outcome"], 1, "NotFound: {refused}");
+    let invalid: serde_json::Value = serde_json::from_str(&bridge.pin_mut().calibration_apply("", 0.4886)).unwrap();
+    assert_eq!(invalid["outcome"], 8, "InvalidRequest: {invalid}");
+    let after: serde_json::Value = serde_json::from_str(&bridge.pin_mut().calibration_records_list()).unwrap();
+    assert_eq!(after["store"]["revision"], list["store"]["revision"], "no actuation");
+    assert_eq!(after["current_factor"], list["current_factor"], "the factor is unchanged");
+    bridge.pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(&data_dir);
 }
 
 // ABI 41 (#716 A6a): the contract describes the live cell commands, caps and rules.
@@ -1113,6 +1172,12 @@ fn rust_enums_match_contract_json() {
         ("monitoring_cell_pin_outcomes", &[("Pinned", 0), ("PinnedWithoutImage", 1), ("AlreadyPinned", 2),
                                            ("RunMismatch", 3), ("NotFound", 4), ("LimitReached", 5),
                                            ("CaptureMismatch", 6)]),
+        // ABI 42 (#716 A4a): pinned in C++ by static_asserts in shim.cpp.
+        ("calibration_record_statuses", &[("Proposed", 0), ("Applied", 1), ("Superseded", 2), ("Invalidated", 3),
+                                          ("Insufficient", 4)]),
+        ("calibration_apply_outcomes", &[("Applied", 0), ("NotFound", 1), ("Insufficient", 2), ("NotApplicable", 3),
+                                         ("StaleFactor", 4), ("RunActive", 5), ("IdentityMismatch", 6),
+                                         ("StoreFailed", 7), ("InvalidRequest", 8)]),
         ("run_completion_states", &[("Complete", 0), ("IntentionallyPartial", 1), ("IncompleteLoss", 2), ("Failed", 3), ("Unknown", 4)]),
         ("readiness_gate_statuses", &[("Pass", 0), ("Warn", 1), ("Fail", 2), ("Unavailable", 3), ("NotRequired", 4)]),
         // ABI 14 discovery groups (#419): pinned in C++ by static_asserts in shim.cpp.
@@ -1341,6 +1406,9 @@ fn experiment_lifecycle_end_to_end() {
         (r#"{"operator_name":"Alice"}"#, "operator_name"),
         (r#"{"sample_ref":"S1"}"#, "sample_ref"),
         (r#"{"experiment_id":""}"#, "experiment_id"),
+        // ABI 42 (#716 A4a): a declared calibration record must be the applied record in effect;
+        // none is applied here, so this is a mismatch.
+        (r#"{"calibration_record_id":"cal-7"}"#, "calibration_record_id"),
     ] {
         let refused = bridge.pin_mut().experiment_start(&out_path.to_string_lossy(), false, bad);
         assert!(!refused.ok, "startRequest {bad} must be refused");
@@ -1352,7 +1420,7 @@ fn experiment_lifecycle_end_to_end() {
         );
     }
     let declared = r#"{"experiment_id":"3F2A9C1E-7B4D-4E8A-9C2F-1A2B3C4D5E6F","run_index":2,
-        "sample_ref":"S2","operator":{"name":"Alice"},"calibration_record_id":"cal-7",
+        "sample_ref":"S2","operator":{"name":"Alice"},
         "annotation":{"condition":"vehicle","experimental_unit":"donor A",
         "concentration":{"value":10,"unit":"uM"},"temperature_c":21.5,"free":{"passage":"4"}}}"#;
     let start = bridge.pin_mut().experiment_start(&out_path.to_string_lossy(), false, declared);

@@ -3,7 +3,7 @@
 // Regenerate with: python3 scripts/gen_bridge_contract.py
 // CI verifies this file with: python3 scripts/gen_bridge_contract.py --check
 
-export const BRIDGE_ABI_VERSION = 41;
+export const BRIDGE_ABI_VERSION = 42;
 
 export const EVENT_KINDS = {
   FrameReady: 0,
@@ -231,6 +231,26 @@ export const MONITORING_CELL_PIN_OUTCOMES = {
   NotFound: 4,
   LimitReached: 5,
   CaptureMismatch: 6,
+} as const;
+
+export const CALIBRATION_RECORD_STATUSES = {
+  Proposed: 0,
+  Applied: 1,
+  Superseded: 2,
+  Invalidated: 3,
+  Insufficient: 4,
+} as const;
+
+export const CALIBRATION_APPLY_OUTCOMES = {
+  Applied: 0,
+  NotFound: 1,
+  Insufficient: 2,
+  NotApplicable: 3,
+  StaleFactor: 4,
+  RunActive: 5,
+  IdentityMismatch: 6,
+  StoreFailed: 7,
+  InvalidRequest: 8,
 } as const;
 
 export const RUN_COMPLETION_STATES = {
@@ -461,6 +481,16 @@ export const MONITORING_CELLS = {
 
 export const MONITORING_CELL_ERROR_CODES = {
   "capture_mismatch": "CAPTURE_MISMATCH"
+} as const;
+
+export const CALIBRATION_RECORDS = {
+  "record_id_max_bytes": 128,
+  "min_valid_objects": 200,
+  "default_max_cv_percent": 10,
+  "default_max_age_hours": 24,
+  "rate_window_seconds": 1,
+  "rate_min_windows": 3,
+  "store_max_versions": 2048
 } as const;
 
 export const EVENT_KIND_NAMES: Readonly<Record<number, string>> = {

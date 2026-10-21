@@ -14,6 +14,7 @@
 // close), so no client (Qt window or bridge) touches Hdf5Service for a run.
 #pragma once
 
+#include "backend/app/CalibrationRecord.h"
 #include "backend/app/WallClock.h"
 #include "backend/app/ExperimentReadiness.h"
 #include "backend/recording/RecordingAccounting.h"
@@ -169,6 +170,7 @@ private:
         std::string outputPath;
         std::string profileId;
         std::string method; // methodInvalidationKey (#398 M2)
+        std::string calibration; // CalibrationGateResult::invalidationKey (#716 A4a)
         bool faulted{false};
         uint64_t frameWidth{0}, frameHeight{0}, pixelFormat{0};
         bool frameGeometryKnown{false};
@@ -197,6 +199,16 @@ private:
                                                const std::string& outputRefusal = {});
     RunConfigurationSnapshot candidateLocked(const std::string& outputPath,
                                              const std::string& profileId) const;
+    // The `calibration.record` gate (#716 A4a) for the candidate: parses the applied method's
+    // calibration members (memoized by the config hash), invalidates the applied record when the
+    // known identity changed (a store append, once per change), and evaluates the method's policy.
+    CalibrationGateResult calibrationGateLocked(const RunConfigurationSnapshot& candidate);
+    // A closed run of a calibration method (#716 A4a): derive its record from the run's own file
+    // and append it to the store. Called by the finalization with the coordinator lock released
+    // and the state still Stopping/Failed, so no review reader can open meanwhile (HDF5 is not
+    // thread-safe, #722). Never fails the run.
+    void deriveCalibrationRecord(const RunConfigurationSnapshot& run, const CalibrationMethodSpec& spec,
+                                 const CalibrationIdentity& identity, bool finalizationOk);
     ExperimentStatus snapshotLocked() const;
     // Publish the current snapshot: copies it, releases `lk`, invokes the
     // callback, re-acquires `lk`.
@@ -271,6 +283,22 @@ private:
         MethodProvenance method;
     };
     mutable MethodMemo methodMemo_;
+    // The applied method's calibration members (#716 A4a), parsed once per config.json (guarded
+    // by mutex_).
+    struct CalibrationSpecMemo {
+        bool valid{false};
+        std::string rawConfigSha256;
+        CalibrationMethodSpec spec;
+        std::string error;
+    };
+    CalibrationSpecMemo calibrationSpecMemo_;
+    // The calibration method of the active run and the identity at its Start (guarded by mutex_):
+    // the finalization derives its record (#716 A4a). Empty for a measurement run.
+    struct ActiveCalibration {
+        CalibrationMethodSpec spec;
+        CalibrationIdentity identity;
+    };
+    std::optional<ActiveCalibration> activeCalibration_;
     // Multi-image series runs force inline realtime processing; restored on
     // finalize (moved here from the Qt window).
     bool restoreRealtimeMode_{false};

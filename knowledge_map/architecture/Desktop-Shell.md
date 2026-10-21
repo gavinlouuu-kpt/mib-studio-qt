@@ -998,6 +998,22 @@ generation; the classic Stop Experiment sends none). Guards:
 `experimentStart.test.ts`, `queueModel.test.ts`, `QueuePlan.test.tsx`,
 `PlanView.test.tsx`, `navigation.test.tsx`.
 
+**Calibration records (ABI 42, #716 A4a).** `calibrationRecords.ts` types and
+checks the replies of [[../services/CalibrationRecords]]:
+`bridge.calibrationRecordsList()` (`calibration_records_list`: the newest version
+of every record, newest first, a plain list, with the applied and in-effect ids,
+the current factor and identity), `bridge.calibrationRecordGet(recordId)` (one
+record and its versions) and `bridge.calibrationApply(recordId,
+expectedCurrentFactor)` (the compare-and-set; the reply has `previous_factor` /
+`new_factor` and an `outcome` from `CALIBRATION_APPLY_OUTCOMES`). An unknown
+status or outcome is refused (`CALIBRATION_REPLY_INVALID`); a malformed id or
+factor throws before anything is sent (`INVALID_RECORD_ID`,
+`INVALID_EXPECTED_FACTOR`). Apply is a control command on the remote server
+(`VIEWER_ONLY` for a viewer); list and get are reads. The startRequest's
+`calibration_record_id` is now a check against the applied record in effect.
+No develop UI uses them; the workspace Prepare card (A4b) will. Guard:
+`calibrationRecords.test.ts`.
+
 **Live cell images (ABI 41, #716 A6a).** `monitoringCells.ts` types and checks
 the backend's live cell store ([[../services/MonitoringCellStore]]):
 `bridge.fetchMonitoringCells()` (`fetch_monitoring_cells` → the strip of recent

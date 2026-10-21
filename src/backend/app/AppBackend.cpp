@@ -497,6 +497,11 @@ namespace backend
                         instrumentIdentity_.id.empty() ? "<unknown>" : instrumentIdentity_.id,
                         instrumentIdentity_.name.empty() ? "" : " (" + instrumentIdentity_.name + ")");
         }
+        // Calibration records (#716 A4a): instrument settings, beside instrument_identity.json.
+        calibrationStore_ = std::make_unique<app::CalibrationStore>(
+            std::filesystem::path(dataDir) / "instrument_calibration.json");
+        if (!calibrationStore_->error().empty())
+            SPDLOG_ERROR("AppBackend: calibration store: {}", calibrationStore_->error());
 
         {
             profiles::RegistryWorkerConfig registryConfig;

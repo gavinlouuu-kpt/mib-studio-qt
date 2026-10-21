@@ -12,6 +12,7 @@
 #include "backend/camera/common/TimestampValue.h"
 #include "backend/playback/FrameStore.h"
 #include "backend/processing/ProcessingCoreLoader.h"
+#include "backend/processing/ProcessingCoreSha256.h"
 #include "backend/processing/ProcessingService.h"
 #include "backend/profiles/InstrumentIdentity.h"
 #include "backend/profiles/ProfileRegistryWorker.h"
@@ -524,7 +525,7 @@ bool ExperimentCoordinator::InvalidationKey::operator==(const InvalidationKey& o
            coreSha256 == o.coreSha256 && corePinSatisfied == o.corePinSatisfied &&
            backgroundGeneration == o.backgroundGeneration && roiX == o.roiX && roiY == o.roiY &&
            roiW == o.roiW && roiH == o.roiH && roiPending == o.roiPending && pixelToMicron == o.pixelToMicron &&
-           outputPath == o.outputPath && profileId == o.profileId && method == o.method &&
+           outputPath == o.outputPath && profileId == o.profileId && method == o.method && calibration == o.calibration &&
            faulted == o.faulted && frameWidth == o.frameWidth && frameHeight == o.frameHeight &&
            pixelFormat == o.pixelFormat && frameGeometryKnown == o.frameGeometryKnown &&
            bufferBytes == o.bufferBytes && flushInterval == o.flushInterval;
@@ -773,7 +774,12 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
     r.evaluatedHostTimeUs = Tools::getTimestamp();
     r.candidate = candidateLocked(outputPath, profileId);
     const auto& c = r.candidate;
-    const auto key = currentKeyLocked(outputPath, profileId);
+    // The calibration gate first (#716 A4a): an identity change invalidates the applied record
+    // here, before the key is taken, so the key already describes the store after it.
+    const auto calibration = calibrationGateLocked(c);
+    r.calibrationRecordId = calibration.inEffectRecordId;
+    auto key = currentKeyLocked(outputPath, profileId);
+    key.calibration = calibration.invalidationKey;
     if (!haveLastKey_ || key != lastKey_) {
         readinessGeneration_.fetch_add(1);
         lastKey_ = key;
@@ -971,6 +977,7 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
                                "pixel-to-micron factor is not positive",
                                "set the conversion factor in Settings"));
     }
+    r.gates.push_back(calibration.gate);
     if (!app::hostProcessingAvailable()) {
         // backgrounds live in the PL's table bank (B6 profile); checked there
     } else if (c.backgroundPresent) {
@@ -1343,6 +1350,22 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
     // mismatch means the preflight is stale (reconnect, config/background/
     // core/ROI/output change, or new fault).
     result.readiness = evaluateLocked(path, request.profileId);
+    // A declared calibration record must be the applied record in effect (#716 A4a): the snapshot
+    // records the backend's applied record, never a client's claim. Undeclared is fine. Checked
+    // against this fresh evaluation before the generation, so a record applied after the preflight
+    // is reported as the mismatch it is, not as a stale preflight.
+    if (const auto& declaredRecord = request.declared.identity.calibrationRecordId;
+        declaredRecord && declaredRecord != result.readiness.calibrationRecordId) {
+        result.outcome = ExperimentStartOutcome::InvalidRequest;
+        result.message = "invalid start request: calibration_record_id: declared \"" + *declaredRecord + "\" but " +
+                         (result.readiness.calibrationRecordId
+                              ? "the applied record is \"" + *result.readiness.calibrationRecordId + "\""
+                              : std::string("no calibration record is applied and in effect")) +
+                         " (mismatch)";
+        SPDLOG_WARN("ExperimentCoordinator: start refused — {}", result.message);
+        restoreModeOnFailure();
+        return result;
+    }
     if (request.readinessGeneration != result.readiness.generation) {
         result.outcome = ExperimentStartOutcome::StaleReadiness;
         result.message = "readiness generation " + std::to_string(request.readinessGeneration) +
@@ -1393,6 +1416,9 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
     run.v3.runId = profiles::generateUuidV4();
     captureRunFacts(backend_, run.v3);
     run.v3.identity = request.declared.identity;   // as declared; each member null when not
+    // The calibration record is the backend's: the applied record in effect at this evaluation
+    // (a declared one was checked equal above), null when none is (#716 A4a).
+    run.v3.identity.calibrationRecordId = result.readiness.calibrationRecordId;
 
     // 4b. The SSD run (#667 S2): ask pzrec for the id it will give the run, before anything is opened. The id goes into the snapshot, into RUN_ID of the
     // bridge before ARM (the stored records carry it) and is checked against the run pzrec opens after ARM. A refusal names the SSD state.
@@ -1554,6 +1580,12 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
         SPDLOG_INFO("ExperimentCoordinator: PL results from '{}' (run id {})", provider->name(), runId);
     }
     activeRun_ = run;
+    // A run of a calibration method derives its record when it closes (#716 A4a): the method and
+    // the identity are the ones this Start evaluated.
+    activeCalibration_.reset();
+    if (calibrationSpecMemo_.valid && calibrationSpecMemo_.error.empty() &&
+        calibrationSpecMemo_.spec.purpose == MethodPurpose::Calibration)
+        activeCalibration_ = ActiveCalibration{calibrationSpecMemo_.spec, calibrationIdentityOf(run)};
     // A run start is a capture change for the live cell store: its strip is cleared and its pins,
     // which belong to the latest run, are dropped now (#716 A6a review 3).
     if (auto* cells = backend_.monitoringCells()) cells->beginRun(run.startGeneration);
@@ -1821,6 +1853,8 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
     restoreRealtimeMode_ = false;
     const std::string liveKdeCoreJson = std::move(liveKdeCoreJson_);
     liveKdeCoreJson_.clear();
+    const auto calibrationRun = std::move(activeCalibration_);
+    activeCalibration_.reset();
     lk.unlock();
 
     // PL science: stop the provider first. It delivers what the device wrote
@@ -1974,6 +2008,10 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
         hdf5.closeFile();
         SPDLOG_INFO("ExperimentCoordinator: closeFile took {:.3f} ms", sinceMs(tClose));
     }
+    // 6b. A run of a calibration method: its record, from the closed file (#716 A4a). The state is
+    // still Stopping/Failed, so no review reader opens beside this one; it never fails the run.
+    if (calibrationRun && fileOpen)
+        deriveCalibrationRecord(run, calibrationRun->spec, calibrationRun->identity, ok && !failed && metadataOk);
     // An undeclared loss, a failure, an unknown outcome, or declared malformed frames above the
     // warning fraction is something the operator must see (#549): WARN, not INFO. Complete and
     // declared-partial runs stay at INFO.
@@ -2107,3 +2145,112 @@ bool ExperimentCoordinator::withIdleConfiguration(const std::function<void()>& t
     return true;
 }
 }
+
+namespace backend::app {
+
+CalibrationGateResult ExperimentCoordinator::calibrationGateLocked(const RunConfigurationSnapshot& c)
+{
+    // The applied method's calibration members, parsed once per config.json. The memo is keyed by
+    // the hash of the text actually parsed, so a config applied in between re-parses next time.
+    auto& memo = calibrationSpecMemo_;
+    if (!memo.valid || memo.rawConfigSha256 != c.configJsonSha256) {
+        const auto text = backend_.getLastConfigJson();
+        memo.spec = CalibrationMethodSpec{};
+        memo.error.clear();
+        std::string why;
+        if (!parseCalibrationMethodSpec(text, memo.spec, &why)) {
+            memo.spec = CalibrationMethodSpec{};
+            memo.error = why;
+        }
+        memo.rawConfigSha256 = sha256Of(text);
+        memo.valid = true;
+    }
+    CalibrationGateInput in;
+    in.spec = memo.spec;
+    in.specError = memo.error;
+    in.current = calibrationIdentityOf(c);
+    in.currentFactor = c.pixelToMicron;
+    in.nowUnixMs = WallClock::nowNs() / 1'000'000ull;
+    auto* store = backend_.calibrationStore();
+    if (!store) {
+        in.storeError = "the calibration store is not available (the backend is not initialized)";
+        return evaluateCalibrationGate(in);
+    }
+    // Hard invalidation: a known camera / ROI / chip / objective identity that differs from the
+    // applied record's appends its Invalidated version (once: it is no longer applied after).
+    store->invalidateOnIdentityChange(in.current, in.nowUnixMs);
+    in.storeError = store->error();
+    in.applied = store->applied();
+    const auto records = store->latestRecords();
+    const CalibrationRecord* newestInvalidated = nullptr;
+    for (const auto& r : records) {
+        if (r.status == CalibrationStatus::Proposed) in.proposed.push_back(r);
+        if (r.status == CalibrationStatus::Invalidated &&
+            (!newestInvalidated || r.statusAtUnixMs > newestInvalidated->statusAtUnixMs))
+            newestInvalidated = &r;
+    }
+    if (!in.applied && newestInvalidated) in.invalidatedNote = "record " + newestInvalidated->recordId + " " + newestInvalidated->statusReason;
+    return evaluateCalibrationGate(in);
+}
+
+void ExperimentCoordinator::deriveCalibrationRecord(const RunConfigurationSnapshot& run,
+                                                    const CalibrationMethodSpec& spec,
+                                                    const CalibrationIdentity& identity, bool finalizationOk)
+{
+    auto* store = backend_.calibrationStore();
+    if (!store || !spec.reference) return;
+    const auto t0 = std::chrono::steady_clock::now();
+    const uint64_t nowMs = WallClock::nowNs() / 1'000'000ull;
+    CalibrationRecord rec;
+    rec.recordId = newCalibrationRecordId(nowMs);
+    rec.createdAtUnixMs = nowMs;
+    rec.statusAtUnixMs = nowMs;
+    rec.runId = run.v3.runId.value_or(std::string{});
+    rec.file = run.outputPath;
+    rec.startGeneration = run.startGeneration;
+    rec.backgroundSha256 = run.backgroundPresent ? run.backgroundSha256 : std::string{};
+    rec.methodSource = run.method.source;
+    rec.methodId = run.method.methodId;
+    rec.revisionId = run.method.revisionId;
+    rec.revisionNumber = run.method.revisionNumber;
+    rec.methodDisplayName = run.method.displayName;
+    rec.configSha256 = run.method.configCanonicalSha256.empty() ? run.configJsonSha256 : run.method.configCanonicalSha256;
+    rec.reference = *spec.reference;
+    rec.identity = identity;
+    std::string hashWhy;
+    rec.fileSha256 = processing::processingCoreFileSha256(run.outputPath, &hashWhy);
+    if (rec.fileSha256.empty()) SPDLOG_WARN("ExperimentCoordinator: calibration run file not hashed: {}", hashWhy);
+    CalibrationEvidence evidence;
+    std::string readWhy;
+    const bool readable = readCalibrationEvidence(run.outputPath, evidence, &readWhy);
+    rec.derivation = deriveCalibration(evidence, *spec.reference, run.pixelToMicron);
+    auto& gates = rec.derivation.gates;
+    if (!readable) gates.insert(gates.begin(), CalibrationEvidenceGate{"file_readable", false, 0.0, 1.0, readWhy});
+    if (!finalizationOk)
+        gates.insert(gates.begin(),
+                     CalibrationEvidenceGate{"run_finalized", false, 0.0, 1.0,
+                                             "the run did not finalize cleanly (see its accounting and fault); its "
+                                             "file is not calibration evidence"});
+    if (rec.derivation.sufficient()) {
+        rec.status = CalibrationStatus::Proposed;
+        rec.statusReason = "derived from run " + std::to_string(run.startGeneration) + "; a proposal until applied";
+    } else {
+        rec.status = CalibrationStatus::Insufficient;
+        std::string reasons;
+        for (const auto& g : gates)
+            if (!g.pass) reasons += (reasons.empty() ? "" : "; ") + g.reason;
+        rec.statusReason = "insufficient: " + reasons;
+    }
+    std::string why;
+    if (!store->addDerived(rec, &why)) {
+        SPDLOG_ERROR("ExperimentCoordinator: calibration record of run {} not stored: {}", run.startGeneration, why);
+        return;
+    }
+    SPDLOG_INFO("ExperimentCoordinator: calibration record {} ({}) from run {}: {} valid objects, proposed factor {} "
+                "({:.1f} ms)",
+                rec.recordId, toString(rec.status), run.startGeneration, rec.derivation.results.validObjects,
+                rec.proposedFactor() ? std::to_string(*rec.proposedFactor()) : std::string("none"),
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
+}
+
+} // namespace backend::app

@@ -1334,6 +1334,19 @@ pub mod ffi {
             mask: bool,
         ) -> BridgeMonitoringCellImage;
 
+        /// ABI 42 (#716 A4a): the instrument's calibration records as JSON (bridge-contract.json
+        /// `calibration_records.list_reply`): the newest version of every record, newest first,
+        /// plus the applied / in-effect record, the current factor and identity. A read: it never
+        /// applies or changes anything. `{"valid": false}` before init.
+        fn calibration_records_list(self: Pin<&mut BackendBridge>) -> String;
+        /// One record and every version of it (`calibration_records.get_reply`). A read.
+        fn calibration_record_get(self: Pin<&mut BackendBridge>, record_id: &str) -> String;
+        /// The explicit compare-and-set of the pixel-to-micron factor from a proposed record
+        /// (`calibration_records.apply_reply`, outcome a `calibration_apply_outcomes` value):
+        /// refused unless the experiment is idle, the record is applicable and of the current
+        /// setup, and `expected_current_factor` is the current factor. Previous vs new on success.
+        fn calibration_apply(self: Pin<&mut BackendBridge>, record_id: &str, expected_current_factor: f64) -> String;
+
         /// Set the sorter trigger pulse duration in microseconds.
         fn trigger_set_pulse_duration(self: Pin<&mut BackendBridge>, pulse_us: i32)
             -> BridgeCommandResult;
