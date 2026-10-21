@@ -175,6 +175,13 @@ missing, not a finite positive float scalar, or unreadable.
 `ReviewSession::recordedPixelToMicron` reads it when the file has no run
 snapshot factor, unless the source says it was a fallback.
 
+`writeEModulusLutJson(json)` / `readEModulusLutJson()` (#764) store
+`/experiment_info @emodulus_lut_json`, a UTF-8 string written by
+`saveMasksToHdf5`: the E-LUT record of a regenerated file (shape and
+`provenance` in `RunProvenanceRecord.h`, `eModulusLutRecordJson` /
+`parseEModulusLutRecordJson`; `readFileEModulusLut` reads the snapshot record
+first, then this).
+
 `readScalarStringAttribute(group, name)` and the recorded config document
 read share one reader of scalar string attributes (`readGroupStringAttribute`
 in `Hdf5Service.cpp`, #764; caps 1 MiB and 16 MiB as before).

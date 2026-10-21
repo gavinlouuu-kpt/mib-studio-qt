@@ -110,7 +110,9 @@ recording used, never another one. The message names it, for example
 (the source run's)". If the recording used a table this version does not
 have, the regeneration stops with a message that names it, and nothing is
 written. If the recording had no table loaded, the new file has no E
-values either ("E not computed"). Files recorded before the table was
+values either ("E not computed"). The new file records which table it used;
+when that is the recording's own table (or none), regenerating it again uses
+the same one. Files recorded before the table was
 recorded keep the earlier behaviour: YOFO Review computes no E for them.
 
 Regenerating never replaces a file. **Save as…** suggests a name that is

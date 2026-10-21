@@ -357,7 +357,11 @@ cells render with density ready in ~2–3 s.
   none gets no E ("E not computed: the source run loaded no E-LUT"); a file
   that records none keeps the old behaviour (no E in YOFO Review: "E not
   computed: the source records no E-LUT and none is loaded"). A run whose
-  LUT is not the bundled one fails with the reason, before writing.
+  LUT is not the bundled one fails with the reason, before writing. The new
+  file records what E was computed with (`@emodulus_lut_json`: the run's
+  record carried over, or the host's LUT); with the run's record,
+  regenerating or reprocessing it again uses the same LUT, or none, while a
+  host record is legacy, said as such.
 
 ## Differences from the Qt tab (parity sign-off, 2026-10-04)
 

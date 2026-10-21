@@ -136,6 +136,13 @@ public:
     bool writeAnalysisPixelToMicron(double factor, const std::string& source);
     std::optional<double> readAnalysisPixelToMicron() const;
     std::optional<std::string> readAnalysisPixelToMicronSource() const;
+    // The E-modulus LUT record of a regenerated / reanalysed file (#764): `/experiment_info
+    // @emodulus_lut_json`, a UTF-8 JSON string (recording::eModulusLutRecordJson; read with
+    // recording::readFileEModulusLut). The writer needs writeExperimentInfo() first and refuses
+    // an empty string; the reader returns nullopt when it is absent or unreadable.
+    static constexpr const char* kEModulusLutJsonAttribute = "emodulus_lut_json";
+    bool writeEModulusLutJson(const std::string& json);
+    std::optional<std::string> readEModulusLutJson() const;
 
     // Names of members present in the persisted compound metadata type. This
     // lets field-aware exporters distinguish an absent metric from an older

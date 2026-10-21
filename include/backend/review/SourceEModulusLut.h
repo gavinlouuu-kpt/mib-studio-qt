@@ -14,6 +14,11 @@
 //  - the source records nothing (no snapshot, or one before v3; folder and
 //    AVI sources): the host's behaviour before #764 (Legacy), which the
 //    caller says in its reply.
+// A regenerated file has no snapshot; it carries the same record as
+// `/experiment_info @emodulus_lut_json` (recording::readFileEModulusLut reads
+// either). Provenance "recorded" is a run's own record and follows the rules
+// above; "host" names only the LUT a host used for a source that recorded
+// none, so it is Legacy too, said as such (`hostRecord`).
 #pragma once
 
 #include "backend/processing/EModulusLut.h"
@@ -47,6 +52,11 @@ namespace backend::review
         // "scaled_isoelastic_data_LUT_6.16-4.24 bundled (sha256 8a86b2beef4f)".
         std::string name;
         std::string sha256; // Source: the recorded hash, lowercase
+        // Source / NotLoaded: the run's record, carried into an output's
+        // `@emodulus_lut_json` (outputEModulusLutJson).
+        std::optional<recording::EModulusLutRecord> record;
+        // Legacy from a regenerated file whose record names only a host's LUT.
+        std::optional<recording::EModulusLutRecord> hostRecord;
         // Sets the call's table: Source this one, NotLoaded none; Legacy
         // leaves the service's own.
         void applyTo(services::ProcessingService::BatchAnalysisInputs &inputs) const;
@@ -63,15 +73,24 @@ namespace backend::review
     // The host kernel's loaded LUT in the same words; "" when none is loaded.
     std::string describeLoadedEModulusLut(const services::ProcessingService &host);
 
-    // The open file's recorded LUT (snapshot v3 `emodulus_lut`); nullopt
-    // when the file has no snapshot, an unreadable one, or one without it.
-    std::optional<recording::EModulusLutRecord> recordedEModulusLut(const services::Hdf5Service &reader);
+    // A host record (`@emodulus_lut_json` provenance "host") in words for a
+    // reply: "only the host's E-LUT <name>, not a run's" or "only that its
+    // host loaded no E-LUT".
+    std::string describeHostEModulusLut(const recording::EModulusLutRecord &record);
 
-    // Resolves `record` (see the file comment). `host` (may be null) is the
+    // The `@emodulus_lut_json` of an output computed with `resolved` on
+    // `host`: the run's record carried over (provenance "recorded") for
+    // Source / NotLoaded, else the host kernel's loaded LUT (provenance
+    // "host", `loaded` false when it has none).
+    std::string outputEModulusLutJson(const SourceEModulusLut &resolved, const services::ProcessingService &host);
+    // The host record alone (callers without a source record: the Qt dialog).
+    std::string hostEModulusLutJson(const services::ProcessingService &host);
+
+    // Resolves `record` (recording::readFileEModulusLut; see the file comment). `host` (may be null) is the
     // kernel whose loaded LUT is a candidate. False, with a plain `error`,
     // when the source records a LUT that cannot be identified or found here.
     // Reads no file; safe from any thread.
-    bool resolveSourceEModulusLut(const std::optional<recording::EModulusLutRecord> &record,
+    bool resolveSourceEModulusLut(const std::optional<recording::ProvenancedEModulusLut> &record,
                                   const services::ProcessingService *host, SourceEModulusLut &out,
                                   std::string &error);
 

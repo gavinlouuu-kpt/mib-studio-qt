@@ -12,6 +12,9 @@
 //  - The px→µm source (item 4): saveMasksToHdf5 records where its factor came
 //    from; review takes a fallback factor as not the file's; old regenerated
 //    files read as before.
+//  - E-LUT provenance in regenerated files: saveMasksToHdf5 records the
+//    run's record (or the host's LUT) as @emodulus_lut_json; reanalysis,
+//    reprocess and the CSV follow it; files without it behave as before.
 //  - The metrics CSV (item 5): E is written as missing (an empty cell) for a
 //    run whose snapshot records that no E-LUT was loaded; otherwise as stored.
 // Fixture: one ellipse per frame, one track (deformability inside the bundled
@@ -699,5 +702,126 @@ int main()
                    "a legacy file: as stored");
     }
     wd.mark("csv");
+
+    // ---- E-LUT provenance in regenerated files (@emodulus_lut_json) ----------------
+    {
+        using backend::recording::ProvenancedEModulusLut;
+        const auto fileRecord = [](const fs::path &path) {
+            Hdf5Service reader;
+            MIB_REQUIRE(reader.loadFile(path.string()), "open " + path.string());
+            return backend::recording::readFileEModulusLut(reader);
+        };
+        const auto attributeOf = [](const fs::path &path) {
+            Hdf5Service reader;
+            MIB_REQUIRE(reader.loadFile(path.string()), "open " + path.string());
+            return reader.readEModulusLutJson();
+        };
+        // Round trip: what each engine output above records.
+        auto rec = fileRecord(td / "engine_a.h5");
+        MIB_EXPECT(rec && rec->provenance == "recorded" && rec->lut.loaded && rec->lut.sha256 == shaA &&
+                       rec->lut.lutId == std::optional<std::string>("lut-a") &&
+                       rec->lut.revision == std::optional<std::string>("r1"),
+                   "the source's record is carried over (recorded, LUT A)");
+        {
+            Hdf5Service reader;
+            MIB_REQUIRE(reader.loadFile((td / "engine_a.h5").string()), "open engine_a");
+            const auto document = reader.readScalarStringAttribute("/experiment_info", "config_json");
+            MIB_EXPECT(document && nlohmann::json::parse(*document)["emodulus_lut"].value("sha256", "") == shaA &&
+                           nlohmann::json::parse(*document)["emodulus_lut"].value("provenance", "") == "recorded",
+                       "mirrored in the config document");
+        }
+        rec = fileRecord(td / "engine_none.h5");
+        MIB_EXPECT(rec && rec->provenance == "recorded" && !rec->lut.loaded, "a source without a LUT: loaded false, recorded");
+        rec = fileRecord(td / "engine_legacy_src_legacy.h5");
+        MIB_EXPECT(rec && rec->provenance == "host" && rec->lut.loaded && rec->lut.sha256 == sha256Of(lutB),
+                   "a legacy source: the host's LUT B, marked host");
+        rec = fileRecord(td / "engine_legacy_nolut.h5");
+        MIB_EXPECT(rec && rec->provenance == "host" && !rec->lut.loaded, "a legacy source, no LUT loaded: host, loaded false");
+        rec = fileRecord(td / "engine_folder.h5");
+        MIB_EXPECT(rec && rec->provenance == "host" && rec->lut.sha256 == sha256Of(lutB), "a folder: the host's LUT");
+        rec = fileRecord(td / "yofo_a.h5");
+        MIB_EXPECT(rec && rec->provenance == "recorded" && rec->lut.sha256 == shaA, "YOFO's regenerate records it too");
+        MIB_EXPECT(!fileRecord(srcLegacy), "a capture without a snapshot record has none");
+        MIB_EXPECT(!backend::recording::parseEModulusLutRecordJson(R"({"loaded":true,"provenance":"guess"})") &&
+                       !backend::recording::parseEModulusLutRecordJson(R"({"provenance":"host"})"),
+                   "an unknown provenance or no loaded flag is no record");
+
+        // Reanalysing a regenerated file follows its record.
+        ProcessingService kernelA, kernelB;
+        MIB_REQUIRE(kernelA.loadEModulusLut(lutAPath.string()) && kernelB.loadEModulusLut(lutBPath.string()), "kernels");
+        auto o = backend::review::runReanalysis(hdfRequest(td / "engine_a.h5", td / "regen2_a.h5"), kernelA, flag(), {});
+        MIB_REQUIRE(o.published, "regenerated (LUT A) again: " + o.error);
+        MIB_EXPECT(allE(readOutput(td / "regen2_a.h5"), kEA) && o.eModulusLutBasis == EModulusLutBasis::Source &&
+                       o.eModulusLut == nameA,
+                   "the run's LUT A again, from the regenerated file's record");
+        rec = fileRecord(td / "regen2_a.h5");
+        MIB_EXPECT(rec && rec->provenance == "recorded" && rec->lut.sha256 == shaA, "and carried over again");
+        o = backend::review::runReanalysis(hdfRequest(td / "engine_a.h5", td / "regen2_refused.h5"), kernelB, flag(), {});
+        MIB_EXPECT(!o.published && has(o.error, "no E-LUT with that hash") && !fs::exists(td / "regen2_refused.h5"),
+                   "LUT A not here: refused, never the live LUT B: " + o.error);
+        o = backend::review::runReanalysis(hdfRequest(td / "engine_none.h5", td / "regen2_none.h5"), kernelB, flag(), {});
+        MIB_REQUIRE(o.published, "regenerated (no LUT) again: " + o.error);
+        MIB_EXPECT(allE(readOutput(td / "regen2_none.h5"), 0.0) && o.eModulusLutBasis == EModulusLutBasis::NotLoaded,
+                   "no E, as the run");
+        o = backend::review::runReanalysis(hdfRequest(td / "engine_legacy_src_legacy.h5", td / "regen2_host.h5"), kernelA,
+                                           flag(), {});
+        MIB_REQUIRE(o.published, "regenerated (host LUT B) again: " + o.error);
+        MIB_EXPECT(allE(readOutput(td / "regen2_host.h5"), kEA) && o.eModulusLutBasis == EModulusLutBasis::Legacy &&
+                       has(o.eModulusLutNote, "the source records only the host's E-LUT") &&
+                       has(o.eModulusLutNote, "not a run's"),
+                   "a host record keeps the legacy rule (the kernel's LUT A), said so: " + o.eModulusLutNote);
+
+        // Reprocess on a regenerated file.
+        {
+            ReviewSession s;
+            ReviewJobs jobs(s, &kernelA, [](const ReviewJobEvent &) {});
+            ReprocessResult r;
+            std::string err;
+            MIB_REQUIRE(s.open((td / "engine_a.h5").string()), "open regenerated A");
+            MIB_REQUIRE(jobs.reprocessRecord(true, 0, ReprocessSettings::Recorded, r, &err), "reprocess regenerated: " + err);
+            MIB_EXPECT(r.emodulusRecomputed && r.emodulusLut == nameA && r.emodulusLutSha256 == shaA,
+                       "reprocessing a regenerated file names the run's LUT: " + r.emodulusLut);
+            MIB_REQUIRE(s.open((td / "engine_legacy_src_legacy.h5").string()), "open regenerated host");
+            MIB_REQUIRE(jobs.reprocessRecord(true, 0, ReprocessSettings::Recorded, r, &err), "reprocess host: " + err);
+            MIB_EXPECT(!r.emodulusRecomputed && r.emodulusLut.empty() &&
+                           has(r.settingsLabel, "E not recomputed: the file records only the host's E-LUT"),
+                       "a host record: as legacy, said so: " + r.settingsLabel);
+        }
+
+        // The CSV of a regenerated file follows its record's `loaded`.
+        backend::recording::HdfExportService exporter;
+        const auto csv = [&](const fs::path &src) {
+            backend::recording::HdfExportRequest req;
+            req.sourcePath = src.string();
+            req.outputRoot = (td / ("csv2_" + src.stem().string())).string();
+            req.format = backend::recording::HdfExportFormat::MetricsCsv;
+            const auto result = exporter.run(req, backend::recording::HdfExportCancelToken{});
+            MIB_REQUIRE(result.completed(), "export " + src.string() + ": " + result.error);
+            return eColumn(result.finalPath);
+        };
+        const auto empty = [](const std::vector<std::string> &e) {
+            return !e.empty() && std::all_of(e.begin(), e.end(), [](const auto &v) { return v.empty(); });
+        };
+        MIB_EXPECT(empty(csv(td / "engine_none.h5")), "regenerated, the run loaded no LUT: E empty");
+        MIB_EXPECT(empty(csv(td / "engine_legacy_nolut.h5")), "regenerated with no LUT loaded (host record): E empty");
+        const auto withA = csv(td / "engine_a.h5");
+        MIB_EXPECT(!withA.empty() && std::all_of(withA.begin(), withA.end(), [](const auto &v) { return v == "5.000"; }),
+                   "regenerated with LUT A: E as stored");
+
+        // An old regenerated file (no attribute): as before.
+        const fs::path old = td / "regen_old.h5";
+        fs::copy_file(td / "engine_none.h5", old);
+        setExperimentInfoString(old, Hdf5Service::kEModulusLutJsonAttribute, nullptr);
+        MIB_EXPECT(!attributeOf(old) && !fileRecord(old), "the attribute removed");
+        o = backend::review::runReanalysis(hdfRequest(old, td / "regen_old_out.h5"), kernelB, flag(), {});
+        MIB_REQUIRE(o.published, "old regenerated: " + o.error);
+        MIB_EXPECT(allE(readOutput(td / "regen_old_out.h5"), kEB) && o.eModulusLutBasis == EModulusLutBasis::Legacy &&
+                       has(o.eModulusLutNote, "the source records no E-LUT"),
+                   "an old regenerated file: the kernel's LUT, as before: " + o.eModulusLutNote);
+        const auto oldE = csv(old);
+        MIB_EXPECT(!oldE.empty() && std::all_of(oldE.begin(), oldE.end(), [](const auto &v) { return v == "0.000"; }),
+                   "an old regenerated file's CSV: as stored");
+    }
+    wd.mark("regenerated provenance");
     return mib::test::exitCode();
 }

@@ -79,18 +79,52 @@ namespace backend::review
         return out.empty() ? "an unidentified E-LUT" : out;
     }
 
-    std::optional<recording::EModulusLutRecord> recordedEModulusLut(const services::Hdf5Service &reader)
+    std::string describeHostEModulusLut(const recording::EModulusLutRecord &record)
     {
-        recording::RecordedRunProvenance provenance;
-        if (!recording::readRecordedRunProvenance(reader, provenance)) return std::nullopt;
-        return provenance.v3.eModulusLut;
+        return record.loaded ? "only the host's E-LUT " + describeEModulusLut(record) + ", not a run's"
+                             : "only that its host loaded no E-LUT";
     }
 
-    bool resolveSourceEModulusLut(const std::optional<recording::EModulusLutRecord> &record,
+    std::string hostEModulusLutJson(const services::ProcessingService &host)
+    {
+        recording::EModulusLutRecord lut;
+        lut.loaded = host.eModulusLut().isLoaded();
+        if (lut.loaded)
+        {
+            const auto identity = host.eModulusLutIdentity();
+            const auto set = [](std::optional<std::string> &member, const std::string &value) {
+                if (!value.empty()) member = value;
+            };
+            set(lut.lutId, identity.lutId);
+            set(lut.revision, identity.revision);
+            set(lut.source, identity.source);
+            set(lut.sha256, identity.sha256);
+            set(lut.catalogSha256, identity.catalogSha256);
+            set(lut.checksumStatus, identity.checksumStatus);
+        }
+        return recording::eModulusLutRecordJson(lut, recording::kEModulusLutProvenanceHost);
+    }
+
+    std::string outputEModulusLutJson(const SourceEModulusLut &resolved, const services::ProcessingService &host)
+    {
+        if (resolved.basis != EModulusLutBasis::Legacy && resolved.record)
+            return recording::eModulusLutRecordJson(*resolved.record, recording::kEModulusLutProvenanceRecorded);
+        return hostEModulusLutJson(host);
+    }
+
+    bool resolveSourceEModulusLut(const std::optional<recording::ProvenancedEModulusLut> &provenanced,
                                   const services::ProcessingService *host, SourceEModulusLut &out, std::string &error)
     {
         out = SourceEModulusLut{};
-        if (!record) return true; // Legacy: the host's own, as before
+        if (!provenanced) return true; // Legacy: the host's own, as before
+        if (provenanced->provenance != recording::kEModulusLutProvenanceRecorded)
+        {
+            // A regenerated file's host record names no run's LUT: Legacy, said so.
+            out.hostRecord = provenanced->lut;
+            return true;
+        }
+        const recording::EModulusLutRecord *record = &provenanced->lut;
+        out.record = *record;
         if (!record->loaded)
         {
             out.basis = EModulusLutBasis::NotLoaded;
@@ -119,6 +153,7 @@ namespace backend::review
         if (!out.table && bundledEModulusLutSha256() == want) out.table = bundledTable();
         if (!out.table)
         {
+            out.record.reset();
             error = "E cannot be recomputed with the source run's E-LUT " + name +
                     ": no E-LUT with that hash is available here (loaded: " + shortHash(hostHash) +
                     "; bundled: " + shortHash(bundledEModulusLutSha256()) + ")";

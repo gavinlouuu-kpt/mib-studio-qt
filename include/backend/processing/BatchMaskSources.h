@@ -84,7 +84,11 @@ size_t saveMaskImages(const std::vector<ProcessedFrame>& frames,
 // (#764) from `pixelToMicronSource`. Review reads the factor as the file's
 // recorded one only when its source is Recorded or Operator; a Fallback
 // factor (the source recorded none and nobody supplied one) is shown as a
-// fallback. 0 records none. Returns true on success.
+// fallback. 0 records none. `eModulusLutJson` (#764), when not empty, is the
+// E-LUT record of the frames (recording::eModulusLutRecordJson: the source
+// run's own record carried over, or the host's LUT for a source that records
+// none), written as `/experiment_info @emodulus_lut_json` and mirrored as
+// `emodulus_lut` in `@config_json`. Returns true on success.
 enum class PixelToMicronSource {
     Recorded, // the source run's own recorded factor
     Operator, // supplied explicitly for this output
@@ -98,6 +102,7 @@ bool saveMasksToHdf5(const std::vector<ProcessedFrame>& frames,
                      bool useFrameTimestamps = false,
                      const backend::processing::ProcessingCoreIdentity* processingCore = nullptr,
                      double pixelToMicron = 0.0,
-                     PixelToMicronSource pixelToMicronSource = PixelToMicronSource::Fallback);
+                     PixelToMicronSource pixelToMicronSource = PixelToMicronSource::Fallback,
+                     const std::string& eModulusLutJson = {});
 
 } // namespace backend::services::batch_masks

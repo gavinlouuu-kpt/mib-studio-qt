@@ -179,6 +179,9 @@ namespace backend::review
         // Run identity from snapshot v3 and the annotation (#717 B1a); absent
         // members for a legacy file.
         RunIdentity runIdentity;
+        // The E-LUT record of the stored E (#764): the snapshot v3 record,
+        // else a regenerated file's `@emodulus_lut_json`; nullopt for neither.
+        std::optional<recording::ProvenancedEModulusLut> eModulusLutRecord;
         // The space of the stored boxes and centroids, decided once at open
         // (#756 review 2, ObjectCoordinates.h); Unknown for a raw recording,
         // which stores no objects.

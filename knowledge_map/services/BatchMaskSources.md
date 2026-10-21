@@ -60,7 +60,11 @@ core as [[ProcessingService]].
   there; the target group is read back from it, see [[Hdf5Service]]). The
   reanalysis engine and the Qt dialog pass the factor they validated at and
   whether it is the source's (the Qt dialog's live factor is `Fallback`); the
-  wheel's `save_masks_to_hdf5` passes none.
+  wheel's `save_masks_to_hdf5` passes none. Since #764 an `eModulusLutJson`
+  argument writes `/experiment_info @emodulus_lut_json` (mirrored as
+  `emodulus_lut` in `@config_json`): the reanalysis engine passes the run's
+  record or its kernel's LUT, and so does the Qt dialog; the wheel passes
+  none.
 
 ## Typical flow
 
@@ -91,5 +95,6 @@ batch_masks::saveMaskImages(frames, "/out/dir", names);
   service's live factor and channel band, not the source's. Every offline
   caller in the repo passes them (#758: before, YOFO Review regenerated at
   0.4886 µm/px and MIB Studio / Qt at the live factor, whatever the source
-  recorded). The wheel's `process_batch(pixel_to_micron=…, channel_band=…)`
-  passes them too since #764 (omitted: 0.4886 and no band, as before).
+  recorded). The wheel's `process_batch(pixel_to_micron=…)` passes the factor
+  too since #764 (omitted: 0.4886, as before); its config's
+  `channel_band_y/h` gate directly.

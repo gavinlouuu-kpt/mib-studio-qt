@@ -293,6 +293,7 @@ namespace backend::review
             reader.readKdeAnalysisJson(meta.kdeAnalysisJson);
             reader.readKdeLiveJson(meta.kdeLiveJson);
             meta.runIdentity = ReviewSession::readRunIdentity(reader);
+            meta.eModulusLutRecord = recording::readFileEModulusLut(reader);
             if (!recording) meta.objectCoordinates = resolveObjectCoordinatesLocked();
         }
 
@@ -773,7 +774,7 @@ namespace backend::review
         // a file whose space nothing decides is refused, never matched by a
         // guess.
         out.objectCoordinates = meta.objectCoordinates;
-        out.eModulusLut = meta.runIdentity.eModulusLut;
+        out.eModulusLut = meta.eModulusLutRecord;
         if (out.objectCoordinates.space == ObjectSpace::Unknown)
             return refuse("Record " + std::to_string(index) +
                           " cannot be matched: the file does not record whether its bounding boxes are relative to "

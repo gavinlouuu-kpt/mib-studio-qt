@@ -343,7 +343,8 @@ bool saveMasksToHdf5(const std::vector<ProcessedFrame>& frames,
                      bool useFrameTimestamps,
                      const backend::processing::ProcessingCoreIdentity* processingCore,
                      double pixelToMicron,
-                     PixelToMicronSource pixelToMicronSource) {
+                     PixelToMicronSource pixelToMicronSource,
+                     const std::string& eModulusLutJson) {
     if (frames.empty()) {
         SPDLOG_WARN("saveMasksToHdf5: no frames to save");
         return false;
@@ -403,6 +404,13 @@ bool saveMasksToHdf5(const std::vector<ProcessedFrame>& frames,
         out.closeFile();
         return false;
     }
+    // What the frames' E was computed with (#764), so reprocessing this file
+    // uses the same LUT, or none, as its source did.
+    if (!eModulusLutJson.empty() && !out.writeEModulusLutJson(eModulusLutJson)) {
+        SPDLOG_ERROR("saveMasksToHdf5: emodulus_lut_json write failed");
+        out.closeFile();
+        return false;
+    }
     // The config document, as a capture records its runtime one: the target
     // group (no processing_config_* attribute carries it) is read back from
     // here as the output's recorded setting (#758).
@@ -410,6 +418,10 @@ bool saveMasksToHdf5(const std::vector<ProcessedFrame>& frames,
     if (pixelToMicron > 0.0) {
         document["pixel_to_micron_factor"] = pixelToMicron;
         document["pixel_to_micron_source"] = source;
+    }
+    if (!eModulusLutJson.empty()) {
+        const auto lut = nlohmann::json::parse(eModulusLutJson, nullptr, false);
+        if (lut.is_object()) document["emodulus_lut"] = lut;
     }
     if (!out.writeConfigJson(document.dump())) {
         SPDLOG_ERROR("saveMasksToHdf5: config_json write failed");

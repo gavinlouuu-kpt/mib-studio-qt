@@ -395,16 +395,13 @@ HdfExportResult HdfExportService::run(const HdfExportRequest& request, const Hdf
             checkCancel();
             const fs::path csv = folderJob ? partial / "metrics.csv" : partial;
             progress(HdfExportPhase::Metrics, csv.string());
-            // A run whose snapshot records that no E-LUT was loaded has no E
-            // values: its stored 0 is written as missing (#764). Files without
-            // a snapshot (or before v3) are written as stored.
-            bool eNotComputed = false;
-            {
-                RecordedRunProvenance provenance;
-                if (readRecordedRunProvenance(reader, provenance) && provenance.v3.eModulusLut &&
-                    !provenance.v3.eModulusLut->loaded)
-                    eNotComputed = true;
-            }
+            // A file whose record says no E-LUT was loaded has no E values:
+            // its stored 0 is written as missing (#764). The record is the run
+            // snapshot's, else a regenerated file's @emodulus_lut_json, whose
+            // `loaded` states what that file's E was computed with whatever its
+            // provenance. Files with neither are written as stored.
+            const auto lutRecord = readFileEModulusLut(reader);
+            const bool eNotComputed = lutRecord && !lutRecord->lut.loaded;
             std::string err;
             if (!writeMetricsCsv(csv, valid, invalid, request.conversionFactor, eNotComputed, err)) throw Failed{err};
             result.metricsWritten = true;

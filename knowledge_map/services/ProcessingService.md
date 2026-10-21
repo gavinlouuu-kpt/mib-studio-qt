@@ -602,8 +602,8 @@ TIFFs — use:
   service's own table for the call: set to a table, E and an E-gated target
   group use it (a reanalysed source run's own LUT, see
   [[ReviewSession]]); set to null, no E (E 0, as a run without a LUT);
-  unset, the service's own. The wheel's `process_batch(pixel_to_micron=,
-  channel_band=)` maps onto these inputs (omitted: unchanged).
+  unset, the service's own. The wheel's `process_batch(pixel_to_micron=)`
+  maps onto `pixelToMicronFactor` (omitted: unchanged).
 
   When `multi_image_enabled` and `multi_image_count > 1`, each newly retained
   valid track also carries the trigger image plus the available following

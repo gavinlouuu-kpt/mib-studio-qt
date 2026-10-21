@@ -148,8 +148,8 @@ class TestProcessBatch:
 
 
 class TestProcessBatchCalibration:
-    """#764: process_batch(pixel_to_micron=, channel_band=) map to the core's
-    per-call BatchAnalysisInputs; omitted, the behaviour is unchanged."""
+    """#764: process_batch(pixel_to_micron=) maps to the core's per-call
+    BatchAnalysisInputs; omitted, the behaviour is unchanged."""
 
     def test_omitted_factor_is_the_processing_default(self) -> None:
         frame = make_ring_frame()
@@ -176,23 +176,6 @@ class TestProcessBatchCalibration:
     def test_factor_must_be_finite_and_positive(self, bad: float) -> None:
         with pytest.raises(ValueError):
             mp.process_batch([make_ring_frame()], make_smoke_config(), pixel_to_micron=bad)
-
-    def test_channel_band_gates_auto_roi_objects(self) -> None:
-        bg = np.full((80, 120), 128, dtype=np.uint8)
-        frame = bg.copy()
-        frame[4:14, 20:40] = 88    # on the top wall (centroid row ~8.5)
-        frame[34:54, 70:90] = 88   # in the channel (centroid row ~43.5)
-        cfg = _contract_config(2)  # the wheel's config has no auto_roi_from_background
-        omitted = mp.process_batch([frame], cfg, background=bg)
-        assert len(omitted) == 2 and all(o["in_channel"] and o["is_valid"] for o in omitted)
-        banded = mp.process_batch([frame], cfg, background=bg, channel_band=(0, 20, 120, 50))
-        by_row = sorted(banded, key=lambda o: o["centroid_xy"][1])
-        assert not by_row[0]["in_channel"] and not by_row[0]["is_valid"]
-        assert by_row[1]["in_channel"] and by_row[1]["is_valid"]
-        no_band = mp.process_batch([frame], cfg, background=bg, channel_band=(0, 0, 0, 0))
-        assert all(o["in_channel"] and o["is_valid"] for o in no_band)  # h == 0: no band
-        with pytest.raises(ValueError):
-            mp.process_batch([frame], cfg, background=bg, channel_band=(0, 20))
 
 
 class TestEModulusLut:

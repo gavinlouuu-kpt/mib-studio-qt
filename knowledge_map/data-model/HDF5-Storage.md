@@ -25,7 +25,13 @@
   run's own factor, `operator` = supplied for this output, `fallback` = a host
   default or fallback because the source records none; review takes only
   `recorded` / `operator`, or a file without the attribute, as the file's
-  calibration), plus processing-core provenance:
+  calibration), `emodulus_lut_json` (UTF-8 JSON, regenerated / reanalysed
+  files since #764: the snapshot v3 `emodulus_lut` shape plus `provenance`,
+  `recorded` = the source run's own record carried over, `host` = the LUT the
+  host computed E with for a source that recorded none, `loaded` false when it
+  had none; also mirrored as `emodulus_lut` in `config_json`; read by
+  `recording::readFileEModulusLut` after the snapshot record), plus
+  processing-core provenance:
   `processing_core_version`, `processing_contract_version`,
   `processing_engine_abi_version`, `processing_core_sha256`,
   `processing_manifest_sha256`, `processing_release_tag`,

@@ -437,6 +437,13 @@ Parsing never sets them, so the facade keeps the defaults:
   written with a reason naming the LUT and the hashes present. `loaded` false:
   no E (E 0, as the source). No record (no snapshot, a snapshot before v3,
   folder / AVI): the kernel's own, as before (`Legacy`).
+  A regenerated source has no snapshot: `recording::readFileEModulusLut`
+  reads its `@emodulus_lut_json` instead, with the same rules for provenance
+  `recorded`; provenance `host` (a LUT a host used for a source that recorded
+  none) is Legacy, and the note / message say "the source records only the
+  host's E-LUT <name>, not a run's". The output records what this run used
+  (`outputEModulusLutJson`: the run's record carried over, or the kernel's LUT
+  as `host`), so no regenerated file is written without it.
   `ReanalysisOutcome::eModulusLutBasis` / `eModulusLut` say which;
   `reanalysisEModulusLutPhrase` words it for YOFO's completion message
   (`…; E-LUT <name> (the source run's))`), and for an HDF source whose own
@@ -577,7 +584,8 @@ processing default), so the instance a job uses is never reconfigured.
 Area validity and the target group are in µm², so the factor decides them;
 `pixelToMicron` and `settingsLabel` say which applied. E (#764, review ABI
 4): the run's own E-LUT (`ReprocessInputs::eModulusLut`, the snapshot v3
-record read at open), resolved outside every lock like the engine's (the
+record, else a regenerated file's `@emodulus_lut_json`, read at open into
+`ReviewMetadata::eModulusLutRecord`), resolved outside every lock like the engine's (the
 session kernel's loaded LUT or the bundled one, by hash), passed per call;
 `emodulusLut` / `emodulusLutSha256` name it and `settingsLabel` ends
 `; E-LUT <name> (the run's)`. Not available or no hash: refused

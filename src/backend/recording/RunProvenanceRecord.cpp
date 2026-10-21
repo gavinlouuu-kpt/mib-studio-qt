@@ -424,6 +424,37 @@ std::optional<RunStopRecord> parseRunStop(const std::string& json, std::string* 
     return stop;
 }
 
+std::string eModulusLutRecordJson(const EModulusLutRecord& lut, const std::string& provenance)
+{
+    OJson j = lutJson(lut);
+    j["provenance"] = provenance;
+    return j.dump();
+}
+
+std::optional<ProvenancedEModulusLut> parseEModulusLutRecordJson(const std::string& json)
+{
+    Json root = Json::parse(json, nullptr, /*allow_exceptions=*/false);
+    if (root.is_discarded() || !root.is_object()) return std::nullopt;
+    const auto provenance = str(root, "provenance");
+    if (!provenance || (*provenance != kEModulusLutProvenanceRecorded && *provenance != kEModulusLutProvenanceHost))
+        return std::nullopt;
+    const auto lut = parseLut(Json{{"emodulus_lut", root}});
+    if (!lut) return std::nullopt;
+    return ProvenancedEModulusLut{*lut, *provenance};
+}
+
+std::optional<ProvenancedEModulusLut> readFileEModulusLut(const services::Hdf5Service& file)
+{
+    std::string snapshot;
+    if (file.readRunSnapshotJson(snapshot)) {
+        RecordedRunProvenance parsed;
+        if (parseRunProvenance(snapshot, parsed) && parsed.v3.eModulusLut)
+            return ProvenancedEModulusLut{*parsed.v3.eModulusLut, kEModulusLutProvenanceRecorded};
+    }
+    const auto attribute = file.readEModulusLutJson();
+    return attribute ? parseEModulusLutRecordJson(*attribute) : std::nullopt;
+}
+
 bool readRecordedRunProvenance(const services::Hdf5Service& file, RecordedRunProvenance& out, std::string* why)
 {
     out = RecordedRunProvenance{};

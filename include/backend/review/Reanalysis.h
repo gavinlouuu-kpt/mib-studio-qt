@@ -41,7 +41,10 @@
 // call; the run is refused before anything is written when it cannot be
 // found. A source that loaded none gets no E, as it had none. A source that
 // records nothing (no snapshot, or one before v3; folder and AVI) keeps the
-// kernel's own LUT, as before. The outcome names what was used.
+// kernel's own LUT, as before. The outcome names what was used. A
+// regenerated source carries its record in `@emodulus_lut_json` and follows
+// the same rules; the output records what this run used there (the run's
+// record carried over, or the kernel's LUT as a "host" record).
 #pragma once
 
 #include "backend/processing/ProcessingService.h"
@@ -163,6 +166,9 @@ namespace backend::review
         EModulusLutBasis eModulusLutBasis{EModulusLutBasis::Legacy};
         std::string eModulusLut;
         bool eModulusLutResolved{false};
+        // Legacy from a regenerated source whose `@emodulus_lut_json` names
+        // only a host's LUT: that record in words (describeHostEModulusLut).
+        std::string eModulusLutHostRecord;
         // For a reply with a message: what E was computed with, said when the
         // source is an hdf file whose own LUT was not used (NotLoaded, or
         // Legacy); empty otherwise. reanalysisTerminalStatusJson adds it to

@@ -197,7 +197,7 @@ namespace backend::review
             // AVI too). Resolved before any frame is read, refused when its
             // own cannot be found here.
             SourceEModulusLut lut;
-            const auto resolveLut = [&](const std::optional<recording::EModulusLutRecord> &record) {
+            const auto resolveLut = [&](const std::optional<recording::ProvenancedEModulusLut> &record) {
                 std::string lutError;
                 if (!resolveSourceEModulusLut(record, &kernel, lut, lutError)) throw std::runtime_error(lutError);
                 outcome.eModulusLutResolved = true;
@@ -205,6 +205,7 @@ namespace backend::review
                 outcome.eModulusLut = lut.basis == EModulusLutBasis::Source   ? lut.name
                                       : lut.basis == EModulusLutBasis::Legacy ? describeLoadedEModulusLut(kernel)
                                                                               : std::string();
+                outcome.eModulusLutHostRecord = lut.hostRecord ? describeHostEModulusLut(*lut.hostRecord) : std::string();
                 if (kind == "hdf" && lut.basis != EModulusLutBasis::Source)
                     outcome.eModulusLutNote = reanalysisEModulusLutPhrase(outcome);
             };
@@ -284,7 +285,8 @@ namespace backend::review
                     throw std::runtime_error("Source ROI metadata is missing");
                 reader.readBackgroundImage(background);
                 hasOriginalCore = reader.readProcessingCoreIdentity(originalCore);
-                resolveLut(recordedEModulusLut(reader));
+                // The run snapshot's record, else a regenerated file's own.
+                resolveLut(recording::readFileEModulusLut(reader));
                 if (request.useRecordedPixelToMicron)
                 {
                     if (const double recorded = ReviewSession::recordedPixelToMicron(reader); recorded > 0.0)
@@ -389,7 +391,9 @@ namespace backend::review
                                       : request.pixelToMicronExplicit ? services::batch_masks::PixelToMicronSource::Operator
                                                                       : services::batch_masks::PixelToMicronSource::Fallback;
             if (!services::batch_masks::saveMasksToHdf5(frames, partial.string(), config, roi.x, roi.y, roi.w, roi.h,
-                                                        background, kind == "hdf", &usedCore, factor, factorSource))
+                                                        background, kind == "hdf", &usedCore, factor, factorSource,
+                                                        // What E was computed with (#764): the run's record, or the kernel's LUT.
+                                                        outputEModulusLutJson(lut, kernel)))
                 throw std::runtime_error("Failed to save regenerated HDF");
             checkCancel();
             // Atomic no-clobber publication; supports NTFS/FAT on Windows and
@@ -449,9 +453,11 @@ namespace backend::review
         case EModulusLutBasis::Legacy:
             break;
         }
-        return outcome.eModulusLut.empty() ? "E not computed: the source records no E-LUT and none is loaded"
-                                           : "E-LUT " + outcome.eModulusLut +
-                                                 " (the loaded one: the source records no E-LUT)";
+        // A regenerated source whose record names only a host's LUT is said as such.
+        const std::string records = outcome.eModulusLutHostRecord.empty() ? "no E-LUT" : outcome.eModulusLutHostRecord;
+        return outcome.eModulusLut.empty() ? "E not computed: the source records " + records + " and none is loaded"
+                                           : "E-LUT " + outcome.eModulusLut + " (the loaded one: the source records " +
+                                                 records + ")";
     }
 
     bool loadReanalysisPreview(const std::string &text, cv::Mat &image, std::uint64_t &index)

@@ -23,6 +23,18 @@ that table (`SourceEModulusLut.h`):
 The table goes per call through `BatchAnalysisInputs::eModulusLut`; the
 kernel's own table is never replaced, so a job cannot affect a live run.
 
+**Regenerated files carry the record.** `saveMasksToHdf5` writes
+`/experiment_info @emodulus_lut_json` (mirrored as `emodulus_lut` in
+`@config_json`): the snapshot v3 shape plus `provenance`, `recorded` (the
+source run's record carried over, `loaded` false when it loaded none) or
+`host` (a source that recorded none: the LUT the host computed E with,
+`loaded` false when none). `recording::readFileEModulusLut` reads the snapshot
+record, else this attribute; reanalysis, reprocess and the CSV follow it. A
+`host` record keeps the legacy rule and is said as such ("the source records
+only the host's E-LUT …, not a run's"). Files regenerated before #764 have no
+attribute and behave as before. The Qt `BatchMaskDialog` resolves the
+source's record the same way (Codex round 2) and records what it used.
+
 **Review ABI 4.** `review_reprocess_record` names the LUT it used:
 `emodulus_lut` (lut id, revision, the hash's first 12 hex digits) and
 `emodulus_lut_sha256`, `null` in the shell's JSON when E was not recomputed.
@@ -38,15 +50,16 @@ only the first two; files regenerated between #758 and #764 have no source
 attribute and read as before. The Qt `BatchMaskDialog` marks its live factor
 `fallback`.
 
-**Metrics CSV.** For a run whose snapshot records `emodulus_lut.loaded ==
-false`, Export Metrics to CSV, Export All and Batch Metrics leave every E cell
-empty (the export's missing-value convention), not the stored 0. Legacy files
-are written as stored ([[services/HdfExportService]]).
+**Metrics CSV.** For a file whose E-LUT record (snapshot, or a regenerated
+file's attribute of either provenance) says `loaded == false`, Export Metrics
+to CSV, Export All and Batch Metrics leave every E cell empty (the export's
+missing-value convention), not the stored 0. Files with neither record are
+written as stored ([[services/HdfExportService]]).
 
-**Wheel.** `process_batch(pixel_to_micron=None, channel_band=None)`: a given
-factor now decides area validity and the target group as well as `area_um2`
-(it was only used for `area_um2`); a given band `(x, y, w, h)` gates objects by
-centroid row for the call. Omitted, both behave as before. No version bump:
+**Wheel.** `process_batch(pixel_to_micron=None)`: a given factor now decides
+area validity and the target group as well as `area_um2` (it was only used for
+`area_um2`). Omitted, as before. No `channel_band` argument: the config's
+`channel_band_y/h` already gate. No version bump:
 the wheel version is the processing-core release identity and is bumped at
 release.
 

@@ -5,6 +5,7 @@
 #include "backend/recording/Hdf5Service.h"
 #include "backend/processing/ProcessingService.h"
 #include "backend/review/ReviewSession.h"
+#include "backend/review/SourceEModulusLut.h"
 #include "frontend/utils/RoiDrawCanvas.h"
 
 #include <QCoreApplication>
@@ -35,6 +36,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <optional>
 #include <limits>
 #include <utility>
 
@@ -957,6 +959,11 @@ void BatchMaskDialog::onRun() {
     // band stay as they are.
     double factor = proc.getPixelToMicronFactor();
     bool recordedFactor = false;
+    // #764: E with the source run's own E-LUT (snapshot v3, or a regenerated
+    // file's @emodulus_lut_json), as the review engine does; refused when it
+    // is not available here. Image folders / AVI and files that record none
+    // use the live LUT, as before.
+    std::optional<backend::recording::ProvenancedEModulusLut> lutRecord;
     if (srcHdf5_->isChecked() && !hdf5LoadedPath_.isEmpty()) {
         backend::services::Hdf5Service reader;
         if (reader.loadFile(hdf5LoadedPath_.toStdString())) {
@@ -964,10 +971,30 @@ void BatchMaskDialog::onRun() {
                 factor = f;
                 recordedFactor = true;
             }
+            lutRecord = backend::recording::readFileEModulusLut(reader);
         }
     }
-    const auto inputs =
+    backend::review::SourceEModulusLut lut;
+    {
+        std::string lutError;
+        if (!backend::review::resolveSourceEModulusLut(lutRecord, &proc, lut, lutError)) {
+            setRunning(false);
+            const QString reason = QString::fromStdString(lutError);
+            logView_->appendPlainText(reason);
+            statusLabel_->setText(tr("Error: %1").arg(reason));
+            QMessageBox::warning(this, tr("E-modulus table not available"), reason);
+            return;
+        }
+    }
+    auto inputs =
         backend::services::ProcessingService::offlineAnalysisInputs(config, background, factor);
+    lut.applyTo(inputs);
+    logView_->appendPlainText(
+        lut.basis == backend::review::EModulusLutBasis::Source
+            ? tr("Young's modulus from the source run's E-LUT %1.").arg(QString::fromStdString(lut.name))
+        : lut.basis == backend::review::EModulusLutBasis::NotLoaded
+            ? tr("Young's modulus not computed: the source run loaded no E-LUT.")
+            : tr("Young's modulus from the current E-LUT: the source records none."));
     logView_->appendPlainText(tr("Validating at %1 µm per pixel (%2).")
                                   .arg(factor, 0, 'f', 4)
                                   .arg(recordedFactor ? tr("recorded in the source file")
@@ -989,7 +1016,9 @@ void BatchMaskDialog::onRun() {
         srcHdf5_->isChecked(), &processingCore, factor,
         // #764: the live factor is not the source's calibration.
         recordedFactor ? backend::services::batch_masks::PixelToMicronSource::Recorded
-                       : backend::services::batch_masks::PixelToMicronSource::Fallback);
+                       : backend::services::batch_masks::PixelToMicronSource::Fallback,
+        // #764: what E was computed with: the run's record, or the live LUT as the host's.
+        backend::review::outputEModulusLutJson(lut, proc));
 
     if (ok) {
         savedHdf5Path_ = outputPath;

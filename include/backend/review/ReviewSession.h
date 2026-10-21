@@ -129,9 +129,10 @@ namespace backend::review
             // The stored row's coordinate space (ReviewMetadata): `stored`
             // is as stored; toImageSpace places it.
             ObjectCoordinates objectCoordinates;
-            // The E-LUT the run recorded (snapshot v3 `emodulus_lut`, read at
-            // open); nullopt when it records none (#764).
-            std::optional<recording::EModulusLutRecord> eModulusLut;
+            // The E-LUT the file records (snapshot v3 `emodulus_lut`, else a
+            // regenerated file's `@emodulus_lut_json`; read at open);
+            // nullopt when it records none (#764).
+            std::optional<recording::ProvenancedEModulusLut> eModulusLut;
         };
         bool reprocessInputs(bool valid, std::uint64_t index, ReprocessSettings settings, ReprocessInputs &out,
                              std::string *error = nullptr) const;

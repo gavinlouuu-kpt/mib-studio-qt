@@ -785,7 +785,9 @@ namespace backend::review
                 label << "; E not recomputed: the run loaded no E-LUT";
                 break;
             case EModulusLutBasis::Legacy:
-                if (!out.emodulusRecomputed) label << "; E not recomputed: the file records no E-LUT";
+                if (!out.emodulusRecomputed)
+                    label << "; E not recomputed: the file records "
+                          << (lut.hostRecord ? describeHostEModulusLut(*lut.hostRecord) : std::string("no E-LUT"));
                 break;
             }
             out.settingsLabel = label.str();

@@ -103,7 +103,10 @@ used, found by its checksum. If that table is not available, the
 reanalysis stops with a message that names it and writes nothing. If the
 recording had no table loaded, the new file has no E values either. Files
 recorded before the table was recorded use the table loaded in the app, as
-before, and the completion message says so.
+before, and the completion message says so. The new file records which table
+its E values were computed with. When that is the recording's own table (or
+none), reanalysing the new file again uses the same one; when it was the
+app's table, the new file says so and is treated like an older recording.
 
 **Exported metrics (CSV):** for a recording made without an E-modulus table,
 the Young's modulus column is empty instead of 0.

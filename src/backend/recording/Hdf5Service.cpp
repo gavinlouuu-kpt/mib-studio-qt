@@ -2967,6 +2967,42 @@ namespace backend::services
         return readScalarStringAttribute("/experiment_info", kPixelToMicronSourceAttribute);
     }
 
+    bool Hdf5Service::writeEModulusLutJson(const std::string& json)
+    {
+        if (!isFileOpen() || json.empty()) return false;
+        if (linkExists(impl_->fileId_, "/experiment_info") <= 0)
+        {
+            SPDLOG_WARN("Cannot write emodulus_lut_json: /experiment_info group does not exist");
+            return false;
+        }
+        hid_t groupId = H5Gopen2(impl_->fileId_, "/experiment_info", H5P_DEFAULT);
+        if (groupId < 0) return false;
+        hid_t strType = H5Tcopy(H5T_C_S1);
+        H5Tset_size(strType, H5T_VARIABLE);
+        H5Tset_cset(strType, H5T_CSET_UTF8);
+        hid_t scalarSpace = H5Screate(H5S_SCALAR);
+        if (H5Aexists(groupId, kEModulusLutJsonAttribute) > 0) H5Adelete(groupId, kEModulusLutJsonAttribute);
+        hid_t attr = H5Acreate2(groupId, kEModulusLutJsonAttribute, strType, scalarSpace, H5P_DEFAULT, H5P_DEFAULT);
+        bool ok = false;
+        if (attr >= 0)
+        {
+            const char* ptr = json.c_str();
+            ok = H5Awrite(attr, strType, &ptr) >= 0;
+            H5Aclose(attr);
+        }
+        H5Sclose(scalarSpace);
+        H5Tclose(strType);
+        H5Gclose(groupId);
+        if (ok && !flush()) SPDLOG_WARN("writeEModulusLutJson: post-write flush failed");
+        if (!ok) SPDLOG_ERROR("Failed to write /experiment_info @emodulus_lut_json");
+        return ok;
+    }
+
+    std::optional<std::string> Hdf5Service::readEModulusLutJson() const
+    {
+        return readScalarStringAttribute("/experiment_info", kEModulusLutJsonAttribute);
+    }
+
     std::optional<double> Hdf5Service::readAnalysisPixelToMicron() const
     {
         if (!isFileOpen() || linkExists(impl_->fileId_, "/experiment_info") <= 0) return std::nullopt;
