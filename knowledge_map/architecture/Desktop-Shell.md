@@ -185,6 +185,23 @@ and a Chromium run that stops and restarts a real server under an open page.
 
 - request `{"request_id", "cmd", "args"}` with the `invoke` name and camelCase
   arguments; reply `{"request_id", "ok"}` / `{"request_id", "error"}`;
+- duplicate keys (#788): the server parses each request frame once from its raw
+  text (`mib-bridge-server` `request.rs`) and refuses a key repeated in any
+  object, the frame's own fields, `args`, nested objects and objects inside
+  arrays, with ``BAD_REQUEST: duplicate key `k` at line 1 column n``, the code
+  malformed JSON gets; the command never runs, for a controller and a viewer
+  alike. A `serde_json::Value` would keep the last of two equal keys, and the
+  backend's strict parsers would only see the collapsed re-serialisation. The
+  visitor builds the same `Value` as before in the same single pass (on a 1 MB
+  request the cost is within run-to-run noise, see the recent-work note). A refused frame's
+  reply carries its `request_id` when the frame names exactly one (otherwise
+  the waiting call would hang: `wsTransport` drops replies without an id). JSON
+  documents inside string arguments (`startRequestJson`) stay the backend's to
+  parse. Tauri IPC cannot apply the rule: Tauri parses the IPC body into a
+  `serde_json::Value` before any command sees it, and the webview builds every
+  body with `JSON.stringify` from a JS object, which cannot hold a repeated key.
+  Tests: `request.rs` unit tests, `ws.rs`
+  `duplicate_keys_are_refused_before_dispatch`;
 - binary replies: 8-byte little-endian request id, then the unchanged bytes
   (MIBF frame packets); frames stay client-pulled;
 - events: the server alone drains the backend queue every 20 ms and pushes

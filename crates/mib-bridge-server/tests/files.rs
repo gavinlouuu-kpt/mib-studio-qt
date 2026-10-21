@@ -84,8 +84,7 @@ fn parse(raw: &[u8]) -> Reply {
     if headers.iter().any(|(k, v)| k.eq_ignore_ascii_case("transfer-encoding") && v.contains("chunked")) {
         let mut out = Vec::new();
         let mut rest = &body[..];
-        loop {
-            let Some(eol) = rest.windows(2).position(|w| w == b"\r\n") else { break };
+        while let Some(eol) = rest.windows(2).position(|w| w == b"\r\n") {
             let size = usize::from_str_radix(std::str::from_utf8(&rest[..eol]).unwrap().trim(), 16).unwrap_or(0);
             if size == 0 {
                 break;
@@ -362,7 +361,7 @@ async fn diagnostics_reports_the_log_tail_key_lines_and_the_bundle() {
     let reply = request(f.addr, "GET", &url, &[]).await;
     assert_eq!(reply.status, 200);
     let d = reply.json();
-    assert!(d["server"]["version"].as_str().unwrap().len() > 0);
+    assert!(!d["server"]["version"].as_str().unwrap().is_empty());
     assert!(d["server"]["uptime_s"].as_u64().is_some());
     assert_eq!(d["bundle"], Value::Null);
     let tail = d["log"]["tail"].as_array().unwrap();

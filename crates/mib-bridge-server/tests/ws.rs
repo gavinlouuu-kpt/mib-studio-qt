@@ -892,3 +892,102 @@ async fn run_quick_look_over_the_websocket() {
     server.state().bridge.lock().unwrap().pin_mut().shutdown();
     let _ = std::fs::remove_dir_all(&data);
 }
+
+/// The next reply that is not an event or a session message, as sent.
+async fn next_reply(ws: &mut Socket) -> Value {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let message = tokio::time::timeout_at(deadline.into(), ws.next()).await.expect("reply in time").unwrap().unwrap();
+        if let Message::Text(text) = message {
+            let value: Value = serde_json::from_str(text.as_str()).unwrap();
+            if value.get("event").is_none() && value.get("session").is_none() {
+                return value;
+            }
+        }
+    }
+}
+
+// #788: a request whose raw text repeats a key, at the top level, nested or inside an array of
+// objects, is refused with BAD_REQUEST before dispatch (a serde Value would silently keep the last
+// one), for every command family and for a viewer exactly as for the controller. Nothing runs: the
+// preferences, the CSV, the controller are unchanged. The same keys in sibling objects still pass.
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn duplicate_keys_are_refused_before_dispatch() {
+    use mib_bridge::review_ffi;
+    let (server, addr, data) = start("duplicate_keys").await;
+    let v3 = data.join("v3.h5").to_string_lossy().into_owned();
+    assert!(review_ffi::review_fixture_write_quick_look(&v3, 0));
+    let v3_json = serde_json::to_string(&v3).unwrap();
+    let mut controller = connect(addr).await;
+    let mut viewer = connect(addr).await;
+    let mut events = Vec::new();
+    call(&mut controller, 1, "init", json!({ "dataDir": "" }), &mut events).await.unwrap();
+    assert_eq!(server.controller(), Some(1));
+    let preferences = json!({ "a": { "k": 1 }, "b": { "k": 1 }, "list": [{ "k": 1 }, { "k": 2 }] });
+    call(&mut controller, 2, "set_preferences", json!({ "preferences": preferences }), &mut events).await.unwrap();
+    let csv = data.join("export.csv");
+    let csv_json = serde_json::to_string(&csv.to_string_lossy()).unwrap();
+    let csv2_json = serde_json::to_string(&data.join("export2.csv").to_string_lossy()).unwrap();
+
+    let mut id = 10u64;
+    let cases: Vec<(&str, String, &str)> = vec![
+        // read
+        ("fetch_camera_selection", r#"{"x":1,"x":1}"#.into(), "`x`"),
+        // control
+        ("configure_mock", format!(r#"{{"frameDir":{},"frameIntervalMs":5,"frameIntervalMs":1000,"loopFiles":true}}"#,
+            serde_json::to_string(&mock_frames()).unwrap()), "`frameIntervalMs`"),
+        ("set_preferences", r#"{"preferences":{"a":{"k":2,"k":3}}}"#.into(), "`k`"),
+        ("set_preferences", r#"{"preferences":{"list":[{"k":1},{"k":2,"k":3}]}}"#.into(), "`k`"),
+        // review
+        ("review_export_csv", format!(r#"{{"outputPath":{csv_json},"outputPath":{csv2_json}}}"#), "`outputPath`"),
+        ("fetch_review_metrics_page", r#"{"valid":true,"offset":0,"offset":5,"count":10}"#.into(), "`offset`"),
+        // run_quick_look: the Codex case on #786, and inside the reference object
+        ("run_quick_look", format!(r#"{{"paths":[{v3_json}],"paths":[{v3_json}]}}"#), "`paths`"),
+        ("run_quick_look", format!(r#"{{"paths":[{v3_json}],"reference":{{"path":{v3_json},"run_id":"1","run_id":"2"}}}}"#), "`run_id`"),
+        // the server's own command
+        ("take_control", r#"{"a":[{"b":{"c":1,"c":1}}]}"#.into(), "`c`"),
+    ];
+    for (cmd, args, key) in &cases {
+        let mut errors = Vec::new();
+        for ws in [&mut controller, &mut viewer] {
+            id += 1;
+            let frame = format!(r#"{{"request_id":{id},"cmd":"{cmd}","args":{args}}}"#);
+            let error = call_text(ws, id, frame, &mut events).await.expect_err(cmd);
+            assert!(error.starts_with(&format!("BAD_REQUEST: duplicate key {key} at line 1 column")), "{cmd}: {error}");
+            errors.push(error);
+        }
+        assert_eq!(errors[0], errors[1], "{cmd}: a viewer gets the same refusal");
+    }
+    // A repeated frame field: the refusal still names the one request id.
+    id += 1;
+    let frame = format!(r#"{{"request_id":{id},"cmd":"take_control","cmd":"fetch_camera_selection"}}"#);
+    let error = call_text(&mut viewer, id, frame, &mut events).await.unwrap_err();
+    assert!(error.starts_with("BAD_REQUEST: duplicate key `cmd`"), "{error}");
+    // A repeated request id names no request (which call would it settle?): the old malformed shape.
+    viewer.send(Message::Text(r#"{"request_id":90,"request_id":91,"cmd":"take_control"}"#.into())).await.unwrap();
+    let reply = next_reply(&mut viewer).await;
+    assert!(reply.get("request_id").is_none(), "{reply}");
+    assert!(reply["error"].as_str().unwrap().starts_with("BAD_REQUEST: duplicate key `request_id`"), "{reply}");
+
+    // Nothing ran.
+    assert_eq!(server.controller(), Some(1), "take_control did not run");
+    let Ok(Reply::Json(stored)) = call(&mut viewer, 100, "get_preferences", Value::Null, &mut events).await else { panic!() };
+    assert_eq!(stored, preferences, "set_preferences did not run");
+    assert!(!csv.exists() && !data.join("export2.csv").exists(), "review_export_csv did not run");
+
+    // Without duplicates the same requests pass (the same key in sibling objects is no duplicate).
+    let frame = format!(r#"{{"request_id":101,"cmd":"run_quick_look","args":{{"paths":[{v3_json}],"reference":null}}}}"#);
+    let Ok(Reply::Json(r)) = call_text(&mut viewer, 101, frame, &mut events).await else { panic!() };
+    assert_eq!(r["ok"], json!(true), "{r}");
+    assert_eq!(r["runs"][0]["status"], json!("computed"), "{r}");
+    let frame = r#"{"request_id":102,"cmd":"set_preferences","args":{"preferences":{"a":{"k":2},"b":{"k":2},"list":[{"k":1},{"k":1}]}}}"#;
+    call_text(&mut controller, 102, frame.into(), &mut events).await.unwrap();
+    let Ok(Reply::Json(stored)) = call(&mut viewer, 103, "get_preferences", Value::Null, &mut events).await else { panic!() };
+    assert_eq!(stored, json!({ "a": { "k": 2 }, "b": { "k": 2 }, "list": [{ "k": 1 }, { "k": 1 }] }));
+
+    controller.close(None).await.unwrap();
+    viewer.close(None).await.unwrap();
+    server.state().bridge.lock().unwrap().pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(&data);
+}
