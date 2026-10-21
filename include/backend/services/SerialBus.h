@@ -1,6 +1,7 @@
 #pragma once
 
 #include "backend/services/ISerialPort.h"
+#include "backend/services/SerialPortClaims.h"
 
 #include <atomic>
 #include <chrono>
@@ -168,6 +169,9 @@ public:
     // supply a fake to drive the Modbus protocol without hardware. Applies to
     // sessions opened afterwards.
     void setSerialPortFactory(SerialPortFactory factory);
+
+    // True while a live session holds `portName` (acquire() would share it).
+    bool hasSession(const std::string& portName);
 
     std::shared_ptr<ModbusBusSession> acquire(const std::string& portName,
                                               const SerialSettings& settings,

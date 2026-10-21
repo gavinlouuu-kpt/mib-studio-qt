@@ -2,6 +2,7 @@
 
 #include "backend/nanopositioner/oeabt/OeabtProtocol.h"
 #include "backend/nanopositioner/oeabt/SerialTransport.h"
+#include "backend/services/SerialPortClaims.h"
 
 #include <algorithm>
 #include <chrono>
@@ -400,11 +401,30 @@ std::unique_ptr<INanopositionerBackend> createNanopositionerBackend(BackendKind 
     return backend ? std::make_unique<SerializedBackendProxy>(std::move(backend)) : nullptr;
 }
 
+std::string endpointPortName(const Endpoint& endpoint) {
+    const bool coremor = endpoint.backend == BackendKind::Coremor ||
+                         (endpoint.backend == BackendKind::Auto && endpoint.coremorPort > 0 &&
+                          !endpoint.knownOeabtCandidate);
+    if (coremor) return endpoint.coremorPort > 0 ? "COM" + std::to_string(endpoint.coremorPort) : std::string{};
+    return endpoint.systemPath;
+}
+
 bool probeNanopositionerEndpoint(const Endpoint& endpoint, std::string& error) {
     BackendKind kind = endpoint.backend;
     if (kind == BackendKind::Auto) {
         kind = endpoint.coremorPort > 0 && !endpoint.knownOeabtCandidate ? BackendKind::Coremor
                                                                          : BackendKind::Oeabt;
+    }
+    // Never probe a port this process holds or reserves: a CH340 RS485 dongle
+    // carrying the pumps is an OEABT candidate by USB identity, and the probe
+    // would hold it for ~2 s and write ASCII onto the pump bus.
+    backend::services::portclaims::Claim claim;
+    if (const auto port = endpointPortName(endpoint); !port.empty()) {
+        claim = backend::services::portclaims::tryProbe(port, "nanopositioner probe", &error);
+        if (!claim) {
+            SPDLOG_INFO("Nanopositioner probe skips {}", error);
+            return false;
+        }
     }
     auto backend = createNanopositionerBackend(kind);
     if (!backend) {

@@ -34,6 +34,8 @@
 #include "backend/services/TriggerService.h"
 #include "backend/services/DotGridService.h"
 #include "backend/services/SerialBus.h"
+#include "backend/services/SerialPortClaims.h"
+#include "backend/services/SimulatedSerialScenario.h"
 #include "backend/services/SyringePumpService.h"
 #include "backend/services/PulseGeneratorService.h"
 #include "backend/services/StageService.h"
@@ -450,6 +452,20 @@ namespace backend
         // Use user-writable location for logs if dataDir is in Program Files
         std::string logPath = getLogPath(dataDir);
         backend::services::Logger::init(logPath);
+
+        // Simulated serial hardware (MIB_SERIAL_MODE=sim), before any service
+        // can enumerate or open a port. A rig a test already installed stays.
+        // A broken scenario refuses the start rather than falling back to the
+        // real COM ports while the operator believes they are simulated.
+        if (!services::serialsim::installed())
+        {
+            std::string simError;
+            if (!services::serialsim::installFromEnvironment(simError) && !simError.empty())
+            {
+                SPDLOG_ERROR("AppBackend: simulated serial hardware not started: {}", simError);
+                return false;
+            }
+        }
 
         // Pipeline latency instrumentation: opt in via environment so field
         // diagnosis needs no rebuild. CSVs land in pipelineTimingDir_ on
@@ -3640,6 +3656,21 @@ namespace backend
         {
             std::lock_guard<std::mutex> lk(configJsonMutex_);
             lastConfigJson_ = json;
+        }
+        // The pump COM ports in config.json are reserved, so the startup
+        // nanopositioner probe never opens the pump RS485 bus, even before
+        // the operator connects the pumps (SerialPortClaims.h).
+        {
+            std::vector<std::string> pumpPorts;
+            const auto parsed = nlohmann::json::parse(json, nullptr, /*allow_exceptions=*/false);
+            if (parsed.is_object()) {
+                for (const char *key : {"pump_sample_com_port", "pump_sheath_com_port"}) {
+                    const auto it = parsed.find(key);
+                    if (it != parsed.end() && it->is_number_integer() && it->get<int>() > 0)
+                        pumpPorts.push_back("COM" + std::to_string(it->get<int>()));
+                }
+            }
+            services::portclaims::setReserved("the syringe pumps (config.json)", pumpPorts);
         }
         // Optional `rf_generator` block: {"enabled":true,"transport":"usb"|"lan",
         // "resource":"auto"|"/dev/usbtmc0"|"USB0::...::INSTR"|"host[:port]",

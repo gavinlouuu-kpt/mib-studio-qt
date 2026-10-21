@@ -58,6 +58,11 @@ public:
 
 std::vector<Endpoint> availableOeabtEndpoints();
 std::unique_ptr<INanopositionerBackend> createNanopositionerBackend(BackendKind kind);
+// Read-only identity probe: connect, then disconnect. Refused (false, `error`
+// says why) when the port is held or reserved in this process
+// (SerialPortClaims.h).
 bool probeNanopositionerEndpoint(const Endpoint& endpoint, std::string& error);
+// The serial port an endpoint opens: systemPath, or "COM<n>" for CoreMorrow.
+std::string endpointPortName(const Endpoint& endpoint);
 
 } // namespace backend::nanopositioner

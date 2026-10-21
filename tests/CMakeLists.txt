@@ -1,9 +1,12 @@
 find_package(Python3 COMPONENTS Interpreter QUIET)
 
 if(WIN32)
-    add_executable(serial_port_win32_timeout_test backend/serial_port_win32_timeout_test.cpp)
+    # The platform port defers to an installed simulated rig, so the rig
+    # compiles in too (SimulatedSerial.cpp).
+    add_executable(serial_port_win32_timeout_test backend/serial_port_win32_timeout_test.cpp
+        ${PROJECT_SOURCE_DIR}/src/backend/services/SimulatedSerial.cpp)
     target_include_directories(serial_port_win32_timeout_test PRIVATE ${PROJECT_SOURCE_DIR}/include ${PROJECT_SOURCE_DIR}/tests)
-    target_link_libraries(serial_port_win32_timeout_test PRIVATE setupapi advapi32)
+    target_link_libraries(serial_port_win32_timeout_test PRIVATE setupapi advapi32 spdlog::spdlog)
     add_test(NAME backend.serial_port_win32_timeout COMMAND serial_port_win32_timeout_test)
     set_tests_properties(backend.serial_port_win32_timeout PROPERTIES LABELS "backend;serial;fault-injection" TIMEOUT 15)
 else()
@@ -11,7 +14,8 @@ else()
     # faked and a pty for the rest. It compiles SerialPortPosix.cpp itself,
     # so it cannot join the shared runner (duplicate platform-port symbols).
     find_package(Threads REQUIRED)
-    add_executable(serial_port_posix_timeout_test backend/serial_port_posix_timeout_test.cpp)
+    add_executable(serial_port_posix_timeout_test backend/serial_port_posix_timeout_test.cpp
+        ${PROJECT_SOURCE_DIR}/src/backend/services/SimulatedSerial.cpp) # the port defers to an installed rig
     target_include_directories(serial_port_posix_timeout_test PRIVATE ${PROJECT_SOURCE_DIR}/include ${PROJECT_SOURCE_DIR}/tests)
     target_link_libraries(serial_port_posix_timeout_test PRIVATE spdlog::spdlog Threads::Threads)
     add_test(NAME backend.serial_port_posix_timeout COMMAND serial_port_posix_timeout_test)
@@ -392,6 +396,18 @@ mib_add_backend_test_executable(serial_bus_pty_test backend/serial_bus_pty_test.
 mib_backend_test_link(serial_bus_pty_test PRIVATE Threads::Threads)
 add_test(NAME backend.serial_bus_pty COMMAND $<TARGET_FILE:mib_backend_tests> serial_bus_pty_test)
 set_tests_properties(backend.serial_bus_pty PROPERTIES LABELS "backend" TIMEOUT 60)
+
+# Simulated serial hardware (SimulatedSerial.h): the rig itself, and startup
+# racing the operator's connects through the real AppBackend. The `backend`
+# label keeps both in the TSan/ASan lane.
+mib_add_backend_test_executable(serial_sim_test backend/serial_sim_test.cpp)
+mib_backend_test_link(serial_sim_test PRIVATE Threads::Threads)
+add_test(NAME backend.serial_sim COMMAND $<TARGET_FILE:mib_backend_tests> serial_sim_test)
+set_tests_properties(backend.serial_sim PROPERTIES LABELS "backend;serial;fault-injection" TIMEOUT 60)
+mib_add_backend_test_executable(serial_startup_race_test backend/serial_startup_race_test.cpp)
+mib_backend_test_link(serial_startup_race_test PRIVATE Threads::Threads)
+add_test(NAME backend.serial_startup_race COMMAND $<TARGET_FILE:mib_backend_tests> serial_startup_race_test)
+set_tests_properties(backend.serial_startup_race PROPERTIES LABELS "backend;serial;discovery;concurrency;stress" TIMEOUT 360)
 
 mib_add_backend_test_executable(mindvision_overview_mode_test backend/mindvision_overview_mode_test.cpp)
 mib_backend_test_link(mindvision_overview_mode_test PRIVATE Threads::Threads)

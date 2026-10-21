@@ -38,6 +38,7 @@ Jump to the notes that match your task:
 | Where on the wafer / which chip the camera sees (dot-grid fiducials) | [[services/DotGridService]] + [[frontend/OverviewTab]] (Wafer Grid toggle + overlay, Overview only) + [[task/2026-09-17-dot-grid-localization]] |
 | Device discovery (camera / nanopositioner / pulse-generator scans, startup auto-select) | [[services/DeviceDiscoveryService]] + [[frontend/System-Utilities]] (`DeviceInitManager`) + [[task/2026-09-15-device-discovery-service]] |
 | Hidden desktop / hardware held after close | [[frontend/DesktopInstance]] + [[task/2026-09-15-hardware-shutdown]] |
+| COM port races at startup, simulated serial hardware | [[services/SimulatedSerial]] + [[services/SerialPortClaims]] + `docs/howto/simulated-serial.md` |
 | Syringe pumps | [[services/SyringePumpService]] (serial via [[services/ISerialPort]]) + [[frontend/SyringePumpTab]] |
 | Crashes / observability | [[services/CrashReporter]] + [[diagnostics/CrashStateMirror]] |
 | React + Tauri migration / Rust bridge | [[architecture/Rust-Bridge]] + `docs/decisions/0003-rust-cxx-bridge.md` |

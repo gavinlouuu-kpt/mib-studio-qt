@@ -267,6 +267,8 @@ set_target_properties(oeabt_core PROPERTIES
 add_library(oeabt_serial STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/nanopositioner/oeabt/SerialTransport.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/SerialBus.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/services/SimulatedSerial.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/services/SerialPortClaims.cpp
 )
 target_include_directories(oeabt_serial PUBLIC ${PROJECT_SOURCE_DIR}/include)
 target_link_libraries(oeabt_serial PUBLIC oeabt_core spdlog::spdlog)
@@ -506,6 +508,7 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/services/SyringePumpService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/PulseGeneratorService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/StageConfig.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/services/SimulatedSerialScenario.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/StageService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/discovery/providers/Zc300Provider.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/RfGeneratorService.cpp

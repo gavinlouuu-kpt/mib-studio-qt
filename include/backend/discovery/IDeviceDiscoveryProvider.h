@@ -21,6 +21,7 @@ struct ProviderContext {
     std::chrono::steady_clock::time_point deadline{};
     std::uint64_t jobId{0};
     int attempt{1};
+    int maxAttempts{1}; // attempt == maxAttempts: the last chance this job gives
 };
 
 struct ProviderResult {

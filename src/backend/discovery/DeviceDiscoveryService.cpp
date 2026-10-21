@@ -728,6 +728,7 @@ void DeviceDiscoveryService::run(std::shared_ptr<Job> jobPtr)
             ctx.deadline = deadline;
             ctx.jobId = job.id;
             ctx.attempt = attempt;
+            ctx.maxAttempts = maxAttempts;
 
             std::shared_ptr<std::mutex> resource;
             const std::string cls = provider->resourceClass();

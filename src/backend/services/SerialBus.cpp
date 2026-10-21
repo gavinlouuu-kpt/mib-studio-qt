@@ -193,6 +193,9 @@ struct ModbusBusSession::IoState {
     // Released by the I/O thread right after it closed the port (see
     // SerialBusManager::acquire).
     std::shared_ptr<PortReservation> reservation{std::make_shared<PortReservation>()};
+    // Keeps this process's discovery probes off the port until it is closed
+    // (SerialPortClaims.h); released with the reservation.
+    portclaims::Claim claim;
     BusError openErrorCode{BusError::PortUnavailable};
     std::string openErrorDetail;
     std::atomic<bool> portOpen{false};
@@ -362,6 +365,7 @@ void ModbusBusSession::IoState::run()
         std::scoped_lock lock(mutex);
         reservation->release(); // the port is closed: a new session may open it
         reservation.reset();
+        claim.release();
         exited = true;
     }
     cv.notify_all();
@@ -609,15 +613,16 @@ void SerialBusManager::setShutdownJoinMsForTesting(int ms)
 
 std::string SerialBusManager::normalizeKey(const std::string& portName)
 {
-    // "COM3", "\\.\COM3", "ttyUSB0" and "/dev/ttyUSB0" must map to one bus.
-    std::string key = portName;
-    key.erase(0, key.find_first_not_of(" \t"));
-    if (const auto end = key.find_last_not_of(" \t"); end != std::string::npos) key.erase(end + 1);
-    if (key.rfind("\\\\.\\", 0) == 0) key.erase(0, 4);
-    if (const auto slash = key.find_last_of('/'); slash != std::string::npos) key = key.substr(slash + 1);
-    std::transform(key.begin(), key.end(), key.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return key;
+    // "COM3", "\\.\COM3", "ttyUSB0" and "/dev/ttyUSB0" must map to one bus,
+    // and to the same key the port claims use.
+    return portclaims::key(portName);
+}
+
+bool SerialBusManager::hasSession(const std::string& portName)
+{
+    std::scoped_lock lock(mutex_);
+    const auto it = sessions_.find(normalizeKey(portName));
+    return it != sessions_.end() && !it->second.session.expired();
 }
 
 std::shared_ptr<ModbusBusSession> SerialBusManager::acquire(const std::string& portName,
@@ -627,6 +632,16 @@ std::shared_ptr<ModbusBusSession> SerialBusManager::acquire(const std::string& p
 {
     using Clock = std::chrono::steady_clock;
     const std::string key = normalizeKey(portName);
+    // A discovery probe of this process may be on the port right now: the
+    // startup nanopositioner probe (CH34x adapters, the common RS485 dongle) or
+    // the pulse generator's "auto" sweep (every USB adapter, any chip, at its
+    // own baud). Wait for it, unlocked, rather than fail with "busy" or with
+    // "different settings" against the probe's short-lived session
+    // (SerialPortClaims.h). A probe on this thread is not waited for. The
+    // claim is kept only if this call opens a new session.
+    auto claim = portclaims::claimForService(portName, "serial bus " + portName, portclaims::kProbeYield,
+                                             /*busSession=*/true);
+
     // A session that is gone may still be closing its port. Its destructor
     // decides within kShutdownJoinMs: closed (the reservation is released) or
     // stalled (the I/O thread is detached, still holding the port). Wait for
@@ -678,6 +693,7 @@ std::shared_ptr<ModbusBusSession> SerialBusManager::acquire(const std::string& p
     }
 
     auto* raw = new ModbusBusSession(portName, settings, factory_, shutdownJoinMs_);
+    raw->io_->claim = std::move(claim); // released when its I/O thread closed the port
     BusError openError = BusError::PortUnavailable;
     std::string detail;
     if (!raw->start(&openError, &detail)) {
