@@ -49,7 +49,7 @@ const props = (over: Partial<WorkspaceProps> = {}): WorkspaceProps => ({
   preflightInput: INPUT, zStage: null, signature: "sig-now", confirmedFor: "", onConfirm, confirmLockedReason: "",
   experimentActive: false, onRefreshChecks, onOpenSetup,
   align: { facts: FACTS, subscribeFrames, onSwitchMode, writeRoi, lockedReason: "" },
-  experiment: { plan: PLAN, lockedReason: "", view: "Plan", onView: () => {} }, ...over,
+  experiment: { plan: PLAN, lockedReason: "", view: "Plan", onView: () => {}, live: { snapshot: null, running: false, experimentActive: false, hostProcessing: true, subscribeFrames: () => {}, onStopAcquisition: async () => {}, onStopRun: async () => ({ ok: false, message: "not in this test" }) } }, ...over,
 });
 const onView = vi.fn();
 /** The Experiment sub-view is held by App: here by a wrapper, as App does. */

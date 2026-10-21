@@ -356,3 +356,148 @@
   align-items: center;
   gap: var(--mib-space-2);
 }
+/* O4 Experiment · Live (A6b), as the board: live cells beside the scatter; the pinned cell beside
+   the run status; the sample queue beside the run lifecycle. One column when narrow. */
+.ws-shell .ws-live__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--mib-space-4);
+  align-items: stretch;
+}
+.ws-shell .ws-live__row--wide {
+  grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+}
+@media (max-width: 1100px) {
+  .ws-shell .ws-live__row,
+  .ws-shell .ws-live__row--wide {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.ws-shell .ws-live__layers {
+  display: inline-flex;
+  gap: var(--mib-space-1);
+}
+.ws-shell .ws-live__frame {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 96px;
+  margin-bottom: var(--mib-space-3);
+  border: 1px solid var(--mib-color-line);
+  border-radius: var(--mib-radius-sm);
+  background: var(--mib-color-tile);
+  overflow: hidden;
+}
+.ws-shell .ws-live__canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  image-rendering: pixelated;
+}
+.ws-shell .ws-live__frame-label {
+  position: absolute;
+  left: var(--mib-space-2);
+  bottom: var(--mib-space-2);
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: var(--mib-color-card);
+  font-size: var(--mib-font-size-xs);
+  font-weight: var(--mib-font-weight-semibold);
+  color: var(--mib-color-sub);
+}
+.ws-shell .ws-live__chart {
+  overflow-x: auto;
+}
+.ws-shell .ws-live__chart--pick svg {
+  cursor: crosshair;
+}
+.ws-shell .ws-live__pin {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--mib-space-4);
+}
+.ws-shell .ws-live__pin > .mib-facts {
+  flex: 1;
+  min-width: 220px;
+}
+/* A pin without an image: the reason in the crop's place, never a picture. */
+.ws-shell .ws-live__noimage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mib-space-1);
+  box-sizing: border-box;
+  padding: var(--mib-space-2);
+  border: 1px dashed var(--mib-color-line);
+  border-radius: var(--mib-radius-sm);
+  background: var(--mib-color-tile);
+  font-size: var(--mib-font-size-xs);
+  color: var(--mib-color-sub);
+}
+.ws-shell .ws-live__noimage strong {
+  font-size: var(--mib-font-size-sm);
+  color: var(--mib-color-ink);
+}
+.ws-shell .ws-live__file {
+  display: block;
+  margin-bottom: var(--mib-space-3);
+  font-size: var(--mib-font-size-md);
+  font-weight: var(--mib-font-weight-semibold);
+  color: var(--mib-color-ink);
+  overflow-wrap: anywhere;
+}
+.ws-shell .ws-live__stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: var(--mib-space-3);
+}
+.ws-shell .ws-live__samples {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: var(--mib-space-2);
+}
+.ws-shell .ws-live__sample {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mib-space-2);
+  padding: var(--mib-space-2) var(--mib-space-3);
+  border: 1px solid var(--mib-color-line);
+  border-radius: var(--mib-radius-sm);
+  font-size: var(--mib-font-size-sm);
+}
+.ws-shell .ws-live__sample--current {
+  border-color: var(--mib-color-accent);
+  background: var(--mib-color-accent-bg);
+}
+.ws-shell .ws-live__sample-name {
+  font-weight: var(--mib-font-weight-semibold);
+  color: var(--mib-color-ink);
+}
+.ws-shell .ws-live__lifecycle-next {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--mib-space-2);
+  margin-top: var(--mib-space-2);
+}
+/* The pinned cell's viewer: a modal over the workspace (a second window is not used: see the PR). */
+.ws-shell .ws-live__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--mib-space-6);
+  background: rgba(27, 38, 38, 0.45);
+}
+.ws-shell .ws-live__viewer {
+  max-width: min(760px, 100%);
+  max-height: 100%;
+  overflow: auto;
+  outline: none;
+}
+.ws-shell .ws-live__pin--large > .mib-facts {
+  min-width: 260px;
+}
