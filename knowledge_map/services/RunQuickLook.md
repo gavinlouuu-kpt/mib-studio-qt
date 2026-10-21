@@ -125,7 +125,9 @@ the pass never takes it there.
 - Never a fabricated 0: a valid set whose compound lacks `area`, `deformability` or `isValid` is
   an error; without `isTargetGroup` the group's n, of and % are null (declared stays as recorded);
   without `timestampNs` the event rate is `not_recorded`. The target group counts as declared only
-  with a boolean `image_processing.target_group.enabled` and every recorded member of its type;
+  with a boolean `image_processing.target_group.enabled` and every recorded member of its exact
+  type (area bounds integers in int range, never `true` as 1 or 10.5 truncated; the other bounds
+  finite numbers; the switches booleans);
   a bound the document does not record is null. The contract version is reported only when a
   marker is recorded (the reader's legacy Contract 1 is an inference, not a record).
 - Opening a file the review session already holds with a second reader is fine (HDF5 shares the

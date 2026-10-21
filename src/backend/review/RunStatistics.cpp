@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <limits>
 #include <set>
 #include <system_error>
 
@@ -409,6 +410,40 @@ namespace backend::review
         return s;
     }
 
+    namespace
+    {
+        // Every recorded target-group member of its exact type, before config_json::fromJson
+        // (which would read `true` as 1 or truncate 10.5 into an int bound): area bounds integers
+        // in int range, the other bounds finite numbers, the switches booleans. Unknown members
+        // are ignored, as fromJson ignores them.
+        bool wellTypedTargetGroup(const nlohmann::json &t)
+        {
+            for (const auto &item : t.items())
+            {
+                const auto &key = item.key();
+                const auto &v = item.value();
+                if (key == "enabled" || key == "emodulus_enabled")
+                {
+                    if (!v.is_boolean()) return false;
+                }
+                else if (key == "area_min" || key == "area_max")
+                {
+                    if (!v.is_number_integer()) return false;
+                    if (v.is_number_unsigned() ? v.get<std::uint64_t>() > static_cast<std::uint64_t>(std::numeric_limits<int>::max())
+                                               : (v.get<std::int64_t>() < std::numeric_limits<int>::min() ||
+                                                  v.get<std::int64_t>() > std::numeric_limits<int>::max()))
+                        return false;
+                }
+                else if (key == "deformability_min" || key == "deformability_max" || key == "emodulus_min" ||
+                         key == "emodulus_max")
+                {
+                    if (!v.is_number() || !std::isfinite(v.get<double>())) return false;
+                }
+            }
+            return true;
+        }
+    } // namespace
+
     RunStatisticsHeader readRunStatisticsHeader(const services::Hdf5Service &reader)
     {
         RunStatisticsHeader h;
@@ -458,7 +493,7 @@ namespace backend::review
             if (root.is_object())
                 if (const auto p = root.find("image_processing"); p != root.end() && p->is_object())
                     if (const auto t = p->find("target_group"); t != p->end() && t->is_object())
-                        if (const auto e = t->find("enabled"); e != t->end() && e->is_boolean())
+                        if (const auto e = t->find("enabled"); e != t->end() && e->is_boolean() && wellTypedTargetGroup(*t))
                         {
                             services::ProcessingConfig parsed;
                             if (processing::config_json::fromJson(nlohmann::json{{"target_group", *t}}, parsed))

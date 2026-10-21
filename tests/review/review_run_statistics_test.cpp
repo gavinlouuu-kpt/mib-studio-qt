@@ -269,7 +269,12 @@ int main()
         for (const auto &[name, group] :
              std::vector<std::pair<const char *, json>>{{"tg_empty.h5", json::object()},
                                                         {"tg_text.h5", {{"enabled", "yes"}}},
-                                                        {"tg_badbound.h5", {{"enabled", true}, {"area_min", "10"}}}})
+                                                        {"tg_badbound.h5", {{"enabled", true}, {"area_min", "10"}}},
+                                                        {"tg_boolbound.h5", {{"enabled", true}, {"area_min", true}}},
+                                                        {"tg_fraction.h5", {{"enabled", true}, {"area_max", 10.5}}},
+                                                        {"tg_overflow.h5", {{"enabled", true}, {"area_max", 4294967296LL}}},
+                                                        {"tg_booldeform.h5", {{"enabled", true}, {"deformability_max", false}}},
+                                                        {"tg_textgate.h5", {{"enabled", true}, {"emodulus_enabled", 1}}}})
         {
             const auto s = withConfig(name, group);
             MIB_EXPECT(s["target_group"]["declared"].is_null() && s["target_group"]["n"].is_null() &&
