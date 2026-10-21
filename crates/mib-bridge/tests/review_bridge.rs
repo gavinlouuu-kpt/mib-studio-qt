@@ -338,8 +338,8 @@ fn run_identity_in_info_and_the_probe() {
         serde_json::from_str(include_str!("../contract/review-contract.json")).unwrap();
     assert_eq!(
         ffi::review_bridge_abi_version(),
-        5,
-        "review ABI 5 (#783; the identity since 2, the E-LUT and profile since 3, the E-LUT provenance since 5)"
+        6,
+        "review ABI 6 (#716 A7a review_run_statistics; 5 is #783's E-LUT provenance; the identity since 2, the E-LUT and profile since 3)"
     );
     let max_paths = contract["review_probe"]["max_paths"].as_u64().unwrap() as usize;
     assert_eq!(max_paths, 256);
@@ -644,4 +644,60 @@ fn inspect_track_rows_and_reprocess_one_record() {
 
     bridge.pin_mut().shutdown();
     let _ = std::fs::remove_file(&path);
+}
+
+// Review ABI 6 (#716 A7a): review_run_statistics over the parity fixture: the contract's bounds,
+// computed runs, the reference confirmed by run_id with deltas, legacy / raw / missing per file, a
+// refused request, and nothing written.
+#[test]
+#[serial]
+fn run_statistics_twin_over_the_parity_fixture() {
+    let contract: serde_json::Value =
+        serde_json::from_str(include_str!("../contract/review-contract.json")).unwrap();
+    let c = &contract["review_run_statistics"];
+    assert_eq!((c["max_paths"].as_u64(), c["path_max_bytes"].as_u64()), (Some(32), Some(4096)));
+    assert!(c["semantics"].as_str().unwrap().contains("run_quick_look"));
+    let path = |v: u32| {
+        let p = fixture_path(&format!("quick_look_{v}"));
+        assert!(ffi::review_fixture_write_quick_look(&p.to_string_lossy(), v), "fixture {v}");
+        p.to_string_lossy().into_owned()
+    };
+    let (v3, legacy, even, raw) = (path(0), path(1), path(3), path(5));
+    assert!(!ffi::review_fixture_write_quick_look(&v3, 6), "unknown variant");
+    let before = std::fs::read(&v3).unwrap();
+    let mut bridge = ffi::new_review_bridge();
+    assert!(bridge.pin_mut().initialize(""));
+    let request = serde_json::json!({
+        "paths": [v3, legacy, raw, format!("{v3}.missing")],
+        "reference": { "path": even, "run_id": ffi::review_fixture_quick_look_run_id(3) },
+    });
+    let r: serde_json::Value = serde_json::from_str(&bridge.pin_mut().review_run_statistics(&request.to_string())).unwrap();
+    assert_eq!(r["ok"], true, "{r}");
+    let runs = r["runs"].as_array().unwrap();
+    assert_eq!(runs.len(), 4);
+    assert_eq!(runs[0]["status"], "computed");
+    assert_eq!(runs[0]["computed_at"], "on_demand");
+    assert_eq!(runs[0]["from_cache"], false);
+    assert_eq!(runs[0]["statistics"]["counts"]["valid"], "21");
+    assert_eq!(runs[0]["delta"]["emodulus_median_kpa"]["withheld"], "lut_differs");
+    assert_eq!(runs[1]["statistics"]["emodulus"]["status"], "not_recorded");
+    assert_eq!(runs[1]["delta"]["area_um2_median"]["withheld"], "factor_not_recorded");
+    assert_eq!(runs[2]["status"], "not_available");
+    assert_eq!(runs[3]["status"], "error");
+    assert_eq!(r["reference"]["confirmed"], true);
+    // The golden reply the TypeScript decoder tests read (contract/fixtures/run-quick-look-v1.json,
+    // the same request over /data/runs/fixture_<variant>.h5) has exactly these numbers.
+    let golden: serde_json::Value =
+        serde_json::from_str(include_str!("../contract/fixtures/run-quick-look-v1.json")).unwrap();
+    for i in 0..4 {
+        for key in ["status", "statistics", "delta", "computed_at", "from_cache"] {
+            assert_eq!(runs[i][key], golden["runs"][i][key], "golden run {i} {key}: regenerate the fixture");
+        }
+    }
+    assert_eq!(r["reference"]["run"]["statistics"], golden["reference"]["run"]["statistics"]);
+    let refused: serde_json::Value =
+        serde_json::from_str(&bridge.pin_mut().review_run_statistics(r#"{"paths":[]}"#)).unwrap();
+    assert_eq!(refused["ok"], false, "{refused}");
+    assert_eq!(std::fs::read(&v3).unwrap(), before, "nothing written");
+    bridge.pin_mut().shutdown();
 }

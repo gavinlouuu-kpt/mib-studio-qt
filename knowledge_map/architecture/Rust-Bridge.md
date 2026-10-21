@@ -520,6 +520,38 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
   `stage_motion_is_control_only_but_stop_is_not` in the server;
   `backend.stage_bridge_facade`.
 
+## ABI 44: the run quick look (#716 A7a)
+
+Additive over ABI 43. `run_quick_look {paths: 1..32, reference?: {path, run_id, start_generation?}}`
+returns the per-run statistics of closed HDF5 experiment runs and `run − reference` deltas
+([[../services/RunQuickLook]]). Contract: `run_quick_look` (bounds, `commands`, `when_computed`,
+`reply`, `run`, `statistics`, `delta`).
+
+- **Path:** C++ `BackendFacade::runQuickLookJson` (a JSON document; the cache in
+  `AppBackend::runStatisticsCache`, filled at close by the coordinator) -> cxx
+  `run_quick_look(request_json) -> String` -> `mib-app-commands` `run_quick_look(paths,
+  reference)` (`QuickLookReference`, strict serde: unknown keys refused, `run_id` required but
+  nullable; `quick_look_request` checks the bounds before the backend; Tauri and the WebSocket
+  server alike) -> `desktop/src/bridge.ts` `runQuickLook` (`runQuickLook.ts`).
+- **A read for every client:** not in the server's `CONTROL_COMMANDS`; it never writes or
+  actuates. A miss is read only while the instrument is idle and no review job runs, otherwise
+  the file is `deferred`; a cache hit is served during a run.
+- **One function, two bridges:** the review bridge's `review_run_statistics` (review ABI 6, below)
+  returns the same document from the same `computeRunStatistics`.
+- **ABI touch points:** `bridge-contract.json` `abi_version` 44 and `run_quick_look`; `shim.cpp`
+  `bridge_abi_version()` and static_asserts on `RunStatistics.h`'s constants; `contract.rs`
+  `abi_version_is_stable`; the generated `bridgeContract.ts` (`RUN_QUICK_LOOK`) and
+  `frame_packet_contract.rs` (`RUN_QUICK_LOOK_MAX_PATHS`, `_PATH_MAX_BYTES`, `_RUN_ID_MAX_BYTES`);
+  `gen_bridge_contract.py` checks the contract's numbers against `RunStatistics.h`; the
+  `eventAdapter.test.ts` pin.
+- **Tests:** `contract.rs` `run_quick_look_is_described` and
+  `run_quick_look_equals_review_run_statistics` (both bridges over the parity fixture: every
+  shared field of every run and the reference, computed and then cached); `dispatch.rs`
+  `run_quick_look_through_dispatch` (strict arguments, the Tauri function, the cache, no writes);
+  `ws.rs` `run_quick_look_over_the_websocket` (a viewer reads, control unchanged); the server's
+  `run_quick_look_is_a_read`; `runQuickLook.test.ts`; C++ `review.run_statistics`,
+  `e2e.run_quick_look`.
+
 ## ABI 43: the applied method's calibration declarations in readiness (#776)
 
 Additive over ABI 42. The workspace could not tell from the bridge that the applied method is a
@@ -928,6 +960,11 @@ attach to):
   paths, per-file errors, refused while a job runs; it goes through
   `ReviewJobs::probeRuns`, so it is serialized with the session's reads and
   the job lane, see [[../services/ReviewSession]]),
+  `review_run_statistics(request_json)` (review ABI 6, #716 A7a: the run
+  quick look's twin for B2 R2, a JSON string, the same request and reply
+  document as the backend bridge's `run_quick_look` from the same C++
+  function; each file through `ReviewJobs::runStatistics`, deferred while a
+  job runs; no cache; paths used as given; see [[../services/RunQuickLook]]),
   `fetch_review_rows` (full-column `ReviewRow`s),
   `fetch_review_track_rows(valid, track_id, max)` (review ABI 3, #717 B3b:
   one track's records → `ReviewTrackRows { ok, message, total, truncated,
@@ -971,7 +1008,11 @@ attach to):
   5: the experiment fixture without a snapshot and with a verbatim
   `@emodulus_lut_json`; empty = none, regenerated before #764) and
   `review_fixture_write_population(path, cells, seed)` (two seeded
-  populations for the Charts view; `examples/review_fixture --population N`).
+  populations for the Charts view; `examples/review_fixture --population N`),
+  and (review ABI 6) `review_fixture_write_quick_look(path, variant)` /
+  `review_fixture_quick_look_run_id(variant)` (the run quick look's parity
+  fixture, `RunStatisticsFixture.h`; also used by the backend bridge's and the
+  server's tests).
 - **Run identity (review ABI 2; E-LUT and profile since 3).** cxx structs
   carry no `Option`, so `ReviewRunIdentity` (with `ReviewEModulusLut` and
   `profile_id` since review ABI 3), `ReviewAnnotation` and `ReviewRunProbe` pair every
@@ -990,11 +1031,12 @@ attach to):
   regenerated from #764 on has `has_snapshot` false with only these two
   set.
 - **Contract.** YOFO Review has its own versioned contract,
-  `contract/review-contract.json` (`review_abi_version` 5 since #783: the
-  identity's E-LUT record of a regenerated file and its provenance; 4 since
-  #764: the reprocess reply names its E-LUT; 3 since #717 B3b, 2 since B1a;
-  v1 was the ReviewSession surface; 6 and above are free for later steps,
-  S12 included), so the shared
+  `contract/review-contract.json` (`review_abi_version` 6 since #716 A7a:
+  `review_run_statistics`, whose `review_run_statistics` bounds the generator
+  checks against `RunStatistics.h`; 5 since #783: the identity's E-LUT record
+  of a regenerated file and its provenance; 4 since #764: the reprocess reply
+  names its E-LUT; 3 since #717 B3b, 2 since B1a; v1 was the ReviewSession
+  surface; 7 and above are free for later steps, S12 included), so the shared
   `bridge-contract.json` is never touched for it: `run_identity` and
   `review_probe` (prose + `max_paths`, rendered as `REVIEW_PROBE` and
   checked against `ReviewTypes.h` `kReviewProbeMaxPaths` by the generator),

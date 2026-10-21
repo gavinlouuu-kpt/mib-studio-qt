@@ -1,0 +1,621 @@
+{
+ "message": "2 of 4 run(s) computed",
+ "ok": true,
+ "reference": {
+  "confirmed": true,
+  "message": "",
+  "requested": {
+   "path": "/data/runs/fixture_3.h5",
+   "run_id": "33333333-3333-4333-8333-333333333333",
+   "start_generation": "8"
+  },
+  "run": {
+   "computed_at": "on_demand",
+   "delta": null,
+   "file": {
+    "canonical_path": "/data/runs/fixture_3.h5",
+    "size_bytes": "55352"
+   },
+   "from_cache": false,
+   "message": "",
+   "path": "/data/runs/fixture_3.h5",
+   "statistics": {
+    "accounting": {
+     "admitted": "30",
+     "cancelled_by_policy": "5",
+     "completion": "intentionallyPartial",
+     "completion_reason": "declared policy: storeMalformed=0 cancelledByPolicy=5 pendingAtStop=0 persistencePendingAtStop=0 persistenceCancelledByPolicy=0 (delivery policy allows drops)",
+     "empty": "0",
+     "objects_detected": "0",
+     "pending_at_stop": "0",
+     "persistence_admitted": "25",
+     "persistence_committed": "25",
+     "persistence_failed": "0",
+     "processed": "25",
+     "processing_failed": "0",
+     "read_error": null,
+     "reconciled": true,
+     "scientifically_rejected": "0",
+     "store_loss": "0"
+    },
+    "area_um2": {
+     "median": 15.75,
+     "n": "21",
+     "pixel_to_micron": 0.25
+    },
+    "counts": {
+     "excluded": "2",
+     "finite": "20",
+     "set_rows": "26",
+     "valid": "22"
+    },
+    "deformability": {
+     "median": 0.059,
+     "n": "21"
+    },
+    "emodulus": {
+     "lut": {
+      "loaded": true,
+      "lut_id": "fixture_lut",
+      "provenance": "snapshot",
+      "revision": "1",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "source": "bundled-fallback"
+     },
+     "median_kpa": 3.75,
+     "n": "15",
+     "out_of_domain": "4",
+     "status": "computed"
+    },
+    "event_rate": {
+     "per_s": 440.0,
+     "span_s": 0.05,
+     "status": "computed",
+     "ticks_per_second": "1000000"
+    },
+    "flags": [
+     "low_n",
+     "loss",
+     "e_out_of_domain"
+    ],
+    "identity": {
+     "annotation": null,
+     "annotation_unreadable": false,
+     "calibration_record_id": null,
+     "config_canonical_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+     "contract_version": 2,
+     "core_version": "fixture-core-1",
+     "end_time_ns": "6000000000",
+     "experiment_id": "0f0e0d0c-0b0a-4908-8706-050403020100",
+     "has_snapshot": true,
+     "method_revision_id": null,
+     "operator": null,
+     "profile_id": "fixture-b",
+     "run_id": "33333333-3333-4333-8333-333333333333",
+     "run_index": 2,
+     "sample_ref": "S1",
+     "snapshot_unreadable": false,
+     "snapshot_version": 3,
+     "start_generation": "8",
+     "start_time_ns": "5000000000"
+    },
+    "overlay": {
+     "area_px": [
+      200.0,
+      204.0,
+      212.0,
+      216.0,
+      224.0,
+      232.0,
+      236.0,
+      240.0,
+      244.0,
+      252.0,
+      256.0,
+      260.0,
+      264.0,
+      268.0,
+      272.0,
+      280.0,
+      284.0,
+      288.0,
+      296.0,
+      300.0
+     ],
+     "area_um2": [
+      12.5,
+      12.75,
+      13.25,
+      13.5,
+      14.0,
+      14.5,
+      14.75,
+      15.0,
+      15.25,
+      15.75,
+      16.0,
+      16.25,
+      16.5,
+      16.75,
+      17.0,
+      17.5,
+      17.75,
+      18.0,
+      18.5,
+      18.75
+     ],
+     "deformability": [
+      0.02,
+      0.023,
+      0.029,
+      0.032,
+      0.038000000000000006,
+      0.044,
+      0.047,
+      0.05,
+      0.053000000000000005,
+      0.059,
+      0.062,
+      0.065,
+      0.068,
+      0.07100000000000001,
+      0.074,
+      0.08,
+      0.083,
+      0.08600000000000001,
+      0.09200000000000001,
+      0.095
+     ],
+     "points": "20",
+     "stride": "1",
+     "target_group": [
+      1,
+      0,
+      1,
+      0,
+      1,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      1,
+      0,
+      1,
+      0,
+      1,
+      0
+     ]
+    },
+    "schema_version": 1,
+    "target_group": {
+     "bounds": {
+      "area_um2_max": 30,
+      "area_um2_min": 10,
+      "deformability_max": 0.2,
+      "deformability_min": 0.0,
+      "emodulus_gated": false,
+      "emodulus_kpa_max": null,
+      "emodulus_kpa_min": null
+     },
+     "declared": true,
+     "n": "8",
+     "of": "22",
+     "percent": 36.36363636363637
+    }
+   },
+   "status": "computed"
+  }
+ },
+ "runs": [
+  {
+   "computed_at": "on_demand",
+   "delta": {
+    "area_um2_median": {
+     "value": -0.25,
+     "withheld": null
+    },
+    "deformability_median": {
+     "value": -0.0029999999999999957,
+     "withheld": null
+    },
+    "differs": {
+     "contract": "same",
+     "core": "same",
+     "method_revision": "same",
+     "profile": "differs"
+    },
+    "emodulus_median_kpa": {
+     "value": null,
+     "withheld": "lut_differs"
+    }
+   },
+   "file": {
+    "canonical_path": "/data/runs/fixture_0.h5",
+    "size_bytes": "55096"
+   },
+   "from_cache": false,
+   "message": "",
+   "path": "/data/runs/fixture_0.h5",
+   "statistics": {
+    "accounting": {
+     "admitted": "30",
+     "cancelled_by_policy": "5",
+     "completion": "intentionallyPartial",
+     "completion_reason": "declared policy: storeMalformed=0 cancelledByPolicy=5 pendingAtStop=0 persistencePendingAtStop=0 persistenceCancelledByPolicy=0 (delivery policy allows drops)",
+     "empty": "0",
+     "objects_detected": "0",
+     "pending_at_stop": "0",
+     "persistence_admitted": "25",
+     "persistence_committed": "25",
+     "persistence_failed": "0",
+     "processed": "25",
+     "processing_failed": "0",
+     "read_error": null,
+     "reconciled": true,
+     "scientifically_rejected": "0",
+     "store_loss": "0"
+    },
+    "area_um2": {
+     "median": 15.5,
+     "n": "20",
+     "pixel_to_micron": 0.25
+    },
+    "counts": {
+     "excluded": "2",
+     "finite": "19",
+     "set_rows": "25",
+     "valid": "21"
+    },
+    "deformability": {
+     "median": 0.056,
+     "n": "20"
+    },
+    "emodulus": {
+     "lut": {
+      "loaded": true,
+      "lut_id": "fixture_lut",
+      "provenance": "snapshot",
+      "revision": "1",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "source": "bundled-fallback"
+     },
+     "median_kpa": 3.5,
+     "n": "14",
+     "out_of_domain": "4",
+     "status": "computed"
+    },
+    "event_rate": {
+     "per_s": 437.5,
+     "span_s": 0.048,
+     "status": "computed",
+     "ticks_per_second": "1000000"
+    },
+    "flags": [
+     "low_n",
+     "loss",
+     "e_out_of_domain"
+    ],
+    "identity": {
+     "annotation": null,
+     "annotation_unreadable": false,
+     "calibration_record_id": null,
+     "config_canonical_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+     "contract_version": 2,
+     "core_version": "fixture-core-1",
+     "end_time_ns": "6000000000",
+     "experiment_id": "0f0e0d0c-0b0a-4908-8706-050403020100",
+     "has_snapshot": true,
+     "method_revision_id": null,
+     "operator": null,
+     "profile_id": "fixture",
+     "run_id": "11111111-1111-4111-8111-111111111111",
+     "run_index": 1,
+     "sample_ref": "S1",
+     "snapshot_unreadable": false,
+     "snapshot_version": 3,
+     "start_generation": "7",
+     "start_time_ns": "5000000000"
+    },
+    "overlay": {
+     "area_px": [
+      200.0,
+      204.0,
+      212.0,
+      216.0,
+      224.0,
+      232.0,
+      236.0,
+      240.0,
+      244.0,
+      252.0,
+      256.0,
+      260.0,
+      264.0,
+      268.0,
+      272.0,
+      280.0,
+      284.0,
+      288.0,
+      296.0
+     ],
+     "area_um2": [
+      12.5,
+      12.75,
+      13.25,
+      13.5,
+      14.0,
+      14.5,
+      14.75,
+      15.0,
+      15.25,
+      15.75,
+      16.0,
+      16.25,
+      16.5,
+      16.75,
+      17.0,
+      17.5,
+      17.75,
+      18.0,
+      18.5
+     ],
+     "deformability": [
+      0.02,
+      0.023,
+      0.029,
+      0.032,
+      0.038000000000000006,
+      0.044,
+      0.047,
+      0.05,
+      0.053000000000000005,
+      0.059,
+      0.062,
+      0.065,
+      0.068,
+      0.07100000000000001,
+      0.074,
+      0.08,
+      0.083,
+      0.08600000000000001,
+      0.09200000000000001
+     ],
+     "points": "19",
+     "stride": "1",
+     "target_group": [
+      1,
+      0,
+      1,
+      0,
+      1,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      1,
+      0,
+      1,
+      0,
+      1
+     ]
+    },
+    "schema_version": 1,
+    "target_group": {
+     "bounds": {
+      "area_um2_max": 30,
+      "area_um2_min": 10,
+      "deformability_max": 0.2,
+      "deformability_min": 0.0,
+      "emodulus_gated": false,
+      "emodulus_kpa_max": null,
+      "emodulus_kpa_min": null
+     },
+     "declared": true,
+     "n": "8",
+     "of": "21",
+     "percent": 38.095238095238095
+    }
+   },
+   "status": "computed"
+  },
+  {
+   "computed_at": "on_demand",
+   "delta": {
+    "area_um2_median": {
+     "value": null,
+     "withheld": "factor_not_recorded"
+    },
+    "deformability_median": {
+     "value": -0.0029999999999999957,
+     "withheld": null
+    },
+    "differs": {
+     "contract": "differs",
+     "core": "same",
+     "method_revision": "unknown",
+     "profile": "unknown"
+    },
+    "emodulus_median_kpa": {
+     "value": null,
+     "withheld": "no_emodulus"
+    }
+   },
+   "file": {
+    "canonical_path": "/data/runs/fixture_1.h5",
+    "size_bytes": "47712"
+   },
+   "from_cache": false,
+   "message": "",
+   "path": "/data/runs/fixture_1.h5",
+   "statistics": {
+    "accounting": null,
+    "area_um2": {
+     "median": null,
+     "n": null,
+     "pixel_to_micron": null
+    },
+    "counts": {
+     "excluded": "2",
+     "finite": "19",
+     "set_rows": "25",
+     "valid": "21"
+    },
+    "deformability": {
+     "median": 0.056,
+     "n": "20"
+    },
+    "emodulus": {
+     "lut": null,
+     "median_kpa": null,
+     "n": null,
+     "out_of_domain": null,
+     "status": "not_recorded"
+    },
+    "event_rate": {
+     "per_s": null,
+     "span_s": null,
+     "status": "not_recorded",
+     "ticks_per_second": null
+    },
+    "flags": [
+     "low_n",
+     "legacy",
+     "no_accounting",
+     "factor_not_recorded"
+    ],
+    "identity": {
+     "annotation": null,
+     "annotation_unreadable": false,
+     "calibration_record_id": null,
+     "config_canonical_sha256": null,
+     "contract_version": 1,
+     "core_version": "fixture-core-1",
+     "end_time_ns": "6000000000",
+     "experiment_id": null,
+     "has_snapshot": false,
+     "method_revision_id": null,
+     "operator": null,
+     "profile_id": null,
+     "run_id": null,
+     "run_index": null,
+     "sample_ref": null,
+     "snapshot_unreadable": false,
+     "snapshot_version": null,
+     "start_generation": null,
+     "start_time_ns": "5000000000"
+    },
+    "overlay": {
+     "area_px": [
+      200.0,
+      204.0,
+      212.0,
+      216.0,
+      224.0,
+      232.0,
+      236.0,
+      240.0,
+      244.0,
+      252.0,
+      256.0,
+      260.0,
+      264.0,
+      268.0,
+      272.0,
+      280.0,
+      284.0,
+      288.0,
+      296.0
+     ],
+     "area_um2": null,
+     "deformability": [
+      0.02,
+      0.023,
+      0.029,
+      0.032,
+      0.038000000000000006,
+      0.044,
+      0.047,
+      0.05,
+      0.053000000000000005,
+      0.059,
+      0.062,
+      0.065,
+      0.068,
+      0.07100000000000001,
+      0.074,
+      0.08,
+      0.083,
+      0.08600000000000001,
+      0.09200000000000001
+     ],
+     "points": "19",
+     "stride": "1",
+     "target_group": [
+      1,
+      0,
+      1,
+      0,
+      1,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      1,
+      0,
+      1,
+      0,
+      1
+     ]
+    },
+    "schema_version": 1,
+    "target_group": {
+     "bounds": null,
+     "declared": null,
+     "n": null,
+     "of": null,
+     "percent": null
+    }
+   },
+   "status": "computed"
+  },
+  {
+   "computed_at": null,
+   "delta": null,
+   "file": {
+    "canonical_path": "/data/runs/fixture_5.h5",
+    "size_bytes": "16184"
+   },
+   "from_cache": false,
+   "message": "not available until exported to HDF5",
+   "path": "/data/runs/fixture_5.h5",
+   "statistics": null,
+   "status": "not_available"
+  },
+  {
+   "computed_at": null,
+   "delta": null,
+   "file": null,
+   "from_cache": false,
+   "message": "No such file: /data/runs/missing.h5",
+   "path": "/data/runs/missing.h5",
+   "statistics": null,
+   "status": "error"
+  }
+ ],
+ "schema_version": 1
+}

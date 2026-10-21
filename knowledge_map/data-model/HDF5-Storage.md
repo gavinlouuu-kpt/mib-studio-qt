@@ -259,6 +259,10 @@ Tests: `recording.run_start_identity`, `backend.experiment_readiness`.
 
 - Metadata only: `readValidMetadata`, `readInvalidMetadata`. Use these to
   populate `HdfMetricsModel` without loading image bytes.
+- Metadata columns (#716 A7a): `readMetadataColumns` reads six members of the
+  same compound by hyperslab, in bounded chunks, for the run quick look
+  ([[../services/RunQuickLook]]). No schema change: nothing new is written,
+  the quick look's numbers live only in memory.
 - Recording mode: `isRecordingFile()` probes `/recording_info`;
   `readRecordingMetadata` fills minimal `ProcessedFrame`s (index +
   timestampNs only); `readRecordingInfo` reads the core attributes

@@ -18,6 +18,7 @@
 #include "backend/app/WallClock.h"
 #include "backend/app/ExperimentReadiness.h"
 #include "backend/recording/RecordingAccounting.h"
+#include "backend/review/RunStatistics.h"
 
 #include <atomic>
 #include <condition_variable>
@@ -91,6 +92,19 @@ public:
     // moves are queued under the same lock (withIdleConfiguration), which makes the check
     // and the queueing atomic against each other.
     void setStageBusyProbe(std::function<bool()> probe);
+
+    // Run quick look at close (#716 A7a, finalization step 6b): after the calibration record and
+    // before the terminal status, the run's statistics (review/RunStatistics.h) are computed from
+    // the closed file and put in AppBackend's in-memory cache (runStatisticsCache); nothing is
+    // written to the file, a store or the snapshot, and it never fails the run (its time is
+    // logged). The reader serializes that read with HDF5 users outside the coordinator: the
+    // facade installs one that runs it under its review lanes' lock and session mutex
+    // (review::ReviewJobs::runStatistics, #722), which defers it while a review job runs (the
+    // numbers are then computed on demand when the instrument is idle). Without one the file is
+    // read directly, as the calibration derivation reads it. The reader is called with its own
+    // lock held, so clearing it (nullptr, the facade's teardown) waits for a call in progress.
+    using ClosedRunStatisticsReader = std::function<review::RunStatisticsResult(const std::string& path)>;
+    void setClosedRunStatisticsReader(ClosedRunStatisticsReader reader);
 
     // The reconciled accounting of the last finalized run (#549), with that run's start
     // generation, or false before any run has finished. The UI uses it for the true admitted-frame
@@ -209,6 +223,8 @@ private:
     // thread-safe, #722). Never fails the run.
     void deriveCalibrationRecord(const RunConfigurationSnapshot& run, const CalibrationMethodSpec& spec,
                                  const CalibrationIdentity& identity, bool finalizationOk);
+    // Step 6b's run quick look (setClosedRunStatisticsReader). Lock released, never throws.
+    void quickLookAtClose(const RunConfigurationSnapshot& run);
     ExperimentStatus snapshotLocked() const;
     // Publish the current snapshot: copies it, releases `lk`, invokes the
     // callback, re-acquires `lk`.
@@ -224,6 +240,8 @@ private:
     AppBackend& backend_;
     mutable std::mutex mutex_;
     std::function<bool()> stageBusyProbe_; // under mutex_
+    std::mutex closedRunStatisticsMutex_;
+    ClosedRunStatisticsReader closedRunStatisticsReader_; // under closedRunStatisticsMutex_
     std::atomic<uint64_t> readinessGeneration_{0};
     InvalidationKey lastKey_;
     bool haveLastKey_{false};

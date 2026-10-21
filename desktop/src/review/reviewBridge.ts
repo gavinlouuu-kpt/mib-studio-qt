@@ -14,6 +14,7 @@ import { REVIEW_EMODULUS_LUT_PROVENANCES, REVIEW_FRAME_PACKET, REVIEW_PIXEL_FORM
 import { decimalU64, type FramePacket } from "../framePacket";
 import { decodeReviewPacket } from "./reviewPacket";
 import { gateReviewCommand } from "./reviewAvailability";
+import { decodeRunQuickLookReply, runQuickLookArgs, type RunQuickLookReference, type RunQuickLookReply } from "../runQuickLook";
 
 function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   return gateReviewCommand(cmd, () => transportInvoke<T>(cmd, args));
@@ -387,6 +388,11 @@ export const reviewBridge = {
     const r = await invoke<ReviewProbeResult>("review_probe_runs", { paths });
     return { ok: !!r.ok, message: String(r.message ?? ""), runs: r.runs ?? [] };
   },
+  /** Review ABI 6 (#716 A7a): the run quick look's twin for B2 R2: per-run statistics and
+   * run - reference deltas, the same document as the backend bridge's `run_quick_look` (one C++
+   * function). Each file is deferred while a review job runs; nothing is written. */
+  runStatistics: async (paths: string[], reference?: RunQuickLookReference | null): Promise<RunQuickLookReply> =>
+    decodeRunQuickLookReply(await invoke<unknown>("review_run_statistics", runQuickLookArgs(paths, reference))),
   rows: (valid: boolean, offset: number | string, count: number) =>
     invoke<ReviewRows>("fetch_review_rows", { valid, offset: decimalU64(offset), count }),
   /** Review ABI 3 (#717 B3b): the linked records of one cell (its track),

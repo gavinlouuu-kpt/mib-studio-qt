@@ -68,6 +68,14 @@ a macro). Unit-tested by `tests/backend/hdf_write_queue_test.cpp`.
   `readImageByIndex` / `readImagesRange` using hyperslabs.
 - Metadata-only reads (`readValidMetadata` / `readInvalidMetadata`) skip
   image payloads — used by [[../frontend/HdfReviewTab]] for lazy virtualization.
+- **Column reads** (`readMetadataColumns(valid, chunkRows, sink)`, #716 A7a):
+  six members of the metadata compound (`timestampNs`, `area`,
+  `deformability`, `youngsModulus`, `isValid`, `isTargetGroup`) as
+  `MetadataColumnRow`s, by hyperslab in chunks of at most `chunkRows`
+  (default `kMetadataColumnChunkRows` = 65536), handed to `sink` in set order:
+  never the whole row and never every row at once (the PZ7035's RAM). A member
+  the file predates reads as 0, as in `readValidMetadata`. The run quick look's
+  column path ([[RunQuickLook]]); byte-equal results to the row path are tested.
 - Chart snapshots: `saveChartSnapshot` / `readChartSnapshot` (2D/3D images
   without batch dim).
 - **Multi-image series** (`multi_image_enabled` in ProcessingConfig):

@@ -9,6 +9,8 @@
 #include "backend/recording/Hdf5Service.h"
 #include "backend/review/ReviewJobs.h"
 #include "backend/review/ReviewSession.h"
+#include "backend/review/RunStatistics.h"
+#include "backend/review/RunStatisticsFixture.h"
 #include "backend/processing/ProcessingService.h"
 
 #include <opencv2/core.hpp>
@@ -58,6 +60,10 @@ static_assert(static_cast<std::uint32_t>(backend::recording::RunCompletionState:
 static_assert(static_cast<std::uint32_t>(backend::recording::RunCompletionState::Unknown) == 4);
 // review-contract.json review_probe.max_paths (review ABI 2, #717 B1a).
 static_assert(br::kReviewProbeMaxPaths == 256);
+// review-contract.json review_run_statistics (review ABI 6, #716 A7a).
+static_assert(br::kRunQuickLookMaxPaths == 32);
+static_assert(br::kRunQuickLookPathMaxBytes == 4096);
+static_assert(static_cast<std::uint32_t>(br::RunStatisticsFixture::RawRecording) == 5);
 
 // Contract review_pixel_formats.
 constexpr std::uint64_t kPixelFormatMono8 = 0;
@@ -433,6 +439,37 @@ ReviewProbeResult ReviewBridge::review_probe_runs(rust::Vec<rust::String> paths)
     return out;
 }
 
+rust::String ReviewBridge::review_run_statistics(rust::Str request_json) {
+    try {
+        br::RunQuickLookRequest request;
+        std::string error;
+        if (!br::parseRunQuickLookRequest(toStd(request_json), request, error))
+            return rust::String(br::runQuickLookRefusedJson(error));
+        // The same function as the backend bridge's run_quick_look; no cache and no instrument
+        // here, so only a running review job defers a file (ReviewJobs::runStatistics, #722).
+        const auto one = [this](const std::string& path) {
+            br::RunStatisticsResult r;
+            r.path = path;
+            br::RunFileStamp stamp;
+            if (!br::stampRunFile(path, stamp, r.message)) return r;
+            r = impl_->jobs->runStatistics(path, "on_demand");
+            r.path = path;
+            r.stamp = stamp;
+            return r;
+        };
+        std::vector<br::RunStatisticsResult> runs;
+        runs.reserve(request.paths.size());
+        for (const auto& path : request.paths) runs.push_back(one(path));
+        std::optional<br::RunStatisticsResult> reference;
+        if (request.reference) reference = one(request.reference->path);
+        return rust::String(br::runQuickLookReplyJson(runs, request.reference, reference));
+    } catch (const std::exception& e) {
+        return rust::String(br::runQuickLookRefusedJson(std::string("review_run_statistics failed: ") + e.what()));
+    } catch (...) {
+        return rust::String(br::runQuickLookRefusedJson("review_run_statistics failed"));
+    }
+}
+
 ReviewRows ReviewBridge::fetch_review_rows(bool valid, std::uint64_t offset, std::uint64_t count) {
     ReviewRows out{};
     try {
@@ -784,8 +821,8 @@ std::unique_ptr<ReviewBridge> new_review_bridge() { return std::make_unique<Revi
 // E-LUT it used (emodulus_lut, emodulus_lut_sha256): the run's own. v5
 // (#783): the identity's emodulus_lut also reads a regenerated file's
 // @emodulus_lut_json, named by emodulus_lut_provenance (snapshot | recorded |
-// host).
-std::uint32_t review_bridge_abi_version() { return 5; }
+// host). v6 (#716 A7a): review_run_statistics, the run quick look's twin.
+std::uint32_t review_bridge_abi_version() { return 6; }
 
 namespace {
 
@@ -900,6 +937,16 @@ bool review_fixture_write_regenerated(rust::Str path, rust::Str emodulus_lut_jso
     } catch (...) {
         return false;
     }
+}
+
+bool review_fixture_write_quick_look(rust::Str path, std::uint32_t variant) {
+    if (variant > static_cast<std::uint32_t>(br::RunStatisticsFixture::RawRecording)) return false;
+    return br::writeRunStatisticsFixture(toStd(path), static_cast<br::RunStatisticsFixture>(variant));
+}
+
+rust::String review_fixture_quick_look_run_id(std::uint32_t variant) {
+    if (variant > static_cast<std::uint32_t>(br::RunStatisticsFixture::RawRecording)) return rust::String();
+    return rust::String(br::runStatisticsFixtureRunId(static_cast<br::RunStatisticsFixture>(variant)));
 }
 
 bool review_fixture_write_population(rust::Str path, std::uint32_t cells, std::uint64_t seed) {

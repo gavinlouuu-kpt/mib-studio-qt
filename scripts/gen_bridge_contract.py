@@ -118,6 +118,10 @@ def render(contract: dict) -> str:
     calib = {k: v for k, v in contract["calibration_records"].items() if isinstance(v, int)}
     lines.append("export const CALIBRATION_RECORDS = " + json.dumps(calib, indent=2) + " as const;")
     lines.append("")
+    # ABI 44 (#716 A7a): the run quick look's bounds (numbers only; the prose stays in the JSON).
+    quick = {k: v for k, v in contract["run_quick_look"].items() if isinstance(v, int)}
+    lines.append("export const RUN_QUICK_LOOK = " + json.dumps(quick, indent=2) + " as const;")
+    lines.append("")
     # Reverse lookup for event kinds: numeric value -> stable name.
     lines.append("export const EVENT_KIND_NAMES: Readonly<Record<number, string>> = {")
     for name, value in contract["event_kinds"].items():
@@ -146,6 +150,11 @@ def render_rust(contract: dict) -> str:
     lines += [f"pub const MONITORING_CELL_CAPTURE_MISMATCH: &str = \"{code}\";"]
     # ABI 42 (#716 A4a): a calibration record id longer than this is refused before the backend.
     lines += [f"pub const CALIBRATION_RECORD_ID_MAX_BYTES: usize = {contract['calibration_records']['record_id_max_bytes']};"]
+    # ABI 44 (#716 A7a): a run_quick_look request outside these bounds is refused before the backend.
+    quick = contract["run_quick_look"]
+    lines += [f"pub const RUN_QUICK_LOOK_MAX_PATHS: usize = {quick['max_paths']};",
+              f"pub const RUN_QUICK_LOOK_PATH_MAX_BYTES: usize = {quick['path_max_bytes']};",
+              f"pub const RUN_QUICK_LOOK_RUN_ID_MAX_BYTES: usize = {quick['run_id_max_bytes']};"]
     return "\n".join(lines) + "\n"
 
 
@@ -180,6 +189,10 @@ def render_review(review: dict) -> str:
     lines.append("")
     reprocess = {k: v for k, v in review["review_reprocess_record"].items() if k != "semantics"}
     lines.append("export const REVIEW_REPROCESS = " + json.dumps(reprocess, indent=2) + " as const;")
+    lines.append("")
+    # Review ABI 6 (#716 A7a): review_run_statistics' bounds (the run_quick_look request's).
+    stats = {k: v for k, v in review["review_run_statistics"].items() if isinstance(v, int)}
+    lines.append("export const REVIEW_RUN_STATISTICS = " + json.dumps(stats, indent=2) + " as const;")
     lines.append("")
     # Review ABI 3 (#756 review 2): the object coordinate spaces, their sources and the mask check's bounds.
     spaces = {k: v for k, v in review["review_object_coordinates"].items() if k != "semantics"}
@@ -264,6 +277,26 @@ def check_review(review: dict) -> str | None:
         named.append(m.group(1))
     if review["run_identity"]["emodulus_lut_provenances"] != named:
         return f"run_identity.emodulus_lut_provenances differs from the C++ constants {named}"
+    # Review ABI 6 (#716 A7a): the twin's bounds equal RunStatistics.h's.
+    stats_header = (REPO_ROOT / "include/backend/review/RunStatistics.h").read_text(encoding="utf-8")
+    for member, const in (("max_paths", "kRunQuickLookMaxPaths"), ("path_max_bytes", "kRunQuickLookPathMaxBytes")):
+        bound = re.search(const + r"\s*=\s*(\d+)", stats_header)
+        if not bound or int(bound.group(1)) != review["review_run_statistics"][member]:
+            return f"review_run_statistics.{member} differs from RunStatistics.h {const}"
+    return None
+
+
+def check_bridge(contract: dict) -> str | None:
+    """Checks of bridge-contract.json against C++ constants; an error message or None."""
+    # ABI 44 (#716 A7a): the run quick look's numbers equal RunStatistics.h's.
+    header = (REPO_ROOT / "include/backend/review/RunStatistics.h").read_text(encoding="utf-8")
+    for member, const in (("max_paths", "kRunQuickLookMaxPaths"), ("path_max_bytes", "kRunQuickLookPathMaxBytes"),
+                          ("overlay_max_points", "kRunStatisticsOverlayMaxPoints"),
+                          ("low_n_valid_rows", "kRunStatisticsLowN"), ("cache_entries", "kRunStatisticsCacheEntries"),
+                          ("schema_version", "kRunStatisticsSchemaVersion")):
+        bound = re.search(const + r"\s*=\s*(\d+)", header)
+        if not bound or int(bound.group(1)) != contract["run_quick_look"][member]:
+            return f"run_quick_look.{member} differs from RunStatistics.h {const}"
     return None
 
 
@@ -282,6 +315,11 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 1
+
+    problem = check_bridge(contract)
+    if problem:
+        print(f"gen_bridge_contract: {problem}", file=sys.stderr)
+        return 1
 
     review = json.loads(REVIEW_CONTRACT_JSON.read_text(encoding="utf-8"))
     problem = check_review(review)

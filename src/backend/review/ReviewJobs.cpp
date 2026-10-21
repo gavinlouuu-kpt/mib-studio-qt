@@ -699,6 +699,15 @@ namespace backend::review
         return impl_->session.probeRuns(paths, out, error);
     }
 
+    RunStatisticsResult ReviewJobs::runStatistics(const std::string &path, const std::string &computedAt)
+    {
+        // The probe's rule (lock order: the lanes' mutex, then the session's).
+        std::scoped_lock lock(impl_->mutex);
+        for (const auto &lane : impl_->lanes)
+            if (lane.busy) return deferredRunStatistics(path);
+        return impl_->session.runStatistics(path, computedAt);
+    }
+
     bool ReviewJobs::reprocessRecord(bool valid, std::uint64_t index, ReprocessSettings settings, ReprocessResult &out,
                                      std::string *error)
     {

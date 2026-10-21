@@ -29,6 +29,7 @@ Jump to the notes that match your task:
 | Monitoring scatter density (KDE) / core contour | [[services/MonitoringDensityService]] + [[frontend/ExperimentMonitoringTab]] |
 | Live cell images (recent-cells strip, click-to-pin) | [[services/MonitoringCellStore]] + [[architecture/Rust-Bridge]] |
 | Calibration run / records / pixel-to-micron apply | [[services/CalibrationRecords]] + [[architecture/ExperimentCoordinator]] |
+| Run summary / quick look numbers (`run_quick_look`, `review_run_statistics`) | [[services/RunQuickLook]] + [[services/ReviewSession]] |
 | Saving/reading experiment files | [[services/Hdf5Service]] + [[data-model/HDF5-Storage]] |
 | Exporting CSV/TIFF from HDF5 (native or PySide tool) | [[services/HdfExportService]] + [[frontend/HdfReviewTab]] + [[task/2026-08-24-exporter-stability]] |
 | Live preview / ROI / overlays | [[frontend/PreviewPage]], [[frontend/ConfigTabs]] |

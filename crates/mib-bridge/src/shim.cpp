@@ -12,6 +12,7 @@
 #include "backend/app/MethodApply.h"
 #include "backend/profiles/ProfileRegistryWorker.h"
 #include "backend/recording/RunStartIdentity.h"
+#include "backend/review/RunStatistics.h"
 #include "backend/services/CameraControlService.h"
 #include "backend/services/MonitoringCellStore.h"
 #include "backend/services/SyringePumpService.h"
@@ -257,6 +258,13 @@ static_assert(cal::kCalibrationDefaultMaxAgeHours == 24.0);
 static_assert(cal::kCalibrationRateWindowSeconds == 1.0);
 static_assert(cal::kCalibrationRateMinWindows == 3);
 static_assert(cal::kCalibrationStoreMaxVersions == 2048);
+// ABI 44 (#716 A7a): the run quick look (bridge-contract.json run_quick_look; backend/review/RunStatistics.h).
+static_assert(backend::review::kRunQuickLookMaxPaths == 32);
+static_assert(backend::review::kRunQuickLookPathMaxBytes == 4096);
+static_assert(backend::review::kRunStatisticsOverlayMaxPoints == 2000);
+static_assert(backend::review::kRunStatisticsLowN == 200);
+static_assert(backend::review::kRunStatisticsCacheEntries == 64);
+static_assert(backend::review::kRunStatisticsSchemaVersion == 1);
 static_assert(static_cast<std::uint32_t>(backend::recording::RunCompletionState::Complete) == 0);
 static_assert(static_cast<std::uint32_t>(backend::recording::RunCompletionState::IntentionallyPartial) == 1);
 static_assert(static_cast<std::uint32_t>(backend::recording::RunCompletionState::IncompleteLoss) == 2);
@@ -2406,6 +2414,17 @@ rust::String BackendBridge::calibration_apply(rust::Str record_id, double expect
     }
 }
 
+// ABI 44 (#716 A7a): the run quick look. A JSON document (bridge-contract.json run_quick_look); a read.
+rust::String BackendBridge::run_quick_look(rust::Str request_json) {
+    try {
+        return rust::String(impl_->facade.runQuickLookJson(std::string(request_json)));
+    } catch (const std::exception& e) {
+        return rust::String(backend::review::runQuickLookRefusedJson(std::string("run_quick_look failed: ") + e.what()));
+    } catch (...) {
+        return rust::String(backend::review::runQuickLookRefusedJson("run_quick_look failed"));
+    }
+}
+
 BridgeCommandResult BackendBridge::monitoring_cell_unpin(std::uint64_t start_generation, std::uint64_t capture_epoch,
                                                          std::uint64_t frame_index, std::int32_t object_id) {
     try {
@@ -2692,7 +2711,7 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 43; }
+std::uint32_t bridge_abi_version() { return 44; }
 
 } // namespace mib_bridge
 

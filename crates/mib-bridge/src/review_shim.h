@@ -42,6 +42,8 @@ public:
 
     ReviewInfo fetch_review_info();
     ReviewProbeResult review_probe_runs(rust::Vec<rust::String> paths);
+    // Review ABI 6 (#716 A7a): the run quick look's twin (review-contract.json review_run_statistics).
+    rust::String review_run_statistics(rust::Str request_json);
     ReviewRows fetch_review_rows(bool valid, std::uint64_t offset, std::uint64_t count);
     ReviewTrackRows fetch_review_track_rows(bool valid, std::int32_t track_id, std::uint32_t max);
     ReviewReprocessResult review_reprocess_record(bool valid, std::uint64_t index, std::uint32_t settings);
@@ -85,5 +87,7 @@ bool review_fixture_write_experiment(rust::Str path);
 bool review_fixture_write_run(rust::Str path, rust::Str snapshot_json, rust::Str annotation_json);
 bool review_fixture_write_regenerated(rust::Str path, rust::Str emodulus_lut_json);
 bool review_fixture_write_population(rust::Str path, std::uint32_t cells, std::uint64_t seed);
+bool review_fixture_write_quick_look(rust::Str path, std::uint32_t variant);
+rust::String review_fixture_quick_look_run_id(std::uint32_t variant);
 
 } // namespace mib_review_bridge

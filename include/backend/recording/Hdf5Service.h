@@ -200,6 +200,28 @@ public:
     bool readValidMetadata(std::vector<ProcessedFrame>& frames);
     bool readInvalidMetadata(std::vector<ProcessedFrame>& frames);
 
+    // #716 A7a: the few metadata members the run quick look needs
+    // (review/RunStatistics.h), read as columns in bounded chunks: never the
+    // whole compound row and never every row at once, so a 1M-row run costs
+    // one chunk of these members in working memory (the PZ7035 has little
+    // RAM). Each value is the one readValidMetadata gives for the same row:
+    // a member the file predates reads as 0 there and here. `sink` receives
+    // the rows in set order, at most `chunkRows` at a time (0 = the default),
+    // and may stop the read by returning false. False when no file is open,
+    // the dataset is missing or cannot be read, or `sink` stopped it; an
+    // empty dataset calls nothing and returns true.
+    struct MetadataColumnRow {
+        uint64_t timestampNs{0};
+        double area{0.0};
+        double deformability{0.0};
+        double youngsModulus{0.0};
+        uint8_t isValid{0};
+        uint8_t isTargetGroup{0};
+    };
+    static constexpr std::size_t kMetadataColumnChunkRows = 65536;
+    bool readMetadataColumns(bool valid, std::size_t chunkRows,
+                             const std::function<bool(const MetadataColumnRow* rows, std::size_t count)>& sink) const;
+
     // Chart snapshot saving (for saving chart images to HDF5)
     bool saveChartSnapshot(const std::string& datasetPath, const cv::Mat& image);
     

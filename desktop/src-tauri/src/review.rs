@@ -5,7 +5,7 @@
 //! as lossless JSON.
 
 use mib_bridge::review_ffi;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::ipc::Response;
 use tauri::State;
 
@@ -537,6 +537,37 @@ pub fn fetch_review_info(state: State<AppState>) -> Result<ReviewInfo, String> {
         ring_ratio_max: m.ring_ratio_max,
         identity: run_identity(m.identity),
     })
+}
+
+/// Review ABI 6 (#716 A7a): the reference run of `review_run_statistics`, as bridge-contract.json
+/// `run_quick_look` names it (`run_id` required, null for a file that records none).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct QuickLookReference {
+    pub path: String,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_generation: Option<String>,
+}
+
+/// Review ABI 6 (#716 A7a): the run quick look's twin for B2 R2: the per-run statistics of `paths`
+/// (1 to `review_run_statistics.max_paths`) and an optional reference with run - reference deltas,
+/// the JSON document of bridge-contract.json `run_quick_look`, computed by the same C++ function.
+/// The backend checks the request's bounds (a refused request replies `ok` false); each file is
+/// deferred while a review job runs; nothing is written.
+#[tauri::command]
+pub fn review_run_statistics(
+    state: State<AppState>,
+    paths: Vec<String>,
+    reference: Option<QuickLookReference>,
+) -> Result<serde_json::Value, String> {
+    let mut request = serde_json::json!({ "paths": paths });
+    if let Some(r) = reference {
+        request["reference"] = serde_json::to_value(r).map_err(|e| e.to_string())?;
+    }
+    let mut guard = state.review.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().review_run_statistics(&request.to_string())).map_err(|e| e.to_string())
 }
 
 /// Review ABI 2 (#717 B1a): the experiment library's identity probe over

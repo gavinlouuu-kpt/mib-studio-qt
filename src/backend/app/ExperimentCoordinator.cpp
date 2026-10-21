@@ -2017,6 +2017,10 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
     // still Stopping/Failed, so no review reader opens beside this one; it never fails the run.
     if (calibrationRun && fileOpen)
         deriveCalibrationRecord(run, calibrationRun->spec, calibrationRun->identity, ok && !failed && metadataOk);
+    // 6b (#716 A7a). The run quick look, after the calibration record and before the terminal
+    // status: the statistics of the closed file into the in-memory cache. Nothing is written; it
+    // never fails the run.
+    if (fileOpen) quickLookAtClose(run);
     // An undeclared loss, a failure, an unknown outcome, or declared malformed frames above the
     // warning fraction is something the operator must see (#549): WARN, not INFO. Complete and
     // declared-partial runs stay at INFO.
@@ -2196,6 +2200,44 @@ CalibrationGateResult ExperimentCoordinator::calibrationGateLocked(const RunConf
     }
     if (!in.applied && newestInvalidated) in.invalidatedNote = "record " + newestInvalidated->recordId + " " + newestInvalidated->statusReason;
     return evaluateCalibrationGate(in);
+}
+
+void ExperimentCoordinator::setClosedRunStatisticsReader(ClosedRunStatisticsReader reader)
+{
+    std::lock_guard<std::mutex> lock(closedRunStatisticsMutex_);
+    closedRunStatisticsReader_ = std::move(reader);
+}
+
+void ExperimentCoordinator::quickLookAtClose(const RunConfigurationSnapshot& run)
+{
+    const auto t0 = std::chrono::steady_clock::now();
+    try {
+        review::RunFileStamp stamp;
+        std::string why;
+        if (!review::stampRunFile(run.outputPath, stamp, why)) {
+            SPDLOG_WARN("ExperimentCoordinator: run quick look skipped: {}", why);
+            return;
+        }
+        review::RunStatisticsResult result;
+        {
+            std::lock_guard<std::mutex> lock(closedRunStatisticsMutex_);
+            result = closedRunStatisticsReader_ ? closedRunStatisticsReader_(run.outputPath)
+                                                : review::readRunStatistics(run.outputPath, "close");
+        }
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        if (result.status == review::RunStatisticsStatus::Computed && result.stats) {
+            backend_.runStatisticsCache().insert(stamp, {result.stats, "close"});
+            SPDLOG_INFO("ExperimentCoordinator: run {} quick look: {} valid rows, {} set rows ({:.3f} ms)",
+                        run.startGeneration, result.stats->validRows, result.stats->setRows, ms);
+        } else {
+            SPDLOG_WARN("ExperimentCoordinator: run {} quick look not computed at close: {} {} ({:.3f} ms)",
+                        run.startGeneration, review::toString(result.status), result.message, ms);
+        }
+    } catch (const std::exception& e) {
+        SPDLOG_WARN("ExperimentCoordinator: run quick look failed: {}", e.what());
+    } catch (...) {
+        SPDLOG_WARN("ExperimentCoordinator: run quick look failed");
+    }
 }
 
 void ExperimentCoordinator::deriveCalibrationRecord(const RunConfigurationSnapshot& run,

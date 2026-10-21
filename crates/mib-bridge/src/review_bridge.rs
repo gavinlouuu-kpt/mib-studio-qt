@@ -442,6 +442,14 @@ pub mod review_ffi {
         /// default recorded config, no stored KDE record.
         fn review_fixture_write_population(path: &str, cells: u32, seed: u64) -> bool;
 
+        /// Test fixture (never a Tauri command, review ABI 6): the run quick look's parity fixture
+        /// (backend/review/RunStatisticsFixture.h): `variant` 0 v3 with E, 1 legacy, 2 LUT not
+        /// loaded, 3 v3 with E and an even n (the deltas' reference), 4 an empty valid set, 5 a raw
+        /// recording. False for another variant or a write failure.
+        fn review_fixture_write_quick_look(path: &str, variant: u32) -> bool;
+        /// The run_id a parity fixture variant records ("" for legacy and raw).
+        fn review_fixture_quick_look_run_id(variant: u32) -> String;
+
         /// Set up logging under `data_dir` (empty = no file log).
         fn initialize(self: Pin<&mut ReviewBridge>, data_dir: &str) -> bool;
         fn shutdown(self: Pin<&mut ReviewBridge>);
@@ -462,6 +470,11 @@ pub mod review_ffi {
         /// file) and with the job lane (refused while a job runs, #722);
         /// the open file is left as it was.
         fn review_probe_runs(self: Pin<&mut ReviewBridge>, paths: Vec<String>) -> ReviewProbeResult;
+        /// Review ABI 6 (#716 A7a): the run quick look's twin. `request_json` and the JSON reply
+        /// are bridge-contract.json `run_quick_look`'s (the same C++ function computes them), for
+        /// B2 R2's per-run numbers: each file read under the session's lock, deferred (never an
+        /// error) while a review job runs; no cache; nothing written.
+        fn review_run_statistics(self: Pin<&mut ReviewBridge>, request_json: &str) -> String;
         fn fetch_review_rows(
             self: Pin<&mut ReviewBridge>,
             valid: bool,
