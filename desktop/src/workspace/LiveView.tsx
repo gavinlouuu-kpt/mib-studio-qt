@@ -216,7 +216,7 @@ export function LiveView({ tabs, plan, snapshot, running, experimentActive, host
             <LiveFrame subscribeFrames={subscribeFrames} frozen={frozen} running={running} />
             <span className="ws-plan-label">{controlHeld ? "Detected cells · newest first · click to pin" : "Detected cells · newest first"}</span>
             <CellStrip cells={stripItems} pinnedId={pinned && listing && !isEndedPin(pinned, listing) ? pinnedName : undefined}
-              onPin={controlHeld && !cells.busy ? pinFromStrip : undefined} size={64} data-testid="live-strip"
+              onPin={controlHeld ? pinFromStrip : undefined} size={64} data-testid="live-strip"
               empty={listing ? "No cells detected in this capture yet." : "The live cells have not been read yet."} />
             <p className="ws-note">{`The backend keeps the ${listing?.caps.strip_max_cells ?? 24} newest cells of this capture as copies (at most ${mib(listing?.caps.strip_max_bytes)} MiB); the oldest is evicted first, and the strip is cleared when the capture changes. A pin keeps its own copy.`}</p>
           </Card>
@@ -224,7 +224,7 @@ export function LiveView({ tabs, plan, snapshot, running, experimentActive, host
           <Card title="Area–Deformability" className="ws-live__scatter" data-testid="live-scatter"
             subtitle={controlHeld ? "Click a point to pin its cell · acquisition is unaffected" : "Valid, calibrated rows of the monitoring buffer"}>
             <LiveScatter points={scatter.points} pinned={pinned && listing && !isEndedPin(pinned, listing) ? pinned : null}
-              onPick={controlHeld && !cells.busy ? (i) => {
+              onPick={controlHeld ? (i) => {
                 const p = scatter.points[i];
                 if (p.key) void cells.pin(p.key);
                 else cells.inform({ tone: "warn", title: `Not pinned · ${cellName(p.row)}`, text: "This row carries no run or capture identity (an older backend reports none), so it cannot be pinned. Nothing was sent." });
@@ -310,7 +310,7 @@ function LiveFrame({ subscribeFrames, frozen, running }: { subscribeFrames: (sin
   frozenRef.current = frozen;
   const paintPending = useRef(false);
   const [frame, setFrame] = useState<{ index: string; width: number; height: number } | null>(null);
-  const shown = useRef("");
+  const labelMs = useRef(-Infinity);
   const paint = useCallback(() => {
     paintPending.current = false;
     const el = canvas.current, p = latest.current;
@@ -318,8 +318,9 @@ function LiveFrame({ subscribeFrames, frozen, running }: { subscribeFrames: (sin
     if (el.width !== p.width || el.height !== p.height) { el.width = p.width; el.height = p.height; }
     const ctx = el.getContext("2d");
     if (ctx) ctx.putImageData(mono8ToImageData(p.data, p.width, p.height, p.stride_bytes), 0, 0);
-    const id = `${p.frame_index}:${p.width}x${p.height}`;
-    if (id !== shown.current) { shown.current = id; setFrame({ index: p.frame_index, width: p.width, height: p.height }); }
+    // The label at most four times a second (the pixels every animation frame).
+    const now = performance.now();
+    if (now - labelMs.current >= 250) { labelMs.current = now; setFrame({ index: p.frame_index, width: p.width, height: p.height }); }
   }, []);
   useEffect(() => {
     subscribeFrames((p) => {
