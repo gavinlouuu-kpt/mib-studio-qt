@@ -275,6 +275,15 @@ cells render with density ready in ~2–3 s.
   `useReviewJobs.start` takes `{onRefused, onStarted}` hooks, so a refusal goes
   back to the dialog instead of the job dialog. An output created while the
   job runs fails the job and is left untouched.
+  **Pixel-to-micron factor (#758):** with the recorded settings objects are
+  validated (area range, target group) at the file's recorded factor, or the
+  fallback preference when it records none; with default settings and for AVI
+  / folder sources at 0.4886 µm/px. The output records the factor, so it
+  reopens at it (no "(fallback)"), and the job message ends with
+  "px→µm F recorded | default | fallback: the file records none". The
+  recorded target group comes from the file's config document. Before #758
+  every regenerate validated at 0.4886 and, with recorded settings, selected
+  no target group; the pending release notice says which files to regenerate.
 
 ## Differences from the Qt tab (parity sign-off, 2026-10-04)
 
@@ -328,7 +337,10 @@ accounting text for recording files.
   of 1049 records named another frame. Files regenerated with YOFO Review up to
   review-v1.1.3-beta.1 carry that mis-paired per-record metadata; the
   data-integrity follow-up is #737. YOFO also gained the facade's no-clobber
-  publish: an existing output is refused, not replaced.
+  publish: an existing output is refused, not replaced. Since #758 all three
+  validate at the source's own factor (an HDF source's recorded one; YOFO's
+  fallback preference or default, the facade's and Qt's live factor
+  otherwise), passed per call, never set on the shared kernel.
 - **Regenerate gating:** YOFO enables Regenerate masks once a file is ready;
   Qt requires data.
 - **Core fraction:** YOFO uses the stored record's fraction, else 0.9; Qt uses

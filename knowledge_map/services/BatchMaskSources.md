@@ -39,13 +39,21 @@ core as [[ProcessingService]].
   `<basename>_mask.png` per `ProcessedFrame::processedImage`. If
   `filenames` is empty or shorter than `frames`, falls back to
   `mask_00000.png`, `mask_00001.png`, ...
-- `saveMasksToHdf5(frames, outputPath, config, roiX, roiY, roiW, roiH, background, useFrameTimestamps = false)`
+- `saveMasksToHdf5(frames, outputPath, config, roiX, roiY, roiW, roiH, background, useFrameTimestamps = false, processingCore = nullptr, pixelToMicron = 0)`
   — opens a fresh HDF5 file, writes `experiment_info` (so the file
   round-trips through [[../frontend/HdfReviewTab]]), then partitions
   `frames` into valid/invalid by `validation.isValid` and writes them via
   `Hdf5Service::saveFrames()`. When `useFrameTimestamps` is true,
   `experiment_info` start/end timestamps come from the already normalised
-  frame timestamps instead of wall-clock write time.
+  frame timestamps instead of wall-clock write time. Since #758 it also
+  records what the frames were analysed with: `pixelToMicron` > 0 as
+  `/experiment_info @pixel_to_micron` (review reads it as the file's
+  recorded factor, see [[ReviewSession]]), and the applied config as the
+  `@config_json` document `{"image_processing": …, "pixel_to_micron_factor": …}`
+  (captures write their runtime document there; the target group is read
+  back from it, see [[Hdf5Service]]). The reanalysis engine and the Qt
+  dialog pass the factor they validated at; the wheel's
+  `save_masks_to_hdf5` passes none.
 
 ## Typical flow
 
@@ -55,9 +63,12 @@ std::vector<std::string> names;
 std::vector<std::string> errs;
 batch_masks::loadFromFolder("/path/to/folder", imgs, names, errs);
 
+// An offline run passes its own factor and band per call (#758); the live
+// service's are neither read nor changed.
+auto config = backend.processing().getProcessingConfig();
+const auto inputs = ProcessingService::offlineAnalysisInputs(config, /*background=*/{}, factor);
 const auto frames = backend.processing().processBatch(
-    imgs, backend.processing().getProcessingConfig(),
-    /*background=*/{}, /*roi=*/{0,0,0,0});
+    imgs, config, /*background=*/{}, /*roi=*/{0,0,0,0}, {}, nullptr, inputs);
 
 batch_masks::saveMaskImages(frames, "/out/dir", names);
 ```
@@ -69,3 +80,9 @@ batch_masks::saveMaskImages(frames, "/out/dir", names);
   which uses `H5F_ACC_TRUNC`).
 - All loaders force `CV_8UC1`. Anything else is `cvtColor`-converted or
   `convertTo`-coerced.
+- Calling `processBatch` without `BatchAnalysisInputs` validates at the
+  service's live factor and channel band, not the source's. Every offline
+  caller in the repo passes them (#758: before, YOFO Review regenerated at
+  0.4886 µm/px and MIB Studio / Qt at the live factor, whatever the source
+  recorded). The wheel's `process_batch(pixel_to_micron=…)` still validates
+  at a fresh service's 0.4886 and uses its argument only for `area_um2`.

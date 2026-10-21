@@ -150,7 +150,21 @@ frame coordinates). Recording callers pass
 `ProcessingService::getEffectiveProcessingConfig()`, which adds the detected
 band. The write is mandatory, like core provenance. `readRecordedProcessingConfig`
 reads every `processing_config_*` attribute back into a `ProcessingConfig`;
-attributes an older file lacks keep the caller's values.
+attributes an older file lacks keep the caller's values. The target group has
+no attribute: since #758 the reader takes it from the `@config_json` document
+(`image_processing.target_group`, via `config_json::fromJson`), so a
+regenerate with the recorded settings selects the target group the capture
+used; a file without the document (or a malformed one) keeps the caller's
+values (the default: off), as before.
+
+`writeAnalysisPixelToMicron(factor)` / `readAnalysisPixelToMicron()` (#758)
+store `/experiment_info @pixel_to_micron`, a scalar double: the µm per pixel a
+regenerated or reanalysed file's objects were validated at
+(`batch_masks::saveMasksToHdf5` writes it). The writer refuses a factor that
+is not finite and positive and needs `writeExperimentInfo` first; the reader
+returns `nullopt` when it is missing, not a finite positive float scalar, or
+unreadable. `ReviewSession::recordedPixelToMicron` reads it when the file has
+no run snapshot factor.
 
 `readRecordedProcessingContract` is the narrow export-reader path. It checks
 the root, `/experiment_info`, `/recording_info`, and `/run_provenance` groups,
