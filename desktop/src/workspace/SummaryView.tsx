@@ -112,7 +112,9 @@ export function SummaryView({ tabs, plan, experimentActive, onView, onAlign, rev
   const status = plan.queue.status;
   const active = runInProgress(status);
   const ref = plan.reference;
-  const refRun = reply?.reference?.run ?? null;
+  // The reference's own numbers only once the backend confirmed it is the run chosen (its run_id).
+  const refConfirmed = !!ref && !!reply?.reference?.confirmed && reply.reference.requested.path === ref.path;
+  const refRun = refConfirmed ? reply!.reference!.run : null;
 
   return (
     <div className="ws-view" data-testid="workspace-summary">
@@ -169,7 +171,7 @@ export function SummaryView({ tabs, plan, experimentActive, onView, onAlign, rev
         ) : null}
 
         {shown.length ? (
-          <OverlayCard runs={shown.filter((r) => overlay.includes(r.path) && r.path !== ref?.path)} reply={reply} slotOf={slotOf} reference={ref ? { run: refRun, name: `run ${ref.runIndex ?? "?"} · ${ref.ref ?? basename(ref.path)}` } : null} />
+          <OverlayCard runs={shown.filter((r) => overlay.includes(r.path) && r.path !== ref?.path)} reply={reply} slotOf={slotOf} reference={ref ? { run: refRun, confirmed: refConfirmed, name: `run ${ref.runIndex ?? "?"} · ${ref.ref ?? basename(ref.path)}` } : null} />
         ) : null}
       </div>
     </div>
@@ -274,8 +276,10 @@ function Decisions({ run, plan, onView, onAlign, review }: {
   else {
     const row = rowState(q, run.ref);
     const last = row.attempts[row.attempts.length - 1];
+    const requeued = row.history?.some((h) => h.runIndex === run.runIndex) ?? false;
     repeat = control || (busy ? "a Start or a stop is pending" : "")
-      || (last && last.runIndex !== run.runIndex ? `${run.ref} was re-queued after this run (run ${last.runIndex})` : repeatReason(order, q, run.ref));
+      || (last && last.runIndex !== run.runIndex ? `${run.ref} was re-queued after this run (run ${last.runIndex})`
+        : requeued ? `${run.ref} is already re-queued: its next run waits for its Start in the Plan` : repeatReason(order, q, run.ref));
   }
 
   // Continue: the queue's next step from here.
@@ -377,7 +381,7 @@ function ActiveRunTile({ plan }: { plan: PlanController }) {
 
 function OverlayCard({ runs, reply, slotOf, reference }: {
   runs: PlanRun[]; reply: RunQuickLookReply | null; slotOf: (r: PlanRun) => ConditionSlot | undefined;
-  reference: { run: RunQuickLookRun | null; name: string } | null;
+  reference: { run: RunQuickLookRun | null; confirmed: boolean; name: string } | null;
 }) {
   const points: AreaDeformPoint[] = [];
   const legend: { condition: ConditionSlot; label: string }[] = [];
@@ -389,7 +393,7 @@ function OverlayCard({ runs, reply, slotOf, reference }: {
     return true;
   };
   if (reference?.run?.statistics && add(reference.run.statistics, REFERENCE_SLOT)) legend.push({ condition: REFERENCE_SLOT, label: `Reference · ${reference.name}` });
-  else if (reference) notes.push(`The reference (${reference.name}) is not drawn: ${reference.run?.status === "computed" ? "px→µm not recorded" : "its numbers were not read"}.`);
+  else if (reference) notes.push(`The reference (${reference.name}) is not drawn: ${!reference.confirmed ? "the backend has not confirmed it" : reference.run?.status === "computed" ? "px→µm not recorded" : "its numbers were not read"}.`);
   for (const r of runs) {
     const q = runFor(reply, r.path);
     const slot = slotOf(r);

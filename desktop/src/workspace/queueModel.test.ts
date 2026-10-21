@@ -717,6 +717,19 @@ describe("Repeat sample (#716 A7b, the A7 ruling 8): a UI-local event that keeps
     // Not closed: a planned row, the running S1.
     expect(repeatReason(ORDER, closedS1(), "S2")).toMatch(/not closed/);
     expect(repeatReason(ORDER, startedS1(), "S1")).toMatch(/not closed/);
+    // One repeat at a time (Codex round 1): with S1 and S2 closed and S1's repeat queued, S2's is refused,
+    // because S1 (earlier in the sheet) would run first.
+    const bothClosed = run([
+      { type: "start", ref: "S2", runIndex: 2, generationBefore: "1" },
+      { type: "start-result", ref: "S2", runIndex: 2, generationBefore: "1", result: STARTED("/data/s2.h5") },
+      { type: "status", status: active("2", "/data/s2.h5") },
+      { type: "status", status: closed("2", { output_path: "/data/s2.h5" }) },
+      { type: "confirm-closed", ref: "S2" },
+    ], closedS1());
+    expect(repeatReason(ORDER, bothClosed, "S2")).toBe("");
+    const s1Queued = run([{ type: "repeat", ref: "S1" }], bothClosed);
+    expect(repeatReason(ORDER, s1Queued, "S2")).toMatch(/the repeat of S1 is queued/);
+    expect(run([{ type: "repeat", ref: "S2" }], s1Queued)).toBe(s1Queued);
     // A finalized row only while it is the current one; a repeated row is planned (not closed) again.
     const repeated = run([{ type: "repeat", ref: "S1" }], closedS1());
     expect(run([{ type: "repeat", ref: "S1" }], repeated)).toBe(repeated);

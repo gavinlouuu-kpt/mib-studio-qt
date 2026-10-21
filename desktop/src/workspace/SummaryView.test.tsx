@@ -24,6 +24,11 @@ type Variant = "v3" | "legacy" | "raw" | "error" | "deferred" | "noLut" | "zero"
 let variants: Record<string, Variant> = {};
 let deltaOverride: unknown = null;
 let refConfirmed = true;
+/** The reference's own run as the backend answers it: computed, or deferred (a miss during a run). */
+let refRunStatus: "computed" | "deferred" = "computed";
+/** Set to hold every read until the test releases it. */
+let holdReads = false;
+const heldReads: (() => void)[] = [];
 const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const G = golden as any;
@@ -45,10 +50,16 @@ function quickReply(args: { paths: string[]; reference?: { path: string; run_id:
     else if (deltaOverride) run.delta = clone(deltaOverride);
     return run;
   });
+  // An unconfirmed reference may still carry the file's computed numbers (another run on that path).
+  const refRun = refRunStatus === "deferred"
+    ? { ...clone(G.reference.run), path: args.reference?.path, status: "deferred", statistics: null, delta: null, computed_at: null, message: "computed when the instrument is idle" }
+    : { ...clone(G.reference.run), path: args.reference?.path };
+  const confirmed = refConfirmed && refRunStatus === "computed";
+  if (!confirmed) runs.forEach((r: { delta: unknown }) => { r.delta = null; });
   const reference = args.reference ? {
     requested: { path: args.reference.path, run_id: args.reference.run_id, start_generation: args.reference.start_generation ?? null },
-    confirmed: refConfirmed, message: refConfirmed ? "" : "run_id does not match the file",
-    run: refConfirmed ? { ...clone(G.reference.run), path: args.reference.path } : null,
+    confirmed, message: confirmed ? "" : refRunStatus === "deferred" ? "the reference is computed when the instrument is idle" : "run_id does not match the file",
+    run: refRun,
   } : null;
   return { ok: true, message: `${runs.length} run(s)`, schema_version: 1, runs, reference };
 }
@@ -115,10 +126,13 @@ beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   vi.mocked(invoke).mockReset();
   vi.mocked(invoke).mockImplementation(async (c: string, a?: unknown) => {
-    if (c === "run_quick_look") return quickReply(a as Parameters<typeof quickReply>[0]);
+    if (c === "run_quick_look") {
+      const answer = quickReply(a as Parameters<typeof quickReply>[0]);
+      return holdReads ? new Promise((resolve) => heldReads.push(() => resolve(answer))) : answer;
+    }
     throw new Error(`unexpected command ${c}`);
   });
-  variants = {}; deltaOverride = null; operationId = undefined; refConfirmed = true; reviewReason = ""; current = { status: null };
+  variants = {}; deltaOverride = null; operationId = undefined; refRunStatus = "computed"; holdReads = false; heldReads.length = 0; refConfirmed = true; reviewReason = ""; current = { status: null };
   runStart.mockClear(); onView.mockClear(); onAlign.mockClear(); openReview.mockClear();
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -351,5 +365,63 @@ describe("the decisions: each one explicit step", () => {
     expect(text("summary-run")).toContain("Run summary · Run 1 · S1");
     expect(($("decision-repeat") as HTMLButtonElement).disabled).toBe(true);
     expect($("decision-repeat")?.title).toContain("a single-sample plan has one run");
+  });
+});
+
+describe("Codex round 1: replies for what they were read for", () => {
+  it("a late reply for an earlier reference never shows its deltas under a newer one", async () => {
+    await queuePlan();
+    await runToFinalized(1, "/d/s1");
+    await act(async () => planRef.queue.confirmClosed());
+    await runToFinalized(2, "/d/s2");
+    deltaOverride = { ...G.runs[0].delta, area_um2_median: { value: 99, withheld: null } };
+    holdReads = true;
+    await click("summary-run-1-set-reference"); // read A (reference run 1), held
+    await click("summary-run-2-set-reference"); // read B (reference run 2), held
+    expect(heldReads).toHaveLength(2);
+    // A answers late, after B was asked: ignored.
+    await act(async () => { heldReads[0](); });
+    await flush();
+    expect(text("summary-run-2-tiles-area")).not.toContain("+99.00");
+    expect(text("summary-reference-chip")).toBe("Reference · not read yet");
+    await act(async () => { heldReads[1](); });
+    await flush();
+    expect(text("summary-reference-chip")).toBe("Reference · confirmed by the backend");
+    expect(text("summary-run-1-tiles-area")).toContain("+99.00"); // run 1 against reference run 2
+    expect(text("summary-run-2-reference")).toBe("Reference");
+  });
+
+  it("an unconfirmed reference is not drawn, even when the backend sent the file's numbers", async () => {
+    await queuePlan();
+    await runToFinalized(1, "/d/s1");
+    await act(async () => planRef.queue.confirmClosed());
+    await runToFinalized(2, "/d/s2");
+    const points = () => host.querySelectorAll("[data-testid=summary-chart] circle").length;
+    await click("summary-run-1-set-reference");
+    expect(points()).toBe(19 + 20);
+    refConfirmed = false;
+    await click("summary-refresh");
+    expect(points()).toBe(19);
+    expect(text("summary-overlay")).toContain("the backend has not confirmed it");
+  });
+
+  it("a deferred reference alone is read again once the instrument turns idle", async () => {
+    await queuePlan();
+    await runToFinalized(1, "/d/s1");
+    await act(async () => planRef.queue.confirmClosed());
+    await runToFinalized(2, "/d/s2");
+    await act(async () => planRef.queue.confirmClosed());
+    await click("summary-run-1-set-reference");
+    // Another client's run: the runs are served from the cache, the reference is deferred.
+    refRunStatus = "deferred";
+    await render({ status: activeAt("3", "/d/other.h5") });
+    await click("summary-refresh");
+    const n = reads().length;
+    expect(text("summary-reference-unconfirmed")).toContain("computed when the instrument is idle");
+    refRunStatus = "computed";
+    await render({ status: closedAt("3", "/d/other.h5") });
+    await flush();
+    expect(reads()).toHaveLength(n + 1);
+    expect(text("summary-reference-chip")).toBe("Reference · confirmed by the backend");
   });
 });

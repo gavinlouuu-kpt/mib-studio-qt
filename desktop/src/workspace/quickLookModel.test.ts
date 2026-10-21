@@ -84,6 +84,12 @@ describe("formatting only", () => {
     r.runs[2] = { ...r.runs[2], status: "deferred", message: "computed when the instrument is idle" };
     expect(hasDeferred(r)).toBe(true);
     expect(statusChip(r.runs[2], false).text).toBe("Deferred · computed when idle");
+    // The reference alone deferred counts too (Codex round 1).
+    const refOnly = reply();
+    refOnly.runs = [refOnly.runs[0]];
+    refOnly.runs[0] = { ...refOnly.runs[0], delta: null };
+    refOnly.reference = { ...refOnly.reference!, confirmed: false, run: { ...refOnly.reference!.run!, status: "deferred", statistics: null, delta: null } };
+    expect(hasDeferred(refOnly)).toBe(true);
   });
 });
 

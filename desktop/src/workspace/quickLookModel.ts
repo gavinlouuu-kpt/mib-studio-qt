@@ -82,8 +82,9 @@ export function runFor(reply: RunQuickLookReply | null, path: string): RunQuickL
   return reply?.runs.find((r) => r.path === path) ?? null;
 }
 
-/** Whether a reply holds a run the backend will compute only when the instrument is idle. */
-export const hasDeferred = (reply: RunQuickLookReply | null): boolean => !!reply?.runs.some((r) => r.status === "deferred");
+/** Whether a reply holds a run (or the reference) the backend will compute only when the instrument is idle. */
+export const hasDeferred = (reply: RunQuickLookReply | null): boolean =>
+  !!reply?.runs.some((r) => r.status === "deferred") || reply?.reference?.run?.status === "deferred";
 
 /** The reference to send for the plan's choice; null when none is chosen. */
 export function referenceArgs(r: PlanReference | null) {

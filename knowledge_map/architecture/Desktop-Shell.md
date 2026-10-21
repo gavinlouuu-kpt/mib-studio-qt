@@ -664,8 +664,11 @@ of the quick controls and the sample sheet, until the kit has them).
   - **Reads, never polled** (`useQuickLook`): on showing the Summary when the plan has a closed run,
     when the closed runs or the reference change, once the instrument turns idle (App's
     `expActive` going false) when the last reply had a deferred run (also when that happens while a
-    read is answered), and on Refresh. An older reply never replaces a newer one. With no closed run
-    nothing is read. A viewer reads too (`run_quick_look` is not a control command).
+    read is answered; the reference's own deferral counts), and on Refresh. A reply is shown only
+    for what it was read for: a change of paths or reference invalidates reads in flight, so a late
+    answer never shows an earlier reference's deltas; while the reference changes, the runs' own
+    numbers of the same paths stay, without deltas. With no closed run nothing is read. A viewer
+    reads too (`run_quick_look` is not a control command).
   - **O5 Run summary** (the newest closed run, or the one chosen with a tile's Summary): the outcome
     as the client observed it (Finalized · file closed / cancelled, "Awaiting your close
     confirmation"), the quick look's state, the flags as grey chips (`legacy` in the unknown tone; no
@@ -681,7 +684,8 @@ of the quick controls and the sample sheet, until the kit has them).
     chooses one (`PlanController.reference`, held by `usePlan` with the plan, cleared by New plan,
     never persisted; path, run_id and start generation from the run's quick look). The reply's
     reference chip says confirmed or not, with the backend's reason; a withheld delta reads
-    "withheld · <reason>" (`WITHHELD_TEXT`); the reference shows no delta to itself. The overlay
+    "withheld · <reason>" (`WITHHELD_TEXT`); the reference shows no delta to itself, and is drawn
+    only once the backend confirmed it. The overlay
     (`AreaDeformChart`): the reference in slot 5 and up to four chosen runs (default the inspected
     run) in their condition's slot, from each reply's display-only subsample, with the "display
     only" note. During a run: the earlier runs from the backend's cache, and the active run's
@@ -690,8 +694,9 @@ of the quick controls and the sample sheet, until the kit has them).
     (`queueModel.ts`): a finalized (current) or closed row goes back to planned as the current row,
     its run kept in `QueueRow.history`, its attempts kept (the row stays locked), `nextRunIndex`
     unchanged, so the next Start sends the same sample_ref with the next run index and picks a new
-    file; only between samples (`repeatReason`: not while a Start, run or stop is in flight, nor
-    ahead of a failure waiting for retry / skip / end, nor paused or ended); the Plan says "Repeat
+    file; only between samples and one repeat at a time (`repeatReason`: not while a Start, run or
+    stop is in flight, nor ahead of a failure waiting for retry / skip / end, nor while another
+    repeat is queued, nor paused or ended); the Plan says "Repeat
     S1 · load the tube again"; a single-sample plan has none. **Adjust next**: Align (the
     workspace's stage) or the Plan, navigation only. **Continue · Next sample**: confirms the
     finalized row's close (the queue's Confirm closed) and shows the Plan, where the next Start

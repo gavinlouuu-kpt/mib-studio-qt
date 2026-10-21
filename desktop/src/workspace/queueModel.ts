@@ -33,8 +33,9 @@
 // is re-queued as the next run of the same sample_ref. Its run is kept in `history`, its attempts stay
 // (the row stays locked), and the row becomes the current one again, so its Start sends the same
 // sample_ref with `nextRunIndex` (the index rules above are unchanged: an index is never sent twice)
-// and picks a new file. Only between samples: never while a Start, a run or a stop is in flight, and
-// never ahead of a failure that waits for the operator's retry, skip or end. It sends nothing.
+// and picks a new file. Only between samples: never while a Start, a run or a stop is in flight, never
+// ahead of a failure that waits for the operator's retry, skip or end, and one repeat at a time (a
+// second, of a row further down, would not be the next run). It sends nothing.
 //
 // A lost controlling client pauses the queue (`paused`): every action is refused until the
 // operator resumes it, and resuming sends nothing. Status observations still apply while paused,
@@ -450,6 +451,8 @@ export function repeatReason(order: readonly string[], q: QueueState, ref: strin
   if (row.phase === "finalized") return cur >= 0 && order[cur] === ref ? "" : `${ref}'s run is not the queue's current row`;
   if (cur < 0) return "";
   const at = rowState(q, order[cur]);
+  // One repeat at a time: a second would not be the next run (the sheet order decides which row is next).
+  if (at.history?.length) return `the repeat of ${order[cur]} is queued: start it, or end the queue, first`;
   if (at.phase === "planned" || at.phase === "refused") return "";
   return `${order[cur]} is ${rowChip(at, q.ended).text.toLowerCase()}: repeat a sample between samples`;
 }
