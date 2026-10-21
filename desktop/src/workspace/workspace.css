@@ -454,7 +454,7 @@
 }
 .ws-shell .ws-live__samples {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
   gap: var(--mib-space-2);
 }
 .ws-shell .ws-live__sample {
