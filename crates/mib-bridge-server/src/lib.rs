@@ -17,8 +17,11 @@
 //!
 //! Protocol on `/ws` (token on the upgrade: `?token=` or `Authorization: Bearer`):
 //! - client -> server text: `{"request_id": n, "cmd": "start_capture", "args": {...}}`, the
-//!   name and camelCase arguments exactly as the webview passes them to Tauri's `invoke`;
+//!   name and camelCase arguments exactly as the webview passes them to Tauri's `invoke`. The frame
+//!   is parsed from its raw text with a key repeated in any object refused (`request.rs`, #788): it
+//!   gets `BAD_REQUEST` like malformed JSON and runs nothing;
 //! - server -> client text: `{"request_id": n, "ok": value}` or `{"request_id": n, "error": "..."}`;
+//!   a refused frame gets `{"error": "BAD_REQUEST: ..."}`, with its `request_id` when it names exactly one;
 //! - server -> client binary: 8-byte little-endian request id, then the reply bytes unchanged
 //!   (frame packets with their 96-byte MIBF header);
 //! - server -> client text `{"event": EventEnvelope}`: the server alone drains backend events
@@ -71,6 +74,7 @@ mod diagnostics;
 mod files;
 mod ssd_export;
 mod platform;
+mod request;
 
 /// Experiment states that a client loss must finalise (`bridgeContract.ts` EXPERIMENT_STATES).
 const EXPERIMENT_STARTING: u32 = 1;
@@ -555,14 +559,6 @@ async fn upgrade(
     ws.max_message_size(64 << 20).on_upgrade(move |socket| connection(server, socket, peer.to_string()))
 }
 
-#[derive(Deserialize)]
-struct Request {
-    request_id: u64,
-    cmd: String,
-    #[serde(default)]
-    args: Value,
-}
-
 async fn connection(server: Arc<Server>, socket: WebSocket, peer: String) {
     server.clients.fetch_add(1, Ordering::SeqCst);
     let client_id = server.connects.fetch_add(1, Ordering::SeqCst) + 1;
@@ -617,11 +613,13 @@ async fn connection(server: Arc<Server>, socket: WebSocket, peer: String) {
             Message::Close(_) => break,
             _ => continue, // pong / ping / binary: proof of life only
         };
-        let reply = match serde_json::from_str::<Request>(text.as_str()) {
-            Err(e) => Message::Text(json!({ "error": format!("BAD_REQUEST: {e}") }).to_string().into()),
+        // Parsed from the raw text with duplicate keys refused at any depth (#788): a refused frame
+        // runs nothing, for a controller and a viewer alike.
+        let reply = match request::parse(text.as_str()) {
+            Err(e) => Message::Text(bad_request(text.as_str(), &e).into()),
             Ok(request) => {
                 let worker = server.clone();
-                let Request { request_id, cmd, args } = request;
+                let request::Request { request_id, cmd, args } = request;
                 let client = peer.clone();
                 let result = tokio::task::spawn_blocking(move || worker.run(&client, client_id, &cmd, args))
                     .await
@@ -650,6 +648,17 @@ async fn connection(server: Arc<Server>, socket: WebSocket, peer: String) {
         server.broadcast_session();
     }
     server.client_gone();
+}
+
+/// The refusal of a frame `request::parse` rejected: `{"error": "BAD_REQUEST: ..."}`, with the
+/// frame's `request_id` when it names exactly one, so the waiting call settles instead of hanging.
+fn bad_request(text: &str, error: &serde_json::Error) -> String {
+    let error = format!("BAD_REQUEST: {error}");
+    match request::request_id_of(text) {
+        Some(request_id) => json!({ "request_id": request_id, "error": error }),
+        None => json!({ "error": error }),
+    }
+    .to_string()
 }
 
 #[cfg(test)]
