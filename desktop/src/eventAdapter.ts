@@ -2,6 +2,7 @@ import { CAMERA_STATES, FRAME_READY_SOURCES, COMMAND_TYPES, ERROR_SOURCES, EVENT
   EXPERIMENT_START_OUTCOMES, EXPERIMENT_STOP_OUTCOMES,
   JSON_TRANSPORT, OPERATION_KINDS, OPERATION_STATES, RECORDING_STATES, READINESS_GATE_STATUSES, RUN_COMPLETION_STATES } from "./bridgeContract";
 import { decimalU64 } from "./framePacket";
+import { decodeMethodCalibration, type MethodCalibration } from "./calibrationRecords";
 
 export function wireU64(value: unknown): string {
   if (typeof value !== "string") throw new Error("TRANSPORT_U64_MUST_BE_STRING");
@@ -134,7 +135,9 @@ export function decodeExperimentStatus(value:unknown):ExperimentStatus {
 }
 
 export interface ReadinessGate { id:string; status:number; reason:string; remediation:string }
-export interface ExperimentReadiness { valid:boolean; ready:boolean; generation:string; gates:ReadinessGate[] }
+/** `method_calibration` (ABI 43, #776): the applied method's calibration declarations; null only
+ *  when the backend predates ABI 43 and sent none (unknown, never assumed measurement). */
+export interface ExperimentReadiness { valid:boolean; ready:boolean; generation:string; gates:ReadinessGate[]; method_calibration:MethodCalibration|null }
 /** Fail (2) and Unavailable (3) block Start; unknown is never Pass. */
 export function decodeExperimentReadiness(value:unknown):ExperimentReadiness {
   const o=object(value); version(o);
@@ -144,7 +147,8 @@ export function decodeExperimentReadiness(value:unknown):ExperimentReadiness {
     if(typeof g.status!=="number" || !Object.values(READINESS_GATE_STATUSES).includes(g.status as never)) throw new Error("TRANSPORT_UNKNOWN_REQUIRED_ENUM");
     return {id:text(g.id),status:g.status,reason:text(g.reason),remediation:text(g.remediation)};
   });
-  return {valid:bool(o.valid),ready:bool(o.ready),generation:wireU64(o.generation),gates};
+  const method_calibration=o.method_calibration===undefined ? null : decodeMethodCalibration(o.method_calibration);
+  return {valid:bool(o.valid),ready:bool(o.ready),generation:wireU64(o.generation),gates,method_calibration};
 }
 
 export interface ProcessingStats {

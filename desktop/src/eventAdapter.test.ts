@@ -38,7 +38,7 @@ it("distinguishes command acceptance from a terminal operation notification",()=
 });
 // Bridge ABI 40 (#741): experiment replies carry their typed outcome; the message is unchanged.
 it("decodes the typed start and stop outcomes of experiment replies",()=>{
-  expect(BRIDGE_ABI_VERSION).toBe(42); // ABI 42 (#716 A4a): calibration records, calibrationRecords.test.ts
+  expect(BRIDGE_ABI_VERSION).toBe(43); // ABI 43 (#776): the readiness report's method_calibration, calibrationRecords.test.ts
   expect(EXPERIMENT_START_OUTCOMES).toMatchObject({Started:0,NotReady:1,StaleReadiness:2,AlreadyActive:3,StorageFailed:4,ProvenanceFailed:5,Busy:6,InvalidRequest:7});
   expect(EXPERIMENT_STOP_OUTCOMES).toEqual({Accepted:0,NotActive:1,Busy:2,RunMismatch:3});
   const base={transport_version:1,ok:false,command:6,operation_id:"0"};
@@ -77,6 +77,11 @@ it("decodes readiness gates exactly and refuses unknown gate statuses",()=>{
   expect(decoded.gates[0]).toEqual({id:"camera.session",status:2,reason:"capture not running",remediation:"Start Live View"});
   expect(()=>decodeExperimentReadiness({...readiness,gates:[{id:"x",status:7,reason:"",remediation:""}]})).toThrow("TRANSPORT_UNKNOWN_REQUIRED_ENUM");
   expect(()=>decodeExperimentReadiness({...readiness,generation:5})).toThrow();
+  // ABI 43 (#776): method_calibration is decoded strictly; absent (a pre-43 backend) is null, never a guess.
+  expect(decoded.method_calibration).toBeNull();
+  const undeclared={declared:false,purpose:"measurement",calibration_policy:"none",calibration_max_age_hours:24,calibration_reference:null,error:null};
+  expect(decodeExperimentReadiness({...readiness,method_calibration:undeclared}).method_calibration).toEqual(undeclared);
+  expect(()=>decodeExperimentReadiness({...readiness,method_calibration:{...undeclared,purpose:"qc"}})).toThrow("CALIBRATION_REPLY_INVALID");
 });
 
 import {decodeProcessingStats,formatMetric} from "./eventAdapter";

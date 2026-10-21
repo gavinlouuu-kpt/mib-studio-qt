@@ -12,6 +12,7 @@
 // not mutate it.
 #pragma once
 
+#include "backend/app/CalibrationMethodSpec.h"
 #include "backend/processing/IProcessingKernel.h"
 #include "backend/recording/RecordingAccounting.h"
 #include "backend/recording/RunProvenanceRecord.h"
@@ -183,6 +184,13 @@ struct ExperimentReadinessSnapshot {
     // `calibration.record`): its identity matches and its factor is the current factor. Start
     // records it as the run snapshot's calibration_record_id and refuses a declared id that differs.
     std::optional<std::string> calibrationRecordId;
+    // The applied method's calibration declarations as this evaluation's `calibration.record`
+    // gate read them (#776, bridge ABI 43: the readiness report's `method_calibration`). No method
+    // applied, or one that declares nothing: the defaults (measurement, none) with `declared`
+    // false. A declaration that cannot be read: the defaults, with the reason in
+    // methodCalibrationError (the gate then fails closed).
+    CalibrationMethodSpec methodCalibration;
+    std::string methodCalibrationError;
 
     const ReadinessGate* gate(const std::string& id) const
     {

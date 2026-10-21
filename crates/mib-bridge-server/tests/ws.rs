@@ -800,3 +800,57 @@ async fn calibration_records_over_the_websocket() {
     server.state().bridge.lock().unwrap().pin_mut().shutdown();
     let _ = std::fs::remove_dir_all(&data);
 }
+
+// The applied method's calibration declarations (#776, ABI 43): the controller applies a calibration
+// method (a profile), and every client's readiness report carries its purpose and reference; after a
+// method without declarations it reports measurement / none with declared false.
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn readiness_reports_the_method_calibration_over_the_websocket() {
+    let (server, addr, data) = start("method_calibration").await;
+    let mut controller = connect(addr).await;
+    let mut viewer = connect(addr).await;
+    let mut events = Vec::new();
+    call(&mut controller, 1, "init", json!({ "dataDir": "" }), &mut events).await.unwrap();
+    assert_eq!(server.controller(), Some(1));
+    let ok = |r: Result<Reply, String>| match r {
+        Ok(Reply::Json(v)) => v,
+        other => panic!("{other:?}"),
+    };
+    let out = data.join("probe.h5").to_string_lossy().into_owned();
+    let undeclared = json!({ "declared": false, "purpose": "measurement", "calibration_policy": "none",
+        "calibration_max_age_hours": 24.0, "calibration_reference": null, "error": null });
+    let r = ok(call(&mut viewer, 2, "fetch_experiment_readiness", json!({ "outputPath": out }), &mut events).await);
+    assert_eq!(r["method_calibration"], undeclared, "a viewer reads it, no method applied: {r}");
+
+    let base = data.join("profiles").to_string_lossy().into_owned();
+    let mut id = 10;
+    for (name, document) in [
+        ("beads", r#"{"config_schema_version":1,"purpose":"calibration","calibration_policy":"warn","calibration_reference":{"nominal_diameter_um":5,"diameter_tolerance_um":0.25,"nominal_e_kpa":2.5,"max_cv_percent":8}}"#),
+        ("cells", r#"{"config_schema_version":1,"buffer_threshold":64}"#),
+    ] {
+        id += 1;
+        let request = json!({ "operation": "create", "name": name, "document_json": document }).to_string();
+        let created = ok(call(&mut controller, id, "profile_command", json!({ "base": base, "request": request }), &mut events).await);
+        assert_eq!(created["ok"], json!(true), "{created}");
+    }
+    let beads = json!({ "declared": true, "purpose": "calibration", "calibration_policy": "warn",
+        "calibration_max_age_hours": 24.0, "error": null, "calibration_reference": { "nominal_diameter_um": 5.0,
+        "diameter_tolerance_um": 0.25, "nominal_e_kpa": 2.5, "max_cv_percent": 8.0 } });
+    for (name, expected) in [("beads", &beads), ("cells", &undeclared)] {
+        id += 1;
+        let request = json!({ "operation": "read", "name": name }).to_string();
+        let read = ok(call(&mut controller, id, "profile_command", json!({ "base": base, "request": request }), &mut events).await);
+        id += 1;
+        let request = json!({ "operation": "apply", "name": name, "baseline": read["profile"]["revision"] }).to_string();
+        let applied = ok(call(&mut controller, id, "profile_command", json!({ "base": base, "request": request }), &mut events).await);
+        assert_eq!(applied["ok"], json!(true), "apply {name}: {applied}");
+        id += 1;
+        let r = ok(call(&mut viewer, id, "fetch_experiment_readiness", json!({ "outputPath": out }), &mut events).await);
+        assert_eq!(&r["method_calibration"], expected, "after {name}: {r}");
+    }
+    controller.close(None).await.unwrap();
+    viewer.close(None).await.unwrap();
+    server.state().bridge.lock().unwrap().pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(&data);
+}
