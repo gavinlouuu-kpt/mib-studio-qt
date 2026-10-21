@@ -440,7 +440,7 @@ export function canEnd(order: readonly string[], q: QueueState): boolean {
  *  closed by the backend (finalized, the current row, or closed) and the queue between samples. */
 export function repeatReason(order: readonly string[], q: QueueState, ref: string): string {
   if (q.ended) return "the queue was ended: a new plan mints a new experiment id";
-  if (q.paused) return "the queue is paused: resume it first";
+  if (q.paused) return "the queue is paused: resume it in the Plan or Live first";
   if (!order.includes(ref)) return `${ref} is not in the sheet`;
   const row = rowState(q, ref);
   const last = row.attempts[row.attempts.length - 1];

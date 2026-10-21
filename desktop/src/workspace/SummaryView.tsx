@@ -87,7 +87,7 @@ const basename = (path: string) => path.split(/[\\/]/).pop() || path;
 const runName = (r: PlanRun) => `Run ${r.runIndex} · ${r.ref || "sample"}`;
 const what = (r: PlanRun) => r.row ? (r.row.sample.trim() || r.row.condition.trim()) : "";
 /** Who controls the decisions that act: a viewer's are disabled, and nothing is sent. */
-export const DECISIONS_CONTROL = controlBlock("Repeat sample, Continue and Open in Review");
+export const DECISIONS_CONTROL = controlBlock("Each of Repeat sample, Continue and Open in Review");
 
 export function SummaryView({ tabs, plan, experimentActive, onView, onAlign, review, read }: SummaryViewProps) {
   const runs = useMemo(() => planClosedRuns({ draft: plan.draft, queue: plan.queue.state, started: plan.started }),
@@ -288,7 +288,7 @@ function Decisions({ run, plan, onView, onAlign, review }: {
   const curState = curRef ? rowState(q, curRef) : null;
   let next: { label: string; act: () => void; reason: string; title: string };
   if (queueMode && curState?.phase === "finalized") {
-    next = { label: "Continue · Next sample", reason: control || (busy || q.paused ? "the queue is paused or a request is pending" : ""),
+    next = { label: "Continue · Next sample", reason: control || (q.paused ? "the queue is paused: resume it in the Plan or Live" : busy ? "a Start or a stop is pending" : ""),
       title: `Confirms ${curRef}'s close (sends nothing), then the Plan shows the next Start`, act: () => { queue.confirmClosed(); onView("Plan"); } };
   } else if (queueMode && curState && ["starting", "running", "stopping"].includes(curState.phase)) {
     next = { label: "Continue · Next sample", reason: `${curRef} is ${curState.phase}: Next sample is in the Plan and Live`, title: "", act: () => {} };
