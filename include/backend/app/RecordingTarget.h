@@ -5,9 +5,20 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 #include <string>
 
 namespace backend::app {
+
+// Path strings in the backend are UTF-8 (the bridge, JSON, HDF5's Windows file driver; #762). On
+// MSVC `path(std::string)` and `path::string()` use the ANSI code page instead, so a non-ASCII path
+// would be decoded wrongly or recorded as mojibake: convert at the string boundary with these.
+inline std::filesystem::path utf8ToPath(const std::string& text) { return std::filesystem::u8path(text); }
+inline std::string pathToUtf8(const std::filesystem::path& path)
+{
+    const auto text = path.u8string();   // std::string in C++17, std::u8string in C++20
+    return std::string(text.begin(), text.end());
+}
 
 struct RecordingTarget {
     std::string path;        // the directory that was examined (nearest existing ancestor)
@@ -50,7 +61,12 @@ struct ClientPath {
 //    symlink (whose target could be created anywhere) are refused with a plain reason. The root
 //    itself is accepted (a folder writer may write into it). The resolved path is returned: it is
 //    the path that was checked.
-// A symlink swapped in after the check is not covered (the writers open by path).
+// All strings in and out are UTF-8 (utf8ToPath / pathToUtf8): an absolute request comes back
+// byte for byte.
+// Limit (ruling on #767): a local process that swaps a component for a symlink between this check
+// and the open is not stopped. The threat is a path a client sends, not a local user who can already
+// write to the storage root, and HDF5 opens files by pathname only, so there is no handle-based walk;
+// experiment Start checks once more right before its open.
 ClientPath resolveClientPath(const std::string& requested, const std::string& storageRoot);
 
 } // namespace backend::app

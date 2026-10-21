@@ -6,7 +6,8 @@
 //     `..` that leaves the root, a sibling directory whose name starts with the root's (compared
 //     by component, not as a string), absolute (unchanged), a symlinked parent or file that
 //     resolves outside, a dangling symlink, a symlink that stays inside, empty, no root configured
-//     (unchanged: today's behaviour), the root itself, a root given through a symlink.
+//     (unchanged: today's behaviour), the root itself, a root given through a symlink, a non-ASCII
+//     root and paths (UTF-8 in and out; an absolute one byte for byte).
 //  2. Through the facade, as the bridge drives it (readiness for the path, then Start), with a
 //     mock camera and the process's working directory moved to an empty folder:
 //     - fetch_instrument_status storage.path is the absolute storage root;
@@ -19,6 +20,8 @@
 //       InvalidRequest with a plain reason, open nothing, and readiness fails storage.output
 //       without probing;
 //     - an absolute path outside the root keeps today's behaviour;
+//     - non-ASCII relative and absolute paths: UTF-8 in the reply, status and snapshot, and the
+//       file where that UTF-8 path says;
 //     - raw recording, the review metrics export, Regenerate masks and the preview buffer save
 //       resolve their client paths the same way (relative under the root, escape refused);
 //  3. F2: the storage.hdf5 gate and Start's refusal say how to free the file a review holds
@@ -184,6 +187,28 @@ void resolverCases(const fs::path& base)
     {
         const auto r = app::resolveClientPath("rel.h5", "");
         MIB_EXPECT(r.ok && r.path == "rel.h5", "no root: the relative path is unchanged");
+    }
+
+    // Non-ASCII (UTF-8 in, UTF-8 out; on MSVC path::string() would give the ANSI code page): a root
+    // and a relative path with accents, and an absolute path that comes back byte for byte.
+    {
+        const std::string dataName = "d\xC3\xA4t\xC3\xA4";          // "dätä"
+        const std::string cafe = "caf\xC3\xA9";                     // "café"
+        const fs::path dataU = base / app::utf8ToPath(dataName);
+        fs::create_directories(dataU);
+        const std::string rootU = app::storageRootOf(app::pathToUtf8(dataU));
+        MIB_EXPECT(rootU == app::pathToUtf8(fs::weakly_canonical(dataU)) && contains(rootU, dataName),
+                   "a non-ASCII root is UTF-8: " + rootU);
+        MIB_EXPECT(app::recordingTarget(rootU).path == rootU, "recordingTarget reports it in UTF-8 (storage.path)");
+        const auto rel = app::resolveClientPath(cafe + "/run \xC3\xA9.h5", rootU);
+        MIB_EXPECT(rel.ok && rel.path == app::pathToUtf8(app::utf8ToPath(rootU) / app::utf8ToPath(cafe) /
+                                                         app::utf8ToPath("run \xC3\xA9.h5")),
+                   "a non-ASCII relative path under a non-ASCII root, in UTF-8: " + rel.path + " " + rel.reason);
+        const auto esc = app::resolveClientPath("../x.h5", rootU);
+        MIB_EXPECT(!esc.ok && contains(esc.reason, rootU), "the refusal names the root in UTF-8: " + esc.reason);
+        const std::string absU = app::pathToUtf8(outside / app::utf8ToPath("na\xC3\xAFve") / app::utf8ToPath("abs \xC3\xA9.h5"));
+        const auto abs8 = app::resolveClientPath(absU, rootU);
+        MIB_EXPECT(abs8.ok && abs8.path == absU, "a non-ASCII absolute path comes back byte for byte");
     }
 
     // Symlinks (skipped where the platform refuses to create them).
@@ -403,6 +428,34 @@ int main()
             MIB_EXPECT(r.ok && coordinator.status().outputPath == abs && fs::exists(abs),
                        "an absolute path outside the root keeps today's behaviour: " + r.message);
             if (r.ok) MIB_REQUIRE(stopRun(facade, coordinator), "absolute run finalizes");
+        }
+
+        // Non-ASCII through Start (#762, review round 1): the reply, the status and the snapshot are
+        // UTF-8, and the file is where that UTF-8 path says.
+        wd.mark("non-ASCII starts");
+        {
+            const std::string relU = "caf\xC3\xA9/run \xC3\xA9.h5";
+            const std::string expected =
+                app::pathToUtf8(R / app::utf8ToPath("caf\xC3\xA9") / app::utf8ToPath("run \xC3\xA9.h5"));
+            const auto r = startRun(facade, relU);
+            MIB_EXPECT(r.ok && r.message == "experiment started: " + expected && coordinator.status().outputPath == expected,
+                       "a non-ASCII relative path: " + r.message);
+            if (r.ok) MIB_REQUIRE(stopRun(facade, coordinator), "non-ASCII relative run finalizes");
+            MIB_EXPECT(fs::exists(app::utf8ToPath(expected)), "the file is at the UTF-8 path");
+            backend::services::Hdf5Service reader;
+            std::string runJson;
+            const bool persisted = reader.loadFile(expected) && reader.readRunSnapshotJson(runJson);
+            reader.closeFile();
+            MIB_EXPECT(persisted && nlohmann::json::parse(runJson).value("output_path", std::string()) == expected,
+                       "the snapshot records the UTF-8 path");
+
+            const std::string absU =
+                app::pathToUtf8(outside / app::utf8ToPath("na\xC3\xAFve") / app::utf8ToPath("abs \xC3\xA9.h5"));
+            const auto a = startRun(facade, absU);
+            MIB_EXPECT(a.ok && coordinator.status().outputPath == absU,
+                       "a non-ASCII absolute path keeps its bytes: " + a.message);
+            if (a.ok) MIB_REQUIRE(stopRun(facade, coordinator), "non-ASCII absolute run finalizes");
+            MIB_EXPECT(fs::exists(app::utf8ToPath(absU)), "the file is at the UTF-8 absolute path");
         }
 
         // ---- raw recording, and F2 while recording ----

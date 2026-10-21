@@ -397,7 +397,11 @@ no contour processing.
   readiness, raw recording, review exports, Regenerate masks, preview buffer
   save). Empty refused; absolute unchanged; relative joined to the root and
   `weakly_canonical`, refused when it leaves the root (compared by component)
-  or goes through a dangling symlink. Test: `e2e.client_output_path`.
+  or goes through a dangling symlink. Strings in and out are UTF-8
+  (`app::utf8ToPath` / `app::pathToUtf8`), an absolute request byte for byte.
+  A symlink swapped in between the check and the open is outside the threat
+  model (a client path, not a local writer of the root); Start re-checks right
+  before its open. Test: `e2e.client_output_path`.
 - Counters: `frameRecordingCount()`, `frameRecordingFiltered()`
 - Uses a dedicated `frameRecordingThread_`. Empty frames are dropped via
   `ProcessingService::isFrameEmptyWithActiveKernel` after the

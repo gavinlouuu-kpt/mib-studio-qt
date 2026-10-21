@@ -377,8 +377,10 @@ namespace backend::services
         // the parent tree here and surface a specific, actionable error.
         try
         {
+            // UTF-8, as H5Fcreate decodes it on Windows (and openFileForUpdate): a narrow
+            // path() would read it in the ANSI code page there (#762).
             const std::filesystem::path parent =
-                std::filesystem::path(filePath).parent_path();
+                std::filesystem::u8path(filePath).parent_path();
             if (!parent.empty() && !std::filesystem::is_directory(parent))
             {
                 std::error_code ec;

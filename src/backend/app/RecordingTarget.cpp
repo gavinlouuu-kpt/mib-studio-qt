@@ -20,14 +20,14 @@ constexpr long kExt4Magic = 0xEF53;
 RecordingTarget recordingTarget(const std::string& pathOrDir) {
     namespace fs = std::filesystem;
     std::error_code ec;
-    fs::path p = fs::u8path(pathOrDir.empty() ? "." : pathOrDir);
+    fs::path p = utf8ToPath(pathOrDir.empty() ? "." : pathOrDir);
     // An output file that does not exist yet: look at the directory it goes into, or the
     // nearest existing ancestor (the HDF5 writer creates parents).
     if (!fs::is_directory(p, ec)) p = p.has_parent_path() ? p.parent_path() : fs::path(".");
     while (!p.empty() && !fs::exists(p, ec) && p.has_parent_path() && p != p.parent_path()) p = p.parent_path();
 
     RecordingTarget t;
-    t.path = p.string();
+    t.path = pathToUtf8(p);
     t.exists = fs::is_directory(p, ec);
     if (!t.exists) return t;
     const auto probe = p / ".mib_recording_target_probe";
@@ -60,10 +60,10 @@ std::string storageRootOf(const std::string& dataDir) {
     namespace fs = std::filesystem;
     if (dataDir.empty()) return {};
     std::error_code ec;
-    fs::path p = fs::absolute(fs::u8path(dataDir), ec);
-    if (ec) p = fs::u8path(dataDir);
+    fs::path p = fs::absolute(utf8ToPath(dataDir), ec);
+    if (ec) p = utf8ToPath(dataDir);
     const fs::path canon = fs::weakly_canonical(p, ec);
-    return (ec ? p.lexically_normal() : canon).string();
+    return pathToUtf8(ec ? p.lexically_normal() : canon);
 }
 
 namespace {
@@ -89,7 +89,7 @@ ClientPath resolveClientPath(const std::string& requested, const std::string& st
         out.reason = "no output path given";
         return out;
     }
-    const fs::path asked = fs::u8path(requested);
+    const fs::path asked = utf8ToPath(requested);
     // Absolute: today's behaviour (the native dialogs). No root: the desktop without a data
     // directory keeps resolving against the working directory, as before (#762).
     if (asked.is_absolute() || storageRoot.empty()) {
@@ -98,7 +98,7 @@ ClientPath resolveClientPath(const std::string& requested, const std::string& st
         return out;
     }
     std::error_code ec;
-    const fs::path root = fs::u8path(storageRootOf(storageRoot));
+    const fs::path root = utf8ToPath(storageRootOf(storageRoot));
     const fs::path joined = root / asked;
     // A dangling symlink anywhere on the way: weakly_canonical treats it as not existing (and
     // keeps its name), but creating the file would follow it wherever it points.
@@ -110,7 +110,7 @@ ClientPath resolveClientPath(const std::string& requested, const std::string& st
             const auto st = fs::symlink_status(prefix, se);
             if (!se && fs::is_symlink(st) && !fs::exists(prefix, se)) {
                 out.reason = "the output path " + requested + " goes through a symlink that points nowhere (" +
-                             prefix.string() + "); choose a path inside the data directory " + root.string();
+                             pathToUtf8(prefix) + "); choose a path inside the data directory " + pathToUtf8(root);
                 return out;
             }
         }
@@ -121,12 +121,12 @@ ClientPath resolveClientPath(const std::string& requested, const std::string& st
         return out;
     }
     if (!insideRoot(root, resolved)) {
-        out.reason = "the output path " + requested + " leaves the data directory " + root.string() +
-                     " (it resolves to " + resolved.string() + "); choose a path inside it";
+        out.reason = "the output path " + requested + " leaves the data directory " + pathToUtf8(root) +
+                     " (it resolves to " + pathToUtf8(resolved) + "); choose a path inside it";
         return out;
     }
     out.ok = true;
-    out.path = resolved.string();
+    out.path = pathToUtf8(resolved);
     return out;
 }
 

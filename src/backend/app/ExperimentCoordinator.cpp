@@ -133,7 +133,7 @@ bool outputWritable(const std::string& path, std::string& reason, bool& writeVer
         return false;
     }
     std::error_code ec;
-    const std::filesystem::path p(path);
+    const std::filesystem::path p = utf8ToPath(path);   // UTF-8, as the HDF5 open decodes it (#762)
     const auto dir = p.has_parent_path() ? p.parent_path() : std::filesystem::current_path(ec);
     if (!std::filesystem::exists(dir, ec)) {
         // Hdf5Service::openFile creates parents; verify the nearest existing
@@ -141,11 +141,11 @@ bool outputWritable(const std::string& path, std::string& reason, bool& writeVer
         auto probe = dir;
         while (!probe.empty() && !std::filesystem::exists(probe, ec)) probe = probe.parent_path();
         if (probe.empty() || !std::filesystem::is_directory(probe, ec)) {
-            reason = "output directory cannot be created: " + dir.string();
+            reason = "output directory cannot be created: " + pathToUtf8(dir);
             return false;
         }
     } else if (!std::filesystem::is_directory(dir, ec)) {
-        reason = "output parent is not a directory: " + dir.string();
+        reason = "output parent is not a directory: " + pathToUtf8(dir);
         return false;
     }
     if (std::filesystem::exists(p, ec) && std::filesystem::is_directory(p, ec)) {
@@ -160,7 +160,7 @@ bool outputWritable(const std::string& path, std::string& reason, bool& writeVer
         {
             std::ofstream f(probeFile, std::ios::binary);
             if (!f.good()) {
-                reason = "output directory is not writable: " + probeDir.string();
+                reason = "output directory is not writable: " + pathToUtf8(probeDir);
                 return false;
             }
         }
@@ -169,7 +169,7 @@ bool outputWritable(const std::string& path, std::string& reason, bool& writeVer
     }
     const auto space = std::filesystem::space(probeDir, ec);
     if (!ec && space.available < (64ULL << 20)) {
-        reason = "less than 64 MiB free at " + probeDir.string();
+        reason = "less than 64 MiB free at " + pathToUtf8(probeDir);
         return false;
     }
     return true;
@@ -179,7 +179,7 @@ bool outputWritable(const std::string& path, std::string& reason, bool& writeVer
 // caller keeps a pass per (path, readiness generation) so a UI timer does not
 // continuously write files (#713).
 bool probeHdf5Destination(const std::string& output, std::string& reason) {
-    auto dir = std::filesystem::path(output).parent_path();
+    auto dir = utf8ToPath(output).parent_path();   // UTF-8, as the HDF5 open decodes it (#762)
     if (dir.empty()) dir = std::filesystem::current_path();
     std::error_code ec;
     while (!dir.empty() && !std::filesystem::exists(dir, ec))
@@ -190,7 +190,7 @@ bool probeHdf5Destination(const std::string& output, std::string& reason) {
         ~Cleanup() {
             std::error_code e;
             std::filesystem::remove(path, e);
-            std::filesystem::remove(path.string() + ".recovery.h5", e);
+            std::filesystem::remove(utf8ToPath(pathToUtf8(path) + ".recovery.h5"), e);
         }
     } cleanup{path};
     try {
@@ -204,10 +204,10 @@ bool probeHdf5Destination(const std::string& output, std::string& reason) {
                     f.originalImage.at<uint8_t>(y, x) = static_cast<uint8_t>(x + 7 * y + i);
             f.processedImage = f.originalImage.clone();
         }
-        bool ok = hdf.openFile(path.string()) && hdf.appendFrames(frames, {}) && hdf.flush();
+        bool ok = hdf.openFile(pathToUtf8(path)) && hdf.appendFrames(frames, {}) && hdf.flush();
         hdf.closeFile();
         std::vector<services::ProcessedFrame> readback;
-        ok = ok && hdf.loadFile(path.string()) && hdf.readValidFrames(readback) &&
+        ok = ok && hdf.loadFile(pathToUtf8(path)) && hdf.readValidFrames(readback) &&
              readback.size() == frames.size();
         if (ok)
             for (size_t i = 0; i < frames.size(); ++i)
@@ -1428,12 +1428,18 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
         run.v3.plRunId = plRunId;
     }
 
-    // 5. Persistence resources.
+    // 5. Persistence resources. The path was checked when it was accepted; it is checked once more
+    // right before the by-path open (the probes ran in between), so a symlink swapped into it meanwhile
+    // is refused, not followed (#762; see resolveClientPath for the remaining window).
     auto& hdf5 = backend_.hdf5();
-    if (!hdf5.openFile(path)) {
+    const auto recheck = acceptOutputPath(request.outputPath);
+    const bool samePath = recheck.refusal.empty() && recheck.path == path;
+    if (!samePath || !hdf5.openFile(path)) {
         state_ = ExperimentRunState::Idle;
         result.outcome = ExperimentStartOutcome::StorageFailed;
-        result.message = "failed to open HDF5 file: " + path;
+        result.message = samePath ? "failed to open HDF5 file: " + path
+                                  : "the output path changed after it was checked: " +
+                                        (recheck.refusal.empty() ? recheck.path : recheck.refusal);
         restoreModeOnFailure();
         publishLocked(lk, "start failed");
         return result;

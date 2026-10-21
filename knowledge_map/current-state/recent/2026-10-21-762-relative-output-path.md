@@ -15,7 +15,17 @@ relative path is unchanged, as before. Otherwise the path is joined to the root 
 `weakly_canonical`; it must stay inside the root, compared by path component (a sibling `data2` is
 not inside `data`). `..` that leaves the root, an existing symlink (file or parent) that resolves
 outside it and a dangling symlink are refused with a plain reason; the resolved path is what the
-writer gets. Not covered: a symlink swapped in after the check (the writers open by path).
+writer gets. Strings are UTF-8 in and out (`app::utf8ToPath` / `app::pathToUtf8`; on MSVC
+`path::string()` is the ANSI code page): an absolute request comes back byte for byte, and the root,
+`storage.path`, a resolved path and the reasons are UTF-8. The readiness probes and
+`Hdf5Service::openFile`'s parent-folder creation decode the path as UTF-8 too, as `H5Fcreate` does
+on Windows.
+
+**Limit (ruling on #767, round 1).** A local process that swaps a path component for a symlink
+between the check and the open is not stopped: the threat model is a path a client sends, not a
+local user who can already write to the storage root, and HDF5 opens files by pathname only, so
+there is no handle-based walk. Experiment Start checks the path once more right before its open
+(a change is `StorageFailed`), which narrows the window after the probes.
 
 **Where it applies.** Experiment Start: `ExperimentCoordinator::acceptOutputPath` (append `.h5`,
 then resolve) is the one place the start path is accepted; `evaluateReadiness` and `start` both
