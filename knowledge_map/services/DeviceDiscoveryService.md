@@ -110,6 +110,22 @@ RequireSelection/Incomplete/Refused`; nanopositioner `Started/Searching
 duplicates; `stop()` is terminal and cancels owned jobs. The Tauri shell
 does not start the coordinator (no auto-connect there, as before).
 
+### Hot-plug after startup (2026-10-21)
+
+With `Hooks::listSerialPorts` set (AppBackend: `enumerateSerialPorts()`
+names, unset on the PL instrument), `start()` also runs a watcher thread
+that polls the port list (`Timing::hotplugPoll`, 2 s). Once a nanopositioner
+step has ended `NotFound`, `Incomplete` or `ConnectFailed`, a port that
+appears runs the step again (origin `hotplug-nanopositioner`,
+`hotplugSettle` 1 s initial delay for the driver and controller boot,
+`hotplugRetries` 1, so its last attempt probes every adapter). A port that
+appeared while a step was running reruns it when that step fails. Never
+while a controller is connected, a step is running, or the last step ended
+`RequireSelection` (the operator chooses). `stop()` joins the watcher (it
+detaches it when stop() runs inside an action on the watcher thread). Test:
+the hot-plug scenario in `backend.serial_startup_race` (controller plugged
+in after NotFound, CH340 and CP2102).
+
 ## Threading
 
 One worker thread per job; providers run sequentially inside a job. Workers

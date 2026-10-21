@@ -79,6 +79,8 @@ jobs:
           assets: none
       - name: Set up sccache
         uses: mozilla-actions/sccache-action@v0.0.9
+      - name: Start sccache
+        uses: ./.github/actions/start-sccache
       - name: Configure Qt app and tests
         run: cmake --preset linux-system-release -DBUILD_TESTING=ON -DMIB_ENABLE_MINDVISION=OFF -DMIB_USE_SENTRY=OFF
       - name: Build all targets
@@ -162,6 +164,8 @@ jobs:
           key: ${{ steps.conan-cache.outputs.cache-primary-key }}
       - name: Set up sccache
         uses: mozilla-actions/sccache-action@v0.0.9
+      - name: Start sccache
+        uses: ./.github/actions/start-sccache
       - name: Configure Qt app and tests
         run: cmake --preset windows-ninja-ci -DBUILD_TESTING=ON -DMIB_ENABLE_HARDWARE_SDKS=OFF -DMIB_ENABLE_COREMOR=OFF -DMIB_ENABLE_MINDVISION=OFF -DMIB_ENABLE_WINDOWS_PACKAGING=OFF -DMIB_USE_SENTRY=OFF
       - name: Build all targets

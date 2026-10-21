@@ -79,6 +79,19 @@ the claims:
 - **The sweep.** It considers USB adapters only (VID/PID present). An
   onboard UART is never swept.
 
+## Pump adapters Windows renumbered (2026-10-21)
+
+`SerialAdapterIdentity.h` (`mib_backend`): `identityOf`, `matches`,
+`resolveAdapterPort`, JSON helpers for config.json `pump_*_adapter`. Kinds:
+`Configured`, `Moved` (serial number found on another port), `Mismatch`
+(the configured port carries another adapter), `Missing`, `Ambiguous` (clones
+sharing a serial). Only a real serial number is followed: Windows reports a
+location-generated instance suffix (`5&2c5f1a2b&0&3`) as the "serial" of an
+adapter without one, and identityOf drops it. A half identity (one of
+VID/PID missing) reads as unknown, never as a reason to refuse. Users:
+[[../frontend/SyringePumpTab]] (connect) and `AppBackend::setLastConfigJson`
+(reserves the moved port). Test: `backend.serial_adapter_identity`.
+
 ## Limits
 
 - In-process only. A port held by another process, including a handle a
@@ -91,6 +104,12 @@ the claims:
   Modbus RTU slaves discard ASCII (bad CRC) and do not hear 9600 on a
   115200 bus. A Connect waits for the probe, so nothing fails. Naming the
   pump port in config.json keeps both off the pump bus entirely.
+- A pump adapter without a USB serial number (CH340) that Windows renumbered
+  is not followed: it cannot be told apart from another CH340, such as the
+  nanopositioner's. Connect refuses with the candidate ports named, and its
+  new port is not reserved until the operator selects it.
+- The desktop (Tauri) app connects pumps on the port its instrument profile
+  names; it does not use `pump_*_adapter`.
 - The pulse-generator port is not in config.json. The startup probe can
   reach it when it is a CH34x and not yet connected, like an unconfigured
   pump bus.

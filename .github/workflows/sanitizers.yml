@@ -100,6 +100,9 @@ jobs:
         timeout-minutes: 3
         with:
           version: "v0.16.0"
+      - name: Start sccache
+        if: github.event_name != 'pull_request' || needs.changes.outputs.cpp == 'true'
+        uses: ./.github/actions/start-sccache
 
       - name: Configure (backend-only + sanitizer)
         if: github.event_name != 'pull_request' || needs.changes.outputs.cpp == 'true'

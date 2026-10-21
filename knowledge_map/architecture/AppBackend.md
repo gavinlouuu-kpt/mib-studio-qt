@@ -511,6 +511,11 @@ config watcher, stored as a string attribute on `/experiment_info` in HDF5
 `setLastConfigJson` also reserves `pump_sample_com_port` /
 `pump_sheath_com_port` (`COM<n>`) in [[../services/SerialPortClaims]], so the
 startup nanopositioner probe never opens the pump RS485 bus (2026-10-19).
+When `pump_*_adapter` remembers an adapter with a serial number that Windows
+has renumbered, its new port is reserved too (2026-10-21,
+`SerialAdapterIdentity.h`). The startup coordinator gets a
+`listSerialPorts` hook (enumeration) for its hot-plug watch, except on the
+PL instrument.
 
 ## Simulated serial hardware (2026-10-19)
 

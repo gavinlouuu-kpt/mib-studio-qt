@@ -64,6 +64,14 @@ launcher; the workflows do not duplicate launcher arguments. Cache statistics
 are written to the lane log artifact on every attempted run. Hosted cache hit
 rates are not proven until a hosted run completes.
 
+Every sccache lane then runs `.github/actions/start-sccache` (2026-10-21).
+sccache checks its Actions cache when its server starts and exits if the
+cache refuses (503 `ServerBusy`, "Egress is over the account limit"). That
+failed the first compile and the whole build twice on #748. The action
+starts the server itself; on that refusal it starts it on a local disk
+cache (`SCCACHE_GHA_ENABLED=false`, `SCCACHE_IDLE_TIMEOUT=0`, also written
+to `GITHUB_ENV`) and warns, so the build runs uncached instead of failing.
+
 Each long-running command has both a GNU `timeout` and a slightly larger
 GitHub step budget. `timeout --signal=TERM --kill-after=30s` gives child
 processes a grace period before force-killing a stalled process. CTest's

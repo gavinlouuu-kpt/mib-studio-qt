@@ -408,6 +408,10 @@ mib_add_backend_test_executable(serial_startup_race_test backend/serial_startup_
 mib_backend_test_link(serial_startup_race_test PRIVATE Threads::Threads)
 add_test(NAME backend.serial_startup_race COMMAND $<TARGET_FILE:mib_backend_tests> serial_startup_race_test)
 set_tests_properties(backend.serial_startup_race PROPERTIES LABELS "backend;serial;discovery;concurrency;stress" TIMEOUT 360)
+mib_add_backend_test_executable(serial_adapter_identity_test backend/serial_adapter_identity_test.cpp)
+mib_backend_test_link(serial_adapter_identity_test PRIVATE Threads::Threads)
+add_test(NAME backend.serial_adapter_identity COMMAND $<TARGET_FILE:mib_backend_tests> serial_adapter_identity_test)
+set_tests_properties(backend.serial_adapter_identity PROPERTIES LABELS "backend;serial" TIMEOUT 60)
 
 mib_add_backend_test_executable(mindvision_overview_mode_test backend/mindvision_overview_mode_test.cpp)
 mib_backend_test_link(mindvision_overview_mode_test PRIVATE Threads::Threads)
