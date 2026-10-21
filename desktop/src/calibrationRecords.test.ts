@@ -118,8 +118,20 @@ it("rejects a malformed method_calibration", async () => {
     { ...calibrationMethod, calibration_reference: null },
     { ...calibrationMethod, calibration_reference: { ...calibrationMethod.calibration_reference, nominal_diameter_um: "7" } },
     { ...calibrationMethod, calibration_reference: { ...calibrationMethod.calibration_reference, nominal_e_kpa: Number.NaN } },
+    // The method document's bounds (Codex round 1): the backend never sends these.
+    { ...undeclared, calibration_max_age_hours: 87601 }, { ...undeclared, calibration_max_age_hours: -1 },
+    ...[{ nominal_diameter_um: 0 }, { nominal_diameter_um: -7 }, { nominal_diameter_um: 1001 }, { diameter_tolerance_um: -0.1 },
+      { diameter_tolerance_um: 8 }, { nominal_e_kpa: 0 }, { nominal_e_kpa: -3 }, { nominal_e_kpa: 1e6 + 1 },
+      { max_cv_percent: 0 }, { max_cv_percent: 101 }]
+      .map(r => ({ ...calibrationMethod, calibration_reference: { ...calibrationMethod.calibration_reference, ...r } })),
   ];
   for (const v of bad) expect(() => decodeMethodCalibration(v), JSON.stringify(v)).toThrow("CALIBRATION_REPLY_INVALID");
+  // The bounds themselves are accepted.
+  const edge = { ...calibrationMethod, calibration_max_age_hours: 87600,
+    calibration_reference: { nominal_diameter_um: 1000, diameter_tolerance_um: 1000, nominal_e_kpa: 1e6, max_cv_percent: 100 } };
+  expect(decodeMethodCalibration(edge)).toEqual(edge);
+  expect(decodeMethodCalibration({ ...edge, calibration_reference: { ...edge.calibration_reference, diameter_tolerance_um: 0 } })
+    .calibration_reference?.diameter_tolerance_um).toBe(0);
   // Members missing entirely are an error too: the backend always sends every one.
   const { error: _omitted, ...missing } = undeclared;
   expect(() => decodeMethodCalibration(missing)).toThrow("CALIBRATION_REPLY_INVALID");

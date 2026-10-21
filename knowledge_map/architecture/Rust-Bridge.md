@@ -546,7 +546,8 @@ method's declarations exactly as that evaluation's `calibration.record` gate rea
   `bridgeContract.ts`, and the `eventAdapter.test.ts` pin.
 - **Tests:** `contract.rs` `method_calibration_in_readiness_follows_profile_apply` (real profile
   applies through cxx) and the `calibration_records_are_described` needles; `dispatch.rs`
-  `readiness_reports_the_applied_method_calibration` (dispatch and the Tauri function); `ws.rs`
+  `readiness_reports_the_applied_method_calibration` (dispatch and the Tauri function) and
+  `method_calibration_serialises_reference_and_error` (the flat-to-nested conversion); `ws.rs`
   `readiness_reports_the_method_calibration_over_the_websocket` (a viewer reads it after the
   controller applies); `calibrationRecords.test.ts`, `eventAdapter.test.ts`; C++
   `e2e.calibration_profile_apply`, `backend.calibration_record`.

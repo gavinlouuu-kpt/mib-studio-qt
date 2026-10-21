@@ -2069,3 +2069,37 @@ mod tests {
         let _ = std::fs::remove_dir_all(&data);
     }
 }
+
+// ABI 43 (#776): the flat cxx struct becomes the nested readiness member: a reference only for a
+// calibration method, nominal E and the error null when absent, the error carried when present.
+#[cfg(test)]
+mod method_calibration_tests {
+    use super::*;
+
+    #[test]
+    fn method_calibration_serialises_reference_and_error() {
+        let undeclared = ffi::BridgeMethodCalibration {
+            purpose: "measurement".into(),
+            calibration_policy: "none".into(),
+            calibration_max_age_hours: 24.0,
+            ..Default::default()
+        };
+        assert_eq!(serde_json::to_value(MethodCalibration::from(undeclared.clone())).unwrap(), serde_json::json!({
+            "declared": false, "purpose": "measurement", "calibration_policy": "none",
+            "calibration_max_age_hours": 24.0, "calibration_reference": null, "error": null }));
+        let unreadable = ffi::BridgeMethodCalibration { error: "calibration_reference: required".into(), ..undeclared.clone() };
+        assert_eq!(serde_json::to_value(MethodCalibration::from(unreadable)).unwrap()["error"],
+                   serde_json::json!("calibration_reference: required"));
+        let beads = ffi::BridgeMethodCalibration {
+            declared: true, purpose: "calibration".into(), has_reference: true, nominal_diameter_um: 7.32,
+            diameter_tolerance_um: 0.1, max_cv_percent: 10.0, nominal_e_kpa: 99.0, ..undeclared.clone()
+        };
+        assert_eq!(serde_json::to_value(MethodCalibration::from(beads.clone())).unwrap()["calibration_reference"],
+                   serde_json::json!({ "nominal_diameter_um": 7.32, "diameter_tolerance_um": 0.1,
+                                       "nominal_e_kpa": null, "max_cv_percent": 10.0 }),
+                   "nominal E only with has_nominal_e_kpa");
+        let with_e = ffi::BridgeMethodCalibration { has_nominal_e_kpa: true, nominal_e_kpa: 1.5, ..beads };
+        assert_eq!(serde_json::to_value(MethodCalibration::from(with_e)).unwrap()["calibration_reference"]["nominal_e_kpa"],
+                   serde_json::json!(1.5));
+    }
+}

@@ -132,6 +132,8 @@ bead round trip), `e2e.calibration_profile_apply` (the declarations through the 
 paths: a profile with `required` blocks Start, a calibration profile derives its record, a
 measurement profile without declarations inherits nothing, processing settings keep them, the
 central method text is verbatim; since #776 also the readiness report's method calibration after
-each apply: no method, a policy, a calibration method's reference, nothing stale after switching),
+each apply: no method, a policy, a calibration method's reference, nothing stale after switching,
+and unreadable declarations: the defaults, the reason, the gate failing closed, cleared by a
+readable text),
 and the bridge tests listed in [[../architecture/Rust-Bridge]] (ABI 42, ABI 43).
 `backend.calibration_record` also pins `declared` (absent, null and explicit-default members).

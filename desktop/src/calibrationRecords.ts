@@ -154,21 +154,26 @@ export function calibrationApplyArgs(recordId: string, expectedCurrentFactor: nu
 }
 
 const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+/** Within (lo, hi] (or [lo, hi] when `closedLow`), the backend's bounds (contract method_document). */
+const within = (v: unknown, lo: number, hi: number, closedLow = false): v is number =>
+  finite(v) && (closedLow ? v >= lo : v > lo) && v <= hi;
 
 /** The readiness report's `method_calibration` (ABI 43): every member is required; an unknown
- *  purpose or policy, a reference on a measurement method or a calibration method without one is
- *  rejected (contract: reject and reconcile). Nothing is defaulted on the client. */
+ *  purpose or policy, a number outside the method document's bounds, a reference on a measurement
+ *  method or a calibration method without one is rejected (contract: reject and reconcile).
+ *  Nothing is defaulted on the client. */
 export function decodeMethodCalibration(v: unknown): MethodCalibration {
   if (!isObject(v) || typeof v.declared !== "boolean") return invalid("method_calibration");
   if (!PURPOSES.includes(v.purpose as MethodPurpose)) return invalid(`purpose ${String(v.purpose)}`);
   if (!POLICIES.includes(v.calibration_policy as CalibrationPolicy)) return invalid(`calibration_policy ${String(v.calibration_policy)}`);
-  if (!finite(v.calibration_max_age_hours) || v.calibration_max_age_hours <= 0) return invalid("calibration_max_age_hours");
+  if (!within(v.calibration_max_age_hours, 0, 87600)) return invalid("calibration_max_age_hours");
   if (v.error !== null && typeof v.error !== "string") return invalid("error");
   const ref = v.calibration_reference;
   let reference: MethodCalibrationReference | null = null;
   if (ref !== null) {
-    if (!isObject(ref) || !finite(ref.nominal_diameter_um) || !finite(ref.diameter_tolerance_um) || !finite(ref.max_cv_percent) ||
-        (ref.nominal_e_kpa !== null && !finite(ref.nominal_e_kpa))) return invalid("calibration_reference");
+    if (!isObject(ref) || !within(ref.nominal_diameter_um, 0, 1000) ||
+        !within(ref.diameter_tolerance_um, 0, ref.nominal_diameter_um, true) || !within(ref.max_cv_percent, 0, 100) ||
+        (ref.nominal_e_kpa !== null && !within(ref.nominal_e_kpa, 0, 1e6))) return invalid("calibration_reference");
     reference = { nominal_diameter_um: ref.nominal_diameter_um, diameter_tolerance_um: ref.diameter_tolerance_um,
       nominal_e_kpa: ref.nominal_e_kpa as number | null, max_cv_percent: ref.max_cv_percent };
   }

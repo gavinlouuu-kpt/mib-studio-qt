@@ -453,8 +453,9 @@ passes a generation, so it is unchanged; the workspace queue and Plan switch on
 (`none` | `warn` | `required`), `calibration_max_age_hours`,
 `calibration_reference` (`nominal_diameter_um`, `diameter_tolerance_um`,
 `nominal_e_kpa | null`, `max_cv_percent`; non-null exactly for a calibration
-method) and `error`. An unknown purpose or policy, a missing member, or a
-reference that does not match the purpose is refused (`CALIBRATION_REPLY_INVALID`).
+method) and `error`. An unknown purpose or policy, a missing member, a number
+outside the method document's bounds, or a reference that does not match the
+purpose is refused (`CALIBRATION_REPLY_INVALID`).
 A reply without the member (a backend before ABI 43) decodes as `null`: unknown,
 never assumed to be a measurement method. No develop UI reads it; the workspace
 Prepare card (A4b) switches to it after the next develop sync. Guards:

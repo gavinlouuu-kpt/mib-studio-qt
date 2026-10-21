@@ -348,6 +348,21 @@ int main()
         MIB_EXPECT(!malformed.ok && backendApp.getLastConfigJson() == kCalibrationWithE,
                    "a declaration the strict parse refuses applies nothing: " + malformed.error);
         MIB_EXPECT(methodCalibration(readiness(facade, probe)) == m, "#776: and the report is unchanged");
+
+        // Declarations that cannot be read (every apply path refuses them, so only a stored text
+        // set directly reaches this): the defaults, no reference retained from the calibration
+        // method, the reason, and the gate fails closed. A readable text clears the error.
+        backendApp.setLastConfigJson(R"({"purpose":"calibration"})");
+        const auto bad = readiness(facade, probe);
+        auto e = methodCalibration(bad);
+        MIB_EXPECT(e["purpose"] == "measurement" && e["calibration_policy"] == "none" && e["declared"] == false &&
+                       e["calibration_reference"].is_null() &&
+                       e["error"].get<std::string>().find("calibration_reference") != std::string::npos,
+                   "#776: unreadable declarations report the defaults and the reason: " + e.dump());
+        MIB_EXPECT(gateStatus(bad) == GateStatus::Fail, "and the gate fails closed");
+        backendApp.setLastConfigJson(kMeasurement);
+        MIB_EXPECT(methodCalibration(readiness(facade, probe)) == kUndeclared,
+                   "#776: the error clears with a readable text: " + methodCalibration(readiness(facade, probe)).dump());
     }
 
     facade.shutdown();
