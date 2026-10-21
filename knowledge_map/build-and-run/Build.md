@@ -77,7 +77,7 @@ upload artifacts for docs-only pull requests.
 | Sanitizers (each matrix entry) | 60 min | setup 10; configure 4/5; build 35/36; suite 12/13 |
 | Backend CI | 45 min | setup 10; Conan probe 180 s advisory; configure 4/5; combined build 20/21; suite 12/13; PL replay 4/5 |
 | Nightly soak | 60 min | repeat validation before setup; setup 10; configure 4/5; build 20/21; suite 30/31 |
-| Python wheel (x86_64 / ARM64 QEMU) | 20 / 120 min | job-level cap around the unchanged cibuildwheel and test coverage |
+| Python wheel (x86_64 / ARM64 native) | 20 / 30 min | job-level cap around the unchanged cibuildwheel and test coverage |
 
 The soak input is validated as an integer from 1 through 100 before package
 setup; the default remains 40. Its full existing test selection, including
@@ -95,8 +95,8 @@ Observed timing evidence used for these bounds:
   runtimes are not additive queue or billing totals.
 - [Soak run 37456065522](https://github.com/gavinlouuu-kpt/mib-studio-qt/actions/runs/37456065522): compile 12 m 48 s and test 12 m 30 s.
 - [ARM64 wheel run 37568147020](https://github.com/gavinlouuu-kpt/mib-studio-qt/actions/runs/37568147020): all four Python wheels under QEMU took about
-  69.5 m, while x86_64 entries took about 3.0–3.8 m; the larger ARM cap is
-  therefore intentional until a native ARM runner is available.
+  69.5 m, while x86_64 entries took about 3.0–3.8 m. Since 2026-10-21 the ARM64
+  job runs natively on `ubuntu-24.04-arm` (30-minute cap).
 
 These observations prove a need for bounds and retry/churn control, not a
 specific deadlock or a complete billing total. A stale main-checkout view and
@@ -340,11 +340,12 @@ executable link.
 
 CI produces repaired `manylinux_2_28` wheels for CPython 3.10–3.13 on
 `x86_64` and `aarch64`. cibuildwheel installs/imports every
-wheel in its matching container (QEMU-backed for ARM64 on the GitHub x86_64
-runner); the x86_64 jobs retain the full pytest/conformance suite and import
+wheel in its matching container (native on the `ubuntu-24.04-arm` runner for
+ARM64); the x86_64 jobs retain the full pytest/conformance suite and import
 CPython 3.12 in a slim production base with Biowork's `libgl1` and
 `libglib2.0-0` prerequisites. AlmaLinux/EPEL supplies the build dependencies
-before `auditwheel` repair. Linux i686 is intentionally unsupported because
+before `auditwheel` repair (up to four install attempts, with dnf metadata
+cleaned between them, because a bad EPEL mirror failed whole runs). Linux i686 is intentionally unsupported because
 NumPy no longer publishes those wheels and the workload is not a practical fit
 for a 32-bit address space. See `bindings/python/README.md`.
 ARMv7 is excluded because cibuildwheel 2.22 marks it experimental and lacks a

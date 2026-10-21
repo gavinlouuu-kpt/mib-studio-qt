@@ -24,8 +24,8 @@ released.
 
 Linux releases are repaired `manylinux_2_28` wheels for CPython 3.10–3.13 on
 `x86_64` and `aarch64`. cibuildwheel installs and imports every
-wheel inside its matching architecture container; the ARM64 lane registers
-QEMU on the x86_64 GitHub runner. The x86_64 jobs additionally run the full
+wheel inside its matching architecture container; the ARM64 lane runs
+natively on GitHub's `ubuntu-24.04-arm` runner. The x86_64 jobs additionally run the full
 pytest/conformance suite, and import the CPython 3.12 artifact in a
 `python:3.12-slim` container with Biowork's production
 `libgl1`/`libglib2.0-0` runtime prerequisites before a tag can publish. These
