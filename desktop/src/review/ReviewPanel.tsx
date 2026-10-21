@@ -544,7 +544,8 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
     } catch (e) {
       answer = { status: "refused", message: String(e) };
     }
-    setTrack((cur) => (cur?.key === key && trackKeyRef.current === key ? { key, answer } : cur));
+    // Moved on meanwhile: the reply is dropped and nothing stays pending.
+    setTrack((cur) => (cur?.key !== key ? cur : trackKeyRef.current === key ? { key, answer } : null));
   };
   const reprocessReason = reprocessUnavailable(info, selected >= 0, imagesMissingFor(info, validSet), jobs.busy);
   const reprocessRecord = async () => {
@@ -558,7 +559,7 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
     } catch (e) {
       answer = { status: "refused", message: String(e) };
     }
-    setReprocess((cur) => (cur?.key === key && recordKeyRef.current === key ? { key, answer } : cur));
+    setReprocess((cur) => (cur?.key !== key ? cur : recordKeyRef.current === key ? { key, answer } : null));
   };
 
   // The records table: today's metric columns on the kit's DataTable, one

@@ -200,7 +200,12 @@ export function TrackCard({ valid, row, position, track, onShow, onSelect }: Tra
   let body: ReactNode;
   if (!row) body = <p className="rv-note">Select a record</p>;
   else if (!tracked) body = <p className="rv-note">Not tracked: this record has no linked records</p>;
-  else if (!track) body = <p className="rv-note">Track {row.track_id} · {row.track_observation_count} observations recorded</p>;
+  else if (!track)
+    body = (
+      <p className="rv-note">
+        Track {row.track_id} · {row.track_observation_count} {row.track_observation_count === 1 ? "observation" : "observations"} recorded
+      </p>
+    );
   else if (track.status === "pending") body = <p className="rv-note" role="status">Reading the track…</p>;
   else if (track.status === "refused") body = <p className="rv-note rv-refusal" role="alert">Not read: {track.message}</p>;
   else {

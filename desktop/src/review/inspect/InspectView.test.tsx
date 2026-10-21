@@ -666,7 +666,7 @@ it("reads the selected record's linked records only when asked, and says when th
   await mountOpen();
   const linked = () => card("Linked cell records");
   const trackCalls = () => calls.filter((c) => c.cmd === "fetch_review_track_rows");
-  expect(linked().textContent).toContain("Track 0 · 1 observations recorded");
+  expect(linked().textContent).toContain("Track 0 · 1 observation recorded");
   expect(trackCalls()).toEqual([]);
   await click(button("Show linked records", linked()));
   expect(trackCalls().map((c) => c.args)).toEqual([{ valid: true, trackId: 0, max: 256 }]);
@@ -840,9 +840,34 @@ it("drops a reprocess reply that lands after the operator moved on", async () =>
   expect(recordName()).toBe("frame 1003 · object 2");
   expect(card("Stored vs reprocessed").querySelector('[data-testid="reprocess-result"]')).toBeNull();
   expect(card("Stored vs reprocessed").textContent).not.toContain("Reprocessing the record…");
-  // Back on the first record, the dropped reply is not shown either.
+  // Back on the first record, the dropped reply is not shown either, and
+  // nothing is left pending: the button can be pressed again.
   await click(button("Previous record"));
   expect(card("Stored vs reprocessed").querySelector('[data-testid="reprocess-result"]')).toBeNull();
+  expect(card("Stored vs reprocessed").textContent).not.toContain("Reprocessing the record…");
+  expect(button("Reprocess this record", card("Stored vs reprocessed")).disabled).toBe(false);
+  holdReprocess = null;
+  await click(button("Reprocess this record", card("Stored vs reprocessed")));
+  expect(card("Stored vs reprocessed").querySelector('[data-testid="reprocess-result"]')).not.toBeNull();
+});
+
+it("drops a track reply that lands after the operator moved to another track", async () => {
+  await mountOpen();
+  let release = () => undefined as void;
+  const held = new Promise<void>((r) => (release = r));
+  trackAnswer = (args) => held.then(() => ({ ok: true, message: "", total: "1", truncated: false, positions: ["0"], rows: [row(true, Number(args.trackId) * 2)] }));
+  await click(button("Show linked records", card("Linked cell records")));
+  expect(card("Linked cell records").textContent).toContain("Reading the track…");
+  // Records 0 and 1 share track 0; record 2 is on track 1.
+  await click(button("Next record"));
+  await click(button("Next record"));
+  release();
+  await settle();
+  await click(button("Previous record"));
+  await click(button("Previous record"));
+  expect(card("Linked cell records").querySelector('[data-testid="track-summary"]')).toBeNull();
+  expect(card("Linked cell records").textContent).not.toContain("Reading the track…");
+  expect(button("Show linked records", card("Linked cell records")).disabled).toBe(false);
 });
 
 it("sends nothing new on selection, sub-view or set changes (B3a's calls only)", async () => {
