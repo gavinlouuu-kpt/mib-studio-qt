@@ -6,11 +6,18 @@
 // everything else is lossless JSON (u64 as decimal strings). Every call goes
 // through `../transport` (#512 S9): Tauri IPC in the desktop shells, the
 // WebSocket in a browser (where the server does not serve these commands yet,
-// S11), with the same command names and arguments.
-import { invoke, upload, type TransportUnsupportedError } from "../transport";
+// S11), with the same command names and arguments. Each call passes the
+// availability gate (`reviewAvailability.ts`, #763 F7): once the server has
+// answered UNKNOWN_COMMAND, review calls are refused locally.
+import { invoke as transportInvoke, upload, type TransportUnsupportedError } from "../transport";
 import { REVIEW_FRAME_PACKET, REVIEW_PIXEL_FORMATS } from "./reviewContract";
 import { decimalU64, type FramePacket } from "../framePacket";
 import { decodeReviewPacket } from "./reviewPacket";
+import { gateReviewCommand } from "./reviewAvailability";
+
+function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  return gateReviewCommand(cmd, () => transportInvoke<T>(cmd, args));
+}
 
 export interface ReviewDatasetInfo {
   present: boolean;

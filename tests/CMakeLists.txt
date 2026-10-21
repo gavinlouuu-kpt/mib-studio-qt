@@ -365,6 +365,11 @@ mib_add_backend_test_executable(monitoring_cell_pipeline_test processing/monitor
 mib_backend_test_link(monitoring_cell_pipeline_test PRIVATE Threads::Threads)
 add_test(NAME processing.monitoring_cell_pipeline COMMAND $<TARGET_FILE:mib_backend_tests> monitoring_cell_pipeline_test)
 set_tests_properties(processing.monitoring_cell_pipeline PROPERTIES LABELS "backend;processing;monitoring;safety" TIMEOUT 180)
+# #763 F17: the realtime rates fall to 0 when frames stop and on stopRealtime.
+mib_add_backend_test_executable(realtime_rates_decay_test processing/realtime_rates_decay_test.cpp)
+mib_backend_test_link(realtime_rates_decay_test PRIVATE Threads::Threads)
+add_test(NAME processing.realtime_rates_decay COMMAND $<TARGET_FILE:mib_backend_tests> realtime_rates_decay_test)
+set_tests_properties(processing.realtime_rates_decay PROPERTIES LABELS "backend;processing;realtime" TIMEOUT 120)
 # #716 A6a: what live cell images cost the hot path (ratio gates; sanitizer lanes skip `performance`).
 mib_add_backend_test_executable(monitoring_cell_hot_path_test performance/monitoring_cell_hot_path_test.cpp)
 mib_backend_test_link(monitoring_cell_hot_path_test PRIVATE Threads::Threads)

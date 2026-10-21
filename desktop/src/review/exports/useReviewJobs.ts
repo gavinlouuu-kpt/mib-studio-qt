@@ -6,11 +6,19 @@
 //
 // Events are buffered per operation id so a job that finishes before its
 // start call returns (Export Charts on two images) still reaches its dialog.
+//
+// A server without the review commands (yofo-studio-server before #512 S11)
+// answers the poll with UNKNOWN_COMMAND: the poll stops at once and says so
+// once, instead of failing five times a second (#763 F7). It starts again
+// only after the shell's probe finds the commands served (a new connection
+// or Retry; `reviewAvailability.ts`). Any other error is logged when it
+// changes, not on every tick.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { OPERATION_STATES } from "../../bridgeContract";
 import { REVIEW_OPERATION_KINDS } from "../reviewContract";
 import { isTransportUnsupported } from "../../transport";
 import { reviewBridge, unsupportedText, type ReviewCmdResult, type ReviewEvent } from "../reviewBridge";
+import { isReviewUnavailable, reviewPollAllowed, useReviewAvailability } from "../reviewAvailability";
 
 const POLL_MS = 200;
 const BUFFERED_IDS = 64;
@@ -97,6 +105,7 @@ export function useReviewJobs(ready: boolean, log: (line: string) => void): Revi
   const buffer = useRef(new Map<string, ReviewEvent[]>());
   const waiters = useRef(new Map<string, (j: TrackedJob) => void>());
   const tickBusy = useRef(false);
+  const availability = useReviewAvailability().state;
 
   const update = useCallback((next: TrackedJob | null) => {
     jobRef.current = next;
@@ -135,20 +144,34 @@ export function useReviewJobs(ready: boolean, log: (line: string) => void): Revi
   );
 
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || !reviewPollAllowed(availability)) return;
+    let stopped = false;
+    let lastError = "";
     const id = window.setInterval(async () => {
-      if (tickBusy.current) return;
+      if (tickBusy.current || stopped) return;
       tickBusy.current = true;
       try {
         ingest(await reviewBridge.pollEvents());
+        lastError = "";
       } catch (e) {
-        log(`review events error: ${e}`);
+        if (isReviewUnavailable(e)) {
+          stopped = true;
+          window.clearInterval(id);
+          log("review job events are not served by this server; polling stopped");
+          return;
+        }
+        const text = String(e);
+        if (text !== lastError) log(`review events error: ${text}`);
+        lastError = text;
       } finally {
         tickBusy.current = false;
       }
     }, POLL_MS);
-    return () => window.clearInterval(id);
-  }, [ready, ingest, log]);
+    return () => {
+      stopped = true;
+      window.clearInterval(id);
+    };
+  }, [ready, availability, ingest, log]);
 
   const start = useCallback(
     async (

@@ -415,10 +415,24 @@ public:
     void setPixelToMicronFactor(double factor);
     double getPixelToMicronFactor() const;
     
-    // Realtime throughput metrics (1-second window)
-    double getAlgoFps1s() const { return algoFps1s_.load(std::memory_order_relaxed); }
-    double getValidFps1s() const { return validFps1s_.load(std::memory_order_relaxed); }
-    double getInvalidFps1s() const { return invalidFps1s_.load(std::memory_order_relaxed); }
+    // Realtime throughput metrics (1-second window). The realtime loops close a window at least
+    // once a second while they run, frames or not, so the rates fall to 0 once frames stop, and
+    // stopRealtime() zeroes them (#763 F17). A window that no loop has closed for
+    // kRealtimeRateStaleUs (an async-batch loop without a frame store, say) reads 0 rather than
+    // the last published value.
+    static constexpr uint64_t kRealtimeRateStaleUs = 3'000'000;
+    double getAlgoFps1s() const { return freshRealtimeRate(algoFps1s_); }
+    double getValidFps1s() const { return freshRealtimeRate(validFps1s_); }
+    double getInvalidFps1s() const { return freshRealtimeRate(invalidFps1s_); }
+    // A rate published at `publishedUs` as read at `nowUs` (monotonic microseconds, as
+    // backend::Tools::getTimestamp; `publishedUs` 0 = never published): 0 once it is older than
+    // kRealtimeRateStaleUs. A publication that lands after `nowUs` was read counts as fresh.
+    static double realtimeRateAt(double rate, uint64_t publishedUs, uint64_t nowUs)
+    {
+        if (publishedUs == 0) return 0.0;
+        if (nowUs <= publishedUs) return rate;
+        return nowUs - publishedUs > kRealtimeRateStaleUs ? 0.0 : rate;
+    }
     void resetRealtimeMetrics() {
         algoFps1s_.store(0.0, std::memory_order_relaxed);
         validFps1s_.store(0.0, std::memory_order_relaxed);
@@ -1145,7 +1159,8 @@ private:
     std::atomic<double> validFps1s_{0.0};
     std::atomic<double> invalidFps1s_{0.0};
     std::atomic<double> algoAvgUs1s_{0.0};
-    std::atomic<uint64_t> algoAvgUs1sUpdatedUs_{0}; // monotonic us when algoAvgUs1s_ was last published
+    std::atomic<uint64_t> algoAvgUs1sUpdatedUs_{0}; // monotonic us when the window (all four) was last published
+    double freshRealtimeRate(const std::atomic<double>& rate) const; // realtimeRateAt(rate, published, now)
     
     // Experiment totals
     std::atomic<uint64_t> totalValidFlushed_{0};

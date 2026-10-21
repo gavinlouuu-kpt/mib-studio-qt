@@ -186,7 +186,12 @@ profile catalog:
   by default, with `MIB_STUDIO_EMODULUS_LUT_MANIFEST_URL` as an override.
 - Remote payloads are verified with SHA-256 before replacing the local cache.
 - The active LUT path is logged with source, revision, checksum status, and
-  remote update outcome.
+  remote update outcome. The path is the file `EModulusLut` actually read
+  (`ProcessingService::eModulusLutIdentity().path`), with `(requested …)`
+  when it differs: `EModulusLut::resolvePath` also tries `resources/…`
+  relative to the working directory, so a server whose data directory is in
+  `/tmp` loads the checkout's bundled file while the request named
+  `/tmp/resources/…`, and the log named the latter (#763 F24).
 - After the load, `AppBackend` hands the catalog's description of the loaded
   file to `ProcessingService::setEModulusLutCatalogIdentity` (#712): the
   catalog's `lutId` / revision / source / checksum status, or, when the bundled

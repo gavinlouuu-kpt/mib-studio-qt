@@ -14,7 +14,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
 import { bridge } from "../bridge";
+import { isRemote, transport } from "../transport";
 import { REVIEW_ABI_VERSION } from "./reviewContract";
+import {
+  REVIEW_UNAVAILABLE_TEXT,
+  isReviewUnavailable,
+  reviewAvailability,
+  useReviewAvailability,
+  watchReviewConnection,
+} from "./reviewAvailability";
 import { FramePullScheduler } from "../framePullScheduler";
 import { ReviewPanel, type ReviewPanelHandle } from "./ReviewPanel";
 import { reviewBridge, type ReviewInfo } from "./reviewBridge";
@@ -28,6 +36,10 @@ export const OPEN_FILE_EVENT = "review-open-file";
 export const PX_TO_UM_KEY = "yofo.review.pixelToMicron";
 // Same default as the Qt tab's live factor and ReviewSession (0.4886 µm/px).
 export const DEFAULT_PX_TO_UM = 0.4886;
+/** A recheck that could not reach the server tries again after this, doubling
+ * up to RECHECK_MAX_MS (#763 F7). */
+export const RECHECK_FIRST_MS = 1000;
+export const RECHECK_MAX_MS = 30000;
 
 /** The stored fallback factor, or the default when unset / invalid. */
 export function loadPixelToMicron(storage: Pick<Storage, "getItem"> | null = safeStorage()): number {
@@ -140,6 +152,14 @@ export default function ReviewApp() {
   const [channel, setChannel] = useState<UpdateChannel>(() => loadUpdateChannel());
   const [showUpdate, setShowUpdate] = useState(false);
   const [updateNotice, setUpdateNotice] = useState("");
+  // #763 F7: a server without the review commands (yofo-studio-server before
+  // #512 S11) is "initialized" but cannot review; the panel stays disabled
+  // and the shell says why instead of offering an Open that cannot work.
+  // A new connection or Retry checks again ("checking") before enabling it.
+  const availability = useReviewAvailability();
+  const rechecking = availability.state === "checking";
+  const reviewUnavailable = availability.state === "unavailable" || rechecking;
+  const reviewReady = ready && !reviewUnavailable;
   const scheduler = useRef(new FramePullScheduler());
   const panel = useRef<ReviewPanelHandle>(null);
   // React StrictMode runs the boot effect twice in development; open the
@@ -151,17 +171,29 @@ export default function ReviewApp() {
     void bridge.shellLog("info", line).catch(() => {});
   }, []);
 
+  // The review ABI probe, also the availability probe: over the WebSocket an
+  // UNKNOWN_COMMAND answer marks the review commands unavailable, a reply
+  // available (#763 F7). Resolves "available", "unavailable" or the error.
+  const probeReview = useCallback(async (): Promise<string> => {
+    try {
+      const v = await reviewBridge.abiVersion();
+      setAbi(v);
+      if (v < REVIEW_ABI_VERSION) append(`review bridge ABI ${v} is older than the UI contract (${REVIEW_ABI_VERSION})`);
+      return "available";
+    } catch (e) {
+      if (!isReviewUnavailable(e)) return String(e);
+      append("review commands are not served by this server");
+      return "unavailable";
+    }
+  }, [append]);
+
   // Initialize the backend on boot (empty data dir resolves to Tauri's
   // app_data_dir on the Rust side).
   useEffect(() => {
     getVersion().then(setAppVersion).catch(() => setAppVersion(""));
-    reviewBridge
-      .abiVersion()
-      .then((v) => {
-        setAbi(v);
-        if (v < REVIEW_ABI_VERSION) append(`review bridge ABI ${v} is older than the UI contract (${REVIEW_ABI_VERSION})`);
-      })
-      .catch((e) => append(`abi error: ${e}`));
+    const abiProbe = probeReview().then((r) => {
+      if (r !== "available" && r !== "unavailable") append(`abi error: ${r}`);
+    });
     (async () => {
       try {
         const already = await bridge.isInitialized();
@@ -172,6 +204,8 @@ export default function ReviewApp() {
         // and the screenshot harness), opens straight away.
         if (ok && !launched.current) {
           launched.current = true;
+          await abiProbe;
+          if (reviewAvailability.get().state === "unavailable") return;
           const fromQuery = new URLSearchParams(window.location.search).get("open") ?? "";
           const launch = fromQuery || (await reviewBridge.launchPath().catch(() => ""));
           if (launch) await panel.current?.openPath(launch);
@@ -183,12 +217,43 @@ export default function ReviewApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // The server may be restarted or upgraded while the page is open: a lost or
+  // new connection checks the review commands again (none in the Tauri shells).
+  useEffect(() => watchReviewConnection(transport.session), []);
+
+  // A recheck (new connection, Retry): probe until the server answers. Only a
+  // reply enables the panel and the job poll again; UNKNOWN_COMMAND keeps them
+  // off; a server that cannot be reached yet is asked again with backoff.
+  useEffect(() => {
+    if (!rechecking) return;
+    let live = true;
+    let timer: number | undefined;
+    let delay = RECHECK_FIRST_MS;
+    let reported = "";
+    const attempt = async () => {
+      const outcome = await probeReview();
+      // The answer itself ends the recheck (the state left "checking").
+      if (outcome === "available") append("review commands are served by this server; review enabled");
+      if (!live || outcome === "available" || outcome === "unavailable") return;
+      if (outcome !== reported) append(`review check: ${outcome}; trying again`);
+      reported = outcome;
+      timer = window.setTimeout(() => void attempt(), delay);
+      delay = Math.min(delay * 2, RECHECK_MAX_MS);
+    };
+    void attempt();
+    return () => {
+      live = false;
+      window.clearTimeout(timer);
+    };
+  }, [rechecking, probeReview, append]);
+
   // macOS: a Finder open (double-click, Open With, drop on the Dock icon)
   // while the app runs. The backend queues the path and emits; taking it
   // through the bridge means a cold-launch open that the boot read already
   // took is never opened twice.
   useEffect(() => {
-    if (!ready) return;
+    // The browser has no OS open requests (and no Tauri event API).
+    if (!reviewReady || isRemote) return;
     let stop: (() => void) | undefined;
     let disposed = false;
     void listen<string>(OPEN_FILE_EVENT, async () => {
@@ -202,7 +267,7 @@ export default function ReviewApp() {
       disposed = true;
       stop?.();
     };
-  }, [ready]);
+  }, [reviewReady]);
 
   // One quiet check per launch / channel change: a status-bar notice when a
   // newer version exists (builds without an update key stay silent).
@@ -248,10 +313,18 @@ export default function ReviewApp() {
       </nav>
 
       <main className="review-main">
+        {reviewUnavailable && (
+          <p className="pending-note" role="alert" data-testid="review-unavailable">
+            <span data-testid="review-unavailable-text">{REVIEW_UNAVAILABLE_TEXT}</span>{" "}
+            <button className="btn" onClick={() => reviewAvailability.recheck()} disabled={rechecking}>
+              {rechecking ? "Checking…" : "Retry"}
+            </button>
+          </p>
+        )}
         <PanelErrorBoundary>
         <ReviewPanel
           ref={panel}
-          ready={ready}
+          ready={reviewReady}
           scheduler={scheduler.current}
           fitWindow={fitWindow}
           log={append}
@@ -307,7 +380,8 @@ export default function ReviewApp() {
             <p>
               Reviews HDF5 files recorded by MIB Studio.
               <br />
-              Review bridge ABI version: {abi ?? "unknown"} · backend {ready ? "initialized" : "not initialized"}.
+              Review bridge ABI version: {abi ?? "unknown"} · backend {ready ? "initialized" : "not initialized"}
+              {reviewUnavailable ? " · review commands not served by this server" : ""}.
             </p>
             <div className="actions">
               <button className="btn" onClick={() => setShowAbout(false)}>Close</button>

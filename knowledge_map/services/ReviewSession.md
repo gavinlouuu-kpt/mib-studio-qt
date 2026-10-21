@@ -441,7 +441,12 @@ The functions:
 - `loadReanalysisPreview(json, image, index)`: one Mono8 source frame through
   an independent reader.
 - `reanalysis{Loading,Progress,Terminal,StartFailed}StatusJson`: the
-  contract's status snapshots, byte for byte as the facade wrote them.
+  contract's status snapshots, byte for byte as the facade wrote them, plus
+  one key: the terminal snapshot's `valid_objects` (of `objects`, the valid
+  records; #763 F18). Only the terminal snapshot carries `objects`; it has
+  no `phase` / `completed` / `total`, which is why MIB Studio's status line
+  read "Reanalysis: completed /" (`reanalysisStatusLine` in
+  `desktop/src/reanalysisControls.tsx` now words each state).
 
 ## Export engine (`ExportEngine.h`, #512 S3)
 

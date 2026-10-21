@@ -518,7 +518,15 @@ and read `in_channel` per object. Native ABI cores do not carry the band yet.
 ## Metrics exposed
 
 1-second rolling window: `getAlgoFps1s`, `getValidFps1s`, `getInvalidFps1s`,
-`getAlgoAvgUs1s`. Plus `getBufferedFrameCounts()` for cheap UI/status polling,
+`getAlgoAvgUs1s`. The window closes at least once a second while a realtime
+loop runs, frames or not, so the rates fall to 0 within about two seconds of
+the last frame (a stopped camera with realtime still on); before #763 F17 the
+inline loop closed it only after a processed frame and the last second's
+rates stayed published (96/15/93 per second 20 s after Stop acquisition). The
+async batch loop already closed it on every pass. `stopRealtime` zeroes the
+three rates, and a window no loop has closed for `kRealtimeRateStaleUs` (3 s)
+reads 0 (`realtimeRateAt`, the testable rule; `algoAvgUs1sUpdatedUs_` is the
+publication time). Test: `processing.realtime_rates_decay`. Plus `getBufferedFrameCounts()` for cheap UI/status polling,
 `getTotalValidFlushed` for experiment totals, and dropped-frame counters for
 the bounded experiment backlog.
 

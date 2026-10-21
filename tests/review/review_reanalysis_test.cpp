@@ -499,14 +499,15 @@ int main()
         ReanalysisOutcome done;
         done.published = true;
         done.produced = 18;
+        done.valid = 5;
         MIB_EXPECT(backend::review::reanalysisTerminalStatusJson(7, r, done) ==
-                       R"({"error":"","final_path":"/out/new.h5","objects":"18","operation_id":"7","retained_partial_path":"","state":"completed","warnings":[]})",
+                       R"({"error":"","final_path":"/out/new.h5","objects":"18","operation_id":"7","retained_partial_path":"","state":"completed","valid_objects":"5","warnings":[]})",
                    "completed status");
         ReanalysisOutcome cancelled;
         cancelled.cancelled = true;
         cancelled.error = "Reanalysis cancelled";
         MIB_EXPECT(backend::review::reanalysisTerminalStatusJson(8, r, cancelled) ==
-                       R"({"error":"Reanalysis cancelled","final_path":"","objects":"0","operation_id":"8","retained_partial_path":"","state":"cancelled","warnings":[]})",
+                       R"({"error":"Reanalysis cancelled","final_path":"","objects":"0","operation_id":"8","retained_partial_path":"","state":"cancelled","valid_objects":"0","warnings":[]})",
                    "cancelled status");
         ReanalysisOutcome failed;
         failed.error = "Failed to save regenerated HDF";
@@ -514,7 +515,7 @@ int main()
         failed.retainedPartialPath = "/out/.new.h5.partial-1";
         failed.produced = 2;
         MIB_EXPECT(backend::review::reanalysisTerminalStatusJson(9, r, failed) ==
-                       R"({"error":"Failed to save regenerated HDF","final_path":"","objects":"2","operation_id":"9","retained_partial_path":"/out/.new.h5.partial-1","state":"failed","warnings":[" Temporary file cleanup failed: x"]})",
+                       R"({"error":"Failed to save regenerated HDF","final_path":"","objects":"2","operation_id":"9","retained_partial_path":"/out/.new.h5.partial-1","state":"failed","valid_objects":"0","warnings":[" Temporary file cleanup failed: x"]})",
                    "failed status with warning");
         MIB_EXPECT(backend::review::reanalysisStartFailedStatusJson(10, "no thread") ==
                        R"({"error":"no thread","operation_id":"10","state":"failed"})",

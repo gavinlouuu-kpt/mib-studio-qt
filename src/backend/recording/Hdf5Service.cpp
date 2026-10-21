@@ -54,6 +54,38 @@ namespace backend::services
             return rank >= 0 && points == 1;
         }
 
+        // H5Lexists on each component of `path` in turn ("/a", then "/a/b"):
+        // HDF5 1.10 fails, and prints an HDF5-DIAG error stack, when an
+        // intermediate group is missing, so "/recorded_frames/images" on an
+        // experiment file was an error rather than "no" (#763 F20). Same
+        // result convention as H5Lexists: > 0 exists, 0 absent, < 0 error.
+        htri_t linkExists(hid_t loc, const std::string& path)
+        {
+            std::size_t from = (!path.empty() && path[0] == '/') ? 1 : 0;
+            while (true)
+            {
+                const std::size_t slash = path.find('/', from);
+                const std::string prefix = path.substr(0, slash);
+                if (!prefix.empty() && prefix != "/")
+                {
+                    const htri_t exists = H5Lexists(loc, prefix.c_str(), H5P_DEFAULT);
+                    if (exists <= 0) return exists;
+                }
+                if (slash == std::string::npos) return 1;
+                from = slash + 1;
+            }
+        }
+
+        // The attribute `name` of `loc`, opened when it exists and created
+        // (`type`, `space`) when it does not. Never probe with H5Aopen first:
+        // a failed H5Aopen prints an HDF5-DIAG error stack, one per attribute
+        // a new file does not have yet (#763 F20: 31 stacks per finalize).
+        hid_t openOrCreateAttribute(hid_t loc, const char* name, hid_t type, hid_t space)
+        {
+            return H5Aexists(loc, name) > 0 ? H5Aopen(loc, name, H5P_DEFAULT)
+                                            : H5Acreate2(loc, name, type, space, H5P_DEFAULT, H5P_DEFAULT);
+        }
+
         // A scalar string attribute of an open group (variable or fixed
         // length, at most 16 MiB); nullopt when absent or unreadable.
         std::optional<std::string> readGroupStringAttribute(hid_t group, const char* name)
@@ -1622,7 +1654,7 @@ namespace backend::services
                     const hsize_t rowsBefore = impl_->seriesImagesWritten_;
                     if (!appendSeriesImageDataset(impl_->fileId_, "/valid_frames/series_images", validFrames, impl_->seriesImagesWritten_)) {
                         SPDLOG_WARN("Failed to append series_images dataset (non-fatal)");
-                    } else if (H5Lexists(impl_->fileId_, "/valid_frames/series_meta", H5P_DEFAULT) > 0) {
+                    } else if (linkExists(impl_->fileId_, "/valid_frames/series_meta") > 0) {
                         if (!appendSeriesMetaDatasets(impl_->fileId_, validFrames, rowsBefore)) {
                             SPDLOG_WARN("Failed to append series_meta datasets (non-fatal)");
                         }
@@ -2096,7 +2128,7 @@ namespace backend::services
         }
 
         // Open the experiment_info group (must already exist from writeExperimentInfo)
-        htri_t exists = H5Lexists(impl_->fileId_, "/experiment_info", H5P_DEFAULT);
+        htri_t exists = linkExists(impl_->fileId_, "/experiment_info");
         if (exists <= 0)
         {
             SPDLOG_WARN("Cannot write config JSON: /experiment_info group does not exist");
@@ -2116,12 +2148,7 @@ namespace backend::services
         H5Tset_cset(strType, H5T_CSET_UTF8);
 
         hid_t scalarSpace = H5Screate(H5S_SCALAR);
-        hid_t attr = H5Aopen(groupId, "config_json", H5P_DEFAULT);
-        if (attr < 0)
-        {
-            attr = H5Acreate2(groupId, "config_json", strType, scalarSpace,
-                              H5P_DEFAULT, H5P_DEFAULT);
-        }
+        hid_t attr = openOrCreateAttribute(groupId, "config_json", strType, scalarSpace);
         bool ok = false;
         if (attr >= 0)
         {
@@ -2302,7 +2329,7 @@ namespace backend::services
                                  std::vector<cv::Mat>& images)
     {
         // Check if dataset exists
-        htri_t exists = H5Lexists(fileId, datasetPath.c_str(), H5P_DEFAULT);
+        htri_t exists = linkExists(fileId, datasetPath.c_str());
         if (exists <= 0)
         {
             SPDLOG_WARN("Dataset {} does not exist", datasetPath);
@@ -2376,7 +2403,7 @@ namespace backend::services
                                     std::vector<ProcessedFrame>& frames)
     {
         // Check if dataset exists
-        htri_t exists = H5Lexists(fileId, datasetPath.c_str(), H5P_DEFAULT);
+        htri_t exists = linkExists(fileId, datasetPath.c_str());
         if (exists <= 0)
         {
             SPDLOG_WARN("Dataset {} does not exist", datasetPath);
@@ -2578,8 +2605,8 @@ namespace backend::services
         }
 
         // A PL run (YOFO S3) records metadata only: no images or masks.
-        if (H5Lexists(impl_->fileId_, "/valid_frames/images", H5P_DEFAULT) <= 0 &&
-            H5Lexists(impl_->fileId_, "/valid_frames/masks", H5P_DEFAULT) <= 0)
+        if (linkExists(impl_->fileId_, "/valid_frames/images") <= 0 &&
+            linkExists(impl_->fileId_, "/valid_frames/masks") <= 0)
         {
             return true;
         }
@@ -2634,8 +2661,8 @@ namespace backend::services
         }
 
         // A PL run (YOFO S3) records metadata only: no images or masks.
-        if (H5Lexists(impl_->fileId_, "/invalid_frames/images", H5P_DEFAULT) <= 0 &&
-            H5Lexists(impl_->fileId_, "/invalid_frames/masks", H5P_DEFAULT) <= 0)
+        if (linkExists(impl_->fileId_, "/invalid_frames/images") <= 0 &&
+            linkExists(impl_->fileId_, "/invalid_frames/masks") <= 0)
         {
             return true;
         }
@@ -2686,7 +2713,7 @@ namespace backend::services
         }
 
         // Check if group exists
-        htri_t exists = H5Lexists(impl_->fileId_, "/experiment_info", H5P_DEFAULT);
+        htri_t exists = linkExists(impl_->fileId_, "/experiment_info");
         if (exists <= 0)
         {
             SPDLOG_WARN("Experiment info group does not exist");
@@ -2871,7 +2898,7 @@ namespace backend::services
     std::optional<uint64_t> Hdf5Service::readScalarUintAttribute(const char* groupPath, const char* name) const
     {
         if (!isFileOpen() || !groupPath || !name) return std::nullopt;
-        if (H5Lexists(impl_->fileId_, groupPath, H5P_DEFAULT) <= 0) return std::nullopt;
+        if (linkExists(impl_->fileId_, groupPath) <= 0) return std::nullopt;
         hid_t group = H5Gopen2(impl_->fileId_, groupPath, H5P_DEFAULT);
         if (group < 0) return std::nullopt;
         std::optional<uint64_t> out;
@@ -2913,7 +2940,7 @@ namespace backend::services
             SPDLOG_ERROR("writeAnalysisPixelToMicron: factor {} is not finite and positive", factor);
             return false;
         }
-        if (H5Lexists(impl_->fileId_, "/experiment_info", H5P_DEFAULT) <= 0)
+        if (linkExists(impl_->fileId_, "/experiment_info") <= 0)
         {
             SPDLOG_WARN("Cannot write pixel_to_micron: /experiment_info group does not exist");
             return false;
@@ -2940,7 +2967,7 @@ namespace backend::services
 
     std::optional<double> Hdf5Service::readAnalysisPixelToMicron() const
     {
-        if (!isFileOpen() || H5Lexists(impl_->fileId_, "/experiment_info", H5P_DEFAULT) <= 0) return std::nullopt;
+        if (!isFileOpen() || linkExists(impl_->fileId_, "/experiment_info") <= 0) return std::nullopt;
         hid_t group = H5Gopen2(impl_->fileId_, "/experiment_info", H5P_DEFAULT);
         if (group < 0) return std::nullopt;
         std::optional<double> out;
@@ -2967,9 +2994,9 @@ namespace backend::services
     {
         if (!isFileOpen()) return false;
         const char* groupPath = nullptr;
-        if (H5Lexists(impl_->fileId_, "/experiment_info", H5P_DEFAULT) > 0)
+        if (linkExists(impl_->fileId_, "/experiment_info") > 0)
             groupPath = "/experiment_info";
-        else if (H5Lexists(impl_->fileId_, "/recording_info", H5P_DEFAULT) > 0)
+        else if (linkExists(impl_->fileId_, "/recording_info") > 0)
             groupPath = "/recording_info";
         else
             return false;
@@ -2977,6 +3004,7 @@ namespace backend::services
         if (group < 0) return false;
 
         const auto readUint32 = [&](const char* name, uint32_t& value) {
+            if (H5Aexists(group, name) <= 0) return false;
             hid_t attribute = H5Aopen(group, name, H5P_DEFAULT);
             if (attribute < 0) return false;
             const bool ok = isScalarAttribute(attribute) &&
@@ -2985,6 +3013,7 @@ namespace backend::services
             return ok;
         };
         const auto readString = [&](const char* name, std::string& value) {
+            if (H5Aexists(group, name) <= 0) return false;
             hid_t attribute = H5Aopen(group, name, H5P_DEFAULT);
             if (attribute < 0) return false;
             if (!isScalarAttribute(attribute) || H5Aget_storage_size(attribute) > 1024 * 1024) {
@@ -3042,7 +3071,7 @@ namespace backend::services {
 
     bool Hdf5Service::readRecordedProcessingConfig(ProcessingConfig& config) const
     {
-        if (!isFileOpen() || H5Lexists(impl_->fileId_, "/experiment_info", H5P_DEFAULT) <= 0)
+        if (!isFileOpen() || linkExists(impl_->fileId_, "/experiment_info") <= 0)
             return false;
         hid_t group = H5Gopen2(impl_->fileId_, "/experiment_info", H5P_DEFAULT);
         if (group < 0) return false;
@@ -3182,7 +3211,7 @@ namespace backend::services {
         };
 
         for (const char* path : {"/", "/experiment_info", "/recording_info", "/run_provenance"}) {
-            if (H5Lexists(impl_->fileId_, path, H5P_DEFAULT) <= 0) continue;
+            if (linkExists(impl_->fileId_, path) <= 0) continue;
             hid_t group = H5Gopen2(impl_->fileId_, path, H5P_DEFAULT);
             if (group < 0) return false;
             bool ok = true;
@@ -3223,7 +3252,7 @@ namespace backend::services {
         }
 
         // Check existence
-        htri_t exists = H5Lexists(impl_->fileId_, datasetPath.c_str(), H5P_DEFAULT);
+        htri_t exists = linkExists(impl_->fileId_, datasetPath.c_str());
         if (exists <= 0)
         {
             SPDLOG_WARN("getDatasetInfo: dataset {} does not exist", datasetPath);
@@ -3288,7 +3317,7 @@ namespace backend::services {
 
         SPDLOG_TRACE("readImageByIndex: path='{}', index={}", datasetPath, index);
         // Check existence
-        htri_t exists = H5Lexists(impl_->fileId_, datasetPath.c_str(), H5P_DEFAULT);
+        htri_t exists = linkExists(impl_->fileId_, datasetPath.c_str());
         if (exists <= 0)
         {
             SPDLOG_WARN("readImageByIndex: dataset {} does not exist", datasetPath);
@@ -3459,11 +3488,11 @@ namespace backend::services {
     {
         if (!isFileOpen()) return std::nullopt;
         const char* group = valid ? "/valid_frames" : "/invalid_frames";
-        const htri_t groupExists = H5Lexists(impl_->fileId_, group, H5P_DEFAULT);
+        const htri_t groupExists = linkExists(impl_->fileId_, group);
         if (groupExists < 0) return std::nullopt;
         if (groupExists == 0) return false;
         const std::string path = std::string(group) + "/metadata";
-        const htri_t exists = H5Lexists(impl_->fileId_, path.c_str(), H5P_DEFAULT);
+        const htri_t exists = linkExists(impl_->fileId_, path.c_str());
         if (exists < 0) return std::nullopt;
         return exists > 0;
     }
@@ -3555,7 +3584,7 @@ namespace backend::services {
         if (lastSlash != std::string::npos && lastSlash > 0)
         {
             std::string parentPath = datasetPath.substr(0, lastSlash);
-            htri_t exists = H5Lexists(impl_->fileId_, parentPath.c_str(), H5P_DEFAULT);
+            htri_t exists = linkExists(impl_->fileId_, parentPath.c_str());
             if (exists <= 0)
             {
                 // Create parent group (and any intermediate groups)
@@ -3578,7 +3607,7 @@ namespace backend::services {
                     
                     if (!currentPath.empty() && currentPath != "/")
                     {
-                        htri_t groupExists = H5Lexists(impl_->fileId_, currentPath.c_str(), H5P_DEFAULT);
+                        htri_t groupExists = linkExists(impl_->fileId_, currentPath.c_str());
                         if (groupExists <= 0)
                         {
                             hid_t groupId = H5Gcreate2(impl_->fileId_, currentPath.c_str(), H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
@@ -3712,7 +3741,7 @@ namespace backend::services {
         H5Eget_auto(H5E_DEFAULT, &old_func, &old_client_data);
         H5Eset_auto(H5E_DEFAULT, nullptr, nullptr);
         
-        htri_t exists = H5Lexists(impl_->fileId_, datasetPath.c_str(), H5P_DEFAULT);
+        htri_t exists = linkExists(impl_->fileId_, datasetPath.c_str());
         
         // Restore error handling
         H5Eset_auto(H5E_DEFAULT, old_func, old_client_data);
@@ -3809,6 +3838,7 @@ namespace backend::services {
     {
         if (!isFileOpen()) return false;
 
+        if (linkExists(impl_->fileId_, "/valid_frames/series_images") <= 0) return false;
         hid_t dsId = H5Dopen2(impl_->fileId_, "/valid_frames/series_images", H5P_DEFAULT);
         if (dsId < 0) return false;
 
@@ -3835,6 +3865,7 @@ namespace backend::services {
     {
         if (!isFileOpen()) return false;
 
+        if (linkExists(impl_->fileId_, "/valid_frames/series_images") <= 0) return false;
         hid_t dsId = H5Dopen2(impl_->fileId_, "/valid_frames/series_images", H5P_DEFAULT);
         if (dsId < 0) return false;
 
@@ -3884,7 +3915,7 @@ namespace backend::services {
     {
         outInfo.clear();
         if (!isFileOpen()) return false;
-        if (H5Lexists(impl_->fileId_, "/valid_frames/series_meta", H5P_DEFAULT) <= 0) return false;
+        if (linkExists(impl_->fileId_, "/valid_frames/series_meta") <= 0) return false;
 
         hid_t dsId = H5Dopen2(impl_->fileId_, "/valid_frames/series_meta", H5P_DEFAULT);
         if (dsId < 0) return false;
@@ -3922,7 +3953,7 @@ namespace backend::services {
         if (outContiguous)
         {
             *outContiguous = true;
-            if (H5Lexists(impl_->fileId_, "/valid_frames/series_contiguous", H5P_DEFAULT) > 0)
+            if (linkExists(impl_->fileId_, "/valid_frames/series_contiguous") > 0)
             {
                 hid_t cId = H5Dopen2(impl_->fileId_, "/valid_frames/series_contiguous", H5P_DEFAULT);
                 if (cId >= 0)
@@ -3956,7 +3987,7 @@ namespace backend::services {
         hid_t typeId = createTriggerEventType();
         const hsize_t rows = static_cast<hsize_t>(events.size());
         bool ok = true;
-        if (H5Lexists(impl_->fileId_, path, H5P_DEFAULT) <= 0)
+        if (linkExists(impl_->fileId_, path) <= 0)
         {
             hsize_t dims[1] = {rows};
             hsize_t maxDims[1] = {H5S_UNLIMITED};
@@ -4021,7 +4052,7 @@ namespace backend::services {
         out.clear();
         if (!isFileOpen()) return false;
         const char* path = "/trigger_events";
-        if (H5Lexists(impl_->fileId_, path, H5P_DEFAULT) <= 0) return false;
+        if (linkExists(impl_->fileId_, path) <= 0) return false;
         hid_t dsId = H5Dopen2(impl_->fileId_, path, H5P_DEFAULT);
         if (dsId < 0) return false;
         hid_t spaceId = H5Dget_space(dsId);
@@ -4047,7 +4078,7 @@ namespace backend::services {
     {
         if (!isFileOpen())
             return false;
-        return H5Lexists(impl_->fileId_, "/recording_info", H5P_DEFAULT) > 0;
+        return linkExists(impl_->fileId_, "/recording_info") > 0;
     }
 
     bool Hdf5Service::readRecordingMetadata(std::vector<ProcessedFrame>& frames)
@@ -4060,7 +4091,7 @@ namespace backend::services {
         frames.clear();
 
         const char* datasetPath = "/recorded_frames/metadata";
-        htri_t exists = H5Lexists(impl_->fileId_, datasetPath, H5P_DEFAULT);
+        htri_t exists = linkExists(impl_->fileId_, datasetPath);
         if (exists <= 0)
         {
             SPDLOG_WARN("Dataset {} does not exist", datasetPath);
@@ -4152,7 +4183,7 @@ namespace backend::services {
             return false;
         }
 
-        htri_t exists = H5Lexists(impl_->fileId_, "/recording_info", H5P_DEFAULT);
+        htri_t exists = linkExists(impl_->fileId_, "/recording_info");
         if (exists <= 0)
         {
             SPDLOG_WARN("readRecordingInfo: /recording_info group not found");
@@ -4384,11 +4415,9 @@ namespace backend::services {
         if (!isFileOpen())
             return false;
 
-        hid_t infoGroupId = H5Gopen2(impl_->fileId_, "/recording_info", H5P_DEFAULT);
-        if (infoGroupId < 0)
-        {
-            infoGroupId = H5Gcreate2(impl_->fileId_, "/recording_info", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
-        }
+        hid_t infoGroupId = linkExists(impl_->fileId_, "/recording_info") > 0
+                                ? H5Gopen2(impl_->fileId_, "/recording_info", H5P_DEFAULT)
+                                : H5Gcreate2(impl_->fileId_, "/recording_info", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
         if (infoGroupId < 0)
         {
             SPDLOG_ERROR("Failed to create recording_info group");
@@ -4398,12 +4427,7 @@ namespace backend::services {
         hid_t scalarSpaceId = H5Screate(H5S_SCALAR);
 
         auto writeAttr = [&](const char* name, uint64_t value) {
-            hid_t attr = H5Aopen(infoGroupId, name, H5P_DEFAULT);
-            if (attr < 0)
-            {
-                attr = H5Acreate2(infoGroupId, name, H5T_NATIVE_UINT64, scalarSpaceId,
-                                  H5P_DEFAULT, H5P_DEFAULT);
-            }
+            hid_t attr = openOrCreateAttribute(infoGroupId, name, H5T_NATIVE_UINT64, scalarSpaceId);
             if (attr >= 0)
             {
                 H5Awrite(attr, H5T_NATIVE_UINT64, &value);
@@ -4417,12 +4441,8 @@ namespace backend::services {
         writeAttr("total_filtered_empty_frames", filteredFrames);
 
         const uint8_t multiImageEnabledValue = multiImageEnabled ? 1 : 0;
-        hid_t multiEnabledAttr = H5Aopen(infoGroupId, "multi_image_enabled", H5P_DEFAULT);
-        if (multiEnabledAttr < 0)
-        {
-            multiEnabledAttr = H5Acreate2(infoGroupId, "multi_image_enabled", H5T_NATIVE_UINT8, scalarSpaceId,
-                                          H5P_DEFAULT, H5P_DEFAULT);
-        }
+        hid_t multiEnabledAttr =
+            openOrCreateAttribute(infoGroupId, "multi_image_enabled", H5T_NATIVE_UINT8, scalarSpaceId);
         if (multiEnabledAttr >= 0)
         {
             H5Awrite(multiEnabledAttr, H5T_NATIVE_UINT8, &multiImageEnabledValue);
@@ -4430,12 +4450,8 @@ namespace backend::services {
         }
 
         const uint64_t multiImageCountValue = std::max<uint64_t>(1, multiImageCount);
-        hid_t multiCountAttr = H5Aopen(infoGroupId, "multi_image_count", H5P_DEFAULT);
-        if (multiCountAttr < 0)
-        {
-            multiCountAttr = H5Acreate2(infoGroupId, "multi_image_count", H5T_NATIVE_UINT64, scalarSpaceId,
-                                        H5P_DEFAULT, H5P_DEFAULT);
-        }
+        hid_t multiCountAttr =
+            openOrCreateAttribute(infoGroupId, "multi_image_count", H5T_NATIVE_UINT64, scalarSpaceId);
         if (multiCountAttr >= 0)
         {
             H5Awrite(multiCountAttr, H5T_NATIVE_UINT64, &multiImageCountValue);
@@ -4445,11 +4461,7 @@ namespace backend::services {
         const auto defaultIdentity = backend::processing::bundledProcessingCoreIdentity();
         const auto& coreIdentity = processingCore ? *processingCore : defaultIdentity;
         const auto writeUint32Attribute = [&](const char* name, uint32_t value) {
-            hid_t attribute = H5Aopen(infoGroupId, name, H5P_DEFAULT);
-            if (attribute < 0) {
-                attribute = H5Acreate2(infoGroupId, name, H5T_NATIVE_UINT32, scalarSpaceId,
-                                       H5P_DEFAULT, H5P_DEFAULT);
-            }
+            hid_t attribute = openOrCreateAttribute(infoGroupId, name, H5T_NATIVE_UINT32, scalarSpaceId);
             if (attribute < 0) return false;
             const bool ok = H5Awrite(attribute, H5T_NATIVE_UINT32, &value) >= 0;
             H5Aclose(attribute);
@@ -4460,11 +4472,7 @@ namespace backend::services {
             if (stringType < 0) return false;
             H5Tset_size(stringType, H5T_VARIABLE);
             H5Tset_cset(stringType, H5T_CSET_UTF8);
-            hid_t attribute = H5Aopen(infoGroupId, name, H5P_DEFAULT);
-            if (attribute < 0) {
-                attribute = H5Acreate2(infoGroupId, name, stringType, scalarSpaceId,
-                                       H5P_DEFAULT, H5P_DEFAULT);
-            }
+            hid_t attribute = openOrCreateAttribute(infoGroupId, name, stringType, scalarSpaceId);
             bool ok = false;
             if (attribute >= 0) {
                 const char* pointer = value.c_str();
@@ -4489,12 +4497,7 @@ namespace backend::services {
         const char* mode = "frame_recording";
         hid_t strType = H5Tcopy(H5T_C_S1);
         H5Tset_size(strType, std::strlen(mode) + 1);
-        hid_t modeAttr = H5Aopen(infoGroupId, "mode", H5P_DEFAULT);
-        if (modeAttr < 0)
-        {
-            modeAttr = H5Acreate2(infoGroupId, "mode", strType, scalarSpaceId,
-                                  H5P_DEFAULT, H5P_DEFAULT);
-        }
+        hid_t modeAttr = openOrCreateAttribute(infoGroupId, "mode", strType, scalarSpaceId);
         if (modeAttr >= 0)
         {
             H5Awrite(modeAttr, strType, mode);
@@ -4527,8 +4530,8 @@ namespace backend::services {
     namespace {
     const char* runInfoGroupPath(hid_t fileId)
     {
-        if (H5Lexists(fileId, "/experiment_info", H5P_DEFAULT) > 0) return "/experiment_info";
-        if (H5Lexists(fileId, "/recording_info", H5P_DEFAULT) > 0) return "/recording_info";
+        if (linkExists(fileId, "/experiment_info") > 0) return "/experiment_info";
+        if (linkExists(fileId, "/recording_info") > 0) return "/recording_info";
         return nullptr;
     }
     } // namespace
@@ -4549,17 +4552,14 @@ namespace backend::services {
         hid_t scalar = H5Screate(H5S_SCALAR);
         bool ok = true;
         auto writeU64 = [&](const char* name, uint64_t value) {
-            hid_t attr = H5Aexists(group, name) > 0
-                             ? H5Aopen(group, name, H5P_DEFAULT)
-                             : H5Acreate2(group, name, H5T_NATIVE_UINT64, scalar, H5P_DEFAULT, H5P_DEFAULT);
+            hid_t attr = openOrCreateAttribute(group, name, H5T_NATIVE_UINT64, scalar);
             if (attr < 0) { ok = false; return; }
             if (H5Awrite(attr, H5T_NATIVE_UINT64, &value) < 0) ok = false;
             H5Aclose(attr);
         };
         auto writeU8 = [&](const char* name, bool value) {
             const uint8_t v = value ? 1 : 0;
-            hid_t attr = H5Aopen(group, name, H5P_DEFAULT);
-            if (attr < 0) attr = H5Acreate2(group, name, H5T_NATIVE_UINT8, scalar, H5P_DEFAULT, H5P_DEFAULT);
+            hid_t attr = openOrCreateAttribute(group, name, H5T_NATIVE_UINT8, scalar);
             if (attr < 0) { ok = false; return; }
             if (H5Awrite(attr, H5T_NATIVE_UINT8, &v) < 0) ok = false;
             H5Aclose(attr);
@@ -4806,8 +4806,7 @@ namespace backend::services {
         hid_t scalar = H5Screate(H5S_SCALAR);
         bool ok = true;
         auto writeU64 = [&](const std::string& name, uint64_t value) {
-            hid_t attr = H5Aopen(group, name.c_str(), H5P_DEFAULT);
-            if (attr < 0) attr = H5Acreate2(group, name.c_str(), H5T_NATIVE_UINT64, scalar, H5P_DEFAULT, H5P_DEFAULT);
+            hid_t attr = openOrCreateAttribute(group, name.c_str(), H5T_NATIVE_UINT64, scalar);
             if (attr < 0) { ok = false; return; }
             if (H5Awrite(attr, H5T_NATIVE_UINT64, &value) < 0) ok = false;
             H5Aclose(attr);
@@ -5084,7 +5083,7 @@ namespace backend::services {
             SPDLOG_ERROR("writeRunSnapshotJson: injected write fault; run snapshot not stored");
             return false;
         }
-        hid_t group = H5Lexists(impl_->fileId_, "/run_provenance", H5P_DEFAULT) > 0
+        hid_t group = linkExists(impl_->fileId_, "/run_provenance") > 0
                           ? H5Gopen2(impl_->fileId_, "/run_provenance", H5P_DEFAULT)
                           : H5Gcreate2(impl_->fileId_, "/run_provenance", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
         if (group < 0) return false;
@@ -5130,7 +5129,7 @@ namespace backend::services {
         runSnapshotJson.clear();
         if (readinessJson) readinessJson->clear();
         if (!isFileOpen()) return false;
-        if (H5Lexists(impl_->fileId_, "/run_provenance", H5P_DEFAULT) <= 0) return false;
+        if (linkExists(impl_->fileId_, "/run_provenance") <= 0) return false;
         hid_t group = H5Gopen2(impl_->fileId_, "/run_provenance", H5P_DEFAULT);
         if (group < 0) return false;
         auto readStr = [&](const char* name, std::string& v) {
@@ -5165,7 +5164,7 @@ namespace backend::services {
             SPDLOG_ERROR("writeRunStopJson: injected write fault; stop record not stored");
             return false;
         }
-        hid_t group = H5Lexists(impl_->fileId_, "/run_provenance", H5P_DEFAULT) > 0
+        hid_t group = linkExists(impl_->fileId_, "/run_provenance") > 0
                           ? H5Gopen2(impl_->fileId_, "/run_provenance", H5P_DEFAULT)
                           : H5Gcreate2(impl_->fileId_, "/run_provenance", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
         if (group < 0) return false;
@@ -5198,7 +5197,7 @@ namespace backend::services {
     bool Hdf5Service::readRunStopJson(std::string& runStopJson) const
     {
         runStopJson.clear();
-        if (!isFileOpen() || H5Lexists(impl_->fileId_, "/run_provenance", H5P_DEFAULT) <= 0) return false;
+        if (!isFileOpen() || linkExists(impl_->fileId_, "/run_provenance") <= 0) return false;
         hid_t group = H5Gopen2(impl_->fileId_, "/run_provenance", H5P_DEFAULT);
         if (group < 0) return false;
         bool ok = false;
@@ -5233,7 +5232,7 @@ namespace backend::services {
             return false;
         }
         // Written once: the block is the sample as planned at Start and is never rewritten (ADR 0015 item 4).
-        if (H5Lexists(impl_->fileId_, "/experiment_annotation", H5P_DEFAULT) > 0) {
+        if (linkExists(impl_->fileId_, "/experiment_annotation") > 0) {
             SPDLOG_ERROR("writeExperimentAnnotationJson: the file already has /experiment_annotation; not rewritten");
             return false;
         }
@@ -5283,7 +5282,7 @@ namespace backend::services {
     {
         annotationJson.clear();
         if (schemaVersion) *schemaVersion = 0;
-        if (!isFileOpen() || H5Lexists(impl_->fileId_, "/experiment_annotation", H5P_DEFAULT) <= 0) return false;
+        if (!isFileOpen() || linkExists(impl_->fileId_, "/experiment_annotation") <= 0) return false;
         hid_t group = H5Gopen2(impl_->fileId_, "/experiment_annotation", H5P_DEFAULT);
         if (group < 0) return false;
         bool ok = false;
@@ -5333,7 +5332,7 @@ namespace backend::services {
 
     bool writeGroupJsonAttribute(hid_t fileId, const char* groupPath, const char* name, const std::string& value)
     {
-        hid_t group = H5Lexists(fileId, groupPath, H5P_DEFAULT) > 0
+        hid_t group = linkExists(fileId, groupPath) > 0
                           ? H5Gopen2(fileId, groupPath, H5P_DEFAULT)
                           : H5Gcreate2(fileId, groupPath, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
         if (group < 0) return false;
@@ -5370,7 +5369,7 @@ namespace backend::services {
     bool readGroupJsonAttribute(hid_t fileId, const char* groupPath, const char* name, std::string& value)
     {
         value.clear();
-        if (H5Lexists(fileId, groupPath, H5P_DEFAULT) <= 0) return false;
+        if (linkExists(fileId, groupPath) <= 0) return false;
         hid_t group = H5Gopen2(fileId, groupPath, H5P_DEFAULT);
         if (group < 0) return false;
         bool ok = false;
