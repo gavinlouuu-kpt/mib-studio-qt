@@ -143,6 +143,15 @@ the Qt [[../frontend/HdfReviewTab]] (`recordedPixelToMicron`, TD-17)
   bridge calls `ReviewJobs::probeRuns`, which holds the lanes' mutex (where a start claims its lane)
   for the whole probe (no job starts) and refuses while one runs ("A review
   job is running; …").
+- `runStatistics(path, computedAt)` (#716 A7a): one file's run statistics
+  ([[RunQuickLook]], `readRunStatistics`: a short-lived reader of its own, the
+  valid set read as bounded columns) under the session's mutex, like the
+  probe; the open file is left as it was (tested, also for the open file
+  itself). `ReviewJobs::runStatistics` holds the lanes' mutex for the read and
+  returns `Deferred` (never an error, nothing read) while either lane is
+  claimed; the review bridge's `review_run_statistics` and the facade's
+  `run_quick_look` (inside the idle transaction) and the coordinator's pass at
+  close all go through it.
 - `metricsPage(valid, offset, count)` → `MetricRow` with **every**
   FilterResult column the Qt `HdfMetricsModel` shows plus `areaUm2`. The
   static `metricRow(frame, pixelToMicron)` is the same conversion for a
@@ -582,7 +591,8 @@ through `ReviewJobs::probeRuns`, holds the lanes' mutex for the whole call
 (lock order: lanes, then session; nothing takes them the other way round)
 and refuses while either lane is claimed, so it never runs beside a session
 read or a job. `review.run_identity` probes from one thread while another
-reads frames and rows.
+reads frames and rows. `runStatistics` (#716 A7a) follows the same rule
+(`Deferred` instead of a refusal).
 `ReviewJobs::reprocessRecord` (#717 B3b) follows the same rule: under the
 lanes' mutex it refuses while either lane is claimed ("A review job is
 running; …", export jobs read HDF5 outside the session mutex too) and reads

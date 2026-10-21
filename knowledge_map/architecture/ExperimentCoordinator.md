@@ -207,6 +207,17 @@ append only, never renumber.
    is still `Stopping`/`Failed`, so no review reader can open beside it (the
    facade opens review sources only inside the idle transaction; HDF5 is not
    thread-safe, #722); it never changes the run outcome.
+   Then, for every run with a file (#716 A7a), the **run quick look**
+   (`quickLookAtClose`): the closed file's statistics
+   ([[../services/RunQuickLook]]) into AppBackend's in-memory cache, before the
+   terminal status, so a client that sees the terminal status finds them. The
+   read goes through the reader the facade installs
+   (`setClosedRunStatisticsReader` → `ReviewJobs::runStatistics`: the review
+   lanes' lock and the session's mutex, #722); a review job holding a lane
+   defers it to on demand (nothing cached, logged). Without a facade (a native
+   shell with HDF5 users of its own) nothing serializes the read, so the file is
+   deferred to on demand and nothing is read. Nothing is written;
+   it never fails the run; its time is logged.
 7. Restore the realtime mode if Start switched it.
 8. Terminal status: `terminal=true`, `completion` from the reconciled
    accounting (`Failed` for a fatal save error), `finalizationOk=false` if

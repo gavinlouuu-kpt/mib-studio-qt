@@ -97,6 +97,14 @@ the file does not record is `null` and a recorded 0 is `"0"`; a 0 time is
 PR adds the client only; R1 Open (B1b, on `feat/egrabber-workspace`) is its
 first user. `reviewIpc.golden.json` records the probe call.
 
+**Run statistics (review ABI 6, #716 A7a).** `reviewBridge.runStatistics(paths,
+reference?)` (`review_run_statistics`) is the run quick look's twin for B2 R2:
+the per-run numbers and `run − reference` deltas of
+[[../services/RunQuickLook]], the same document as MIB Studio's
+`run_quick_look` (one C++ function), decoded by `runQuickLook.ts`. Each file is
+deferred (never an error) while a review job runs; there is no cache; nothing is
+written. No UI yet (B2 R2 on the workspace branch); `runQuickLook.test.ts`.
+
 **Inspect commands (review ABI 3, #717 B3b).** `identity.emodulus_lut` is
 the run's E-modulus LUT provenance (`lut_id`, `revision`, `source`,
 `sha256`, `catalog_sha256`, `checksum_status`, each `null` when not

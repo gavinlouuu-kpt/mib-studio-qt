@@ -236,6 +236,8 @@ public:
     rust::String calibration_records_list();
     rust::String calibration_record_get(rust::Str record_id);
     rust::String calibration_apply(rust::Str record_id, double expected_current_factor);
+    // ABI 44 (#716 A7a): the run quick look (bridge-contract.json run_quick_look).
+    rust::String run_quick_look(rust::Str request_json);
     BridgeMonitoringCellImage fetch_monitoring_cell_image(std::uint64_t start_generation, std::uint64_t capture_epoch,
                                                           std::uint64_t frame_index, std::int32_t object_id,
                                                           bool mask);

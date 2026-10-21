@@ -948,6 +948,20 @@ mib_add_backend_test_executable(review_run_identity_test review/review_run_ident
 mib_backend_test_link(review_run_identity_test PRIVATE Threads::Threads)
 add_test(NAME review.run_identity COMMAND $<TARGET_FILE:mib_backend_tests> review_run_identity_test)
 set_tests_properties(review.run_identity PROPERTIES LABELS "review;recording;backend;hdf5;concurrency;safety" TIMEOUT 180)
+# Run quick look (#716 A7a; bridge ABI 44, review ABI 6): the one shared statistics function on the
+# parity fixture (numbers by hand, legacy / no LUT / even / empty / raw), the column path byte-equal to
+# ReviewSession's row path, deltas and the reference, the strict request, no writes, the LRU under
+# threads (TSan lane) and the lane gate (#722).
+mib_add_backend_test_executable(review_run_statistics_test review/review_run_statistics_test.cpp)
+mib_backend_test_link(review_run_statistics_test PRIVATE Threads::Threads)
+add_test(NAME review.run_statistics COMMAND $<TARGET_FILE:mib_backend_tests> review_run_statistics_test)
+set_tests_properties(review.run_statistics PROPERTIES LABELS "review;backend;hdf5;roundtrip;concurrency;safety" TIMEOUT 180)
+# #716 A7a: the run quick look on a large synthetic run (100k rows; MIB_QUICK_LOOK_ROWS for 1M): time
+# and peak memory of the column path next to ReviewSession's row path, printed for the PR; the gate
+# is a memory ratio (the column path never loads whole rows) and equal numbers.
+mib_add_backend_test_executable(run_quick_look_memory_test review/run_quick_look_memory_test.cpp)
+add_test(NAME performance.run_quick_look_memory COMMAND $<TARGET_FILE:mib_backend_tests> run_quick_look_memory_test)
+set_tests_properties(performance.run_quick_look_memory PROPERTIES LABELS "review;backend;hdf5;performance" TIMEOUT 600)
 # R3 Inspect's backend (#717 B3b, review ABI 3): the linked records of a track
 # and one record reprocessed next to its stored values, gated on the job lanes.
 mib_add_backend_test_executable(review_inspect_test review/review_inspect_test.cpp)
@@ -1774,6 +1788,14 @@ set_tests_properties(e2e.calibration_run PROPERTIES LABELS "backend;calibration;
 mib_add_backend_test_executable(calibration_profile_apply_test backend/calibration_profile_apply_test.cpp)
 add_test(NAME e2e.calibration_profile_apply COMMAND $<TARGET_FILE:mib_backend_tests> calibration_profile_apply_test)
 set_tests_properties(e2e.calibration_profile_apply PROPERTIES LABELS "backend;calibration;profiles;e2e;safety" TIMEOUT 180)
+
+# #716 A7a (bridge ABI 44): the run quick look through the facade: the close pass before the terminal
+# status, on-demand reads deferred during a run or a review job (#722), cache hits during a run, the
+# reference and its deltas, no actuation.
+mib_add_backend_test_executable(run_quick_look_test backend/run_quick_look_test.cpp)
+mib_backend_test_link(run_quick_look_test PRIVATE Threads::Threads)
+add_test(NAME e2e.run_quick_look COMMAND $<TARGET_FILE:mib_backend_tests> run_quick_look_test)
+set_tests_properties(e2e.run_quick_look PROPERTIES LABELS "backend;review;e2e;hdf5;concurrency;safety" TIMEOUT 180)
 
 mib_add_backend_test_executable(method_provenance_test backend/method_provenance_test.cpp)
 add_test(NAME backend.method_provenance COMMAND $<TARGET_FILE:mib_backend_tests> method_provenance_test)

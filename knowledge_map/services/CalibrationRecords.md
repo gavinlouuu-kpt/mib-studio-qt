@@ -104,6 +104,8 @@
 
 ## Key APIs
 
+- The medians are `backend::review::median` (`RunStatistics.h`, since #716 A7a), the one the
+  run quick look uses ([[RunQuickLook]]).
 - `parseCalibrationMethodSpec`, `deriveCalibration`, `readCalibrationEvidence`,
   `calibrationRecordToJson` / `calibrationRecordFromJson`, `calibrationIdentityOf`,
   `evaluateCalibrationGate`.

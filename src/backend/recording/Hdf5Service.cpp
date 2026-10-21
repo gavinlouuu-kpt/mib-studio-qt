@@ -3209,8 +3209,9 @@ namespace backend::services {
         return true;
     }
 
-    bool Hdf5Service::readRecordedProcessingContract(int& contract) const
+    bool Hdf5Service::readRecordedProcessingContract(int& contract, bool* recorded) const
     {
+        if (recorded) *recorded = false;
         if (!isFileOpen()) return false;
 
         // Contract metadata was added after the first recording files. Those
@@ -3269,6 +3270,7 @@ namespace backend::services {
             if (!ok) return false;
         }
         contract = discovered.value_or(1);
+        if (recorded) *recorded = discovered.has_value();
         return true;
     }
 
@@ -3601,6 +3603,54 @@ namespace backend::services {
         }
         SPDLOG_INFO("readInvalidMetadata: {} entries", frames.size());
         return true;
+    }
+
+    bool Hdf5Service::readMetadataColumns(
+        bool valid, std::size_t chunkRows,
+        const std::function<bool(const MetadataColumnRow* rows, std::size_t count)>& sink) const
+    {
+        if (!isFileOpen() || !sink) return false;
+        if (chunkRows == 0) chunkRows = kMetadataColumnChunkRows;
+        const char* path = valid ? "/valid_frames/metadata" : "/invalid_frames/metadata";
+        if (linkExists(impl_->fileId_, path) <= 0) return false;
+        const hid_t dataset = H5Dopen2(impl_->fileId_, path, H5P_DEFAULT);
+        if (dataset < 0) return false;
+        const hid_t fileSpace = H5Dget_space(dataset);
+        // The members by name, as the row path's base type names them; HDF5
+        // converts each from the file's compound and leaves a member the file
+        // lacks as initialised (0, like the row path's value-initialised record).
+        const hid_t memType = H5Tcreate(H5T_COMPOUND, sizeof(MetadataColumnRow));
+        bool ok = fileSpace >= 0 && memType >= 0 && H5Sget_simple_extent_ndims(fileSpace) == 1;
+        if (ok) {
+            ok = H5Tinsert(memType, "timestampNs", HOFFSET(MetadataColumnRow, timestampNs), H5T_NATIVE_UINT64) >= 0 &&
+                 H5Tinsert(memType, "area", HOFFSET(MetadataColumnRow, area), H5T_NATIVE_DOUBLE) >= 0 &&
+                 H5Tinsert(memType, "deformability", HOFFSET(MetadataColumnRow, deformability), H5T_NATIVE_DOUBLE) >= 0 &&
+                 H5Tinsert(memType, "youngsModulus", HOFFSET(MetadataColumnRow, youngsModulus), H5T_NATIVE_DOUBLE) >= 0 &&
+                 H5Tinsert(memType, "isValid", HOFFSET(MetadataColumnRow, isValid), H5T_NATIVE_UINT8) >= 0 &&
+                 H5Tinsert(memType, "isTargetGroup", HOFFSET(MetadataColumnRow, isTargetGroup), H5T_NATIVE_UINT8) >= 0;
+        }
+        hsize_t total = 0;
+        if (ok) ok = H5Sget_simple_extent_dims(fileSpace, &total, nullptr) == 1;
+        std::vector<MetadataColumnRow> buffer;
+        for (hsize_t start = 0; ok && start < total;) {
+            const hsize_t count = std::min<hsize_t>(static_cast<hsize_t>(chunkRows), total - start);
+            buffer.assign(static_cast<std::size_t>(count), MetadataColumnRow{});
+            const hid_t memSpace = H5Screate_simple(1, &count, nullptr);
+            ok = memSpace >= 0 &&
+                 H5Sselect_hyperslab(fileSpace, H5S_SELECT_SET, &start, nullptr, &count, nullptr) >= 0 &&
+                 H5Dread(dataset, memType, memSpace, fileSpace, H5P_DEFAULT, buffer.data()) >= 0;
+            if (memSpace >= 0) H5Sclose(memSpace);
+            if (!ok) {
+                SPDLOG_ERROR("readMetadataColumns: reading rows {}..{} of {} failed", start, start + count, path);
+                break;
+            }
+            start += count;
+            ok = sink(buffer.data(), buffer.size());
+        }
+        if (memType >= 0) H5Tclose(memType);
+        if (fileSpace >= 0) H5Sclose(fileSpace);
+        H5Dclose(dataset);
+        return ok;
     }
 
     bool Hdf5Service::saveChartSnapshot(const std::string& datasetPath, const cv::Mat& image)

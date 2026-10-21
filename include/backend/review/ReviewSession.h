@@ -16,6 +16,7 @@
 #pragma once
 
 #include "backend/review/ReviewTypes.h"
+#include "backend/review/RunStatistics.h"
 
 #include <cstdint>
 #include <memory>
@@ -90,6 +91,13 @@ namespace backend::review
         // (ReviewJobs::probeRuns); the bridge only calls that one.
         bool probeRuns(const std::vector<std::string> &paths, std::vector<RunProbe> &out,
                        std::string *error = nullptr) const;
+
+        // #716 A7a: one file's run statistics (RunStatistics.h,
+        // readRunStatistics: a short-lived reader of its own, the valid set
+        // read as bounded columns), under this session's mutex like the probe
+        // (#722); the open file is left as it was. Hosts gate it on the job
+        // lanes as well (ReviewJobs::runStatistics); the bridges only call that.
+        RunStatisticsResult runStatistics(const std::string &path, const std::string &computedAt) const;
 
         ReviewMetadata metadata() const;
         bool isRecordingFile() const;

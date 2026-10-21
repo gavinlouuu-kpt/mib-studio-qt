@@ -124,7 +124,90 @@ fn abi_version_is_stable() {
     // applied record in effect (InvalidRequest on a mismatch), and the snapshot records the backend's.
     // v43 (#776) the readiness report carries the applied method's calibration declarations
     // (method_calibration: purpose, policy, max age, reference; declared false when none).
-    assert_eq!(ffi::bridge_abi_version(), 43);
+    // v44 (#716 A7a) run_quick_look: the per-run statistics of closed HDF5 runs (computed at close
+    // into an in-memory LRU, or on demand while idle; deferred otherwise) with a reference's deltas.
+    assert_eq!(ffi::bridge_abi_version(), 44);
+}
+
+// ABI 44 (#716 A7a): the contract describes the run quick look, its bounds and rules.
+#[test]
+fn run_quick_look_is_described() {
+    let contract: serde_json::Value =
+        serde_json::from_str(include_str!("../contract/bridge-contract.json")).unwrap();
+    let c = &contract["run_quick_look"];
+    for (key, value) in [("max_paths", 32), ("path_max_bytes", 4096), ("run_id_max_bytes", 128),
+                         ("overlay_max_points", 2000), ("low_n_valid_rows", 200), ("cache_entries", 64),
+                         ("schema_version", 1)] {
+        assert_eq!(c[key], serde_json::json!(value), "run_quick_look.{key} (pinned in shim.cpp)");
+    }
+    for (key, needle) in [("commands", "never writes"), ("commands", "not a control command"),
+                          ("when_computed", "step 6b"), ("when_computed", "before the terminal status"),
+                          ("when_computed", "deferred"), ("when_computed", "idle transaction"),
+                          ("when_computed", "not available until exported to HDF5"),
+                          ("statistics", "RECORDED factor only"), ("statistics", "no_lut"),
+                          ("statistics", "out_of_domain"), ("statistics", "run_not_finalized"),
+                          ("statistics", "display only"), ("delta", "lut_differs"),
+                          ("delta", "factor_not_recorded"), ("delta", "never withheld"),
+                          ("reply", "confirmed"), ("$comment", "review_run_statistics")] {
+        assert!(c[key].as_str().is_some_and(|d| d.contains(needle)), "run_quick_look.{key} mentions {needle}");
+    }
+}
+
+// ABI 44 / review ABI 6 (#716 A7a, ruling 9): run_quick_look and the review bridge's
+// review_run_statistics give the same numbers on the parity fixture (one C++ function): every
+// shared field of every run (status, file, statistics, delta) and the reference. Only the
+// backend's cache bookkeeping (computed_at, from_cache) may differ.
+#[test]
+#[serial]
+fn run_quick_look_equals_review_run_statistics() {
+    use mib_bridge::review_ffi;
+    let dir = std::env::temp_dir().join(format!("mib_bridge_quick_look_parity_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let paths: Vec<String> = (0..6u32)
+        .map(|v| {
+            let p = dir.join(format!("fixture_{v}.h5")).to_string_lossy().into_owned();
+            assert!(review_ffi::review_fixture_write_quick_look(&p, v), "fixture {v}");
+            p
+        })
+        .collect();
+    let request = serde_json::json!({
+        "paths": paths,
+        "reference": { "path": paths[3], "run_id": review_ffi::review_fixture_quick_look_run_id(3), "start_generation": "8" },
+    })
+    .to_string();
+    let mut backend = ffi::new_backend_bridge();
+    let refused: serde_json::Value = serde_json::from_str(&backend.pin_mut().run_quick_look(&request)).unwrap();
+    assert_eq!(refused["ok"], false, "refused before init: {refused}");
+    assert!(backend.pin_mut().initialize(&dir.join("data").to_string_lossy()));
+    let mut review = review_ffi::new_review_bridge();
+    assert!(review.pin_mut().initialize(""));
+    let parse = |s: String| -> serde_json::Value { serde_json::from_str(&s).unwrap() };
+    for round in 0..2 {
+        // Round 0 computes in both; round 1 is the backend's cache against a fresh computation.
+        let a = parse(backend.pin_mut().run_quick_look(&request).to_string());
+        let b = parse(review.pin_mut().review_run_statistics(&request).to_string());
+        assert_eq!(a["ok"], true, "{a}");
+        assert_eq!(b["ok"], true, "{b}");
+        let (ra, rb) = (a["runs"].as_array().unwrap(), b["runs"].as_array().unwrap());
+        assert_eq!(ra.len(), 6);
+        assert_eq!(ra.len(), rb.len());
+        for (i, (x, y)) in ra.iter().zip(rb).enumerate() {
+            for key in ["path", "status", "message", "file", "statistics", "delta"] {
+                assert_eq!(x[key], y[key], "round {round}, run {i}, {key}");
+            }
+            assert_eq!(x["from_cache"], serde_json::json!(round == 1 && x["status"] == "computed"), "round {round} run {i}");
+        }
+        for key in ["requested", "confirmed", "message"] {
+            assert_eq!(a["reference"][key], b["reference"][key], "reference {key}");
+        }
+        assert_eq!(a["reference"]["run"]["statistics"], b["reference"]["run"]["statistics"]);
+        assert_eq!(ra[0]["statistics"]["counts"]["valid"], "21", "the numbers are there");
+        assert_eq!(ra[5]["status"], "not_available");
+    }
+    backend.pin_mut().shutdown();
+    review.pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 // ABI 42 (#716 A4a): the contract describes the calibration records, their bounds and rules.

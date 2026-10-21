@@ -692,6 +692,14 @@ namespace backend::review
         return true;
     }
 
+    RunStatisticsResult ReviewSession::runStatistics(const std::string &path, const std::string &computedAt) const
+    {
+        // The session's own lock (#722), as probeRuns: no session read, open or
+        // close interleaves with this file's HDF5 calls.
+        std::scoped_lock lock(impl_->mutex);
+        return readRunStatistics(path, computedAt);
+    }
+
     ReviewMetadata ReviewSession::metadata() const
     {
         std::scoped_lock lock(impl_->mutex);
