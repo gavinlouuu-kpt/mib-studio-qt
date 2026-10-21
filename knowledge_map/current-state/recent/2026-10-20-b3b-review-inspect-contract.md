@@ -55,6 +55,10 @@ Review round 2 (#756, coordinator ruling on the coordinate space):
   box (IoU ≥ 0.8) and its hull area the stored area (15 %; a hole's for
   Contract 1 objects); only one fitting placement decides. The valid set is
   sampled first, the invalid set only fills the rest.
+- Codex round 3 (P2): nested look-alikes over a large box could allocate a
+  box-sized bitmap per component (GiBs from a 16 MiB mask). Components are now
+  visited one at a time, the box test runs before any bitmap is drawn, and a
+  placement with more than 4 box matches is undecided.
 
 Tests: `review.object_coordinates` (new), `review.inspect` (new), `review.run_identity` (LUT and profile),
 `tests/review_bridge.rs` in both feature configurations, the Tauri identity

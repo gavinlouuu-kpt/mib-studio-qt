@@ -117,13 +117,15 @@ namespace backend::review
     // has a bounding box with IoU >= kObjectSpaceMaskCheckMinBoxIouPercent %,
     // a hole when `object.hole`, and, when the record has an area, the
     // convex-hull area of a hole (`hole`) or of its outline within
-    // kObjectSpaceMaskCheckAreaTolerancePercent % of it.
+    // kObjectSpaceMaskCheckAreaTolerancePercent % of it. A placement where
+    // more than a few components pass the box test is undecided (no fit):
+    // look-alikes are no evidence, and each one drawn costs the box's size.
     bool storedObjectAt(const cv::Mat &mask, const cv::Rect2d &placedBox, const StoredObject &object);
 
     // One record's vote in the mask check: the placement of its stored box
     // (as stored, or shifted by the origin) where the stored object is
     // (storedObjectAt). Decisive only when exactly one placement fits;
-    // nullopt when both, neither, or the origin is (0, 0).
+    // nullopt when both, neither, either is undecided, or the origin is (0, 0).
     std::optional<ObjectSpace> maskPlacementVote(const cv::Mat &mask, const StoredObject &object, int originX,
                                                  int originY);
 

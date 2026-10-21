@@ -388,6 +388,40 @@ int main()
             MIB_EXPECT(maskPlacementVote(merged, asHole, 40, 24) != ObjectSpace::Image,
                        "an outline merged with debris: never image");
         }
+        {
+            // A placement crowded with look-alikes: nested 1-px rings 2 px
+            // apart at the stored box (10, 20, 200, 200), six of them with a
+            // box IoU >= 80 %, none of the stored area. The object itself, a
+            // diamond of that area, sits at the ROI-local placement (origin
+            // (220, 0)). More look-alikes than the cap leave the image
+            // placement undecided, so the record does not vote; at most the
+            // cap's worth is drawn and traced, however large the mask.
+            const cv::Rect2d stored(10, 20, 200, 200);
+            auto diamondAt = [](cv::Mat &m, int x, int y) {
+                const std::vector<cv::Point> corners{{x + 100, y}, {x + 199, y + 100}, {x + 100, y + 199}, {x, y + 100}};
+                cv::fillConvexPoly(m, corners, cv::Scalar(255), cv::LINE_8);
+            };
+            auto ringsAt = [](cv::Mat &m, int count) {
+                for (int k = 0; k < count; ++k)
+                    cv::rectangle(m, cv::Rect(10 + 2 * k, 20 + 2 * k, 200 - 4 * k, 200 - 4 * k), cv::Scalar(255), 1);
+            };
+            cv::Mat alone = cv::Mat::zeros(240, 450, CV_8UC1);
+            diamondAt(alone, 230, 20);
+            const Measured diamond = measure(alone);
+            MIB_REQUIRE(diamond.box == cv::Rect2d(230, 20, 200, 200), "the diamond's box");
+            const StoredObject object{stored, diamond.outerArea, false};
+            MIB_EXPECT(maskPlacementVote(alone, object, 220, 0) == ObjectSpace::RoiLocal, "the diamond alone: roi_local");
+            cv::Mat few = alone.clone();
+            ringsAt(few, 3);
+            MIB_EXPECT(maskPlacementVote(few, object, 220, 0) == ObjectSpace::RoiLocal,
+                       "three look-alikes (under the cap) fail the area test: still roi_local");
+            cv::Mat crowded = alone.clone();
+            ringsAt(crowded, 12);
+            MIB_EXPECT(!maskPlacementVote(crowded, object, 220, 0),
+                       "more look-alikes than the cap: the placement is undecided, the record does not vote");
+            MIB_EXPECT(!storedObjectAt(crowded, stored, object) && storedObjectAt(crowded, cv::Rect2d(230, 20, 200, 200), object),
+                       "storedObjectAt: undecided is not a fit; the diamond still fits");
+        }
 
         using Votes = std::vector<std::optional<ObjectSpace>>;
         const Votes eightLocal(8, ObjectSpace::RoiLocal);

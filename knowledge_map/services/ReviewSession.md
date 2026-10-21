@@ -571,9 +571,13 @@ the origin it implies), in the order of `backend/review/ObjectCoordinates.h`:
    a convex-hull area within 15 % of it: a hole's for a Contract 1
    inner-contour object (the science measures the hole and boxes the
    outline, so the component needs a hole), the outline's otherwise
-   (`storedObjectAt`). A record is decisive only when exactly one placement
-   fits (`maskPlacementVote`): debris or a second cell at the other
-   placement makes it indecisive, never a wrong vote. The file is that space
+   (`storedObjectAt`). The box test runs on the component's box alone, and
+   only a component that passes it is drawn for the contour test, one at a
+   time. A placement where more than 4 components pass the box test is
+   undecided: look-alikes are no evidence, and each one costs a bitmap the
+   size of the box. A record is decisive only when exactly one placement
+   fits and neither is undecided (`maskPlacementVote`): debris or a second
+   cell at the other placement makes it indecisive, never a wrong vote. The file is that space
    with at least 8 decisive votes agreeing at 90 % or more
    (`maskCheckVerdict`);
 5. otherwise `Unknown`. A raw recording (no objects) and no file are
