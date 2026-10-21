@@ -183,6 +183,7 @@ struct CalibrationRecord {
     std::string file;
     std::string fileSha256;         // empty when it could not be hashed
     uint64_t startGeneration{0};
+    std::string backgroundSha256;   // the background the run processed with (empty: none)
     // The method and revision the run used (MethodProvenance at Start).
     std::string methodSource;       // "central" | "local" | "none"
     std::string methodId;

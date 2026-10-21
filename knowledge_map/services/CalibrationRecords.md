@@ -36,7 +36,7 @@
   `min_valid_objects` (200), `max_cv_percent` (the method's limit), plus `run_finalized` /
   `file_readable` when those fail. Any failed gate: status `insufficient`, never applicable.
 - **Record.** id `cal-<UTC>-<8 hex>` (≤ 128 bytes); source run (run id, file, SHA-256, start
-  generation); method source / id / revision / config hash; inputs; identity (camera = effective
+  generation, the background's SHA-256); method source / id / revision / config hash; inputs; identity (camera = effective
   source:label, ROI `x,y,w,h` or `full`, chip and objective "not tracked" until a setup declares
   them); results and gates; status `proposed | applied | superseded | invalidated |
   insufficient`; on an applied version the previous and new factor. Unknown values are null.

@@ -461,7 +461,8 @@ std::string calibrationRecordToJson(const CalibrationRecord& rec)
          {{"run_id", rec.runId.empty() ? json(nullptr) : json(rec.runId)},
           {"file", rec.file},
           {"file_sha256", rec.fileSha256.empty() ? json(nullptr) : json(rec.fileSha256)},
-          {"start_generation", rec.startGeneration}}},
+          {"start_generation", rec.startGeneration},
+          {"background_sha256", rec.backgroundSha256.empty() ? json(nullptr) : json(rec.backgroundSha256)}}},
         {"method",
          {{"source", rec.methodSource},
           {"method_id", rec.methodId.empty() ? json(nullptr) : json(rec.methodId)},
@@ -553,6 +554,7 @@ bool calibrationRecordFromJson(const std::string& text, CalibrationRecord& out, 
     r.file = getString(src, "file");
     r.fileSha256 = getString(src, "file_sha256");
     r.startGeneration = getU64(src, "start_generation");
+    r.backgroundSha256 = getString(src, "background_sha256");
     const auto& m = obj("method");
     r.methodSource = getString(m, "source");
     r.methodId = getString(m, "method_id");

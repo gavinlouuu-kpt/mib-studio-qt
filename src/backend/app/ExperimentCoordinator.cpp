@@ -2206,6 +2206,7 @@ void ExperimentCoordinator::deriveCalibrationRecord(const RunConfigurationSnapsh
     rec.runId = run.v3.runId.value_or(std::string{});
     rec.file = run.outputPath;
     rec.startGeneration = run.startGeneration;
+    rec.backgroundSha256 = run.backgroundPresent ? run.backgroundSha256 : std::string{};
     rec.methodSource = run.method.source;
     rec.methodId = run.method.methodId;
     rec.revisionId = run.method.revisionId;
