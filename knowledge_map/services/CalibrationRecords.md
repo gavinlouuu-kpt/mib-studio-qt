@@ -66,6 +66,10 @@
   never invalidates and never confirms. An applied record whose stored evidence fails the re-check
   is never in effect.
 
+**Client.** The workspace's Prepare Calibration card (#716 A4b) lists the records, offers Apply /
+Re-apply (also straight from the gate's "re-apply record <id>" Fix after a restart) and the Plan
+declares the record in effect at Start; see "Opt-in workspace" in [[../architecture/Desktop-Shell]].
+
 ## Key APIs
 
 - `parseCalibrationMethodSpec`, `deriveCalibration`, `readCalibrationEvidence`,

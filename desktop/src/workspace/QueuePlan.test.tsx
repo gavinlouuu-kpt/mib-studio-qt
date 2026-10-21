@@ -39,6 +39,12 @@ const status = (over: Partial<ExperimentStatus> = {}): ExperimentStatus => ({
   completion: C.Complete, completion_reason: "", fault_revision: "0", fault_code: "", fault_message: "", ...over,
 });
 
+/** The calibration list the mock backend gives (#716 A4b): `inEffect` is the applied record in effect. */
+const calRecordsList = (inEffect: string | null) => ({ valid: true, store: { revision: 2, max_versions: 2048, error: null }, applied_record_id: inEffect,
+  in_effect_record_id: inEffect, current_factor: 0.5, current_identity: { camera: "mock:Camera 01", roi: "full", chip: "not tracked", objective: "not tracked", known: true },
+  records: [] });
+let calList: unknown = calRecordsList(null);
+
 let host: HTMLDivElement, root: Root;
 /** The file the mock's dialog gives each sample: /data/s1.h5 for S1. */
 const fileFor = (json: string) => `/data/${String(JSON.parse(json).sample_ref).toLowerCase()}.h5`;
@@ -58,7 +64,7 @@ function Harness({ cameraMode = null }: { cameraMode?: PlanCameraMode | null }) 
   const props: WorkspaceProps = {
     brand: "MIB Studio", source: "Mock camera", method: "", stage: 2, onStage: () => {}, onExit: () => {}, serviceMode: false,
     preflightInput: READY_INPUT, zStage: null, signature: "sig", confirmedFor: "", onConfirm: () => {}, confirmLockedReason: "",
-    experimentActive: false, onRefreshChecks: () => {}, onOpenSetup: () => {},
+    experimentActive: false, controlHeld: held, onRefreshChecks: () => {}, onOpenSetup: () => {},
     align: { facts: FACTS, subscribeFrames: () => () => {}, onSwitchMode: async () => {}, writeRoi: vi.fn(), lockedReason: "" },
     experiment: { plan, lockedReason: "", view, onView: setView, cameraMode, onCameraMode, live: { snapshot: null, running: false, experimentActive: false, hostProcessing: true, subscribeFrames: () => {}, onStopAcquisition: async () => {}, onStopRun: async () => ({ ok: false, message: "not in this test" }) } },
   };
@@ -107,11 +113,13 @@ beforeEach(() => {
   vi.resetAllMocks();
   runStart = vi.fn(async (json: string, _stillWanted?: () => boolean): Promise<PlanStartResult> => ({ kind: "started", path: fileFor(json), notice: "" }));
   stop = vi.fn(async (_expectedStartGeneration: string): Promise<StopReply> => ({ ok: true, message: "stop accepted" }));
+  calList = calRecordsList(null);
   const saved = new Map<string, string>();
   vi.stubGlobal("localStorage", { getItem: (k: string) => saved.get(k) ?? null, setItem: (k: string, v: string) => void saved.set(k, v), removeItem: (k: string) => void saved.delete(k) });
   vi.mocked(invoke).mockImplementation(async (cmd: string) => {
     if (cmd === "fetch_experiment_readiness") return { transport_version: JSON_TRANSPORT.version, valid: true, ready: false, generation: "1",
       gates: [{ id: "storage.output", status: G.Unavailable, reason: "no output path chosen yet", remediation: "choose an HDF5 destination" }] };
+    if (cmd === "calibration_records_list") return calList;
     throw new Error(`unexpected command ${cmd}`);
   });
   host = document.createElement("div"); document.body.append(host); root = createRoot(host);
@@ -634,5 +642,42 @@ describe("the start and stop outcome codes (ABI 40)", () => {
     expect(stateOf("S1")).toBe("Stopping · draining");
     await report({ state: S.Idle, terminal: true, finalization_ok: true, start_generation: "1", output_path: "/data/s1.h5" });
     expect(stateOf("S1")).toBe("Finalized · confirm close");
+  });
+});
+
+// #716 A4b: each Start of the queue declares the record the page shows as in effect at that press.
+describe("the calibration record each queue Start declares (A4b)", () => {
+  it("Start S1 declares the record shown as in effect; with none, nothing", async () => {
+    calList = calRecordsList("cal-a");
+    await twoSamples();
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect($("plan-calibration-declared")!.textContent).toContain("cal-a · in effect");
+    await press($("queue-start"), "Start S1");
+    expect(JSON.parse(runStart.mock.calls[0][0])).toMatchObject({ sample_ref: "S1", run_index: 1, calibration_record_id: "cal-a" });
+  });
+
+  it("with none in effect the queue declares nothing", async () => {
+    calList = calRecordsList(null);
+    await twoSamples();
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    await press($("queue-start"), "Start S1");
+    expect(JSON.parse(runStart.mock.calls[0][0])).not.toHaveProperty("calibration_record_id");
+  });
+
+  it("the mismatch refusal says the applied calibration changed; S1 may start again as run 1 with the record shown then", async () => {
+    calList = calRecordsList("cal-a");
+    runStart = vi.fn(async () => ({ kind: "refused", path: "/data/s1.h5", code: 7,
+      message: 'invalid start request: calibration_record_id: declared "cal-a" but the applied record is "cal-b" (mismatch)' }) as PlanStartResult);
+    await twoSamples();
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    await press($("queue-start"), "Start S1");
+    expect($("queue-step")!.textContent).toContain("Not started · the applied calibration changed since this page read it");
+    expect($("queue-step")!.textContent).not.toContain("Correct the row");
+    calList = calRecordsList("cal-b");
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); }); // the next read
+    runStart = vi.fn(async (_json: string): Promise<PlanStartResult> => ({ kind: "started", path: "/data/s1.h5", notice: "" }));
+    await render();
+    await press(button("Start S1"), "Start S1");
+    expect(JSON.parse(runStart.mock.calls[0][0])).toMatchObject({ run_index: 1, calibration_record_id: "cal-b" });
   });
 });

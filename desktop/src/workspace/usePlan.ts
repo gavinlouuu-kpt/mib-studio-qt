@@ -82,8 +82,10 @@ export interface QueueController {
   controlHeld: boolean;
   /** The last experiment status read (the run's progress and its file). */
   status: ExperimentStatus | null;
-  /** Start (or retry) the current row with the next run index: the Start flow, once. */
-  startCurrent: () => Promise<void>;
+  /** Start (or retry) the current row with the next run index: the Start flow, once.
+   *  `calibrationRecordId`: the applied record the page shows as in effect, declared in the start
+   *  request (#716 A4b; buildStartRequest); null or absent declares none. */
+  startCurrent: (calibrationRecordId?: string | null) => Promise<void>;
   /** Next sample: stop the current row's run (stop → drain → finalize, observed in the status). */
   stopCurrent: () => Promise<void>;
   /** The operator confirms the finalized run's file is closed (sends nothing). */
@@ -259,13 +261,13 @@ export function usePlan(runStart: RunStart, options: PlanOptions = {}): PlanCont
 
   // ---- the queue's buttons: each sends at most one command ----
 
-  const startCurrent = useCallback(async () => {
+  const startCurrent = useCallback(async (calibrationRecordId: string | null = null) => {
     const q = queueRef.current, d = draftRef.current, s = statusRef.current;
     if (pending.current || q.paused || !controlRef.current || d.format !== "queue" || !s?.valid) return;
     const index = currentIndex(order(), q);
     if (index < 0) return;
     const ref = d.rows[index].ref, runIndex = q.nextRunIndex, generationBefore = s.start_generation;
-    const build = buildStartRequest(d, index, runIndex);
+    const build = buildStartRequest(d, index, runIndex, calibrationRecordId);
     if (build.json === null) return;
     dispatch({ type: "start", ref, runIndex, generationBefore });
     if (queueRef.current.rows[ref]?.phase !== "starting") return; // the machine refused it

@@ -366,10 +366,17 @@ function annotation(c: Checker, row: SampleRow): Fragment {
 
 /** The startRequestJson of one run of the plan (ABI 39, the contract's `experiment_start_request`):
  *  experiment_id, run_index, sample_ref (the row's ref), the selected operator {id, name} when one
- *  is given, and the row's annotation when anything is declared. Nothing undeclared is sent; no
- *  calibration_record_id yet (calibration records come in A4). Members in the contract's order;
- *  free key/values in sheet order. */
-export function buildStartRequest(plan: PlanDraft, rowIndex = 0, runIndex = SINGLE_SAMPLE_RUN_INDEX): StartRequestBuild {
+ *  is given, `calibration_record_id` when the page showed one as in effect (#716 A4b), and the
+ *  row's annotation when anything is declared. Nothing undeclared is sent. Members in the
+ *  contract's order; free key/values in sheet order.
+ *
+ *  `calibrationRecordId` is the applied record the page last read as in effect
+ *  (`calibration_records_list.in_effect_record_id`), and only that: since ABI 42 it is a check, so
+ *  a record applied, re-applied or taken out of effect between that read and Start makes the
+ *  backend refuse the Start (InvalidRequest, mismatch; `calibrationChanged`). With none in effect,
+ *  or the list not read, pass null or nothing: nothing is declared and the backend records the
+ *  record in effect at Start itself. */
+export function buildStartRequest(plan: PlanDraft, rowIndex = 0, runIndex = SINGLE_SAMPLE_RUN_INDEX, calibrationRecordId: string | null = null): StartRequestBuild {
   const c = new Checker();
   const row = plan.rows[rowIndex];
   if (!CANONICAL_UUID.test(plan.experimentId)) c.add("experiment_id", KEY_LABELS.experiment_id, "not a lowercase UUID (8-4-4-4-12 hex digits).");
@@ -389,6 +396,7 @@ export function buildStartRequest(plan: PlanDraft, rowIndex = 0, runIndex = SING
     ["run_index", num(runIndex)],
     ["sample_ref", optStr(ref)],
     ["operator", operator],
+    ["calibration_record_id", optStr(calibrationRecordId === null ? undefined : c.text("calibration_record_id", KEY_LABELS.calibration_record_id, calibrationRecordId, B.max_id_bytes))],
     ["annotation", annotation(c, row)],
   ]);
   const bytes = utf8Bytes(text);
@@ -458,6 +466,20 @@ export function invalidRequestReason(message: string, code?: number): InvalidReq
   const [, key, text] = m;
   const free = /^annotation\.free\["(.*)"\]$/.exec(key);
   return { key, label: free ? `Key/value “${free[1]}”` : KEY_LABELS[key] ?? key, text };
+}
+
+/** The Start refusal of a declared calibration record that is no longer the one in effect
+ *  (InvalidRequest on `calibration_record_id`, "… (mismatch)"): the plan is fine, the page's read of
+ *  the calibration was not. */
+export const CALIBRATION_CHANGED_TITLE = "The applied calibration changed since this page read it";
+
+/** Whether a backend refusal is the calibration mismatch (key `calibration_record_id`). */
+export const calibrationChanged = (r: InvalidRequestReason | null): boolean => r?.key === "calibration_record_id";
+
+/** The mismatch refusal in plain words, with the backend's detail. */
+export function calibrationChangedText(r: InvalidRequestReason): string {
+  return `${CALIBRATION_CHANGED_TITLE}: ${r.text}. No file was created. The plan is kept; the page reads the calibration again. `
+    + "Check the record in effect in Prepare's Calibration card, then press Start again.";
 }
 
 // ---- remembered operators ------------------------------------------------------------------------

@@ -160,6 +160,20 @@ describe("Start", () => {
     expect(rowState(q, "S1").failure!.text).toBe("Condition: 300 bytes, at most 256. No file was created. Correct the row and press Start again.");
   });
 
+  it("the calibration mismatch refusal says the applied calibration changed, not that the row is wrong (#716 A4b)", () => {
+    const q = run([
+      { type: "start", ref: "S1", runIndex: 1, generationBefore: "0" },
+      { type: "start-result", ref: "S1", runIndex: 1, generationBefore: "0", result: { kind: "refused", path: "/x.h5", code: O.InvalidRequest,
+        message: 'invalid start request: calibration_record_id: declared "cal-a" but no calibration record is applied and in effect (mismatch)' } },
+    ]);
+    const f = rowState(q, "S1").failure!;
+    expect(f.title).toBe("Not started · the applied calibration changed since this page read it");
+    expect(f.text).toContain('declared "cal-a" but no calibration record is applied and in effect (mismatch). No file was created.');
+    expect(f.text).not.toContain("Correct the row");
+    expect(phase(q, "S1")).toBe("refused"); // nothing recorded: S1 may be started again as run 1
+    expect(q.nextRunIndex).toBe(1);
+  });
+
   it("cancelled (the dialog): back to where it was, the failure shown before kept", () => {
     const refused = run([
       { type: "start", ref: "S1", runIndex: 1, generationBefore: "0" },

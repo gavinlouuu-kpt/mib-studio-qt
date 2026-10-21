@@ -22,7 +22,7 @@ import {
   nextSampleRef,
   type SampleRow,
 } from "./planModel";
-import { CONTROL_BLOCK, FormatCard, NOT_DECLARED, OperatorFields, CameraModeNotice, SampleEditor, StartBlockText, startBlocks, type StartBlock } from "./planParts";
+import { CONTROL_BLOCK, calibrationFacts, declaredCalibration, FormatCard, NOT_DECLARED, OperatorFields, CameraModeNotice, SampleEditor, StartBlockText, startBlocks, type StartBlock } from "./planParts";
 import type { PlanViewProps } from "./PlanView";
 import { startConfirmation } from "./prepareModel";
 import {
@@ -51,7 +51,7 @@ const rowFile = (st: QueueRow) => st.end?.outputPath || st.outputPath || st.atte
 
 type NoticeText = { tone: "confirmed" | "warn" | "blocked" | "unknown" | "info"; title: string; text: string };
 
-export function QueuePlan({ plan, lockedReason, verdict, blockers, cameraMode, onCameraMode, confirmation }: PlanViewProps) {
+export function QueuePlan({ plan, lockedReason, verdict, blockers, cameraMode, onCameraMode, confirmation, calibration }: PlanViewProps) {
   const { draft, queue } = plan;
   const q = queue.state;
   const order = draft.rows.map((r) => r.ref);
@@ -69,8 +69,10 @@ export function QueuePlan({ plan, lockedReason, verdict, blockers, cameraMode, o
   const selIndex = order.indexOf(selRef);
   const selRow = draft.rows[selIndex];
   const selEditable = rowEditable(q, selRef) && pending !== "start";
-  const selBuild = buildStartRequest(draft, selIndex, plannedRunIndex(order, q, selIndex) ?? q.nextRunIndex);
-  const curBuild = curRow ? buildStartRequest(draft, cur, q.nextRunIndex) : null;
+  const selBuild = buildStartRequest(draft, selIndex, plannedRunIndex(order, q, selIndex) ?? q.nextRunIndex, declaredCalibration(calibration));
+  // The calibration record shown as in effect is the one the next Start declares (#716 A4b).
+  const declared = declaredCalibration(calibration);
+  const curBuild = curRow ? buildStartRequest(draft, cur, q.nextRunIndex, declared) : null;
   const slots = conditionSlots(draft.rows);
   const confirm = confirmation ? startConfirmation(confirmation) : null;
 
@@ -197,9 +199,9 @@ export function QueuePlan({ plan, lockedReason, verdict, blockers, cameraMode, o
     if (!curRow || !curState) return finished ? { label: "New plan", onClick: plan.newPlan, disabled: pending !== null, testId: "queue-new-plan" } : null;
     switch (curState.phase) {
       case "planned": case "refused":
-        return { label: pending === "start" ? "Starting…" : `Start ${curRow.ref}`, onClick: () => void queue.startCurrent(), disabled: actionsLocked || blocks.length > 0, testId: "queue-start" };
+        return { label: pending === "start" ? "Starting…" : `Start ${curRow.ref}`, onClick: () => void queue.startCurrent(declared), disabled: actionsLocked || blocks.length > 0, testId: "queue-start" };
       case "unknown": case "failed": case "interrupted":
-        return { label: `Retry ${curRow.ref} as run ${q.nextRunIndex}`, onClick: () => void queue.startCurrent(), disabled: actionsLocked || blocks.length > 0, testId: "queue-retry" };
+        return { label: `Retry ${curRow.ref} as run ${q.nextRunIndex}`, onClick: () => void queue.startCurrent(declared), disabled: actionsLocked || blocks.length > 0, testId: "queue-retry" };
       case "starting":
         return { label: "Starting…", onClick: () => {}, disabled: true, testId: "queue-start" };
       case "running":
@@ -300,7 +302,7 @@ export function QueuePlan({ plan, lockedReason, verdict, blockers, cameraMode, o
             { label: "Runs", value: `${draft.rows.length} ${draft.rows.length === 1 ? "sample" : "samples"} · one run and one file each` },
             { label: "Next run index", value: <span data-testid="queue-next-run-index">{q.nextRunIndex}</span> },
             { label: "Run index rule", value: "Assigned at each Start; a started or unknown run's index is never sent again" },
-            { label: "Calibration record", value: "Unavailable · calibration runs come in a later step; not recorded", tone: "unknown" },
+            ...calibrationFacts(calibration),
             { label: "Destination", value: "Chosen at each Start" },
           ]} />
           <OperatorFields plan={plan} issues={(k) => (begun ? [] : issuesFor(curBuild?.issues ?? [], [`operator.${k}`]))} locked={begun || q.ended || pending !== null} />

@@ -15,9 +15,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import App from "../App";
-import { BRIDGE_ABI_VERSION, COMMAND_TYPES, EXPERIMENT_START_OUTCOMES, EXPERIMENT_STATES, EXPERIMENT_STOP_OUTCOMES as S, JSON_TRANSPORT,
+import { BRIDGE_ABI_VERSION, CALIBRATION_APPLY_OUTCOMES, COMMAND_TYPES, EXPERIMENT_START_OUTCOMES, EXPERIMENT_STATES, EXPERIMENT_STOP_OUTCOMES as S, JSON_TRANSPORT,
   READINESS_GATE_STATUSES as G, RUN_COMPLETION_STATES } from "../bridgeContract";
 import { DESKTOP_CAPABILITIES } from "../platformCapabilities";
+import { applyReply, calList as calListOf, calRecord } from "./calibrationFixtures";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/app", () => ({ getVersion: vi.fn(async () => "1.2.0") }));
@@ -44,7 +45,12 @@ const ACTUATING = [
   "pump_connect", "pump_start", "pump_stop", "pump_purge", "pump_set_flow_rate", "trigger_manual_pulse", "trigger_periodic_start",
   "experiment_start", "experiment_stop", "start_recording", "stop_recording", "ring_freeze", "ring_resume",
   "processing_core_command", "install_application_update", "apply_processing", "configure_mock",
+  "calibration_apply",
 ];
+
+/** The reads Prepare (and the Plan, which takes its verdict and declares its calibration record)
+ *  add: the path-less readiness and the calibration records list (#716 A4b). Neither acts. */
+const PREPARE_READS = ["calibration_records_list", "fetch_experiment_readiness"];
 
 /** What showing Experiment · Live (O4, A6b) adds: monitoring on while it is shown and off when it is
  *  left with no run in progress (the classic Monitoring tab's visibility gate, BE-5), and reads. None
@@ -81,6 +87,13 @@ let statefulRuns = false;
 let run = { generation: 0, state: EXPERIMENT_STATES.Idle as number, flushing: false, terminal: false, ok: false, path: "" };
 const finalizeRun = () => Object.assign(run, { state: EXPERIMENT_STATES.Idle, flushing: false, terminal: true, ok: true });
 let startSent = false;
+/** The calibration records the mock backend lists (#716 A4b), and its answer to calibration_apply. */
+const emptyCalList = () => ({ valid: true, store: { revision: 0, max_versions: 2048, error: null }, applied_record_id: null, in_effect_record_id: null,
+  current_factor: 0.5, current_identity: { camera: "mock:Camera 01", roi: "full", chip: "not tracked", objective: "not tracked", known: true }, records: [] as unknown[] });
+let calList: unknown = emptyCalList();
+/** The calibration.record gate of the path-less readiness read, when set. */
+let calGate: { id: string; status: number; reason: string; remediation: string } | null = null;
+let calApply: (a: Record<string, unknown>) => unknown = () => { throw new Error("calibration_apply is not expected here"); };
 /** Set to hold the next readiness read with a file (the Start flow's), until the test releases it. */
 let holdStartReadiness = false;
 const heldReadiness: (() => void)[] = [];
@@ -124,7 +137,7 @@ function respond(variant: Variant, cmd: string, args?: unknown): unknown {
     } return a.outputPath
       ? { transport_version: JSON_TRANSPORT.version, valid: true, ready: true, generation: "2", gates: [{ id: "storage.output", status: G.Pass, reason: "", remediation: "" }] }
       : { transport_version: JSON_TRANSPORT.version, valid: true, ready: false, generation: "1",
-        gates: [{ id: "storage.output", status: G.Unavailable, reason: "no output path chosen yet", remediation: "choose an HDF5 destination" }] };
+        gates: [...(calGate ? [calGate] : []), { id: "storage.output", status: G.Unavailable, reason: "no output path chosen yet", remediation: "choose an HDF5 destination" }] };
     case "experiment_start": startSent = true;
       if (statefulRuns && startReply.ok) run = { generation: run.generation + 1, state: EXPERIMENT_STATES.Active, flushing: false, terminal: false, ok: false, path: String(a.outputPath) };
       if (noOutcomeCodes) return { ...cmdResult(COMMAND_TYPES.Experiment), ok: startReply.ok, message: startReply.message };
@@ -157,6 +170,8 @@ function respond(variant: Variant, cmd: string, args?: unknown): unknown {
       device.mode = String(a.mode);
       if (a.mode === "run") Object.assign(device, { runX: a.x, runY: a.y, runSet: true });
       return cmdResult(COMMAND_TYPES.Camera);
+    case "calibration_records_list": return calList;
+    case "calibration_apply": return calApply(a);
     case "review_export_status_json":
     case "review_reanalysis_status_json": return JSON.stringify({ state: "idle" });
     default: return null; // reads the shell tolerates as "not reported"
@@ -186,6 +201,9 @@ async function boot(variant: Variant) {
 
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  calList = emptyCalList();
+  calGate = null;
+  calApply = () => { throw new Error("calibration_apply is not expected here"); };
   device = { overview: false, mode: "unknown", runX: 0, runY: 0, runSet: false };
   holdNextGeometry = false;
   heldGeometry.length = 0;
@@ -254,7 +272,7 @@ describe.each<Variant>(["desktop", "pz7035"])("workspace navigation never actuat
     const navigation = await navigateWorkspace();
     expect(navigation.filter((e) => ACTUATING.includes(e.cmd))).toEqual([]);
     // Two reads are added: Prepare's gates and Align's camera read-back (the classic tab's poll).
-    expect([...namesIn(navigation)].filter((n) => !namesIn(idle).has(n)).sort()).toEqual(["fetch_camera_geometry", "fetch_experiment_readiness"]);
+    expect([...namesIn(navigation)].filter((n) => !namesIn(idle).has(n)).sort()).toEqual(["calibration_records_list", "fetch_camera_geometry", "fetch_experiment_readiness"]);
     expect(readinessReads(navigation).length).toBeGreaterThan(0);
     for (const r of readinessReads(navigation)) expect(r.args).toEqual({ outputPath: "" });
 
@@ -273,7 +291,7 @@ describe.each<Variant>(["desktop", "pz7035"])("workspace navigation never actuat
     // Prepare (and then the classic Connect tab) poll the checklist devices: reads only.
     const added = [...namesIn(navigation)].filter((n) => !namesIn(idle).has(n));
     expect(added.length).toBeGreaterThan(0);
-    for (const n of added) expect(n).toMatch(/^fetch_/);
+    for (const n of added) expect(n.startsWith("fetch_") || PREPARE_READS.includes(n)).toBe(true);
     for (const r of readinessReads(navigation)) expect(r.args).toEqual({ outputPath: "" });
   });
 
@@ -285,7 +303,7 @@ describe.each<Variant>(["desktop", "pz7035"])("workspace navigation never actuat
     await advance(6000);
     const visit = log.splice(0);
     expect(visit.filter((e) => ACTUATING.includes(e.cmd))).toEqual([]);
-    for (const n of [...namesIn(visit)].filter((n) => !namesIn(idle).has(n))) expect(["fetch_camera_geometry", "fetch_experiment_readiness"]).toContain(n);
+    for (const n of [...namesIn(visit)].filter((n) => !namesIn(idle).has(n))) expect(["fetch_camera_geometry", ...PREPARE_READS]).toContain(n);
     const notice = host.querySelector("[data-testid=align-mode]")!;
     expect(notice.textContent).toContain(variant === "pz7035" ? "Mode · unknown" : "Experiment window");
     const action = variant === "pz7035" ? "Switch to Align" : "Show the full sensor";
@@ -424,7 +442,7 @@ describe.each<Variant>(["desktop", "pz7035"])("Experiment · Plan never acts on 
     expect(visit.filter((e) => ACTUATING.includes(e.cmd))).toEqual([]);
     // Only Prepare's path-less readiness read is added (the Plan takes Prepare's verdict), and Live's
     // reads and monitoring switch while it was shown; monitoring is off again after it.
-    for (const n of [...namesIn(visit)].filter((n) => !namesIn(idle).has(n))) expect(["fetch_experiment_readiness", ...LIVE_COMMANDS]).toContain(n);
+    for (const n of [...namesIn(visit)].filter((n) => !namesIn(idle).has(n))) expect([...PREPARE_READS, ...LIVE_COMMANDS]).toContain(n);
     expect(lastMonitoring(visit)).toEqual({ active: false });
     for (const r of readinessReads(visit)) expect(r.args).toEqual({ outputPath: "" });
     // In the mock nothing is ready to run (no core status, no stream or Run mode): Start run says why and sends nothing.
@@ -605,7 +623,7 @@ describe.each<Variant>(["desktop", "pz7035"])("the sample queue never acts on it
     await advance(10_000);
     const visit = log.splice(0);
     expect(visit.filter((e) => ACTUATING.includes(e.cmd))).toEqual([]);
-    for (const n of [...namesIn(visit)].filter((n) => !namesIn(idle).has(n))) expect(["fetch_experiment_readiness", ...LIVE_COMMANDS]).toContain(n);
+    for (const n of [...namesIn(visit)].filter((n) => !namesIn(idle).has(n))) expect([...PREPARE_READS, ...LIVE_COMMANDS]).toContain(n);
     expect(lastMonitoring(visit)).toEqual({ active: false });
     for (const r of readinessReads(visit)) expect(r.args).toEqual({ outputPath: "" });
     // The queue is still there after leaving the stage and the workspace.
@@ -999,5 +1017,58 @@ describe("the sample queue after review (desktop)", () => {
     expect(byTestId("plan-blocked-camera")!.textContent).toContain("The camera shows the full sensor, not the experiment window");
     await click(buttonByText("Start run"), "Start run");
     expect(log.filter((e) => ACTUATING.includes(e.cmd))).toEqual([]);
+  });
+});
+
+// #716 A4b: Prepare's Calibration card. The whole App over the mocked transport, every command
+// logged: listing, polling and navigation never send calibration_apply, even while a re-apply is
+// offered; only the operator's press sends exactly one. A Start declares the record in effect.
+describe("Prepare's Calibration card (A4b)", () => {
+  const APPLIED = calRecord("cal-a", "applied", { factor: 0.52 });
+  const PROPOSED = calRecord("cal-p", "proposed", { factor: 0.53 });
+  const RESTART_GATE = { id: "calibration.record", status: G.Fail, reason: "the applied record's factor 0.52 is not the current pixel-to-micron factor 0.5",
+    remediation: "re-apply record cal-a (calibration_apply), or run the calibration method" };
+
+  it.each<Variant>(["desktop", "pz7035"])("navigation, listing and polling never send calibration_apply; the Fix's Re-apply sends exactly one (%s)", async (variant) => {
+    calList = calListOf([PROPOSED, APPLIED]);
+    calGate = RESTART_GATE;
+    calApply = (a) => applyReply(String(a.recordId), CALIBRATION_APPLY_OUTCOMES.Applied, { previous_factor: 0.5, new_factor: 0.52 });
+    await boot(variant);
+    const navigation = await navigateWorkspace();
+    expect(navigation.filter((e) => e.cmd === "calibration_apply")).toEqual([]);
+    expect(navigation.filter((e) => e.cmd === "calibration_records_list").length).toBeGreaterThan(0);
+    await click(buttonByText("Workspace preview"), "workspace toggle");
+    await advance(10000); // polling
+    for (const tab of host.querySelectorAll(".mib-stages__tab")) await click(tab, "stage tab");
+    await click(host.querySelectorAll(".mib-stages__tab")[0], "Prepare");
+    await advance(4000);
+    expect(log.filter((e) => e.cmd === "calibration_apply")).toEqual([]);
+    expect(host.querySelector("[data-testid=calibration-fix]")!.textContent).toContain("re-apply record cal-a");
+    log.splice(0);
+    await click(host.querySelector("[data-testid=calibration-facts] [data-testid=calibration-reapply-cal-a]"), "Re-apply cal-a");
+    expect(log.filter((e) => ACTUATING.includes(e.cmd))).toEqual([{ cmd: "calibration_apply", args: { recordId: "cal-a", expectedCurrentFactor: 0.5 } }]);
+    expect(host.querySelector("[data-testid=calibration-outcome]")!.textContent).toContain("Pixel-to-micron 0.5 → 0.52 µm/px");
+    await advance(6000);
+    expect(log.filter((e) => e.cmd === "calibration_apply")).toHaveLength(1);
+  });
+
+  it("Start declares the record in effect; the backend's mismatch says the applied calibration changed (desktop)", async () => {
+    canStart = true;
+    calList = calListOf([APPLIED], { in_effect_record_id: "cal-a", current_factor: 0.52 });
+    startReply = { ok: false, start_outcome: EXPERIMENT_START_OUTCOMES.InvalidRequest,
+      message: 'invalid start request: calibration_record_id: declared "cal-a" but no calibration record is applied and in effect (mismatch)' };
+    await boot("desktop");
+    await openPlan();
+    const id = host.querySelector("[data-testid=plan-experiment-id]")!.textContent!;
+    await advance(3000);
+    log.splice(0);
+    vi.mocked(save).mockResolvedValueOnce("/data/run.h5");
+    await click(buttonByText("Start run"), "Start run");
+    expect(log.filter((e) => e.cmd === "experiment_start")).toEqual([{ cmd: "experiment_start", args: {
+      outputPath: "/data/run.h5", acknowledgeDiscardRing: false,
+      startRequestJson: `{"experiment_id":"${id}","run_index":1,"sample_ref":"S1","calibration_record_id":"cal-a"}` } }]);
+    expect(log.filter((e) => e.cmd === "calibration_apply")).toEqual([]);
+    expect(byTestId("plan-calibration-refusal")!.textContent).toContain("Not started · the applied calibration changed since this page read it");
+    expect(host.querySelector("[data-testid=plan-experiment-id]")!.textContent).toBe(id);
   });
 });

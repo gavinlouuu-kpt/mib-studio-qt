@@ -128,9 +128,9 @@ describe("one Prepare verdict from the checklist and the path-less gates", () =>
 });
 
 describe("plain gate labels", () => {
-  // Every gate id the backend emits (ExperimentCoordinator.cpp, MethodProvenance.cpp).
+  // Every gate id the backend emits (ExperimentCoordinator.cpp, MethodProvenance.cpp, CalibrationRecord.cpp).
   const BACKEND_GATES = [
-    "calibration.pixelToMicron", "camera.deliveryMode", "camera.geometry", "camera.mode", "camera.session", "camera.source", "clock.wall",
+    "calibration.pixelToMicron", "calibration.record", "camera.deliveryMode", "camera.geometry", "camera.mode", "camera.session", "camera.source", "clock.wall",
     "instrument.mode", "instrument.strobe", "lifecycle.experiment", "lifecycle.fault", "lifecycle.recording", "method.revision",
     "processing.background", "processing.backgroundCalibration", "processing.config", "processing.core", "processing.profileCompile",
     "processing.roi", "rf.generator", "ring.placement", "run.frozen", "science.pl", "storage.buffer", "storage.hdf5", "storage.output",

@@ -43,7 +43,7 @@ function Harness({ over = {}, lockedReason = "", controlHeld = true }: { over?: 
   const props: WorkspaceProps = {
     brand: "MIB Studio", source: "Mock camera", method: "", stage: 2, onStage, onExit, serviceMode: false,
     preflightInput: READY_INPUT, zStage: null, signature: "sig", confirmedFor: "", onConfirm: () => {}, confirmLockedReason: "",
-    experimentActive: false, onRefreshChecks: () => {}, onOpenSetup: () => {},
+    experimentActive: false, controlHeld, onRefreshChecks: () => {}, onOpenSetup: () => {},
     align: { facts: FACTS, subscribeFrames: () => () => {}, onSwitchMode: async () => {}, writeRoi: vi.fn(), lockedReason: "" },
     experiment: { plan, lockedReason, view, onView: setView, live: { snapshot: null, running: false, experimentActive: false, hostProcessing: true, subscribeFrames: () => {}, onStopAcquisition: async () => {}, onStopRun: async () => ({ ok: false, message: "not in this test" }) } }, ...over,
   };
@@ -92,8 +92,17 @@ async function fillFull() {
   await type("plan-operator-id", "op-7");
 }
 
+/** What the Plan reads: Prepare's path-less readiness and the calibration list (#716 A4b). */
+const isPrepareRead = (c: { cmd: string; args: unknown }) =>
+  (c.cmd === "fetch_experiment_readiness" && JSON.stringify(c.args) === JSON.stringify({ outputPath: "" })) || (c.cmd === "calibration_records_list" && c.args === undefined);
+const calRecordsList = (inEffect: string | null) => ({ valid: true, store: { revision: 2, max_versions: 2048, error: null }, applied_record_id: inEffect,
+  in_effect_record_id: inEffect, current_factor: 0.5, current_identity: { camera: "mock:Camera 01", roi: "full", chip: "not tracked", objective: "not tracked", known: true },
+  records: [] });
+let calList: unknown = calRecordsList(null);
+
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  calList = calRecordsList(null);
   vi.useFakeTimers();
   vi.resetAllMocks();
   runStart = vi.fn(async (_json: string): Promise<PlanStartResult> => ({ kind: "started", path: "/data/run.h5", notice: "" }));
@@ -102,6 +111,7 @@ beforeEach(() => {
   vi.mocked(invoke).mockImplementation(async (cmd: string) => {
     if (cmd === "fetch_experiment_readiness") return { transport_version: JSON_TRANSPORT.version, valid: true, ready: false, generation: "1",
       gates: [{ id: "storage.output", status: G.Unavailable, reason: "no output path chosen yet", remediation: "choose an HDF5 destination" }] };
+    if (cmd === "calibration_records_list") return calList;
     throw new Error(`unexpected command ${cmd}`);
   });
   host = document.createElement("div"); document.body.append(host); root = createRoot(host);
@@ -119,7 +129,7 @@ describe("the Plan acts only on Start run", () => {
     expect(experimentId()).toMatch(UUID_V4);
     await fillFull();
     await advance(5000);
-    for (const c of backendCalls()) expect(c).toEqual({ cmd: "fetch_experiment_readiness", args: { outputPath: "" } });
+    for (const c of backendCalls()) expect(isPrepareRead(c)).toBe(true);
     expect(runStart).not.toHaveBeenCalled();
     // The sheet's row as it will be recorded: one colour per condition.
     const table = $("plan-sheet-table")!;
@@ -152,7 +162,7 @@ describe("the Plan acts only on Start run", () => {
     // Not even through the plan itself: the Start flow is not entered (no file dialog, no read).
     await act(async () => { expect(await planRef!.start(buildStartRequest(planRef!.draft, 0, 1).json!, 1)).toBeNull(); });
     expect(runStart).not.toHaveBeenCalled();
-    for (const c of backendCalls()) expect(c.cmd).toBe("fetch_experiment_readiness");
+    for (const c of backendCalls()) expect(isPrepareRead(c)).toBe(true);
     // Control taken here: the gate goes and Start run sends the plan.
     await render({ controlHeld: true });
     expect($("plan-blocked-control")).toBeNull();
@@ -492,5 +502,69 @@ describe("the start outcome code (ABI 40)", () => {
     await act(async () => startButton()!.click());
     expect($("plan-outcome")!.textContent).toContain("Not started · the backend refused the Start");
     expect(startButton()!.disabled).toBe(false);
+  });
+});
+
+// #716 A4b: the Plan declares calibration_record_id only as the record it showed as in effect.
+describe("the calibration record a Start declares (A4b)", () => {
+  const MISMATCH = 'invalid start request: calibration_record_id: declared "cal-a" but the applied record is "cal-b" (mismatch)';
+
+  it("the record shown as in effect is declared at Start, and shown in the run identity", async () => {
+    calList = calRecordsList("cal-a");
+    await render();
+    await advance(0);
+    expect($("plan-calibration-declared")!.textContent).toContain("cal-a · in effect (0.5 µm/px) · declared at Start");
+    await act(async () => startButton()!.click());
+    expect(runStart).toHaveBeenCalledTimes(1);
+    expect(runStart.mock.calls[0][0]).toBe(`{"experiment_id":"${experimentId()}","run_index":1,"sample_ref":"S1","calibration_record_id":"cal-a"}`);
+  });
+
+  it("with none in effect, nothing is declared", async () => {
+    calList = calRecordsList(null);
+    await render();
+    await advance(0);
+    expect($("plan-identity")!.textContent).toContain("None in effect · not declared; the run records none");
+    await act(async () => startButton()!.click());
+    expect(JSON.parse(runStart.mock.calls[0][0])).not.toHaveProperty("calibration_record_id");
+  });
+
+  it("with the list not read, nothing is declared and the record is unknown, never None", async () => {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === "fetch_experiment_readiness") return { transport_version: JSON_TRANSPORT.version, valid: true, ready: false, generation: "1",
+        gates: [{ id: "storage.output", status: G.Unavailable, reason: "no output path chosen yet", remediation: "choose an HDF5 destination" }] };
+      throw new Error("TRANSPORT_LOST");
+    });
+    await render();
+    await advance(0);
+    expect($("plan-identity")!.textContent).toContain("Unknown · Error: TRANSPORT_LOST · not declared");
+    expect($("plan-identity")!.textContent).not.toContain("None in effect");
+    await act(async () => startButton()!.click());
+    expect(JSON.parse(runStart.mock.calls[0][0])).not.toHaveProperty("calibration_record_id");
+  });
+
+  it("the backend's mismatch refusal says the applied calibration changed since this page read it; the plan is kept and the list is read again", async () => {
+    calList = calRecordsList("cal-a");
+    runStart = vi.fn(async () => ({ kind: "refused", path: "/data/run.h5", message: MISMATCH, code: O.InvalidRequest }) as PlanStartResult);
+    await render();
+    await advance(0);
+    const id = experimentId();
+    const reads = () => backendCalls().filter((c) => c.cmd === "calibration_records_list").length;
+    calList = calRecordsList("cal-b");
+    const before = reads();
+    await act(async () => startButton()!.click());
+    await advance(0);
+    const refusal = $("plan-calibration-refusal")!;
+    expect(refusal.closest("[data-testid=plan-identity]")).not.toBeNull(); // beside the calibration record, not the sheet
+    expect(refusal.textContent).toContain("Not started · the applied calibration changed since this page read it");
+    expect(refusal.textContent).toContain('declared "cal-a" but the applied record is "cal-b" (mismatch). No file was created.');
+    expect($("plan-refusal")).toBeNull();
+    expect($("plan-outcome")).toBeNull();
+    expect(reads()).toBeGreaterThan(before); // read again at once
+    expect($("plan-calibration-declared")!.textContent).toContain("cal-b · in effect");
+    // The plan is kept: the same identity, and the next Start declares what is shown now.
+    expect(experimentId()).toBe(id);
+    expect(startButton()!.disabled).toBe(false);
+    await act(async () => startButton()!.click());
+    expect(JSON.parse(runStart.mock.calls[1][0])).toMatchObject({ experiment_id: id, run_index: 1, calibration_record_id: "cal-b" });
   });
 });

@@ -1,8 +1,9 @@
 // O1 Prepare (#713, track A step A1): the instrument's readiness, read-only. The hardware
 // checklist (preflight.ts) and the authoritative backend gates read without a destination,
-// summed up in one verdict (prepareVerdict). Nothing here acts on hardware: the only action is
-// the operator's explicit Preflight confirmation, which stores a signature and sends nothing to
-// the backend.
+// summed up in one verdict (prepareVerdict). Nothing here acts on hardware. The actions are
+// buttons: the operator's Preflight confirmation, which stores a signature and sends nothing to the
+// backend, and the Calibration card's Apply / Re-apply (calibration_apply, #716 A4b), which sets
+// pixel-to-micron by a compare-and-set against the factor the page read.
 import { Button, Card, FactList, Notice, StateChip, Toolbar, type Fact } from "@mib/ui";
 import type { StageStatus } from "../bridge";
 import type { ReadinessGate } from "../eventAdapter";
@@ -28,6 +29,8 @@ import {
   type Verdict,
 } from "./prepareModel";
 import type { PrepareReadiness } from "./usePrepareReadiness";
+import { CalibrationCard } from "./CalibrationCard";
+import type { CalibrationController } from "./useCalibration";
 
 export interface PrepareViewProps {
   /** The same snapshot the classic checklist is derived from. */
@@ -49,6 +52,13 @@ export interface PrepareViewProps {
   onRefreshChecks: () => void;
   /** Leave the workspace for the classic Connect tab, where devices are set up. */
   onOpenSetup: () => void;
+  /** Whether this client controls the instrument (a viewer's calibration Apply sends nothing). */
+  controlHeld: boolean;
+  /** The calibration records and their explicit apply (#716 A4b), and the calibration gate. */
+  calibration: CalibrationController;
+  calibrationGate: ReadinessGate | null;
+  /** This computer's clock, for the records' ages. */
+  now: number;
 }
 
 const rows = (checks: PreflightCheck[]): Fact[] =>
@@ -176,6 +186,8 @@ export function PrepareView(p: PrepareViewProps) {
               </Notice>
             ) : null}
           </Card>
+          <CalibrationCard calibration={p.calibration} gate={p.calibrationGate} gatesRead={!!p.readiness.snapshot?.valid}
+            controlHeld={p.controlHeld} experimentActive={p.experimentActive} now={p.now} />
         </div>
       </div>
     </div>

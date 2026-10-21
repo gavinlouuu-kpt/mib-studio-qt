@@ -1786,6 +1786,8 @@ export default function App() {
             onConfirm={() => { if (!expActive) setPreflightConfirmedFor(preflightSignature); }}
             confirmLockedReason={!ready ? "Backend is not initialized" : expActive ? "Setup is locked while an experiment is active" : ""}
             experimentActive={expActive}
+            // Prepare's calibration Apply is a control command: a viewer's sends nothing (#716 A4b).
+            controlHeld={controlHeld}
             onRefreshChecks={() => void refreshPreflight()}
             // The classic Connect tab only reads (it never switches camera modes).
             onOpenSetup={() => { setTab("connect"); exitWorkspace(); }}
