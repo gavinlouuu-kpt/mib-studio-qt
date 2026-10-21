@@ -28,6 +28,10 @@ export interface ReviewExportStatus {
   images_exported?: string;
   images_failed?: string;
   metrics_written?: boolean;
+  /** Reanalysis, terminal only (decimal strings): the records written and, of
+   * those, the valid ones (`valid_objects`, #763 F18). */
+  objects?: string;
+  valid_objects?: string;
   warnings?: string[];
   error?: string;
 }

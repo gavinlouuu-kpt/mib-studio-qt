@@ -816,10 +816,19 @@ namespace backend
                     processingService_->setEModulusLutCatalogIdentity(lutInfo.lutId, lutInfo.revision, lutInfo.sourceType,
                                                                       lutInfo.sha256, lutInfo.checksumStatus);
             }
+            // The path is the file that was read (#763 F24): EModulusLut::resolvePath finds the
+            // bundled name elsewhere when the requested path is missing (in development the
+            // checkout's resources/ beside a temporary data directory), so log what it loaded and
+            // name the request only when it differs.
+            const auto lutIdentity = processingService_->eModulusLutIdentity();
+            const std::string requestedLutPath = lutInfo.localPath.empty() ? activeLutPath : lutInfo.localPath;
+            std::string loadedLutPath = lutIdentity.loaded ? lutIdentity.path : std::string("(not loaded)");
+            if (lutIdentity.loaded && lutIdentity.path != requestedLutPath)
+                loadedLutPath += " (requested " + requestedLutPath + ")";
             SPDLOG_INFO("AppBackend: Young's modulus LUT source={}, revision={}, path={}, checksum_status={}, remote_updated={}, bundled_fallback={}, manifest={}",
                         lutInfo.sourceType,
                         lutInfo.revision,
-                        lutInfo.localPath.empty() ? activeLutPath : lutInfo.localPath,
+                        loadedLutPath,
                         lutInfo.checksumStatus,
                         lutInfo.remoteUpdated,
                         lutInfo.usedBundledFallback,

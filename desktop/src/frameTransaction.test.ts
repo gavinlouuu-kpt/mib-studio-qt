@@ -1,5 +1,5 @@
 import { beforeEach, expect, it, vi } from "vitest";
-import { bridge } from "./bridge";
+import { bridge, isFrameReplyRace } from "./bridge";
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 function packet(index: bigint, value: number, kind: number, width = 2, height = 2) {
@@ -83,4 +83,26 @@ it("10,000 interleaved client pulls retain only their own pixels", async () => {
     expect(Array.from(second.data)).toEqual([22,22,22]);
     expect(first.data.buffer.byteLength+second.data.buffer.byteLength).toBe(197);
   }
+});
+
+// #763 F20: opening a recording in Review (a source mutation) while the live view pulls gave
+// "frame error: Error: FRAME_SOURCE_CHANGING" in the log. That pull is refused by this client
+// without asking the backend; the views skip it, and only it (and a stale reply).
+it("tells a pull this client discarded from a backend refusal", async () => {
+  let finish!: (v: unknown) => void;
+  invoke.mockImplementation((command: string) => command === "load_recording"
+    ? new Promise(r => { finish = r; }) : Promise.reject("VIEWER_ONLY: another client controls the instrument"));
+  const opening = bridge.loadRecording("/data/run.h5");
+  let during: unknown;
+  await bridge.fetchFrame().catch((e) => { during = e; });
+  expect(String(during)).toContain("FRAME_SOURCE_CHANGING");
+  expect(isFrameReplyRace(during)).toBe(true);
+  expect(invoke).not.toHaveBeenCalledWith("fetch_frame_packet", undefined);
+  finish({ transport_version: 1, ok: true, command: 0, message: "", operation_id: "0" });
+  await opening;
+  let refused: unknown;
+  await bridge.fetchFrame().catch((e) => { refused = e; });
+  expect(isFrameReplyRace(refused)).toBe(false);
+  expect(isFrameReplyRace(new Error("FRAME_REPLY_STALE"))).toBe(true);
+  expect(isFrameReplyRace("FRAME_SOURCE_CHANGING: from a backend")).toBe(false);
 });

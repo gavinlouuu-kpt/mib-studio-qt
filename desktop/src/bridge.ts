@@ -740,6 +740,14 @@ async function sourceMutation(command: string, args?: Record<string, unknown>): 
   try { return await invokeCommand(command, args); }
   finally { sourceMutations--; frameGeneration++; }
 }
+/** A pull this client discarded itself, not a backend refusal: FRAME_SOURCE_CHANGING (a source
+ * mutation such as opening a recording in Review was in flight, so nothing was asked) or
+ * FRAME_REPLY_STALE (the source changed while the reply was on its way). The next pull is
+ * unaffected, so a view's error log skips these (#763 F20); every other error is the backend's
+ * or the transport's and stays logged. */
+export function isFrameReplyRace(error: unknown): boolean {
+  return error instanceof Error && (error.message === "FRAME_SOURCE_CHANGING" || error.message === "FRAME_REPLY_STALE");
+}
 async function pullFrame(command: string, kind: number, args?: Record<string, unknown>) {
   if (sourceMutations) throw new Error("FRAME_SOURCE_CHANGING");
   const generation = frameGeneration;

@@ -14,7 +14,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
 import { bridge } from "../bridge";
+import { isRemote } from "../transport";
 import { REVIEW_ABI_VERSION } from "./reviewContract";
+import { REVIEW_UNAVAILABLE_TEXT, isReviewUnavailable, reviewAvailability, useReviewAvailability } from "./reviewAvailability";
 import { FramePullScheduler } from "../framePullScheduler";
 import { ReviewPanel, type ReviewPanelHandle } from "./ReviewPanel";
 import { reviewBridge, type ReviewInfo } from "./reviewBridge";
@@ -140,6 +142,12 @@ export default function ReviewApp() {
   const [channel, setChannel] = useState<UpdateChannel>(() => loadUpdateChannel());
   const [showUpdate, setShowUpdate] = useState(false);
   const [updateNotice, setUpdateNotice] = useState("");
+  // #763 F7: a server without the review commands (yofo-studio-server before
+  // #512 S11) is "initialized" but cannot review; the panel stays disabled
+  // and the shell says why instead of offering an Open that cannot work.
+  const availability = useReviewAvailability();
+  const reviewUnavailable = availability.state === "unavailable";
+  const reviewReady = ready && !reviewUnavailable;
   const scheduler = useRef(new FramePullScheduler());
   const panel = useRef<ReviewPanelHandle>(null);
   // React StrictMode runs the boot effect twice in development; open the
@@ -155,13 +163,15 @@ export default function ReviewApp() {
   // app_data_dir on the Rust side).
   useEffect(() => {
     getVersion().then(setAppVersion).catch(() => setAppVersion(""));
-    reviewBridge
+    // Also the availability probe: over the WebSocket an UNKNOWN_COMMAND
+    // answer here marks the review commands unavailable (#763 F7).
+    const abiProbe = reviewBridge
       .abiVersion()
       .then((v) => {
         setAbi(v);
         if (v < REVIEW_ABI_VERSION) append(`review bridge ABI ${v} is older than the UI contract (${REVIEW_ABI_VERSION})`);
       })
-      .catch((e) => append(`abi error: ${e}`));
+      .catch((e) => append(isReviewUnavailable(e) ? "review commands are not served by this server" : `abi error: ${e}`));
     (async () => {
       try {
         const already = await bridge.isInitialized();
@@ -172,6 +182,8 @@ export default function ReviewApp() {
         // and the screenshot harness), opens straight away.
         if (ok && !launched.current) {
           launched.current = true;
+          await abiProbe;
+          if (reviewAvailability.get().state === "unavailable") return;
           const fromQuery = new URLSearchParams(window.location.search).get("open") ?? "";
           const launch = fromQuery || (await reviewBridge.launchPath().catch(() => ""));
           if (launch) await panel.current?.openPath(launch);
@@ -188,7 +200,8 @@ export default function ReviewApp() {
   // through the bridge means a cold-launch open that the boot read already
   // took is never opened twice.
   useEffect(() => {
-    if (!ready) return;
+    // The browser has no OS open requests (and no Tauri event API).
+    if (!reviewReady || isRemote) return;
     let stop: (() => void) | undefined;
     let disposed = false;
     void listen<string>(OPEN_FILE_EVENT, async () => {
@@ -202,7 +215,7 @@ export default function ReviewApp() {
       disposed = true;
       stop?.();
     };
-  }, [ready]);
+  }, [reviewReady]);
 
   // One quiet check per launch / channel change: a status-bar notice when a
   // newer version exists (builds without an update key stay silent).
@@ -248,10 +261,15 @@ export default function ReviewApp() {
       </nav>
 
       <main className="review-main">
+        {reviewUnavailable && (
+          <p className="pending-note" role="alert" data-testid="review-unavailable">
+            {REVIEW_UNAVAILABLE_TEXT}
+          </p>
+        )}
         <PanelErrorBoundary>
         <ReviewPanel
           ref={panel}
-          ready={ready}
+          ready={reviewReady}
           scheduler={scheduler.current}
           fitWindow={fitWindow}
           log={append}
@@ -307,7 +325,8 @@ export default function ReviewApp() {
             <p>
               Reviews HDF5 files recorded by MIB Studio.
               <br />
-              Review bridge ABI version: {abi ?? "unknown"} · backend {ready ? "initialized" : "not initialized"}.
+              Review bridge ABI version: {abi ?? "unknown"} · backend {ready ? "initialized" : "not initialized"}
+              {reviewUnavailable ? " · review commands not served by this server" : ""}.
             </p>
             <div className="actions">
               <button className="btn" onClick={() => setShowAbout(false)}>Close</button>

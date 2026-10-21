@@ -457,7 +457,10 @@ namespace backend::review
                     {"retained_partial_path", outcome.retainedPartialPath},
                     {"error", outcome.error},
                     {"warnings", outcome.warning.empty() ? json::array() : json::array({outcome.warning})},
-                    {"objects", std::to_string(outcome.produced)}}
+                    {"objects", std::to_string(outcome.produced)},
+                    // Of `objects`, the valid records (#763 F18: the classic view's completion line
+                    // reports both, next to final_path).
+                    {"valid_objects", std::to_string(outcome.valid)}}
             .dump();
     }
 

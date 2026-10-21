@@ -401,3 +401,47 @@ async fn diagnostics_without_a_log_and_with_a_bundle_line() {
     assert_eq!(d["key_lines"], serde_json::json!([]));
 }
 
+
+/// #763 F20: `/favicon.ico` was a 404 on every page load (the built UI has no icon).
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn favicon_is_the_ui_icon_or_no_content() {
+    let base = std::env::temp_dir().join(format!("yofo_favicon_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let dist = base.join("dist");
+    let data = base.join("data");
+    std::fs::create_dir_all(&dist).unwrap();
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::write(dist.join("index.html"), b"<!doctype html>").unwrap();
+    let serve = |dist: Option<std::path::PathBuf>| {
+        let data = data.clone();
+        async move {
+            let mut config = ServerConfig::new(data.to_string_lossy());
+            config.token = Some(TOKEN.to_string());
+            config.dist_dir = dist;
+            let server = Server::new(config, Arc::new(AppState::new()));
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            tokio::spawn(server.clone().serve(listener, std::future::pending()));
+            addr
+        }
+    };
+
+    // No icon in the UI: 204, no body; the UI itself is still served.
+    let addr = serve(Some(dist.clone())).await;
+    let r = request(addr, "GET", "/favicon.ico", &[]).await;
+    assert_eq!(r.status, 204);
+    assert!(r.body.is_empty());
+    assert_eq!(request(addr, "GET", "/index.html", &[]).await.status, 200);
+
+    // The UI ships one: served as an icon, without a token like the rest of the UI.
+    std::fs::write(dist.join("favicon.ico"), b"\x00\x00\x01\x00icon").unwrap();
+    let r = request(addr, "GET", "/favicon.ico", &[]).await;
+    assert_eq!(r.status, 200);
+    assert_eq!(r.header("content-type"), Some("image/x-icon"));
+    assert_eq!(r.body, b"\x00\x00\x01\x00icon");
+
+    // No UI at all (--dist not given): still no 404.
+    let addr = serve(None).await;
+    assert_eq!(request(addr, "GET", "/favicon.ico", &[]).await.status, 204);
+}

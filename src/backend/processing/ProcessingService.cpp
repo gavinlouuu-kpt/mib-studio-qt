@@ -369,6 +369,10 @@ void ProcessingService::stopRealtime() {
     if (!wasRunning && !realtimeThread_.joinable()) return;
     if (realtimeThread_.joinable()) realtimeThread_.join();
     backend::diagnostics::CrashStateMirror::instance().processing.realtimeRunning.store(false);
+    // Nothing is processed any more: the throughput is 0, not the last window's (#763 F17).
+    algoFps1s_.store(0.0, std::memory_order_relaxed);
+    validFps1s_.store(0.0, std::memory_order_relaxed);
+    invalidFps1s_.store(0.0, std::memory_order_relaxed);
     SPDLOG_INFO("ProcessingService: realtime processing stopped");
     // Stopping realtime ends the capture (#716 A6a review 3): the live cell store clears its
     // strip and keeps its pins' measurements only; images after the run belong to Review.
@@ -1071,6 +1075,11 @@ bool ProcessingService::loadEModulusLut(const std::string& path) {
     std::scoped_lock lk(eModulusLutIdentityMutex_);
     eModulusLutIdentity_ = std::move(identity);
     return ok;
+}
+
+double ProcessingService::freshRealtimeRate(const std::atomic<double>& rate) const {
+    return realtimeRateAt(rate.load(std::memory_order_relaxed),
+                          algoAvgUs1sUpdatedUs_.load(std::memory_order_relaxed), backend::Tools::getTimestamp());
 }
 
 ProcessingService::EModulusLutIdentity ProcessingService::eModulusLutIdentity() const {
@@ -3439,6 +3448,33 @@ void ProcessingService::realtimeInlineLoop() {
     double algoMsSinceSummary = 0.0;
     uint64_t validSinceSummary = 0;
     uint64_t invalidSinceSummary = 0;
+    // Close the 1 s throughput window when no frame is being processed (#763 F17). The summaries
+    // in the frame paths below run only after a processed frame, so once frames stopped (the
+    // camera stopped, realtime kept running) the last window's rates stayed published forever.
+    // Rates are this window's counts over its length, so an idle window publishes 0. Quiet: no
+    // debug summary, which stays with the frame paths. The async batch loop closes its window on
+    // every pass already.
+    const auto closeIdleRateWindow = [&] {
+        const auto now = clock::now();
+        const double windowMs = std::chrono::duration<double, std::milli>(now - lastSummaryTs).count();
+        if (windowMs < 1000.0) return;
+        const double perSecond = 1000.0 / windowMs;
+        algoFps1s_.store(static_cast<double>(framesSinceSummary) * perSecond, std::memory_order_relaxed);
+        validFps1s_.store(static_cast<double>(validSinceSummary) * perSecond, std::memory_order_relaxed);
+        invalidFps1s_.store(static_cast<double>(invalidSinceSummary) * perSecond, std::memory_order_relaxed);
+        algoAvgUs1s_.store(framesSinceSummary > 0
+                               ? algoMsSinceSummary * 1000.0 / static_cast<double>(framesSinceSummary)
+                               : 0.0,
+                           std::memory_order_relaxed);
+        algoAvgUs1sUpdatedUs_.store(backend::Tools::getTimestamp(), std::memory_order_relaxed);
+        lastSummaryTs = now;
+        framesSinceSummary = 0;
+        framesSkippedSinceSummary = 0;
+        msSinceSummary = 0.0;
+        algoMsSinceSummary = 0.0;
+        validSinceSummary = 0;
+        invalidSinceSummary = 0;
+    };
 
     // Multi-image series state (persists across loop iterations, single-threaded access)
     ProcessedFrame pendingMultiImageFrame;
@@ -3495,11 +3531,13 @@ void ProcessingService::realtimeInlineLoop() {
         }
         if (!rtStore_) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            closeIdleRateWindow();
             continue;
         }
         const uint64_t total = rtStore_->totalWritten();
         if (total == 0) {
             rtStore_->waitForFrame(0, std::chrono::milliseconds(5));
+            closeIdleRateWindow();
             continue;
         }
         if (roiPending_.load(std::memory_order_relaxed)) {
@@ -3539,6 +3577,7 @@ void ProcessingService::realtimeInlineLoop() {
             // frame and dominated end-to-end latency. The timeout preserves
             // stop responsiveness (rtRunning_ is rechecked each iteration).
             rtStore_->waitForFrame(total, std::chrono::milliseconds(2));
+            closeIdleRateWindow();
             continue;
         }
 
