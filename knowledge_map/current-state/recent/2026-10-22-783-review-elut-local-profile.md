@@ -18,10 +18,14 @@ C++). No UI change: the workspace branch wires the words and B3d.
 calibration record's method block had no id or name, and the snapshot's `profile_id` was empty.
 `attachLocalProfile` reads the `profile_selection` ProfileStore writes into the applied config text
 into `MethodProvenance::localProfile{Name,Path,Revision,Id}` (local methods only). The run snapshot
-v3 (no new version) carries it as `method.local_profile {name, path, revision, profile_id}` and as
-`profile_id` when the client declares none; the calibration record uses its existing members
-(`method_id` = profile_id, `revision_id` = revision, `display_name` = name, `config_sha256`), so no
-bridge reply shape changed (bridge ABI stays 43). The `method.revision` gate's detail names the
+v3 (no new version) carries it as `method.local_profile {name, path, revision, profile_id,
+modified_after_apply}` and as `profile_id` when the client declares none; the calibration record
+uses its existing members (`method_id` = profile_id, `revision_id` = revision, `display_name` =
+name, `config_sha256`), so no bridge reply shape changed (bridge ABI stays 43). ProfileStore now
+fingerprints the text it applied (`profile_selection.applied_config_sha256`, kept out of the
+`selection` reply); a processing-settings apply afterwards keeps the selection but changes the
+text, so the method names the profile as modified after apply and the record's `revision_id` is
+null (Codex round 1). The `method.revision` gate's detail names the
 profile. Legacy files and stored records read as before.
 
 Tests: `review.run_identity`, `backend.method_provenance`, `e2e.calibration_profile_apply`,

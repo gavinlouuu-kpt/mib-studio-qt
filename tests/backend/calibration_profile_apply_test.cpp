@@ -330,7 +330,7 @@ int main()
         MIB_EXPECT(snapshot["method"]["source"] == "local" &&
                        snapshot["method"]["local_profile"] ==
                            json({{"name", "calibration"}, {"path", profilePath}, {"revision", revision},
-                                 {"profile_id", "calibration"}}) &&
+                                 {"profile_id", "calibration"}, {"modified_after_apply", false}}) &&
                        snapshot["method"]["config_canonical_sha256"].get<std::string>().size() == 64,
                    "#783: the snapshot's method block names the profile and the config hash: " +
                        snapshot["method"].dump());
@@ -342,6 +342,37 @@ int main()
         const auto got = json::parse(facade.calibrationRecordGetJson(rec["record_id"].get<std::string>()));
         MIB_EXPECT(got["found"] == true && got["record"]["method"] == rec["method"],
                    "#783: the stored record reads back with the profile: " + got.dump());
+
+        // Settings changed after the profile's apply (the selection stays in the applied text):
+        // the profile is named as the base, its revision is not claimed for the changed config.
+        MIB_REQUIRE(capture(facade, false), "capture stop");
+        bridge::ProcessingSettingsCommand settings;
+        settings.flushInterval = 91;
+        MIB_REQUIRE(facade.dispatch(settings).ok, "processing settings apply");
+        MIB_REQUIRE(capture(facade, true), "capture start");
+        MIB_REQUIRE(waitFor([&] { return readiness(facade, probe).blockingGateIds().empty(); }, std::chrono::seconds(15)),
+                    "ready after the settings apply");
+        const auto edited = readiness(facade, probe);
+        MIB_EXPECT(edited.candidate.method.localProfileName == "calibration" && edited.candidate.method.localProfileModified &&
+                       edited.candidate.profileId == "calibration",
+                   "#783: the candidate names the base profile as modified");
+        const auto editedPath = (td.path() / "calibration_run_edited.h5").string();
+        const auto again = startRun(facade, editedPath);
+        MIB_REQUIRE(again.ok, "the edited calibration run starts: " + again.message);
+        MIB_REQUIRE(stopRun(facade, backendApp), "the edited run finalizes");
+        const auto editedSnapshot = runSnapshot(editedPath);
+        MIB_EXPECT(editedSnapshot["method"]["local_profile"]["modified_after_apply"] == true &&
+                       editedSnapshot["method"]["local_profile"]["revision"] == revision &&
+                       editedSnapshot["method"]["config_canonical_sha256"] != snapshot["method"]["config_canonical_sha256"],
+                   "#783: the snapshot names the base profile, modified, with the changed config's hash: " +
+                       editedSnapshot["method"].dump());
+        const auto records = json::parse(facade.calibrationRecordsListJson())["records"];
+        MIB_REQUIRE(records.size() == 2, "a second record: " + records.dump());
+        const auto& editedRec = records[0]; // newest first
+        MIB_EXPECT(editedRec["source"]["file"] == editedPath && editedRec["method"]["display_name"] == "calibration" &&
+                       editedRec["method"]["method_id"] == "calibration" && editedRec["method"]["revision_id"].is_null() &&
+                       editedRec["method"]["config_sha256"] == editedSnapshot["method"]["config_canonical_sha256"],
+                   "#783: the record names the base profile without claiming its revision: " + editedRec["method"].dump());
     }
 
     // ---- a measurement method without declarations: none carried over ----------------------
@@ -362,7 +393,7 @@ int main()
         const auto started = startRun(facade, path);
         MIB_REQUIRE(started.ok, "the measurement run starts: " + started.message);
         MIB_REQUIRE(stopRun(facade, backendApp), "the run finalizes");
-        MIB_EXPECT(store->latestRecords().size() == 1, "a measurement run derives no record");
+        MIB_EXPECT(store->latestRecords().size() == 2, "a measurement run derives no record");
     }
 
     // ---- 'gated' after 'calibration': the purpose does not carry over ----------------------

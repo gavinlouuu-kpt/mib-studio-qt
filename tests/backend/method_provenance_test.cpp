@@ -290,31 +290,55 @@ int main() {
     // #783: a local profile names the method.
     {
         const std::string rev(64, 'f');
-        const std::string applied = Json{{"buffer_threshold", 64},
-                                         {"profile_selection",
-                                          {{"name", "Beads 7 um"},
-                                           {"path", "/profiles/Beads 7 um/config.json"},
-                                           {"revision", rev},
-                                           {"profile_id", "beads-7"},
-                                           {"display_fps", 30}}}}
-                                        .dump();
+        // As ProfileStore::apply writes it: the selection fingerprints the text it left.
+        Json doc = {{"buffer_threshold", 64}, {"pixel_to_micron_factor", 0.5}};
+        const auto fingerprint = localProfileAppliedConfigSha256(doc.dump());
+        MIB_REQUIRE(fingerprint.size() == 64, "the fingerprint is a sha256");
+        doc["profile_selection"] = {{"name", "Beads 7 um"},
+                                    {"path", "/profiles/Beads 7 um/config.json"},
+                                    {"revision", rev},
+                                    {"profile_id", "beads-7"},
+                                    {"display_fps", 30},
+                                    {"applied_config_sha256", fingerprint}};
+        const std::string applied = doc.dump();
+        MIB_EXPECT(localProfileAppliedConfigSha256(applied) == fingerprint, "the selection is not part of the fingerprint");
         auto local = resolveMethodProvenance(std::string(64, 'z'), registry({}), context(), "MIB-01");
         attachLocalProfile(local, applied);
         MIB_EXPECT(local.source == "local" && local.hasLocalProfile() && local.localProfileName == "Beads 7 um" &&
                        local.localProfilePath == "/profiles/Beads 7 um/config.json" && local.localProfileRevision == rev &&
-                       local.localProfileId == "beads-7",
-                   "a local method names its profile");
+                       local.localProfileId == "beads-7" && !local.localProfileModified,
+                   "a local method names its profile, unmodified");
         const auto j = Json::parse(methodProvenanceToJson(local));
         MIB_EXPECT(j.at("local_profile") == Json({{"name", "Beads 7 um"},
                                                   {"path", "/profiles/Beads 7 um/config.json"},
                                                   {"revision", rev},
-                                                  {"profile_id", "beads-7"}}) &&
+                                                  {"profile_id", "beads-7"},
+                                                  {"modified_after_apply", false}}) &&
                        j.at("config_canonical_sha256") == std::string(64, 'z'),
                    "the snapshot's method block names it beside the config hash: " + j.dump());
         const auto g = methodRevisionGate(local);
         MIB_EXPECT(g.status == GateStatus::NotRequired &&
                        g.detail == "config zzzzzzzzzzzz; local profile \"Beads 7 um\" revision ffffffffffff",
                    "the gate's detail names it: " + g.detail);
+
+        // A settings apply after the profile keeps the selection but changes the text: modified.
+        Json edited = Json::parse(applied);
+        edited["buffer_threshold"] = 77;
+        auto changed = resolveMethodProvenance(std::string(64, 'y'), registry({}), context(), "MIB-01");
+        attachLocalProfile(changed, edited.dump());
+        MIB_EXPECT(changed.hasLocalProfile() && changed.localProfileModified && changed.localProfileRevision == rev,
+                   "an edited text names its base profile as modified after apply");
+        MIB_EXPECT(Json::parse(methodProvenanceToJson(changed)).at("local_profile").at("modified_after_apply") == true,
+                   "the snapshot says so");
+        MIB_EXPECT(methodRevisionGate(changed).detail ==
+                       "config yyyyyyyyyyyy; local profile \"Beads 7 um\" revision ffffffffffff, modified after apply",
+                   "the gate's detail says so: " + methodRevisionGate(changed).detail);
+        // The same values re-applied (key order, 64 vs 64.0) are not a modification.
+        Json same = Json::parse(applied);
+        same["buffer_threshold"] = 64.0;
+        auto unchanged = resolveMethodProvenance(std::string(64, 'y'), registry({}), context(), "MIB-01");
+        attachLocalProfile(unchanged, same.dump());
+        MIB_EXPECT(unchanged.hasLocalProfile() && !unchanged.localProfileModified, "canonical: the same values match");
 
         auto bare = resolveMethodProvenance(std::string(64, 'z'), registry({}), context(), "MIB-01");
         attachLocalProfile(bare, R"({"buffer_threshold":64})");
@@ -329,8 +353,9 @@ int main() {
         MIB_EXPECT(bare.hasLocalProfile() && bare.localProfileId == "only-id" && bare.localProfileName.empty(),
                    "a profile_id alone names it");
         MIB_EXPECT(Json::parse(methodProvenanceToJson(bare)).at("local_profile") ==
-                       Json({{"name", nullptr}, {"path", nullptr}, {"revision", nullptr}, {"profile_id", "only-id"}}),
-                   "absent members are null, never empty strings");
+                       Json({{"name", nullptr}, {"path", nullptr}, {"revision", nullptr}, {"profile_id", "only-id"},
+                             {"modified_after_apply", true}}),
+                   "absent members are null, never empty strings; no fingerprint is not verified");
 
         auto central = resolveMethodProvenance(kConfig, registry({revision("r1", 1, CentralState::Published)}),
                                                context(), "MIB-01");

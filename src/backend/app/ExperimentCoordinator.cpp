@@ -2222,9 +2222,10 @@ void ExperimentCoordinator::deriveCalibrationRecord(const RunConfigurationSnapsh
     if (run.method.source == "local" && run.method.hasLocalProfile()) {
         // #783: a local profile identifies the method in the record's existing members: its
         // profile_id, its revision (the sha256 of its files) and its name (the path is in the run's
-        // snapshot, source.file).
+        // snapshot, source.file). Settings changed after the profile's apply: the profile is named,
+        // its revision is not claimed (revision_id null; config_sha256 is the exact config).
         rec.methodId = run.method.localProfileId;
-        rec.revisionId = run.method.localProfileRevision;
+        rec.revisionId = run.method.localProfileModified ? std::string{} : run.method.localProfileRevision;
         rec.methodDisplayName = run.method.localProfileName;
     }
     rec.configSha256 = run.method.configCanonicalSha256.empty() ? run.configJsonSha256 : run.method.configCanonicalSha256;

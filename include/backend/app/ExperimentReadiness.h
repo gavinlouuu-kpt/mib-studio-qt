@@ -95,6 +95,10 @@ struct MethodProvenance {
     std::string localProfilePath;
     std::string localProfileRevision;
     std::string localProfileId;
+    // The applied text no longer is what the profile's apply left (a later settings apply changed
+    // it), or carries no fingerprint: the profile is the base, not the exact method; its revision
+    // is not claimed for the run's config (config hash: configCanonicalSha256).
+    bool localProfileModified{false};
     bool hasLocalProfile() const { return !localProfileName.empty() || !localProfileId.empty(); }
 };
 

@@ -68,8 +68,9 @@
 - **Record.** id `cal-<UTC>-<8 hex>` (≤ 128 bytes); source run (run id, file, SHA-256, start
   generation, the background's SHA-256); method source / id / revision / config hash (a central revision: its registry ids and name; a
   local method applied from a local profile, #783: `method_id` = the profile's `profile_id`,
-  `revision_id` = its revision, the sha256 of its files, `display_name` = its name, from
-  `MethodProvenance::localProfile*`; a local text no profile names: those null and
+  `revision_id` = its revision, the sha256 of its files (null when settings changed after the
+  profile's apply, `localProfileModified`: the profile is the base, not the exact config),
+  `display_name` = its name, from `MethodProvenance::localProfile*`; a local text no profile names: those null and
   `config_sha256` identifies it; the profile's path is in the run's snapshot,
   `method.local_profile`); inputs; identity (camera = effective
   source:label, ROI `x,y,w,h` or `full`, chip and objective "not tracked" until a setup declares

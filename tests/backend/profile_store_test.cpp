@@ -142,6 +142,11 @@ int main() {
     MIB_EXPECT(selected["selection"]["name"] == "runtime" &&
                    selected["active_profile"]["name"] == "runtime",
                "selected pointer and actual runtime provenance are independently retrievable");
+    MIB_EXPECT(!selected["active_profile"].contains("applied_config_sha256") &&
+                   J::parse(backend.getLastConfigJson())["profile_selection"]["applied_config_sha256"]
+                           .get<std::string>()
+                           .size() == 64,
+               "#783: the applied text carries the profile's fingerprint; the selection reply does not");
     backend.setLastConfigJson("{}");
     backend.processing().setPixelToMicronFactor(1.0);
     auto restored = call({{"operation", "restore"}});
