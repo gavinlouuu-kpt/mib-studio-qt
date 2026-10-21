@@ -62,3 +62,19 @@ once a release carries it.
   The user manual (`docs/manual/yofo-review.md`, Regenerate masks) already carries the
   notice. The release body in `.github/workflows/review-release.yml` is generic, so add the
   notice to the GitHub Release by hand when the release is cut.
+- **YOFO Studio (browser UI): where files without a full path were saved (#762).** The
+  next release with `yofo-studio-server` must state:
+  - **What was wrong:** in the browser, a file name without a full path (the Start prompt's
+    default `experiment.h5`, or a name typed into a save prompt for a recording, an export,
+    Regenerate masks or a preview save) was written to the server's working directory, not
+    to its data directory, so Files did not list it. The readiness check wrote its probe
+    files there too.
+  - **What changed:** such a path is now saved under the data directory, and the save
+    prompt opens on `<data directory>/<name>` and says where the file goes. A path that
+    would leave the data directory (`..`, or a link to elsewhere) is refused with the
+    reason. Full paths are saved where they point, as before.
+  - **What to do:** look for runs from earlier versions in the directory the server was
+    started from (for a systemd unit, its `WorkingDirectory`, `/` by default) and move them
+    into the data directory.
+  - **Also:** while a file is open in Review, Start is still refused (HDF5 is not
+    thread-safe); the message now says to close it in Review (Review → Close File).

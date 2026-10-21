@@ -766,7 +766,8 @@ ExperimentCoordinator::currentKeyLocked(const std::string& outputPath, const std
 }
 
 ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::string& outputPath,
-                                                                  const std::string& profileId)
+                                                                  const std::string& profileId,
+                                                                  const std::string& outputRefusal)
 {
     ExperimentReadinessSnapshot r;
     r.evaluatedHostTimeUs = Tools::getTimestamp();
@@ -1070,6 +1071,11 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
     if (outputPath.empty()) {
         r.gates.push_back(gate("storage.output", GateStatus::Unavailable, "no output path chosen yet",
                                "choose an HDF5 destination"));
+    } else if (!outputRefusal.empty()) {
+        // A path that leaves the storage root (#762): refused before anything is probed, so no
+        // probe file is written outside the root.
+        r.gates.push_back(gate("storage.output", GateStatus::Fail, outputRefusal,
+                               "choose a path inside the data directory", outputPath));
     } else {
         // The destination probes write to the disk: a pass is kept per (path, readiness
         // generation), so a polled readiness does not probe again (#713). A path change bumps
@@ -1129,8 +1135,15 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
     }
 
     // A file open for review in the facade's own reader fails the same gate
-    // with the same text (D1 (a), #512 S5): HDF5 is not thread-safe (#722).
-    if (backend_.hdf5().isFileOpen() || backend_.reviewSourceOpen()) {
+    // with the same text as one in the shared handle (D1 (a), #512 S5): HDF5
+    // is not thread-safe (#722). The remediation says how to free it (F2 of
+    // #763): a file open for review is closed in Review; the writers (raw
+    // recording, a run of this coordinator) have their own gates.
+    if (backend_.reviewSourceOpen() ||
+        (backend_.hdf5().isFileOpen() && !backend_.isFrameRecording() && state_ == ExperimentRunState::Idle)) {
+        r.gates.push_back(gate("storage.hdf5", GateStatus::Fail, "an HDF5 file is already open",
+                               kCloseReviewFile));
+    } else if (backend_.hdf5().isFileOpen()) {
         r.gates.push_back(gate("storage.hdf5", GateStatus::Fail, "an HDF5 file is already open",
                                "finish or close the current file first"));
     } else {
@@ -1187,11 +1200,33 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
     return r;
 }
 
+ExperimentCoordinator::AcceptedOutputPath ExperimentCoordinator::acceptOutputPath(const std::string& requested) const
+{
+    AcceptedOutputPath out;
+    if (requested.empty()) return out;
+    std::string path = requested;
+    if (path.size() < 3 || (path.substr(path.size() - 3) != ".h5" &&
+                            (path.size() < 5 || path.substr(path.size() - 5) != ".hdf5"))) {
+        path += ".h5";
+    }
+    // Relative: under the storage root. Absolute, or no root configured (an uninitialized
+    // backend): unchanged, as before #762.
+    const auto resolved = backend_.resolveClientPath(path);
+    if (!resolved.ok) {
+        out.path = path;
+        out.refusal = resolved.reason;
+        return out;
+    }
+    out.path = resolved.path;
+    return out;
+}
+
 ExperimentReadinessSnapshot ExperimentCoordinator::evaluateReadiness(const std::string& outputPath,
                                                                      const std::string& profileId)
 {
+    const auto output = acceptOutputPath(outputPath);
     std::lock_guard<std::mutex> lk(mutex_);
-    return evaluateLocked(outputPath, profileId);
+    return evaluateLocked(output.path, profileId, output.refusal);
 }
 
 ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest& request)
@@ -1208,6 +1243,19 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
             return result;
         }
     }
+    // The output path is accepted here, once (#762): a relative one resolves under the storage
+    // root, so the probes, the candidate, the snapshot, the reply and the status all carry the
+    // resolved absolute path. An empty path or one that leaves the root is a bad request, refused
+    // like a bad declaration: nothing is opened, whatever the coordinator is doing.
+    const auto output = acceptOutputPath(request.outputPath);
+    if (output.path.empty() || !output.refusal.empty()) {
+        result.outcome = ExperimentStartOutcome::InvalidRequest;
+        result.message = output.path.empty() ? "no output path given: choose where the run file goes"
+                                             : output.refusal;
+        SPDLOG_WARN("ExperimentCoordinator: start refused — {}", result.message);
+        return result;
+    }
+    const std::string& path = output.path;
     // A start during an active run is AlreadyActive however busy the mutex is: answer it before the
     // try-lock, which reports Busy while another thread (status polls, the worker) holds the mutex (#595).
     if (state_.load() == ExperimentRunState::Active) {
@@ -1256,9 +1304,12 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
     // review file (the facade's own reader) is one too (D1 (a), #512 S5).
     if (backend_.isFrameRecording() || backend_.hdf5().isFileOpen() || backend_.reviewSourceOpen()) {
         result.outcome = ExperimentStartOutcome::NotReady;
-        result.message =
-            "stop raw recording and close the existing HDF5 file before starting an experiment";
-        result.readiness = evaluateLocked(request.outputPath, request.profileId);
+        // Say how to free it (F2 of #763). The refusal itself stays (D1 (a), #722).
+        result.message = backend_.isFrameRecording()
+                             ? "raw recording is active: stop it before starting an experiment"
+                             : std::string("an HDF5 file is already open: ") + kCloseReviewFile +
+                                   " before starting an experiment";
+        result.readiness = evaluateLocked(path, request.profileId);
         SPDLOG_WARN("ExperimentCoordinator: start refused — {}", result.message);
         return result;
     }
@@ -1286,12 +1337,6 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
             restoreRealtimeMode_ = false;
         }
     };
-
-    std::string path = request.outputPath;
-    if (path.size() < 3 || (path.substr(path.size() - 3) != ".h5" &&
-                            (path.size() < 5 || path.substr(path.size() - 5) != ".hdf5"))) {
-        path += ".h5";
-    }
 
     // 1-3. Re-evaluate now and compare with the presented generation. The
     // evaluation bumps the generation iff an invalidation input changed, so a
@@ -1517,7 +1562,7 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
     }
     state_ = ExperimentRunState::Active;
     result.outcome = ExperimentStartOutcome::Started;
-    result.message = "experiment started";
+    result.message = "experiment started: " + path;   // the resolved path (#762); the bridge reply has no path field
     result.run = run;
     SPDLOG_INFO("ExperimentCoordinator: started run {} (readiness gen {}, capture gen {}, camera {}{}) -> {}",
                 run.startGeneration, run.readinessGeneration, run.captureGeneration, run.camera.effective,

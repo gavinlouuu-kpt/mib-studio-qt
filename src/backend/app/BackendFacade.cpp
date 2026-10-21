@@ -1843,6 +1843,14 @@ namespace backend::bridge
         }
         auto &request = parsed.request;
         auto &sources = parsed.sources;
+        // The destinations are client paths (#762): a relative one lies under the storage root.
+        for (auto *destination : {&request.outputRoot, &request.explicitDestination})
+        {
+            if (destination->empty()) continue;
+            const auto resolved = backend_.resolveClientPath(*destination);
+            if (!resolved.ok) return {false, BackendCommandType::Review, "Export destination refused: " + resolved.reason};
+            *destination = resolved.path;
+        }
         request.sourcePath = review_->filePath();
         if (sources.empty()) {
             if (request.sourcePath.empty())
@@ -3511,8 +3519,9 @@ std::string BackendFacade::fetchInstrumentStatusJson() {
                                 {"last_stuck_p13", alignLock.lastStuckP13},
                                 {"pl_gave_ups", alignLock.plGaveUps},
                                 {"last_pl_gave_up_ms", alignLock.lastPlGaveUpMs}}}};
-    // Where recordings land (#501): RAM on today's JTAG RAM root, lost at power-off.
-    const auto target = app::recordingTarget(backend_.dataDir());
+    // Where recordings land (#501): RAM on today's JTAG RAM root, lost at power-off. The path is
+    // the storage root (#762): absolute, the directory a relative client output path resolves under.
+    const auto target = app::recordingTarget(backend_.storageRoot());
     const nlohmann::json storage{{"path", target.path},
                                  {"writable", target.writable},
                                  {"ram", target.ram},
@@ -3770,7 +3779,14 @@ std::string BackendFacade::savePreviewBufferJson(const std::string& request) {
         const bool filterEmpty = input.value("filter_empty",false);
         const double fps = input.value("fps", 30.0);
         if (!std::isfinite(fps) || fps <= 0 || fps > 1000) throw std::runtime_error("invalid AVI playback fps");
-        const std::filesystem::path root(input.value("output_root",std::string()));
+        std::string rootText = input.value("output_root",std::string());
+        if (action == "save" && !rootText.empty()) {
+            // A client path (#762): a relative output root lies under the storage root.
+            const auto resolved = backend_.resolveClientPath(rootText);
+            if (!resolved.ok) throw std::runtime_error("output root refused: " + resolved.reason);
+            rootText = resolved.path;
+        }
+        const std::filesystem::path root(rootText);
         if (action == "save" && !std::filesystem::is_directory(root)) throw std::runtime_error("output root must be an existing directory");
         const bool idle = backend_.experiment().withIdleConfiguration([&] {
             if (backend_.capture().isRunning()) throw std::runtime_error("stop capture before saving a stable preview buffer");

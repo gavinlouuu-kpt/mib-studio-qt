@@ -34,12 +34,31 @@
   pixel-to-micron factor, output path, profile id, unresolved fault). A stable
   state keeps its generation, so a preflight stays usable until something
   actually changes.
+- **Output path (#762).** `acceptOutputPath(requested)` is the one place a
+  start path is accepted: `.h5` is appended when the path has no HDF5
+  extension, then `AppBackend::resolveClientPath` (`app::resolveClientPath`
+  under `AppBackend::storageRoot()`, the data directory made absolute with
+  symlinks resolved; [[AppBackend]]) puts a relative path under the storage
+  root. An absolute path is unchanged (the native dialogs); with no root
+  configured (an uninitialized backend) a relative path stays relative, as
+  before. A path whose `weakly_canonical` form leaves the root (`..`, a
+  symlink as the file or a parent, compared by component) or that goes
+  through a dangling symlink is refused. `evaluateReadiness` and `start` both
+  call it, so the probes run in the resolved directory and the candidate, the
+  snapshot `output_path`, the run, the status and the start reply
+  (`experiment started: <path>`) carry the resolved absolute path. Readiness
+  for a refused path fails `storage.output` with the reason and probes
+  nothing.
 - `start(ExperimentStartRequest{outputPath, readinessGeneration, profileId,
   acknowledgeLatestFrameDrops, acknowledgeDiscardRing, declared})` is the serialized Start transaction:
   0. `declared` (the client's identity and planned annotation, bridge ABI 39,
      `recording::StartRequestIdentity`) is checked with
      `recording::validateStartRequest` before anything else: a refused one is
-     `InvalidRequest`, whatever the state, and opens nothing.
+     `InvalidRequest`, whatever the state, and opens nothing. Then the output
+     path (`acceptOutputPath`): empty, or leaving the storage root, is
+     `InvalidRequest` too ("no output path given: choose where the run file
+     goes" / "the output path … leaves the data directory …"), whatever the
+     state, and opens nothing.
   1. A run in progress gets `AlreadyActive` first, from the atomic `state_`,
      before any lock (a status poll or the worker holding the mutex used to
      turn it into `Busy`, #595). Then `try_lock` — a concurrent transaction
@@ -212,8 +231,8 @@ thresholds, so a slow trickle of large frames never sits unwritten.
 | `processing.background` | — | no background image |
 | `trigger.output` | sorting enabled but TriggerService not bound to the running session (`NotRequired` when sorting is off) | — |
 | `rf.generator` | sorting enabled and the configured [[../services/RfGeneratorService]] link is down, or the SSG3021X is mis-armed (RF off, pulse mod off, trigger mode not external, source not internal, zero width — reason lists them); `NotRequired` when sorting is off or `rf_generator.enabled` is false or absent (bundled defaults included) | — |
-| `storage.output` | no path (`Unavailable`), unwritable parent, path is a directory, < 64 MiB free | — |
-| `storage.hdf5` / `lifecycle.recording` / `lifecycle.experiment` | file already open (the shared handle, or a review file in the facade's ReviewSession: `AppBackend::reviewSourceOpen()`, #512 S5) / raw recording active / coordinator not Idle | — |
+| `storage.output` | no path (`Unavailable`), a path that leaves the storage root (#762, nothing probed), unwritable parent, path is a directory, < 64 MiB free | — |
+| `storage.hdf5` / `lifecycle.recording` / `lifecycle.experiment` | file already open (the shared handle, or a review file in the facade's ReviewSession: `AppBackend::reviewSourceOpen()`, #512 S5; remediation `kCloseReviewFile` for a file open for review, "finish or close the current file first" while raw recording or a run holds it, F2 of #763) / raw recording active / coordinator not Idle | — |
 | `lifecycle.fault` | unresolved fault reported | — |
 | `telemetry.transportLoss` | no active session | backend cannot / has not reported transport loss |
 
@@ -313,7 +332,9 @@ taken under the same mutex as the stop it guards.
 ## Gotchas
 
 - The preflight must be evaluated with the **same** `outputPath` and
-  `profileId` the Start presents — both are invalidation inputs.
+  `profileId` the Start presents — both are invalidation inputs. The key
+  holds the accepted path (extension appended, resolved under the storage
+  root), so "run" and "run.h5" evaluate the same file and generation.
 - `camera.source` fails on a *fallback* (hardware requested, mock built) and
   only warns on an *explicit* mock selection; [[AppBackend]] records the
   distinction (`cameraSourceInfo()`), never silently.
@@ -363,15 +384,20 @@ exception leaves the transaction, and `ReviewSession::open()` is all or
 nothing, so the flag never reads closed while a review reader is open once
 the coordinator mutex is released. The gate, Start's writer-conflict check and raw recording's
 writer check all read `hdf5().isFileOpen() || reviewSourceOpen()` under the
-coordinator mutex, so the operator sees exactly what they saw before: gate
-`storage.hdf5` Fail, "an HDF5 file is already open" / "finish or close the
-current file first"; Start NotReady "stop raw recording and close the
-existing HDF5 file before starting an experiment"; raw recording "Close the
-existing HDF5 file before starting raw recording; its writer will not be
-replaced". Like the shared handle, the flag is not an invalidation input (no
-generation bump). Tests: `backend.experiment_readiness` section 5b,
-`backend.facade_review_session`, `backend.facade_boundary`. Revisit after
-#722.
+coordinator mutex, so a review file and a file in the shared handle give the
+same texts. Since F2 of #763 they say how to clear it
+(`kCloseReviewFile` in `ExperimentReadiness.h`): gate `storage.hdf5` Fail, "an
+HDF5 file is already open" / "Close the file in Review (Review → Close
+File)"; Start NotReady "an HDF5 file is already open: Close the file in Review
+(Review → Close File) before starting an experiment"; raw recording "an HDF5
+file is already open: Close the file in Review (Review → Close File) before
+starting raw recording". While raw recording holds the shared handle, Start
+says "raw recording is active: stop it before starting an experiment" and the
+gate keeps "finish or close the current file first" (also during a run). Like
+the shared handle, the flag is not an invalidation input (no generation
+bump). Tests: `backend.experiment_readiness` section 5b,
+`backend.facade_review_session`, `backend.facade_boundary`,
+`e2e.client_output_path`. Revisit after #722.
 
 ### Raw recording admission (#451)
 
