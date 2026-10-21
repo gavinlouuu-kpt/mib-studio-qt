@@ -2,11 +2,15 @@
 
 #include "backend/discovery/StartupDiscoveryPolicy.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <iterator>
 #include <mutex>
+#include <thread>
 #include <utility>
+#include <vector>
 
 #include <spdlog/spdlog.h>
 
@@ -41,8 +45,22 @@ struct StartupDiscoveryCoordinator::Impl : std::enable_shared_from_this<Impl> {
     bool nanoRunning{false};                 // mutex
     bool chainNanoAfterCamera{true};         // mutex
     int lastReportedAttempt{0};              // mutex
+    // Hot-plug: the last nanopositioner step ended without a connection, and
+    // whether a serial port appeared since the current step began.
+    bool hotplugArmed{false};                // mutex
+    bool portAppearedSinceStep{false};       // mutex
     std::uint64_t observerId{0};
     std::atomic<bool> stopped{false};
+
+    // The watcher thread holds `watch` and a weak Impl, so a watcher detached
+    // by a stop() running on it never touches a destroyed Impl.
+    struct Watch {
+        std::mutex mutex;
+        std::condition_variable cv;
+        bool stop{false};
+    };
+    std::shared_ptr<Watch> watch{std::make_shared<Watch>()};
+    std::thread watcher; // started once by start(); joined by stop()
 
     // Actions (decisions, hook calls, listener delivery) currently executing on
     // any thread. stop() drains this so that "no hook or listener runs after
@@ -173,7 +191,9 @@ struct StartupDiscoveryCoordinator::Impl : std::enable_shared_from_this<Impl> {
     // skipped: the nanopositioner probe still waits for the camera timer, so
     // a close right after launch cancels a queued job instead of draining a
     // serial probe.
-    bool beginNano(const char* origin, std::chrono::milliseconds delay = std::chrono::milliseconds(0))
+    // `retries` < 0: the configured nanopositioner retries.
+    bool beginNano(const char* origin, std::chrono::milliseconds delay = std::chrono::milliseconds(0),
+                   int retries = -1)
     {
         if (stopped.load()) return false;
         if (hook(hooks.nanopositionerConnected)) {
@@ -194,7 +214,7 @@ struct StartupDiscoveryCoordinator::Impl : std::enable_shared_from_this<Impl> {
         std::function<std::optional<nanopositioner::Endpoint>()> preferredHook;
         {
             std::lock_guard<std::mutex> lk(mutex);
-            request.retry.maxRetries = timing.nanopositionerRetries;
+            request.retry.maxRetries = retries >= 0 ? retries : timing.nanopositionerRetries;
             request.retry.delay = timing.nanopositionerRetryDelay;
             request.deadline = timing.nanopositionerDeadline;
             preferredHook = hooks.preferredNanopositioner;
@@ -214,6 +234,8 @@ struct StartupDiscoveryCoordinator::Impl : std::enable_shared_from_this<Impl> {
             nanoJob = start.jobId;
             nanoRunning = true;
             lastReportedAttempt = 1;
+            hotplugArmed = false;
+            portAppearedSinceStep = false;
         }
         SPDLOG_INFO("StartupDiscovery: nanopositioner step started (job {})", start.jobId);
         NanopositionerOutcome started;
@@ -357,7 +379,120 @@ struct StartupDiscoveryCoordinator::Impl : std::enable_shared_from_this<Impl> {
                               (snapshot.complete ? "" : " (incomplete coverage)");
             break;
         }
+        bool rerun = false;
+        {
+            std::lock_guard<std::mutex> lk(mutex);
+            hotplugArmed = outcome.kind == NanopositionerOutcome::Kind::NotFound ||
+                           outcome.kind == NanopositionerOutcome::Kind::Incomplete ||
+                           outcome.kind == NanopositionerOutcome::Kind::ConnectFailed;
+            // A port that appeared while this step ran may have been
+            // enumerated too late for its attempts.
+            rerun = hotplugArmed && portAppearedSinceStep;
+        }
         emitNano(outcome);
+        if (rerun) hotplugStep();
+    }
+
+    // ---- hot-plug ---------------------------------------------------------------
+    // Executor context.
+    void hotplugStep()
+    {
+        std::chrono::milliseconds settle;
+        int retries = 0;
+        {
+            std::lock_guard<std::mutex> lk(mutex);
+            if (!hotplugArmed || nanoRunning) return;
+            settle = timing.hotplugSettle;
+            retries = timing.hotplugRetries;
+        }
+        if (hook(hooks.nanopositionerConnected)) { // connected by the operator meanwhile
+            std::lock_guard<std::mutex> lk(mutex);
+            hotplugArmed = false;
+            return;
+        }
+        SPDLOG_INFO("StartupDiscovery: a serial port appeared, looking for the nanopositioner again");
+        beginNano("hotplug-nanopositioner", settle, retries);
+    }
+
+    // Watcher thread.
+    void onPortsAppeared(const std::vector<std::string>& added)
+    {
+        std::string names;
+        for (const auto& name : added) names += (names.empty() ? "" : ", ") + name;
+        bool trigger = false;
+        {
+            std::lock_guard<std::mutex> lk(mutex);
+            portAppearedSinceStep = true;
+            trigger = hotplugArmed && !nanoRunning;
+        }
+        SPDLOG_INFO("StartupDiscovery: serial port(s) appeared: {}", names);
+        if (trigger) post([](Impl& self) { self.hotplugStep(); });
+    }
+
+    void startWatcher()
+    {
+        std::function<std::vector<std::string>()> list;
+        {
+            std::lock_guard<std::mutex> lk(mutex);
+            if (watcher.joinable() || !hooks.listSerialPorts) return;
+            list = hooks.listSerialPorts;
+        }
+        const auto present = [list] {
+            std::vector<std::string> names;
+            try {
+                names = list();
+            } catch (const std::exception& e) {
+                SPDLOG_WARN("StartupDiscovery: serial port enumeration failed: {}", e.what());
+            }
+            std::sort(names.begin(), names.end());
+            return names;
+        };
+        std::weak_ptr<Impl> weak = weak_from_this();
+        std::thread thread([weak, w = watch, present] {
+            auto previous = present();
+            for (;;) {
+                std::chrono::milliseconds poll;
+                {
+                    auto self = weak.lock();
+                    if (!self || self->stopped.load()) return;
+                    std::lock_guard<std::mutex> lk(self->mutex);
+                    poll = self->timing.hotplugPoll;
+                }
+                {
+                    std::unique_lock<std::mutex> lk(w->mutex);
+                    if (w->cv.wait_for(lk, poll, [&] { return w->stop; })) return;
+                }
+                auto current = present();
+                std::vector<std::string> added;
+                std::set_difference(current.begin(), current.end(), previous.begin(), previous.end(),
+                                    std::back_inserter(added));
+                previous = std::move(current);
+                if (added.empty()) continue;
+                auto self = weak.lock();
+                if (!self || self->stopped.load()) return;
+                self->onPortsAppeared(added);
+            }
+        });
+        std::lock_guard<std::mutex> lk(mutex);
+        if (stopped.load()) thread.detach(); // stop() already ran; it exits at its next check
+        else watcher = std::move(thread);
+    }
+
+    void stopWatcher()
+    {
+        {
+            std::lock_guard<std::mutex> lk(watch->mutex);
+            watch->stop = true;
+        }
+        watch->cv.notify_all();
+        std::thread thread;
+        {
+            std::lock_guard<std::mutex> lk(mutex);
+            thread = std::move(watcher);
+        }
+        if (!thread.joinable()) return;
+        if (thread.get_id() == std::this_thread::get_id()) thread.detach(); // stop() from an action it ran
+        else thread.join();
     }
 };
 
@@ -424,6 +559,7 @@ void StartupDiscoveryCoordinator::setNanopositionerListener(NanopositionerListen
 void StartupDiscoveryCoordinator::start()
 {
     if (impl_->stopped.load()) return;
+    impl_->startWatcher();
     if (impl_->hook(impl_->hooks.cameraConfigured) || impl_->hook(impl_->hooks.captureRunning)) {
         CameraOutcome outcome;
         outcome.kind = CameraOutcome::Kind::Skipped;
@@ -492,6 +628,7 @@ void StartupDiscoveryCoordinator::stop()
     }
     if (cameraJob) impl_->service.cancelDiscovery(cameraJob);
     if (nanoJob) impl_->service.cancelDiscovery(nanoJob);
+    impl_->stopWatcher();
     impl_->drainActions();
     SPDLOG_INFO("StartupDiscovery: stopped (camera job {}, nanopositioner job {})", cameraJob, nanoJob);
 }

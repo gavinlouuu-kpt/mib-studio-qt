@@ -509,6 +509,7 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/services/PulseGeneratorService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/StageConfig.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/SimulatedSerialScenario.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/services/SerialAdapterIdentity.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/StageService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/discovery/providers/Zc300Provider.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/RfGeneratorService.cpp

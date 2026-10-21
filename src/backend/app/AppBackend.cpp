@@ -33,6 +33,8 @@
 #include "backend/services/AutofocusService.h"
 #include "backend/services/TriggerService.h"
 #include "backend/services/DotGridService.h"
+#include "backend/services/ISerialPort.h"
+#include "backend/services/SerialAdapterIdentity.h"
 #include "backend/services/SerialBus.h"
 #include "backend/services/SerialPortClaims.h"
 #include "backend/services/SimulatedSerialScenario.h"
@@ -638,6 +640,15 @@ namespace backend
             });
             return connected;
         };
+        // Hot-plug: a controller plugged in after the startup retries is
+        // looked for again when its port appears (serial sim included).
+        if (plScienceSerialBlockReason().empty()) {
+            hooks.listSerialPorts = [] {
+                std::vector<std::string> names;
+                for (const auto &port : services::enumerateSerialPorts()) names.push_back(port.systemName);
+                return names;
+            };
+        }
         startupDiscovery_ =
             std::make_unique<discovery::StartupDiscoveryCoordinator>(*deviceDiscovery_, hooks);
 
@@ -3660,14 +3671,29 @@ namespace backend
         // The pump COM ports in config.json are reserved, so the startup
         // nanopositioner probe never opens the pump RS485 bus, even before
         // the operator connects the pumps (SerialPortClaims.h).
+        // A remembered pump adapter that Windows renumbered is reserved on its
+        // new port too (SerialAdapterIdentity.h).
         {
             std::vector<std::string> pumpPorts;
             const auto parsed = nlohmann::json::parse(json, nullptr, /*allow_exceptions=*/false);
+            std::vector<services::SerialPortInfo> present;
+            bool enumerated = false;
             if (parsed.is_object()) {
-                for (const char *key : {"pump_sample_com_port", "pump_sheath_com_port"}) {
-                    const auto it = parsed.find(key);
-                    if (it != parsed.end() && it->is_number_integer() && it->get<int>() > 0)
-                        pumpPorts.push_back("COM" + std::to_string(it->get<int>()));
+                for (const char *pump : {"sample", "sheath"}) {
+                    const auto it = parsed.find(std::string("pump_") + pump + "_com_port");
+                    if (it == parsed.end() || !it->is_number_integer() || it->get<int>() <= 0) continue;
+                    const std::string configured = "COM" + std::to_string(it->get<int>());
+                    pumpPorts.push_back(configured);
+                    const auto adapter = parsed.find(std::string("pump_") + pump + "_adapter");
+                    if (adapter == parsed.end()) continue;
+                    const auto identity = services::adapterIdentityFromJson(*adapter);
+                    if (identity.serialNumber.empty()) continue; // only a serial number is followed
+                    if (!enumerated) {
+                        present = services::enumerateSerialPorts();
+                        enumerated = true;
+                    }
+                    const auto resolved = services::resolveAdapterPort(configured, identity, present);
+                    if (resolved.kind == services::PortResolution::Kind::Moved) pumpPorts.push_back(resolved.port);
                 }
             }
             services::portclaims::setReserved("the syringe pumps (config.json)", pumpPorts);

@@ -64,6 +64,8 @@ jobs:
         timeout-minutes: 3
         with:
           version: "v0.16.0"
+      - name: Start sccache
+        uses: ./.github/actions/start-sccache
 
       - name: Configure
         timeout-minutes: 5

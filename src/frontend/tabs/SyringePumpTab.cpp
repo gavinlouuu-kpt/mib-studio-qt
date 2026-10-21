@@ -11,6 +11,7 @@
 #include <QSettings>
 
 #include <spdlog/spdlog.h>
+#include <cstdlib>
 #include <nlohmann/json.hpp>
 
 #ifdef _WIN32
@@ -20,6 +21,9 @@
 #endif
 
 #include "backend/app/AppBackend.h"
+#include "backend/services/ISerialPort.h"
+#include "backend/services/SerialAdapterIdentity.h"
+#include "backend/services/SerialPortClaims.h"
 #include "backend/services/SyringePumpService.h"
 
 using json = nlohmann::json;
@@ -147,39 +151,7 @@ int SyringePumpTab::comboIndexFromFlowUnit(uint16_t unit) const {
 // ---------------------------------------------------------------------------
 // Connection slots — read COM/baud/addr from config.json
 // ---------------------------------------------------------------------------
-void SyringePumpTab::onConnectSample() {
-    QString path = configPath();
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        QMessageBox::warning(this, tr("Connection Failed"),
-            tr("No config found. Open Settings > Syringe Pump Settings to configure."));
-        return;
-    }
-
-    try {
-        QByteArray data = file.readAll();
-        json config = json::parse(data.constData(), data.constData() + data.size());
-
-        int comPort = config.value("pump_sample_com_port", -1);
-        int baudRate = config.value("pump_sample_baud_rate", 115200);
-        int addr = config.value("pump_sample_address", 1);
-
-        if (comPort < 0) {
-            QMessageBox::warning(this, tr("Connection Failed"),
-                tr("No COM port configured. Open Settings > Syringe Pump Settings."));
-            return;
-        }
-
-        bool ok = backend_.syringePump().connect(PumpId::Sample, comPort, baudRate, static_cast<uint8_t>(addr));
-        if (!ok) {
-            QMessageBox::warning(this, tr("Connection Failed"),
-                tr("Failed to connect Sample pump on COM%1 addr=%2").arg(comPort).arg(addr));
-        }
-    } catch (const std::exception& e) {
-        QMessageBox::warning(this, tr("Config Error"), QString::fromStdString(e.what()));
-    }
-    updatePumpUI(0);
-}
+void SyringePumpTab::onConnectSample() { connectPump(0); }
 
 void SyringePumpTab::onDisconnectSample() {
     saveConfig();
@@ -187,7 +159,12 @@ void SyringePumpTab::onDisconnectSample() {
     updatePumpUI(0);
 }
 
-void SyringePumpTab::onConnectSheath() {
+void SyringePumpTab::onConnectSheath() { connectPump(1); }
+
+void SyringePumpTab::connectPump(int pumpIndex) {
+    const PumpId id = pumpIndex == 0 ? PumpId::Sample : PumpId::Sheath;
+    const std::string prefix = pumpIndex == 0 ? "pump_sample_" : "pump_sheath_";
+    const QString pumpName = pumpIndex == 0 ? tr("Sample") : tr("Sheath");
     QString path = configPath();
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
@@ -198,11 +175,12 @@ void SyringePumpTab::onConnectSheath() {
 
     try {
         QByteArray data = file.readAll();
+        file.close();
         json config = json::parse(data.constData(), data.constData() + data.size());
 
-        int comPort = config.value("pump_sheath_com_port", -1);
-        int baudRate = config.value("pump_sheath_baud_rate", 115200);
-        int addr = config.value("pump_sheath_address", 2);
+        int comPort = config.value(prefix + "com_port", -1);
+        int baudRate = config.value(prefix + "baud_rate", 115200);
+        int addr = config.value(prefix + "address", pumpIndex == 0 ? 1 : 2);
 
         if (comPort < 0) {
             QMessageBox::warning(this, tr("Connection Failed"),
@@ -210,15 +188,65 @@ void SyringePumpTab::onConnectSheath() {
             return;
         }
 
-        bool ok = backend_.syringePump().connect(PumpId::Sheath, comPort, baudRate, static_cast<uint8_t>(addr));
+        // Windows renumbers adapters: check that the configured port still
+        // carries the adapter this pump last connected on.
+        const auto remembered = backend::services::adapterIdentityFromJson(config.value(prefix + "adapter", json()));
+        const auto resolution = backend::services::resolveAdapterPort(
+            "COM" + std::to_string(comPort), remembered, backend::services::enumerateSerialPorts());
+        if (!resolution.connectable()) {
+            SPDLOG_WARN("SyringePumpTab: {} pump not connected: {}", pumpName.toStdString(), resolution.message);
+            QMessageBox::warning(this, tr("Connection Failed"), QString::fromStdString(resolution.message));
+            return;
+        }
+        if (resolution.kind == backend::services::PortResolution::Kind::Moved)
+            SPDLOG_WARN("SyringePumpTab: {}", resolution.message);
+
+        const auto key = backend::services::portclaims::key(resolution.port);
+        const int resolvedCom = key.rfind("com", 0) == 0 ? std::atoi(key.c_str() + 3) : 0;
+        bool ok = resolvedCom > 0
+                      ? backend_.syringePump().connect(id, resolvedCom, baudRate, static_cast<uint8_t>(addr))
+                      : backend_.syringePump().connect(id, resolution.port, baudRate, static_cast<uint8_t>(addr));
         if (!ok) {
             QMessageBox::warning(this, tr("Connection Failed"),
-                tr("Failed to connect Sheath pump on COM%1 addr=%2").arg(comPort).arg(addr));
+                tr("Failed to connect %1 pump on %2 addr=%3")
+                    .arg(pumpName, QString::fromStdString(resolution.port))
+                    .arg(addr));
+        } else {
+            rememberPumpAdapter(pumpIndex, resolution.port);
         }
     } catch (const std::exception& e) {
         QMessageBox::warning(this, tr("Config Error"), QString::fromStdString(e.what()));
     }
-    updatePumpUI(1);
+    updatePumpUI(pumpIndex);
+}
+
+void SyringePumpTab::rememberPumpAdapter(int pumpIndex, const std::string& port) {
+    const std::string prefix = pumpIndex == 0 ? "pump_sample_" : "pump_sheath_";
+    const auto wanted = backend::services::portclaims::key(port);
+    backend::services::AdapterIdentity identity;
+    for (const auto& info : backend::services::enumerateSerialPorts())
+        if (backend::services::portclaims::key(info.systemName) == wanted) identity = backend::services::identityOf(info);
+
+    QFile file(configPath());
+    if (!file.open(QIODevice::ReadWrite | QIODevice::Text)) return;
+    try {
+        QByteArray data = file.readAll();
+        json config;
+        if (!data.isEmpty())
+            config = json::parse(data.constData(), data.constData() + data.size());
+        if (identity.known()) config[prefix + "adapter"] = backend::services::toJson(identity);
+        else config.erase(prefix + "adapter"); // no USB identity (onboard port): nothing to check
+        // A followed adapter: config.json names its new COM port.
+        if (wanted.rfind("com", 0) == 0) {
+            const int number = std::atoi(wanted.c_str() + 3);
+            if (number > 0) config[prefix + "com_port"] = number;
+        }
+        file.resize(0);
+        QTextStream out(&file);
+        out << QString::fromStdString(config.dump(4));
+    } catch (const std::exception& e) {
+        SPDLOG_ERROR("SyringePumpTab: Failed to remember the pump adapter in config.json: {}", e.what());
+    }
 }
 
 void SyringePumpTab::onDisconnectSheath() {
