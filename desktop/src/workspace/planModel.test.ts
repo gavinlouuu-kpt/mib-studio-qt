@@ -4,8 +4,11 @@
 import { describe, expect, it } from "vitest";
 import { EXPERIMENT_START_REQUEST as B } from "../bridgeContract";
 import {
+  CALIBRATION_CHANGED_TITLE,
   UUID_V4,
   buildStartRequest,
+  calibrationChanged,
+  calibrationChangedText,
   conditionSlots,
   concentrationText,
   invalidRequestReason,
@@ -88,7 +91,7 @@ describe("the start request as JSON text", () => {
     const doc = JSON.parse(json(plan())!);
     expect(doc.run_index).toBe(1);
     expect(doc.sample_ref).toBe("S1");
-    expect(doc).not.toHaveProperty("calibration_record_id"); // A4: not available yet
+    expect(doc).not.toHaveProperty("calibration_record_id"); // none declared unless the page shows one in effect (A4b)
   });
 
   it("free keys that are JavaScript property names are sent as keys, in order", () => {
@@ -270,5 +273,43 @@ describe("remembered operators", () => {
   it("reads back only well-formed entries", () => {
     expect(parseOperators([{ name: "A", id: "1" }, { name: 3 }, null, "x", { name: "B", id: "" }])).toEqual([{ name: "A", id: "1" }, { name: "B", id: "" }]);
     expect(parseOperators({})).toEqual([]);
+  });
+});
+
+describe("the calibration record a Start declares (#716 A4b, ABI 42)", () => {
+  const MISMATCH = 'invalid start request: calibration_record_id: declared "cal-a" but the applied record is "cal-b" (mismatch)';
+
+  it("declares the record shown as in effect, between the operator and the annotation, in the contract's order", () => {
+    expect(buildStartRequest(plan({ condition: "Vehicle" }, { name: "A", id: "" }), 0, 1, "cal-20261021T080000Z-0a1b2c3d").json).toBe(
+      `{"experiment_id":"${ID}","run_index":1,"sample_ref":"S1","operator":{"name":"A"},"calibration_record_id":"cal-20261021T080000Z-0a1b2c3d","annotation":{"condition":"Vehicle"}}`,
+    );
+  });
+
+  it("with none in effect (null) or none read, declares nothing: the key is absent, never null or \"\"", () => {
+    for (const none of [null, undefined, ""]) {
+      const doc = JSON.parse(buildStartRequest(plan(), 0, 1, none as string | null).json!);
+      expect(doc).not.toHaveProperty("calibration_record_id");
+    }
+  });
+
+  it("refuses an id over the contract's bound, never truncating it", () => {
+    const long = "c".repeat(B.max_id_bytes + 1);
+    const b = buildStartRequest(plan(), 0, 1, long);
+    expect(b.json).toBeNull();
+    expect(b.issues.map((i) => i.key)).toEqual(["calibration_record_id"]);
+    expect(issueLine(b.issues[0])).toContain("Calibration record: too long");
+    expect(buildStartRequest(plan(), 0, 1, "c".repeat(B.max_id_bytes)).json).not.toBeNull();
+  });
+
+  it("the backend's mismatch refusal is the calibration's, in plain words, not the sheet's", () => {
+    const r = invalidRequestReason(MISMATCH, 7)!;
+    expect(r.key).toBe("calibration_record_id");
+    expect(calibrationChanged(r)).toBe(true);
+    expect(calibrationChanged(invalidRequestReason("invalid start request: annotation.condition: too long", 7))).toBe(false);
+    expect(calibrationChanged(null)).toBe(false);
+    expect(CALIBRATION_CHANGED_TITLE).toBe("The applied calibration changed since this page read it");
+    expect(calibrationChangedText(r)).toBe(
+      'The applied calibration changed since this page read it: declared "cal-a" but the applied record is "cal-b" (mismatch). No file was created. '
+      + "The plan is kept; the page reads the calibration again. Check the record in effect in Prepare's Calibration card, then press Start again.");
   });
 });

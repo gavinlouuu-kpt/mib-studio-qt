@@ -3,7 +3,9 @@
 // format choice, the operator fields and the PZ7035's explicit switch to Run. None of them acts on
 // its own: editing changes the local plan, and the Run switch is a button.
 import { useId, useState } from "react";
-import { Button, Card, Notice, OptionGroup } from "@mib/ui";
+import { Button, Card, Notice, OptionGroup, type Fact } from "@mib/ui";
+import type { ReadinessGate } from "../eventAdapter";
+import { factorText } from "./calibrationModel";
 import { EXPERIMENT_START_REQUEST as B } from "../bridgeContract";
 import {
   FIELD_KEYS,
@@ -21,7 +23,7 @@ import {
   type SampleFormat,
   type SampleRow,
 } from "./planModel";
-import type { Verdict } from "./prepareModel";
+import { gateFactTone, gateRemediation, gateText, type Verdict } from "./prepareModel";
 import type { PlanController } from "./usePlan";
 
 /** Why Prepare's checklist blocks (confirmBlockers), null when it does not. */
@@ -56,11 +58,17 @@ function IssueLines({ id, texts }: { id?: string; texts: string[] }) {
 }
 
 /** Every reason Start run is unavailable, in plain words (empty = it is available). */
+/** A viewer's control (Start, Prepare's calibration Apply): disabled, and nothing is sent. The same
+ *  words wherever the workspace disables a control command for a viewer. */
+export function controlBlock(action: string): StartBlock {
+  return {
+    id: "control", tone: "blocked", title: "Another tab or client holds control",
+    text: `${action} is unavailable here, and nothing is sent. Take control first; the banner at the top offers it.`,
+  };
+}
+
 /** A viewer's Start (single sample or queue): disabled, and nothing is sent. */
-export const CONTROL_BLOCK: StartBlock = {
-  id: "control", tone: "blocked", title: "Another tab or client holds control",
-  text: "Start is unavailable here, and nothing is sent. Take control first; the banner at the top offers it.",
-};
+export const CONTROL_BLOCK: StartBlock = controlBlock("Start");
 
 export function startBlocks(p: { started: "started" | "unknown" | null; notStarted?: boolean; starting: boolean; verdict: Verdict; blockers: StartBlockers; lockedReason: string; issues: readonly PlanIssue[]; cameraReason?: string; controlHeld?: boolean }): StartBlock[] {
   const out: StartBlock[] = [];
@@ -80,6 +88,43 @@ export function startBlocks(p: { started: "started" | "unknown" | null; notStart
     out.push({ id: "sheet", tone: "blocked", title: `Start is unavailable · the plan has ${p.issues.length === 1 ? "1 issue" : `${p.issues.length} issues`}`, text: lines.join(" "), lines });
   }
   return out;
+}
+
+/** What the Plan knows of the calibration (#716 A4b): the applied record the page last read as in
+ *  effect (Workspace's useCalibration, the same read as Prepare's Calibration card) and the
+ *  `calibration.record` gate of the path-less readiness read. */
+export interface PlanCalibration {
+  /** The list was read (the last read succeeded). */
+  read: boolean;
+  /** `in_effect_record_id` of that read; null when none is in effect or the list was not read. */
+  inEffectId: string | null;
+  /** Its factor, for the operator. */
+  factor: number | null;
+  /** Why the list is not read ("" when it is, or before the first read). */
+  error: string;
+  gate: ReadinessGate | null;
+  /** Read the list again. */
+  refresh: () => void;
+}
+
+/** The id a Start declares: only the record the page showed as in effect; nothing otherwise. */
+export const declaredCalibration = (c: PlanCalibration | undefined): string | null => (c?.read ? c.inEffectId : null);
+
+/** The Run identity card's calibration rows: what Start declares, and the gate in the backend's
+ *  words (which also says when the applied method is itself a calibration method). */
+export function calibrationFacts(c: PlanCalibration | undefined): Fact[] {
+  const declared = declaredCalibration(c);
+  const record: Fact = !c || !c.read
+    ? { label: "Calibration record", value: `Unknown · ${c?.error || "not read yet"} · not declared; the backend records the record in effect at Start`, tone: "unknown" }
+    : declared
+      ? { label: "Calibration record", value: <span data-testid="plan-calibration-declared">{`${declared} · in effect${c.factor !== null ? ` (${factorText(c.factor)})` : ""} · declared at Start: if it changes first, the backend refuses the Start`}</span>, tone: "confirmed" }
+      : { label: "Calibration record", value: "None in effect when last read · not declared; the backend records the record in effect at Start" };
+  const g = c?.gate ?? null;
+  const fix = g ? gateRemediation(g) : "";
+  const gate: Fact = g
+    ? { label: "Calibration gate", value: <span className="ws-gate"><span>{gateText(g)}</span>{fix ? <span className="ws-gate-fix">{`Fix: ${fix}`}</span> : null}</span>, tone: gateFactTone(g.status) }
+    : { label: "Calibration gate", value: "Unknown · not read yet", tone: "unknown" };
+  return [record, gate];
 }
 
 export const NOT_DECLARED = <span title="Not declared">–</span>;

@@ -6,6 +6,7 @@
 // code decides what it means (ABI 40, experimentStart.ts startReplyState). Prepare's verdict still
 // governs: while Prepare's checklist blocks, Start is disabled with Prepare's own words
 // (prepareVerdict, confirmBlockers). On the PZ7035 the Plan offers the explicit switch to Run.
+import { useEffect } from "react";
 import { Button, Card, ConditionSwatch, DataTable, FactList, Notice, StateChip, type DataTableColumn } from "@mib/ui";
 import { EXPERIMENT_START_REQUEST as B } from "../bridgeContract";
 import {
@@ -13,12 +14,15 @@ import {
   buildStartRequest,
   conditionSlots,
   concentrationText,
+  CALIBRATION_REFUSAL_TITLE,
+  calibrationChanged,
+  calibrationChangedText,
   invalidRequestReason,
   issuesFor,
   type PlanCameraMode,
   type SampleRow,
 } from "./planModel";
-import { FormatCard, NOT_DECLARED, OperatorFields, CameraModeNotice, SampleEditor, StartBlockText, startBlocks } from "./planParts";
+import { FormatCard, NOT_DECLARED, OperatorFields, CameraModeNotice, SampleEditor, StartBlockText, calibrationFacts, declaredCalibration, startBlocks, type PlanCalibration } from "./planParts";
 import { QueuePlan } from "./QueuePlan";
 import { startConfirmation, type ConfirmationState, type Verdict } from "./prepareModel";
 import type { PlanController, PlanStartResult } from "./usePlan";
@@ -40,6 +44,9 @@ export interface PlanViewProps {
   confirmation?: ConfirmationState;
   /** Show Experiment · Live (navigation only), offered with a started run's outcome. */
   onShowLive?: () => void;
+  /** The calibration record in effect as the page last read it, and the calibration gate (#716 A4b).
+   *  Absent: nothing is declared and the identity card says it is not read. */
+  calibration?: PlanCalibration;
 }
 
 export { startBlocks, type StartBlock } from "./planParts";
@@ -75,13 +82,19 @@ export function PlanView(props: PlanViewProps) {
   return props.plan.draft.format === "queue" ? <QueuePlan {...props} /> : <SinglePlan {...props} />;
 }
 
-function SinglePlan({ plan, lockedReason, verdict, blockers, cameraMode, onCameraMode, confirmation, onShowLive }: PlanViewProps) {
+function SinglePlan({ plan, lockedReason, verdict, blockers, cameraMode, onCameraMode, confirmation, onShowLive, calibration }: PlanViewProps) {
   const { draft, started, starting } = plan;
   const row = draft.rows[0];
-  const build = buildStartRequest(draft, 0, SINGLE_SAMPLE_RUN_INDEX);
+  // The calibration record shown as in effect is the one Start declares (#716 A4b).
+  const build = buildStartRequest(draft, 0, SINGLE_SAMPLE_RUN_INDEX, declaredCalibration(calibration));
   const locked = !!started || starting;
   const blocks = startBlocks({ started: started?.outcome ?? null, notStarted: started?.code !== undefined, starting, verdict, blockers, lockedReason, issues: build.issues, cameraReason: cameraMode?.startReason, controlHeld: plan.queue.controlHeld });
-  const refusal = plan.result?.kind === "refused" ? invalidRequestReason(plan.result.message, plan.result.code) : null;
+  const invalid = plan.result?.kind === "refused" ? invalidRequestReason(plan.result.message, plan.result.code) : null;
+  // The calibration mismatch is not the sheet's: it is said beside the calibration record.
+  const calibrationRefusal = invalid && calibrationChanged(invalid) ? invalid : null;
+  const refusal = calibrationRefusal ? null : invalid;
+  const refreshCalibration = calibration?.refresh;
+  useEffect(() => { if (calibrationRefusal) refreshCalibration?.(); }, [plan.result]);
   const outcome = resultNotice(plan.result);
   const refresh = refreshNotice(plan.result);
   const confirm = confirmation ? startConfirmation(confirmation) : null;
@@ -131,9 +144,14 @@ function SinglePlan({ plan, lockedReason, verdict, blockers, cameraMode, onCamer
             { label: "Experiment", value: <span className="ws-plan-id" data-testid="plan-experiment-id">{draft.experimentId}</span> },
             { label: "Run", value: `${SINGLE_SAMPLE_RUN_INDEX} of 1 · single sample` },
             { label: "Sample ref", value: row.ref },
-            { label: "Calibration record", value: "Unavailable · calibration runs come in a later step; not recorded", tone: "unknown" },
+            ...calibrationFacts(calibration),
             { label: "Destination", value: "Chosen when you press Start run" },
           ]} />
+          {calibrationRefusal ? (
+            <Notice tone="blocked" title={CALIBRATION_REFUSAL_TITLE} data-testid="plan-calibration-refusal">
+              {calibrationChangedText(calibrationRefusal)}
+            </Notice>
+          ) : null}
           <OperatorFields plan={plan} issues={operatorIssues} locked={locked} />
         </Card>
       </div>

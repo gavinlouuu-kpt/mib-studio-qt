@@ -152,7 +152,7 @@ LED on a service setting. Tests: `workflow.test.ts` (#548), `preflight.test.ts` 
 `desktop/src/workspace/Workspace.tsx` is the four-stage Prepare / Align / Experiment /
 Review shell on the `@mib/ui` kit (`AppShell`, `StageTabs`, `Toolbar`, `Card`, `FactList`,
 `StateChip`, `Button`, `Notice`, `DataTable`, `OptionGroup`, `ConditionSwatch`, `Stepper`, `CellImage`,
-`CellStrip`, `AreaDeformChart`, `StatTile`), the Operation app's steps A1, A3, A5 and A6b (#716). The kit stylesheets are imported once, there; `workspace.css`
+`CellStrip`, `AreaDeformChart`, `StatTile`), the Operation app's steps A1, A3, A4b, A5 and A6b (#716). The kit stylesheets are imported once, there; `workspace.css`
 only places cards with the kit's spacing tokens (and styles the app-local number and text fields
 of the quick controls and the sample sheet, until the kit has them).
 
@@ -191,6 +191,53 @@ of the quick controls and the sample sheet, until the kit has them).
   Background calibration with no background set finds no empty frame when every frame has cells).
   Chips, facts and "Fix:" lines wrap inside their card (`min-width: 0`, a `fit-content(45%)` label
   column; #763 F10).
+- **Calibration card (Prepare; #716 A4b, bridge ABI 42).** `CalibrationCard.tsx`, its pure model
+  `calibrationModel.ts` and the hook `useCalibration.ts` (held by `Workspace`, so Prepare and the
+  Plan share one read). See [[../services/CalibrationRecords]].
+  - **Reads.** `calibration_records_list`, polled with the readiness (every 2 s, while Prepare or
+    the Plan is shown and no run is active, one request at a time; a read asked for meanwhile runs
+    once it ends). A failed read clears the list, so it reads "Unknown · <error>", never "None";
+    so does a store the backend cannot read (`store.error`: "Unknown · the calibration store cannot
+    be read", and the Plan declares nothing). A read started before an apply answered, or in an
+    earlier active period (before a run, another view), is dropped. `calibration_record_get` only
+    when the operator selects a record in the list (its versions); only the newest get's reply is
+    shown.
+  - **What it shows.** The `calibration.record` gate (label "Calibration record") with its state
+    and the backend's `Fix:`; the record in effect (the backend's `in_effect_record_id`, never
+    recomputed) with its id, factor, age since it was applied, method and revision, identity
+    (camera · ROI · chip · objective) and source file; the current factor and setup; an applied
+    record that is no longer in effect, with why (its factor is not the current one, e.g. after a
+    restart, or the setup changed); every proposed record with current → proposed, its evidence
+    and whether it is applicable here (a proposal of another setup, or with the identity unknown
+    or no factor reported, is shown with the reason and its button disabled; a record whose stored
+    evidence fails the backend's re-check, `evidenceFails`, gets no button at all); the newest
+    insufficient records with their failed gates in plain words ("Valid objects: 120, at least
+    200"), never with an Apply; and a plain `DataTable` of every record, newest first (at most 20
+    rows), no trend chart. A null stays "Not recorded", never 0.
+  - **Apply / Re-apply** (`calibration_apply(record_id, expected_current_factor)`) is the card's
+    only action, on its button, with the `current_factor` of the list read the page shows. After
+    a restart a `required` method's gate fails with "re-apply record <id>"; the card offers
+    "Re-apply <id>" directly beside that Fix (`fixAction`; a proposal of this setup otherwise), as
+    the PR #771 ruling asks. The reply's previous → new is shown ("Applied · cal-… · Pixel-to-micron
+    0.5 → 0.52 µm/px"). Every refusal is said in plain words and changes nothing on screen but the
+    re-read (`applyReplyNotice`: stale factor, a run active, insufficient, another setup, an unknown
+    identity, not applicable, store failure; `applyErrorNotice`: the server's VIEWER_ONLY, a lost
+    reply). Whatever the answer the list and the gates are read again at once; a list read that
+    started before the apply answered is dropped, as is a gates read in flight (an explicit refresh
+    in `usePrepareReadiness` reads once more), and the buttons stay locked until the list read
+    after the answer settles (at most `RECONCILE_MS`, 5 s), so a second press never acts on the list
+    from before the apply. A viewer's buttons are disabled with the shared
+    control block (`controlBlock("Apply")` in `planParts.tsx`, the words of the Plan's
+    `CONTROL_BLOCK`) and nothing is sent; during a run nothing is read or sent. Navigation, listing,
+    selecting and polling never send `calibration_apply` (`CalibrationCard.test.tsx` and
+    `navigation.test.tsx` count every IPC call).
+  - **Running a calibration** is a normal run: the card says to apply the calibration method in the
+    classic view and record the beads from Experiment · Plan with Start run, and what the backend
+    derives when that run closes (`DERIVATION_TEXT`). There is no separate acquisition path. **Gap:**
+    the bridge reports no method purpose, so the workspace cannot say itself whether the applied
+    method is a calibration method; the card says so (`PURPOSE_GAP_TEXT`) and the gate row shows the
+    backend's own words ("Not required · a calibration method records the reference"), which the
+    workspace does not parse.
 - **One verdict** (`prepareVerdict`), the same words in the header chip and the "Ready to
   operate?" card, combining the checklist and the gates. It never contradicts the Confirm
   button, which the checklist alone drives:
@@ -313,7 +360,7 @@ of the quick controls and the sample sheet, until the kit has them).
     `experiment_id` is a UUID v4 minted with `crypto.getRandomValues` when the plan is created
     (lowercase; `randomUUID` is missing outside a secure context, as on the instrument's HTTP
     UI), `run_index` 1, `sample_ref` the row's ref ("S1"), `operator {id, name}` when one is
-    given, then `annotation` when anything is declared. No `calibration_record_id` until A4.
+    given, `calibration_record_id` (below), then `annotation` when anything is declared.
     The operator is the one the operator selected or typed (#393 phase 1), recorded by the
     backend with assurance "selected"; the card says it is not authentication. Operators are
     remembered on this machine (`localStorage` `mib.workspace.operators`, most recent first, at
@@ -321,6 +368,19 @@ of the quick controls and the sample sheet, until the kit has them).
     plan a page load creates names no operator, the remembered ones are offered unselected, and an
     operator is sent only once it was typed or picked in this page's Plan (the contract has no
     other assurance value, so nothing else is recorded as "selected").
+  - **The calibration record a Start declares (#716 A4b).** `buildStartRequest(plan, row, run,
+    calibrationRecordId)` declares `calibration_record_id` only as the record the page showed as in
+    effect (`declaredCalibration`: `in_effect_record_id` of the last successful list read); with
+    none in effect, or the list not read, nothing is declared and the backend records the record in
+    effect itself. The Run identity card (single and queue) shows it ("cal-… · in effect (0.52 µm/px)
+    · declared at Start"; "None in effect when last read · not declared; the backend records the record in effect at Start"; "Unknown · … · not declared") and the
+    calibration gate in the backend's words. Since ABI 42 the id is a check: a record applied,
+    re-applied or taken out of effect between that read and Start makes the backend refuse the
+    Start (`InvalidRequest`, key `calibration_record_id`, "(mismatch)"); the Plan says "Not started ·
+    the applied calibration changed since this page read it" beside the calibration record
+    (`calibrationChanged`, `calibrationChangedText`; the queue's step says the same), keeps the plan
+    and its identity (a refusal records nothing), and reads the list again. The queue's Start
+    declares what is shown at each press (`startCurrent(calibrationRecordId)`).
   - **Start run** (the one primary action) runs App's `runExperimentStart`, the classic Start
     flow (`experimentStart.ts`: ask before a stopped Run's frames are discarded, pick the file,
     readiness with it, start) with the plan's `startRequestJson`; the classic Start button runs

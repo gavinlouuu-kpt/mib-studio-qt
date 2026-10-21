@@ -8,7 +8,8 @@
 // a mode switch or a write happens only on a button, in Plan a run starts, stops or switches to Run
 // only on a button ("Start run", the sample queue's steps, "Switch to Run" / "Show the experiment
 // window"), and in Live a pin, a run stop or a camera stop happens only on a button (showing Live
-// reads, and turns monitoring on as the classic Monitoring tab does).
+// reads, and turns monitoring on as the classic Monitoring tab does). In Prepare the calibration
+// factor changes only on the Calibration card's Apply / Re-apply button (#716 A4b).
 //
 // The kit stylesheets are imported once, here, at the workspace entry.
 import "@mib/ui/fonts.css";
@@ -23,6 +24,9 @@ import { confirmBlockers, confirmationState, prepareVerdict } from "./prepareMod
 import type { PlanCameraMode } from "./planModel";
 import type { PlanController } from "./usePlan";
 import { usePrepareReadiness } from "./usePrepareReadiness";
+import { calibrationGate } from "./calibrationModel";
+import type { PlanCalibration } from "./planParts";
+import { useCalibration } from "./useCalibration";
 
 export const WORKSPACE_STAGES = ["Prepare", "Align", "Experiment", "Review"] as const;
 
@@ -36,7 +40,7 @@ const CLASSIC_FOR: Readonly<Record<number, string>> = {
   3: "opening and reviewing recordings (Review)",
 };
 
-export interface WorkspaceProps extends Omit<PrepareViewProps, "readiness" | "report" | "verdict"> {
+export interface WorkspaceProps extends Omit<PrepareViewProps, "readiness" | "report" | "verdict" | "calibration" | "calibrationGate" | "now"> {
   brand: string;
   /** Header context: the camera source and the applied method. "" when there is none. */
   source: string;
@@ -66,6 +70,20 @@ export function Workspace({ brand, source, method, stage, onStage, onExit, servi
   // run is active (the gates would only say "running"). Always without a path.
   const showsVerdict = workspaceReadsPrepare(stage, experiment.view);
   const readiness = usePrepareReadiness(showsVerdict && !prepare.experimentActive);
+  // The calibration records (#716 A4b), read with the gates and for the same views: Prepare's
+  // Calibration card, and the record the Plan declares at Start. Only its Apply button acts.
+  const calibration = useCalibration(showsVerdict && !prepare.experimentActive,
+    { controlHeld: prepare.controlHeld, experimentActive: prepare.experimentActive, afterApply: readiness.refresh });
+  const calGate = calibrationGate(readiness.snapshot);
+  // A store the backend cannot read lists no records: what is in effect is then not known (never "none").
+  const storeError = calibration.list?.valid ? calibration.list.store?.error ?? null : null;
+  const calList = calibration.list?.valid && !storeError ? calibration.list : null;
+  const planCalibration: PlanCalibration = {
+    read: calList !== null, inEffectId: calList?.in_effect_record_id ?? null,
+    factor: calList?.in_effect_record_id && typeof calList.current_factor === "number" ? calList.current_factor : null,
+    error: prepare.experimentActive ? "not read while a run is active" : storeError ? "the calibration store cannot be read" : calibration.error,
+    gate: calGate, refresh: calibration.refresh,
+  };
   // One verdict from the checklist, the gates and the operator's confirmation, the same words in
   // the header, in Prepare and beside Start.
   const report = derivePreflight(prepare.preflightInput);
@@ -99,13 +117,13 @@ export function Workspace({ brand, source, method, stage, onStage, onExit, servi
         </div>
       )}
       {stage === 0 ? (
-        <PrepareView {...prepare} report={report} readiness={readiness} verdict={verdict} />
+        <PrepareView {...prepare} report={report} readiness={readiness} verdict={verdict} calibration={calibration} calibrationGate={calGate} now={Date.now()} />
       ) : stage === 1 ? (
         <AlignView {...align} onClassic={onExit} />
       ) : stage === 2 ? (
         <ExperimentView plan={experiment.plan} lockedReason={experiment.lockedReason} view={experiment.view} onView={experiment.onView}
           cameraMode={experiment.cameraMode} onCameraMode={experiment.onCameraMode} live={experiment.live}
-          verdict={verdict} blockers={confirmBlockers(report)} confirmation={confirmation} onClassic={onExit} />
+          verdict={verdict} blockers={confirmBlockers(report)} confirmation={confirmation} onClassic={onExit} calibration={planCalibration} />
       ) : (
         <div className="ws-view" data-testid={`workspace-${WORKSPACE_STAGES[stage]?.toLowerCase() ?? "stage"}`}>
           <Toolbar title={WORKSPACE_STAGES[stage]}>

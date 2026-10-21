@@ -74,6 +74,7 @@ export const GATE_LABELS: Readonly<Record<string, string>> = {
   "processing.core": "Processing core",
   "processing.config": "Processing settings",
   "calibration.pixelToMicron": "Pixel → µm calibration",
+  "calibration.record": "Calibration record",
   "processing.background": "Background image",
   "processing.backgroundCalibration": "Background calibration",
   "trigger.output": "Sort trigger output",

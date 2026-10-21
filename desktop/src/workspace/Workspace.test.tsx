@@ -47,7 +47,7 @@ const PLAN: PlanController = {
 const props = (over: Partial<WorkspaceProps> = {}): WorkspaceProps => ({
   brand: "MIB Studio", source: "Mock camera", method: "", stage: 0, onStage, onExit, serviceMode: false,
   preflightInput: INPUT, zStage: null, signature: "sig-now", confirmedFor: "", onConfirm, confirmLockedReason: "",
-  experimentActive: false, onRefreshChecks, onOpenSetup,
+  experimentActive: false, controlHeld: true, onRefreshChecks, onOpenSetup,
   align: { facts: FACTS, subscribeFrames, onSwitchMode, writeRoi, lockedReason: "" },
   experiment: { plan: PLAN, lockedReason: "", view: "Plan", onView: () => {}, live: { snapshot: null, running: false, experimentActive: false, hostProcessing: true, subscribeFrames: () => {}, onStopAcquisition: async () => {}, onStopRun: async () => ({ ok: false, message: "not in this test" }) } }, ...over,
 });
@@ -60,6 +60,13 @@ function WithView(p: WorkspaceProps) {
 const render = (over: Partial<WorkspaceProps> = {}) => act(async () => root.render(<WithView {...props(over)} />));
 const advance = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
 const calls = () => vi.mocked(invoke).mock.calls.map(([cmd, args]) => ({ cmd, args }));
+/** What Prepare reads (and the Plan, which takes its verdict and declares its calibration record):
+ *  the path-less readiness and the calibration records list (#716 A4b). Neither acts. */
+const PREPARE_READ = [{ cmd: "fetch_experiment_readiness", args: { outputPath: "" } }, { cmd: "calibration_records_list", args: undefined }];
+const isPrepareRead = (c: { cmd: string; args: unknown }) => PREPARE_READ.some((r) => r.cmd === c.cmd && JSON.stringify(r.args) === JSON.stringify(c.args));
+const EMPTY_CAL_LIST = { valid: true, store: { revision: 0, max_versions: 2048, error: null }, applied_record_id: null, in_effect_record_id: null, current_factor: 0.5,
+  current_identity: { camera: "mock:Camera 01", roi: "full", chip: "not tracked", objective: "not tracked", known: true }, records: [] };
+let calList: unknown = EMPTY_CAL_LIST;
 const button = (text: string) => [...host.querySelectorAll("button")].find((b) => b.textContent === text)!;
 const row = (label: string, scope = "") => [...host.querySelectorAll(`${scope} dt`)].find((d) => d.textContent === label)?.nextElementSibling as HTMLElement | undefined;
 const GATES = "[data-testid=workspace-gates]";
@@ -72,8 +79,10 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.resetAllMocks();
   gates = [{ id: "camera.source", status: G.Pass, reason: "", remediation: "" }, NO_PATH];
+  calList = EMPTY_CAL_LIST;
   vi.mocked(invoke).mockImplementation(async (cmd: string) => {
     if (cmd === "fetch_experiment_readiness") return readinessReply();
+    if (cmd === "calibration_records_list") return calList;
     throw new Error(`unexpected command ${cmd}`);
   });
   host = document.createElement("div"); document.body.append(host); root = createRoot(host);
@@ -85,12 +94,15 @@ afterEach(async () => {
 });
 
 describe("Prepare reads readiness without a path (#713)", () => {
-  it("polls only fetch_experiment_readiness, always with an empty output path, so no probe file is written", async () => {
+  it("polls only the readiness, always with an empty output path (so no probe file is written), and the calibration list", async () => {
     await render();
     await advance(PREPARE_READINESS_POLL_MS * 5);
     const log = calls();
-    expect(log.length).toBe(6); // the first read, then one per period
-    for (const c of log) expect(c).toEqual({ cmd: "fetch_experiment_readiness", args: { outputPath: "" } });
+    const readiness = log.filter((c) => c.cmd === "fetch_experiment_readiness");
+    expect(readiness.length).toBe(6); // the first read, then one per period
+    for (const c of readiness) expect(c).toEqual({ cmd: "fetch_experiment_readiness", args: { outputPath: "" } });
+    expect(log.filter((c) => c.cmd === "calibration_records_list").length).toBe(6); // the same cadence
+    for (const c of log) expect(isPrepareRead(c)).toBe(true);
   });
 
   it("Refresh and Read gates again read without a path too", async () => {
@@ -98,7 +110,7 @@ describe("Prepare reads readiness without a path (#713)", () => {
     await act(async () => button("Read gates again").click());
     await act(async () => button("Refresh").click());
     await advance(0);
-    expect(calls().every((c) => c.cmd === "fetch_experiment_readiness" && (c.args as { outputPath: string }).outputPath === "")).toBe(true);
+    expect(calls().every(isPrepareRead)).toBe(true);
     expect(onRefreshChecks).toHaveBeenCalledTimes(1);
   });
 
@@ -281,7 +293,7 @@ describe("stages only navigate", () => {
     expect(tabs.map((t) => t.textContent)).toEqual(["01Prepare", "02Align", "03Experiment", "04Review"]);
     for (const t of tabs) await act(async () => t.click());
     expect(onStage.mock.calls.map(([i]) => i)).toEqual([0, 1, 2, 3]);
-    expect(calls().every((c) => c.cmd === "fetch_experiment_readiness")).toBe(true);
+    expect(calls().every(isPrepareRead)).toBe(true);
   });
 
   it("Review says it is not in the workspace yet and offers the way back", async () => {
@@ -301,7 +313,7 @@ describe("stages only navigate", () => {
     // Prepare's verdict governs the Plan: the same chip in the header.
     expect(verdictChip().textContent).toBe("Ready · destination checked at Start");
     await advance(PREPARE_READINESS_POLL_MS * 3);
-    for (const c of calls()) expect(c).toEqual({ cmd: "fetch_experiment_readiness", args: { outputPath: "" } });
+    for (const c of calls()) expect(isPrepareRead(c)).toBe(true);
     expect(planStart).not.toHaveBeenCalled();
     // Live (O4, A6b) has content: choosing it reads the live cells and sends nothing else. Summary is
     // not in the workspace yet; choosing it sends nothing.
@@ -315,7 +327,7 @@ describe("stages only navigate", () => {
     expect(host.querySelector("[data-testid=workspace-plan]")).not.toBeNull();
     expect(planStart).not.toHaveBeenCalled();
     expect(onView.mock.calls.map(([v]) => v)).toEqual(["Live", "Summary", "Plan"]);
-    for (const c of calls()) expect(["fetch_experiment_readiness", "fetch_monitoring_cells"]).toContain(c.cmd);
+    for (const c of calls()) expect(["fetch_experiment_readiness", "calibration_records_list", "fetch_monitoring_cells"]).toContain(c.cmd);
   });
 
   it("readiness is read only while the Plan is shown: Live and Summary stop the readiness reads, Plan resumes them (#736 review)", async () => {
@@ -337,7 +349,7 @@ describe("stages only navigate", () => {
     expect(readiness().length).toBeGreaterThan(before);
     for (const c of readiness()) expect(c).toEqual({ cmd: "fetch_experiment_readiness", args: { outputPath: "" } });
     // Live read only its cells.
-    for (const c of calls()) expect(["fetch_experiment_readiness", "fetch_monitoring_cells"]).toContain(c.cmd);
+    for (const c of calls()) expect(["fetch_experiment_readiness", "calibration_records_list", "fetch_monitoring_cells"]).toContain(c.cmd);
   });
 
   it("Align (O2) has content now; opening it sends nothing, switches nothing and writes nothing", async () => {
