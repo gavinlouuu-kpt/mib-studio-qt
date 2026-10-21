@@ -28,3 +28,11 @@ wired to the review ABI 3 commands that B3b (#756) added. UI only, under
   record" (the two buttons' calls); no other flow changed.
 - Docs: vault `frontend/YofoReview` (R3 Inspect), the manual
   `yofo-review.md`.
+- Click-through on the review-only build against real files (a legacy
+  capture with a moved ROI, which reads `unknown`; a regenerated file with a
+  moved ROI, `image` by attribute; the legacy synthetic fixture; a v3
+  capture with the `roi_local` attribute; the review-parity run, `image` by
+  ROI origin): screenshots in
+  `/mnt/hdd/shared/exports/workspace-walk-2026-10-21/b3c/`. No real capture
+  with a moved ROI and a decided `roi_local` space exists yet; that case is
+  covered by the panel and model tests.

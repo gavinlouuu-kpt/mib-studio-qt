@@ -264,8 +264,8 @@ export interface StoredCardProps {
 
 const COMPARE_COLUMNS: DataTableColumn<CompareLine>[] = [
   { key: "label", header: "", cell: (l) => l.label, emphasis: true },
-  { key: "stored", header: "Stored", cell: (l) => l.stored, numeric: true },
-  { key: "reprocessed", header: "Reprocessed", cell: (l) => l.reprocessed, numeric: true },
+  { key: "stored", header: "Stored", cell: (l) => l.stored },
+  { key: "reprocessed", header: "Reprocessed", cell: (l) => l.reprocessed },
 ];
 
 function ReprocessResult({ info, result }: { info: ReviewInfo; result: Asked<ReviewReprocess> }) {
@@ -284,7 +284,9 @@ function ReprocessResult({ info, result }: { info: ReviewInfo; result: Asked<Rev
           {r.truncated ? `more than ${r.reprocessed.length}` : r.reprocessed.length}
         </p>
       ) : null}
-      <DataTable className="rv-compare-table" density="compact" columns={COMPARE_COLUMNS} rows={reprocessComparison(r, info)} rowKey={(l) => l.label} />
+      <div className="rv-compare">
+        <DataTable className="rv-compare-table" density="compact" columns={COMPARE_COLUMNS} rows={reprocessComparison(r, info)} rowKey={(l) => l.label} />
+      </div>
       <p className="rv-note">
         Settings: {r.settings_label} · core {r.core_version}
         {r.core_source ? ` (${r.core_source})` : ""}. Computed in memory; nothing is written.

@@ -150,3 +150,27 @@
 .rv-note.rv-truncated {
   color: var(--mib-color-warn, var(--mib-color-ink));
 }
+/* The side column is narrow: both tables wrap and stay inside their card. */
+.rv-compare {
+  overflow-x: auto;
+}
+.rv-compare-table,
+.rv-track-table .mib-table {
+  font-size: var(--mib-font-size-sm);
+}
+.rv-compare-table .mib-table__cell,
+.rv-compare-table .mib-table__head,
+.rv-track-table .mib-table__cell,
+.rv-track-table .mib-table__head {
+  padding-left: var(--mib-space-2);
+  padding-right: var(--mib-space-2);
+  white-space: normal;
+}
+.rv-compare-table td:not(:first-child),
+.rv-compare-table th:not(:first-child) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.rv-compare-table td:first-child {
+  width: 34%;
+}
