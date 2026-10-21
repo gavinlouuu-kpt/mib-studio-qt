@@ -104,7 +104,19 @@ the Qt [[../frontend/HdfReviewTab]] (`recordedPixelToMicron`, TD-17)
   `recording::EModulusLutRecord`: `lutId`, `revision`, `source`, `sha256`,
   `catalogSha256`, `checksumStatus`; absent when the snapshot records none
   or `loaded` false) and `profileId` (the snapshot's `profile_id`, any
-  version, a non-empty string only).
+  version, a non-empty string only). Review ABI 5 (#783): when the
+  snapshot records no `emodulus_lut` (a regenerated file has no snapshot),
+  `eModulusLut` is the file's `/experiment_info @emodulus_lut_json` record
+  (`recording::parseEModulusLutRecordJson`), and `eModulusLutProvenance`
+  says where it came from: `snapshot` (`kEModulusLutProvenanceSnapshot`,
+  the run's own record, which wins when both exist, the order of
+  `recording::readFileEModulusLut`), `recorded` (carried over from the
+  source run, `loaded` false included) or `host` (the host's LUT at
+  regeneration). It is nullopt exactly when `eModulusLut` is: a capture
+  before v3, a file regenerated before #764, or an attribute that is not a
+  record (not an object, no boolean `loaded`, another provenance). It is
+  the only member a file without a snapshot can carry, and the probe reads
+  it too. Tests: `review.run_identity` ("E-LUT provenance").
 - `probeRuns(paths, out, &error)` (#717 B1a, R1 Open's experiment library):
   for each path a short-lived reader of its own opens the file, reads only
   header attributes into a `RunProbe` (the `RunIdentity`, `startTimeNs` /

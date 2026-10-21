@@ -67,8 +67,9 @@ namespace backend::review
         // records neither.
         static double recordedPixelToMicron(const services::Hdf5Service &reader);
         // #717 B1a: the run identity of `reader`'s open file (snapshot v3 +
-        // /experiment_annotation). Attributes only; absent members for a
-        // legacy file, never a default. Does not throw for a bad attribute.
+        // /experiment_annotation, and a regenerated file's E-LUT record,
+        // review ABI 5). Attributes only; absent members for a legacy file,
+        // never a default. Does not throw for a bad attribute.
         static RunIdentity readRunIdentity(const services::Hdf5Service &reader);
         // One metrics row of a processed frame, area in µm² by `pixelToMicron`
         // (the row metricsPage serves; #717 B3b reprocess uses it too).

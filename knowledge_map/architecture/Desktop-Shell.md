@@ -715,6 +715,10 @@ the config/script/metadata aggregate revision still matches. No scripts, device 
 or hardware actuation are performed by restore. `selection` separately returns the saved
 startup choice and actual runtime `profile_selection` provenance; a saved choice alone
 is never evidence of application. External edits fail closed for explicit review/reapply.
+The runtime `profile_selection` also carries `applied_config_sha256` (#783: the canonical hash
+of the applied text without the selection), which the run's method provenance uses to tell an
+exact profile from one whose settings changed after the apply; `selection` leaves it out of
+`active_profile`, so that reply is unchanged.
 
 **One startup pointer (#398 M2c, bridge ABI 32).** Since central methods can be applied
 too, the startup choice is the last thing applied, whichever kind: `app/StartupConfiguration`

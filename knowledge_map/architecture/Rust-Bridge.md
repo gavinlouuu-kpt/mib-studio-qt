@@ -966,7 +966,10 @@ attach to):
   and the fixtures `review_fixture_write_experiment(path)`,
   `review_fixture_write_run(path, snapshot_json, annotation_json)` (review
   ABI 2: the experiment fixture with a verbatim run snapshot and annotation;
-  empty = none, a legacy file) and
+  empty = none, a legacy file),
+  `review_fixture_write_regenerated(path, emodulus_lut_json)` (review ABI
+  5: the experiment fixture without a snapshot and with a verbatim
+  `@emodulus_lut_json`; empty = none, regenerated before #764) and
   `review_fixture_write_population(path, cells, seed)` (two seeded
   populations for the Charts view; `examples/review_fixture --population N`).
 - **Run identity (review ABI 2; E-LUT and profile since 3).** cxx structs
@@ -977,12 +980,21 @@ attach to):
   JSON has `null` for absent and never a 0 or "" stand-in (`ReviewInfo.identity`,
   `review_probe_runs`). A legacy file: `has_snapshot` false, every member
   absent; `snapshot_unreadable` / `annotation.unreadable` for an attribute
-  that is not a JSON object.
+  that is not a JSON object. Review ABI 5 (#783): `emodulus_lut` also reads
+  a regenerated file's `@emodulus_lut_json` (no snapshot record; the
+  snapshot record wins), and `has_emodulus_lut_provenance` /
+  `emodulus_lut_provenance` (`snapshot` | `recorded` | `host`, contract
+  `run_identity.emodulus_lut_provenances`, rendered as
+  `REVIEW_EMODULUS_LUT_PROVENANCES` and checked by the generator against
+  `ReviewTypes.h` / `RunProvenanceRecord.h`) say where it came from; a file
+  regenerated from #764 on has `has_snapshot` false with only these two
+  set.
 - **Contract.** YOFO Review has its own versioned contract,
-  `contract/review-contract.json` (`review_abi_version` 4 since #764: the
-  reprocess reply names its E-LUT; 3 since #717 B3b, 2 since B1a; v1 was the
-  ReviewSession surface; 5 and above are free for later steps, S12
-  included), so the shared
+  `contract/review-contract.json` (`review_abi_version` 5 since #783: the
+  identity's E-LUT record of a regenerated file and its provenance; 4 since
+  #764: the reprocess reply names its E-LUT; 3 since #717 B3b, 2 since B1a;
+  v1 was the ReviewSession surface; 6 and above are free for later steps,
+  S12 included), so the shared
   `bridge-contract.json` is never touched for it: `run_identity` and
   `review_probe` (prose + `max_paths`, rendered as `REVIEW_PROBE` and
   checked against `ReviewTypes.h` `kReviewProbeMaxPaths` by the generator),

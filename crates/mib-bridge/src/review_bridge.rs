@@ -113,9 +113,18 @@ pub mod review_ffi {
         pub operator_name: String,
         pub annotation: ReviewAnnotation,
         /// Review ABI 3 (#717 B3b): the E-modulus LUT the run used (snapshot
-        /// v3 `emodulus_lut`); `has_emodulus_lut` false when it records none.
+        /// v3 `emodulus_lut`; since review ABI 5, #783, else a regenerated
+        /// file's `@emodulus_lut_json`); `has_emodulus_lut` false when the
+        /// file records neither.
         pub has_emodulus_lut: bool,
         pub emodulus_lut: ReviewEModulusLut,
+        /// Review ABI 5 (#783): where `emodulus_lut` comes from: "snapshot"
+        /// (run snapshot v3), or a regenerated file's `@emodulus_lut_json`
+        /// provenance, "recorded" (the source run's record carried over) or
+        /// "host" (the host's LUT at regeneration). The snapshot record wins.
+        /// `has_emodulus_lut_provenance` equals `has_emodulus_lut`.
+        pub has_emodulus_lut_provenance: bool,
+        pub emodulus_lut_provenance: String,
         /// The snapshot's `profile_id`, the only "method" a file records.
         pub has_profile_id: bool,
         pub profile_id: String,
@@ -420,6 +429,12 @@ pub mod review_ffi {
         /// `annotation_json` as `/experiment_annotation`, each written
         /// verbatim; an empty string writes none (a legacy file).
         fn review_fixture_write_run(path: &str, snapshot_json: &str, annotation_json: &str) -> bool;
+
+        /// Test fixture (never a Tauri command, review ABI 5): a regenerated
+        /// file, the experiment fixture's frames without a run snapshot and
+        /// with `emodulus_lut_json` as `/experiment_info @emodulus_lut_json`
+        /// verbatim; an empty string writes none (regenerated before #764).
+        fn review_fixture_write_regenerated(path: &str, emodulus_lut_json: &str) -> bool;
 
         /// Dev / screenshot fixture (never a Tauri command): `cells` valid
         /// cells in two seeded populations (Charts view: scatter, density,

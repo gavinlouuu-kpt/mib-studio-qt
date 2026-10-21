@@ -1,5 +1,6 @@
 #include "backend/app/MethodProvenance.h"
 
+#include "backend/profiles/ProfileRegistry.h"
 #include "backend/profiles/ProfileRegistryWorker.h"
 
 #include <nlohmann/json.hpp>
@@ -100,6 +101,31 @@ MethodProvenance resolveMethodProvenance(const std::string& appliedConfigCanonic
     return m;
 }
 
+void attachLocalProfile(MethodProvenance& m, const std::string& appliedConfigJson) {
+    if (m.source != "local" || appliedConfigJson.empty()) return;
+    const auto root = Json::parse(appliedConfigJson, nullptr, /*allow_exceptions=*/false);
+    if (root.is_discarded() || !root.is_object()) return;
+    const auto it = root.find("profile_selection");
+    if (it == root.end() || !it->is_object()) return;
+    const auto text = [&](const char* key) {
+        const auto v = it->find(key);
+        return v != it->end() && v->is_string() ? v->get<std::string>() : std::string{};
+    };
+    m.localProfileName = text("name");
+    m.localProfilePath = text("path");
+    m.localProfileRevision = text("revision");
+    m.localProfileId = text("profile_id");
+    const auto fingerprint = text("applied_config_sha256");
+    m.localProfileModified = fingerprint.empty() || fingerprint != localProfileAppliedConfigSha256(appliedConfigJson);
+}
+
+std::string localProfileAppliedConfigSha256(const std::string& appliedConfigJson) {
+    auto root = Json::parse(appliedConfigJson, nullptr, /*allow_exceptions=*/false);
+    if (root.is_discarded() || !root.is_object()) return {};
+    root.erase("profile_selection");
+    return profiles::canonicalConfigSha256(root.dump());
+}
+
 ReadinessGate methodRevisionGate(const MethodProvenance& m) {
     ReadinessGate g;
     g.id = "method.revision";
@@ -112,6 +138,10 @@ ReadinessGate methodRevisionGate(const MethodProvenance& m) {
         g.status = GateStatus::NotRequired;
         g.reason = "local method: the applied config.json matches no cached central revision";
         g.detail = "config " + shortHash(m.configCanonicalSha256);
+        if (m.hasLocalProfile())
+            g.detail += "; local profile \"" + (m.localProfileName.empty() ? m.localProfileId : m.localProfileName) +
+                        "\" revision " + shortHash(m.localProfileRevision) +
+                        (m.localProfileModified ? ", modified after apply" : "");
         return g;
     }
     g.detail = revisionLabel(m) + " (" + m.revisionId + ") " + m.centralState + ", content " +
@@ -186,6 +216,15 @@ std::string methodProvenanceToJson(const MethodProvenance& m) {
         j["validator_id"] = m.validatorId;
         j["validated_at_utc"] = m.validatedAtUtc;
         j["validation_evidence_sha256"] = m.validationEvidenceSha256;
+    }
+    if (m.source == "local") {
+        const auto text = [](const std::string& v) { return v.empty() ? Json(nullptr) : Json(v); };
+        j["local_profile"] = m.hasLocalProfile() ? Json{{"name", text(m.localProfileName)},
+                                                        {"path", text(m.localProfilePath)},
+                                                        {"revision", text(m.localProfileRevision)},
+                                                        {"profile_id", text(m.localProfileId)},
+                                                        {"modified_after_apply", m.localProfileModified}}
+                                                  : Json(nullptr);
     }
     return j.dump(-1, ' ', false, Json::error_handler_t::replace);
 }

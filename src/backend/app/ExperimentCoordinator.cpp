@@ -677,6 +677,7 @@ RunConfigurationSnapshot ExperimentCoordinator::candidateLocked(const std::strin
                 configJson.empty() ? std::string{} : profiles::canonicalConfigSha256(configJson);
             memo.method = resolveMethodProvenance(canonical, registry.snapshot(), context,
                                                   instrumentName);
+            attachLocalProfile(memo.method, configJson); // #783: a local profile names the method
             memo.rawConfigSha256 = s.configJsonSha256;
             memo.registryGeneration = generation;
             memo.contextHash = contextHash;
@@ -685,6 +686,8 @@ RunConfigurationSnapshot ExperimentCoordinator::candidateLocked(const std::strin
         }
         s.method = memo.method;
     }
+    // #783: a run under a local profile records its profile_id when the frontend supplies none.
+    if (s.profileId.empty() && s.method.source == "local") s.profileId = s.method.localProfileId;
     s.pixelToMicron = proc.getPixelToMicronFactor();
 
     const auto bg = proc.getRealtimeBackgroundGrayShared();
@@ -2216,6 +2219,15 @@ void ExperimentCoordinator::deriveCalibrationRecord(const RunConfigurationSnapsh
     rec.revisionId = run.method.revisionId;
     rec.revisionNumber = run.method.revisionNumber;
     rec.methodDisplayName = run.method.displayName;
+    if (run.method.source == "local" && run.method.hasLocalProfile()) {
+        // #783: a local profile identifies the method in the record's existing members: its
+        // profile_id, its revision (the sha256 of its files) and its name (the path is in the run's
+        // snapshot, source.file). Settings changed after the profile's apply: the profile is named,
+        // its revision is not claimed (revision_id null; config_sha256 is the exact config).
+        rec.methodId = run.method.localProfileId;
+        rec.revisionId = run.method.localProfileModified ? std::string{} : run.method.localProfileRevision;
+        rec.methodDisplayName = run.method.localProfileName;
+    }
     rec.configSha256 = run.method.configCanonicalSha256.empty() ? run.configJsonSha256 : run.method.configCanonicalSha256;
     rec.reference = *spec.reference;
     rec.identity = identity;
