@@ -11,6 +11,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <sstream>
@@ -472,11 +473,18 @@ namespace backend::review
     double ReviewSession::recordedPixelToMicron(const services::Hdf5Service &reader)
     {
         std::string snapshot;
-        if (!reader.readRunSnapshotJson(snapshot) || snapshot.empty()) return 0.0;
-        const auto j = nlohmann::json::parse(snapshot, nullptr, false);
-        if (!j.is_object() || !j.contains("pixel_to_micron") || !j["pixel_to_micron"].is_number()) return 0.0;
-        const double f = j["pixel_to_micron"].get<double>();
-        return f > 0.0 ? f : 0.0;
+        if (reader.readRunSnapshotJson(snapshot) && !snapshot.empty())
+        {
+            const auto j = nlohmann::json::parse(snapshot, nullptr, false);
+            if (j.is_object() && j.contains("pixel_to_micron") && j["pixel_to_micron"].is_number())
+            {
+                const double f = j["pixel_to_micron"].get<double>();
+                if (std::isfinite(f) && f > 0.0) return f;
+            }
+        }
+        // A regenerated / reanalysed file has no run snapshot: the factor its
+        // objects were validated at (#758).
+        return reader.readAnalysisPixelToMicron().value_or(0.0);
     }
 
     RunIdentity ReviewSession::readRunIdentity(const services::Hdf5Service &reader)

@@ -666,9 +666,13 @@ int main()
         ProcessedFrame first;
         MIB_REQUIRE(out.frameCount(true) + out.frameCount(false) > 0 && (out.frameMeta(true, 0, first) || out.frameMeta(false, 0, first)), "first frame");
         MIB_EXPECT(first.timestampNs < 100000, "timestamps normalised to the first frame");
+        // #758: and the factor the objects were validated at (the fixture's
+        // recorded 0.5); the output records it, so it reopens at 0.5.
         MIB_EXPECT(done.message == req.outputPath + " (33 images: " + std::to_string(out.frameCount(true)) + " valid, " +
-                                       std::to_string(out.frameCount(false)) + " invalid)",
-                   "completion message names the file and the counts: " + done.message);
+                                       std::to_string(out.frameCount(false)) + " invalid; px→µm 0.5000 recorded)",
+                   "completion message names the file, the counts and the factor: " + done.message);
+        MIB_EXPECT(out.metadata().pixelToMicronFromFile && out.pixelToMicron() == 0.5,
+                   "the regenerated file records the factor it was validated at");
         MIB_EXPECT(noPartials(td.path()), "regenerate leaves no partial file");
     }
     wd.mark("regenerate");

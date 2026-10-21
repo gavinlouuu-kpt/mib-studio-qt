@@ -26,6 +26,14 @@
 // first selected frame, a median-of-32 synthetic background, "all" as valid
 // rows then invalid rows, colour HDF frames converted to gray). Request
 // parsing never sets them, so the facade's output is unchanged.
+//
+// Calibration (#758): objects are validated and target-grouped at the
+// source's own pixel-to-micron factor (ReanalysisRequest::pixelToMicron),
+// passed to processBatch per call with the channel band detected from the
+// background in use. The kernel's live factor and band are never read or
+// changed, so a reanalysis beside a live run or another job cannot race on
+// them and one source's factor never reaches the next. The output records
+// the factor used (`/experiment_info @pixel_to_micron`).
 #pragma once
 
 #include "backend/processing/ProcessingService.h"
@@ -97,6 +105,16 @@ namespace backend::review
         // batch_masks::loadFromHdf5 does (BGR -> gray; YOFO Review's job,
         // whose pre-S8 reader converted them).
         bool convertColorToGray{false};
+        // The pixel-to-micron factor (µm per pixel) for area validity and the
+        // target group (#758). With `useRecordedPixelToMicron` an hdf
+        // source's recorded factor (ReviewSession::recordedPixelToMicron)
+        // wins; `pixelToMicron` applies when the source records none, to
+        // folder / avi sources and without the flag. Not part of the JSON
+        // request: the facade sets its live factor as the fallback, YOFO
+        // Review its fallback (recorded settings) or the default (default
+        // settings). Must be finite and positive.
+        bool useRecordedPixelToMicron{true};
+        double pixelToMicron{services::ProcessingService::kDefaultPixelToMicronFactor};
     };
 
     // The refusal for an output path that already exists (the facade's
@@ -121,6 +139,10 @@ namespace backend::review
         std::string retainedPartialPath; // a partial file that could not be removed
         std::size_t produced{0};         // frames the kernel returned
         std::size_t valid{0};            // of those, the valid ones
+        // The factor the objects were validated at (0 when processing never
+        // ran) and whether it is the source's recorded one (#758).
+        double pixelToMicron{0.0};
+        bool pixelToMicronRecorded{false};
     };
 
     using ReanalysisCancelFlag = std::shared_ptr<std::atomic<bool>>;

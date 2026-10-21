@@ -2,7 +2,10 @@
 #include "backend/app/WallClock.h"
 
 #include "backend/recording/Hdf5Service.h"
+#include "backend/processing/ProcessingConfigJson.h"
 #include "backend/processing/ProcessingService.h"
+
+#include <nlohmann/json.hpp>
 
 #include <spdlog/spdlog.h>
 
@@ -338,7 +341,8 @@ bool saveMasksToHdf5(const std::vector<ProcessedFrame>& frames,
                      int roiX, int roiY, int roiW, int roiH,
                      const cv::Mat& background,
                      bool useFrameTimestamps,
-                     const backend::processing::ProcessingCoreIdentity* processingCore) {
+                     const backend::processing::ProcessingCoreIdentity* processingCore,
+                     double pixelToMicron) {
     if (frames.empty()) {
         SPDLOG_WARN("saveMasksToHdf5: no frames to save");
         return false;
@@ -375,6 +379,23 @@ bool saveMasksToHdf5(const std::vector<ProcessedFrame>& frames,
     if (!out.writeExperimentInfo(startTimeNs, endTimeNs, valid.size(), invalid.size(), config, roi,
                                  bgPtr, processingCore)) {
         SPDLOG_ERROR("saveMasksToHdf5: writeExperimentInfo failed");
+        out.closeFile();
+        return false;
+    }
+    // The factor validity and the target group were decided at (#758), so a
+    // reader converts areas with it instead of a fallback.
+    if (pixelToMicron > 0.0 && !out.writeAnalysisPixelToMicron(pixelToMicron)) {
+        SPDLOG_ERROR("saveMasksToHdf5: pixel_to_micron write failed");
+        out.closeFile();
+        return false;
+    }
+    // The config document, as a capture records its runtime one: the target
+    // group (no processing_config_* attribute carries it) is read back from
+    // here as the output's recorded setting (#758).
+    nlohmann::json document{{"image_processing", backend::processing::config_json::toJson(config)}};
+    if (pixelToMicron > 0.0) document["pixel_to_micron_factor"] = pixelToMicron;
+    if (!out.writeConfigJson(document.dump())) {
+        SPDLOG_ERROR("saveMasksToHdf5: config_json write failed");
         out.closeFile();
         return false;
     }
