@@ -3,7 +3,7 @@
 // Regenerate with: python3 scripts/gen_bridge_contract.py
 // CI verifies this file with: python3 scripts/gen_bridge_contract.py --check
 
-export const BRIDGE_ABI_VERSION = 43;
+export const BRIDGE_ABI_VERSION = 44;
 
 export const EVENT_KINDS = {
   FrameReady: 0,
@@ -491,6 +491,16 @@ export const CALIBRATION_RECORDS = {
   "rate_window_seconds": 1,
   "rate_min_windows": 3,
   "store_max_versions": 2048
+} as const;
+
+export const RUN_QUICK_LOOK = {
+  "max_paths": 32,
+  "path_max_bytes": 4096,
+  "run_id_max_bytes": 128,
+  "overlay_max_points": 2000,
+  "low_n_valid_rows": 200,
+  "cache_entries": 64,
+  "schema_version": 1
 } as const;
 
 export const EVENT_KIND_NAMES: Readonly<Record<number, string>> = {

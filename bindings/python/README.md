@@ -85,6 +85,11 @@ processing default 0.4886 applies. Before #764 a given `pixel_to_micron`
 changed only `area_um2`. The config's `channel_band_y` / `channel_band_h` gate
 objects by centroid row.
 
+`compute_processed_frame(..., pixel_to_micron=None)` takes the factor the same
+way (#779): a given factor (finite, > 0, else `ValueError`) decides area
+validity and the target group as well as `area_um2`; omitted, 0.4886 applies
+to both, as before. Before #779 it changed only `area_um2`.
+
 ## Conformance / anti-drift
 
 From the repository root, verify the installed wheel against the committed

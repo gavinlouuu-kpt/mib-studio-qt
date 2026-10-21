@@ -145,6 +145,7 @@ pub const COMMANDS: &[&str] = &[
     "calibration_records_list",
     "calibration_record_get",
     "calibration_apply",
+    "run_quick_look",
     "trigger_set_pulse_duration",
     "trigger_manual_pulse",
     "trigger_periodic_start",
@@ -779,6 +780,19 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
             }
             let a: A = args(value)?;
             crate::calibration_apply(state, a.record_id, a.expected_current_factor).and_then(json)
+        }
+        // ABI 44 (#716 A7a): the run quick look, a read. A malformed request is an error reply and
+        // nothing reaches the backend.
+        "run_quick_look" => {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct A {
+                paths: Vec<String>,
+                #[serde(default)]
+                reference: Option<crate::QuickLookReference>,
+            }
+            let a: A = args(value)?;
+            crate::run_quick_look(state, a.paths, a.reference).and_then(json)
         }
         "monitoring_cell_unpin" => {
             #[derive(Deserialize)]
@@ -1496,6 +1510,63 @@ mod tests {
         assert_eq!(apply("beads"), beads, "and back");
         let tauri = serde_json::to_value(crate::fetch_experiment_readiness(&state, out.clone()).unwrap()).unwrap();
         assert_eq!(tauri["method_calibration"], beads, "the Tauri function serialises the same report");
+        state.bridge.lock().unwrap().pin_mut().shutdown();
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    // ABI 44 (#716 A7a): the run quick look through dispatch (the WebSocket's path) and the Tauri
+    // function: strict arguments refused before the backend, the parity fixture computed, the
+    // reference confirmed with deltas, a second read from the cache, and nothing written.
+    #[test]
+    #[serial]
+    fn run_quick_look_through_dispatch() {
+        use mib_bridge::review_ffi;
+        let data = std::env::temp_dir().join(format!("mib_dispatch_quick_look_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&data);
+        std::fs::create_dir_all(&data).unwrap();
+        let v3 = data.join("v3.h5").to_string_lossy().into_owned();
+        let even = data.join("even.h5").to_string_lossy().into_owned();
+        assert!(review_ffi::review_fixture_write_quick_look(&v3, 0) && review_ffi::review_fixture_write_quick_look(&even, 3));
+        let state = AppState::new();
+        let host = TestHost(data.to_string_lossy().into_owned());
+        assert_eq!(dispatch(&state, &host, "abi_version", Value::Null).unwrap(), Reply::Json(json!(44)));
+        assert_eq!(dispatch(&state, &host, "init", json!({ "dataDir": "" })).unwrap(), Reply::Json(json!(true)));
+        let reply = |args: Value| match dispatch(&state, &host, "run_quick_look", args) {
+            Ok(Reply::Json(r)) => r,
+            other => panic!("run_quick_look: {other:?}"),
+        };
+        // Strict arguments: nothing reaches the backend.
+        let many: Vec<String> = (0..33).map(|i| format!("/f{i}.h5")).collect();
+        for (bad, needle) in [
+            (json!({ "paths": [] }), "Invalid paths"),
+            (json!({ "paths": many }), "Invalid paths"),
+            (json!({ "paths": [""] }), "Invalid paths[0]"),
+            (json!({ "paths": [v3], "reference": { "path": even, "run_id": "" } }), "Invalid reference.run_id"),
+            (json!({ "paths": [v3], "reference": { "path": even, "run_id": null, "start_generation": "x" } }),
+             "Invalid reference.start_generation"),
+            (json!({ "paths": [v3], "reference": { "path": even } }), "INVALID_ARGUMENTS"),
+            (json!({ "paths": [v3], "reference": { "path": even, "run_id": null, "extra": 1 } }), "INVALID_ARGUMENTS"),
+            (json!({ "paths": [v3], "extra": 1 }), "INVALID_ARGUMENTS"),
+            (json!({ "paths": "x" }), "INVALID_ARGUMENTS"),
+        ] {
+            let e = dispatch(&state, &host, "run_quick_look", bad.clone()).unwrap_err();
+            assert!(e.contains(needle), "{bad} -> {e}");
+        }
+        let before = std::fs::read(&v3).unwrap();
+        let even_id = review_ffi::review_fixture_quick_look_run_id(3);
+        let r = reply(json!({ "paths": [v3], "reference": { "path": even, "run_id": even_id, "start_generation": "8" } }));
+        assert_eq!(r["ok"], json!(true), "{r}");
+        let run = &r["runs"][0];
+        assert_eq!((run["status"].clone(), run["from_cache"].clone()), (json!("computed"), json!(false)), "{run}");
+        assert_eq!(run["statistics"]["counts"]["valid"], json!("21"));
+        assert_eq!(run["statistics"]["emodulus"]["status"], json!("computed"));
+        assert_eq!(r["reference"]["confirmed"], json!(true), "{r}");
+        assert_eq!(run["delta"]["emodulus_median_kpa"]["withheld"], json!("lut_differs"));
+        let again = crate::run_quick_look(&state, vec![v3.clone()], None).unwrap();
+        assert_eq!(again["runs"][0]["from_cache"], json!(true), "the Tauri function, from the cache: {again}");
+        assert_eq!(again["runs"][0]["statistics"], run["statistics"]);
+        assert!(again["reference"].is_null());
+        assert_eq!(std::fs::read(&v3).unwrap(), before, "nothing written");
         state.bridge.lock().unwrap().pin_mut().shutdown();
         let _ = std::fs::remove_dir_all(&data);
     }

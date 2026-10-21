@@ -96,5 +96,6 @@ batch_masks::saveMaskImages(frames, "/out/dir", names);
   caller in the repo passes them (#758: before, YOFO Review regenerated at
   0.4886 µm/px and MIB Studio / Qt at the live factor, whatever the source
   recorded). The wheel's `process_batch(pixel_to_micron=…)` passes the factor
-  too since #764 (omitted: 0.4886, as before); its config's
-  `channel_band_y/h` gate directly.
+  too since #764, and `compute_processed_frame(pixel_to_micron=…)` since #779
+  (omitted: 0.4886, as before); its config's `channel_band_y/h` gate
+  directly.

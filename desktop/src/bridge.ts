@@ -11,6 +11,8 @@ import { decodeFramePacket, decimalU64 } from "./framePacket";
 import { FRAME_PACKET } from "./bridgeContract";
 import { cellKeyArgs, decodeMonitoringCellPinReply, decodeMonitoringCells, type MonitoringCellKeyInput } from "./monitoringCells";
 import { calibrationApplyArgs, decodeCalibrationApplyReply, decodeCalibrationRecordGet, decodeCalibrationRecordsList } from "./calibrationRecords";
+import { decodeRunQuickLookReply, runQuickLookArgs, type RunQuickLookReference } from "./runQuickLook";
+export type { RunQuickLookReference, RunQuickLookReply, RunQuickLookRun, RunStatistics, RunDelta } from "./runQuickLook";
 export type { MonitoringCaptureChange, MonitoringCell, MonitoringCellKey, MonitoringCellKeyInput, MonitoringCellPinReply, MonitoringCellsListing, MonitoringCellsReply } from "./monitoringCells";
 import { discoverCameras, type PollOptions } from "./discovery";
 export type { FrameMeta, FramePacket } from "./framePacket";
@@ -1036,6 +1038,12 @@ export const bridge = {
     decodeCalibrationRecordGet(await invoke<unknown>("calibration_record_get", { recordId })),
   calibrationApply: async (recordId: string, expectedCurrentFactor: number) =>
     decodeCalibrationApplyReply(await invoke<unknown>("calibration_apply", calibrationApplyArgs(recordId, expectedCurrentFactor))),
+  // Run quick look (bridge ABI 44, #716 A7a; bridge-contract.json run_quick_look): the per-run
+  // statistics of closed HDF5 runs and run - reference deltas, computed by the backend. A read
+  // every client may use (never writes or actuates); a file the backend cannot read now is
+  // `deferred` ("computed when the instrument is idle"), never an error.
+  runQuickLook: async (paths: string[], reference?: RunQuickLookReference | null) =>
+    decodeRunQuickLookReply(await invoke<unknown>("run_quick_look", runQuickLookArgs(paths, reference))),
   triggerSetPulseDuration: (pulseUs: number) =>
     invokeCommand("trigger_set_pulse_duration", { pulseUs }),
   triggerManualPulse: () => invokeCommand("trigger_manual_pulse"),

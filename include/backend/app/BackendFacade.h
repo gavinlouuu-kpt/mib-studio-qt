@@ -1150,6 +1150,15 @@ namespace backend::bridge
         std::string calibrationRecordsListJson() const;
         std::string calibrationRecordGetJson(const std::string &recordId) const;
         std::string applyCalibrationJson(const std::string &recordId, double expectedCurrentFactor);
+        // Run quick look (#716 A7a, bridge ABI 44; bridge-contract.json run_quick_look): the
+        // statistics of closed HDF5 experiment runs (review/RunStatistics.h) for 1..32 paths and an
+        // optional reference, with run - reference deltas. A read every client may use: it never
+        // writes to a file, a store or a snapshot, and never actuates. A path resolves as a client
+        // path (#762); each file is served from AppBackend's in-memory LRU (filled at close by the
+        // coordinator) or, on a miss, computed only inside the coordinator's idle transaction with
+        // no raw recording, the review lanes free and under the review session's mutex (#722);
+        // otherwise it is `deferred` ("computed when the instrument is idle"), never an error.
+        std::string runQuickLookJson(const std::string &requestJson);
         // Asynchronous device discovery (issue #419, ABI 14): start a job on
         // the backend service, poll its bounded snapshot, cancel it. Camera
         // snapshots additionally carry the synthetic mock entry (camera type

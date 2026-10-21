@@ -1834,6 +1834,61 @@ pub fn calibration_apply(
         .map_err(|e| e.to_string())
 }
 
+/// ABI 44 (#716 A7a): the reference run of a quick look (bridge-contract.json `run_quick_look`):
+/// held by the client with its plan; the backend confirms its `run_id` against the file. `run_id`
+/// is required (null for a run whose file records none); `start_generation` is echoed.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct QuickLookReference {
+    pub path: String,
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_generation: Option<String>,
+}
+
+/// ABI 44 (#716 A7a): the `run_quick_look` request document, checked against the contract's
+/// bounds (1 to `RUN_QUICK_LOOK_MAX_PATHS` paths of 1 to `RUN_QUICK_LOOK_PATH_MAX_BYTES` bytes, a
+/// run_id of 1 to `RUN_QUICK_LOOK_RUN_ID_MAX_BYTES` bytes or null, a decimal start_generation);
+/// anything else is refused before the backend, which checks the same rules again.
+pub fn quick_look_request(paths: &[String], reference: Option<&QuickLookReference>) -> Result<serde_json::Value, String> {
+    use frame_packet::{RUN_QUICK_LOOK_MAX_PATHS, RUN_QUICK_LOOK_PATH_MAX_BYTES, RUN_QUICK_LOOK_RUN_ID_MAX_BYTES};
+    if paths.is_empty() || paths.len() > RUN_QUICK_LOOK_MAX_PATHS {
+        return Err(format!("Invalid paths: 1 to {RUN_QUICK_LOOK_MAX_PATHS} paths are required (got {})", paths.len()));
+    }
+    let path_ok = |p: &str| !p.is_empty() && p.len() <= RUN_QUICK_LOOK_PATH_MAX_BYTES;
+    if let Some(i) = paths.iter().position(|p| !path_ok(p)) {
+        return Err(format!("Invalid paths[{i}]: a path of 1 to {RUN_QUICK_LOOK_PATH_MAX_BYTES} bytes is required"));
+    }
+    let mut request = serde_json::json!({ "paths": paths });
+    if let Some(r) = reference {
+        if !path_ok(&r.path) {
+            return Err(format!("Invalid reference.path: a path of 1 to {RUN_QUICK_LOOK_PATH_MAX_BYTES} bytes is required"));
+        }
+        if r.run_id.as_ref().is_some_and(|id| id.is_empty() || id.len() > RUN_QUICK_LOOK_RUN_ID_MAX_BYTES) {
+            return Err(format!("Invalid reference.run_id: 1 to {RUN_QUICK_LOOK_RUN_ID_MAX_BYTES} bytes, or null"));
+        }
+        if r.start_generation.as_ref().is_some_and(|g| g.is_empty() || g.len() > 20 || !g.bytes().all(|b| b.is_ascii_digit())) {
+            return Err("Invalid reference.start_generation: a decimal string is required".to_string());
+        }
+        request["reference"] = serde_json::to_value(r).map_err(|e| e.to_string())?;
+    }
+    Ok(request)
+}
+
+/// ABI 44 (#716 A7a): the run quick look (bridge-contract.json `run_quick_look.reply`). A read
+/// every client may use: it never writes or actuates anything; a cache miss is computed only while
+/// the instrument is idle and no review job runs, otherwise the file is deferred.
+pub fn run_quick_look(
+    state: &AppState,
+    paths: Vec<String>,
+    reference: Option<QuickLookReference>,
+) -> Result<serde_json::Value, String> {
+    let request = quick_look_request(&paths, reference.as_ref())?;
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().run_quick_look(&request.to_string())).map_err(|e| e.to_string())
+}
+
 /// The owned crop (`layer` "image", pull kind 5) or its mask ("mask", pull kind 6) of a pinned
 /// or strip cell as a frame packet; an empty packet (flags 0) when the cell or the layer is not
 /// held (the listing carries the reason). An identity of another capture than the current one is

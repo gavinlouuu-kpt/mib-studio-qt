@@ -25,6 +25,7 @@ following `[[WikiLinks]]`. If you are a new agent, start here:
 - Live Monitoring density (KDE, backend worker): [[services/MonitoringDensityService]]
 - Live per-row cell images (strip + pins, ABI 41): [[services/MonitoringCellStore]]
 - Calibration run, records and the `calibration.record` gate (ABI 42): [[services/CalibrationRecords]]
+- Run quick look, per-run statistics at close and on demand (ABI 44, review ABI 6): [[services/RunQuickLook]]
 - Persistence: [[services/Hdf5Service]], [[services/SqliteService]]; export: [[services/HdfExportService]]
 - Playback: [[services/PlaybackService]]
 - Wafer localization (dot-grid fiducials): [[services/DotGridService]]

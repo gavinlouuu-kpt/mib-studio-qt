@@ -14,6 +14,7 @@
 
 #include "backend/app/BackgroundFrame.h"
 #include "backend/app/CalibrationStore.h"
+#include "backend/review/RunStatistics.h"
 #include "backend/processing/EModulusLutCatalog.h" // HttpGetFn seam (ADR 0002)
 #include "backend/app/ExperimentReadiness.h"
 #include "backend/app/RecordingTarget.h" // ClientPath (#762)
@@ -307,6 +308,10 @@ namespace backend
         // null before. Records are derived by the coordinator when a run of a calibration method
         // closes and applied only by calibration_apply (BackendFacade::applyCalibrationJson).
         app::CalibrationStore *calibrationStore() const { return calibrationStore_.get(); }
+        // The run quick look's in-memory LRU (#716 A7a, bridge ABI 44): the statistics of closed
+        // runs, filled by the coordinator at close and by run_quick_look on a miss
+        // (BackendFacade::runQuickLookJson). Never persisted; thread-safe.
+        review::RunStatisticsCache &runStatisticsCache() { return runStatisticsCache_; }
         // The local context a method validation binds to: this instrument,
         // the active processing core build and the effective camera source.
         profiles::MethodContext methodContext() const;
@@ -569,6 +574,7 @@ namespace backend
         std::unique_ptr<profiles::ProfileRegistryWorker> profileRegistry_;
         profiles::InstrumentIdentity instrumentIdentity_;
         std::unique_ptr<app::CalibrationStore> calibrationStore_;
+        review::RunStatisticsCache runStatisticsCache_;
 
         // Shell-injected LUT fetch config (ADR 0002).
         HttpGetFn lutHttpGet_;

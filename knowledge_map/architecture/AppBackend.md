@@ -485,6 +485,13 @@ appends a derived record when a calibration run closes; the facade lists, reads 
 (`calibrationRecordsListJson` / `calibrationRecordGetJson` / `applyCalibrationJson`, the apply
 inside the coordinator's idle transaction). See [[../services/CalibrationRecords]].
 
+## Run quick look cache (bridge ABI 44, #716 A7a)
+
+`runStatisticsCache()` is the in-memory LRU of closed runs' statistics (`review::RunStatisticsCache`,
+64 entries, a member that exists from construction, never persisted). [[ExperimentCoordinator]]
+fills it at close (finalization step 6b); `BackendFacade::runQuickLookJson` reads it and fills it on
+an idle miss. See [[../services/RunQuickLook]].
+
 ## Live cell store (bridge ABI 41, #716 A6a)
 
 `initialize()` builds [[../services/MonitoringCellStore]] right after the

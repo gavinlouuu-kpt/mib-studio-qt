@@ -627,6 +627,14 @@ public:
         std::optional<const EModulusLut*> eModulusLut;
     };
 
+    // computeProcessedFrame with per-call analysis inputs, mapped as in
+    // processBatch (#779: the wheel's compute_processed_frame(pixel_to_micron=)
+    // validates at the caller's factor). A set factor must be finite and > 0
+    // (std::invalid_argument otherwise); an unset member keeps the live value.
+    ProcessedFrame computeProcessedFrame(const cv::Mat& grayInput, const cv::Mat& backgroundGray,
+                                         const ProcessingConfig& config, const Roi& roi, uint64_t index,
+                                         uint64_t timestampNs, const BatchAnalysisInputs& inputs);
+
     // Process each image in order and emit one ProcessedFrame per detected
     // object candidate. Multiple records can share the same source index and
     // timestamp. Does not modify realtime config, monitoring buffers,

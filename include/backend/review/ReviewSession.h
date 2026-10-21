@@ -16,6 +16,7 @@
 #pragma once
 
 #include "backend/review/ReviewTypes.h"
+#include "backend/review/RunStatistics.h"
 
 #include <cstdint>
 #include <memory>
@@ -67,8 +68,9 @@ namespace backend::review
         // records neither.
         static double recordedPixelToMicron(const services::Hdf5Service &reader);
         // #717 B1a: the run identity of `reader`'s open file (snapshot v3 +
-        // /experiment_annotation). Attributes only; absent members for a
-        // legacy file, never a default. Does not throw for a bad attribute.
+        // /experiment_annotation, and a regenerated file's E-LUT record,
+        // review ABI 5). Attributes only; absent members for a legacy file,
+        // never a default. Does not throw for a bad attribute.
         static RunIdentity readRunIdentity(const services::Hdf5Service &reader);
         // One metrics row of a processed frame, area in µm² by `pixelToMicron`
         // (the row metricsPage serves; #717 B3b reprocess uses it too).
@@ -89,6 +91,13 @@ namespace backend::review
         // (ReviewJobs::probeRuns); the bridge only calls that one.
         bool probeRuns(const std::vector<std::string> &paths, std::vector<RunProbe> &out,
                        std::string *error = nullptr) const;
+
+        // #716 A7a: one file's run statistics (RunStatistics.h,
+        // readRunStatistics: a short-lived reader of its own, the valid set
+        // read as bounded columns), under this session's mutex like the probe
+        // (#722); the open file is left as it was. Hosts gate it on the job
+        // lanes as well (ReviewJobs::runStatistics); the bridges only call that.
+        RunStatisticsResult runStatistics(const std::string &path, const std::string &computedAt) const;
 
         ReviewMetadata metadata() const;
         bool isRecordingFile() const;

@@ -578,6 +578,7 @@ dependencies = [
  "futures-util",
  "libc",
  "mib-app-commands",
+ "mib-bridge",
  "serde",
  "serde_json",
  "serial_test",

@@ -1372,6 +1372,13 @@ pub mod ffi {
         /// refused unless the experiment is idle, the record is applicable and of the current
         /// setup, and `expected_current_factor` is the current factor. Previous vs new on success.
         fn calibration_apply(self: Pin<&mut BackendBridge>, record_id: &str, expected_current_factor: f64) -> String;
+        /// ABI 44 (#716 A7a): the run quick look as JSON (bridge-contract.json `run_quick_look`):
+        /// `request_json` is `{paths: [1..32], reference?: {path, run_id, start_generation?}}`; the
+        /// reply has one entry per path (computed, deferred, not_available or error) and the
+        /// reference with run - reference deltas. A read: it never writes or actuates anything. A
+        /// cache miss is computed only while the instrument is idle and no review job runs,
+        /// otherwise deferred. `{"ok": false, ...}` before init and for a refused request.
+        fn run_quick_look(self: Pin<&mut BackendBridge>, request_json: &str) -> String;
 
         /// Set the sorter trigger pulse duration in microseconds.
         fn trigger_set_pulse_duration(self: Pin<&mut BackendBridge>, pulse_us: i32)

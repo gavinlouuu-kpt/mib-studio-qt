@@ -701,6 +701,14 @@ mod stage_control_tests {
             assert!(!CONTROL_COMMANDS.contains(&cmd), "{cmd} is a read: viewers may use it");
         }
     }
+
+    // Run quick look (#716 A7a, ABI 44): a read that never writes or actuates, so every client,
+    // a viewer included, may use it.
+    #[test]
+    fn run_quick_look_is_a_read() {
+        assert!(!CONTROL_COMMANDS.contains(&"run_quick_look"), "run_quick_look is a read: viewers may use it");
+        assert!(mib_app_commands::dispatch::COMMANDS.contains(&"run_quick_look"), "the server dispatches it");
+    }
 }
 
 #[cfg(test)]

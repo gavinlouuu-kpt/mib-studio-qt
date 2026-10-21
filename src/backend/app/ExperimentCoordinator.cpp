@@ -677,6 +677,7 @@ RunConfigurationSnapshot ExperimentCoordinator::candidateLocked(const std::strin
                 configJson.empty() ? std::string{} : profiles::canonicalConfigSha256(configJson);
             memo.method = resolveMethodProvenance(canonical, registry.snapshot(), context,
                                                   instrumentName);
+            attachLocalProfile(memo.method, configJson); // #783: a local profile names the method
             memo.rawConfigSha256 = s.configJsonSha256;
             memo.registryGeneration = generation;
             memo.contextHash = contextHash;
@@ -685,6 +686,8 @@ RunConfigurationSnapshot ExperimentCoordinator::candidateLocked(const std::strin
         }
         s.method = memo.method;
     }
+    // #783: a run under a local profile records its profile_id when the frontend supplies none.
+    if (s.profileId.empty() && s.method.source == "local") s.profileId = s.method.localProfileId;
     s.pixelToMicron = proc.getPixelToMicronFactor();
 
     const auto bg = proc.getRealtimeBackgroundGrayShared();
@@ -2014,6 +2017,10 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
     // still Stopping/Failed, so no review reader opens beside this one; it never fails the run.
     if (calibrationRun && fileOpen)
         deriveCalibrationRecord(run, calibrationRun->spec, calibrationRun->identity, ok && !failed && metadataOk);
+    // 6b (#716 A7a). The run quick look, after the calibration record and before the terminal
+    // status: the statistics of the closed file into the in-memory cache. Nothing is written; it
+    // never fails the run.
+    if (fileOpen) quickLookAtClose(run);
     // An undeclared loss, a failure, an unknown outcome, or declared malformed frames above the
     // warning fraction is something the operator must see (#549): WARN, not INFO. Complete and
     // declared-partial runs stay at INFO.
@@ -2195,6 +2202,47 @@ CalibrationGateResult ExperimentCoordinator::calibrationGateLocked(const RunConf
     return evaluateCalibrationGate(in);
 }
 
+void ExperimentCoordinator::setClosedRunStatisticsReader(ClosedRunStatisticsReader reader)
+{
+    std::lock_guard<std::mutex> lock(closedRunStatisticsMutex_);
+    closedRunStatisticsReader_ = std::move(reader);
+}
+
+void ExperimentCoordinator::quickLookAtClose(const RunConfigurationSnapshot& run)
+{
+    const auto t0 = std::chrono::steady_clock::now();
+    try {
+        review::RunFileStamp stamp;
+        std::string why;
+        if (!review::stampRunFile(run.outputPath, stamp, why)) {
+            SPDLOG_WARN("ExperimentCoordinator: run quick look skipped: {}", why);
+            return;
+        }
+        review::RunStatisticsResult result;
+        {
+            std::lock_guard<std::mutex> lock(closedRunStatisticsMutex_);
+            // Only through the installed reader (the facade's review lanes and session mutex):
+            // HDF5 is not thread-safe (#722), and without it nothing serialises this read
+            // against another HDF5 user, so the file is left for an on-demand read.
+            result = closedRunStatisticsReader_ ? closedRunStatisticsReader_(run.outputPath)
+                                                : review::deferredRunStatistics(run.outputPath);
+        }
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        if (result.status == review::RunStatisticsStatus::Computed && result.stats) {
+            backend_.runStatisticsCache().insert(stamp, {result.stats, "close"});
+            SPDLOG_INFO("ExperimentCoordinator: run {} quick look: {} valid rows, {} set rows ({:.3f} ms)",
+                        run.startGeneration, result.stats->validRows, result.stats->setRows, ms);
+        } else {
+            SPDLOG_WARN("ExperimentCoordinator: run {} quick look not computed at close: {} {} ({:.3f} ms)",
+                        run.startGeneration, review::toString(result.status), result.message, ms);
+        }
+    } catch (const std::exception& e) {
+        SPDLOG_WARN("ExperimentCoordinator: run quick look failed: {}", e.what());
+    } catch (...) {
+        SPDLOG_WARN("ExperimentCoordinator: run quick look failed");
+    }
+}
+
 void ExperimentCoordinator::deriveCalibrationRecord(const RunConfigurationSnapshot& run,
                                                     const CalibrationMethodSpec& spec,
                                                     const CalibrationIdentity& identity, bool finalizationOk)
@@ -2216,6 +2264,15 @@ void ExperimentCoordinator::deriveCalibrationRecord(const RunConfigurationSnapsh
     rec.revisionId = run.method.revisionId;
     rec.revisionNumber = run.method.revisionNumber;
     rec.methodDisplayName = run.method.displayName;
+    if (run.method.source == "local" && run.method.hasLocalProfile()) {
+        // #783: a local profile identifies the method in the record's existing members: its
+        // profile_id, its revision (the sha256 of its files) and its name (the path is in the run's
+        // snapshot, source.file). Settings changed after the profile's apply: the profile is named,
+        // its revision is not claimed (revision_id null; config_sha256 is the exact config).
+        rec.methodId = run.method.localProfileId;
+        rec.revisionId = run.method.localProfileModified ? std::string{} : run.method.localProfileRevision;
+        rec.methodDisplayName = run.method.localProfileName;
+    }
     rec.configSha256 = run.method.configCanonicalSha256.empty() ? run.configJsonSha256 : run.method.configCanonicalSha256;
     rec.reference = *spec.reference;
     rec.identity = identity;

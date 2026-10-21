@@ -22,6 +22,7 @@
 
 #include "backend/recording/HdfExportService.h"
 #include "backend/review/ReviewTypes.h"
+#include "backend/review/RunStatistics.h"
 
 #include <atomic>
 #include <chrono>
@@ -326,6 +327,12 @@ namespace backend::review
         // thread-safe (#722). Synchronous; per-file errors are in `out`.
         bool probeRuns(const std::vector<std::string> &paths, std::vector<RunProbe> &out,
                        std::string *error = nullptr);
+        // #716 A7a: one file's run statistics (ReviewSession::runStatistics),
+        // gated on the lanes like the probe: it holds the lanes' lock for the
+        // read, so no job claims a lane meanwhile, and while either lane is
+        // claimed the file is Deferred (kRunStatisticsDeferredMessage), never
+        // an error and nothing is read. Synchronous; never writes.
+        RunStatisticsResult runStatistics(const std::string &path, const std::string &computedAt);
         // #717 B3b: one record reprocessed with the processing kernel, next
         // to its stored values (ReprocessResult). Never writes. The inputs
         // (stored row, image, recorded config / ROI / background) are read by

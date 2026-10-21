@@ -135,7 +135,17 @@
   sha, `config.json` sha, profile, pixel-to-micron, background
   generation/sha, trigger binding, output path, application identity, and the
   `method` block naming the exact central revision + content hash + local
-  validation, or a local method) and
+  validation, or a local method; since #783 a local method also carries
+  `local_profile {name, path, revision, profile_id, modified_after_apply}`,
+  the local profile `ProfileStore::apply` recorded as `profile_selection` in
+  the applied config text, `null` when no profile names it;
+  `modified_after_apply` is true when the applied text is no longer what
+  that apply left (the selection's `applied_config_sha256`, the canonical
+  hash of the text without the selection, differs: a later processing
+  settings apply), so `revision` names the base profile, not the run's
+  config, whose hash is `config_canonical_sha256`; `profile_id` is the
+  client-supplied profile identity, else that local profile's `profile_id`,
+  else `""`; older files lack `local_profile` and read as before) and
   the readiness evaluation (`readiness_json`, per-gate status/reason) as
   attributes on `/run_provenance`. Written at Start, before any frame;
   `readRunSnapshotJson` returns false (never a fabricated snapshot) for
@@ -249,6 +259,10 @@ Tests: `recording.run_start_identity`, `backend.experiment_readiness`.
 
 - Metadata only: `readValidMetadata`, `readInvalidMetadata`. Use these to
   populate `HdfMetricsModel` without loading image bytes.
+- Metadata columns (#716 A7a): `readMetadataColumns` reads six members of the
+  same compound by hyperslab, in bounded chunks, for the run quick look
+  ([[../services/RunQuickLook]]). No schema change: nothing new is written,
+  the quick look's numbers live only in memory.
 - Recording mode: `isRecordingFile()` probes `/recording_info`;
   `readRecordingMetadata` fills minimal `ProcessedFrame`s (index +
   timestampNs only); `readRecordingInfo` reads the core attributes

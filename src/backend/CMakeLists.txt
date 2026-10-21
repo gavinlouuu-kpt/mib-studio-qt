@@ -224,6 +224,10 @@ add_library(mib_review_core STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/review/Reanalysis.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/review/ExportEngine.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/review/SourceEModulusLut.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/review/RunStatistics.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/review/RunStatisticsFixture.cpp
+    ${PROJECT_SOURCE_DIR}/include/backend/review/RunStatisticsFixture.h
+    ${PROJECT_SOURCE_DIR}/include/backend/review/RunStatistics.h
     ${PROJECT_SOURCE_DIR}/include/backend/review/ReviewSession.h
     ${PROJECT_SOURCE_DIR}/include/backend/review/SourceEModulusLut.h
     ${PROJECT_SOURCE_DIR}/include/backend/review/ReviewCharts.h

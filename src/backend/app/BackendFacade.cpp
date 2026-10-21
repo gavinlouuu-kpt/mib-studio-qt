@@ -251,7 +251,13 @@ namespace backend::bridge
         // setStatusCallback waits out any in-flight invocation. Only an
         // initialized facade installed it (the coordinator exists only after
         // AppBackend::initialize); shutdown() already cleared it.
-        if (initialized_) backend_.experiment().setStatusCallback({});
+        if (initialized_)
+        {
+            backend_.experiment().setStatusCallback({});
+            // The quick-look reader captures the review lanes: detached (waiting out a call in
+            // progress) before they go.
+            backend_.experiment().setClosedRunStatisticsReader({});
+        }
         // A review file left open without shutdown(): close it and lift the
         // D1 refusal it holds on AppBackend (#512 S5).
         if (review_->isOpen())
@@ -285,6 +291,10 @@ namespace backend::bridge
         // stream as ExperimentStatusEvent, tie the running experiment to a
         // tracked operation (BE-1), and surface fatal save errors as events
         // (AppBackend already funnels them into the coordinator).
+        // Run quick look at close (#716 A7a): the coordinator's read runs under the review lanes'
+        // lock and the session's mutex (#722); a running review job defers it to on demand.
+        backend_.experiment().setClosedRunStatisticsReader(
+            [jobs = reviewJobs_.get()](const std::string &path) { return jobs->runStatistics(path, "close"); });
         backend_.experiment().setStatusCallback([this](const app::ExperimentStatus &status) {
             emitEvent(ExperimentStatusEvent{status});
             // A PL receiver auto-reset during a run loses frames: count them over the run.
@@ -350,6 +360,7 @@ namespace backend::bridge
         // service teardown (BE-1 shutdown policy).
         backend_.experiment().shutdown();
         backend_.experiment().setStatusCallback({});
+        backend_.experiment().setClosedRunStatisticsReader({});
         cancelAllOperations("Backend shutdown");
         // The review lanes (#512 S7): their jobs observe the (now set) cancel
         // flags, clean partial outputs and report; joined so no callback
@@ -1480,6 +1491,58 @@ namespace backend::bridge
                     {"known", id.known()}};
         }
     } // namespace
+
+    std::string BackendFacade::runQuickLookJson(const std::string &requestJson)
+    {
+        if (!initialized_) return review::runQuickLookRefusedJson("Backend not initialized");
+        review::RunQuickLookRequest request;
+        std::string error;
+        if (!review::parseRunQuickLookRequest(requestJson, request, error))
+            return review::runQuickLookRefusedJson(error);
+        auto &cache = backend_.runStatisticsCache();
+        const auto one = [&](const std::string &requested) {
+            review::RunStatisticsResult r;
+            r.path = requested;
+            const auto resolved = backend_.resolveClientPath(requested);
+            if (!resolved.ok)
+            {
+                r.message = "Path refused: " + resolved.reason;
+                return r;
+            }
+            review::RunFileStamp stamp;
+            if (!review::stampRunFile(resolved.path, stamp, r.message)) return r;
+            r.stamp = stamp;
+            // A hit needs no HDF5 read, so it is served during a run too.
+            if (const auto hit = cache.find(stamp))
+            {
+                r.status = review::RunStatisticsStatus::Computed;
+                r.stats = hit->stats;
+                r.computedAt = hit->computedAt;
+                r.fromCache = true;
+                return r;
+            }
+            // A miss reads the file: only inside the idle transaction (no run can start meanwhile),
+            // with no raw recording writing HDF5, the review lanes free and under the session's
+            // mutex (ReviewJobs::runStatistics, #722). One file per transaction, so a Start waits
+            // for one file at most.
+            auto computed = review::deferredRunStatistics(requested);
+            backend_.experiment().withIdleConfiguration([&] {
+                if (backend_.isFrameRecording()) return;
+                computed = reviewJobs_->runStatistics(resolved.path, "on_demand");
+            });
+            computed.path = requested;
+            computed.stamp = stamp;
+            if (computed.status == review::RunStatisticsStatus::Computed && computed.stats)
+                cache.insert(stamp, {computed.stats, computed.computedAt});
+            return computed;
+        };
+        std::vector<review::RunStatisticsResult> runs;
+        runs.reserve(request.paths.size());
+        for (const auto &path : request.paths) runs.push_back(one(path));
+        std::optional<review::RunStatisticsResult> reference;
+        if (request.reference) reference = one(request.reference->path);
+        return review::runQuickLookReplyJson(runs, request.reference, reference);
+    }
 
     std::string BackendFacade::calibrationRecordsListJson() const
     {
