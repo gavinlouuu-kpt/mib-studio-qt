@@ -125,7 +125,7 @@ cleanly.
 | Sanitizers (each matrix entry) | 60 min | build 35/36 min; suite 12/13 min |
 | Backend CI | 45 min | configure 4/5 min; combined build 20/21 min; suite 12/13 min; PL replay 4/5 min |
 | Nightly soak | 60 min | configure 4/5 min; build 20/21 min; suite 30/31 min |
-| Python wheels | x86_64 20 min; ARM64 QEMU 120 min | same build and test coverage; only the job cap is architecture-specific |
+| Python wheels | x86_64 20 min; ARM64 native 15 min | same build and test coverage; ARM64 builds all four wheels in one job |
 
 The soak repeat input is validated before environment setup and accepts only
 1–100, defaulting to 40. Its full existing selection remains in place,
@@ -140,8 +140,10 @@ run 37562107549](https://github.com/gavinlouuu-kpt/mib-studio-qt/actions/runs/37
 TSan runtime about 14 m; matrix runtimes overlap or stagger and are not
 additive), and [soak run 37456065522](https://github.com/gavinlouuu-kpt/mib-studio-qt/actions/runs/37456065522) (compile 12 m 48 s, tests 12 m 30 s).
 The [ARM64 QEMU wheel run 37568147020](https://github.com/gavinlouuu-kpt/mib-studio-qt/actions/runs/37568147020) took about 69.5 m for all
-four Python versions, versus 3.0–3.8 m for x86_64, so a native ARM runner is a
-future optimization rather than a reason to weaken coverage now.
+four Python versions, versus 3.0–3.8 m for x86_64 (70–95 m on every backend PR
+of 2026-10-21). The ARM64 job now runs natively on `ubuntu-24.04-arm` with the
+same coverage: all four wheels in 5 m 40 s on PR #772 ([run 39603553067](https://github.com/gavinlouuu-kpt/mib-studio-qt/actions/runs/39603553067); x86_64 entries 3.4–4.0 m),
+so its cap is 15 minutes.
 
 The evidence supports bounds and churn control, but does not prove a deadlock
 or provide a complete billing total; queue delays and cancelled
