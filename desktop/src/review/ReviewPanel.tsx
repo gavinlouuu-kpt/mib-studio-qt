@@ -158,8 +158,11 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
   // B3c: answers to the record's buttons, each kept with the key of what it
   // was asked for (file, set, track or record) and shown only while that is
   // still what the card shows. Nothing here is sent on navigation.
-  const [track, setTrack] = useState<{ key: string; answer: Asked<ReviewTrackRows> } | null>(null);
-  const [reprocess, setReprocess] = useState<{ key: string; answer: Asked<ReviewReprocess> } | null>(null);
+  // `seq` numbers each request: only the latest one's reply is taken, so an
+  // older reply for the same record never replaces a newer one.
+  const [track, setTrack] = useState<{ key: string; seq: number; answer: Asked<ReviewTrackRows> } | null>(null);
+  const [reprocess, setReprocess] = useState<{ key: string; seq: number; answer: Asked<ReviewReprocess> } | null>(null);
+  const requestSeq = useRef(0);
   const [reprocessSettings, setReprocessSettings] = useState<number>(REVIEW_REPROCESS.settings.recorded);
   const [showColumns, setShowColumns] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -526,7 +529,8 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
   // ---- the record's buttons (B3c) ---------------------------------------------
   // Each answer is kept with the key of what was asked and shown only while
   // the card still shows that: a reply that lands after the operator moved on
-  // is dropped (`*KeyRef` is the key now), never shown against another record.
+  // is dropped (`*KeyRef` is the key now), never shown against another record,
+  // and a reply to anything but the latest request (`seq`) is ignored.
   const trackKey = reviewing && selectedRow && selectedRow.track_id >= 0 ? `${fileKey}|${validSet}|${selectedRow.track_id}` : "";
   const recordKey = reviewing && selected >= 0 ? `${fileKey}|${validSet}|${selected}` : "";
   const trackKeyRef = useRef(trackKey);
@@ -536,7 +540,8 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
   const showTrack = async () => {
     if (!trackKey || !selectedRow) return;
     const key = trackKey;
-    setTrack({ key, answer: { status: "pending" } });
+    const seq = ++requestSeq.current;
+    setTrack({ key, seq, answer: { status: "pending" } });
     let answer: Asked<ReviewTrackRows>;
     try {
       const t = await reviewBridge.trackRows(validSet, selectedRow.track_id, REVIEW_TRACK_ROWS.max_rows);
@@ -545,13 +550,14 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
       answer = { status: "refused", message: String(e) };
     }
     // Moved on meanwhile: the reply is dropped and nothing stays pending.
-    setTrack((cur) => (cur?.key !== key ? cur : trackKeyRef.current === key ? { key, answer } : null));
+    setTrack((cur) => (cur?.seq !== seq ? cur : trackKeyRef.current === key ? { key, seq, answer } : null));
   };
   const reprocessReason = reprocessUnavailable(info, selected >= 0, imagesMissingFor(info, validSet), jobs.busy);
   const reprocessRecord = async () => {
     if (!recordKey || reprocessReason !== null) return;
     const key = recordKey;
-    setReprocess({ key, answer: { status: "pending" } });
+    const seq = ++requestSeq.current;
+    setReprocess({ key, seq, answer: { status: "pending" } });
     let answer: Asked<ReviewReprocess>;
     try {
       const r = await reviewBridge.reprocessRecord(validSet, selected, reprocessSettings);
@@ -559,7 +565,7 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
     } catch (e) {
       answer = { status: "refused", message: String(e) };
     }
-    setReprocess((cur) => (cur?.key !== key ? cur : recordKeyRef.current === key ? { key, answer } : null));
+    setReprocess((cur) => (cur?.seq !== seq ? cur : recordKeyRef.current === key ? { key, seq, answer } : null));
   };
 
   // The records table: today's metric columns on the kit's DataTable, one

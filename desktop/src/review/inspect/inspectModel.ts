@@ -352,11 +352,18 @@ export function reprocessComparison(r: ReviewReprocess, info: ReviewInfo): Compa
   ];
 }
 
-/** One line on the match: which found object is compared, or why none is. */
+/** One line on the match: which found object is compared, or why none is.
+ * The backend returns at most 64 objects and matches among those only, so a
+ * truncated answer says the match is among the returned ones. */
 export function reprocessMatchText(r: ReviewReprocess): string {
   const n = r.reprocessed.length;
-  const found = r.truncated ? `more than ${n} objects` : n === 1 ? "1 object" : `${n} objects`;
   if (n === 0) return "No match: the kernel found no object in the record's stored image";
+  if (r.truncated) {
+    return r.match_index === null
+      ? `No match among the first ${n} objects returned (the kernel found more); one not returned may lie inside the stored box`
+      : `Matched object ${r.match_index + 1} of the first ${n} objects returned (the kernel found more; a nearer one may not be returned)`;
+  }
+  const found = n === 1 ? "1 object" : `${n} objects`;
   if (r.match_index === null) return `No match: the kernel found ${found}, none with its centroid inside the stored box`;
   return `Matched object ${r.match_index + 1} of ${found} found (centroid nearest the stored one, inside the stored box)`;
 }

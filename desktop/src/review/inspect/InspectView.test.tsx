@@ -851,6 +851,48 @@ it("drops a reprocess reply that lands after the operator moved on", async () =>
   expect(card("Stored vs reprocessed").querySelector('[data-testid="reprocess-result"]')).not.toBeNull();
 });
 
+it("takes only the latest request's reply, whatever order the replies land in (Codex round 1)", async () => {
+  await mountOpen();
+  const stored = () => card("Stored vs reprocessed");
+  // A1 on record 0 is held; a request on record 1; back on record 0, A2 with
+  // default settings answers at once; then A1 lands late.
+  let releaseA1 = () => undefined as void;
+  const a1 = new Promise<void>((r) => (releaseA1 = r));
+  reprocessAnswer = (args) => ({
+    ok: true,
+    message: "",
+    settings: args.settings,
+    used_recorded_settings: args.settings === 0,
+    settings_label: args.settings === 0 ? "A1 recorded settings" : "A2 default settings",
+    core_version: "2.1.0",
+    core_source: "bundled",
+    pixel_to_micron: 0.25,
+    emodulus_recomputed: false,
+    stored: row(!!args.valid, Number(args.index)),
+    reprocessed: [],
+    match_index: null,
+    object_count_differs: false,
+    truncated: false,
+  });
+  holdReprocess = { promise: a1, release: () => releaseA1() };
+  await click(button("Reprocess this record", stored()));
+  holdReprocess = null;
+  await click(button("Next record"));
+  await click(button("Reprocess this record", stored()));
+  await click(button("Previous record"));
+  const settings = stored().querySelector('select[aria-label="Reprocess settings"]') as HTMLSelectElement;
+  await act(async () => {
+    settings.value = "1";
+    settings.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await click(button("Reprocess this record", stored()));
+  expect(stored().textContent).toContain("A2 default settings");
+  releaseA1();
+  await settle();
+  expect(stored().textContent).toContain("A2 default settings");
+  expect(stored().textContent).not.toContain("A1 recorded settings");
+});
+
 it("drops a track reply that lands after the operator moved to another track", async () => {
   await mountOpen();
   let release = () => undefined as void;

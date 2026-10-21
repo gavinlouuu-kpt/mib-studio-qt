@@ -390,7 +390,11 @@ describe("the record reprocessed", () => {
     expect(reprocessMatchText(none)).toBe("No match: the kernel found 2 objects, none with its centroid inside the stored box");
     expect(reprocessMatchText(result({ match_index: null, reprocessed: [] }))).toBe("No match: the kernel found no object in the record's stored image");
     const many = result({ match_index: 3, truncated: true, reprocessed: Array.from({ length: 64 }, () => found) });
-    expect(reprocessMatchText(many)).toBe("Matched object 4 of more than 64 objects found (centroid nearest the stored one, inside the stored box)");
+    // Truncated: the backend matched among the 64 it returned only.
+    expect(reprocessMatchText(many)).toBe("Matched object 4 of the first 64 objects returned (the kernel found more; a nearer one may not be returned)");
+    expect(reprocessMatchText({ ...many, match_index: null })).toBe(
+      "No match among the first 64 objects returned (the kernel found more); one not returned may lie inside the stored box",
+    );
     expect(reprocessComparison(many, roiLocal).find((l) => l.label === "Objects in frame")?.reprocessed).toBe("more than 64");
     // A stored count of 0 is not a count.
     expect(reprocessComparison(result({ stored: { ...stored, object_count: 0 } }), roiLocal).find((l) => l.label === "Objects in frame")?.stored).toBeNull();
