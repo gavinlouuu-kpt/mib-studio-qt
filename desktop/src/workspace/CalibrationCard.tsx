@@ -31,7 +31,7 @@ import {
   type ApplyAction,
 } from "./calibrationModel";
 import { controlBlock } from "./planParts";
-import { gateRemediation, gateText, gateTone } from "./prepareModel";
+import { gateFactTone, gateRemediation, gateText, gateTone } from "./prepareModel";
 import type { CalibrationController } from "./useCalibration";
 
 export interface CalibrationCardProps {
@@ -117,16 +117,17 @@ export function CalibrationCard(p: CalibrationCardProps) {
           label: <span data-gate-id="calibration.record" title="calibration.record">Calibration gate<span className="ws-gate-id">calibration.record</span></span>,
           value: gate ? (
             <span className="ws-gate">
-              <StateChip size="small" tone={gateTone(gate.status)}>{gateText(gate)}</StateChip>
+              <span>{gateText(gate)}</span>
               {fixText ? <span className="ws-gate-fix" data-testid="calibration-fix">{`Fix: ${fixText}`}</span> : null}
               {fix && list ? <ApplyButton p={p} record={fix.record} action={fix.action} list={list} primary /> : null}
             </span>
           ) : (p.gatesRead ? "Unknown · not reported" : "Unknown · not read yet"),
-          tone: gate ? undefined : "unknown",
+          // The state is the card's chip; the row says it in words, with the Fix and its button.
+          tone: gate ? gateFactTone(gate.status) : "unknown",
         },
         {
           label: "In effect",
-          value: !list ? (c.error ? `Unknown · ${c.error}` : "Unknown · not read yet")
+          value: !list ? (p.experimentActive ? "Unknown · not read while a run is active" : c.error ? `Unknown · ${c.error}` : "Unknown · not read yet")
             : inEffect ? `${inEffect.record_id} · ${factorText(recordFactor(inEffect))}` : "None in effect",
           tone: !list ? "unknown" : inEffect ? "confirmed" : undefined,
         },

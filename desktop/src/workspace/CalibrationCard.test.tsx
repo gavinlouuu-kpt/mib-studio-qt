@@ -270,6 +270,7 @@ describe("only Apply / Re-apply acts (IPC calls counted)", () => {
     await render({ experimentActive: true });
     await advance(PREPARE_READINESS_POLL_MS * 3);
     expect(calls()).toEqual([]);
+    expect($("calibration-facts")!.textContent).toContain("Unknown · not read while a run is active");
   });
 
   it("a list read that started before the apply answered is dropped: the factor shown is never older than the apply", async () => {

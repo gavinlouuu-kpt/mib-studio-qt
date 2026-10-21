@@ -79,7 +79,7 @@ export function Workspace({ brand, source, method, stage, onStage, onExit, servi
   const planCalibration: PlanCalibration = {
     read: calList !== null, inEffectId: calList?.in_effect_record_id ?? null,
     factor: calList?.in_effect_record_id && typeof calList.current_factor === "number" ? calList.current_factor : null,
-    error: calibration.error, gate: calGate, refresh: calibration.refresh,
+    error: prepare.experimentActive ? "not read while a run is active" : calibration.error, gate: calGate, refresh: calibration.refresh,
   };
   // One verdict from the checklist, the gates and the operator's confirmation, the same words in
   // the header, in Prepare and beside Start.
