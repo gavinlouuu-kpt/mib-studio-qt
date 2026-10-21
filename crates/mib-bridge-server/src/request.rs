@@ -36,14 +36,42 @@ pub(crate) fn parse(text: &str) -> Result<Request, serde_json::Error> {
 
 /// The request id of a frame that `parse` refused, when the frame names exactly one: the refusal is
 /// then addressed to the call that is waiting for it (the client drops replies without an id).
-/// `None` for text that is not a JSON object, has no numeric `request_id`, or repeats it.
+/// `None` for text that is not a JSON object (a derived struct would also take `[5]` as id 5), has
+/// no numeric `request_id`, or repeats it.
 pub(crate) fn request_id_of(text: &str) -> Option<u64> {
-    #[derive(Deserialize)]
-    struct Id {
-        request_id: u64,
+    struct Id(Option<u64>);
+
+    impl<'de> Deserialize<'de> for Id {
+        fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            struct IdVisitor;
+
+            impl<'de> Visitor<'de> for IdVisitor {
+                type Value = Id;
+
+                fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                    f.write_str("a request object")
+                }
+
+                fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Id, A::Error> {
+                    let mut id = None;
+                    while let Some(key) = map.next_key::<String>()? {
+                        if key != "request_id" {
+                            map.next_value::<de::IgnoredAny>()?;
+                        } else if id.is_some() {
+                            return Err(duplicate(&key));
+                        } else {
+                            id = Some(map.next_value::<u64>()?);
+                        }
+                    }
+                    Ok(Id(id))
+                }
+            }
+
+            deserializer.deserialize_map(IdVisitor)
+        }
     }
-    // A derived struct refuses a repeated known field ("duplicate field") and skips the others.
-    serde_json::from_str::<Id>(text).ok().map(|id| id.request_id)
+
+    serde_json::from_str::<Id>(text).ok().and_then(|id| id.0)
 }
 
 fn duplicate<E: de::Error>(key: &str) -> E {
@@ -243,6 +271,11 @@ mod tests {
         assert_eq!(request_id_of(r#"{"request_id":5,"request_id":6,"cmd":"c"}"#), None, "which call is it?");
         assert_eq!(request_id_of(r#"{"request_id":"5","cmd":"c"}"#), None);
         assert_eq!(request_id_of("not json"), None);
+        // An array names no request, though a derived struct would read it positionally (Codex, #792).
+        assert_eq!(request_id_of("[5]"), None);
+        assert_eq!(request_id_of(r#"[5,"take_control",{"a":1,"a":2}]"#), None);
+        // A duplicate elsewhere in a frame that is otherwise readable still names its request.
+        assert_eq!(request_id_of(r#"{"x":{"a":1,"a":2},"request_id":8}"#), Some(8));
         assert_eq!(request_id_of(r#"{"cmd":"c"}"#), None);
     }
 
