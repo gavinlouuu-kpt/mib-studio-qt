@@ -362,6 +362,9 @@ of the quick controls and the sample sheet, until the kit has them).
     "New plan" mints a new id and keeps the operator (typed or picked in this page's Plan) and the
     format. The outcome points to Live, where the run is followed and stopped, with "Go to Live"
     (#763 F12).
+  - **A viewer's Start.** In a tab or client that does not hold control, the single-sample Start is
+    disabled, as the queue's is, with "Another tab or client holds control" (`CONTROL_BLOCK` in
+    `planParts.tsx`); nothing is sent.
   - **The camera mode a run records in (A5, #739 review).** `planCameraMode` (`planModel.ts`) and
     the Start (or Queue) card's kit `Notice` "Camera · <mode>" offer the classic Experiment tab's
     entry switch as a button: App's `switchPlanCameraMode` calls the shared
@@ -541,9 +544,18 @@ of the quick controls and the sample sheet, until the kit has them).
     `droppedPinsNotice` from `last_capture_change.pins_dropped`), until dismissed.
   - **Run status and lifecycle.** The run's file, a state chip and the backend's counts (valid and
     invalid saved, pending, dropped, failed to save). The queue's tiles show each row's chip (a
-    single sample's follows its run in the status, `followSingleRun` / `singleRunChip`: Running,
-    Stopping · draining, then Finalized · file closed or Failed, kept after another run starts;
-    #763 F14); the
+    single sample's follows its run by the experiment operation its start reply named,
+    `StartResult.operation_id`, `followSingleRun` / `singleRunChip`: Started, then Finalized · file
+    closed, Finalized · cancelled or Failed from that operation's terminal OperationStatus event,
+    kept after another run starts; #763 F14). The backend finishes that operation when the run's
+    status turns terminal, so its end is this run's and no other's. The status is not used for the
+    sample: the start reply returns no start generation, and a status on the same file or with a
+    newer generation can be another client's run (Codex #766 review). A reply without an operation,
+    or events possibly lost since the Start (`OperationTrack.loss`: a notification overflow, a failed
+    poll, a dropped server connection) before the end was seen, reads "Outcome unknown · check the
+    file"; an end that still arrives is taken. Running and draining are shown by the run card, not
+    attributed to the sample. Binding the sample to the status as well would need the start
+    generation in the start reply (a contract field, not added); the
     lifecycle is the queue's own (`lifecycle`, with Confirm closed for a finalized row and "Go to
     Plan" for the next Start, which stays in the Plan with its file dialog and readiness) or, for
     any other run, `statusLifecycle`: Starting → Running → Stopping · drain → Finalized, a step done

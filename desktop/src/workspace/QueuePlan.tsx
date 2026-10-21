@@ -22,7 +22,7 @@ import {
   nextSampleRef,
   type SampleRow,
 } from "./planModel";
-import { FormatCard, NOT_DECLARED, OperatorFields, CameraModeNotice, SampleEditor, StartBlockText, startBlocks, type StartBlock } from "./planParts";
+import { CONTROL_BLOCK, FormatCard, NOT_DECLARED, OperatorFields, CameraModeNotice, SampleEditor, StartBlockText, startBlocks, type StartBlock } from "./planParts";
 import type { PlanViewProps } from "./PlanView";
 import { startConfirmation } from "./prepareModel";
 import {
@@ -188,7 +188,7 @@ export function QueuePlan({ plan, lockedReason, verdict, blockers, cameraMode, o
   function queueStartBlocks(): StartBlock[] {
     const out = startBlocks({ started: null, starting: pending === "start", verdict, blockers, lockedReason, issues: curBuild!.issues, cameraReason: cameraMode?.startReason })
       .map((b) => (b.id === "sheet" ? { ...b, title: `Start is unavailable · ${curRow!.ref} has ${curBuild!.issues.length === 1 ? "1 issue" : `${curBuild!.issues.length} issues`}` } : b));
-    if (!queue.controlHeld) out.push({ id: "control", tone: "blocked", title: "Start is unavailable · this client does not control the instrument", text: "Take control first; the banner at the top offers it." });
+    if (!queue.controlHeld) out.push(CONTROL_BLOCK);
     if (!queue.status?.valid) out.push({ id: "status", tone: "unknown", title: "Start is unavailable · run status not read yet", text: "The queue follows each run in the experiment status, which is read every half second." });
     return out;
   }

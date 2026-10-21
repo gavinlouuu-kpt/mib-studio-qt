@@ -23,7 +23,15 @@ only (`desktop/src/workspace/`); no backend, contract or classic-view change.
 - **F13.** "Stop requested · run generation N" goes once that run is terminal or replaced, and
   "Pinned · F…" once its pin's capture ended or it was unpinned.
 - **F14.** The Live queue card follows a single sample's run to "Finalized · file closed" (or
-  Failed), kept after another run starts (`followSingleRun`, `singleRunChip` in `queueModel.ts`).
+  cancelled, or Failed), kept after another run starts (`followSingleRun`, `singleRunChip` in
+  `queueModel.ts`). After the Codex review it follows only the experiment operation its start reply
+  named (`operation_id`, ended by its terminal OperationStatus event), never the status: the reply
+  returns no start generation, and a status on the same file can be another client's run. No
+  operation in the reply, or events possibly lost since the Start, reads "Outcome unknown · check
+  the file". Binding it to the status would need `start_generation` in the start reply, a contract
+  field not added here.
+- **Viewer Start.** A tab or client without control cannot start a single sample (the queue already
+  could not): "Another tab or client holds control", nothing sent.
 - **F15.** When a run start cleared the pins, Live says how many, while that capture is current.
 - **F16.** Align says that Write ROI (processing ROI) also starts realtime processing, as the
   classic Apply ROI does. Behaviour unchanged.

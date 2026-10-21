@@ -56,8 +56,15 @@ function IssueLines({ id, texts }: { id?: string; texts: string[] }) {
 }
 
 /** Every reason Start run is unavailable, in plain words (empty = it is available). */
-export function startBlocks(p: { started: "started" | "unknown" | null; notStarted?: boolean; starting: boolean; verdict: Verdict; blockers: StartBlockers; lockedReason: string; issues: readonly PlanIssue[]; cameraReason?: string }): StartBlock[] {
+/** A viewer's Start (single sample or queue): disabled, and nothing is sent. */
+export const CONTROL_BLOCK: StartBlock = {
+  id: "control", tone: "blocked", title: "Another tab or client holds control",
+  text: "Start is unavailable here, and nothing is sent. Take control first; the banner at the top offers it.",
+};
+
+export function startBlocks(p: { started: "started" | "unknown" | null; notStarted?: boolean; starting: boolean; verdict: Verdict; blockers: StartBlockers; lockedReason: string; issues: readonly PlanIssue[]; cameraReason?: string; controlHeld?: boolean }): StartBlock[] {
   const out: StartBlock[] = [];
+  if (p.controlHeld === false && !p.started) out.push(CONTROL_BLOCK);
   if (p.started === "started") out.push({ id: "started", tone: "info", title: "This plan's run has started", text: "Its identity is recorded in that run. A new plan mints a new experiment id." });
   if (p.started === "unknown") out.push({ id: "started", tone: "info", title: "This plan's identity may be recorded", text: p.notStarted
     ? "The backend did not start the run, but it may have opened the run's file first, so the identity is not sent again. A new plan mints a new experiment id."

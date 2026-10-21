@@ -34,7 +34,7 @@ import {
   type OperatorChoice,
   type PlanDraft,
 } from "./planModel";
-import { currentIndex, editKeepsRecorded, followSingleRun, newQueue, ownRunActive, queueInProgress, reduceQueue, rowState, type QueueEvent, type QueueState } from "./queueModel";
+import { currentIndex, editKeepsRecorded, followSingleRun, newQueue, NO_OPERATIONS, ownRunActive, queueInProgress, reduceQueue, rowState, type OperationTrack, type QueueEvent, type QueueState } from "./queueModel";
 
 /** Where the remembered operators are kept (this machine only). */
 export const OPERATORS_STORAGE_KEY = "mib.workspace.operators";
@@ -56,13 +56,15 @@ export interface PlanStarted {
    *  the backend can return after it opened the run's file. */
   outcome: "started" | "unknown";
   code?: number;
-  /** start_generation of the last status read before the Start (null when none was read): the run
-   *  is the first newer one on its file (queueModel followSingleRun, #763 F14). */
-  generationBefore?: string | null;
-  /** The run's start_generation once a status on its file reports it. */
-  generation?: string;
-  /** How the run ended, once a status reports it terminal. */
-  end?: { ok: boolean; cancelled: boolean };
+  /** The experiment operation the start reply named (StartResult.operation_id): the only identity
+   *  the run is followed by (queueModel followSingleRun, #763 F14). Absent when it named none. */
+  operationId?: string;
+  /** OperationTrack.loss when the Start was pressed. */
+  lossBefore?: number;
+  /** How the run ended, once its operation's terminal event was read. */
+  end?: { ok: boolean; cancelled: boolean; message: string };
+  /** Events may have been lost since the Start before its end was seen: the outcome is not known. */
+  endLost?: boolean;
 }
 
 /** The stop command's reply (`experiment_stop`); `stop_outcome` is its EXPERIMENT_STOP_OUTCOMES value
@@ -122,8 +124,11 @@ export interface PlanOptions {
   /** Stop the row's run: `experiment_stop` with this start generation (canonical decimal) as
    *  expectedStartGeneration (ABI 40), so the backend stops nothing when another run is active. */
   stop?: (expectedStartGeneration: string) => Promise<StopReply>;
-  /** Whether this client controls the instrument (false pauses a queue in progress). */
+  /** Whether this client controls the instrument (false pauses a queue in progress, and a single
+   *  sample's Start sends nothing). */
   controlHeld?: boolean;
+  /** The experiment operations' ends App has read (the single sample's run ends with its own). */
+  operations?: OperationTrack;
 }
 
 function readOperators(): OperatorChoice[] {
@@ -152,6 +157,7 @@ export type RunStart = (startRequestJson: string, stillWanted?: () => boolean) =
 export function usePlan(runStart: RunStart, options: PlanOptions = {}): PlanController {
   const status = options.status ?? null;
   const controlHeld = options.controlHeld ?? true;
+  const operations = options.operations ?? NO_OPERATIONS;
   const [operators, setOperators] = useState<OperatorChoice[]>(readOperators);
   // No operator until one is typed or picked: the remembered list only suggests (#763 F6).
   const [draft, setDraft] = useState<PlanDraft>(() => newPlanDraft(mintExperimentId()));
@@ -172,6 +178,8 @@ export function usePlan(runStart: RunStart, options: PlanOptions = {}): PlanCont
   queueRef.current = queue;
   const statusRef = useRef(status);
   statusRef.current = status;
+  const operationsRef = useRef(operations);
+  operationsRef.current = operations;
   const controlRef = useRef(controlHeld);
   controlRef.current = controlHeld;
   const stopRef = useRef(options.stop ?? noStop);
@@ -189,8 +197,8 @@ export function usePlan(runStart: RunStart, options: PlanOptions = {}): PlanCont
 
   // The queue observes every status read (backend facts apply even while paused).
   useEffect(() => { dispatch({ type: "status", status }); }, [status, dispatch]);
-  // So does the single sample's run: its generation, and how it ended (#763 F14).
-  useEffect(() => { setStarted((st) => (st ? followSingleRun(st, status) : st)); }, [status]);
+  // The single sample's run ends with the operation its start reply named, never by a status (#763 F14).
+  useEffect(() => { setStarted((st) => (st ? followSingleRun(st, operations) : st)); }, [started, operations]);
   // A lost controlling client pauses a queue in progress; it never resumes on its own.
   // A control loss also withdraws any pending Start (the epoch the Start flow checks).
   useEffect(() => {
@@ -215,12 +223,13 @@ export function usePlan(runStart: RunStart, options: PlanOptions = {}): PlanCont
   }, []);
 
   const start = useCallback(async (json: string, runIndex: number): Promise<PlanStartResult | null> => {
-    if (pending.current || startedRef.current) return null;
+    // Only the controlling client starts (a viewer's button is disabled too): nothing is sent.
+    if (pending.current || startedRef.current || !controlRef.current) return null;
     pending.current = true;
     setStarting(true);
     setResult(null);
     const epoch = controlEpoch.current;
-    const generationBefore = statusRef.current?.valid ? statusRef.current.start_generation : null;
+    const lossBefore = operationsRef.current.loss;
     try {
       const out = await runStart(json, () => controlEpoch.current === epoch && controlRef.current);
       setResult(out);
@@ -229,7 +238,8 @@ export function usePlan(runStart: RunStart, options: PlanOptions = {}): PlanCont
       if (out.kind === "started" || out.kind === "unknown") {
         startedRef.current = true;
         const code = out.kind === "unknown" && out.code !== undefined ? { code: out.code } : {};
-        setStarted({ path: out.path, notice: out.kind === "started" ? out.notice : "", runIndex, outcome: out.kind, ...code, generationBefore });
+        const op = out.kind === "started" && out.operationId ? { operationId: out.operationId } : {};
+        setStarted({ path: out.path, notice: out.kind === "started" ? out.notice : "", runIndex, outcome: out.kind, ...code, ...op, lossBefore });
       }
       if (out.kind === "started") remember();
       return out;

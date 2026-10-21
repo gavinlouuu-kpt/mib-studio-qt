@@ -9,13 +9,14 @@ import { act, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import { EXPERIMENT_STATES, EXPERIMENT_STOP_OUTCOMES, FRAME_PACKET, JSON_TRANSPORT, MONITORING_CELL_PIN_OUTCOMES as P } from "../bridgeContract";
+import { EXPERIMENT_STATES, EXPERIMENT_STOP_OUTCOMES, FRAME_PACKET, JSON_TRANSPORT, MONITORING_CELL_PIN_OUTCOMES as P, OPERATION_STATES } from "../bridgeContract";
 import type { MonitoringRow, MonitoringSnapshot } from "../bridge";
 import type { ExperimentStatus } from "../eventAdapter";
 import { chartDomain, chartPosition, liveScatter, STRIP_SHOWN } from "./liveModel";
 import { LiveView } from "./LiveView";
 import { useLiveCells, type LiveCells } from "./useLiveCells";
-import { usePlan, type PlanController, type StopReply } from "./usePlan";
+import type { OperationTrack } from "./queueModel";
+import { usePlan, type PlanController, type PlanStartResult, type StopReply } from "./usePlan";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
@@ -657,30 +658,58 @@ describe("click-through polish (#763)", () => {
     expect(calls().filter((c) => CONTROL.includes(c.cmd))).toEqual([]); // the notice sends nothing
   });
 
-  it("F14: the single sample's card follows its run to Finalized, and keeps the end after another run starts", async () => {
+  it("F14 (Codex #766): gen 4, the sample starts as gen 5 and its status refresh fails, another client stops it and starts gen 6 on the same file: only gen 5's own operation ends the sample", async () => {
     let plan: PlanController | null = null;
-    function Single({ st }: { st: ExperimentStatus }) {
-      const p = usePlan(async () => ({ kind: "started", path: "/data/single", notice: "" }), { status: st, controlHeld: true });
+    let reply: PlanStartResult = { kind: "started", path: "/data/single", notice: "", operationId: "5005", refreshError: "TRANSPORT_LOST: status refresh" };
+    function Single({ st, ops }: { st: ExperimentStatus; ops: OperationTrack }) {
+      const p = usePlan(async () => reply, { status: st, controlHeld: true, operations: ops });
       plan = p;
       return <LiveView tabs={null} plan={p} snapshot={null} running experimentActive={st.state === EXPERIMENT_STATES.Active} hostProcessing
         subscribeFrames={subscribeFrames} onStopAcquisition={onStopAcquisition} onStopRun={onStopRun} onView={onView} toUrl={toUrl} />;
     }
-    const show = (st: ExperimentStatus) => act(async () => root.render(<Single st={st} />));
-    const chip = () => $("live-sample-S1")!.querySelector(".mib-chip")!.textContent;
-    // An earlier run's end on the same file is not this run's.
-    await show(status({ terminal: true, finalization_ok: true, start_generation: "4", output_path: "/data/single.h5" }));
+    const ops = (ends: [string, number, string][] = [], loss = 0): OperationTrack => ({ ends: new Map(ends.map(([id, state, message]) => [id, { state, message }])), loss });
+    const show = (st: ExperimentStatus, o: OperationTrack = ops()) => act(async () => root.render(<Single st={st} ops={o} />));
+    const chip = () => $("live-sample-S1-chip")!.textContent;
+    const FILE = "/data/single.h5";
+    const gen4 = status({ terminal: true, finalization_ok: true, start_generation: "4", output_path: FILE });
+    const gen6 = status({ state: EXPERIMENT_STATES.Active, start_generation: "6", output_path: FILE });
+    const gen6Done = status({ terminal: true, finalization_ok: true, start_generation: "6", output_path: FILE });
+    // 1. The status shows gen 4. The sample starts (gen 5); the refresh after its reply fails, so
+    //    the status still shows gen 4, and gen 5 is never read.
+    await show(gen4);
     expect(chip()).toBe("Planned");
     await act(async () => { await plan!.start("{}", 1); });
+    await show(gen4);
     expect(chip()).toBe("Started");
-    await show(status({ terminal: true, finalization_ok: true, start_generation: "4", output_path: "/data/single.h5" }));
+    // 2. Another client stops it and starts gen 6 on the same file (operation 6006), before polling recovers.
+    await show(gen6, ops([["6006", OPERATION_STATES.Started, ""]]));
     expect(chip()).toBe("Started");
-    await show(status({ state: EXPERIMENT_STATES.Active, start_generation: "5", output_path: "/data/single.h5" }));
-    expect(chip()).toBe("Running");
-    await show(status({ state: EXPERIMENT_STATES.Stopping, flushing: true, start_generation: "5", output_path: "/data/single.h5" }));
-    expect(chip()).toBe("Stopping · draining");
-    await show(status({ terminal: true, finalization_ok: true, start_generation: "5", output_path: "/data/single.h5" }));
-    expect(chip()).toBe("Finalized · file closed");
-    await show(status({ state: EXPERIMENT_STATES.Active, start_generation: "6", output_path: "/data/other.h5" }));
-    expect(chip()).toBe("Finalized · file closed");
+    // 3. Gen 6 finalizes: its "Finalized · file closed" is not the sample's.
+    await show(gen6Done, ops([["6006", OPERATION_STATES.Completed, "complete"]]));
+    expect(chip()).toBe("Started");
+    // Gen 5's own operation failed: that is the sample's end, and it stays.
+    await show(gen6Done, ops([["6006", OPERATION_STATES.Completed, "complete"], ["5005", OPERATION_STATES.Failed, "finalized with errors"]]));
+    expect(chip()).toBe("Failed");
+    expect($("live-sample-S1-chip")!.title).toBe("finalized with errors");
+    await show(status({ state: EXPERIMENT_STATES.Active, start_generation: "7", output_path: "/data/other.h5" }));
+    expect(chip()).toBe("Failed");
+
+    // The same sequence when the start reply names no operation (an older backend): never known.
+    reply = { kind: "started", path: "/data/single", notice: "", refreshError: "TRANSPORT_LOST: status refresh" };
+    await act(async () => { plan!.newPlan(); });
+    await show(gen4);
+    await act(async () => { await plan!.start("{}", 1); });
+    expect(chip()).toBe("Outcome unknown · check the file");
+    await show(gen6Done, ops([["6006", OPERATION_STATES.Completed, "complete"]]));
+    expect(chip()).toBe("Outcome unknown · check the file");
+
+    // And when events may have been lost after the Start (here the stream overflowed) before gen 5's end was read.
+    reply = { kind: "started", path: "/data/single", notice: "", operationId: "5007" };
+    await act(async () => { plan!.newPlan(); });
+    await show(gen4, ops([], 1));
+    await act(async () => { await plan!.start("{}", 1); });
+    expect(chip()).toBe("Started");
+    await show(gen6Done, ops([["6006", OPERATION_STATES.Completed, "complete"]], 2));
+    expect(chip()).toBe("Outcome unknown · check the file");
   });
 });

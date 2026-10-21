@@ -35,7 +35,7 @@
 //
 // Pure module: no React or transport imports.
 
-import { EXPERIMENT_STATES, EXPERIMENT_STOP_OUTCOMES } from "../bridgeContract";
+import { EXPERIMENT_STATES, EXPERIMENT_STOP_OUTCOMES, OPERATION_STATES } from "../bridgeContract";
 import type { ExperimentStatus } from "../eventAdapter";
 import { describeRunOutcome, type OutcomeSeverity } from "../runOutcome";
 import { invalidRequestReason, type PlanDraft } from "./planModel";
@@ -498,38 +498,67 @@ export function editKeepsRecorded(prev: PlanDraft, next: PlanDraft, q: QueueStat
 
 // ---- the single-sample run (#763 F14) ------------------------------------------------------------
 
-/** The single-sample plan's run, followed in the experiment status (as a queue row's is): a status
- *  is the run's when it names the run's file and either its generation (once seen) or one newer
- *  than the read before its Start. Without that read, only a run in progress is taken as it, so an
- *  earlier run's end on the same path is never shown as this one's. Returns `st` itself when the
- *  status says nothing new about the run; the end, once read, stays. */
-export function followSingleRun(st: PlanStarted, s: ExperimentStatus | null): PlanStarted {
-  if (st.outcome !== "started" || st.end || !st.path || !s?.valid || s.output_path !== recordedPath(st.path)) return st;
-  const gen = big(s.start_generation);
-  if (gen === null) return st;
-  const terminal = s.terminal && (s.state === EXPERIMENT_STATES.Idle || s.state === EXPERIMENT_STATES.Failed);
-  if (st.generation !== undefined) {
-    if (s.start_generation !== st.generation) return st;
-  } else if (st.generationBefore !== undefined && st.generationBefore !== null) {
-    const before = big(st.generationBefore);
-    if (before === null || gen <= before) return st;
-  } else if (terminal) {
-    return st;
+/** An experiment operation's end: its terminal OperationStatus event (BE-1), with the state
+ *  (OPERATION_STATES Completed, Failed, Cancelled or TimedOut) and the event's message. */
+export interface OperationEnd { state: number; message: string }
+
+/** What App has seen of the experiment operations: their ends by operation id, and how many times
+ *  events may have been lost since the page loaded (a notification overflow, a failed poll, a
+ *  dropped connection to the server). */
+export interface OperationTrack { ends: ReadonlyMap<string, OperationEnd>; loss: number }
+
+export const NO_OPERATIONS: OperationTrack = { ends: new Map(), loss: 0 };
+
+/** How many operation ends App keeps (the most recent): a sample keeps its own end once read. */
+export const OPERATION_ENDS_KEPT = 64;
+
+/** `ends` with one more operation's end (the newest last, the oldest dropped past the bound). */
+export function withOperationEnd(ends: ReadonlyMap<string, OperationEnd>, id: string, end: OperationEnd): ReadonlyMap<string, OperationEnd> {
+  const next = new Map(ends);
+  next.delete(id);
+  next.set(id, end);
+  for (const old of next.keys()) {
+    if (next.size <= OPERATION_ENDS_KEPT) break;
+    next.delete(old);
   }
-  const generation = s.start_generation;
-  if (!terminal) return generation === st.generation ? st : { ...st, generation };
-  const ok = s.finalization_ok && s.state !== EXPERIMENT_STATES.Failed && !s.fault_code;
-  return { ...st, generation, end: { ok, cancelled: s.cancelled } };
+  return next;
 }
 
-/** The single sample's state on Live's queue card: its end once the status reported it, else what
- *  the status shows of its run, else what its start reply said. */
-export function singleRunChip(st: PlanStarted | null, s: ExperimentStatus | null): { tone: ChipTone; text: string } {
+/** The single-sample plan's run, followed only through the identity its start reply returned: the
+ *  experiment operation the backend tracks that run under (StartResult.operation_id). The backend
+ *  finishes that operation when the run's status turns terminal (Failed when the run failed or
+ *  did not finalize, else Cancelled or Completed), so its terminal event is this run's end and no
+ *  other's. The experiment status is never used: it names a start generation, which the start
+ *  reply does not return, and a status on the same file, or with a newer generation, can be
+ *  another client's run (Codex #766 review). Without an operation in the reply, or once events may
+ *  have been lost since the Start and its end was not seen, the outcome is not known
+ *  (`endLost`); an end that still arrives is taken. Returns `st` itself when nothing is new; the
+ *  end, once read, stays. */
+export function followSingleRun(st: PlanStarted, ops: OperationTrack): PlanStarted {
+  if (st.outcome !== "started" || st.end || !st.operationId) return st;
+  const e = ops.ends.get(st.operationId);
+  if (e && e.state >= OPERATION_STATES.Completed) { // only a terminal state ends it
+    const cancelled = e.state === OPERATION_STATES.Cancelled;
+    return { ...st, end: { ok: e.state === OPERATION_STATES.Completed || cancelled, cancelled, message: e.message } };
+  }
+  if (!st.endLost && ops.loss > (st.lossBefore ?? 0)) return { ...st, endLost: true };
+  return st;
+}
+
+/** The single sample's outcome when no end can be read for it. */
+export const SINGLE_OUTCOME_UNKNOWN = "Outcome unknown · check the file";
+
+/** The single sample's state on Live's queue card: its end once its operation reported it, else
+ *  what its start reply said. The run's progress (running, draining) is the status's, shown by
+ *  the run card, not attributed to the sample. */
+export function singleRunChip(st: PlanStarted | null): { tone: ChipTone; text: string; title?: string } {
   if (!st) return { tone: "neutral", text: "Planned" };
-  if (st.end) return st.end.ok ? { tone: "confirmed", text: st.end.cancelled ? "Finalized · cancelled" : "Finalized · file closed" } : { tone: "blocked", text: "Failed" };
+  if (st.end) {
+    if (!st.end.ok) return { tone: "blocked", text: "Failed", title: st.end.message || undefined };
+    return { tone: "confirmed", text: st.end.cancelled ? "Finalized · cancelled" : "Finalized · file closed", title: st.end.message || undefined };
+  }
   if (st.outcome !== "started") return { tone: "unknown", text: "Start outcome not known" };
-  const ours = st.generation !== undefined && !!s?.valid && s.start_generation === st.generation && s.output_path === recordedPath(st.path);
-  if (ours && (s!.state === EXPERIMENT_STATES.Stopping || s!.flushing)) return { tone: "info", text: "Stopping · draining" };
-  if (ours && s!.state === EXPERIMENT_STATES.Active) return { tone: "info", text: "Running" };
+  if (!st.operationId) return { tone: "unknown", text: SINGLE_OUTCOME_UNKNOWN, title: "The start reply named no operation to follow the run by: open its file to see how it ended." };
+  if (st.endLost) return { tone: "unknown", text: SINGLE_OUTCOME_UNKNOWN, title: "Notifications may have been lost since the Start, the run's end among them: open its file to see how it ended." };
   return { tone: "info", text: "Started" };
 }

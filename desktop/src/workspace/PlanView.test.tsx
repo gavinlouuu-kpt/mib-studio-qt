@@ -14,7 +14,7 @@ import type { PreflightInput } from "../preflight";
 import type { AlignFacts } from "./alignControls";
 import type { ExperimentSubView } from "./ExperimentView";
 import { UUID_V4, buildStartRequest } from "./planModel";
-import { OPERATORS_STORAGE_KEY, usePlan, type PlanStartResult } from "./usePlan";
+import { OPERATORS_STORAGE_KEY, usePlan, type PlanController, type PlanStartResult } from "./usePlan";
 import { Workspace, type WorkspaceProps } from "./Workspace";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -35,8 +35,10 @@ let host: HTMLDivElement, root: Root;
 let runStart = vi.fn(async (_json: string): Promise<PlanStartResult> => ({ kind: "started", path: "/data/run.h5", notice: "" }));
 const onExit = vi.fn(), onStage = vi.fn();
 
-function Harness({ over = {}, lockedReason = "" }: { over?: Partial<WorkspaceProps>; lockedReason?: string }) {
-  const plan = usePlan(runStart);
+let planRef: PlanController | null = null;
+function Harness({ over = {}, lockedReason = "", controlHeld = true }: { over?: Partial<WorkspaceProps>; lockedReason?: string; controlHeld?: boolean }) {
+  const plan = usePlan(runStart, { controlHeld });
+  planRef = plan;
   const [view, setView] = useState<ExperimentSubView>("Plan");
   const props: WorkspaceProps = {
     brand: "MIB Studio", source: "Mock camera", method: "", stage: 2, onStage, onExit, serviceMode: false,
@@ -48,7 +50,7 @@ function Harness({ over = {}, lockedReason = "" }: { over?: Partial<WorkspacePro
   return <Workspace {...props} />;
 }
 
-const render = (props: { over?: Partial<WorkspaceProps>; lockedReason?: string } = {}) =>
+const render = (props: { over?: Partial<WorkspaceProps>; lockedReason?: string; controlHeld?: boolean } = {}) =>
   act(async () => root.render(<StrictMode><Harness {...props} /></StrictMode>));
 const advance = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
 const $ = (id: string) => host.querySelector<HTMLElement>(`[data-testid=${id}]`);
@@ -137,6 +139,26 @@ describe("the Plan acts only on Start run", () => {
       `"annotation":{"sample":"Donor 1 · vehicle","condition":"Vehicle","experimental_unit":"D1","concentration":{"value":0.1,"unit":"µM"},` +
       `"channel":"C1 · 20 µm","medium":"PBS + 0.5% MC","temperature_c":22.5,"notes":"Line 1\\nLine 2","free":{"passage":"12"}}}`,
     );
+  });
+
+  it("a viewer's Start run is disabled: another tab or client holds control, and nothing is sent (#766 review)", async () => {
+    await render({ controlHeld: false });
+    await fillFull();
+    const gate = $("plan-blocked-control")!;
+    expect(gate.textContent).toContain("Another tab or client holds control");
+    expect(gate.textContent).toContain("nothing is sent");
+    expect(startButton()!.disabled).toBe(true);
+    await act(async () => startButton()!.click());
+    // Not even through the plan itself: the Start flow is not entered (no file dialog, no read).
+    await act(async () => { expect(await planRef!.start(buildStartRequest(planRef!.draft, 0, 1).json!, 1)).toBeNull(); });
+    expect(runStart).not.toHaveBeenCalled();
+    for (const c of backendCalls()) expect(c.cmd).toBe("fetch_experiment_readiness");
+    // Control taken here: the gate goes and Start run sends the plan.
+    await render({ controlHeld: true });
+    expect($("plan-blocked-control")).toBeNull();
+    expect(startButton()!.disabled).toBe(false);
+    await act(async () => startButton()!.click());
+    expect(runStart).toHaveBeenCalledTimes(1);
   });
 
   it("an empty plan sends its identity only", async () => {

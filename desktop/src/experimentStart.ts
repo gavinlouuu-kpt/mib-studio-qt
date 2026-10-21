@@ -11,8 +11,11 @@ import { startDiscardNotice, type RingStatus } from "./ringPlayback";
 export interface StartGate { id: string; status: number; reason: string; remediation?: string }
 export interface StartReadiness { valid: boolean; ready: boolean; gates: StartGate[] }
 /** The start reply: `start_outcome` is the backend's EXPERIMENT_START_OUTCOMES value (ABI 40), absent
- *  from an older backend (ABI 39 and before), which answers with ok and message only. */
-export interface StartResult { ok: boolean; message: string; start_outcome?: number }
+ *  from an older backend (ABI 39 and before), which answers with ok and message only.
+ *  `operation_id` (bridge schema v4, BE-1) is the experiment operation the backend tracks a started
+ *  run under; it finishes that operation when the run's status turns terminal, so the operation's
+ *  terminal OperationStatus event is that run's end. "0" or absent: none was named. */
+export interface StartResult { ok: boolean; message: string; start_outcome?: number; operation_id?: string }
 
 /** What a start reply means for the run's identity (#736 rules): started (the run exists), refused
  *  (nothing was recorded: the identity and the run index may be sent again) or unknown (the run, or
@@ -66,7 +69,8 @@ export type StartOutcome =
   /** The backend refused the start before it began the run (`code`: its start outcome, absent from
    *  an older backend): nothing was recorded. */
   | { kind: "refused"; path: string; message: string; code?: number }
-  | { kind: "started"; path: string; notice: string }
+  /** `operationId`: the start reply's operation (StartResult.operation_id), absent when it named none. */
+  | { kind: "started"; path: string; notice: string; operationId?: string }
   /** The run may exist, so its identity must be treated as used. Without `code`: the start request
    *  was sent but no reply was decoded (transport error). With `code`: the reply was read and says
    *  not started, but with a code the backend can return after it opened the run's file
@@ -104,7 +108,10 @@ export async function startExperiment(deps: StartDeps, startRequestJson?: string
     return { kind: "unknown", path: picked, message: String(e) };
   }
   const state = startReplyState(res);
-  if (state === "started") return { kind: "started", path: picked, notice };
+  if (state === "started") {
+    const op = res.operation_id;
+    return op && op !== "0" ? { kind: "started", path: picked, notice, operationId: op } : { kind: "started", path: picked, notice };
+  }
   const code = res.start_outcome === undefined ? {} : { code: res.start_outcome };
   return { kind: state, path: picked, message: res.message, ...code };
 }

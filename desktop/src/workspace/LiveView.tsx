@@ -60,7 +60,7 @@ import {
   type LiveNotice,
 } from "./liveModel";
 import { conditionSlots, type SampleRow } from "./planModel";
-import { currentIndex, lifecycle, queueBegun, recordedPath, rowChip, rowState, singleRunChip, type LifecycleStep } from "./queueModel";
+import { currentIndex, lifecycle, queueBegun, recordedPath, rowChip, rowState, singleRunChip, type ChipTone, type LifecycleStep } from "./queueModel";
 import { useLiveCells, VIEWER_PIN_REASON, type CellPicture, type PacketToUrl } from "./useLiveCells";
 import type { PlanController, StopReply } from "./usePlan";
 
@@ -534,13 +534,13 @@ function QueueCard({ plan, cur, begun }: { plan: PlanController; cur: number; be
       <div className="ws-live__samples">
         {rows.map((r, i) => {
           const st = queueMode ? rowState(q, r.ref) : null;
-          const chip = st ? rowChip(st, q.ended) : singleRunChip(plan.started, plan.queue.status);
+          const chip: { tone: ChipTone; text: string; title?: string } = st ? rowChip(st, q.ended) : singleRunChip(plan.started);
           const slot = slots.get(r.condition.trim());
           const what = r.sample.trim() || r.condition.trim();
           return (
             <div key={r.ref} className={`ws-live__sample${i === cur ? " ws-live__sample--current" : ""}`} data-testid={`live-sample-${r.ref}`} aria-current={i === cur ? "step" : undefined}>
               <span className="ws-live__sample-name">{slot ? <ConditionSwatch condition={slot}>{`${r.ref}${what ? ` ${what}` : ""}`}</ConditionSwatch> : `${r.ref}${what ? ` ${what}` : ""}`}</span>
-              <StateChip size="small" tone={chip.tone}>{chip.text}</StateChip>
+              <StateChip size="small" tone={chip.tone} title={chip.title} data-testid={`live-sample-${r.ref}-chip`}>{chip.text}</StateChip>
             </div>
           );
         })}

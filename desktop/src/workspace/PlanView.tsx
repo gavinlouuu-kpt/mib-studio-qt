@@ -80,7 +80,7 @@ function SinglePlan({ plan, lockedReason, verdict, blockers, cameraMode, onCamer
   const row = draft.rows[0];
   const build = buildStartRequest(draft, 0, SINGLE_SAMPLE_RUN_INDEX);
   const locked = !!started || starting;
-  const blocks = startBlocks({ started: started?.outcome ?? null, notStarted: started?.code !== undefined, starting, verdict, blockers, lockedReason, issues: build.issues, cameraReason: cameraMode?.startReason });
+  const blocks = startBlocks({ started: started?.outcome ?? null, notStarted: started?.code !== undefined, starting, verdict, blockers, lockedReason, issues: build.issues, cameraReason: cameraMode?.startReason, controlHeld: plan.queue.controlHeld });
   const refusal = plan.result?.kind === "refused" ? invalidRequestReason(plan.result.message, plan.result.code) : null;
   const outcome = resultNotice(plan.result);
   const refresh = refreshNotice(plan.result);

@@ -369,7 +369,8 @@ describe("a lost controlling client", () => {
     await twoSamples();
     await act(async () => setControl(false));
     expect($("queue-paused")).toBeNull(); // nothing began: nothing to pause
-    expect($("plan-blocked-control")!.textContent).toContain("this client does not control the instrument");
+    expect($("plan-blocked-control")!.textContent).toContain("Another tab or client holds control");
+    expect($("plan-blocked-control")!.textContent).toContain("nothing is sent");
     await press($("queue-start"), "Start S1");
     expect(acted()).toBe(0);
   });
