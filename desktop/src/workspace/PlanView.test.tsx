@@ -523,7 +523,7 @@ describe("the calibration record a Start declares (A4b)", () => {
     calList = calRecordsList(null);
     await render();
     await advance(0);
-    expect($("plan-identity")!.textContent).toContain("None in effect · not declared; the run records none");
+    expect($("plan-identity")!.textContent).toContain("None in effect when last read · not declared; the backend records the record in effect at Start");
     await act(async () => startButton()!.click());
     expect(JSON.parse(runStart.mock.calls[0][0])).not.toHaveProperty("calibration_record_id");
   });

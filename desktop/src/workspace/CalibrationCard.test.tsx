@@ -13,6 +13,7 @@ import type { ReadinessGate } from "../eventAdapter";
 import type { PreflightInput } from "../preflight";
 import { applyReply, calList, calRecord, SETUP } from "./calibrationFixtures";
 import { PREPARE_READINESS_POLL_MS } from "./prepareModel";
+import { RECONCILE_MS } from "./useCalibration";
 import { Workspace, type WorkspaceProps } from "./Workspace";
 import type { AlignFacts } from "./alignControls";
 import { newPlanDraft } from "./planModel";
@@ -344,5 +345,75 @@ describe("only Apply / Re-apply acts (IPC calls counted)", () => {
     expect(card().textContent).not.toContain("None in effect");
     expect($("calibration-store-error")!.textContent).toContain("is unreadable (bad json)");
     expect($("calibration-facts")!.textContent).toContain("Current factor0.5 µm/px");
+  });
+
+  it("Apply stays locked until the list read after its answer settles: a second press sends nothing (Codex round 2)", async () => {
+    list = calList([PROPOSED]);
+    let n = 0;
+    applyAnswer = () => (++n === 1 ? applyReply("cal-p", O.Applied, { previous_factor: 0.5, new_factor: 0.53 })
+      : applyReply("cal-p", O.NotApplicable, { message: "record cal-p is already applied and in effect" }));
+    await render();
+    const held: ((v: unknown) => void)[] = [];
+    vi.mocked(invoke).mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === "fetch_experiment_readiness") return { transport_version: JSON_TRANSPORT.version, valid: true, ready: false, generation: "3", gates: [NO_PATH] };
+      if (cmd === "calibration_records_list") return new Promise((resolve) => held.push(resolve));
+      if (cmd === "calibration_apply") return applyAnswer((args ?? {}) as Record<string, unknown>);
+      throw new Error(`unexpected ${cmd}`);
+    });
+    const button = () => $("calibration-proposed-cal-p")!.querySelector<HTMLButtonElement>("button")!;
+    await press(button());
+    expect($("calibration-outcome")!.textContent).toContain("Applied · cal-p");
+    expect(button().disabled).toBe(true); // the list from before the apply is still shown
+    await press(button());
+    expect(applies()).toHaveLength(1);
+    await act(async () => held[held.length - 1](calList([{ ...PROPOSED, status: "applied", applicable: false, apply: { previous_factor: 0.5, new_factor: 0.53 } }],
+      { applied_record_id: "cal-p", in_effect_record_id: "cal-p", current_factor: 0.53 })));
+    await advance(0);
+    expect($("calibration-proposed-cal-p")).toBeNull(); // in effect now, no Apply left
+    expect($("calibration-outcome")!.textContent).toContain("Applied · cal-p");
+  });
+
+  it("a list read that never answers unlocks Apply after RECONCILE_MS", async () => {
+    list = calList([PROPOSED]);
+    applyAnswer = () => applyReply("cal-p", O.StaleFactor, { previous_factor: 0.51 });
+    await render();
+    vi.mocked(invoke).mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === "fetch_experiment_readiness") return { transport_version: JSON_TRANSPORT.version, valid: true, ready: false, generation: "3", gates: [NO_PATH] };
+      if (cmd === "calibration_records_list") return new Promise(() => {});
+      if (cmd === "calibration_apply") return applyAnswer((args ?? {}) as Record<string, unknown>);
+      throw new Error(`unexpected ${cmd}`);
+    });
+    const button = () => $("calibration-proposed-cal-p")!.querySelector<HTMLButtonElement>("button")!;
+    await press(button());
+    expect(button().disabled).toBe(true);
+    await advance(RECONCILE_MS);
+    expect(button().disabled).toBe(false);
+  });
+
+  it("the gates read after an apply is never replaced by a poll from before it (Codex round 2)", async () => {
+    list = calList([PROPOSED]);
+    calGate = { id: "calibration.record", status: G.Warn, reason: "no calibration record is applied", remediation: "apply proposed record cal-p (calibration_apply), or run the calibration method" };
+    await render();
+    const heldGates: ((v: unknown) => void)[] = [];
+    let applied = false;
+    const gates = (g: ReadinessGate) => ({ transport_version: JSON_TRANSPORT.version, valid: true, ready: false, generation: "4", gates: [g, NO_PATH] });
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === "fetch_experiment_readiness") return new Promise((resolve) => heldGates.push(resolve));
+      if (cmd === "calibration_records_list") return applied ? calList([{ ...PROPOSED, status: "applied", applicable: false, apply: { previous_factor: 0.5, new_factor: 0.53 } }],
+        { applied_record_id: "cal-p", in_effect_record_id: "cal-p", current_factor: 0.53 }) : calList([PROPOSED]);
+      if (cmd === "calibration_apply") { applied = true; return applyReply("cal-p", O.Applied, { previous_factor: 0.5, new_factor: 0.53 }); }
+      throw new Error(`unexpected ${cmd}`);
+    });
+    await advance(PREPARE_READINESS_POLL_MS); // a gates poll starts and is held
+    expect(heldGates).toHaveLength(1);
+    await press($("calibration-proposed-cal-p")!.querySelector("button"));
+    // The poll from before the apply answers late, with what the backend said then.
+    await act(async () => heldGates[0](gates({ ...calGate!, reason: "stale: from before the apply" })));
+    await advance(0);
+    expect(heldGates).toHaveLength(2); // read once more
+    expect(card().textContent).not.toContain("stale: from before the apply"); // dropped
+    await act(async () => heldGates[1](gates({ id: "calibration.record", status: G.Pass, reason: "", remediation: "" })));
+    await advance(0);
+    expect(card().querySelector(".mib-chip")!.textContent).toBe("Pass");
   });
 });

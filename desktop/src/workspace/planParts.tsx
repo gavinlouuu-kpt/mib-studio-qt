@@ -118,7 +118,7 @@ export function calibrationFacts(c: PlanCalibration | undefined): Fact[] {
     ? { label: "Calibration record", value: `Unknown · ${c?.error || "not read yet"} · not declared; the backend records the record in effect at Start`, tone: "unknown" }
     : declared
       ? { label: "Calibration record", value: <span data-testid="plan-calibration-declared">{`${declared} · in effect${c.factor !== null ? ` (${factorText(c.factor)})` : ""} · declared at Start: if it changes first, the backend refuses the Start`}</span>, tone: "confirmed" }
-      : { label: "Calibration record", value: "None in effect · not declared; the run records none" };
+      : { label: "Calibration record", value: "None in effect when last read · not declared; the backend records the record in effect at Start" };
   const g = c?.gate ?? null;
   const fix = g ? gateRemediation(g) : "";
   const gate: Fact = g

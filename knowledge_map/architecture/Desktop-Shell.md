@@ -223,7 +223,10 @@ of the quick controls and the sample sheet, until the kit has them).
     re-read (`applyReplyNotice`: stale factor, a run active, insufficient, another setup, an unknown
     identity, not applicable, store failure; `applyErrorNotice`: the server's VIEWER_ONLY, a lost
     reply). Whatever the answer the list and the gates are read again at once; a list read that
-    started before the apply answered is dropped. A viewer's buttons are disabled with the shared
+    started before the apply answered is dropped, as is a gates read in flight (an explicit refresh
+    in `usePrepareReadiness` reads once more), and the buttons stay locked until the list read
+    after the answer settles (at most `RECONCILE_MS`, 5 s), so a second press never acts on the list
+    from before the apply. A viewer's buttons are disabled with the shared
     control block (`controlBlock("Apply")` in `planParts.tsx`, the words of the Plan's
     `CONTROL_BLOCK`) and nothing is sent; during a run nothing is read or sent. Navigation, listing,
     selecting and polling never send `calibration_apply` (`CalibrationCard.test.tsx` and
@@ -370,7 +373,7 @@ of the quick controls and the sample sheet, until the kit has them).
     effect (`declaredCalibration`: `in_effect_record_id` of the last successful list read); with
     none in effect, or the list not read, nothing is declared and the backend records the record in
     effect itself. The Run identity card (single and queue) shows it ("cal-… · in effect (0.52 µm/px)
-    · declared at Start"; "None in effect · not declared"; "Unknown · … · not declared") and the
+    · declared at Start"; "None in effect when last read · not declared; the backend records the record in effect at Start"; "Unknown · … · not declared") and the
     calibration gate in the backend's words. Since ABI 42 the id is a check: a record applied,
     re-applied or taken out of effect between that read and Start makes the backend refuse the
     Start (`InvalidRequest`, key `calibration_record_id`, "(mismatch)"); the Plan says "Not started ·

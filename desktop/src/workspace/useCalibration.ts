@@ -17,6 +17,9 @@ import type { CalibrationRecordGet, CalibrationRecordsList } from "../calibratio
 import { applyErrorNotice, applyReplyNotice, type CalibrationNotice } from "./calibrationModel";
 import { PREPARE_READINESS_POLL_MS } from "./prepareModel";
 
+/** How long Apply stays locked waiting for the list read after its answer, at most. */
+export const RECONCILE_MS = 5000;
+
 export interface CalibrationHistory {
   recordId: string;
   reply: CalibrationRecordGet | null;
@@ -72,9 +75,17 @@ export function useCalibration(active: boolean, options: CalibrationOptions): Ca
     return () => { mounted.current = false; };
   }, []);
 
-  const read = useCallback(async () => {
-    if (inFlight.current) { again.current = true; return; }
+  // The running read loop: a read asked for meanwhile joins it (and makes it read once more).
+  const loop = useRef<Promise<void> | null>(null);
+
+  const read = useCallback((): Promise<void> => {
+    if (inFlight.current) { again.current = true; return loop.current ?? Promise.resolve(); }
     inFlight.current = true;
+    loop.current = runLoop();
+    return loop.current;
+  }, []);
+
+  async function runLoop(): Promise<void> {
     try {
       do {
         again.current = false;
@@ -90,7 +101,7 @@ export function useCalibration(active: boolean, options: CalibrationOptions): Ca
     } finally {
       inFlight.current = false;
     }
-  }, []);
+  }
 
   useEffect(() => {
     // A read started in an earlier active period (before a run, or another view) is not current.
@@ -126,17 +137,20 @@ export function useCalibration(active: boolean, options: CalibrationOptions): Ca
       notice = applyReplyNotice(await bridge.calibrationApply(recordId, expectedFactor), expectedFactor);
     } catch (e) {
       notice = applyErrorNotice(e);
-    } finally {
-      applyPending.current = false;
-      epoch.current += 1;
     }
-    if (!mounted.current) return;
-    setApplying(null);
+    epoch.current += 1;
+    if (!mounted.current) { applyPending.current = false; return; }
     setOutcome(notice);
-    // Re-read: the list (and the selected record's versions) and the gates show what changed.
-    void read();
+    // Re-read: the list (and the selected record's versions) and the gates show what changed. The
+    // buttons stay locked until the list read after the answer has settled (or RECONCILE_MS
+    // passed), so a second press never acts on the list from before the apply.
     if (selected.current) select(selected.current);
     opts.current.afterApply?.();
+    let timer = 0;
+    await Promise.race([read(), new Promise<void>((resolve) => { timer = window.setTimeout(resolve, RECONCILE_MS); })]);
+    window.clearTimeout(timer);
+    applyPending.current = false;
+    if (mounted.current) setApplying(null);
   }, [read, select]);
 
   return { list, error, refresh, applying, outcome, apply, history, select };
