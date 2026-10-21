@@ -1761,6 +1761,11 @@ set_tests_properties(backend.calibration_record PROPERTIES LABELS "backend;calib
 mib_add_backend_test_executable(calibration_run_test backend/calibration_run_test.cpp)
 add_test(NAME e2e.calibration_run COMMAND $<TARGET_FILE:mib_backend_tests> calibration_run_test)
 set_tests_properties(e2e.calibration_run PROPERTIES LABELS "backend;calibration;e2e;hdf5;safety" TIMEOUT 180)
+# #716 A4a fix: the calibration declarations through the real apply paths (profile apply copies
+# or removes them, processing settings keep them, the central method applies its text verbatim).
+mib_add_backend_test_executable(calibration_profile_apply_test backend/calibration_profile_apply_test.cpp)
+add_test(NAME e2e.calibration_profile_apply COMMAND $<TARGET_FILE:mib_backend_tests> calibration_profile_apply_test)
+set_tests_properties(e2e.calibration_profile_apply PROPERTIES LABELS "backend;calibration;profiles;e2e;safety" TIMEOUT 180)
 
 mib_add_backend_test_executable(method_provenance_test backend/method_provenance_test.cpp)
 add_test(NAME backend.method_provenance COMMAND $<TARGET_FILE:mib_backend_tests> method_provenance_test)

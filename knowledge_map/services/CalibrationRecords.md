@@ -23,6 +23,19 @@
   nominal_e_kpa?, max_cv_percent? (default 10)}`. Absent: a measurement method with policy none,
   so legacy methods are unchanged. `parseCalibrationMethodSpec` is strict;
   `stageConfigDocument` refuses a whole document whose calibration members are malformed.
+- **Where the gate reads them.** The coordinator parses the applied config text
+  (`AppBackend::getLastConfigJson`). Its calibration members (`kCalibrationDeclarationKeys`)
+  always reflect exactly the method that was just applied, on every apply path:
+  - the central method (`applyCentralMethod` -> `applyConfigDocument`) stores the method's full
+    text verbatim;
+  - a local profile (`ProfileStore::apply`) builds a provenance document from the previous one
+    plus the keys it applies; the calibration members are replaced, copied verbatim when the
+    profile declares them (after the strict parse accepted them) and **removed** when it does
+    not, so a declaration never carries over from an earlier method (absent = measurement,
+    policy none);
+  - applying processing settings only (`ProcessingSettingsCommand`,
+    `applyProcessingConfigTransaction`) keeps the current method's declarations unchanged;
+  - the retired Qt shell's `AppConfigWatcher` stores the watched file's full text.
 - **Derivation** (`readCalibrationEvidence` + the pure `deriveCalibration`). The run's valid
   objects (metadata only, as the normal core recorded them). Per object with a finite positive
   area: equivalent diameter `2*sqrt(area/pi)` px. Median, raw MAD and CV (sample SD / mean);
@@ -98,4 +111,7 @@ apply compare-and-set and every refusal, supersede, invalidation, persistence, f
 no change from reads), `e2e.calibration_run` (through the facade with the real coordinator: no
 actuation from listing / polling, the policy gate, the derivation at close, apply refused during
 a run / stale / insufficient, Start identity mismatch, a changed factor, ROI invalidation, an HDF5
-bead round trip), and the bridge tests listed in [[../architecture/Rust-Bridge]] (ABI 42).
+bead round trip), `e2e.calibration_profile_apply` (the declarations through the real apply
+paths: a profile with `required` blocks Start, a calibration profile derives its record, a
+measurement profile without declarations inherits nothing, processing settings keep them, the
+central method text is verbatim), and the bridge tests listed in [[../architecture/Rust-Bridge]] (ABI 42).

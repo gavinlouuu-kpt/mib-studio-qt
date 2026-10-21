@@ -71,6 +71,13 @@ struct CalibrationMethodSpec {
 bool parseCalibrationMethodSpec(const std::string& configJson, CalibrationMethodSpec& out,
                                 std::string* why = nullptr);
 
+// The root members of config.json that parseCalibrationMethodSpec reads. An apply path that
+// builds the applied config text from earlier provenance (ProfileStore) replaces exactly these
+// with the applied method's own: copied when it declares them, removed when it does not, so a
+// declaration never carries over from an earlier method.
+inline constexpr const char* kCalibrationDeclarationKeys[] = {
+    "purpose", "calibration_policy", "calibration_max_age_hours", "calibration_reference"};
+
 // Contract-pinned (bridge-contract.json calibration_record_statuses); append only.
 enum class CalibrationStatus { Proposed = 0, Applied = 1, Superseded = 2, Invalidated = 3, Insufficient = 4 };
 const char* toString(CalibrationStatus status);
