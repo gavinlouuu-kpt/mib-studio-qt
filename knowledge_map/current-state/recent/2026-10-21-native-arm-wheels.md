@@ -9,8 +9,9 @@ ARM64 job had finished.
 
 **Change (`.github/workflows/python-wheel.yml`):**
 - Each matrix entry names its `runner`: x86_64 on `ubuntu-24.04`, ARM64 on `ubuntu-24.04-arm`
-  (GitHub's arm64 runner, free for public repositories). The QEMU setup step is gone, and the
-  ARM64 job cap drops from 120 to 30 minutes. The coverage is the same: the same cibuildwheel
+  (GitHub's arm64 runner, free for public repositories). The QEMU setup step is gone. PR #772's
+  own run built all four ARM64 wheels in **5 m 40 s** (x86_64 entries 3.4–4.0 m), so the ARM64 job
+  cap drops from 120 to 15 minutes. The coverage is the same: the same cibuildwheel
   selectors, the same in-container import test, and the same 8-wheel release gate.
 - `CIBW_BEFORE_ALL_LINUX` retries the EPEL and dependency install up to four times, running
   `dnf clean all` and waiting 20 s between attempts so fresh metadata picks another mirror. It

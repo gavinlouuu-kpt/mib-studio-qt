@@ -77,7 +77,7 @@ upload artifacts for docs-only pull requests.
 | Sanitizers (each matrix entry) | 60 min | setup 10; configure 4/5; build 35/36; suite 12/13 |
 | Backend CI | 45 min | setup 10; Conan probe 180 s advisory; configure 4/5; combined build 20/21; suite 12/13; PL replay 4/5 |
 | Nightly soak | 60 min | repeat validation before setup; setup 10; configure 4/5; build 20/21; suite 30/31 |
-| Python wheel (x86_64 / ARM64 native) | 20 / 30 min | job-level cap around the unchanged cibuildwheel and test coverage |
+| Python wheel (x86_64 / ARM64 native) | 20 / 15 min | job-level cap around the unchanged cibuildwheel and test coverage |
 
 The soak input is validated as an integer from 1 through 100 before package
 setup; the default remains 40. Its full existing test selection, including
@@ -96,7 +96,8 @@ Observed timing evidence used for these bounds:
 - [Soak run 37456065522](https://github.com/gavinlouuu-kpt/mib-studio-qt/actions/runs/37456065522): compile 12 m 48 s and test 12 m 30 s.
 - [ARM64 wheel run 37568147020](https://github.com/gavinlouuu-kpt/mib-studio-qt/actions/runs/37568147020): all four Python wheels under QEMU took about
   69.5 m, while x86_64 entries took about 3.0–3.8 m. Since 2026-10-21 the ARM64
-  job runs natively on `ubuntu-24.04-arm` (30-minute cap).
+  job runs natively on `ubuntu-24.04-arm`: all four wheels in 5 m 40 s on PR #772
+  (15-minute cap).
 
 These observations prove a need for bounds and retry/churn control, not a
 specific deadlock or a complete billing total. A stale main-checkout view and

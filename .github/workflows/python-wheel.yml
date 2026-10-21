@@ -147,10 +147,10 @@ jobs:
     name: Build + test wheel (${{ matrix.label }})
     needs: validate-source-version
     # ARM64 builds natively on GitHub's arm64 runner (free for public
-    # repositories); under QEMU on x86_64 the all-Python build took 70-95
-    # minutes. All four ARM64 wheels build in one job, so its cap is larger.
+    # repositories): all four wheels in 5 m 40 s (PR #772, run 39603553067),
+    # against 70-95 minutes under QEMU. One job builds all four, hence 15.
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: ${{ matrix.arch == 'aarch64' && 30 || 20 }}
+    timeout-minutes: ${{ matrix.arch == 'aarch64' && 15 || 20 }}
     strategy:
       fail-fast: false
       matrix:
