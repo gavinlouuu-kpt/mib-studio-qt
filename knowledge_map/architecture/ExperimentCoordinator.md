@@ -65,8 +65,11 @@
      gets `Busy`.
   2. Re-evaluate now; `readinessGeneration` mismatch → `StaleReadiness`
      (reconnect, config/background/core/ROI/output change, new fault since
-     the presented preflight). Not ready → `NotReady`. LatestFrame without
-     acknowledgement → `NotReady`.
+     the presented preflight). A declared `calibration_record_id` that is not
+     the applied calibration record in effect at this evaluation (#716 A4a,
+     ABI 42; also one declared while none is in effect) → `InvalidRequest`
+     ("… (mismatch)"), nothing opened. Not ready → `NotReady`. LatestFrame
+     without acknowledgement → `NotReady`.
   3. Freeze the `RunConfigurationSnapshot` from the evaluated candidate
      (start generation, host + wall-clock start time, output path), then the
      snapshot v3 facts (#712): a fresh `run_id` (UUID v4) and
@@ -75,7 +78,11 @@
      PL run id (`RUN_ID`: the SSD run id, otherwise the start time in ms) is
      chosen here too, after the SSD prepare and before the snapshot is written,
      so the snapshot names the id the provider is armed with. The declared
-     identity is copied into `run.v3.identity` as given.
+     identity is copied into `run.v3.identity` as given, except
+     `calibration_record_id`, which is the backend's applied record in effect
+     (`ExperimentReadinessSnapshot::calibrationRecordId`, null when none; #716
+     A4a). A run of a calibration method remembers its method spec and the
+     identity at Start (`activeCalibration_`) for the derivation at close.
   4. Open the HDF5 file + `initializeDatasets()` (`StorageFailed` rolls back
      to Idle), then persist the snapshot **first** via
      `Hdf5Service::writeRunSnapshotJson` (`ProvenanceFailed` closes and
@@ -190,6 +197,15 @@ append only, never renumber.
    wall-clock provenance: a failed write logs an error, the run outcome is
    unchanged, and the file reads its stop reason as unknown.
 6. `closeFile()`.
+6b. A run of a calibration method (#716 A4a): `deriveCalibrationRecord` reads
+   the closed file in a reader of its own (`readCalibrationEvidence`: valid
+   objects, metadata only), hashes it, derives the record
+   (`deriveCalibration`, see [[../services/CalibrationRecords]]) and appends it
+   to the store, `proposed` or `insufficient` (a failed finalization adds the
+   failing `run_finalized` gate). It runs with the lock released while the state
+   is still `Stopping`/`Failed`, so no review reader can open beside it (the
+   facade opens review sources only inside the idle transaction; HDF5 is not
+   thread-safe, #722); it never changes the run outcome.
 7. Restore the realtime mode if Start switched it.
 8. Terminal status: `terminal=true`, `completion` from the reconciled
    accounting (`Failed` for a fatal save error), `finalizationOk=false` if
@@ -232,6 +248,7 @@ thresholds, so a slow trickle of large frames never sits unwritten.
 | `processing.core` | pinned core not active | — |
 | `method.revision` (#398 M2) | applied config.json is a cached central revision that is revoked or not published/superseded (`NotRequired` for a local method or no config) | central revision not validated on this instrument/context, a failed local validation, or unknown instrument |
 | `calibration.pixelToMicron` | factor not positive | — |
+| `calibration.record` (#716 A4a) | the applied method's `calibration_policy` is `required` and no applied record is in effect (none applied, the factor changed since the apply, or derived under another setup); `Unavailable` when the camera/ROI identity is unknown or the store cannot be read; a malformed method fails closed. `NotRequired` for policy `none` (legacy methods) and for a calibration method itself. An identity change first appends the applied record's `invalidated` version (hard, once). Fix names the real action: "run the calibration method", "apply proposed record <id> (calibration_apply)…", or "re-apply record <id>…" | policy `warn` with the same conditions; the applied record is older than `calibration_max_age_hours` (soft: also under `required`); its age cannot be determined (clock behind) |
 | `processing.background` | — | no background image |
 | `trigger.output` | sorting enabled but TriggerService not bound to the running session (`NotRequired` when sorting is off) | — |
 | `rf.generator` | sorting enabled and the configured [[../services/RfGeneratorService]] link is down, or the SSG3021X is mis-armed (RF off, pulse mod off, trigger mode not external, source not internal, zero width — reason lists them); `NotRequired` when sorting is off or `rf_generator.enabled` is false or absent (bundled defaults included) | — |
@@ -315,10 +332,14 @@ does no device I/O except the PZ7035 strobe registers (memory-mapped):
   written, autofocus on); the device mutex is held across serial I/O, so no
   backend kind or fresh read is taken.
 - `pl_run_id`: the id armed into the PL (null for a host run).
-- `experiment_id`, `run_index`, `sample_ref`, `operator`, `calibration_record_id`:
-  the request's `declared.identity` (ABI 39), null when not declared; the
-  operator is recorded with `assurance: "selected"` (the client's selection,
-  #393 phase 1, not authentication).
+- `experiment_id`, `run_index`, `sample_ref`, `operator`: the request's
+  `declared.identity` (ABI 39), null when not declared; the operator is
+  recorded with `assurance: "selected"` (the client's selection, #393 phase 1,
+  not authentication).
+- `calibration_record_id` (since ABI 42, #716 A4a): the backend's applied
+  calibration record in effect at the Start's readiness evaluation (identity
+  matches, its factor is the current factor), null when none. A declared id is
+  only a check (step 2): it never reaches the snapshot.
 
 ## Threading
 

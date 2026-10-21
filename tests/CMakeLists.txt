@@ -1750,6 +1750,18 @@ mib_backend_test_link(registry_method_test PRIVATE Threads::Threads)
 add_test(NAME profiles.registry_method COMMAND $<TARGET_FILE:mib_backend_tests> registry_method_test)
 set_tests_properties(profiles.registry_method PROPERTIES LABELS "backend;profiles;roundtrip;fault-injection" TIMEOUT 60)
 
+# #716 A4a (bridge ABI 42): the calibration run's pure parts (method spec, derivation on synthetic
+# bead runs, the calibration.record gate) and the append-only store (apply compare-and-set and its
+# refusals, supersede, invalidation, persistence, fault injection).
+mib_add_backend_test_executable(calibration_record_test backend/calibration_record_test.cpp)
+add_test(NAME backend.calibration_record COMMAND $<TARGET_FILE:mib_backend_tests> calibration_record_test)
+set_tests_properties(backend.calibration_record PROPERTIES LABELS "backend;calibration;roundtrip;fault-injection;safety" TIMEOUT 30)
+# #716 A4a: the calibration run end to end through the facade (derivation at close, apply and its
+# refusals during a run, Start identity mismatch, factor change, ROI invalidation, no actuation).
+mib_add_backend_test_executable(calibration_run_test backend/calibration_run_test.cpp)
+add_test(NAME e2e.calibration_run COMMAND $<TARGET_FILE:mib_backend_tests> calibration_run_test)
+set_tests_properties(e2e.calibration_run PROPERTIES LABELS "backend;calibration;e2e;hdf5;safety" TIMEOUT 180)
+
 mib_add_backend_test_executable(method_provenance_test backend/method_provenance_test.cpp)
 add_test(NAME backend.method_provenance COMMAND $<TARGET_FILE:mib_backend_tests> method_provenance_test)
 set_tests_properties(backend.method_provenance PROPERTIES LABELS "backend;profiles;contract" TIMEOUT 30)

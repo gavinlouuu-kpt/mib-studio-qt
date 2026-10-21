@@ -824,7 +824,7 @@ int main()
             std::string why;
             MIB_REQUIRE(rec::parseStartRequestJson(
                             R"({"experiment_id":"3f2a9c1e-7b4d-4e8a-9c2f-1a2b3c4d5e6f","run_index":1,"sample_ref":"S1",
-                                "operator":{"name":"Alice"},"calibration_record_id":"cal-7",
+                                "operator":{"name":"Alice"},
                                 "annotation":{"condition":"vehicle","experimental_unit":"donor A",
                                 "concentration":{"value":0,"unit":"uM"},"free":{"passage":"4"}}})",
                             declared, &why),
@@ -850,6 +850,17 @@ int main()
                 return recorded;
             };
 
+            // A declared calibration record must be the applied record in effect (#716 A4a): none is
+            // applied here, so declaring one is a mismatch, refused before anything is opened.
+            {
+                rec::StartRequestIdentity withRecord = declared;
+                withRecord.identity.calibrationRecordId = "cal-7";
+                const auto [mismatchPath, mismatch] = startWith("calibration_mismatch.h5", withRecord);
+                MIB_EXPECT(mismatch.outcome == ExperimentStartOutcome::InvalidRequest &&
+                               mismatch.message.find("calibration_record_id") != std::string::npos &&
+                               mismatch.message.find("mismatch") != std::string::npos && !fs::exists(mismatchPath),
+                           "a declared calibration record with none applied is refused: " + mismatch.message);
+            }
             const auto [declaredPath, started] = startWith("declared_run.h5", declared);
             MIB_REQUIRE(started.started(), "a declared run starts: " + started.message);
             MIB_EXPECT(started.run.v3.identity.sampleRef == std::optional<std::string>("S1"),
@@ -859,8 +870,9 @@ int main()
             MIB_EXPECT(id.experimentId == declared.identity.experimentId && id.runIndex == std::optional<uint32_t>(1) &&
                            id.sampleRef == std::optional<std::string>("S1") && id.selectedOperator &&
                            id.selectedOperator->name == std::optional<std::string>("Alice") && !id.selectedOperator->id &&
-                           id.calibrationRecordId == std::optional<std::string>("cal-7"),
-                       "the identity is recorded as declared (operator id not declared: unknown)");
+                           !id.calibrationRecordId,
+                       "the identity is recorded as declared (operator id not declared: unknown; no calibration "
+                       "record applied: null)");
             MIB_EXPECT(recorded.annotation && recorded.annotationSchemaVersion == 1 &&
                            recorded.annotation->condition == std::optional<std::string>("vehicle") &&
                            recorded.annotation->concentration && recorded.annotation->concentration->value == 0.0 &&
