@@ -98,9 +98,22 @@ Preferences…** when the file records none). Untick that option to use the
 default settings instead, which check objects at 0.4886 µm per pixel. AVI
 and image-folder sources always use the defaults.
 
-The new file records the factor it was made with, so the status bar shows
-that factor, not "(fallback)", when it opens. The message at the end of the
-job also names it, for example "px→µm 0.2500 recorded".
+The new file records the factor it was made with. When that is the file's
+own factor, the status bar shows it, not "(fallback)", when the new file
+opens. When the file recorded none (or you used the default settings), the
+new file says so and opens with "(fallback)". The message at the end of the
+job also names the factor, for example "px→µm 0.2500 recorded".
+
+Young's modulus (E) is computed with the E-modulus look-up table the
+recording used, never another one. The message names it, for example
+"E-LUT scaled_isoelastic_data_LUT_6.16-4.24 bundled (sha256 8a86b2beef4f)
+(the source run's)". If the recording used a table this version does not
+have, the regeneration stops with a message that names it, and nothing is
+written. If the recording had no table loaded, the new file has no E
+values either ("E not computed"). The new file records which table it used;
+when that is the recording's own table (or none), regenerating it again uses
+the same one. Files recorded before the table was
+recorded keep the earlier behaviour: YOFO Review computes no E for them.
 
 Regenerating never replaces a file. **Save as…** suggests a name that is
 not taken yet (`<name>_remasked.h5`, then `_2`, `_3`, …). If you pick a file

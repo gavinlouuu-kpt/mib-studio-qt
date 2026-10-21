@@ -48,7 +48,9 @@ retries from archive.ubuntu.com when the runner's Azure mirror crawls), Conan
 (`conan: "true"`), the MindVision SDK and assets; `backend-ci`, `bridge-ci`,
 `desktop-ci`, `review-ci` (YOFO Review, [[../frontend/YofoReview]]; builds
 `mib_review_core`, the Qt-free review library [[../services/ReviewSession]]
-that `mib_backend` and the review bridge link),
+that `mib_backend` and the review bridge link; since #764 it compiles in the
+bundled E-LUT's bytes through `cmake/GenerateEmbeddedText.cmake`, so YOFO
+Review needs no resources folder to recompute E with it),
 `sanitizers`, `soak`, `exporter-soak`, `python-wheel` (Linux)
 and `network-tests` all use it, and `grep apt-get .github/workflows` should
 match nothing. `network-tests.yml` (nightly + manual) runs

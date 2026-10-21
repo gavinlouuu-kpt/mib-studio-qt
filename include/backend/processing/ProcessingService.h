@@ -619,6 +619,12 @@ public:
         // Frame coordinates; h == 0 is no band (the config's channel_band_*
         // then apply as given). Used only with auto_roi_from_background.
         std::optional<Roi> channelBand;
+        // The E-LUT for Young's modulus and an E-gated target group (#764:
+        // a source run's own table in reanalysis). Unset: the service's own.
+        // Set: this table, where null or an unloaded table computes no E (as
+        // a run that loaded none: E stays 0, E gates cannot pass). The caller
+        // keeps the table alive for the call.
+        std::optional<const EModulusLut*> eModulusLut;
     };
 
     // Process each image in order and emit one ProcessedFrame per detected

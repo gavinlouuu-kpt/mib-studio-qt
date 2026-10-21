@@ -385,7 +385,7 @@ int main()
         auto o = regenerate(at25, td / "yofo_recorded.h5", true);
         MIB_EXPECT(allObjects(o, true, true), "recorded settings: validity and target group at the recorded 0.25");
         MIB_EXPECT(o.recordedFactor && near(*o.recordedFactor, kRecorded), "the output records 0.25");
-        MIB_EXPECT(done.message.find("; px→µm 0.2500 recorded)") != std::string::npos, "message: " + done.message);
+        MIB_EXPECT(done.message.find("; px→µm 0.2500 recorded; ") != std::string::npos, "message: " + done.message);
         {
             ReviewSession reopened;
             MIB_REQUIRE(reopened.open((td / "yofo_recorded.h5").string()), "reopen regenerated");
@@ -395,12 +395,12 @@ int main()
         o = regenerate(at25, td / "yofo_default.h5", false);
         MIB_EXPECT(allObjects(o, false, false), "default settings: at 0.4886, invalid");
         MIB_EXPECT(o.recordedFactor && near(*o.recordedFactor, kDefault), "the default output records 0.4886");
-        MIB_EXPECT(done.message.find("; px→µm 0.4886 default)") != std::string::npos, "message: " + done.message);
+        MIB_EXPECT(done.message.find("; px→µm 0.4886 default; ") != std::string::npos, "message: " + done.message);
         session.setFallbackPixelToMicron(kRecorded);
         o = regenerate(none, td / "yofo_fallback.h5", true);
         MIB_EXPECT(allObjects(o, true, true) && o.recordedFactor && near(*o.recordedFactor, kRecorded),
                    "a file without a factor: the session's fallback 0.25");
-        MIB_EXPECT(done.message.find("; px→µm 0.2500 fallback: the file records none)") != std::string::npos,
+        MIB_EXPECT(done.message.find("; px→µm 0.2500 fallback: the file records none; ") != std::string::npos,
                    "message: " + done.message);
         // Two files in turn on one kernel: each its own factor, nothing carried over.
         o = regenerate(at4886, td / "yofo_seq_1.h5", true);

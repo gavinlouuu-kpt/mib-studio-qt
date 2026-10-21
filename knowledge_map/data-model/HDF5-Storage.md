@@ -16,11 +16,22 @@
   read back by `readRecordedProcessingConfig`), ROI, optional `background` image,
   `config_json` (raw JSON string: a capture's runtime config document, a
   regenerated / reanalysed file's `{"image_processing": …,
-  "pixel_to_micron_factor": …}`; its `image_processing.target_group` is the
-  recorded target group, which no `processing_config_*` attribute carries,
-  #758), `pixel_to_micron` (double, regenerated / reanalysed files only since
-  #758: the µm per pixel their objects were validated at; captures record
-  theirs in the run snapshot), plus processing-core provenance:
+  "pixel_to_micron_factor": …, "pixel_to_micron_source": …}`; its
+  `image_processing.target_group` is the recorded target group, which no
+  `processing_config_*` attribute carries, #758), `pixel_to_micron` (double,
+  regenerated / reanalysed files only since #758: the µm per pixel their
+  objects were validated at; captures record theirs in the run snapshot) with
+  `pixel_to_micron_source` (UTF-8 string since #764: `recorded` = the source
+  run's own factor, `operator` = supplied for this output, `fallback` = a host
+  default or fallback because the source records none; review takes only
+  `recorded` / `operator`, or a file without the attribute, as the file's
+  calibration), `emodulus_lut_json` (UTF-8 JSON, regenerated / reanalysed
+  files since #764: the snapshot v3 `emodulus_lut` shape plus `provenance`,
+  `recorded` = the source run's own record carried over, `host` = the LUT the
+  host computed E with for a source that recorded none, `loaded` false when it
+  had none; also mirrored as `emodulus_lut` in `config_json`; read by
+  `recording::readFileEModulusLut` after the snapshot record), plus
+  processing-core provenance:
   `processing_core_version`, `processing_contract_version`,
   `processing_engine_abi_version`, `processing_core_sha256`,
   `processing_manifest_sha256`, `processing_release_tag`,

@@ -903,10 +903,12 @@ attach to):
   record's stored row next to what the session's kernel finds in its image
   now → `ReviewReprocessResult { ok, message, settings,
   used_recorded_settings, settings_label, core_version, core_source,
-  pixel_to_micron, emodulus_recomputed, stored, reprocessed, has_match,
-  match_index, object_count_differs, truncated }`; it runs at the file's
-  recorded px→µm (or the default, for default settings) on an instance of
-  its own;
+  pixel_to_micron, emodulus_recomputed, emodulus_lut, emodulus_lut_sha256,
+  stored, reprocessed, has_match, match_index, object_count_differs,
+  truncated }`; it runs at the file's recorded px→µm (or the default, for
+  default settings) on an instance of its own, with the run's own E-LUT
+  (review ABI 4, #764: `emodulus_lut` names it, `emodulus_lut_sha256` is its
+  hash, both empty when E was not recomputed; `review.rs` sends `null`);
   `settings` a `review_reprocess_record.settings` value (recorded 0,
   default 1), at most `max_objects` = 64 rows; never writes; refused while a
   job runs; through `ReviewJobs::reprocessRecord`, see
@@ -944,9 +946,10 @@ attach to):
   absent; `snapshot_unreadable` / `annotation.unreadable` for an attribute
   that is not a JSON object.
 - **Contract.** YOFO Review has its own versioned contract,
-  `contract/review-contract.json` (`review_abi_version` 3 since #717 B3b,
-  2 since B1a; v1 was the ReviewSession surface; 4 and above are reserved
-  for later steps on #717), so the shared
+  `contract/review-contract.json` (`review_abi_version` 4 since #764: the
+  reprocess reply names its E-LUT; 3 since #717 B3b, 2 since B1a; v1 was the
+  ReviewSession surface; 5 and above are free for later steps, S12
+  included), so the shared
   `bridge-contract.json` is never touched for it: `run_identity` and
   `review_probe` (prose + `max_paths`, rendered as `REVIEW_PROBE` and
   checked against `ReviewTypes.h` `kReviewProbeMaxPaths` by the generator),

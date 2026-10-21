@@ -162,14 +162,29 @@ regenerate with the recorded settings selects the target group the capture
 used; a file without the document (or a malformed one) keeps the caller's
 values (the default: off), as before.
 
-`writeAnalysisPixelToMicron(factor)` / `readAnalysisPixelToMicron()` (#758)
-store `/experiment_info @pixel_to_micron`, a scalar double: the µm per pixel a
-regenerated or reanalysed file's objects were validated at
-(`batch_masks::saveMasksToHdf5` writes it). The writer refuses a factor that
-is not finite and positive and needs `writeExperimentInfo` first; the reader
-returns `nullopt` when it is missing, not a finite positive float scalar, or
-unreadable. `ReviewSession::recordedPixelToMicron` reads it when the file has
-no run snapshot factor.
+`writeAnalysisPixelToMicron(factor, source)` / `readAnalysisPixelToMicron()`
+(#758) store `/experiment_info @pixel_to_micron`, a scalar double: the µm per
+pixel a regenerated or reanalysed file's objects were validated at
+(`batch_masks::saveMasksToHdf5` writes it). Since #764 the writer also stores
+`@pixel_to_micron_source` (`kPixelToMicronSourceRecorded` / `Operator` /
+`Fallback`: "recorded", "operator", "fallback"), read back by
+`readAnalysisPixelToMicronSource()` (nullopt when absent). The writer refuses
+a factor that is not finite and positive or an unknown source, and needs
+`writeExperimentInfo` first; the reader returns `nullopt` when the factor is
+missing, not a finite positive float scalar, or unreadable.
+`ReviewSession::recordedPixelToMicron` reads it when the file has no run
+snapshot factor, unless the source says it was a fallback.
+
+`writeEModulusLutJson(json)` / `readEModulusLutJson()` (#764) store
+`/experiment_info @emodulus_lut_json`, a UTF-8 string written by
+`saveMasksToHdf5`: the E-LUT record of a regenerated file (shape and
+`provenance` in `RunProvenanceRecord.h`, `eModulusLutRecordJson` /
+`parseEModulusLutRecordJson`; `readFileEModulusLut` reads the snapshot record
+first, then this).
+
+`readScalarStringAttribute(group, name)` and the recorded config document
+read share one reader of scalar string attributes (`readGroupStringAttribute`
+in `Hdf5Service.cpp`, #764; caps 1 MiB and 16 MiB as before).
 
 `readRecordedProcessingContract` is the narrow export-reader path. It checks
 the root, `/experiment_info`, `/recording_info`, and `/run_provenance` groups,
