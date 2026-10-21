@@ -9,15 +9,22 @@
 // same error on every tick.
 //
 // Now the first UNKNOWN_COMMAND answer to a review command marks the review
-// commands unavailable for the page's lifetime: the review bridge refuses
-// every later review call locally with ReviewUnavailableError (nothing is
-// sent, nothing is logged by the server), the shell says so in plain words,
-// and the job-event poll stops. A reply marks them available. The Tauri
-// shells serve every review command, so there the state only ever becomes
+// commands unavailable on that connection: the review bridge refuses every
+// later review call locally with ReviewUnavailableError (nothing is sent,
+// nothing is logged by the server), the shell says so in plain words, and
+// the job-event poll stops. A reply marks them available. The Tauri shells
+// serve every review command, so there the state only ever becomes
 // "available".
+//
+// The answer holds for one connection only: the server may be restarted or
+// upgraded while the page is open. A lost connection, a new session (another
+// client id) or the notice's Retry moves "unavailable" to "checking"; the
+// shell probes again (`review_abi_version`), and only a reply makes them
+// available and lets the poll run again.
 import { useSyncExternalStore } from "react";
+import type { SessionSource, SessionState } from "../transport/Transport";
 
-export type ReviewAvailabilityState = "unknown" | "available" | "unavailable";
+export type ReviewAvailabilityState = "unknown" | "available" | "unavailable" | "checking";
 
 export interface ReviewAvailability {
   state: ReviewAvailabilityState;
@@ -57,6 +64,10 @@ export function isReviewUnavailable(error: unknown): boolean {
 
 let current: ReviewAvailability = { state: "unknown", command: "" };
 const listeners = new Set<() => void>();
+// The connection the server's UNKNOWN_COMMAND came on (its client id, when
+// the transport has sessions) and the session source being watched.
+let watched: SessionSource | undefined;
+let unavailableOn: number | undefined;
 
 function set(next: ReviewAvailability) {
   if (next.state === current.state && next.command === current.command) return;
@@ -72,9 +83,43 @@ export const reviewAvailability = {
       listeners.delete(listener);
     };
   },
-  /** Back to "unknown" (tests; a shell that wants to probe again). */
+  /** Back to "unknown" (tests). */
   reset: () => set({ state: "unknown", command: "" }),
+  /** Ask again: "unavailable" becomes "checking" until the shell's probe
+   * answers (the notice's Retry, a new connection). No-op otherwise. */
+  recheck: () => {
+    if (current.state === "unavailable") set({ state: "checking", command: current.command });
+  },
 };
+
+/** Whether the job-event poll may run: not while the commands are unavailable
+ * or being checked again ("unknown" keeps the boot order of the shells). */
+export function reviewPollAllowed(state: ReviewAvailabilityState): boolean {
+  return state === "unknown" || state === "available";
+}
+
+/** A connection change that may have changed the server: the connection was
+ * lost (empty session) or a new one has another client id. A handover (only
+ * the controller changes) is the same connection. */
+function connectionChanged(next: SessionState): boolean {
+  if (next.clientId === undefined) return next.controllerId === undefined;
+  return next.clientId !== unavailableOn;
+}
+
+/** Watch the transport's connection (the WebSocket session; the Tauri
+ * transport has none): while the commands are unavailable, a lost or new
+ * connection asks again (`recheck`). Returns the unsubscribe. */
+export function watchReviewConnection(session: SessionSource | undefined): () => void {
+  if (!session) return () => {};
+  watched = session;
+  const stop = session.subscribe((next) => {
+    if (current.state === "unavailable" && connectionChanged(next)) reviewAvailability.recheck();
+  });
+  return () => {
+    stop();
+    if (watched === session) watched = undefined;
+  };
+}
 
 /** Run one review command through the availability gate: refused locally once
  * the commands are known unavailable; an UNKNOWN_COMMAND answer marks them
@@ -84,10 +129,13 @@ export async function gateReviewCommand<T>(command: string, call: () => Promise<
   if (current.state === "unavailable") throw new ReviewUnavailableError(command);
   try {
     const value = await call();
-    if (current.state === "unknown") set({ state: "available", command: "" });
+    if (current.state === "unknown" || current.state === "checking") set({ state: "available", command: "" });
     return value;
   } catch (e) {
-    if (isUnknownCommand(e)) set({ state: "unavailable", command });
+    if (isUnknownCommand(e)) {
+      unavailableOn = watched?.get().clientId;
+      set({ state: "unavailable", command });
+    }
     throw e;
   }
 }

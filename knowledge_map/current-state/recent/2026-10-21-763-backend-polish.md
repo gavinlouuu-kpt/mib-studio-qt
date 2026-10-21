@@ -10,8 +10,10 @@ other review commands with `UNKNOWN_COMMAND: <name>` (#512 S11 has not landed).
 The page showed the backend as ready, listed an empty folder and logged the
 same error five times a second. Every `reviewBridge` call now goes through
 `gateReviewCommand` (`desktop/src/review/reviewAvailability.ts`): the first
-UNKNOWN_COMMAND marks the review commands unavailable, and later calls are
-refused locally (`ReviewUnavailableError`, nothing sent). `ReviewApp` shows a
+UNKNOWN_COMMAND marks the review commands unavailable on that connection, and
+later calls are refused locally (`ReviewUnavailableError`, nothing sent). A
+lost or new connection (a server restart or upgrade) or the notice's Retry
+probes again; only a reply enables the panel and the poll. `ReviewApp` shows a
 plain notice instead of a usable Open, skips the launch file and the Tauri
 open-file listener in a browser, and `useReviewJobs` stops polling with one log
 line. The Tauri shells only ever reach "available". See

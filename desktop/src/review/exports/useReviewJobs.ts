@@ -9,14 +9,16 @@
 //
 // A server without the review commands (yofo-studio-server before #512 S11)
 // answers the poll with UNKNOWN_COMMAND: the poll stops at once and says so
-// once, instead of failing five times a second (#763 F7). Any other error is
-// logged when it changes, not on every tick.
+// once, instead of failing five times a second (#763 F7). It starts again
+// only after the shell's probe finds the commands served (a new connection
+// or Retry; `reviewAvailability.ts`). Any other error is logged when it
+// changes, not on every tick.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { OPERATION_STATES } from "../../bridgeContract";
 import { REVIEW_OPERATION_KINDS } from "../reviewContract";
 import { isTransportUnsupported } from "../../transport";
 import { reviewBridge, unsupportedText, type ReviewCmdResult, type ReviewEvent } from "../reviewBridge";
-import { isReviewUnavailable, useReviewAvailability } from "../reviewAvailability";
+import { isReviewUnavailable, reviewPollAllowed, useReviewAvailability } from "../reviewAvailability";
 
 const POLL_MS = 200;
 const BUFFERED_IDS = 64;
@@ -142,7 +144,7 @@ export function useReviewJobs(ready: boolean, log: (line: string) => void): Revi
   );
 
   useEffect(() => {
-    if (!ready || availability === "unavailable") return;
+    if (!ready || !reviewPollAllowed(availability)) return;
     let stopped = false;
     let lastError = "";
     const id = window.setInterval(async () => {

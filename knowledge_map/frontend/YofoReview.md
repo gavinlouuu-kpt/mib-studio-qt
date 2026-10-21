@@ -137,10 +137,18 @@ the review commands in `mib-app-commands` and a binary request path for
 review command with the string `UNKNOWN_COMMAND: <name>` (the dispatcher's
 error, which `wsTransport` rejects with). Every `reviewBridge` call goes
 through `gateReviewCommand` (`reviewAvailability.ts`): the first
-UNKNOWN_COMMAND marks the review commands unavailable for the page's life
+UNKNOWN_COMMAND marks the review commands unavailable on that connection
 (S11 registers them as one set), and later review calls are refused locally
 with `ReviewUnavailableError` (no request, no server log); a reply marks them
-available, which is all that happens in the Tauri shells. The boot probe
+available, which is all that happens in the Tauri shells. The answer holds
+for one connection: the server may be restarted or upgraded with the page
+open. `watchReviewConnection` (on `transport.session`) turns "unavailable"
+into "checking" when the connection is lost or a new one has another client
+id (a handover is not a new connection), and so does the notice's **Retry**.
+While checking, `ReviewApp` probes `review_abi_version` again, retrying with
+backoff (1 s doubling to 30 s) while the server cannot be reached; only a
+reply enables the panel and the job poll again, and UNKNOWN_COMMAND leaves
+them off with nothing more sent on that connection. The boot probe
 (`review_abi_version`) decides it before any file is opened: `ReviewApp`
 shows `REVIEW_UNAVAILABLE_TEXT` (role `alert`), passes `ready` false to the
 panel (Open and the jobs stay disabled), skips the `?open=` / launch file and
@@ -150,7 +158,7 @@ server" once. `useReviewJobs` does not poll while they are unavailable, stops
 at the first UNKNOWN_COMMAND answer with one log line, and logs any other
 repeated poll error once instead of five times a second. Pinned by
 `reviewAvailability.test.tsx` (a real `wsTransport` over a fake server that
-knows only the boot commands). Before this the page showed the backend as
+knows only the boot commands, then restarts with or without them; Retry). Before this the page showed the backend as
 ready, an empty folder, and the same error at 5 Hz. On the workspace branch
 the R1 shell's "Backend ready" chip and the Open view's folder listing take
 the same state (`useReviewAvailability`) after the develop sync.
@@ -461,8 +469,8 @@ Help ▸ About with the stamped version from `@tauri-apps/api/app`), the
 panel, a status bar and the log drawer. **Preferences** holds the fallback
 px→µm (`localStorage` `yofo.review.pixelToMicron`, default 0.4886 like the Qt tab) passed to
 the panel. No camera, experiment or hardware state exists. Against a server
-without the review commands it shows the unavailable notice instead of a
-usable Open (see **Transport**, #763 F7).
+without the review commands it shows the unavailable notice (with Retry)
+instead of a usable Open (see **Transport**, #763 F7).
 
 ## CI
 
