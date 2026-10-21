@@ -107,38 +107,84 @@ namespace backend::review
         }
     } // namespace
 
+    namespace
+    {
+        struct Component
+        {
+            cv::Rect box;
+            cv::Mat pixels; // 255 on the component's pixels, cropped to `box`
+        };
+
+        // The 8-connected components of `binary` (CV_8U, non-zero is
+        // foreground) with a pixel inside `window`, each traced in full. Only
+        // those components are visited, on this thread: OpenCV's parallel
+        // labelling hands buffers between TBB threads, which the thread
+        // sanitizer cannot follow.
+        std::vector<Component> componentsMeeting(const cv::Mat &binary, const cv::Rect &window)
+        {
+            std::vector<Component> out;
+            cv::Mat visited = cv::Mat::zeros(binary.size(), CV_8U);
+            std::vector<cv::Point> stack;
+            std::vector<cv::Point> members;
+            for (int y = window.y; y < window.y + window.height; ++y)
+            {
+                for (int x = window.x; x < window.x + window.width; ++x)
+                {
+                    if (!binary.at<std::uint8_t>(y, x) || visited.at<std::uint8_t>(y, x)) continue;
+                    members.clear();
+                    stack.assign(1, cv::Point(x, y));
+                    visited.at<std::uint8_t>(y, x) = 1;
+                    int x0 = x, y0 = y, x1 = x, y1 = y;
+                    while (!stack.empty())
+                    {
+                        const cv::Point p = stack.back();
+                        stack.pop_back();
+                        members.push_back(p);
+                        x0 = std::min(x0, p.x);
+                        y0 = std::min(y0, p.y);
+                        x1 = std::max(x1, p.x);
+                        y1 = std::max(y1, p.y);
+                        for (int dy = -1; dy <= 1; ++dy)
+                        {
+                            for (int dx = -1; dx <= 1; ++dx)
+                            {
+                                const int nx = p.x + dx, ny = p.y + dy;
+                                if ((dx == 0 && dy == 0) || nx < 0 || ny < 0 || nx >= binary.cols || ny >= binary.rows)
+                                    continue;
+                                if (!binary.at<std::uint8_t>(ny, nx) || visited.at<std::uint8_t>(ny, nx)) continue;
+                                visited.at<std::uint8_t>(ny, nx) = 1;
+                                stack.emplace_back(nx, ny);
+                            }
+                        }
+                    }
+                    Component c;
+                    c.box = cv::Rect(x0, y0, x1 - x0 + 1, y1 - y0 + 1);
+                    c.pixels = cv::Mat::zeros(c.box.size(), CV_8U);
+                    for (const cv::Point &m : members) c.pixels.at<std::uint8_t>(m.y - y0, m.x - x0) = 255;
+                    out.push_back(std::move(c));
+                }
+            }
+            return out;
+        }
+    } // namespace
+
     bool storedObjectAt(const cv::Mat &mask, const cv::Rect2d &placedBox, const StoredObject &object)
     {
         if (mask.empty() || mask.channels() != 1 || !finiteBox(placedBox)) return false;
-        const cv::Rect2d frame(0, 0, mask.cols, mask.rows);
-        const cv::Rect2d visible = placedBox & frame;
+        const cv::Rect2d visible = placedBox & cv::Rect2d(0, 0, mask.cols, mask.rows);
         if (visible.area() <= 0.0) return false;
+        const int x0 = static_cast<int>(std::floor(visible.x));
+        const int y0 = static_cast<int>(std::floor(visible.y));
+        const int x1 = static_cast<int>(std::ceil(visible.x + visible.width));
+        const int y1 = static_cast<int>(std::ceil(visible.y + visible.height));
+        const cv::Rect window = cv::Rect(x0, y0, std::max(1, x1 - x0), std::max(1, y1 - y0)) &
+                                cv::Rect(0, 0, mask.cols, mask.rows);
         cv::Mat binary;
         cv::compare(mask, 0, binary, cv::CMP_NE);
-        cv::Mat labels, stats, centroids;
-        cv::connectedComponentsWithStats(binary, labels, stats, centroids, 8, CV_32S);
-        const cv::Rect window(static_cast<int>(std::floor(visible.x)), static_cast<int>(std::floor(visible.y)),
-                              std::max(1, static_cast<int>(std::ceil(visible.x + visible.width)) -
-                                              static_cast<int>(std::floor(visible.x))),
-                              std::max(1, static_cast<int>(std::ceil(visible.y + visible.height)) -
-                                              static_cast<int>(std::floor(visible.y))));
-        const cv::Rect inside = window & cv::Rect(0, 0, mask.cols, mask.rows);
-        std::vector<bool> seen(static_cast<std::size_t>(stats.rows), false);
-        for (int y = inside.y; y < inside.y + inside.height; ++y)
+        for (const Component &c : componentsMeeting(binary, window))
         {
-            const int *row = labels.ptr<int>(y);
-            for (int x = inside.x; x < inside.x + inside.width; ++x)
-            {
-                const int label = row[x];
-                if (label <= 0 || seen[static_cast<std::size_t>(label)]) continue;
-                seen[static_cast<std::size_t>(label)] = true;
-                const cv::Rect box(stats.at<int>(label, cv::CC_STAT_LEFT), stats.at<int>(label, cv::CC_STAT_TOP),
-                                   stats.at<int>(label, cv::CC_STAT_WIDTH), stats.at<int>(label, cv::CC_STAT_HEIGHT));
-                if (iou(cv::Rect2d(box), placedBox) * 100.0 < kObjectSpaceMaskCheckMinBoxIouPercent) continue;
-                cv::Mat component;
-                cv::compare(labels(box), label, component, cv::CMP_EQ);
-                if (contoursMatch(component, object)) return true;
-            }
+            if (iou(cv::Rect2d(c.box), placedBox) * 100.0 < kObjectSpaceMaskCheckMinBoxIouPercent) continue;
+            if (contoursMatch(c.pixels, object)) return true;
         }
         return false;
     }

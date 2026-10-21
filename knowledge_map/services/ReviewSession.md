@@ -565,7 +565,9 @@ the origin it implies), in the order of `backend/review/ObjectCoordinates.h`:
    over first and the invalid set (rejected objects, often debris) only to
    fill the rest. Each record is placed as stored and shifted by the ROI
    origin; a placement fits when an 8-connected mask component overlapping
-   it has a bounding box with IoU ≥ 0.8 and, where the record has an area,
+   it (traced on the calling thread from the box's pixels; OpenCV's parallel
+   labelling hands buffers between TBB threads the thread sanitizer cannot
+   follow) has a bounding box with IoU ≥ 0.8 and, where the record has an area,
    a convex-hull area within 15 % of it: a hole's for a Contract 1
    inner-contour object (the science measures the hole and boxes the
    outline, so the component needs a hole), the outline's otherwise
