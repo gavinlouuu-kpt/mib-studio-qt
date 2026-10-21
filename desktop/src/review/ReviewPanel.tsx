@@ -223,10 +223,17 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
     }
   }, [columns]);
 
+  // Only the latest page request fills the table (B3c, Codex round 3): a
+  // page of another set or file that lands late would otherwise become the
+  // selected row, and the record's buttons would ask about the wrong record.
+  // A reset (open, close, set change) retires every page in flight.
+  const rowsSeq = useRef(0);
   const loadRows = useCallback(
     async (valid: boolean, offset: number): Promise<ReviewRows | null> => {
+      const seq = ++rowsSeq.current;
       try {
         const page = await reviewBridge.rows(valid, offset, METRICS_PAGE_SIZE);
+        if (seq !== rowsSeq.current) return null;
         if (page.valid) {
           setRows(page);
           setRowsOffset(offset);
@@ -278,6 +285,7 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
   );
 
   const resetView = useCallback(() => {
+    rowsSeq.current++;
     scheduler.invalidate("review");
     scheduler.invalidate("viewer");
     setRows(null);

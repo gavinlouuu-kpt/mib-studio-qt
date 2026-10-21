@@ -683,6 +683,10 @@ not record is shown as a value.
   operator moved on is dropped and leaves nothing pending, an older reply
   never replaces a newer one, and a fallback px→µm change drops answers
   computed with the old factor without re-sending (Codex rounds 1 and 2).
+  Records pages carry a sequence too (`loadRows`, Codex round 3): only the
+  latest request fills the table, and a reset (open, close, set change)
+  retires pages in flight, so a late page of the other set or file never
+  becomes the selected record the buttons ask about.
   "Reprocessing writes a new file; this view lists no history" (#754 defers
   regenerate provenance and Compare); **Reprocess into a new file…** opens
   the Regenerate masks dialog, unchanged.

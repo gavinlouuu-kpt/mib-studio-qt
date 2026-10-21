@@ -40,6 +40,8 @@ let pxFactor = 0.25;
 let trackAnswer: ((args: Record<string, unknown>) => unknown) | null = null;
 /** review_reprocess_record: null = the stored record found again. */
 let reprocessAnswer: ((args: Record<string, unknown>) => unknown) | null = null;
+/** Holds the next fetch_review_rows reply of the valid set until released. */
+let holdValidRows: Promise<void> | null = null;
 /** Holds review_reprocess_record's reply until released. */
 let holdReprocess: { promise: Promise<void>; release: () => void } | null = null;
 
@@ -196,7 +198,13 @@ function respond(cmd: string, args: Record<string, unknown>): unknown {
       const offset = Number(args.offset);
       const rows = [];
       for (let i = offset; i < Math.min(total, offset + Number(args.count)); i++) rows.push(row(valid, i));
-      return { valid: true, total: String(total), offset: String(offset), rows };
+      const page = { valid: true, total: String(total), offset: String(offset), rows };
+      if (valid && holdValidRows) {
+        const held = holdValidRows;
+        holdValidRows = null;
+        return held.then(() => page);
+      }
+      return page;
     }
     case "fetch_review_track_rows": {
       if (trackAnswer) return trackAnswer(args);
@@ -323,6 +331,7 @@ beforeEach(() => {
   trackAnswer = null;
   reprocessAnswer = null;
   holdReprocess = null;
+  holdValidRows = null;
   const saved = new Map<string, string>();
   vi.stubGlobal("localStorage", {
     getItem: (k: string) => saved.get(k) ?? null,
@@ -923,6 +932,29 @@ it("drops linked records and a reprocess answer when the fallback px→µm chang
   const after = calls.slice(sent).map((c) => c.cmd);
   expect(after).toContain("review_set_pixel_to_micron");
   for (const cmd of ["fetch_review_track_rows", "review_reprocess_record"]) expect(after, cmd).not.toContain(cmd);
+});
+
+it("a records page of the other set that lands late never becomes the selected record (Codex round 3)", async () => {
+  await mountOpen();
+  await click(button(`Invalid Frames (${INVALID})`));
+  // Back to the valid set: its first page is held while the operator
+  // switches to the invalid set again.
+  let release = () => undefined as void;
+  holdValidRows = new Promise<void>((r) => (release = r));
+  await click(button(`Valid Frames (${VALID})`));
+  expect(holdValidRows).toBeNull(); // the valid page was asked for, and is held
+  await click(button(`Invalid Frames (${INVALID})`));
+  expect(recordName()).toBe("frame 2000 · object 1");
+  release();
+  await settle();
+  expect(recordName()).toBe("frame 2000 · object 1");
+  expect(identityText()).toContain("invalid record 1 of 3");
+  // The buttons ask about the invalid record, not a valid one.
+  await click(button("Show linked records", card("Linked cell records")));
+  expect(calls.filter((c) => c.cmd === "fetch_review_track_rows").map((c) => c.args)).toEqual([{ valid: false, trackId: 0, max: 256 }]);
+  await click(button("Reprocess this record", card("Stored vs reprocessed")));
+  expect(calls.filter((c) => c.cmd === "review_reprocess_record").map((c) => c.args)).toEqual([{ valid: false, index: "0", settings: 0 }]);
+  expect(card("Stored vs reprocessed").querySelector('[data-testid="reprocess-result"]')?.textContent).toContain("Area (px²)");
 });
 
 it("drops a track reply that lands after the operator moved to another track", async () => {
