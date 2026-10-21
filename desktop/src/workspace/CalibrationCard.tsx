@@ -85,7 +85,11 @@ function recordFacts(r: CalibrationRecord, list: CalibrationRecordsList, now: nu
 
 export function CalibrationCard(p: CalibrationCardProps) {
   const { calibration: c, gate } = p;
-  const list = c.list?.valid ? c.list : null;
+  const storeError = c.list?.valid ? c.list.store?.error ?? null : null;
+  // An unreadable store lists nothing: the records and what is in effect are unknown, never "none".
+  const list = c.list?.valid && !storeError ? c.list : null;
+  // The current factor and setup are read even when the store is not.
+  const read = c.list?.valid ? c.list : null;
   const records = list?.records ?? [];
   const inEffect = list ? records.find((r) => r.record_id === list.in_effect_record_id) ?? null : null;
   const applied = list ? records.find((r) => r.record_id === list.applied_record_id) ?? null : null;
@@ -127,17 +131,18 @@ export function CalibrationCard(p: CalibrationCardProps) {
         },
         {
           label: "In effect",
-          value: !list ? (p.experimentActive ? "Unknown · not read while a run is active" : c.error ? `Unknown · ${c.error}` : "Unknown · not read yet")
+          value: !list ? (p.experimentActive ? "Unknown · not read while a run is active" : storeError ? "Unknown · the calibration store cannot be read"
+            : c.error ? `Unknown · ${c.error}` : "Unknown · not read yet")
             : inEffect ? `${inEffect.record_id} · ${factorText(recordFactor(inEffect))}` : "None in effect",
           tone: !list ? "unknown" : inEffect ? "confirmed" : undefined,
         },
-        { label: "Current factor", value: list ? factorText(list.current_factor) : "Unknown", tone: list && typeof list.current_factor === "number" ? undefined : "unknown" },
-        { label: "Current setup", value: list?.current_identity ? `${identityText(list.current_identity)}${list.current_identity.known ? "" : " · unknown, so no record can be confirmed"}` : "Unknown",
-          tone: list?.current_identity?.known ? undefined : "unknown" },
+        { label: "Current factor", value: read ? factorText(read.current_factor) : "Unknown", tone: read && typeof read.current_factor === "number" ? undefined : "unknown" },
+        { label: "Current setup", value: read?.current_identity ? `${identityText(read.current_identity)}${read.current_identity.known ? "" : " · unknown, so no record can be confirmed"}` : "Unknown",
+          tone: read?.current_identity?.known ? undefined : "unknown" },
       ]} />
-      {list?.store?.error ? (
+      {storeError ? (
         <Notice tone="blocked" title="The calibration store cannot be read" data-testid="calibration-store-error">
-          {`${list.store.error}. Every change is refused until it is repaired; nothing in it is lost.`}
+          {`${storeError}. Every change is refused until it is repaired; nothing in it is lost.`}
         </Notice>
       ) : null}
 

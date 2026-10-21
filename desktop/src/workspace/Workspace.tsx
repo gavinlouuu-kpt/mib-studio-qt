@@ -75,11 +75,14 @@ export function Workspace({ brand, source, method, stage, onStage, onExit, servi
   const calibration = useCalibration(showsVerdict && !prepare.experimentActive,
     { controlHeld: prepare.controlHeld, experimentActive: prepare.experimentActive, afterApply: readiness.refresh });
   const calGate = calibrationGate(readiness.snapshot);
-  const calList = calibration.list?.valid ? calibration.list : null;
+  // A store the backend cannot read lists no records: what is in effect is then not known (never "none").
+  const storeError = calibration.list?.valid ? calibration.list.store?.error ?? null : null;
+  const calList = calibration.list?.valid && !storeError ? calibration.list : null;
   const planCalibration: PlanCalibration = {
     read: calList !== null, inEffectId: calList?.in_effect_record_id ?? null,
     factor: calList?.in_effect_record_id && typeof calList.current_factor === "number" ? calList.current_factor : null,
-    error: prepare.experimentActive ? "not read while a run is active" : calibration.error, gate: calGate, refresh: calibration.refresh,
+    error: prepare.experimentActive ? "not read while a run is active" : storeError ? "the calibration store cannot be read" : calibration.error,
+    gate: calGate, refresh: calibration.refresh,
   };
   // One verdict from the checklist, the gates and the operator's confirmation, the same words in
   // the header, in Prepare and beside Start.

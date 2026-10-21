@@ -9,10 +9,11 @@
 // the operator's choice (retry, skip, end); a lost controlling client pauses the flow until the
 // operator resumes it. queueModel.ts is the state machine, usePlan the controller. Rows can be
 // added at any time and reordered or removed only before they have started.
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Button, Card, ConditionSwatch, DataTable, FactList, Notice, StateChip, Stepper, type DataTableColumn } from "@mib/ui";
 import { experimentCounterRows } from "../experimentCounters";
 import {
+  CALIBRATION_REFUSAL_TITLE,
   KEY_LABELS,
   buildStartRequest,
   concentrationText,
@@ -72,6 +73,10 @@ export function QueuePlan({ plan, lockedReason, verdict, blockers, cameraMode, o
   const selBuild = buildStartRequest(draft, selIndex, plannedRunIndex(order, q, selIndex) ?? q.nextRunIndex, declaredCalibration(calibration));
   // The calibration record shown as in effect is the one the next Start declares (#716 A4b).
   const declared = declaredCalibration(calibration);
+  // A Start refused for a calibration mismatch reads the calibration again at once, as it says.
+  const calibrationRefused = curState?.failure?.title === CALIBRATION_REFUSAL_TITLE ? curState.failure : null;
+  const refreshCalibration = calibration?.refresh;
+  useEffect(() => { if (calibrationRefused) refreshCalibration?.(); }, [calibrationRefused]);
   const curBuild = curRow ? buildStartRequest(draft, cur, q.nextRunIndex, declared) : null;
   const slots = conditionSlots(draft.rows);
   const confirm = confirmation ? startConfirmation(confirmation) : null;

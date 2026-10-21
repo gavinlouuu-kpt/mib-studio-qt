@@ -38,7 +38,7 @@
 import { EXPERIMENT_STATES, EXPERIMENT_STOP_OUTCOMES, OPERATION_STATES } from "../bridgeContract";
 import type { ExperimentStatus } from "../eventAdapter";
 import { describeRunOutcome, type OutcomeSeverity } from "../runOutcome";
-import { CALIBRATION_CHANGED_TITLE, calibrationChanged, calibrationChangedText, invalidRequestReason, type PlanDraft } from "./planModel";
+import { CALIBRATION_REFUSAL_TITLE, calibrationChanged, calibrationChangedText, invalidRequestReason, type PlanDraft } from "./planModel";
 import type { PlanStarted, PlanStartResult } from "./usePlan";
 
 export type RowPhase =
@@ -202,7 +202,7 @@ function startFailure(ref: string, runIndex: number, r: PlanStartResult): QueueF
     case "refused": {
       const invalid = invalidRequestReason(r.message, r.code);
       if (invalid && calibrationChanged(invalid))
-        return { step: "start", tone: "blocked", title: `Not started · ${CALIBRATION_CHANGED_TITLE.charAt(0).toLowerCase()}${CALIBRATION_CHANGED_TITLE.slice(1)}`, text: calibrationChangedText(invalid) };
+        return { step: "start", tone: "blocked", title: CALIBRATION_REFUSAL_TITLE, text: calibrationChangedText(invalid) };
       return invalid
         ? { step: "start", tone: "blocked", title: `Not started · the backend refused ${ref}'s sheet row`, text: `${invalid.label}: ${invalid.text}. No file was created. Correct the row and press Start again.` }
         : { step: "start", tone: "blocked", title: `Not started · the backend refused the Start of ${ref}`, text: `${r.path ? `${r.path}: ` : ""}${r.message}` };

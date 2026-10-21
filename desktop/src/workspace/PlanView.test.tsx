@@ -567,4 +567,13 @@ describe("the calibration record a Start declares (A4b)", () => {
     await act(async () => startButton()!.click());
     expect(JSON.parse(runStart.mock.calls[1][0])).toMatchObject({ experiment_id: id, run_index: 1, calibration_record_id: "cal-b" });
   });
+
+  it("with the calibration store unreadable, nothing is declared and the record is unknown (Codex round 1)", async () => {
+    calList = { ...calRecordsList(null), store: { revision: 0, max_versions: 2048, error: "unreadable" } };
+    await render();
+    await advance(0);
+    expect($("plan-identity")!.textContent).toContain("Unknown · the calibration store cannot be read · not declared");
+    await act(async () => startButton()!.click());
+    expect(JSON.parse(runStart.mock.calls[0][0])).not.toHaveProperty("calibration_record_id");
+  });
 });

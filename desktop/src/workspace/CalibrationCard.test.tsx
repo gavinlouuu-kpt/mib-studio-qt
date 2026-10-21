@@ -300,4 +300,49 @@ describe("only Apply / Re-apply acts (IPC calls counted)", () => {
     expect($("calibration-facts")!.textContent).toContain("cal-p · 0.53 µm/px");
     expect($("calibration-facts")!.textContent).toContain("Current factor0.53 µm/px");
   });
+
+  it("an older record_get reply never replaces a newer one (Codex round 1)", async () => {
+    list = calList([PROPOSED]);
+    const held: ((v: unknown) => void)[] = [];
+    getAnswer = () => new Promise((resolve) => held.push(resolve));
+    applyAnswer = () => applyReply("cal-p", O.Applied, { previous_factor: 0.5, new_factor: 0.53 });
+    await render();
+    const row = [...$("calibration-list")!.querySelectorAll("tbody tr")].find((r) => r.textContent!.includes("cal-p"))!;
+    await press(row as HTMLElement); // get #1, held
+    await press($("calibration-proposed-cal-p")!.querySelector("button")); // the apply re-reads the versions: get #2
+    expect(held).toHaveLength(2);
+    await act(async () => held[1]({ found: true, message: "", record: PROPOSED, history: [PROPOSED, { ...PROPOSED, version: 2, status: "applied" }] }));
+    await act(async () => held[0]({ found: true, message: "", record: PROPOSED, history: [PROPOSED] })); // the older reply, late
+    await advance(0);
+    expect($("calibration-history")!.textContent).toContain("v2 · applied");
+  });
+
+  it("a list read from before a run is dropped when the card is read again after it (Codex round 1)", async () => {
+    list = calList([PROPOSED]);
+    await render();
+    const held: ((v: unknown) => void)[] = [];
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === "fetch_experiment_readiness") return { transport_version: JSON_TRANSPORT.version, valid: true, ready: false, generation: "3", gates: [NO_PATH] };
+      if (cmd === "calibration_records_list") return new Promise((resolve) => held.push(resolve));
+      throw new Error(`unexpected ${cmd}`);
+    });
+    await advance(PREPARE_READINESS_POLL_MS); // a poll starts and is held
+    await render({ experimentActive: true }); // a run starts: no reads
+    await render({ experimentActive: false }); // it ends: read again
+    await act(async () => held[0](calList([PROPOSED], { current_factor: 0.4444 }))); // the read from before the run answers late
+    await advance(0);
+    expect($("calibration-facts")!.textContent).not.toContain("0.4444");
+    await act(async () => held[held.length - 1](calList([PROPOSED], { current_factor: 0.5 })));
+    await advance(0);
+    expect($("calibration-facts")!.textContent).toContain("Current factor0.5 µm/px");
+  });
+
+  it("an unreadable store is unknown, never None in effect (Codex round 1)", async () => {
+    list = calList([], { store: { revision: 0, max_versions: 2048, error: "/data/instrument_calibration.json is unreadable (bad json)" } });
+    await render();
+    expect($("calibration-facts")!.textContent).toContain("Unknown · the calibration store cannot be read");
+    expect(card().textContent).not.toContain("None in effect");
+    expect($("calibration-store-error")!.textContent).toContain("is unreadable (bad json)");
+    expect($("calibration-facts")!.textContent).toContain("Current factor0.5 µm/px");
+  });
 });

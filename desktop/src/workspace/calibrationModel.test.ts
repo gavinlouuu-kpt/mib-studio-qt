@@ -9,6 +9,7 @@ import {
   applyErrorNotice,
   applyReplyNotice,
   calibrationGate,
+  evidenceFails,
   factorChange,
   factorText,
   failedGates,
@@ -157,5 +158,28 @@ describe("apply outcomes in plain words", () => {
     const lost = applyErrorNotice(new Error("TRANSPORT_LOST"));
     expect(lost.title).toBe("Apply outcome not known");
     expect(lost.text).toContain("reads the records again");
+  });
+});
+
+describe("stored evidence is re-checked, as the backend does (Codex round 1)", () => {
+  it("an applied record whose stored evidence fails is never re-applicable, and says why", () => {
+    const bad = calRecord("cal-a", "applied", { factor: 0.5, gates: [{ id: "max_cv_percent", pass: false, value: 14, limit: 10, reason: null }] });
+    const list = calList([bad], { current_factor: 0.5 });
+    expect(evidenceFails(bad)).toBe(true);
+    expect(applyAvailability(bad, list).action).toBeNull();
+    expect(notInEffectText(bad, list)).toContain("stored evidence fails the minimum-evidence gates");
+    expect(fixAction(gate(G.Fail), list)).toBeNull();
+  });
+
+  it("too few objects, a CV over the limit or no proposal fail the re-check even with every gate passed", () => {
+    expect(evidenceFails(calRecord("x", "proposed", { results: { ...calRecord("x", "proposed").results, valid_objects: 150 } }))).toBe(true);
+    expect(evidenceFails(calRecord("x", "proposed", { results: { ...calRecord("x", "proposed").results, cv_diameter_percent: 11 } }))).toBe(true);
+    expect(evidenceFails(calRecord("x", "proposed", { results: { ...calRecord("x", "proposed").results, proposed_pixel_to_micron: null } }))).toBe(true);
+    expect(evidenceFails(calRecord("x", "proposed"))).toBe(false);
+  });
+
+  it("matching setup and factor but not in effect: the card does not invent a cause", () => {
+    const a = calRecord("cal-a", "applied", { factor: 0.5 });
+    expect(notInEffectText(a, calList([a], { current_factor: 0.5 }))).toBe("The backend does not report it in effect, although its setup and factor match; the calibration gate says why.");
   });
 });

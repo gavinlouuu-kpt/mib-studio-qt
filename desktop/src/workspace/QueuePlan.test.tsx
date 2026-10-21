@@ -670,11 +670,14 @@ describe("the calibration record each queue Start declares (A4b)", () => {
       message: 'invalid start request: calibration_record_id: declared "cal-a" but the applied record is "cal-b" (mismatch)' }) as PlanStartResult);
     await twoSamples();
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    calList = calRecordsList("cal-b");
+    const reads = () => vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === "calibration_records_list").length;
+    const before = reads();
     await press($("queue-start"), "Start S1");
     expect($("queue-step")!.textContent).toContain("Not started · the applied calibration changed since this page read it");
     expect($("queue-step")!.textContent).not.toContain("Correct the row");
-    calList = calRecordsList("cal-b");
-    await act(async () => { await vi.advanceTimersByTimeAsync(2000); }); // the next read
+    expect(reads()).toBeGreaterThan(before); // read again at once, without waiting for the poll (Codex round 1)
+    expect($("plan-calibration-declared")!.textContent).toContain("cal-b · in effect");
     runStart = vi.fn(async (_json: string): Promise<PlanStartResult> => ({ kind: "started", path: "/data/s1.h5", notice: "" }));
     await render();
     await press(button("Start S1"), "Start S1");

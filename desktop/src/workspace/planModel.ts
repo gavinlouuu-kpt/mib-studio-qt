@@ -473,6 +473,9 @@ export function invalidRequestReason(message: string, code?: number): InvalidReq
  *  the calibration was not. */
 export const CALIBRATION_CHANGED_TITLE = "The applied calibration changed since this page read it";
 
+/** The title of the Start refusal for the calibration mismatch, in the Plan and the queue. */
+export const CALIBRATION_REFUSAL_TITLE = `Not started · ${CALIBRATION_CHANGED_TITLE.charAt(0).toLowerCase()}${CALIBRATION_CHANGED_TITLE.slice(1)}`;
+
 /** Whether a backend refusal is the calibration mismatch (key `calibration_record_id`). */
 export const calibrationChanged = (r: InvalidRequestReason | null): boolean => r?.key === "calibration_record_id";
 

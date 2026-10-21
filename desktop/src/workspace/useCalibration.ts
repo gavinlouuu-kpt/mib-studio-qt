@@ -65,6 +65,8 @@ export function useCalibration(active: boolean, options: CalibrationOptions): Ca
   opts.current = options;
   const applyPending = useRef(false);
   const selected = useRef<string | null>(null);
+  // Each record_get gets a token; only the newest request's reply is shown.
+  const historyToken = useRef(0);
   useEffect(() => {
     mounted.current = true;
     return () => { mounted.current = false; };
@@ -91,6 +93,8 @@ export function useCalibration(active: boolean, options: CalibrationOptions): Ca
   }, []);
 
   useEffect(() => {
+    // A read started in an earlier active period (before a run, or another view) is not current.
+    epoch.current += 1;
     if (!active) { setList(null); setError(""); return; }
     void read();
     const id = window.setInterval(() => void read(), PREPARE_READINESS_POLL_MS);
@@ -101,11 +105,13 @@ export function useCalibration(active: boolean, options: CalibrationOptions): Ca
 
   const select = useCallback((recordId: string | null) => {
     selected.current = recordId;
+    const token = ++historyToken.current;
     if (recordId === null) { setHistory(null); return; }
-    setHistory({ recordId, reply: null, error: "" });
+    setHistory((h) => (h?.recordId === recordId ? h : { recordId, reply: null, error: "" }));
+    const current = () => mounted.current && historyToken.current === token;
     bridge.calibrationRecordGet(recordId).then(
-      (reply) => { if (mounted.current && selected.current === recordId) setHistory({ recordId, reply, error: "" }); },
-      (e) => { if (mounted.current && selected.current === recordId) setHistory({ recordId, reply: null, error: String(e) }); },
+      (reply) => { if (current()) setHistory({ recordId, reply, error: "" }); },
+      (e) => { if (current()) setHistory({ recordId, reply: null, error: String(e) }); },
     );
   }, []);
 

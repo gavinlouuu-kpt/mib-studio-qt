@@ -196,8 +196,12 @@ of the quick controls and the sample sheet, until the kit has them).
   Plan share one read). See [[../services/CalibrationRecords]].
   - **Reads.** `calibration_records_list`, polled with the readiness (every 2 s, while Prepare or
     the Plan is shown and no run is active, one request at a time; a read asked for meanwhile runs
-    once it ends). A failed read clears the list, so it reads "Unknown · <error>", never "None".
-    `calibration_record_get` only when the operator selects a record in the list (its versions).
+    once it ends). A failed read clears the list, so it reads "Unknown · <error>", never "None";
+    so does a store the backend cannot read (`store.error`: "Unknown · the calibration store cannot
+    be read", and the Plan declares nothing). A read started before an apply answered, or in an
+    earlier active period (before a run, another view), is dropped. `calibration_record_get` only
+    when the operator selects a record in the list (its versions); only the newest get's reply is
+    shown.
   - **What it shows.** The `calibration.record` gate (label "Calibration record") with its state
     and the backend's `Fix:`; the record in effect (the backend's `in_effect_record_id`, never
     recomputed) with its id, factor, age since it was applied, method and revision, identity
@@ -205,7 +209,8 @@ of the quick controls and the sample sheet, until the kit has them).
     record that is no longer in effect, with why (its factor is not the current one, e.g. after a
     restart, or the setup changed); every proposed record with current → proposed, its evidence
     and whether it is applicable here (a proposal of another setup, or with the identity unknown
-    or no factor reported, is shown with the reason and its button disabled); the newest
+    or no factor reported, is shown with the reason and its button disabled; a record whose stored
+    evidence fails the backend's re-check, `evidenceFails`, gets no button at all); the newest
     insufficient records with their failed gates in plain words ("Valid objects: 120, at least
     200"), never with an Apply; and a plain `DataTable` of every record, newest first (at most 20
     rows), no trend chart. A null stays "Not recorded", never 0.

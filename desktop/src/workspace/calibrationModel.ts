@@ -132,6 +132,22 @@ export function failedGates(r: CalibrationRecord): string[] {
   });
 }
 
+/** Whether a record's stored evidence fails the backend's re-check (CalibrationRecord::
+ *  evidenceSufficient: every gate passed, at least the minimum valid objects, a diameter CV within
+ *  the method's limit, a positive proposal). The backend never trusts a status alone: such a record
+ *  is never in effect and its apply is refused, so the card offers no button for it. */
+export function evidenceFails(r: CalibrationRecord): boolean {
+  const res = r.results ?? ({} as CalibrationRecord["results"]);
+  const minimum = Math.max(finite(r.inputs?.min_valid_objects) ? r.inputs.min_valid_objects : 0, CALIBRATION_RECORDS.min_valid_objects);
+  const limit = r.inputs?.max_cv_percent;
+  const cv = res.cv_diameter_percent;
+  const proposal = res.proposed_pixel_to_micron;
+  return (r.gates ?? []).some((g) => !g.pass)
+    || !finite(res.valid_objects) || res.valid_objects < minimum
+    || !finite(cv) || !finite(limit) || limit <= 0 || cv > limit
+    || !finite(proposal) || proposal <= 0;
+}
+
 export type ApplyAction = "Apply" | "Re-apply";
 
 export interface ApplyAvailability {
@@ -147,6 +163,7 @@ export interface ApplyAvailability {
  *  identity and the current factor must be known, and the identity the record's. */
 export function applyAvailability(r: CalibrationRecord, list: CalibrationRecordsList): ApplyAvailability {
   if (r.status === "insufficient") return { action: null, reason: "an insufficient record is never applicable" };
+  if (evidenceFails(r)) return { action: null, reason: "its stored evidence fails a minimum-evidence gate, so it is never applicable" };
   let action: ApplyAction | null = null;
   if (r.status === "proposed" && r.applicable) action = "Apply";
   else if (r.status === "applied" && list.applied_record_id === r.record_id && list.in_effect_record_id !== r.record_id) action = "Re-apply";
@@ -179,11 +196,14 @@ export function fixAction(g: ReadinessGate | null, list: CalibrationRecordsList 
 
 /** The applied record when it is not in effect: what took it out, in plain words. */
 export function notInEffectText(applied: CalibrationRecord, list: CalibrationRecordsList): string {
+  if (evidenceFails(applied)) return "Its stored evidence fails the minimum-evidence gates, so the backend never puts it in effect and refuses to re-apply it: run the calibration method.";
   const current = list.current_identity;
   if (!current?.known) return "The camera or ROI identity is unknown now, so the applied record cannot be confirmed.";
   const diff = identityDiff(applied.identity, current);
   if (diff) return `It was derived under another setup (${diff}).`;
   const factor = applied.apply?.new_factor;
+  if (finite(factor) && finite(list.current_factor) && Math.abs(factor - list.current_factor) <= 1e-9 * Math.max(Math.abs(factor), Math.abs(list.current_factor)))
+    return "The backend does not report it in effect, although its setup and factor match; the calibration gate says why.";
   return `Its factor ${factorText(factor)} is not the current factor ${factorText(list.current_factor)}: the factor changed after it was applied (a restart restores the method's factor, never the record's). Re-apply it to put it back in effect.`;
 }
 

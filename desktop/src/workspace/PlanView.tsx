@@ -14,7 +14,7 @@ import {
   buildStartRequest,
   conditionSlots,
   concentrationText,
-  CALIBRATION_CHANGED_TITLE,
+  CALIBRATION_REFUSAL_TITLE,
   calibrationChanged,
   calibrationChangedText,
   invalidRequestReason,
@@ -148,7 +148,7 @@ function SinglePlan({ plan, lockedReason, verdict, blockers, cameraMode, onCamer
             { label: "Destination", value: "Chosen when you press Start run" },
           ]} />
           {calibrationRefusal ? (
-            <Notice tone="blocked" title={`Not started · ${CALIBRATION_CHANGED_TITLE.charAt(0).toLowerCase()}${CALIBRATION_CHANGED_TITLE.slice(1)}`} data-testid="plan-calibration-refusal">
+            <Notice tone="blocked" title={CALIBRATION_REFUSAL_TITLE} data-testid="plan-calibration-refusal">
               {calibrationChangedText(calibrationRefusal)}
             </Notice>
           ) : null}
