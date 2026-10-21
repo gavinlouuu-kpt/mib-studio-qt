@@ -59,7 +59,8 @@ overlay so a researcher can refine the experiment while it is still running; the
 Review app owns gates beyond polygon-AND-E, statistics with declared units,
 comparison and fits. Only the brand and the stage list differ.
 The work for the two products is split into two tracks and a shared kit in
-[WORK-SPLIT.md](WORK-SPLIT.md).
+[WORK-SPLIT.md](WORK-SPLIT.md). The branch is not promoted to `develop` until the owner
+approves; see [PROMOTION.md](PROMOTION.md).
 
 ## Prepare means instrument readiness
 
