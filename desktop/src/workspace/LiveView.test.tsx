@@ -14,6 +14,7 @@ import type { MonitoringRow, MonitoringSnapshot } from "../bridge";
 import type { ExperimentStatus } from "../eventAdapter";
 import { chartDomain, chartPosition, liveScatter, STRIP_SHOWN } from "./liveModel";
 import { LiveView } from "./LiveView";
+import { useLiveCells, type LiveCells } from "./useLiveCells";
 import { usePlan, type StopReply } from "./usePlan";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -341,6 +342,23 @@ describe("a client without control only watches", () => {
     // The stops need control too.
     expect(($("live-stop-acquisition") as HTMLButtonElement).title).toContain("does not control the instrument");
     expect(($("live-stop-run") as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe("the cells hook without control", () => {
+  it("sends no pin, unpin or clear even when asked directly, and says why", async () => {
+    const probe: { cells: LiveCells | null } = { cells: null };
+    function Probe() { probe.cells = useLiveCells({ active: true, controlHeld: false, frozen: false, masks: false, toUrl }); return null; }
+    setListing({ ring_capture_epoch: "4", pins: [cell("1", { image: null, no_image_reason: ENDED }), cell("2", { capture_epoch: "4" })] });
+    await act(async () => root.render(<Probe />));
+    await advance(100);
+    const key = { start_generation: "0", capture_epoch: "4", frame_index: "2", object_id: 1 };
+    await act(async () => { await probe.cells!.pin(key); });
+    await act(async () => { await probe.cells!.unpin(key); });
+    await act(async () => { await probe.cells!.clearEnded(); });
+    await act(async () => { await probe.cells!.clearAll(); });
+    expect(calls().filter((c) => CONTROL.includes(c.cmd))).toEqual([]);
+    expect(probe.cells!.notice!.title).toBe("Not sent · this client does not control the instrument");
   });
 });
 
