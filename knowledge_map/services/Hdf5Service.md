@@ -198,7 +198,9 @@ in `Hdf5Service.cpp`, #764; caps 1 MiB and 16 MiB as before).
 the root, `/experiment_info`, `/recording_info`, and `/run_provenance` groups,
 accepts only scalar integer values 1–3, and requires all present copies to
 agree. Arrays, non-integers, unsupported values, and conflicts return false;
-when no contract metadata exists it returns Contract 1 for legacy files.
+when no contract metadata exists it returns Contract 1 for legacy files. The
+optional `recorded` out-parameter (#716 A7a) says whether any marker exists, so
+the run quick look reports a contract only when the file records one.
 
 ## Run accounting (issue #367)
 
