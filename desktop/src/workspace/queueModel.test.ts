@@ -23,6 +23,8 @@ import {
   rowState,
   ownRunActive,
   recordedPath,
+  repeatReason,
+  queueClosedRuns,
   followSingleRun,
   OPERATION_ENDS_KEPT,
   SINGLE_OUTCOME_UNKNOWN,
@@ -647,5 +649,91 @@ describe("the single-sample run, followed by the operation its start reply named
     expect(ends.has("2")).toBe(false);
     expect(ends.has("3")).toBe(true);
     expect([...ends.keys()].pop()).toBe(String(OPERATION_ENDS_KEPT + 2));
+  });
+});
+
+describe("Repeat sample (#716 A7b, the A7 ruling 8): a UI-local event that keeps the identity rules", () => {
+  /** S1 closed (run 1); S2 is current and planned. */
+  const closedS1 = () => run([{ type: "confirm-closed", ref: "S1" }], finalizedS1());
+
+  it("re-queues a closed row as the current row: its run is kept, nextRunIndex is unchanged, the row stays locked", () => {
+    const q0 = closedS1();
+    expect(currentIndex(ORDER, q0)).toBe(1);
+    expect(repeatReason(ORDER, q0, "S1")).toBe("");
+    const q = run([{ type: "repeat", ref: "S1" }], q0);
+    expect(phase(q, "S1")).toBe("planned");
+    expect(currentIndex(ORDER, q)).toBe(0); // the next Start is S1's
+    expect(q.nextRunIndex).toBe(q0.nextRunIndex); // nothing was sent, no index consumed
+    expect(rowState(q, "S1").attempts.map((a) => a.runIndex)).toEqual([1]); // never removed
+    expect(rowEditable(q, "S1")).toBe(false); // its identity is recorded in run 1
+    expect(rowState(q, "S1").history).toEqual([{ runIndex: 1, path: RUN, end: rowState(q0, "S1").end, generation: "1" }]);
+    expect(rowChip(rowState(q, "S1"), false).text).toBe("Repeat planned");
+    expect(plannedRunIndex(ORDER, q, 0)).toBe(2);
+    // The Start of the repeat uses the next index (2); a Start with the old index is refused.
+    expect(phase(run([{ type: "start", ref: "S1", runIndex: 1, generationBefore: "1" }], q), "S1")).toBe("planned");
+    const started = run([
+      { type: "start", ref: "S1", runIndex: 2, generationBefore: "1" },
+      { type: "start-result", ref: "S1", runIndex: 2, generationBefore: "1", result: STARTED("/data/run-2.h5") },
+    ], q);
+    expect(phase(started, "S1")).toBe("running");
+    expect(started.nextRunIndex).toBe(3);
+    expect(rowState(started, "S1").attempts.map((a) => a.runIndex)).toEqual([1, 2]);
+    // The closed runs list keeps run 1 while run 2 runs, then shows both once run 2 is finalized.
+    expect(queueClosedRuns(ORDER, started).map((c) => [c.ref, c.run.runIndex])).toEqual([["S1", 1]]);
+    const done = run([
+      { type: "status", status: active("2", "/data/run-2.h5") },
+      { type: "status", status: closed("2", { output_path: "/data/run-2.h5" }) },
+    ], started);
+    expect(phase(done, "S1")).toBe("finalized");
+    expect(queueClosedRuns(ORDER, done).map((c) => [c.ref, c.run.runIndex, c.run.path, c.confirmed])).toEqual([
+      ["S1", 1, RUN, true], ["S1", 2, "/data/run-2.h5", false],
+    ]);
+  });
+
+  it("re-queues the current finalized row in one step (its close is taken as confirmed)", () => {
+    const q = run([{ type: "repeat", ref: "S1" }], finalizedS1());
+    expect(phase(q, "S1")).toBe("planned");
+    expect(currentIndex(ORDER, q)).toBe(0);
+    expect(rowState(q, "S1").history?.map((h) => h.runIndex)).toEqual([1]);
+  });
+
+  it("is refused while a run or a Start is in flight, ahead of a failure, while paused, once ended, and for a row not closed", () => {
+    // S2 running: not between samples.
+    const s2Running = run([
+      { type: "start", ref: "S2", runIndex: 2, generationBefore: "1" },
+      { type: "start-result", ref: "S2", runIndex: 2, generationBefore: "1", result: STARTED("/data/s2.h5") },
+    ], closedS1());
+    expect(repeatReason(ORDER, s2Running, "S1")).toMatch(/S2 is running/);
+    expect(run([{ type: "repeat", ref: "S1" }], s2Running)).toBe(s2Running);
+    // S2 starting.
+    const s2Starting = run([{ type: "start", ref: "S2", runIndex: 2, generationBefore: "1" }], closedS1());
+    expect(repeatReason(ORDER, s2Starting, "S1")).not.toBe("");
+    // S2 failed: the operator's retry / skip / end comes first.
+    const s2Unknown = run([{ type: "start-result", ref: "S2", runIndex: 2, generationBefore: "1", result: { kind: "unknown", path: "", message: "lost" } }], s2Starting);
+    expect(repeatReason(ORDER, s2Unknown, "S1")).not.toBe("");
+    // Paused, ended.
+    expect(repeatReason(ORDER, run([{ type: "pause", reason: "lost" }], closedS1()), "S1")).toMatch(/paused/);
+    expect(repeatReason(ORDER, run([{ type: "end" }], closedS1()), "S1")).toMatch(/ended/);
+    // Not closed: a planned row, the running S1.
+    expect(repeatReason(ORDER, closedS1(), "S2")).toMatch(/not closed/);
+    expect(repeatReason(ORDER, startedS1(), "S1")).toMatch(/not closed/);
+    // A finalized row only while it is the current one; a repeated row is planned (not closed) again.
+    const repeated = run([{ type: "repeat", ref: "S1" }], closedS1());
+    expect(run([{ type: "repeat", ref: "S1" }], repeated)).toBe(repeated);
+  });
+
+  it("re-queues from a complete queue", () => {
+    const one = ["S1"];
+    const q = run([
+      { type: "start", ref: "S1", runIndex: 1, generationBefore: "0" },
+      { type: "start-result", ref: "S1", runIndex: 1, generationBefore: "0", result: STARTED() },
+      { type: "status", status: active("1") },
+      { type: "status", status: closed("1") },
+      { type: "confirm-closed", ref: "S1" },
+    ], newQueue(), one);
+    expect(currentIndex(one, q)).toBe(-1);
+    const again = run([{ type: "repeat", ref: "S1" }], q, one);
+    expect(currentIndex(one, again)).toBe(0);
+    expect(queueInProgress(one, again)).toBe(true);
   });
 });

@@ -19,6 +19,7 @@ import { BRIDGE_ABI_VERSION, CALIBRATION_APPLY_OUTCOMES, COMMAND_TYPES, EXPERIME
   READINESS_GATE_STATUSES as G, RUN_COMPLETION_STATES } from "../bridgeContract";
 import { DESKTOP_CAPABILITIES } from "../platformCapabilities";
 import { applyReply, calList as calListOf, calRecord } from "./calibrationFixtures";
+import quickLookGolden from "../../../crates/mib-bridge/contract/fixtures/run-quick-look-v1.json";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/app", () => ({ getVersion: vi.fn(async () => "1.2.0") }));
@@ -117,7 +118,7 @@ function respond(variant: Variant, cmd: string, args?: unknown): unknown {
     case "fetch_experiment_status": if (statusFailsAfterStart && startSent) throw new Error("TRANSPORT_LOST");
       return statefulRuns ? { ...status, state: run.state, flushing: run.flushing, terminal: run.terminal, finalization_ok: run.ok, output_path: run.path,
         start_generation: String(run.generation) } : status;
-    case "fetch_review_metadata": return { valid: false, file_open: false, file_path: "", recording_file: false };
+    case "fetch_review_metadata": return { valid: false, file_open: false, file_path: "", recording_file: false, valid_images: { present: false, count: 0 }, invalid_images: { present: false, count: 0 } };
     case "fetch_platform_info": return pz ? { science: "pl", host_processing: false, aravis: true, capabilities: PZ_CAPS } : { science: "host", host_processing: true, aravis: false };
     case "fetch_camera_selection": return { valid: true, configured: true, mode: 0, label: pz ? "PZ7035 IMX426" : "Camera 01", interface_index: 0, device_index: 0, mindvision_index: 0,
       mindvision_config_path: "", camera_script_path: "", mock_frame_dir: "", mock_interval_ms: 33, mock_loop: true };
@@ -171,6 +172,12 @@ function respond(variant: Variant, cmd: string, args?: unknown): unknown {
       if (a.mode === "run") Object.assign(device, { runX: a.x, runY: a.y, runSet: true });
       return cmdResult(COMMAND_TYPES.Camera);
     case "calibration_records_list": return calList;
+    // Opening a recording in the classic Review (the Summary's Open in Review, A7b): refused here, so
+    // the classic Review stays empty.
+    case "load_recording": return { ...cmdResult(COMMAND_TYPES.RecordingLoad), ok: false, message: "not in this mock" };
+    // The run quick look (ABI 44, #716 A7b): each path answered with the golden v3 run, no reference.
+    case "run_quick_look": return { ...quickLookGolden, reference: null, message: "",
+      runs: (a.paths as string[]).map((p) => ({ ...quickLookGolden.runs[0], path: p, delta: null })) };
     case "calibration_apply": return calApply(a);
     case "review_export_status_json":
     case "review_reanalysis_status_json": return JSON.stringify({ state: "idle" });
@@ -710,6 +717,57 @@ describe("the sample queue over the mocked transport (desktop)", () => {
   }
   const acts = () => log.filter((e) => ACTUATING.includes(e.cmd));
   const stops = () => log.filter((e) => e.cmd === "experiment_stop");
+
+  it("Summary (O5/O6, A7b): reads the quick look on S1's close; Repeat sample re-queues S1 as run 2 (same sample_ref, a new file); Open in Review loads the file in the classic Review", async () => {
+    canStart = true;
+    statefulRuns = true;
+    await boot("desktop");
+    await openPlan();
+    await chooseQueue();
+    const id = host.querySelector("[data-testid=plan-experiment-id]")!.textContent!;
+    await typeInto("[data-testid=plan-condition]", "Vehicle");
+    await click(byTestId("queue-add"), "+ Sample");
+    await advance(3000);
+    vi.mocked(save).mockResolvedValueOnce("/data/s1.h5");
+    await click(byTestId("queue-start"), "Start S1");
+    await advance(3000);
+    await click(buttonByText("Summary"), "Summary");
+    expect(byTestId("summary-empty")).not.toBeNull();
+    log.splice(0);
+    await advance(5000);
+    expect(log.some((e) => e.cmd === "run_quick_look")).toBe(false); // nothing closed yet, nothing read
+    finalizeRun();
+    await advance(3000);
+    const quick = log.filter((e) => e.cmd === "run_quick_look");
+    expect(quick).toEqual([{ cmd: "run_quick_look", args: { paths: ["/data/s1.h5"] } }]);
+    expect(byTestId("summary-run")!.textContent).toContain("Run summary · Run 1 · S1");
+    await advance(5000);
+    expect(log.filter((e) => e.cmd === "run_quick_look")).toHaveLength(1); // the status polls read nothing more
+
+    log.splice(0);
+    await click(byTestId("decision-repeat"), "Repeat sample");
+    expect(log.filter((e) => ACTUATING.includes(e.cmd))).toEqual([]); // sends nothing
+    await click(buttonByText("Plan"), "Plan");
+    expect(byTestId("queue-step")!.textContent).toContain("Repeat S1 · Vehicle · load the tube again");
+    vi.mocked(save).mockResolvedValueOnce("/data/s1-repeat.h5");
+    await click(byTestId("queue-start"), "Start S1");
+    await advance(3000);
+    expect(log.filter((e) => ACTUATING.includes(e.cmd))).toEqual([{ cmd: "experiment_start", args: { outputPath: "/data/s1-repeat.h5", acknowledgeDiscardRing: false,
+      startRequestJson: `{"experiment_id":"${id}","run_index":2,"sample_ref":"S1","annotation":{"condition":"Vehicle"}}` } }]);
+    await click(buttonByText("Next sample"), "Next sample");
+    finalizeRun();
+    await advance(3000);
+
+    await click(buttonByText("Summary"), "Summary");
+    await advance(1000);
+    expect(byTestId("summary-runs")!.textContent).toContain("Run 1 · S1");
+    expect(byTestId("summary-runs")!.textContent).toContain("Run 2 · S1");
+    log.splice(0);
+    await click(byTestId("decision-review"), "Open in Review");
+    await advance(1000);
+    expect(log.filter((e) => e.cmd === "load_recording")).toEqual([{ cmd: "load_recording", args: { filePath: "/data/s1-repeat.h5" } }]);
+    expect(host.querySelector("[data-testid=workspace]")).toBeNull(); // the classic Review tab
+  });
 
   it("Next sample names S1's run: when another run is active by then, the backend stops nothing and S1 is interrupted; nothing more is sent", async () => {
     await runningS1();

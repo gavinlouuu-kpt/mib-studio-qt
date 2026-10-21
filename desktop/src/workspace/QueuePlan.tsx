@@ -97,10 +97,14 @@ export function QueuePlan({ plan, lockedReason, verdict, blockers, cameraMode, o
   const columns: DataTableColumn<SampleRow>[] = [
     { key: "run", header: "Run", numeric: true, width: "56px", cell: (r) => {
       const st = rowState(q, r.ref);
-      if (st.attempts.length) return st.attempts.map((a) => (
-        <span key={a.runIndex} title={a.outcome === "started" ? "Started" : a.code !== undefined ? "Not started, but its file may exist; its index is not used again" : "Reply lost: this run may exist; its index is not used again"}>{a.outcome === "unknown" ? `${a.runIndex}?` : a.runIndex}</span>
-      )).reduce<ReactNode[]>((acc, el, i) => (i ? [...acc, ", ", el] : [el]), []);
       const planned = plannedRunIndex(order, q, order.indexOf(r.ref));
+      if (st.attempts.length) return [
+        ...st.attempts.map((a) => (
+          <span key={a.runIndex} title={a.outcome === "started" ? "Started" : a.code !== undefined ? "Not started, but its file may exist; its index is not used again" : "Reply lost: this run may exist; its index is not used again"}>{a.outcome === "unknown" ? `${a.runIndex}?` : a.runIndex}</span>
+        )),
+        // A repeated row (#716 A7b): its next run, planned.
+        ...(st.phase === "planned" && planned !== null ? [<span key="planned" className="ws-detail" title="Repeat planned: the run index is assigned at Start">{planned}</span>] : []),
+      ].reduce<ReactNode[]>((acc, el, i) => (i ? [...acc, ", ", el] : [el]), []);
       return planned === null ? "" : <span className="ws-detail" title="Planned: the run index is assigned at Start">{planned}</span>;
     } },
     { key: "ref", header: "Ref", emphasis: true, width: "48px" },
@@ -150,11 +154,19 @@ export function QueuePlan({ plan, lockedReason, verdict, blockers, cameraMode, o
   if (curRow && curState) {
     const file = rowFile(curState);
     switch (curState.phase) {
-      case "planned":
+      case "planned": {
+        // Repeat sample (#716 A7b): the row's earlier run is kept; its Start sends the same ref with the next run index.
+        const kept = curState.history?.length ? curState.history[curState.history.length - 1] : null;
+        if (kept) {
+          notice = { tone: "info", title: `Repeat ${describe(curRow)} · load the tube again`,
+            text: `Run ${kept.runIndex}'s file is kept (${kept.path}). Start ${curRow.ref} picks a new file, checks readiness with it and starts run ${q.nextRunIndex} with the same sample ref.` };
+          break;
+        }
         notice = prev && prevState && begun
           ? { tone: "info", title: `Swap the tube for ${describe(curRow)}`, text: `${prev.ref} ${prevState.phase === "closed" ? `is closed${rowFile(prevState) ? ` (${rowFile(prevState)})` : ""}` : "was skipped"}. Load the next tube, then press Start ${curRow.ref}: it picks the file, checks readiness with it and starts run ${q.nextRunIndex}.` }
           : { tone: "info", title: `Ready for ${describe(curRow)}`, text: `Start ${curRow.ref} picks the file, checks readiness with it and starts run ${q.nextRunIndex} of experiment ${draft.experimentId.slice(0, 8)}…` };
         break;
+      }
       case "starting":
         notice = { tone: "info", title: `Starting ${curRow.ref} · run ${q.nextRunIndex}`, text: "Waiting for the file dialog, readiness with the chosen file and the backend's answer." };
         break;

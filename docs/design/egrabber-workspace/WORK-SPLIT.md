@@ -115,13 +115,20 @@ app-local markup until they land.
 |---|---|---|---|---|
 | B0 | none | One review implementation (#512) | nothing | none |
 | B1 | R1 Open | Review shell on the kit (#269): in review (B1a #746 and B1b #747 merged; R1 grouping) | B0 | DataTable |
-| B2 | R2 Overview | S6; statistics from the #523 worker | B1, A2 | DataTable |
+| B2 | R2 Overview | S6; per-run numbers from the shared quick-look function (`review_run_statistics`, review ABI 6); populations, CV and fits from the #523 worker | B1, A2, A7a | DataTable |
 | B3 | R3 Inspect | S6: in progress (B3b develop, B3a this branch, then B3c) | B1 | DataTable, CellImage |
 | B4 | R6 Export | Parity (#269) | B1 | OptionGroup, DataTable |
 | B5 | Studio mount | S6 | B3 | none |
 
 R4 Populations (#523 FJ04) and R5 Compare (#314, #523 FJ09) remain reference views
 and are not scheduled.
+
+**B2 amendment (#716 A7 ruling 11, Q1 (a), 2026-10-22).** R2's per-run numbers (counts, the
+medians of area, deformability and E, the declared target group's share, the event rate and the
+descriptive flags) come from the one C++ function that also feeds the operation app's O5/O6
+(`computeRunStatistics`, read by Review through `review_run_statistics`, review ABI 6; see
+`knowledge_map/services/RunQuickLook.md`), so the two apps agree on the same file by construction.
+The #523 worker keeps populations, CV and fits.
 
 ## Kit (#715)
 

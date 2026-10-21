@@ -22,6 +22,10 @@
 //   creates (at every page load) starts with no operator, and one is sent only once the operator
 //   typed it or picked it from the remembered list in this page's Plan. "New plan" keeps the
 //   operator selected in the plan before it, which was itself typed or picked here.
+// - The Quick look's reference run (#716 A7b, the A7 ruling 4, Q3 a) is held here, with the plan:
+//   none until the operator chooses one, cleared by "New plan", never persisted (until the
+//   workspace store exists, #393/#395). Choosing it sends nothing; the backend confirms its run_id
+//   when the quick look is read.
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ExperimentStatus } from "../eventAdapter";
 import type { StartOutcome } from "../experimentStart";
@@ -96,6 +100,20 @@ export interface QueueController {
   end: () => void;
   /** The operator resumes a paused queue (sends nothing; only allowed with control held). */
   resume: () => void;
+  /** Repeat sample (#716 A7b): re-queue this closed (or finalized) row as the next run of its
+   *  sample_ref (sends nothing; only with control held; queueModel repeatReason). */
+  repeat: (ref: string) => void;
+}
+
+/** The Quick look's reference run, as the client holds it (#716 A7b; run_quick_look `reference`):
+ *  the file, and the run_id and start generation its quick look reported. */
+export interface PlanReference {
+  path: string;
+  run_id: string | null;
+  start_generation: string | null;
+  /** How the plan names it: the run index and sample ref (null when not known). */
+  runIndex: number | null;
+  ref: string | null;
 }
 
 export interface PlanController {
@@ -118,6 +136,10 @@ export interface PlanController {
   newPlan: () => void;
   /** The guided sample queue. */
   queue: QueueController;
+  /** The Quick look's reference run: none until the operator chooses one; "New plan" clears it. */
+  reference: PlanReference | null;
+  /** Choose (or clear, with null) the reference run (sends nothing). */
+  setReference: (reference: PlanReference | null) => void;
 }
 
 export interface PlanOptions {
@@ -168,6 +190,7 @@ export function usePlan(runStart: RunStart, options: PlanOptions = {}): PlanCont
   const [starting, setStarting] = useState(false);
   const [queue, setQueue] = useState<QueueState>(newQueue);
   const [queuePending, setQueuePending] = useState<"start" | "stop" | null>(null);
+  const [reference, setReference] = useState<PlanReference | null>(null);
   const pending = useRef(false);
   const startedRef = useRef(false);
   // The values as last rendered, for the async actions: the operator remembered is the one the
@@ -324,12 +347,14 @@ export function usePlan(runStart: RunStart, options: PlanOptions = {}): PlanCont
   const skip = useCallback(() => { const ref = currentRef(); if (ref && !pending.current) dispatch({ type: "skip", ref }); }, [dispatch]);
   const end = useCallback(() => { if (!pending.current) dispatch({ type: "end" }); }, [dispatch]);
   const resume = useCallback(() => { if (controlRef.current) dispatch({ type: "resume" }); }, [dispatch]);
+  const repeat = useCallback((ref: string) => { if (!pending.current && controlRef.current) dispatch({ type: "repeat", ref }); }, [dispatch]);
 
   const newPlan = useCallback(() => {
     if (pending.current || queueInProgress(order(), queueRef.current)) return;
     startedRef.current = false;
     setStarted(null);
     setResult(null);
+    setReference(null);
     queueRef.current = newQueue();
     setQueue(queueRef.current);
     const next = newPlanDraft(mintExperimentId(), draftRef.current.operator, draftRef.current.format);
@@ -338,7 +363,7 @@ export function usePlan(runStart: RunStart, options: PlanOptions = {}): PlanCont
   }, []);
 
   return {
-    draft, edit, operators, result, started, starting, start, newPlan,
-    queue: { state: queue, pending: queuePending, controlHeld, status, startCurrent, stopCurrent, confirmClosed, skip, end, resume },
+    draft, edit, operators, result, started, starting, start, newPlan, reference, setReference,
+    queue: { state: queue, pending: queuePending, controlHeld, status, startCurrent, stopCurrent, confirmClosed, skip, end, resume, repeat },
   };
 }

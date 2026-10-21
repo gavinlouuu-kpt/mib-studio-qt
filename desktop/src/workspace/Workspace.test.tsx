@@ -40,9 +40,9 @@ const onSwitchMode = vi.fn(async () => {}), writeRoi = vi.fn(), subscribeFrames 
 const planStart = vi.fn(async () => null);
 const PLAN: PlanController = {
   draft: newPlanDraft("3f2b8c1e-9a4d-4e6f-8b21-0c5d7e9f1a2b"), edit: () => {}, operators: [], result: null, started: null, starting: false,
-  start: planStart, newPlan: () => {},
+  start: planStart, newPlan: () => {}, reference: null, setReference: () => {},
   queue: { state: newQueue(), pending: null, controlHeld: true, status: null, startCurrent: async () => {}, stopCurrent: async () => {},
-    confirmClosed: () => {}, skip: () => {}, end: () => {}, resume: () => {} },
+    confirmClosed: () => {}, skip: () => {}, end: () => {}, resume: () => {}, repeat: () => {} },
 };
 const props = (over: Partial<WorkspaceProps> = {}): WorkspaceProps => ({
   brand: "MIB Studio", source: "Mock camera", method: "", stage: 0, onStage, onExit, serviceMode: false,
@@ -315,14 +315,13 @@ describe("stages only navigate", () => {
     await advance(PREPARE_READINESS_POLL_MS * 3);
     for (const c of calls()) expect(isPrepareRead(c)).toBe(true);
     expect(planStart).not.toHaveBeenCalled();
-    // Live (O4, A6b) has content: choosing it reads the live cells and sends nothing else. Summary is
-    // not in the workspace yet; choosing it sends nothing.
+    // Live (O4, A6b) has content: choosing it reads the live cells and sends nothing else. Summary
+    // (O5/O6, A7b) with no closed run reads nothing (no run_quick_look) and sends nothing.
     await act(async () => button("Live").click());
     expect(host.querySelector("[data-testid=workspace-live]")).not.toBeNull();
     await act(async () => button("Summary").click());
-    expect(host.textContent).toContain("Not yet in the workspace · Summary");
-    await act(async () => button("Back to the classic view").click());
-    expect(onExit).toHaveBeenCalledTimes(1);
+    expect(host.querySelector("[data-testid=summary-empty]")).not.toBeNull();
+    expect(calls().some((c) => c.cmd === "run_quick_look")).toBe(false);
     await act(async () => button("Plan").click());
     expect(host.querySelector("[data-testid=workspace-plan]")).not.toBeNull();
     expect(planStart).not.toHaveBeenCalled();

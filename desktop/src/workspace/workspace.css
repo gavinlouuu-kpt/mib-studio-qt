@@ -576,3 +576,44 @@
   flex-wrap: wrap;
   gap: var(--mib-space-2);
 }
+
+/* ---- Experiment · Summary: O5 Run summary and O6 Quick look (#716 A7b) ---- */
+.ws-shell .ws-ql__board {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: var(--mib-space-3);
+  align-items: start;
+}
+.ws-shell .ws-ql__tiles {
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+}
+.ws-shell .ws-ql__run .mib-card__status {
+  flex-wrap: wrap;
+}
+.ws-shell .ws-ql__facts {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--mib-space-4);
+  margin-top: var(--mib-space-3);
+}
+@media (max-width: 1100px) {
+  .ws-shell .ws-ql__facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.ws-shell .ws-ql__decisions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mib-space-2);
+  margin-top: var(--mib-space-4);
+  padding-top: var(--mib-space-3);
+  border-top: 1px solid var(--mib-color-line);
+}
+.ws-shell .ws-ql__decision-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--mib-space-2);
+}
+.ws-shell .ws-ql__reason {
+  margin: 0;
+}
