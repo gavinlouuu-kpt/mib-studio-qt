@@ -3272,20 +3272,37 @@ namespace backend
         // Open HDF5 file for recording
         auto& hdf5 = *hdf5Service_;
         // A review file in the facade's own reader counts as an open file
-        // (D1 (a), #512 S5): same message, so nothing changes for the operator.
+        // (D1 (a), #512 S5): same message as the shared handle. It says how to
+        // free it (F2 of #763); the refusal stays (HDF5 is not thread-safe, #722).
+        // Recording and a run are refused before this point, so an open file
+        // here is one open for review.
         if (hdf5.isFileOpen() || reviewSourceOpen()) {
             if (error)
-                *error = "Close the existing HDF5 file before starting raw recording; its writer "
-                         "will not be replaced";
+                *error = std::string("an HDF5 file is already open: ") + app::kCloseReviewFile +
+                         " before starting raw recording";
             SPDLOG_WARN("Frame recording refused: {}", hdf5.isFileOpen() ? "shared HDF5 file already open"
                                                                          : "a review file is open (HDF5 is not thread-safe, #722)");
             return false;
         }
 
+        if (hdf5FilePath.empty()) {
+            if (error) *error = "no output path given: choose where the raw recording goes";
+            return false;
+        }
         std::string path = hdf5FilePath;
         if (path.size() < 3 || (path.substr(path.size() - 3) != ".h5" &&
             (path.size() < 5 || path.substr(path.size() - 5) != ".hdf5"))) {
             path += ".h5";
+        }
+        // A relative path lies under the storage root, as an experiment's (#762).
+        {
+            const auto resolved = resolveClientPath(path);
+            if (!resolved.ok) {
+                if (error) *error = resolved.reason;
+                SPDLOG_WARN("Frame recording refused: {}", resolved.reason);
+                return false;
+            }
+            path = resolved.path;
         }
 
         if (!hdf5.openFile(path)) {

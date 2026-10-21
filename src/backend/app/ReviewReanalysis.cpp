@@ -39,6 +39,12 @@ BackendCommandResult BackendFacade::submitReviewReanalysisJson(const std::string
         if(!review::parseReanalysisRequest(text,backend_.processing().getProcessingConfig(),request,error))
             return {false,BackendCommandType::Review,error};
     }
+    // The new file's path is a client path (#762): a relative one lies under the storage root.
+    {
+        const auto resolved = backend_.resolveClientPath(request.outputPath);
+        if (!resolved.ok) return {false, BackendCommandType::Review, "Regenerate output refused: " + resolved.reason};
+        request.outputPath = resolved.path;
+    }
     request.useRecordedPixelToMicron=true;
     request.pixelToMicron=backend_.processing().getPixelToMicronFactor();
     const auto started=reviewJobs_->startReanalysisJson(request,backend_.processing());

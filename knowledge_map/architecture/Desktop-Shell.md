@@ -222,7 +222,14 @@ rejects with `TransportUnsupportedError` (`code` `TRANSPORT_UNSUPPORTED`,
 text requests only. Callers show their own words for it. `transport/dialogs` replaces the
 dialog/opener plugins: native in Tauri, prompts for instrument paths and
 `window.open` in a browser (`ask`, the Yes / No question, is
-`window.confirm` there). The review module (`desktop/src/review/`) uses
+`window.confirm` there). A browser `save` prompt (#762) fetches
+`fetch_instrument_status` as it opens (every server answers it, PZ7035 or
+not; the last known directory is the fallback), defaults to
+`<storage.path>/<suggested name>` and says where the file goes ("The file is
+saved on the instrument, in <dir>. A relative path is saved there too."); the
+backend resolves a relative output path under the same storage root
+([[ExperimentCoordinator]], "Output path"). `open` prompts keep the
+suggested default under the last known directory. The review module (`desktop/src/review/`) uses
 the transport too ([[../frontend/YofoReview]], "Transport"). In a browser the close guard only warns on
 `beforeunload` (the server owns stop-and-save) and the installer updater is
 hidden. Verified in headless Chromium: the full UI, live mock frames at 30 fps
@@ -642,7 +649,8 @@ Since #512 S5 the facade's loaded review file is its own `ReviewSession`
 ([[../services/ReviewSession]]), not the experiment writer's handle; the
 Review tab's commands and shapes are unchanged, and a loaded file still keeps
 Start Experiment and Record refused (readiness `storage.hdf5`, same text,
-decision D1 (a)) until Close File, as before.
+decision D1 (a)) until Close File, as before; since F2 of #763 the gate and
+the refusals say "Close the file in Review (Review → Close File)".
 
 ### Finite background calibration
 

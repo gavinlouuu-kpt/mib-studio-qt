@@ -559,6 +559,14 @@ mib_backend_test_link(experiment_stop_generation_test PRIVATE Threads::Threads)
 add_test(NAME e2e.experiment_stop_generation COMMAND $<TARGET_FILE:mib_backend_tests> experiment_stop_generation_test)
 set_tests_properties(e2e.experiment_stop_generation PROPERTIES LABELS "backend;bridge;e2e;concurrency;stress;safety" TIMEOUT 180)
 
+# #762 (and F2 of #763): a relative output path a client gives a writer (experiment Start and its
+# readiness probes, raw recording, review export, Regenerate, preview save) resolves under the
+# storage root; escapes (`..`, symlinks) are refused; absolute paths are unchanged.
+mib_add_backend_test_executable(client_output_path_test backend/client_output_path_test.cpp)
+mib_backend_test_link(client_output_path_test PRIVATE Threads::Threads)
+add_test(NAME e2e.client_output_path COMMAND $<TARGET_FILE:mib_backend_tests> client_output_path_test)
+set_tests_properties(e2e.client_output_path PROPERTIES LABELS "backend;bridge;e2e;recording;hdf5;safety" TIMEOUT 180)
+
 mib_add_backend_test_executable(mindvision_selection_state_test backend/mindvision_selection_state_test.cpp)
 add_test(NAME backend.mindvision_selection_state COMMAND $<TARGET_FILE:mib_backend_tests> mindvision_selection_state_test)
 set_tests_properties(backend.mindvision_selection_state PROPERTIES LABELS "backend;camera")

@@ -583,7 +583,7 @@ int main()
         backend.hdf5().closeFile();
         MIB_EXPECT(sharedHandleGate.status == backend::app::GateStatus::Fail &&
                        sharedHandleGate.reason == "an HDF5 file is already open" &&
-                       sharedHandleGate.remediation == "finish or close the current file first" &&
+                       sharedHandleGate.remediation == backend::app::kCloseReviewFile &&
                        sharedHandleGate.detail.empty(),
                    "the shared-handle gate is the documented one");
         const auto pass = backend.experiment().evaluateReadiness(runOut);
@@ -776,7 +776,7 @@ int main()
             request.readinessGeneration = r.generation;
             const auto start = backend.experiment().start(request);
             const std::string writerConflict =
-                "stop raw recording and close the existing HDF5 file before starting an experiment";
+                std::string("an HDF5 file is already open: ") + backend::app::kCloseReviewFile + " before starting an experiment";
             if (meta.fileOpen)
             {
                 MIB_EXPECT(sameGate(hdf5Gate(r), &sharedHandleGate) && start.message == writerConflict,
@@ -849,9 +849,8 @@ int main()
         request.readinessGeneration = backend.experiment().readinessGeneration();
         const auto refused = backend.experiment().start(request);
         MIB_EXPECT(refused.outcome == backend::app::ExperimentStartOutcome::NotReady &&
-                       refused.message ==
-                           "stop raw recording and close the existing HDF5 file before starting an experiment",
-                   "Start refused with the pre-slice message: " + refused.message);
+                       refused.message == std::string("an HDF5 file is already open: ") + backend::app::kCloseReviewFile + " before starting an experiment",
+                   "Start refused, saying how to close the file: " + refused.message);
         MIB_EXPECT(sameGate(hdf5Gate(refused.readiness), &sharedHandleGate), "Start's readiness carries the same gate");
         MIB_EXPECT(!fs::exists(runOut), "no output created by the refused Start");
 

@@ -388,7 +388,25 @@ no contour processing.
   not thread-safe, #722; see [[ExperimentCoordinator]]). Recording retains busy
   ownership until Stop has joined its worker; failures must be stopped before
   another writer can start. Callers can request a diagnostic error string.
-- `startFrameRecording(hdf5Path)`, `stopFrameRecording()`, `isFrameRecording()`
+- `startFrameRecording(hdf5Path)`, `stopFrameRecording()`, `isFrameRecording()`.
+  The path is a client path (#762): empty is refused, `.h5` is appended, and
+  `resolveClientPath` puts a relative path under the storage root (one that
+  leaves it is refused with the reason). The open-file refusal says "an HDF5
+  file is already open: Close the file in Review (Review → Close File) before
+  starting raw recording" (F2 of #763).
+- `storageRoot()` (#762): `app::storageRootOf(dataDir_)`, the data directory
+  absolute with symlinks resolved ("" before `initialize`); reported as
+  `fetch_instrument_status` `storage.path`. `resolveClientPath(requested)` is
+  `app::resolveClientPath(requested, storageRoot())` (`app/RecordingTarget.h`):
+  the one rule for a path a client gives a writer (experiment Start and
+  readiness, raw recording, review exports, Regenerate masks, preview buffer
+  save). Empty refused; absolute unchanged; relative joined to the root and
+  `weakly_canonical`, refused when it leaves the root (compared by component)
+  or goes through a dangling symlink. Strings in and out are UTF-8
+  (`app::utf8ToPath` / `app::pathToUtf8`), an absolute request byte for byte.
+  A symlink swapped in between the check and the open is outside the threat
+  model (a client path, not a local writer of the root); Start re-checks right
+  before its open. Test: `e2e.client_output_path`.
 - Counters: `frameRecordingCount()`, `frameRecordingFiltered()`
 - Uses a dedicated `frameRecordingThread_`. Empty frames are dropped via
   `ProcessingService::isFrameEmptyWithActiveKernel` after the

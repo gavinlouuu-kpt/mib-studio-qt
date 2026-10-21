@@ -898,9 +898,11 @@ export default function App() {
       if (outcome.kind === "not-ready") { setReadinessMessage(outcome.message); return; }
       if (outcome.kind === "refused") {setReadinessMessage(`${outcome.path}: ${outcome.message}`); setExpStatus(await bridge.fetchExperimentStatus()); return append(`experiment start failed: ${outcome.message}`); }
       if (outcome.kind === "started") {
-        append(`experiment started → ${outcome.path}`);
+        // The backend's path: a relative one is resolved under the data directory (#762).
+        const status = await bridge.fetchExperimentStatus();
+        append(`experiment started → ${status?.output_path || outcome.path}`);
         if (outcome.notice) { setStartNotice(outcome.notice); append(outcome.notice); }
-        setExpStatus(await bridge.fetchExperimentStatus());
+        setExpStatus(status);
       }
     } catch (e) {
       append(`experiment start error: ${e}`);

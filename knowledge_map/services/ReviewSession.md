@@ -507,12 +507,13 @@ session is open (`AppBackend::setReviewSourceOpen`, set in the same
 transaction from `isOpen()` by a scope guard that also runs when an exception
 leaves the transaction, so the flag equals `isOpen()` on every exit; cleared
 by close, a failed load, shutdown and the destructor). While it is, experiment readiness fails `storage.hdf5` with the
-text a file in the shared handle produced ("an HDF5 file is already open",
-"finish or close the current file first"), Start is refused with "stop raw
-recording and close the existing HDF5 file before starting an experiment"
-and raw recording with "Close the existing HDF5 file before starting raw
-recording; its writer will not be replaced": HDF5 is built without thread
-safety (#722), so a review reader must not run beside the 5 kHz writer. See
+text a file in the shared handle produces ("an HDF5 file is already open",
+"Close the file in Review (Review → Close File)"), Start is refused with "an
+HDF5 file is already open: Close the file in Review (Review → Close File)
+before starting an experiment" and raw recording with the same instruction
+"… before starting raw recording" (F2 of #763: the refusal says how to clear
+it): HDF5 is built without thread safety (#722), so a review reader must not
+run beside the 5 kHz writer. See
 [[../architecture/ExperimentCoordinator]]. Shutdown closes the session after
 the export / reanalysis jobs are joined.
 
