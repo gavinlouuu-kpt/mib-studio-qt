@@ -83,7 +83,10 @@ the Qt [[../frontend/HdfReviewTab]] (`recordedPixelToMicron`, TD-17)
   reanalysis engine. A file without a run snapshot factor falls back to
   `/experiment_info @pixel_to_micron`, the factor a regenerated or
   reanalysed file was validated at (#758), so such a file reopens at it
-  instead of the fallback.
+  instead of the fallback, unless its `@pixel_to_micron_source` (#764) says
+  the factor was a fallback (anything but `recorded` / `operator`): then it
+  is not the file's and the session fallback applies. Files regenerated
+  before #764 have no source attribute and read as before.
 - `metadata().runIdentity` → `RunIdentity` (#717 B1a, review ABI 2): what
   the file says about its own run, read at open by the static
   `readRunIdentity(reader)` from run snapshot v3 (#712, parsed with
@@ -419,7 +422,25 @@ Parsing never sets them, so the facade keeps the defaults:
   @pixel_to_micron`) with the applied config document (`@config_json`). Before
   #758 YOFO Review validated at 0.4886 and MIB Studio / the Qt dialog at the
   live factor, whatever the source recorded (pending release notice in
-  `docs/release-notes/README.md`).
+  `docs/release-notes/README.md`). Since #764 the output also records where
+  the factor came from (`@pixel_to_micron_source`): `recorded` when it is the
+  source's, `operator` with `ReanalysisRequest::pixelToMicronExplicit` (no
+  host sets it yet), otherwise `fallback`, which review shows as a fallback.
+- **E-LUT (#764, `SourceEModulusLut.h`).** An HDF source's run snapshot v3
+  `emodulus_lut` decides what E is computed with
+  (`resolveSourceEModulusLut`, per call through
+  `BatchAnalysisInputs::eModulusLut`): a recorded LUT is the table whose
+  bytes have its recorded sha256, found in the kernel's loaded LUT or the
+  bundled LUT compiled into `mib_review_core`
+  (`cmake/GenerateEmbeddedText.cmake`; YOFO Review ships no resources); not
+  found, or recorded without a hash, the run is refused before anything is
+  written with a reason naming the LUT and the hashes present. `loaded` false:
+  no E (E 0, as the source). No record (no snapshot, a snapshot before v3,
+  folder / AVI): the kernel's own, as before (`Legacy`).
+  `ReanalysisOutcome::eModulusLutBasis` / `eModulusLut` say which;
+  `reanalysisEModulusLutPhrase` words it for YOFO's completion message
+  (`…; E-LUT <name> (the source run's))`), and for an HDF source whose own
+  LUT was not used `eModulusLutNote` goes into the facade's `warnings`.
 
 The functions:
 
@@ -554,9 +575,16 @@ another, configured with the record's calibration (`Recorded`: the file's
 px→µm, or the session's fallback when it records none; `Default`: the
 processing default), so the instance a job uses is never reconfigured.
 Area validity and the target group are in µm², so the factor decides them;
-`pixelToMicron` and `settingsLabel` say which applied. No E-LUT is loaded
-for it: `emodulusRecomputed` is false and the reprocessed rows' E is NaN
-(an E-gated target group is not recomputed either). It writes nothing. The
+`pixelToMicron` and `settingsLabel` say which applied. E (#764, review ABI
+4): the run's own E-LUT (`ReprocessInputs::eModulusLut`, the snapshot v3
+record read at open), resolved outside every lock like the engine's (the
+session kernel's loaded LUT or the bundled one, by hash), passed per call;
+`emodulusLut` / `emodulusLutSha256` name it and `settingsLabel` ends
+`; E-LUT <name> (the run's)`. Not available or no hash: refused
+("Record N cannot be reprocessed: …"). A run that loaded none, or a file
+that records none: `emodulusRecomputed` false, the names empty and the
+reprocessed rows' E NaN (an E-gated target group is not recomputed either);
+the label says which. It writes nothing. The
 rows are the objects found (the
 kernel's frame-level "no object" result, `objectCount` 0, is not one), with
 the record's frame index and no track, at most `kReviewReprocessMaxObjects`

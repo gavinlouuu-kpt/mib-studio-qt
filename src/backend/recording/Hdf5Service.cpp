@@ -86,9 +86,11 @@ namespace backend::services
                                             : H5Acreate2(loc, name, type, space, H5P_DEFAULT, H5P_DEFAULT);
         }
 
-        // A scalar string attribute of an open group (variable or fixed
-        // length, at most 16 MiB); nullopt when absent or unreadable.
-        std::optional<std::string> readGroupStringAttribute(hid_t group, const char* name)
+        // The one reader of a scalar string attribute of an open group
+        // (variable or fixed length, at most `maxBytes`); nullopt when absent,
+        // not a scalar string, larger than `maxBytes` or unreadable (#764:
+        // readScalarStringAttribute and the recorded config document share it).
+        std::optional<std::string> readGroupStringAttribute(hid_t group, const char* name, std::size_t maxBytes)
         {
             if (group < 0 || H5Aexists(group, name) <= 0) return std::nullopt;
             hid_t attribute = H5Aopen(group, name, H5P_DEFAULT);
@@ -96,7 +98,7 @@ namespace backend::services
             std::optional<std::string> out;
             hid_t type = H5Aget_type(attribute);
             if (type >= 0 && H5Tget_class(type) == H5T_STRING && isScalarAttribute(attribute) &&
-                H5Aget_storage_size(attribute) <= 16u * 1024u * 1024u)
+                H5Aget_storage_size(attribute) <= maxBytes)
             {
                 if (H5Tis_variable_str(type) > 0)
                 {
@@ -107,7 +109,7 @@ namespace backend::services
                 else
                 {
                     const size_t size = H5Tget_size(type);
-                    if (size > 0 && size <= 16u * 1024u * 1024u)
+                    if (size > 0 && size <= maxBytes)
                     {
                         std::vector<char> buffer(size + 1, '\0');
                         if (H5Aread(attribute, type, buffer.data()) >= 0)
@@ -2215,40 +2217,7 @@ namespace backend::services
         if (H5Lexists(impl_->fileId_, groupPath, H5P_DEFAULT) <= 0) return std::nullopt;
         hid_t group = H5Gopen2(impl_->fileId_, groupPath, H5P_DEFAULT);
         if (group < 0) return std::nullopt;
-        std::optional<std::string> out;
-        if (H5Aexists(group, name) > 0)
-        {
-            hid_t attribute = H5Aopen(group, name, H5P_DEFAULT);
-            if (attribute >= 0)
-            {
-                hid_t type = H5Aget_type(attribute);
-                if (type >= 0 && H5Tget_class(type) == H5T_STRING && isScalarAttribute(attribute) &&
-                    H5Aget_storage_size(attribute) <= 1024 * 1024)
-                {
-                    if (H5Tis_variable_str(type) > 0)
-                    {
-                        char* pointer = nullptr;
-                        if (H5Aread(attribute, type, &pointer) >= 0) out = std::string(pointer ? pointer : "");
-                        if (pointer) H5free_memory(pointer);
-                    }
-                    else
-                    {
-                        const size_t size = H5Tget_size(type);
-                        if (size > 0 && size <= 1024 * 1024)
-                        {
-                            std::vector<char> buffer(size + 1, '\0');
-                            if (H5Aread(attribute, type, buffer.data()) >= 0)
-                            {
-                                const auto end = std::find(buffer.begin(), buffer.begin() + size, '\0');
-                                out = std::string(buffer.begin(), end);
-                            }
-                        }
-                    }
-                }
-                if (type >= 0) H5Tclose(type);
-                H5Aclose(attribute);
-            }
-        }
+        auto out = readGroupStringAttribute(group, name, 1024u * 1024u);
         H5Gclose(group);
         return out;
     }
@@ -2934,12 +2903,18 @@ namespace backend::services
         return out;
     }
 
-    bool Hdf5Service::writeAnalysisPixelToMicron(double factor)
+    bool Hdf5Service::writeAnalysisPixelToMicron(double factor, const std::string& source)
     {
         if (!isFileOpen()) return false;
         if (!std::isfinite(factor) || factor <= 0.0)
         {
             SPDLOG_ERROR("writeAnalysisPixelToMicron: factor {} is not finite and positive", factor);
+            return false;
+        }
+        if (source != kPixelToMicronSourceRecorded && source != kPixelToMicronSourceOperator &&
+            source != kPixelToMicronSourceFallback)
+        {
+            SPDLOG_ERROR("writeAnalysisPixelToMicron: unknown factor source '{}'", source);
             return false;
         }
         if (linkExists(impl_->fileId_, "/experiment_info") <= 0)
@@ -2960,11 +2935,36 @@ namespace backend::services
             ok = H5Awrite(attr, H5T_NATIVE_DOUBLE, &factor) >= 0;
             H5Aclose(attr);
         }
+        // Where the factor came from (#764): a reader takes it as the run's
+        // own calibration only when it is recorded or operator-supplied.
+        if (ok)
+        {
+            ok = false;
+            hid_t strType = H5Tcopy(H5T_C_S1);
+            H5Tset_size(strType, H5T_VARIABLE);
+            H5Tset_cset(strType, H5T_CSET_UTF8);
+            if (H5Aexists(groupId, kPixelToMicronSourceAttribute) > 0)
+                H5Adelete(groupId, kPixelToMicronSourceAttribute);
+            hid_t sourceAttr = H5Acreate2(groupId, kPixelToMicronSourceAttribute, strType, scalarSpace, H5P_DEFAULT,
+                                          H5P_DEFAULT);
+            if (sourceAttr >= 0)
+            {
+                const char* ptr = source.c_str();
+                ok = H5Awrite(sourceAttr, strType, &ptr) >= 0;
+                H5Aclose(sourceAttr);
+            }
+            H5Tclose(strType);
+        }
         H5Sclose(scalarSpace);
         H5Gclose(groupId);
         if (ok && !flush()) SPDLOG_WARN("writeAnalysisPixelToMicron: post-write flush failed");
-        if (!ok) SPDLOG_ERROR("Failed to write /experiment_info @pixel_to_micron");
+        if (!ok) SPDLOG_ERROR("Failed to write /experiment_info @pixel_to_micron / @pixel_to_micron_source");
         return ok;
+    }
+
+    std::optional<std::string> Hdf5Service::readAnalysisPixelToMicronSource() const
+    {
+        return readScalarStringAttribute("/experiment_info", kPixelToMicronSourceAttribute);
     }
 
     std::optional<double> Hdf5Service::readAnalysisPixelToMicron() const
@@ -3140,7 +3140,7 @@ namespace backend::services {
         // image_processing.target_group; captures write the runtime document,
         // batch_masks::saveMasksToHdf5 the config it applied, #758). Absent or
         // malformed: the struct default (no target group), as before.
-        if (const auto document = readGroupStringAttribute(group, "config_json"))
+        if (const auto document = readGroupStringAttribute(group, "config_json", 16u * 1024u * 1024u))
         {
             const auto root = nlohmann::json::parse(*document, nullptr, false);
             if (root.is_object())

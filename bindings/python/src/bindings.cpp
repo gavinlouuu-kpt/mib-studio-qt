@@ -7,7 +7,9 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#include <cmath>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 
 #include "backend/processing/BatchMaskSources.h"
@@ -71,24 +73,53 @@ py::dict processedFrameToPyDict(const ProcessedFrame& frame, double pixelToMicro
     return d;
 }
 
+// process_batch(pixel_to_micron=None, channel_band=None) (#764): both map to
+// ProcessingService::BatchAnalysisInputs. pixel_to_micron (finite, > 0)
+// decides area validity and the target group as well as area_um2; omitted,
+// the processing default (0.4886) applies to both, as before. channel_band
+// (x, y, w, h) in frame coordinates is the band objects are gated by, by
+// centroid row, as offline reanalysis applies a run's own band (#758): the
+// call runs with auto_roi_from_background on and this band (h == 0: no band,
+// the config's channel_band_* then apply as given). The wheel's config has no
+// auto_roi_from_background key, so without the argument nothing changes: no
+// band is detected, and config channel_band_y / channel_band_h still gate
+// directly.
 py::list processBatch(const std::vector<py::array>& frames, const py::dict& configDict,
-                      const py::object& background, const py::tuple& roiTuple, double pixelToMicron,
-                      bool includeMasks, bool includeSeriesImages) {
+                      const py::object& background, const py::tuple& roiTuple,
+                      const std::optional<double>& pixelToMicronArg, bool includeMasks,
+                      bool includeSeriesImages, const py::object& channelBandArg) {
     std::vector<cv::Mat> grayImages;
     grayImages.reserve(frames.size());
     for (const auto& arr : frames) {
         grayImages.push_back(numpyToGrayMat(arr));
     }
 
-    const ProcessingConfig config = configFromDict(configDict);
+    ProcessingConfig config = configFromDict(configDict);
     const cv::Mat bg = backgroundFromObject(background);
     const ProcessingService::Roi roi = roiFromTuple(roiTuple);
+
+    ProcessingService::BatchAnalysisInputs inputs;
+    if (pixelToMicronArg) {
+        if (!std::isfinite(*pixelToMicronArg) || *pixelToMicronArg <= 0.0)
+            throw std::invalid_argument("pixel_to_micron must be finite and positive");
+        inputs.pixelToMicronFactor = *pixelToMicronArg;
+    }
+    if (!channelBandArg.is_none()) {
+        const py::tuple band = channelBandArg.cast<py::tuple>();
+        if (band.size() != 4) throw std::invalid_argument("channel_band must be a 4-tuple (x, y, w, h)");
+        ProcessingService::Roi r{band[0].cast<int>(), band[1].cast<int>(), band[2].cast<int>(), band[3].cast<int>()};
+        if (r.w < 0 || r.h < 0) throw std::invalid_argument("channel_band width and height must not be negative");
+        inputs.channelBand = r;
+        config.auto_roi_from_background = true; // the band gate reads the call's band
+    }
+    const double pixelToMicron =
+        pixelToMicronArg ? *pixelToMicronArg : ProcessingService::kDefaultPixelToMicronFactor;
 
     ProcessingService service;
     std::vector<ProcessedFrame> results;
     {
         py::gil_scoped_release release;
-        results = service.processBatch(grayImages, config, bg, roi);
+        results = service.processBatch(grayImages, config, bg, roi, {}, nullptr, inputs);
     }
 
     py::list out;
@@ -261,14 +292,20 @@ PYBIND11_MODULE(_mib_processing, m) {
 
     m.def("process_batch", &processBatch, py::arg("frames"), py::arg("config"),
           py::arg("background") = py::none(), py::arg("roi") = py::make_tuple(0, 0, 0, 0),
-          py::arg("pixel_to_micron") = 0.4886, py::arg("include_masks") = false,
-          py::arg("include_series_images") = false,
+          py::arg("pixel_to_micron") = py::none(), py::arg("include_masks") = false,
+          py::arg("include_series_images") = false, py::arg("channel_band") = py::none(),
           "Run the batch pipeline over a list of 2D uint8 grayscale numpy "
           "arrays. Returns a list of dicts (one per detected object "
           "candidate, gold-standard-metrics shaped); pass include_masks=True "
           "to add a 'mask' numpy array to each dict. With multi-image mode "
           "enabled in config, include_series_images=True adds the trigger "
-          "image and available following frames to each retained valid record.");
+          "image and available following frames to each retained valid record. "
+          "pixel_to_micron (um per pixel, finite and > 0) is the calibration "
+          "area validity, the target group and area_um2 use; omitted, the "
+          "processing default 0.4886. channel_band=(x, y, w, h), frame "
+          "coordinates, gates objects by centroid row as a run's detected "
+          "channel band does (h == 0: none; the config's channel_band_y/h "
+          "then apply); omitted, as before.");
 
     m.def("compute_processed_frame", &computeProcessedFrame, py::arg("gray"),
           py::arg("background") = py::none(), py::arg("config") = py::dict(),

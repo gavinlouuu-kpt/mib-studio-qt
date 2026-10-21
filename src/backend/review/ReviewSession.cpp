@@ -582,7 +582,15 @@ namespace backend::review
             }
         }
         // A regenerated / reanalysed file has no run snapshot: the factor its
-        // objects were validated at (#758).
+        // objects were validated at (#758), when it is the run's own (#764):
+        // recorded from the source or supplied by the operator. A fallback
+        // factor (the source recorded none) is not the file's calibration.
+        // Files regenerated before #764 have no source attribute and read as
+        // before.
+        const auto source = reader.readAnalysisPixelToMicronSource();
+        if (source && *source != services::Hdf5Service::kPixelToMicronSourceRecorded &&
+            *source != services::Hdf5Service::kPixelToMicronSourceOperator)
+            return 0.0;
         return reader.readAnalysisPixelToMicron().value_or(0.0);
     }
 
@@ -765,6 +773,7 @@ namespace backend::review
         // a file whose space nothing decides is refused, never matched by a
         // guess.
         out.objectCoordinates = meta.objectCoordinates;
+        out.eModulusLut = meta.runIdentity.eModulusLut;
         if (out.objectCoordinates.space == ObjectSpace::Unknown)
             return refuse("Record " + std::to_string(index) +
                           " cannot be matched: the file does not record whether its bounding boxes are relative to "

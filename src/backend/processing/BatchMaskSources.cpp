@@ -342,7 +342,8 @@ bool saveMasksToHdf5(const std::vector<ProcessedFrame>& frames,
                      const cv::Mat& background,
                      bool useFrameTimestamps,
                      const backend::processing::ProcessingCoreIdentity* processingCore,
-                     double pixelToMicron) {
+                     double pixelToMicron,
+                     PixelToMicronSource pixelToMicronSource) {
     if (frames.empty()) {
         SPDLOG_WARN("saveMasksToHdf5: no frames to save");
         return false;
@@ -390,9 +391,14 @@ bool saveMasksToHdf5(const std::vector<ProcessedFrame>& frames,
         out.closeFile();
         return false;
     }
-    // The factor validity and the target group were decided at (#758), so a
-    // reader converts areas with it instead of a fallback.
-    if (pixelToMicron > 0.0 && !out.writeAnalysisPixelToMicron(pixelToMicron)) {
+    // The factor validity and the target group were decided at (#758), with
+    // where it came from (#764): a reader takes it as the run's calibration
+    // only when it was recorded by the source or supplied by the operator.
+    const char* source = pixelToMicronSource == PixelToMicronSource::Recorded ? Hdf5Service::kPixelToMicronSourceRecorded
+                         : pixelToMicronSource == PixelToMicronSource::Operator
+                             ? Hdf5Service::kPixelToMicronSourceOperator
+                             : Hdf5Service::kPixelToMicronSourceFallback;
+    if (pixelToMicron > 0.0 && !out.writeAnalysisPixelToMicron(pixelToMicron, source)) {
         SPDLOG_ERROR("saveMasksToHdf5: pixel_to_micron write failed");
         out.closeFile();
         return false;
@@ -401,7 +407,10 @@ bool saveMasksToHdf5(const std::vector<ProcessedFrame>& frames,
     // group (no processing_config_* attribute carries it) is read back from
     // here as the output's recorded setting (#758).
     nlohmann::json document{{"image_processing", backend::processing::config_json::toJson(config)}};
-    if (pixelToMicron > 0.0) document["pixel_to_micron_factor"] = pixelToMicron;
+    if (pixelToMicron > 0.0) {
+        document["pixel_to_micron_factor"] = pixelToMicron;
+        document["pixel_to_micron_source"] = source;
+    }
     if (!out.writeConfigJson(document.dump())) {
         SPDLOG_ERROR("saveMasksToHdf5: config_json write failed");
         out.closeFile();

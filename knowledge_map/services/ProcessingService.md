@@ -184,7 +184,7 @@ All gates in one struct. Notable fields:
   (#712): `loaded`, `path` (the file the bytes came from, after EModulusLut's
   candidate resolution), the SHA-256 of exactly the bytes the table was built
   from (`EModulusLut::loadFromFileWithBytes(path, &bytes, &from)` reads the file once,
-  so a file replaced or a cache refreshed after the load does not change it), and the catalog labels `AppBackend` sets with
+  so a file replaced or a cache refreshed after the load does not change it; `EModulusLut::loadFromText(text, origin)` builds a table from bytes already in memory, #764), and the catalog labels `AppBackend` sets with
   `setEModulusLutCatalogIdentity` (`lutId`, `revision`, `source`,
   `catalogSha256`, `checksumStatus`). The run snapshot v3 `emodulus_lut` block
   is written from it ([[../data-model/HDF5-Storage]]).
@@ -598,6 +598,12 @@ TIFFs — use:
   factor and band are never set by a job, so a job cannot race a live run or
   another job, and one source's factor never reaches the next.
   `kDefaultPixelToMicronFactor` (0.4886) names the start value.
+  Since #764 `eModulusLut` (`std::optional<const EModulusLut*>`) replaces the
+  service's own table for the call: set to a table, E and an E-gated target
+  group use it (a reanalysed source run's own LUT, see
+  [[ReviewSession]]); set to null, no E (E 0, as a run without a LUT);
+  unset, the service's own. The wheel's `process_batch(pixel_to_micron=,
+  channel_band=)` maps onto these inputs (omitted: unchanged).
 
   When `multi_image_enabled` and `multi_image_count > 1`, each newly retained
   valid track also carries the trigger image plus the available following

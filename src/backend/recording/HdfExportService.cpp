@@ -71,10 +71,13 @@ std::string padded(uint64_t v, int width)
     return buf;
 }
 
-// Same columns/format as the historical HdfReviewTab CSV writer.
+// Same columns/format as the historical HdfReviewTab CSV writer. A missing
+// value is an empty cell (an E outside the LUT is stored as NaN). With
+// `eNotComputed` (#764: the run's snapshot records that no E-LUT was loaded,
+// so its stored E = 0 is not a value) every E cell is empty.
 bool writeMetricsCsv(const fs::path& path, const std::vector<services::ProcessedFrame>& valid,
                      const std::vector<services::ProcessedFrame>& invalid, double conversionFactor,
-                     std::string& error)
+                     bool eNotComputed, std::string& error)
 {
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
     if (!out) {
@@ -96,7 +99,7 @@ bool writeMetricsCsv(const fs::path& path, const std::vector<services::Processed
             << (v.hasSingleInnerContour ? "Yes" : "No") << "," << (v.inRange ? "Yes" : "No") << ","
             << v.innerContourCount << "," << fixed(v.brightness.q1, 2) << "," << fixed(v.brightness.q2, 2) << ","
             << fixed(v.brightness.q3, 2) << "," << fixed(v.brightness.q4, 2) << ","
-            << (std::isnan(v.youngsModulus) ? std::string() : fixed(v.youngsModulus, 3)) << "\n";
+            << (eNotComputed || std::isnan(v.youngsModulus) ? std::string() : fixed(v.youngsModulus, 3)) << "\n";
     };
     for (const auto& f : valid) writeFrame("Valid", f);
     for (const auto& f : invalid) writeFrame("Invalid", f);
@@ -392,8 +395,18 @@ HdfExportResult HdfExportService::run(const HdfExportRequest& request, const Hdf
             checkCancel();
             const fs::path csv = folderJob ? partial / "metrics.csv" : partial;
             progress(HdfExportPhase::Metrics, csv.string());
+            // A run whose snapshot records that no E-LUT was loaded has no E
+            // values: its stored 0 is written as missing (#764). Files without
+            // a snapshot (or before v3) are written as stored.
+            bool eNotComputed = false;
+            {
+                RecordedRunProvenance provenance;
+                if (readRecordedRunProvenance(reader, provenance) && provenance.v3.eModulusLut &&
+                    !provenance.v3.eModulusLut->loaded)
+                    eNotComputed = true;
+            }
             std::string err;
-            if (!writeMetricsCsv(csv, valid, invalid, request.conversionFactor, err)) throw Failed{err};
+            if (!writeMetricsCsv(csv, valid, invalid, request.conversionFactor, eNotComputed, err)) throw Failed{err};
             result.metricsWritten = true;
             result.validCount = valid.size();
             result.invalidCount = invalid.size();

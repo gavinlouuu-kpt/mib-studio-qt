@@ -225,8 +225,14 @@ export interface ReviewReprocess {
   core_source: string;
   /** The px→µm factor the reprocessing ran and reports with (named in settings_label). */
   pixel_to_micron: number;
-  /** False without an E-LUT: the reprocessed rows' E is then null (not recomputed). */
+  /** True when E was recomputed with the run's own E-LUT; false when the run
+   * loaded none or records none: the reprocessed rows' E is then null. */
   emodulus_recomputed: boolean;
+  /** Review ABI 4 (#764): the E-LUT used, in words (lut id, revision, the
+   * hash's first 12 hex digits), and its full sha256; `null` when E was not
+   * recomputed. */
+  emodulus_lut: string | null;
+  emodulus_lut_sha256: string | null;
   stored: ReviewRow | null;
   reprocessed: ReviewRow[];
   match_index: number | null;

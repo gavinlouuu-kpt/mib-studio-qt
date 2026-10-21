@@ -119,9 +119,23 @@ public:
     // refuses a factor that is not finite and positive, and needs
     // writeExperimentInfo() first. The reader returns nullopt when the
     // attribute is missing, not a finite positive scalar, or unreadable.
+    //
+    // Beside it, `@pixel_to_micron_source` (a UTF-8 string, #764) says where
+    // the factor came from: kPixelToMicronSourceRecorded (the source run's
+    // own recorded factor), kPixelToMicronSourceOperator (supplied explicitly
+    // for this output) or kPixelToMicronSourceFallback (a host default or
+    // fallback because the source records none: the objects were validated at
+    // it, but it is not the run's calibration). Files regenerated before #764
+    // have no source attribute. readAnalysisPixelToMicronSource returns
+    // nullopt when the attribute is absent or unreadable.
     static constexpr const char* kAnalysisPixelToMicronAttribute = "pixel_to_micron";
-    bool writeAnalysisPixelToMicron(double factor);
+    static constexpr const char* kPixelToMicronSourceAttribute = "pixel_to_micron_source";
+    static constexpr const char* kPixelToMicronSourceRecorded = "recorded";
+    static constexpr const char* kPixelToMicronSourceOperator = "operator";
+    static constexpr const char* kPixelToMicronSourceFallback = "fallback";
+    bool writeAnalysisPixelToMicron(double factor, const std::string& source);
     std::optional<double> readAnalysisPixelToMicron() const;
+    std::optional<std::string> readAnalysisPixelToMicronSource() const;
 
     // Names of members present in the persisted compound metadata type. This
     // lets field-aware exporters distinguish an absent metric from an older

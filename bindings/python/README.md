@@ -79,6 +79,13 @@ for r in results:
     print(r["frame_type"], r["deformability"], r.get("youngs_modulus"))
 ```
 
+`pixel_to_micron` is the calibration (µm per pixel) the area range and the
+target group are checked at, and the one `area_um2` uses; omitted, the
+processing default 0.4886 applies. `channel_band=(x, y, w, h)`, in frame
+coordinates, gates objects by centroid row for that call, as a run's detected
+channel band does; omitted, nothing changes. Before #764 a given
+`pixel_to_micron` changed only `area_um2`.
+
 ## Conformance / anti-drift
 
 From the repository root, verify the installed wheel against the committed

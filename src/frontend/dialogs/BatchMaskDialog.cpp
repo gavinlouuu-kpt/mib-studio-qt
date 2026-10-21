@@ -986,7 +986,10 @@ void BatchMaskDialog::onRun() {
     const bool ok = backend::services::batch_masks::saveMasksToHdf5(
         results_, outputPath.toStdString(), config,
         roi.x, roi.y, roi.w, roi.h, background,
-        srcHdf5_->isChecked(), &processingCore, factor);
+        srcHdf5_->isChecked(), &processingCore, factor,
+        // #764: the live factor is not the source's calibration.
+        recordedFactor ? backend::services::batch_masks::PixelToMicronSource::Recorded
+                       : backend::services::batch_masks::PixelToMicronSource::Fallback);
 
     if (ok) {
         savedHdf5Path_ = outputPath;

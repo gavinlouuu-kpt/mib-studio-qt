@@ -10,6 +10,7 @@
 #include "backend/processing/ProcessingTypes.h"
 #include "backend/recording/Hdf5Service.h"
 #include "backend/recording/HdfExportService.h"
+#include "backend/recording/RunProvenanceRecord.h"
 
 #include <nlohmann/json.hpp>
 #include <opencv2/core.hpp>
@@ -191,6 +192,22 @@ namespace backend::review
             cv::Mat background;
             processing::ProcessingCoreIdentity originalCore;
             bool hasOriginalCore = false;
+            // The E-LUT of this run (#764): the source run's own, none when it
+            // loaded none, or the kernel's when it records nothing (folder /
+            // AVI too). Resolved before any frame is read, refused when its
+            // own cannot be found here.
+            SourceEModulusLut lut;
+            const auto resolveLut = [&](const std::optional<recording::EModulusLutRecord> &record) {
+                std::string lutError;
+                if (!resolveSourceEModulusLut(record, &kernel, lut, lutError)) throw std::runtime_error(lutError);
+                outcome.eModulusLutResolved = true;
+                outcome.eModulusLutBasis = lut.basis;
+                outcome.eModulusLut = lut.basis == EModulusLutBasis::Source   ? lut.name
+                                      : lut.basis == EModulusLutBasis::Legacy ? describeLoadedEModulusLut(kernel)
+                                                                              : std::string();
+                if (kind == "hdf" && lut.basis != EModulusLutBasis::Source)
+                    outcome.eModulusLutNote = reanalysisEModulusLutPhrase(outcome);
+            };
             if (kind == "hdf")
             {
                 services::Hdf5Service reader;
@@ -267,6 +284,7 @@ namespace backend::review
                     throw std::runtime_error("Source ROI metadata is missing");
                 reader.readBackgroundImage(background);
                 hasOriginalCore = reader.readProcessingCoreIdentity(originalCore);
+                resolveLut(recordedEModulusLut(reader));
                 if (request.useRecordedPixelToMicron)
                 {
                     if (const double recorded = ReviewSession::recordedPixelToMicron(reader); recorded > 0.0)
@@ -321,11 +339,13 @@ namespace backend::review
                                  : services::batch_masks::buildSyntheticBackground(
                                        images, [cancel] { return cancel->load(std::memory_order_acquire); });
             const auto selected = images.size();
+            if (!outcome.eModulusLutResolved) resolveLut(std::nullopt); // folder / AVI: nothing recorded
             // The analysis inputs of this run (#758): its factor and the
             // channel band of its background, per call; `config` records the
             // band applied.
             services::ProcessingConfig config = request.config;
-            const auto inputs = services::ProcessingService::offlineAnalysisInputs(config, background, factor);
+            auto inputs = services::ProcessingService::offlineAnalysisInputs(config, background, factor);
+            lut.applyTo(inputs);
             usedFactor = factor;
             processing::ProcessingCoreIdentity usedCore;
             auto frames = kernel.processBatch(
@@ -363,8 +383,13 @@ namespace backend::review
             partial = std::filesystem::path(output).parent_path() /
                       ("." + std::filesystem::path(output).filename().string() + ".partial-" +
                        recording::HdfExportService::newJobId());
+            // The factor's source (#764): the source run's own, the
+            // operator's, or a fallback that is not the run's calibration.
+            const auto factorSource = factorRecorded                  ? services::batch_masks::PixelToMicronSource::Recorded
+                                      : request.pixelToMicronExplicit ? services::batch_masks::PixelToMicronSource::Operator
+                                                                      : services::batch_masks::PixelToMicronSource::Fallback;
             if (!services::batch_masks::saveMasksToHdf5(frames, partial.string(), config, roi.x, roi.y, roi.w, roi.h,
-                                                        background, kind == "hdf", &usedCore, factor))
+                                                        background, kind == "hdf", &usedCore, factor, factorSource))
                 throw std::runtime_error("Failed to save regenerated HDF");
             checkCancel();
             // Atomic no-clobber publication; supports NTFS/FAT on Windows and
@@ -412,6 +437,23 @@ namespace backend::review
         return outcome;
     }
 
+    std::string reanalysisEModulusLutPhrase(const ReanalysisOutcome &outcome)
+    {
+        if (!outcome.eModulusLutResolved) return {};
+        switch (outcome.eModulusLutBasis)
+        {
+        case EModulusLutBasis::Source:
+            return "E-LUT " + outcome.eModulusLut + " (the source run's)";
+        case EModulusLutBasis::NotLoaded:
+            return "E not computed: the source run loaded no E-LUT";
+        case EModulusLutBasis::Legacy:
+            break;
+        }
+        return outcome.eModulusLut.empty() ? "E not computed: the source records no E-LUT and none is loaded"
+                                           : "E-LUT " + outcome.eModulusLut +
+                                                 " (the loaded one: the source records no E-LUT)";
+    }
+
     bool loadReanalysisPreview(const std::string &text, cv::Mat &image, std::uint64_t &index)
     {
         try
@@ -456,7 +498,14 @@ namespace backend::review
                     {"final_path", outcome.published ? request.outputPath : ""},
                     {"retained_partial_path", outcome.retainedPartialPath},
                     {"error", outcome.error},
-                    {"warnings", outcome.warning.empty() ? json::array() : json::array({outcome.warning})},
+                    {"warnings", [&] {
+                         json warnings = json::array();
+                         if (!outcome.warning.empty()) warnings.push_back(outcome.warning);
+                         // What E was computed with when not the source's own (#764).
+                         if (outcome.published && !outcome.eModulusLutNote.empty())
+                             warnings.push_back(outcome.eModulusLutNote);
+                         return warnings;
+                     }()},
                     {"objects", std::to_string(outcome.produced)},
                     // Of `objects`, the valid records (#763 F18: the classic view's completion line
                     // reports both, next to final_path).

@@ -16,11 +16,16 @@
   read back by `readRecordedProcessingConfig`), ROI, optional `background` image,
   `config_json` (raw JSON string: a capture's runtime config document, a
   regenerated / reanalysed file's `{"image_processing": …,
-  "pixel_to_micron_factor": …}`; its `image_processing.target_group` is the
-  recorded target group, which no `processing_config_*` attribute carries,
-  #758), `pixel_to_micron` (double, regenerated / reanalysed files only since
-  #758: the µm per pixel their objects were validated at; captures record
-  theirs in the run snapshot), plus processing-core provenance:
+  "pixel_to_micron_factor": …, "pixel_to_micron_source": …}`; its
+  `image_processing.target_group` is the recorded target group, which no
+  `processing_config_*` attribute carries, #758), `pixel_to_micron` (double,
+  regenerated / reanalysed files only since #758: the µm per pixel their
+  objects were validated at; captures record theirs in the run snapshot) with
+  `pixel_to_micron_source` (UTF-8 string since #764: `recorded` = the source
+  run's own factor, `operator` = supplied for this output, `fallback` = a host
+  default or fallback because the source records none; review takes only
+  `recorded` / `operator`, or a file without the attribute, as the file's
+  calibration), plus processing-core provenance:
   `processing_core_version`, `processing_contract_version`,
   `processing_engine_abi_version`, `processing_core_sha256`,
   `processing_manifest_sha256`, `processing_release_tag`,

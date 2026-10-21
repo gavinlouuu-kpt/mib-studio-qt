@@ -80,8 +80,16 @@ size_t saveMaskImages(const std::vector<ProcessedFrame>& frames,
 // write them to a new HDF5 file at `outputPath` via Hdf5Service::saveFrames().
 // Also writes `experiment_info` so the file round-trips through HdfReviewTab.
 // `pixelToMicron` > 0 is the factor the frames were analysed at: written as
-// `/experiment_info @pixel_to_micron` (#758), which review reads as the
-// file's recorded factor; 0 records none. Returns true on success.
+// `/experiment_info @pixel_to_micron` (#758) with `@pixel_to_micron_source`
+// (#764) from `pixelToMicronSource`. Review reads the factor as the file's
+// recorded one only when its source is Recorded or Operator; a Fallback
+// factor (the source recorded none and nobody supplied one) is shown as a
+// fallback. 0 records none. Returns true on success.
+enum class PixelToMicronSource {
+    Recorded, // the source run's own recorded factor
+    Operator, // supplied explicitly for this output
+    Fallback, // a host default or fallback: the source records none
+};
 bool saveMasksToHdf5(const std::vector<ProcessedFrame>& frames,
                      const std::string& outputPath,
                      const ProcessingConfig& config,
@@ -89,6 +97,7 @@ bool saveMasksToHdf5(const std::vector<ProcessedFrame>& frames,
                      const cv::Mat& background,
                      bool useFrameTimestamps = false,
                      const backend::processing::ProcessingCoreIdentity* processingCore = nullptr,
-                     double pixelToMicron = 0.0);
+                     double pixelToMicron = 0.0,
+                     PixelToMicronSource pixelToMicronSource = PixelToMicronSource::Fallback);
 
 } // namespace backend::services::batch_masks

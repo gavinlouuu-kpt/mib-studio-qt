@@ -183,5 +183,10 @@ Metrics CSV (Qt and YOFO Review, byte-identical for tools/review_parity) appends
 existing column position. Values come from persisted `validation.youngsModulus`
 and use three decimal places; NaN is an empty field. The exporter regression
 covers finite and NaN values, 24-column rows and repeated export soak timing.
+Since #764 a run whose snapshot v3 records that no E-LUT was loaded
+(`emodulus_lut.loaded == false`) has every E cell empty: its stored 0 is not a
+value (Export Metrics to CSV, Export All and Batch Metrics share
+`writeMetricsCsv`). A run that loaded a LUT, or a file without a snapshot (or
+one before v3), is written as stored. FCS export is unchanged.
 
 The #595 export soak permits a late median up to max(1.25 × early median, early median + 100 ms) on Windows, allowing filesystem/Defender bursts across several rounds (+20 ms elsewhere, where a round is ~5 ms). Sustained growth beyond that bound still fails; exact per-job HDF5 object baseline, identical manifests and source integrity remain required.

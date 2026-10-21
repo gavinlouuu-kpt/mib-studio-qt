@@ -50,13 +50,17 @@ core as [[ProcessingService]].
   `experiment_info` start/end timestamps come from the already normalised
   frame timestamps instead of wall-clock write time. Since #758 it also
   records what the frames were analysed with: `pixelToMicron` > 0 as
-  `/experiment_info @pixel_to_micron` (review reads it as the file's
+  `/experiment_info @pixel_to_micron` with `@pixel_to_micron_source` from
+  `PixelToMicronSource` (#764: `Recorded` = the source's own factor,
+  `Operator` = supplied for this output, `Fallback` = the default argument, a
+  host default or fallback; review reads only the first two as the file's
   recorded factor, see [[ReviewSession]]), and the applied config as the
-  `@config_json` document `{"image_processing": …, "pixel_to_micron_factor": …}`
-  (captures write their runtime document there; the target group is read
-  back from it, see [[Hdf5Service]]). The reanalysis engine and the Qt
-  dialog pass the factor they validated at; the wheel's
-  `save_masks_to_hdf5` passes none.
+  `@config_json` document `{"image_processing": …, "pixel_to_micron_factor":
+  …, "pixel_to_micron_source": …}` (captures write their runtime document
+  there; the target group is read back from it, see [[Hdf5Service]]). The
+  reanalysis engine and the Qt dialog pass the factor they validated at and
+  whether it is the source's (the Qt dialog's live factor is `Fallback`); the
+  wheel's `save_masks_to_hdf5` passes none.
 
 ## Typical flow
 
@@ -87,5 +91,5 @@ batch_masks::saveMaskImages(frames, "/out/dir", names);
   service's live factor and channel band, not the source's. Every offline
   caller in the repo passes them (#758: before, YOFO Review regenerated at
   0.4886 µm/px and MIB Studio / Qt at the live factor, whatever the source
-  recorded). The wheel's `process_batch(pixel_to_micron=…)` still validates
-  at a fresh service's 0.4886 and uses its argument only for `area_um2`.
+  recorded). The wheel's `process_batch(pixel_to_micron=…, channel_band=…)`
+  passes them too since #764 (omitted: 0.4886 and no band, as before).

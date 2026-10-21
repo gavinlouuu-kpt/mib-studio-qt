@@ -669,6 +669,10 @@ pub struct ReviewReprocess {
     core_source: String,
     pixel_to_micron: f64,
     emodulus_recomputed: bool,
+    /// Review ABI 4 (#764): the E-LUT used (the run's own), `null` when E
+    /// was not recomputed.
+    emodulus_lut: Option<String>,
+    emodulus_lut_sha256: Option<String>,
     stored: Option<ReviewRow>,
     reprocessed: Vec<ReviewRow>,
     match_index: Option<u32>,
@@ -700,6 +704,8 @@ pub fn review_reprocess_record(
         core_source: r.core_source,
         pixel_to_micron: r.pixel_to_micron,
         emodulus_recomputed: r.emodulus_recomputed,
+        emodulus_lut: (!r.emodulus_lut.is_empty()).then_some(r.emodulus_lut),
+        emodulus_lut_sha256: (!r.emodulus_lut_sha256.is_empty()).then_some(r.emodulus_lut_sha256),
         stored: ok.then(|| review_row(r.stored)),
         reprocessed: r.reprocessed.into_iter().map(review_row).collect(),
         match_index: present(r.has_match, r.match_index),

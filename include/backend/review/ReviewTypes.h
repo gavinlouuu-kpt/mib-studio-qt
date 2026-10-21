@@ -256,9 +256,17 @@ namespace backend::review
         // the file's (or the fallback when it records none); Default, the
         // processing default. Named in settingsLabel.
         double pixelToMicron{0.0};
-        // E (and an E-gated target group) recomputed: false when no E-LUT
-        // is loaded for reprocessing; the reprocessed rows' E is then NaN.
+        // E (and an E-gated target group) recomputed: true when the run's
+        // own E-LUT was used (#764, SourceEModulusLut.h); false when the run
+        // loaded none or records none (a file before snapshot v3); the
+        // reprocessed rows' E is then NaN.
         bool emodulusRecomputed{false};
+        // The E-LUT used (review ABI 4, #764): the run's recorded one in
+        // words (lut id, revision, the hash's first 12 hex digits) and its
+        // full sha256; both empty when E was not recomputed. Named in
+        // settingsLabel.
+        std::string emodulusLut;
+        std::string emodulusLutSha256;
         // The stored row as stored (its box and centroid in the file's
         // object coordinate space, ReviewMetadata::objectCoordinates).
         MetricRow stored;

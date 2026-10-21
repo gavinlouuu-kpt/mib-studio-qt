@@ -91,6 +91,18 @@ once a release carries it.
   `.github/workflows/review-release.yml` is generic, so add the notice to the GitHub Release
   by hand when the release is cut.
 
+- **YOFO Review and MIB Studio: reprocessing uses the recording's own E-modulus table (#764).**
+  The next release of each product should state:
+  - Regenerate masks, reanalysis and reprocessing one record compute Young's modulus with
+    the E-modulus look-up table the recording used, found by its checksum; before, they used
+    the table loaded in the app (MIB Studio) or none (YOFO Review). If that table is not
+    available, they stop and name it. A recording made without a table gets no E values.
+    Recordings made before the table was recorded behave as before.
+  - A regenerated file whose pixel-to-micron factor was not the recording's own (a fallback
+    or the default) now says so, and Review shows it as a fallback.
+  - Exported metrics CSV files leave Young's modulus empty for recordings made without an
+    E-modulus table, instead of writing 0.
+
 - **YOFO Studio (browser UI): where files without a full path were saved (#762).** The
   next release with `yofo-studio-server` must state:
   - **What was wrong:** in the browser, a file name without a full path (the Start prompt's

@@ -978,6 +978,14 @@ mib_add_backend_test_executable(review_reanalysis_pixel_factor_test review/revie
 mib_backend_test_link(review_reanalysis_pixel_factor_test PRIVATE Threads::Threads)
 add_test(NAME review.reanalysis_pixel_factor COMMAND $<TARGET_FILE:mib_backend_tests> review_reanalysis_pixel_factor_test)
 set_tests_properties(review.reanalysis_pixel_factor PROPERTIES LABELS "review;recording;backend;hdf5;roundtrip;concurrency;safety" TIMEOUT 240)
+# #764: reanalysis, regenerate and reprocess use the source run's own E-LUT
+# (by its recorded hash; refused when it is not here; no E when it loaded
+# none; legacy files as before); the reprocess reply names it (review ABI 4);
+# a fallback px→µm is recorded as one; the metrics CSV writes E as missing
+# for a run that loaded no E-LUT.
+mib_add_backend_test_executable(review_source_elut_test review/review_source_elut_test.cpp)
+add_test(NAME review.source_elut COMMAND $<TARGET_FILE:mib_backend_tests> review_source_elut_test)
+set_tests_properties(review.source_elut PROPERTIES LABELS "review;recording;backend;hdf5;roundtrip;safety" TIMEOUT 240)
 # Export engine in mib_review_core (#512 slice 3): parse, single + batch round
 # trips, continue-on-failure / stop-on-cancel, write faults with and without
 # keep_partial_on_failure, both cancel polling modes, status JSON byte for byte.
