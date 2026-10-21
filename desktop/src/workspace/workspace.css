@@ -502,6 +502,15 @@
   border-radius: var(--mib-radius-sm);
   font-size: var(--mib-font-size-sm);
 }
+/* A tile's state chip wraps inside the tile ("Finalized · file closed"; #763 F10, F14). */
+.ws-shell .ws-live__sample {
+  min-width: 0;
+}
+.ws-shell .ws-live__sample .mib-chip {
+  align-self: flex-start;
+  max-width: 100%;
+  white-space: normal;
+}
 .ws-shell .ws-live__sample--current {
   border-color: var(--mib-color-accent);
   background: var(--mib-color-accent-bg);
