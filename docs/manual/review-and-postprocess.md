@@ -92,8 +92,20 @@ The result is written to a **new** HDF5 file — the original is never
 modified — and opened in the Review tab. If no background is available,
 one can be synthesized from the least-changing image tiles.
 
+Each object's area range and target group are checked at the
+pixel-to-micron factor the loaded file was recorded with, or at the factor
+currently set in the app when the file records none and for AVI and folder
+sources. The new file records that factor.
+
 Use this to rescue an experiment recorded with a bad threshold, or to
 compare configurations on identical input.
+
+**Files regenerated with v1.2.0-beta.1108951d or earlier** (#758): those
+versions checked objects at the factor set in the app, not the one the file
+was recorded with, and did not record a factor in the new file. If the two
+factors differed, the valid / invalid split and the target group in the
+regenerated file can be wrong. Images, masks and background are correct.
+Regenerate such files again from the original recording.
 
 ## YOFO Review (standalone review app)
 

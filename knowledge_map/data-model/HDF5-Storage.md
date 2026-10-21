@@ -14,7 +14,13 @@
   serialized `ProcessingConfig` (`processing_config_*`, including the declared
   contract, difference threshold, all object gates and the channel band;
   read back by `readRecordedProcessingConfig`), ROI, optional `background` image,
-  `config_json` (raw JSON string), plus processing-core provenance:
+  `config_json` (raw JSON string: a capture's runtime config document, a
+  regenerated / reanalysed file's `{"image_processing": …,
+  "pixel_to_micron_factor": …}`; its `image_processing.target_group` is the
+  recorded target group, which no `processing_config_*` attribute carries,
+  #758), `pixel_to_micron` (double, regenerated / reanalysed files only since
+  #758: the µm per pixel their objects were validated at; captures record
+  theirs in the run snapshot), plus processing-core provenance:
   `processing_core_version`, `processing_contract_version`,
   `processing_engine_abi_version`, `processing_core_sha256`,
   `processing_manifest_sha256`, `processing_release_tag`,

@@ -519,6 +519,11 @@ mib_add_backend_test_executable(facade_review_jobs_test backend/facade_review_jo
 mib_backend_test_link(facade_review_jobs_test PRIVATE Threads::Threads)
 add_test(NAME backend.facade_review_jobs COMMAND $<TARGET_FILE:mib_backend_tests> facade_review_jobs_test)
 set_tests_properties(backend.facade_review_jobs PROPERTIES LABELS "backend;bridge;review;recording;hdf5;concurrency;stress" TIMEOUT 300)
+# #758: the facade's review_reanalysis_json validates at the HDF source's
+# recorded factor (the live one as the fallback) and never changes the live one.
+mib_add_backend_test_executable(facade_reanalysis_pixel_factor_test backend/facade_reanalysis_pixel_factor_test.cpp)
+add_test(NAME backend.facade_reanalysis_pixel_factor COMMAND $<TARGET_FILE:mib_backend_tests> facade_reanalysis_pixel_factor_test)
+set_tests_properties(backend.facade_reanalysis_pixel_factor PROPERTIES LABELS "backend;bridge;review;recording;hdf5;roundtrip" TIMEOUT 120)
 
 # BE-4 (#274): backend-owned experiment lifecycle state machine — pipeline e2e
 # over the facade command surface plus fault-injection (fatal save error,
@@ -932,6 +937,14 @@ set_tests_properties(review.overlay_kernel PROPERTIES LABELS "review;backend;inv
 mib_add_backend_test_executable(review_reanalysis_test review/review_reanalysis_test.cpp)
 add_test(NAME review.reanalysis COMMAND $<TARGET_FILE:mib_backend_tests> review_reanalysis_test)
 set_tests_properties(review.reanalysis PROPERTIES LABELS "review;recording;backend;hdf5;safety" TIMEOUT 120)
+# #758: reanalysis / regenerate validate at the source's own pixel-to-micron
+# factor, passed per call (processBatch inputs, the engine, YOFO's regenerate
+# job, a batch of sources with different factors, a live caller beside a job,
+# the run's own channel band); the output records the factor.
+mib_add_backend_test_executable(review_reanalysis_pixel_factor_test review/review_reanalysis_pixel_factor_test.cpp)
+mib_backend_test_link(review_reanalysis_pixel_factor_test PRIVATE Threads::Threads)
+add_test(NAME review.reanalysis_pixel_factor COMMAND $<TARGET_FILE:mib_backend_tests> review_reanalysis_pixel_factor_test)
+set_tests_properties(review.reanalysis_pixel_factor PROPERTIES LABELS "review;recording;backend;hdf5;roundtrip;concurrency;safety" TIMEOUT 240)
 # Export engine in mib_review_core (#512 slice 3): parse, single + batch round
 # trips, continue-on-failure / stop-on-cancel, write faults with and without
 # keep_partial_on_failure, both cancel polling modes, status JSON byte for byte.

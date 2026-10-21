@@ -160,8 +160,11 @@ namespace backend::review
         // while the job runs fails the job, untouched.
         std::string outputPath;
         // Processing inputs. When `useRecordedConfig` the open file's recorded
-        // config, ROI and background are used (the reanalysis default); else
-        // the given ones.
+        // config, ROI, background and pixel-to-micron factor are used (the
+        // reanalysis default; the session's fallback factor when the file
+        // records none, #758); else the given ones at the default factor
+        // (0.4886 µm/px), as for AVI and folder sources. The output records
+        // the factor and the completion message names it.
         bool useRecordedConfig{true};
         services::ProcessingConfig config{};
         services::ProcessingService::Roi roi{};
@@ -295,7 +298,9 @@ namespace backend::review
         // by the service (`ExportCancelPolling::Direct`); refused with "An
         // export is already active" while the export lane is busy. Reanalysis:
         // `runReanalysis` on `kernel` (the facade: the live processing
-        // service; it outlives the job); refused with "Reanalysis already
+        // service; it outlives the job; the request's factor and channel band
+        // are passed per call, so the live ones are neither read nor changed,
+        // #758); refused with "Reanalysis already
         // active" while the processing lane is busy. Progress events carry no
         // message; the terminal message is the final path (export completed)
         // or the engine's error. The lane's status snapshot is updated before

@@ -5,7 +5,10 @@
 // reanalysis at a time, beside an export; the lane holds the status snapshot).
 // The facade keeps the policy: the live processing config as the default and
 // the live processing service as the kernel, the tracked operation
-// (BackendOperationKind::Reanalysis, through the lanes' host hook).
+// (BackendOperationKind::Reanalysis, through the lanes' host hook). Objects
+// are validated at an HDF source's recorded pixel-to-micron factor, the live
+// factor when the source records none and for folder / AVI sources (#758);
+// the engine passes it per call, so the live service's factor is unchanged.
 #include "backend/app/BackendFacade.h"
 #include "backend/app/AppBackend.h"
 #include "backend/review/Reanalysis.h"
@@ -42,6 +45,8 @@ BackendCommandResult BackendFacade::submitReviewReanalysisJson(const std::string
         if (!resolved.ok) return {false, BackendCommandType::Review, "Regenerate output refused: " + resolved.reason};
         request.outputPath = resolved.path;
     }
+    request.useRecordedPixelToMicron=true;
+    request.pixelToMicron=backend_.processing().getPixelToMicronFactor();
     const auto started=reviewJobs_->startReanalysisJson(request,backend_.processing());
     if (started.operationId==0) return {false,BackendCommandType::Review,started.error};
     if (!started.started) return {false,BackendCommandType::Review,started.error,started.operationId};
