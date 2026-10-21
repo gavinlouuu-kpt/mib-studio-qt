@@ -362,6 +362,7 @@ void MonitoringCellStore::refreshStrip()
     }
     source_.releaseShares(newest.rows); // keys and metrics stay for the index below
     std::deque<Entry> dropped; // freed when this returns, after the lock
+    std::function<void(const char*)> droppedHook; // tests only
     {
         std::scoped_lock lk(mutex_);
         ++counters_.refreshes;
@@ -404,7 +405,9 @@ void MonitoringCellStore::refreshStrip()
         trimStripLocked();
         raisePeakLocked();
         counters_.lastRefreshUs = elapsedUs(t0, Clock::now());
+        if (readHook_ && !dropped.empty()) droppedHook = readHook_;
     }
+    if (droppedHook) droppedHook("refresh-dropped"); // after the lock, the dropped copies still held
     if (otherCapture)
         SPDLOG_DEBUG("MonitoringCellStore: {} row(s) of another capture than {} not admitted to the strip",
                      otherCapture, current);
@@ -483,12 +486,23 @@ MonitoringCellStore::PinResult MonitoringCellStore::pin(const MonitoringCellKey&
     // The ring (headers under its lock): only a row whose frame carried this capture is this
     // identity (frame indices restart with a capture); admit() rechecks the capture.
     auto found = source_.find(key.frameIndex, key.objectId);
-    // The strip already holds an owned copy of this capture's row: share it (immutable), no new crop.
+    // The strip already holds an owned copy of this capture's row: the pin takes a copy of that
+    // copy (no new crop), under the lock, never a refcount share of it (#789). Every pixel buffer
+    // has exactly one owner in the store, so whichever thread removes it under the mutex frees it
+    // after every read (reads happen under the mutex only); a share would make the last release
+    // whichever owner went last, ordered after the readers by cv::Mat's reference count alone,
+    // which ThreadSanitizer cannot see (it lives in the uninstrumented OpenCV library).
     {
         std::optional<Entry> fromStrip;
         {
             std::scoped_lock lk(mutex_);
-            if (const auto* s = findLocked(key, false)) fromStrip = *s;
+            if (const auto* s = findLocked(key, false)) {
+                Entry e;
+                e.info = s->info;
+                e.image = s->image.clone(); // ≤ crop_max_side² bytes each; empty stays empty
+                e.mask = s->mask.clone();
+                fromStrip = std::move(e);
+            }
         }
         if (fromStrip) {
             source_.releaseShares(found.rows);
@@ -644,8 +658,8 @@ diagnostics::MemoryOwnerStats MonitoringCellStore::memoryStats() const
     o.capacityBytes = policy_.stripMaxBytes + policy_.pinMaxBytes;
     o.capacityCount = policy_.stripMaxCells + policy_.maxPins;
     o.evictedByBudget = counters_.stripEvicted;
-    o.note = "owned crops of the live detected-cell strip and the pinned cells (bridge ABI 41); a strip shared by a "
-             "pin is counted twice (upper bound)";
+    o.note = "owned crops of the live detected-cell strip and the pinned cells (bridge ABI 41); a pinned strip cell "
+             "has a copy of its own in each (#789)";
     return o;
 }
 
