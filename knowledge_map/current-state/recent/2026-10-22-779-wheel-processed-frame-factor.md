@@ -17,5 +17,6 @@ with a trailing `const BatchAnalysisInputs&`, which checks the factor as
 signature is unchanged.
 
 Tests: the wheel's `TestComputeProcessedFrameCalibration` (a factor that
-changes validity, agreement with `process_batch`, the default unchanged,
+changes validity, one that changes the target group, agreement with
+`process_batch`, the default unchanged,
 invalid factors refused).

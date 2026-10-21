@@ -221,6 +221,23 @@ class TestComputeProcessedFrameCalibration:
         for key in ("is_valid", "frame_type", "area", "area_um2", "in_range"):
             assert single[key] == batch[key], key
 
+    def test_factor_decides_the_target_group(self) -> None:
+        frame = make_ring_frame()
+        area_px = mp.compute_processed_frame(frame, config=make_smoke_config())["area"]
+        at25 = area_px * 0.25 * 0.25
+        config = make_smoke_config()
+        config.update(enable_target_group=True, target_group_area_min=int(at25 / 2),
+                      target_group_area_max=int(math.ceil(at25 * 2)),
+                      target_group_deformability_min=0.0, target_group_deformability_max=1.0)
+        assert area_px * 0.4886 * 0.4886 > config["target_group_area_max"]
+        calibrated = mp.compute_processed_frame(frame, config=config, pixel_to_micron=0.25)
+        default = mp.compute_processed_frame(frame, config=config)
+        assert calibrated["is_valid"] is True and default["is_valid"] is True
+        assert calibrated["is_target_group"] is True
+        assert default["is_target_group"] is False  # decided at 0.4886, as before
+        batch = mp.process_batch([frame], config, pixel_to_micron=0.25)[0]
+        assert batch["is_target_group"] is True
+
     @pytest.mark.parametrize("bad", [0.0, -0.5, float("nan"), float("inf")])
     def test_factor_must_be_finite_and_positive(self, bad: float) -> None:
         with pytest.raises(ValueError):
