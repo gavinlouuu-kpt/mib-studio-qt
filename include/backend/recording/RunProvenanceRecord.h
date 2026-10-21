@@ -174,4 +174,25 @@ std::optional<RunStopRecord> parseRunStop(const std::string& json, std::string* 
 bool readRecordedRunProvenance(const services::Hdf5Service& file, RecordedRunProvenance& out,
                                std::string* why = nullptr);
 
+// The E-modulus LUT record of a regenerated / reanalysed file (#764): `/experiment_info
+// @emodulus_lut_json`, written by batch_masks::saveMasksToHdf5. The snapshot v3 `emodulus_lut`
+// shape plus `provenance`: "recorded" (carried over from the source run's own record, so it
+// names the run's LUT, or `loaded` false when the run loaded none) or "host" (the source recorded
+// none: the LUT the host computed E with, `loaded` false when it had none). A file never has
+// both a snapshot record and this attribute.
+inline constexpr const char* kEModulusLutProvenanceRecorded = "recorded";
+inline constexpr const char* kEModulusLutProvenanceHost = "host";
+std::string eModulusLutRecordJson(const EModulusLutRecord& lut, const std::string& provenance);
+struct ProvenancedEModulusLut {
+    EModulusLutRecord lut;
+    std::string provenance; // kEModulusLutProvenanceRecorded | kEModulusLutProvenanceHost
+};
+// nullopt when the text is not an object, has no boolean `loaded`, or another provenance.
+std::optional<ProvenancedEModulusLut> parseEModulusLutRecordJson(const std::string& json);
+
+// The E-LUT record describing an open file's stored E values: its run snapshot v3 `emodulus_lut`
+// (provenance "recorded"), else its `@emodulus_lut_json` (#764); nullopt when it has neither (a
+// capture before v3, or a file regenerated before #764).
+std::optional<ProvenancedEModulusLut> readFileEModulusLut(const services::Hdf5Service& file);
+
 } // namespace backend::recording

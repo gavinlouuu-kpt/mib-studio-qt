@@ -1058,6 +1058,22 @@ generation; the classic Stop Experiment sends none). Guards:
 `experimentStart.test.ts`, `queueModel.test.ts`, `QueuePlan.test.tsx`,
 `PlanView.test.tsx`, `navigation.test.tsx`.
 
+**The applied method's calibration declarations (ABI 43, #776).**
+`bridge.fetchExperimentReadiness()` now returns `method_calibration`
+(`MethodCalibration` in `calibrationRecords.ts`, decoded strictly by
+`decodeMethodCalibration` from `eventAdapter.decodeExperimentReadiness`):
+`declared`, `purpose` (`measurement` | `calibration`), `calibration_policy`
+(`none` | `warn` | `required`), `calibration_max_age_hours`,
+`calibration_reference` (`nominal_diameter_um`, `diameter_tolerance_um`,
+`nominal_e_kpa | null`, `max_cv_percent`; non-null exactly for a calibration
+method) and `error`. An unknown purpose or policy, a missing member, a number
+outside the method document's bounds, or a reference that does not match the
+purpose is refused (`CALIBRATION_REPLY_INVALID`).
+A reply without the member (a backend before ABI 43) decodes as `null`: unknown,
+never assumed to be a measurement method. No develop UI reads it; the workspace
+Prepare card (A4b) switches to it after the next develop sync. Guards:
+`calibrationRecords.test.ts`, `eventAdapter.test.ts`.
+
 **Calibration records (ABI 42, #716 A4a).** `calibrationRecords.ts` types and
 checks the replies of [[../services/CalibrationRecords]]:
 `bridge.calibrationRecordsList()` (`calibration_records_list`: the newest version

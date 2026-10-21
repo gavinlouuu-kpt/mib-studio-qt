@@ -16,6 +16,7 @@ import { discoverCameras, type PollOptions } from "./discovery";
 export type { FrameMeta, FramePacket } from "./framePacket";
 import { decodeEvents, decodeCommandResult, decodeExperimentReadiness, decodeExperimentStatus, decodeProcessingStats, wireU64, type CmdResult } from "./eventAdapter";
 export type { BridgeEvent, CmdResult, ExperimentReadiness, ExperimentStatus, ProcessingStats, ReadinessGate } from "./eventAdapter";
+export type { MethodCalibration, MethodCalibrationReference, MethodPurpose, CalibrationPolicy } from "./calibrationRecords";
 
 /** Autofocus/nanopositioner status (schema v11, BE-8). `ring_ratio_age_us`
  *  makes focus-metric staleness explicit (0 = never updated). */

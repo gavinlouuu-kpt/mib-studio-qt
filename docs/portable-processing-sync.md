@@ -191,7 +191,7 @@ Python wheels are architecture-independent from that native-plugin rollout.
 Each `mib-processing-v<version>` release requires the complete CPython
 3.10–3.13 × `manylinux_2_28_{x86_64,aarch64}` wheel matrix (8 wheels).
 Every wheel is installed and imported in its matching cibuildwheel container;
-ARM64 uses QEMU on the x86_64 Actions runner. Release creation and immutable
+ARM64 builds natively on the `ubuntu-24.04-arm` Actions runner. Release creation and immutable
 release reuse both fail if any Python/architecture pair is absent or an
 unexpected wheel is present.
 

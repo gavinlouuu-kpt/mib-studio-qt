@@ -318,9 +318,15 @@ pub mod review_ffi {
         pub core_source: String,
         /// The px→µm factor the reprocessing ran and reports with.
         pub pixel_to_micron: f64,
-        /// E (and an E-gated target group) recomputed; false without an
-        /// E-LUT, and the reprocessed rows' E is then NaN.
+        /// E (and an E-gated target group) recomputed with the run's own
+        /// E-LUT; false when the run loaded none or records none, and the
+        /// reprocessed rows' E is then NaN.
         pub emodulus_recomputed: bool,
+        /// Review ABI 4 (#764): the E-LUT used, in words (lut id, revision,
+        /// the hash's first 12 hex digits), and its full sha256; both empty
+        /// when E was not recomputed.
+        pub emodulus_lut: String,
+        pub emodulus_lut_sha256: String,
         pub stored: ReviewRow,
         pub reprocessed: Vec<ReviewRow>,
         pub has_match: bool,

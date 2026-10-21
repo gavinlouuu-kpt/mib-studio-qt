@@ -978,6 +978,14 @@ mib_add_backend_test_executable(review_reanalysis_pixel_factor_test review/revie
 mib_backend_test_link(review_reanalysis_pixel_factor_test PRIVATE Threads::Threads)
 add_test(NAME review.reanalysis_pixel_factor COMMAND $<TARGET_FILE:mib_backend_tests> review_reanalysis_pixel_factor_test)
 set_tests_properties(review.reanalysis_pixel_factor PROPERTIES LABELS "review;recording;backend;hdf5;roundtrip;concurrency;safety" TIMEOUT 240)
+# #764: reanalysis, regenerate and reprocess use the source run's own E-LUT
+# (by its recorded hash; refused when it is not here; no E when it loaded
+# none; legacy files as before); the reprocess reply names it (review ABI 4);
+# a fallback px→µm is recorded as one; the metrics CSV writes E as missing
+# for a run that loaded no E-LUT.
+mib_add_backend_test_executable(review_source_elut_test review/review_source_elut_test.cpp)
+add_test(NAME review.source_elut COMMAND $<TARGET_FILE:mib_backend_tests> review_source_elut_test)
+set_tests_properties(review.source_elut PROPERTIES LABELS "review;recording;backend;hdf5;roundtrip;safety" TIMEOUT 240)
 # Export engine in mib_review_core (#512 slice 3): parse, single + batch round
 # trips, continue-on-failure / stop-on-cancel, write faults with and without
 # keep_partial_on_failure, both cancel polling modes, status JSON byte for byte.
@@ -1761,6 +1769,11 @@ set_tests_properties(backend.calibration_record PROPERTIES LABELS "backend;calib
 mib_add_backend_test_executable(calibration_run_test backend/calibration_run_test.cpp)
 add_test(NAME e2e.calibration_run COMMAND $<TARGET_FILE:mib_backend_tests> calibration_run_test)
 set_tests_properties(e2e.calibration_run PROPERTIES LABELS "backend;calibration;e2e;hdf5;safety" TIMEOUT 180)
+# #716 A4a fix: the calibration declarations through the real apply paths (profile apply copies
+# or removes them, processing settings keep them, the central method applies its text verbatim).
+mib_add_backend_test_executable(calibration_profile_apply_test backend/calibration_profile_apply_test.cpp)
+add_test(NAME e2e.calibration_profile_apply COMMAND $<TARGET_FILE:mib_backend_tests> calibration_profile_apply_test)
+set_tests_properties(e2e.calibration_profile_apply PROPERTIES LABELS "backend;calibration;profiles;e2e;safety" TIMEOUT 180)
 
 mib_add_backend_test_executable(method_provenance_test backend/method_provenance_test.cpp)
 add_test(NAME backend.method_provenance COMMAND $<TARGET_FILE:mib_backend_tests> method_provenance_test)

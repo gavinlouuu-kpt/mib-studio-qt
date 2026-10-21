@@ -34,14 +34,18 @@ class ProcessingCoreWheelArchitectureTest(unittest.TestCase):
                 )
                 self.assertIn(image, workflow)
 
-        self.assertIn("docker/setup-qemu-action@v3", workflow)
-        self.assertRegex(workflow, r"platforms:\s*arm64")
+        # ARM64 builds natively on the arm64 runner, not under QEMU.
+        self.assertIn("runner: ubuntu-24.04-arm", workflow)
+        self.assertIn("runs-on: ${{ matrix.runner }}", workflow)
+        self.assertNotIn("setup-qemu-action", workflow)
+        self.assertIn("CIBW_BEFORE_ALL_LINUX: >-", workflow)
         self.assertIn(
-            "CIBW_BEFORE_ALL_LINUX: >-\n"
-            "            dnf install -y --setopt=install_weak_deps=False "
-            "epel-release",
+            "dnf install -y --setopt=install_weak_deps=False epel-release",
             workflow,
         )
+        # The EPEL install is retried with fresh metadata.
+        self.assertIn("for attempt in 1 2 3 4", workflow)
+        self.assertIn('test "$ok" = 1', workflow)
         self.assertIn("CIBW_TEST_COMMAND:", workflow)
         self.assertIn("assert mp.CONTRACT_VERSION == 1", workflow)
         self.assertNotIn("manylinux_i686", workflow)

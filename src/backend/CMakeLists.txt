@@ -1,4 +1,14 @@
 include("${PROJECT_SOURCE_DIR}/cmake/GenerateReviewIsoelastic.cmake")
+include("${PROJECT_SOURCE_DIR}/cmake/GenerateEmbeddedText.cmake")
+# The bundled E-modulus LUT's bytes in mib_review_core (#764): reanalysis,
+# regenerate and reprocess recompute E with a source run's own LUT, found by
+# its recorded hash; YOFO Review ships no resources folder.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${PROJECT_SOURCE_DIR}/resources/isoelastic_curve/scaled_isoelastic_data_LUT_6.16-4.24.txt")
+mib_generate_embedded_text(
+    "${PROJECT_SOURCE_DIR}/resources/isoelastic_curve/scaled_isoelastic_data_LUT_6.16-4.24.txt"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/review/BundledEModulusLut.h"
+    generatedBundledEModulusLutText)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${PROJECT_SOURCE_DIR}/resources/isoelastic_curve/scaled_isoelastic_data_6.16-4.24.txt")
 mib_generate_review_isoelastic(
@@ -213,7 +223,9 @@ add_library(mib_review_core STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/review/ReviewJobs.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/review/Reanalysis.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/review/ExportEngine.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/review/SourceEModulusLut.cpp
     ${PROJECT_SOURCE_DIR}/include/backend/review/ReviewSession.h
+    ${PROJECT_SOURCE_DIR}/include/backend/review/SourceEModulusLut.h
     ${PROJECT_SOURCE_DIR}/include/backend/review/ReviewCharts.h
     ${PROJECT_SOURCE_DIR}/include/backend/review/ReviewJobs.h
     ${PROJECT_SOURCE_DIR}/include/backend/review/Reanalysis.h
@@ -230,6 +242,7 @@ set_target_properties(mib_review_core PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 target_include_directories(mib_review_core PUBLIC ${PROJECT_SOURCE_DIR}/include)
+target_include_directories(mib_review_core PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated/review")
 target_link_libraries(mib_review_core PUBLIC mib_processing)
 
 if(MIB_BUILD_REVIEW_LINK_PROBE)

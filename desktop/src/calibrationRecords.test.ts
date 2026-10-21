@@ -1,9 +1,11 @@
 // Bridge ABI 42 (#716 A4a): the calibration records client against a mocked transport. The list,
 // get and apply replies are checked against the contract, an unknown status or outcome is
-// rejected, and a malformed apply never reaches the transport.
+// rejected, and a malformed apply never reaches the transport. ABI 43 (#776): the readiness
+// report's method_calibration is decoded strictly.
 import { beforeEach, expect, it, vi } from "vitest";
 import { bridge } from "./bridge";
 import { CALIBRATION_APPLY_OUTCOMES, CALIBRATION_RECORDS, CALIBRATION_RECORD_STATUSES } from "./bridgeContract";
+import { decodeMethodCalibration } from "./calibrationRecords";
 
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -74,4 +76,65 @@ it("applies with previous vs new; refusals and unknown outcomes", async () => {
   await expect(bridge.calibrationApply("cal-1", Number.NaN)).rejects.toThrow("INVALID_EXPECTED_FACTOR");
   await expect(bridge.calibrationApply("cal-1", 0)).rejects.toThrow("INVALID_EXPECTED_FACTOR");
   expect(invoke).not.toHaveBeenCalled();
+});
+
+// ABI 43 (#776): the applied method's calibration declarations in the readiness report.
+const readinessReply = (method_calibration: unknown) => ({
+  transport_version: 1, valid: true, ready: true, generation: "7",
+  gates: [{ id: "calibration.record", status: 4, reason: "a calibration method derives its own record", remediation: "" }],
+  method_calibration,
+});
+const calibrationMethod = {
+  declared: true, purpose: "calibration", calibration_policy: "none", calibration_max_age_hours: 24, error: null,
+  calibration_reference: { nominal_diameter_um: 7.32, diameter_tolerance_um: 0.1, nominal_e_kpa: null, max_cv_percent: 4 },
+};
+const undeclared = {
+  declared: false, purpose: "measurement", calibration_policy: "none", calibration_max_age_hours: 24,
+  calibration_reference: null, error: null,
+};
+
+it("decodes a calibration method's purpose and reference from the readiness report", async () => {
+  invoke.mockResolvedValueOnce(readinessReply(calibrationMethod));
+  const r = await bridge.fetchExperimentReadiness("/data/beads.h5");
+  expect(invoke).toHaveBeenLastCalledWith("fetch_experiment_readiness", { outputPath: "/data/beads.h5" });
+  expect(r.method_calibration).toEqual(calibrationMethod);
+  expect(r.method_calibration?.calibration_reference?.nominal_e_kpa).toBeNull();
+});
+
+it("reports measurement / none with declared false, never missing members", async () => {
+  invoke.mockResolvedValueOnce(readinessReply(undeclared));
+  const r = await bridge.fetchExperimentReadiness("/data/run.h5");
+  expect(r.method_calibration).toEqual(undeclared);
+  const gated = { ...undeclared, declared: true, calibration_policy: "required", calibration_max_age_hours: 12 };
+  expect(decodeMethodCalibration(gated)).toEqual(gated);
+  expect(decodeMethodCalibration({ ...undeclared, error: "calibration_policy: \"always\" is not ..." }).error).toContain("always");
+});
+
+it("rejects a malformed method_calibration", async () => {
+  const bad: unknown[] = [
+    null, {}, { ...undeclared, declared: "no" }, { ...undeclared, purpose: "qc" }, { ...undeclared, calibration_policy: "always" },
+    { ...undeclared, calibration_max_age_hours: 0 }, { ...undeclared, calibration_max_age_hours: null },
+    { ...undeclared, error: 3 }, { ...undeclared, calibration_reference: calibrationMethod.calibration_reference },
+    { ...calibrationMethod, calibration_reference: null },
+    { ...calibrationMethod, calibration_reference: { ...calibrationMethod.calibration_reference, nominal_diameter_um: "7" } },
+    { ...calibrationMethod, calibration_reference: { ...calibrationMethod.calibration_reference, nominal_e_kpa: Number.NaN } },
+    // The method document's bounds (Codex round 1): the backend never sends these.
+    { ...undeclared, calibration_max_age_hours: 87601 }, { ...undeclared, calibration_max_age_hours: -1 },
+    ...[{ nominal_diameter_um: 0 }, { nominal_diameter_um: -7 }, { nominal_diameter_um: 1001 }, { diameter_tolerance_um: -0.1 },
+      { diameter_tolerance_um: 8 }, { nominal_e_kpa: 0 }, { nominal_e_kpa: -3 }, { nominal_e_kpa: 1e6 + 1 },
+      { max_cv_percent: 0 }, { max_cv_percent: 101 }]
+      .map(r => ({ ...calibrationMethod, calibration_reference: { ...calibrationMethod.calibration_reference, ...r } })),
+  ];
+  for (const v of bad) expect(() => decodeMethodCalibration(v), JSON.stringify(v)).toThrow("CALIBRATION_REPLY_INVALID");
+  // The bounds themselves are accepted.
+  const edge = { ...calibrationMethod, calibration_max_age_hours: 87600,
+    calibration_reference: { nominal_diameter_um: 1000, diameter_tolerance_um: 1000, nominal_e_kpa: 1e6, max_cv_percent: 100 } };
+  expect(decodeMethodCalibration(edge)).toEqual(edge);
+  expect(decodeMethodCalibration({ ...edge, calibration_reference: { ...edge.calibration_reference, diameter_tolerance_um: 0 } })
+    .calibration_reference?.diameter_tolerance_um).toBe(0);
+  // Members missing entirely are an error too: the backend always sends every one.
+  const { error: _omitted, ...missing } = undeclared;
+  expect(() => decodeMethodCalibration(missing)).toThrow("CALIBRATION_REPLY_INVALID");
+  invoke.mockResolvedValueOnce(readinessReply({ ...undeclared, purpose: "qc" }));
+  await expect(bridge.fetchExperimentReadiness("/data/run.h5")).rejects.toThrow("CALIBRATION_REPLY_INVALID");
 });

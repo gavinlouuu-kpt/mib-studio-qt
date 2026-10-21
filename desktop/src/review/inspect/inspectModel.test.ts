@@ -358,6 +358,8 @@ describe("the record reprocessed", () => {
     core_source: "bundled",
     pixel_to_micron: 0.25,
     emodulus_recomputed: false,
+    emodulus_lut: null,
+    emodulus_lut_sha256: null,
     stored,
     reprocessed: [found],
     match_index: 0,
@@ -436,7 +438,7 @@ describe("a stored E of a run without an E-LUT (coordinator ruling on #774, opti
     expect(fact(measurementFacts(stored0, noLut), "E (stored)")).toMatchObject({ value: "Not computed (no E-LUT loaded)", tone: "unknown" });
     const r: ReviewReprocess = {
       ok: true, message: "", settings: 0, used_recorded_settings: true, settings_label: "", core_version: "2.1.0", core_source: "bundled",
-      pixel_to_micron: 0.25, emodulus_recomputed: false, stored: stored0, reprocessed: [stored0], match_index: 0, object_count_differs: false, truncated: false,
+      pixel_to_micron: 0.25, emodulus_recomputed: false, emodulus_lut: null, emodulus_lut_sha256: null, stored: stored0, reprocessed: [stored0], match_index: 0, object_count_differs: false, truncated: false,
     };
     expect(reprocessComparison(r, noLut).find((l) => l.label === "E")?.stored).toBe("Not computed (no E-LUT loaded)");
   });

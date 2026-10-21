@@ -321,7 +321,7 @@ int main()
         // The fixture's snapshot records px→µm 0.5: the reprocessing runs and reports with it.
         MIB_EXPECT(r.usedRecordedSettings &&
                        r.settingsLabel == "recorded settings (config, ROI, background); px→µm 0.5000 recorded; "
-                                          "E not recomputed (no E-LUT loaded)",
+                                          "E not recomputed: the file records no E-LUT",
                    "recorded settings named: " + r.settingsLabel);
         MIB_EXPECT(r.pixelToMicron == 0.5 && !r.emodulusRecomputed, "the recorded factor, no E-LUT");
         MIB_EXPECT(!r.coreVersion.empty(), "the kernel that reprocessed it is named");
@@ -349,7 +349,7 @@ int main()
         MIB_REQUIRE(jobs.reprocessRecord(true, 0, ReprocessSettings::Default, r, &err), "reprocess default: " + err);
         MIB_EXPECT(!r.usedRecordedSettings && r.settings == ReprocessSettings::Default &&
                        r.settingsLabel == "default settings (whole image, no background); px→µm 0.4886 default; "
-                                          "E not recomputed (no E-LUT loaded)",
+                                          "E not recomputed: the file records no E-LUT",
                    "default settings named: " + r.settingsLabel);
         MIB_EXPECT(std::abs(r.pixelToMicron - 0.4886) < 1e-12, "the processing default factor");
         MIB_EXPECT(r.stored.frameIndex == 10, "the same record");

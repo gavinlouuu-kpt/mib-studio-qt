@@ -744,19 +744,56 @@ namespace backend::review
         }
         if (in.processingPixelToMicron > 0.0) local.setPixelToMicronFactor(in.processingPixelToMicron);
         const double f = local.getPixelToMicronFactor();
+        // E with the run's own E-LUT (#764), found by its recorded hash among
+        // the session kernel's loaded LUT and the bundled one; refused when it
+        // cannot be found. A run that loaded none gets no E; a file that
+        // records none keeps the behaviour before #764 (the call's own
+        // instance loads no LUT, so E is not recomputed).
+        SourceEModulusLut lut;
+        {
+            std::string lutError;
+            if (!resolveSourceEModulusLut(in.eModulusLut, impl_->processing, lut, lutError))
+            {
+                if (error) *error = "Record " + std::to_string(index) + " cannot be reprocessed: " + lutError;
+                out = ReprocessResult{};
+                out.settings = settings;
+                return false;
+            }
+        }
+        services::ProcessingService::BatchAnalysisInputs inputs;
+        lut.applyTo(inputs);
         out.pixelToMicron = f;
-        out.emodulusRecomputed = local.eModulusLut().isLoaded();
+        out.emodulusRecomputed = lut.basis == EModulusLutBasis::Source ||
+                                 (lut.basis == EModulusLutBasis::Legacy && local.eModulusLut().isLoaded());
+        if (lut.basis == EModulusLutBasis::Source)
+        {
+            out.emodulusLut = lut.name;
+            out.emodulusLutSha256 = lut.sha256;
+        }
         {
             std::ostringstream label;
             label << in.settingsLabel << "; px→µm " << std::fixed << std::setprecision(4) << f << ' '
                   << (settings == ReprocessSettings::Default ? "default"
                       : in.pixelToMicronFromFile          ? "recorded"
                                                           : "fallback: the file records none");
-            if (!out.emodulusRecomputed) label << "; E not recomputed (no E-LUT loaded)";
+            switch (lut.basis)
+            {
+            case EModulusLutBasis::Source:
+                label << "; E-LUT " << lut.name << " (the run's)";
+                break;
+            case EModulusLutBasis::NotLoaded:
+                label << "; E not recomputed: the run loaded no E-LUT";
+                break;
+            case EModulusLutBasis::Legacy:
+                if (!out.emodulusRecomputed)
+                    label << "; E not recomputed: the file records "
+                          << (lut.hostRecord ? describeHostEModulusLut(*lut.hostRecord) : std::string("no E-LUT"));
+                break;
+            }
             out.settingsLabel = label.str();
         }
         processing::ProcessingCoreIdentity used;
-        const auto frames = local.processBatch({in.image}, in.config, in.background, in.roi, {}, &used);
+        const auto frames = local.processBatch({in.image}, in.config, in.background, in.roi, {}, &used, inputs);
         out.usedRecordedSettings = in.usedRecordedSettings;
         out.coreVersion = used.version;
         out.coreSource = used.source;
@@ -1173,8 +1210,12 @@ namespace backend::review
                     << std::setprecision(4) << outcome.pixelToMicron << ' '
                     << (!r.useRecordedPixelToMicron       ? "default"
                         : outcome.pixelToMicronRecorded ? "recorded"
-                                                        : "fallback: the file records none")
-                    << ")";
+                                                        : "fallback: the file records none");
+                // What E was computed with (#764): the source run's own
+                // E-LUT, none as the source, or the loaded one for a file
+                // that records none.
+                if (const auto lut = reanalysisEModulusLutPhrase(outcome); !lut.empty()) msg << "; " << lut;
+                msg << ")";
                 return Outcome{ReviewJobState::Completed, msg.str()};
             }
             if (outcome.cancelled)

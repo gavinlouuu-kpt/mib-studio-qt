@@ -289,8 +289,51 @@ pub struct ReadinessGate {
     remediation: String,
 }
 
+/// A calibration method's reference sample (ABI 43, #776; the method document's
+/// `calibration_reference`). `nominal_e_kpa` is null when the method does not declare one.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct MethodCalibrationReference {
+    nominal_diameter_um: f64,
+    diameter_tolerance_um: f64,
+    nominal_e_kpa: Option<f64>,
+    max_cv_percent: f64,
+}
+
+/// The applied method's calibration declarations in the readiness report (ABI 43, #776;
+/// bridge-contract.json `calibration_records.method_calibration`). The member names are the
+/// method document's. No method applied, or one that declares nothing: `declared` false,
+/// measurement / none / the default age, reference null. `error` is null unless the applied
+/// declarations could not be read.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct MethodCalibration {
+    declared: bool,
+    purpose: String,
+    calibration_policy: String,
+    calibration_max_age_hours: f64,
+    calibration_reference: Option<MethodCalibrationReference>,
+    error: Option<String>,
+}
+
+impl From<ffi::BridgeMethodCalibration> for MethodCalibration {
+    fn from(m: ffi::BridgeMethodCalibration) -> Self {
+        MethodCalibration {
+            declared: m.declared,
+            purpose: m.purpose,
+            calibration_policy: m.calibration_policy,
+            calibration_max_age_hours: m.calibration_max_age_hours,
+            calibration_reference: m.has_reference.then(|| MethodCalibrationReference {
+                nominal_diameter_um: m.nominal_diameter_um,
+                diameter_tolerance_um: m.diameter_tolerance_um,
+                nominal_e_kpa: m.has_nominal_e_kpa.then_some(m.nominal_e_kpa),
+                max_cv_percent: m.max_cv_percent,
+            }),
+            error: (!m.error.is_empty()).then_some(m.error),
+        }
+    }
+}
+
 /// Experiment readiness evaluation for the webview (ABI 13).
-#[derive(Serialize, Clone, Default)]
+#[derive(Serialize, Clone)]
 pub struct ExperimentReadiness {
     transport_version: u32,
     valid: bool,
@@ -298,6 +341,8 @@ pub struct ExperimentReadiness {
     #[serde(serialize_with = "event_transport::serialize_u64")]
     generation: u64,
     gates: Vec<ReadinessGate>,
+    /// ABI 43 (#776): the applied method's calibration declarations, always present.
+    method_calibration: MethodCalibration,
 }
 
 /// Evaluate experiment readiness for a destination (ABI 13).
@@ -314,6 +359,7 @@ pub fn fetch_experiment_readiness(state: &AppState, output_path: String) -> Resu
             .into_iter()
             .map(|g| ReadinessGate { id: g.id, status: g.status, reason: g.reason, remediation: g.remediation })
             .collect(),
+        method_calibration: r.method_calibration.into(),
     })
 }
 
@@ -2021,5 +2067,39 @@ mod tests {
         bridge.pin_mut().shutdown();
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_dir_all(&data);
+    }
+}
+
+// ABI 43 (#776): the flat cxx struct becomes the nested readiness member: a reference only for a
+// calibration method, nominal E and the error null when absent, the error carried when present.
+#[cfg(test)]
+mod method_calibration_tests {
+    use super::*;
+
+    #[test]
+    fn method_calibration_serialises_reference_and_error() {
+        let undeclared = ffi::BridgeMethodCalibration {
+            purpose: "measurement".into(),
+            calibration_policy: "none".into(),
+            calibration_max_age_hours: 24.0,
+            ..Default::default()
+        };
+        assert_eq!(serde_json::to_value(MethodCalibration::from(undeclared.clone())).unwrap(), serde_json::json!({
+            "declared": false, "purpose": "measurement", "calibration_policy": "none",
+            "calibration_max_age_hours": 24.0, "calibration_reference": null, "error": null }));
+        let unreadable = ffi::BridgeMethodCalibration { error: "calibration_reference: required".into(), ..undeclared.clone() };
+        assert_eq!(serde_json::to_value(MethodCalibration::from(unreadable)).unwrap()["error"],
+                   serde_json::json!("calibration_reference: required"));
+        let beads = ffi::BridgeMethodCalibration {
+            declared: true, purpose: "calibration".into(), has_reference: true, nominal_diameter_um: 7.32,
+            diameter_tolerance_um: 0.1, max_cv_percent: 10.0, nominal_e_kpa: 99.0, ..undeclared.clone()
+        };
+        assert_eq!(serde_json::to_value(MethodCalibration::from(beads.clone())).unwrap()["calibration_reference"],
+                   serde_json::json!({ "nominal_diameter_um": 7.32, "diameter_tolerance_um": 0.1,
+                                       "nominal_e_kpa": null, "max_cv_percent": 10.0 }),
+                   "nominal E only with has_nominal_e_kpa");
+        let with_e = ffi::BridgeMethodCalibration { has_nominal_e_kpa: true, nominal_e_kpa: 1.5, ..beads };
+        assert_eq!(serde_json::to_value(MethodCalibration::from(with_e)).unwrap()["calibration_reference"]["nominal_e_kpa"],
+                   serde_json::json!(1.5));
     }
 }

@@ -333,7 +333,7 @@ fn assert_identity_declared(id: &ffi::ReviewRunIdentity, run_index: u32, sample_
 fn run_identity_in_info_and_the_probe() {
     let contract: serde_json::Value =
         serde_json::from_str(include_str!("../contract/review-contract.json")).unwrap();
-    assert_eq!(ffi::review_bridge_abi_version(), 3, "review ABI 3 (#717 B3b; the identity since 2)");
+    assert_eq!(ffi::review_bridge_abi_version(), 4, "review ABI 4 (#764; the identity since 2, the E-LUT and profile since 3)");
     let max_paths = contract["review_probe"]["max_paths"].as_u64().unwrap() as usize;
     assert_eq!(max_paths, 256);
 
@@ -517,12 +517,15 @@ fn inspect_track_rows_and_reprocess_one_record() {
         let expected = if settings == recorded { 0.25 } else { 0.4886 };
         assert!((r.pixel_to_micron - expected).abs() < 1e-12, "{} {}", r.pixel_to_micron, r.settings_label);
         assert!(!r.emodulus_recomputed && r.reprocessed.iter().all(|x| x.youngs_modulus.is_nan()));
+        // Review ABI 4 (#764): the E-LUT used is named; the fixture's run
+        // records none (a snapshot before v3), so none was used.
+        assert!(r.emodulus_lut.is_empty() && r.emodulus_lut_sha256.is_empty(), "{}", r.emodulus_lut);
     }
     let r = bridge.pin_mut().review_reprocess_record(true, 0, recorded);
     assert!(r.settings_label.starts_with("recorded settings") && r.settings_label.contains("px→µm 0.2500 recorded"), "{}", r.settings_label);
     assert_eq!(
         bridge.pin_mut().review_reprocess_record(true, 0, default).settings_label,
-        "default settings (whole image, no background); px→µm 0.4886 default; E not recomputed (no E-LUT loaded)"
+        "default settings (whole image, no background); px→µm 0.4886 default; E not recomputed: the file records no E-LUT"
     );
 
     // Refusals: beyond the set, unknown settings.

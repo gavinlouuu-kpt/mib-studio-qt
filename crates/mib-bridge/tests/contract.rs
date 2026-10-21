@@ -122,7 +122,9 @@ fn abi_version_is_stable() {
     // calibration_apply (calibration_record_statuses, calibration_apply_outcomes); the readiness
     // gate calibration.record; the startRequest calibration_record_id becomes a check against the
     // applied record in effect (InvalidRequest on a mismatch), and the snapshot records the backend's.
-    assert_eq!(ffi::bridge_abi_version(), 42);
+    // v43 (#776) the readiness report carries the applied method's calibration declarations
+    // (method_calibration: purpose, policy, max age, reference; declared false when none).
+    assert_eq!(ffi::bridge_abi_version(), 43);
 }
 
 // ABI 42 (#716 A4a): the contract describes the calibration records, their bounds and rules.
@@ -142,7 +144,9 @@ fn calibration_records_are_described() {
                           ("record", "append-only"), ("apply_reply", "previous vs new"), ("apply_reply", "StaleFactor"),
                           ("readiness_gate", "calibration.record"), ("readiness_gate", "Invalidation is hard"),
                           ("readiness_gate", "Age is soft"), ("start_identity", "InvalidRequest"),
-                          ("list_reply", "in_effect_record_id")] {
+                          ("list_reply", "in_effect_record_id"), ("method_calibration", "ABI 43"),
+                          ("method_calibration", "declared"), ("method_calibration", "calibration_reference"),
+                          ("method_calibration", "calibration.record")] {
         assert!(c[key].as_str().is_some_and(|d| d.contains(needle)), "calibration_records.{key} mentions {needle}");
     }
 }
@@ -176,6 +180,69 @@ fn calibration_records_end_to_end() {
     let after: serde_json::Value = serde_json::from_str(&bridge.pin_mut().calibration_records_list()).unwrap();
     assert_eq!(after["store"]["revision"], list["store"]["revision"], "no actuation");
     assert_eq!(after["current_factor"], list["current_factor"], "the factor is unchanged");
+    bridge.pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(&data_dir);
+}
+
+// ABI 43 (#776): the readiness report's method_calibration follows real profile applies through
+// cxx: the defaults before init and with no method, a calibration method's purpose and reference, a
+// measurement method's policy, and nothing stale after switching.
+#[test]
+#[serial]
+fn method_calibration_in_readiness_follows_profile_apply() {
+    let data_dir = std::env::temp_dir().join(format!("mib_bridge_method_calibration_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&data_dir);
+    std::fs::create_dir_all(&data_dir).unwrap();
+    let out = data_dir.join("probe.h5").to_string_lossy().to_string();
+    let undeclared = |m: &ffi::BridgeMethodCalibration| {
+        !m.declared && m.purpose == "measurement" && m.calibration_policy == "none"
+            && m.calibration_max_age_hours == 24.0 && !m.has_reference && !m.has_nominal_e_kpa && m.error.is_empty()
+    };
+    let mut bridge = ffi::new_backend_bridge();
+    let before = bridge.pin_mut().fetch_experiment_readiness(&out);
+    assert!(!before.valid && undeclared(&before.method_calibration), "defaults before init: {:?}", before.method_calibration);
+    assert!(bridge.pin_mut().initialize(&data_dir.to_string_lossy()));
+    let none = bridge.pin_mut().fetch_experiment_readiness(&out);
+    assert!(none.valid && undeclared(&none.method_calibration), "no method applied: {:?}", none.method_calibration);
+
+    let base = data_dir.join("profiles").to_string_lossy().to_string();
+    let command = |bridge: &mut cxx::UniquePtr<ffi::BackendBridge>, request: serde_json::Value| -> serde_json::Value {
+        serde_json::from_str(&bridge.pin_mut().profile_command(&base, &request.to_string())).unwrap()
+    };
+    for (name, document) in [
+        ("calibration", r#"{"config_schema_version":1,"purpose":"calibration","calibration_max_age_hours":6,"calibration_reference":{"nominal_diameter_um":7.32,"diameter_tolerance_um":0.1,"nominal_e_kpa":1.5,"max_cv_percent":4}}"#),
+        ("gated", r#"{"config_schema_version":1,"calibration_policy":"required","calibration_max_age_hours":12}"#),
+        ("measurement", r#"{"config_schema_version":1,"buffer_threshold":64}"#),
+    ] {
+        let created = command(&mut bridge, serde_json::json!({"operation": "create", "name": name, "document_json": document}));
+        assert_eq!(created["ok"], true, "create {name}: {created}");
+    }
+    let apply = |bridge: &mut cxx::UniquePtr<ffi::BackendBridge>, name: &str| -> ffi::BridgeMethodCalibration {
+        let read = command(bridge, serde_json::json!({"operation": "read", "name": name}));
+        let applied = command(bridge, serde_json::json!({"operation": "apply", "name": name, "baseline": read["profile"]["revision"]}));
+        assert_eq!(applied["ok"], true, "apply {name}: {applied}");
+        let r = bridge.pin_mut().fetch_experiment_readiness(&out);
+        assert!(r.valid);
+        r.method_calibration
+    };
+    let calibration = |m: &ffi::BridgeMethodCalibration| {
+        m.declared && m.purpose == "calibration" && m.calibration_policy == "none" && m.calibration_max_age_hours == 6.0
+            && m.has_reference && m.nominal_diameter_um == 7.32 && m.diameter_tolerance_um == 0.1
+            && m.has_nominal_e_kpa && m.nominal_e_kpa == 1.5 && m.max_cv_percent == 4.0 && m.error.is_empty()
+    };
+    let m = apply(&mut bridge, "calibration");
+    assert!(calibration(&m), "the calibration method's declarations: {m:?}");
+    let m = apply(&mut bridge, "measurement");
+    assert!(undeclared(&m), "a measurement method without declarations: nothing stale: {m:?}");
+    let m = apply(&mut bridge, "gated");
+    assert!(m.declared && m.purpose == "measurement" && m.calibration_policy == "required"
+                && m.calibration_max_age_hours == 12.0 && !m.has_reference && m.error.is_empty(),
+            "a measurement method with a policy: {m:?}");
+    let m = apply(&mut bridge, "calibration");
+    assert!(calibration(&m), "back to the calibration method: {m:?}");
+    let m = apply(&mut bridge, "gated");
+    assert!(m.purpose == "measurement" && !m.has_reference && !m.has_nominal_e_kpa && m.calibration_policy == "required",
+            "no reference carried over: {m:?}");
     bridge.pin_mut().shutdown();
     let _ = std::fs::remove_dir_all(&data_dir);
 }

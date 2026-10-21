@@ -71,10 +71,13 @@ std::string padded(uint64_t v, int width)
     return buf;
 }
 
-// Same columns/format as the historical HdfReviewTab CSV writer.
+// Same columns/format as the historical HdfReviewTab CSV writer. A missing
+// value is an empty cell (an E outside the LUT is stored as NaN). With
+// `eNotComputed` (#764: the run's snapshot records that no E-LUT was loaded,
+// so its stored E = 0 is not a value) every E cell is empty.
 bool writeMetricsCsv(const fs::path& path, const std::vector<services::ProcessedFrame>& valid,
                      const std::vector<services::ProcessedFrame>& invalid, double conversionFactor,
-                     std::string& error)
+                     bool eNotComputed, std::string& error)
 {
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
     if (!out) {
@@ -96,7 +99,7 @@ bool writeMetricsCsv(const fs::path& path, const std::vector<services::Processed
             << (v.hasSingleInnerContour ? "Yes" : "No") << "," << (v.inRange ? "Yes" : "No") << ","
             << v.innerContourCount << "," << fixed(v.brightness.q1, 2) << "," << fixed(v.brightness.q2, 2) << ","
             << fixed(v.brightness.q3, 2) << "," << fixed(v.brightness.q4, 2) << ","
-            << (std::isnan(v.youngsModulus) ? std::string() : fixed(v.youngsModulus, 3)) << "\n";
+            << (eNotComputed || std::isnan(v.youngsModulus) ? std::string() : fixed(v.youngsModulus, 3)) << "\n";
     };
     for (const auto& f : valid) writeFrame("Valid", f);
     for (const auto& f : invalid) writeFrame("Invalid", f);
@@ -392,8 +395,15 @@ HdfExportResult HdfExportService::run(const HdfExportRequest& request, const Hdf
             checkCancel();
             const fs::path csv = folderJob ? partial / "metrics.csv" : partial;
             progress(HdfExportPhase::Metrics, csv.string());
+            // A file whose record says no E-LUT was loaded has no E values:
+            // its stored 0 is written as missing (#764). The record is the run
+            // snapshot's, else a regenerated file's @emodulus_lut_json, whose
+            // `loaded` states what that file's E was computed with whatever its
+            // provenance. Files with neither are written as stored.
+            const auto lutRecord = readFileEModulusLut(reader);
+            const bool eNotComputed = lutRecord && !lutRecord->lut.loaded;
             std::string err;
-            if (!writeMetricsCsv(csv, valid, invalid, request.conversionFactor, err)) throw Failed{err};
+            if (!writeMetricsCsv(csv, valid, invalid, request.conversionFactor, eNotComputed, err)) throw Failed{err};
             result.metricsWritten = true;
             result.validCount = valid.size();
             result.invalidCount = invalid.size();

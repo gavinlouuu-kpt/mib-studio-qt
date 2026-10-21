@@ -778,6 +778,8 @@ ExperimentReadinessSnapshot ExperimentCoordinator::evaluateLocked(const std::str
     // here, before the key is taken, so the key already describes the store after it.
     const auto calibration = calibrationGateLocked(c);
     r.calibrationRecordId = calibration.inEffectRecordId;
+    r.methodCalibration = calibration.spec;          // #776: the readiness report's method_calibration
+    r.methodCalibrationError = calibration.specError;
     auto key = currentKeyLocked(outputPath, profileId);
     key.calibration = calibration.invalidationKey;
     if (!haveLastKey_ || key != lastKey_) {
