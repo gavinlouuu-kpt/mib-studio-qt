@@ -10,7 +10,7 @@ import type { CameraGeometry } from "../bridge";
 import type { FramePacket } from "../framePacket";
 import type { AlignFacts } from "./alignControls";
 import { INSPECT_INTERVAL_MS } from "./alignImageModel";
-import { AlignView, type AlignViewProps, type FrameSink } from "./AlignView";
+import { AlignView, PROCESSING_ROI_WRITE, type AlignViewProps, type FrameSink } from "./AlignView";
 import { WRITE_TIMEOUT_MS, type Rect, type WriteResult } from "./quickControlModel";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -292,5 +292,22 @@ describe("the camera mode switch is a button", () => {
     await render();
     await press("All features · classic view");
     expect(onClassic).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Write ROI says what else it does (#763 F16)", () => {
+  it("the processing ROI's Write says it also starts realtime processing, as the classic Apply ROI; writing still waits for the press", async () => {
+    await render({ facts: { ...FACTS, geometry: null, processingRoi: { x: 0, y: 0, width: 0, height: 0 } } });
+    expect($("align-roi-write-note").textContent).toBe(PROCESSING_ROI_WRITE);
+    expect(PROCESSING_ROI_WRITE).toContain("as the classic Apply ROI does: it also starts realtime processing");
+    expect(button("Write ROI").title).toBe(PROCESSING_ROI_WRITE);
+    expect(writeRoi).not.toHaveBeenCalled();
+  });
+
+  it("the camera ROI and the PZ7035 Run window write only the window: no such note", async () => {
+    await render();
+    expect($("align-roi-write-note")).toBeNull();
+    await render({ facts: { ...FACTS, pz7035: true, instrumentModes: true, geometry: null, instrumentMode: "align" } });
+    expect($("align-roi-write-note")).toBeNull();
   });
 });

@@ -20,7 +20,7 @@ import { EXPERIMENT_STATES, MONITORING_CELLS, MONITORING_CELL_PIN_OUTCOMES as P 
 import type { MonitoringRow, MonitoringSnapshot } from "../bridge";
 import { monitoringPlotData } from "../components/MonitoringCharts";
 import type { ExperimentStatus } from "../eventAdapter";
-import type { MonitoringCell, MonitoringCellKeyInput, MonitoringCellPinReply, MonitoringCellsListing } from "../monitoringCells";
+import { cellKeyString, type MonitoringCell, type MonitoringCellKeyInput, type MonitoringCellPinReply, type MonitoringCellsListing } from "../monitoringCells";
 import { ownRunActive, type LifecycleStep, type QueueRow } from "./queueModel";
 
 export type LiveTone = "confirmed" | "info" | "warn" | "blocked" | "unknown";
@@ -101,6 +101,53 @@ export function pinNotice(name: string, reply: MonitoringCellPinReply): LiveNoti
       ? { tone: "info", title: `Pinned · ${name}`, text: m }
       : { tone: "blocked", title: `Not pinned · ${name}`, text: m || "the backend did not evaluate the pin" };
   }
+}
+
+/** The pin a notice is about ("Pinned · F…"): its identity, its capture, and the listing revision
+ *  the pin's reply reported. */
+export interface PinNoticeSubject { key: string; epoch: string; revision?: string }
+
+/** The subject of a pin's reply when its notice describes a pin that exists (Pinned, Pinned
+ *  without an image, Already pinned); null for a refusal. */
+export function pinNoticeSubject(reply: MonitoringCellPinReply): PinNoticeSubject | null {
+  if (!reply.ok || !reply.cell) return null;
+  return { key: cellKeyString(reply.cell), epoch: reply.cell.capture_epoch, ...(reply.revision === undefined ? {} : { revision: reply.revision }) };
+}
+
+const bigOrNull = (s: string | undefined): bigint | null => {
+  try { return s !== undefined && /^\d+$/.test(s) ? BigInt(s) : null; } catch { return null; }
+};
+
+/** A notice about a pin is stale once the pin has ended or gone (#763 F13): its capture ended (the
+ *  camera stopped, the ROI changed, a run started and dropped it), or a listing at least as new as
+ *  the pin's reply no longer holds it (unpinned here or by another client). A listing from before
+ *  the reply never clears it. */
+export function pinNoticeStale(subject: PinNoticeSubject, l: MonitoringCellsListing | null): boolean {
+  if (!l) return false;
+  if (l.ring_capture_epoch !== subject.epoch) return true;
+  if (l.pins.some((p) => cellKeyString(p) === subject.key)) return false;
+  const rev = bigOrNull(l.revision), at = bigOrNull(subject.revision);
+  return rev !== null && at !== null && rev >= at;
+}
+
+/** "Stop requested · run generation N" is stale once that run is over or replaced (#763 F13): the
+ *  status shows it terminal, or shows another run. */
+export const stopRequestStale = (generation: string, s: ExperimentStatus | null): boolean =>
+  !!s?.valid && (s.start_generation !== generation || s.terminal);
+
+/** When a run start cleared the pins (by design: pins belong to the latest run started), the notice
+ *  that says so, for as long as the capture that run began is the current one (#763 F15); null
+ *  when the current capture did not begin that way or no pin was cleared. `epoch` names the capture,
+ *  so a dismissal holds for it alone. */
+export function droppedPinsNotice(l: MonitoringCellsListing | null): (LiveNotice & { epoch: string }) | null {
+  const c = l?.last_capture_change;
+  if (!l || !c || c.capture_epoch !== l.ring_capture_epoch || !(c.pins_dropped > 0)) return null;
+  const n = c.pins_dropped === 1 ? "1 pin" : `${c.pins_dropped} pins`;
+  const run = l.scope_start_generation === "0" ? "" : ` · run generation ${l.scope_start_generation} started`;
+  return {
+    epoch: c.capture_epoch, tone: "info", title: `${n} cleared${run}`,
+    text: `Pins belong to the latest run started, so the backend cleared ${c.pins_dropped === 1 ? "the pin" : "every pin"} when this run started. Pin cells of this run to keep them.`,
+  };
 }
 
 // ---- the scatter ---------------------------------------------------------------------------------

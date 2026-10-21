@@ -18,6 +18,7 @@ import {
   confirmationState,
   gateFactTone,
   gateLabel,
+  gateRemediation,
   gateText,
   gateTone,
   startRefusalText,
@@ -69,10 +70,11 @@ function GateLabel({ id }: { id: string }) {
 
 /** The gate's state and reason, then its remediation when there is one. */
 function GateValue({ g, chip }: { g: ReadinessGate; chip: boolean }) {
+  const fix = gateRemediation(g);
   return (
     <span className="ws-gate">
       {chip ? <StateChip size="small" tone={gateTone(g.status)}>{gateText(g)}</StateChip> : gateText(g)}
-      {g.remediation ? <span className="ws-gate-fix">{`Fix: ${g.remediation}`}</span> : null}
+      {fix ? <span className="ws-gate-fix">{`Fix: ${fix}`}</span> : null}
     </span>
   );
 }

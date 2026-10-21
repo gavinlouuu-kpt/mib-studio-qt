@@ -18,9 +18,9 @@ import {
   type PlanCameraMode,
   type SampleRow,
 } from "./planModel";
-import { FormatCard, NOT_DECLARED, OperatorFields, CameraModeNotice, SampleEditor, startBlocks } from "./planParts";
+import { FormatCard, NOT_DECLARED, OperatorFields, CameraModeNotice, SampleEditor, StartBlockText, startBlocks } from "./planParts";
 import { QueuePlan } from "./QueuePlan";
-import type { Verdict } from "./prepareModel";
+import { startConfirmation, type ConfirmationState, type Verdict } from "./prepareModel";
 import type { PlanController, PlanStartResult } from "./usePlan";
 
 export interface PlanViewProps {
@@ -35,21 +35,27 @@ export interface PlanViewProps {
    *  experiment window after the full sensor (null when none is needed). */
   cameraMode?: PlanCameraMode | null;
   onCameraMode?: () => Promise<unknown>;
+  /** Prepare's Preflight confirmation for this setup, shown beside Start while it is not given
+   *  (advisory: kept per browser tab, Start does not require it; #763 F23). Absent: not shown. */
+  confirmation?: ConfirmationState;
+  /** Show Experiment · Live (navigation only), offered with a started run's outcome. */
+  onShowLive?: () => void;
 }
 
 export { startBlocks, type StartBlock } from "./planParts";
 
-type NoticeText = { tone: "confirmed" | "warn" | "blocked" | "info"; title: string; text: string };
+/** `live`: the outcome points to Live, where the run is followed and stopped (#763 F12). */
+type NoticeText = { tone: "confirmed" | "warn" | "blocked" | "info"; title: string; text: string; live?: boolean };
 
 /** The Notice for the last Start's result, decided by the start reply alone; the InvalidRequest
  *  refusal is shown by the sheet. */
 export function resultNotice(r: PlanStartResult | null): NoticeText | null {
   if (!r) return null;
   switch (r.kind) {
-    case "started": return { tone: "confirmed", title: `Run ${SINGLE_SAMPLE_RUN_INDEX} started · ${r.path}`, text: `Its identity and the planned annotation are recorded in the file.${r.notice ? ` ${r.notice}` : ""} Monitor and stop it in the classic view.` };
+    case "started": return { tone: "confirmed", title: `Run ${SINGLE_SAMPLE_RUN_INDEX} started · ${r.path}`, text: `Its identity and the planned annotation are recorded in the file.${r.notice ? ` ${r.notice}` : ""} Follow it in Experiment · Live, and stop it there with Stop & finalize run.`, live: true };
     case "unknown": return r.code !== undefined
       ? { tone: "blocked", title: `Not started · its file may exist${r.path ? ` · ${r.path}` : ""}`, text: `The backend did not start the run (${r.message}), but it can answer this way after it opened the run's file. This plan's identity is not sent again: check the file, then make a new plan.` }
-      : { tone: "blocked", title: `Start outcome not known${r.path ? ` · ${r.path}` : ""}`, text: `The start request was sent but no reply was read (${r.message}). The run may have started: check it in the classic view. This plan's identity is not sent again.` };
+      : { tone: "blocked", title: `Start outcome not known${r.path ? ` · ${r.path}` : ""}`, text: `The start request was sent but no reply was read (${r.message}). The run may have started: Experiment · Live shows the run the status reports. This plan's identity is not sent again.`, live: true };
     case "not-ready": return { tone: "warn", title: "Not started · readiness with the chosen file", text: r.message };
     case "refused": return invalidRequestReason(r.message, r.code) ? null : { tone: "blocked", title: "Not started · the backend refused the Start", text: `${r.path}: ${r.message}` };
     case "error": return { tone: "blocked", title: "Not started · an error before the start was sent", text: r.message };
@@ -69,15 +75,16 @@ export function PlanView(props: PlanViewProps) {
   return props.plan.draft.format === "queue" ? <QueuePlan {...props} /> : <SinglePlan {...props} />;
 }
 
-function SinglePlan({ plan, lockedReason, verdict, blockers, cameraMode, onCameraMode }: PlanViewProps) {
+function SinglePlan({ plan, lockedReason, verdict, blockers, cameraMode, onCameraMode, confirmation, onShowLive }: PlanViewProps) {
   const { draft, started, starting } = plan;
   const row = draft.rows[0];
   const build = buildStartRequest(draft, 0, SINGLE_SAMPLE_RUN_INDEX);
   const locked = !!started || starting;
-  const blocks = startBlocks({ started: started?.outcome ?? null, notStarted: started?.code !== undefined, starting, verdict, blockers, lockedReason, issues: build.issues, cameraReason: cameraMode?.startReason });
+  const blocks = startBlocks({ started: started?.outcome ?? null, notStarted: started?.code !== undefined, starting, verdict, blockers, lockedReason, issues: build.issues, cameraReason: cameraMode?.startReason, controlHeld: plan.queue.controlHeld });
   const refusal = plan.result?.kind === "refused" ? invalidRequestReason(plan.result.message, plan.result.code) : null;
   const outcome = resultNotice(plan.result);
   const refresh = refreshNotice(plan.result);
+  const confirm = confirmation ? startConfirmation(confirmation) : null;
   const slots = conditionSlots(draft.rows);
   const editRow = (change: (r: SampleRow) => SampleRow) => plan.edit((d) => ({ ...d, rows: d.rows.map((r, i) => (i === 0 ? change(r) : r)) }));
   const operatorIssues = (k: "name" | "id") => issuesFor(build.issues, [`operator.${k}`]);
@@ -132,7 +139,10 @@ function SinglePlan({ plan, lockedReason, verdict, blockers, cameraMode, onCamer
       </div>
 
       <Card title="Start" subtitle="Start run picks the file, checks readiness with it and starts this plan's run" data-testid="plan-start"
-        status={<StateChip tone={verdict.tone} title={verdict.detail || undefined}>{`Prepare: ${verdict.title}`}</StateChip>}
+        status={<>
+          <StateChip tone={verdict.tone} title={verdict.detail || undefined}>{`Prepare: ${verdict.title}`}</StateChip>
+          {confirm ? <StateChip tone={confirm.tone} data-testid="plan-confirmation">{confirm.chip}</StateChip> : null}
+        </>}
         actions={<>
           {started ? <Button onClick={plan.newPlan}>New plan</Button> : null}
           <Button variant="primary" disabled={blocks.length > 0} onClick={() => { if (build.json !== null) void plan.start(build.json, SINGLE_SAMPLE_RUN_INDEX); }}>
@@ -140,11 +150,13 @@ function SinglePlan({ plan, lockedReason, verdict, blockers, cameraMode, onCamer
           </Button>
         </>}>
         <CameraModeNotice mode={cameraMode} onSwitch={onCameraMode} />
-        {outcome ? <Notice tone={outcome.tone} title={outcome.title} data-testid="plan-outcome">{outcome.text}</Notice> : null}
+        {outcome ? <Notice tone={outcome.tone} title={outcome.title} data-testid="plan-outcome"
+          actions={outcome.live && onShowLive ? <Button size="small" onClick={onShowLive} data-testid="plan-to-live">Go to Live</Button> : undefined}>{outcome.text}</Notice> : null}
         {refresh ? <Notice tone={refresh.tone} title={refresh.title} data-testid="plan-refresh">{refresh.text}</Notice> : null}
         {blocks.map((b) => (
-          <Notice key={b.id} tone={b.tone} title={b.title} data-testid={`plan-blocked-${b.id}`}>{b.text}</Notice>
+          <Notice key={b.id} tone={b.tone} title={b.title} data-testid={`plan-blocked-${b.id}`}><StartBlockText block={b} /></Notice>
         ))}
+        {confirm ? <p className="ws-note" data-testid="plan-confirmation-note">{confirm.note}</p> : null}
         <p className="ws-note">
           {`Nothing starts on navigation. The request is ${build.bytes.toLocaleString("en-US")} of at most ${B.max_request_bytes.toLocaleString("en-US")} bytes; the backend checks it again and refuses, never truncates.`}
         </p>

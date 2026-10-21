@@ -424,6 +424,12 @@ function ProfilePlot({ inspection }: { inspection: Inspection | null }) {
   );
 }
 
+/** What Write ROI does to the processing ROI (#763 F16): it applies the processing settings with the
+ *  new ROI, as the classic Apply ROI does, so it also starts realtime processing. */
+export const PROCESSING_ROI_WRITE = "Write ROI applies the processing settings with this ROI, as the classic Apply ROI does: it also starts realtime "
+  + "processing when the settings enable it and it is not running yet. The live cells then begin a new capture: the strip is cleared, and pins of "
+  + "the earlier capture keep their measurements only.";
+
 type ControlApi = ReturnType<typeof useQuickControl<Rect, RectDraft>>;
 type TableRow = { id: string; label: string; roi?: RoiRow; readback?: ReadbackRow };
 
@@ -485,7 +491,7 @@ function QuickControls({ roi, rows, control, lockedReason, pz7035 }: { roi: RoiR
       data-testid="align-quick-controls"
       actions={roi.access === "rw" ? <>
         <Button disabled={!canWrite || (!s.edited && s.phase === "idle")} onClick={control.revert}>Revert to readback</Button>
-        <Button disabled={!canWrite} onClick={control.submit}>{pending ? "Writing…" : `Write ${roi.kind === "run" ? "Run window" : "ROI"}`}</Button>
+        <Button disabled={!canWrite} onClick={control.submit} title={roi.kind === "processing" ? PROCESSING_ROI_WRITE : undefined}>{pending ? "Writing…" : `Write ${roi.kind === "run" ? "Run window" : "ROI"}`}</Button>
       </> : undefined}
     >
       <DataTable columns={columns} rows={table} rowKey={(r) => r.id} density="compact" />
@@ -495,6 +501,7 @@ function QuickControls({ roi, rows, control, lockedReason, pz7035 }: { roi: RoiR
         Exposure, gain and frame rate are {pz7035 ? "set in Config → Camera document" : "set by the camera script or configuration"} in the classic view, as are all features, the XML and scripts.
         Nothing here is written until you press Write.
       </p>
+      {roi.kind === "processing" && roi.access === "rw" ? <p className="ws-note" data-testid="align-roi-write-note">{PROCESSING_ROI_WRITE}</p> : null}
     </Card>
   );
 }

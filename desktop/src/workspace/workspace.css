@@ -24,19 +24,46 @@
   font-size: var(--mib-font-size-sm);
   color: var(--mib-color-sub);
 }
+/* Cards keep their text inside them (#763 F10): a grid or flex item may shrink below its content
+   (min-width: 0), a fact's value takes the rest of the row and wraps, and a card's state chips (one
+   line in the kit) wrap inside the card. The label column stays as wide as its longest label, up
+   to 45% of the card. */
+.ws-shell .ws-grid > .mib-card,
+.ws-shell .mib-card,
+.ws-shell .mib-card__body {
+  min-width: 0;
+}
+.ws-shell .mib-facts {
+  grid-template-columns: fit-content(45%) minmax(0, 1fr);
+}
+.ws-shell .mib-facts__label,
+.ws-shell .mib-facts__value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.ws-shell .mib-card__status .mib-chip,
+.ws-shell .mib-facts__value .mib-chip {
+  white-space: normal;
+  max-width: 100%;
+}
 .ws-shell .ws-gate {
-  display: inline-flex;
+  display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--mib-space-1) var(--mib-space-2);
+  min-width: 0;
+  max-width: 100%;
 }
 /* The raw gate id under its plain label, for matching the logs. */
 .ws-shell .ws-gate-id {
   display: block;
   font-size: var(--mib-font-size-xs);
   color: var(--mib-color-mute);
+  overflow-wrap: anywhere;
 }
 .ws-shell .ws-gate-fix {
+  flex-basis: 100%;
+  min-width: 0;
   font-size: var(--mib-font-size-sm);
   color: var(--mib-color-sub);
 }
@@ -242,10 +269,19 @@
 .ws-shell .ws-plan-field [aria-invalid="true"] {
   border-color: var(--mib-color-blocked);
 }
-/* A refused value: the reason under the field, in the blocked state's colour. */
+/* A refused value: the reason under the field, in the blocked state's colour; one line per issue
+   (#763 F21). */
 .ws-shell .ws-plan-issue {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   font-size: var(--mib-font-size-xs);
   color: var(--mib-color-blocked);
+}
+/* The sheet's issues in the Start block: one list item per issue. */
+.ws-shell .ws-issue-list {
+  margin: 0;
+  padding-left: var(--mib-space-4);
 }
 .ws-shell .ws-plan-kv {
   display: grid;
@@ -465,6 +501,15 @@
   border: 1px solid var(--mib-color-line);
   border-radius: var(--mib-radius-sm);
   font-size: var(--mib-font-size-sm);
+}
+/* A tile's state chip wraps inside the tile ("Finalized · file closed"; #763 F10, F14). */
+.ws-shell .ws-live__sample {
+  min-width: 0;
+}
+.ws-shell .ws-live__sample .mib-chip {
+  align-self: flex-start;
+  max-width: 100%;
+  white-space: normal;
 }
 .ws-shell .ws-live__sample--current {
   border-color: var(--mib-color-accent);

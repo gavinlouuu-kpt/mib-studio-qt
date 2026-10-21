@@ -15,6 +15,7 @@ import {
   cellWhere,
   chartDomain,
   chartPosition,
+  droppedPinsNotice,
   endedPins,
   frozenChangeText,
   isEndedPin,
@@ -24,10 +25,13 @@ import {
   pinCap,
   pinIdentityRefusal,
   pinNotice,
+  pinNoticeStale,
+  pinNoticeSubject,
   runCounts,
   scopeChanged,
   statusLifecycle,
   stopAcquisitionReason,
+  stopRequestStale,
   stopTarget,
   stripShown,
 } from "./liveModel";
@@ -225,5 +229,47 @@ describe("the stops", () => {
     expect(stopAcquisitionReason(true, false, false)).toBe("The camera is not running.");
     expect(stopAcquisitionReason(true, true, true)).toContain("A run is active");
     expect(stopAcquisitionReason(false, true, false)).toContain("does not control the instrument");
+  });
+});
+
+describe("stale notices and cleared pins (#763)", () => {
+  const pinned = (over: Record<string, unknown> = {}) =>
+    ({ ok: true, outcome: P.Pinned, message: "pinned", revision: "9", cell: listing({ pins: [cell("7")] }).pins[0], ...over });
+
+  it("F13: a pin's notice names the pin only when the reply says it exists", () => {
+    expect(pinNoticeSubject(pinned() as never)).toEqual({ key: "0:3:7:1", epoch: "3", revision: "9" });
+    expect(pinNoticeSubject(pinned({ ok: false, outcome: P.LimitReached, cell: null }) as never)).toBeNull();
+    expect(pinNoticeSubject(pinned({ revision: undefined }) as never)).toEqual({ key: "0:3:7:1", epoch: "3" });
+  });
+
+  it("F13: Pinned · F… is stale once its capture ended, or a listing as new as the reply lacks it; never on an older listing", () => {
+    const about = { key: "0:3:7:1", epoch: "3", revision: "9" };
+    expect(pinNoticeStale(about, null)).toBe(false);
+    expect(pinNoticeStale(about, listing({ revision: "5" }))).toBe(false); // read before the pin's reply
+    expect(pinNoticeStale(about, listing({ revision: "9", pins: [cell("7")] }))).toBe(false);
+    expect(pinNoticeStale(about, listing({ revision: "10" }))).toBe(true); // unpinned since
+    expect(pinNoticeStale(about, listing({ ring_capture_epoch: "4", revision: "10", pins: [cell("7", { image: null, no_image_reason: "no image: capture 3 ended" })] }))).toBe(true); // its capture ended
+    expect(pinNoticeStale({ key: "0:3:7:1", epoch: "3" }, listing({ revision: "99" }))).toBe(false); // no revision: only a capture change clears it
+  });
+
+  it("F13: Stop requested is stale once its run is terminal or another run is shown", () => {
+    expect(stopRequestStale("5", null)).toBe(false);
+    expect(stopRequestStale("5", status({ state: EXPERIMENT_STATES.Active, start_generation: "5" }))).toBe(false);
+    expect(stopRequestStale("5", status({ state: EXPERIMENT_STATES.Stopping, flushing: true, start_generation: "5" }))).toBe(false);
+    expect(stopRequestStale("5", status({ terminal: true, finalization_ok: true, start_generation: "5" }))).toBe(true);
+    expect(stopRequestStale("5", status({ state: EXPERIMENT_STATES.Active, start_generation: "6" }))).toBe(true);
+    expect(stopRequestStale("5", status({ valid: false }))).toBe(false);
+  });
+
+  it("F15: says a run start's cleared pins while that capture is current", () => {
+    const change = (n: number, epoch = "8") => ({ capture_epoch: epoch, reason: "a run started", pins_ended: 0, pins_dropped: n, strip_dropped: 0 });
+    const l = listing({ scope_start_generation: "7", ring_capture_epoch: "8", last_capture_change: change(1) });
+    expect(droppedPinsNotice(l)).toEqual({ epoch: "8", tone: "info", title: "1 pin cleared · run generation 7 started",
+      text: "Pins belong to the latest run started, so the backend cleared the pin when this run started. Pin cells of this run to keep them." });
+    expect(droppedPinsNotice(listing({ scope_start_generation: "7", ring_capture_epoch: "8", last_capture_change: change(3) }))!.title).toBe("3 pins cleared · run generation 7 started");
+    expect(droppedPinsNotice(listing({ ring_capture_epoch: "9", last_capture_change: change(1, "8") }))).toBeNull(); // a later capture
+    expect(droppedPinsNotice(listing({ ring_capture_epoch: "8", last_capture_change: change(0) }))).toBeNull();
+    expect(droppedPinsNotice(listing())).toBeNull();
+    expect(droppedPinsNotice(null)).toBeNull();
   });
 });

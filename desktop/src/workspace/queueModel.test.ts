@@ -2,7 +2,7 @@
 // operator's retry / skip / end, identity locking (a run index is never sent twice), the pause on a
 // lost controlling client, and no transition that starts or advances on its own.
 import { describe, expect, it } from "vitest";
-import { EXPERIMENT_START_OUTCOMES as O, EXPERIMENT_STATES as S, EXPERIMENT_STOP_OUTCOMES as SO, RUN_COMPLETION_STATES as C } from "../bridgeContract";
+import { EXPERIMENT_START_OUTCOMES as O, EXPERIMENT_STATES as S, EXPERIMENT_STOP_OUTCOMES as SO, OPERATION_STATES as OP, RUN_COMPLETION_STATES as C } from "../bridgeContract";
 import type { ExperimentStatus } from "../eventAdapter";
 import { emptyRow, newPlanDraft, type PlanDraft } from "./planModel";
 import {
@@ -23,11 +23,17 @@ import {
   rowState,
   ownRunActive,
   recordedPath,
+  followSingleRun,
+  OPERATION_ENDS_KEPT,
+  SINGLE_OUTCOME_UNKNOWN,
+  withOperationEnd,
+  type OperationTrack,
+  singleRunChip,
   type QueueEvent,
   type QueueState,
   type RowPhase,
 } from "./queueModel";
-import type { PlanStartResult } from "./usePlan";
+import type { PlanStarted, PlanStartResult } from "./usePlan";
 
 const ORDER = ["S1", "S2", "S3"];
 const status = (over: Partial<ExperimentStatus> = {}): ExperimentStatus => ({
@@ -563,5 +569,69 @@ describe("the outcome codes (ABI 40)", () => {
     ]);
     expect(rowState(q, "S1").failure!.title).toBe("Not started · the backend refused the Start of S1");
     expect(q.nextRunIndex).toBe(1);
+  });
+});
+
+describe("the single-sample run, followed by the operation its start reply named (#763 F14)", () => {
+  const started = (over: Partial<PlanStarted> = {}): PlanStarted => ({ path: "/data/run", notice: "", runIndex: 1, outcome: "started", operationId: "17", lossBefore: 0, ...over });
+  const track = (ends: [string, number, string?][] = [], loss = 0): OperationTrack =>
+    ({ ends: new Map(ends.map(([id, state, message = ""]) => [id, { state, message }])), loss });
+
+  it("takes its end from its own operation only, and keeps it", () => {
+    let st = started();
+    expect(followSingleRun(st, track())).toBe(st);
+    expect(followSingleRun(st, track([["16", OP.Completed], ["18", OP.Completed]]))).toBe(st); // other operations: other runs
+    expect(followSingleRun(st, track([["17", OP.Progress]]))).toBe(st); // not an end
+    expect(singleRunChip(st)).toEqual({ tone: "info", text: "Started" });
+    st = followSingleRun(st, track([["17", OP.Completed, "complete"]]));
+    expect(st.end).toEqual({ ok: true, cancelled: false, message: "complete" });
+    expect(singleRunChip(st)).toEqual({ tone: "confirmed", text: "Finalized · file closed", title: "complete" });
+    expect(followSingleRun(st, track([["17", OP.Failed]], 3))).toBe(st); // the end stays
+  });
+
+  it("a failed or cancelled end is said as such", () => {
+    const failed = followSingleRun(started(), track([["17", OP.Failed, "a save error occurred"]]));
+    expect(singleRunChip(failed)).toEqual({ tone: "blocked", text: "Failed", title: "a save error occurred" });
+    expect(singleRunChip(followSingleRun(started(), track([["17", OP.TimedOut]])))).toMatchObject({ tone: "blocked", text: "Failed" });
+    const cancelled = followSingleRun(started(), track([["17", OP.Cancelled]]));
+    expect(singleRunChip(cancelled)).toEqual({ tone: "confirmed", text: "Finalized · cancelled" });
+  });
+
+  it("another run's end is never this sample's, whatever file it wrote (the gen 4 → 5 → 6 sequence is in LiveView.test.tsx)", () => {
+    // This sample's start reply named operation 5005; another client's run on the same file, 6006.
+    let st = started({ operationId: "5005" });
+    st = followSingleRun(st, track([["6006", OP.Completed, "complete"]]));
+    expect(st.end).toBeUndefined();
+    expect(singleRunChip(st)).toEqual({ tone: "info", text: "Started" });
+    st = followSingleRun(st, track([["6006", OP.Completed], ["5005", OP.Failed, "finalized with errors"]]));
+    expect(singleRunChip(st)).toEqual({ tone: "blocked", text: "Failed", title: "finalized with errors" });
+  });
+
+  it("without an operation in its start reply, or after events were lost, its outcome is not known", () => {
+    const anonymous = started({ operationId: undefined });
+    expect(followSingleRun(anonymous, track([["17", OP.Completed]]))).toBe(anonymous);
+    expect(singleRunChip(anonymous)).toMatchObject({ tone: "unknown", text: SINGLE_OUTCOME_UNKNOWN });
+    let st = started({ lossBefore: 2 });
+    expect(followSingleRun(st, track([], 2))).toBe(st); // losses before the Start cannot hide its end
+    st = followSingleRun(st, track([], 3));
+    expect(st.endLost).toBe(true);
+    expect(singleRunChip(st)).toMatchObject({ tone: "unknown", text: "Outcome unknown · check the file" });
+    st = followSingleRun(st, track([["17", OP.Completed]], 3)); // an end that still arrives is taken
+    expect(singleRunChip(st)).toMatchObject({ tone: "confirmed", text: "Finalized · file closed" });
+  });
+
+  it("an unknown start, or none, is said as before", () => {
+    expect(singleRunChip(null)).toEqual({ tone: "neutral", text: "Planned" });
+    expect(singleRunChip(started({ outcome: "unknown" }))).toEqual({ tone: "unknown", text: "Start outcome not known" });
+    expect(followSingleRun(started({ outcome: "unknown" }), track([["17", OP.Completed]])).end).toBeUndefined();
+  });
+
+  it("keeps the most recent operation ends only", () => {
+    let ends: ReadonlyMap<string, { state: number; message: string }> = new Map();
+    for (let i = 0; i < OPERATION_ENDS_KEPT + 3; i++) ends = withOperationEnd(ends, String(i), { state: OP.Completed, message: "" });
+    expect(ends.size).toBe(OPERATION_ENDS_KEPT);
+    expect(ends.has("2")).toBe(false);
+    expect(ends.has("3")).toBe(true);
+    expect([...ends.keys()].pop()).toBe(String(OPERATION_ENDS_KEPT + 2));
   });
 });

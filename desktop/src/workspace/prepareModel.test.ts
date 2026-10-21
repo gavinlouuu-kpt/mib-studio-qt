@@ -16,9 +16,11 @@ import {
   confirmationState,
   gateBlocksStart,
   gateLabel,
+  gateRemediation,
   gateText,
   gateTone,
   prepareVerdict,
+  startConfirmation,
   startRefusalText,
   summarizeRequired,
   worstState,
@@ -218,5 +220,54 @@ describe("coarse Z stage fact", () => {
     expect(zStageFact(stage({ emergency_stop: true }))).toMatchObject({ tone: "blocked", status: "failed" });
     // The Focus card's chip takes the stage into account.
     expect(worstState([{ status: "passed" }, zStageFact(stage({ zero_set: false }))])?.status).toBe("warning");
+  });
+});
+
+describe("click-through polish (#763)", () => {
+  // What the backend reports with the camera idle and no background set (ExperimentCoordinator).
+  const SESSION = gate("camera.session", G.Fail, "camera is idle", "Start Live View and wait until the camera reports Running");
+  const BACKGROUND = gate("processing.background", G.Warn, "no background image set; detection uses frame thresholds only", "capture a background (Set Background / calibration)");
+
+  it("F11: camera.session says what the operator does here: Start Camera in the classic view, never Start Live View", () => {
+    const fix = gateRemediation(SESSION);
+    expect(fix).toContain("in the classic view, press Start Camera");
+    expect(fix).toContain("The workspace does not start the camera");
+    expect(fix).not.toContain("Live View");
+    // The verdict's Start-blocked line uses the same words.
+    const v = prepareVerdict(PASSING, snapshot([SESSION, NO_PATH]));
+    expect(v.startBlocked).toEqual([`Camera session — ${fix}`]);
+    expect(startRefusalText(v.startBlocked)!.text).not.toContain("Live View");
+  });
+
+  it("F8: with no background set, the background gate says Set Background first, and why calibration needs it", () => {
+    const fix = gateRemediation(BACKGROUND);
+    expect(fix.startsWith("Set Background first")).toBe(true);
+    expect(fix).toContain("Without a background, Background calibration finds no empty frame when every frame has cells");
+    // A passing gate has nothing to fix: the backend's (empty) remediation stands.
+    expect(gateRemediation(gate("processing.background", G.Pass))).toBe("");
+    expect(gateRemediation(gate("camera.session", G.Pass))).toBe("");
+    // A gate without workspace words keeps the backend's.
+    expect(gateRemediation(gate("processing.core", G.Fail, "pin", "activate the pinned core"))).toBe("activate the pinned core");
+  });
+
+  it("F9: once readiness is confirmed for this setup, the verdict says Confirmed, never Ready to confirm", () => {
+    const gates = snapshot([SESSION, NO_PATH]);
+    expect(prepareVerdict(PASSING, gates).title).toBe("Ready to confirm · Start blocked: Camera session");
+    const v = prepareVerdict(PASSING, gates, "", false, true);
+    expect(v).toMatchObject({ word: "Confirmed", tone: "warn", title: "Confirmed · Start blocked: Camera session" });
+    expect(v.title).not.toContain("Ready to confirm");
+    expect(prepareVerdict(PASSING, null, "", false, true)).toMatchObject({ word: "Confirmed", tone: "unknown", title: "Confirmed · gates not read yet" });
+    // Confirmation never hides a blocking checklist, a paused read, or changes Ready.
+    expect(prepareVerdict(derivePreflight({ ...INPUT, backendReady: false }), null, "", false, true).word).toBe("Not ready");
+    expect(prepareVerdict(PASSING, null, "", true, true).word).toBe("Readiness paused");
+    expect(prepareVerdict(PASSING, snapshot([NO_PATH]), "", false, true).word).toBe("Ready");
+  });
+
+  it("F23: beside Start, an unconfirmed preflight is said per browser tab, and is advisory", () => {
+    expect(CONFIRMATION_TEXT.none.text).toBe("Not confirmed in this browser tab");
+    expect(startConfirmation("none")).toEqual({ tone: "unknown", chip: "Not confirmed in this browser tab", note: expect.stringContaining("Start does not require it") });
+    expect(startConfirmation("changed")!.chip).toBe("Setup changed since the confirmation");
+    expect(startConfirmation("blocked")!.tone).toBe("blocked");
+    expect(startConfirmation("confirmed")).toBeNull();
   });
 });

@@ -95,13 +95,32 @@ export const GATE_LABELS: Readonly<Record<string, string>> = {
 /** The plain label of a gate, or its id when there is none. */
 export const gateLabel = (id: string): string => GATE_LABELS[id] ?? id;
 
+/** Remediations the workspace words itself (#763), because the backend's names a control the
+ *  operator cannot press from here or leads to a step that cannot succeed yet:
+ *  - camera.session: the backend names the Qt app's "Start Live View". The desktop's classic view
+ *    has Start Camera, and the workspace never starts the camera (navigation never acts) (F11).
+ *  - processing.background: Background calibration with no background set finds no empty frame on
+ *    a feed with cells in every frame, so Set Background comes first (F8). */
+export const GATE_REMEDIATIONS: Readonly<Record<string, string>> = {
+  "camera.session": "in the classic view, press Start Camera and wait until the camera reports Running. The workspace does not start the camera",
+  "processing.background": "Set Background first: in the classic view, with the camera running, press Set Background. Without a background, "
+    + "Background calibration finds no empty frame when every frame has cells",
+};
+
+/** What the operator does about a gate: the workspace's own words when it has them, else the
+ *  backend's remediation; "" for a gate that passes or is not required. */
+export function gateRemediation(g: Pick<ReadinessGate, "id" | "status" | "remediation">): string {
+  if (g.status === G.Pass || g.status === G.NotRequired) return g.remediation;
+  return GATE_REMEDIATIONS[g.id] ?? g.remediation;
+}
+
 type IssueKind = "failed" | "unknown" | "warning";
 /** `blocking`: the issue blocks Confirm (a check) or Start (a gate); it sets the Not ready tone. */
 interface Issue { kind: IssueKind; name: string; blocking: boolean }
 
 export interface Verdict {
   /** The same words wherever it is shown. */
-  word: "Not ready" | "Readiness paused" | "Ready to confirm" | "Ready with warnings" | "Ready";
+  word: "Not ready" | "Readiness paused" | "Ready to confirm" | "Confirmed" | "Ready with warnings" | "Ready";
   tone: StateTone;
   /** "Not ready · 3 unknown, 1 warning", "Ready to confirm · Start blocked: Processing core". */
   title: string;
@@ -144,10 +163,13 @@ function firstNames(names: string[], shown = 2): string {
  *    pending destination blocks Start (Fail, or Unavailable: Start refuses both). Warn tone, and
  *    `startBlocked` says what Start will refuse on. With the gates not read, "Ready to confirm ·
  *    gates not read yet" in the unknown tone.
+ *  - Confirmed · Start blocked / Confirmed · gates not read yet: as "Ready to confirm", once the
+ *    operator confirmed readiness for this setup (`confirmed`, #763 F9): the words never ask for a
+ *    confirmation that was given.
  *  - Ready with warnings: nothing blocks, but a check or gate warns (or an optional check failed).
  *  - Ready.
  *  The destination is checked at Start and never counted either way. */
-export function prepareVerdict(report: PreflightReport, r: ExperimentReadiness | null, error = "", paused = false): Verdict {
+export function prepareVerdict(report: PreflightReport, r: ExperimentReadiness | null, error = "", paused = false, confirmed = false): Verdict {
   const issues: Issue[] = [];
   for (const c of report.checks) {
     if (c.blocks) issues.push({ kind: c.status === "failed" ? "failed" : c.status === "unknown" ? "unknown" : "warning", name: c.label, blocking: true });
@@ -178,13 +200,14 @@ export function prepareVerdict(report: PreflightReport, r: ExperimentReadiness |
     return { word: "Not ready", tone, title: `Not ready · ${countText(issues)}`, detail, startBlocked: [] };
   }
   if (paused) return { word: "Readiness paused", tone: "info", title: "Readiness paused · a run is active", detail: "Start re-evaluates every gate.", startBlocked: [] };
-  if (!gatesRead) return { word: "Ready to confirm", tone: "unknown", title: "Ready to confirm · gates not read yet", detail, startBlocked: [] };
+  const word = confirmed ? "Confirmed" : "Ready to confirm";
+  if (!gatesRead) return { word, tone: "unknown", title: `${word} · gates not read yet`, detail, startBlocked: [] };
   if (refused.length) {
     const startBlocked = refused.map((g) => {
-      const fix = (g.remediation || g.reason).replace(/\.$/, "");
+      const fix = (gateRemediation(g) || g.reason).replace(/\.$/, "");
       return fix ? `${gateLabel(g.id)} — ${fix}` : gateLabel(g.id);
     });
-    return { word: "Ready to confirm", tone: "warn", title: `Ready to confirm · Start blocked: ${firstNames(refused.map((g) => gateLabel(g.id)))}`, detail, startBlocked };
+    return { word, tone: "warn", title: `${word} · Start blocked: ${firstNames(refused.map((g) => gateLabel(g.id)))}`, detail, startBlocked };
   }
   if (issues.length) return { word: "Ready with warnings", tone: "warn", title: `Ready with warnings · ${countText(issues)}`, detail, startBlocked: [] };
   return { word: "Ready", tone: "confirmed", title: destination ? "Ready · destination checked at Start" : "Ready", detail: tail.trim(), startBlocked: [] };
@@ -282,7 +305,9 @@ export function summarizeRequired(report: PreflightReport): RequiredSummary {
 
 export type ConfirmationState = "none" | "confirmed" | "changed" | "blocked";
 
-/** Where the operator's Preflight confirmation stands against the current signature. */
+/** Where the operator's Preflight confirmation stands against the current signature. The
+ *  confirmation is kept per browser tab (sessionStorage; it survives a reload of the tab), so it is
+ *  advisory: Start does not require it (#763 F23) and re-evaluates every gate itself. */
 export function confirmationState(signature: string, confirmedFor: string, criticalPassed: boolean): ConfirmationState {
   if (signature !== "" && signature === confirmedFor) return criticalPassed ? "confirmed" : "blocked";
   if (confirmedFor !== "") return "changed";
@@ -290,11 +315,25 @@ export function confirmationState(signature: string, confirmedFor: string, criti
 }
 
 export const CONFIRMATION_TEXT: Readonly<Record<ConfirmationState, { tone: "confirmed" | "warn" | "blocked" | "unknown" | undefined; text: string }>> = {
-  none: { tone: undefined, text: "Not confirmed in this session" },
+  none: { tone: undefined, text: "Not confirmed in this browser tab" },
   confirmed: { tone: "confirmed", text: "Confirmed for this setup" },
   changed: { tone: "warn", text: "Setup changed since the confirmation · confirm again" },
   blocked: { tone: "blocked", text: "Confirmed, but a required check blocks · it does not count" },
 };
+
+/** The Preflight confirmation beside Start (#763 F23), while it is not given for this setup; null
+ *  once it is. Advisory: it is kept per browser tab, and Start does not require it. */
+export function startConfirmation(state: ConfirmationState): { tone: "unknown" | "warn" | "blocked"; chip: string; note: string } | null {
+  if (state === "confirmed") return null;
+  const chip = state === "changed" ? "Setup changed since the confirmation"
+    : state === "blocked" ? "Confirmation does not count · a required check blocks"
+    : CONFIRMATION_TEXT.none.text;
+  return {
+    tone: state === "changed" ? "warn" : state === "blocked" ? "blocked" : "unknown",
+    chip,
+    note: "Prepare's Confirm readiness is advisory: it is kept per browser tab, and Start does not require it. Start re-evaluates every gate with the chosen file.",
+  };
+}
 
 export interface ZStageFact {
   value: string;

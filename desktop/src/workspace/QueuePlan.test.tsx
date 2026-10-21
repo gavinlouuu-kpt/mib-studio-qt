@@ -138,6 +138,18 @@ describe("the sample format", () => {
   });
 });
 
+describe("the queue's Start beside the preflight confirmation (#763 F23)", () => {
+  it("says the preflight is not confirmed in this browser tab, and Start S1 stays available: the confirmation is advisory", async () => {
+    await twoSamples();
+    const card = $("queue-card")!;
+    expect(card.querySelector("[data-testid=plan-confirmation]")!.textContent).toBe("Not confirmed in this browser tab");
+    expect(card.querySelector("[data-testid=plan-confirmation-note]")!.textContent).toContain("Start does not require it");
+    expect(($("queue-start") as HTMLButtonElement).disabled).toBe(false);
+    await press($("queue-start"), "Start S1");
+    expect(runStart).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("the sheet", () => {
   it("holds one row per sample with its own ref under one experiment id; editing, adding, moving and removing send nothing", async () => {
     await twoSamples();
@@ -357,7 +369,8 @@ describe("a lost controlling client", () => {
     await twoSamples();
     await act(async () => setControl(false));
     expect($("queue-paused")).toBeNull(); // nothing began: nothing to pause
-    expect($("plan-blocked-control")!.textContent).toContain("this client does not control the instrument");
+    expect($("plan-blocked-control")!.textContent).toContain("Another tab or client holds control");
+    expect($("plan-blocked-control")!.textContent).toContain("nothing is sent");
     await press($("queue-start"), "Start S1");
     expect(acted()).toBe(0);
   });

@@ -14,13 +14,13 @@ import { ProcessedPreview } from "./components/ProcessedPreview";
 import { RunOutcomeNotice } from "./components/RunOutcomeNotice";
 import { describeReviewOutcome, describeRunOutcome, runKey } from "./runOutcome";
 import { BackgroundCalibrationControls } from "./components/BackgroundCalibrationControls";
-import {invoke, isRemote} from "./transport";
+import {invoke, isRemote, transport} from "./transport";
 import { productName } from "./brand";
 import { isString, isStringArray, usePersistedState } from "./persistedState";
 import { PreviewBufferControls, usePreviewBuffer } from "./previewBuffer";
 import { decimalU64 } from "./framePacket";
 import { FramePullScheduler } from "./framePullScheduler";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {open, save, confirm} from "./transport/dialogs";
 import { volatileDataNotice } from "./diagnosticsView";
 import { useWallClockSync } from "./transport/wallClockSync";
@@ -33,6 +33,7 @@ import { faultClearedNote } from "./ringPlayback";
 import { startExperiment, type StartOutcome } from "./experimentStart";
 import { SerialReads } from "./serialReads";
 import { usePlan, type PlanStartResult, type StopReply } from "./workspace/usePlan";
+import { withOperationEnd, type OperationEnd, type OperationTrack } from "./workspace/queueModel";
 import { planCameraMode } from "./workspace/planModel";
 import { runInProgress } from "./workspace/liveModel";
 import { useHoldsControl } from "./transport/useControlRole";
@@ -65,7 +66,7 @@ import {
   type TriggerStatus,
 } from "./bridge";
 import { deviceIdentity as cameraIdentity, preflightSignature as signPreflight, type SignatureDevice } from "./confirmationSignature";
-import { BRIDGE_ABI_VERSION, EXPERIMENT_STATES, PUMP_IDS } from "./bridgeContract";
+import { BRIDGE_ABI_VERSION, EXPERIMENT_STATES, OPERATION_KINDS, OPERATION_STATES, PUMP_IDS } from "./bridgeContract";
 import { deriveWorkflow, type StageTab, type WorkflowFacts } from "./workflow";
 import { CHECK_STATUS_LABEL, PREFLIGHT_POLL_MS, PREFLIGHT_READ_STALE_MS, derivePreflight, type PreflightInput } from "./preflight";
 import { capabilitiesOf, isPz7035, PL_IGNORED_SETTINGS_TEXT } from "./platformCapabilities";
@@ -487,6 +488,20 @@ export default function App() {
     [countDisplayed],
   );
 
+  // The experiment operations' ends (BE-1), by operation id, from their terminal OperationStatus
+  // events, and how many times events may have been lost (a notification overflow, a failed poll, a
+  // dropped server connection). The workspace's single sample ends with the operation its start
+  // reply named, never by a status (#763 F14): an end not read after a loss is not known.
+  const [operationEnds, setOperationEnds] = useState<ReadonlyMap<string, OperationEnd>>(() => new Map());
+  const [eventLoss, setEventLoss] = useState(0);
+  const operations = useMemo<OperationTrack>(() => ({ ends: operationEnds, loss: eventLoss }), [operationEnds, eventLoss]);
+  const noteEventLoss = useCallback(() => setEventLoss((n) => n + 1), []);
+  useEffect(() => {
+    const session = transport.session;
+    // The server pushes events while connected; a dropped connection resets the session.
+    return session ? session.subscribe((state) => { if (state.clientId === undefined) noteEventLoss(); }) : undefined;
+  }, [noteEventLoss]);
+
   const applyEvents = useCallback((events: BridgeEvent[]) => {
     for (const e of events) {
       if (e.kind === "CameraStatus") {
@@ -496,9 +511,14 @@ export default function App() {
       } else if (e.kind === "BackendError") {
         append(`backend error: ${e.message}${e.textTruncated ? " (details truncated)" : ""}`);
       } else if (e.kind === "OperationStatus") {
+        if (e.operationKind === OPERATION_KINDS.Experiment && e.state >= OPERATION_STATES.Completed) {
+          const end: OperationEnd = { state: e.state, message: e.message };
+          setOperationEnds((ends) => withOperationEnd(ends, e.operationId, end));
+        }
         if (e.state === 2) append(`operation ${e.operationId} completed: ${e.message}`);
         else if (e.state >= 3) append(`operation ${e.operationId} ${e.state === 3 ? "failed" : e.state === 4 ? "cancelled" : "timed out"}: ${e.message}`);
       } else if (e.kind === "QueueOverflow") {
+        noteEventLoss();
         append(`notification loss: ${e.notificationsDropped} discarded (total ${e.notificationsDroppedTotal}); authoritative reconciliation required`);
       } else if (e.kind === "ExperimentStatus") {
         if(e.state === EXPERIMENT_STATES.Failed) append(`experiment failed: ${e.message}`);
@@ -508,7 +528,7 @@ export default function App() {
         append(`unrecognized notification ${e.receivedKind}; authoritative reconciliation required`);
       }
     }
-  },[append]);
+  },[append, noteEventLoss]);
 
   const procEnabledRef = useRef(procEnabled);
   procEnabledRef.current = procEnabled;
@@ -532,7 +552,7 @@ export default function App() {
     tickBusy.current = true;
     try {
       // State/fault notifications do not wait behind pixel decode/rendering.
-      applyEvents(await bridge.pollEvents());
+      applyEvents(await bridge.pollEvents().catch((e: unknown) => { noteEventLoss(); throw e; }));
       const runtime = await invoke<{capture_running: boolean; recording: boolean}>("fetch_preview_buffer");
       setRunning(runtime.capture_running); setRecording(runtime.recording);
       setStats(await bridge.fetchProcessingStats());
@@ -541,7 +561,7 @@ export default function App() {
     } catch (e) {
       append(`tick error: ${e}`);
     } finally { tickBusy.current = false; }
-  }, [applyEvents, append]);
+  }, [applyEvents, append, noteEventLoss]);
 
   const stopLoop = useCallback(() => {
     framePulls.current.invalidate("live");
@@ -1038,7 +1058,7 @@ export default function App() {
     bridge.monitoringSetActive(monitoringWanted).catch(() => {});
   }, [ready, controlHeld, monitoringWanted]);
   // The workspace's Experiment plan (O3): local until its buttons (Start run, the queue's steps).
-  const plan = usePlan(runExperimentStart, { status: expStatus, stop: stopForPlan, controlHeld });
+  const plan = usePlan(runExperimentStart, { status: expStatus, stop: stopForPlan, controlHeld, operations });
 
   const onStopExperiment = useCallback(async () => {
     try {
@@ -1108,7 +1128,7 @@ export default function App() {
       setReviewPath(picked);
       setReviewing(true);
       append(`loaded ${picked}`);
-      applyEvents(await bridge.pollEvents());
+      applyEvents(await bridge.pollEvents().catch((e: unknown) => { noteEventLoss(); throw e; }));
       const meta = await bridge.fetchReviewMetadata();
       setReviewMeta(meta);
       setReviewTab(meta.recording_file ? "raw" : "valid");
@@ -1124,7 +1144,7 @@ export default function App() {
       try { const metadata=await bridge.fetchReviewMetadata();if(!metadata.file_open)clearReviewSource();else setReviewMeta(metadata); } catch { clearReviewSource(); }
     } finally {reviewSourcePending.current=false;setReviewSourceBusy(false);}
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [append, applyEvents, range.earliest, stopLoop, onScrub, loadMetricsPage, drawReviewImage,clearReviewSource]);
+  }, [append, applyEvents, noteEventLoss, range.earliest, stopLoop, onScrub, loadMetricsPage, drawReviewImage,clearReviewSource]);
 
   useEffect(()=>{
     if(!ready||tab!=="review"||!recoveredReview.current||!reviewMeta?.file_open)return;

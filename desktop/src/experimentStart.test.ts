@@ -171,6 +171,15 @@ describe("the start reply's outcome code (ABI 40)", () => {
 
 describe("bridge.experimentStart on the transport", () => {
   const reply = { transport_version: JSON_TRANSPORT.version, ok: true, command: COMMAND_TYPES.Experiment, message: "started", operation_id: "1" };
+  it("a started outcome names the reply's operation, the run's identity in the reply (#763 F14); \"0\" or none names none", async () => {
+    vi.mocked(invoke).mockReset();
+    vi.mocked(invoke).mockResolvedValue({ ...reply, operation_id: "9007199254740993", start_outcome: O.Started });
+    const started = deps({ fetchRingStatus: vi.fn(async () => ring({ run_frozen: false })), start: (p, a, j) => bridge.experimentStart(p, a, j) });
+    expect(await startExperiment(started, REQUEST_TEXT)).toEqual({ kind: "started", path: "/data/run.h5", notice: "", operationId: "9007199254740993" });
+    vi.mocked(invoke).mockResolvedValue({ ...reply, operation_id: "0" });
+    expect(await startExperiment(started, REQUEST_TEXT)).toEqual({ kind: "started", path: "/data/run.h5", notice: "" });
+    expect(await startExperiment(deps({ fetchRingStatus: vi.fn(async () => ring({ run_frozen: false })) }))).toEqual({ kind: "started", path: "/data/run.h5", notice: "" });
+  });
   it("sends startRequestJson only when given, and then exactly the text", async () => {
     vi.mocked(invoke).mockReset();
     vi.mocked(invoke).mockResolvedValue(reply);

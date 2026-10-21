@@ -14,7 +14,7 @@ import type { PreflightInput } from "../preflight";
 import type { AlignFacts } from "./alignControls";
 import type { ExperimentSubView } from "./ExperimentView";
 import { UUID_V4, buildStartRequest } from "./planModel";
-import { OPERATORS_STORAGE_KEY, usePlan, type PlanStartResult } from "./usePlan";
+import { OPERATORS_STORAGE_KEY, usePlan, type PlanController, type PlanStartResult } from "./usePlan";
 import { Workspace, type WorkspaceProps } from "./Workspace";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -35,8 +35,10 @@ let host: HTMLDivElement, root: Root;
 let runStart = vi.fn(async (_json: string): Promise<PlanStartResult> => ({ kind: "started", path: "/data/run.h5", notice: "" }));
 const onExit = vi.fn(), onStage = vi.fn();
 
-function Harness({ over = {}, lockedReason = "" }: { over?: Partial<WorkspaceProps>; lockedReason?: string }) {
-  const plan = usePlan(runStart);
+let planRef: PlanController | null = null;
+function Harness({ over = {}, lockedReason = "", controlHeld = true }: { over?: Partial<WorkspaceProps>; lockedReason?: string; controlHeld?: boolean }) {
+  const plan = usePlan(runStart, { controlHeld });
+  planRef = plan;
   const [view, setView] = useState<ExperimentSubView>("Plan");
   const props: WorkspaceProps = {
     brand: "MIB Studio", source: "Mock camera", method: "", stage: 2, onStage, onExit, serviceMode: false,
@@ -48,7 +50,7 @@ function Harness({ over = {}, lockedReason = "" }: { over?: Partial<WorkspacePro
   return <Workspace {...props} />;
 }
 
-const render = (props: { over?: Partial<WorkspaceProps>; lockedReason?: string } = {}) =>
+const render = (props: { over?: Partial<WorkspaceProps>; lockedReason?: string; controlHeld?: boolean } = {}) =>
   act(async () => root.render(<StrictMode><Harness {...props} /></StrictMode>));
 const advance = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
 const $ = (id: string) => host.querySelector<HTMLElement>(`[data-testid=${id}]`);
@@ -139,6 +141,26 @@ describe("the Plan acts only on Start run", () => {
     );
   });
 
+  it("a viewer's Start run is disabled: another tab or client holds control, and nothing is sent (#766 review)", async () => {
+    await render({ controlHeld: false });
+    await fillFull();
+    const gate = $("plan-blocked-control")!;
+    expect(gate.textContent).toContain("Another tab or client holds control");
+    expect(gate.textContent).toContain("nothing is sent");
+    expect(startButton()!.disabled).toBe(true);
+    await act(async () => startButton()!.click());
+    // Not even through the plan itself: the Start flow is not entered (no file dialog, no read).
+    await act(async () => { expect(await planRef!.start(buildStartRequest(planRef!.draft, 0, 1).json!, 1)).toBeNull(); });
+    expect(runStart).not.toHaveBeenCalled();
+    for (const c of backendCalls()) expect(c.cmd).toBe("fetch_experiment_readiness");
+    // Control taken here: the gate goes and Start run sends the plan.
+    await render({ controlHeld: true });
+    expect($("plan-blocked-control")).toBeNull();
+    expect(startButton()!.disabled).toBe(false);
+    await act(async () => startButton()!.click());
+    expect(runStart).toHaveBeenCalledTimes(1);
+  });
+
   it("an empty plan sends its identity only", async () => {
     await render();
     await act(async () => startButton()!.click());
@@ -152,7 +174,7 @@ describe("refusals keep the plan", () => {
     await type("plan-condition", "x".repeat(B.max_text_bytes + 1));
     const field = $("plan-condition")!;
     expect(field.getAttribute("aria-invalid")).toBe("true");
-    expect(field.parentElement!.querySelector(".ws-plan-issue")!.textContent).toBe(`too long: ${B.max_text_bytes + 1} bytes, at most ${B.max_text_bytes}. Shorten it; nothing is cut off.`);
+    expect(field.parentElement!.querySelector(".ws-plan-issue")!.textContent).toBe(`Too long: ${B.max_text_bytes + 1} bytes, at most ${B.max_text_bytes}. Shorten it; nothing is cut off.`);
     expect((field as HTMLInputElement).value).toHaveLength(B.max_text_bytes + 1); // never cut off
     expect(startButton()!.disabled).toBe(true);
     expect($("plan-blocked-sheet")!.textContent).toContain(`Condition: too long: ${B.max_text_bytes + 1} bytes, at most ${B.max_text_bytes}`);
@@ -297,13 +319,86 @@ describe("a started run locks its plan", () => {
     expect(startButton()!.disabled).toBe(false);
   });
 
-  it("a remembered operator is the next plan's default and can be picked", async () => {
+  it("a remembered operator is only a suggestion: none is selected or sent until one is picked (#763 F6)", async () => {
     localStorage.setItem(OPERATORS_STORAGE_KEY, JSON.stringify([{ name: "B. Second", id: "" }, { name: "A. Operator", id: "op-7" }]));
     await render();
-    expect(($("plan-operator-name") as HTMLInputElement).value).toBe("B. Second");
+    // After a reload the plan names no operator: the remembered ones are offered, none chosen.
+    expect(($("plan-operator-name") as HTMLInputElement).value).toBe("");
+    expect(($("plan-operator-id") as HTMLInputElement).value).toBe("");
+    const offered = [...$("plan-operators")!.querySelectorAll("button")];
+    expect(offered.map((b) => b.textContent)).toEqual(["B. Second", "A. Operator (op-7)"]);
+    expect(offered.every((b) => !b.className.includes("selected"))).toBe(true);
+    expect($("plan-operator-note")!.textContent).toContain("a remembered name is never selected for you");
+    await act(async () => startButton()!.click());
+    expect(runStart).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(runStart.mock.calls[0][0])).not.toHaveProperty("operator"); // nothing recorded as "selected"
+  });
+
+  it("an operator picked from the remembered list is sent, and New plan keeps the one picked here", async () => {
+    localStorage.setItem(OPERATORS_STORAGE_KEY, JSON.stringify([{ name: "B. Second", id: "" }, { name: "A. Operator", id: "op-7" }]));
+    await render();
     await act(async () => button("A. Operator (op-7)")!.click());
     expect(($("plan-operator-id") as HTMLInputElement).value).toBe("op-7");
     expect($("plan-operator-note")!.textContent).toContain("not authentication");
+    await act(async () => startButton()!.click());
+    expect(JSON.parse(runStart.mock.calls[0][0]).operator).toEqual({ id: "op-7", name: "A. Operator" });
+    await act(async () => button("New plan")!.click());
+    expect(($("plan-operator-name") as HTMLInputElement).value).toBe("A. Operator"); // picked in this page's Plan
+  });
+
+  it("a remembered operator is never sent without a pick, whatever was remembered (#763 F6)", async () => {
+    // The plan a page load creates: for any remembered list, the first Start sends no operator.
+    for (const remembered of [[{ name: "Solo", id: "" }], [{ name: "", id: "id-only" }], [{ name: "X", id: "x-1" }, { name: "Y", id: "" }]]) {
+      localStorage.setItem(OPERATORS_STORAGE_KEY, JSON.stringify(remembered));
+      runStart.mockClear();
+      await act(async () => root.unmount());
+      root = createRoot(host);
+      await render();
+      await act(async () => startButton()!.click());
+      expect(runStart).toHaveBeenCalledTimes(1);
+      expect(runStart.mock.calls[0][0]).not.toContain("\"operator\"");
+    }
+  });
+});
+
+describe("click-through polish (#763)", () => {
+  it("F12: a started run's outcome points to Live, and Go to Live only shows it", async () => {
+    await render();
+    await act(async () => startButton()!.click());
+    const outcome = $("plan-outcome")!;
+    expect(outcome.textContent).toContain("Follow it in Experiment · Live, and stop it there with Stop & finalize run.");
+    expect(outcome.textContent).not.toContain("classic view");
+    const sent = backendCalls().length;
+    await act(async () => $("plan-to-live")!.click());
+    expect($("workspace-live")).not.toBeNull();
+    // Showing Live reads (and, from the controlling client, turns monitoring on); it starts or stops nothing.
+    expect(backendCalls().slice(sent).every((c) => !["experiment_start", "experiment_stop", "stop_camera"].includes(c.cmd))).toBe(true);
+  });
+
+  it("F21: each issue is its own message, under its field and in the Start block", async () => {
+    await render();
+    await type("plan-concentrationValue", "-1");
+    const field = $("plan-concentrationValue")!;
+    const lines = [...field.parentElement!.querySelectorAll(".ws-plan-issue__line")].map((l) => l.textContent);
+    expect(lines).toEqual(["Give a unit with the value (e.g. µM), or clear the value when it is not declared.", "Must be 0 or more."]);
+    const items = [...$("plan-blocked-sheet")!.querySelectorAll("li")].map((l) => l.textContent);
+    expect(items).toEqual([
+      "Concentration: give a unit with the value (e.g. µM), or clear the value when it is not declared.",
+      "Concentration value: must be 0 or more.",
+    ]);
+  });
+
+  it("F23: Start says the preflight is not confirmed in this browser tab, and stays available", async () => {
+    await render();
+    expect($("plan-confirmation")!.textContent).toBe("Not confirmed in this browser tab");
+    expect($("plan-confirmation-note")!.textContent).toContain("advisory");
+    expect(startButton()!.disabled).toBe(false); // advisory: Start is not gated on it
+    await render({ over: { confirmedFor: "sig" } });
+    expect($("plan-confirmation")).toBeNull();
+    expect($("plan-confirmation-note")).toBeNull();
+    expect(startButton()!.disabled).toBe(false);
+    await render({ over: { confirmedFor: "sig-before" } });
+    expect($("plan-confirmation")!.textContent).toBe("Setup changed since the confirmation");
   });
 });
 

@@ -235,6 +235,45 @@ describe("Prepare states", () => {
   });
 });
 
+describe("click-through polish (#763)", () => {
+  // The gates the walk read with the mock camera idle and no background set.
+  const SESSION = { id: "camera.session", status: G.Fail, reason: "camera is idle", remediation: "Start Live View and wait until the camera reports Running" };
+  const BACKGROUND = { id: "processing.background", status: G.Warn, reason: "no background image set; detection uses frame thresholds only", remediation: "capture a background (Set Background / calibration)" };
+  const cardChip = () => [...host.querySelectorAll(".mib-card")].find((c) => c.textContent?.startsWith("Ready to operate?"))!.querySelector(".mib-card__status .mib-chip")!;
+
+  it("F9: after Confirm readiness, the verdict chips say Confirmed, next to Confirmed for this setup", async () => {
+    gates = [SESSION, NO_PATH];
+    await render();
+    expect(verdictChip().textContent).toBe("Ready to confirm · Start blocked: Camera session");
+    await render({ confirmedFor: "sig-now" });
+    expect(row("Preflight confirmation")!.textContent).toBe("Confirmed for this setup");
+    expect(verdictChip().textContent).toBe("Confirmed · Start blocked: Camera session");
+    expect(cardChip().textContent).toBe(verdictChip().textContent);
+    expect(host.textContent).not.toContain("Ready to confirm");
+    // A changed setup asks again.
+    await render({ confirmedFor: "sig-before" });
+    expect(verdictChip().textContent).toBe("Ready to confirm · Start blocked: Camera session");
+  });
+
+  it("F11: the camera session's fix names Start Camera in the classic view, in the gate row and in the Start-blocked notice", async () => {
+    gates = [SESSION, NO_PATH];
+    await render();
+    const fix = gateRow("camera.session")!.querySelector(".ws-gate-fix")!.textContent!;
+    expect(fix).toBe("Fix: in the classic view, press Start Camera and wait until the camera reports Running. The workspace does not start the camera");
+    expect(host.querySelector("[data-testid=workspace-start-refused]")!.textContent).toContain("Camera session — in the classic view, press Start Camera");
+    expect(host.textContent).not.toContain("Start Live View");
+  });
+
+  it("F8: with no background set, the background gate says Set Background first", async () => {
+    gates = [BACKGROUND, { id: "processing.backgroundCalibration", status: G.Pass, reason: "", remediation: "" }, NO_PATH];
+    await render();
+    const fix = gateRow("processing.background")!.querySelector(".ws-gate-fix")!.textContent!;
+    expect(fix.startsWith("Fix: Set Background first: in the classic view, with the camera running, press Set Background.")).toBe(true);
+    expect(fix).toContain("Without a background, Background calibration finds no empty frame");
+    expect(gateRow("processing.backgroundCalibration")!.querySelector(".ws-gate-fix")).toBeNull(); // a passing gate has nothing to fix
+  });
+});
+
 describe("stages only navigate", () => {
   it("selecting a stage calls onStage and sends nothing but the Prepare reads", async () => {
     await render();
