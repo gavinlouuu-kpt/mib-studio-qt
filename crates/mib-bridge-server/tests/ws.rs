@@ -766,3 +766,37 @@ async fn live_cells_over_the_websocket() {
     let _ = std::fs::remove_dir_all(&frames);
     let _ = std::fs::remove_dir_all(&data);
 }
+
+// Calibration records (#716 A4a, ABI 42): every client may list and read the records, but apply
+// sets the instrument's pixel-to-micron factor, so only the controlling client may send it (a
+// viewer gets VIEWER_ONLY and nothing reaches the backend).
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn calibration_records_over_the_websocket() {
+    let (server, addr, data) = start("calibration").await;
+    let mut controller = connect(addr).await;
+    let mut viewer = connect(addr).await;
+    let mut events = Vec::new();
+    call(&mut controller, 1, "init", json!({ "dataDir": "" }), &mut events).await.unwrap();
+    assert_eq!(server.controller(), Some(1));
+    let ok = |r: Result<Reply, String>| match r {
+        Ok(Reply::Json(v)) => v,
+        other => panic!("{other:?}"),
+    };
+    let list = ok(call(&mut viewer, 2, "calibration_records_list", Value::Null, &mut events).await);
+    assert_eq!(list["valid"], json!(true), "a viewer lists: {list}");
+    let got = ok(call(&mut viewer, 3, "calibration_record_get", json!({ "recordId": "cal-none" }), &mut events).await);
+    assert_eq!(got["found"], json!(false), "a viewer reads: {got}");
+    let refused = call(&mut viewer, 4, "calibration_apply",
+        json!({ "recordId": "cal-none", "expectedCurrentFactor": 0.4886 }), &mut events).await.unwrap_err();
+    assert!(refused.starts_with("VIEWER_ONLY"), "{refused}");
+    let applied = ok(call(&mut controller, 5, "calibration_apply",
+        json!({ "recordId": "cal-none", "expectedCurrentFactor": 0.4886 }), &mut events).await);
+    assert_eq!((applied["ok"].clone(), applied["outcome"].clone()), (json!(false), json!(1)), "NotFound: {applied}");
+    let after = ok(call(&mut viewer, 6, "calibration_records_list", Value::Null, &mut events).await);
+    assert_eq!(after["store"]["revision"], list["store"]["revision"], "nothing changed: {after}");
+    controller.close(None).await.unwrap();
+    viewer.close(None).await.unwrap();
+    server.state().bridge.lock().unwrap().pin_mut().shutdown();
+    let _ = std::fs::remove_dir_all(&data);
+}

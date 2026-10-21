@@ -191,6 +191,9 @@ const CONTROL_COMMANDS: &[&str] = &[
     // fill it (or clear the operator's) under the controller. Reading the strip, the pins and
     // their images stays open to every client.
     "monitoring_cell_pin", "monitoring_cell_unpin", "monitoring_cell_clear_pins",
+    // Calibration apply (#716 A4a, ABI 42): it sets the instrument's pixel-to-micron factor, so
+    // only the controlling client may send it. Listing and reading records stay open to viewers.
+    "calibration_apply",
 ];
 
 impl Server {
@@ -685,6 +688,16 @@ mod stage_control_tests {
             assert!(CONTROL_COMMANDS.contains(&cmd), "{cmd} must be a CONTROL command");
         }
         for cmd in ["fetch_monitoring_cells", "fetch_monitoring_cell_packet", "fetch_monitoring_snapshot"] {
+            assert!(!CONTROL_COMMANDS.contains(&cmd), "{cmd} is a read: viewers may use it");
+        }
+    }
+
+    // Calibration records (#716 A4a, ABI 42): apply changes the instrument's factor, so it needs
+    // control; the list and get are reads every client may use.
+    #[test]
+    fn calibration_apply_is_control_only_but_reads_are_not() {
+        assert!(CONTROL_COMMANDS.contains(&"calibration_apply"), "calibration_apply must be a CONTROL command");
+        for cmd in ["calibration_records_list", "calibration_record_get"] {
             assert!(!CONTROL_COMMANDS.contains(&cmd), "{cmd} is a read: viewers may use it");
         }
     }

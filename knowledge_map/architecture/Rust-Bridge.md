@@ -181,7 +181,7 @@ TypeScript via the generated `desktop/src/bridgeContract.ts`
 (`scripts/gen_bridge_contract.py --check` is a desktop-CI drift gate).
 
 The command/event set is a versioned schema: `bridge_abi_version()` returns the
-current version (`41` since #716 A6a; each later bump has its own `## ABI N` section below)
+current version (`42` since #716 A4a; each later bump has its own `## ABI N` section below)
 (the early history:v2 added the review commands — `load_recording`, `playback_seek_index`,
 `fetch_frame_by_index`; v3 added the processing commands — `apply_processing`,
 `fetch_processing_stats`; v4 added operation state, `cancel_operation`,
@@ -519,6 +519,41 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
 - **Tests:** `contract.rs` `stage_commands_fail_safely_without_hardware`;
   `stage_motion_is_control_only_but_stop_is_not` in the server;
   `backend.stage_bridge_facade`.
+
+## ABI 42: calibration records (#716 A4a, ADR 0015 item 7)
+
+Additive over ABI 41. A run whose method has `purpose: "calibration"` produces an
+instrument-scoped calibration record when it closes; the operator applies its
+pixel-to-micron proposal explicitly. Backend: [[../services/CalibrationRecords]] (derivation,
+store, gate) and [[ExperimentCoordinator]] (the gate in readiness, the derivation at close, the
+Start check). Contract section `calibration_records`, enums `calibration_record_statuses` and
+`calibration_apply_outcomes` (static_asserts in `shim.cpp`, `contract.rs`, generated TS).
+
+- **Commands** (cxx -> `mib-app-commands` -> Tauri and the WebSocket server -> `bridge.ts`):
+  `calibration_records_list` (read: the newest version of every record, newest first, a plain
+  list; plus the applied and in-effect record ids, the current factor and identity),
+  `calibration_record_get` (read: one record and every version, `recordId`),
+  `calibration_apply` (`recordId`, `expectedCurrentFactor`): the compare-and-set inside the
+  coordinator's idle transaction; the reply carries `previous_factor` / `new_factor` and the
+  superseded record. A malformed `recordId` (not 1..128 bytes) or factor (not finite > 0) is an
+  error reply from `mib-app-commands`; nothing reaches the backend.
+- **Who may send it:** `calibration_apply` joins the WebSocket server's `CONTROL_COMMANDS` (a
+  viewer gets `VIEWER_ONLY`); the list and get are reads every client may use. Reads never apply,
+  invalidate or append anything.
+- **Readiness:** the gate `calibration.record` is in the existing `fetch_experiment_readiness`
+  report (no new field). Its inputs are part of the readiness generation.
+- **Start:** the startRequest's `calibration_record_id` (ABI 39) becomes a check: it must equal
+  the applied record in effect, else `InvalidRequest` (mismatch), nothing opened. The snapshot v3
+  always records the backend's applied record in effect (null when none).
+- **Client:** `desktop/src/calibrationRecords.ts` (shape checks, unknown status / outcome
+  rejected) and `bridge.calibrationRecordsList / calibrationRecordGet / calibrationApply`. No
+  develop UI uses them yet (the workspace Prepare card is A4b).
+- **Tests:** `contract.rs` `calibration_records_are_described`, `calibration_records_end_to_end`,
+  the enum groups and the start-request mismatch; `dispatch.rs`
+  `calibration_records_through_dispatch`; the server's
+  `calibration_apply_is_control_only_but_reads_are_not` and `ws.rs`
+  `calibration_records_over_the_websocket`; `calibrationRecords.test.ts`; C++
+  `backend.calibration_record`, `e2e.calibration_run`.
 
 ## ABI 41: per-row cell images for live Monitoring (#716 A6a)
 
