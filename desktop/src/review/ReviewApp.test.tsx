@@ -718,6 +718,16 @@ it("opens the launch file straight into Inspect", async () => {
   expect(activeStage()).toBe("03Inspect");
 });
 
+it("a stage change with a run open sends nothing (B3c sends only on its buttons)", async () => {
+  launchPath = "/data/run.h5";
+  await mount();
+  expect(activeStage()).toBe("03Inspect");
+  const before = calls.filter((c) => c.cmd !== "poll_review_events").length;
+  for (const stage of ["Overview", "Export", "Open", "Inspect"]) await click(stageTab(stage));
+  expect(calls.filter((c) => c.cmd !== "poll_review_events").length).toBe(before);
+  for (const cmd of ["fetch_review_track_rows", "review_reprocess_record"]) expect(calls.some((c) => c.cmd === cmd)).toBe(false);
+});
+
 it("opens an OS open request once, into Inspect", async () => {
   await mount();
   const listen = calls.find((c) => c.cmd === "plugin:event|listen");

@@ -7,6 +7,10 @@
 // viewer; the sub-views keep the selection; the Stored card says what
 // produced the stored results and sends Reprocess to the Regenerate masks
 // dialog; and every feature of the panel before B3a is still reachable.
+// B3c (review ABI 3): the crop is placed through the file's object
+// coordinate space (ROI-local, image, unknown); the Stored card gives the
+// profile and E-LUT; the linked records and the record reprocessed are sent
+// only by their buttons, with every refusal said plainly.
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -24,6 +28,17 @@ let recording = false;
 let canvasWorks = true;
 /** The recorded ROI's origin; (0, 0) unless a test moves it. */
 let roiOrigin = { x: 0, y: 0 };
+/** The file's object coordinate space as fetch_review_info reports it. */
+let space: { kind: string; source: string; x: number; y: number } = { kind: "image", source: "roi_origin", x: 0, y: 0 };
+let lut: unknown = null;
+let profile: string | null = null;
+let untracked = false;
+/** fetch_review_track_rows: null = the track's records from the mock rows. */
+let trackAnswer: ((args: Record<string, unknown>) => unknown) | null = null;
+/** review_reprocess_record: null = the stored record found again. */
+let reprocessAnswer: ((args: Record<string, unknown>) => unknown) | null = null;
+/** Holds review_reprocess_record's reply until released. */
+let holdReprocess: { promise: Promise<void>; release: () => void } | null = null;
 
 const W = 64, H = 48, VALID = 12, INVALID = 3;
 const ds = (count: number, present = count > 0) => ({ present, count: String(count), height: H, width: W, channels: 1 });
@@ -44,6 +59,10 @@ function info() {
     roi_y: roiOrigin.y,
     roi_w: W,
     roi_h: H,
+    object_coordinates: open && !recording ? space.kind : "unknown",
+    object_coordinates_source: open && !recording ? space.source : "",
+    object_origin_x: space.x,
+    object_origin_y: space.y,
     has_background: false,
     has_core_identity: open,
     core_version: "2.1.0",
@@ -88,6 +107,8 @@ function info() {
       operator: null,
       annotation: null,
       annotation_unreadable: false,
+      emodulus_lut: open ? lut : null,
+      profile_id: open ? profile : null,
     },
   };
 }
@@ -107,7 +128,8 @@ function row(valid: boolean, i: number) {
     inner_contour_count: 1,
     object_id: recording ? 0 : 1 + (i % 2),
     object_count: recording ? 0 : 1,
-    track_id: recording ? -1 : i,
+    // Two records per track (0, 0, 1, 1, …).
+    track_id: recording || untracked ? -1 : Math.floor(i / 2),
     track_first_frame: "0",
     track_last_frame: "0",
     track_observation_count: 1,
@@ -171,6 +193,41 @@ function respond(cmd: string, args: Record<string, unknown>): unknown {
       const rows = [];
       for (let i = offset; i < Math.min(total, offset + Number(args.count)); i++) rows.push(row(valid, i));
       return { valid: true, total: String(total), offset: String(offset), rows };
+    }
+    case "fetch_review_track_rows": {
+      if (trackAnswer) return trackAnswer(args);
+      const valid = !!args.valid;
+      const positions: string[] = [];
+      const rows = [];
+      for (let i = 0; i < (valid ? VALID : INVALID); i++) {
+        if (Math.floor(i / 2) !== Number(args.trackId) || rows.length >= Number(args.max)) continue;
+        positions.push(String(i));
+        rows.push(row(valid, i));
+      }
+      return { ok: true, message: "", total: String(rows.length), truncated: false, positions, rows };
+    }
+    case "review_reprocess_record": {
+      const answer = () => {
+        if (reprocessAnswer) return reprocessAnswer(args);
+        const stored = row(!!args.valid, Number(args.index));
+        return {
+          ok: true,
+          message: "",
+          settings: args.settings,
+          used_recorded_settings: args.settings === 0,
+          settings_label: args.settings === 0 ? "recorded settings (config, ROI, background); px→µm 0.2500 recorded" : "default settings (whole image, no background); px→µm 0.4886 default",
+          core_version: "2.1.0",
+          core_source: "bundled",
+          pixel_to_micron: 0.25,
+          emodulus_recomputed: false,
+          stored,
+          reprocessed: [{ ...stored, area: 90, bbox_x: stored.bbox_x + space.x, bbox_y: stored.bbox_y + space.y, youngs_modulus: null }],
+          match_index: 0,
+          object_count_differs: false,
+          truncated: false,
+        };
+      };
+      return holdReprocess ? holdReprocess.promise.then(answer) : answer();
     }
     case "fetch_review_frame":
       return images || recording ? packet(Number(args.overlay) !== 0 || !!args.roiOverlay) : new ArrayBuffer(0);
@@ -253,6 +310,13 @@ beforeEach(() => {
   recording = false;
   canvasWorks = true;
   roiOrigin = { x: 0, y: 0 };
+  space = { kind: "image", source: "roi_origin", x: 0, y: 0 };
+  lut = null;
+  profile = null;
+  untracked = false;
+  trackAnswer = null;
+  reprocessAnswer = null;
+  holdReprocess = null;
   const saved = new Map<string, string>();
   vi.stubGlobal("localStorage", {
     getItem: (k: string) => saved.get(k) ?? null,
@@ -393,36 +457,65 @@ it("asks the backend for each image view's overlay and crops the record's box", 
   expect((host.querySelector(".canvas-wrap.preview") as HTMLElement).hidden).toBe(false);
 });
 
-it("offers no cell crop while the file's coordinate space is unknown to it (ROI origin not 0, 0)", async () => {
+it("places the crop through the file's object coordinate space, also with a moved ROI (B3c)", async () => {
+  // A capture whose ROI starts at (16, 8) stores ROI-local boxes next to
+  // full-frame images: the crop is cut at box + origin.
+  roiOrigin = { x: 16, y: 8 };
+  space = { kind: "roi_local", source: "attribute", x: 16, y: 8 };
+  await mountOpen("/data/roi.h5");
+  await click(button("Raw"));
+  // bbox 20,10 10×10 + (16, 8) = 36,18 → a 24 px square centred on (41, 23): (29, 11).
+  expect(crops).toEqual([[-29, -11, 29, 11, 24, 24]]);
+  expect(card("Selected measurement").querySelector(".rv-crop-note")).toBeNull();
+  expect(factValue(card("Stored vs reprocessed"), "Object coordinates")).toBe(
+    "ROI-local, placed at the ROI origin (16, 8) · recorded in the file (@object_coordinates)",
+  );
+  // The ROI moved to (30, 20) in another capture: the crop moves with it.
+  roiOrigin = { x: 30, y: 20 };
+  space = { kind: "roi_local", source: "snapshot", x: 30, y: 20 };
+  crops.length = 0;
+  await act(async () => void (await panel.current!.openPath("/data/roi-moved.h5")));
+  await settle();
+  await click(button("Contour"));
+  // 50,30 → centre (55, 35) → (43, 23), inside the 64 × 48 frame.
+  expect(crops[crops.length - 1]).toEqual([-40, -23, 40, 23, 24, 24]);
+  // A regenerated file stores image coordinates: as stored, whatever its ROI.
+  space = { kind: "image", source: "attribute", x: 0, y: 0 };
+  crops.length = 0;
+  await act(async () => void (await panel.current!.openPath("/data/regenerated.h5")));
+  await settle();
+  await click(button("Raw"));
+  expect(crops[crops.length - 1]).toEqual([-13, -3, 13, 3, 24, 24]);
+  expect(factValue(card("Stored vs reprocessed"), "Object coordinates")).toBe("image · recorded in the file (@object_coordinates)");
+});
+
+it("offers no cell crop when nothing decides the file's space, and says why", async () => {
   await mountOpen();
   await click(button("Raw"));
   expect(button("Raw").getAttribute("aria-pressed")).toBe("true");
-  // A capture whose ROI starts at (16, 8): its boxes may be ROI-local next to
-  // full-frame images, so a crop could land beside the cell. Never a wrong
-  // crop: Full frame only, with the reason, until B3c (#757 round 2).
-  roiOrigin = { x: 16, y: 8 };
+  roiOrigin = { x: 4, y: 2 };
+  space = { kind: "unknown", source: "", x: 0, y: 0 };
   crops.length = 0;
-  await act(async () => void (await panel.current!.openPath("/data/roi.h5")));
+  await act(async () => void (await panel.current!.openPath("/data/legacy.h5")));
   await settle();
   const measured = card("Selected measurement");
+  const why = "No cell crop: the file does not record whether its bounding boxes are relative to its ROI or to the image, and its masks do not tell";
   for (const view of ["Raw", "Contour", "Mask"]) {
     expect(button(view).disabled, view).toBe(true);
-    expect(button(view).title, view).toBe("Cell crop needs the file's coordinate space (B3c)");
+    expect(button(view).title, view).toBe(why);
   }
-  expect(button("Full frame").disabled).toBe(false);
   expect(button("Full frame").getAttribute("aria-pressed")).toBe("true");
-  expect(measured.querySelector(".rv-crop-note")?.textContent).toBe("Cell crop needs the file's coordinate space (B3c)");
-  expect((host.querySelector(".canvas-wrap.preview") as HTMLElement).hidden).toBe(false);
+  expect(measured.querySelector(".rv-crop-note")?.textContent).toBe(why);
   expect(measured.querySelector(".mib-cell__img")).toBeNull();
-  // Nothing is cut: every frame asked for is the full frame's.
   expect(crops).toEqual([]);
   expect(lastFrame()).toEqual({ dataset: 0, index: "0", overlay: 0, roiOverlay: false });
   await click(button("Next record"));
   expect(crops).toEqual([]);
-  expect(button("Raw").disabled).toBe(true);
-  // At the origin both placements are the same: the crop is offered again.
-  roiOrigin = { x: 0, y: 0 };
-  await act(async () => void (await panel.current!.openPath("/data/origin.h5")));
+  expect(factValue(card("Stored vs reprocessed"), "Object coordinates")).toMatch(/^Unknown: the file does not record it/);
+  // A file whose ROI origin is not (0, 0) but whose space is decided offers
+  // the crop (the B3a stopgap is gone).
+  space = { kind: "image", source: "mask_check", x: 0, y: 0 };
+  await act(async () => void (await panel.current!.openPath("/data/decided.h5")));
   await settle();
   expect(button("Raw").disabled).toBe(false);
   expect(card("Selected measurement").querySelector(".rv-crop-note")).toBeNull();
@@ -542,11 +635,234 @@ it("says what produced the stored results and sends Reprocess to Regenerate mask
   const stored = card("Stored vs reprocessed");
   expect(factValue(stored, "Stored results")).toBe("core 2.1.0 (bundled) recorded in this file");
   expect(factValue(stored, "Calibration used")).toBe("cal-0042 · px→µm 0.2500 (recorded)");
-  expect(factValue(stored, "E-LUT")).toBe("Not available");
+  // A v3 snapshot without an E-LUT or profile: "Not recorded", never a value.
+  expect(factValue(stored, "E-LUT")).toBe("Not recorded");
+  expect(factValue(stored, "Profile")).toBe("Not recorded");
+  expect(identityText()).toContain("profile not recorded · E-LUT not recorded");
   expect(factValue(stored, "Reprocessing")).toBe("Reprocessing writes a new file; this view lists no history");
   expect(stored.textContent).not.toContain("Compare");
   await click(button("Reprocess into a new file…", stored));
   expect(host.querySelector('[role="dialog"][aria-label="Regenerate masks"]')).not.toBeNull();
+  expect(calls.some((c) => c.cmd === "review_reprocess_record")).toBe(false);
+});
+
+it("gives the run's E-LUT and profile as recorded (review ABI 3)", async () => {
+  lut = { loaded: true, lut_id: "emod-lut-2026a", revision: "3", source: "catalog", sha256: "9f86d081884c7d659a2feaa0c55ad015", catalog_sha256: null, checksum_status: "verified" };
+  profile = "rbc-default";
+  await mountOpen();
+  const stored = card("Stored vs reprocessed");
+  expect(factValue(stored, "E-LUT")).toBe("emod-lut-2026a · revision 3 · catalog · sha256 9f86d081884c… · checksum verified");
+  expect(factValue(stored, "Profile")).toBe("rbc-default");
+  expect(identityText()).toContain("calibration cal-0042 · profile rbc-default · E-LUT emod-lut-2026a rev 3");
+  expect(stored.textContent).not.toContain("Not available");
+  // A run that loaded no LUT says so.
+  lut = { loaded: false, lut_id: null, revision: null, source: null, sha256: null, catalog_sha256: null, checksum_status: null };
+  await act(async () => void (await panel.current!.openPath("/data/nolut.h5")));
+  await settle();
+  expect(factValue(card("Stored vs reprocessed"), "E-LUT")).toBe("none loaded (the run had no E values)");
+});
+
+it("reads the selected record's linked records only when asked, and says when the cap cut them", async () => {
+  await mountOpen();
+  const linked = () => card("Linked cell records");
+  const trackCalls = () => calls.filter((c) => c.cmd === "fetch_review_track_rows");
+  expect(linked().textContent).toContain("Track 0 · 1 observations recorded");
+  expect(trackCalls()).toEqual([]);
+  await click(button("Show linked records", linked()));
+  expect(trackCalls().map((c) => c.args)).toEqual([{ valid: true, trackId: 0, max: 256 }]);
+  expect(linked().querySelector('[data-testid="track-summary"]')?.textContent).toBe("Track 0: 2 records in the valid set");
+  const rows = linked().querySelectorAll("tbody tr");
+  expect(Array.from(rows).map((r) => r.querySelector("td:nth-child(2)")?.textContent)).toEqual(["1000", "1003"]);
+  expect(rows[0].getAttribute("aria-current")).toBe("true");
+  // A row selects its record; the same track stays shown, with no new call.
+  await click(rows[1]);
+  expect(recordName()).toBe("frame 1003 · object 2");
+  expect(linked().querySelector('[data-testid="track-summary"]')).not.toBeNull();
+  expect(trackCalls()).toHaveLength(1);
+  // The next record is on another track: nothing is read until asked.
+  await click(button("Next record"));
+  expect(recordName()).toBe("frame 1006 · object 1");
+  expect(linked().querySelector('[data-testid="track-summary"]')).toBeNull();
+  expect(trackCalls()).toHaveLength(1);
+  // A track longer than the cap: the first 256, and said so.
+  trackAnswer = (args) => ({
+    ok: true,
+    message: "",
+    total: "300",
+    truncated: true,
+    positions: Array.from({ length: Number(args.max) }, (_, k) => String(k)),
+    rows: Array.from({ length: Number(args.max) }, (_, k) => row(true, k % VALID)),
+  });
+  await click(button("Show linked records", linked()));
+  const summary = linked().querySelector('[data-testid="track-summary"]')!;
+  expect(summary.textContent).toBe("Track 1: 300 records in the valid set; the first 256 are shown (at most 256 per request)");
+  expect(summary.className).toContain("rv-truncated");
+  expect(linked().querySelectorAll("tbody tr")).toHaveLength(256);
+  // A refusal is said plainly.
+  trackAnswer = () => ({ ok: false, message: "No review file is open", total: "0", truncated: false, positions: [], rows: [] });
+  await click(button("Next record"));
+  await click(button("Next record"));
+  await click(button("Show linked records", linked()));
+  expect(linked().querySelector('[role="alert"]')?.textContent).toBe("Not read: No review file is open");
+});
+
+it("offers no linked records for an untracked record or a recording", async () => {
+  untracked = true;
+  await mountOpen();
+  expect(button("Show linked records", card("Linked cell records")).disabled).toBe(true);
+  expect(card("Linked cell records").textContent).toContain("Not tracked: this record has no linked records");
+  recording = true;
+  await act(async () => void (await panel.current!.openPath("/data/rec.h5")));
+  await settle();
+  expect(host.querySelector(".rv-track-card")).toBeNull();
+  expect(calls.some((c) => c.cmd === "fetch_review_track_rows")).toBe(false);
+});
+
+it("reprocesses the selected record only on its button and shows stored next to reprocessed", async () => {
+  roiOrigin = { x: 16, y: 8 };
+  space = { kind: "roi_local", source: "attribute", x: 16, y: 8 };
+  await mountOpen();
+  const reprocessCalls = () => calls.filter((c) => c.cmd === "review_reprocess_record");
+  const stored = () => card("Stored vs reprocessed");
+  // Opening, stepping, sub-views and the set send nothing.
+  await click(button("Next record"));
+  await click(button("Records"));
+  await click(button("Frames"));
+  await click(button(`Invalid Frames (${INVALID})`));
+  await click(button(`Valid Frames (${VALID})`));
+  expect(reprocessCalls()).toEqual([]);
+  await click(button("Reprocess this record", stored()));
+  expect(reprocessCalls().map((c) => c.args)).toEqual([{ valid: true, index: "0", settings: 0 }]);
+  const result = stored().querySelector('[data-testid="reprocess-result"]')!;
+  expect(result.querySelector('[data-testid="reprocess-match"]')?.textContent).toBe(
+    "Matched object 1 of 1 object found (centroid nearest the stored one, inside the stored box)",
+  );
+  const cells = (label: string) => {
+    const tr = Array.from(result.querySelectorAll("tbody tr")).find((r) => r.querySelector("td")?.textContent === label);
+    return Array.from(tr?.querySelectorAll("td") ?? []).slice(1).map((td) => td.textContent);
+  };
+  expect(cells("Area (px²)")).toEqual(["80.0", "90.0"]);
+  // The stored ROI-local box is shown placed in the image, beside the found one.
+  expect(cells("Box (image x, y · w×h)")).toEqual(["36, 18 · 10×10", "36, 18 · 10×10"]);
+  expect(cells("E")).toEqual(["1.50 kPa", "not recomputed (no E-LUT loaded)"]);
+  expect(result.textContent).toContain("Settings: recorded settings (config, ROI, background); px→µm 0.2500 recorded · core 2.1.0 (bundled)");
+  expect(result.textContent).toContain("nothing is written");
+  // Moving on hides it and sends nothing; default settings go as 1.
+  await click(button("Next record"));
+  expect(stored().querySelector('[data-testid="reprocess-result"]')).toBeNull();
+  expect(reprocessCalls()).toHaveLength(1);
+  const settings = stored().querySelector('select[aria-label="Reprocess settings"]') as HTMLSelectElement;
+  await act(async () => {
+    settings.value = "1";
+    settings.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await settle();
+  expect(reprocessCalls()).toHaveLength(1);
+  await click(button("Reprocess this record", stored()));
+  expect(reprocessCalls()[reprocessCalls().length - 1]?.args).toEqual({ valid: true, index: "1", settings: 1 });
+  expect(stored().textContent).toContain("default settings (whole image, no background)");
+  // "Reprocess into a new file…" and the #754 wording stay.
+  expect(factValue(stored(), "Reprocessing")).toBe("Reprocessing writes a new file; this view lists no history");
+  expect(button("Reprocess into a new file…", stored()).disabled).toBe(false);
+});
+
+it("says every reprocess refusal plainly", async () => {
+  await mountOpen();
+  const stored = () => card("Stored vs reprocessed");
+  const refusal = () => stored().querySelector('[role="alert"]')?.textContent;
+  const refuse = (message: string) => () => ({ ok: false, message, settings: 0, stored: null, reprocessed: [], match_index: null });
+  // The processing lane claimed (a job started elsewhere after the card was drawn).
+  reprocessAnswer = refuse("A review job is running; reprocess the record when it finishes");
+  await click(button("Reprocess this record", stored()));
+  expect(refusal()).toBe("Not reprocessed: A review job is running; reprocess the record when it finishes");
+  reprocessAnswer = refuse("Record 0 has no stored image to reprocess");
+  await click(button("Reprocess this record", stored()));
+  expect(refusal()).toBe("Not reprocessed: Record 0 has no stored image to reprocess");
+  // The backend refuses an unknown space for the whole call.
+  reprocessAnswer = refuse("Record 0 cannot be matched: the file does not record whether its bounding boxes are relative to its ROI (which starts at 4, 2) or to the image, and its masks do not tell");
+  await click(button("Reprocess this record", stored()));
+  expect(refusal()).toContain("Not reprocessed: Record 0 cannot be matched");
+  // No match: answered, but no found object is the stored one.
+  reprocessAnswer = (args) => ({
+    ok: true,
+    message: "",
+    settings: args.settings,
+    used_recorded_settings: true,
+    settings_label: "recorded settings (config, ROI, background)",
+    core_version: "2.1.0",
+    core_source: "bundled",
+    pixel_to_micron: 0.25,
+    emodulus_recomputed: false,
+    stored: row(true, 0),
+    reprocessed: [{ ...row(true, 0), centroid_x: 60, centroid_y: 40 }],
+    match_index: null,
+    object_count_differs: true,
+    truncated: false,
+  });
+  await click(button("Reprocess this record", stored()));
+  expect(refusal()).toBeUndefined();
+  expect(stored().querySelector('[data-testid="reprocess-match"]')?.textContent).toBe(
+    "No match: the kernel found 1 object, none with its centroid inside the stored box",
+  );
+  const result = stored().querySelector('[data-testid="reprocess-result"]')!;
+  const area = Array.from(result.querySelectorAll("tbody tr")).find((r) => r.querySelector("td")?.textContent === "Area (px²)")!;
+  expect(Array.from(area.querySelectorAll("td")).map((td) => td.textContent)).toEqual(["Area (px²)", "80.0", "–"]);
+  // A file whose space nothing decides: the button says why, and nothing is sent.
+  space = { kind: "unknown", source: "", x: 0, y: 0 };
+  calls.length = 0;
+  await act(async () => void (await panel.current!.openPath("/data/legacy.h5")));
+  await settle();
+  const button_ = button("Reprocess this record", stored());
+  expect(button_.disabled).toBe(true);
+  expect(stored().querySelector(".rv-reprocess-unavailable")?.textContent).toMatch(
+    /^Not offered: the file does not record whether its bounding boxes are relative to its ROI or to the image/,
+  );
+  await click(button_);
+  expect(calls.some((c) => c.cmd === "review_reprocess_record")).toBe(false);
+  // A recording: no objects, no button to press.
+  recording = true;
+  await act(async () => void (await panel.current!.openPath("/data/rec.h5")));
+  await settle();
+  expect(button("Reprocess this record", stored()).disabled).toBe(true);
+  expect(button("Reprocess this record", stored()).title).toBe("Recording files carry no objects");
+});
+
+it("drops a reprocess reply that lands after the operator moved on", async () => {
+  await mountOpen();
+  let release = () => undefined as void;
+  holdReprocess = { promise: new Promise<void>((r) => (release = r)), release: () => release() };
+  await click(button("Reprocess this record", card("Stored vs reprocessed")));
+  expect(card("Stored vs reprocessed").textContent).toContain("Reprocessing the record…");
+  expect(button("Reprocess this record", card("Stored vs reprocessed")).disabled).toBe(true);
+  await click(button("Next record"));
+  holdReprocess.release();
+  await settle();
+  expect(recordName()).toBe("frame 1003 · object 2");
+  expect(card("Stored vs reprocessed").querySelector('[data-testid="reprocess-result"]')).toBeNull();
+  expect(card("Stored vs reprocessed").textContent).not.toContain("Reprocessing the record…");
+  // Back on the first record, the dropped reply is not shown either.
+  await click(button("Previous record"));
+  expect(card("Stored vs reprocessed").querySelector('[data-testid="reprocess-result"]')).toBeNull();
+});
+
+it("sends nothing new on selection, sub-view or set changes (B3a's calls only)", async () => {
+  await mountOpen();
+  const sent = () => calls.map((c) => c.cmd);
+  calls.length = 0;
+  await click(button("Next record"));
+  await click(button("Previous record"));
+  expect(sent()).toEqual(["fetch_review_frame", "fetch_review_frame"]);
+  calls.length = 0;
+  await click(button("Records"));
+  await click(button("Frames"));
+  expect(sent().filter((c) => c !== "fetch_review_thumbnails_packet")).toEqual([]);
+  calls.length = 0;
+  await click(button(`Invalid Frames (${INVALID})`));
+  expect(new Set(sent())).toEqual(new Set(["fetch_review_rows", "fetch_review_thumbnails_packet", "fetch_review_frame"]));
+  calls.length = 0;
+  await click(button("Raw"));
+  expect(sent()).toEqual(["fetch_review_frame"]);
+  for (const c of ["fetch_review_track_rows", "review_reprocess_record"]) expect(calls.some((x) => x.cmd === c)).toBe(false);
 });
 
 it("keeps every feature of the panel before B3a reachable", async () => {

@@ -115,3 +115,38 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* B3c: the linked records, and the record reprocessed now. */
+.rv-track-table {
+  max-height: 240px;
+  overflow: auto;
+}
+.rv-track-table .mib-table__row {
+  cursor: pointer;
+}
+.rv-reprocess {
+  margin-top: var(--mib-space-3);
+}
+.rv-reprocess__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--mib-space-2);
+}
+.rv-reprocess__controls select {
+  font-size: var(--mib-font-size-sm);
+}
+.rv-reprocess-result {
+  margin-top: var(--mib-space-2);
+}
+.rv-track-card .rv-note,
+.rv-stored-card .rv-note.rv-refusal,
+.rv-track-card .rv-note.rv-refusal,
+.rv-note.rv-truncated {
+  margin: var(--mib-space-2) 0;
+  font-size: var(--mib-font-size-xs);
+}
+.rv-note.rv-refusal,
+.rv-note.rv-truncated {
+  color: var(--mib-color-warn, var(--mib-color-ink));
+}
