@@ -264,36 +264,41 @@ describe("stages only navigate", () => {
     await advance(PREPARE_READINESS_POLL_MS * 3);
     for (const c of calls()) expect(c).toEqual({ cmd: "fetch_experiment_readiness", args: { outputPath: "" } });
     expect(planStart).not.toHaveBeenCalled();
-    // Live and Summary are not in the workspace yet; choosing them sends nothing.
-    for (const sub of ["Live", "Summary"]) {
-      await act(async () => button(sub).click());
-      expect(host.textContent).toContain(`Not yet in the workspace · ${sub}`);
-    }
+    // Live (O4, A6b) has content: choosing it reads the live cells and sends nothing else. Summary is
+    // not in the workspace yet; choosing it sends nothing.
+    await act(async () => button("Live").click());
+    expect(host.querySelector("[data-testid=workspace-live]")).not.toBeNull();
+    await act(async () => button("Summary").click());
+    expect(host.textContent).toContain("Not yet in the workspace · Summary");
     await act(async () => button("Back to the classic view").click());
     expect(onExit).toHaveBeenCalledTimes(1);
     await act(async () => button("Plan").click());
     expect(host.querySelector("[data-testid=workspace-plan]")).not.toBeNull();
     expect(planStart).not.toHaveBeenCalled();
     expect(onView.mock.calls.map(([v]) => v)).toEqual(["Live", "Summary", "Plan"]);
+    for (const c of calls()) expect(["fetch_experiment_readiness", "fetch_monitoring_cells"]).toContain(c.cmd);
   });
 
-  it("readiness is read only while the Plan is shown: Live and Summary stop the reads, Plan resumes them (#736 review)", async () => {
+  it("readiness is read only while the Plan is shown: Live and Summary stop the readiness reads, Plan resumes them (#736 review)", async () => {
     await render({ stage: 2 });
     await advance(PREPARE_READINESS_POLL_MS * 2);
     expect(calls().length).toBeGreaterThan(0);
     expect(verdictChip()).not.toBeNull();
+    const readiness = () => calls().filter((c) => c.cmd === "fetch_experiment_readiness");
     for (const sub of ["Live", "Summary"]) {
       await act(async () => button(sub).click());
-      const before = calls().length;
+      const before = readiness().length;
       await advance(PREPARE_READINESS_POLL_MS * 5);
-      expect(calls().length).toBe(before); // no read while a placeholder is shown
+      expect(readiness().length).toBe(before); // no readiness read while Live or the placeholder is shown
       expect(host.querySelector("[data-testid=workspace-verdict]")).toBeNull(); // no verdict without the reads
     }
-    const before = calls().length;
+    const before = readiness().length;
     await act(async () => button("Plan").click());
     await advance(PREPARE_READINESS_POLL_MS * 2);
-    expect(calls().length).toBeGreaterThan(before);
-    for (const c of calls()) expect(c).toEqual({ cmd: "fetch_experiment_readiness", args: { outputPath: "" } });
+    expect(readiness().length).toBeGreaterThan(before);
+    for (const c of readiness()) expect(c).toEqual({ cmd: "fetch_experiment_readiness", args: { outputPath: "" } });
+    // Live read only its cells.
+    for (const c of calls()) expect(["fetch_experiment_readiness", "fetch_monitoring_cells"]).toContain(c.cmd);
   });
 
   it("Align (O2) has content now; opening it sends nothing, switches nothing and writes nothing", async () => {
