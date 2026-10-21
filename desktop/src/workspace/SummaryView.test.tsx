@@ -28,6 +28,8 @@ let refConfirmed = true;
 let refRunStatus: "computed" | "deferred" = "computed";
 /** Set to hold every read until the test releases it. */
 let holdReads = false;
+/** Set to make every read fail (a transport error). */
+let failReads = false;
 const heldReads: (() => void)[] = [];
 const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -127,12 +129,14 @@ beforeEach(() => {
   vi.mocked(invoke).mockReset();
   vi.mocked(invoke).mockImplementation(async (c: string, a?: unknown) => {
     if (c === "run_quick_look") {
-      const answer = quickReply(a as Parameters<typeof quickReply>[0]);
-      return holdReads ? new Promise((resolve) => heldReads.push(() => resolve(answer))) : answer;
+      if (failReads) throw new Error("TRANSPORT_LOST: no reply");
+      // A held read is answered as the backend would at its release.
+      const answer = () => quickReply(a as Parameters<typeof quickReply>[0]);
+      return holdReads ? new Promise((resolve) => heldReads.push(() => resolve(answer()))) : answer();
     }
     throw new Error(`unexpected command ${c}`);
   });
-  variants = {}; deltaOverride = null; operationId = undefined; refRunStatus = "computed"; holdReads = false; heldReads.length = 0; refConfirmed = true; reviewReason = ""; current = { status: null };
+  variants = {}; deltaOverride = null; operationId = undefined; refRunStatus = "computed"; holdReads = false; heldReads.length = 0; failReads = false; refConfirmed = true; reviewReason = ""; current = { status: null };
   runStart.mockClear(); onView.mockClear(); onAlign.mockClear(); openReview.mockClear();
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -423,5 +427,37 @@ describe("Codex round 1: replies for what they were read for", () => {
     await flush();
     expect(reads()).toHaveLength(n + 1);
     expect(text("summary-reference-chip")).toBe("Reference · confirmed by the backend");
+  });
+});
+
+describe("Codex round 2: failures and a Summary that is gone", () => {
+  it("a read that fails for new paths says why", async () => {
+    await queuePlan();
+    failReads = true;
+    await runToFinalized(1, "/d/s1");
+    expect(text("summary-read-error")).toContain("TRANSPORT_LOST: no reply");
+    failReads = false;
+    await click("summary-refresh");
+    expect($("summary-read-error")).toBeNull();
+    expect(text("summary-tiles-valid")).toContain("21");
+  });
+
+  it("a late answer after the Summary was left reads nothing more", async () => {
+    await queuePlan();
+    await runToFinalized(1, "/d/s1");
+    await act(async () => planRef.queue.confirmClosed());
+    // Another client's run; the Summary's read is held.
+    holdReads = true;
+    await render({ status: activeAt("2", "/d/other.h5") });
+    await click("summary-refresh");
+    // The instrument turns idle, then the Summary is left before the answer (a deferral) arrives.
+    await render({ status: closedAt("2", "/d/other.h5") });
+    await render({ show: false });
+    const n = reads().length;
+    variants["/d/s1.h5"] = "deferred";
+    holdReads = false;
+    for (const release of heldReads.splice(0)) await act(async () => { release(); });
+    await flush();
+    expect(reads()).toHaveLength(n);
   });
 });

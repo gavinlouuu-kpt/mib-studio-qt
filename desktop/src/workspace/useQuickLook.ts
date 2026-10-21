@@ -57,21 +57,29 @@ export function useQuickLook(paths: readonly string[], reference: RunQuickLookRe
   const idleEpoch = useRef(0);
   const activeRef = useRef(experimentActive);
   activeRef.current = experimentActive;
+  // Set once the Summary is gone: a late answer then neither lands nor reads again.
+  const disposed = useRef(false);
+  useEffect(() => {
+    disposed.current = false;
+    return () => { disposed.current = true; };
+  }, []);
 
   const doRead = useCallback(async (retryOnIdle = true) => {
     const { key: k, pathsKey: pk, paths: p, reference: r, read: rd } = args.current;
-    if (p.length === 0) return;
+    if (p.length === 0 || disposed.current) return;
     const mine = ++generation.current;
     const epoch = idleEpoch.current;
     setLoading(true);
     try {
       const out = await rd([...p], r);
-      if (mine !== generation.current) return;
+      if (mine !== generation.current || disposed.current) return;
       setHeld({ key: k, pathsKey: pk, reply: out, error: out.ok ? "" : out.message });
       // The instrument turned idle while this read was answered: read once more for its deferrals.
       if (retryOnIdle && epoch !== idleEpoch.current && !activeRef.current && hasDeferred(out)) void doRead(false);
     } catch (e) {
-      if (mine === generation.current) setHeld((h) => ({ ...h, error: plain(e) }));
+      // The failure of this read, for its own paths: an earlier reply of the same paths stays shown.
+      if (mine === generation.current && !disposed.current)
+        setHeld((h) => (h.pathsKey === pk ? { ...h, error: plain(e) } : { key: k, pathsKey: pk, reply: null, error: plain(e) }));
     } finally {
       if (mine === generation.current) setLoading(false);
     }
