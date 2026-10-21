@@ -163,6 +163,14 @@ changes; `wsTransport` keeps it (`transport.session`, reset on a lost link) and 
 not operate." with a **Take control** button (`take_control`), which disappears for the new controller and
 appears for the old one. Without it a second browser, or an older tab that reconnected first after a
 restart, showed buttons that failed with only a log line (seen on the board on 2026-10-08).
+The classic view also disables those buttons for a viewer (#763 F19): `components/ViewerGate.tsx`
+wraps each cluster of controls that sends a control command in a `fieldset.viewer-gate`
+(`display: contents`, so toolbars keep their layout) that is `disabled` for a viewer, with the
+reason as its title; single buttons inside a `<p>` (Resume Run, the Run Stop, the config Apply
+buttons) take `viewerOnly` in their own `disabled`, and File ▸ Open Recording… is `pending`.
+Navigation, view toggles, reads and the ring playback stepping stay open to a viewer. The desktop
+shell has no session, so nothing changes there. `ViewerGate.test.tsx` also checks App.tsx's
+control-command controls against the gate.
 
 **Reconnecting (#501).** `AuthGate` keeps probing `/auth` every 2 s after the app mounted. The
 server reports a `boot_id` (one value per server process; `mib-bridge-server` `Server::new`) on every
@@ -248,7 +256,10 @@ capture running ~90 % CPU (the backend takes every preview the producer
 delivers, ~400/s, while the UI shows 30/s) and 266 MiB RSS after a UI session
 (desktop-sized buffers; a target profile is open in impl spec S6).
 
-`desktop/dist` is served at `/` with `--dist`. Tests: `tests/ws.rs` (mock
+`desktop/dist` is served at `/` with `--dist`. `/favicon.ico` is the UI's own
+`dist/favicon.ico` when it has one, else 204 No Content (the UI ships none, so every
+page load logged a 404; #763 F20; test `favicon_is_the_ui_icon_or_no_content` in
+`tests/files.rs`). Tests: `tests/ws.rs` (mock
 capture over the socket, wrong token refused, client loss and quick reconnect,
 client loss with a pump on a stalled serial adapter, #720).
 
@@ -302,7 +313,12 @@ scientific overlays remain blocked pending the accepted backend contract.
 and one replaceable pending request per view (no pending pixel buffers).
 Review intents supersede older replies; live sampling does not starve a slow
 in-flight frame. Unmount/navigation/source changes retire replies without
-stopping a run or claiming native cancellation. No pixels enter React state.
+stopping a run or claiming native cancellation. A reply that arrives after the source
+changed rejects with `FRAME_REPLY_STALE`, and a pull during a source switch (`bridge.ts`
+`sourceMutation`, e.g. Review opening a file) with `FRAME_SOURCE_CHANGING`
+without reaching the backend. Both are the client's own discards, so the
+classic view's scheduler mounts skip them (`isFrameReplyRace`) and log only
+backend refusals (#763 F20). No pixels enter React state.
 Live sampling targets 30 Hz; routine polling and metadata state updates are
 capped at 5 Hz. These are scheduling policies, not measured camera throughput.
 State polling no longer awaits the image response, but native lock contention

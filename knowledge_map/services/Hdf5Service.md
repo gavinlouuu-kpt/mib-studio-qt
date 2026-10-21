@@ -288,6 +288,17 @@ the run info; legacy files return `false` with an Unsupported descriptor.
 
 ## Gotchas
 
+- **Probe without printing an error stack (#763 F20).** A failed `H5Aopen`,
+  `H5Dopen2` or `H5Gopen2` prints an `HDF5-DIAG` stack to stderr even when
+  the caller handles it, and HDF5 1.10's `H5Lexists` fails (and prints) when
+  an intermediate group is missing ("/recorded_frames/images" on an
+  experiment file). Writers that create-or-update an attribute use
+  `openOrCreateAttribute` (`H5Aexists` first; before, a finalize printed 31
+  stacks: the accounting flags, the timestamp and telemetry provenance and
+  `config_json`), every link check is `linkExists` (each path component in
+  turn, same result convention as `H5Lexists`), and the series readers check
+  the dataset before opening it. Add new probes the same way rather than
+  `H5Aopen`-then-create or a bare nested `H5Lexists`.
 - `openFile(path)` creates the destination's parent directory tree
   (`std::filesystem::create_directories`) before `H5Fcreate`. HDF5 cannot
   create intermediate directories, so without this a save to a folder that
