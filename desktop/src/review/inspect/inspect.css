@@ -147,7 +147,8 @@
   font-size: var(--mib-font-size-xs);
 }
 .rv-note.rv-refusal,
-.rv-note.rv-truncated {
+.rv-note.rv-truncated,
+.rv-compare-warn {
   color: var(--mib-color-warn, var(--mib-color-ink));
 }
 /* The side column is narrow: both tables wrap and stay inside their card. */

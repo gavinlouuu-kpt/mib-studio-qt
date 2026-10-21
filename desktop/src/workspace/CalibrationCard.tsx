@@ -4,15 +4,19 @@
 // calibration_apply(record_id, expected_current_factor) with the factor this page last read; a
 // viewer, a run or a pending apply disables it and nothing is sent. Showing, listing and polling
 // never apply anything. A calibration itself is a normal run of a calibration method, started
-// from Experiment · Plan; there is no separate acquisition path.
+// from Experiment · Plan; there is no separate acquisition path. The applied method's purpose,
+// reference and policy come from the readiness report's `method_calibration` (bridge ABI 43, #776),
+// read with the gates; they are never inferred from the gate's text. A backend before ABI 43 (null)
+// keeps the A4b wording with the purpose-gap note.
 import { Button, Card, DataTable, FactList, Notice, StateChip, type DataTableColumn, type Fact } from "@mib/ui";
-import type { CalibrationRecord, CalibrationRecordsList } from "../calibrationRecords";
+import type { CalibrationRecord, CalibrationRecordsList, MethodCalibration } from "../calibrationRecords";
 import type { ReadinessGate } from "../eventAdapter";
 import {
   CALIBRATION_LIST_ROWS,
   DERIVATION_TEXT,
   INSUFFICIENT_SHOWN,
   PURPOSE_GAP_TEXT,
+  RUN_APPLIED_CALIBRATION_TEXT,
   RUN_CALIBRATION_TEXT,
   ageText,
   applyAvailability,
@@ -21,10 +25,14 @@ import {
   failedGates,
   fixAction,
   identityText,
+  methodPurposeText,
   methodText,
   notInEffectText,
+  policyDetail,
+  policyText,
   recordCv,
   recordFactor,
+  referenceText,
   sourceText,
   statusText,
   statusTone,
@@ -40,6 +48,9 @@ export interface CalibrationCardProps {
   gate: ReadinessGate | null;
   /** Whether the readiness report was read (the gate's absence then means "not reported"). */
   gatesRead: boolean;
+  /** The applied method's calibration declarations from the same readiness read (ABI 43
+   *  `method_calibration`); null for an older backend or a report not read. */
+  method: MethodCalibration | null;
   controlHeld: boolean;
   experimentActive: boolean;
   /** This computer's clock, for the records' ages. */
@@ -100,6 +111,15 @@ export function CalibrationCard(p: CalibrationCardProps) {
   const fixText = gate ? gateRemediation(gate) : "";
   const anyAction = !!list && (!!appliedOut || proposed.some((r) => applyAvailability(r, list).action !== null));
   const sel = c.history?.recordId;
+  // ABI 43: the applied method's declarations, as the gate read them. Never inferred from gate text.
+  const m = p.method;
+  const methodError = m?.error ?? null;
+  const methodFacts: Fact[] = !m ? [] : [
+    { label: "Applied method", value: <span data-testid="calibration-method">{methodPurposeText(m)}{methodError && !gate ? <span className="ws-detail">{methodError}</span> : null}</span>,
+      tone: methodError ? "unknown" : undefined },
+    ...(m.calibration_reference && !methodError ? [{ label: "Reference", value: <span data-testid="calibration-reference">{referenceText(m.calibration_reference)}</span> }] : []),
+    ...(!methodError ? [{ label: "Policy", value: <span data-testid="calibration-policy">{policyText(m)}<span className="ws-detail">{policyDetail(m)}</span></span> }] : []),
+  ];
 
   const columns: DataTableColumn<CalibrationRecord>[] = [
     { key: "record_id", header: "Record", emphasis: true },
@@ -123,12 +143,14 @@ export function CalibrationCard(p: CalibrationCardProps) {
             <span className="ws-gate">
               <span>{gateText(gate)}</span>
               {fixText ? <span className="ws-gate-fix" data-testid="calibration-fix">{`Fix: ${fixText}`}</span> : null}
+              {methodError ? <span className="ws-gate-fix" data-testid="calibration-method-error">{`The applied method's calibration declarations cannot be read: ${methodError}`}</span> : null}
               {fix && list ? <ApplyButton p={p} record={fix.record} action={fix.action} list={list} primary /> : null}
             </span>
           ) : (p.gatesRead ? "Unknown · not reported" : "Unknown · not read yet"),
           // The state is the card's chip; the row says it in words, with the Fix and its button.
           tone: gate ? gateFactTone(gate.status) : "unknown",
         },
+        ...methodFacts,
         {
           label: "In effect",
           value: !list ? (p.experimentActive ? "Unknown · not read while a run is active" : storeError ? "Unknown · the calibration store cannot be read"
@@ -202,8 +224,9 @@ export function CalibrationCard(p: CalibrationCardProps) {
       ) : null}
 
       <Notice tone="info" title="Running a calibration" data-testid="calibration-run">
-        {`${RUN_CALIBRATION_TEXT} ${DERIVATION_TEXT}`}
-        <span className="ws-detail" data-testid="calibration-purpose-gap">{PURPOSE_GAP_TEXT}</span>
+        {`${m?.purpose === "calibration" && !methodError ? RUN_APPLIED_CALIBRATION_TEXT : RUN_CALIBRATION_TEXT} ${DERIVATION_TEXT}`}
+        {/* Only when the backend does not report the method (before ABI 43) or it was not read. */}
+        {!m ? <span className="ws-detail" data-testid="calibration-purpose-gap">{PURPOSE_GAP_TEXT}</span> : null}
       </Notice>
 
       {list ? (

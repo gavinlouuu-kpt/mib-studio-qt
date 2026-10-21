@@ -60,7 +60,7 @@ The repo root `src/` is the C++ tree, so the whole Tauri app lives under
 - `desktop/src/workspace/` — the opt-in four-stage workspace on the `@mib/ui`
   kit (P1/P2, #713; P3 Align, #716 A3): `Workspace.tsx` (shell, stages), `PrepareView.tsx` (O1),
   `prepareModel.ts` (pure tones and summaries), `usePrepareReadiness.ts`
-  (path-less readiness poll), `AlignView.tsx` (O2), `alignImageModel.ts` (view transform,
+  (path-less readiness poll; stopping it drops a read in flight, `usePrepareReadiness.test.tsx`), `AlignView.tsx` (O2), `alignImageModel.ts` (view transform,
   probe, histogram, profile, `FrameInspector`), `quickControlModel.ts` + `useQuickControl.ts`
   (requested → readback machine), `alignControls.ts` (which controls an instrument offers);
   O3 Experiment · Plan (#716 A5): `ExperimentView.tsx` (sub-views Plan / Live / Summary),
@@ -191,7 +191,8 @@ of the quick controls and the sample sheet, until the kit has them).
   Background calibration with no background set finds no empty frame when every frame has cells).
   Chips, facts and "Fix:" lines wrap inside their card (`min-width: 0`, a `fit-content(45%)` label
   column; #763 F10).
-- **Calibration card (Prepare; #716 A4b, bridge ABI 42).** `CalibrationCard.tsx`, its pure model
+- **Calibration card (Prepare; #716 A4b, bridge ABI 42; the method report since ABI 43).**
+  `CalibrationCard.tsx`, its pure model
   `calibrationModel.ts` and the hook `useCalibration.ts` (held by `Workspace`, so Prepare and the
   Plan share one read). See [[../services/CalibrationRecords]].
   - **Reads.** `calibration_records_list`, polled with the readiness (every 2 s, while Prepare or
@@ -231,13 +232,32 @@ of the quick controls and the sample sheet, until the kit has them).
     `CONTROL_BLOCK`) and nothing is sent; during a run nothing is read or sent. Navigation, listing,
     selecting and polling never send `calibration_apply` (`CalibrationCard.test.tsx` and
     `navigation.test.tsx` count every IPC call).
+  - **The applied method (bridge ABI 43, #776; `methodCalibrationOf`).** The card reads the
+    readiness report's `method_calibration` from the readiness read that already happens (no extra
+    IPC), exactly as the `calibration.record` gate read it. Purpose and policy are never inferred
+    from the gate's text. Rows under the gate:
+    - **Applied method**: for `purpose: "calibration"`, "This method is a calibration method:
+      closing its run derives a record" (`CALIBRATION_METHOD_TEXT`); for `declared: false`,
+      "Measurement method · policy none: it declares no calibration requirements"; otherwise
+      "Measurement method".
+    - **Reference** (calibration methods only, `referenceText`): "7 ± 0.5 µm diameter · CV at most
+      10 % · nominal E 3 kPa", the nominal E only when the method declares one.
+    - **Policy** (`policyText`, `policyDetail`): the report's `calibration_policy` and
+      `calibration_max_age_hours` ("required · max age 24 h"), with what that means for the gate
+      (a calibration method itself needs no record).
+    - When `error` is set (the declarations cannot be read; the gate fails closed), the error is
+      shown in the gate row beside its Fix, the method reads "Unknown · its calibration
+      declarations cannot be read", and the default purpose / policy the report carries are not
+      shown as the method's.
+    - When the member is `null` (a backend before ABI 43, or the report not read or `valid: false`),
+      none of these rows appear and the A4b wording stays, with the purpose-gap note.
   - **Running a calibration** is a normal run: the card says to apply the calibration method in the
-    classic view and record the beads from Experiment · Plan with Start run, and what the backend
-    derives when that run closes (`DERIVATION_TEXT`). There is no separate acquisition path. **Gap:**
-    the bridge reports no method purpose, so the workspace cannot say itself whether the applied
-    method is a calibration method; the card says so (`PURPOSE_GAP_TEXT`) and the gate row shows the
-    backend's own words ("Not required · a calibration method records the reference"), which the
-    workspace does not parse.
+    classic view (or, with a calibration method applied, that it is applied:
+    `RUN_APPLIED_CALIBRATION_TEXT`) and record the beads from Experiment · Plan with Start run, and
+    what the backend derives when that run closes (`DERIVATION_TEXT`). There is no separate
+    acquisition path. Only when the method report is `null` does the card add the purpose-gap note
+    (`PURPOSE_GAP_TEXT`: the workspace cannot tell whether the applied method is a calibration
+    method; the gate row shows the backend's own words).
 - **One verdict** (`prepareVerdict`), the same words in the header chip and the "Ready to
   operate?" card, combining the checklist and the gates. It never contradicts the Confirm
   button, which the checklist alone drives:
@@ -1070,8 +1090,8 @@ method) and `error`. An unknown purpose or policy, a missing member, a number
 outside the method document's bounds, or a reference that does not match the
 purpose is refused (`CALIBRATION_REPLY_INVALID`).
 A reply without the member (a backend before ABI 43) decodes as `null`: unknown,
-never assumed to be a measurement method. No develop UI reads it; the workspace
-Prepare card (A4b) switches to it after the next develop sync. Guards:
+never assumed to be a measurement method. The workspace Prepare Calibration card
+reads it ("Opt-in workspace" above); no classic UI does. Guards:
 `calibrationRecords.test.ts`, `eventAdapter.test.ts`.
 
 **Calibration records (ABI 42, #716 A4a).** `calibrationRecords.ts` types and

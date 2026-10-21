@@ -98,7 +98,9 @@
 
 **Client.** The workspace's Prepare Calibration card (#716 A4b) lists the records, offers Apply /
 Re-apply (also straight from the gate's "re-apply record <id>" Fix after a restart) and the Plan
-declares the record in effect at Start; see "Opt-in workspace" in [[../architecture/Desktop-Shell]].
+declares the record in effect at Start. Since ABI 43 it shows the applied method's purpose,
+reference and policy from the report's `method_calibration` (an `error` beside the gate), never
+parsed from the gate's text; see "Opt-in workspace" in [[../architecture/Desktop-Shell]].
 
 ## Key APIs
 

@@ -13,7 +13,7 @@
 // only by their buttons, with every refusal said plainly.
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FramePullScheduler } from "../../framePullScheduler";
 import { ReviewPanel, type ReviewPanelHandle } from "../ReviewPanel";
 
@@ -709,7 +709,7 @@ it("shows a stored E as not computed where the run had no E-LUT, and as stored i
   expect(factValue(card("Selected measurement"), "E (stored)")).toBe("1.50 kPa");
 });
 
-it("says a recomputed E used the app's current E-LUT, which the reply does not name (#764 item 2)", async () => {
+it("an older backend (review ABI < 4) names no E-LUT: a recomputed E keeps the B3c caveat (#764 item 2)", async () => {
   reprocessAnswer = (args) => {
     const stored = row(!!args.valid, Number(args.index));
     return {
@@ -730,6 +730,64 @@ it("says a recomputed E used the app's current E-LUT, which the reply does not n
   expect(result.querySelector('[data-testid="reprocess-match"]')?.textContent).toContain(
     "; its E was computed with the app's current E-LUT, which may differ from the run's",
   );
+});
+
+describe("B3d: the reprocess names its E-LUT (review ABI 4)", () => {
+  const RUN_SHA = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
+  const OTHER_SHA = "8a86b2beef4f0123456789abcdef0123456789abcdef0123456789abcdef0123";
+  const answerWith = (over: Record<string, unknown>) => (args: Record<string, unknown>) => {
+    const stored = row(!!args.valid, Number(args.index));
+    return {
+      ok: true, message: "", settings: args.settings, used_recorded_settings: true, settings_label: "recorded settings (config, ROI, background)",
+      core_version: "2.1.0", core_source: "bundled", pixel_to_micron: 0.25, emodulus_recomputed: true,
+      emodulus_lut: "emod-lut-2026a 3 (sha256 9f86d081884c)", emodulus_lut_sha256: RUN_SHA,
+      stored, reprocessed: [{ ...stored, youngs_modulus: 1.7 }], match_index: 0, object_count_differs: false, truncated: false, ...over,
+    };
+  };
+  const reprocessOnce = async () => {
+    await mountOpen();
+    const before = calls.length;
+    await click(button("Reprocess this record", card("Stored vs reprocessed")));
+    // Exactly the button's one call: naming the LUT reads nothing more.
+    expect(calls.slice(before).map((c) => c.cmd)).toEqual(["review_reprocess_record"]);
+    const result = card("Stored vs reprocessed").querySelector('[data-testid="reprocess-result"]')!;
+    const eRow = Array.from(result.querySelectorAll("tbody tr")).find((r) => r.querySelector("td")?.textContent === "E")!;
+    return { result, cells: Array.from(eRow.querySelectorAll("td")).map((td) => td.textContent), eRow };
+  };
+  const RUN_LUT = { loaded: true, lut_id: "emod-lut-2026a", revision: "3", source: "catalog", sha256: RUN_SHA, catalog_sha256: null, checksum_status: "verified" };
+
+  it("the run's LUT: the E names it with its short sha256, no caveat", async () => {
+    lut = RUN_LUT;
+    reprocessAnswer = answerWith({});
+    const { result, cells, eRow } = await reprocessOnce();
+    expect(cells[2]).toBe("1.70 kPa, E-LUT emod-lut-2026a 3 (sha256 9f86d081884c), the run's");
+    expect(eRow.querySelector('[data-testid="reprocess-lut-differs"]')).toBeNull();
+    const match = result.querySelector('[data-testid="reprocess-match"]')!;
+    expect(match.textContent).toContain("; its E was computed with the run's E-LUT emod-lut-2026a 3 (sha256 9f86d081884c)");
+    expect(match.className).not.toContain("rv-refusal");
+    expect(result.textContent).not.toContain("may differ from the run's");
+  });
+
+  it("a different LUT than the run's: the E row is marked not comparable, and the match line says so", async () => {
+    lut = RUN_LUT;
+    reprocessAnswer = answerWith({ emodulus_lut: "scaled_isoelastic_data_LUT_6.16-4.24 bundled (sha256 8a86b2beef4f)", emodulus_lut_sha256: OTHER_SHA });
+    const { result, cells, eRow } = await reprocessOnce();
+    expect(cells[2]).toBe("1.70 kPa, E-LUT scaled_isoelastic_data_LUT_6.16-4.24 bundled (sha256 8a86b2beef4f) · different E-LUT: not comparable (the run's: sha256 9f86d081884c)");
+    expect(eRow.querySelector('[data-testid="reprocess-lut-differs"]')).not.toBeNull();
+    const match = result.querySelector('[data-testid="reprocess-match"]')!;
+    expect(match.textContent).toContain("not the run's (sha256 9f86d081884c): E is not comparable");
+    expect(match.className).toContain("rv-refusal");
+  });
+
+  it("not recomputed: the E says so and names no LUT (the bridge's empty fields)", async () => {
+    lut = RUN_LUT;
+    reprocessAnswer = answerWith({ emodulus_recomputed: false, emodulus_lut: "", emodulus_lut_sha256: "", reprocessed: [{ ...row(true, 0), youngs_modulus: null }],
+      settings_label: "recorded settings; E not recomputed: the run loaded no E-LUT" });
+    const { result, cells } = await reprocessOnce();
+    expect(cells[2]).toBe("not recomputed (no E-LUT loaded)");
+    expect(result.querySelector('[data-testid="reprocess-match"]')!.textContent).not.toContain("E-LUT");
+    expect(result.textContent).toContain("E not recomputed: the run loaded no E-LUT");
+  });
 });
 
 it("reads the selected record's linked records only when asked, and says when the cap cut them", async () => {

@@ -35,6 +35,7 @@ import {
   recordProvenance,
   recordWhere,
   reprocessComparison,
+  reprocessLutDiffers,
   reprocessMatchText,
   storedFacts,
   trackSummary,
@@ -265,7 +266,7 @@ export interface StoredCardProps {
 const COMPARE_COLUMNS: DataTableColumn<CompareLine>[] = [
   { key: "label", header: "", cell: (l) => l.label, emphasis: true },
   { key: "stored", header: "Stored", cell: (l) => l.stored },
-  { key: "reprocessed", header: "Reprocessed", cell: (l) => l.reprocessed },
+  { key: "reprocessed", header: "Reprocessed", cell: (l) => (l.warn ? <span className="rv-compare-warn" data-testid="reprocess-lut-differs">{l.reprocessed}</span> : l.reprocessed) },
 ];
 
 function ReprocessResult({ info, result }: { info: ReviewInfo; result: Asked<ReviewReprocess> }) {
@@ -275,8 +276,8 @@ function ReprocessResult({ info, result }: { info: ReviewInfo; result: Asked<Rev
   const matched = r.match_index !== null;
   return (
     <div className="rv-reprocess-result" data-testid="reprocess-result">
-      <p className={`rv-note${matched ? "" : " rv-refusal"}`} data-testid="reprocess-match">
-        {reprocessMatchText(r)}
+      <p className={`rv-note${matched && !reprocessLutDiffers(r, info) ? "" : " rv-refusal"}`} data-testid="reprocess-match">
+        {reprocessMatchText(r, info)}
       </p>
       {r.object_count_differs && r.stored ? (
         <p className="rv-note rv-truncated">

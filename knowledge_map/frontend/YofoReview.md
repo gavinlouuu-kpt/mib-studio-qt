@@ -607,12 +607,13 @@ recheck), and Open and Inspect stay disabled with no listing sent (see
 - **Export (R6):** a `Notice` and a `FactList` naming where each export is on
   Inspect's toolbar, with "Go to Inspect"; the export view itself is step B4.
 
-## R3 Inspect (#717 B3a, B3c)
+## R3 Inspect (#717 B3a, B3c, B3d)
 
 `ReviewPanel` laid out as the Penpot R3 board (`dcdbaa6b-9790-4e69-bea4-936747f588b1`)
 (B3a), wired to the review ABI 3 commands in B3c (object coordinate space,
-E-LUT and profile, track rows, reprocess one record); nothing the file does
-not record is shown as a value.
+E-LUT and profile, track rows, reprocess one record), and to the review ABI 4
+reprocess reply's E-LUT in B3d; nothing the file does not record is shown as
+a value.
 
 - **Toolbar** (kit `Toolbar`): the sub-views **Scatter** (experiment files:
   `ChartsView` in a `Card`, valid records only), **Records** (the table
@@ -700,12 +701,26 @@ not record is shown as a value.
   in image coordinates with the stored box placed through the space,
   objects in frame), the match line (`reprocessMatchText`: matched object k
   of n, or "No match" with why), a count difference, and the settings label
-  and core; "nothing is written". A reprocessed E without a LUT reads "not
-  recomputed (no E-LUT loaded)". The reply names no E-LUT, and reprocessing
-  uses the app's live or bundled LUT, not the run's (#764 item 2), so a
-  recomputed E reads "x kPa, computed with the app's current E-LUT, which
-  may differ from the run's" and the match line carries the same caveat
-  (`REPROCESSED_E_CAVEAT`). Refusals read "Not reprocessed: <backend message>" (a
+  and core; "nothing is written". A reprocessed E without a LUT
+  (`emodulus_recomputed` false) reads "not recomputed (no E-LUT loaded)".
+  **Which E-LUT (B3d, review ABI 4, #778; `reprocessLut`):** the reply's
+  `emodulus_lut` (name) and `emodulus_lut_sha256` name the LUT a recomputed E
+  used ("1.70 kPa, E-LUT emod-lut-2026a 3 (sha256 9f86d081884c)", the short
+  hash added when the name lacks it), and the match line says the same ("its
+  E was computed with …"). When the file's run identity records its LUT's
+  sha256 (`identity.emodulus_lut`, from the snapshot), the two are compared by
+  sha256 (case-insensitive): the same hash adds ", the run's"; another hash,
+  or a run that loaded none, marks the E row "different E-LUT: not comparable
+  (the run's: sha256 …)" (`DIFFERENT_LUT`, warn tone) and the match line
+  says "not the run's (…): E is not comparable" in the warn tone (the match
+  line's E note appears only when the matched object has an E value). Since #778
+  the backend uses the run's LUT or refuses, so that should be rare; it is
+  checked, not assumed. A backend before review ABI 4 sends neither field
+  (`reprocessRecord` keeps them `undefined`; the bridge's "" becomes `null`):
+  only then does a recomputed E keep the B3c caveat "x kPa, computed with the
+  app's current E-LUT, which may differ from the run's"
+  (`REPROCESSED_E_CAVEAT`), on the E row and the match line. Naming the LUT
+  reads nothing more: the reprocess call is unchanged. Refusals read "Not reprocessed: <backend message>" (a
   claimed job lane, no stored image, an unknown space, a kernel failure).
   Cases the backend would refuse are said under the button before any call
   (`reprocessUnavailable`: no selection, a recording, an unknown space, no
@@ -730,13 +745,15 @@ not record is shown as a value.
 - **Tests:** `inspect/inspectModel.test.ts` (names, crop square and its
   placement for `roi_local` / `image` / `unknown` with a moved ROI, view
   availability, facts, E-LUT and profile, track truncation, the comparison
-  and match text, when reprocessing is offered) and
+  and match text, the reprocess E-LUT (the run's, named, different, not
+  recomputed, an older backend), when reprocessing is offered) and
   `inspect/InspectView.test.tsx` (the panel over a mocked IPC: the overlay
   each view asks for and the crop rectangle in each space, the reasons,
   stepping, the viewer from Record details / full frame / a row, sub-views
   keeping the selection, the Stored card's E-LUT / profile / space, linked
   records with the cap, reprocess only on its button with every refusal and
-  a late reply dropped, no new IPC on selection / sub-view / set changes,
+  a late reply dropped, the reprocess E-LUT named, marked different, not
+  recomputed and caveated for an older backend, no new IPC on selection / sub-view / set changes,
   and every pre-B3a control still reachable). `ReviewApp.test.tsx` checks a
   stage change with a run open sends nothing. `reviewIpc.golden.json`
   gained one flow in B3c ("linked records and reprocess one record": the

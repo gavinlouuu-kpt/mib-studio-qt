@@ -21,7 +21,10 @@ import {
   recordLabel,
   recordProvenance,
   recordWhere,
+  DIFFERENT_LUT,
   reprocessComparison,
+  reprocessLut,
+  reprocessLutDiffers,
   reprocessMatchText,
   reprocessUnavailable,
   storedEText,
@@ -383,9 +386,10 @@ describe("the record reprocessed", () => {
     expect(reprocessMatchText(result({}))).toBe("Matched object 1 of 1 object found (centroid nearest the stored one, inside the stored box)");
     // Image-space files are shown as stored.
     expect(reprocessComparison(result({}), info()).find((l) => l.label === "Box (image x, y · w×h)")?.stored).toBe("0, 0 · 20×30");
-    // A recomputed E is shown with the caveat that the reprocess reply names no
-    // LUT (#764 item 2: the app's current one, not necessarily the run's).
-    const recomputed = result({ emodulus_recomputed: true, reprocessed: [{ ...found, youngs_modulus: 1.5 }] });
+    // A backend before review ABI 4 names no LUT (the fields are absent): a
+    // recomputed E keeps the B3c caveat (the app's current one, not
+    // necessarily the run's).
+    const recomputed = result({ emodulus_recomputed: true, emodulus_lut: undefined, emodulus_lut_sha256: undefined, reprocessed: [{ ...found, youngs_modulus: 1.5 }] });
     expect(reprocessComparison(recomputed, info()).find((l) => l.label === "E")?.reprocessed).toBe(
       "1.50 kPa, computed with the app's current E-LUT, which may differ from the run's",
     );
@@ -394,6 +398,75 @@ describe("the record reprocessed", () => {
     );
     // Not recomputed: no E to compare, so no caveat on the match line.
     expect(reprocessMatchText(result({}))).not.toContain("E-LUT");
+  });
+
+  describe("names the E-LUT the reprocess used (B3d, review ABI 4)", () => {
+    const SHA = LUT.sha256!;
+    const OTHER = "8a86b2beef4f0123456789abcdef0123456789abcdef0123456789abcdef0123";
+    const named = (over: Partial<ReviewReprocess> = {}) => result({
+      emodulus_recomputed: true, emodulus_lut: "emod-lut-2026a 3 (sha256 9f86d081884c)", emodulus_lut_sha256: SHA,
+      settings_label: "recorded settings; E-LUT emod-lut-2026a 3 (sha256 9f86d081884c) (the run's)",
+      reprocessed: [{ ...found, youngs_modulus: 1.5 }], ...over,
+    });
+    const runLut = info({ identity: identity({ emodulus_lut: LUT }) });
+    const eLine = (r: ReviewReprocess, i: ReviewInfo) => reprocessComparison(r, i).find((l) => l.label === "E");
+
+    it("the run's LUT, matched by sha256: named, no caveat", () => {
+      expect(reprocessLut(named(), runLut)).toEqual({ kind: "run", words: "E-LUT emod-lut-2026a 3 (sha256 9f86d081884c)", run: "" });
+      expect(eLine(named(), runLut)).toEqual({ label: "E", stored: "1.42 kPa", reprocessed: "1.50 kPa, E-LUT emod-lut-2026a 3 (sha256 9f86d081884c), the run's" });
+      expect(reprocessMatchText(named(), runLut)).toBe(
+        "Matched object 1 of 1 object found (centroid nearest the stored one, inside the stored box); its E was computed with the run's E-LUT emod-lut-2026a 3 (sha256 9f86d081884c)",
+      );
+      expect(reprocessMatchText(named(), runLut)).not.toContain("may differ");
+      // The hash compares case-insensitively.
+      expect(reprocessLut(named({ emodulus_lut_sha256: SHA.toUpperCase() }), runLut).kind).toBe("run");
+      expect(reprocessLutDiffers(named(), runLut)).toBe(false);
+    });
+
+    it("the run records no LUT hash: named, nothing compared; a name without the hash gets the short form", () => {
+      const noHash = info({ identity: identity({ emodulus_lut: { ...LUT, sha256: null } }) });
+      expect(reprocessLut(named(), noHash).kind).toBe("named");
+      expect(eLine(named(), info())?.reprocessed).toBe("1.50 kPa, E-LUT emod-lut-2026a 3 (sha256 9f86d081884c)");
+      expect(reprocessLut(named({ emodulus_lut: "emod-lut-2026a 3" }), info()).words).toBe("E-LUT emod-lut-2026a 3 (sha256 9f86d081884c)");
+      expect(reprocessMatchText(named(), info())).toContain("; its E was computed with E-LUT emod-lut-2026a 3 (sha256 9f86d081884c)");
+    });
+
+    it("a different LUT than the run's: the E row is marked not comparable, and the match line says so", () => {
+      const other = named({ emodulus_lut: "scaled_isoelastic_data_LUT_6.16-4.24 bundled (sha256 8a86b2beef4f)", emodulus_lut_sha256: OTHER });
+      expect(reprocessLut(other, runLut)).toMatchObject({ kind: "different", run: "sha256 9f86d081884c" });
+      const e = eLine(other, runLut)!;
+      expect(e.warn).toBe(true);
+      expect(e.reprocessed).toBe(`1.50 kPa, E-LUT scaled_isoelastic_data_LUT_6.16-4.24 bundled (sha256 8a86b2beef4f) · ${DIFFERENT_LUT} (the run's: sha256 9f86d081884c)`);
+      expect(DIFFERENT_LUT).toBe("different E-LUT: not comparable");
+      expect(reprocessMatchText(other, runLut)).toBe(
+        "Matched object 1 of 1 object found (centroid nearest the stored one, inside the stored box); its E was computed with E-LUT scaled_isoelastic_data_LUT_6.16-4.24 bundled (sha256 8a86b2beef4f), not the run's (sha256 9f86d081884c): E is not comparable",
+      );
+      expect(reprocessLutDiffers(other, runLut)).toBe(true);
+      // A run that loaded no LUT, reprocessed with one, is not comparable either.
+      const noneLoaded = info({ identity: identity({ emodulus_lut: { ...LUT, loaded: false, lut_id: null, revision: null, sha256: null } }) });
+      expect(reprocessLut(other, noneLoaded)).toMatchObject({ kind: "different", run: "none loaded" });
+      // No match: no E row to mark.
+      expect(eLine(named({ match_index: null }), runLut)?.warn).toBeUndefined();
+      // A matched object without an E value: the match line claims no computed E.
+      const noValue = named({ emodulus_lut: other.emodulus_lut, emodulus_lut_sha256: OTHER, reprocessed: [{ ...found, youngs_modulus: Number.NaN }] });
+      expect(reprocessMatchText(noValue, runLut)).toBe("Matched object 1 of 1 object found (centroid nearest the stored one, inside the stored box)");
+      expect(reprocessLutDiffers(noValue, runLut)).toBe(false);
+      expect(eLine(noValue, runLut)).toMatchObject({ reprocessed: null });
+    });
+
+    it("not recomputed: says so, never names a LUT", () => {
+      const not = result({ emodulus_recomputed: false, emodulus_lut: null, emodulus_lut_sha256: null });
+      expect(reprocessLut(not, runLut).kind).toBe("not_recomputed");
+      expect(eLine(not, runLut)?.reprocessed).toBe("not recomputed (no E-LUT loaded)");
+      expect(reprocessMatchText(not, runLut)).not.toContain("E-LUT");
+    });
+
+    it("an older backend (fields absent) keeps the B3c caveat, only then", () => {
+      const older = named({ emodulus_lut: undefined, emodulus_lut_sha256: undefined });
+      expect(reprocessLut(older, runLut).kind).toBe("unnamed");
+      expect(eLine(older, runLut)?.reprocessed).toBe("1.50 kPa, computed with the app's current E-LUT, which may differ from the run's");
+      expect(reprocessMatchText(named(), runLut)).not.toContain("which may differ");
+    });
   });
 
   it("says when nothing matches, and leaves the reprocessed side empty", () => {

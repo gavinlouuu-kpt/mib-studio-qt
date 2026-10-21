@@ -50,7 +50,8 @@ export function usePrepareReadiness(active: boolean): PrepareReadiness {
   }, []);
 
   useEffect(() => {
-    if (!active) { setSnapshot(null); setError(""); return; }
+    // Stopping retires a read in flight: its reply must not restore the cleared state.
+    if (!active) { generation.current += 1; setSnapshot(null); setError(""); return; }
     void read();
     const id = window.setInterval(() => void read(), PREPARE_READINESS_POLL_MS);
     return () => window.clearInterval(id);
