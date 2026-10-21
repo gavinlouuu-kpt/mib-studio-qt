@@ -465,6 +465,8 @@ fn inspect_track_rows_and_reprocess_one_record() {
     assert_eq!(spaces["mask_check"]["max_records"].as_u64(), Some(64));
     assert_eq!(spaces["mask_check"]["min_decisive"].as_u64(), Some(8));
     assert_eq!(spaces["mask_check"]["min_agreement_percent"].as_u64(), Some(90));
+    assert_eq!(spaces["mask_check"]["min_box_iou_percent"].as_u64(), Some(80));
+    assert_eq!(spaces["mask_check"]["area_tolerance_percent"].as_u64(), Some(15));
 
     bridge.pin_mut().set_fallback_pixel_to_micron(0.9);
     assert!(bridge.pin_mut().review_open(&path.to_string_lossy()).ok);

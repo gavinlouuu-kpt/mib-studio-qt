@@ -1,6 +1,10 @@
 #include "backend/review/ObjectCoordinates.h"
 
 #include <opencv2/core.hpp>
+#if __has_include(<opencv2/geometry.hpp>)
+#include <opencv2/geometry.hpp> // OpenCV 5 moved contour geometry out of imgproc.hpp
+#endif
+#include <opencv2/imgproc.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -65,34 +69,91 @@ namespace backend::review
 
     namespace
     {
-        // Mask pixels (non-zero) inside `box`, clipped to the mask.
-        std::size_t maskPixelsIn(const cv::Mat &mask, const cv::Rect2d &box)
+        bool finiteBox(const cv::Rect2d &box)
         {
-            if (!std::isfinite(box.x) || !std::isfinite(box.y) || !std::isfinite(box.width) || !std::isfinite(box.height))
-                return 0;
-            const int x0 = std::max(0, static_cast<int>(std::floor(box.x)));
-            const int y0 = std::max(0, static_cast<int>(std::floor(box.y)));
-            const int x1 = std::min(mask.cols, static_cast<int>(std::ceil(box.x + box.width)));
-            const int y1 = std::min(mask.rows, static_cast<int>(std::ceil(box.y + box.height)));
-            if (x1 <= x0 || y1 <= y0) return 0;
-            return static_cast<std::size_t>(cv::countNonZero(mask(cv::Rect(x0, y0, x1 - x0, y1 - y0))));
+            return std::isfinite(box.x) && std::isfinite(box.y) && std::isfinite(box.width) &&
+                   std::isfinite(box.height) && box.width > 0 && box.height > 0;
+        }
+
+        double iou(const cv::Rect2d &a, const cv::Rect2d &b)
+        {
+            const double overlap = (a & b).area();
+            const double joint = a.area() + b.area() - overlap;
+            return joint > 0.0 ? overlap / joint : 0.0;
+        }
+
+        // Whether a component (its pixels set in `component`, cropped to its
+        // box) is the stored object by its contours: a hole for a hole
+        // object, and the hull area of that hole (or of the outline) within
+        // the tolerance of the stored area when it is checked.
+        bool contoursMatch(const cv::Mat &component, const StoredObject &object)
+        {
+            const bool checkArea = std::isfinite(object.areaPx) && object.areaPx > 0.0;
+            if (!checkArea && !object.hole) return true;
+            std::vector<std::vector<cv::Point>> contours;
+            std::vector<cv::Vec4i> hierarchy;
+            cv::findContours(component, contours, hierarchy, cv::RETR_CCOMP, cv::CHAIN_APPROX_NONE);
+            const double tolerance = object.areaPx * kObjectSpaceMaskCheckAreaTolerancePercent / 100.0;
+            for (std::size_t i = 0; i < contours.size(); ++i)
+            {
+                const bool isHole = hierarchy[i][3] >= 0;
+                if (isHole != object.hole) continue;
+                if (!checkArea) return true;
+                std::vector<cv::Point> hull;
+                cv::convexHull(contours[i], hull);
+                if (std::abs(cv::contourArea(hull) - object.areaPx) <= tolerance) return true;
+            }
+            return false;
         }
     } // namespace
 
-    std::optional<ObjectSpace> maskPlacementVote(const cv::Mat &mask, const cv::Rect2d &storedBox, int originX,
+    bool storedObjectAt(const cv::Mat &mask, const cv::Rect2d &placedBox, const StoredObject &object)
+    {
+        if (mask.empty() || mask.channels() != 1 || !finiteBox(placedBox)) return false;
+        const cv::Rect2d frame(0, 0, mask.cols, mask.rows);
+        const cv::Rect2d visible = placedBox & frame;
+        if (visible.area() <= 0.0) return false;
+        cv::Mat binary;
+        cv::compare(mask, 0, binary, cv::CMP_NE);
+        cv::Mat labels, stats, centroids;
+        cv::connectedComponentsWithStats(binary, labels, stats, centroids, 8, CV_32S);
+        const cv::Rect window(static_cast<int>(std::floor(visible.x)), static_cast<int>(std::floor(visible.y)),
+                              std::max(1, static_cast<int>(std::ceil(visible.x + visible.width)) -
+                                              static_cast<int>(std::floor(visible.x))),
+                              std::max(1, static_cast<int>(std::ceil(visible.y + visible.height)) -
+                                              static_cast<int>(std::floor(visible.y))));
+        const cv::Rect inside = window & cv::Rect(0, 0, mask.cols, mask.rows);
+        std::vector<bool> seen(static_cast<std::size_t>(stats.rows), false);
+        for (int y = inside.y; y < inside.y + inside.height; ++y)
+        {
+            const int *row = labels.ptr<int>(y);
+            for (int x = inside.x; x < inside.x + inside.width; ++x)
+            {
+                const int label = row[x];
+                if (label <= 0 || seen[static_cast<std::size_t>(label)]) continue;
+                seen[static_cast<std::size_t>(label)] = true;
+                const cv::Rect box(stats.at<int>(label, cv::CC_STAT_LEFT), stats.at<int>(label, cv::CC_STAT_TOP),
+                                   stats.at<int>(label, cv::CC_STAT_WIDTH), stats.at<int>(label, cv::CC_STAT_HEIGHT));
+                if (iou(cv::Rect2d(box), placedBox) * 100.0 < kObjectSpaceMaskCheckMinBoxIouPercent) continue;
+                cv::Mat component;
+                cv::compare(labels(box), label, component, cv::CMP_EQ);
+                if (contoursMatch(component, object)) return true;
+            }
+        }
+        return false;
+    }
+
+    std::optional<ObjectSpace> maskPlacementVote(const cv::Mat &mask, const StoredObject &object, int originX,
                                                  int originY)
     {
-        if (mask.empty() || mask.channels() != 1 || storedBox.width <= 0 || storedBox.height <= 0) return std::nullopt;
         if (originX == 0 && originY == 0) return std::nullopt; // both placements are the same
-        const std::size_t image = maskPixelsIn(mask, storedBox);
-        cv::Rect2d shifted = storedBox;
+        cv::Rect2d shifted = object.box;
         shifted.x += originX;
         shifted.y += originY;
-        const std::size_t roiLocal = maskPixelsIn(mask, shifted);
-        const std::size_t more = std::max(image, roiLocal);
-        const std::size_t less = std::min(image, roiLocal);
-        if (more == 0 || more < 2 * less) return std::nullopt;
-        return image > roiLocal ? ObjectSpace::Image : ObjectSpace::RoiLocal;
+        const bool image = storedObjectAt(mask, object.box, object);
+        const bool roiLocal = storedObjectAt(mask, shifted, object);
+        if (image == roiLocal) return std::nullopt; // both fit, or neither
+        return image ? ObjectSpace::Image : ObjectSpace::RoiLocal;
     }
 
     std::optional<ObjectSpace> maskCheckVerdict(const std::vector<std::optional<ObjectSpace>> &votes)
@@ -112,9 +173,9 @@ namespace backend::review
         return image > roiLocal ? ObjectSpace::Image : ObjectSpace::RoiLocal;
     }
 
-    std::vector<std::size_t> maskCheckSample(std::size_t candidates)
+    std::vector<std::size_t> maskCheckSample(std::size_t candidates, std::size_t limit)
     {
-        const std::size_t n = std::min(candidates, kObjectSpaceMaskCheckMaxRecords);
+        const std::size_t n = std::min(candidates, limit);
         std::vector<std::size_t> out;
         out.reserve(n);
         for (std::size_t k = 0; k < n; ++k) out.push_back(k * candidates / n);

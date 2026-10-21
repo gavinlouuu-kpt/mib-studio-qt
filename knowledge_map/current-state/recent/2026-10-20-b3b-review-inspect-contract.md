@@ -50,6 +50,11 @@ Review round 2 (#756, coordinator ruling on the coordinate space):
   gains `review_object_coordinates` (`REVIEW_OBJECT_COORDINATES`).
 - The reprocess match places the stored record through `toImageSpace`;
   an unknown space is refused with the reason.
+- Codex round 2 (P2): the mask check votes by object identity, not pixel
+  count. A placement fits when a mask component's box matches the stored
+  box (IoU ≥ 0.8) and its hull area the stored area (15 %; a hole's for
+  Contract 1 objects); only one fitting placement decides. The valid set is
+  sampled first, the invalid set only fills the rest.
 
 Tests: `review.object_coordinates` (new), `review.inspect` (new), `review.run_identity` (LUT and profile),
 `tests/review_bridge.rs` in both feature configurations, the Tauri identity

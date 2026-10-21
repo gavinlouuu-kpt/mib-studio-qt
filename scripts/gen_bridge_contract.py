@@ -213,7 +213,9 @@ def check_review(review: dict) -> str | None:
     header = (REPO_ROOT / "include/backend/review/ObjectCoordinates.h").read_text(encoding="utf-8")
     for member, const in (("max_records", "kObjectSpaceMaskCheckMaxRecords"),
                           ("min_decisive", "kObjectSpaceMaskCheckMinDecisive"),
-                          ("min_agreement_percent", "kObjectSpaceMaskCheckMinAgreementPercent")):
+                          ("min_agreement_percent", "kObjectSpaceMaskCheckMinAgreementPercent"),
+                          ("min_box_iou_percent", "kObjectSpaceMaskCheckMinBoxIouPercent"),
+                          ("area_tolerance_percent", "kObjectSpaceMaskCheckAreaTolerancePercent")):
         bound = re.search(const + r"\s*=\s*(\d+)", header)
         if not bound or int(bound.group(1)) != spaces["mask_check"][member]:
             return f"review_object_coordinates.mask_check.{member} differs from ObjectCoordinates.h {const}"

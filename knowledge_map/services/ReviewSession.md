@@ -559,11 +559,20 @@ the origin it implies), in the order of `backend/review/ObjectCoordinates.h`:
    `async_batch` or no ROI is `image`, another mode does not decide;
 3. an ROI without area or at (0, 0): `image` (`roi_origin`): both placements
    are the same, so the mask check (next) could never decide such a file;
-4. the mask check: up to 64 records with a box and a mask, spread over the
-   file (valid set, then invalid); each votes for the placement of its box
-   (as stored, or shifted by the ROI origin) that covers mask pixels and at
-   least twice as many as the other (`maskPlacementVote`); the file is that
-   space with at least 8 decisive votes agreeing at 90 % or more
+4. the mask check, by object identity (Codex round 2 on #756: a pixel
+   count let dense debris at the wrong placement outvote a thin cell
+   outline): up to 64 records with a box and a mask, the valid set spread
+   over first and the invalid set (rejected objects, often debris) only to
+   fill the rest. Each record is placed as stored and shifted by the ROI
+   origin; a placement fits when an 8-connected mask component overlapping
+   it has a bounding box with IoU ≥ 0.8 and, where the record has an area,
+   a convex-hull area within 15 % of it: a hole's for a Contract 1
+   inner-contour object (the science measures the hole and boxes the
+   outline, so the component needs a hole), the outline's otherwise
+   (`storedObjectAt`). A record is decisive only when exactly one placement
+   fits (`maskPlacementVote`): debris or a second cell at the other
+   placement makes it indecisive, never a wrong vote. The file is that space
+   with at least 8 decisive votes agreeing at 90 % or more
    (`maskCheckVerdict`);
 5. otherwise `Unknown`. A raw recording (no objects) and no file are
    `Unknown` too.

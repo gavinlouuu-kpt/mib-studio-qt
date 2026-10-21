@@ -1,5 +1,6 @@
 #include "backend/review/ReviewSession.h"
 
+#include "backend/processing/ProcessingContract.h"
 #include "backend/processing/ProcessingTypes.h"
 #include "backend/recording/Hdf5Service.h"
 #include "backend/recording/RunProvenanceRecord.h"
@@ -332,41 +333,48 @@ namespace backend::review
             return resolveObjectCoordinates(evidence, [this] { return maskCheckLocked(); });
         }
 
-        // Which placement of the stored boxes lands on the stored full-frame
-        // masks, over a bounded sample of the records that have both.
+        // Where the stored objects are in the stored full-frame masks, over a
+        // bounded sample of the records that have both: the valid set spread
+        // over, the invalid set only to fill what the valid set lacks.
         std::optional<ObjectSpace> maskCheckLocked() const
         {
-            struct Candidate
-            {
-                bool valid;
-                std::size_t index;
-            };
-            std::vector<Candidate> candidates;
+            // Contract 1 objects are inner contours: the area is the hole's
+            // hull and the box the outline's (ProcessingScience), whenever the
+            // frame had an inner contour; otherwise outlines.
+            services::ProcessingConfig recorded;
+            const bool innerContours = processing::contract::contractObjectsAreInnerContours(
+                reader.readRecordedProcessingConfig(recorded) ? recorded.processing_contract_version
+                                                              : services::ProcessingConfig{}.processing_contract_version);
+            std::vector<std::optional<ObjectSpace>> votes;
             for (const bool valid : {true, false})
             {
+                const std::size_t room = kObjectSpaceMaskCheckMaxRecords - votes.size();
                 const DatasetInfo &masks = valid ? meta.validMasks : meta.invalidMasks;
-                if (!masks.present) continue;
+                if (room == 0 || !masks.present) continue;
                 const auto &frames = set(valid);
                 const std::size_t n = std::min<std::size_t>(frames.size(), static_cast<std::size_t>(masks.count));
+                std::vector<std::size_t> candidates;
                 for (std::size_t i = 0; i < n; ++i)
                 {
                     const auto &v = frames[i].validation;
-                    if (v.bboxWidth > 0 && v.bboxHeight > 0) candidates.push_back({valid, i});
+                    if (v.bboxWidth > 0 && v.bboxHeight > 0) candidates.push_back(i);
                 }
-            }
-            std::vector<std::optional<ObjectSpace>> votes;
-            for (const std::size_t position : maskCheckSample(candidates.size()))
-            {
-                const Candidate &c = candidates[position];
-                cv::Mat mask;
-                if (!reader.readImageByIndex(masksPath(c.valid), c.index, mask) || mask.empty())
+                for (const std::size_t position : maskCheckSample(candidates.size(), room))
                 {
-                    votes.emplace_back(std::nullopt);
-                    continue;
+                    const std::size_t index = candidates[position];
+                    cv::Mat mask;
+                    if (!reader.readImageByIndex(masksPath(valid), index, mask) || mask.empty())
+                    {
+                        votes.emplace_back(std::nullopt);
+                        continue;
+                    }
+                    const auto &v = frames[index].validation;
+                    StoredObject object;
+                    object.box = cv::Rect2d(v.bboxX, v.bboxY, v.bboxWidth, v.bboxHeight);
+                    object.areaPx = v.area;
+                    object.hole = innerContours && v.innerContourCount > 0;
+                    votes.push_back(maskPlacementVote(toGray(mask), object, meta.roi.x, meta.roi.y));
                 }
-                const auto &v = set(c.valid)[c.index].validation;
-                votes.push_back(maskPlacementVote(toGray(mask), cv::Rect2d(v.bboxX, v.bboxY, v.bboxWidth, v.bboxHeight),
-                                                  meta.roi.x, meta.roi.y));
             }
             return maskCheckVerdict(votes);
         }

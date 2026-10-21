@@ -146,6 +146,8 @@ export const REVIEW_OBJECT_COORDINATES = {
   "mask_check": {
     "max_records": 64,
     "min_decisive": 8,
-    "min_agreement_percent": 90
+    "min_agreement_percent": 90,
+    "min_box_iou_percent": 80,
+    "area_tolerance_percent": 15
   }
 } as const;
