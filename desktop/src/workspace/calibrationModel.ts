@@ -13,7 +13,7 @@
 
 import type { StateTone } from "@mib/ui";
 import { CALIBRATION_APPLY_OUTCOMES as O, CALIBRATION_RECORDS, READINESS_GATE_STATUSES as G } from "../bridgeContract";
-import type { CalibrationApplyReply, CalibrationIdentity, CalibrationRecord, CalibrationRecordsList } from "../calibrationRecords";
+import type { CalibrationApplyReply, CalibrationIdentity, CalibrationRecord, CalibrationRecordsList, MethodCalibration, MethodCalibrationReference } from "../calibrationRecords";
 import type { ExperimentReadiness, ReadinessGate } from "../eventAdapter";
 
 /** The readiness gate of the applied calibration record (CalibrationRecord.cpp). */
@@ -263,6 +263,53 @@ export const DERIVATION_TEXT = "When a run of a calibration method closes, the b
 export const RUN_CALIBRATION_TEXT = "Apply the calibration method (a method whose purpose is calibration, with its bead reference) in the classic "
   + "view, then record the beads from Experiment · Plan with Start run, like any run.";
 
-/** The gap, said plainly: the bridge reports no method purpose yet. */
+/** The run notice when the applied method is a calibration method (ABI 43 `method_calibration`). */
+export const RUN_APPLIED_CALIBRATION_TEXT = "The applied method is a calibration method: record the beads from Experiment · Plan with "
+  + "Start run, like any run.";
+
+/** The gap, said plainly, only for a backend before ABI 43 (the readiness report has no
+ *  `method_calibration`) or a report not read: the workspace then does not know the method's purpose. */
 export const PURPOSE_GAP_TEXT = "The workspace cannot tell yet whether the applied method is a calibration method: the bridge does not report a "
   + "method's purpose. The calibration gate says it in the backend's words (Not required · a calibration method records the reference).";
+
+/** The statement for a calibration method (the #780 hand-over's words). */
+export const CALIBRATION_METHOD_TEXT = "This method is a calibration method: closing its run derives a record";
+/** A method that declares none of the calibration members (`declared: false`). */
+export const UNDECLARED_METHOD_TEXT = "Measurement method · policy none: it declares no calibration requirements";
+
+/** The applied method's calibration declarations, from the readiness report's `method_calibration`
+ *  (bridge ABI 43, #776), exactly as the `calibration.record` gate read them. Null for a backend
+ *  before ABI 43 or a report not read: then nothing is said here and the purpose gap stays. Purpose
+ *  and policy are never inferred from the gate's text. */
+export function methodCalibrationOf(r: ExperimentReadiness | null): MethodCalibration | null {
+  if (!r || !r.valid) return null;
+  return r.method_calibration ?? null;
+}
+
+const short = (n: number) => String(Number(n.toPrecision(6)));
+
+/** "7 ± 0.5 µm diameter · CV at most 10 % · nominal E 3 kPa" (nominal E only when declared). */
+export function referenceText(ref: MethodCalibrationReference): string {
+  const e = ref.nominal_e_kpa === null ? "" : ` · nominal E ${short(ref.nominal_e_kpa)} kPa`;
+  return `${short(ref.nominal_diameter_um)} ± ${short(ref.diameter_tolerance_um)} µm diameter · CV at most ${short(ref.max_cv_percent)} %${e}`;
+}
+
+/** "required · max age 24 h", from the report's members (never parsed from the gate). */
+export const policyText = (m: MethodCalibration): string => `${m.calibration_policy} · max age ${short(m.calibration_max_age_hours)} h`;
+
+/** What the policy means for the gate, in plain words. */
+export function policyDetail(m: MethodCalibration): string {
+  if (m.purpose === "calibration") return "The gate requires no record for a calibration method itself.";
+  switch (m.calibration_policy) {
+    case "required": return `Start needs an applied record in effect; one older than ${short(m.calibration_max_age_hours)} h warns.`;
+    case "warn": return `The gate warns without an applied record in effect, or with one older than ${short(m.calibration_max_age_hours)} h; Start is not blocked.`;
+    case "none": return "No calibration record is checked.";
+  }
+}
+
+/** The "Method" row: what kind of method is applied, or why that is unknown. */
+export function methodPurposeText(m: MethodCalibration): string {
+  if (m.error !== null) return "Unknown · its calibration declarations cannot be read";
+  if (m.purpose === "calibration") return CALIBRATION_METHOD_TEXT;
+  return m.declared ? "Measurement method" : UNDECLARED_METHOD_TEXT;
+}

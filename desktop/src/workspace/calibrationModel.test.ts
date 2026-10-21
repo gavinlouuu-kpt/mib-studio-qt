@@ -4,6 +4,8 @@ import { CALIBRATION_APPLY_OUTCOMES as O, READINESS_GATE_STATUSES as G } from ".
 import { applyReply, calList, calRecord, SETUP } from "./calibrationFixtures";
 import {
   CALIBRATION_GATE,
+  CALIBRATION_METHOD_TEXT,
+  UNDECLARED_METHOD_TEXT,
   ageText,
   applyAvailability,
   applyErrorNotice,
@@ -15,11 +17,16 @@ import {
   failedGates,
   fixAction,
   identityDiff,
+  methodCalibrationOf,
+  methodPurposeText,
   notInEffectText,
+  policyDetail,
+  policyText,
+  referenceText,
   statusText,
   statusTone,
 } from "./calibrationModel";
-import type { CalibrationApplyReply } from "../calibrationRecords";
+import type { CalibrationApplyReply, MethodCalibration } from "../calibrationRecords";
 
 const gate = (status: number, remediation = "") => ({ id: CALIBRATION_GATE, status, reason: "r", remediation });
 const reply = (id: string, outcome: number, over: Record<string, unknown> = {}) => applyReply(id, outcome, over) as unknown as CalibrationApplyReply;
@@ -181,5 +188,46 @@ describe("stored evidence is re-checked, as the backend does (Codex round 1)", (
   it("matching setup and factor but not in effect: the card does not invent a cause", () => {
     const a = calRecord("cal-a", "applied", { factor: 0.5 });
     expect(notInEffectText(a, calList([a], { current_factor: 0.5 }))).toBe("The backend does not report it in effect, although its setup and factor match; the calibration gate says why.");
+  });
+});
+
+// ABI 43 (#776, #780 "For the A4b card"): the applied method's declarations from the readiness
+// report, never parsed from the gate's text.
+const undeclared: MethodCalibration = { declared: false, purpose: "measurement", calibration_policy: "none", calibration_max_age_hours: 24, calibration_reference: null, error: null };
+const beads: MethodCalibration = { declared: true, purpose: "calibration", calibration_policy: "none", calibration_max_age_hours: 24, error: null,
+  calibration_reference: { nominal_diameter_um: 7, diameter_tolerance_um: 0.5, nominal_e_kpa: 3, max_cv_percent: 10 } };
+
+describe("the applied method's calibration declarations (ABI 43)", () => {
+  it("read from the readiness report; null for an older backend or a report not read", () => {
+    expect(methodCalibrationOf({ valid: true, ready: false, generation: "1", gates: [], method_calibration: beads })).toBe(beads);
+    expect(methodCalibrationOf({ valid: true, ready: false, generation: "1", gates: [], method_calibration: null })).toBeNull();
+    expect(methodCalibrationOf({ valid: false, ready: false, generation: "0", gates: [], method_calibration: undeclared })).toBeNull();
+    expect(methodCalibrationOf(null)).toBeNull();
+  });
+
+  it("a calibration method: the statement and its reference, nominal E only when declared", () => {
+    expect(methodPurposeText(beads)).toBe(CALIBRATION_METHOD_TEXT);
+    expect(CALIBRATION_METHOD_TEXT).toBe("This method is a calibration method: closing its run derives a record");
+    expect(referenceText(beads.calibration_reference!)).toBe("7 ± 0.5 µm diameter · CV at most 10 % · nominal E 3 kPa");
+    expect(referenceText({ ...beads.calibration_reference!, nominal_e_kpa: null })).toBe("7 ± 0.5 µm diameter · CV at most 10 %");
+    expect(policyDetail(beads)).toBe("The gate requires no record for a calibration method itself.");
+  });
+
+  it("the policy and max age come from the report's members", () => {
+    const required = { ...undeclared, declared: true, calibration_policy: "required" as const, calibration_max_age_hours: 12 };
+    expect(policyText(required)).toBe("required · max age 12 h");
+    expect(policyDetail(required)).toBe("Start needs an applied record in effect; one older than 12 h warns.");
+    expect(policyDetail({ ...required, calibration_policy: "warn" })).toContain("Start is not blocked");
+    expect(methodPurposeText(required)).toBe("Measurement method");
+  });
+
+  it("declared false is a plain measurement method with policy none", () => {
+    expect(methodPurposeText(undeclared)).toBe(UNDECLARED_METHOD_TEXT);
+    expect(policyText(undeclared)).toBe("none · max age 24 h");
+    expect(policyDetail(undeclared)).toBe("No calibration record is checked.");
+  });
+
+  it("unreadable declarations are unknown, not the defaults they carry", () => {
+    expect(methodPurposeText({ ...undeclared, error: "calibration_policy must be one of none, warn, required" })).toBe("Unknown · its calibration declarations cannot be read");
   });
 });

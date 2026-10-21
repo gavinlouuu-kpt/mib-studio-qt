@@ -158,9 +158,53 @@ export function storedEText(row: Pick<ReviewRow, "youngs_modulus">, info: Review
   return typeof e === "number" && Number.isFinite(e) ? `${metricNumber(e, 2)} kPa` : null;
 }
 
-/** The reprocess reply names no E-LUT (#764 item 2: it uses the app's live
- * or bundled LUT, not the run's), so a recomputed E carries this caveat. */
+/** A backend before review ABI 4 names no E-LUT in its reprocess reply (it
+ * used the app's live or bundled LUT, not the run's), so a recomputed E
+ * carries this caveat. Since ABI 4 (#764, #778) the reply names the LUT. */
 export const REPROCESSED_E_CAVEAT = "computed with the app's current E-LUT, which may differ from the run's";
+
+/** The E row's mark when the reprocess used another E-LUT than the run's. */
+export const DIFFERENT_LUT = "different E-LUT: not comparable";
+
+/** Which E-LUT a reprocessed E was computed with (B3d, review ABI 4):
+ * - `not_recomputed`: E was not recomputed;
+ * - `unnamed`: a backend before ABI 4, which does not name it (the B3c caveat;
+ *   also a reply that recomputed E but names nothing, which ABI 4 never sends);
+ * - `run`: the reply's sha256 is the run's recorded one;
+ * - `named`: named, and the run records no LUT hash to compare with;
+ * - `different`: the run recorded another LUT (another sha256, or none
+ *   loaded), so the reprocessed E is not comparable with the stored one.
+ * Since #778 the backend uses the run's LUT or refuses, so `different` should
+ * be rare; it is checked, not assumed. */
+export type ReprocessLutKind = "not_recomputed" | "unnamed" | "run" | "named" | "different";
+
+export interface ReprocessLut {
+  kind: ReprocessLutKind;
+  /** "E-LUT <name>" with the short sha256 (when the name lacks it); "" for not_recomputed / unnamed. */
+  words: string;
+  /** The run's recorded LUT for a `different` answer ("sha256 <12 hex>", "none loaded"); "" otherwise. */
+  run: string;
+}
+
+const shortSha = (sha: string) => sha.trim().toLowerCase().slice(0, 12);
+
+/** The reprocess reply's E-LUT, compared with the run's recorded one by sha256. */
+export function reprocessLut(r: Pick<ReviewReprocess, "emodulus_recomputed" | "emodulus_lut" | "emodulus_lut_sha256">, info: ReviewInfo | null | undefined): ReprocessLut {
+  if (!r.emodulus_recomputed) return { kind: "not_recomputed", words: "", run: "" };
+  const name = (r.emodulus_lut ?? "").trim();
+  const sha = (r.emodulus_lut_sha256 ?? "").trim().toLowerCase();
+  // Absent (a backend before ABI 4), or a reply that recomputed E but names
+  // nothing: no claim is made about the LUT, only the B3c caveat.
+  if (!name && !sha) return { kind: "unnamed", words: "", run: "" };
+  const short = sha ? shortSha(sha) : "";
+  const label = name || "not named";
+  const words = `E-LUT ${label}${short && !label.toLowerCase().includes(short) ? ` (sha256 ${short})` : ""}`;
+  const recorded = info?.identity?.emodulus_lut ?? null;
+  if (recorded && !recorded.loaded) return { kind: "different", words, run: "none loaded" };
+  const runSha = recorded?.sha256?.trim().toLowerCase() ?? "";
+  if (!runSha || !sha) return { kind: "named", words, run: "" };
+  return runSha === sha ? { kind: "run", words, run: "" } : { kind: "different", words, run: `sha256 ${shortSha(runSha)}` };
+}
 
 const saved = (present: boolean, detail?: string): Pick<Fact, "value" | "tone"> =>
   present ? { value: detail ? `Saved · ${detail}` : "Saved", tone: "confirmed" } : { value: "Not recorded", tone: "unknown" };
@@ -339,6 +383,8 @@ export interface CompareLine {
   label: string;
   stored: string | null;
   reprocessed: string | null;
+  /** The two sides are not comparable (the E row with another E-LUT than the run's). */
+  warn?: boolean;
 }
 
 const num = (v: number | null | undefined, digits: number): string | null =>
@@ -357,10 +403,18 @@ export function reprocessComparison(r: ReviewReprocess, info: ReviewInfo): Compa
   const centre = (row: ReviewRow, dx: number, dy: number) => `${num(row.centroid_x + dx, 1)}, ${num(row.centroid_y + dy, 1)}`;
   const validation = (row: ReviewRow) => `${row.valid ? "valid" : "invalid"}${row.target_group ? " · target group" : ""}`;
   const found = r.truncated ? `more than ${r.reprocessed.length}` : String(r.reprocessed.length);
-  const e = (row: ReviewRow | null, recomputed: boolean): string | null => {
+  const lut = reprocessLut(r, info);
+  const e = (row: ReviewRow | null): string | null => {
     if (!row) return null;
-    if (!recomputed) return "not recomputed (no E-LUT loaded)";
-    return num(row.youngs_modulus, 2) !== null ? `${num(row.youngs_modulus, 2)} kPa, ${REPROCESSED_E_CAVEAT}` : null;
+    if (lut.kind === "not_recomputed") return "not recomputed (no E-LUT loaded)";
+    const value = num(row.youngs_modulus, 2);
+    if (value === null) return null;
+    switch (lut.kind) {
+      case "unnamed": return `${value} kPa, ${REPROCESSED_E_CAVEAT}`;
+      case "run": return `${value} kPa, ${lut.words}, the run's`;
+      case "named": return `${value} kPa, ${lut.words}`;
+      case "different": return `${value} kPa, ${lut.words} · ${DIFFERENT_LUT} (the run's: ${lut.run})`;
+    }
   };
   return [
     { label: "Area (px²)", stored: num(s.area, 1), reprocessed: m ? num(m.area, 1) : null },
@@ -368,7 +422,7 @@ export function reprocessComparison(r: ReviewReprocess, info: ReviewInfo): Compa
     { label: "Deformability", stored: num(s.deformability, 4), reprocessed: m ? num(m.deformability, 4) : null },
     { label: "Area ratio", stored: num(s.area_ratio, 3), reprocessed: m ? num(m.area_ratio, 3) : null },
     { label: "Ring ratio", stored: num(s.ring_ratio, 3), reprocessed: m ? num(m.ring_ratio, 3) : null },
-    { label: "E", stored: storedEText(s, info), reprocessed: e(m, r.emodulus_recomputed) },
+    { label: "E", stored: storedEText(s, info), reprocessed: e(m), ...(m && lut.kind === "different" ? { warn: true } : {}) },
     { label: "Validation", stored: validation(s), reprocessed: m ? validation(m) : null },
     { label: "Box (image x, y · w×h)", stored: box(s, offset.dx, offset.dy), reprocessed: m ? box(m, 0, 0) : null },
     { label: "Centroid (image)", stored: centre(s, offset.dx, offset.dy), reprocessed: m ? centre(m, 0, 0) : null },
@@ -379,20 +433,32 @@ export function reprocessComparison(r: ReviewReprocess, info: ReviewInfo): Compa
 /** One line on the match: which found object is compared, or why none is.
  * The backend returns at most 64 objects and matches among those only, so a
  * truncated answer says the match is among the returned ones. */
-export function reprocessMatchText(r: ReviewReprocess): string {
+export function reprocessMatchText(r: ReviewReprocess, info?: ReviewInfo | null): string {
   const n = r.reprocessed.length;
   if (n === 0) return "No match: the kernel found no object in the record's stored image";
   if (r.truncated) {
     return r.match_index === null
       ? `No match among the first ${n} objects returned (the kernel found more); one not returned may lie inside the stored box`
-      : `Matched object ${r.match_index + 1} of the first ${n} objects returned (the kernel found more; a nearer one may not be returned)${eCaveat(r)}`;
+      : `Matched object ${r.match_index + 1} of the first ${n} objects returned (the kernel found more; a nearer one may not be returned)${eCaveat(r, info)}`;
   }
   const found = n === 1 ? "1 object" : `${n} objects`;
   if (r.match_index === null) return `No match: the kernel found ${found}, none with its centroid inside the stored box`;
-  return `Matched object ${r.match_index + 1} of ${found} found (centroid nearest the stored one, inside the stored box)${eCaveat(r)}`;
+  return `Matched object ${r.match_index + 1} of ${found} found (centroid nearest the stored one, inside the stored box)${eCaveat(r, info)}`;
 }
 
-/** The match line's E caveat: a recomputed E used the app's current E-LUT. */
-function eCaveat(r: ReviewReprocess): string {
-  return r.emodulus_recomputed ? `; its E was ${REPROCESSED_E_CAVEAT}` : "";
+/** The match line's E note: which E-LUT a recomputed E used (review ABI 4),
+ * the B3c caveat for an older backend, and a different LUT said plainly. */
+function eCaveat(r: ReviewReprocess, info: ReviewInfo | null | undefined): string {
+  const lut = reprocessLut(r, info);
+  switch (lut.kind) {
+    case "not_recomputed": return "";
+    case "unnamed": return `; its E was ${REPROCESSED_E_CAVEAT}`;
+    case "run": return `; its E was computed with the run's ${lut.words}`;
+    case "named": return `; its E was computed with ${lut.words}`;
+    case "different": return `; its E was computed with ${lut.words}, not the run's (${lut.run}): E is not comparable`;
+  }
 }
+
+/** Whether the match line should be in the warn tone for its E note. */
+export const reprocessLutDiffers = (r: ReviewReprocess, info: ReviewInfo | null | undefined): boolean =>
+  r.match_index !== null && reprocessLut(r, info).kind === "different";

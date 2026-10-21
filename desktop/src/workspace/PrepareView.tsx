@@ -30,6 +30,7 @@ import {
 } from "./prepareModel";
 import type { PrepareReadiness } from "./usePrepareReadiness";
 import { CalibrationCard } from "./CalibrationCard";
+import { methodCalibrationOf } from "./calibrationModel";
 import type { CalibrationController } from "./useCalibration";
 
 export interface PrepareViewProps {
@@ -187,6 +188,7 @@ export function PrepareView(p: PrepareViewProps) {
             ) : null}
           </Card>
           <CalibrationCard calibration={p.calibration} gate={p.calibrationGate} gatesRead={!!p.readiness.snapshot?.valid}
+            method={methodCalibrationOf(p.readiness.snapshot)}
             controlHeld={p.controlHeld} experimentActive={p.experimentActive} now={p.now} />
         </div>
       </div>

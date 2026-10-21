@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { CALIBRATION_APPLY_OUTCOMES as O, JSON_TRANSPORT, READINESS_GATE_STATUSES as G } from "../bridgeContract";
 import type { ReadinessGate } from "../eventAdapter";
+import type { MethodCalibration } from "../calibrationRecords";
 import type { PreflightInput } from "../preflight";
 import { applyReply, calList, calRecord, SETUP } from "./calibrationFixtures";
 import { PREPARE_READINESS_POLL_MS } from "./prepareModel";
@@ -51,6 +52,8 @@ const props = (over: Partial<WorkspaceProps> = {}): WorkspaceProps => ({
 
 const NO_PATH: ReadinessGate = { id: "storage.output", status: G.Unavailable, reason: "no output path chosen yet", remediation: "choose an HDF5 destination" };
 let calGate: ReadinessGate | null = null;
+/** The readiness report's method_calibration (ABI 43); undefined = a backend before ABI 43 (absent). */
+let methodCal: MethodCalibration | undefined = undefined;
 let list: unknown = calList([]);
 let applyAnswer: (args: Record<string, unknown>) => unknown = () => { throw new Error("calibration_apply is not expected"); };
 let getAnswer: (args: Record<string, unknown>) => unknown = () => ({ found: false, message: "none", record: null, history: [] });
@@ -74,13 +77,15 @@ beforeEach(() => {
   vi.setSystemTime(Date.parse("2026-10-21T10:00:00Z"));
   vi.resetAllMocks();
   calGate = null;
+  methodCal = undefined;
   list = calList([]);
   applyAnswer = () => { throw new Error("calibration_apply is not expected"); };
   getAnswer = () => ({ found: false, message: "none", record: null, history: [] });
   vi.mocked(invoke).mockImplementation(async (cmd: string, args?: unknown) => {
     const a = (args ?? {}) as Record<string, unknown>;
     if (cmd === "fetch_experiment_readiness")
-      return { transport_version: JSON_TRANSPORT.version, valid: true, ready: false, generation: "3", gates: calGate ? [calGate, NO_PATH] : [NO_PATH] };
+      return { transport_version: JSON_TRANSPORT.version, valid: true, ready: false, generation: "3", gates: calGate ? [calGate, NO_PATH] : [NO_PATH],
+        ...(methodCal === undefined ? {} : { method_calibration: methodCal }) };
     if (cmd === "calibration_records_list") return list;
     if (cmd === "calibration_record_get") return getAnswer(a);
     if (cmd === "calibration_apply") return applyAnswer(a);
@@ -154,6 +159,9 @@ describe("what the card shows", () => {
     expect(run.textContent).toContain("proposed pixel-to-micron (the reference's nominal diameter ÷ the median)");
     expect(run.textContent).toContain("at least 200 valid objects");
     expect($("calibration-purpose-gap")!.textContent).toContain("cannot tell yet whether the applied method is a calibration method");
+    // A backend before ABI 43 reports no method: nothing about it is said or guessed.
+    expect($("calibration-method")).toBeNull();
+    expect($("calibration-policy")).toBeNull();
   });
 
   it("an unread list and an unread gate are unknown, never None", async () => {
@@ -166,6 +174,86 @@ describe("what the card shows", () => {
     expect($("calibration-facts")!.textContent).toContain("Unknown · Error: TRANSPORT_LOST");
     expect(card().textContent).not.toContain("None in effect");
     expect(card().querySelector(".mib-card__status")?.textContent ?? card().textContent).toContain("Unknown");
+  });
+});
+
+// ABI 43 (#776; #780 "For the A4b card"): the card reads the report's method_calibration from the
+// readiness read that already happens; purpose and policy are never parsed from the gate's text.
+const UNDECLARED: MethodCalibration = { declared: false, purpose: "measurement", calibration_policy: "none", calibration_max_age_hours: 24, calibration_reference: null, error: null };
+const BEADS: MethodCalibration = { declared: true, purpose: "calibration", calibration_policy: "none", calibration_max_age_hours: 24, error: null,
+  calibration_reference: { nominal_diameter_um: 7, diameter_tolerance_um: 0.5, nominal_e_kpa: 3, max_cv_percent: 10 } };
+const NOT_REQUIRED: ReadinessGate = { id: "calibration.record", status: G.NotRequired, reason: "a calibration method records the reference", remediation: "" };
+
+describe("the applied method's calibration declarations (ABI 43)", () => {
+  it("a calibration method: says closing its run derives a record, with its reference; no purpose-gap note", async () => {
+    calGate = NOT_REQUIRED;
+    methodCal = BEADS;
+    await render();
+    expect($("calibration-method")!.textContent).toBe("This method is a calibration method: closing its run derives a record");
+    expect($("calibration-reference")!.textContent).toBe("7 ± 0.5 µm diameter · CV at most 10 % · nominal E 3 kPa");
+    expect($("calibration-policy")!.textContent).toContain("none · max age 24 h");
+    expect($("calibration-policy")!.textContent).toContain("The gate requires no record for a calibration method itself.");
+    expect($("calibration-run")!.textContent).toContain("The applied method is a calibration method: record the beads from Experiment · Plan with Start run");
+    expect($("calibration-purpose-gap")).toBeNull();
+  });
+
+  it("a calibration method without a nominal E shows none", async () => {
+    methodCal = { ...BEADS, calibration_reference: { ...BEADS.calibration_reference!, nominal_e_kpa: null, max_cv_percent: 8 } };
+    await render();
+    expect($("calibration-reference")!.textContent).toBe("7 ± 0.5 µm diameter · CV at most 8 %");
+  });
+
+  it("policy and max age come from the report, not the gate's text", async () => {
+    // The gate's words name a calibration method; the report says a measurement method with a policy.
+    calGate = { ...NOT_REQUIRED, status: G.Fail, reason: "no calibration record is applied", remediation: "run the calibration method" };
+    methodCal = { ...UNDECLARED, declared: true, calibration_policy: "required", calibration_max_age_hours: 12 };
+    await render();
+    expect($("calibration-method")!.textContent).toBe("Measurement method");
+    expect($("calibration-policy")!.textContent).toContain("required · max age 12 h");
+    expect($("calibration-policy")!.textContent).toContain("Start needs an applied record in effect; one older than 12 h warns.");
+    expect($("calibration-reference")).toBeNull();
+    expect($("calibration-purpose-gap")).toBeNull();
+  });
+
+  it("declared false is said plainly: a measurement method with policy none, even under gate words about calibration", async () => {
+    calGate = NOT_REQUIRED;
+    methodCal = UNDECLARED;
+    await render();
+    expect($("calibration-method")!.textContent).toBe("Measurement method · policy none: it declares no calibration requirements");
+    expect($("calibration-policy")!.textContent).toContain("none · max age 24 h");
+    expect($("calibration-run")!.textContent).toContain("Apply the calibration method");
+    expect($("calibration-purpose-gap")).toBeNull();
+  });
+
+  it("unreadable declarations: the error beside the failing gate; no defaults shown as the method's", async () => {
+    calGate = { id: "calibration.record", status: G.Fail, reason: "the applied method's calibration declarations are malformed", remediation: "fix the method's calibration members" };
+    methodCal = { ...UNDECLARED, declared: true, error: "calibration_policy must be one of none, warn, required" };
+    await render();
+    const gateRow = $("calibration-fix")!.parentElement!;
+    expect(gateRow.querySelector('[data-testid="calibration-method-error"]')!.textContent)
+      .toBe("The applied method's calibration declarations cannot be read: calibration_policy must be one of none, warn, required");
+    expect($("calibration-method")!.textContent).toBe("Unknown · its calibration declarations cannot be read");
+    expect($("calibration-policy")).toBeNull();
+    expect($("calibration-reference")).toBeNull();
+    expect($("calibration-purpose-gap")).toBeNull();
+  });
+
+  it("no extra IPC: the report rides on the readiness read that already happens", async () => {
+    const run = async () => {
+      vi.mocked(invoke).mockClear();
+      await render();
+      await advance(PREPARE_READINESS_POLL_MS * 4);
+      const counts: Record<string, number> = {};
+      for (const c of calls()) counts[c.cmd] = (counts[c.cmd] ?? 0) + 1;
+      await act(async () => root.unmount());
+      root = createRoot(host);
+      return counts;
+    };
+    const older = await run();
+    methodCal = BEADS;
+    const abi43 = await run();
+    expect(abi43).toEqual(older);
+    expect(Object.keys(abi43).sort()).toEqual(["calibration_records_list", "fetch_experiment_readiness"]);
   });
 });
 
