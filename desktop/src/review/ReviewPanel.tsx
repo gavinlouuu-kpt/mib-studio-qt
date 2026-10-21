@@ -531,8 +531,12 @@ export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(funct
   // the card still shows that: a reply that lands after the operator moved on
   // is dropped (`*KeyRef` is the key now), never shown against another record,
   // and a reply to anything but the latest request (`seq`) is ignored.
-  const trackKey = reviewing && selectedRow && selectedRow.track_id >= 0 ? `${fileKey}|${validSet}|${selectedRow.track_id}` : "";
-  const recordKey = reviewing && selected >= 0 ? `${fileKey}|${validSet}|${selected}` : "";
+  // The px→µm factor in use is part of both keys: a fallback change (a file
+  // without a recorded factor) drops answers whose µm² values used the old
+  // one (Codex round 2); nothing is re-sent on its own.
+  const factorKey = info ? `${info.pixel_to_micron}` : "";
+  const trackKey = reviewing && selectedRow && selectedRow.track_id >= 0 ? `${fileKey}|${factorKey}|${validSet}|${selectedRow.track_id}` : "";
+  const recordKey = reviewing && selected >= 0 ? `${fileKey}|${factorKey}|${validSet}|${selected}` : "";
   const trackKeyRef = useRef(trackKey);
   trackKeyRef.current = trackKey;
   const recordKeyRef = useRef(recordKey);

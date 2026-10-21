@@ -677,8 +677,12 @@ not record is shown as a value.
   claimed job lane, no stored image, an unknown space, a kernel failure).
   Cases the backend would refuse are said under the button before any call
   (`reprocessUnavailable`: no selection, a recording, an unknown space, no
-  stored images, a running job). An answer is kept with its file, set and
-  record and dropped if it lands after the operator moved on.
+  stored images, a running job). An answer is kept with its file, the
+  px→µm factor in use, the set and the record (the linked records with the
+  track), and a request sequence number: a reply that lands after the
+  operator moved on is dropped and leaves nothing pending, an older reply
+  never replaces a newer one, and a fallback px→µm change drops answers
+  computed with the old factor without re-sending (Codex rounds 1 and 2).
   "Reprocessing writes a new file; this view lists no history" (#754 defers
   regenerate provenance and Compare); **Reprocess into a new file…** opens
   the Regenerate masks dialog, unchanged.

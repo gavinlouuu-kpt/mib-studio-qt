@@ -33,6 +33,9 @@ let space: { kind: string; source: string; x: number; y: number } = { kind: "ima
 let lut: unknown = null;
 let profile: string | null = null;
 let untracked = false;
+/** The file records its px→µm factor; otherwise the fallback the panel sets applies. */
+let fromFile = true;
+let pxFactor = 0.25;
 /** fetch_review_track_rows: null = the track's records from the mock rows. */
 let trackAnswer: ((args: Record<string, unknown>) => unknown) | null = null;
 /** review_reprocess_record: null = the stored record found again. */
@@ -88,8 +91,8 @@ function info() {
     accounting_admitted: "15",
     accounting_persistence_failed: "0",
     accounting_summary: open ? " · run complete — empty 0" : "",
-    pixel_to_micron: 0.25,
-    pixel_to_micron_from_file: true,
+    pixel_to_micron: pxFactor,
+    pixel_to_micron_from_file: fromFile,
     kde_analysis_json: "",
     kde_live_json: "",
     has_recorded_config: true,
@@ -177,6 +180,7 @@ const ok = (message = "accepted") => ({ ok: true, command: 9, message, operation
 function respond(cmd: string, args: Record<string, unknown>): unknown {
   switch (cmd) {
     case "review_set_pixel_to_micron":
+      if (!fromFile) pxFactor = Number(args.factor);
       return null;
     case "review_open":
       opened = String(args.path);
@@ -314,6 +318,8 @@ beforeEach(() => {
   lut = null;
   profile = null;
   untracked = false;
+  fromFile = true;
+  pxFactor = 0.25;
   trackAnswer = null;
   reprocessAnswer = null;
   holdReprocess = null;
@@ -383,11 +389,16 @@ function factValue(scope: ParentNode, label: string): string | undefined {
   return dt?.nextElementSibling?.textContent ?? undefined;
 }
 
-async function mountOpen(path = "/data/run.h5") {
-  const scheduler = new FramePullScheduler();
+let scheduler = new FramePullScheduler();
+async function render(fallback = 0.4886) {
   await act(async () =>
-    root.render(<ReviewPanel ref={(h) => void (panel.current = h)} ready={true} scheduler={scheduler} fitWindow={true} log={() => undefined} fallbackPixelToMicron={0.4886} />),
+    root.render(<ReviewPanel ref={(h) => void (panel.current = h)} ready={true} scheduler={scheduler} fitWindow={true} log={() => undefined} fallbackPixelToMicron={fallback} />),
   );
+}
+
+async function mountOpen(path = "/data/run.h5") {
+  scheduler = new FramePullScheduler();
+  await render();
   await settle();
   if (path) {
     await act(async () => void (await panel.current!.openPath(path)));
@@ -891,6 +902,27 @@ it("takes only the latest request's reply, whatever order the replies land in (C
   await settle();
   expect(stored().textContent).toContain("A2 default settings");
   expect(stored().textContent).not.toContain("A1 recorded settings");
+});
+
+it("drops linked records and a reprocess answer when the fallback px→µm changes, and re-sends neither (Codex round 2)", async () => {
+  fromFile = false;
+  await mountOpen();
+  expect(factValue(card("Stored vs reprocessed"), "Calibration used")).toBe("cal-0042 · px→µm 0.4886 (fallback: the file records none)");
+  await click(button("Show linked records", card("Linked cell records")));
+  await click(button("Reprocess this record", card("Stored vs reprocessed")));
+  expect(card("Linked cell records").querySelector('[data-testid="track-summary"]')).not.toBeNull();
+  expect(card("Stored vs reprocessed").querySelector('[data-testid="reprocess-result"]')).not.toBeNull();
+  const sent = calls.length;
+  // Preferences: another fallback factor. The info follows; the answers that
+  // used the old factor go, and nothing is sent again on its own.
+  await render(0.9772);
+  await settle();
+  expect(factValue(card("Stored vs reprocessed"), "Calibration used")).toBe("cal-0042 · px→µm 0.9772 (fallback: the file records none)");
+  expect(card("Linked cell records").querySelector('[data-testid="track-summary"]')).toBeNull();
+  expect(card("Stored vs reprocessed").querySelector('[data-testid="reprocess-result"]')).toBeNull();
+  const after = calls.slice(sent).map((c) => c.cmd);
+  expect(after).toContain("review_set_pixel_to_micron");
+  for (const cmd of ["fetch_review_track_rows", "review_reprocess_record"]) expect(after, cmd).not.toContain(cmd);
 });
 
 it("drops a track reply that lands after the operator moved to another track", async () => {
