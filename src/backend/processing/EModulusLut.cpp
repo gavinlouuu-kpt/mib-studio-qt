@@ -165,6 +165,13 @@ bool EModulusLut::loadFromFileWithBytes(const std::string& basePath, std::string
         }
         bytes = std::move(buffer).str();
     }
+    if (!loadFromText(bytes, resolvedPath)) return false;
+    if (loadedBytes) *loadedBytes = std::move(bytes);
+    if (loadedPath) *loadedPath = resolvedPath;
+    return true;
+}
+
+bool EModulusLut::loadFromText(const std::string& bytes, const std::string& resolvedPath) {
     std::vector<LutPoint> points;
     if (!parseText(bytes, points)) {
         SPDLOG_WARN("EModulusLut: Failed to load LUT from {}", resolvedPath);
@@ -190,8 +197,6 @@ bool EModulusLut::loadFromFileWithBytes(const std::string& basePath, std::string
 
     buildGrid(points);
     loaded_ = true;
-    if (loadedBytes) *loadedBytes = std::move(bytes);
-    if (loadedPath) *loadedPath = resolvedPath;
 
     SPDLOG_INFO("EModulusLut: Loaded {} data points from {}, grid {}x{}, "
                 "area=[{:.1f}, {:.1f}] um², deform=[{:.4f}, {:.4f}]",

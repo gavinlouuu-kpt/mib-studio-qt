@@ -29,7 +29,7 @@ import {
 
 const gate = (id: string, status: number, reason = "", remediation = ""): ReadinessGate => ({ id, status, reason, remediation });
 const snapshot = (gates: ReadinessGate[], over: Partial<ExperimentReadiness> = {}): ExperimentReadiness =>
-  ({ valid: true, ready: false, generation: "7", gates, ...over });
+  ({ valid: true, ready: false, generation: "7", gates, method_calibration: null, ...over });
 // What the backend reports without a path (ExperimentCoordinator, outputPath.empty()).
 const NO_PATH = gate("storage.output", G.Unavailable, "no output path chosen yet", "choose an HDF5 destination");
 

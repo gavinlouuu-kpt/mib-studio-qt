@@ -139,6 +139,8 @@ bool parseCalibrationMethodSpec(const std::string& configJson, CalibrationMethod
     }
     if (!root.is_object()) return fail(why, "config.json root must be an object");
     CalibrationMethodSpec spec;
+    for (const auto* key : kCalibrationDeclarationKeys)
+        if (const auto it = root.find(key); it != root.end() && !it->is_null()) spec.declared = true;
     if (const auto it = root.find("purpose"); it != root.end() && !it->is_null()) {
         if (!it->is_string()) return fail(why, "purpose: expected \"measurement\" or \"calibration\"");
         const auto text = it->get<std::string>();
@@ -649,6 +651,8 @@ bool calibrationRecordFromJson(const std::string& text, CalibrationRecord& out, 
 CalibrationGateResult evaluateCalibrationGate(const CalibrationGateInput& in)
 {
     CalibrationGateResult out;
+    out.spec = in.spec;
+    out.specError = in.specError;
     auto& g = out.gate;
     g.id = "calibration.record";
     const auto& spec = in.spec;

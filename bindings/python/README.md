@@ -24,8 +24,8 @@ released.
 
 Linux releases are repaired `manylinux_2_28` wheels for CPython 3.10–3.13 on
 `x86_64` and `aarch64`. cibuildwheel installs and imports every
-wheel inside its matching architecture container; the ARM64 lane registers
-QEMU on the x86_64 GitHub runner. The x86_64 jobs additionally run the full
+wheel inside its matching architecture container; the ARM64 lane runs
+natively on GitHub's `ubuntu-24.04-arm` runner. The x86_64 jobs additionally run the full
 pytest/conformance suite, and import the CPython 3.12 artifact in a
 `python:3.12-slim` container with Biowork's production
 `libgl1`/`libglib2.0-0` runtime prerequisites before a tag can publish. These
@@ -78,6 +78,12 @@ results = mp.process_batch(frames, config, pixel_to_micron=0.4886)
 for r in results:
     print(r["frame_type"], r["deformability"], r.get("youngs_modulus"))
 ```
+
+`pixel_to_micron` is the calibration (µm per pixel) the area range and the
+target group are checked at, and the one `area_um2` uses; omitted, the
+processing default 0.4886 applies. Before #764 a given `pixel_to_micron`
+changed only `area_um2`. The config's `channel_band_y` / `channel_band_h` gate
+objects by centroid row.
 
 ## Conformance / anti-drift
 

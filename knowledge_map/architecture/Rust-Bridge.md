@@ -520,6 +520,38 @@ The Z stage landed before #501 P1, so under the landing-order rule it took 26;
   `stage_motion_is_control_only_but_stop_is_not` in the server;
   `backend.stage_bridge_facade`.
 
+## ABI 43: the applied method's calibration declarations in readiness (#776)
+
+Additive over ABI 42. The workspace could not tell from the bridge that the applied method is a
+calibration method. `fetch_experiment_readiness` now carries `method_calibration`, the applied
+method's declarations exactly as that evaluation's `calibration.record` gate read them
+([[../services/CalibrationRecords]]). Contract: `calibration_records.method_calibration`.
+
+- **Path:** C++ `ExperimentReadinessSnapshot::methodCalibration` / `methodCalibrationError` ->
+  cxx `BridgeExperimentReadiness.method_calibration` (`BridgeMethodCalibration`, flat: `declared`,
+  `purpose`, `calibration_policy`, `calibration_max_age_hours`, `has_reference`,
+  `nominal_diameter_um`, `diameter_tolerance_um`, `has_nominal_e_kpa`, `nominal_e_kpa`,
+  `max_cv_percent`, `error`; filled also when `valid` is false) -> `mib-app-commands`
+  `MethodCalibration` (nested JSON with the method document's names: `calibration_reference`
+  object or null, `nominal_e_kpa` and `error` null when absent; Tauri and the WebSocket server
+  alike) -> `eventAdapter.decodeExperimentReadiness` / `calibrationRecords.decodeMethodCalibration`.
+- **Explicit defaults:** no method applied, or one that declares nothing: `declared` false,
+  `measurement`, `none`, 24 h, reference null. Never missing members.
+- **Why not the gate's details:** a readiness gate on the bridge is `{id, status, reason,
+  remediation}` for every gate (the C++ `detail` string does not even cross it). Structured data
+  for one gate would mean an optional, gate-specific member on every gate; an additive object on
+  the report is cleaner under ADR 0004 and still one document.
+- **ABI touch points:** `bridge-contract.json` `abi_version` 43, `shim.cpp`
+  `bridge_abi_version()`, `contract.rs` `abi_version_is_stable`, the generated
+  `bridgeContract.ts`, and the `eventAdapter.test.ts` pin.
+- **Tests:** `contract.rs` `method_calibration_in_readiness_follows_profile_apply` (real profile
+  applies through cxx) and the `calibration_records_are_described` needles; `dispatch.rs`
+  `readiness_reports_the_applied_method_calibration` (dispatch and the Tauri function) and
+  `method_calibration_serialises_reference_and_error` (the flat-to-nested conversion); `ws.rs`
+  `readiness_reports_the_method_calibration_over_the_websocket` (a viewer reads it after the
+  controller applies); `calibrationRecords.test.ts`, `eventAdapter.test.ts`; C++
+  `e2e.calibration_profile_apply`, `backend.calibration_record`.
+
 ## ABI 42: calibration records (#716 A4a, ADR 0015 item 7)
 
 Additive over ABI 41. A run whose method has `purpose: "calibration"` produces an
@@ -541,7 +573,8 @@ Start check). Contract section `calibration_records`, enums `calibration_record_
   viewer gets `VIEWER_ONLY`); the list and get are reads every client may use. Reads never apply,
   invalidate or append anything.
 - **Readiness:** the gate `calibration.record` is in the existing `fetch_experiment_readiness`
-  report (no new field). Its inputs are part of the readiness generation.
+  report (no new field in ABI 42; ABI 43 adds `method_calibration`, above). Its inputs are part of
+  the readiness generation.
 - **Start:** the startRequest's `calibration_record_id` (ABI 39) becomes a check: it must equal
   the applied record in effect, else `InvalidRequest` (mismatch), nothing opened. The snapshot v3
   always records the backend's applied record in effect (null when none).
@@ -903,10 +936,12 @@ attach to):
   record's stored row next to what the session's kernel finds in its image
   now → `ReviewReprocessResult { ok, message, settings,
   used_recorded_settings, settings_label, core_version, core_source,
-  pixel_to_micron, emodulus_recomputed, stored, reprocessed, has_match,
-  match_index, object_count_differs, truncated }`; it runs at the file's
-  recorded px→µm (or the default, for default settings) on an instance of
-  its own;
+  pixel_to_micron, emodulus_recomputed, emodulus_lut, emodulus_lut_sha256,
+  stored, reprocessed, has_match, match_index, object_count_differs,
+  truncated }`; it runs at the file's recorded px→µm (or the default, for
+  default settings) on an instance of its own, with the run's own E-LUT
+  (review ABI 4, #764: `emodulus_lut` names it, `emodulus_lut_sha256` is its
+  hash, both empty when E was not recomputed; `review.rs` sends `null`);
   `settings` a `review_reprocess_record.settings` value (recorded 0,
   default 1), at most `max_objects` = 64 rows; never writes; refused while a
   job runs; through `ReviewJobs::reprocessRecord`, see
@@ -944,9 +979,10 @@ attach to):
   absent; `snapshot_unreadable` / `annotation.unreadable` for an attribute
   that is not a JSON object.
 - **Contract.** YOFO Review has its own versioned contract,
-  `contract/review-contract.json` (`review_abi_version` 3 since #717 B3b,
-  2 since B1a; v1 was the ReviewSession surface; 4 and above are reserved
-  for later steps on #717), so the shared
+  `contract/review-contract.json` (`review_abi_version` 4 since #764: the
+  reprocess reply names its E-LUT; 3 since #717 B3b, 2 since B1a; v1 was the
+  ReviewSession surface; 5 and above are free for later steps, S12
+  included), so the shared
   `bridge-contract.json` is never touched for it: `run_identity` and
   `review_probe` (prose + `max_paths`, rendered as `REVIEW_PROBE` and
   checked against `ReviewTypes.h` `kReviewProbeMaxPaths` by the generator),

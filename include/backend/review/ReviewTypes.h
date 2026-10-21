@@ -179,6 +179,9 @@ namespace backend::review
         // Run identity from snapshot v3 and the annotation (#717 B1a); absent
         // members for a legacy file.
         RunIdentity runIdentity;
+        // The E-LUT record of the stored E (#764): the snapshot v3 record,
+        // else a regenerated file's `@emodulus_lut_json`; nullopt for neither.
+        std::optional<recording::ProvenancedEModulusLut> eModulusLutRecord;
         // The space of the stored boxes and centroids, decided once at open
         // (#756 review 2, ObjectCoordinates.h); Unknown for a raw recording,
         // which stores no objects.
@@ -256,9 +259,17 @@ namespace backend::review
         // the file's (or the fallback when it records none); Default, the
         // processing default. Named in settingsLabel.
         double pixelToMicron{0.0};
-        // E (and an E-gated target group) recomputed: false when no E-LUT
-        // is loaded for reprocessing; the reprocessed rows' E is then NaN.
+        // E (and an E-gated target group) recomputed: true when the run's
+        // own E-LUT was used (#764, SourceEModulusLut.h); false when the run
+        // loaded none or records none (a file before snapshot v3); the
+        // reprocessed rows' E is then NaN.
         bool emodulusRecomputed{false};
+        // The E-LUT used (review ABI 4, #764): the run's recorded one in
+        // words (lut id, revision, the hash's first 12 hex digits) and its
+        // full sha256; both empty when E was not recomputed. Named in
+        // settingsLabel.
+        std::string emodulusLut;
+        std::string emodulusLutSha256;
         // The stored row as stored (its box and centroid in the file's
         // object coordinate space, ReviewMetadata::objectCoordinates).
         MetricRow stored;

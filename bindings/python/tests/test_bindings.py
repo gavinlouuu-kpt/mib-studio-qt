@@ -147,6 +147,37 @@ class TestProcessBatch:
         assert result["is_valid"] is True
 
 
+class TestProcessBatchCalibration:
+    """#764: process_batch(pixel_to_micron=) maps to the core's per-call
+    BatchAnalysisInputs; omitted, the behaviour is unchanged."""
+
+    def test_omitted_factor_is_the_processing_default(self) -> None:
+        frame = make_ring_frame()
+        omitted = mp.process_batch([frame], make_smoke_config())
+        explicit = mp.process_batch([frame], make_smoke_config(), pixel_to_micron=0.4886)
+        assert omitted == explicit
+        assert omitted[0]["area_um2"] == pytest.approx(omitted[0]["area"] * 0.4886 * 0.4886)
+
+    def test_factor_decides_area_validity_and_area_um2(self) -> None:
+        frame = make_ring_frame()
+        area_px = mp.process_batch([frame], make_smoke_config())[0]["area"]
+        at25 = area_px * 0.25 * 0.25
+        config = make_smoke_config()
+        config.update(enable_area_range_check=True, area_threshold_min=int(at25 / 2),
+                      area_threshold_max=int(math.ceil(at25 * 2)))
+        assert area_px * 0.4886 * 0.4886 > config["area_threshold_max"]
+        calibrated = mp.process_batch([frame], config, pixel_to_micron=0.25)[0]
+        default = mp.process_batch([frame], config)[0]
+        assert calibrated["is_valid"] is True
+        assert calibrated["area_um2"] == pytest.approx(area_px * 0.25 * 0.25)
+        assert default["is_valid"] is False  # validated at 0.4886, as before
+
+    @pytest.mark.parametrize("bad", [0.0, -0.5, float("nan"), float("inf")])
+    def test_factor_must_be_finite_and_positive(self, bad: float) -> None:
+        with pytest.raises(ValueError):
+            mp.process_batch([make_ring_frame()], make_smoke_config(), pixel_to_micron=bad)
+
+
 class TestEModulusLut:
     def test_lookup_returns_nan_before_load(self) -> None:
         lut = mp.EModulusLut()

@@ -124,8 +124,8 @@ describe("the gate's Fix as a button", () => {
   });
 
   it("finds the gate in a readiness report, null when not reported", () => {
-    expect(calibrationGate({ valid: true, ready: false, generation: "1", gates: [gate(G.Warn)] })!.status).toBe(G.Warn);
-    expect(calibrationGate({ valid: true, ready: false, generation: "1", gates: [] })).toBeNull();
+    expect(calibrationGate({ valid: true, ready: false, generation: "1", gates: [gate(G.Warn)], method_calibration: null })!.status).toBe(G.Warn);
+    expect(calibrationGate({ valid: true, ready: false, generation: "1", gates: [], method_calibration: null })).toBeNull();
     expect(calibrationGate(null)).toBeNull();
   });
 });

@@ -18,6 +18,7 @@
 //   `calibration_apply`; the deformation offset and E against its nominal are reported only.
 #pragma once
 
+#include "backend/app/CalibrationMethodSpec.h"
 #include "backend/app/ExperimentReadiness.h"
 
 #include <cstddef>
@@ -32,8 +33,7 @@ namespace backend::app {
 // Contract-pinned (bridge-contract.json calibration_records; static_asserts in shim.cpp).
 inline constexpr std::size_t kCalibrationRecordIdMaxBytes = 128;
 inline constexpr std::size_t kCalibrationMinValidObjects = 200;
-inline constexpr double kCalibrationDefaultMaxCvPercent = 10.0;
-inline constexpr double kCalibrationDefaultMaxAgeHours = 24.0;
+// kCalibrationDefaultMaxCvPercent and kCalibrationDefaultMaxAgeHours: CalibrationMethodSpec.h.
 inline constexpr double kCalibrationRateWindowSeconds = 1.0;
 inline constexpr std::size_t kCalibrationRateMinWindows = 3;
 inline constexpr std::size_t kCalibrationStoreMaxVersions = 2048;
@@ -44,32 +44,23 @@ inline constexpr double kCalibrationFactorRelativeTolerance = 1e-9;
 inline constexpr const char* kCalibrationNotTracked = "not tracked";
 inline constexpr const char* kCalibrationNotRecorded = "not recorded";
 
-enum class MethodPurpose { Measurement, Calibration };
-enum class CalibrationPolicy { None, Warn, Required };
-const char* toString(MethodPurpose purpose);
-const char* toString(CalibrationPolicy policy);
-
-// The reference sample a calibration method declares (rigid size beads, ADR 0015 item 7).
-struct CalibrationReference {
-    double nominalDiameterUm{0.0};          // > 0
-    double diameterToleranceUm{0.0};        // >= 0
-    std::optional<double> nominalEKpa;      // check-only, > 0 when declared
-    double maxCvPercent{kCalibrationDefaultMaxCvPercent}; // the diameter CV limit, (0, 100]
-};
-
-struct CalibrationMethodSpec {
-    MethodPurpose purpose{MethodPurpose::Measurement};
-    CalibrationPolicy policy{CalibrationPolicy::None};
-    double maxAgeHours{kCalibrationDefaultMaxAgeHours};
-    std::optional<CalibrationReference> reference; // set exactly when purpose is Calibration
-};
+// MethodPurpose, CalibrationPolicy, CalibrationReference and CalibrationMethodSpec:
+// CalibrationMethodSpec.h (the readiness report carries the applied method's, #776).
 
 // Parse the calibration members of a config.json document. Empty text or absent members: the
-// legacy defaults (measurement, none, 24 h). False with `why` naming the key for anything
-// malformed (wrong type, unknown value, out of range, a calibration method without its
-// reference, or a reference on a measurement method).
+// legacy defaults (measurement, none, 24 h) with `declared` false; any member present (non-null)
+// sets `declared`. False with `why` naming the key for anything malformed (wrong type, unknown
+// value, out of range, a calibration method without its reference, or a reference on a
+// measurement method).
 bool parseCalibrationMethodSpec(const std::string& configJson, CalibrationMethodSpec& out,
                                 std::string* why = nullptr);
+
+// The root members of config.json that parseCalibrationMethodSpec reads. An apply path that
+// builds the applied config text from earlier provenance (ProfileStore) replaces exactly these
+// with the applied method's own: copied when it declares them, removed when it does not, so a
+// declaration never carries over from an earlier method.
+inline constexpr const char* kCalibrationDeclarationKeys[] = {
+    "purpose", "calibration_policy", "calibration_max_age_hours", "calibration_reference"};
 
 // Contract-pinned (bridge-contract.json calibration_record_statuses); append only.
 enum class CalibrationStatus { Proposed = 0, Applied = 1, Superseded = 2, Invalidated = 3, Insufficient = 4 };
@@ -249,6 +240,10 @@ struct CalibrationGateResult {
     std::optional<std::string> inEffectRecordId;
     // Everything the gate depends on, for the readiness invalidation key.
     std::string invalidationKey;
+    // The applied method's declarations the gate evaluated (#776, the readiness report's
+    // `method_calibration`): input.spec and input.specError.
+    CalibrationMethodSpec spec;
+    std::string specError;
 };
 
 CalibrationGateResult evaluateCalibrationGate(const CalibrationGateInput& input);

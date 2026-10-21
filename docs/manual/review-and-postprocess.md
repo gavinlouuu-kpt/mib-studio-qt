@@ -95,7 +95,21 @@ one can be synthesized from the least-changing image tiles.
 Each object's area range and target group are checked at the
 pixel-to-micron factor the loaded file was recorded with, or at the factor
 currently set in the app when the file records none and for AVI and folder
-sources. The new file records that factor.
+sources. The new file records that factor, and whether it was the file's own
+or the app's (Review then shows the app's factor as a fallback).
+
+Young's modulus is computed with the E-modulus look-up table the recording
+used, found by its checksum. If that table is not available, the
+reanalysis stops with a message that names it and writes nothing. If the
+recording had no table loaded, the new file has no E values either. Files
+recorded before the table was recorded use the table loaded in the app, as
+before, and the completion message says so. The new file records which table
+its E values were computed with. When that is the recording's own table (or
+none), reanalysing the new file again uses the same one; when it was the
+app's table, the new file says so and is treated like an older recording.
+
+**Exported metrics (CSV):** for a recording made without an E-modulus table,
+the Young's modulus column is empty instead of 0.
 
 Use this to rescue an experiment recorded with a bad threshold, or to
 compare configurations on identical input.

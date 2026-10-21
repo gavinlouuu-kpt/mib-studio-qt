@@ -498,6 +498,8 @@ ReviewReprocessResult ReviewBridge::review_reprocess_record(bool valid, std::uin
         out.core_source = rust::String(r.coreSource);
         out.pixel_to_micron = r.pixelToMicron;
         out.emodulus_recomputed = r.emodulusRecomputed;
+        out.emodulus_lut = rust::String(r.emodulusLut);
+        out.emodulus_lut_sha256 = rust::String(r.emodulusLutSha256);
         out.stored = toRow(r.stored);
         for (const auto& row : r.reprocessed) out.reprocessed.push_back(toRow(row));
         out.has_match = r.match.has_value();
@@ -777,8 +779,9 @@ std::unique_ptr<ReviewBridge> new_review_bridge() { return std::make_unique<Revi
 // identity in fetch_review_info and review_probe_runs (review_probe). v3
 // (#717 B3b): emodulus_lut and profile_id in the identity,
 // fetch_review_track_rows (review_track_rows) and review_reprocess_record
-// (review_reprocess_record).
-std::uint32_t review_bridge_abi_version() { return 3; }
+// (review_reprocess_record). v4 (#764): review_reprocess_record names the
+// E-LUT it used (emodulus_lut, emodulus_lut_sha256): the run's own.
+std::uint32_t review_bridge_abi_version() { return 4; }
 
 namespace {
 

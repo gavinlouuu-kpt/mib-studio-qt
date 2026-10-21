@@ -112,10 +112,16 @@ next to the objects the session's kernel finds in the record's image now
 (`reprocessed`, at most 64, `match_index` or `null`,
 `object_count_differs`), with `settings_label`, `core_version` and
 `core_source` naming what was used, `pixel_to_micron` the factor it ran
-and reports with, and `emodulus_recomputed` false (no E-LUT: the
-reprocessed E is `null`). It never writes a file and is refused
-while a review job runs, or when the file's object coordinate space is
-unknown. `fetch_review_info` gains `object_coordinates` (`roi_local`,
+and reports with, and `emodulus_recomputed`. Since review ABI 4 (#764) E is
+recomputed with the run's own E-LUT (the snapshot v3 record, found by its
+hash in the loaded or the bundled LUT) and `emodulus_lut` /
+`emodulus_lut_sha256` name it; both are `null`, `emodulus_recomputed` is
+false and the reprocessed E is `null` when the run loaded no LUT or records
+none (a file before snapshot v3). It never writes a file and is refused
+while a review job runs, when the file's object coordinate space is
+unknown, or when the run's recorded E-LUT has no hash or is not available
+here. The UI on `feat/egrabber-workspace` (#774) still caveats the
+reprocessed E; B3d can switch that caveat to the named LUT. `fetch_review_info` gains `object_coordinates` (`roi_local`,
 `image` or `unknown`), `object_coordinates_source` (`attribute`,
 `snapshot`, `mask_check`, `roi_origin`, or `""` when unknown) and
 `object_origin_x` / `object_origin_y`, the offset that places a stored box
@@ -349,6 +355,20 @@ cells render with density ready in ~2–3 s.
   recorded target group comes from the file's config document. Before #758
   every regenerate validated at 0.4886 and, with recorded settings, selected
   no target group; the pending release notice says which files to regenerate.
+  Since #764 a factor that is not the source's (the fallback, or 0.4886 with
+  default settings) is recorded with `@pixel_to_micron_source = "fallback"`,
+  so the regenerated file reopens with "(fallback)", not as recorded.
+  **E-LUT (#764):** E is computed with the source run's own E-LUT (snapshot
+  v3, found by its hash in the bundled LUT, since YOFO Review loads none),
+  and the message adds "; E-LUT <name> (the source run's)". A run that loaded
+  none gets no E ("E not computed: the source run loaded no E-LUT"); a file
+  that records none keeps the old behaviour (no E in YOFO Review: "E not
+  computed: the source records no E-LUT and none is loaded"). A run whose
+  LUT is not the bundled one fails with the reason, before writing. The new
+  file records what E was computed with (`@emodulus_lut_json`: the run's
+  record carried over, or the host's LUT); with the run's record,
+  regenerating or reprocessing it again uses the same LUT, or none, while a
+  host record is legacy, said as such.
 
 ## Differences from the Qt tab (parity sign-off, 2026-10-04)
 

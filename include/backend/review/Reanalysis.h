@@ -33,10 +33,22 @@
 // background in use. The kernel's live factor and band are never read or
 // changed, so a reanalysis beside a live run or another job cannot race on
 // them and one source's factor never reaches the next. The output records
-// the factor used (`/experiment_info @pixel_to_micron`).
+// the factor used (`/experiment_info @pixel_to_micron`) and where it came
+// from (`@pixel_to_micron_source`, #764): recorded, operator or fallback.
+//
+// E-LUT (#764, SourceEModulusLut.h): an hdf source whose run snapshot records
+// its E-LUT is reprocessed with that table (found by its hash), passed per
+// call; the run is refused before anything is written when it cannot be
+// found. A source that loaded none gets no E, as it had none. A source that
+// records nothing (no snapshot, or one before v3; folder and AVI) keeps the
+// kernel's own LUT, as before. The outcome names what was used. A
+// regenerated source carries its record in `@emodulus_lut_json` and follows
+// the same rules; the output records what this run used there (the run's
+// record carried over, or the kernel's LUT as a "host" record).
 #pragma once
 
 #include "backend/processing/ProcessingService.h"
+#include "backend/review/SourceEModulusLut.h"
 
 #include <atomic>
 #include <cstddef>
@@ -115,6 +127,10 @@ namespace backend::review
         // settings). Must be finite and positive.
         bool useRecordedPixelToMicron{true};
         double pixelToMicron{services::ProcessingService::kDefaultPixelToMicronFactor};
+        // `pixelToMicron` was supplied explicitly by the operator for this
+        // run (#764): when it applies, the output records it as "operator"
+        // instead of "fallback". No host sets it yet.
+        bool pixelToMicronExplicit{false};
     };
 
     // The refusal for an output path that already exists (the facade's
@@ -143,7 +159,28 @@ namespace backend::review
         // ran) and whether it is the source's recorded one (#758).
         double pixelToMicron{0.0};
         bool pixelToMicronRecorded{false};
+        // The E-LUT E was computed with (#764), set once the source was read:
+        // Source (`eModulusLut` names the source run's own), NotLoaded (no
+        // E: the source loaded none) or Legacy (the source records none: the
+        // kernel's own, which `eModulusLut` names; "" when it has none).
+        EModulusLutBasis eModulusLutBasis{EModulusLutBasis::Legacy};
+        std::string eModulusLut;
+        bool eModulusLutResolved{false};
+        // Legacy from a regenerated source whose `@emodulus_lut_json` names
+        // only a host's LUT: that record in words (describeHostEModulusLut).
+        std::string eModulusLutHostRecord;
+        // For a reply with a message: what E was computed with, said when the
+        // source is an hdf file whose own LUT was not used (NotLoaded, or
+        // Legacy); empty otherwise. reanalysisTerminalStatusJson adds it to
+        // `warnings` of a published run.
+        std::string eModulusLutNote;
     };
+
+    // The E-LUT of an outcome in words, for a completion message, e.g.
+    // "E-LUT lut-a r1 (sha256 0123456789ab) (the source run's)" or
+    // "E not computed: the source run loaded no E-LUT"; "" when the source
+    // was never read.
+    std::string reanalysisEModulusLutPhrase(const ReanalysisOutcome &outcome);
 
     using ReanalysisCancelFlag = std::shared_ptr<std::atomic<bool>>;
     // Kernel progress, called after the cancel check (done, total frames).

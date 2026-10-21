@@ -2612,7 +2612,10 @@ std::vector<FilterResult> ProcessingService::filterProcessedObjects(const cv::Ma
     const double pixelToMicronFactor = inputs.pixelToMicronFactor
                                            ? *inputs.pixelToMicronFactor
                                            : pixelToMicronFactor_.load(std::memory_order_relaxed);
-    const backend::EModulusLut* eModulusLut = eModulusLut_.isLoaded() ? &eModulusLut_ : nullptr;
+    // The call's E-LUT (a reanalysed source run's own, #764) or the service's.
+    const backend::EModulusLut* eModulusLut =
+        inputs.eModulusLut ? (*inputs.eModulusLut && (*inputs.eModulusLut)->isLoaded() ? *inputs.eModulusLut : nullptr)
+                           : (eModulusLut_.isLoaded() ? &eModulusLut_ : nullptr);
     std::shared_ptr<backend::processing::IProcessingKernel> kernel;
     {
         std::shared_lock lock(processingKernelMutex_);

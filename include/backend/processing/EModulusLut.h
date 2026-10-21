@@ -24,6 +24,10 @@ public:
     bool loadFromFileWithBytes(const std::string& basePath, std::string* loadedBytes,
                                std::string* loadedPath);
 
+    /// The same build from LUT text already in memory (the file's bytes), e.g. a table compiled
+    /// into the program or one identified by its hash (#764). `origin` names it in the log.
+    bool loadFromText(const std::string& text, const std::string& origin);
+
     /// Whether a LUT has been successfully loaded.
     bool isLoaded() const { return loaded_; }
 

@@ -61,7 +61,10 @@ namespace backend::review
         // TD-17: the factor `reader`'s open file was recorded with (run
         // snapshot `pixel_to_micron`), else the factor a regenerated or
         // reanalysed file was analysed at (`/experiment_info
-        // @pixel_to_micron`, #758); 0 when the file records neither.
+        // @pixel_to_micron`, #758) unless its `@pixel_to_micron_source` says
+        // it was a fallback (#764: anything but "recorded" or "operator";
+        // files without the attribute read as before); 0 when the file
+        // records neither.
         static double recordedPixelToMicron(const services::Hdf5Service &reader);
         // #717 B1a: the run identity of `reader`'s open file (snapshot v3 +
         // /experiment_annotation). Attributes only; absent members for a
@@ -126,6 +129,10 @@ namespace backend::review
             // The stored row's coordinate space (ReviewMetadata): `stored`
             // is as stored; toImageSpace places it.
             ObjectCoordinates objectCoordinates;
+            // The E-LUT the file records (snapshot v3 `emodulus_lut`, else a
+            // regenerated file's `@emodulus_lut_json`; read at open);
+            // nullopt when it records none (#764).
+            std::optional<recording::ProvenancedEModulusLut> eModulusLut;
         };
         bool reprocessInputs(bool valid, std::uint64_t index, ReprocessSettings settings, ReprocessInputs &out,
                              std::string *error = nullptr) const;

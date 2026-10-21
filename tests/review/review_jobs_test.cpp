@@ -669,7 +669,7 @@ int main()
         // #758: and the factor the objects were validated at (the fixture's
         // recorded 0.5); the output records it, so it reopens at 0.5.
         MIB_EXPECT(done.message == req.outputPath + " (33 images: " + std::to_string(out.frameCount(true)) + " valid, " +
-                                       std::to_string(out.frameCount(false)) + " invalid; px→µm 0.5000 recorded)",
+                                       std::to_string(out.frameCount(false)) + " invalid; px→µm 0.5000 recorded; E not computed: the source records no E-LUT and none is loaded)",
                    "completion message names the file, the counts and the factor: " + done.message);
         MIB_EXPECT(out.metadata().pixelToMicronFromFile && out.pixelToMicron() == 0.5,
                    "the regenerated file records the factor it was validated at");

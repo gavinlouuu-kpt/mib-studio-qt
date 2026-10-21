@@ -117,6 +117,28 @@ int main()
                        s.reference && s.reference->maxCvPercent == kCalibrationDefaultMaxCvPercent &&
                        !s.reference->nominalEKpa,
                    "default CV limit 10 %, no nominal E");
+        // #776: `declared` says whether the method declares any calibration member at all.
+        {
+            CalibrationMethodSpec d;
+            MIB_EXPECT(parseCalibrationMethodSpec("", d) && !d.declared, "no config declares nothing");
+            MIB_EXPECT(parseCalibrationMethodSpec(R"({"image_processing":{}})", d) && !d.declared, "a legacy method declares nothing");
+            MIB_EXPECT(parseCalibrationMethodSpec(R"({"purpose":null,"calibration_policy":null})", d) && !d.declared,
+                       "null members are absent");
+            for (const char* text : {R"({"purpose":"measurement"})", R"({"calibration_policy":"none"})",
+                                     R"({"calibration_max_age_hours":24})"}) {
+                d = CalibrationMethodSpec{};
+                MIB_EXPECT(parseCalibrationMethodSpec(text, d) && d.declared && d.purpose == MethodPurpose::Measurement &&
+                               d.policy == CalibrationPolicy::None,
+                           std::string("an explicit default is a declaration: ") + text);
+            }
+            MIB_EXPECT(parseCalibrationMethodSpec(
+                           R"({"purpose":"calibration","calibration_reference":{"nominal_diameter_um":5,"diameter_tolerance_um":0.2}})",
+                           d) && d.declared,
+                       "a calibration method is declared");
+            d.declared = true;
+            MIB_EXPECT(!parseCalibrationMethodSpec(R"({"purpose":"qc"})", d) && !d.declared,
+                       "a refused document leaves the defaults, declared false");
+        }
         auto refused = [&](const char* text, const char* key) {
             CalibrationMethodSpec x;
             std::string w;
