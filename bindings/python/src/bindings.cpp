@@ -117,20 +117,34 @@ py::list processBatch(const std::vector<py::array>& frames, const py::dict& conf
     return out;
 }
 
+// compute_processed_frame(pixel_to_micron=None) (#779) maps to
+// ProcessingService::BatchAnalysisInputs exactly as process_batch does: a
+// given factor (finite, > 0) decides area validity and the target group as
+// well as area_um2; omitted, the processing default (0.4886) applies to both,
+// as before.
 py::dict computeProcessedFrame(const py::array& grayInput, const py::object& background,
                                const py::dict& configDict, const py::tuple& roiTuple,
-                               uint64_t index, uint64_t timestampNs, double pixelToMicron,
-                               bool includeMask) {
+                               uint64_t index, uint64_t timestampNs,
+                               const std::optional<double>& pixelToMicronArg, bool includeMask) {
     const cv::Mat gray = numpyToGrayMat(grayInput);
     const cv::Mat bg = backgroundFromObject(background);
     const ProcessingConfig config = configFromDict(configDict);
     const ProcessingService::Roi roi = roiFromTuple(roiTuple);
 
+    ProcessingService::BatchAnalysisInputs inputs;
+    if (pixelToMicronArg) {
+        if (!std::isfinite(*pixelToMicronArg) || *pixelToMicronArg <= 0.0)
+            throw std::invalid_argument("pixel_to_micron must be finite and positive");
+        inputs.pixelToMicronFactor = *pixelToMicronArg;
+    }
+    const double pixelToMicron =
+        pixelToMicronArg ? *pixelToMicronArg : ProcessingService::kDefaultPixelToMicronFactor;
+
     ProcessingService service;
     ProcessedFrame frame;
     {
         py::gil_scoped_release release;
-        frame = service.computeProcessedFrame(gray, bg, config, roi, index, timestampNs);
+        frame = service.computeProcessedFrame(gray, bg, config, roi, index, timestampNs, inputs);
     }
     py::dict out =
         processedFrameToPyDict(frame, pixelToMicron, includeMask, /*includeSeriesImages=*/false);
@@ -293,12 +307,15 @@ PYBIND11_MODULE(_mib_processing, m) {
     m.def("compute_processed_frame", &computeProcessedFrame, py::arg("gray"),
           py::arg("background") = py::none(), py::arg("config") = py::dict(),
           py::arg("roi") = py::make_tuple(0, 0, 0, 0), py::arg("index") = 0,
-          py::arg("timestamp_ns") = 0, py::arg("pixel_to_micron") = 0.4886,
+          py::arg("timestamp_ns") = 0, py::arg("pixel_to_micron") = py::none(),
           py::arg("include_mask") = false,
           "Pure single-frame pipeline (blur -> optional background subtract "
           "-> threshold -> morphology -> filter). Returns one dict for the "
           "frame's first selected object (see docs/gold_standard_metrics.md "
-          "on has_single_inner_contour / multi-object semantics).");
+          "on has_single_inner_contour / multi-object semantics). "
+          "pixel_to_micron (um per pixel, finite and > 0) is the calibration "
+          "area validity, the target group and area_um2 use; omitted, the "
+          "processing default 0.4886.");
 
     m.def(
         "config_from_dict", [](const py::dict& d) { return configToDict(configFromDict(d)); },

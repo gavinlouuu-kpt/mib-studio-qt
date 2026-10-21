@@ -1793,6 +1793,21 @@ ProcessedFrame ProcessingService::computeProcessedFrame(const cv::Mat& grayInput
     return computeProcessedFrameWith(grayInput, backgroundGray, config, roiIn, index, timestampNs, {});
 }
 
+ProcessedFrame ProcessingService::computeProcessedFrame(const cv::Mat& grayInput,
+                                                        const cv::Mat& backgroundGray,
+                                                        const ProcessingConfig& config,
+                                                        const Roi& roiIn, uint64_t index,
+                                                        uint64_t timestampNs,
+                                                        const BatchAnalysisInputs& inputs) {
+    if (inputs.pixelToMicronFactor &&
+        !(std::isfinite(*inputs.pixelToMicronFactor) && *inputs.pixelToMicronFactor > 0.0)) {
+        throw std::invalid_argument(
+            "computeProcessedFrame: pixel-to-micron factor must be finite and positive");
+    }
+    return computeProcessedFrameWith(grayInput, backgroundGray, config, roiIn, index, timestampNs,
+                                     inputs);
+}
+
 ProcessedFrame ProcessingService::computeProcessedFrameWith(const cv::Mat& grayInput,
                                                             const cv::Mat& backgroundGray,
                                                             const ProcessingConfig& config,
