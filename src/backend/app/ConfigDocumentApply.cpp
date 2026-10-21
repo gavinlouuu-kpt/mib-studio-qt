@@ -1,6 +1,7 @@
 #include "backend/app/ConfigDocumentApply.h"
 
 #include "backend/app/AppBackend.h"
+#include "backend/app/CalibrationRecord.h"
 #include "backend/app/ExperimentCoordinator.h"
 #include "backend/app/MethodApply.h"
 #include "backend/app/ProcessingConfigTransaction.h"
@@ -88,6 +89,13 @@ StagedConfig stageConfigDocument(AppBackend& backend, const std::string& bytes) 
     auto root = Json::parse(bytes);
     if (!root.is_object()) throw std::runtime_error("config.json root must be an object");
     integer(root, "config_schema_version", 1, 1, 1);
+    // The method's purpose and calibration policy (#716 A4a): checked here, read by the
+    // coordinator's calibration.record gate; nothing to apply.
+    {
+        CalibrationMethodSpec calibration;
+        std::string why;
+        if (!parseCalibrationMethodSpec(bytes, calibration, &why)) throw std::runtime_error(why);
+    }
     auto& processing = backend.processing();
     StagedConfig s;
 

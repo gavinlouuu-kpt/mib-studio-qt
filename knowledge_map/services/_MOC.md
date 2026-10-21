@@ -14,6 +14,9 @@
   lowest-priority worker with load back-off and a compute budget
 - [[MonitoringCellStore]] — live per-row cell images: a bounded strip of recent
   crops and run-scoped pins that outlive the ring (bridge ABI 41)
+- [[CalibrationRecords]] — the calibration run: method purpose / policy, record
+  derivation at close, the append-only instrument store, explicit apply, the
+  `calibration.record` gate (bridge ABI 42)
 
 ## Persistence
 - [[Hdf5Service]] — batched write/read of experiment frames + metadata

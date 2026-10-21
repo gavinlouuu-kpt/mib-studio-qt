@@ -17,6 +17,7 @@
 #include "backend/recording/RunProvenanceRecord.h"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -178,6 +179,10 @@ struct ExperimentReadinessSnapshot {
     bool ready{false};             // no gate blocks start
     std::vector<ReadinessGate> gates;
     RunConfigurationSnapshot candidate; // identities the evaluation was based on
+    // The applied calibration record in effect at this evaluation (#716 A4a, gate
+    // `calibration.record`): its identity matches and its factor is the current factor. Start
+    // records it as the run snapshot's calibration_record_id and refuses a declared id that differs.
+    std::optional<std::string> calibrationRecordId;
 
     const ReadinessGate* gate(const std::string& id) const
     {

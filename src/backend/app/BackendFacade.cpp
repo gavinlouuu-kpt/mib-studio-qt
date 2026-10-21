@@ -1,4 +1,5 @@
 #include "backend/app/BackendFacade.h"
+#include "backend/app/CalibrationStore.h"
 #include "backend/processing/IExecutionProvider.h"
 #include "backend/recording/RecordingAccounting.h"
 #include "backend/app/RecordingTarget.h"
@@ -27,6 +28,7 @@
 #include "backend/review/ReviewSession.h"
 
 #include <nlohmann/json.hpp>
+#include <spdlog/spdlog.h>
 
 #include <cstring>
 #include <cmath>
@@ -1450,6 +1452,160 @@ namespace backend::bridge
             return o == O::Pinned || o == O::PinnedWithoutImage || o == O::AlreadyPinned;
         }
     } // namespace
+
+    namespace
+    {
+        // The identity calibration records are derived under and checked against (#716 A4a): the
+        // effective camera source and label, and the applied processing ROI.
+        app::CalibrationIdentity currentCalibrationIdentity(AppBackend &backend)
+        {
+            app::RunConfigurationSnapshot c;
+            c.camera = backend.cameraSourceInfo();
+            const auto roi = backend.processing().getRealtimeRoi();
+            c.roiX = roi.x;
+            c.roiY = roi.y;
+            c.roiW = roi.w;
+            c.roiH = roi.h;
+            c.roiPending = backend.processing().realtimeRoiPending();
+            return app::calibrationIdentityOf(c);
+        }
+
+        nlohmann::json identityJson(const app::CalibrationIdentity &id)
+        {
+            auto text = [](const std::string &v) { return v.empty() ? nlohmann::json(nullptr) : nlohmann::json(v); };
+            return {{"camera", text(id.camera)},
+                    {"roi", text(id.roi)},
+                    {"chip", id.chip},
+                    {"objective", id.objective},
+                    {"known", id.known()}};
+        }
+    } // namespace
+
+    std::string BackendFacade::calibrationRecordsListJson() const
+    {
+        auto *store = initialized_ ? backend_.calibrationStore() : nullptr;
+        if (!store) return R"({"valid":false})";
+        const auto records = store->latestRecords();
+        const auto applied = store->applied();
+        const auto identity = currentCalibrationIdentity(backend_);
+        const double factor = backend_.processing().getPixelToMicronFactor();
+        const bool inEffect = applied && app::calibrationRecordInEffect(*applied, identity, factor);
+        nlohmann::json list = nlohmann::json::array();
+        for (const auto &r : records) list.push_back(nlohmann::json::parse(app::calibrationRecordToJson(r)));
+        const auto error = store->error();
+        const nlohmann::json j = {
+            {"valid", true},
+            {"store",
+             {{"revision", store->revision()},
+              {"max_versions", app::kCalibrationStoreMaxVersions},
+              {"error", error.empty() ? nlohmann::json(nullptr) : nlohmann::json(error)}}},
+            {"applied_record_id", applied ? nlohmann::json(applied->recordId) : nlohmann::json(nullptr)},
+            {"in_effect_record_id", inEffect ? nlohmann::json(applied->recordId) : nlohmann::json(nullptr)},
+            {"current_factor", std::isfinite(factor) ? nlohmann::json(factor) : nlohmann::json(nullptr)},
+            {"current_identity", identityJson(identity)},
+            {"records", list},
+        };
+        return j.dump();
+    }
+
+    std::string BackendFacade::calibrationRecordGetJson(const std::string &recordId) const
+    {
+        auto *store = initialized_ ? backend_.calibrationStore() : nullptr;
+        if (!store) return R"({"found":false,"message":"the backend is not initialized","record":null,"history":[]})";
+        nlohmann::json j = {{"found", false}, {"record", nullptr}, {"history", nlohmann::json::array()}};
+        if (recordId.empty() || recordId.size() > app::kCalibrationRecordIdMaxBytes)
+        {
+            j["message"] = "a record id of 1 to " + std::to_string(app::kCalibrationRecordIdMaxBytes) + " bytes is required";
+            return j.dump();
+        }
+        const auto history = store->history(recordId);
+        if (history.empty())
+        {
+            j["message"] = "no calibration record " + recordId;
+            return j.dump();
+        }
+        j["found"] = true;
+        j["message"] = "";
+        j["record"] = nlohmann::json::parse(app::calibrationRecordToJson(history.back()));
+        for (const auto &v : history) j["history"].push_back(nlohmann::json::parse(app::calibrationRecordToJson(v)));
+        return j.dump();
+    }
+
+    std::string BackendFacade::applyCalibrationJson(const std::string &recordId, double expectedCurrentFactor)
+    {
+        app::CalibrationApplyResult result;
+        result.recordId = recordId;
+        auto *store = initialized_ ? backend_.calibrationStore() : nullptr;
+        if (!store)
+        {
+            result.outcome = app::CalibrationApplyOutcome::StoreFailed;
+            result.message = "the backend is not initialized";
+        }
+        else if (recordId.empty() || recordId.size() > app::kCalibrationRecordIdMaxBytes ||
+                 !std::isfinite(expectedCurrentFactor) || expectedCurrentFactor <= 0.0)
+        {
+            // The store states the exact reason; nothing is locked or read for a malformed request.
+            result = store->apply(recordId, expectedCurrentFactor, 0.0, {}, 0);
+        }
+        else
+        {
+            // One idle transaction (the coordinator's lock, which Start takes): the factor is read,
+            // compared and set with no Start in between, and never during a run.
+            bool recording = false;
+            const bool idle = backend_.experiment().withIdleConfiguration([&] {
+                // Raw recording starts under this same lock: no factor or record change beside it.
+                if (backend_.isFrameRecording())
+                {
+                    recording = true;
+                    return;
+                }
+                auto &processing = backend_.processing();
+                const double current = processing.getPixelToMicronFactor();
+                result = store->apply(recordId, expectedCurrentFactor, current, currentCalibrationIdentity(backend_),
+                                      app::WallClock::nowNs() / 1'000'000ull);
+                if (result.ok()) processing.setPixelToMicronFactor(*result.newFactor);
+            });
+            if (recording)
+            {
+                result = {};
+                result.recordId = recordId;
+                result.outcome = app::CalibrationApplyOutcome::RunActive;
+                result.message = "raw recording is active: calibration_apply is refused until it stops; nothing was applied";
+            }
+            else if (!idle)
+            {
+                result = {};
+                result.recordId = recordId;
+                result.outcome = app::CalibrationApplyOutcome::RunActive;
+                result.message = std::string("the experiment is ") + app::toString(backend_.experiment().state()) +
+                                 ": calibration_apply is refused unless it is idle; nothing was applied";
+            }
+        }
+        if (result.ok())
+            SPDLOG_INFO("BackendFacade: {}", result.message);
+        else
+            SPDLOG_WARN("BackendFacade: calibration_apply {} refused ({}): {}", recordId, app::toString(result.outcome),
+                        result.message);
+        auto number = [](const std::optional<double> &v) {
+            return v && std::isfinite(*v) ? nlohmann::json(*v) : nlohmann::json(nullptr);
+        };
+        nlohmann::json j = {
+            {"ok", result.ok()},
+            {"outcome", static_cast<int>(result.outcome)},
+            {"outcome_name", app::toString(result.outcome)},
+            {"message", result.message},
+            {"record_id", recordId},
+            {"previous_factor", number(result.previousFactor)},
+            {"new_factor", number(result.newFactor)},
+            {"superseded_record_id",
+             result.supersededRecordId.empty() ? nlohmann::json(nullptr) : nlohmann::json(result.supersededRecordId)},
+            {"record", nullptr},
+        };
+        if (store && recordId.size() <= app::kCalibrationRecordIdMaxBytes && !recordId.empty())
+            if (const auto latest = store->latest(recordId))
+                j["record"] = nlohmann::json::parse(app::calibrationRecordToJson(*latest));
+        return j.dump();
+    }
 
     bool BackendFacade::fetchMonitoringCellsJson(std::string &out) const
     {

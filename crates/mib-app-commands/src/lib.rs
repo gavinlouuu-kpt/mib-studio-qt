@@ -1745,6 +1745,49 @@ pub fn monitoring_cell_clear_pins(state: &AppState) -> Result<CmdResult, String>
     Ok(guard.pin_mut().monitoring_cell_clear_pins().into())
 }
 
+/// ABI 42 (#716 A4a): a calibration record id as the contract allows it (1 to
+/// `calibration_records.record_id_max_bytes` bytes); anything else is refused before the backend.
+fn calibration_record_id(record_id: &str) -> Result<(), String> {
+    if record_id.is_empty() || record_id.len() > frame_packet::CALIBRATION_RECORD_ID_MAX_BYTES {
+        return Err(format!(
+            "Invalid recordId: a calibration record id of 1 to {} bytes is required",
+            frame_packet::CALIBRATION_RECORD_ID_MAX_BYTES
+        ));
+    }
+    Ok(())
+}
+
+/// ABI 42 (#716 A4a): the instrument's calibration records (bridge-contract.json
+/// `calibration_records.list_reply`). A read: it never applies or changes anything.
+pub fn calibration_records_list(state: &AppState) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().calibration_records_list()).map_err(|e| e.to_string())
+}
+
+/// One calibration record and its versions (`calibration_records.get_reply`). A read.
+pub fn calibration_record_get(state: &AppState, record_id: String) -> Result<serde_json::Value, String> {
+    calibration_record_id(&record_id)?;
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().calibration_record_get(&record_id)).map_err(|e| e.to_string())
+}
+
+/// Apply a proposed calibration record: the compare-and-set of the pixel-to-micron factor against
+/// `expected_current_factor` (`calibration_records.apply_reply`). A control command on the
+/// WebSocket server.
+pub fn calibration_apply(
+    state: &AppState,
+    record_id: String,
+    expected_current_factor: f64,
+) -> Result<serde_json::Value, String> {
+    calibration_record_id(&record_id)?;
+    if !expected_current_factor.is_finite() || expected_current_factor <= 0.0 {
+        return Err("Invalid expectedCurrentFactor: a finite positive number is required".to_string());
+    }
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().calibration_apply(&record_id, expected_current_factor))
+        .map_err(|e| e.to_string())
+}
+
 /// The owned crop (`layer` "image", pull kind 5) or its mask ("mask", pull kind 6) of a pinned
 /// or strip cell as a frame packet; an empty packet (flags 0) when the cell or the layer is not
 /// held (the listing carries the reason). An identity of another capture than the current one is

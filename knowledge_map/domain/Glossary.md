@@ -18,6 +18,12 @@
 - **Young's modulus (E-modulus)** — stiffness. Computed by LUT lookup from
   `(area, deformability)`; LUT loaded from
   `resources/isoelastic_curve/*.txt` by `AppBackend::initialize`.
+- **Calibration run / calibration record** — a run of a method with purpose
+  *calibration* (rigid size beads of a declared nominal diameter) and the
+  instrument-scoped, versioned record the backend derives from its file: a
+  pixel-to-micron proposal (nominal µm / median equivalent diameter px) that the
+  operator applies explicitly, plus check-only deformation offset, event-rate
+  stability, focus and E-vs-nominal. See [[../services/CalibrationRecords]].
 - **Target group** — a second gate within valid frames; frames matching
   target-group criteria pulse the camera trigger
   ([[../services/TriggerService]]).

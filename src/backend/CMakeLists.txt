@@ -491,6 +491,8 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/app/ProfileCatalog.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ProcessingCoreTrust.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ProcessingCoreManagement.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/CalibrationRecord.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/app/CalibrationStore.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/ExperimentCoordinator.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/MethodProvenance.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/app/MethodApply.cpp

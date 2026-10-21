@@ -23,6 +23,7 @@ following `[[WikiLinks]]`. If you are a new agent, start here:
 - Realtime path: [[services/CaptureService]] → [[services/ProcessingService]]
 - Live Monitoring density (KDE, backend worker): [[services/MonitoringDensityService]]
 - Live per-row cell images (strip + pins, ABI 41): [[services/MonitoringCellStore]]
+- Calibration run, records and the `calibration.record` gate (ABI 42): [[services/CalibrationRecords]]
 - Persistence: [[services/Hdf5Service]], [[services/SqliteService]]; export: [[services/HdfExportService]]
 - Playback: [[services/PlaybackService]]
 - Wafer localization (dot-grid fiducials): [[services/DotGridService]]
