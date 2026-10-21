@@ -34,6 +34,8 @@
 #include "backend/services/TriggerService.h"
 #include "backend/services/DotGridService.h"
 #include "backend/services/SerialBus.h"
+#include "backend/services/SerialPortClaims.h"
+#include "backend/services/SimulatedSerialScenario.h"
 #include "backend/services/SyringePumpService.h"
 #include "backend/services/PulseGeneratorService.h"
 #include "backend/services/StageService.h"
@@ -451,6 +453,20 @@ namespace backend
         std::string logPath = getLogPath(dataDir);
         backend::services::Logger::init(logPath);
 
+        // Simulated serial hardware (MIB_SERIAL_MODE=sim), before any service
+        // can enumerate or open a port. A rig a test already installed stays.
+        // A broken scenario refuses the start rather than falling back to the
+        // real COM ports while the operator believes they are simulated.
+        if (!services::serialsim::installed())
+        {
+            std::string simError;
+            if (!services::serialsim::installFromEnvironment(simError) && !simError.empty())
+            {
+                SPDLOG_ERROR("AppBackend: simulated serial hardware not started: {}", simError);
+                return false;
+            }
+        }
+
         // Pipeline latency instrumentation: opt in via environment so field
         // diagnosis needs no rebuild. CSVs land in pipelineTimingDir_ on
         // capture stop / shutdown (see PipelineTimingRecorder).
@@ -816,10 +832,19 @@ namespace backend
                     processingService_->setEModulusLutCatalogIdentity(lutInfo.lutId, lutInfo.revision, lutInfo.sourceType,
                                                                       lutInfo.sha256, lutInfo.checksumStatus);
             }
+            // The path is the file that was read (#763 F24): EModulusLut::resolvePath finds the
+            // bundled name elsewhere when the requested path is missing (in development the
+            // checkout's resources/ beside a temporary data directory), so log what it loaded and
+            // name the request only when it differs.
+            const auto lutIdentity = processingService_->eModulusLutIdentity();
+            const std::string requestedLutPath = lutInfo.localPath.empty() ? activeLutPath : lutInfo.localPath;
+            std::string loadedLutPath = lutIdentity.loaded ? lutIdentity.path : std::string("(not loaded)");
+            if (lutIdentity.loaded && lutIdentity.path != requestedLutPath)
+                loadedLutPath += " (requested " + requestedLutPath + ")";
             SPDLOG_INFO("AppBackend: Young's modulus LUT source={}, revision={}, path={}, checksum_status={}, remote_updated={}, bundled_fallback={}, manifest={}",
                         lutInfo.sourceType,
                         lutInfo.revision,
-                        lutInfo.localPath.empty() ? activeLutPath : lutInfo.localPath,
+                        loadedLutPath,
                         lutInfo.checksumStatus,
                         lutInfo.remoteUpdated,
                         lutInfo.usedBundledFallback,
@@ -3247,20 +3272,37 @@ namespace backend
         // Open HDF5 file for recording
         auto& hdf5 = *hdf5Service_;
         // A review file in the facade's own reader counts as an open file
-        // (D1 (a), #512 S5): same message, so nothing changes for the operator.
+        // (D1 (a), #512 S5): same message as the shared handle. It says how to
+        // free it (F2 of #763); the refusal stays (HDF5 is not thread-safe, #722).
+        // Recording and a run are refused before this point, so an open file
+        // here is one open for review.
         if (hdf5.isFileOpen() || reviewSourceOpen()) {
             if (error)
-                *error = "Close the existing HDF5 file before starting raw recording; its writer "
-                         "will not be replaced";
+                *error = std::string("an HDF5 file is already open: ") + app::kCloseReviewFile +
+                         " before starting raw recording";
             SPDLOG_WARN("Frame recording refused: {}", hdf5.isFileOpen() ? "shared HDF5 file already open"
                                                                          : "a review file is open (HDF5 is not thread-safe, #722)");
             return false;
         }
 
+        if (hdf5FilePath.empty()) {
+            if (error) *error = "no output path given: choose where the raw recording goes";
+            return false;
+        }
         std::string path = hdf5FilePath;
         if (path.size() < 3 || (path.substr(path.size() - 3) != ".h5" &&
             (path.size() < 5 || path.substr(path.size() - 5) != ".hdf5"))) {
             path += ".h5";
+        }
+        // A relative path lies under the storage root, as an experiment's (#762).
+        {
+            const auto resolved = resolveClientPath(path);
+            if (!resolved.ok) {
+                if (error) *error = resolved.reason;
+                SPDLOG_WARN("Frame recording refused: {}", resolved.reason);
+                return false;
+            }
+            path = resolved.path;
         }
 
         if (!hdf5.openFile(path)) {
@@ -3640,6 +3682,21 @@ namespace backend
         {
             std::lock_guard<std::mutex> lk(configJsonMutex_);
             lastConfigJson_ = json;
+        }
+        // The pump COM ports in config.json are reserved, so the startup
+        // nanopositioner probe never opens the pump RS485 bus, even before
+        // the operator connects the pumps (SerialPortClaims.h).
+        {
+            std::vector<std::string> pumpPorts;
+            const auto parsed = nlohmann::json::parse(json, nullptr, /*allow_exceptions=*/false);
+            if (parsed.is_object()) {
+                for (const char *key : {"pump_sample_com_port", "pump_sheath_com_port"}) {
+                    const auto it = parsed.find(key);
+                    if (it != parsed.end() && it->is_number_integer() && it->get<int>() > 0)
+                        pumpPorts.push_back("COM" + std::to_string(it->get<int>()));
+                }
+            }
+            services::portclaims::setReserved("the syringe pumps (config.json)", pumpPorts);
         }
         // Optional `rf_generator` block: {"enabled":true,"transport":"usb"|"lan",
         // "resource":"auto"|"/dev/usbtmc0"|"USB0::...::INSTR"|"host[:port]",

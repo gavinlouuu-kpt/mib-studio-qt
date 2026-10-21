@@ -59,12 +59,17 @@ namespace backend::review
         double pixelToMicron() const;
         double fallbackPixelToMicron() const;
         // TD-17: the factor `reader`'s open file was recorded with (run
-        // snapshot `pixel_to_micron`); 0 when the file records none.
+        // snapshot `pixel_to_micron`), else the factor a regenerated or
+        // reanalysed file was analysed at (`/experiment_info
+        // @pixel_to_micron`, #758); 0 when the file records neither.
         static double recordedPixelToMicron(const services::Hdf5Service &reader);
         // #717 B1a: the run identity of `reader`'s open file (snapshot v3 +
         // /experiment_annotation). Attributes only; absent members for a
         // legacy file, never a default. Does not throw for a bad attribute.
         static RunIdentity readRunIdentity(const services::Hdf5Service &reader);
+        // One metrics row of a processed frame, area in µm² by `pixelToMicron`
+        // (the row metricsPage serves; #717 B3b reprocess uses it too).
+        static MetricRow metricRow(const services::ProcessedFrame &frame, double pixelToMicron);
 
         // #717 B1a: the experiment library's identity probe. Each path is
         // opened with its own short-lived reader, its header attributes read
@@ -84,6 +89,46 @@ namespace backend::review
 
         ReviewMetadata metadata() const;
         bool isRecordingFile() const;
+
+        // #717 B3b: the records of a set (valid / invalid) that share
+        // `trackId`, in set order, at most `max` rows (TrackRows). From the
+        // metadata read at open: no HDF5 read, an O(n) scan under the
+        // session's mutex. Refused (false, `error`) when no file is open, for
+        // a recording file (no records), for `max` above kReviewTrackRowsMax
+        // and for a negative track id (an untracked record has no links).
+        bool trackRows(bool valid, int trackId, std::size_t max, TrackRows &out,
+                       std::string *error = nullptr) const;
+
+        // #717 B3b: what reprocessing one record needs, read under the
+        // session's mutex: the record's stored row, its image (gray, as the
+        // regenerate engine converts colour frames) and, for Recorded, the
+        // file's recorded config, ROI and background (the defaults when the
+        // file records no config); for Default, the default config, the whole
+        // image and no background. Refused (false, `error`) when no file is
+        // open, for a recording file, for an index outside the set and for a
+        // record whose image cannot be read. Hosts gate it on the job lanes
+        // (ReviewJobs::reprocessRecord): jobs read outside this mutex.
+        struct ReprocessInputs
+        {
+            MetricRow stored;
+            cv::Mat image; // gray
+            cv::Mat background;
+            services::ProcessingConfig config{};
+            services::ProcessingService::Roi roi{}; // the ROI to process with
+            bool usedRecordedSettings{false};
+            std::string settingsLabel;
+            double pixelToMicron{0.0}; // the stored rows' factor (recorded or fallback)
+            // The factor to process with (Recorded: the file's, or the
+            // fallback when it records none; 0 for Default: the processing
+            // default) and whether the file records it.
+            double processingPixelToMicron{0.0};
+            bool pixelToMicronFromFile{false};
+            // The stored row's coordinate space (ReviewMetadata): `stored`
+            // is as stored; toImageSpace places it.
+            ObjectCoordinates objectCoordinates;
+        };
+        bool reprocessInputs(bool valid, std::uint64_t index, ReprocessSettings settings, ReprocessInputs &out,
+                             std::string *error = nullptr) const;
 
         // Metadata rows of a set (valid / invalid; recording files have only
         // the valid set with index + timestamp filled).

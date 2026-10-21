@@ -58,6 +58,8 @@ public:
     // call from a UI timer. Each call increments the readiness generation
     // only when an invalidation input changed (so a stable state keeps its
     // generation and a preflight stays usable).
+    // `outputPath` is accepted as Start accepts it (acceptOutputPath, #762): the
+    // gates, the probes and the candidate see the resolved absolute path.
     ExperimentReadinessSnapshot evaluateReadiness(const std::string& outputPath = {},
                                                   const std::string& profileId = {});
 
@@ -176,8 +178,23 @@ private:
         bool operator!=(const InvalidationKey& o) const { return !(*this == o); }
     };
     InvalidationKey currentKeyLocked(const std::string& outputPath, const std::string& profileId) const;
+    // The output path a client gave, as the run uses it (#762): ".h5" appended
+    // when it has no HDF5 extension, then AppBackend::resolveClientPath (a
+    // relative path lies under the storage root; one that leaves it is refused).
+    // The one place a start path is accepted: readiness and Start both call it,
+    // so the probes, the candidate, the snapshot, the reply and the status all
+    // carry the resolved absolute path. `refusal` is set (and `path` is the
+    // request) when it is refused; both are empty for an empty request.
+    struct AcceptedOutputPath {
+        std::string path;
+        std::string refusal;
+    };
+    AcceptedOutputPath acceptOutputPath(const std::string& requested) const;
+    // `outputRefusal` (from acceptOutputPath): storage.output fails with it and
+    // nothing is probed.
     ExperimentReadinessSnapshot evaluateLocked(const std::string& outputPath,
-                                               const std::string& profileId);
+                                               const std::string& profileId,
+                                               const std::string& outputRefusal = {});
     RunConfigurationSnapshot candidateLocked(const std::string& outputPath,
                                              const std::string& profileId) const;
     ExperimentStatus snapshotLocked() const;

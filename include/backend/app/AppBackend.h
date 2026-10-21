@@ -15,6 +15,7 @@
 #include "backend/app/BackgroundFrame.h"
 #include "backend/processing/EModulusLutCatalog.h" // HttpGetFn seam (ADR 0002)
 #include "backend/app/ExperimentReadiness.h"
+#include "backend/app/RecordingTarget.h" // ClientPath (#762)
 #include "backend/diagnostics/MemoryBudget.h"
 #include "backend/processing/pz/PzProfileCompiler.h"
 #include "backend/pz/PzFrameRing.h"
@@ -140,6 +141,17 @@ namespace backend
         void setSsdStoreForTesting(std::unique_ptr<pz::SsdStore> store);
         // The data directory given to initialize() (recordings default under it).
         const std::string &dataDir() const { return dataDir_; }
+        // The storage root (#762): the data directory, absolute with symlinks resolved; "" before
+        // initialize(). fetch_instrument_status reports it as storage.path, and a relative path a
+        // client gives a writer resolves under it.
+        std::string storageRoot() const { return app::storageRootOf(dataDir_); }
+        // A client's output path as a writer must use it (app::resolveClientPath under
+        // storageRoot()): experiment Start and readiness, raw recording, review exports,
+        // Regenerate masks and preview buffer saves all go through this one rule.
+        app::ClientPath resolveClientPath(const std::string &requested) const
+        {
+            return app::resolveClientPath(requested, storageRoot());
+        }
 
         // ---- PZ7035 camera modes (#501 P1) ----
         // Align = the full sensor at 500 fps, LED 0/125 µs, the producer streaming previews.

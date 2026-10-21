@@ -518,7 +518,15 @@ and read `in_channel` per object. Native ABI cores do not carry the band yet.
 ## Metrics exposed
 
 1-second rolling window: `getAlgoFps1s`, `getValidFps1s`, `getInvalidFps1s`,
-`getAlgoAvgUs1s`. Plus `getBufferedFrameCounts()` for cheap UI/status polling,
+`getAlgoAvgUs1s`. The window closes at least once a second while a realtime
+loop runs, frames or not, so the rates fall to 0 within about two seconds of
+the last frame (a stopped camera with realtime still on); before #763 F17 the
+inline loop closed it only after a processed frame and the last second's
+rates stayed published (96/15/93 per second 20 s after Stop acquisition). The
+async batch loop already closed it on every pass. `stopRealtime` zeroes the
+three rates, and a window no loop has closed for `kRealtimeRateStaleUs` (3 s)
+reads 0 (`realtimeRateAt`, the testable rule; `algoAvgUs1sUpdatedUs_` is the
+publication time). Test: `processing.realtime_rates_decay`. Plus `getBufferedFrameCounts()` for cheap UI/status polling,
 `getTotalValidFlushed` for experiment totals, and dropped-frame counters for
 the bounded experiment backlog.
 
@@ -566,12 +574,30 @@ TIFFs — use:
   rings, no experiment accumulation, no callbacks, no auto-background).
   Returns a `ProcessedFrame` with a full-size mask (zero outside ROI).
 - `ProcessingService::processBatch(grayImages, config, background, roi, progressCb,
-  processingCore)`
+  processingCore, inputs = {})`
   — wraps `computeProcessedFrame` over a vector of grayscale `cv::Mat`
   inputs, returns `std::vector<ProcessedFrame>`. Progress is reported via
   `BatchProgressCallback(BatchProgress{done, total})`. The optional identity
   output records the exact core held for the whole operation; activation is
   blocked until the call returns.
+- **Per-call analysis inputs (#758).** `BatchAnalysisInputs{pixelToMicronFactor,
+  channelBand}` (both `std::optional`) replace, for that call only, what
+  object analysis otherwise reads from the live service: the factor
+  `setPixelToMicronFactor` set (area validity, the target group, the stamped
+  `analysisPixelToMicronFactor`) and the band `getChannelBand()` detected from
+  the published background. Unset members keep the live values; a factor that
+  is not finite and positive throws `std::invalid_argument`.
+  `offlineAnalysisInputs(config, background, factor)` builds them for an
+  offline run: the factor, the band `detectChannelBand(background, config)`
+  finds in the run's own background (the static form of
+  `computeAutoRoiFromBackground`, with the config's auto-ROI settings), and,
+  with `auto_roi_from_background` on, that band written into the config's
+  `channel_band_*` (0 when none, as `getEffectiveProcessingConfig`), so the
+  config an output records is the one applied. Offline reanalysis (the review
+  engine, YOFO's regenerate, the Qt dialog) always passes them: the live
+  factor and band are never set by a job, so a job cannot race a live run or
+  another job, and one source's factor never reaches the next.
+  `kDefaultPixelToMicronFactor` (0.4886) names the start value.
 
   When `multi_image_enabled` and `multi_image_count > 1`, each newly retained
   valid track also carries the trigger image plus the available following
@@ -593,7 +619,8 @@ Input/output adapters live in [[BatchMaskSources]] —
 button that drives this via `BatchMaskDialog`.
 
 Batch calls do **not** touch realtime state or monitoring buffers, so
-they're safe to run concurrently with live capture. Dynamic cores allocate or
+they're safe to run concurrently with live capture. Without
+`BatchAnalysisInputs` they do read the live factor and channel band. Dynamic cores allocate or
 reuse separate ABI contexts for concurrent calls.
 
 ## Async batch processing (capture decoupling)

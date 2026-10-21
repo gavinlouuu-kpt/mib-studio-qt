@@ -1,6 +1,7 @@
 // POSIX (termios) implementation of ISerialPort. Compiled on non-Windows
 // builds (selected in src/backend/CMakeLists.txt). Qt-free.
 #include "backend/services/ISerialPort.h"
+#include "backend/services/SimulatedSerial.h"
 
 #include <spdlog/spdlog.h>
 
@@ -375,6 +376,7 @@ private:
 
 std::unique_ptr<ISerialPort> makePlatformSerialPort()
 {
+    if (auto rig = serialsim::installed()) return rig->makePort();
     return std::make_unique<PosixSerialPort>();
 }
 
@@ -405,6 +407,7 @@ std::string readSysfs(const std::filesystem::path& p)
 // nearest ancestor that carries idVendor/idProduct.
 std::vector<SerialPortInfo> enumerateSerialPorts()
 {
+    if (auto rig = serialsim::installed()) return rig->enumerate();
     namespace fs = std::filesystem;
     std::vector<SerialPortInfo> ports;
     std::error_code ec;

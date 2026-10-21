@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CmdResult } from "../bridge";
+import { useViewerOnly, viewerReason } from "./ViewerGate";
 import {
   advancePlayback, capacityText, CELL_REASONS, cellMetrics, clampSeq, DEFAULT_DISPLAY_FPS, DISPLAY_FPS, elapsedText,
   frameNotes, metricText, nextOverlay, noMaskNote, OVERLAY_LABEL, playbackAvailability, rangeText, ringFrameRgba, saveClipState,
@@ -22,6 +23,8 @@ type Props = {
 
 export function RingPlaybackPanel({ status, fetchFrame, onResume, append, ssdPathAvailable = false, startPending = false }: Props) {
   const availability = playbackAvailability(status);
+  // Resume re-arms the ring (a control command); stepping through the held frames stays open to a viewer (#763 F19).
+  const viewerOnly = useViewerOnly();
   const range = { first: status.first_seq, last: status.last_seq };
   const [seq, setSeq] = useState(status.last_seq);
   const [playing, setPlaying] = useState(false);
@@ -165,7 +168,7 @@ export function RingPlaybackPanel({ status, fetchFrame, onResume, append, ssdPat
       )}
       {status.hold_note && <p className="pending-note warn" role="status" data-testid="hold-note">{status.hold_note}</p>}
       <p>
-        <button onClick={resume} disabled={busy || startPending} title={startPending ? "An experiment is starting" : "Re-arm the ring: these buffered frames are discarded"}>Resume Run (discards these frames)</button>
+        <button onClick={resume} disabled={busy || startPending || viewerOnly} title={viewerReason(viewerOnly, startPending ? "An experiment is starting" : "Re-arm the ring: these buffered frames are discarded")}>Resume Run (discards these frames)</button>
         {" "}
         <button disabled={!save.enabled} title={save.reason} aria-describedby="ring-save-reason">Save clip</button>
         {!save.enabled && <span id="ring-save-reason" className="pending-note"> {save.reason}</span>}

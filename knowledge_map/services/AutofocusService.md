@@ -127,6 +127,19 @@ the controller and reads limits/current voltage. Every write is validated
 against configured limits and the controller-reported maximum; invalid values
 are rejected rather than silently clamped at the transport boundary.
 
+## Port claim (2026-10-19)
+
+`connect()` takes a [[SerialPortClaims]] service claim on the endpoint's port
+(`nanopositioner::endpointPortName`) before opening it. It waits for a
+startup probe on that port instead of failing, and keeps the claim in
+`portClaim_` until `disconnect()`, so a later Refresh never probes the
+connected port. Under [[SimulatedSerial]], `availableEndpoints()` offers no
+CoreMorrow endpoints (the vendor DLL would open real ports).
+
+`availableEndpoints()` lists every serial port (2026-10-20), not only the
+CH340/CH341 candidates. The discovery provider decides the probe order (see
+[[DeviceDiscoveryService]], probe stages).
+
 ## Gotchas
 
 - A NaN ring ratio (every Contract 2/3 object) used to pass the `<= 0.0`

@@ -28,6 +28,18 @@ must be closed before using the new build. See [[../frontend/DesktopInstance]].
   `tauri.review.conf.json`; no camera, hardware or experiment code. See
   [[../frontend/YofoReview]].
 
+## Simulated serial hardware (2026-10-19)
+
+| Variable | Default | Effect |
+|---|---|---|
+| `MIB_SERIAL_MODE=sim` | unset (`hardware`) | Every COM port is the [[../services/SimulatedSerial]] rig: pumps on COM3, pulse generator COM4 @ 9600, OEABT nanopositioner COM5, ZC300 COM6 |
+| `MIB_SERIAL_SIM_SCENARIO=<file.json>` | built-in bench | Ports, devices and timing faults (format in `docs/howto/simulated-serial.md`) |
+| `MIB_SERIAL_SIM_SEED=<n>` | scenario's, else 1 | Reply-jitter seed; a failing seed replays |
+
+With `MIB_CAMERA_MODE=mock` this runs the whole app with no hardware. A bad
+scenario stops the backend from initializing. It never falls back to real
+ports.
+
 ## Mock camera env vars
 
 Read at startup (see `main.cpp` and [[../architecture/AppBackend]]):

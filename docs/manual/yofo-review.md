@@ -224,10 +224,17 @@ last output folder.
 a **new** HDF5 file, which opens when it is done; the original is never
 changed.
 
-For HDF5 files, YOFO Review uses the processing settings, ROI and
-background the file was recorded with. Untick that option to use the
-default settings instead. AVI and image-folder sources always use the
-defaults.
+For HDF5 files, YOFO Review uses the processing settings, ROI,
+background and pixel-to-micron factor the file was recorded with, and the
+target group the recording used. Each object's area range and target group
+are checked at that factor (at the factor set under **File ▸
+Preferences…** when the file records none). Untick that option to use the
+default settings instead, which check objects at 0.4886 µm per pixel. AVI
+and image-folder sources always use the defaults.
+
+The new file records the factor it was made with, so the status bar shows
+that factor, not "(fallback)", when it opens. The message at the end of the
+job also names it, for example "px→µm 0.2500 recorded".
 
 Regenerating never replaces a file. **Save as…** suggests a name that is
 not taken yet (`<name>_remasked.h5`, then `_2`, `_3`, …). If you pick a file
@@ -242,6 +249,16 @@ in those files are correct; the per-record frame references are not.
 Regenerate such files again from the original recording with this version:
 each record now names its own frame. MIB Studio's reanalysis was never
 affected.
+
+**Files regenerated with review-v1.1.3-beta.1 or earlier** (#758): those
+versions checked each object's area range and target group at 0.4886 µm per
+pixel, whatever factor the file was recorded with, and with the recorded
+settings they selected no target group. They also did not record a factor,
+so the new file opened at the fallback factor. For a file recorded at
+another factor, the valid / invalid split, the target group and the sizes
+shown can be wrong. A file whose recording used a target group has no target
+group cells after regenerating. Images, masks and background are correct.
+Regenerate such files again from the original recording with this version.
 
 ## Pixel-to-micron factor
 
@@ -292,6 +309,10 @@ contours match. The visible differences:
 - **A regenerated file's frame indices or times do not match its images**:
   the file was probably written by review-v1.1.3-beta.1 or earlier. See
   [Regenerate masks](#regenerate-masks) and regenerate it again.
+- **A regenerated file shows "(fallback)", or its valid cells or target
+  group differ from the original recording's**: it was probably written by
+  review-v1.1.3-beta.1 or earlier, which checked objects at 0.4886 µm per
+  pixel. See [Regenerate masks](#regenerate-masks) and regenerate it again.
 - **Check for updates fails**: the computer needs internet access to
   `updates.yofo.bio`. You can always install a newer version by hand from
   the GitHub Release.

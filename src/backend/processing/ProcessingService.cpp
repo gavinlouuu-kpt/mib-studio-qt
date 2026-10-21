@@ -28,6 +28,7 @@
 #include <filesystem>
 #include <iterator>
 #include <limits>
+#include <stdexcept>
 #include <tuple>
 #include <utility>
 #include <cmath>
@@ -368,6 +369,10 @@ void ProcessingService::stopRealtime() {
     if (!wasRunning && !realtimeThread_.joinable()) return;
     if (realtimeThread_.joinable()) realtimeThread_.join();
     backend::diagnostics::CrashStateMirror::instance().processing.realtimeRunning.store(false);
+    // Nothing is processed any more: the throughput is 0, not the last window's (#763 F17).
+    algoFps1s_.store(0.0, std::memory_order_relaxed);
+    validFps1s_.store(0.0, std::memory_order_relaxed);
+    invalidFps1s_.store(0.0, std::memory_order_relaxed);
     SPDLOG_INFO("ProcessingService: realtime processing stopped");
     // Stopping realtime ends the capture (#716 A6a review 3): the live cell store clears its
     // strip and keeps its pins' measurements only; images after the run belong to Review.
@@ -1070,6 +1075,11 @@ bool ProcessingService::loadEModulusLut(const std::string& path) {
     std::scoped_lock lk(eModulusLutIdentityMutex_);
     eModulusLutIdentity_ = std::move(identity);
     return ok;
+}
+
+double ProcessingService::freshRealtimeRate(const std::atomic<double>& rate) const {
+    return realtimeRateAt(rate.load(std::memory_order_relaxed),
+                          algoAvgUs1sUpdatedUs_.load(std::memory_order_relaxed), backend::Tools::getTimestamp());
 }
 
 ProcessingService::EModulusLutIdentity ProcessingService::eModulusLutIdentity() const {
@@ -1780,6 +1790,15 @@ ProcessedFrame ProcessingService::computeProcessedFrame(const cv::Mat& grayInput
                                                         const ProcessingConfig& config,
                                                         const Roi& roiIn, uint64_t index,
                                                         uint64_t timestampNs) {
+    return computeProcessedFrameWith(grayInput, backgroundGray, config, roiIn, index, timestampNs, {});
+}
+
+ProcessedFrame ProcessingService::computeProcessedFrameWith(const cv::Mat& grayInput,
+                                                            const cv::Mat& backgroundGray,
+                                                            const ProcessingConfig& config,
+                                                            const Roi& roiIn, uint64_t index,
+                                                            uint64_t timestampNs,
+                                                            const BatchAnalysisInputs& inputs) {
     auto operation = acquireProcessingCoreOperation();
 
     ProcessedFrame out;
@@ -1824,7 +1843,7 @@ ProcessedFrame ProcessingService::computeProcessedFrame(const cv::Mat& grayInput
     }
 
     // Validation + contour/metric extraction (same helper as realtime)
-    out.validation = filterProcessedImage(mask, cvRoi, config, gray, backgroundGray);
+    out.validation = filterProcessedImage(mask, cvRoi, config, gray, backgroundGray, inputs);
     out.processedImage = std::move(mask);
     return out;
 }
@@ -1833,7 +1852,12 @@ std::vector<ProcessedFrame>
 ProcessingService::processBatch(const std::vector<cv::Mat>& grayImages,
                                 const ProcessingConfig& config, const cv::Mat& background,
                                 const Roi& roi, BatchProgressCallback progress,
-                                backend::processing::ProcessingCoreIdentity* processingCore) {
+                                backend::processing::ProcessingCoreIdentity* processingCore,
+                                const BatchAnalysisInputs& inputs) {
+    if (inputs.pixelToMicronFactor &&
+        !(std::isfinite(*inputs.pixelToMicronFactor) && *inputs.pixelToMicronFactor > 0.0)) {
+        throw std::invalid_argument("processBatch: pixel-to-micron factor must be finite and positive");
+    }
 
     auto operation = acquireProcessingCoreOperation();
     if (processingCore) *processingCore = operation.identity();
@@ -1877,8 +1901,8 @@ ProcessingService::processBatch(const std::vector<cv::Mat>& grayImages,
     if (progress) progress(BatchProgress{0, total});
 
     for (size_t i = 0; i < total; ++i) {
-        ProcessedFrame base = computeProcessedFrame(grayImages[i], background, config, roi,
-                                                    static_cast<uint64_t>(i), 0);
+        ProcessedFrame base = computeProcessedFrameWith(grayImages[i], background, config, roi,
+                                                        static_cast<uint64_t>(i), 0, inputs);
         if (base.originalImage.empty() || base.processedImage.empty()) {
             results.emplace_back(std::move(base));
             if (progress) progress(BatchProgress{i + 1, total});
@@ -1901,7 +1925,7 @@ ProcessingService::processBatch(const std::vector<cv::Mat>& grayImages,
         const cv::Rect cvRoi(normalizedRoi.x, normalizedRoi.y, normalizedRoi.w, normalizedRoi.h);
 
         auto objectResults = filterProcessedObjects(base.processedImage, cvRoi, config,
-                                                    base.originalImage, {}, background);
+                                                    base.originalImage, {}, background, inputs);
         if (objectResults.empty()) {
             results.emplace_back(std::move(base));
         } else {
@@ -2333,6 +2357,11 @@ ProcessingService::computeAutoRoiFromBackground(const cv::Mat& backgroundGray) c
         std::scoped_lock lk(configMutex_);
         config = processingConfig_;
     }
+    return detectChannelBand(backgroundGray, config);
+}
+
+ProcessingService::Roi ProcessingService::detectChannelBand(const cv::Mat& backgroundGray,
+                                                            const ProcessingConfig& config) {
     if (!config.auto_roi_from_background || backgroundGray.empty()) {
         return Roi{}; // disabled / no background: empty ROI == full frame
     }
@@ -2342,6 +2371,20 @@ ProcessingService::computeAutoRoiFromBackground(const cv::Mat& backgroundGray) c
     const backend::processing::ChannelRoi detected =
         backend::processing::detectChannelRoi(backgroundGray, params);
     return Roi{detected.x, detected.y, detected.w, detected.h};
+}
+
+ProcessingService::BatchAnalysisInputs
+ProcessingService::offlineAnalysisInputs(ProcessingConfig& config, const cv::Mat& background,
+                                         double pixelToMicronFactor) {
+    BatchAnalysisInputs inputs;
+    inputs.pixelToMicronFactor = pixelToMicronFactor;
+    const Roi band = detectChannelBand(background, config);
+    inputs.channelBand = band.h > 0 ? band : Roi{};
+    if (config.auto_roi_from_background) {
+        config.channel_band_y = band.h > 0 ? band.y : 0;
+        config.channel_band_h = band.h > 0 ? band.h : 0;
+    }
+    return inputs;
 }
 
 ProcessingService::Roi ProcessingService::getChannelBand() const {
@@ -2545,13 +2588,15 @@ std::vector<FilterResult> ProcessingService::filterProcessedObjects(const cv::Ma
                                                                     const ProcessingConfig& config,
                                                                     const cv::Mat& originalImage,
                                                                     cv::Point maskOrigin,
-                                                                    const cv::Mat& background) {
+                                                                    const cv::Mat& background,
+                                                                    const BatchAnalysisInputs& inputs) {
     // The service owns the detected channel band (frame coordinates); express
-    // it in the mask's coordinates for the object filter.
+    // it in the mask's coordinates for the object filter. A call's own band
+    // (offline reanalysis, #758) replaces it.
     ProcessingConfig bandConfig;
     const ProcessingConfig* effectiveConfig = &config;
     if (config.auto_roi_from_background) {
-        const Roi band = getChannelBand();
+        const Roi band = inputs.channelBand ? *inputs.channelBand : getChannelBand();
         if (band.h > 0) {
             bandConfig = config;
             bandConfig.channel_band_y = band.y - maskOrigin.y;
@@ -2562,7 +2607,11 @@ std::vector<FilterResult> ProcessingService::filterProcessedObjects(const cv::Ma
     // Version-sensitive science is owned by the selected kernel (A7). The
     // caller already holds a CoreOperationLease, so the kernel cannot swap
     // between the mask call and this analysis call.
-    const double pixelToMicronFactor = pixelToMicronFactor_.load(std::memory_order_relaxed);
+    // The call's factor (offline reanalysis at its source's calibration, #758)
+    // or the live one, read once.
+    const double pixelToMicronFactor = inputs.pixelToMicronFactor
+                                           ? *inputs.pixelToMicronFactor
+                                           : pixelToMicronFactor_.load(std::memory_order_relaxed);
     const backend::EModulusLut* eModulusLut = eModulusLut_.isLoaded() ? &eModulusLut_ : nullptr;
     std::shared_ptr<backend::processing::IProcessingKernel> kernel;
     {
@@ -2587,9 +2636,10 @@ FilterResult ProcessingService::filterProcessedImage(const cv::Mat& processedIma
                                                      const cv::Rect& roi,
                                                      const ProcessingConfig& config,
                                                      const cv::Mat& originalImage,
-                                                     const cv::Mat& background) {
+                                                     const cv::Mat& background,
+                                                     const BatchAnalysisInputs& inputs) {
     auto results = filterProcessedObjects(processedImage, roi, config, originalImage, {},
-                                          background);
+                                          background, inputs);
     if (results.empty()) {
         return {};
     }
@@ -3398,6 +3448,33 @@ void ProcessingService::realtimeInlineLoop() {
     double algoMsSinceSummary = 0.0;
     uint64_t validSinceSummary = 0;
     uint64_t invalidSinceSummary = 0;
+    // Close the 1 s throughput window when no frame is being processed (#763 F17). The summaries
+    // in the frame paths below run only after a processed frame, so once frames stopped (the
+    // camera stopped, realtime kept running) the last window's rates stayed published forever.
+    // Rates are this window's counts over its length, so an idle window publishes 0. Quiet: no
+    // debug summary, which stays with the frame paths. The async batch loop closes its window on
+    // every pass already.
+    const auto closeIdleRateWindow = [&] {
+        const auto now = clock::now();
+        const double windowMs = std::chrono::duration<double, std::milli>(now - lastSummaryTs).count();
+        if (windowMs < 1000.0) return;
+        const double perSecond = 1000.0 / windowMs;
+        algoFps1s_.store(static_cast<double>(framesSinceSummary) * perSecond, std::memory_order_relaxed);
+        validFps1s_.store(static_cast<double>(validSinceSummary) * perSecond, std::memory_order_relaxed);
+        invalidFps1s_.store(static_cast<double>(invalidSinceSummary) * perSecond, std::memory_order_relaxed);
+        algoAvgUs1s_.store(framesSinceSummary > 0
+                               ? algoMsSinceSummary * 1000.0 / static_cast<double>(framesSinceSummary)
+                               : 0.0,
+                           std::memory_order_relaxed);
+        algoAvgUs1sUpdatedUs_.store(backend::Tools::getTimestamp(), std::memory_order_relaxed);
+        lastSummaryTs = now;
+        framesSinceSummary = 0;
+        framesSkippedSinceSummary = 0;
+        msSinceSummary = 0.0;
+        algoMsSinceSummary = 0.0;
+        validSinceSummary = 0;
+        invalidSinceSummary = 0;
+    };
 
     // Multi-image series state (persists across loop iterations, single-threaded access)
     ProcessedFrame pendingMultiImageFrame;
@@ -3454,11 +3531,13 @@ void ProcessingService::realtimeInlineLoop() {
         }
         if (!rtStore_) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            closeIdleRateWindow();
             continue;
         }
         const uint64_t total = rtStore_->totalWritten();
         if (total == 0) {
             rtStore_->waitForFrame(0, std::chrono::milliseconds(5));
+            closeIdleRateWindow();
             continue;
         }
         if (roiPending_.load(std::memory_order_relaxed)) {
@@ -3498,6 +3577,7 @@ void ProcessingService::realtimeInlineLoop() {
             // frame and dominated end-to-end latency. The timeout preserves
             // stop responsiveness (rtRunning_ is rechecked each iteration).
             rtStore_->waitForFrame(total, std::chrono::milliseconds(2));
+            closeIdleRateWindow();
             continue;
         }
 

@@ -4,6 +4,7 @@
 #include "backend/processing/BatchMaskSources.h"
 #include "backend/recording/Hdf5Service.h"
 #include "backend/processing/ProcessingService.h"
+#include "backend/review/ReviewSession.h"
 #include "frontend/utils/RoiDrawCanvas.h"
 
 #include <QCoreApplication>
@@ -924,8 +925,8 @@ void BatchMaskDialog::onRun() {
     }
     logView_->appendPlainText(tr("Loaded %1 images.").arg(images.size()));
 
-    auto& proc        = backend_.processing();
-    const auto config = localConfig_;
+    auto& proc  = backend_.processing();
+    auto config = localConfig_;
 
     const QRect qroi = roiCanvas_->getRoi();
     const backend::services::ProcessingService::Roi roi{
@@ -950,8 +951,30 @@ void BatchMaskDialog::onRun() {
         }
     };
 
+    // #758: validate at the source's own pixel-to-micron factor (an HDF
+    // source's recorded one, else the live factor) and the channel band of
+    // the background in use, passed per call: the live service's factor and
+    // band stay as they are.
+    double factor = proc.getPixelToMicronFactor();
+    bool recordedFactor = false;
+    if (srcHdf5_->isChecked() && !hdf5LoadedPath_.isEmpty()) {
+        backend::services::Hdf5Service reader;
+        if (reader.loadFile(hdf5LoadedPath_.toStdString())) {
+            if (const double f = backend::review::ReviewSession::recordedPixelToMicron(reader); f > 0.0) {
+                factor = f;
+                recordedFactor = true;
+            }
+        }
+    }
+    const auto inputs =
+        backend::services::ProcessingService::offlineAnalysisInputs(config, background, factor);
+    logView_->appendPlainText(tr("Validating at %1 µm per pixel (%2).")
+                                  .arg(factor, 0, 'f', 4)
+                                  .arg(recordedFactor ? tr("recorded in the source file")
+                                                      : tr("current setting")));
+
     backend::processing::ProcessingCoreIdentity processingCore;
-    results_ = proc.processBatch(images, config, background, roi, progressCb, &processingCore);
+    results_ = proc.processBatch(images, config, background, roi, progressCb, &processingCore, inputs);
     applySourceMetadata();
 
     size_t validCount = 0;
@@ -963,7 +986,7 @@ void BatchMaskDialog::onRun() {
     const bool ok = backend::services::batch_masks::saveMasksToHdf5(
         results_, outputPath.toStdString(), config,
         roi.x, roi.y, roi.w, roi.h, background,
-        srcHdf5_->isChecked(), &processingCore);
+        srcHdf5_->isChecked(), &processingCore, factor);
 
     if (ok) {
         savedHdf5Path_ = outputPath;

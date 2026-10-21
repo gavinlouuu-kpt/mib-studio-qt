@@ -48,6 +48,8 @@ const absentIdentity = (): ReviewRunIdentity => ({
   operator: null,
   annotation: null,
   annotation_unreadable: false,
+  emodulus_lut: null,
+  profile_id: null,
 });
 const planned = (sample: string | null, condition: string | null): ReviewRunAnnotation => ({
   schema_version: 1,

@@ -53,6 +53,9 @@ function saveFolder(folder: string) {
 export interface OpenViewProps {
   /** Backend initialized (opening is refused otherwise). */
   ready: boolean;
+  /** The bridge is up but this server serves no review commands (#763 F7): the shell says so, so the
+   *  not-initialized notice stays away. */
+  reviewUnavailable?: boolean;
   /** The open file's info (null when none). */
   info: ReviewInfo | null;
   /** Open a run in the review session (the panel's openPath). */
@@ -131,7 +134,7 @@ function GroupCaption({ group, probing }: { group: RunGroup; probing: boolean })
   );
 }
 
-export function OpenView({ ready, info, onOpenPath, onOpenFile, onClose, onInspect, log }: OpenViewProps) {
+export function OpenView({ ready, reviewUnavailable = false, info, onOpenPath, onOpenFile, onClose, onInspect, log }: OpenViewProps) {
   const [folder, setFolder] = useState(loadFolder);
   const [listed, setListed] = useState<Listed | null>(null);
   // The folder whose names are being listed ("" when idle).
@@ -348,7 +351,7 @@ export function OpenView({ ready, info, onOpenPath, onOpenFile, onClose, onInspe
         </Button>
       </Toolbar>
       <div className="rv-body">
-        {!ready && (
+        {!ready && !reviewUnavailable && (
           <Notice tone="unknown" title="Backend · not initialized">
             Files can be listed and opened once the review backend is up.
           </Notice>

@@ -1,5 +1,6 @@
 #include "backend/review/ReviewSession.h"
 
+#include "backend/processing/ProcessingContract.h"
 #include "backend/processing/ProcessingTypes.h"
 #include "backend/recording/Hdf5Service.h"
 #include "backend/recording/RunProvenanceRecord.h"
@@ -11,6 +12,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <sstream>
@@ -43,6 +45,19 @@ namespace backend::review
             if (image.empty() || image.channels() == 1) return image;
             cv::Mat gray;
             cv::extractChannel(image, gray, 0);
+            return gray;
+        }
+
+        // A frame with more than one channel becomes Mono8 exactly as the
+        // regenerate engine converts HDF input (Reanalysis.cpp,
+        // grayLikeLoadFromHdf5), so a one-record reprocess sees what a
+        // regenerate of the file would.
+        cv::Mat grayLikeRegenerate(cv::Mat frame)
+        {
+            if (frame.empty() || frame.type() == CV_8UC1) return frame;
+            cv::Mat gray;
+            if (frame.channels() == 3) cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
+            else frame.convertTo(gray, CV_8UC1);
             return gray;
         }
 
@@ -278,6 +293,91 @@ namespace backend::review
             reader.readKdeAnalysisJson(meta.kdeAnalysisJson);
             reader.readKdeLiveJson(meta.kdeLiveJson);
             meta.runIdentity = ReviewSession::readRunIdentity(reader);
+            if (!recording) meta.objectCoordinates = resolveObjectCoordinatesLocked();
+        }
+
+        // The file's object coordinate space (#756 review 2), in the order of
+        // ObjectCoordinates.h. Runs at open under the session's mutex: the
+        // mask check reads HDF5 (#722).
+        ObjectCoordinates resolveObjectCoordinatesLocked() const
+        {
+            ObjectSpaceEvidence evidence;
+            evidence.attribute =
+                reader.readScalarStringAttribute("/experiment_info", services::Hdf5Service::kObjectCoordinatesAttribute);
+            evidence.recordedRoi = meta.roi;
+            std::string snapshot;
+            if (reader.readRunSnapshotJson(snapshot))
+            {
+                const auto doc = nlohmann::json::parse(snapshot, nullptr, false);
+                if (doc.is_object())
+                {
+                    if (const auto v = doc.find("schema_version"); v != doc.end() && v->is_number_unsigned())
+                        evidence.snapshotVersion = v->get<std::uint32_t>();
+                    if (const auto r = doc.find("roi"); r != doc.end() && r->is_object())
+                    {
+                        const auto member = [&](const char *name, int &value) {
+                            const auto it = r->find(name);
+                            if (it == r->end() || !it->is_number_integer()) return false;
+                            value = it->get<int>();
+                            return true;
+                        };
+                        services::ProcessingService::Roi roi{};
+                        if (member("x", roi.x) && member("y", roi.y) && member("w", roi.w) && member("h", roi.h))
+                            evidence.snapshotRoi = roi;
+                    }
+                    if (const auto p = doc.find("science_placement"); p != doc.end() && p->is_string())
+                        evidence.snapshotPlScience = p->get<std::string>() == "pl";
+                    if (const auto m = doc.find("realtime_mode"); m != doc.end() && m->is_string())
+                        evidence.snapshotRealtimeMode = m->get<std::string>();
+                }
+            }
+            return resolveObjectCoordinates(evidence, [this] { return maskCheckLocked(); });
+        }
+
+        // Where the stored objects are in the stored full-frame masks, over a
+        // bounded sample of the records that have both: the valid set spread
+        // over, the invalid set only to fill what the valid set lacks.
+        std::optional<ObjectSpace> maskCheckLocked() const
+        {
+            // Contract 1 objects are inner contours: the area is the hole's
+            // hull and the box the outline's (ProcessingScience), whenever the
+            // frame had an inner contour; otherwise outlines.
+            services::ProcessingConfig recorded;
+            const bool innerContours = processing::contract::contractObjectsAreInnerContours(
+                reader.readRecordedProcessingConfig(recorded) ? recorded.processing_contract_version
+                                                              : services::ProcessingConfig{}.processing_contract_version);
+            std::vector<std::optional<ObjectSpace>> votes;
+            for (const bool valid : {true, false})
+            {
+                const std::size_t room = kObjectSpaceMaskCheckMaxRecords - votes.size();
+                const DatasetInfo &masks = valid ? meta.validMasks : meta.invalidMasks;
+                if (room == 0 || !masks.present) continue;
+                const auto &frames = set(valid);
+                const std::size_t n = std::min<std::size_t>(frames.size(), static_cast<std::size_t>(masks.count));
+                std::vector<std::size_t> candidates;
+                for (std::size_t i = 0; i < n; ++i)
+                {
+                    const auto &v = frames[i].validation;
+                    if (v.bboxWidth > 0 && v.bboxHeight > 0) candidates.push_back(i);
+                }
+                for (const std::size_t position : maskCheckSample(candidates.size(), room))
+                {
+                    const std::size_t index = candidates[position];
+                    cv::Mat mask;
+                    if (!reader.readImageByIndex(masksPath(valid), index, mask) || mask.empty())
+                    {
+                        votes.emplace_back(std::nullopt);
+                        continue;
+                    }
+                    const auto &v = frames[index].validation;
+                    StoredObject object;
+                    object.box = cv::Rect2d(v.bboxX, v.bboxY, v.bboxWidth, v.bboxHeight);
+                    object.areaPx = v.area;
+                    object.hole = innerContours && v.innerContourCount > 0;
+                    votes.push_back(maskPlacementVote(toGray(mask), object, meta.roi.x, meta.roi.y));
+                }
+            }
+            return maskCheckVerdict(votes);
         }
 
         const std::vector<services::ProcessedFrame> &set(bool valid) const
@@ -472,11 +572,23 @@ namespace backend::review
     double ReviewSession::recordedPixelToMicron(const services::Hdf5Service &reader)
     {
         std::string snapshot;
-        if (!reader.readRunSnapshotJson(snapshot) || snapshot.empty()) return 0.0;
-        const auto j = nlohmann::json::parse(snapshot, nullptr, false);
-        if (!j.is_object() || !j.contains("pixel_to_micron") || !j["pixel_to_micron"].is_number()) return 0.0;
-        const double f = j["pixel_to_micron"].get<double>();
-        return f > 0.0 ? f : 0.0;
+        if (reader.readRunSnapshotJson(snapshot) && !snapshot.empty())
+        {
+            const auto j = nlohmann::json::parse(snapshot, nullptr, false);
+            if (j.is_object() && j.contains("pixel_to_micron") && j["pixel_to_micron"].is_number())
+            {
+                const double f = j["pixel_to_micron"].get<double>();
+                if (std::isfinite(f) && f > 0.0) return f;
+            }
+        }
+        // A regenerated / reanalysed file has no run snapshot: the factor its
+        // objects were validated at (#758).
+        return reader.readAnalysisPixelToMicron().value_or(0.0);
+    }
+
+    MetricRow ReviewSession::metricRow(const services::ProcessedFrame &frame, double pixelToMicron)
+    {
+        return rowFromFrame(frame, 0, pixelToMicron);
     }
 
     RunIdentity ReviewSession::readRunIdentity(const services::Hdf5Service &reader)
@@ -492,6 +604,16 @@ namespace backend::review
                 out.snapshotVersion = parsed.schemaVersion;
                 out.runId = parsed.v3.runId;
                 out.declared = parsed.v3.identity;
+                out.eModulusLut = parsed.v3.eModulusLut;
+                // profile_id is not part of the typed record: read it from
+                // the same document, a non-empty string only (#717 B3b).
+                const auto doc = nlohmann::json::parse(snapshot, nullptr, false);
+                if (doc.is_object())
+                {
+                    const auto it = doc.find("profile_id");
+                    if (it != doc.end() && it->is_string() && !it->get<std::string>().empty())
+                        out.profileId = it->get<std::string>();
+                }
             }
             else
             {
@@ -579,6 +701,106 @@ namespace backend::review
         rows.reserve(static_cast<std::size_t>(end - offset));
         const double f = impl_->factor();
         for (std::uint64_t i = offset; i < end; ++i) rows.push_back(rowFromFrame(source[i], i, f));
+        return true;
+    }
+
+    bool ReviewSession::trackRows(bool valid, int trackId, std::size_t max, TrackRows &out,
+                                  std::string *error) const
+    {
+        out = TrackRows{};
+        auto refuse = [error](std::string message) {
+            if (error) *error = std::move(message);
+            return false;
+        };
+        if (max > kReviewTrackRowsMax)
+            return refuse("Too many rows requested: " + std::to_string(max) + " (at most " +
+                          std::to_string(kReviewTrackRowsMax) + ")");
+        if (trackId < 0) return refuse("This record is not tracked, so it has no linked records");
+        std::scoped_lock lock(impl_->mutex);
+        if (!impl_->open) return refuse("No review file is open");
+        if (impl_->recording) return refuse("A raw recording has no records");
+        const auto &source = impl_->set(valid);
+        const double f = impl_->factor();
+        for (std::uint64_t i = 0; i < source.size(); ++i)
+        {
+            if (source[i].validation.trackId != trackId) continue;
+            ++out.total;
+            if (out.rows.size() >= max) continue;
+            out.positions.push_back(i);
+            out.rows.push_back(rowFromFrame(source[i], i, f));
+        }
+        out.truncated = out.total > out.rows.size();
+        return true;
+    }
+
+    bool ReviewSession::reprocessInputs(bool valid, std::uint64_t index, ReprocessSettings settings,
+                                        ReprocessInputs &out, std::string *error) const
+    {
+        out = ReprocessInputs{};
+        auto refuse = [error](std::string message) {
+            if (error) *error = std::move(message);
+            return false;
+        };
+        if (settings != ReprocessSettings::Recorded && settings != ReprocessSettings::Default)
+            return refuse("Unknown reprocess settings");
+        std::scoped_lock lock(impl_->mutex);
+        if (!impl_->open) return refuse("No review file is open");
+        if (impl_->recording) return refuse("A raw recording has no stored records to reprocess");
+        const auto &source = impl_->set(valid);
+        if (index >= source.size())
+            return refuse("No record " + std::to_string(index) + " in the " + (valid ? "valid" : "invalid") +
+                          " set (" + std::to_string(source.size()) + " records)");
+        const auto &meta = impl_->meta;
+        out.pixelToMicron = impl_->factor();
+        out.stored = rowFromFrame(source[static_cast<std::size_t>(index)], index, out.pixelToMicron);
+        cv::Mat image;
+        if (!impl_->reader.readImageByIndex(impl_->imagesPath(valid), static_cast<std::size_t>(index), image) ||
+            image.empty())
+        {
+            return refuse("Record " + std::to_string(index) + " has no stored image to reprocess");
+        }
+        out.image = grayLikeRegenerate(std::move(image));
+        out.pixelToMicronFromFile = meta.pixelToMicronFromFile && meta.pixelToMicron > 0.0;
+        // The stored record is matched in image coordinates (#756 review 2):
+        // a file whose space nothing decides is refused, never matched by a
+        // guess.
+        out.objectCoordinates = meta.objectCoordinates;
+        if (out.objectCoordinates.space == ObjectSpace::Unknown)
+            return refuse("Record " + std::to_string(index) +
+                          " cannot be matched: the file does not record whether its bounding boxes are relative to "
+                          "its ROI (which starts at " + std::to_string(meta.roi.x) + ", " + std::to_string(meta.roi.y) +
+                          ") or to the image, and its masks do not tell");
+        if (settings == ReprocessSettings::Recorded)
+        {
+            // The recorded calibration is a recorded processing input: area
+            // validity and the target group are in µm² (#756 review).
+            out.processingPixelToMicron = out.pixelToMicron;
+            services::ProcessingConfig recorded;
+            if (impl_->reader.readRecordedProcessingConfig(recorded))
+            {
+                out.config = recorded;
+                out.roi = meta.roi;
+                cv::Mat background;
+                if (impl_->reader.readBackgroundImage(background) && !background.empty())
+                    out.background = grayLikeRegenerate(std::move(background));
+                out.usedRecordedSettings = true;
+                out.settingsLabel = out.background.empty() ? "recorded settings (config, ROI; the file records no background)"
+                                                           : "recorded settings (config, ROI, background)";
+            }
+            else
+            {
+                out.settingsLabel = "default settings: the file records none";
+            }
+        }
+        else
+        {
+            out.settingsLabel = "default settings (whole image, no background)";
+        }
+        if (!out.background.empty() && out.background.size() != out.image.size())
+        {
+            // As the regenerate engine refuses it: a background of another size.
+            return refuse("The recorded background does not match the record's image size");
+        }
         return true;
     }
 

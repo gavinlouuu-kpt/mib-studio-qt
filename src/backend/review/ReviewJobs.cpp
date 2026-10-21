@@ -21,6 +21,7 @@
 #include <condition_variable>
 #include <exception>
 #include <filesystem>
+#include <iomanip>
 #include <limits>
 #include <map>
 #include <random>
@@ -698,6 +699,123 @@ namespace backend::review
         return impl_->session.probeRuns(paths, out, error);
     }
 
+    bool ReviewJobs::reprocessRecord(bool valid, std::uint64_t index, ReprocessSettings settings, ReprocessResult &out,
+                                     std::string *error)
+    {
+        out = ReprocessResult{};
+        out.settings = settings;
+        ReviewSession::ReprocessInputs in;
+        processing::ProcessingCoreIdentity sessionCore;
+        {
+            // The probe's rule: no job holds a lane while the inputs are read
+            // (lock order: the lanes' mutex, then the session's).
+            std::scoped_lock lock(impl_->mutex);
+            for (const auto &lane : impl_->lanes)
+            {
+                if (lane.busy)
+                {
+                    if (error) *error = "A review job is running; reprocess the record when it finishes";
+                    return false;
+                }
+            }
+            if (!impl_->processing)
+            {
+                if (error) *error = "No processing kernel is available to reprocess with";
+                return false;
+            }
+            sessionCore = impl_->processing->activeProcessingCoreIdentity();
+            if (!impl_->session.reprocessInputs(valid, index, settings, in, error)) return false;
+        }
+
+        // Outside every lock: processBatch reads no file. It runs on a
+        // processing instance of this call's own (the bundled core, as the
+        // review session's), configured with this record's calibration, so
+        // nothing a job or another call reads is changed (#756 review).
+        services::ProcessingService local;
+        const auto localCore = local.activeProcessingCoreIdentity();
+        if (localCore != sessionCore)
+        {
+            if (error)
+                *error = "Reprocessing one record runs the bundled processing core " + localCore.version +
+                         "; the review session's active core is " + sessionCore.version + " (" + sessionCore.source + ")";
+            out = ReprocessResult{};
+            out.settings = settings;
+            return false;
+        }
+        if (in.processingPixelToMicron > 0.0) local.setPixelToMicronFactor(in.processingPixelToMicron);
+        const double f = local.getPixelToMicronFactor();
+        out.pixelToMicron = f;
+        out.emodulusRecomputed = local.eModulusLut().isLoaded();
+        {
+            std::ostringstream label;
+            label << in.settingsLabel << "; px→µm " << std::fixed << std::setprecision(4) << f << ' '
+                  << (settings == ReprocessSettings::Default ? "default"
+                      : in.pixelToMicronFromFile          ? "recorded"
+                                                          : "fallback: the file records none");
+            if (!out.emodulusRecomputed) label << "; E not recomputed (no E-LUT loaded)";
+            out.settingsLabel = label.str();
+        }
+        processing::ProcessingCoreIdentity used;
+        const auto frames = local.processBatch({in.image}, in.config, in.background, in.roi, {}, &used);
+        out.usedRecordedSettings = in.usedRecordedSettings;
+        out.coreVersion = used.version;
+        out.coreSource = used.source;
+        out.stored = in.stored;
+        // One image in: a frame without a mask means the kernel failed on it.
+        if (frames.empty() || frames.front().processedImage.empty())
+        {
+            if (error) *error = "The processing kernel could not process record " + std::to_string(index);
+            out = ReprocessResult{};
+            out.settings = settings;
+            return false;
+        }
+        std::size_t found = 0;
+        for (const auto &frame : frames)
+        {
+            // The frame-level result of an image with no object (objectCount
+            // 0, what regenerate stores for it) is not an object.
+            if (frame.validation.objectCount <= 0) continue;
+            ++found;
+            if (out.reprocessed.size() >= kReviewReprocessMaxObjects)
+            {
+                out.truncated = true;
+                continue; // still counted
+            }
+            MetricRow row = ReviewSession::metricRow(frame, f);
+            row.frameIndex = in.stored.frameIndex; // the record's frame, not the batch's local index
+            row.timestampNs = in.stored.timestampNs;
+            row.trackId = -1; // one frame: no tracking
+            row.trackFirstFrame = 0;
+            row.trackLastFrame = 0;
+            row.trackObservationCount = 0;
+            if (!out.emodulusRecomputed) row.youngsModulus = std::numeric_limits<double>::quiet_NaN();
+            out.reprocessed.push_back(row);
+        }
+        // A stored count of 0 (nothing found, or a file older than the count)
+        // is not compared.
+        out.objectCountDiffers = in.stored.objectCount > 0 && found != static_cast<std::size_t>(in.stored.objectCount);
+        // Pair them in image coordinates: processBatch reports them whatever
+        // the ROI; the stored record is placed through the file's space.
+        cv::Rect2d box(in.stored.bboxX, in.stored.bboxY, in.stored.bboxWidth, in.stored.bboxHeight);
+        cv::Point2d centre(in.stored.centroidX, in.stored.centroidY);
+        toImageSpace(in.objectCoordinates, box, centre); // known: reprocessInputs refuses Unknown
+        double best = std::numeric_limits<double>::infinity();
+        for (std::size_t i = 0; i < out.reprocessed.size(); ++i)
+        {
+            const auto &r = out.reprocessed[i];
+            const cv::Point2d c(r.centroidX, r.centroidY);
+            const bool inside = c.x >= box.x && c.x <= box.x + box.width && c.y >= box.y && c.y <= box.y + box.height;
+            if (!inside) continue;
+            const double d = std::hypot(c.x - centre.x, c.y - centre.y);
+            if (d < best)
+            {
+                best = d;
+                out.match = i;
+            }
+        }
+        return true;
+    }
+
     std::string ReviewJobs::computedCoreJson() const
     {
         const std::string current = impl_->session.filePath();
@@ -966,7 +1084,13 @@ namespace backend::review
             return 0;
         }
         const bool recordingFile = impl_->session.isRecordingFile();
-        return impl_->startOwn(ReviewJobKind::RegenerateMasks, [impl = impl_.get(), req, source, recordingFile](std::uint64_t id, auto flag) {
+        // #758: objects are validated at the open file's recorded factor with
+        // recorded settings (this fallback when it records none, as the file
+        // is shown when opened), at the default with default settings and for
+        // AVI / folder sources. The engine reads it from the source and
+        // passes it per call: the shared kernel's own factor is never set.
+        const double fallback = impl_->session.fallbackPixelToMicron();
+        return impl_->startOwn(ReviewJobKind::RegenerateMasks, [impl = impl_.get(), req, source, recordingFile, fallback](std::uint64_t id, auto flag) {
             // YOFO Review's regenerate on the shared reanalysis engine
             // (backend/review/Reanalysis.h) with its D6 options: timestamps
             // rebased to the first selected frame, a median-of-32 synthetic
@@ -983,6 +1107,8 @@ namespace backend::review
             r.syntheticBackground = req.synthesizeBackground;
             r.config = req.config;
             r.roi = req.roi;
+            r.useRecordedPixelToMicron = false;
+            r.pixelToMicron = services::ProcessingService::kDefaultPixelToMicronFactor;
             if (req.source == RegenerateSource::Avi || req.source == RegenerateSource::Folder)
             {
                 r.sourceKind = req.source == RegenerateSource::Avi ? "avi" : "folder";
@@ -1022,6 +1148,11 @@ namespace backend::review
                 // files and "not recorded" use the request's.
                 r.overrideRoi = !req.useRecordedConfig || recordingFile;
                 r.clearBackground = !req.useRecordedConfig;
+                if (req.useRecordedConfig)
+                {
+                    r.useRecordedPixelToMicron = true;
+                    r.pixelToMicron = fallback;
+                }
             }
             const auto onProgress = [&](std::uint64_t done, std::uint64_t total) {
                 if ((done % 25) == 0 || done == total)
@@ -1034,9 +1165,16 @@ namespace backend::review
                 outcome.retainedPartialPath.empty() ? "" : "; partial output kept at " + outcome.retainedPartialPath;
             if (outcome.published)
             {
+                // The factor the objects were validated at, as the reprocess
+                // label names it (#758); the output records it too.
                 std::ostringstream msg;
                 msg << req.outputPath << " (" << outcome.produced << " images: " << outcome.valid << " valid, "
-                    << (outcome.produced - outcome.valid) << " invalid)";
+                    << (outcome.produced - outcome.valid) << " invalid; px→µm " << std::fixed
+                    << std::setprecision(4) << outcome.pixelToMicron << ' '
+                    << (!r.useRecordedPixelToMicron       ? "default"
+                        : outcome.pixelToMicronRecorded ? "recorded"
+                                                        : "fallback: the file records none")
+                    << ")";
                 return Outcome{ReviewJobState::Completed, msg.str()};
             }
             if (outcome.cancelled)

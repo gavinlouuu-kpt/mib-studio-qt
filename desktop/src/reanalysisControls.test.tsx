@@ -2,7 +2,7 @@
 import {act} from "react";
 import {createRoot,type Root} from "react-dom/client";
 import {beforeEach,afterEach,it,expect,vi} from "vitest";
-import {useReanalysis,ReanalysisStatus,ReanalysisControls} from "./reanalysisControls";
+import {useReanalysis,ReanalysisStatus,ReanalysisControls,reanalysisStatusLine} from "./reanalysisControls";
 import {bridge} from "./bridge";
 import {save} from "@tauri-apps/plugin-dialog";
 vi.mock("./bridge",()=>({bridge:{reviewReanalysis:vi.fn(),reviewReanalysisStatus:vi.fn(),fetchReviewMetadata:vi.fn(),cancelOperation:vi.fn(),fetchReanalysisPreview:vi.fn()},mono8ToImageData:vi.fn()}));
@@ -66,4 +66,29 @@ it("reload recovers a native reanalysis and blocks duplicate work until reconcil
  await act(async()=>finish({state:"running",operation_id:"9007199254740993"} as never));
  vi.mocked(bridge.cancelOperation).mockResolvedValue({ok:true} as never);
  await act(async()=>model.cancel());expect(bridge.cancelOperation).toHaveBeenCalledWith("9007199254740993");
+});
+
+// #763 F18: the terminal status has no phase/progress; the line said "Reanalysis: completed /".
+it("reports a completed reanalysis with its records and output file, never an empty progress",async()=>{
+  await act(async()=>model.start("source.h5","/valid_frames/images",0,10));
+  vi.mocked(bridge.reviewReanalysisStatus).mockResolvedValue({state:"completed",operation_id:"12",final_path:"/data/run-regen.h5",objects:"45",valid_objects:"13",warnings:[],error:""} as never);
+  await act(async()=>vi.advanceTimersByTimeAsync(500));
+  const line=host.querySelector('[aria-label="Reanalysis status"] [role="status"]')!.textContent;
+  expect(line).toBe("Reanalysis: completed · 45 records (13 valid, 32 invalid)");
+  expect(line).not.toMatch(/\//);
+  expect(host.textContent).toContain("Output: /data/run-regen.h5");
+});
+it("says so when a completed reanalysis names no output file",()=>{
+  expect(reanalysisStatusLine({state:"completed",final_path:"",objects:"3"},false)).toBe("Reanalysis: completed · 3 records, but the backend named no output file");
+  expect(reanalysisStatusLine({state:"completed"},false)).toBe("Reanalysis: completed, but the backend named no output file");
+});
+it("words every state without undefined fields",()=>{
+  expect(reanalysisStatusLine({state:"running"},true)).toBe("Reanalysis: request pending");
+  expect(reanalysisStatusLine({state:"running",phase:"loading"},false)).toBe("Reanalysis: running · loading the source");
+  expect(reanalysisStatusLine({state:"running",phase:"processing",completed:"12",total:"57"},false)).toBe("Reanalysis: running · 12 of 57 frames processed");
+  expect(reanalysisStatusLine({state:"running"},false)).toBe("Reanalysis: running");
+  expect(reanalysisStatusLine({state:"completed",final_path:"/x.h5",objects:"45"},false)).toBe("Reanalysis: completed · 45 records");
+  expect(reanalysisStatusLine({state:"cancelled"},false)).toBe("Reanalysis: cancelled");
+  expect(reanalysisStatusLine({state:"failed",error:"Disk write failed"},false)).toBe("Reanalysis: failed");
+  for(const state of ["idle","running","completed","cancelled","failed"] as const)expect(reanalysisStatusLine({state},false)).not.toMatch(/undefined| \/|\/$/);
 });

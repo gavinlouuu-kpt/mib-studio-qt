@@ -274,6 +274,7 @@ impl Server {
         let mut router = Router::new()
             .route("/ws", get(upgrade))
             .route("/healthz", get(health))
+            .route("/favicon.ico", get(favicon))
             .route("/auth", get(auth))
             .route("/diagnostics", get(diagnostics::diagnostics))
             .route("/files", get(files::list))
@@ -497,6 +498,18 @@ async fn health(State(server): State<Arc<Server>>) -> Json<Value> {
         .await
         .unwrap_or(false);
     Json(json!({ "clients": server.clients(), "initialized": initialized, "stop_and_saves": server.stop_and_saves() }))
+}
+
+/// Browsers ask for `/favicon.ico` on every page load. The built UI ships none, so the `dist`
+/// fallback answered 404 each time (#763 F20): serve the UI's own icon when `dist` has one, else
+/// 204 No Content (nothing to show, nothing wrong). Public like the UI itself: no token.
+async fn favicon(State(server): State<Arc<Server>>) -> Response {
+    if let Some(dist) = &server.config().dist_dir {
+        if let Ok(bytes) = tokio::fs::read(dist.join("favicon.ico")).await {
+            return ([(axum::http::header::CONTENT_TYPE, "image/x-icon")], bytes).into_response();
+        }
+    }
+    StatusCode::NO_CONTENT.into_response()
 }
 
 /// Token check without a WebSocket (#501): a browser cannot read the 401 of a refused upgrade,
