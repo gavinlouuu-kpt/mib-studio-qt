@@ -342,6 +342,71 @@ accounting text for recording files.
 - **Core fraction:** YOFO uses the stored record's fraction, else 0.9; Qt uses
   `Monitoring/KdeCoreFraction` (default 0.9).
 
+### MIB Studio against Qt and YOFO (#512 S6, 2026-10-20)
+
+`tools/review_parity/` has a third half since #512 S6:
+`crates/mib-bridge/examples/review_parity_studio.rs` drives MIB Studio's
+facade commands over `BackendBridge`:
+
+- `load_recording`;
+- `fetch_review_charts_json`;
+- `review_export_json` metrics_csv / all, with `exportControls.tsx`'s defaults;
+- `render_review_overlay`.
+
+YOFO's half also dumps `fetch_review_frame` overlays (`yofo/overlays/`) and
+the recorded ROI for the overlay comparison. The studio half charts each file
+three times:
+
+- as opened (the live 0.4886 and 15–25);
+- with the live ring range set to the recorded one ± 5 (the D4 probe);
+- with the live factor and range set to the recorded ones, as the Qt dump does.
+  This pass produces the compared outputs.
+
+Every acceptance is checked by its effect (README there). Each studio table
+also lists every dump file and summary key its checks read (*expected
+artefacts*) and the studio run's failures and export states (*studio run*);
+an absent one is a DIFF, never a skipped check.
+
+The run of 2026-10-20 used develop `1826a00b` + S6 and the four sign-off
+inputs. `run.sh` exits 0. Outputs are in
+`/mnt/hdd/developer-data/mib-studio-qt/review-parity/out-2026-10-20-s6-r3/`.
+These are identical to Qt and YOFO:
+
+- metrics.csv;
+- Export All, apart from the chart TIFFs (30878 / 587 / 45 / 3301 files);
+- scatter point count;
+- scatter axis extents. On `population_3000`, YOFO's double padding is 1 ulp
+  off the shared kernel's long double; the 1e-12 tolerance absorbs it.
+- histogram bins and range.
+
+Identical to YOFO: the density cells and the 30 ROI-off overlay renders per
+experiment file. Only a point within 1e-9 of a cell edge may sit in the cell
+across that edge; every other point must be in its own cell. No point of the
+sign-off inputs is that close to an edge.
+
+Accepted until S13 (plan decisions):
+
+- **D2:** the ROI-on overlays differ only where each half painted exactly its
+  own style's band at the recorded ROI, every band pixel in its colour.
+  MIB Studio draws yellow at thickness 1; YOFO draws red at thickness 3, which
+  OpenCV paints as a 5 px band with rounded outer corners (`compare.roi_band`,
+  checked against `cv2.rectangle` goldens).
+- **D3:** the as-opened px→µm on the two 0.25 µm/px fixtures (live 0.4886), with
+  the area extents scaled by (0.4886 / 0.25)².
+- **D4:** the probe's bins over [10, 30]. As opened, D4 is not exercised: every
+  input records 15–25, the live default.
+- **D5:** Export All carries `scatter_plot.tiff` and `histogram.tiff`.
+- **D10:** the histogram y axis. This is the coordinator's ruling of 2026-10-20
+  (named D6 in the ruling; the plan's D6 is the regenerate semantics).
+  MIB Studio's inline tab tops it at the largest bin
+  (`components/ReviewCharts.tsx` `maxBin`: 64 on the 512x96 run). Qt applies
+  `applyNiceNumbers()` (80), and YOFO uses `ceil(1.1 × max)` (71). This is
+  display headroom only; the bins are identical.
+
+The Qt ↔ YOFO table is unchanged from 2026-10-04, except for the accounting
+text. Qt's status line now carries the accounting suffix too, so that row
+passes instead of being an accepted difference.
+
 ## Updates (PR 6)
 
 `src-tauri/src/review_update.rs` (review-only feature, `tauri-plugin-updater`

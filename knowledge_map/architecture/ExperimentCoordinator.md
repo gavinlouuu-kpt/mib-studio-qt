@@ -69,6 +69,12 @@
      run only); publish `Active`. Before step 2 a multi-image series run
      switches the realtime mode `AsyncBatch -> Inline` (so the frozen
      snapshot records the mode actually used); the finalization restores it.
+     Right before `startExperiment()` it calls
+     `ProcessingService::setMonitoringRunGeneration(startGeneration)`, so the
+     monitoring ring tags the run's rows (bridge ABI 41; reset to 0 if the
+     provider start then fails), and at Active it calls
+     `MonitoringCellStore::beginRun(startGeneration)`, which drops the live
+     cell strip and every pin ([[../services/MonitoringCellStore]]).
 - `requestStop(cancelled)` returns `ExperimentStopOutcome::Accepted` and
   hands the finalization to the worker; `Busy` while Starting/Stopping or a
   stop is already queued; `NotActive` when there is no run. Completion is
@@ -139,7 +145,8 @@ append only, never renumber.
 1. Publish `Stopping` (or `Failed` for a fatal save error).
 2. `flushBufferedFrames(hdf5)` + `finishFlush()`: drain the async write
    queue; the writer thread has stopped afterwards.
-3. `endExperiment()`; `resetRealtimeMetrics()`.
+3. `endExperiment()`, then `setMonitoringRunGeneration(0)` (later monitoring
+   rows are "outside a run"); `resetRealtimeMetrics()`.
 4. Remainder that arrived between 2 and 3 goes through `flushBufferedFrames`
    + `finishFlush` again so `persistenceCommitted` credits it (a direct
    `appendFrames` left a clean run labelled IntentionallyPartial; bench,

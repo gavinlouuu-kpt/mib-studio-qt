@@ -19,6 +19,7 @@
 #include "backend/recording/RunProvenanceRecord.h"
 #include "backend/services/AutofocusService.h"
 #include "backend/services/CaptureService.h"
+#include "backend/services/MonitoringCellStore.h"
 #include "backend/services/RfGeneratorService.h"
 #include "backend/services/StageService.h"
 #include "backend/services/SyringePumpService.h"
@@ -1433,6 +1434,10 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
     // Pulse records from before the run (manual/periodic test pulses, a
     // previous run's tail) are not this experiment's: discard them.
     (void)backend_.trigger().drainEvents();
+    // Live cell images (#716 A6a): frames entering processing from here on carry this run's start
+    // generation to their monitoring rows (an atomic read at the frame's entry, no hot-path lock);
+    // 0 again when the run stops accumulating or this start is rolled back.
+    proc.setMonitoringRunGeneration(run.startGeneration);
     proc.startExperiment();
     // The shared lifecycle must own a live consumer. Qt previously started it
     // from a visible tab; a headless/Tauri Start otherwise finalized zero work.
@@ -1482,6 +1487,7 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
             // Roll back as for a provenance failure; the results source is a
             // start prerequisite, so the outcome is NotReady with the reason.
             proc.endExperiment();
+            proc.setMonitoringRunGeneration(0);
             hdf5.closeFile();
             std::error_code ec;
             std::filesystem::remove(path, ec);
@@ -1497,6 +1503,9 @@ ExperimentStartResult ExperimentCoordinator::start(const ExperimentStartRequest&
         SPDLOG_INFO("ExperimentCoordinator: PL results from '{}' (run id {})", provider->name(), runId);
     }
     activeRun_ = run;
+    // A run start is a capture change for the live cell store: its strip is cleared and its pins,
+    // which belong to the latest run, are dropped now (#716 A6a review 3).
+    if (auto* cells = backend_.monitoringCells()) cells->beginRun(run.startGeneration);
     wallHold_ = std::move(wallHold); // released at the terminal status of finalizeLocked
     lastRun_ = run;
     liveKdeCoreJson_.clear();
@@ -1805,6 +1814,7 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
     }
     // 3. Stop accumulating.
     if (!proc.endExperiment()) flushOk = false;
+    proc.setMonitoringRunGeneration(0); // later monitoring rows are outside a run (#716 A6a)
     proc.resetRealtimeMetrics();
     // 4. Remainder that arrived between 2 and 3 goes through the same flush
     // path so the accounting credits it as committed (bench, 2026-09-08).

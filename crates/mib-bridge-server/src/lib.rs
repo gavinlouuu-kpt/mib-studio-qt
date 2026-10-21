@@ -187,6 +187,10 @@ const CONTROL_COMMANDS: &[&str] = &[
     // the axis (Stop is always accepted, ADR 0013 §5).
     "stage_connect", "stage_disconnect", "stage_move_to", "stage_move_by", "stage_set_zero",
     "stage_apply_profile",
+    // Live cell pins (#716 A6a, ABI 41): one shared, bounded set per instrument, so a viewer could
+    // fill it (or clear the operator's) under the controller. Reading the strip, the pins and
+    // their images stays open to every client.
+    "monitoring_cell_pin", "monitoring_cell_unpin", "monitoring_cell_clear_pins",
 ];
 
 impl Server {
@@ -658,6 +662,18 @@ mod stage_control_tests {
         }
         assert!(!CONTROL_COMMANDS.contains(&"stage_stop"), "any client may stop the stage");
         assert!(!CONTROL_COMMANDS.contains(&"fetch_stage_status"), "viewers may read the status");
+    }
+
+    // Live cell images (#716 A6a, ABI 41): the pins are one shared, bounded set, so changing them
+    // needs control; the strip, the pins and their images are reads every client may use.
+    #[test]
+    fn live_cell_pins_are_control_only_but_reads_are_not() {
+        for cmd in ["monitoring_cell_pin", "monitoring_cell_unpin", "monitoring_cell_clear_pins"] {
+            assert!(CONTROL_COMMANDS.contains(&cmd), "{cmd} must be a CONTROL command");
+        }
+        for cmd in ["fetch_monitoring_cells", "fetch_monitoring_cell_packet", "fetch_monitoring_snapshot"] {
+            assert!(!CONTROL_COMMANDS.contains(&cmd), "{cmd} is a read: viewers may use it");
+        }
     }
 }
 

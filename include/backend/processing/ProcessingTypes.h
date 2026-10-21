@@ -164,6 +164,10 @@ struct ProcessedFrame {
     uint64_t previewStoreGeneration{0}, previewCaptureSession{0};
     std::string previewRecipeSha256;
     cv::Rect previewRoi;
+    // Host-only monitoring identity (#716 A6a review 3): the run and the
+    // capture epoch decided when the frame entered processing, carried to its
+    // monitoring rows (captureEpoch 0: never a live cell). Not persisted.
+    uint64_t monitoringRunGeneration{0}, monitoringCaptureEpoch{0};
     uint64_t index{0};
     uint64_t timestampNs{0};
     // Host monotonic acquisition stamp carried from playback::Frame (0 if unknown).
