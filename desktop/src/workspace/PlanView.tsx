@@ -47,6 +47,11 @@ export interface PlanViewProps {
   /** The calibration record in effect as the page last read it, and the calibration gate (#716 A4b).
    *  Absent: nothing is declared and the identity card says it is not read. */
   calibration?: PlanCalibration;
+  /** The recording this page has open in the classic Review (App's review metadata: its own Open
+   *  recording, Summary's Open in Review, or one restored at start-up); "" or absent: none. Start is
+   *  unavailable meanwhile (#716 A7b). Another client's open file is not known here: the backend's
+   *  refusal says so at Start. */
+  reviewOpen?: string;
 }
 
 export { startBlocks, type StartBlock } from "./planParts";
@@ -82,13 +87,13 @@ export function PlanView(props: PlanViewProps) {
   return props.plan.draft.format === "queue" ? <QueuePlan {...props} /> : <SinglePlan {...props} />;
 }
 
-function SinglePlan({ plan, lockedReason, verdict, blockers, cameraMode, onCameraMode, confirmation, onShowLive, calibration }: PlanViewProps) {
+function SinglePlan({ plan, lockedReason, verdict, blockers, cameraMode, onCameraMode, confirmation, onShowLive, calibration, reviewOpen }: PlanViewProps) {
   const { draft, started, starting } = plan;
   const row = draft.rows[0];
   // The calibration record shown as in effect is the one Start declares (#716 A4b).
   const build = buildStartRequest(draft, 0, SINGLE_SAMPLE_RUN_INDEX, declaredCalibration(calibration));
   const locked = !!started || starting;
-  const blocks = startBlocks({ started: started?.outcome ?? null, notStarted: started?.code !== undefined, starting, verdict, blockers, lockedReason, issues: build.issues, cameraReason: cameraMode?.startReason, controlHeld: plan.queue.controlHeld });
+  const blocks = startBlocks({ started: started?.outcome ?? null, notStarted: started?.code !== undefined, starting, verdict, blockers, lockedReason, issues: build.issues, cameraReason: cameraMode?.startReason, controlHeld: plan.queue.controlHeld, reviewOpen });
   const invalid = plan.result?.kind === "refused" ? invalidRequestReason(plan.result.message, plan.result.code) : null;
   // The calibration mismatch is not the sheet's: it is said beside the calibration record.
   const calibrationRefusal = invalid && calibrationChanged(invalid) ? invalid : null;

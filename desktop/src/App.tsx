@@ -1818,7 +1818,9 @@ export default function App() {
               live: { snapshot: workspaceLiveVisible ? monSnapshot : null, running, experimentActive: expActive, hostProcessing,
                 subscribeFrames: subscribeAlignFrames, onStopAcquisition: onStopCamera, onStopRun: stopForLive },
               // O5/O6 Summary (A7b): Open in Review, the classic Review tab with the run's file.
-              summary: { review: { reason: summaryReviewReason, open: openInReview } } }}
+              summary: { review: { reason: summaryReviewReason, open: openInReview } },
+              // A recording open in the classic Review blocks the Plan's Start (the backend refuses it).
+              reviewOpen: reviewFilePath }}
           />
         </div>
       )}

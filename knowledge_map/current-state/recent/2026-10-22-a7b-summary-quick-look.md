@@ -23,7 +23,10 @@ rulings:
   only), Adjust next (Align or Plan, navigation only), Continue (confirms the finalized row's close,
   then shows the Plan), Open in Review (the classic Review tab with the file, through App's
   `loadReviewSource(path)`; not during a run). A viewer's acting decisions are disabled with the
-  shared control block.
+  shared control block. Coordinator rulings on #791: Continue stays disabled while a row runs;
+  while this page has a recording open in the classic Review, the Plan's Start (single and queue)
+  shows "A recording is open in Review · close it there (Review → Close File) to start" and sends
+  nothing, from App's review metadata (another client's open file shows as the backend's refusal).
 - **Reads, never polled** (`useQuickLook`): on showing the Summary, when the plan's closed runs or
   the reference change, on the idle transition for a deferral, and on Refresh.
 - **No client arithmetic**: `quickLookModel.test.ts` reads the model, the view and the hook and

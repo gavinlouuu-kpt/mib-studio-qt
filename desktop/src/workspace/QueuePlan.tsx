@@ -52,7 +52,7 @@ const rowFile = (st: QueueRow) => st.end?.outputPath || st.outputPath || st.atte
 
 type NoticeText = { tone: "confirmed" | "warn" | "blocked" | "unknown" | "info"; title: string; text: string };
 
-export function QueuePlan({ plan, lockedReason, verdict, blockers, cameraMode, onCameraMode, confirmation, calibration }: PlanViewProps) {
+export function QueuePlan({ plan, lockedReason, verdict, blockers, cameraMode, onCameraMode, confirmation, calibration, reviewOpen }: PlanViewProps) {
   const { draft, queue } = plan;
   const q = queue.state;
   const order = draft.rows.map((r) => r.ref);
@@ -205,7 +205,7 @@ export function QueuePlan({ plan, lockedReason, verdict, blockers, cameraMode, o
 
   const blocks: StartBlock[] = startable && curBuild ? queueStartBlocks() : [];
   function queueStartBlocks(): StartBlock[] {
-    const out = startBlocks({ started: null, starting: pending === "start", verdict, blockers, lockedReason, issues: curBuild!.issues, cameraReason: cameraMode?.startReason })
+    const out = startBlocks({ started: null, starting: pending === "start", verdict, blockers, lockedReason, issues: curBuild!.issues, cameraReason: cameraMode?.startReason, reviewOpen })
       .map((b) => (b.id === "sheet" ? { ...b, title: `Start is unavailable · ${curRow!.ref} has ${curBuild!.issues.length === 1 ? "1 issue" : `${curBuild!.issues.length} issues`}` } : b));
     if (!queue.controlHeld) out.push(CONTROL_BLOCK);
     if (!queue.status?.valid) out.push({ id: "status", tone: "unknown", title: "Start is unavailable · run status not read yet", text: "The queue follows each run in the experiment status, which is read every half second." });

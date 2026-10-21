@@ -36,7 +36,7 @@ let runStart = vi.fn(async (_json: string): Promise<PlanStartResult> => ({ kind:
 const onExit = vi.fn(), onStage = vi.fn();
 
 let planRef: PlanController | null = null;
-function Harness({ over = {}, lockedReason = "", controlHeld = true }: { over?: Partial<WorkspaceProps>; lockedReason?: string; controlHeld?: boolean }) {
+function Harness({ over = {}, lockedReason = "", controlHeld = true, reviewOpen = "" }: { over?: Partial<WorkspaceProps>; lockedReason?: string; controlHeld?: boolean; reviewOpen?: string }) {
   const plan = usePlan(runStart, { controlHeld });
   planRef = plan;
   const [view, setView] = useState<ExperimentSubView>("Plan");
@@ -45,12 +45,12 @@ function Harness({ over = {}, lockedReason = "", controlHeld = true }: { over?: 
     preflightInput: READY_INPUT, zStage: null, signature: "sig", confirmedFor: "", onConfirm: () => {}, confirmLockedReason: "",
     experimentActive: false, controlHeld, onRefreshChecks: () => {}, onOpenSetup: () => {},
     align: { facts: FACTS, subscribeFrames: () => () => {}, onSwitchMode: async () => {}, writeRoi: vi.fn(), lockedReason: "" },
-    experiment: { plan, lockedReason, view, onView: setView, live: { snapshot: null, running: false, experimentActive: false, hostProcessing: true, subscribeFrames: () => {}, onStopAcquisition: async () => {}, onStopRun: async () => ({ ok: false, message: "not in this test" }) } }, ...over,
+    experiment: { plan, lockedReason, view, onView: setView, reviewOpen, live: { snapshot: null, running: false, experimentActive: false, hostProcessing: true, subscribeFrames: () => {}, onStopAcquisition: async () => {}, onStopRun: async () => ({ ok: false, message: "not in this test" }) } }, ...over,
   };
   return <Workspace {...props} />;
 }
 
-const render = (props: { over?: Partial<WorkspaceProps>; lockedReason?: string; controlHeld?: boolean } = {}) =>
+const render = (props: { over?: Partial<WorkspaceProps>; lockedReason?: string; controlHeld?: boolean; reviewOpen?: string } = {}) =>
   act(async () => root.render(<StrictMode><Harness {...props} /></StrictMode>));
 const advance = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
 const $ = (id: string) => host.querySelector<HTMLElement>(`[data-testid=${id}]`);
@@ -268,6 +268,18 @@ describe("Start run follows Prepare and the classic Start's locks", () => {
     await render({ lockedReason: "Camera must be running before starting an experiment" });
     expect(startButton()!.disabled).toBe(true);
     expect($("plan-blocked-locked")!.textContent).toContain("Camera must be running before starting an experiment.");
+  });
+
+  it("A7b ruling: a recording open in the classic Review blocks Start run with its own words; nothing is sent; closed, Start is back", async () => {
+    await render({ reviewOpen: "/data/s1.h5" });
+    expect(startButton()!.disabled).toBe(true);
+    expect($("plan-blocked-review")!.textContent).toContain("A recording is open in Review · close it there (Review → Close File) to start");
+    expect($("plan-blocked-review")!.textContent).toContain("/data/s1.h5");
+    await act(async () => startButton()!.click());
+    expect(runStart).not.toHaveBeenCalled();
+    await render({ reviewOpen: "" });
+    expect($("plan-blocked-review")).toBeNull();
+    expect(startButton()!.disabled).toBe(false);
   });
 });
 

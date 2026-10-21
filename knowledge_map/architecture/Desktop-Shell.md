@@ -700,11 +700,17 @@ of the quick controls and the sample sheet, until the kit has them).
     S1 · load the tube again"; a single-sample plan has none. **Adjust next**: Align (the
     workspace's stage) or the Plan, navigation only. **Continue · Next sample**: confirms the
     finalized row's close (the queue's Confirm closed) and shows the Plan, where the next Start
-    waits; otherwise it shows the Plan; disabled while a row runs. **Open in Review**: App's
+    waits; otherwise it shows the Plan; disabled while a row runs (ruling: stopping stays on Next
+    sample in the Plan and Live; the Summary is for closed runs). **Open in Review**: App's
     classic Review tab with the file (`loadReviewSource(path)`, `load_recording`, the same path as
     the classic "Open recording"), leaving the workspace; unavailable during a run, and its title
-    says a file open in Review blocks Start until Review → Close File (D1 (a), #722). B5 (the
-    review mounted in Studio) is not built. A viewer's Repeat, Continue (when it confirms) and Open
+    says a file open in Review blocks Start until Review → Close File (D1 (a), #722). While this
+    page has a recording open in the classic Review (App's review metadata: its own Open recording,
+    Open in Review, or one restored at start-up; `PlanViewProps.reviewOpen`), the Plan's Start,
+    single and queue, shows the `startBlocks` entry "A recording is open in Review · close it there
+    (Review → Close File) to start" and sends nothing; Close File lifts it (coordinator ruling on
+    #791, option (c)). Another client's open file is not known to this page: the backend's refusal
+    at Start says it. No backend call was added. B5 (the review mounted in Studio) is not built. A viewer's Repeat, Continue (when it confirms) and Open
     in Review are disabled with the shared control block (`controlBlock`); reads, Adjust and the
     reference choice are not.
   - Not in this step: live medians (a later A7c, if wanted), isoelastic curves, tests, fits, CV,
@@ -715,7 +721,9 @@ of the quick controls and the sample sheet, until the kit has them).
     viewer's gating; a single sample), `quickLookModel.test.ts` (formatting, the closed runs, the
     no-arithmetic pin), `queueModel.test.ts` (Repeat sample and the identity rules),
     `navigation.test.tsx` (the whole App: the quick look read on S1's close, Repeat S1 started as
-    run 2 with the same sample_ref, Open in Review's `load_recording`).
+    run 2 with the same sample_ref, Open in Review's `load_recording`; a recording opened in Review
+    blocks the Plan's Start, which sends nothing, until Close File), `PlanView.test.tsx` (the
+    single sample's Start block).
 - **Gate (P1, extended for P3).** `workspace/navigation.test.tsx` runs the whole App over a
   mocked transport, desktop and PZ7035: opening the workspace, visiting every stage, leaving,
   coming back and Camera setup add no command to the idle app's steady state except two reads,

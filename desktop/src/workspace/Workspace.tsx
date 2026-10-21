@@ -70,6 +70,9 @@ export interface WorkspaceProps extends Omit<PrepareViewProps, "readiness" | "re
     /** O5/O6 Experiment · Summary (A7b): Open in Review (App's classic Review tab with a file) and
      *  the read (tests). Adjust next's Align is this workspace's stage 1. */
     summary?: Omit<ExperimentViewProps["summary"], "onAlign">;
+    /** The recording this page has open in the classic Review ("" or absent: none): the Plan's Start
+     *  is unavailable meanwhile (#716 A7b). */
+    reviewOpen?: string;
   };
 }
 
@@ -131,7 +134,7 @@ export function Workspace({ brand, source, method, stage, onStage, onExit, servi
       ) : stage === 2 ? (
         <ExperimentView plan={experiment.plan} lockedReason={experiment.lockedReason} view={experiment.view} onView={experiment.onView}
           cameraMode={experiment.cameraMode} onCameraMode={experiment.onCameraMode} live={experiment.live}
-          summary={{ ...(experiment.summary ?? NO_REVIEW), onAlign: () => onStage(1) }}
+          summary={{ ...(experiment.summary ?? NO_REVIEW), onAlign: () => onStage(1) }} reviewOpen={experiment.reviewOpen}
           verdict={verdict} blockers={confirmBlockers(report)} confirmation={confirmation} calibration={planCalibration} />
       ) : (
         <div className="ws-view" data-testid={`workspace-${WORKSPACE_STAGES[stage]?.toLowerCase() ?? "stage"}`}>

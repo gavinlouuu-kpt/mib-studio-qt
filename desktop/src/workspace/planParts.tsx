@@ -31,7 +31,7 @@ export type StartBlockers = { tone: "blocked" | "unknown" | "warn"; lines: strin
 
 /** Why Start run is unavailable, each as its own Notice next to the button. */
 export interface StartBlock {
-  id: "started" | "starting" | "prepare" | "locked" | "sheet" | "control" | "status" | "paused" | "camera";
+  id: "started" | "starting" | "prepare" | "locked" | "sheet" | "control" | "status" | "paused" | "camera" | "review";
   tone: "blocked" | "unknown" | "warn" | "info";
   title: string;
   text: string;
@@ -70,7 +70,13 @@ export function controlBlock(action: string): StartBlock {
 /** A viewer's Start (single sample or queue): disabled, and nothing is sent. */
 export const CONTROL_BLOCK: StartBlock = controlBlock("Start");
 
-export function startBlocks(p: { started: "started" | "unknown" | null; notStarted?: boolean; starting: boolean; verdict: Verdict; blockers: StartBlockers; lockedReason: string; issues: readonly PlanIssue[]; cameraReason?: string; controlHeld?: boolean }): StartBlock[] {
+/** The Start block while this page has a recording open in the classic Review (#716 A7b ruling): the
+ *  backend refuses every Start while one is open (D1 (a), #722). */
+export const REVIEW_OPEN_TITLE = "A recording is open in Review · close it there (Review → Close File) to start";
+
+export function startBlocks(p: { started: "started" | "unknown" | null; notStarted?: boolean; starting: boolean; verdict: Verdict; blockers: StartBlockers; lockedReason: string; issues: readonly PlanIssue[]; cameraReason?: string; controlHeld?: boolean;
+  /** The recording this page has open in the classic Review ("" or absent: none). */
+  reviewOpen?: string }): StartBlock[] {
   const out: StartBlock[] = [];
   if (p.controlHeld === false && !p.started) out.push(CONTROL_BLOCK);
   if (p.started === "started") out.push({ id: "started", tone: "info", title: "This plan's run has started", text: "Its identity is recorded in that run. A new plan mints a new experiment id." });
@@ -82,6 +88,8 @@ export function startBlocks(p: { started: "started" | "unknown" | null; notStart
   if (p.verdict.word === "Not ready")
     out.push({ id: "prepare", tone: p.blockers?.tone ?? "blocked", title: `Start is unavailable · Prepare: ${p.verdict.title}`, text: p.blockers?.lines.length ? `${p.blockers.lines.join(". ")}.` : p.verdict.detail });
   if (p.lockedReason) out.push({ id: "locked", tone: "info", title: "Start is unavailable", text: `${p.lockedReason.replace(/\.$/, "")}.` });
+  if (p.reviewOpen && !p.started) out.push({ id: "review", tone: "blocked", title: REVIEW_OPEN_TITLE,
+    text: `${p.reviewOpen} is open in the classic Review, and the backend refuses a Start while a recording is open there. Nothing is sent.` });
   if (p.cameraReason) out.push({ id: "camera", tone: "blocked", title: "Start is unavailable · camera mode", text: `${p.cameraReason}. Show the experiment window first (the button above).` });
   if (p.issues.length) {
     const lines = p.issues.map(issueLine);
