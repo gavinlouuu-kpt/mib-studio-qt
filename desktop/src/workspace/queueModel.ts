@@ -29,6 +29,14 @@
 // and the queue sends nothing more for it. A later status that shows the row's own run ending still
 // applies (its own generation and file), so a run that ended by itself is followed to its close.
 //
+// Repeat sample (#716 A7b, the A7 ruling 8): a closed (or finalized, awaiting its confirmation) row
+// is re-queued as the next run of the same sample_ref. Its run is kept in `history`, its attempts stay
+// (the row stays locked), and the row becomes the current one again, so its Start sends the same
+// sample_ref with `nextRunIndex` (the index rules above are unchanged: an index is never sent twice)
+// and picks a new file. Only between samples: never while a Start, a run or a stop is in flight, never
+// ahead of a failure that waits for the operator's retry, skip or end, and one repeat at a time (a
+// second, of a row further down, would not be the next run). It sends nothing.
+//
 // A lost controlling client pauses the queue (`paused`): every action is refused until the
 // operator resumes it, and resuming sends nothing. Status observations still apply while paused,
 // because they are backend facts (the server's safe stop, #711, may finalize the run meanwhile).
@@ -88,6 +96,16 @@ export interface QueueFailure {
   text: string;
 }
 
+/** A run of the row the operator re-queued with Repeat sample: its file was closed and confirmed. */
+export interface ClosedRun {
+  runIndex: number;
+  /** The file the backend wrote and closed (status.output_path). */
+  path: string;
+  end: RowEnd;
+  /** The run's start_generation, as the status reported it. */
+  generation: string | null;
+}
+
 export interface QueueRow {
   phase: RowPhase;
   attempts: RunAttempt[];
@@ -99,6 +117,8 @@ export interface QueueRow {
   stopPending: boolean;
   /** Where a cancelled Start goes back to. */
   before: { phase: RowPhase; failure: QueueFailure | null } | null;
+  /** The row's earlier closed runs, oldest first, kept by Repeat sample (absent before one). */
+  history?: readonly ClosedRun[];
 }
 
 export interface QueueState {
@@ -183,6 +203,8 @@ export type QueueEvent =
   | { type: "skip"; ref: string }
   /** The operator ended the queue. */
   | { type: "end" }
+  /** Repeat sample: re-queue a closed (or finalized) row as the next run of its sample_ref (sends nothing). */
+  | { type: "repeat"; ref: string }
   /** The controlling client was lost. */
   | { type: "pause"; reason: string }
   /** The operator resumed the paused queue (sends nothing). */
@@ -377,6 +399,16 @@ export function reduceQueue(q: QueueState, e: QueueEvent, order: readonly string
       if (row.phase !== "refused" && row.phase !== "unknown" && row.phase !== "failed" && row.phase !== "interrupted") return q;
       return withRow(q, e.ref, { ...row, phase: "skipped", failure: null });
     }
+    case "repeat": {
+      if (repeatReason(order, q, e.ref) !== "") return q;
+      const row = rowState(q, e.ref);
+      const last = row.attempts[row.attempts.length - 1];
+      const closed: ClosedRun = { runIndex: last.runIndex, path: row.end!.outputPath, end: row.end!, generation: last.generation };
+      return withRow(q, e.ref, {
+        ...row, phase: "planned", end: null, outputPath: "", failure: null, before: null, stopPending: false,
+        history: [...(row.history ?? []), closed],
+      });
+    }
     case "end": {
       if (q.paused || q.ended || !canEnd(order, q)) return q;
       return { ...q, ended: true };
@@ -404,6 +436,41 @@ export function canEnd(order: readonly string[], q: QueueState): boolean {
     || (row.phase === "running" && row.failure?.step === "stop");
 }
 
+/** Why Repeat sample is unavailable for this row ("" when it may be pressed): the row's run must be
+ *  closed by the backend (finalized, the current row, or closed) and the queue between samples. */
+export function repeatReason(order: readonly string[], q: QueueState, ref: string): string {
+  if (q.ended) return "the queue was ended: a new plan mints a new experiment id";
+  if (q.paused) return "the queue is paused: resume it in the Plan or Live first";
+  if (!order.includes(ref)) return `${ref} is not in the sheet`;
+  const row = rowState(q, ref);
+  const last = row.attempts[row.attempts.length - 1];
+  if (!row.end || !last || last.outcome !== "started" || (row.phase !== "finalized" && row.phase !== "closed"))
+    return `${ref}'s run is not closed`;
+  if (row.stopPending || Object.values(q.rows).some((r) => r.phase === "starting")) return "a Start or a stop is pending";
+  const cur = currentIndex(order, q);
+  if (row.phase === "finalized") return cur >= 0 && order[cur] === ref ? "" : `${ref}'s run is not the queue's current row`;
+  if (cur < 0) return "";
+  const at = rowState(q, order[cur]);
+  // One repeat at a time: a second would not be the next run (the sheet order decides which row is next).
+  if (at.history?.length) return `the repeat of ${order[cur]} is queued: start it, or end the queue, first`;
+  if (at.phase === "planned" || at.phase === "refused") return "";
+  return `${order[cur]} is ${rowChip(at, q.ended).text.toLowerCase()}: repeat a sample between samples`;
+}
+
+/** The queue's closed runs in run order: each row's earlier runs (Repeat sample) and its own run
+ *  once the backend finalized it (awaiting the operator's confirmation, or closed). */
+export function queueClosedRuns(order: readonly string[], q: QueueState): { ref: string; run: ClosedRun; confirmed: boolean }[] {
+  const out: { ref: string; run: ClosedRun; confirmed: boolean }[] = [];
+  for (const ref of order) {
+    const row = rowState(q, ref);
+    for (const run of row.history ?? []) out.push({ ref, run, confirmed: true });
+    const last = row.attempts[row.attempts.length - 1];
+    if ((row.phase === "finalized" || row.phase === "closed") && row.end && last)
+      out.push({ ref, run: { runIndex: last.runIndex, path: row.end.outputPath, end: row.end, generation: last.generation }, confirmed: row.phase === "closed" });
+  }
+  return out.sort((a, b) => a.run.runIndex - b.run.runIndex);
+}
+
 // ---- presentation (pure) -------------------------------------------------------------------------
 
 export type ChipTone = "confirmed" | "warn" | "blocked" | "unknown" | "unsupported" | "info" | "neutral";
@@ -421,7 +488,8 @@ const interruptedText = (row: QueueRow): string => (stopMismatched(row) ? "Inter
 /** A row's state as the queue table shows it. */
 export function rowChip(row: QueueRow, ended: boolean): { tone: ChipTone; text: string } {
   switch (row.phase) {
-    case "planned": return ended ? { tone: "neutral", text: "Not run" } : { tone: "neutral", text: "Planned" };
+    case "planned": return ended ? { tone: "neutral", text: row.history?.length ? "Repeat not run" : "Not run" }
+      : { tone: "neutral", text: row.history?.length ? "Repeat planned" : "Planned" };
     case "starting": return { tone: "info", text: "Starting" };
     case "refused": return { tone: "blocked", text: "Not started" };
     case "unknown": return notStarted(row) ? { tone: "unknown", text: "Not started · file may exist" } : { tone: "unknown", text: "Unknown · reply lost" };

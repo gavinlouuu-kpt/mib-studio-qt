@@ -1122,11 +1122,13 @@ export default function App() {
     setReviewMeta(null);setMetricsPage(null);setReviewPath("");setReviewing(false);setReviewIndex("0");setReviewImgIndex(0);
     const canvas=reviewCanvasRef.current;if(canvas)canvas.getContext("2d")?.clearRect(0,0,canvas.width,canvas.height);
   },[]);
-  const onSelectHdf = useCallback(async () => {
+  // Opens a recording in the classic Review: the file the operator picks, or `given` (the workspace
+  // Summary's Open in Review, #716 A7b).
+  const loadReviewSource = useCallback(async (given?: string) => {
     if(reviewSourcePending.current)return;reviewSourcePending.current=true;setReviewSourceBusy(true);
     const sourceGeneration=++reviewSourceGeneration.current;
     try {
-    const picked = await open({ title: "Open recording", filters: H5_FILTER, multiple: false });
+    const picked = given ?? await open({ title: "Open recording", filters: H5_FILTER, multiple: false });
     if (typeof picked !== "string") return;
     ++metricsGeneration.current;
     framePulls.current.invalidate("review");
@@ -1154,6 +1156,7 @@ export default function App() {
     } finally {reviewSourcePending.current=false;setReviewSourceBusy(false);}
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [append, applyEvents, noteEventLoss, range.earliest, stopLoop, onScrub, loadMetricsPage, drawReviewImage,clearReviewSource]);
+  const onSelectHdf = useCallback(() => loadReviewSource(), [loadReviewSource]);
 
   useEffect(()=>{
     if(!ready||tab!=="review"||!recoveredReview.current||!reviewMeta?.file_open)return;
@@ -1381,6 +1384,18 @@ export default function App() {
   const openWorkspace = useCallback(() => { workspaceStageRef.current = 0; setWorkspaceStage(0); }, []);
   // Leaving the workspace never acts: a mode the workspace changed is shown, not reverted.
   const exitWorkspace = useCallback(() => setWorkspaceStage(null), []);
+  // The workspace Summary's Open in Review (#716 A7b): the classic Review tab with the run's file. It
+  // loads the file there (`load_recording`, a control command: a viewer's button is disabled), and
+  // never during a run. While a file is open in Review the backend refuses Start (D1 (a), #722).
+  const summaryReviewReason = !ready ? "the backend is not initialized"
+    : expActive ? "a run is in progress: open the file in Review between runs (a file open in Review blocks Start)"
+    : reviewSourceBusy ? "the classic Review is opening a file" : "";
+  const openInReview = useCallback((path: string) => {
+    if (!controlHeld || expActive || reviewSourcePending.current) return;
+    setTab("review");
+    exitWorkspace();
+    void loadReviewSource(path);
+  }, [controlHeld, expActive, exitWorkspace, loadReviewSource]);
   const modeNotice = workspaceStage === null ? classicModeNotice({
     stale: classicModeStale, tab, instrumentModes, instrumentMode: instrument?.mode?.name, geometry: cameraGeometry,
     windowPlaced: cameraWin.placed, expActive, runFrozen: !!instrument?.ring?.run_frozen,
@@ -1801,7 +1816,11 @@ export default function App() {
               // O4 Live: the monitoring snapshot polled while it is shown, the live preview's frames,
               // and the two separate stops (the classic Stop Camera; experiment_stop naming the run).
               live: { snapshot: workspaceLiveVisible ? monSnapshot : null, running, experimentActive: expActive, hostProcessing,
-                subscribeFrames: subscribeAlignFrames, onStopAcquisition: onStopCamera, onStopRun: stopForLive } }}
+                subscribeFrames: subscribeAlignFrames, onStopAcquisition: onStopCamera, onStopRun: stopForLive },
+              // O5/O6 Summary (A7b): Open in Review, the classic Review tab with the run's file.
+              summary: { review: { reason: summaryReviewReason, open: openInReview } },
+              // A recording open in the classic Review blocks the Plan's Start (the backend refuses it).
+              reviewOpen: reviewFilePath }}
           />
         </div>
       )}

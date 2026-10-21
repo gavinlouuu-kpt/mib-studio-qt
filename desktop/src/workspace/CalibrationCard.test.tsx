@@ -36,9 +36,9 @@ const FACTS: AlignFacts = {
 };
 const PLAN: PlanController = {
   draft: newPlanDraft("3f2b8c1e-9a4d-4e6f-8b21-0c5d7e9f1a2b"), edit: () => {}, operators: [], result: null, started: null, starting: false,
-  start: async () => null, newPlan: () => {},
+  start: async () => null, newPlan: () => {}, reference: null, setReference: () => {},
   queue: { state: newQueue(), pending: null, controlHeld: true, status: null, startCurrent: async () => {}, stopCurrent: async () => {},
-    confirmClosed: () => {}, skip: () => {}, end: () => {}, resume: () => {} },
+    confirmClosed: () => {}, skip: () => {}, end: () => {}, resume: () => {}, repeat: () => {} },
 };
 const props = (over: Partial<WorkspaceProps> = {}): WorkspaceProps => ({
   brand: "MIB Studio", source: "Mock camera", method: "", stage: 0, onStage: () => {}, onExit: () => {}, serviceMode: false,

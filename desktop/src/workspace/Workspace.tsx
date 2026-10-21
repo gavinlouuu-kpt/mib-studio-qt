@@ -4,11 +4,13 @@
 // can act on hardware (Camera & Alignment switches the PZ7035 to Align and its LED on; Experiment
 // to Run). Selecting a stage here only changes what is shown; it never starts capture, switches a
 // camera mode, moves a motor or stage, enables light, runs a pump or installs an update. Prepare
-// (O1), Align (O2), Experiment · Plan (O3, A5) and Experiment · Live (O4, A6b) have content; in Align
+// (O1), Align (O2), Experiment · Plan (O3, A5), Experiment · Live (O4, A6b) and Experiment · Summary
+// (O5 Run summary and O6 Quick look, A7b) have content; in Align
 // a mode switch or a write happens only on a button, in Plan a run starts, stops or switches to Run
 // only on a button ("Start run", the sample queue's steps, "Switch to Run" / "Show the experiment
 // window"), and in Live a pin, a run stop or a camera stop happens only on a button (showing Live
-// reads, and turns monitoring on as the classic Monitoring tab does). In Prepare the calibration
+// reads, and turns monitoring on as the classic Monitoring tab does), and in Summary a decision acts
+// only on its button (showing it reads the run quick look). In Prepare the calibration
 // factor changes only on the Calibration card's Apply / Re-apply button (#716 A4b).
 //
 // The kit stylesheets are imported once, here, at the workspace entry.
@@ -31,7 +33,7 @@ import { useCalibration } from "./useCalibration";
 export const WORKSPACE_STAGES = ["Prepare", "Align", "Experiment", "Review"] as const;
 
 /** Whether the workspace shows Prepare's verdict, and so polls Prepare's checklist and gates:
- *  in Prepare and in Experiment's Plan, not in its Live view or Summary placeholder (#736 review). */
+ *  in Prepare and in Experiment's Plan, not in its Live or Summary views (#736 review). */
 export const workspaceReadsPrepare = (stage: number, experimentView: ExperimentSubView): boolean =>
   stage === 0 || (stage === 2 && experimentView === "Plan");
 
@@ -39,6 +41,9 @@ export const workspaceReadsPrepare = (stage: number, experimentView: ExperimentS
 const CLASSIC_FOR: Readonly<Record<number, string>> = {
   3: "opening and reviewing recordings (Review)",
 };
+
+/** Without App's classic Review (a host that gives none), Open in Review is unavailable. */
+const NO_REVIEW = { review: { reason: "the classic Review is not available here", open: () => {} } };
 
 export interface WorkspaceProps extends Omit<PrepareViewProps, "readiness" | "report" | "verdict" | "calibration" | "calibrationGate" | "now"> {
   brand: string;
@@ -62,6 +67,12 @@ export interface WorkspaceProps extends Omit<PrepareViewProps, "readiness" | "re
     cameraMode?: PlanCameraMode | null; onCameraMode?: () => Promise<unknown>;
     /** O4 Experiment · Live (A6b): what App reads and does for it (monitoring is on while it is shown). */
     live: ExperimentViewProps["live"];
+    /** O5/O6 Experiment · Summary (A7b): Open in Review (App's classic Review tab with a file) and
+     *  the read (tests). Adjust next's Align is this workspace's stage 1. */
+    summary?: Omit<ExperimentViewProps["summary"], "onAlign">;
+    /** The recording this page has open in the classic Review ("" or absent: none): the Plan's Start
+     *  is unavailable meanwhile (#716 A7b). */
+    reviewOpen?: string;
   };
 }
 
@@ -123,7 +134,8 @@ export function Workspace({ brand, source, method, stage, onStage, onExit, servi
       ) : stage === 2 ? (
         <ExperimentView plan={experiment.plan} lockedReason={experiment.lockedReason} view={experiment.view} onView={experiment.onView}
           cameraMode={experiment.cameraMode} onCameraMode={experiment.onCameraMode} live={experiment.live}
-          verdict={verdict} blockers={confirmBlockers(report)} confirmation={confirmation} onClassic={onExit} calibration={planCalibration} />
+          summary={{ ...(experiment.summary ?? NO_REVIEW), onAlign: () => onStage(1) }} reviewOpen={experiment.reviewOpen}
+          verdict={verdict} blockers={confirmBlockers(report)} confirmation={confirmation} calibration={planCalibration} />
       ) : (
         <div className="ws-view" data-testid={`workspace-${WORKSPACE_STAGES[stage]?.toLowerCase() ?? "stage"}`}>
           <Toolbar title={WORKSPACE_STAGES[stage]}>
