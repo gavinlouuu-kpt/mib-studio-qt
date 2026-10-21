@@ -60,7 +60,7 @@ The repo root `src/` is the C++ tree, so the whole Tauri app lives under
 - `desktop/src/workspace/` — the opt-in four-stage workspace on the `@mib/ui`
   kit (P1/P2, #713; P3 Align, #716 A3): `Workspace.tsx` (shell, stages), `PrepareView.tsx` (O1),
   `prepareModel.ts` (pure tones and summaries), `usePrepareReadiness.ts`
-  (path-less readiness poll), `AlignView.tsx` (O2), `alignImageModel.ts` (view transform,
+  (path-less readiness poll; stopping it drops a read in flight, `usePrepareReadiness.test.tsx`), `AlignView.tsx` (O2), `alignImageModel.ts` (view transform,
   probe, histogram, profile, `FrameInspector`), `quickControlModel.ts` + `useQuickControl.ts`
   (requested → readback machine), `alignControls.ts` (which controls an instrument offers);
   O3 Experiment · Plan (#716 A5): `ExperimentView.tsx` (sub-views Plan / Live / Summary),

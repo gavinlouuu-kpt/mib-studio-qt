@@ -17,6 +17,7 @@ Two UI follow-ups on `feat/egrabber-workspace`, after the develop sync that brou
   loaded none) marks the E row "different E-LUT: not comparable", and the match line says so. "Not
   recomputed (no E-LUT loaded)" stays. The B3c caveat stays only for a backend before review ABI 4,
   which sends neither field. `reviewIpc.golden.json` is unchanged.
+- **Readiness poll (Codex note, coordinator ruling).** `usePrepareReadiness` now drops a read in flight when polling stops, so a late reply never restores the cleared gates and method report.
 
 See "Opt-in workspace" in [[architecture/Desktop-Shell]], [[services/CalibrationRecords]] and
 "R3 Inspect" in [[frontend/YofoReview]].
