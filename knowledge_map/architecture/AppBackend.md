@@ -474,6 +474,17 @@ the services. All `BackendCommandType` values are now explicit and pinned to
 AlreadyActive, Stop accepted, terminal Idle with the remainder committed,
 NotActive afterwards, Starting/Active/Stopping/Idle event sequence).
 
+## Calibration records (bridge ABI 42, #716 A4a)
+
+`initialize()` opens the instrument's calibration store
+(`<dataDir>/instrument_calibration.json`, `app::CalibrationStore`, right after the instrument
+identity; an unreadable file is logged and left untouched, and the store then refuses changes).
+`calibrationStore()` returns it (null before `initialize()`). [[ExperimentCoordinator]] reads it
+for the `calibration.record` gate, invalidates the applied record on an identity change and
+appends a derived record when a calibration run closes; the facade lists, reads and applies
+(`calibrationRecordsListJson` / `calibrationRecordGetJson` / `applyCalibrationJson`, the apply
+inside the coordinator's idle transaction). See [[../services/CalibrationRecords]].
+
 ## Live cell store (bridge ABI 41, #716 A6a)
 
 `initialize()` builds [[../services/MonitoringCellStore]] right after the

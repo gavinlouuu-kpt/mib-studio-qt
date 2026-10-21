@@ -8,6 +8,7 @@
 
 #include "backend/app/AppBackend.h"
 #include "backend/app/BackendFacade.h"
+#include "backend/app/CalibrationStore.h"
 #include "backend/app/MethodApply.h"
 #include "backend/profiles/ProfileRegistryWorker.h"
 #include "backend/recording/RunStartIdentity.h"
@@ -232,6 +233,30 @@ static_assert(mcs::Store::kPinMaxBytes == 4194304);
 static_assert(mcs::Store::kCropMaxSide == 256);
 static_assert(mcs::Store::kCropMinMargin == 8);
 static_assert(mcs::Store::kRowIndexMax == 4096);
+// ABI 42 (#716 A4a): calibration records (calibration_record_statuses, calibration_apply_outcomes,
+// calibration_records in bridge-contract.json; backend/app/CalibrationRecord.h, CalibrationStore.h).
+namespace cal { using namespace backend::app; }
+static_assert(static_cast<std::uint32_t>(cal::CalibrationStatus::Proposed) == 0);
+static_assert(static_cast<std::uint32_t>(cal::CalibrationStatus::Applied) == 1);
+static_assert(static_cast<std::uint32_t>(cal::CalibrationStatus::Superseded) == 2);
+static_assert(static_cast<std::uint32_t>(cal::CalibrationStatus::Invalidated) == 3);
+static_assert(static_cast<std::uint32_t>(cal::CalibrationStatus::Insufficient) == 4);
+static_assert(static_cast<std::uint32_t>(cal::CalibrationApplyOutcome::Applied) == 0);
+static_assert(static_cast<std::uint32_t>(cal::CalibrationApplyOutcome::NotFound) == 1);
+static_assert(static_cast<std::uint32_t>(cal::CalibrationApplyOutcome::Insufficient) == 2);
+static_assert(static_cast<std::uint32_t>(cal::CalibrationApplyOutcome::NotApplicable) == 3);
+static_assert(static_cast<std::uint32_t>(cal::CalibrationApplyOutcome::StaleFactor) == 4);
+static_assert(static_cast<std::uint32_t>(cal::CalibrationApplyOutcome::RunActive) == 5);
+static_assert(static_cast<std::uint32_t>(cal::CalibrationApplyOutcome::IdentityMismatch) == 6);
+static_assert(static_cast<std::uint32_t>(cal::CalibrationApplyOutcome::StoreFailed) == 7);
+static_assert(static_cast<std::uint32_t>(cal::CalibrationApplyOutcome::InvalidRequest) == 8);
+static_assert(cal::kCalibrationRecordIdMaxBytes == 128);
+static_assert(cal::kCalibrationMinValidObjects == 200);
+static_assert(cal::kCalibrationDefaultMaxCvPercent == 10.0);
+static_assert(cal::kCalibrationDefaultMaxAgeHours == 24.0);
+static_assert(cal::kCalibrationRateWindowSeconds == 1.0);
+static_assert(cal::kCalibrationRateMinWindows == 3);
+static_assert(cal::kCalibrationStoreMaxVersions == 2048);
 static_assert(static_cast<std::uint32_t>(backend::recording::RunCompletionState::Complete) == 0);
 static_assert(static_cast<std::uint32_t>(backend::recording::RunCompletionState::IntentionallyPartial) == 1);
 static_assert(static_cast<std::uint32_t>(backend::recording::RunCompletionState::IncompleteLoss) == 2);
@@ -2356,6 +2381,31 @@ rust::String BackendBridge::monitoring_cell_pin(std::uint64_t expected_start_gen
     }
 }
 
+// ABI 42 (#716 A4a): calibration records. JSON documents (bridge-contract.json calibration_records).
+rust::String BackendBridge::calibration_records_list() {
+    try {
+        return rust::String(impl_->facade.calibrationRecordsListJson());
+    } catch (...) {
+        return rust::String(R"({"valid":false})");
+    }
+}
+
+rust::String BackendBridge::calibration_record_get(rust::Str record_id) {
+    try {
+        return rust::String(impl_->facade.calibrationRecordGetJson(std::string(record_id)));
+    } catch (...) {
+        return rust::String(R"({"found":false,"message":"calibration_record_get failed","record":null,"history":[]})");
+    }
+}
+
+rust::String BackendBridge::calibration_apply(rust::Str record_id, double expected_current_factor) {
+    try {
+        return rust::String(impl_->facade.applyCalibrationJson(std::string(record_id), expected_current_factor));
+    } catch (...) {
+        return rust::String(R"({"ok":false,"message":"calibration_apply failed; nothing was applied","record":null})");
+    }
+}
+
 BridgeCommandResult BackendBridge::monitoring_cell_unpin(std::uint64_t start_generation, std::uint64_t capture_epoch,
                                                          std::uint64_t frame_index, std::int32_t object_id) {
     try {
@@ -2618,7 +2668,7 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 41; }
+std::uint32_t bridge_abi_version() { return 42; }
 
 } // namespace mib_bridge
 

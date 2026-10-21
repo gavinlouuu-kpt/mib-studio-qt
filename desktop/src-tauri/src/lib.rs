@@ -635,6 +635,23 @@ fn fetch_monitoring_cell_packet(state: State<AppState>, start_generation: String
     cmds::fetch_monitoring_cell_packet(&state, start_generation, capture_epoch, frame_index, object_id, layer).map(Response::new)
 }
 
+// ABI 42 (#716 A4a): calibration records. The list and get are reads; apply is the one explicit
+// compare-and-set of the pixel-to-micron factor.
+#[tauri::command]
+fn calibration_records_list(state: State<AppState>) -> Result<serde_json::Value, String> {
+    cmds::calibration_records_list(&state)
+}
+
+#[tauri::command]
+fn calibration_record_get(state: State<AppState>, record_id: String) -> Result<serde_json::Value, String> {
+    cmds::calibration_record_get(&state, record_id)
+}
+
+#[tauri::command]
+fn calibration_apply(state: State<AppState>, record_id: String, expected_current_factor: f64) -> Result<serde_json::Value, String> {
+    cmds::calibration_apply(&state, record_id, expected_current_factor)
+}
+
 #[tauri::command]
 fn trigger_set_pulse_duration(state: State<AppState>, pulse_us: i32) -> Result<cmds::CmdResult, String> {
     cmds::trigger_set_pulse_duration(&state, pulse_us)
@@ -910,6 +927,9 @@ pub fn run() {
             monitoring_cell_unpin,
             monitoring_cell_clear_pins,
             fetch_monitoring_cell_packet,
+            calibration_records_list,
+            calibration_record_get,
+            calibration_apply,
             trigger_set_pulse_duration,
             trigger_manual_pulse,
             trigger_periodic_start,

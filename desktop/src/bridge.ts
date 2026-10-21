@@ -10,6 +10,7 @@ import {invoke} from "./transport";
 import { decodeFramePacket, decimalU64 } from "./framePacket";
 import { FRAME_PACKET } from "./bridgeContract";
 import { cellKeyArgs, decodeMonitoringCellPinReply, decodeMonitoringCells, type MonitoringCellKeyInput } from "./monitoringCells";
+import { calibrationApplyArgs, decodeCalibrationApplyReply, decodeCalibrationRecordGet, decodeCalibrationRecordsList } from "./calibrationRecords";
 export type { MonitoringCaptureChange, MonitoringCell, MonitoringCellKey, MonitoringCellKeyInput, MonitoringCellPinReply, MonitoringCellsListing, MonitoringCellsReply } from "./monitoringCells";
 import { discoverCameras, type PollOptions } from "./discovery";
 export type { FrameMeta, FramePacket } from "./framePacket";
@@ -28,6 +29,8 @@ export interface ExperimentStartRequestDoc {
   run_index?: number | null;
   sample_ref?: string | null;
   operator?: { id?: string | null; name?: string | null } | null;
+  /** Since ABI 42 a check: it must equal the backend's applied calibration record in effect, else
+   *  Start is refused (InvalidRequest, mismatch). The snapshot always records the backend's. */
   calibration_record_id?: string | null;
   annotation?: {
     sample?: string | null;
@@ -1023,6 +1026,15 @@ export const bridge = {
     const kind = layer === "mask" ? FRAME_PACKET.pull_kinds.monitoring_cell_mask : FRAME_PACKET.pull_kinds.monitoring_cell_image;
     return decodeFramePacket(await invoke<ArrayBuffer>("fetch_monitoring_cell_packet", { ...cellKeyArgs(key), layer }), kind);
   },
+  // Calibration records (bridge ABI 42, #716 A4a; bridge-contract.json calibration_records). The
+  // list and get are reads (they never apply anything); apply is the explicit compare-and-set of
+  // pixel-to-micron against the factor the client saw, refused unless the experiment is idle, and
+  // a control command on the WebSocket server (VIEWER_ONLY otherwise).
+  calibrationRecordsList: async () => decodeCalibrationRecordsList(await invoke<unknown>("calibration_records_list")),
+  calibrationRecordGet: async (recordId: string) =>
+    decodeCalibrationRecordGet(await invoke<unknown>("calibration_record_get", { recordId })),
+  calibrationApply: async (recordId: string, expectedCurrentFactor: number) =>
+    decodeCalibrationApplyReply(await invoke<unknown>("calibration_apply", calibrationApplyArgs(recordId, expectedCurrentFactor))),
   triggerSetPulseDuration: (pulseUs: number) =>
     invokeCommand("trigger_set_pulse_duration", { pulseUs }),
   triggerManualPulse: () => invokeCommand("trigger_manual_pulse"),

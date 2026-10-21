@@ -142,6 +142,9 @@ pub const COMMANDS: &[&str] = &[
     "monitoring_cell_unpin",
     "monitoring_cell_clear_pins",
     "fetch_monitoring_cell_packet",
+    "calibration_records_list",
+    "calibration_record_get",
+    "calibration_apply",
     "trigger_set_pulse_duration",
     "trigger_manual_pulse",
     "trigger_periodic_start",
@@ -757,6 +760,26 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
             crate::monitoring_cell_pin(state, a.expected_start_generation, a.capture_epoch, a.frame_index, a.object_id)
                 .and_then(json)
         }
+        // ABI 42 (#716 A4a): calibration records. A malformed id or factor is an error reply and
+        // nothing reaches the backend.
+        "calibration_records_list" => crate::calibration_records_list(state).and_then(json),
+        "calibration_record_get" => {
+            #[derive(Deserialize)]
+            struct A {
+                #[serde(rename = "recordId")] record_id: String,
+            }
+            let a: A = args(value)?;
+            crate::calibration_record_get(state, a.record_id).and_then(json)
+        }
+        "calibration_apply" => {
+            #[derive(Deserialize)]
+            struct A {
+                #[serde(rename = "recordId")] record_id: String,
+                #[serde(rename = "expectedCurrentFactor")] expected_current_factor: f64,
+            }
+            let a: A = args(value)?;
+            crate::calibration_apply(state, a.record_id, a.expected_current_factor).and_then(json)
+        }
         "monitoring_cell_unpin" => {
             #[derive(Deserialize)]
             struct A {
@@ -1370,6 +1393,61 @@ mod tests {
         assert!(dispatch(&state, &host, "no_such_command", Value::Null).unwrap_err().starts_with("UNKNOWN_COMMAND"));
         assert!(dispatch(&state, &host, "seek_index", json!({ "frameIndex": 3 }))
             .unwrap_err().starts_with("INVALID_ARGUMENTS"), "u64 indices travel as strings");
+        state.bridge.lock().unwrap().pin_mut().shutdown();
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    // ABI 42 (#716 A4a): calibration records through dispatch (the WebSocket's path) and the Tauri
+    // functions: strict arguments, the JSON list / get / apply replies, and no actuation from reads.
+    #[test]
+    #[serial]
+    fn calibration_records_through_dispatch() {
+        let data = std::env::temp_dir().join(format!("mib_dispatch_calibration_{}", std::process::id()));
+        let state = AppState::new();
+        let host = TestHost(data.to_string_lossy().into_owned());
+        assert_eq!(dispatch(&state, &host, "init", json!({ "dataDir": "" })).unwrap(), Reply::Json(json!(true)));
+        let reply = |name: &str, args: Value| match dispatch(&state, &host, name, args) {
+            Ok(Reply::Json(r)) => r,
+            other => panic!("{name}: {other:?}"),
+        };
+        let list = reply("calibration_records_list", Value::Null);
+        assert_eq!(list["valid"], json!(true), "{list}");
+        assert!(list["records"].as_array().unwrap().is_empty() && list["applied_record_id"].is_null(), "{list}");
+        assert_eq!(list["store"]["max_versions"], json!(2048));
+
+        // Strict arguments: nothing reaches the backend.
+        let long = "c".repeat(129);
+        for bad in ["", long.as_str()] {
+            let e = dispatch(&state, &host, "calibration_record_get", json!({ "recordId": bad })).unwrap_err();
+            assert!(e.contains("Invalid recordId"), "{e}");
+            let e = dispatch(&state, &host, "calibration_apply",
+                json!({ "recordId": bad, "expectedCurrentFactor": 0.5 })).unwrap_err();
+            assert!(e.contains("Invalid recordId"), "{e}");
+        }
+        for bad in [json!(0.0), json!(-1.0)] {
+            let e = dispatch(&state, &host, "calibration_apply",
+                json!({ "recordId": "cal-1", "expectedCurrentFactor": bad })).unwrap_err();
+            assert!(e.contains("Invalid expectedCurrentFactor"), "{e}");
+        }
+        assert!(dispatch(&state, &host, "calibration_apply", json!({ "recordId": "cal-1", "expectedCurrentFactor": "0.5" }))
+            .unwrap_err().starts_with("INVALID_ARGUMENTS"), "the factor is a number");
+        assert!(dispatch(&state, &host, "calibration_apply", json!({ "recordId": "cal-1" }))
+            .unwrap_err().starts_with("INVALID_ARGUMENTS"), "the factor is required");
+        assert!(crate::calibration_apply(&state, "cal-1".into(), f64::NAN).unwrap_err().contains("expectedCurrentFactor"));
+
+        // The backend's replies.
+        let got = reply("calibration_record_get", json!({ "recordId": "cal-none" }));
+        assert_eq!(got["found"], json!(false), "{got}");
+        let applied = reply("calibration_apply", json!({ "recordId": "cal-none", "expectedCurrentFactor": 0.4886 }));
+        assert_eq!(applied["ok"], json!(false), "{applied}");
+        assert_eq!(applied["outcome"], json!(1), "NotFound: {applied}");
+        let tauri = crate::calibration_apply(&state, "cal-none".into(), 0.4886).unwrap();
+        assert_eq!(tauri["outcome"], json!(1));
+
+        // Reads and refused applies change nothing.
+        let after = reply("calibration_records_list", Value::Null);
+        assert_eq!(after["store"]["revision"], list["store"]["revision"], "no actuation: {after}");
+        assert_eq!(after["current_factor"], list["current_factor"], "the factor is unchanged");
         state.bridge.lock().unwrap().pin_mut().shutdown();
         let _ = std::fs::remove_dir_all(&data);
     }

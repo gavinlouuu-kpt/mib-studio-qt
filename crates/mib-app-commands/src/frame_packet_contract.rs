@@ -14,3 +14,4 @@ pub const PULL_KINDS: &[u32] = &[1, 2, 3, 4, 5, 6];
 pub const JSON_TRANSPORT_VERSION: u32 = 1;
 pub const MAX_EVENT_TEXT_BYTES: usize = 4096;
 pub const MONITORING_CELL_CAPTURE_MISMATCH: &str = "CAPTURE_MISMATCH";
+pub const CALIBRATION_RECORD_ID_MAX_BYTES: usize = 128;
