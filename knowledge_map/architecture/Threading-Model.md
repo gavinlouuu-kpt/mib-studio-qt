@@ -119,7 +119,8 @@ the cache mutex. Guards: `review.run_statistics` (the LRU under threads, the TSa
   the ring (lock held for scalars and cv::Mat headers only), crops outside every
   lock, drops the shares under the ring lock again and then takes the store
   mutex; the store mutex is never held while the ring lock is taken. Store
-  copies never leave the store (image pulls copy under the store mutex).
+  copies never leave the store (image pulls copy under the store mutex) and
+  have one owner inside it (a pin of a strip cell copies it, #789).
   Both rules make "freed after the last reader" a lock order, which
   ThreadSanitizer can check; cv::Mat's refcount (uninstrumented OpenCV) it cannot.
   A capture change (review rounds 2-3 of #749) is one critical section of the

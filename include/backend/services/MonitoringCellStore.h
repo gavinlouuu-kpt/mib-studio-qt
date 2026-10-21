@@ -47,8 +47,11 @@
 // under the ring's lock again (releaseShares). The store's own mutex guards
 // its collections and its capture epoch; it is never held while the ring is
 // read (only the source's lock-free publishCapture runs under it). Owned
-// copies are immutable once admitted and never shared outside the store:
-// image() hands out a private copy taken under the store's mutex. Both rules
+// copies are immutable once admitted and never shared, neither outside the
+// store (image() hands out a private copy taken under the store's mutex) nor
+// between the strip and the pins (a pin of a strip cell copies the strip's
+// copy under the mutex, #789): every buffer has one owner, which frees it
+// after removing it under the mutex. These rules
 // order every free of a pixel buffer after its readers by a lock, the only
 // synchronisation ThreadSanitizer can see (cv::Mat's reference count lives in
 // the uninstrumented OpenCV library). Lock order: a caller's (the coordinator,
@@ -325,7 +328,10 @@ public:
     ReadResult image(const MonitoringCellKey& key, bool mask, cv::Mat& out, MonitoringCellInfo* info = nullptr) const;
 
     // Test seam (review round 3): called under the store's mutex where a read
-    // has resolved what it serves and is about to copy it ("image", "listing").
+    // has resolved what it serves and is about to copy it ("image", "listing");
+    // and (#789) by refreshStrip after the mutex is released while the strip
+    // cells it dropped are still held, just before they are freed
+    // ("refresh-dropped", only when it dropped any).
     void setReadHookForTests(std::function<void(const char* where)> hook);
 
     Stats stats() const;

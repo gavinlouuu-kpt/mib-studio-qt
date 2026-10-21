@@ -42,7 +42,8 @@
   `RunMismatch`; an existing pin is `AlreadyPinned`; 16 pins or 4 MiB of pinned pixels is
   `LimitReached` (a pin is never evicted to make room); the ring is read (only a row whose frame
   carried this capture is this identity); a strip entry with the exact key is
-  shared (immutable, no new crop); otherwise the ring row with that tag is cropped and owned
+  copied under the store mutex (no new crop; the pin owns its copy, never a share of the strip's,
+  #789); otherwise the ring row with that tag is cropped and owned
   (`Pinned`); otherwise the bounded row index (4096 rows the snapshot served, `noteRows`) gives
   `PinnedWithoutImage` with the recorded measurements and a plain reason; a row found under another
   tag is `RunMismatch`; nothing at all is `NotFound`. Admission re-checks, under the store mutex,
@@ -140,6 +141,17 @@ over `visitMonitoringNewest` and `publishMonitoringCapture`; tests use a fake ri
   them under that mutex. Pinned by `backend.monitoring_cell_store` "shares go back" (no share of
   a ring image stays with the store after a refresh or a pin, refused or not; two `image()` calls
   give two private buffers).
+- **One owner per store copy (#789).** Until #789 a pin of a strip cell took a refcount share of
+  the strip's copy. When a refresh dropped that strip cell (the ring moved to another run; pins
+  stay until the next run starts) it freed its share after unlocking; a reader that copied the
+  pin's pixels meanwhile and an unpin then left the refresh holding the last share, so the free
+  was ordered after the read by the refcount only. TSan reported it as a race in
+  `processing.monitoring_cell_concurrency` (free in `refreshStrip` vs `cv::Mat::copyTo` in
+  `image()` under the store mutex), about 1 run in 8 with 12 copies in parallel and never seen
+  idle. A pin now copies the strip's crop under the mutex (≤ 2 × 64 KiB, off the hot path), so
+  every buffer has one owner and the remover's free follows every read by the mutex.
+  `backend.monitoring_cell_store` "a pinned strip cell owns its copy" reproduces the interleaving
+  deterministically through the `refresh-dropped` read hook (fails 5/5 under TSan with a share).
 - Measured (`performance.monitoring_cell_hot_path`, 512x96 realtime loop, this host, after review
   round 3): ring lock hold median 1.3–1.5 µs for a strip read, 6.4–7.0 µs for a pin lookup,
   ~1.5 µs to give the shares back (47–50 µs median when the ring evicted all 24 rows meanwhile and
