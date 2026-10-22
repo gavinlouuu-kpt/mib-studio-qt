@@ -237,3 +237,16 @@ Next real-adapter acceptance requests narrow shared test ownership in
 identity, range export and no auto-resume. No shared implementation edit proceeds
 on the assumption that merely posting a request grants ownership. This is a
 specific shared-file dependency, not a general halt to independent E work.
+
+### E05/E06 real-backend buffer acceptance
+
+The proposed shared `tests/ws.rs` edit was avoided: the new isolated
+`crates/mib-bridge-server/tests/egrabber_buffer.rs` uses the actual server route
+and mock camera/native FrameStore. Run from the server crate with
+`MIB_BRIDGE_NO_CMAKE=1 cargo test --release --test egrabber_buffer` after the
+native build above. It verifies running-capture resize refusal, stopped one-frame
+range export producing files, confirmation-required shrink preserving original
+frames on refusal, successful confirmed shrink, rejected stale generation, and
+no automatic capture restart. This is one additional native-adapter integration
+test, separate from the 11 existing WebSocket tests. Export decoding/physical SDK
+reserve qualification and full E05/E06 lifecycle acceptance remain outstanding.
