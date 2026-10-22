@@ -254,7 +254,7 @@ function CalibrationBlock({ run, q, list, error, listRead, onPrepare }: {
     // "None was derived" only once the records were read, the store is readable and the run's id is
     // known: otherwise a record may exist, and the block says it is not known.
     const resolved = listRead && !error && !storeError && usable !== null && runIdKnown && runId !== null;
-    const reason = noRecordReason({ listError: error, storeError, listRead, runIdKnown, runId });
+    const reason = noRecordReason({ listError: error, storeError, listRead, listValid: list ? list.valid : undefined, runIdKnown, runId });
     return resolved ? (
       <Notice tone="info" title="No calibration record was derived for this run" data-testid="o5-calibration-none">
         {`This run used a calibration method${run.methodPurpose === "calibration" ? " (the readiness report at its Start)" : ""}: ${reason}.`}

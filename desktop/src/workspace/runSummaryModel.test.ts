@@ -128,6 +128,7 @@ describe("the calibration record of a run", () => {
     expect(noRecordReason({ ...base, runIdKnown: false })).toContain("not known yet");
     expect(noRecordReason({ ...base, listError: "TRANSPORT_LOST" })).toContain("could not be read (TRANSPORT_LOST)");
     expect(noRecordReason({ ...base, storeError: "corrupt" })).toContain("store cannot be read");
+    expect(noRecordReason({ ...base, listValid: false })).toContain("listed no records");
   });
 });
 

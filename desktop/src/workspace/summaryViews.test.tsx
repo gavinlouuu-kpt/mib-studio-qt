@@ -486,6 +486,12 @@ describe("O5 calibration run: the record the backend derived, never applied from
     calListReply = calList([], { store: { revision: 1, max_versions: 2048, error: "corrupt" } });
     await click("summary-refresh");
     expect(text("o5-calibration-unknown")).toContain("store cannot be read");
+    // Codex round 2: a list the backend could not give yet ({valid: false}) is "not known" too, with that reason.
+    calListReply = { valid: false };
+    await click("summary-refresh");
+    expect($("o5-calibration-none")).toBeNull();
+    expect(text("o5-calibration-unknown")).toContain("the backend listed no records (not initialized yet)");
+    expect(text("o5-calibration-unknown")).not.toContain("none of the backend's records");
   });
 
   it("an older backend (purpose not reported): the list is read and a matching record shows; a measurement run reads none", async () => {

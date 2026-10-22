@@ -211,10 +211,11 @@ export function recordForRun(list: CalibrationRecordsList | null, runId: string 
 }
 
 /** Why no record is shown for a calibration run, as far as it is known. */
-export function noRecordReason(p: { listError: string; storeError: string | null; listRead: boolean; runIdKnown: boolean; runId: string | null }): string {
+export function noRecordReason(p: { listError: string; storeError: string | null; listRead: boolean; listValid?: boolean; runIdKnown: boolean; runId: string | null }): string {
   if (p.listError) return `the calibration records could not be read (${p.listError})`;
   if (p.storeError) return "the calibration store cannot be read, so its records are not known";
   if (!p.listRead) return "the calibration records are not read yet";
+  if (p.listValid === false) return "the backend listed no records (not initialized yet), so they are not known";
   if (!p.runIdKnown) return "the run's id is not known yet: it is read from the run's quick look";
   if (p.runId === null) return "the run's file records no run id, so no record can be matched to it";
   return `none of the backend's records names this run (run id ${p.runId}) as its source`;
