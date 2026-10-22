@@ -13,3 +13,7 @@ review: it would otherwise land on Experiment after a failed run and switch the 
 acts…". `develop` is unchanged until promotion. Tests: `landing.test.ts` and
 `navigation.test.tsx` ("the workspace branch opens in the workspace"); the earlier navigation gates
 start from a remembered classic choice. See [[architecture/Desktop-Shell]].
+
+The native webview gate (`desktop/scripts/native-workflow.py`) drives the classic view through
+its buttons and reads visible text, so it failed once the app opened in the workspace. It now asserts
+the workspace landing, takes "Classic view" and restarts the webview before the classic workflow.

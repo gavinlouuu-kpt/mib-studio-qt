@@ -1452,6 +1452,9 @@ owned session. Desktop CI now runs this in addition to unit tests and launch smo
 Initial local pass: 2 persistence-admitted/committed frames, 2 exported images.
 The gate exposed and drove fixes for the disabled Start button and missing
 realtime processing consumer. It does not establish physical hardware timing.
+On `feat/egrabber-workspace` the harness first asserts that the app opens in the workspace,
+takes its "Classic view" (which records the choice) and restarts the webview, so the rest of
+the workflow runs in the classic view as on `develop`.
 
 ### Managed profiles and startup provenance
 

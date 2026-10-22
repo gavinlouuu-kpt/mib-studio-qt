@@ -149,6 +149,17 @@ def main():
         wait(available, 'driver startup')
         session = request('/session', {'capabilities': {'alwaysMatch': {'tauri:options': {'application': str(args.binary.resolve())}}}})['sessionId']
         wait(lambda: 'backend: ready' in js('return document.body.innerText'), 'embedded app/backend initialization')
+        # The workspace branch opens in the workspace (Prepare). This workflow exercises the classic
+        # view, so take the operator's "Classic view" (it records the choice) and restart the webview,
+        # which must now open in the classic view as develop does. Hidden text is not in innerText.
+        wait(lambda: js('return [...document.querySelectorAll("button")].some(b=>b.textContent.trim()==="Classic view"&&b.offsetParent!==null)'), 'opens in the workspace')
+        evidence['opened_in_workspace'] = True
+        click('Classic view')
+        wait(lambda: js('return localStorage.getItem("yofo.workspace.landing")') == 'classic', 'classic view remembered')
+        js('window.__mibBeforeLanding=true')
+        request(f'/session/{session}/refresh', {})
+        wait(lambda: js('return !window.__mibBeforeLanding && document.body.innerText.includes("backend: ready")'), 'restart in the classic view')
+        assert not js('return [...document.querySelectorAll("button")].some(b=>b.textContent.trim()==="Classic view"&&b.offsetParent!==null)'), 'restarted in the workspace'
         stage('Hardware Preflight')
         click('Cameras')
         click('Configure Mock…')
