@@ -91,10 +91,23 @@ not the local inventory, regression tests or adapter fix.
   and Vite build, 14 offline prototype checks, docs and whitespace checks passed.
 - Self-review complete for the narrow slice; independent review and CI are not
   inferred from local test results. Draft PR remains unmerged.
-- **Full fold-in blocked:** session-owned feature contract/ABI agreement
+- **Dependencies for complete acceptance (not a stop condition for other work):**
+  session-owned feature contract/ABI agreement
   (#716/bridge coordinator), peer evidence/outcome compatibility (#807/#808),
   externally owned classic-view delivery (#799), and supported hardware
   qualification (operator + #806). E02, E07 and all other named gaps remain in
   the ledger; no capability has been removed or declared accepted.
-- Resume from this worktree/branch after the corresponding owner acknowledgement
-  or evidence arrives. Do not restart existing coordinators or replace their work.
+- Continue unblocked implementation and qualification in this worktree while
+  coordinating dependent interfaces. Do not require owner check-ins between
+  milestones, restart existing coordinators or replace their work.
+
+## Autonomous continuation
+
+- 2026-10-22 owner direction: do not stop at milestones or require check-ins
+  while authorized work remains. Previous dependency wording was too broad.
+- E07/#713: native cold/warm empty-path/no-write proof implemented and passing.
+- 24 native CTest cases and 11 real-server WebSocket integration tests pass;
+  see the ledger for scope and repeatable commands. Physical camera proof is
+  still distinct from synthetic-image/native-service qualification.
+- E-B1 proceeds in isolated camera/features files with a borrowed SDK-port
+  adapter, no second device owner and no independently allocated bridge ABI.

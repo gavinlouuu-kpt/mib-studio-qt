@@ -176,3 +176,39 @@ Coordination notices were posted to #806, #716, #807 and #808 before shared
 implementation. No acknowledgement is inferred from posting a proposal. Shared
 contract changes, full live demonstration and E01–E09 acceptance remain blocked
 as listed above. No merge, deployment or hardware action was performed.
+
+## Native qualification follow-up (2026-10-22)
+
+Continuing independently of pending bridge work, the workspace was configured
+with `cmake --preset linux-backend-only -DMIB_ENABLE_MINDVISION=OFF` (system
+libraries; local non-system package prefixes excluded). Built targets
+`mib_backend_tests` and `hdf_export_service_test` with 12 compile workers.
+
+- **24 native CTest cases pass:** discovery service/fault/providers/stress/facade
+  and device lifecycle; capture lifecycle; FrameStore bounds/reserve/concurrency/
+  resize; MonitoringCellStore; experiment readiness; new empty-path probe-cache
+  proof; HDF5 resilience/export; experiment/run-identity/provenance/multi-image
+  round trips; recording lifecycle/accounting; pipeline timing/stress.
+- The #713 gap now has a real-backend test: 20 empty-path polls with a cold cache
+  and another 20 with a warm destination cache, no cwd/previous-destination
+  changes (including transient create/delete), output Unavailable and no claimed
+  round-trip gate. Capture bootstrap is disabled. This is storage access/format
+  qualification, not sustained storage throughput.
+- Built `yofo-studio-server` with `MIB_BRIDGE_NO_CMAKE=1 cargo build --release`
+  against those native libraries. The real server's `cargo test --release
+  --test ws -- --test-threads=1` passes **11 tests**: mock capture/binary frame
+  transport, client-loss stop/save (including stalled simulated pump), controller
+  exclusion, run-specific Stop/start request handling, exact live cells,
+  calibration/readiness and quick-look transport. No production service was
+  started or replaced; tests bind temporary loopback listeners.
+
+The native tests use synthetic images/simulated providers and pseudo-terminal
+serial fixtures. They are stronger than UI DTO fixtures but **not physical
+EGrabber/Windows SDK or timing proof**. Full E01–E09 acceptance remains open.
+E07's missing no-path test is now implemented; its other requirements remain.
+
+E acknowledged F-contracts/1 and I's ABI-40/snapshot-v3 semantics; I acknowledged
+E's immutable evidence semantics. Unbiased committed analytic snapshots remain
+separate from display-ring samples and HDF5 acquisition exclusion is preserved.
+Concrete shared ABI/adapter ownership still needs coordination, but it does not
+block isolated implementation or further qualification.
