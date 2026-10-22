@@ -44,9 +44,9 @@ are historical source-map anchors unless explicitly verified by this execution.
 | E04 · 02, 07, 14–15, 32; REA independent preview/start | **reuse + extend** `CaptureService.cpp`, `EGrabberCamera.cpp`, `desktop/src/workspace/LiveView.tsx`; SDK start sequence already uses one `grabber_->start()`, EveryFrame/LatestFrame already exist | #328/#331/#333/#365/#368 and #806 E-C. Keep capture receipt, first frame, preview conversion and writer states distinct; do not reimplement acquisition | `tests/backend/capture_lifecycle_test.cpp`, `tests/integration/e2e_pipeline_stress_test.cpp`, `desktop/src/workspace/LiveView.test.tsx`. Missing: preview conversion fault while writer succeeds, actual supported-device disconnect/start observation and timestamp qualification |
 | E05 · 03, 08, 34; REA operating reserve | **reuse + extend** `src/backend/playback/{FrameStore,PlaybackService}.cpp`, `desktop/src/{previewBuffer.tsx,ringPlayback.ts}`, `MonitoringCellStore.cpp` bounded copies | #806 E-C with existing ring work (#649); no duplicate buffer allocator. Reserve/budget semantics across host SDK and PZ ring are not interchangeable | `tests/backend/frame_store_{reserve,bounds,resize_under_load,concurrency}_test.cpp`, `desktop/src/{previewBuffer,ringPlayback}.test.*`, `tests/backend/monitoring_cell_store_test.cpp`. Missing: full stop/reallocate/no-auto-resume scenario, retained-range eviction/exact playback and native SDK reserve qualification |
 | E06 · 04, 14–16, 35; REA recorder API | **reuse + extend; historical deferral reconciled** `src/backend/recording/{RecorderService,Hdf5Service,HdfExportService}.cpp`, existing run lifecycle and export jobs | #806 E-C; #807 owns orchestration, not a new writer. Chapters remain capability-qualified obligation; no chapter support inferred from HDF5 presence | `tests/recording/{recording_lifecycle,recording_accounting,hdf5_resilience,hdf_export_service,experiment_roundtrip}_test.cpp`. Missing: full range export/reopen + disconnect/disk-full/cancel/failed-close scenario at this head; explicit chapter capability |
-| E07 · 06, 23–29, 31; preparation | **reuse + extend** `ExperimentCoordinator.cpp`, `desktop/src/workspace/{PrepareView.tsx,usePrepareReadiness.ts}`, hardware controls; readiness cache delivered (#719/#727 historical anchors) | #713 backend no-path/no-write test outstanding; #796–#799 externally delegated. #806 E-D owns remaining adapter-qualified LED/focus/storage/compatibility gaps, not the externally owned redesign | `tests/backend/{experiment_readiness,readiness_probe_cache}_test.cpp`, `desktop/src/workspace/usePrepareReadiness.test.tsx`. Missing: idle-only storage qualification, supported firmware/LED/focus evidence, no-actuation complete navigation with real backend |
+| E07 · 06, 23–29, 31; preparation | **reuse + extend** `ExperimentCoordinator.cpp`, `desktop/src/workspace/{PrepareView.tsx,usePrepareReadiness.ts}`, hardware controls; readiness cache delivered (#719/#727 historical anchors) | #713 backend no-path/no-write test now passes (see native evidence below); #796–#799 externally delegated. #806 E-D owns remaining adapter-qualified LED/focus/storage/compatibility gaps, not the externally owned redesign | `tests/backend/{experiment_readiness,readiness_probe_cache}_test.cpp`, `desktop/src/workspace/usePrepareReadiness.test.tsx`. Missing: idle-only storage qualification, supported firmware/LED/focus evidence, no-actuation complete navigation with real backend |
 | E08 · 11–12, 17–18, 27; engineering | **reuse + extend** `desktop/src/cameraScript.tsx`, existing config/update/help routes and backend script guard; provider support is qualified | #716/#272/#806 E-D; firmware/service tools must retain mode/idle/authorization checks. No normal navigation-triggered maintenance | `desktop/src/cameraScript.test.tsx`, `tests/backend/camera_script_apply_test.cpp`, `tests/hardware/hw_egrabber_script_test.cpp`. Missing: provider capability/version diagnostic report and supported firmware maintenance acceptance; hardware test not run |
-| E09 · 04, 16, 19–22, 36; exact evidence | **reuse + extend** `MonitoringCellStore.cpp`, `desktop/src/workspace/useLiveCells.ts`, `desktop/src/review/inspect/inspectModel.ts`; one native reader/inspection owner | #806 supplies frame identity/delivery; #808/#717 own shared scientific inspector. EventSnapshot/EvidenceResolver agreement pending; do not fork Review | `tests/backend/monitoring_cell_store_test.cpp`, `tests/review/review_inspect_test.cpp`, `desktop/src/review/inspect/inspectModel.test.ts`. Missing: cross-track source/run/frame/object + processing/calibration identity and absent/expired stale-pixel clearing with real adapters |
+| E09 · 04, 16, 19–22, 36; exact evidence | **reuse + extend** `MonitoringCellStore.cpp`, `desktop/src/workspace/useLiveCells.ts`, `desktop/src/review/inspect/inspectModel.ts`; one native reader/inspection owner | #806 supplies frame identity/delivery; #808/#717 own shared scientific inspector. F-contracts/1 logical semantics acknowledged; concrete integration ownership pending; do not fork Review | `tests/backend/monitoring_cell_store_test.cpp`, `tests/review/review_inspect_test.cpp`, `desktop/src/review/inspect/inspectModel.test.ts`. Missing: cross-track source/run/frame/object + processing/calibration identity and absent/expired stale-pixel clearing with real adapters |
 
 Coverage bookkeeping: 00 is the complete-workspace map; 30 the evidence/delta map.
 The rows assign every view 01–29 and 31–36, with intentional overlaps. This is
@@ -212,3 +212,28 @@ E's immutable evidence semantics. Unbiased committed analytic snapshots remain
 separate from display-ring samples and HDF5 acquisition exclusion is preserved.
 Concrete shared ABI/adapter ownership still needs coordination, but it does not
 block isolated implementation or further qualification.
+
+
+## Typed-feature isolated slice — PR #812
+
+[PR #812](https://github.com/gavinlouuu-kpt/mib-studio-qt/pull/812) targets the
+same workspace baseline independently of this ledger/discovery PR #809. It adds
+`camera/features/FeatureControl` and a borrowed `EGrabberFeaturePort`, not a new
+camera owner. Exact source/session/capability tokens fence stale calls; scalar
+writes refresh access/bounds and distinguish requested values, readback and
+unknown write outcomes. One SDK-inferred selector slot uses the SDK transaction;
+rollback/range checking disabled means refusal without changing SDK options.
+
+Evidence: two standalone CTests pass (fake core port and fake SDK adapter), real
+26.09.0.5 SDK explicit template instantiation compiles, and the core passes UBSan.
+The new CI workflow runs SDK-free core acceptance. No claim of physical rollback,
+Windows linking, session-owner serialization or installed application controls.
+Category/tree enumeration, multi-selector browsing, engineering commands and
+shared ABI/capture-owner integration remain required E02 work. #716 has the
+concrete allocation/ownership request; bridge45/Review7 remain reserved elsewhere.
+
+Next real-adapter acceptance requests narrow shared test ownership in
+`crates/mib-bridge-server/tests/ws.rs` for stopped-buffer resize, invalidated
+identity, range export and no auto-resume. No shared implementation edit proceeds
+on the assumption that merely posting a request grants ownership. This is a
+specific shared-file dependency, not a general halt to independent E work.
