@@ -1,5 +1,24 @@
 # Desktop Shell (React + Tauri v2)
 
+## iQue annotation groups (#807 I-A1)
+
+The single and queue Plan views mount `workspace/AnnotationGroups.tsx`, backed
+by the pure `annotationModel.ts`. Existing condition/unit/channel/medium and
+free key/value annotations supply selectable grouping layers. Grouping never
+changes queue order or sends a backend command. Condition colours reuse
+`conditionSlots`; other categories stay textual. Unit labels are deduplicated
+as labels, never asserted to be statistically independent replicates.
+
+The annotation-only JSON projection (`mib.planned-annotations`, version 1)
+validates through `buildStartRequest`, preserving its omission and UTF-8 rules.
+Invalid sheets disable export; a stale open JSON preview disappears immediately.
+No acquisition run index is exported. Group selection is not persisted, and
+copying this JSON does not save/reopen an experiment. Full continuity awaits
+the agreed workspace store, not another localStorage authority. Coverage:
+`annotationModel.test.ts`, `AnnotationGroups.test.tsx` and existing Plan/Queue
+interaction suites. Scope/evidence: `docs/design/ique-workflow/README.md` and
+`DEMO.md`.
+
 > The Phase 3 deliverable of epic #246: the React + Tauri v2 desktop app that
 > replaces the Qt frontend. It drives the Qt-free C++ backend through the
 > [[Rust-Bridge]] (`mib-bridge`, ADR 0003). First vertical slice: **mock camera
