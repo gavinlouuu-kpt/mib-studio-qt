@@ -42,3 +42,12 @@ and Plan/Queue suite: 83 passed. TypeScript + Vite production build passed.
 `scripts/check_docs.py` and `git diff --check` passed. Existing jsdom navigation
 tests emit canvas-not-implemented diagnostics despite passing; these are not
 native-webview validation. No hardware/TSan/scientific parity claim.
+
+## Recipe association continuation
+
+Added isolated recipe v1 model/presentation and fixture: immutable association,
+fresh unsaved draft lineage, stale compatibility rejection, no save/apply side
+effects. Published minimum I-workspace/1 contract to F #808; exact storage ownership
+awaits agreement. This consumes #393/#395 rather than inventing a parallel store.
+#811's four CI checks passed; #813 carries the recorded QC slice. Full capability
+acceptance remains open. UI browser inspection remains blocked by tool policy.

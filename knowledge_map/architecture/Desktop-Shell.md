@@ -1976,3 +1976,13 @@ Issue #570: Review keeps unreadable run accounting as Unknown, displaying the
 existing `completion_reason` field rather than promoting `reconciled=false` to
 Failed when the outcome is Unknown. Known outcomes with unreconciled counters
 still show Failed. No bridge ABI or JSON field changes.
+
+### iQue recipe association boundary (#807)
+
+`workspace/recipeModel.ts` decodes version-1 immutable method/analysis references,
+creates detached unsaved copies with lineage, and rejects stale compatibility by
+exact pair/setup revision. `RecipePairing.tsx` renders these facts and an optional
+copy action only. It does not save or apply; the isolated `ique-demo.html` uses
+labelled fixtures. Live persistence awaits the single #393/#395 workspace authority
+and scientific validation awaits #808. Design proposal:
+`docs/design/ique-workflow/WORKSPACE-CONTRACT.md`.
