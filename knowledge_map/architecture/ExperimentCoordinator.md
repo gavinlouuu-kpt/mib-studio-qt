@@ -474,7 +474,12 @@ runs again at the next evaluation, so a destination the operator fixes
 failing destination blocks Start anyway. The metadata checks of
 `storage.output` (parent a directory, path not a directory, 64 MiB free)
 write nothing and run on every evaluation. Test:
-`backend.readiness_probe_cache`. `storage.buffer` rejects a host
+`backend.readiness_probe_cache`. Its path-less Prepare cases cover both cold
+and warm destination caches: repeated empty-path evaluations leave the working
+directory and previous destination unchanged (including create/delete mtime
+checks), return storage.output Unavailable and omit storage.roundtrip. Capture
+bootstrap is disabled so this storage-policy proof never opens a camera (#806).
+`storage.buffer` rejects a host
 image/mask series larger than the byte budget and warns when byte pressure
 will precede the count threshold. Geometry/format, budget and flush interval
 changes invalidate preflight. Metadata-only provider recordings do not use

@@ -211,3 +211,17 @@ AppBackend applies camera selection or nanopositioner connection only while the
 experiment coordinator holds Idle and capture is still stopped. The desktop preference
 is explicit opt-in; a scheduled job is not reported as a successful connection. Facade
 tests repeatedly drain empty fake-provider jobs without accessing real hardware.
+
+### React polling identity guard (#806)
+
+`desktop/src/discovery.ts` accepts a valid snapshot only when its lossless decimal
+`job_id` matches the accepted Start. The first valid snapshot pins its generation;
+subsequent valid replies must keep that generation before any terminal state is
+accepted. Invalid snapshots do not pin a generation. A mismatch rejects with a
+refresh/retry message without cancelling a potentially different session. This
+is a scan consistency check, not a connected-camera session token or proof of
+reconnection safety across a server restart that reuses both values.
+`desktop/src/discovery.test.ts` covers terminal-state mismatches, adjacent u64
+values above JavaScript's integer precision, generation changes, invalid initial
+snapshots and matching coalesced jobs. Timeout cancels only a newly created job, never one this caller joined through
+coalescing; the backend deadline still bounds that shared job.

@@ -1,7 +1,7 @@
 // Device discovery client (bridge schema v14, issue #419).
 //
 // Discovery is a backend job: start it, poll its bounded snapshot until a
-// terminal state, cancel it when the caller gives up. This module is pure
+// terminal state, cancel an owned job when the caller gives up. This module is pure
 // (the Tauri `invoke` calls are injected) so the polling contract is unit
 // tested; bridge.ts wires it to the real commands.
 import type { CameraDiscovery, DiscoveredDevice, DiscoverySnapshot, DiscoveryStart } from "./bridge";
@@ -17,7 +17,7 @@ export interface DiscoveryApi {
 }
 
 export interface PollOptions {
-  /** Give up (and cancel the job) after this long. Default 65 s: longer than the backend job deadline. */
+  /** Give up (cancel only a newly created job) after this long. Default 65 s: longer than the backend job deadline. */
   timeoutMs?: number;
   intervalMs?: number;
   now?: () => number;
@@ -33,8 +33,9 @@ export function isTerminalDiscoveryState(state: number): boolean {
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-/** Start a discovery job and poll until it ends. Rejects on a refused start
- *  or on timeout (after requesting cancellation). Never blocks the bridge. */
+/** Start a discovery job and poll until it ends. Rejects on a refused start,
+ *  stale identity, or timeout (cancelling only a newly created job). A scan generation
+ *  is not a connected-camera session token. Never blocks the bridge. */
 export async function pollDiscovery(api: DiscoveryApi, opts: PollOptions = {}): Promise<DiscoverySnapshot> {
   const timeoutMs = opts.timeoutMs ?? 65_000;
   const intervalMs = opts.intervalMs ?? 100;
@@ -46,11 +47,25 @@ export async function pollDiscovery(api: DiscoveryApi, opts: PollOptions = {}): 
     throw new Error(`discovery refused: ${start.reason || `rejection ${start.rejection}`}`);
   }
   const deadline = now() + timeoutMs;
+  let generation: string | undefined;
   for (;;) {
     const snap = await api.fetch(start.job_id);
-    if (snap.valid && isTerminalDiscoveryState(snap.state)) return snap;
+    if (snap.valid) {
+      // Keep u64 identities as strings. Never accept another job's terminal
+      // result (including Failed/Cancelled), or mix generations after reconnect.
+      // Do not cancel on mismatch: the endpoint may now own a different session.
+      if (snap.job_id !== start.job_id) {
+        throw new Error("Discovery job identity changed; refresh discovery and try again.");
+      }
+      if (generation !== undefined && snap.generation !== generation) {
+        throw new Error("Discovery generation changed; refresh discovery and try again.");
+      }
+      generation = snap.generation;
+      if (isTerminalDiscoveryState(snap.state)) return snap;
+    }
     if (now() >= deadline) {
-      await api.cancel(start.job_id).catch(() => false);
+      // Joining an existing scan does not transfer its cancellation ownership.
+      if (!start.coalesced) await api.cancel(start.job_id).catch(() => false);
       throw new Error(`discovery job ${start.job_id} timed out after ${timeoutMs} ms`);
     }
     await sleep(intervalMs);

@@ -4,6 +4,8 @@
 // and removes a temp file next to the target, storage.roundtrip writes and
 // reads back a small HDF5 file. They run once per (output path, readiness
 // generation), so a UI polling readiness does not churn the SSD:
+//  - path-less Prepare polling never probes the cwd or a previously chosen
+//    destination, with either a cold or warm destination cache;
 //  - repeated evaluations with the same path and generation create no file in
 //    the destination after the first (its modification time stays put: a file
 //    created or removed in a directory moves it) and leave nothing behind;
@@ -35,14 +37,12 @@ using backend::app::GateStatus;
 namespace fs = std::filesystem;
 
 namespace {
-GateStatus statusOf(const backend::app::ExperimentReadinessSnapshot& r, const char* id)
-{
+GateStatus statusOf(const backend::app::ExperimentReadinessSnapshot& r, const char* id) {
     const auto* g = r.gate(id);
     return g ? g->status : GateStatus::Unavailable;
 }
 
-size_t entries(const fs::path& dir)
-{
+size_t entries(const fs::path& dir) {
     size_t n = 0;
     for (const auto& e : fs::directory_iterator(dir)) {
         (void)e;
@@ -53,15 +53,13 @@ size_t entries(const fs::path& dir)
 
 // Set the directory's modification time an hour back and return it: any file a
 // probe creates or removes in it afterwards gives a different time.
-fs::file_time_type age(const fs::path& dir)
-{
+fs::file_time_type age(const fs::path& dir) {
     fs::last_write_time(dir, fs::last_write_time(dir) - std::chrono::hours(1));
     return fs::last_write_time(dir);
 }
 
 bool sameGate(const backend::app::ExperimentReadinessSnapshot& a,
-              const backend::app::ExperimentReadinessSnapshot& b, const char* id)
-{
+              const backend::app::ExperimentReadinessSnapshot& b, const char* id) {
     const auto* x = a.gate(id);
     const auto* y = b.gate(id);
     return x && y && x->status == y->status && x->reason == y->reason &&
@@ -69,14 +67,13 @@ bool sameGate(const backend::app::ExperimentReadinessSnapshot& a,
 }
 } // namespace
 
-int main()
-{
+int main() {
 #ifdef _WIN32
     _putenv_s("MIB_DISABLED_SERVICES",
-              "auto_update,autofocus,trigger,syringe_pump,pulse_generator");
+              "auto_update,autofocus,trigger,syringe_pump,pulse_generator,capture");
 #else
-    setenv("MIB_DISABLED_SERVICES", "auto_update,autofocus,trigger,syringe_pump,pulse_generator",
-           1);
+    setenv("MIB_DISABLED_SERVICES",
+           "auto_update,autofocus,trigger,syringe_pump,pulse_generator,capture", 1);
 #endif
     mib::test::Watchdog wd(60);
     mib::test::TempDir td("readiness_probe_cache");
@@ -86,15 +83,47 @@ int main()
 
     const fs::path dest = td.path() / "dest";
     const fs::path dest2 = td.path() / "dest2";
-    MIB_REQUIRE(fs::create_directories(dest) && fs::create_directories(dest2), "destination directories");
+    MIB_REQUIRE(fs::create_directories(dest) && fs::create_directories(dest2),
+                "destination directories");
     const std::string out1 = (dest / "run1.h5").string();
     const std::string out2 = (dest2 / "run2.h5").string();
+
+    // A missing path must not become a relative destination or reuse the last
+    // probe path. Watch directory mtime as well as entries: a transient probe
+    // that creates and deletes a file must still be detected.
+    const auto noPathDoesNotProbe = [&] {
+        const auto oldCwd = fs::current_path();
+        struct RestoreCwd {
+            fs::path path;
+            ~RestoreCwd() { fs::current_path(path); }
+        } restore{oldCwd};
+        fs::current_path(dest2);
+        const auto destinationTime = age(dest);
+        const auto cwdTime = age(dest2);
+        for (int i = 0; i < 20; ++i) {
+            const auto r = coord.evaluateReadiness("");
+            MIB_EXPECT(r.candidate.outputPath.empty(), "path-less readiness keeps output absent");
+            MIB_EXPECT(statusOf(r, "storage.output") == GateStatus::Unavailable,
+                       "path-less storage is unavailable, never a fabricated pass");
+            MIB_EXPECT(r.gate("storage.roundtrip") == nullptr,
+                       "path-less readiness does not claim a storage round trip");
+        }
+        MIB_EXPECT(fs::last_write_time(dest) == destinationTime,
+                   "path-less polling never probes the previous destination");
+        MIB_EXPECT(fs::last_write_time(dest2) == cwdTime,
+                   "path-less polling never probes the working directory");
+        MIB_EXPECT(entries(dest) == 0 && entries(dest2) == 0,
+                   "path-less polling leaves no files behind");
+    };
+    wd.mark("path-less cold cache");
+    noPathDoesNotProbe();
 
     // ---- 1. Cold cache: the first evaluation probes ---------------------------
     wd.mark("cold");
     auto aged = age(dest);
     const auto first = coord.evaluateReadiness(out1);
-    MIB_EXPECT(statusOf(first, "storage.output") == GateStatus::Pass, "writable destination passes");
+    MIB_EXPECT(statusOf(first, "storage.output") == GateStatus::Pass,
+               "writable destination passes");
     MIB_EXPECT(statusOf(first, "storage.roundtrip") == GateStatus::Pass, "HDF5 round trip passes");
     MIB_EXPECT(fs::last_write_time(dest) != aged, "the first evaluation probes the destination");
     MIB_EXPECT(entries(dest) == 0, "the probes leave nothing behind");
@@ -111,6 +140,9 @@ int main()
     MIB_EXPECT(fs::last_write_time(dest) == aged,
                "repeated evaluations with the same path and generation create no file");
     MIB_EXPECT(entries(dest) == 0, "still nothing in the destination");
+
+    wd.mark("path-less warm cache");
+    noPathDoesNotProbe();
 
     // ---- 3. A path change probes the new destination -------------------------
     wd.mark("path change");
@@ -148,7 +180,10 @@ int main()
     const auto settled = coord.evaluateReadiness(out1);
     MIB_EXPECT(statusOf(settled, "storage.output") == GateStatus::Pass, "pass before the change");
     fs::remove_all(dest);
-    { std::ofstream f(dest); f << "x"; }
+    {
+        std::ofstream f(dest);
+        f << "x";
+    }
     const auto blocked = coord.evaluateReadiness(out1);
     MIB_EXPECT(blocked.generation == settled.generation, "the key did not change");
     MIB_EXPECT(statusOf(blocked, "storage.output") == GateStatus::Fail,
@@ -163,7 +198,10 @@ int main()
     bool enforced = false;
     {
         const auto canary = dest2 / "canary";
-        { std::ofstream f(canary); enforced = !f.good(); }
+        {
+            std::ofstream f(canary);
+            enforced = !f.good();
+        }
         std::error_code ec;
         fs::remove(canary, ec);
     }
@@ -175,9 +213,10 @@ int main()
         fs::permissions(dest2, writable);
         const auto fixed = coord.evaluateReadiness(out2);
         MIB_EXPECT(fixed.generation == denied.generation, "nothing in the key changed");
-        MIB_EXPECT(statusOf(fixed, "storage.output") == GateStatus::Pass &&
-                       statusOf(fixed, "storage.roundtrip") == GateStatus::Pass,
-                   "the failure was not kept: the fixed destination passes without a generation bump");
+        MIB_EXPECT(
+            statusOf(fixed, "storage.output") == GateStatus::Pass &&
+                statusOf(fixed, "storage.roundtrip") == GateStatus::Pass,
+            "the failure was not kept: the fixed destination passes without a generation bump");
         aged2 = age(dest2);
         coord.evaluateReadiness(out2);
         MIB_EXPECT(fs::last_write_time(dest2) == aged2, "and its pass is kept");
