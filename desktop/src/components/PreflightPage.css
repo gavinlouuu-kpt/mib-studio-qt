@@ -1,0 +1,24 @@
+/* The classic Hardware Preflight first page (#796): the kit's summary inside the classic tab body.
+   Kit tokens only; the classic shell around it keeps its own styles. */
+.classic-preflight {
+  padding: var(--mib-space-4) var(--mib-space-3);
+  background: var(--mib-color-bg);
+  min-width: 0;
+}
+/* The legacy Hardware setup page (until #798): today's forms behind a plain header. */
+.classic-setup-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 4px 0 8px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 10px;
+}
+.classic-setup-head h2 {
+  margin: 0;
+  font-size: 16px;
+}
+.classic-setup-head .sub {
+  flex: 1;
+  color: var(--muted);
+}

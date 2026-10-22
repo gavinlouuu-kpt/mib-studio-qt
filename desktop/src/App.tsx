@@ -69,7 +69,7 @@ import {
 import { deviceIdentity as cameraIdentity, preflightSignature as signPreflight, type SignatureDevice } from "./confirmationSignature";
 import { BRIDGE_ABI_VERSION, EXPERIMENT_STATES, OPERATION_KINDS, OPERATION_STATES, PUMP_IDS } from "./bridgeContract";
 import { deriveWorkflow, type StageTab, type WorkflowFacts } from "./workflow";
-import { CHECK_STATUS_LABEL, PREFLIGHT_POLL_MS, PREFLIGHT_READ_STALE_MS, derivePreflight, type PreflightInput } from "./preflight";
+import { PREFLIGHT_POLL_MS, PREFLIGHT_READ_STALE_MS, derivePreflight, type PreflightInput } from "./preflight";
 import { capabilitiesOf, isPz7035, PL_IGNORED_SETTINGS_TEXT } from "./platformCapabilities";
 import { deriveQualityGates, GATE_STATUS_LABEL, type ImageQualityInput, type QualityInput } from "./quality";
 import { deriveContextBar, SEG_STATUS_LABEL, type ContextBarFacts } from "./contextBar";
@@ -107,6 +107,8 @@ import { SavedReviewImage } from "./components/SavedReviewImage";
 import { ReviewCharts } from "./components/ReviewCharts";
 import { ExportStatus, ReviewExportOptions, useReviewExport } from "./exportControls";
 import { Workspace, workspaceReadsPrepare } from "./workspace/Workspace";
+import { PreflightPage } from "./components/PreflightPage";
+import type { SetupSection } from "./workspace/PrepareSummary";
 import { initialWorkspaceStage, readLanding, writeLanding } from "./workspace/landing";
 import type { ExperimentSubView } from "./workspace/ExperimentView";
 import type { FrameSink } from "./workspace/AlignView";
@@ -219,6 +221,11 @@ export default function App() {
   // Camera & Alignment or Experiment and switch the camera mode behind the operator's back).
   const startedInWorkspace = useRef(workspaceStage !== null);
   const [connectTab, setConnectTab] = useState<"cameras" | "mindvision" | "framegrabbers">("cameras");
+  // The classic Hardware Preflight stage (#796): its summary-first first page, or the Hardware setup
+  // page (#798) that a row's "Set up …" or Settings opens at a section.
+  const [connectView, setConnectView] = useState<"preflight" | "setup">("preflight");
+  const [setupSection, setSetupSection] = useState<SetupSection | null>(null);
+  const openSetup = useCallback((section: SetupSection | null) => { setTab("connect"); setConnectView("setup"); setSetupSection(section); }, []);
   const [expTab, setExpTab] = useState<"preview" | "monitoring" | "files" | "recordings">("preview");
   const [configTab, setConfigTab] = useState<"app" | "script">("app");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
@@ -1722,6 +1729,7 @@ export default function App() {
             { label: "Processing Settings…", onClick: () => {setTab("experiment");setExpTab("preview");setConfigTab("app");} },
             { label: "Pixel to Micron…", onClick: () => {setTab("experiment");setExpTab("preview");setConfigTab("app");} },
             { label: "Monitoring Settings…", onClick: () => {setTab("experiment");setExpTab("monitoring");} },
+            { label: "Hardware setup…", onClick: () => openSetup(null) },
             // Board diagnostics (versions, log tail, download) are served by the instrument's server: browser only.
             ...(isRemote ? [{ label: "Diagnostics…", onClick: () => setShowDiagnostics(true) }] : []),
             // The central registry import and the application updater are desktop-shell features: in the
@@ -1816,7 +1824,7 @@ export default function App() {
             controlHeld={controlHeld}
             onRefreshChecks={() => void refreshPreflight()}
             // The classic Connect tab only reads (it never switches camera modes).
-            onOpenSetup={() => { setTab("connect"); exitWorkspace(); }}
+            onOpenSetup={(section) => { openSetup(section); exitWorkspace(); }}
             // O3 Plan: Start run is locked for the same reasons as the classic Start button.
             experiment={{ plan, lockedReason: startExperimentReason ?? "", view: experimentView, onView: setExperimentView,
               cameraMode: planCameraMode({ instrumentModes, mode: instrumentModes ? instrument?.mode?.name ?? null : null, windowPlaced: cameraWin.placed,
@@ -2018,7 +2026,7 @@ export default function App() {
           )}
 
           <ViewerGate>
-          <CaptureRecovery ready={ready} blocked={expActive || !!expStatus?.flushing || (expState === EXPERIMENT_STATES.Failed && !expStatus?.terminal) || recording || cameraScript.busy} onRetry={onStartCamera} onConfigure={() => setTab("connect")} />
+          <CaptureRecovery ready={ready} blocked={expActive || !!expStatus?.flushing || (expState === EXPERIMENT_STATES.Failed && !expStatus?.terminal) || recording || cameraScript.busy} onRetry={onStartCamera} onConfigure={() => openSetup("camera")} />
           <ExperimentRecovery ready={ready} status={expStatus} onStatus={setExpStatus} />
           {caps.reanalysis && <ReanalysisStatus model={reanalysis}/>}
           <ExportStatus model={reviewExport} />
@@ -2026,15 +2034,31 @@ export default function App() {
           <div className="tab-body">
             {modeNotice && <ClassicModeNotice notice={modeNotice} busy={classicModeBusy} onApply={() => void applyClassicMode()} />}
             <PanelErrorBoundary>{() => <>
-            <div hidden={tab !== "connect"}><ViewerGate>
+            {/* The Hardware setup page (until #798 lands: today's forms, unchanged, behind a plain header).
+                The forms stay mounted while hidden so their state survives navigation. */}
+            <div hidden={!(tab === "connect" && connectView === "setup")} data-testid="hardware-setup" data-setup-section={setupSection ?? undefined}>
+              <div className="classic-setup-head">
+                <h2>Hardware setup</h2>
+                <span className="sub">Reached from a preflight row's Set up… and from Settings · nothing here is required for the mock camera</span>
+                <button type="button" onClick={() => setConnectView("preflight")}>Back to preflight</button>
+              </div>
+              <ViewerGate>
               <HardwareControls ready={ready} experimentActive={expActive} append={append} capabilities={caps}
                 mode={operatingMode} armed={triggerArmed} onDisarm={() => setTriggerArmed(false)} onSelectionChanged={refreshCameraState} />
               {/* Z stage (#464): hidden on the PZ7035 until the board has a serial path for it. */}
               {!pz7035 && <StageControls ready={ready} experimentActive={expActive} append={append}
                 mode={operatingMode} armed={triggerArmed} onDisarm={() => setTriggerArmed(false)} />}
             </ViewerGate></div>
-            {/* ---- Connect ---- */}
-            {tab === "connect" && (
+            {/* ---- Hardware Preflight: the summary-first first page (#796) ---- */}
+            {tab === "connect" && connectView === "preflight" && (
+              <PreflightPage active={ready && workspaceStage === null && !expActive}
+                preflightInput={preflightInput} zStage={zStage} signature={preflightSignature} confirmedFor={preflightConfirmedFor}
+                onConfirm={() => { if (!expActive) setPreflightConfirmedFor(preflightSignature); }}
+                confirmLockedReason={!ready ? "Backend is not initialized" : expActive ? "Setup is locked while an experiment is active" : ""}
+                experimentActive={expActive} onRefreshChecks={() => void refreshPreflight()} onSetup={openSetup} controlHeld={controlHeld} />
+            )}
+            {/* ---- Hardware setup: the device sources (today's "Available devices") ---- */}
+            {tab === "connect" && connectView === "setup" && (
               <>
                 <p style={{ margin: "0 0 6px" }}>Available devices:</p>
                 <div className="subtabs" role="tablist" aria-label="Device sources">
@@ -2111,66 +2135,6 @@ export default function App() {
                   </p>
                 </div>
 
-                {/* ---- UX-3 hardware preflight checklist ---- */}
-                <div className="preflight-panel">
-                  <div className="preflight-head">
-                    <h4>Hardware preflight</h4>
-                    <span className="preflight-summary">
-                      {preflight.passed} passed · {preflight.warning} warning · {preflight.failed} failed
-                      {preflight.unknown ? ` · ${preflight.unknown} unknown` : ""}
-                      {preflight.unsupported ? ` · ${preflight.unsupported} unsupported` : ""}
-                      {preflight.notRequired ? ` · ${preflight.notRequired} n/a` : ""}
-                    </span>
-                    <button className="btn" onClick={() => void refreshPreflight()} disabled={!ready}>
-                      Refresh
-                    </button>
-                  </div>
-                  <ul className="preflight-list">
-                    {preflight.checks.map((c) => (
-                      <li key={c.id} data-check-id={c.id} className={`preflight-check ${c.status}`}>
-                        <span className={`check-dot ${c.status}`} aria-hidden="true" />
-                        <span className="check-main">
-                          <span className="check-label">
-                            {c.label}
-                            {c.requirement === "required" && <span className="req-badge">required</span>}
-                          </span>
-                          <span className="check-detail">{c.detail}</span>
-                          {(c.expected || c.detected !== "—") && (
-                            <span className="check-identity">
-                              {c.expected ? `expected ${c.expected} · ` : ""}
-                              detected {c.detected}
-                            </span>
-                          )}
-                        </span>
-                        <span
-                          className="check-status"
-                          aria-label={`${c.label}: ${CHECK_STATUS_LABEL[c.status]}`}
-                        >
-                          {CHECK_STATUS_LABEL[c.status]}
-                        </span>
-                        {c.recovery.length > 0 && (
-                          <span className="check-recovery">
-                            {c.recovery.map((a) => (
-                              <button
-                                key={a.kind}
-                                className="btn small"
-                                onClick={() => void refreshPreflight()}
-                                disabled={!ready}
-                              >
-                                {a.label}
-                              </button>
-                            ))}
-                          </span>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                  <p className={`preflight-foot ${preflight.criticalPassed ? "ok" : "warn"}`}>
-                    {preflight.criticalPassed
-                      ? "Required checks pass — confirm readiness in the workflow bar to complete Preflight."
-                      : "Required checks must pass (an unknown check is not a pass) before Preflight can be confirmed."}
-                  </p>
-                </div>
               </>
             )}
 

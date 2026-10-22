@@ -737,3 +737,118 @@
   gap: var(--mib-space-2);
   align-items: center;
 }
+/* The summary-first preflight (O1b, PrepareSummary.tsx): the verdict card and "What was checked"
+   span the full width; the rows are DisclosureRow (disclosure.css). Scoped to .ws-prepare-summary so
+   the classic Hardware Preflight stage shares it. */
+.ws-prepare-summary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mib-space-4);
+  min-width: 0;
+}
+.ws-prepare-summary .mib-card,
+.ws-prepare-summary .mib-card__body {
+  min-width: 0;
+}
+.ws-prepare-summary .mib-facts__label,
+.ws-prepare-summary .mib-facts__value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.ws-prepare-summary .mib-card__status .mib-chip,
+.ws-prepare-summary .mib-facts__value .mib-chip {
+  white-space: normal;
+  max-width: 100%;
+}
+.ws-prepare-summary .ws-note {
+  margin: 0;
+  font-size: var(--mib-font-size-sm);
+  color: var(--mib-color-sub);
+}
+.ws-prepare-summary .ws-gate {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--mib-space-1) var(--mib-space-2);
+  min-width: 0;
+  max-width: 100%;
+}
+.ws-prepare-summary .ws-gate-id {
+  display: block;
+  font-size: var(--mib-font-size-xs);
+  color: var(--mib-color-mute);
+  overflow-wrap: anywhere;
+}
+.ws-prepare-summary .ws-gate-fix,
+.ws-prepare-summary .ws-gate-note {
+  flex-basis: 100%;
+  min-width: 0;
+  font-size: var(--mib-font-size-sm);
+  color: var(--mib-color-sub);
+}
+.ws-prepare-summary .ws-next {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--mib-space-2);
+  font-size: var(--mib-font-size-md);
+  color: var(--mib-color-sub);
+}
+.ws-prepare-summary .ws-refusal {
+  align-self: center;
+  margin-left: var(--mib-space-2);
+  font-size: var(--mib-font-size-md);
+  color: var(--mib-color-sub);
+}
+.ws-prepare-summary .ws-verdict-facts {
+  grid-template-columns: 146px minmax(0, 1fr);
+}
+.ws-prepare-summary .ws-checked .mib-card__body {
+  gap: 0;
+}
+.ws-prepare-summary .ws-row-facts {
+  grid-template-columns: minmax(0, 200px) minmax(0, 1fr);
+}
+.ws-prepare-summary .ws-row-facts--gates {
+  grid-template-columns: minmax(0, 170px) minmax(0, 1fr);
+}
+.ws-prepare-summary .ws-row-gates {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--mib-space-6);
+}
+@media (max-width: 1100px) {
+  .ws-prepare-summary .ws-row-gates {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.ws-prepare-summary .ws-row-more {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--mib-font-family);
+  font-size: var(--mib-font-size-md);
+  font-weight: var(--mib-font-weight-semibold);
+  color: var(--mib-color-accent);
+}
+.ws-prepare-summary .ws-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--mib-space-2);
+  margin-top: var(--mib-space-1);
+}
+.ws-prepare-summary .ws-how {
+  margin-right: 18px;
+}
+.ws-prepare-summary .ws-how .mib-card__body {
+  gap: 6px;
+}
+.ws-prepare-summary .ws-cal-embedded {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mib-space-3);
+  min-width: 0;
+}
