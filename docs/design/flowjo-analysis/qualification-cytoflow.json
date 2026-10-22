@@ -1,0 +1,292 @@
+{
+  "checks": [
+    {
+      "actual": [
+        "source-0/valid/9007199254740993",
+        "source-1/valid/9007199254740993",
+        "source-0/valid/9007199254740994",
+        "source-1/valid/9007199254740994",
+        "source-0/valid/9007199254740995",
+        "source-1/valid/9007199254740995",
+        "source-0/valid/9007199254740996",
+        "source-1/valid/9007199254740996",
+        "source-0/valid/9007199254740997"
+      ],
+      "expected": [
+        "source-0/valid/9007199254740993",
+        "source-1/valid/9007199254740993",
+        "source-0/valid/9007199254740994",
+        "source-1/valid/9007199254740994",
+        "source-0/valid/9007199254740995",
+        "source-1/valid/9007199254740995",
+        "source-0/valid/9007199254740996",
+        "source-1/valid/9007199254740996",
+        "source-0/valid/9007199254740997"
+      ],
+      "name": "exact_keys_ccw",
+      "passed": true
+    },
+    {
+      "actual": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        false,
+        false,
+        false
+      ],
+      "expected": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        false,
+        false,
+        false
+      ],
+      "name": "edge_vertex_missing_ccw",
+      "passed": true
+    },
+    {
+      "actual": [
+        "source-0/valid/9007199254740993",
+        "source-1/valid/9007199254740993",
+        "source-0/valid/9007199254740994",
+        "source-1/valid/9007199254740994",
+        "source-0/valid/9007199254740995",
+        "source-1/valid/9007199254740995"
+      ],
+      "expected": [
+        "source-0/valid/9007199254740993",
+        "source-1/valid/9007199254740993",
+        "source-0/valid/9007199254740994",
+        "source-1/valid/9007199254740994",
+        "source-0/valid/9007199254740995",
+        "source-1/valid/9007199254740995"
+      ],
+      "name": "query_keys_ccw",
+      "passed": true
+    },
+    {
+      "actual": [
+        "source-0/valid/9007199254740993",
+        "source-1/valid/9007199254740993",
+        "source-0/valid/9007199254740994",
+        "source-1/valid/9007199254740994",
+        "source-0/valid/9007199254740995",
+        "source-1/valid/9007199254740995",
+        "source-0/valid/9007199254740996",
+        "source-1/valid/9007199254740996",
+        "source-0/valid/9007199254740997"
+      ],
+      "expected": [
+        "source-0/valid/9007199254740993",
+        "source-1/valid/9007199254740993",
+        "source-0/valid/9007199254740994",
+        "source-1/valid/9007199254740994",
+        "source-0/valid/9007199254740995",
+        "source-1/valid/9007199254740995",
+        "source-0/valid/9007199254740996",
+        "source-1/valid/9007199254740996",
+        "source-0/valid/9007199254740997"
+      ],
+      "name": "exact_keys_cw",
+      "passed": true
+    },
+    {
+      "actual": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        false,
+        false,
+        false
+      ],
+      "expected": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        false,
+        false,
+        false
+      ],
+      "name": "edge_vertex_missing_cw",
+      "passed": true
+    },
+    {
+      "actual": [
+        "source-0/valid/9007199254740993",
+        "source-1/valid/9007199254740993",
+        "source-0/valid/9007199254740994",
+        "source-1/valid/9007199254740994",
+        "source-0/valid/9007199254740995",
+        "source-1/valid/9007199254740995"
+      ],
+      "expected": [
+        "source-0/valid/9007199254740993",
+        "source-1/valid/9007199254740993",
+        "source-0/valid/9007199254740994",
+        "source-1/valid/9007199254740994",
+        "source-0/valid/9007199254740995",
+        "source-1/valid/9007199254740995"
+      ],
+      "name": "query_keys_cw",
+      "passed": true
+    },
+    {
+      "actual": false,
+      "expected": false,
+      "name": "input_unchanged",
+      "passed": true
+    },
+    {
+      "actual": [
+        "source-0/valid/9007199254740993",
+        "source-0/valid/9007199254740994",
+        "source-0/valid/9007199254740995",
+        "source-1/valid/9007199254740993",
+        "source-1/valid/9007199254740994",
+        "source-1/valid/9007199254740995"
+      ],
+      "expected": [
+        "source-0/valid/9007199254740993",
+        "source-0/valid/9007199254740994",
+        "source-0/valid/9007199254740995",
+        "source-1/valid/9007199254740993",
+        "source-1/valid/9007199254740994",
+        "source-1/valid/9007199254740995"
+      ],
+      "name": "reordered_key_membership",
+      "passed": true
+    },
+    {
+      "actual": {
+        "reason": "('high', 'range high must be > range low')",
+        "refused": "CytoflowOpError"
+      },
+      "expected": [
+        false,
+        false,
+        false,
+        false,
+        true,
+        true,
+        false,
+        false,
+        true
+      ],
+      "name": "equal_range_required_by_MIB",
+      "passed": false
+    },
+    {
+      "actual": [
+        true,
+        true
+      ],
+      "expected": [
+        false,
+        false
+      ],
+      "name": "missing_values_not_admitted_by_naive_negation",
+      "passed": false
+    }
+  ],
+  "engine": "1.3.2",
+  "engine_source_commit": "02f40704b24ad8dcd32cee69b9fe50e3aeb56c49",
+  "fcsparser_source_commit": "04efc3dcd2e3a58989f2f4dae3773cf39c727f1d",
+  "limits": "Synthetic real-engine probe only; no MIB adapter, live integration, performance, advanced operations or distribution qualification.",
+  "packages": {
+    "Bottleneck": "1.6.0",
+    "Cython": "3.3.0",
+    "PyYAML": "6.0.3",
+    "apptools": "5.3.1",
+    "array-api-compat": "1.15.0",
+    "attrs": "26.1.0",
+    "camel": "0.1.2",
+    "cffi": "2.1.1",
+    "cloudpickle": "3.1.2",
+    "configobj": "5.0.9",
+    "contourpy": "1.3.3",
+    "cycler": "0.12.1",
+    "cytoflow": "1.3.2",
+    "dcor": "0.7",
+    "envisage": "8.0.1",
+    "fastjsonschema": "2.22.2",
+    "fcsparser": "0.2.8",
+    "fdasrsf": "2.7.3",
+    "findiff": "0.16.0",
+    "fonttools": "4.67.0",
+    "formulaic": "1.2.2",
+    "igraph": "0.11.9",
+    "importlib_metadata": "9.0.1",
+    "importlib_resources": "7.1.0",
+    "interface_meta": "2.0.1",
+    "joblib": "1.6.0",
+    "jsonschema": "4.26.0",
+    "jsonschema-specifications": "2025.9.1",
+    "jupyter_core": "5.9.1",
+    "kiwisolver": "1.5.1",
+    "lazy-loader": "0.6",
+    "llvmlite": "0.50.0",
+    "matplotlib": "3.11.2",
+    "mpmath": "1.3.0",
+    "multimethod": "2.1",
+    "narwhals": "2.27.1",
+    "natsort": "8.4.0",
+    "nbformat": "5.11.1",
+    "numba": "0.68.0",
+    "numexpr": "2.14.2",
+    "numpy": "1.26.4",
+    "openTSNE": "1.0.4",
+    "packaging": "26.3",
+    "pandas": "3.0.6",
+    "patsy": "1.0.3",
+    "pillow": "13.0.0",
+    "platformdirs": "4.13.5",
+    "pycparser": "3.11",
+    "pyface": "8.0.0",
+    "pyparsing": "3.3.3",
+    "python-dateutil": "3.0.0",
+    "python-igraph": "0.11.9",
+    "rdata": "1.1.0",
+    "referencing": "0.37.0",
+    "rpds-py": "2026.9.1",
+    "scikit-datasets": "0.2.5",
+    "scikit-fda": "0.10.1",
+    "scikit-learn": "1.9.1",
+    "scipy": "1.17.1",
+    "seaborn": "0.13.2",
+    "setuptools": "80.10.2",
+    "six": "1.17.0",
+    "statsmodels": "0.15.0",
+    "swig": "4.5.1",
+    "sympy": "1.14.0",
+    "texttable": "1.7.2",
+    "threadpoolctl": "3.7.0",
+    "tomli": "2.5.0",
+    "tqdm": "4.70.1",
+    "traitlets": "5.16.1",
+    "traits": "7.2.0",
+    "traitsui": "8.0.0",
+    "typing_extensions": "4.16.0",
+    "tzdata": "2026.5",
+    "wrapt": "2.5.1",
+    "xarray": "2026.9.0",
+    "yapf": "0.40.2",
+    "zipp": "4.1.2"
+  },
+  "passed": false,
+  "python": "3.12.3",
+  "schema": "mib-cytoflow-qualification/v1"
+}

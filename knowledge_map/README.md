@@ -19,6 +19,7 @@ following `[[WikiLinks]]`. If you are a new agent, start here:
 - [[services/ReviewSession]] — Qt-free review implementation shared by the Qt tab, the Tauri shell and YOFO Review
 
 ### Services (`src/backend/services/`)
+- [[services/AnalysisWorker]] — native population semantics, bounded Cytoflow worker and terminal job recovery
 - [[services/_MOC|Services MOC]]
 - Realtime path: [[services/CaptureService]] → [[services/ProcessingService]]
 - Live Monitoring density (KDE, backend worker): [[services/MonitoringDensityService]]
