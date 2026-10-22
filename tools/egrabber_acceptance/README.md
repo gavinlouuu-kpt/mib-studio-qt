@@ -22,3 +22,7 @@ Integration must retain existing CaptureService/camera ownership and serialize
 session-token acquisition through readback with stop, scripts and selector access.
 No bridge ABI or UI entry point is added. Tree enumeration, multi-selectors,
 commands, physical qualification and final E02 acceptance remain outstanding.
+
+The path-filtered `egrabber-feature-control.yml` workflow runs the SDK-free core
+with UBSan on pull requests. SDK adapter checks remain explicitly local because
+the SDK is not vendored or provisioned by CI.

@@ -6,3 +6,6 @@ No camera ownership, shared bridge ABI, acquisition behavior or UI changed.
 Standalone tests distinguish fake-port behavior, fake-adapter behavior, and
 compile-only compatibility against the operator-provided eGrabber 26.09 headers.
 E02 is partial pending capture-owner integration and physical qualification.
+
+A path-filtered GitHub workflow runs the SDK-free core with UBSan; it does not
+claim SDK/hardware coverage. SDK adapter checks remain an explicit local gate.
