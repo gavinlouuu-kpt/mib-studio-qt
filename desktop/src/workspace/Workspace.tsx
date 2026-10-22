@@ -1,5 +1,6 @@
-// The opt-in four-stage workspace (P1, #713; track A steps A1 and A3): Prepare / Align /
-// Experiment / Review on the @mib/ui kit. The classic shell stays the default and keeps running
+// The four-stage workspace (P1, #713; track A steps A1 and A3): Prepare / Align /
+// Experiment / Review on the @mib/ui kit. On the workspace branch the app opens here (landing.ts),
+// with the classic view one click away ("Classic view"); the classic shell keeps running
 // underneath, unchanged: the workspace never changes the classic tab, because a classic tab change
 // can act on hardware (Camera & Alignment switches the PZ7035 to Align and its LED on; Experiment
 // to Run). Selecting a stage here only changes what is shown; it never starts capture, switches a
@@ -30,6 +31,12 @@ import { calibrationGate } from "./calibrationModel";
 import type { PlanCalibration } from "./planParts";
 import { useCalibration } from "./useCalibration";
 
+/** The band under the brand: what the workspace is, and its one rule. */
+export const WORKSPACE_BAND = {
+  left: "Workspace preview",
+  right: "Navigation never acts: only an explicit button switches or writes. The classic view is one click away (Classic view).",
+} as const;
+
 export const WORKSPACE_STAGES = ["Prepare", "Align", "Experiment", "Review"] as const;
 
 /** Whether the workspace shows Prepare's verdict, and so polls Prepare's checklist and gates:
@@ -52,7 +59,8 @@ export interface WorkspaceProps extends Omit<PrepareViewProps, "readiness" | "re
   method: string;
   stage: number;
   onStage: (stage: number) => void;
-  /** Back to the classic view as it was (no classic tab change). */
+  /** Back to the classic view as it was (no classic tab change); App remembers it as the
+   *  operator's choice for the next start. */
   onExit: () => void;
   serviceMode: boolean;
   /** O2 Align: the live image, image tools and quick controls. */
@@ -113,7 +121,7 @@ export function Workspace({ brand, source, method, stage, onStage, onExit, servi
       stages={[...WORKSPACE_STAGES]}
       activeStage={stage}
       onStageSelect={onStage}
-      band={{ left: "Workspace preview · opt-in", right: "Navigation never acts: only an explicit button switches or writes. The classic view stays the default." }}
+      band={WORKSPACE_BAND}
       status={<>
         {showsVerdict ? <StateChip tone={verdict.tone} title={verdict.detail || undefined} data-testid="workspace-verdict">{verdict.title}</StateChip> : null}
         <StateChip tone="neutral" data-testid="workspace-preview-chip">{stage === 1 || stage === 2 ? "Preview · acts only on a button" : "Preview · read-only"}</StateChip>

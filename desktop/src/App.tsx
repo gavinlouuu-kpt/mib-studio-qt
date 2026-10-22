@@ -107,6 +107,7 @@ import { SavedReviewImage } from "./components/SavedReviewImage";
 import { ReviewCharts } from "./components/ReviewCharts";
 import { ExportStatus, ReviewExportOptions, useReviewExport } from "./exportControls";
 import { Workspace, workspaceReadsPrepare } from "./workspace/Workspace";
+import { initialWorkspaceStage, readLanding, writeLanding } from "./workspace/landing";
 import type { ExperimentSubView } from "./workspace/ExperimentView";
 import type { FrameSink } from "./workspace/AlignView";
 import type { RoiKind } from "./workspace/alignControls";
@@ -204,12 +205,14 @@ export default function App() {
   const [preflightConfirmedFor, setPreflightConfirmedFor] = usePersistedState("yofo.preflightConfirmedFor", "", isString);
   const [alignmentConfirmedFor, setAlignmentConfirmedFor] = usePersistedState("yofo.alignmentConfirmedFor", "", isString);
   const didInitStage = useRef(false);
-  // Opt-in workspace (P1, #713): the stage shown, or null for the classic view. Session state
-  // only: every start and every reload opens the classic view, so startup does not change.
-  const [workspaceStage, setWorkspaceStage] = useState<number | null>(null);
+  // The workspace (P1, #713): the stage shown, or null for the classic view. On this branch the app
+  // opens in the workspace (Prepare) unless the operator last chose the classic view in this
+  // browser (landing.ts). Opening there acts on nothing: the classic tab stays on Connect, and the
+  // classic startup landing is skipped while the workspace is open.
+  const [workspaceStage, setWorkspaceStage] = useState<number | null>(() => initialWorkspaceStage(readLanding()));
   // The Experiment stage's sub-view (Plan / Live / Summary): what the workspace polls depends on it.
   const [experimentView, setExperimentView] = useState<ExperimentSubView>("Plan");
-  const workspaceStageRef = useRef<number | null>(null);
+  const workspaceStageRef = useRef<number | null>(workspaceStage);
   workspaceStageRef.current = workspaceStage;
   const [connectTab, setConnectTab] = useState<"cameras" | "mindvision" | "framegrabbers">("cameras");
   const [expTab, setExpTab] = useState<"preview" | "monitoring" | "files" | "recordings">("preview");
@@ -1380,10 +1383,14 @@ export default function App() {
     await applyCameraMode("experiment");
   }, [applyCameraMode]);
   // Opening the workspace cancels a pending classic switch at once (the ref, before the render):
-  // a classic tab change that is still awaiting its read then sends nothing.
-  const openWorkspace = useCallback(() => { workspaceStageRef.current = 0; setWorkspaceStage(0); }, []);
+  // a classic tab change that is still awaiting its read then sends nothing. The menu row's
+  // "Workspace preview" is an explicit choice: the next start opens the workspace again.
+  const openWorkspace = useCallback(() => { workspaceStageRef.current = 0; setWorkspaceStage(0); writeLanding("workspace"); }, []);
   // Leaving the workspace never acts: a mode the workspace changed is shown, not reverted.
   const exitWorkspace = useCallback(() => setWorkspaceStage(null), []);
+  // The workspace's "Classic view" is the operator's choice: the next start opens the classic view.
+  // Task jumps (Prepare's setup buttons, Open in Review) use exitWorkspace and change nothing.
+  const chooseClassic = useCallback(() => { setWorkspaceStage(null); writeLanding("classic"); }, []);
   // The workspace Summary's Open in Review (#716 A7b): the classic Review tab with the run's file. It
   // loads the file there (`load_recording`, a control command: a viewer's button is disabled), and
   // never during a run. While a file is open in Review the backend refuses Start (D1 (a), #722).
@@ -1742,7 +1749,7 @@ export default function App() {
           type="button"
           className="workspace-toggle"
           onClick={openWorkspace}
-          title="Open the opt-in Prepare / Align / Experiment / Review workspace. It reads the backend only; the classic view stays the default."
+          title="Open the Prepare / Align / Experiment / Review workspace. Opening it acts on nothing; the app then opens in it at the next start."
         >
           Workspace preview
         </button>
@@ -1778,7 +1785,7 @@ export default function App() {
             method={profiles.activeProfile ? profiles.activeProfile.profile_id || profiles.activeProfile.name : ""}
             stage={workspaceStage}
             onStage={setWorkspaceStage}
-            onExit={exitWorkspace}
+            onExit={chooseClassic}
             serviceMode={operatingMode === "service"}
             align={{
               facts: {

@@ -19,6 +19,7 @@ import { BRIDGE_ABI_VERSION, CALIBRATION_APPLY_OUTCOMES, COMMAND_TYPES, EXPERIME
   READINESS_GATE_STATUSES as G, RUN_COMPLETION_STATES } from "../bridgeContract";
 import { DESKTOP_CAPABILITIES } from "../platformCapabilities";
 import { applyReply, calList as calListOf, calRecord } from "./calibrationFixtures";
+import { LANDING_STORAGE_KEY } from "./landing";
 import quickLookGolden from "../../../crates/mib-bridge/contract/fixtures/run-quick-look-v1.json";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -243,6 +244,9 @@ beforeEach(() => {
   const store = { getItem: (k: string) => saved.get(k) ?? null, setItem: (k: string, v: string) => void saved.set(k, v), removeItem: (k: string) => void saved.delete(k) };
   vi.stubGlobal("localStorage", store);
   vi.stubGlobal("sessionStorage", store);
+  // These gates start from the classic view, as an operator who chose it last (landing.ts); the
+  // workspace landing itself is tested in "the workspace branch opens in the workspace" below.
+  saved.set(LANDING_STORAGE_KEY, "classic");
   vi.useFakeTimers();
   vi.mocked(invoke).mockReset();
   vi.mocked(save).mockReset(); // no file left over from an earlier test's unused answer
@@ -448,6 +452,74 @@ const openPlan = async () => {
   await click(host.querySelectorAll(".mib-stages__tab")[2], "Experiment");
   expect(host.querySelector("[data-testid=workspace-plan]")).not.toBeNull();
 };
+
+/** Unmount the app and start it again over the same storage (a reload, or the next start). */
+async function restart(variant: Variant) {
+  await act(async () => root.unmount());
+  root = createRoot(host);
+  log = [];
+  await boot(variant);
+}
+/** What acts, among the commands sent: the start-up core `info` request is a read the classic
+ *  start-up sends either way (coreManagement's restore), never an action. */
+const acting = (entries: { cmd: string; args: unknown }[]) => entries.filter((e) => ACTUATING.includes(e.cmd)
+  && !(e.cmd === "processing_core_command" && JSON.parse((e.args as { request: string }).request).operation === "info"));
+const storedLanding = () => localStorage.getItem(LANDING_STORAGE_KEY);
+const workspaceShown = () => host.querySelector("[data-testid=workspace]") !== null;
+
+describe.each<Variant>(["desktop", "pz7035"])("the workspace branch opens in the workspace (%s)", (variant) => {
+  beforeEach(() => localStorage.removeItem(LANDING_STORAGE_KEY)); // no choice made in this browser yet
+
+  it("with no choice remembered, the app opens in Prepare; nothing acts at start-up, and the classic view is one click away", async () => {
+    await boot(variant);
+    expect(host.querySelector("[data-testid=workspace-prepare]")).not.toBeNull();
+    // The classic view is hidden, not unmounted, and stays on Connect.
+    expect((host.querySelector("nav.menubar") as HTMLElement).style.display).toBe("none");
+    const band = host.querySelector(".ws-shell")!.textContent!;
+    expect(band).toContain("Navigation never acts: only an explicit button switches or writes.");
+    expect(band).toContain("The classic view is one click away");
+    expect(band).not.toContain("stays the default");
+    await advance(6000);
+    // Opening in the workspace switches no camera mode and lights nothing: the classic startup landing is skipped.
+    expect(acting(log)).toEqual([]);
+    for (const r of readinessReads(log)) expect(r.args).toEqual({ outputPath: "" });
+    expect(storedLanding()).toBeNull(); // opening by default records no choice
+
+    await click(buttonByText("Classic view"), "Classic view");
+    expect(workspaceShown()).toBe(false);
+    expect((host.querySelector("nav.menubar") as HTMLElement).style.display).toBe("");
+    // The classic tab is the first one (Connect, which only reads): the startup landing did not move it.
+    expect(host.querySelector('.tabbar button[aria-selected="true"]')).toBe(host.querySelector(".tabbar button"));
+    await advance(6000);
+    expect(acting(log)).toEqual([]);
+  });
+
+  it("remembers the last explicit choice per browser: Classic view opens the classic view next time, Workspace preview the workspace", async () => {
+    await boot(variant);
+    expect(workspaceShown()).toBe(true);
+    await click(buttonByText("Classic view"), "Classic view");
+    expect(storedLanding()).toBe("classic");
+
+    await restart(variant);
+    expect(workspaceShown()).toBe(false);
+    await click(buttonByText("Workspace preview"), "workspace toggle");
+    expect(workspaceShown()).toBe(true);
+    expect(storedLanding()).toBe("workspace");
+
+    await restart(variant);
+    expect(host.querySelector("[data-testid=workspace-prepare]")).not.toBeNull();
+    expect(acting(log)).toEqual([]);
+  });
+
+  it("a task jump to the classic view (Prepare's Camera setup) is not a choice: the next start opens the workspace again", async () => {
+    await boot(variant);
+    await click(buttonByText("Camera setup"), "Camera setup");
+    expect(workspaceShown()).toBe(false);
+    expect(storedLanding()).toBeNull();
+    await restart(variant);
+    expect(workspaceShown()).toBe(true);
+  });
+});
 
 describe.each<Variant>(["desktop", "pz7035"])("Experiment · Plan never acts on its own (%s)", (variant) => {
   it("visiting the Plan, filling the sheet and switching sub-views sends nothing that acts; Start run is locked with the reason", async () => {
