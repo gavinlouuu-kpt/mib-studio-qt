@@ -1,0 +1,57 @@
+/* The disclosure row (DisclosureRow.tsx; kit gap #715): a native <details> styled with @mib/ui
+   tokens only. The summary is chevron, title, one-line summary, StateChip. */
+.ws-row {
+  border-top: 1px solid var(--mib-color-line);
+}
+.ws-row > summary {
+  display: grid;
+  grid-template-columns: 18px 224px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0 var(--mib-space-2);
+  min-height: 48px;
+  list-style: none;
+  cursor: pointer;
+}
+.ws-row > summary::-webkit-details-marker {
+  display: none;
+}
+.ws-row > summary[aria-disabled] {
+  cursor: default;
+}
+.ws-row > summary:focus-visible {
+  outline: 2px solid var(--mib-color-inspect);
+  outline-offset: -2px;
+}
+.ws-row__chev {
+  font-size: var(--mib-font-size-xs);
+  color: var(--mib-color-sub);
+}
+.ws-row__title {
+  font-size: var(--mib-font-size-lg);
+  font-weight: var(--mib-font-weight-semibold);
+  color: var(--mib-color-ink);
+}
+.ws-row__summary {
+  min-width: 0;
+  font-size: var(--mib-font-size-md);
+  color: var(--mib-color-sub);
+  padding-right: var(--mib-space-3);
+}
+.ws-row > summary .mib-chip {
+  white-space: normal;
+  justify-self: end;
+}
+.ws-row--quiet .ws-row__title {
+  font-size: var(--mib-font-size-md);
+  color: var(--mib-color-sub);
+}
+.ws-row--quiet .ws-row__summary {
+  color: var(--mib-color-mute);
+}
+.ws-row__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mib-space-2);
+  padding: 0 0 var(--mib-space-4) 18px;
+  min-width: 0;
+}

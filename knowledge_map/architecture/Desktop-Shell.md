@@ -59,7 +59,10 @@ The repo root `src/` is the C++ tree, so the whole Tauri app lives under
   signature (#713), with `confirmationSignature.test.ts`.
 - `desktop/src/workspace/` — the opt-in four-stage workspace on the `@mib/ui`
   kit (P1/P2, #713; P3 Align, #716 A3): `Workspace.tsx` (shell, stages), `PrepareView.tsx` (O1),
-  `prepareModel.ts` (pure tones and summaries), `usePrepareReadiness.ts`
+  `prepareModel.ts` (pure tones and summaries), `prepareSummaryModel.ts` (pure, summary-first
+  preflight O1b, not mounted yet: what counts as an issue, the headline, the Next · Align and
+  Start-refusal lines, row words, the Calibration row's auto-open) and `DisclosureRow.tsx` +
+  `disclosure.css` (the disclosure row, kit gap #715), `usePrepareReadiness.ts`
   (path-less readiness poll; stopping it drops a read in flight, `usePrepareReadiness.test.tsx`), `AlignView.tsx` (O2), `alignImageModel.ts` (view transform,
   probe, histogram, profile, `FrameInspector`), `quickControlModel.ts` + `useQuickControl.ts`
   (requested → readback machine), `alignControls.ts` (which controls an instrument offers);
