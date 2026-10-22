@@ -251,15 +251,26 @@ function CalibrationBlock({ run, q, list, error, listRead, onPrepare }: {
   const record = recordForRun(usable, runId);
   if (run.methodPurpose !== "calibration" && !record) return null;
   if (!record) {
-    return (
+    // "None was derived" only once the records were read, the store is readable and the run's id is
+    // known: otherwise a record may exist, and the block says it is not known.
+    const resolved = listRead && !error && !storeError && usable !== null && runIdKnown && runId !== null;
+    const reason = noRecordReason({ listError: error, storeError, listRead, runIdKnown, runId });
+    return resolved ? (
       <Notice tone="info" title="No calibration record was derived for this run" data-testid="o5-calibration-none">
-        {`This run used a calibration method${run.methodPurpose === "calibration" ? " (the readiness report at its Start)" : ""}: ${noRecordReason({ listError: error, storeError, listRead, runIdKnown, runId })}.`}
+        {`This run used a calibration method${run.methodPurpose === "calibration" ? " (the readiness report at its Start)" : ""}: ${reason}.`}
+      </Notice>
+    ) : (
+      <Notice tone="unknown" title="Calibration record not known" data-testid="o5-calibration-unknown">
+        {`This run used a calibration method${run.methodPurpose === "calibration" ? " (the readiness report at its Start)" : ""}: ${reason}. Refresh reads the records again.`}
       </Notice>
     );
   }
   const proposed = record.status === "proposed";
   const avail = usable ? applyAvailability(record, usable) : { action: null, reason: "" };
-  if (dismissed === record.record_id) {
+  // Dismissal holds for this version of a proposal only: a record applied, invalidated or revised
+  // since (by another client, read on Refresh) shows again.
+  const dismissKey = `${record.record_id}:${record.version}:${record.sequence}`;
+  if (proposed && dismissed === dismissKey) {
     return (
       <div className="ws-o5__calibration" data-testid="o5-calibration">
         <p className="ws-note" data-testid="o5-calibration-dismissed">{`Dismissed here · ${record.record_id} stays proposed in Prepare's list and changes nothing until it is applied there. Nothing was sent.`}</p>
@@ -273,8 +284,8 @@ function CalibrationBlock({ run, q, list, error, listRead, onPrepare }: {
       <StateChip size="small" tone={statusTone(record, usable!)} data-testid="o5-calibration-status">{statusText(record, usable!)}</StateChip>
       <FactList missing={NOT_RECORDED} facts={[
         { label: "Record", value: <span className="ws-plan-id" data-testid="o5-calibration-record">{record.record_id}</span> },
-        { label: "Pixel → µm", value: <span data-testid="o5-calibration-factor">{proposed
-          ? `${factorChange(usable!.current_factor, record.results?.proposed_pixel_to_micron)} · current → proposed`
+        { label: "Pixel → µm", value: <span data-testid="o5-calibration-factor">{record.status === "proposed" || record.status === "insufficient"
+          ? `${factorChange(usable!.current_factor, record.results?.proposed_pixel_to_micron)} · current → proposed${record.status === "insufficient" ? " · never applicable" : ""}`
           : factorText(recordFactor(record))}</span> },
         { label: "Diameter CV", value: <span data-testid="o5-calibration-cv">{cvText(record)}</span> },
         { label: "Gates", value: <ul className="ws-issue-list" data-testid="o5-calibration-gates">{gateLines(record).map((g) => <li key={g.id}>{g.text}</li>)}</ul> },
@@ -284,7 +295,7 @@ function CalibrationBlock({ run, q, list, error, listRead, onPrepare }: {
         {proposed && avail.action ? <>
           <Button size="small" variant="primary" onClick={() => onPrepare(record.record_id)} data-testid="o5-calibration-apply"
             title="Shows Prepare's Calibration card with this record: Apply is there, with the factor it reads. Nothing is applied from here.">Apply in Prepare…</Button>
-          <Button size="small" onClick={() => setDismissed(record.record_id)} data-testid="o5-calibration-dismiss"
+          <Button size="small" onClick={() => setDismissed(dismissKey)} data-testid="o5-calibration-dismiss"
             title="Hides the proposal here; it stays proposed in Prepare's list. Sends nothing.">Dismiss</Button>
         </> : <Button size="small" onClick={() => onPrepare(record.record_id)} data-testid="o5-calibration-show">Show in Prepare</Button>}
       </div>

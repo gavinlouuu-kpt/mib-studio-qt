@@ -168,10 +168,9 @@ export function nextSample(draft: { format: string; rows: readonly SampleRow[] }
   return draft.rows[upcoming] ?? null;
 }
 
-/** How a sheet row is named: "S2 · Cytochalasin D" (sample, else condition). */
+/** How a sheet row is named: "S2 · Donor A · Cytochalasin D" (its sample and condition, when set). */
 export function sampleName(row: SampleRow): string {
-  const what = row.sample.trim() || row.condition.trim();
-  return what ? `${row.ref} · ${what}` : row.ref;
+  return [row.ref, row.sample.trim(), row.condition.trim()].filter((v) => v).join(" · ");
 }
 
 /** End queue from the summary: the queue's own `end` (sends nothing), after confirming a finalized

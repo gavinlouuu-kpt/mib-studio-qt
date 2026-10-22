@@ -712,8 +712,11 @@ of the quick controls and the sample sheet, until the kit has them).
       a measurement run): status, pixel → µm current → proposed, the diameter CV with its limit and
       the gates (met / not met with value and limit). **Apply in Prepare…** shows Prepare's
       Calibration card with the record selected (`calibration_record_get`, a read); **Dismiss** hides
-      the proposal here (it stays proposed in Prepare's list). Nothing is applied from O5. Without a
-      record: "No calibration record was derived for this run" with the reason when known.
+      the proposal here, for that version only (a record applied, invalidated or revised since shows
+      again). Nothing is applied from O5. Without a record: "No calibration record was derived for
+      this run" only once the records were read, the store is readable and the run's id is known;
+      otherwise "Calibration record not known" with the reason (a failed read, an unreadable store,
+      the run's id not read or not recorded).
   - **O6 Quick look.** The experiment board, in plan order (`boardEntries`): each row's closed runs
     (condition swatch, n, the medians with deltas, the target group, the event rate, flags and
     `differs` chips, a mini scatter of the backend's overlay points (`QuickLookThumb.tsx`, display

@@ -24,7 +24,8 @@ sandbox file's Operation app page). No backend or contract change.
   method purpose from the Start's readiness read, ABI 43, now carried on the start outcome; or a
   record naming the run) the record derived from it, matched by `source.run_id`: current →
   proposed, the CV and the gates; Apply and Dismiss lead to Prepare's Calibration card; nothing is
-  applied from O5. Without a record: "No calibration record was derived for this run" and why.
+  applied from O5. Without a record: "No calibration record was derived for this run" and why, or
+  "Calibration record not known" while the records or the run's id are not read (Codex round 1).
 - **O6**: the board in plan order with grey "Queued" placeholders (no numbers) for runs not yet made,
   mini scatters from the backend's overlay points, and "Refine the experiment" beside the overlay
   (Continue · load S<n>, Repeat, Adjust next sample…, Open in Review (PC)), descriptive helper text

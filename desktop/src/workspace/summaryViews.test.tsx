@@ -357,7 +357,7 @@ describe("O5 Next: Next sample, Repeat this sample, End queue", () => {
     await queuePlan();
     await act(async () => planRef.edit((d) => ({ ...d, rows: d.rows.map((r) => (r.ref === "S2" ? { ...r, sample: "Cytochalasin D" } : r)) })));
     await runToFinalized(1, "/d/s1");
-    expect(text("o5-next-name")).toBe("Next · S2 · Cytochalasin D");
+    expect(text("o5-next-name")).toBe("Next · S2 · Cytochalasin D · Drug");
     const before = calls().length;
     await click("decision-repeat");
     expect(rowState(planRef.queue.state, "S1").phase).toBe("planned");
@@ -449,6 +449,7 @@ describe("O5 calibration run: the record the backend derived, never applied from
     expect(text("o5-calibration-gates")).toContain("Diameter CV: met · 3.1, limit 10");
     const before = calls().length;
     await click("o5-calibration-apply");
+    expect(calls().length).toBe(before);
     expect(onPrepare).toHaveBeenCalledWith("cal-0042");
     await click("o5-calibration-dismiss");
     expect(text("o5-calibration-dismissed")).toContain("stays proposed in Prepare's list");
@@ -461,6 +462,11 @@ describe("O5 calibration run: the record the backend derived, never applied from
     expect(calReads()).toHaveLength(1);
     await click("summary-refresh");
     expect(calReads()).toHaveLength(2);
+    // Codex round 1: a dismissed proposal applied meanwhile (another client; read on Refresh) shows again.
+    calListReply = calList([record({ status: "applied", version: 2, sequence: 2, apply: { previous_factor: 0.5, new_factor: 0.52 } })]);
+    await click("summary-refresh");
+    expect($("o5-calibration-dismissed")).toBeNull();
+    expect(text("o5-calibration-status")).toBe("Applied · not in effect");
   });
 
   it("a calibration run without a record says so, with the reason", async () => {
@@ -471,9 +477,15 @@ describe("O5 calibration run: the record the backend derived, never applied from
     await runToFinalized(1, "/d/s1");
     expect(text("o5-calibration-none")).toContain("No calibration record was derived for this run");
     expect(text("o5-calibration-none")).toContain("none of the backend's records names this run (run id run-/d/s1.h5) as its source");
+    // Codex round 1: a failed read is "not known", never "none was derived".
     calListReply = null;
     await click("summary-refresh");
-    expect(text("o5-calibration-none")).toContain("the calibration records could not be read (TRANSPORT_LOST: no reply)");
+    expect($("o5-calibration-none")).toBeNull();
+    expect(text("o5-calibration-unknown")).toContain("Calibration record not known");
+    expect(text("o5-calibration-unknown")).toContain("the calibration records could not be read (TRANSPORT_LOST: no reply)");
+    calListReply = calList([], { store: { revision: 1, max_versions: 2048, error: "corrupt" } });
+    await click("summary-refresh");
+    expect(text("o5-calibration-unknown")).toContain("store cannot be read");
   });
 
   it("an older backend (purpose not reported): the list is read and a matching record shows; a measurement run reads none", async () => {
@@ -484,6 +496,7 @@ describe("O5 calibration run: the record the backend derived, never applied from
     await runToFinalized(1, "/d/s1");
     expect(calReads()).toHaveLength(1);
     expect(text("o5-calibration-status")).toBe("Insufficient");
+    expect(text("o5-calibration-factor")).toBe("0.5 → 0.52 µm/px · current → proposed · never applicable");
     expect($("o5-calibration-apply")).toBeNull(); // never applicable: only Show in Prepare
     expect($("o5-calibration-show")).not.toBeNull();
     await act(async () => planRef.queue.confirmClosed());
