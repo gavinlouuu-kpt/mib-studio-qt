@@ -4,13 +4,13 @@
 // can act on hardware (Camera & Alignment switches the PZ7035 to Align and its LED on; Experiment
 // to Run). Selecting a stage here only changes what is shown; it never starts capture, switches a
 // camera mode, moves a motor or stage, enables light, runs a pump or installs an update. Prepare
-// (O1), Align (O2), Experiment · Plan (O3, A5), Experiment · Live (O4, A6b) and Experiment · Summary
-// (O5 Run summary and O6 Quick look, A7b) have content; in Align
+// (O1), Align (O2), Experiment · Plan (O3, A5), Experiment · Live (O4, A6b), Experiment · Run summary
+// (O5) and Experiment · Quick look (O6) (A7b, A7c) have content; in Align
 // a mode switch or a write happens only on a button, in Plan a run starts, stops or switches to Run
 // only on a button ("Start run", the sample queue's steps, "Switch to Run" / "Show the experiment
 // window"), and in Live a pin, a run stop or a camera stop happens only on a button (showing Live
-// reads, and turns monitoring on as the classic Monitoring tab does), and in Summary a decision acts
-// only on its button (showing it reads the run quick look). In Prepare the calibration
+// reads, and turns monitoring on as the classic Monitoring tab does), and in Run summary and Quick look
+// a decision acts only on its button (showing them reads the run quick look; never applies calibration). In Prepare the calibration
 // factor changes only on the Calibration card's Apply / Re-apply button (#716 A4b).
 //
 // The kit stylesheets are imported once, here, at the workspace entry.
@@ -33,7 +33,7 @@ import { useCalibration } from "./useCalibration";
 export const WORKSPACE_STAGES = ["Prepare", "Align", "Experiment", "Review"] as const;
 
 /** Whether the workspace shows Prepare's verdict, and so polls Prepare's checklist and gates:
- *  in Prepare and in Experiment's Plan, not in its Live or Summary views (#736 review). */
+ *  in Prepare and in Experiment's Plan, not in its Live, Run summary or Quick look views (#736 review). */
 export const workspaceReadsPrepare = (stage: number, experimentView: ExperimentSubView): boolean =>
   stage === 0 || (stage === 2 && experimentView === "Plan");
 
@@ -67,9 +67,10 @@ export interface WorkspaceProps extends Omit<PrepareViewProps, "readiness" | "re
     cameraMode?: PlanCameraMode | null; onCameraMode?: () => Promise<unknown>;
     /** O4 Experiment · Live (A6b): what App reads and does for it (monitoring is on while it is shown). */
     live: ExperimentViewProps["live"];
-    /** O5/O6 Experiment · Summary (A7b): Open in Review (App's classic Review tab with a file) and
-     *  the read (tests). Adjust next's Align is this workspace's stage 1. */
-    summary?: Omit<ExperimentViewProps["summary"], "onAlign">;
+    /** O5 Run summary and O6 Quick look (A7b/A7c): Open in Review (App's classic Review tab with a
+     *  file) and the reads (tests). Adjust next's Align is this workspace's stage 1; a calibration
+     *  run's Apply / Dismiss lead to Prepare's Calibration card (stage 0). */
+    summary?: Omit<ExperimentViewProps["summary"], "onAlign" | "onPrepare">;
     /** The recording this page has open in the classic Review ("" or absent: none): the Plan's Start
      *  is unavailable meanwhile (#716 A7b). */
     reviewOpen?: string;
@@ -94,6 +95,13 @@ export function Workspace({ brand, source, method, stage, onStage, onExit, servi
     factor: calList?.in_effect_record_id && typeof calList.current_factor === "number" ? calList.current_factor : null,
     error: prepare.experimentActive ? "not read while a run is active" : storeError ? "the calibration store cannot be read" : calibration.error,
     gate: calGate, refresh: calibration.refresh,
+  };
+  // O5's calibration block leads here: Prepare, its Calibration card, and the record selected (its
+  // versions are a read). Nothing is applied: Apply is the card's own button.
+  const showCalibration = (recordId: string | null) => {
+    onStage(0);
+    if (recordId) calibration.select(recordId);
+    window.setTimeout(() => document.querySelector<HTMLElement>("[data-testid=workspace-calibration]")?.scrollIntoView?.({ block: "start" }), 0);
   };
   // One verdict from the checklist, the gates and the operator's confirmation, the same words in
   // the header, in Prepare and beside Start.
@@ -134,7 +142,7 @@ export function Workspace({ brand, source, method, stage, onStage, onExit, servi
       ) : stage === 2 ? (
         <ExperimentView plan={experiment.plan} lockedReason={experiment.lockedReason} view={experiment.view} onView={experiment.onView}
           cameraMode={experiment.cameraMode} onCameraMode={experiment.onCameraMode} live={experiment.live}
-          summary={{ ...(experiment.summary ?? NO_REVIEW), onAlign: () => onStage(1) }} reviewOpen={experiment.reviewOpen}
+          summary={{ ...(experiment.summary ?? NO_REVIEW), onAlign: () => onStage(1), onPrepare: showCalibration }} reviewOpen={experiment.reviewOpen}
           verdict={verdict} blockers={confirmBlockers(report)} confirmation={confirmation} calibration={planCalibration} />
       ) : (
         <div className="ws-view" data-testid={`workspace-${WORKSPACE_STAGES[stage]?.toLowerCase() ?? "stage"}`}>

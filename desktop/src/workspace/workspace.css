@@ -577,10 +577,10 @@
   gap: var(--mib-space-2);
 }
 
-/* ---- Experiment · Summary: O5 Run summary and O6 Quick look (#716 A7b) ---- */
+/* ---- Experiment · O5 Run summary and O6 Quick look (#716 A7b, own sub-views in A7c) ---- */
 .ws-shell .ws-ql__board {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: var(--mib-space-3);
   align-items: start;
 }
@@ -616,4 +616,124 @@
 }
 .ws-shell .ws-ql__reason {
   margin: 0;
+}
+
+/* O5 Run summary (A7c, board O5): Outcome · Counts · Provenance, then Snapshot · Next. */
+.ws-shell .ws-o5__row {
+  display: grid;
+  gap: var(--mib-space-3);
+  align-items: start;
+}
+.ws-shell .ws-o5__row--three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.ws-shell .ws-o5__row--two {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+@media (max-width: 1100px) {
+  .ws-shell .ws-o5__row--three,
+  .ws-shell .ws-o5__row--two {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.ws-shell .ws-o5__pick {
+  display: flex;
+  align-items: center;
+  gap: var(--mib-space-2);
+}
+.ws-shell .ws-o5__checklist {
+  list-style: none;
+  margin: 0 0 var(--mib-space-2);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--mib-space-2);
+}
+.ws-shell .ws-o5__step {
+  display: flex;
+  gap: var(--mib-space-2);
+  align-items: flex-start;
+}
+.ws-shell .ws-o5__step-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.ws-shell .ws-o5__mark {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  border: 1px solid var(--mib-color-line);
+  color: var(--mib-color-sub);
+}
+.ws-shell .ws-o5__step--done .ws-o5__mark {
+  background: var(--mib-color-confirmed);
+  border-color: var(--mib-color-confirmed);
+  color: var(--mib-color-on-dark);
+}
+.ws-shell .ws-o5__step--current .ws-o5__mark {
+  border-color: var(--mib-color-confirmed);
+  color: var(--mib-color-confirmed);
+}
+.ws-shell .ws-o5__step--unknown .ws-o5__mark {
+  border-style: dashed;
+}
+.ws-shell .ws-o5__counts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--mib-space-2);
+}
+.ws-shell .ws-o5__next-name {
+  margin: 0;
+  font-weight: 600;
+}
+.ws-shell .ws-o5__calibration {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mib-space-2);
+  margin-top: var(--mib-space-3);
+  padding: var(--mib-space-3);
+  background: var(--mib-color-tile);
+  border-radius: 4px;
+}
+
+/* O6 Quick look (A7c, board O6): placeholders, mini scatters, overlay beside "Refine the experiment". */
+.ws-shell .ws-ql__run--placeholder {
+  opacity: 0.75;
+}
+.ws-shell .ws-ql__dash {
+  margin: 0;
+  font-size: 20px;
+  color: var(--mib-color-sub);
+}
+.ws-shell .ws-ql__thumb {
+  display: block;
+  margin-bottom: var(--mib-space-2);
+}
+.ws-shell .ws-o6__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.75fr) minmax(0, 1fr);
+  gap: var(--mib-space-3);
+  align-items: start;
+}
+@media (max-width: 1100px) {
+  .ws-shell .ws-o6__row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.ws-shell .ws-o6__decisions {
+  display: grid;
+  grid-template-columns: minmax(180px, auto) minmax(0, 1fr);
+  gap: var(--mib-space-2) var(--mib-space-3);
+  align-items: center;
+}
+.ws-shell .ws-o6__pair {
+  display: inline-flex;
+  gap: var(--mib-space-2);
+  align-items: center;
 }

@@ -207,7 +207,7 @@ export default function App() {
   // Opt-in workspace (P1, #713): the stage shown, or null for the classic view. Session state
   // only: every start and every reload opens the classic view, so startup does not change.
   const [workspaceStage, setWorkspaceStage] = useState<number | null>(null);
-  // The Experiment stage's sub-view (Plan / Live / Summary): what the workspace polls depends on it.
+  // The Experiment stage's sub-view (Plan / Live / Run summary / Quick look): what the workspace polls depends on it.
   const [experimentView, setExperimentView] = useState<ExperimentSubView>("Plan");
   const workspaceStageRef = useRef<number | null>(null);
   workspaceStageRef.current = workspaceStage;
@@ -1123,7 +1123,7 @@ export default function App() {
     const canvas=reviewCanvasRef.current;if(canvas)canvas.getContext("2d")?.clearRect(0,0,canvas.width,canvas.height);
   },[]);
   // Opens a recording in the classic Review: the file the operator picks, or `given` (the workspace
-  // Summary's Open in Review, #716 A7b).
+  // Quick look's Open in Review, #716 A7b).
   const loadReviewSource = useCallback(async (given?: string) => {
     if(reviewSourcePending.current)return;reviewSourcePending.current=true;setReviewSourceBusy(true);
     const sourceGeneration=++reviewSourceGeneration.current;
@@ -1384,7 +1384,7 @@ export default function App() {
   const openWorkspace = useCallback(() => { workspaceStageRef.current = 0; setWorkspaceStage(0); }, []);
   // Leaving the workspace never acts: a mode the workspace changed is shown, not reverted.
   const exitWorkspace = useCallback(() => setWorkspaceStage(null), []);
-  // The workspace Summary's Open in Review (#716 A7b): the classic Review tab with the run's file. It
+  // The workspace Quick look's Open in Review (#716 A7b): the classic Review tab with the run's file. It
   // loads the file there (`load_recording`, a control command: a viewer's button is disabled), and
   // never during a run. While a file is open in Review the backend refuses Start (D1 (a), #722).
   const summaryReviewReason = !ready ? "the backend is not initialized"
@@ -1817,7 +1817,7 @@ export default function App() {
               // and the two separate stops (the classic Stop Camera; experiment_stop naming the run).
               live: { snapshot: workspaceLiveVisible ? monSnapshot : null, running, experimentActive: expActive, hostProcessing,
                 subscribeFrames: subscribeAlignFrames, onStopAcquisition: onStopCamera, onStopRun: stopForLive },
-              // O5/O6 Summary (A7b): Open in Review, the classic Review tab with the run's file.
+              // O5 Run summary / O6 Quick look (A7b, A7c): Open in Review, the classic Review tab with the run's file.
               summary: { review: { reason: summaryReviewReason, open: openInReview } },
               // A recording open in the classic Review blocks the Plan's Start (the backend refuses it).
               reviewOpen: reviewFilePath }}

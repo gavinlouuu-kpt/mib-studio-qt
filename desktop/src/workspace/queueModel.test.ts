@@ -26,6 +26,7 @@ import {
   repeatReason,
   queueClosedRuns,
   followSingleRun,
+  upcomingIndex,
   OPERATION_ENDS_KEPT,
   SINGLE_OUTCOME_UNKNOWN,
   withOperationEnd,
@@ -666,7 +667,7 @@ describe("Repeat sample (#716 A7b, the A7 ruling 8): a UI-local event that keeps
     expect(q.nextRunIndex).toBe(q0.nextRunIndex); // nothing was sent, no index consumed
     expect(rowState(q, "S1").attempts.map((a) => a.runIndex)).toEqual([1]); // never removed
     expect(rowEditable(q, "S1")).toBe(false); // its identity is recorded in run 1
-    expect(rowState(q, "S1").history).toEqual([{ runIndex: 1, path: RUN, end: rowState(q0, "S1").end, generation: "1" }]);
+    expect(rowState(q, "S1").history).toEqual([{ runIndex: 1, path: RUN, end: rowState(q0, "S1").end, generation: "1", seen: rowState(q0, "S1").attempts[0].seen }]);
     expect(rowChip(rowState(q, "S1"), false).text).toBe("Repeat planned");
     expect(plannedRunIndex(ORDER, q, 0)).toBe(2);
     // The Start of the repeat uses the next index (2); a Start with the old index is refused.
@@ -748,5 +749,50 @@ describe("Repeat sample (#716 A7b, the A7 ruling 8): a UI-local event that keeps
     const again = run([{ type: "repeat", ref: "S1" }], q, one);
     expect(currentIndex(one, again)).toBe(0);
     expect(queueInProgress(one, again)).toBe(true);
+  });
+});
+
+describe("what the page observed of a run (#716 A7c, O5's checklist): recorded, never acted on", () => {
+  const started = () => run([
+    { type: "start", ref: "S1", runIndex: 1, generationBefore: "0" },
+    { type: "start-result", ref: "S1", runIndex: 1, generationBefore: "0", result: { kind: "started", path: RUN, notice: "", methodPurpose: "calibration" } },
+  ]);
+  const last = (q: QueueState) => { const a = rowState(q, "S1").attempts; return a[a.length - 1]; };
+
+  it("Active, the first frames, Stopping and the terminal status's start and end; the Start's method purpose", () => {
+    let q = started();
+    expect(last(q).seen).toBeUndefined();
+    expect(last(q).methodPurpose).toBe("calibration");
+    q = run([{ type: "status", status: status({ state: S.Starting, start_generation: "1", output_path: RUN }) }], q);
+    expect(last(q).seen).toBeUndefined(); // seen, but nothing of interest yet
+    q = run([{ type: "status", status: { ...active("1"), valid_saved: "3" } }], q);
+    expect(last(q).seen).toEqual({ active: true, frame: true });
+    q = run([{ type: "status", status: stopping("1") }, { type: "status", status: closed("1", { start_time_ns: "10", end_time_ns: "20" }) }], q);
+    expect(last(q).seen).toEqual({ active: true, frame: true, stopping: true });
+    expect(rowState(q, "S1").end).toMatchObject({ startTimeNs: "10", endTimeNs: "20" });
+    const runs = queueClosedRuns(ORDER, q);
+    expect(runs[0].run.seen).toEqual({ active: true, frame: true, stopping: true });
+    expect(runs[0].run.methodPurpose).toBe("calibration");
+  });
+
+  it("another run's status records nothing on the row; an accepted stop is recorded, a refused one is not", () => {
+    let q = run([{ type: "status", status: active("1") }], started());
+    q = run([{ type: "status", status: { ...active("1", "/data/other.h5"), valid_saved: "9" } }], q);
+    expect(phase(q, "S1")).toBe("interrupted");
+    expect(last(q).seen).toEqual({ active: true });
+    let r = run([{ type: "status", status: active("1") }], started());
+    r = run([{ type: "stop", ref: "S1" }, { type: "stop-result", ref: "S1", ok: false, message: "busy" }], r);
+    expect(last(r).seen?.stopAccepted).toBeUndefined();
+    r = run([{ type: "stop", ref: "S1" }, { type: "stop-result", ref: "S1", ok: true, message: "" }], r);
+    expect(last(r).seen?.stopAccepted).toBe(true);
+  });
+
+  it("upcomingIndex: the row after a finalized one, the current row otherwise, -1 when none is left", () => {
+    let q = run([{ type: "status", status: active("1") }, { type: "status", status: closed("1") }], started());
+    expect(phase(q, "S1")).toBe("finalized");
+    expect(upcomingIndex(ORDER, q)).toBe(1);
+    q = run([{ type: "confirm-closed", ref: "S1" }], q);
+    expect(upcomingIndex(ORDER, q)).toBe(1);
+    expect(upcomingIndex(["S1"], run([{ type: "status", status: active("1") }, { type: "status", status: closed("1") }], started()))).toBe(-1);
   });
 });

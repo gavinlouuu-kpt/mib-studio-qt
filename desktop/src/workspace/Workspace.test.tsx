@@ -315,27 +315,30 @@ describe("stages only navigate", () => {
     await advance(PREPARE_READINESS_POLL_MS * 3);
     for (const c of calls()) expect(isPrepareRead(c)).toBe(true);
     expect(planStart).not.toHaveBeenCalled();
-    // Live (O4, A6b) has content: choosing it reads the live cells and sends nothing else. Summary
-    // (O5/O6, A7b) with no closed run reads nothing (no run_quick_look) and sends nothing.
+    // Live (O4, A6b) has content: choosing it reads the live cells and sends nothing else. Run
+    // summary (O5) and Quick look (O6) (A7b, A7c) with no closed run read nothing (no run_quick_look)
+    // and send nothing; Quick look shows the plan's row as a queued placeholder.
     await act(async () => button("Live").click());
     expect(host.querySelector("[data-testid=workspace-live]")).not.toBeNull();
-    await act(async () => button("Summary").click());
-    expect(host.querySelector("[data-testid=summary-empty]")).not.toBeNull();
+    await act(async () => button("Run summary").click());
+    expect(host.querySelector("[data-testid=workspace-run-summary] [data-testid=summary-empty]")).not.toBeNull();
+    await act(async () => button("Quick look").click());
+    expect(host.querySelector("[data-testid=workspace-quick-look] [data-testid=summary-empty]")).not.toBeNull();
     expect(calls().some((c) => c.cmd === "run_quick_look")).toBe(false);
     await act(async () => button("Plan").click());
     expect(host.querySelector("[data-testid=workspace-plan]")).not.toBeNull();
     expect(planStart).not.toHaveBeenCalled();
-    expect(onView.mock.calls.map(([v]) => v)).toEqual(["Live", "Summary", "Plan"]);
+    expect(onView.mock.calls.map(([v]) => v)).toEqual(["Live", "Run summary", "Quick look", "Plan"]);
     for (const c of calls()) expect(["fetch_experiment_readiness", "calibration_records_list", "fetch_monitoring_cells"]).toContain(c.cmd);
   });
 
-  it("readiness is read only while the Plan is shown: Live and Summary stop the readiness reads, Plan resumes them (#736 review)", async () => {
+  it("readiness is read only while the Plan is shown: Live, Run summary and Quick look stop the readiness reads, Plan resumes them (#736 review)", async () => {
     await render({ stage: 2 });
     await advance(PREPARE_READINESS_POLL_MS * 2);
     expect(calls().length).toBeGreaterThan(0);
     expect(verdictChip()).not.toBeNull();
     const readiness = () => calls().filter((c) => c.cmd === "fetch_experiment_readiness");
-    for (const sub of ["Live", "Summary"]) {
+    for (const sub of ["Live", "Run summary", "Quick look"]) {
       await act(async () => button(sub).click());
       const before = readiness().length;
       await advance(PREPARE_READINESS_POLL_MS * 5);
