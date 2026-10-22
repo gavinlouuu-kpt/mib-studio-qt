@@ -43,7 +43,7 @@ uv venv --python 3.12 qualification-env
 uv pip install --python qualification-env/bin/python swig==4.5.1
 PATH="$PWD/qualification-env/bin:$PATH" uv pip install \
   --python qualification-env/bin/python \
-  -c /path/to/mib-studio-qt/tools/flowjo_acceptance/runtime-constraints.txt \
+  -c /path/to/mib-studio-qt/env/analysis-worker/runtime-constraints.txt \
   ./cytoflow-source ./cytoflow-source/fcsparser
 timeout 60 qualification-env/bin/python \
   /path/to/mib-studio-qt/tools/flowjo_acceptance/qualify_cytoflow.py
@@ -76,3 +76,51 @@ the harness enforces version 1.3.2 but does not attest installed source contents
 Reproduction must use the pinned checkout above. No vendor sources or figures
 are committed. Test exit codes must be captured directly, not masked by a later
 `cat` command. Failing qualifications must remain visible in acceptance reports.
+
+## Implemented headless analysis-core slice (F-A1)
+
+The production candidate now includes the native C++ population core, a real
+Cytoflow polygon adapter, Rust process supervision, and a durable private job
+journal. These are not mounted in Studio/Review yet. No source reader or UI is
+substituted by this synthetic demo; all remaining capability obligations persist.
+See [AnalysisWorker](../../knowledge_map/services/AnalysisWorker.md).
+
+Build/test the native module without camera/Qt/HDF5 dependencies:
+
+```sh
+cmake -S tools/flowjo_acceptance -B build/analysis-module -DCMAKE_BUILD_TYPE=Debug
+cmake --build build/analysis-module -j2
+ctest --test-dir build/analysis-module --output-on-failure
+cargo test --locked --manifest-path crates/mib-analysis-worker/Cargo.toml
+```
+
+With the pinned Python environment prepared above:
+
+```sh
+/path/to/qualification-env/bin/python -m unittest discover -s tests/analysis -p test_worker.py -v
+MIB_CYTOFLOW_PYTHON=/path/to/qualification-env/bin/python cargo test --locked \
+  --manifest-path crates/mib-analysis-worker/Cargo.toml real_engine -- --ignored
+cargo run --locked --manifest-path crates/mib-analysis-worker/Cargo.toml --example module -- \
+  run /path/to/qualification-env/bin/python "$PWD/workers/cytoflow/worker.py" \
+  "$PWD/data/analysis-demo" < tools/flowjo_acceptance/module-fixture.json
+```
+
+The four rows must be `true, unknown, unknown, false`. This combines real
+Cytoflow geometry with the same native C++ inclusive E predicate (equal 2..2)
+and preserves source/set/row identity beyond 2^53. Scalar values here are
+**synthetic**, not an acquired or LUT-computed measurement. Nothing actuates.
+The command emits a durable job ID; reopen/query with:
+
+```sh
+cargo run --locked --manifest-path crates/mib-analysis-worker/Cargo.toml --example module -- \
+  query "$PWD/data/analysis-demo" JOB_ID
+```
+
+Repeating the identical run returns its existing immutable terminal result.
+Changing inputs under that job ID is refused; use a new job for an explicit
+retry/new revision. Crash recovery marks unfinished work Interrupted, not success.
+The audit's original bare-engine 8/10 probe remains intentionally red: it records
+why the native adapter is necessary. The adapted tests are distinct evidence.
+
+Unix supervisor only so far; Windows execution explicitly refuses. Shipping
+qualification, real-recording adapter and full workspace/module demo remain open.

@@ -83,5 +83,8 @@ a declared representative observation, not objectId-based deduplication.
   This blocks shipping, not isolated internal qualification. No engine substitution
   or FCS-only fallback is proposed.
 
-No peer acknowledgment is recorded yet. These proposals may be evaluated with
-isolated fixtures, but are not permission to change shared ABI or file ownership.
+The F coordinator has acknowledged the compatible logical E/I proposals on #808.
+Exact shared public ABI and file ownership remains coordinated separately.
+F-owned native composition, internal worker protocol and private job artifact
+journal are now implemented in isolated new paths; this does not create another
+workspace/recipe/finding store. See [AnalysisWorker](../../../knowledge_map/services/AnalysisWorker.md).

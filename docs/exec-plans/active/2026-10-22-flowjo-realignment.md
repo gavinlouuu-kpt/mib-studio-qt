@@ -1,6 +1,6 @@
 # FlowJo shared analysis fold-in — #808
 
-Status: active; audit deliverable prepared, shared implementation awaits contract ownership agreement.
+Status: active; F-owned native/worker/job implementation progressing; public bridge edits separately coordinated.
 
 ## Goal
 
@@ -23,9 +23,11 @@ on develop. UI audit uses the freshly fetched `feat/egrabber-workspace` at
 The latter happens still to equal the historical audit snapshot; no checkout
 was reset. Existing dirty checkout and other worktrees are untouched.
 
-Current ownership is limited to `docs/design/flowjo-analysis/**`, this plan,
-`tools/flowjo_acceptance/**` and a new recent-work note. No shared ABI numbers,
-production services, UI kit or host composition files claimed.
+Current ownership additionally includes new `src/backend/analysis/**`, matching
+headers, `tests/analysis/**`, `workers/cytoflow/**`, `crates/mib-analysis-worker/**`,
+`env/analysis-worker/**`, the new analysis CI workflow and matching vault notes.
+No shared ABI numbers, UI kit or host composition files claimed. This independent
+implementation does not wait on the shared bridge/file agreement.
 
 ## Bounded dependency plan
 
@@ -108,3 +110,11 @@ production services, UI kit or host composition files claimed.
 - 2026-10-22: Historical tests are recorded as inspected, not rerun. A local
   reference verifier may prove the bounded v10 evidence independently; it cannot
   establish MIB module implementation, v11 parity or general histogram estimators.
+- 2026-10-22: Owner directed continued execution without check-ins. Corrected
+  the over-broad stop: only shared interface/file edits await coordination.
+  F-owned code now provides native inclusive scalar/three-valued composition,
+  exact-key/revision acceptance, real Cytoflow polygon adapter, Unix bounded
+  process supervision and immutable terminal job recovery. The worker-private
+  journal is not the shared workspace store. Native ASan/UBSan, eight Python
+  adapter tests and six Rust tests (including real engine/native persistence)
+  pass locally; CI/independent review and full host/module acceptance remain open.
