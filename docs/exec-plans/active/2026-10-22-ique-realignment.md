@@ -1,8 +1,10 @@
 # iQue / Forecyt realignment (#807)
 
-Status: I-A1 bounded annotation slice implemented; complete fold-in blocked on
-shared analysis, workspace persistence and acquisition qualification. No scope
-removed. I13 remains the explicit chapter extension.
+Status: continuing implementation. I-A1 annotation slice delivered; I-D1
+recorded calibration trends implemented and native reuse qualification passed.
+Shared analysis, workspace persistence and acquisition qualification constrain
+complete acceptance, not independent work. No scope removed. I13 remains the
+explicit chapter extension.
 
 The [capability ledger and dependency plan](../../design/ique-workflow/README.md)
 is the execution record, including all I01–I12, source/design pins, existing
@@ -28,6 +30,12 @@ UI fixtures from real backend/hardware acceptance.
   linkage; I02–I12 remain covered by the ledger, not silently deferred.
 
 ## Validation
+
+Continuation: 9 real-backend tests passed (see native evidence), with synthetic
+HDF5/SQLite and mock acquisition, no hardware. QC trend model/component/controller
+suite: 41 passed. Production build passed. Development-only fixture entry
+`desktop/ique-demo.html` uses real components with no IPC; browser tool navigation
+was blocked by policy, so rendered verification is not claimed.
 
 Workspace Vitest suite: 519 tests across 23 files passed. Focused annotation
 and Plan/Queue suite: 83 passed. TypeScript + Vite production build passed.

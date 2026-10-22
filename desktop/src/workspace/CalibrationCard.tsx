@@ -1,6 +1,6 @@
 // Prepare's Calibration card (#716 A4b; ADR 0015 item 7, exec plan P2): the `calibration.record`
 // gate and its Fix, the record in effect, proposed and insufficient records, and a plain list of
-// every record (no trend chart). The one action is Apply / Re-apply, an explicit
+// every record, with a read-only measured-history view (#807 I11). The one write is Apply / Re-apply, an explicit
 // calibration_apply(record_id, expected_current_factor) with the factor this page last read; a
 // viewer, a run or a pending apply disables it and nothing is sent. Showing, listing and polling
 // never apply anything. A calibration itself is a normal run of a calibration method, started
@@ -41,6 +41,7 @@ import {
 import { controlBlock } from "./planParts";
 import { gateFactTone, gateRemediation, gateText, gateTone } from "./prepareModel";
 import type { CalibrationController } from "./useCalibration";
+import { CalibrationTrends } from "./CalibrationTrends";
 
 export interface CalibrationCardProps {
   calibration: CalibrationController;
@@ -229,6 +230,7 @@ export function CalibrationCard(p: CalibrationCardProps) {
         {!m ? <span className="ws-detail" data-testid="calibration-purpose-gap">{PURPOSE_GAP_TEXT}</span> : null}
       </Notice>
 
+      {list ? <CalibrationTrends records={records} selectedId={sel} onSelect={c.select} /> : null}
       {list ? (
         <section className="ws-cal-section" data-testid="calibration-list">
           <DataTable columns={columns} rows={records.slice(0, CALIBRATION_LIST_ROWS)} rowKey={(r) => r.record_id} density="compact"
