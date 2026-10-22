@@ -70,3 +70,13 @@ three-independent-unit operational acceptance scenario.
   without invented swatches. Stable persisted colour registry is outstanding.
 
 See [the ledger](README.md) for every remaining ID and dependency owner.
+
+## Recipe association fixture (v1)
+
+The same development entry now displays `ique-recipe-v1.json`: a pinned method,
+analysis plan and finding. Copy creates an unsaved draft with parent lineage;
+it does not save, apply or alter the original. Change the fixture setup revision
+to prove stale compatibility is removed. Reset restores the original fixture.
+The intentionally incompatible reason is synthetic, not a scientific verdict.
+No production mount/provider is claimed until the shared workspace contract and
+F analysis-plan adapter are available. See [contract proposal](WORKSPACE-CONTRACT.md).

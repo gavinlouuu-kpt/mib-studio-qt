@@ -166,3 +166,14 @@ preserved; this slice reserves no ABI.
 No missing dependency removes an ID. A fixture demo is not operational proof.
 The I-A1 slice can progress independently because it only projects existing
 annotations and neither evaluates science nor creates a persistence authority.
+
+## Recipe consumer milestone
+
+The isolated `recipeModel.ts` / `RecipePairing.tsx` slice implements immutable
+method/analysis associations, fresh unsaved draft copy with lineage, and exact
+pair/setup-revision compatibility matching. It never saves, evaluates, applies or
+starts a run. Version-1 fixture/demo and malformed/stale/copy tests accompany it.
+The [workspace proposal](WORKSPACE-CONTRACT.md) specifies one #393/#395 authority;
+actual store and live provider binding remain open, so I02/I12 are not accepted.
+Annotation PR #811 passed all four CI checks; QC PR #813 has only the gold guard
+triggered on its stacked base, so local checks are reported separately from CI.
