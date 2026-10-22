@@ -19,6 +19,7 @@ import { BRIDGE_ABI_VERSION, CALIBRATION_APPLY_OUTCOMES, COMMAND_TYPES, EXPERIME
   READINESS_GATE_STATUSES as G, RUN_COMPLETION_STATES } from "../bridgeContract";
 import { DESKTOP_CAPABILITIES } from "../platformCapabilities";
 import { applyReply, calList as calListOf, calRecord } from "./calibrationFixtures";
+import { LANDING_STORAGE_KEY } from "./landing";
 import quickLookGolden from "../../../crates/mib-bridge/contract/fixtures/run-quick-look-v1.json";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -80,6 +81,11 @@ let startReply: { ok: boolean; message: string; start_outcome?: number } = { ok:
 /** Set to answer as a backend without the ABI 40 outcome codes: no start_outcome or stop_outcome in
  *  the replies, and experiment_stop ignores expectedStartGeneration (stops whatever run is active). */
 let noOutcomeCodes = false;
+/** Set to report the last run Failed (the classic startup landing then selects Experiment). */
+let failedRun = false;
+/** Set to hold every camera selection read (the classic startup landing waits for the first). */
+let holdSelection = false;
+const heldSelection: (() => void)[] = [];
 /** Set to make every experiment status read fail once experiment_start was sent. */
 let statusFailsAfterStart = false;
 /** Set to make the mock backend run experiments (A5 queue): a start makes a run Active (a new
@@ -121,13 +127,18 @@ function respond(variant: Variant, cmd: string, args?: unknown): unknown {
       return canStart ? CORE_OK : null;
     case "fetch_experiment_status": if (statusFailsAfterStart && startSent) throw new Error("TRANSPORT_LOST");
       return statefulRuns ? { ...status, state: run.state, flushing: run.flushing, terminal: run.terminal, finalization_ok: run.ok, output_path: run.path,
-        start_generation: String(run.generation) } : status;
+        start_generation: String(run.generation) } : failedRun ? { ...status, state: EXPERIMENT_STATES.Failed, terminal: true } : status;
     case "fetch_review_metadata": return { valid: reviewFile !== "", file_open: reviewFile !== "", file_path: reviewFile, recording_file: false,
       valid_images: NO_DATASET, invalid_images: NO_DATASET, valid_masks: NO_DATASET, invalid_masks: NO_DATASET, recorded_images: NO_DATASET,
       start_time_ns: 0, end_time_ns: 0, total_valid: 0, total_invalid: 0, roi_x: 0, roi_y: 0, roi_w: 0, roi_h: 0, has_background: false,
       has_core_identity: false, core_version: "", core_source: "", core_release_tag: "" };
     case "fetch_platform_info": return pz ? { science: "pl", host_processing: false, aravis: true, capabilities: PZ_CAPS } : { science: "host", host_processing: true, aravis: false };
-    case "fetch_camera_selection": return { valid: true, configured: true, mode: 0, label: pz ? "PZ7035 IMX426" : "Camera 01", interface_index: 0, device_index: 0, mindvision_index: 0,
+    case "fetch_camera_selection": if (holdSelection) {
+      holdSelection = false;
+      const reply = respond(variant, cmd, args);
+      holdSelection = true;
+      return new Promise((resolve) => heldSelection.push(() => resolve(reply)));
+    } return { valid: true, configured: true, mode: 0, label: pz ? "PZ7035 IMX426" : "Camera 01", interface_index: 0, device_index: 0, mindvision_index: 0,
       mindvision_config_path: "", camera_script_path: "", mock_frame_dir: "", mock_interval_ms: 33, mock_loop: true };
     case "discover_cameras": return { cameras: [], framegrabbers: [] };
     case "fetch_camera_geometry": if (holdNextGeometry) {
@@ -239,10 +250,16 @@ beforeEach(() => {
   startSent = false;
   holdCore = false;
   heldCore.length = 0;
+  failedRun = false;
+  holdSelection = false;
+  heldSelection.length = 0;
   const saved = new Map<string, string>();
   const store = { getItem: (k: string) => saved.get(k) ?? null, setItem: (k: string, v: string) => void saved.set(k, v), removeItem: (k: string) => void saved.delete(k) };
   vi.stubGlobal("localStorage", store);
   vi.stubGlobal("sessionStorage", store);
+  // These gates start from the classic view, as an operator who chose it last (landing.ts); the
+  // workspace landing itself is tested in "the workspace branch opens in the workspace" below.
+  saved.set(LANDING_STORAGE_KEY, "classic");
   vi.useFakeTimers();
   vi.mocked(invoke).mockReset();
   vi.mocked(save).mockReset(); // no file left over from an earlier test's unused answer
@@ -448,6 +465,102 @@ const openPlan = async () => {
   await click(host.querySelectorAll(".mib-stages__tab")[2], "Experiment");
   expect(host.querySelector("[data-testid=workspace-plan]")).not.toBeNull();
 };
+
+/** Unmount the app and start it again over the same storage (a reload, or the next start). */
+async function restart(variant: Variant) {
+  await act(async () => root.unmount());
+  root = createRoot(host);
+  log = [];
+  await boot(variant);
+}
+/** What acts, among the commands sent: the start-up core `info` request is a read the classic
+ *  start-up sends either way (coreManagement's restore), never an action. */
+const acting = (entries: { cmd: string; args: unknown }[]) => entries.filter((e) => ACTUATING.includes(e.cmd)
+  && !(e.cmd === "processing_core_command" && JSON.parse((e.args as { request: string }).request).operation === "info"));
+const storedLanding = () => localStorage.getItem(LANDING_STORAGE_KEY);
+const workspaceShown = () => host.querySelector("[data-testid=workspace]") !== null;
+
+describe.each<Variant>(["desktop", "pz7035"])("the workspace branch opens in the workspace (%s)", (variant) => {
+  beforeEach(() => localStorage.removeItem(LANDING_STORAGE_KEY)); // no choice made in this browser yet
+
+  it("with no choice remembered, the app opens in Prepare; nothing acts at start-up, and the classic view is one click away", async () => {
+    await boot(variant);
+    expect(host.querySelector("[data-testid=workspace-prepare]")).not.toBeNull();
+    // The classic view is hidden, not unmounted, and stays on Connect.
+    expect((host.querySelector("nav.menubar") as HTMLElement).style.display).toBe("none");
+    const band = host.querySelector(".ws-shell")!.textContent!;
+    expect(band).toContain("Navigation never acts: only an explicit button switches or writes.");
+    expect(band).toContain("The classic view is one click away");
+    expect(band).not.toContain("stays the default");
+    await advance(6000);
+    // Opening in the workspace switches no camera mode and lights nothing: the classic startup landing is skipped.
+    expect(acting(log)).toEqual([]);
+    for (const r of readinessReads(log)) expect(r.args).toEqual({ outputPath: "" });
+    expect(storedLanding()).toBeNull(); // opening by default records no choice
+
+    await click(buttonByText("Classic view"), "Classic view");
+    expect(workspaceShown()).toBe(false);
+    expect((host.querySelector("nav.menubar") as HTMLElement).style.display).toBe("");
+    // The classic tab is the first one (Connect, which only reads): the startup landing did not move it.
+    expect(host.querySelector('.tabbar button[aria-selected="true"]')).toBe(host.querySelector(".tabbar button"));
+    await advance(6000);
+    expect(acting(log)).toEqual([]);
+  });
+
+  it("remembers the last explicit choice per browser: Classic view opens the classic view next time, Workspace preview the workspace", async () => {
+    await boot(variant);
+    expect(workspaceShown()).toBe(true);
+    await click(buttonByText("Classic view"), "Classic view");
+    expect(storedLanding()).toBe("classic");
+
+    await restart(variant);
+    expect(workspaceShown()).toBe(false);
+    await click(buttonByText("Workspace preview"), "workspace toggle");
+    expect(workspaceShown()).toBe(true);
+    expect(storedLanding()).toBe("workspace");
+
+    await restart(variant);
+    expect(host.querySelector("[data-testid=workspace-prepare]")).not.toBeNull();
+    expect(acting(log)).toEqual([]);
+  });
+
+  it.each(["Classic view", "Camera setup"])("leaving through %s before the first camera snapshot: the classic startup landing never runs, so nothing acts", async (exit) => {
+    // A failed last run and a camera on the full sensor: the classic landing would select Experiment
+    // and switch the desktop camera to the experiment window (the control below shows it does).
+    failedRun = true;
+    device.overview = true;
+    holdSelection = true;
+    await act(async () => { vi.mocked(invoke).mockImplementation(async (cmd: string, args?: unknown) => { log.push({ cmd, args }); return respond(variant, cmd, args); });
+      root.render(<App />); });
+    await advance(3000);
+    expect(heldSelection.length).toBeGreaterThan(0);
+    await click(buttonByText(exit), exit);
+    expect(workspaceShown()).toBe(false);
+    holdSelection = false;
+    await act(async () => { for (const r of heldSelection.splice(0)) r(); });
+    await advance(6000);
+    expect(acting(log)).toEqual([]);
+    expect(host.querySelector('.tabbar button[aria-selected="true"]')).toBe(host.querySelector(".tabbar button")); // still Connect
+  });
+
+  it("control: with a classic choice remembered, the same start-up lands on Experiment and the desktop camera is switched", async () => {
+    localStorage.setItem(LANDING_STORAGE_KEY, "classic");
+    failedRun = true;
+    device.overview = true;
+    await boot(variant);
+    expect(host.querySelector('.tabbar button[aria-selected="true"]')!.getAttribute("aria-label")).toMatch(/^Experiment/);
+    if (variant === "desktop") expect(acting(log).map((e) => e.cmd)).toContain("set_camera_overview");
+  });
+
+  it("a task jump to the classic view (Prepare's Camera setup) is not a choice: the next start opens the workspace again", async () => {
+    await boot(variant);
+    await click(buttonByText("Camera setup"), "Camera setup");
+    expect(workspaceShown()).toBe(false);
+    expect(storedLanding()).toBeNull();
+    await restart(variant);
+    expect(workspaceShown()).toBe(true);
+  });
+});
 
 describe.each<Variant>(["desktop", "pz7035"])("Experiment · Plan never acts on its own (%s)", (variant) => {
   it("visiting the Plan, filling the sheet and switching sub-views sends nothing that acts; Start run is locked with the reason", async () => {

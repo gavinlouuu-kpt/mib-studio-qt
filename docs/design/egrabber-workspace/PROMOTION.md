@@ -23,7 +23,7 @@ The branch was 94 commits ahead of `develop`: 192 files, about 23k lines. It hol
 
 | Area | Paths | Shipped behaviour if merged |
 |---|---|---|
-| Operation workspace (track A) | `desktop/src/workspace/`, hooks in `desktop/src/App.tsx`, `experimentStart.ts`, `preflight.ts`, `confirmationSignature.ts`, `cameraWindow.ts`, `serialReads.ts` | The **Workspace preview** button in the classic header (session-only) |
+| Operation workspace (track A) | `desktop/src/workspace/`, hooks in `desktop/src/App.tsx`, `experimentStart.ts`, `preflight.ts`, `confirmationSignature.ts`, `cameraWindow.ts`, `serialReads.ts` | Since 2026-10-22 the app **opens in the workspace** (Prepare), with "Classic view" one click away and the last choice remembered per browser (`workspace/landing.ts`, `DEFAULT_LANDING`). A promotion must set the landing it wants for `develop` (e.g. `classic`, or the workspace hidden behind option (a)'s setting) |
 | Review app shell (track B) | `desktop/src/review/` (`ReviewApp.tsx`, `open/`, `inspect/`, `shell/`) | Replaces YOFO Review's shell. Inspect is the existing `ReviewPanel`. Overview and Export say they are not available yet |
 | UI language kit `@mib/ui` | `desktop/ui/`, aliases in `desktop/vite.config.ts` and `desktop/tsconfig.json` | None by itself |
 | Design records | `docs/design/egrabber-workspace/`, `EGRABBER_WORKSPACE.md`, `knowledge_map/` | None |

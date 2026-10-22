@@ -158,11 +158,27 @@ Review shell on the `@mib/ui` kit (`AppShell`, `StageTabs`, `Toolbar`, `Card`, `
 only places cards with the kit's spacing tokens (and styles the app-local number and text fields
 of the quick controls and the sample sheet, until the kit has them).
 
-- **Opt-in, session only.** The menu row's "Workspace preview" button opens it; "Classic
-  view" closes it. The flag is plain React state: every start and every reload opens the
-  classic view, so startup is unchanged. While the workspace is shown, the classic menu row,
-  body and context bar are hidden with `display: none`, not unmounted, so nothing in the
-  classic tree mounts, unmounts or changes tab because of it; the status bar and log stay.
+- **Landing: the workspace branch opens in the workspace** (2026-10-22, Gavin's ask; `develop`
+  is unchanged until promotion). The app opens on Prepare unless the operator last chose the
+  classic view in this browser; the classic view is one click away (the header's "Classic view").
+  `workspace/landing.ts` holds the choice in `localStorage` (`yofo.workspace.landing`:
+  `"workspace"` / `"classic"`, default `"workspace"`; every access guarded, so blocked storage
+  falls back to the default). Only explicit switches record it: the menu row's "Workspace preview"
+  records `workspace`, and the workspace's `onExit` (the header's "Classic view", the Review
+  stage's "Back to the classic view", Align's "All features · classic view") records `classic`.
+  Task jumps to the classic view (Prepare's setup buttons, the Summary's Open in Review) do not.
+  The same `App` serves the Tauri desktop and the PZ7035 browser UI, so both get the same
+  default (the browser per origin, the desktop per webview); the Review app (`review.html`,
+  `review/main.tsx`) never imports `App` and is unaffected. Opening in the workspace acts on
+  nothing: the classic tab stays on Connect (it only reads) and the classic startup landing never
+  runs in a session that started in the workspace (`startedInWorkspace`), even when the operator
+  leaves before the first camera snapshot arrived, so no camera mode is switched and no LED is lit
+  (`navigation.test.tsx`, "the workspace branch opens in the workspace"). The band reads
+  "Workspace preview" and "Navigation never acts: only an explicit button switches or writes. The
+  classic view is one click away (Classic view)." (`WORKSPACE_BAND`). While the workspace is
+  shown, the classic menu row, body and context bar are hidden with `display: none`, not
+  unmounted, so nothing in the classic tree mounts, unmounts or changes tab because of it; the
+  status bar and log stay.
 - **Navigation never actuates.** The workspace never changes the classic `tab`: a classic tab
   change can act (Camera & Alignment switches the camera to the full sensor, and the PZ7035 to
   Align with its LED; Experiment to Run). Stages only change what is shown. In Align the
@@ -1436,6 +1452,9 @@ owned session. Desktop CI now runs this in addition to unit tests and launch smo
 Initial local pass: 2 persistence-admitted/committed frames, 2 exported images.
 The gate exposed and drove fixes for the disabled Start button and missing
 realtime processing consumer. It does not establish physical hardware timing.
+On `feat/egrabber-workspace` the harness first asserts that the app opens in the workspace,
+takes its "Classic view" (which records the choice) and restarts the webview, so the rest of
+the workflow runs in the classic view as on `develop`.
 
 ### Managed profiles and startup provenance
 
