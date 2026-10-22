@@ -48,8 +48,8 @@ Existing tests are evidence anchors, not claims that they ran in this audit.
 
 | ID | Research / board | Existing code, PR and tests | Disposition / owned issue | Acceptance gap |
 |---|---|---|---|---|
-| I01 | RG Design; C Setup; F Plan; O3 | `workspace/planModel.ts`, `PlanView.tsx`, `QueuePlan.tsx`; #736/#739; `planModel.test.ts`, `PlanView.test.tsx`; backend `run_start_identity_test.cpp` | Extend #807 with #314 metadata semantics | Free annotations exist; grouping/layers and consistent table/export projection incomplete. Independent-unit identity must never be inferred from rows/cells. |
-| I02 | RG templates; C Setup; O3 | `profiles.tsx`, `CentralMethodsPanel.tsx`, backend `MethodApply.cpp`; #398; no recipe pairing | Restore #807/#398; consume #808 plan references | Versioned recipe association, immutable base-on-previous draft, compatibility-before-apply and persistence absent. |
+| I01 | RG Design; C Setup; F Plan; O3 | `workspace/planModel.ts`, `PlanView.tsx`, `QueuePlan.tsx`; #736/#739; `planModel.test.ts`, `PlanView.test.tsx`; backend `run_start_identity_test.cpp` | Extend #807 with #314 metadata semantics | Planned annotation grouping/table/JSON projection implemented in #811; durable layer selection and acquired-result continuity incomplete. Independent-unit identity must never be inferred from rows/cells. |
+| I02 | RG templates; C Setup; O3 | `profiles.tsx`, `CentralMethodsPanel.tsx`, backend `MethodApply.cpp`; #398; no recipe pairing | Restore #807/#398; consume #808 plan references | Versioned association and detached draft lineage implemented in #814; real compatibility/apply provider and persistence binding remain absent. |
 | I03 | RG Protocol/worklist; C Preflight; O1/O3 | `prepareModel.ts`, `usePrepareReadiness.ts`, `planParts.tsx`; #727/#548; `prepareModel.test.ts` | Extend #807; readiness authority #806 | Readiness exists. Time/storage/volume forecasts, provenance/freshness and complete worklist not accepted. |
 | I04 | RG Run; C Run; O3/O4 | `queueModel.ts`, `usePlan.ts`, `QueuePlan.tsx`, `experimentStart.ts`; #739/#744/#750; queue model/view tests | Reuse/extend #807; #741 closed | Manual one-file-per-sample queue exists. Durable reconnect/restart reconciliation absent; live fault qualification outstanding. |
 | I05 | RG Run + linked selection; C Run; O4 | `LiveView.tsx`, `useLiveCells.ts`, `liveImages.ts`; #749; `LiveView.test.tsx`, `liveModel.test.ts` | Reuse/extend #807, image authority #806 | Strip/pins/lifecycle exist; full revision-qualified live answers, reconnect and hardware proof outstanding. Develop #793 must be incorporated before qualification. |
@@ -58,8 +58,8 @@ Existing tests are evidence anchors, not claims that they ran in this audit.
 | I08 | RG Profile Map; V criteria; F criteria/R4 | Analysis criteria UI and common evaluator absent; existing acquisition target is NOT a substitute | Restore #807 UX; #808/#523 FJ04 evaluation | Polygon AND E AND ranges, declared missing policy, linked selected values and exact hit denominator all required. Never deploy sort gates. |
 | I09 | RG Panorama; V multi-plate; C Compare; F Compare/R5 | Single-file review and batch exports; no refreshable ComparisonSpec authority | Restore #807/#314 UX; #808 science | Compatible-run picker with reasons, refresh, small multiples/heatmaps and scale choice absent. |
 | I10 | RG curve fitting; V dose response; C Compare/R5 | No qualified fit result API; #523 FJ09 | Missing #807 presentation; #808 fit authority | Unit/pairing/weighting/model and suspect-fit reasons required; no frontend fit or invented curve. |
-| I11 | RG QC history; C Preflight; O1 | `CalibrationCard.tsx`, `calibrationRecords.ts`, backend `CalibrationRecord.cpp`; #716 A4; calibration model/view and backend tests | Extend/restore #807 history UX; backend owner #716/#806 | Existing measured bead derivation and explicit CAS apply reusable. Versioned trend thresholds/reversible exclusions missing; focus remains not-recorded when absent. |
-| I12 | RG experiment export/templates; C Review; O6/R6 | `usePlan.ts` deliberately holds plan/reference in memory; #393/#395 store not implemented here | Missing #807 continuity; shared persistence #393/#395 and #808 | Save/reopen/export of complete definitions, findings, journal and next-run lineage missing. No replacement localStorage authority. |
+| I11 | RG QC history; C Preflight; O1 | `CalibrationCard.tsx`, `calibrationRecords.ts`, backend `CalibrationRecord.cpp`; #716 A4; calibration model/view and backend tests | Extend/restore #807 history UX; backend owner #716/#806 | Recorded history/setup-filter/selection implemented in #813; existing explicit CAS apply reused. Versioned trend thresholds/reversible exclusions missing; focus remains not-recorded when absent. |
+| I12 | RG experiment export/templates; C Review; O6/R6 | `usePlan.ts` deliberately holds plan/reference in memory; #393/#395 store not implemented here | Missing #807 continuity; shared persistence #393/#395 and #808 | Atomic native snapshot history/reopen/restore implemented in #815; full definitions/findings/journal/export and UI/host binding remain missing. No replacement localStorage authority. |
 | I13 | C Segment | ADR 0015 Amendment 1 | Explicitly deferred #314 | Requires real mid-run use case and additive writer contract; never infer boundaries from event rate. |
 
 ## Scope reconciliation
@@ -154,9 +154,12 @@ preserved; this slice reserves no ABI.
   comparison/fit interfaces and real adapter are absent at this baseline. Owner:
   FlowJo coordinator. Resume when versioned contracts/fixtures and callable
   backend are supplied. I07–I10 and full I06 cannot pass meanwhile.
-- **B-W, #393/#395 with #808:** no agreed durable workspace/finding/recipe store
-  API. Resume after one authority and its versioned persistence/fault contract
-  are agreed. Blocks I02/I12 and durable I04/annotation presentation state.
+- **B-W, #393/#395 with cross-track coordinator:** isolated injected-SQLite core
+  and I persistence ownership are established; actual host metadata lifecycle,
+  operator authorization, facade/provider allocation and document validation remain
+  unbound. Export/relink require shared job/source seams, not a second exporter.
+  Blocks complete I02/I12 and durable I04/annotation presentation state. TSan
+  startup mapping failure remains a native acceptance blocker.
 - **B-E, #806/#716:** authoritative estimates, full source-generation contract,
   live reconciliation and hardware qualification remain. Develop's later fixes
   must reach the qualification base. Blocks complete I03–I05 acceptance.

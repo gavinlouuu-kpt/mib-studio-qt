@@ -1,6 +1,8 @@
 # I-workspace/1 proposal
 
-Proposed on #808, not an ABI reservation or deployed API. F owns plan/result/
+Logical proposal posted on #808; cross-track coordinator subsequently confirmed
+I owns shared metadata persistence and F owns scientific payloads. Not an ABI
+reservation or deployed API. F owns plan/result/
 comparison meaning; I consumes immutable references and owns recipe/finding UX.
 The worker-private terminal JOB journal is not user workspace persistence.
 
@@ -15,7 +17,8 @@ Unknown operator attribution stays unknown; UI names are not authentication.
 Proposed isolated I paths: `include/backend/workspace/`, `src/backend/workspace/`,
 `tests/workspace/`, `tools/ique_acceptance/`. F owns analysis paths and scientific
 artifacts. Shared AppBackend, bridge, ReviewSession and build integration require
-explicit ownership agreement; no implementation claim before that agreement.
+explicit ownership agreement. The isolated core in #815 is implemented under
+confirmed I ownership; no shared host integration is claimed.
 
 ## Minimum logical envelope
 
