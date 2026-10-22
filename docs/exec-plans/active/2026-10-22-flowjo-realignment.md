@@ -1,6 +1,6 @@
 # FlowJo shared analysis fold-in — #808
 
-Status: active; F-owned native/worker/job implementation progressing; public bridge edits separately coordinated.
+Status: active; end-to-end integration is owned by F in `feat/808-flowjo-realignment`, including facade, bridges and both product mounts. No main/develop merge.
 
 ## Goal
 
@@ -17,17 +17,18 @@ The user authorized execution of the coordinator prompt on 2026-10-22.
 ## Base and ownership
 
 Dedicated branch `feat/808-flowjo-realignment`, based on freshly fetched
-`develop` at `0a58e201614bdb1eeb412544be60859f93220de7`. Backend work belongs
-on develop. UI audit uses the freshly fetched `feat/egrabber-workspace` at
-`7133749621defac01a80985fe6a3a5fc3f13eae1`; future view slices target that branch.
+`develop` at `0a58e201614bdb1eeb412544be60859f93220de7`. This branch owns backend and UI work together (no merge into develop is authorized). Historical UI audit uses the freshly fetched `feat/egrabber-workspace` at
+`7133749621defac01a80985fe6a3a5fc3f13eae1`; this is an audit reference, not a current UI branch gate.
 The latter happens still to equal the historical audit snapshot; no checkout
 was reset. Existing dirty checkout and other worktrees are untouched.
 
 Current ownership additionally includes new `src/backend/analysis/**`, matching
 headers, `tests/analysis/**`, `workers/cytoflow/**`, `crates/mib-analysis-worker/**`,
 `env/analysis-worker/**`, the new analysis CI workflow and matching vault notes.
-No shared ABI numbers, UI kit or host composition files claimed. This independent
-implementation does not wait on the shared bridge/file agreement.
+The coordinator lifted shared-file allocation gates for this branch. F owns necessary
+production wiring and generated contracts here; other tracks may edit the same paths
+in their own branches. Preserve bridge 45 / Review 7 reservations; this slice adds
+bridge 46 / Review 8 without implementing or claiming the reserved capabilities.
 
 ## Bounded dependency plan
 
@@ -67,7 +68,7 @@ implementation does not wait on the shared bridge/file agreement.
 - #804: retain Review-7 passthrough options; add analysis jobs only through a
   later coordinated contract, not mislabeling reanalysis as population analysis.
 - #805: retain eventual one-module host mount and prerequisites #803/#804.
-  Shared App.tsx ownership and final composition are outside this change.
+  App.tsx and backend/Review mounts are now in scope within this branch; final multi-track merge is not.
 - #523/#314 retain the full scientific/research scope. WORK-SPLIT's unscheduled
   R4/R5 and October-15 presentation trim are history, not the new scope ceiling.
   ADR 0015's one-file-per-sample and explicit application rules still apply;
@@ -77,14 +78,15 @@ implementation does not wait on the shared bridge/file agreement.
 
 ## Explicit blockers / resume conditions
 
-- **Shared contracts:** #806/#807 and #512/#717 owners acknowledge or amend
-  F-contracts/1 and concrete production file ownership before shared edits.
+- **Source semantics:** live E adapter still needs epoch-qualified event keys, typed
+  batch watermarks, unknown-denominator propagation and measurement/QC separation.
+  These are implementation requirements, not ownership/permission blockers.
 - **Worker integration:** pinned Cytoflow 1.3.2 builds and runs in an isolated
   Python 3.12 environment after building Logicle with SWIG and initializing the
   pinned fcsparser submodule. The configured package index did not resolve the
   version directly. Bare RangeOp rejects equal endpoints; boolean inversion admits
-  missing-value placeholders. The MIB adapter must implement its declared scalar
-  and three-valued composition semantics; no production adapter is implemented.
+  missing-value placeholders. The MIB adapter implements native scalar and three-valued composition semantics.
+  The supervised Cytoflow worker still needs a source-snapshot job submission path from the app.
 - **Shipping:** owner/release maintainer records distribution decision, notices,
   source/patch obligations and fixture rights. Not resolved by this audit.
 - **Live acceptance:** unbiased committed provider + safe acquisition coexistence
@@ -111,7 +113,7 @@ implementation does not wait on the shared bridge/file agreement.
   reference verifier may prove the bounded v10 evidence independently; it cannot
   establish MIB module implementation, v11 parity or general histogram estimators.
 - 2026-10-22: Owner directed continued execution without check-ins. Corrected
-  the over-broad stop: only shared interface/file edits await coordination.
+  the over-broad stop: at that time shared interface/file edits awaited coordination (superseded below).
   F-owned code now provides native inclusive scalar/three-valued composition,
   exact-key/revision acceptance, real Cytoflow polygon adapter, Unix bounded
   process supervision and immutable terminal job recovery. The worker-private
@@ -146,9 +148,29 @@ reductions with revision-qualified feature/unit columns, exact-key alignment,
 explicit membership/missingness accounting, raw min/max/mean/median and bounded
 input refusal. Three native executables pass locally under ASan/UBSan. No shared
 files, ABI, source authority or host mounts changed; no integrated UI claim.
-App exposure remains blocking required scope. Shared typed-feature wiring and
-committed live EventSnapshot integration remain deferred pending concrete shared
-file allocation by the coordinator. Offline pagination still requires an injected
+App exposure remains blocking required scope. Typed-feature wiring and committed live EventSnapshot integration remain implementation
+work; the coordinator subsequently removed the shared-file allocation gate. Offline pagination still requires an injected
 whole-read generation fence; per-call ReviewSession locking is insufficient.
 Reusable tables/export, percentiles/CV, comparison and the remaining F01–F16
 acceptance are still open, not discharged by this native milestone.
+
+### End-to-end branch ownership and first app integration
+
+Coordinator direction: F integrates in its own existing dev branch, including
+shared-named files. All prior F commits are ancestors; no cherry-pick or reset was
+needed. This continuation mounts the same bounded native interval/statistics UI
+in Studio and YOFO Review. ReviewSession reads both cached metadata sets under
+one lock; ReviewJobs excludes active job lanes; BackendFacade additionally uses
+the existing idle transaction and raw-recording exclusion. #722 is unchanged.
+Bridge 46 and Review 8 are additive; reserved 45/7 are not repurposed.
+
+The first app slice intentionally exposes **stored** area (px²) and deformability,
+not inferred E/calibration or fabricated completeness. It refuses unreadable sets,
+header/row count mismatch, raw recordings, >10,000 rows and stale source paths.
+Results identify local evaluations only: fingerprint null, durable false. Absent metadata columns and nonfinite values are unknown, never default zero.
+Detailed per-event missing reasons remain unexposed. It is not F01–F16 acceptance, saved workspace/DAG editing,
+Cytoflow polygon execution, live evidence consumption or verified relinking.
+
+See [app QA handoff](../../design/flowjo-analysis/app-qa.md) for real runtime and
+synthetic fixture distinction. Scope remains the original capability ledger, not
+a reduced interval-only replacement.

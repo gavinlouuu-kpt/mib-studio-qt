@@ -1,8 +1,8 @@
 # EventSnapshot consumer contract — F proposal 1
 
 For the E/F/I coordinator; logical provider contract, **not an allocated ABI**.
-F owns the adapter in analysis/**, E supplies source facts and the coordinator
-allocates ReviewSession/facade integration. No second HDF5 reader or acquisition
+F owns the adapter and ReviewSession/facade integration in its own dev branch; E
+supplies live source facts. Shared-file naming is not an allocation gate. No second HDF5 reader or acquisition
 policy. Existing #722 exclusion applies before acquiring a snapshot lease.
 
 ## Identity and immutable content

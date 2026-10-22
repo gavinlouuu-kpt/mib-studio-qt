@@ -32,8 +32,8 @@ placeholders that become admitted by NOT.
   interrupted rather than replaying uncertain work. It fails before mutation when
   its directory scan budget is insufficient.
 - Internal input `mib-analysis-batch/1` includes native scalar configuration;
-  projected Python request `mib-cytoflow-polygon/1` excludes it. Neither is a public
-  Studio/Review ABI reservation. The current public contracts remain unchanged.
+  projected Python request `mib-cytoflow-polygon/1` excludes it. Neither is the public app schema. App interval analysis uses `review-population/1`
+  (backend ABI 46 / Review ABI 8); the private worker protocol is unchanged.
 
 ## Threading, storage and limits
 
@@ -60,7 +60,8 @@ terminal recovery, collision/corruption, cancellation, timeout, crash and budget
 the separately enabled real-engine test covers C++ equality/unknown composition
 and durable reopen. Native ASan/UBSan and Rust clippy pass locally.
 
-Not yet mounted in Studio/Review; no live provider, source reader adapter,
+The native interval/statistics slice is mounted in Studio/Review; the Cytoflow
+worker is not yet attached to app source submission. No live provider, qualified source reader adapter,
 workspace DAG/undo/redo, images, qualified advanced science or reports. Keep
 [[ReviewSession]] and acquisition exclusion intact. Cytoflow distribution remains
 a release decision, not an excuse to stop internal implementation.
@@ -97,3 +98,17 @@ precision arithmetic. Feature conversion and mechanics computation are not perfo
 duplicate/missing-row refusal, units, empty/singleton populations, finite extremes,
 subnormal medians and size limits. This is not source completeness certification,
 a table UI/export, or F08 acceptance. Existing Review quick-look stays unchanged.
+
+## Production app interval slice
+
+`ReviewSession::analyzePopulation` atomically reduces both stored metadata sets
+through Population/PopulationStatistics. `ReviewJobs::analyzePopulation` holds the
+existing job-lane fence; Studio's `BackendFacade::analyzePopulationJson` additionally
+holds the existing idle-configuration transaction and refuses raw recording.
+No second reader, HDF5 writes or acquisition coexistence. Caps and missingness
+limitations are documented in `review-contract.json` and the actual UI.
+
+One `PopulationAnalysis` React component mounts in Studio App and YOFO Review
+ReviewPanel, via the respective production transports. Native Rust bridge parity
+tests exercise actual HDF5 fixture reads; UI tests mock transport only. App
+exposure does not imply polygon/DAG/workspace/live/report integration.

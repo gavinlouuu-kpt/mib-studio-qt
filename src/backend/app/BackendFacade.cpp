@@ -1492,6 +1492,17 @@ namespace backend::bridge
         }
     } // namespace
 
+    std::string BackendFacade::analyzePopulationJson(const std::string& requestJson) {
+        if (!initialized_) return R"({"ok":false,"message":"Backend not initialized"})";
+        std::string result =
+            R"({"ok":false,"message":"Stop acquisition and recording before offline analysis"})";
+        backend_.experiment().withIdleConfiguration([&] {
+            if (backend_.isFrameRecording()) return;
+            result = reviewJobs_->analyzePopulation(requestJson);
+        });
+        return result;
+    }
+
     std::string BackendFacade::runQuickLookJson(const std::string &requestJson)
     {
         if (!initialized_) return review::runQuickLookRefusedJson("Backend not initialized");

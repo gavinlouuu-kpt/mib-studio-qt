@@ -7,7 +7,8 @@ Status: proposed for #806/#807/#808 and existing #512/#717 owners; not an ABI re
 Reuse the generated `bridge-contract.json` / `review-contract.json` authority.
 Current fetched backend: bridge 44, Review 6. #803 reserves bridge 45;
 #804 reserves Review 7. Do not consume those numbers for analysis.
-The coordinator assigns subsequent additive ABI changes after agreement.
+F owns additive contracts within its dev branch. This slice uses backend 46 / Review 8,
+preserving the reserved 45/7 numbers; no capability of those reservations is implied.
 Proposal revision `F-contracts/1` is a document version, not a wire version.
 
 - E (#806) owns source generations, acquisition/finalization, unbiased committed
@@ -16,7 +17,8 @@ Proposal revision `F-contracts/1` is a document version, not a wire version.
   evaluation, membership, metrics, comparison and scientific artifact persistence.
 - I (#807/#314) owns experiment questions, recipe association and next-run UX;
   existing method/journal services remain the persistence/application authorities.
-- #512/#717 retain the shared ReviewSession and host transport/mount ownership.
+- Reuse #512/#717 ReviewSession and host transport/mount architecture; F may edit
+  those production files within its own branch. No coordinator allocation gate.
 
 ## Proposed logical records
 

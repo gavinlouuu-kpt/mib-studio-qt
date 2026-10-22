@@ -1379,6 +1379,10 @@ BridgeReviewMetadata BackendBridge::fetch_review_metadata() {
     return out;
 }
 
+rust::String BackendBridge::analyze_population(rust::Str request_json) {
+    return rust::String(impl_->facade.analyzePopulationJson(std::string(request_json)));
+}
+
 BridgeReviewMetricsPage BackendBridge::fetch_review_metrics_page(bool valid,
                                                                  std::uint64_t offset,
                                                                  std::uint64_t count) {
@@ -2711,7 +2715,9 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 44; }
+std::uint32_t bridge_abi_version() {
+    return 46;
+}
 
 } // namespace mib_bridge
 

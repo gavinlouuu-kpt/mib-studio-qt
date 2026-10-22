@@ -93,6 +93,7 @@ import { runPreviewRgba, type RunPreview } from "./runPreview";
 import { InstrumentLedControls } from "./components/InstrumentLedControls";
 import { ProfilesPanel, useProfiles } from "./profiles";
 import { ConfigDocumentEditor, useConfigDocument } from "./configDocument";
+import { PopulationAnalysis } from "./review/PopulationAnalysis";
 import { ReanalysisControls, ReanalysisStatus, useReanalysis } from "./reanalysisControls";
 import { SavedReviewImage } from "./components/SavedReviewImage";
 import { ReviewCharts } from "./components/ReviewCharts";
@@ -2425,6 +2426,9 @@ export default function App() {
                 <div className="subtab-body">
                   <RunOutcomeNotice outcome={reviewOutcome} />
                   <ReviewExportOptions model={reviewExport}/>
+                  {reviewMeta?.file_open && !reviewMeta.recording_file && <PopulationAnalysis
+                    key={`${reviewMeta.file_path}:${reviewSourceGeneration.current}`} path={reviewMeta.file_path} evaluate={bridge.analyzePopulation}
+                    disabled={!ready || expActive || reviewSourceBusy || reviewExport.busy || reanalysis.busy} />}
                   {caps.reanalysis && <ViewerGate><ReanalysisControls model={reanalysis} metadata={reviewMeta} blocked={reviewExport.busy || reviewSourceBusy || !ready}/></ViewerGate>}
                   {reviewTab === "charts" && <ReviewCharts sourcePath={reviewMeta?.file_path ?? ""}/>}
                   <div className="review-split" style={reviewTab === "charts" ? { display: "none" } : undefined}>

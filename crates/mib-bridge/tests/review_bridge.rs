@@ -338,8 +338,8 @@ fn run_identity_in_info_and_the_probe() {
         serde_json::from_str(include_str!("../contract/review-contract.json")).unwrap();
     assert_eq!(
         ffi::review_bridge_abi_version(),
-        6,
-        "review ABI 6 (#716 A7a review_run_statistics; 5 is #783's E-LUT provenance; the identity since 2, the E-LUT and profile since 3)"
+        8,
+        "review ABI 8 (population analysis; 7 reserved for #804); previous ABI 6 (#716 A7a review_run_statistics; 5 is #783's E-LUT provenance; the identity since 2, the E-LUT and profile since 3)"
     );
     let max_paths = contract["review_probe"]["max_paths"].as_u64().unwrap() as usize;
     assert_eq!(max_paths, 256);
@@ -700,4 +700,51 @@ fn run_statistics_twin_over_the_parity_fixture() {
     assert_eq!(refused["ok"], false, "{refused}");
     assert_eq!(std::fs::read(&v3).unwrap(), before, "nothing written");
     bridge.pin_mut().shutdown();
+}
+
+#[test]
+#[serial]
+fn review_population_native_both_set_integration() {
+    let path = fixture_path("population");
+    let _ = std::fs::remove_file(&path);
+    assert!(ffi::review_fixture_write_experiment(&path.to_string_lossy()));
+    let before = std::fs::read(&path).unwrap();
+    let mut bridge = ffi::new_review_bridge();
+    assert!(bridge.pin_mut().initialize(""));
+    let mut request = serde_json::json!({"expectedPath":path.to_string_lossy(),"feature":"area","minimum":null,"maximum":null});
+    let call = |bridge: &mut cxx::UniquePtr<ffi::ReviewBridge>, request: &serde_json::Value| -> serde_json::Value {
+        serde_json::from_str(&bridge.pin_mut().review_analyze_population(&request.to_string())).unwrap()
+    };
+    assert_eq!(call(&mut bridge, &request)["ok"], false);
+    assert!(bridge.pin_mut().review_open(&path.to_string_lossy()).ok);
+    let result = call(&mut bridge, &request);
+    assert_eq!(result["ok"], true, "{result}");
+    assert_eq!(result["valid"], "10");
+    assert_eq!(result["invalid"], "4");
+    assert_eq!(result["selected"], "14");
+    assert_eq!(result["unknown"], "0");
+    assert_eq!(result["durable"], false);
+    assert!(result["sourceFingerprint"].is_null());
+    assert_eq!(result["rows"][0]["ordinal"], "0");
+    assert_eq!(result["rows"][10]["ordinal"], "0");
+    assert_ne!(result["rows"][0]["key"], result["rows"][10]["key"]);
+    assert_ne!(result["snapshot"], call(&mut bridge, &request)["snapshot"]);
+    // Native exact reduction agrees with independently summed bridge metadata.
+    let valid = bridge.pin_mut().fetch_review_rows(true, 0, 100);
+    let invalid = bridge.pin_mut().fetch_review_rows(false, 0, 100);
+    let mean = valid.rows.iter().chain(invalid.rows.iter()).map(|r| r.area).sum::<f64>() / 14.;
+    assert!((result["mean"].as_f64().unwrap() - mean).abs() < 1e-12);
+    request["minimum"] = serde_json::json!(1e90);
+    let empty = call(&mut bridge, &request);
+    assert_eq!(empty["selected"], "0");
+    assert!(empty["mean"].is_null());
+    request["maximum"] = serde_json::json!(0.);
+    assert_eq!(call(&mut bridge, &request)["ok"], false);
+    request["minimum"] = serde_json::Value::Null;
+    request["maximum"] = serde_json::Value::Null;
+    request["expectedPath"] = serde_json::json!("a different source");
+    assert_eq!(call(&mut bridge, &request)["ok"], false);
+    bridge.pin_mut().review_close();
+    assert_eq!(before, std::fs::read(&path).unwrap(), "analysis must never write the source");
+    std::fs::remove_file(path).unwrap();
 }

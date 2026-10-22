@@ -1158,6 +1158,7 @@ namespace backend::bridge
         // coordinator) or, on a miss, computed only inside the coordinator's idle transaction with
         // no raw recording, the review lanes free and under the review session's mutex (#722);
         // otherwise it is `deferred` ("computed when the instrument is idle"), never an error.
+        std::string analyzePopulationJson(const std::string& requestJson);
         std::string runQuickLookJson(const std::string &requestJson);
         // Asynchronous device discovery (issue #419, ABI 14): start a job on
         // the backend service, poll its bounded snapshot, cancel it. Camera

@@ -539,6 +539,18 @@ pub fn fetch_review_info(state: State<AppState>) -> Result<ReviewInfo, String> {
     })
 }
 
+/// Bounded read-only native population analysis, scheduled off the UI thread.
+#[tauri::command]
+pub async fn review_analyze_population(
+    state: State<'_, AppState>, request: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    // The command is async, so Tauri dispatches it on the async runtime rather
+    // than the window thread. Backend holds only a bounded metadata operation.
+    let mut guard = state.review.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().review_analyze_population(&request.to_string()))
+        .map_err(|e| e.to_string())
+}
+
 /// Review ABI 6 (#716 A7a): the reference run of `review_run_statistics`, as bridge-contract.json
 /// `run_quick_look` names it (`run_id` required, null for a file that records none).
 #[derive(Debug, Clone, Deserialize, Serialize)]

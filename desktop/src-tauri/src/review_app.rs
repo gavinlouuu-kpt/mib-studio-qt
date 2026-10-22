@@ -56,6 +56,7 @@ pub fn run() {
             review::fetch_review_info,
             review::review_probe_runs,
             review::review_run_statistics,
+            review::review_analyze_population,
             review::fetch_review_track_rows,
             review::review_reprocess_record,
             review::fetch_review_rows,

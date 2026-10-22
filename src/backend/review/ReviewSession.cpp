@@ -1,4 +1,6 @@
 #include "backend/review/ReviewSession.h"
+#include "backend/analysis/PopulationStatistics.h"
+#include <atomic>
 
 #include "backend/processing/ProcessingContract.h"
 #include "backend/processing/ProcessingTypes.h"
@@ -200,6 +202,9 @@ namespace backend::review
         std::vector<services::ProcessedFrame> validMeta;
         std::vector<services::ProcessedFrame> invalidMeta;
         bool validMetaReadable{false};
+        bool invalidMetaReadable{false};
+        std::vector<std::string> validFields, invalidFields;
+        bool validFieldsReadable{false}, invalidFieldsReadable{false};
         ReviewMetadata meta;
         double fallbackFactor{0.4886};
 
@@ -239,7 +244,13 @@ namespace backend::review
                 // charts rule before #512 S5, when they opened their own reader).
                 const auto validPresent = reader.metadataDatasetPresent(true);
                 validMetaReadable = validPresent.has_value() && (!*validPresent || validRead);
-                reader.readInvalidMetadata(invalidMeta);
+                const bool invalidRead = reader.readInvalidMetadata(invalidMeta);
+                const auto invalidPresent = reader.metadataDatasetPresent(false);
+                invalidMetaReadable =
+                    invalidPresent.has_value() && (!*invalidPresent || invalidRead);
+                validFields.clear(); invalidFields.clear();
+                validFieldsReadable = reader.readMetadataFieldNames(true, validFields);
+                invalidFieldsReadable = reader.readMetadataFieldNames(false, invalidFields);
                 std::size_t seriesFrames = 0;
                 std::size_t seriesCount = 0;
                 int h = 0;
@@ -719,6 +730,115 @@ namespace backend::review
     {
         std::scoped_lock lock(impl_->mutex);
         return impl_->set(valid).size();
+    }
+
+    std::string ReviewSession::analyzePopulation(const std::string& requestJson) const {
+        using namespace backend::analysis;
+        using Json = nlohmann::json;
+        const auto refuse = [](const std::string& message) {
+            return Json{{"ok", false}, {"message", message}}.dump();
+        };
+        try {
+            if (requestJson.size() > 4096) return refuse("Analysis request exceeds 4096 bytes");
+            const auto request = Json::parse(requestJson);
+            if (!request.is_object() || request.size() != 4 || !request.contains("feature") ||
+                !request.contains("minimum") || !request.contains("maximum") ||
+                !request.contains("expectedPath"))
+                return refuse("Expected feature, minimum, maximum and expectedPath");
+            const auto feature = request.at("feature").get<std::string>();
+            if (feature != "area" && feature != "deformability")
+                return refuse("Supported features: stored area (px²) and deformability");
+            Interval interval;
+            if (!request.at("minimum").is_null())
+                interval.minimum = request.at("minimum").get<double>();
+            if (!request.at("maximum").is_null())
+                interval.maximum = request.at("maximum").get<double>();
+            validateInterval(interval);
+            // One lock covers source identity, both sets and reduction. No paged
+            // mixed-generation reads, HDF5 access, images or acquisition calls.
+            std::scoped_lock lock(impl_->mutex);
+            if (!impl_->open || impl_->recording)
+                return refuse("Open an experiment file with object metadata");
+            if (request.at("expectedPath").get<std::string>() != impl_->path)
+                return refuse("The open source changed; refresh before analyzing");
+            if (!impl_->validMetaReadable || !impl_->invalidMetaReadable)
+                return refuse(
+                    "Object metadata is unreadable; incomplete populations are not analyzed");
+            if (impl_->validMeta.size() > 10000 ||
+                impl_->invalidMeta.size() > 10000 - impl_->validMeta.size())
+                return refuse("Analysis supports at most 10000 stored observations; no sampling "
+                              "was performed");
+            // Never certify missing observations as a complete file population.
+            if (impl_->meta.totalValid != impl_->validMeta.size() ||
+                impl_->meta.totalInvalid != impl_->invalidMeta.size())
+                return refuse(
+                    "Stored counts and readable rows disagree; source coverage is incomplete");
+            static std::atomic<std::uint64_t> next{0};
+            const auto snapshot = std::string("local-evaluation:") + std::to_string(++next);
+            RevisionKey revision{snapshot,      "unavailable", request.dump(),
+                                 "single-file", "none",        "stored-metadata/1",
+                                 "none",        "not-used",    "native-interval/1"};
+            Membership membership{revision, {}};
+            MeasurementColumn column{
+                revision, feature, feature == "area" ? "px²" : "dimensionless", {}};
+            Json rows = Json::array();
+            for (const bool valid : {true, false}) {
+                const auto& source = impl_->set(valid);
+                const auto& fields = valid ? impl_->validFields : impl_->invalidFields;
+                if (!source.empty() && !(valid ? impl_->validFieldsReadable : impl_->invalidFieldsReadable))
+                    return refuse("Measurement schema is unreadable");
+                const bool recorded = std::find(fields.begin(), fields.end(), feature) != fields.end();
+                for (std::size_t i = 0; i < source.size(); ++i) {
+                    const auto& v = source[i].validation;
+                    const double raw = feature == "area" ? v.area : v.deformability;
+                    const std::optional<double> value =
+                        recorded && std::isfinite(raw) ? std::optional<double>(raw) : std::nullopt;
+                    const auto ordinal = std::to_string(i);
+                    const auto set = valid ? "valid" : "invalid";
+                    const auto key = snapshot + ":" + set + ":" + ordinal;
+                    const auto truth = evaluateInterval(value, interval);
+                    membership.rows.push_back({key, truth});
+                    column.rows.push_back({key, value});
+                    rows.push_back({{"key", key},
+                                    {"set", set},
+                                    {"ordinal", ordinal},
+                                    {"membership", truth == Truth::True    ? "selected"
+                                                   : truth == Truth::False ? "excluded"
+                                                                           : "unknown"}});
+                }
+            }
+            const auto statistics = populationStatistics(membership, column);
+            const auto number = [](const std::optional<double>& v) -> Json {
+                return v ? Json(*v) : Json(nullptr);
+            };
+            return Json{{"ok", true},
+                        {"schema", "review-population/1"},
+                        {"snapshot", snapshot},
+                        {"path", impl_->path},
+                        {"sourceFingerprint", nullptr},
+                        {"durable", false},
+                        {"feature", feature},
+                        {"unit", column.unit},
+                        {"qcPolicy", "none"},
+                        {"valid", std::to_string(impl_->validMeta.size())},
+                        {"invalid", std::to_string(impl_->invalidMeta.size())},
+                        {"selected", std::to_string(statistics.selected)},
+                        {"excluded", std::to_string(statistics.excluded)},
+                        {"unknown", std::to_string(statistics.unknownMembership)},
+                        {"measured", std::to_string(statistics.measured)},
+                        {"missing", std::to_string(statistics.missing)},
+                        {"minimum", number(statistics.minimum)},
+                        {"maximum", number(statistics.maximum)},
+                        {"mean", number(statistics.mean)},
+                        {"median", number(statistics.median)},
+                        {"rows", rows},
+                        {"measurementSemantics",
+                         "Stored metadata values; absent fields and nonfinite measurements are unknown. "
+                         "Processing validity is not scientific QC."}}
+                .dump();
+        } catch (const std::exception& e) {
+            return refuse(e.what());
+        }
     }
 
     bool ReviewSession::metricsPage(bool valid, std::uint64_t offset, std::uint64_t count,

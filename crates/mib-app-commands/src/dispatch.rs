@@ -103,6 +103,7 @@ pub const COMMANDS: &[&str] = &[
     "fetch_stage_status",
     "fetch_review_metadata",
     "fetch_review_metrics_page",
+    "analyze_population",
     "fetch_review_image",
     "review_image_bytes",
     "fetch_review_frame_packet",
@@ -582,6 +583,13 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
             crate::pump_scan_addresses(state, a.com_port, a.baud_rate, a.start_address, a.end_address, a.timeout_ms).and_then(json)
         }
         "fetch_review_metadata" => crate::fetch_review_metadata(state).and_then(json),
+        "analyze_population" => {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct A { request: serde_json::Value }
+            let a: A = args(value)?;
+            crate::analyze_population(state, a.request).and_then(json)
+        }
         "fetch_review_metrics_page" => {
             #[derive(Deserialize)]
             struct A {

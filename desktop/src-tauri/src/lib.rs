@@ -384,6 +384,11 @@ fn fetch_review_metadata(state: State<AppState>) -> Result<cmds::ReviewMetadata,
 }
 
 #[tauri::command]
+async fn analyze_population(state: State<'_, AppState>, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    cmds::analyze_population(&state, request)
+}
+
+#[tauri::command]
 fn fetch_review_metrics_page(state: State<AppState>, valid: bool, offset: u64, count: u64) -> Result<cmds::ReviewMetricsPage, String> {
     cmds::fetch_review_metrics_page(&state, valid, offset, count)
 }
@@ -890,6 +895,7 @@ pub fn run() {
             pump_scan_addresses,
             fetch_review_metadata,
             fetch_review_metrics_page,
+            analyze_population,
             fetch_review_image,
             review_image_bytes,
             review_export_csv,

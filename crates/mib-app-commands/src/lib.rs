@@ -962,6 +962,12 @@ pub fn fetch_review_metadata(state: &AppState) -> Result<ReviewMetadata, String>
     })
 }
 
+/// Native analysis of the open review source, with the facade's idle fence.
+pub fn analyze_population(state: &AppState, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().analyze_population(&request.to_string())).map_err(|e| e.to_string())
+}
+
 /// Pull one bounded page of review metrics.
 pub fn fetch_review_metrics_page(
     state: &AppState,

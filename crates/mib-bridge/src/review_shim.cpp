@@ -439,6 +439,10 @@ ReviewProbeResult ReviewBridge::review_probe_runs(rust::Vec<rust::String> paths)
     return out;
 }
 
+rust::String ReviewBridge::review_analyze_population(rust::Str request_json) {
+    return rust::String(impl_->jobs->analyzePopulation(toStd(request_json)));
+}
+
 rust::String ReviewBridge::review_run_statistics(rust::Str request_json) {
     try {
         br::RunQuickLookRequest request;
@@ -822,7 +826,9 @@ std::unique_ptr<ReviewBridge> new_review_bridge() { return std::make_unique<Revi
 // (#783): the identity's emodulus_lut also reads a regenerated file's
 // @emodulus_lut_json, named by emodulus_lut_provenance (snapshot | recorded |
 // host). v6 (#716 A7a): review_run_statistics, the run quick look's twin.
-std::uint32_t review_bridge_abi_version() { return 6; }
+std::uint32_t review_bridge_abi_version() {
+    return 8;
+}
 
 namespace {
 
