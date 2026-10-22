@@ -24,6 +24,7 @@ import {
 } from "./planModel";
 import { FormatCard, NOT_DECLARED, OperatorFields, CameraModeNotice, SampleEditor, StartBlockText, calibrationFacts, declaredCalibration, startBlocks, type PlanCalibration } from "./planParts";
 import { QueuePlan } from "./QueuePlan";
+import { SavedPlan } from "./SavedPlan";
 import { AnnotationGroups } from "./AnnotationGroups";
 import { startConfirmation, type ConfirmationState, type Verdict } from "./prepareModel";
 import type { PlanController, PlanStartResult } from "./usePlan";
@@ -85,7 +86,7 @@ export function refreshNotice(r: PlanStartResult | null): NoticeText | null {
 }
 
 export function PlanView(props: PlanViewProps) {
-  return props.plan.draft.format === "queue" ? <QueuePlan {...props} /> : <SinglePlan {...props} />;
+  return <><SavedPlan draft={props.plan.draft} controlHeld={props.plan.queue.controlHeld} />{props.plan.draft.format === "queue" ? <QueuePlan {...props} /> : <SinglePlan {...props} />}</>;
 }
 
 function SinglePlan({ plan, lockedReason, verdict, blockers, cameraMode, onCameraMode, confirmation, onShowLive, calibration, reviewOpen }: PlanViewProps) {

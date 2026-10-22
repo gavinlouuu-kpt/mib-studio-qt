@@ -9,4 +9,9 @@ add_executable(ique_workspace_test ../../tests/workspace/workspace_store_test.cp
 target_include_directories(ique_workspace_test PRIVATE ../../include)
 target_link_libraries(ique_workspace_test PRIVATE SQLite::SQLite3 nlohmann_json::nlohmann_json Threads::Threads)
 target_compile_options(ique_workspace_test PRIVATE -Wall -Wextra -Werror)
-# Isolated qualification only. No changes to shared backend/bridge build ownership.
+# Lightweight qualification; the host test is also registered in the production CTest suite.
+find_package(spdlog REQUIRED)
+add_executable(ique_workspace_host_test ../../tests/workspace/workspace_host_test.cpp ../../src/backend/workspace/WorkspaceStore.cpp ../../src/backend/database/SqliteService.cpp)
+target_include_directories(ique_workspace_host_test PRIVATE ../../include)
+target_link_libraries(ique_workspace_host_test PRIVATE SQLite::SQLite3 nlohmann_json::nlohmann_json spdlog::spdlog Threads::Threads)
+target_compile_options(ique_workspace_host_test PRIVATE -Wall -Wextra -Werror)

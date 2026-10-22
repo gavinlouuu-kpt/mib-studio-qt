@@ -3,6 +3,7 @@
 #include "backend/analysis/SourceAnalysis.h"
 #include "backend/database/SqliteService.h"
 #include "backend/app/BackendFacade.h"
+#include "backend/database/SqliteService.h"
 #include "backend/app/CalibrationStore.h"
 #include "backend/processing/IExecutionProvider.h"
 #include "backend/recording/RecordingAccounting.h"
@@ -1558,6 +1559,12 @@ namespace backend::bridge
         std::optional<review::RunStatisticsResult> reference;
         if (request.reference) reference = one(request.reference->path);
         return review::runQuickLookReplyJson(runs, request.reference, reference);
+    }
+
+    std::string BackendFacade::workspaceRequestJson(const std::string& request, bool write)
+    {
+        if (!initialized_) return R"({"status":"unavailable","message":"Backend not initialized"})";
+        return backend_.sqlite().workspaceRequest(request, write);
     }
 
     std::string BackendFacade::calibrationRecordsListJson() const

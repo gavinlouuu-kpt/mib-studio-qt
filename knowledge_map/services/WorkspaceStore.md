@@ -1,8 +1,9 @@
 # WorkspaceStore
 
-Isolated native metadata persistence core for #807 / #393 / #395. Not yet mounted
-in AppBackend or ReviewSession. Connection ownership, operator authorization and
-migration scheduling remain with the shared metadata host.
+Native metadata persistence core for #807 / #393 / #395. Mounted in AppBackend
+through [[SqliteService]] and BackendFacade (bridge ABI 45); not mounted in
+ReviewSession. The host owns connection lifetime and serialization; transport
+controller authorization is not operator authentication.
 
 ## Responsibility and APIs
 
@@ -26,7 +27,6 @@ scientific validation or operator authentication.
 Standalone `tools/ique_acceptance` harness covers round-trip, injected rollback,
 restart, history, restore, command replay and two-connection CAS. ASan/UBSan passed;
 TSan startup failed with unexpected memory mapping, so sanitizer acceptance is
-open. See `docs/design/ique-workflow/WORKSPACE-EVIDENCE.md`. Export/relink and live
-provider/host integration remain required; this is not full I12 acceptance.
+open. See `docs/design/ique-workflow/WORKSPACE-EVIDENCE.md`. Export/relink, scientific provider integration and complete workspace loading remain required; this is not full I12 acceptance.
 
 **Up:** [[_MOC]] · [[../architecture/Desktop-Shell]]

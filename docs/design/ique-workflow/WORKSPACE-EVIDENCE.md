@@ -66,4 +66,5 @@ No hardware, timing performance or production workspace reopen claim.
   document-level schema/lineage validation and frontend provider binding are not
   implemented here. No I02/I12 complete acceptance.
 - No shared build, AppBackend, ReviewSession, bridge/ABI or facade files changed.
-  Cross-track coordinator owns that exact allocation and final integration.
+  This describes the original core-only checkpoint. The later own-branch allocation
+  supersedes that gate; see PRODUCTION-INTEGRATION.md for current host/facade integration.

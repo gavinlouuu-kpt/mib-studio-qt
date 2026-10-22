@@ -3,6 +3,13 @@
 Coordination: #807. Owner direction: 2026-10-22. Status: implementation in progress;
 **no complete capability or operational acceptance claimed**. I13 alone is deferred.
 
+## Current own-branch integration
+
+The active dev branch is `feat/807-ique-workspace-core`; it already consolidates
+all published I slices. Shared-named production files are owned here for end-to-end
+integration. See [production evidence and concrete remaining work](PRODUCTION-INTEGRATION.md).
+The following baseline and allocation entries are historical, not current gates.
+
 ## Baseline and preservation
 
 Current remote workspace head verified on 2026-10-22:
