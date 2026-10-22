@@ -1,0 +1,12 @@
+cmake_minimum_required(VERSION 3.20)
+project(ique_workspace_qualification LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+find_package(SQLite3 REQUIRED)
+find_package(nlohmann_json REQUIRED)
+find_package(Threads REQUIRED)
+add_executable(ique_workspace_test ../../tests/workspace/workspace_store_test.cpp ../../src/backend/workspace/WorkspaceStore.cpp)
+target_include_directories(ique_workspace_test PRIVATE ../../include)
+target_link_libraries(ique_workspace_test PRIVATE SQLite::SQLite3 nlohmann_json::nlohmann_json Threads::Threads)
+target_compile_options(ique_workspace_test PRIVATE -Wall -Wextra -Werror)
+# Isolated qualification only. No changes to shared backend/bridge build ownership.
