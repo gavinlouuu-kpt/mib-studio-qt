@@ -1,4 +1,4 @@
-// The Summary sub-view's pure model (#716 A7b): the plan's closed runs, formatting only (a recorded 0
+// The Run summary and Quick look's pure model (#716 A7b, A7c): the plan's closed runs, formatting only (a recorded 0
 // stays 0, null stays null), the backend's deltas shown as sent, the flags as grey chips, and the pin
 // that neither the model nor the view computes anything from the quick look's numbers.
 import { describe, expect, it } from "vitest";

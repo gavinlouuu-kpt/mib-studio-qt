@@ -1,4 +1,4 @@
-// Pure model of the workspace's Experiment · Summary sub-view (#716 A7b): O5 Run summary and O6 Quick
+// Pure model of the workspace's Experiment sub-views (#716 A7b, split in A7c): O5 Run summary and O6 Quick
 // look over the backend's run quick look (bridge ABI 44 `run_quick_look`, #716 A7a, runQuickLook.ts).
 //
 // - The plan's closed runs: a queue's rows once the backend finalized their run (awaiting the
