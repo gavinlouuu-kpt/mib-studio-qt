@@ -141,6 +141,74 @@ describe("pollDiscovery", () => {
     expect(a.fetches).toBe(0);
   });
 
+  it("does not cancel another caller's coalesced job when this waiter times out", async () => {
+    const a = api([DISCOVERY_JOB_STATES.Running]);
+    a.start = async () => ({ accepted: true, coalesced: true,
+      job_id: "42", rejection: 0, reason: "" });
+    let now = 0;
+    await expect(pollDiscovery(a, {
+      timeoutMs: 50, now: () => (now += 20),
+    })).rejects.toThrow(/timed out/);
+    expect(a.cancelled).toEqual([]);
+  });
+
+  it.each([
+    DISCOVERY_JOB_STATES.Completed,
+    DISCOVERY_JOB_STATES.Cancelled,
+    DISCOVERY_JOB_STATES.Failed,
+  ])("rejects a terminal snapshot for a different job (state %s)", async (state) => {
+    const a = api([state]);
+    a.fetch = async () => snapshot({ job_id: "43", state });
+    await expect(pollDiscovery(a)).rejects.toThrow(/identity changed/);
+    // A stale response is not authority to cancel a possibly different session.
+    expect(a.cancelled).toEqual([]);
+  });
+
+  it("rejects a changed generation before accepting completion", async () => {
+    const a = api([DISCOVERY_JOB_STATES.Running]);
+    let fetches = 0;
+    a.fetch = async (jobId) => snapshot({
+      job_id: jobId,
+      generation: ++fetches === 1 ? "9007199254740992" : "9007199254740993",
+      state: fetches === 1 ? DISCOVERY_JOB_STATES.Running : DISCOVERY_JOB_STATES.Completed,
+    });
+    await expect(pollDiscovery(a)).rejects.toThrow(/generation changed/);
+    expect(fetches).toBe(2);
+    expect(a.cancelled).toEqual([]);
+  });
+
+  it("compares job ids losslessly above the JavaScript integer limit", async () => {
+    const a = api([DISCOVERY_JOB_STATES.Completed]);
+    a.start = async () => ({ accepted: true, coalesced: false,
+      job_id: "9007199254740992", rejection: 0, reason: "" });
+    a.fetch = async () => snapshot({ job_id: "9007199254740993",
+      state: DISCOVERY_JOB_STATES.Completed });
+    await expect(pollDiscovery(a)).rejects.toThrow(/identity changed/);
+    expect(a.cancelled).toEqual([]);
+  });
+
+  it("does not pin generation from an invalid snapshot", async () => {
+    const a = api([DISCOVERY_JOB_STATES.Running]);
+    let fetches = 0;
+    a.fetch = async (jobId) => ++fetches === 1
+      ? snapshot({ valid: false, job_id: "0", generation: "0" })
+      : snapshot({ job_id: jobId, generation: "18446744073709551615",
+        state: DISCOVERY_JOB_STATES.Completed });
+    const result = await pollDiscovery(a);
+    expect(result.generation).toBe("18446744073709551615");
+    expect(fetches).toBe(2);
+    expect(a.cancelled).toEqual([]);
+  });
+
+  it("accepts a matching coalesced job without issuing cancellation", async () => {
+    const a = api([DISCOVERY_JOB_STATES.Completed]);
+    a.start = async () => ({ accepted: true, coalesced: true,
+      job_id: "18446744073709551615", rejection: 0, reason: "" });
+    const result = await pollDiscovery(a);
+    expect(result.job_id).toBe("18446744073709551615");
+    expect(a.cancelled).toEqual([]);
+  });
+
   it("discoverCameras returns the UI shape", async () => {
     const a = api([DISCOVERY_JOB_STATES.Completed]);
     const out = await discoverCameras(a, { timeoutMs: 100, intervalMs: 1 });
