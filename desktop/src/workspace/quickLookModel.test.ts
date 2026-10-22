@@ -166,11 +166,18 @@ describe("no client-side arithmetic on the quick look's numbers (the A7 ruling 5
     expect(offending("const t = numberText(s.area_um2.median, 2);")).toHaveLength(0);
   });
 
-  // O5 Run summary and O6 Quick look (split in #716 A7c) and their shared parts.
+  // O5 Run summary and O6 Quick look (split in #716 A7c) and their shared parts. One exemption
+  // (coordinator ruling on #795): the file size is shown in decimal units through the shared
+  // `formatByteCount` (ssdView.ts), unit formatting for display, not statistics; it lives outside
+  // these sources and is the only conversion they may call. Statistics and deltas stay backend-only.
   const FILES = ["./QuickLookView.tsx", "./RunSummaryView.tsx", "./quickLookModel.ts", "./summaryParts.tsx", "./useQuickLook.ts"];
   const sources = import.meta.glob(["./quickLookModel.ts", "./QuickLookView.tsx", "./RunSummaryView.tsx", "./summaryParts.tsx", "./useQuickLook.ts"],
     { query: "?raw", import: "default", eager: true }) as Record<string, string>;
   it("reads the five sources", () => expect(Object.keys(sources).sort()).toEqual(FILES));
+  it("the file size goes through the exempt shared formatter only", () => {
+    expect(sources["./RunSummaryView.tsx"]).toMatch(/import \{ formatByteCount \} from "\.\.\/ssdView"/);
+    expect(sources["./RunSummaryView.tsx"]).toMatch(/formatByteCount\(q\?\.file\?\.size_bytes\)/);
+  });
   for (const [file, src] of Object.entries(sources)) {
     it(`${file} computes nothing from them`, () => {
       expect(src.length).toBeGreaterThan(1000);

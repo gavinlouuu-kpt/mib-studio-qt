@@ -298,7 +298,8 @@ describe("O5 Outcome: the lifecycle from what this page observed", () => {
     expect(text("summary-counts")).toContain("Admitted");
     expect(text("summary-provenance")).toContain("run-/d/s1.h5");
     expect(text("o5-experiment-run")).toContain("run 1 · sample S1");
-    expect(text("o5-file")).toMatch(/^s1\.h5 · 55.096 bytes$/);
+    expect(text("o5-file")).toBe("s1.h5 · 55 kB");
+    expect($("o5-file")?.title).toMatch(/^55.096 bytes$/); // the exact count in the tooltip
     expect(host.querySelectorAll("[data-testid=o5-snapshot-chart] circle").length).toBe(19);
     expect(text("o5-snapshot")).toContain("display only, the Review app does the analysis");
     expect(text("o5-next")).toContain("statistics: Quick look (descriptive) and the Review app");

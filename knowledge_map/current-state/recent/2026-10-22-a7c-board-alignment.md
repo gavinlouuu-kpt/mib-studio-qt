@@ -40,7 +40,11 @@ sandbox file's Operation app page). No backend or contract change.
 - No recommendation text (A7 ruling 6): the board's "Run 03 looks different from the vehicle and
   clean" is not shown; a test greps the sources and the rendered views for assessment wording.
 - No client-side arithmetic on the quick look's values (the pin now covers both views and their
-  shared parts); deltas only from the backend.
+  shared parts); deltas only from the backend. One exemption (coordinator ruling on #795): the file size is
+  shown in decimal units ("1.24 GB", exact bytes in the tooltip) through the shared `formatByteCount`,
+  unit formatting for display, not statistics.
+- Rulings on #795: Dismiss stays hide-here only (no backend command); a single sample's duration
+  stays "Not recorded".
 
 See [[../../architecture/Desktop-Shell]] (Opt-in workspace → Experiment · Run summary and Quick
 look) and [[../../services/RunQuickLook]].

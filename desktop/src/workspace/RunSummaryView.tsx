@@ -46,6 +46,7 @@ import { useQuickLook, type QuickLookRead } from "./useQuickLook";
 import { useRunCalibration, type CalibrationListRead } from "./useRunCalibration";
 import type { CalibrationRecordsList } from "../calibrationRecords";
 import type { RunQuickLookRun } from "../runQuickLook";
+import { formatByteCount } from "../ssdView";
 
 export interface RunSummaryViewProps {
   /** The Experiment sub-view buttons (Plan · Live · Run summary · Quick look), first in the toolbar. */
@@ -147,7 +148,9 @@ function OutcomeCard({ run, q, loading, experimentId }: { run: PlanRun; q: RunQu
   const reason = stopReason(run);
   const id = q?.status === "computed" ? q.statistics?.identity ?? null : null;
   const chip = statusChip(q, loading);
-  const size = q?.file?.size_bytes ? `${counterText(q.file.size_bytes)} bytes` : null;
+  // The file's size in decimal units, the exact byte count in the tooltip (display units only).
+  const size = formatByteCount(q?.file?.size_bytes);
+  const exact = q?.file?.size_bytes ? `${counterText(q.file.size_bytes)} bytes` : undefined;
   const name = what(run);
   return (
     <Card title="Outcome" data-testid="o5-outcome"
@@ -174,7 +177,7 @@ function OutcomeCard({ run, q, loading, experimentId }: { run: PlanRun; q: RunQu
       {run.outcome.headline ? <p className="ws-note" data-testid="summary-headline">{run.outcome.headline}</p> : null}
       <FactList missing={NOT_RECORDED} data-testid="o5-outcome-facts" facts={[
         { label: "Duration", value: <span title={DURATION_SOURCE} data-testid="o5-duration">{durationText(run)}</span> },
-        { label: "File", value: <span data-testid="o5-file">{`${basename(run.path)}${size ? ` · ${size}` : ""}`}</span> },
+        { label: "File", value: <span data-testid="o5-file" title={exact}>{`${basename(run.path)}${size ? ` · ${size}` : ""}`}</span> },
         { label: "Experiment / run", value: <span data-testid="o5-experiment-run">{id
           ? `${id.experiment_id ?? NOT_RECORDED} · run ${id.run_index ?? NOT_RECORDED} · sample ${id.sample_ref ?? NOT_RECORDED}`
           : `${experimentId} · run ${run.runIndex} · sample ${run.ref || NOT_RECORDED} (as planned; the file's identity is read with its quick look)`}</span> },

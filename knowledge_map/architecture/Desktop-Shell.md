@@ -662,7 +662,8 @@ of the quick controls and the sample sheet, until the kit has them).
     `quickLookModel.test.ts` reads `quickLookModel.ts`, `RunSummaryView.tsx`, `QuickLookView.tsx`,
     `summaryParts.tsx` and `useQuickLook.ts` and refuses arithmetic on the quick look's fields,
     `Math.`, `Number(`, `BigInt(` and `reduce(`; `summaryViews.test.tsx` shows a deliberately
-    inconsistent backend delta as sent). `runSummaryModel.ts` (O5's checklist, duration, board
+    inconsistent backend delta as sent). The one exemption is the file size's unit formatting
+    (`formatByteCount`, display, not statistics; coordinator ruling on #795). `runSummaryModel.ts` (O5's checklist, duration, board
     placeholders, End queue, the calibration match) reads no quick look value
     (`runSummaryModel.test.ts` checks it imports none).
   - **The plan's closed runs** (`planClosedRuns`): a queue row once the backend finalized its run
@@ -692,8 +693,9 @@ of the quick controls and the sample sheet, until the kit has them).
       otherwise "not observed here", since the file's stop record is not in the quick look), the
       **duration** only from the terminal status's recorded start and end (`RowEnd.startTimeNs` /
       `endTimeNs`, the backend's wall clock; "Not recorded" otherwise, and always for a single
-      sample), the file with its size in bytes, the experiment / run / sample from the identity, and
-      the writer.
+      sample), the file with its size in decimal units (the shared `formatByteCount` in `ssdView.ts`,
+      the exact byte count in the tooltip), the experiment / run / sample from the identity, and the
+      writer.
     - **Counts**: the file's counts and accounting as `StatTile`s, the flags as grey chips.
       **Provenance written**: the identity. **Snapshot**: the run's display-only overlay subsample
       on `AreaDeformChart`, "display only, the Review app does the analysis".
@@ -754,7 +756,7 @@ of the quick controls and the sample sheet, until the kit has them).
     "no statistics on the instrument (#501)"; Quick look shows descriptive numbers, so the Next card
     says "statistics: Quick look (descriptive) and the Review app".
   - Not in this step: live medians, isoelastic curves, tests, fits, CV, Compare, a persisted
-    reference, the board's header pills (run closed · queue paused), the file size in GB.
+    reference, the board's header pills (run closed · queue paused).
   - Tests: `summaryViews.test.tsx` (the real `usePlan` with its stop; each sub-view's reads on its
     transitions and Refresh; deferred and the idle re-read; the checklist from observed status and
     unknown when unobserved; the duration and the stop reason; End queue; the calibration block with
