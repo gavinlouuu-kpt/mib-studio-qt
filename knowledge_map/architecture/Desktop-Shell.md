@@ -63,14 +63,16 @@ The repo root `src/` is the C++ tree, so the whole Tauri app lives under
   (path-less readiness poll; stopping it drops a read in flight, `usePrepareReadiness.test.tsx`), `AlignView.tsx` (O2), `alignImageModel.ts` (view transform,
   probe, histogram, profile, `FrameInspector`), `quickControlModel.ts` + `useQuickControl.ts`
   (requested → readback machine), `alignControls.ts` (which controls an instrument offers);
-  O3 Experiment · Plan (#716 A5): `ExperimentView.tsx` (sub-views Plan / Live / Summary),
+  O3 Experiment · Plan (#716 A5): `ExperimentView.tsx` (sub-views Plan / Live / Run summary / Quick look),
   `PlanView.tsx`, `planModel.ts` (pure: sheet, identity, `buildStartRequest`, bounds, refusals)
   and `usePlan.ts` (the plan held by App, remembered operators); O4 Experiment · Live (#716 A6b):
   `LiveView.tsx`, `liveModel.ts` (pure: names, ended pins, pin outcomes, scatter and its click
   mapping, status lifecycle, the stops), `useLiveCells.ts` (the cell store's reads, crops and pin
   commands) and `liveImages.ts` (a crop or mask packet as an image URL); O5 Run summary and O6
-  Quick look (#716 A7b): `SummaryView.tsx`, `quickLookModel.ts` (pure: the plan's closed runs,
-  formatting only) and `useQuickLook.ts` (the `run_quick_look` reads).
+  Quick look (#716 A7b, A7c): `RunSummaryView.tsx`, `QuickLookView.tsx`, `summaryParts.tsx`,
+  `QuickLookThumb.tsx`, `quickLookModel.ts` (pure: the plan's closed runs, formatting only),
+  `runSummaryModel.ts` (pure: O5's checklist, duration, End queue, the board's placeholders, the
+  calibration match), `useQuickLook.ts` (the `run_quick_look` reads) and `useRunCalibration.ts`.
   See "Opt-in workspace" below.
 - `desktop/src/experimentCounters.ts` — operator saved counts by class, pending
   saves derived with exact u64 arithmetic, policy drops and writer failures
@@ -188,8 +190,8 @@ of the quick controls and the sample sheet, until the kit has them).
   goes to the mode a run records in only on the Plan's "Switch to Run" (PZ7035) or "Show the
   experiment window" (desktop). Its Live sub-view reads and turns monitoring on while shown (the
   classic Monitoring tab's visibility gate), and pins, stops or stops the camera only on a button.
-  Its Summary sub-view (O5/O6) reads the run quick look while shown, and a decision acts only on
-  its button. The Review stage says "Not yet in the workspace" and offers "Back to the classic view".
+  Its Run summary (O5) and Quick look (O6) sub-views read the run quick look while shown, and a
+  decision acts only on its button (nothing applies calibration there). The Review stage says "Not yet in the workspace" and offers "Back to the classic view".
   Prepare's "Camera / Focus / Pump setup" leave for the classic Connect tab, which only reads.
   The classic startup landing is skipped when the workspace is already open.
 - **Prepare (O1)** shows the checklist by subsystem (camera and acquisition, focus, fluidics,
@@ -426,7 +428,7 @@ of the quick controls and the sample sheet, until the kit has them).
     it (`startBlocks`), while Prepare's checklist blocks (the same `prepareVerdict` title and
     `confirmBlockers` lines as Prepare; the workspace reads the checklist and the path-less gates
     while the Plan is shown, so the verdict is the same; `workspaceReadsPrepare(stage, view)` is
-    the one predicate for both polls, and the Live and Summary sub-views read neither, so App
+    the one predicate for both polls, and the Live, Run summary and Quick look sub-views read neither, so App
     holds the sub-view), for the classic Start button's reasons
     (`startExperimentReason`: backend, camera stream or Run mode, a run active, a start pending),
     while the sheet has an issue, while a start is pending, and once the plan's run has started.
@@ -560,7 +562,7 @@ of the quick controls and the sample sheet, until the kit has them).
     It never resumes on its own: "Resume queue" needs control again and sends nothing, and the
     operator then presses the step (e.g. Confirm closed) again. Without control, Start says why.
   - Not in this step: per-run auto-stop (a backend stop condition with its own ABI number),
-    "base on previous experiment", the queue's duration/size preview, Summary and Quick look. Live is
+    "base on previous experiment", the queue's duration/size preview, Run summary and Quick look. Live is
     the next bullet.
     A backend restart that remounts the browser app (a new boot id) starts a new plan: the queue is
     local by design, the recorded files stay.
@@ -568,7 +570,7 @@ of the quick controls and the sample sheet, until the kit has them).
   cell store of ABI 41 (A6a, [[../services/MonitoringCellStore]]) and today's commands; no new bridge
   command. `liveModel.ts` holds the pure rules, `useLiveCells.ts` the cells' reads, crops and pin
   commands, and `liveImages.ts` draws a packet for the kit.
-  - **Layout, as the board.** The toolbar: Plan · Live · Summary, then **Stop acquisition**,
+  - **Layout, as the board.** The toolbar: Plan · Live · Run summary · Quick look, then **Stop acquisition**,
     **Freeze display** and **Stop & finalize run**. Then Live cells (the live frame and the strip)
     beside Area–Deformability; Pinned cell beside Recording and run status; Sample queue beside Run
     lifecycle. One column when narrow.
@@ -662,84 +664,127 @@ of the quick controls and the sample sheet, until the kit has them).
   - Not in this step: the population selection card (live populations are P5 / #523), Mark chapter
     (chapters are deferred, ADR 0015), Inspect (Review), the stop-condition progress (per-run
     auto-stop is not built) and the footer's camera / display / transport / writer line.
-- **Experiment · Summary: O5 Run summary and O6 Quick look (P4, S5; #716 A7b).** `SummaryView.tsx`
-  over the run quick look of A7a (bridge ABI 44 `run_quick_look`, [[../services/RunQuickLook]]); the
-  issue's A7 rulings bind it. No backend or contract change. The Penpot boards O5/O6 were not
-  readable when it was built (the penpot-agents backend was unreachable), so it follows
-  `reference.json` and the design docs.
+- **Experiment · Run summary (O5) and Quick look (O6) (P4, S5; #716 A7b, aligned with the Penpot
+  boards in A7c).** Two sub-views, `RunSummaryView.tsx` and `QuickLookView.tsx`, with what they share
+  in `summaryParts.tsx` (the decisions, the per-run states and tiles), over the run quick look of A7a
+  (bridge ABI 44 `run_quick_look`, [[../services/RunQuickLook]]); the issue's A7 rulings bind them.
+  The Experiment sub-nav is Plan · Live · Run summary · Quick look; `ExperimentView` holds the run
+  the two inspect, so it stays while the operator moves between them. No backend or contract
+  change. The boards are O5 and O6 on the Operation app page of the sandbox file (renders in
+  `workspace-walk-2026-10-21/a7b/penpot-O5.png`, `penpot-O6.png`).
   - **One function, no client arithmetic.** Every number is the backend's: counters are decimal
     strings shown in digit groups, medians, the target-group % and the event rate are formatted to
     fixed digits, and every delta is the backend's `run − reference` (`quickLookModel.ts` formats;
-    `quickLookModel.test.ts` reads `quickLookModel.ts`, `SummaryView.tsx` and `useQuickLook.ts`
-    and refuses arithmetic on the quick look's fields, `Math.`, `Number(`, `BigInt(` and `reduce(`;
-    `SummaryView.test.tsx` shows a deliberately inconsistent backend delta as sent).
+    `quickLookModel.test.ts` reads `quickLookModel.ts`, `RunSummaryView.tsx`, `QuickLookView.tsx`,
+    `summaryParts.tsx` and `useQuickLook.ts` and refuses arithmetic on the quick look's fields,
+    `Math.`, `Number(`, `BigInt(` and `reduce(`; `summaryViews.test.tsx` shows a deliberately
+    inconsistent backend delta as sent). The one exemption is the file size's unit formatting
+    (`formatByteCount`, display, not statistics; coordinator ruling on #795). `runSummaryModel.ts` (O5's checklist, duration, board
+    placeholders, End queue, the calibration match) reads no quick look value
+    (`runSummaryModel.test.ts` checks it imports none).
   - **The plan's closed runs** (`planClosedRuns`): a queue row once the backend finalized its run
     (awaiting Confirm closed, or closed; `queueClosedRuns`), the runs Repeat sample kept, and a
-    single sample once its operation reported a good end (its recorded path). One read covers the
-    newest 32 (`RUN_QUICK_LOOK.max_paths`); the rest are named as not read here.
-  - **Reads, never polled** (`useQuickLook`): on showing the Summary when the plan has a closed run,
-    when the closed runs or the reference change, once the instrument turns idle (App's
-    `expActive` going false) when the last reply had a deferred run (also when that happens while a
-    read is answered; the reference's own deferral counts), and on Refresh. A reply is shown only
-    for what it was read for: a change of paths or reference invalidates reads in flight, so a late
-    answer never shows an earlier reference's deltas; while the reference changes, the runs' own
-    numbers of the same paths stay, without deltas. With no closed run nothing is read. A viewer
-    reads too (`run_quick_look` is not a control command).
-  - **O5 Run summary** (the newest closed run, or the one chosen with a tile's Summary): the outcome
-    as the client observed it (Finalized · file closed / cancelled, "Awaiting your close
-    confirmation"), the quick look's state, the flags as grey chips (`legacy` in the unknown tone; no
-    verdict colours), the medians as `StatTile`s (valid rows; median area µm², deformability and E
-    kPa, each with the backend's delta; "% in declared target group"; the event rate), the counts
-    and the file's accounting, and the provenance from the identity. `deferred` reads "Quick look
-    computed when the instrument is idle"; `not_available` "Not available until exported to HDF5";
-    `error` the backend's message; null "Not recorded" (or the reason: "px→µm not recorded", "No
-    E-LUT loaded", "None declared", "Too short"); a recorded 0 stays 0.
-  - **O6 Quick look.** The experiment board: one tile per closed run side by side (its condition
-    swatch, n, the medians with deltas, the target group, the event rate, flags and `differs`
-    chips, then Summary · Set as reference · Overlay). The reference run: none until the operator
-    chooses one (`PlanController.reference`, held by `usePlan` with the plan, cleared by New plan,
-    never persisted; path, run_id and start generation from the run's quick look). The reply's
-    reference chip says confirmed or not, with the backend's reason; a withheld delta reads
-    "withheld · <reason>" (`WITHHELD_TEXT`); the reference shows no delta to itself, and is drawn
-    only once the backend confirmed it. The overlay
-    (`AreaDeformChart`): the reference in slot 5 and up to four chosen runs (default the inspected
-    run) in their condition's slot, from each reply's display-only subsample, with the "display
-    only" note. During a run: the earlier runs from the backend's cache, and the active run's
-    status counts labelled "Medians: numbers at close".
-  - **Decisions (A7 ruling 8), each one step.** **Repeat sample**: the queue event `repeat`
-    (`queueModel.ts`): a finalized (current) or closed row goes back to planned as the current row,
-    its run kept in `QueueRow.history`, its attempts kept (the row stays locked), `nextRunIndex`
-    unchanged, so the next Start sends the same sample_ref with the next run index and picks a new
-    file; only between samples and one repeat at a time (`repeatReason`: not while a Start, run or
-    stop is in flight, nor ahead of a failure waiting for retry / skip / end, nor while another
-    repeat is queued, nor paused or ended); the Plan says "Repeat
-    S1 · load the tube again"; a single-sample plan has none. **Adjust next**: Align (the
-    workspace's stage) or the Plan, navigation only. **Continue · Next sample**: confirms the
-    finalized row's close (the queue's Confirm closed) and shows the Plan, where the next Start
-    waits; otherwise it shows the Plan; disabled while a row runs (ruling: stopping stays on Next
-    sample in the Plan and Live; the Summary is for closed runs). **Open in Review**: App's
-    classic Review tab with the file (`loadReviewSource(path)`, `load_recording`, the same path as
-    the classic "Open recording"), leaving the workspace; unavailable during a run, and its title
-    says a file open in Review blocks Start until Review → Close File (D1 (a), #722). While this
-    page has a recording open in the classic Review (App's review metadata: its own Open recording,
-    Open in Review, or one restored at start-up; `PlanViewProps.reviewOpen`), the Plan's Start,
-    single and queue, shows the `startBlocks` entry "A recording is open in Review · close it there
-    (Review → Close File) to start" and sends nothing; Close File lifts it (coordinator ruling on
-    #791, option (c)). Another client's open file is not known to this page: the backend's refusal
-    at Start says it. No backend call was added. B5 (the review mounted in Studio) is not built. A viewer's Repeat, Continue (when it confirms) and Open
-    in Review are disabled with the shared control block (`controlBlock`); reads, Adjust and the
-    reference choice are not.
-  - Not in this step: live medians (a later A7c, if wanted), isoelastic curves, tests, fits, CV,
-    Compare, a persisted reference.
-  - Tests: `SummaryView.test.tsx` (the real `usePlan`; reads only on the transitions and Refresh;
-    deferred and the idle re-read; not available, error, legacy, no E, a recorded 0; withheld
-    deltas, `differs`, a replaced and an unconfirmed reference; the overlay; the decisions and a
-    viewer's gating; a single sample), `quickLookModel.test.ts` (formatting, the closed runs, the
-    no-arithmetic pin), `queueModel.test.ts` (Repeat sample and the identity rules),
-    `navigation.test.tsx` (the whole App: the quick look read on S1's close, Repeat S1 started as
-    run 2 with the same sample_ref, Open in Review's `load_recording`; a recording opened in Review
-    blocks the Plan's Start, which sends nothing, until Close File), `PlanView.test.tsx` (the
-    single sample's Start block).
+    single sample once its operation reported a good end (its recorded path). Quick look's one read
+    covers the newest 32 (`RUN_QUICK_LOOK.max_paths`); the rest are named as not read here.
+  - **Reads, never polled, per sub-view** (`useQuickLook`, unmounted with its sub-view): the Run
+    summary reads its one run (no reference: O5 has no deltas), Quick look the plan's closed runs and
+    the reference; each on showing, when what it reads changes (a run closed, the run chosen, the
+    reference), once the instrument turns idle (App's `expActive` going false) when the last reply
+    had a deferred run (also while a read is answered; the reference's own deferral counts), and on
+    Refresh. A reply is shown only for what it was read for: a change of paths or reference
+    invalidates reads in flight, so a late answer never shows an earlier reference's deltas. With no
+    closed run nothing is read. A viewer reads too (`run_quick_look` is not a control command).
+  - **O5 Run summary** (the newest closed run, or the one chosen in its "Run shown" list or with a
+    Quick look tile's Run summary): the board's layout, Outcome · Counts · Provenance written, then
+    Area–Deformability snapshot · Next. **No medians here**; they are Quick look's.
+    - **Outcome**: a lifecycle checklist, Start requested · Acknowledged · first frame seen · Active ·
+      recording · Stopping · Drain · finalizing · Confirmed closed (`outcomeChecklist`), each step
+      from what this page observed: the start reply, the statuses of the run's own generation and
+      file (`RunAttempt.seen`, recorded by `queueModel.ts` as it observes: Active, a nonzero frame
+      counter, Stopping or flushing, this page's accepted Next sample), the terminal status, and the
+      operator's Confirm closed. A step not observed reads "unknown · not observed", never ticked (a
+      status read twice a second can miss a short state). A single sample is followed by its
+      operation's end only (#763 F14), so its status steps are unknown and its close is the
+      backend's. Then the stop reason as observed (this page's accepted Next sample, or cancelled;
+      otherwise "not observed here", since the file's stop record is not in the quick look), the
+      **duration** only from the terminal status's recorded start and end (`RowEnd.startTimeNs` /
+      `endTimeNs`, the backend's wall clock; "Not recorded" otherwise, and always for a single
+      sample), the file with its size in decimal units (the shared `formatByteCount` in `ssdView.ts`,
+      the exact byte count in the tooltip), the experiment / run / sample from the identity, and the
+      writer.
+    - **Counts**: the file's counts and accounting as `StatTile`s, the flags as grey chips.
+      **Provenance written**: the identity. **Snapshot**: the run's display-only overlay subsample
+      on `AreaDeformChart`, "display only, the Review app does the analysis".
+    - **Next** ("statistics: Quick look (descriptive) and the Review app"): the next sample by name
+      (`upcomingIndex`: the row after a finalized one), then **Next sample**, **Repeat this
+      sample** and **End queue**, also in the toolbar (Next sample, End queue). **End queue** is the
+      queue's own `end` (sends nothing); on a finalized row it confirms the close first (the queue's
+      Confirm closed), since the queue never ends past an unconfirmed close; refused while a run is
+      in flight, at the last sample (Next sample completes the queue), when paused, ended, or for a
+      single sample (`endQueueState`).
+    - **Calibration run**: when the run's method was a calibration method (the readiness report read
+      with its file at Start, ABI 43 `method_calibration`, carried as `methodPurpose` on the start
+      outcome, the attempt and `PlanStarted`) or a record names the run, the record the backend
+      derived from it (`calibration_records_list`, matched by `source.run_id` to the run's id from its
+      quick look; `useRunCalibration`, read on showing, when the run changes and on Refresh; not for
+      a measurement run): status, pixel → µm current → proposed, the diameter CV with its limit and
+      the gates (met / not met with value and limit). **Apply in Prepare…** shows Prepare's
+      Calibration card with the record selected (`calibration_record_get`, a read); **Dismiss** hides
+      the proposal here, for that version only (a record applied, invalidated or revised since shows
+      again). Nothing is applied from O5. Without a record: "No calibration record was derived for
+      this run" only once the records were read, the store is readable and the run's id is known;
+      otherwise "Calibration record not known" with the reason (a failed read, an unreadable store,
+      the run's id not read or not recorded).
+  - **O6 Quick look.** The experiment board, in plan order (`boardEntries`): each row's closed runs
+    (condition swatch, n, the medians with deltas, the target group, the event rate, flags and
+    `differs` chips, a mini scatter of the backend's overlay points (`QuickLookThumb.tsx`, display
+    only), then Inspect · Run summary · Set as reference · Overlay), the run in progress in its row's
+    place ("Medians: numbers at close"), and a grey "Queued" placeholder with no numbers for each run
+    not yet made ("Repeat queued" for a repeat; "Not run" once ended). The reference run: none until
+    the operator chooses one (`PlanController.reference`, held by `usePlan`, cleared by New plan,
+    never persisted). The reply's reference chip says confirmed or not, with the backend's reason; a
+    withheld delta reads "withheld · <reason>"; the reference shows no delta to itself and is drawn
+    only once confirmed. The overlay (`AreaDeformChart`): the backend's point subsample, the
+    reference in slot 5 and up to four chosen runs in their condition's slot, "display only". Beside
+    it, **Refine the experiment** ("Decisions, not conclusions"): Continue · load S<n>, Repeat
+    S<n>, Adjust next sample… (the Plan; Align… beside it) and Open in Review (PC), each with a line
+    saying what the step does, never an assessment of the run. The toolbar has Next sample and Open
+    in Review.
+  - **Decisions (A7 ruling 8), each one step** (`decisionsFor`). **Repeat sample**: the queue event
+    `repeat` (`queueModel.ts`): a finalized (current) or closed row goes back to planned as the
+    current row, its run kept in `QueueRow.history`, its attempts kept, `nextRunIndex` unchanged, so
+    the next Start sends the same sample_ref with the next run index and a new file; only between
+    samples and one repeat at a time (`repeatReason`). **Adjust next**: the Plan or Align, navigation
+    only. **Next sample / Continue**: confirms the finalized row's close and shows the Plan;
+    otherwise it shows the Plan; disabled while a row runs (stopping stays on Next sample in the Plan
+    and Live). **End queue**: above. **Open in Review**: App's classic Review tab with the file
+    (`loadReviewSource(path)`, `load_recording`), leaving the workspace; unavailable during a run,
+    and while this page has a recording open in the classic Review the Plan's Start shows "A
+    recording is open in Review · close it there (Review → Close File) to start" and sends nothing
+    (coordinator ruling on #791, option (c)). A viewer's Next sample (when it confirms), Repeat, End
+    queue and Open in Review are disabled with the shared control block; reads, Adjust, the
+    reference choice and navigation are not.
+  - **Kept deviations from the boards** (rulings): the overlay is a point subsample, not KDE
+    contours (Q4 a); "% in declared target group", not "% in Population A" (Q2 a); no
+    recommendation text (ruling 6: the board's "Run 03 looks different from the vehicle and clean"
+    is not shown; `summaryViews.test.tsx` greps the sources and the rendered views for assessment
+    wording); no client arithmetic on the quick look; deltas only from the backend. O5's board says
+    "no statistics on the instrument (#501)"; Quick look shows descriptive numbers, so the Next card
+    says "statistics: Quick look (descriptive) and the Review app".
+  - Not in this step: live medians, isoelastic curves, tests, fits, CV, Compare, a persisted
+    reference, the board's header pills (run closed · queue paused).
+  - Tests: `summaryViews.test.tsx` (the real `usePlan` with its stop; each sub-view's reads on its
+    transitions and Refresh; deferred and the idle re-read; the checklist from observed status and
+    unknown when unobserved; the duration and the stop reason; End queue; the calibration block with
+    a record, without one, for an older backend and a measurement run, Apply leading to Prepare and
+    nothing sent; not available, error, legacy, no E, a recorded 0; withheld deltas, `differs`, a
+    replaced and an unconfirmed reference; the overlay; the placeholders in plan order; the decisions'
+    placement and a viewer's gating; no assessment wording), `runSummaryModel.test.ts`,
+    `quickLookModel.test.ts` (formatting, the closed runs, the no-arithmetic pin),
+    `queueModel.test.ts` (Repeat sample, the identity rules, the observations), `experimentStart.test.ts`
+    (the method purpose), `navigation.test.tsx` (the whole App: the quick look read on S1's close,
+    Repeat S1 started as run 2 with the same sample_ref, Open in Review's `load_recording`; a
+    recording opened in Review blocks the Plan's Start), `PlanView.test.tsx`.
 - **Gate (P1, extended for P3).** `workspace/navigation.test.tsx` runs the whole App over a
   mocked transport, desktop and PZ7035: opening the workspace, visiting every stage, leaving,
   coming back and Camera setup add no command to the idle app's steady state except two reads,
@@ -762,7 +807,7 @@ of the quick controls and the sample sheet, until the kit has them).
   followed by failing status reads keeps the plan locked (no second `experiment_start` after the
   reads recover); with the core status read held, several periods send one read, not a pile, the
   read after the stale bound is the only extra one, and the stalled older reply arriving last
-  does not overwrite the newer state; Live and Summary send neither the gates nor the checklist
+  does not overwrite the newer state; Live, Run summary and Quick look send neither the gates nor the checklist
   reads, and Plan resumes them. Since A6b, showing Live adds only its reads and the monitoring
   switch (`LIVE_COMMANDS`: `monitoring_set_active`, `fetch_monitoring_snapshot`,
   `fetch_monitoring_cells`, `fetch_monitoring_cell_packet`), and monitoring is off again once Live
@@ -1184,8 +1229,8 @@ the display-only overlay) and `delta` (only with a confirmed reference; each
 median a value or a withheld reason; `differs` flags). Anything off contract is
 refused (`RUN_QUICK_LOOK_REPLY_INVALID`); `runQuickLookArgs` throws before
 sending for a malformed request (`INVALID_PATHS`, `INVALID_REFERENCE_*`). A read
-on the remote server for every client. No develop UI: the Summary (O5) and
-Quick look (O6) are the workspace branch's Experiment · Summary sub-view (A7b, "Opt-in workspace"
+on the remote server for every client. No develop UI: the Run summary (O5) and
+Quick look (O6) are the workspace branch's Experiment sub-views (A7b, A7c, "Opt-in workspace"
 above). Guards:
 `runQuickLook.test.ts` (the golden reply
 `crates/mib-bridge/contract/fixtures/run-quick-look-v1.json`, which

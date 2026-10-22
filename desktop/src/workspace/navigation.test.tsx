@@ -190,7 +190,7 @@ function respond(variant: Variant, cmd: string, args?: unknown): unknown {
       if (a.mode === "run") Object.assign(device, { runX: a.x, runY: a.y, runSet: true });
       return cmdResult(COMMAND_TYPES.Camera);
     case "calibration_records_list": return calList;
-    // Opening a recording in the classic Review (the Summary's Open in Review, A7b): refused here, so
+    // Opening a recording in the classic Review (Quick look's Open in Review, A7b): refused here, so
     // the classic Review stays empty.
     case "load_recording":
       if (!reviewLoads) return { ...cmdResult(COMMAND_TYPES.RecordingLoad), ok: false, message: "not in this mock" };
@@ -569,7 +569,7 @@ describe.each<Variant>(["desktop", "pz7035"])("Experiment · Plan never acts on 
     await openPlan();
     await typeInto("[data-testid=plan-condition]", "Vehicle");
     await typeInto("[data-testid=plan-operator-name]", "A. Operator");
-    for (const sub of ["Live", "Summary", "Plan"]) await click(buttonByText(sub), sub);
+    for (const sub of ["Live", "Run summary", "Quick look", "Plan"]) await click(buttonByText(sub), sub);
     await advance(6000);
     const visit = log.splice(0);
     expect(visit.filter((e) => ACTUATING.includes(e.cmd))).toEqual([]);
@@ -712,7 +712,7 @@ describe("Experiment · Plan after review (desktop)", () => {
     expect(host.querySelector("[data-testid=plan-blocked-prepare]")).toBeNull();
   });
 
-  it("Live and Summary read neither the gates nor the checklist; Plan resumes both", async () => {
+  it("Live, Run summary and Quick look read neither the gates nor the checklist; Plan resumes both", async () => {
     await boot("desktop");
     // The classic Connect tab polls the checklist itself: leave it for Camera & Alignment first.
     await click(host.querySelector('button[aria-label^="Camera & Alignment:"]'), "classic Camera & Alignment tab");
@@ -721,7 +721,7 @@ describe("Experiment · Plan after review (desktop)", () => {
     await openPlan();
     await advance(3000);
     expect(prepareReads(log.splice(0)).length).toBeGreaterThan(0);
-    for (const sub of ["Live", "Summary"]) {
+    for (const sub of ["Live", "Run summary", "Quick look"]) {
       await click(buttonByText(sub), sub);
       log.splice(0);
       await advance(6000);
@@ -752,7 +752,7 @@ describe.each<Variant>(["desktop", "pz7035"])("the sample queue never acts on it
     await click(byTestId("queue-add"), "+ Sample");
     await click(host.querySelector('[aria-label="Move S3 up"]'), "Move S3 up");
     await click(host.querySelector('[aria-label="Remove S2"]'), "Remove S2");
-    for (const sub of ["Live", "Summary", "Plan"]) await click(buttonByText(sub), sub);
+    for (const sub of ["Live", "Run summary", "Quick look", "Plan"]) await click(buttonByText(sub), sub);
     await advance(10_000);
     const visit = log.splice(0);
     expect(visit.filter((e) => ACTUATING.includes(e.cmd))).toEqual([]);
@@ -844,7 +844,7 @@ describe("the sample queue over the mocked transport (desktop)", () => {
   const acts = () => log.filter((e) => ACTUATING.includes(e.cmd));
   const stops = () => log.filter((e) => e.cmd === "experiment_stop");
 
-  it("Summary (O5/O6, A7b): reads the quick look on S1's close; Repeat sample re-queues S1 as run 2 (same sample_ref, a new file); Open in Review loads the file in the classic Review", async () => {
+  it("Run summary and Quick look (O5/O6, A7b/A7c): read the quick look on S1's close; Repeat sample re-queues S1 as run 2 (same sample_ref, a new file); Open in Review loads the file in the classic Review", async () => {
     canStart = true;
     statefulRuns = true;
     await boot("desktop");
@@ -857,7 +857,7 @@ describe("the sample queue over the mocked transport (desktop)", () => {
     vi.mocked(save).mockResolvedValueOnce("/data/s1.h5");
     await click(byTestId("queue-start"), "Start S1");
     await advance(3000);
-    await click(buttonByText("Summary"), "Summary");
+    await click(buttonByText("Run summary"), "Run summary");
     expect(byTestId("summary-empty")).not.toBeNull();
     log.splice(0);
     await advance(5000);
@@ -866,7 +866,7 @@ describe("the sample queue over the mocked transport (desktop)", () => {
     await advance(3000);
     const quick = log.filter((e) => e.cmd === "run_quick_look");
     expect(quick).toEqual([{ cmd: "run_quick_look", args: { paths: ["/data/s1.h5"] } }]);
-    expect(byTestId("summary-run")!.textContent).toContain("Run summary · Run 1 · S1");
+    expect(byTestId("o5-outcome")!.textContent).toContain("Run 1 · S1");
     await advance(5000);
     expect(log.filter((e) => e.cmd === "run_quick_look")).toHaveLength(1); // the status polls read nothing more
 
@@ -884,7 +884,7 @@ describe("the sample queue over the mocked transport (desktop)", () => {
     finalizeRun();
     await advance(3000);
 
-    await click(buttonByText("Summary"), "Summary");
+    await click(buttonByText("Quick look"), "Quick look");
     await advance(1000);
     expect(byTestId("summary-runs")!.textContent).toContain("Run 1 · S1");
     expect(byTestId("summary-runs")!.textContent).toContain("Run 2 · S1");
@@ -895,7 +895,7 @@ describe("the sample queue over the mocked transport (desktop)", () => {
     expect(host.querySelector("[data-testid=workspace]")).toBeNull(); // the classic Review tab
   });
 
-  it("A7b ruling: a recording opened in Review (Summary's Open in Review) blocks the Plan's Start, which sends nothing; closing it in Review lifts the block", async () => {
+  it("A7b ruling: a recording opened in Review (Quick look's Open in Review) blocks the Plan's Start, which sends nothing; closing it in Review lifts the block", async () => {
     canStart = true;
     statefulRuns = true;
     reviewLoads = true;
@@ -911,7 +911,7 @@ describe("the sample queue over the mocked transport (desktop)", () => {
     finalizeRun();
     await advance(3000);
     await click(buttonByText("Confirm closed"), "Confirm closed");
-    await click(buttonByText("Summary"), "Summary");
+    await click(buttonByText("Quick look"), "Quick look");
     await advance(1000);
     await click(byTestId("decision-review"), "Open in Review");
     await advance(2000);
@@ -1222,7 +1222,7 @@ describe("the sample queue after review (desktop)", () => {
     expect((byTestId("queue-start") as HTMLButtonElement).disabled).toBe(true);
     expect(byTestId("plan-blocked-camera")!.textContent).toContain("The camera shows the full sensor, not the experiment window");
     await click(byTestId("queue-start"), "Start S1");
-    for (const sub of ["Live", "Summary", "Plan"]) await click(buttonByText(sub), sub);
+    for (const sub of ["Live", "Run summary", "Quick look", "Plan"]) await click(buttonByText(sub), sub);
     await advance(6000);
     expect(log.splice(0).filter((e) => ACTUATING.includes(e.cmd))).toEqual([]);
     await click(buttonByText("Show the experiment window"), "Show the experiment window");

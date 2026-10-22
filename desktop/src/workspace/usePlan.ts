@@ -27,6 +27,7 @@
 //   workspace store exists, #393/#395). Choosing it sends nothing; the backend confirms its run_id
 //   when the quick look is read.
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { MethodPurpose } from "../calibrationRecords";
 import type { ExperimentStatus } from "../eventAdapter";
 import type { StartOutcome } from "../experimentStart";
 import {
@@ -69,6 +70,9 @@ export interface PlanStarted {
   end?: { ok: boolean; cancelled: boolean; message: string };
   /** Events may have been lost since the Start before its end was seen: the outcome is not known. */
   endLost?: boolean;
+  /** The applied method's purpose at the Start's readiness check with its file (ABI 43); null when
+   *  that report could not say; absent when not known (#716 A7c, O5's calibration block). */
+  methodPurpose?: MethodPurpose | null;
 }
 
 /** The stop command's reply (`experiment_stop`); `stop_outcome` is its EXPERIMENT_STOP_OUTCOMES value
@@ -264,7 +268,8 @@ export function usePlan(runStart: RunStart, options: PlanOptions = {}): PlanCont
         startedRef.current = true;
         const code = out.kind === "unknown" && out.code !== undefined ? { code: out.code } : {};
         const op = out.kind === "started" && out.operationId ? { operationId: out.operationId } : {};
-        setStarted({ path: out.path, notice: out.kind === "started" ? out.notice : "", runIndex, outcome: out.kind, ...code, ...op, lossBefore });
+        const purpose = out.kind === "started" && out.methodPurpose !== undefined ? { methodPurpose: out.methodPurpose } : {};
+        setStarted({ path: out.path, notice: out.kind === "started" ? out.notice : "", runIndex, outcome: out.kind, ...code, ...op, ...purpose, lossBefore });
       }
       if (out.kind === "started") remember();
       return out;

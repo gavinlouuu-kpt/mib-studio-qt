@@ -1,4 +1,4 @@
-// Pure model of the workspace's Experiment · Summary sub-view (#716 A7b): O5 Run summary and O6 Quick
+// Pure model of the workspace's Experiment sub-views (#716 A7b, split in A7c): O5 Run summary and O6 Quick
 // look over the backend's run quick look (bridge ABI 44 `run_quick_look`, #716 A7a, runQuickLook.ts).
 //
 // - The plan's closed runs: a queue's rows once the backend finalized their run (awaiting the
@@ -25,8 +25,9 @@ import type {
   RunQuickLookRun,
   RunStatistics,
 } from "../runQuickLook";
+import type { MethodPurpose } from "../calibrationRecords";
 import type { SampleRow } from "./planModel";
-import { queueClosedRuns, recordedPath, type ChipTone, type QueueState } from "./queueModel";
+import { queueClosedRuns, recordedPath, type ChipTone, type QueueState, type RunSeen } from "./queueModel";
 import type { PlanReference, PlanStarted } from "./usePlan";
 
 /** What every unrecorded value reads (null, never 0). */
@@ -50,6 +51,17 @@ export interface PlanRun {
   confirmed: boolean;
   /** How the run ended, as the client observed it. */
   outcome: { cancelled: boolean; headline: string };
+  /** How this page followed the run (#716 A7c, O5's checklist): a queue row by the experiment status
+   *  (own generation and file), a single sample by its operation's end only (never the status). */
+  followed: "status" | "operation";
+  /** What the status showed of the run (a queue row); null for a single sample. */
+  seen: RunSeen | null;
+  /** The terminal status's start and end (backend wall clock, ns, decimal strings); null when not
+   *  observed (a single sample, or a row ended before #716 A7c). */
+  times: { startNs: string; endNs: string } | null;
+  /** The applied method's purpose at the run's Start (ABI 43); null when that report could not say;
+   *  undefined when not known. */
+  methodPurpose?: MethodPurpose | null;
 }
 
 /** The plan's closed runs, in run order. */
@@ -58,16 +70,24 @@ export function planClosedRuns(p: { draft: { format: string; rows: readonly Samp
   if (p.draft.format === "queue") {
     return queueClosedRuns(p.draft.rows.map((r) => r.ref), p.queue)
       .filter((c) => c.run.path !== "")
-      .map((c) => ({
-        path: c.run.path, runIndex: c.run.runIndex, ref: c.ref, row: rowOf(c.ref), confirmed: c.confirmed,
-        outcome: { cancelled: c.run.end.cancelled, headline: c.run.end.headline },
-      }));
+      .map((c) => {
+        const e = c.run.end;
+        const run: PlanRun = {
+          path: c.run.path, runIndex: c.run.runIndex, ref: c.ref, row: rowOf(c.ref), confirmed: c.confirmed,
+          outcome: { cancelled: e.cancelled, headline: e.headline }, followed: "status", seen: c.run.seen ?? {},
+          times: e.startTimeNs !== undefined && e.endTimeNs !== undefined ? { startNs: e.startTimeNs, endNs: e.endTimeNs } : null,
+        };
+        if (c.run.methodPurpose !== undefined) run.methodPurpose = c.run.methodPurpose;
+        return run;
+      });
   }
   const st = p.started;
   if (!st || st.outcome !== "started" || !st.end?.ok || !st.path) return [];
   const row = p.draft.rows[0] ?? null;
-  return [{ path: recordedPath(st.path), runIndex: st.runIndex, ref: row?.ref ?? "", row, confirmed: true,
-    outcome: { cancelled: st.end.cancelled, headline: st.end.message } }];
+  const single: PlanRun = { path: recordedPath(st.path), runIndex: st.runIndex, ref: row?.ref ?? "", row, confirmed: true,
+    outcome: { cancelled: st.end.cancelled, headline: st.end.message }, followed: "operation", seen: null, times: null };
+  if (st.methodPurpose !== undefined) single.methodPurpose = st.methodPurpose;
+  return [single];
 }
 
 /** The paths one run_quick_look reads: the newest runs, at most the contract's bound. */

@@ -7,9 +7,13 @@
 // The start reply's `start_outcome` (bridge ABI 40, #741) decides what the reply means, not its message: `startReplyState`.
 import { EXPERIMENT_START_OUTCOMES as O, READINESS_GATE_STATUSES } from "./bridgeContract";
 import { startDiscardNotice, type RingStatus } from "./ringPlayback";
+import type { MethodPurpose } from "./calibrationRecords";
 
 export interface StartGate { id: string; status: number; reason: string; remediation?: string }
-export interface StartReadiness { valid: boolean; ready: boolean; gates: StartGate[] }
+/** `method_calibration` (ABI 43): read only for the applied method's purpose, carried into a started
+ *  outcome (#716 A7c); absent or null from an older backend. */
+export interface StartReadiness { valid: boolean; ready: boolean; gates: StartGate[];
+  method_calibration?: { purpose: MethodPurpose; error: string | null } | null }
 /** The start reply: `start_outcome` is the backend's EXPERIMENT_START_OUTCOMES value (ABI 40), absent
  *  from an older backend (ABI 39 and before), which answers with ok and message only.
  *  `operation_id` (bridge schema v4, BE-1) is the experiment operation the backend tracks a started
@@ -69,8 +73,11 @@ export type StartOutcome =
   /** The backend refused the start before it began the run (`code`: its start outcome, absent from
    *  an older backend): nothing was recorded. */
   | { kind: "refused"; path: string; message: string; code?: number }
-  /** `operationId`: the start reply's operation (StartResult.operation_id), absent when it named none. */
-  | { kind: "started"; path: string; notice: string; operationId?: string }
+  /** `operationId`: the start reply's operation (StartResult.operation_id), absent when it named none.
+   *  `methodPurpose`: the applied method's purpose in the readiness report read with the chosen file
+   *  just before the start (ABI 43 `method_calibration`; null when its declarations could not be
+   *  read); absent when the report carried none (an older backend). */
+  | { kind: "started"; path: string; notice: string; operationId?: string; methodPurpose?: MethodPurpose | null }
   /** The run may exist, so its identity must be treated as used. Without `code`: the start request
    *  was sent but no reply was decoded (transport error). With `code`: the reply was read and says
    *  not started, but with a code the backend can return after it opened the run's file
@@ -110,7 +117,9 @@ export async function startExperiment(deps: StartDeps, startRequestJson?: string
   const state = startReplyState(res);
   if (state === "started") {
     const op = res.operation_id;
-    return op && op !== "0" ? { kind: "started", path: picked, notice, operationId: op } : { kind: "started", path: picked, notice };
+    const mc = readiness.method_calibration;
+    const purpose = mc ? { methodPurpose: mc.error === null ? mc.purpose : null } : {};
+    return op && op !== "0" ? { kind: "started", path: picked, notice, operationId: op, ...purpose } : { kind: "started", path: picked, notice, ...purpose };
   }
   const code = res.start_outcome === undefined ? {} : { code: res.start_outcome };
   return { kind: state, path: picked, message: res.message, ...code };

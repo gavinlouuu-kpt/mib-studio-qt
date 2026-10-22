@@ -1,4 +1,4 @@
-// The Summary sub-view's reads of the run quick look (#716 A7b; bridge ABI 44 `run_quick_look`, a read
+// The Run summary's and Quick look's reads of the run quick look (#716 A7b; bridge ABI 44 `run_quick_look`, a read
 // any viewer may make). No polling: the quick look is read
 //
 // - when the Summary is shown, and when what it reads changes (a run of the plan closed, Repeat

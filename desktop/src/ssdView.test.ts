@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  completionView, defaultRunName, emptyRunsText, formatBytes, formatDuration, hoursAtTypicalRate, recoveryNotice, runDurationSeconds, runRow, startedText, stripView,
+  completionView, defaultRunName, emptyRunsText, formatByteCount, formatBytes, formatDuration, hoursAtTypicalRate, recoveryNotice, runDurationSeconds, runRow, startedText, stripView,
   type SsdRun, type SsdStatus,
 } from "./ssdView";
 
@@ -22,6 +22,11 @@ describe("formatting", () => {
     expect(formatBytes(62_390_272)).toBe("62.4 MB");
     expect(formatBytes(150_500_000_000)).toBe("150.5 GB");
     expect(formatBytes(-1)).toBe("—");
+    // A decimal-string counter (the run quick look's file size, #716 A7c).
+    expect(formatByteCount("1240000000")).toBe("1.24 GB");
+    expect(formatByteCount("15099704")).toBe("15.1 MB");
+    expect(formatByteCount(null)).toBeNull();
+    expect(formatByteCount("-3")).toBeNull();
     expect(formatDuration(9.99)).toBe("9.99 s");
     expect(formatDuration(59.94)).toBe("59.9 s");
     expect(formatDuration(3725)).toBe("1 h 02 min");

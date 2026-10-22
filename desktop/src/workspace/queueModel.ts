@@ -45,6 +45,7 @@
 
 import { EXPERIMENT_STATES, EXPERIMENT_STOP_OUTCOMES, OPERATION_STATES } from "../bridgeContract";
 import type { ExperimentStatus } from "../eventAdapter";
+import type { MethodPurpose } from "../calibrationRecords";
 import { describeRunOutcome, type OutcomeSeverity } from "../runOutcome";
 import { CALIBRATION_REFUSAL_TITLE, calibrationChanged, calibrationChangedText, invalidRequestReason, type PlanDraft } from "./planModel";
 import type { PlanStarted, PlanStartResult } from "./usePlan";
@@ -75,6 +76,26 @@ export interface RunAttempt {
   /** An unknown attempt's start outcome code when its reply was read (not started, but its file
    *  may exist); absent when the reply was lost, and for a started attempt. */
   code?: number;
+  /** What the experiment status showed of this run, as observed by this page (#716 A7c, O5's
+   *  lifecycle checklist); absent until a status of the run was read. Records observations only:
+   *  no transition depends on it. */
+  seen?: RunSeen;
+  /** The applied method's purpose in the readiness report read with this Start's file (ABI 43
+   *  `method_calibration`); null when that report did not say (older backend, or unreadable
+   *  declarations); absent when not known. */
+  methodPurpose?: MethodPurpose | null;
+}
+
+/** What this page observed of one run in the experiment status (own generation and file). */
+export interface RunSeen {
+  /** A status showed the run Active. */
+  active?: true;
+  /** A status of the run showed a nonzero frame or object counter (its first frame was seen). */
+  frame?: true;
+  /** A status showed it Stopping or flushing (draining). */
+  stopping?: true;
+  /** This page's Next sample stop was accepted by the backend for this run. */
+  stopAccepted?: true;
 }
 
 /** How the row's run ended, as the backend reported it (terminal status). */
@@ -86,6 +107,10 @@ export interface RowEnd {
   /** describeRunOutcome's headline ("" when the status says nothing more). */
   headline: string;
   severity: OutcomeSeverity | null;
+  /** The terminal status's run start and end (the backend's wall clock, ns, decimal strings; "0"
+   *  when the status did not report one). Absent on a row ended before #716 A7c. */
+  startTimeNs?: string;
+  endTimeNs?: string;
 }
 
 /** Why the flow stopped at this row, shown with the operator's retry / skip / end choice. */
@@ -104,6 +129,10 @@ export interface ClosedRun {
   end: RowEnd;
   /** The run's start_generation, as the status reported it. */
   generation: string | null;
+  /** What this page observed of the run (RunAttempt.seen); absent when nothing was. */
+  seen?: RunSeen;
+  /** The applied method's purpose at its Start (RunAttempt.methodPurpose); absent when not known. */
+  methodPurpose?: MethodPurpose | null;
 }
 
 export interface QueueRow {
@@ -151,6 +180,14 @@ const STARTABLE: ReadonlySet<RowPhase> = new Set(["planned", "refused", "unknown
 export function currentIndex(order: readonly string[], q: QueueState): number {
   if (q.ended) return -1;
   return order.findIndex((ref) => !DONE.has(rowState(q, ref).phase));
+}
+
+/** The row the next Start is for once the current finalized run's close is confirmed (Next sample in
+ *  O5/O6 confirms it): the current row, or the row after a finalized one; -1 when none is left. */
+export function upcomingIndex(order: readonly string[], q: QueueState): number {
+  const cur = currentIndex(order, q);
+  if (cur < 0 || rowState(q, order[cur]).phase !== "finalized") return cur;
+  return order.findIndex((ref, i) => i > cur && !DONE.has(rowState(q, ref).phase));
 }
 
 /** True once anything was sent for the queue (a Start pressed). */
@@ -261,6 +298,20 @@ function interrupted(ref: string, row: QueueRow, last: RunAttempt, s: Experiment
   };
 }
 
+const nonzero = (v: string) => /^\d+$/.test(v) && /[1-9]/.test(v);
+
+/** The attempt with what this status (of its own run) shows: Active, a first frame, Stopping or a
+ *  drain. Only adds; returns the attempt itself when nothing is new. */
+function withSeen(a: RunAttempt, s: ExperimentStatus): RunAttempt {
+  const seen: RunSeen = { ...(a.seen ?? {}) };
+  if (s.state === EXPERIMENT_STATES.Active && !s.terminal) seen.active = true;
+  if ([s.valid_buffered, s.invalid_buffered, s.valid_saved, s.invalid_saved, s.persistence_admitted].some(nonzero)) seen.frame = true;
+  if (!s.terminal && (s.state === EXPERIMENT_STATES.Stopping || s.flushing)) seen.stopping = true;
+  const before = a.seen ?? {};
+  const changed = (Object.keys(seen) as (keyof RunSeen)[]).some((k) => !before[k]);
+  return changed ? { ...a, seen } : a;
+}
+
 /** A row whose Next sample the backend refused as RunMismatch: it still watches for its own run. */
 const stopMismatched = (row: QueueRow): boolean => row.phase === "interrupted" && row.failure?.step === "stop";
 
@@ -284,13 +335,15 @@ function observe(ref: string, row: QueueRow, s: ExperimentStatus): QueueRow {
     // A later run: this run's end was not seen. After a refused stop the row already says so, with the backend's reason.
     if (gen > seen || !mine) return stopMismatched(row) ? row : interrupted(ref, row, last, s);
   }
+  attempt = withSeen(attempt, s);
   const attempts = [...row.attempts.slice(0, -1), attempt];
   const outputPath = s.output_path;
   const terminal = s.terminal && (s.state === EXPERIMENT_STATES.Idle || s.state === EXPERIMENT_STATES.Failed);
   if (terminal) {
     const ok = s.finalization_ok && s.state !== EXPERIMENT_STATES.Failed && !s.fault_code;
     const outcome = describeRunOutcome(s);
-    const end: RowEnd = { ok, cancelled: s.cancelled, outputPath, headline: outcome?.headline ?? "", severity: outcome?.severity ?? null };
+    const end: RowEnd = { ok, cancelled: s.cancelled, outputPath, headline: outcome?.headline ?? "", severity: outcome?.severity ?? null,
+      startTimeNs: s.start_time_ns, endTimeNs: s.end_time_ns };
     const why = s.fault_message || s.completion_reason || s.message || "its finalization did not complete";
     return {
       ...row, attempts, outputPath, end, phase: ok ? "finalized" : "failed",
@@ -336,6 +389,7 @@ export function reduceQueue(q: QueueState, e: QueueEvent, order: readonly string
       if (r.kind === "started" || r.kind === "unknown") {
         const attempt: RunAttempt = { runIndex: e.runIndex, outcome: r.kind, path: r.path, generationBefore: e.generationBefore, generation: null };
         if (r.kind === "unknown" && r.code !== undefined) attempt.code = r.code;
+        if (r.kind === "started" && r.methodPurpose !== undefined) attempt.methodPurpose = r.methodPurpose;
         const next = { ...q, nextRunIndex: Math.max(q.nextRunIndex, e.runIndex + 1) };
         return withRow(next, e.ref, {
           ...row, attempts: [...row.attempts, attempt], before: null, end: null, outputPath: "",
@@ -359,7 +413,12 @@ export function reduceQueue(q: QueueState, e: QueueEvent, order: readonly string
     case "stop-result": {
       const row = rowState(q, e.ref);
       if (!row.stopPending) return q;
-      if (e.ok || row.phase !== "stopping") return withRow(q, e.ref, { ...row, stopPending: false });
+      if (e.ok) {
+        const last = row.attempts[row.attempts.length - 1];
+        const attempts = last ? [...row.attempts.slice(0, -1), { ...last, seen: { ...(last.seen ?? {}), stopAccepted: true as const } }] : row.attempts;
+        return withRow(q, e.ref, { ...row, stopPending: false, attempts });
+      }
+      if (row.phase !== "stopping") return withRow(q, e.ref, { ...row, stopPending: false });
       if (e.code === EXPERIMENT_STOP_OUTCOMES.RunMismatch) {
         // The backend's run is not this row's (another run is active, or none is): nothing was
         // stopped. The queue never sends the stop again for this row, with or without the generation.
@@ -403,7 +462,7 @@ export function reduceQueue(q: QueueState, e: QueueEvent, order: readonly string
       if (repeatReason(order, q, e.ref) !== "") return q;
       const row = rowState(q, e.ref);
       const last = row.attempts[row.attempts.length - 1];
-      const closed: ClosedRun = { runIndex: last.runIndex, path: row.end!.outputPath, end: row.end!, generation: last.generation };
+      const closed: ClosedRun = closedRunOf(last, row.end!);
       return withRow(q, e.ref, {
         ...row, phase: "planned", end: null, outputPath: "", failure: null, before: null, stopPending: false,
         history: [...(row.history ?? []), closed],
@@ -457,6 +516,14 @@ export function repeatReason(order: readonly string[], q: QueueState, ref: strin
   return `${order[cur]} is ${rowChip(at, q.ended).text.toLowerCase()}: repeat a sample between samples`;
 }
 
+/** A closed run from its attempt and its end (what was observed of it carried along). */
+function closedRunOf(a: RunAttempt, end: RowEnd): ClosedRun {
+  const run: ClosedRun = { runIndex: a.runIndex, path: end.outputPath, end, generation: a.generation };
+  if (a.seen) run.seen = a.seen;
+  if (a.methodPurpose !== undefined) run.methodPurpose = a.methodPurpose;
+  return run;
+}
+
 /** The queue's closed runs in run order: each row's earlier runs (Repeat sample) and its own run
  *  once the backend finalized it (awaiting the operator's confirmation, or closed). */
 export function queueClosedRuns(order: readonly string[], q: QueueState): { ref: string; run: ClosedRun; confirmed: boolean }[] {
@@ -466,7 +533,7 @@ export function queueClosedRuns(order: readonly string[], q: QueueState): { ref:
     for (const run of row.history ?? []) out.push({ ref, run, confirmed: true });
     const last = row.attempts[row.attempts.length - 1];
     if ((row.phase === "finalized" || row.phase === "closed") && row.end && last)
-      out.push({ ref, run: { runIndex: last.runIndex, path: row.end.outputPath, end: row.end, generation: last.generation }, confirmed: row.phase === "closed" });
+      out.push({ ref, run: closedRunOf(last, row.end), confirmed: row.phase === "closed" });
   }
   return out.sort((a, b) => a.run.runIndex - b.run.runIndex);
 }

@@ -25,6 +25,16 @@ function deps(over: Partial<StartDeps> = {}) {
   return d;
 }
 
+describe("the applied method's purpose at the Start (#716 A7c, O5's calibration block)", () => {
+  it("a started outcome carries the purpose from the readiness read with the file; null when its declarations are unreadable; absent from an older backend", async () => {
+    const withPurpose = (mc: StartReadiness["method_calibration"]) => deps({ fetchRingStatus: vi.fn(async () => ring({ run_frozen: false })),
+      fetchReadiness: vi.fn(async () => ({ ...ready, method_calibration: mc })) });
+    expect(await startExperiment(withPurpose({ purpose: "calibration", error: null }))).toEqual({ kind: "started", path: "/data/run.h5", notice: "", methodPurpose: "calibration" });
+    expect(await startExperiment(withPurpose({ purpose: "measurement", error: "bad document" }))).toEqual({ kind: "started", path: "/data/run.h5", notice: "", methodPurpose: null });
+    expect(await startExperiment(withPurpose(null))).toEqual({ kind: "started", path: "/data/run.h5", notice: "" });
+  });
+});
+
 describe("starting an experiment from a stopped Run", () => {
   it("asks first, with the number of frames, and tells the backend that the operator agreed", async () => {
     const d = deps();

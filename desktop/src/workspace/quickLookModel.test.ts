@@ -1,4 +1,4 @@
-// The Summary sub-view's pure model (#716 A7b): the plan's closed runs, formatting only (a recorded 0
+// The Run summary and Quick look's pure model (#716 A7b, A7c): the plan's closed runs, formatting only (a recorded 0
 // stays 0, null stays null), the backend's deltas shown as sent, the flags as grey chips, and the pin
 // that neither the model nor the view computes anything from the quick look's numbers.
 import { describe, expect, it } from "vitest";
@@ -127,7 +127,7 @@ describe("the plan's closed runs", () => {
   });
 
   it("reads at most the contract's 32 newest paths", () => {
-    const runs = Array.from({ length: 34 }, (_, i) => ({ path: `/d/${i}.h5`, runIndex: i, ref: "S1", row: null, confirmed: true, outcome: { cancelled: false, headline: "" } }));
+    const runs = Array.from({ length: 34 }, (_, i) => ({ path: `/d/${i}.h5`, runIndex: i, ref: "S1", row: null, confirmed: true, outcome: { cancelled: false, headline: "" }, followed: "status" as const, seen: {}, times: null }));
     const { paths, left } = quickLookPaths(runs);
     expect(paths).toHaveLength(32);
     expect(paths[0]).toBe("/d/2.h5");
@@ -136,7 +136,7 @@ describe("the plan's closed runs", () => {
 
   it("a reference is a computed run's file with the identity its quick look reported", () => {
     const r = reply();
-    const run = { path: "/data/runs/fixture_0.h5", runIndex: 1, ref: "S1", row: null, confirmed: true, outcome: { cancelled: false, headline: "" } };
+    const run = { path: "/data/runs/fixture_0.h5", runIndex: 1, ref: "S1", row: null, confirmed: true, outcome: { cancelled: false, headline: "" }, followed: "status" as const, seen: {}, times: null };
     expect(referenceOf(run, r.runs[0])).toEqual({ path: run.path, run_id: r.runs[0].statistics!.identity.run_id,
       start_generation: r.runs[0].statistics!.identity.start_generation, runIndex: 1, ref: "S1" });
     expect(referenceOf(run, r.runs[2])).toBeNull(); // not available: no numbers, no reference
@@ -166,8 +166,18 @@ describe("no client-side arithmetic on the quick look's numbers (the A7 ruling 5
     expect(offending("const t = numberText(s.area_um2.median, 2);")).toHaveLength(0);
   });
 
-  const sources = import.meta.glob(["./quickLookModel.ts", "./SummaryView.tsx", "./useQuickLook.ts"], { query: "?raw", import: "default", eager: true }) as Record<string, string>;
-  it("reads the three sources", () => expect(Object.keys(sources).sort()).toEqual(["./SummaryView.tsx", "./quickLookModel.ts", "./useQuickLook.ts"]));
+  // O5 Run summary and O6 Quick look (split in #716 A7c) and their shared parts. One exemption
+  // (coordinator ruling on #795): the file size is shown in decimal units through the shared
+  // `formatByteCount` (ssdView.ts), unit formatting for display, not statistics; it lives outside
+  // these sources and is the only conversion they may call. Statistics and deltas stay backend-only.
+  const FILES = ["./QuickLookView.tsx", "./RunSummaryView.tsx", "./quickLookModel.ts", "./summaryParts.tsx", "./useQuickLook.ts"];
+  const sources = import.meta.glob(["./quickLookModel.ts", "./QuickLookView.tsx", "./RunSummaryView.tsx", "./summaryParts.tsx", "./useQuickLook.ts"],
+    { query: "?raw", import: "default", eager: true }) as Record<string, string>;
+  it("reads the five sources", () => expect(Object.keys(sources).sort()).toEqual(FILES));
+  it("the file size goes through the exempt shared formatter only", () => {
+    expect(sources["./RunSummaryView.tsx"]).toMatch(/import \{ formatByteCount \} from "\.\.\/ssdView"/);
+    expect(sources["./RunSummaryView.tsx"]).toMatch(/formatByteCount\(q\?\.file\?\.size_bytes\)/);
+  });
   for (const [file, src] of Object.entries(sources)) {
     it(`${file} computes nothing from them`, () => {
       expect(src.length).toBeGreaterThan(1000);
