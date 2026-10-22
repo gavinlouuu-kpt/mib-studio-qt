@@ -127,3 +127,14 @@ cycle/dangling/arity/stale-input refusal and no hidden subsampling. Two native
 executables pass normally and with ASan/UBSan. This extends F04, not full gate
 editing/application override/undo acceptance. I workspace boundary acknowledged;
 source read-lease/generation gap sent directly to E with precise fields.
+
+### Clean-run qualification
+
+Analysis CI run 39762481872 passed at `1278cfe5` after correcting pip-isolated
+SWIG native-binary/library discovery and adding FastLogicle import preflight.
+Existing macOS Review parity test failed at `review_bridge.rs:694` with only
+0.038 vs 0.038000000000000006 and 0.053 vs 0.053000000000000005 overlay differences;
+exact evidence sent to the E/F/I coordinator for shared #716 ownership, without
+editing/regenerating gold references. Source seam is now specified in
+`docs/design/flowjo-analysis/event-snapshot-contract.md`; lease/generation
+allocation remains the immediate integration dependency, not missing scope.

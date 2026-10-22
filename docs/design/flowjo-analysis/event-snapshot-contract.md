@@ -15,9 +15,10 @@ policy. Existing #722 exclusion applies before acquiring a snapshot lease.
   manifest and parameter schema ID/revision; native core/config, calibration,
   mechanics LUT/provenance and QC-policy revisions pinned as available. Missing
   provenance is explicit and cannot pass a compatibility check by empty equality.
-- Exact event identity tuple: source ID, dataset/set, uint64 row/frame ID serialized
+- Exact event identity tuple: source ID, dataset/set, uint64 row ordinal serialized
   as decimal text at JSON boundaries. Valid and invalid sets and multiple sources
-  cannot collide. Cell/track grouping, when present, is a separate optional field;
+  cannot collide. Stored frame index/object ID/track grouping are separate lineage
+  fields, not substitutes for set row ordinal;
   per-detection does not silently become per-cell.
 - Parameter IDs and units are explicit: canonical area in µm², dimensionless
   deformability and E in kPa only when provided by the existing native authority.
