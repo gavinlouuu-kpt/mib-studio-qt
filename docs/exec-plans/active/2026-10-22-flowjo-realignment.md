@@ -138,3 +138,17 @@ exact evidence sent to the E/F/I coordinator for shared #716 ownership, without
 editing/regenerating gold references. Source seam is now specified in
 `docs/design/flowjo-analysis/event-snapshot-contract.md`; lease/generation
 allocation remains the immediate integration dependency, not missing scope.
+
+### Continued implementation during coordinator QA
+
+QA handoff is not a stop condition. Added independent F08 native population
+reductions with revision-qualified feature/unit columns, exact-key alignment,
+explicit membership/missingness accounting, raw min/max/mean/median and bounded
+input refusal. Three native executables pass locally under ASan/UBSan. No shared
+files, ABI, source authority or host mounts changed; no integrated UI claim.
+App exposure remains blocking required scope. Shared typed-feature wiring and
+committed live EventSnapshot integration remain deferred pending concrete shared
+file allocation by the coordinator. Offline pagination still requires an injected
+whole-read generation fence; per-call ReviewSession locking is insufficient.
+Reusable tables/export, percentiles/CV, comparison and the remaining F01–F16
+acceptance are still open, not discharged by this native milestone.

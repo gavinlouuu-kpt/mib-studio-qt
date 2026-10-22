@@ -80,3 +80,20 @@ contract, not a bridge ABI, serialized workspace document or a gate editor.
 unknown-safe NOT/QC, exact reordering, empty inputs and deduplicated unions. Both
 native tests pass under ASan/UBSan. Overrides, undo/redo and native source adapters
 remain separate implementation obligations.
+
+## Exact population reductions
+
+`PopulationStatistics.h` adds bounded (10,000 event) revision-bound feature/unit
+columns joined by opaque exact keys. It reports selected/excluded/unknown
+membership separately from finite measured/missing selected values, and raw-value
+minimum/maximum/mean/median (null when no finite selected measurement exists).
+Nonfinite values count as missing; excluded and unknown events never contribute.
+Full column coverage is mandatory even for excluded rows. Median uses the middle
+value or midpoint of the two middle values; mean uses scaled compensated summation.
+These are floating-point raw-data reductions, not histogram estimates or arbitrary
+precision arithmetic. Feature conversion and mechanics computation are not performed.
+
+`analysis.statistics` covers reordered >2^53 keys, conservation, stale/foreign/
+duplicate/missing-row refusal, units, empty/singleton populations, finite extremes,
+subnormal medians and size limits. This is not source completeness certification,
+a table UI/export, or F08 acceptance. Existing Review quick-look stays unchanged.
