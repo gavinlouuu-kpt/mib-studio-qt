@@ -170,8 +170,9 @@ of the quick controls and the sample sheet, until the kit has them).
   The same `App` serves the Tauri desktop and the PZ7035 browser UI, so both get the same
   default (the browser per origin, the desktop per webview); the Review app (`review.html`,
   `review/main.tsx`) never imports `App` and is unaffected. Opening in the workspace acts on
-  nothing: the classic tab stays on Connect (it only reads) and the classic startup landing is
-  skipped while the workspace is open, so no camera mode is switched and no LED is lit
+  nothing: the classic tab stays on Connect (it only reads) and the classic startup landing never
+  runs in a session that started in the workspace (`startedInWorkspace`), even when the operator
+  leaves before the first camera snapshot arrived, so no camera mode is switched and no LED is lit
   (`navigation.test.tsx`, "the workspace branch opens in the workspace"). The band reads
   "Workspace preview" and "Navigation never acts: only an explicit button switches or writes. The
   classic view is one click away (Classic view)." (`WORKSPACE_BAND`). While the workspace is

@@ -81,6 +81,11 @@ let startReply: { ok: boolean; message: string; start_outcome?: number } = { ok:
 /** Set to answer as a backend without the ABI 40 outcome codes: no start_outcome or stop_outcome in
  *  the replies, and experiment_stop ignores expectedStartGeneration (stops whatever run is active). */
 let noOutcomeCodes = false;
+/** Set to report the last run Failed (the classic startup landing then selects Experiment). */
+let failedRun = false;
+/** Set to hold every camera selection read (the classic startup landing waits for the first). */
+let holdSelection = false;
+const heldSelection: (() => void)[] = [];
 /** Set to make every experiment status read fail once experiment_start was sent. */
 let statusFailsAfterStart = false;
 /** Set to make the mock backend run experiments (A5 queue): a start makes a run Active (a new
@@ -122,13 +127,18 @@ function respond(variant: Variant, cmd: string, args?: unknown): unknown {
       return canStart ? CORE_OK : null;
     case "fetch_experiment_status": if (statusFailsAfterStart && startSent) throw new Error("TRANSPORT_LOST");
       return statefulRuns ? { ...status, state: run.state, flushing: run.flushing, terminal: run.terminal, finalization_ok: run.ok, output_path: run.path,
-        start_generation: String(run.generation) } : status;
+        start_generation: String(run.generation) } : failedRun ? { ...status, state: EXPERIMENT_STATES.Failed, terminal: true } : status;
     case "fetch_review_metadata": return { valid: reviewFile !== "", file_open: reviewFile !== "", file_path: reviewFile, recording_file: false,
       valid_images: NO_DATASET, invalid_images: NO_DATASET, valid_masks: NO_DATASET, invalid_masks: NO_DATASET, recorded_images: NO_DATASET,
       start_time_ns: 0, end_time_ns: 0, total_valid: 0, total_invalid: 0, roi_x: 0, roi_y: 0, roi_w: 0, roi_h: 0, has_background: false,
       has_core_identity: false, core_version: "", core_source: "", core_release_tag: "" };
     case "fetch_platform_info": return pz ? { science: "pl", host_processing: false, aravis: true, capabilities: PZ_CAPS } : { science: "host", host_processing: true, aravis: false };
-    case "fetch_camera_selection": return { valid: true, configured: true, mode: 0, label: pz ? "PZ7035 IMX426" : "Camera 01", interface_index: 0, device_index: 0, mindvision_index: 0,
+    case "fetch_camera_selection": if (holdSelection) {
+      holdSelection = false;
+      const reply = respond(variant, cmd, args);
+      holdSelection = true;
+      return new Promise((resolve) => heldSelection.push(() => resolve(reply)));
+    } return { valid: true, configured: true, mode: 0, label: pz ? "PZ7035 IMX426" : "Camera 01", interface_index: 0, device_index: 0, mindvision_index: 0,
       mindvision_config_path: "", camera_script_path: "", mock_frame_dir: "", mock_interval_ms: 33, mock_loop: true };
     case "discover_cameras": return { cameras: [], framegrabbers: [] };
     case "fetch_camera_geometry": if (holdNextGeometry) {
@@ -240,6 +250,9 @@ beforeEach(() => {
   startSent = false;
   holdCore = false;
   heldCore.length = 0;
+  failedRun = false;
+  holdSelection = false;
+  heldSelection.length = 0;
   const saved = new Map<string, string>();
   const store = { getItem: (k: string) => saved.get(k) ?? null, setItem: (k: string, v: string) => void saved.set(k, v), removeItem: (k: string) => void saved.delete(k) };
   vi.stubGlobal("localStorage", store);
@@ -509,6 +522,34 @@ describe.each<Variant>(["desktop", "pz7035"])("the workspace branch opens in the
     await restart(variant);
     expect(host.querySelector("[data-testid=workspace-prepare]")).not.toBeNull();
     expect(acting(log)).toEqual([]);
+  });
+
+  it.each(["Classic view", "Camera setup"])("leaving through %s before the first camera snapshot: the classic startup landing never runs, so nothing acts", async (exit) => {
+    // A failed last run and a camera on the full sensor: the classic landing would select Experiment
+    // and switch the desktop camera to the experiment window (the control below shows it does).
+    failedRun = true;
+    device.overview = true;
+    holdSelection = true;
+    await act(async () => { vi.mocked(invoke).mockImplementation(async (cmd: string, args?: unknown) => { log.push({ cmd, args }); return respond(variant, cmd, args); });
+      root.render(<App />); });
+    await advance(3000);
+    expect(heldSelection.length).toBeGreaterThan(0);
+    await click(buttonByText(exit), exit);
+    expect(workspaceShown()).toBe(false);
+    holdSelection = false;
+    await act(async () => { for (const r of heldSelection.splice(0)) r(); });
+    await advance(6000);
+    expect(acting(log)).toEqual([]);
+    expect(host.querySelector('.tabbar button[aria-selected="true"]')).toBe(host.querySelector(".tabbar button")); // still Connect
+  });
+
+  it("control: with a classic choice remembered, the same start-up lands on Experiment and the desktop camera is switched", async () => {
+    localStorage.setItem(LANDING_STORAGE_KEY, "classic");
+    failedRun = true;
+    device.overview = true;
+    await boot(variant);
+    expect(host.querySelector('.tabbar button[aria-selected="true"]')!.getAttribute("aria-label")).toMatch(/^Experiment/);
+    if (variant === "desktop") expect(acting(log).map((e) => e.cmd)).toContain("set_camera_overview");
   });
 
   it("a task jump to the classic view (Prepare's Camera setup) is not a choice: the next start opens the workspace again", async () => {

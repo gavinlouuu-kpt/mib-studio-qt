@@ -214,6 +214,10 @@ export default function App() {
   const [experimentView, setExperimentView] = useState<ExperimentSubView>("Plan");
   const workspaceStageRef = useRef<number | null>(workspaceStage);
   workspaceStageRef.current = workspaceStage;
+  // Started in the workspace: the classic startup landing never runs in this session, even when the
+  // operator leaves for the classic view before the first camera snapshot arrived (it would land on
+  // Camera & Alignment or Experiment and switch the camera mode behind the operator's back).
+  const startedInWorkspace = useRef(workspaceStage !== null);
   const [connectTab, setConnectTab] = useState<"cameras" | "mindvision" | "framegrabbers">("cameras");
   const [expTab, setExpTab] = useState<"preview" | "monitoring" | "files" | "recordings">("preview");
   const [configTab, setConfigTab] = useState<"app" | "script">("app");
@@ -1678,7 +1682,7 @@ export default function App() {
     didInitStage.current = true;
     // In the workspace the classic tab stays where it is: a landing on Camera & Alignment or
     // Experiment would switch camera modes (and the PZ7035 LED) behind the operator's back.
-    if (workspaceStageRef.current !== null) return;
+    if (workspaceStageRef.current !== null || startedInWorkspace.current) return;
     if (expActive || expState === EXPERIMENT_STATES.Failed) {
       setTab("experiment");
       return;
