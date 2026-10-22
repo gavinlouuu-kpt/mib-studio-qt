@@ -124,3 +124,14 @@ why the native adapter is necessary. The adapted tests are distinct evidence.
 
 Unix supervisor only so far; Windows execution explicitly refuses. Shipping
 qualification, real-recording adapter and full workspace/module demo remain open.
+
+The native harness also builds `analysis.graph`: bounded dependency-ordered
+population composition with parent/QC restrictions, cycle/arity/key/revision
+refusal and empty/unknown cases. See `PopulationGraph.h`; this is not a full
+serialized AnalysisPlan or renderer editor.
+
+Clean pip-build note: the `swig` wheel's Python launcher can lose its module in
+pip's isolated build environment. CI puts `swig.DATA/bin` on PATH and sets
+`SWIG_LIB` to its pinned `share/swig/4.5.1`, then explicitly imports FastLogicle.
+A clean-source isolated wheel build and fresh-wheel native import verified this
+fix locally; installation success alone is not proof the optional extension built.

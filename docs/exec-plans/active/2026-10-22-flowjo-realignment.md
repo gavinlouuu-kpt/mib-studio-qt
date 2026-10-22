@@ -118,3 +118,12 @@ implementation does not wait on the shared bridge/file agreement.
   journal is not the shared workspace store. Native ASan/UBSan, eight Python
   adapter tests and six Rust tests (including real engine/native persistence)
   pass locally; CI/independent review and full host/module acceptance remain open.
+
+### Native graph continuation
+
+Added bounded dependency-ordered PopulationPlan evaluation over qualified masks:
+parent and Boolean edges validated together, exact revisions/keys, QC clipping,
+cycle/dangling/arity/stale-input refusal and no hidden subsampling. Two native
+executables pass normally and with ASan/UBSan. This extends F04, not full gate
+editing/application override/undo acceptance. I workspace boundary acknowledged;
+source read-lease/generation gap sent directly to E with precise fields.

@@ -64,3 +64,19 @@ Not yet mounted in Studio/Review; no live provider, source reader adapter,
 workspace DAG/undo/redo, images, qualified advanced science or reports. Keep
 [[ReviewSession]] and acquisition exclusion intact. Cytoflow distribution remains
 a release decision, not an excuse to stop internal implementation.
+
+## Bounded native population graph
+
+`PopulationGraph.h` adds plan ID/revision, stable node IDs, explicit parent,
+predicate-mask reference or AND/OR/NOT operands. Validation includes parent and
+operand edges in the same acyclic dependency graph. Execution is independent of
+input node ordering, joins every mask by exact key/revision, rejects missing or
+unused predicate inputs, and clips every result to parent and QC. Limits: 256
+nodes, 10,000 events and 1,000,000 node-events; excess is an error, never sampling.
+Empty populations retain revision identity. This is an internal scientific
+contract, not a bridge ABI, serialized workspace document or a gate editor.
+
+`analysis.graph` proves parent/operand cycles, invalid refs/arity, stale revisions,
+unknown-safe NOT/QC, exact reordering, empty inputs and deduplicated unions. Both
+native tests pass under ASan/UBSan. Overrides, undo/redo and native source adapters
+remain separate implementation obligations.

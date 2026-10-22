@@ -88,3 +88,26 @@ Exact shared public ABI and file ownership remains coordinated separately.
 F-owned native composition, internal worker protocol and private job artifact
 journal are now implemented in isolated new paths; this does not create another
 workspace/recipe/finding store. See [AnalysisWorker](../../../knowledge_map/services/AnalysisWorker.md).
+
+## Agreed workspace boundary and internal graph continuation
+
+F acknowledges I's I-workspace/1 logical envelope over #393/#395 metadata SQLite
+with expected-revision commit, stable command replay, history and atomicity.
+I owns new `backend/workspace` source/header, tests/workspace and
+ tools/ique_acceptance paths; F retains scientific definitions and artifacts.
+No shared root/facade/bridge edits are allocated by this agreement. The worker
+journal is private execution persistence, never a second workspace authority.
+
+F's native `PopulationPlan` is an internal revisioned graph: predicate-mask nodes,
+AND/OR/NOT operands and explicit parent; parent + operand dependencies must form
+a DAG. Execution restricts all populations to parent/QC, exact input identity
+and full revisions. It does not yet define the persisted complete AnalysisPlan
+with transforms, overrides, embeddings and report recipes, so I must not label
+this restricted graph as a complete plan or infer missing features are dropped.
+
+Offline source gap: ReviewSession's existing validSet() is atomic but valid-only;
+metadata, fallback calibration and both-set framesPage calls have separate locks
+and no exposed generation. An injected adapter needs an owner-held source read
+lease or generation-fenced both-set API; matching path before/after cannot detect
+same-path reopen or calibration ABA. Preserve #722 acquisition/job exclusion.
+E has this concrete seam request; no second HDF5 reader authority is introduced.

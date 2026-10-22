@@ -45,8 +45,13 @@ jobs:
           git -C "$RUNNER_TEMP/cytoflow" submodule update --init fcsparser
           python -m venv "$RUNNER_TEMP/analysis-env"
           "$RUNNER_TEMP/analysis-env/bin/python" -m pip install swig==4.5.1
-          PATH="$RUNNER_TEMP/analysis-env/bin:$PATH" "$RUNNER_TEMP/analysis-env/bin/python" -m pip install \
+          # pip's isolated build cannot import the outer venv's Python swig
+          # wrapper. Use its packaged native binary + explicit library directory.
+          SWIG_DATA=$("$RUNNER_TEMP/analysis-env/bin/python" -c 'import swig; print(swig.DATA)')
+          export SWIG_LIB="$SWIG_DATA/share/swig/4.5.1"
+          PATH="$SWIG_DATA/bin:$RUNNER_TEMP/analysis-env/bin:$PATH" "$RUNNER_TEMP/analysis-env/bin/python" -m pip install \
             -c env/analysis-worker/runtime-constraints.txt "$RUNNER_TEMP/cytoflow" "$RUNNER_TEMP/cytoflow/fcsparser"
+          "$RUNNER_TEMP/analysis-env/bin/python" -c 'from cytoflow.utility.logicle_ext.Logicle import FastLogicle'
       - name: Real Cytoflow, native composition and durable round trip
         run: |
           "$RUNNER_TEMP/analysis-env/bin/python" -m unittest discover -s tests/analysis -p test_worker.py -v
