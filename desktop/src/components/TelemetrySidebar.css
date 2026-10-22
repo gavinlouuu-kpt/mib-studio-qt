@@ -1,0 +1,83 @@
+/* The classic left column (TelemetrySidebar.tsx, #797): a compact telemetry column is a kit gap
+   (#715), so it is styled here with the kit's tokens only. FactList type: 12 px sub labels, ink
+   values, toned values only for backend states, zero/inactive values in the mute colour; 13/600
+   section titles; 19 px row pitch. The aside around it keeps the classic shell's width and border. */
+.tsb {
+  background: transparent;
+  min-width: 0;
+}
+.tsb-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mib-space-1);
+  padding: var(--mib-space-3) var(--mib-space-3) var(--mib-space-2);
+  border-bottom: 1px solid var(--mib-color-line);
+}
+.tsb-head .mib-chip {
+  align-self: flex-start;
+  white-space: normal;
+}
+.tsb-context {
+  margin: 0;
+  font-size: var(--mib-font-size-md);
+  color: var(--mib-color-sub);
+  overflow-wrap: anywhere;
+}
+.tsb-section {
+  padding: var(--mib-space-2) var(--mib-space-3) var(--mib-space-2);
+  border-bottom: 1px solid var(--mib-color-line);
+}
+.tsb-section__title {
+  margin: 0 0 2px;
+  font-size: var(--mib-font-size-base);
+  font-weight: var(--mib-font-weight-semibold);
+  color: var(--mib-color-ink);
+  line-height: 19px;
+}
+.tsb-rows {
+  display: flex;
+  flex-direction: column;
+}
+.tsb-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--mib-space-2);
+  line-height: 19px;
+  min-width: 0;
+}
+.tsb-row__k {
+  font-size: var(--mib-font-size-md);
+  color: var(--mib-color-sub);
+  white-space: nowrap;
+}
+.tsb-row__v {
+  font-size: var(--mib-font-size-md);
+  color: var(--mib-color-ink);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.tsb-row__v--mute {
+  color: var(--mib-color-mute);
+}
+.tsb-row__v--confirmed {
+  color: var(--mib-color-confirmed);
+  font-weight: var(--mib-font-weight-semibold);
+}
+.tsb-row__v--warn {
+  color: var(--mib-color-warn);
+  font-weight: var(--mib-font-weight-semibold);
+}
+.tsb-row__v--blocked {
+  color: var(--mib-color-blocked);
+  font-weight: var(--mib-font-weight-semibold);
+}
+.tsb-quiet {
+  margin: 0;
+  padding: var(--mib-space-2) var(--mib-space-3);
+  border-bottom: 1px solid var(--mib-color-line);
+  font-size: var(--mib-font-size-md);
+  color: var(--mib-color-mute);
+  line-height: 19px;
+}

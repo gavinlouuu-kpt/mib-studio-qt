@@ -161,12 +161,23 @@ def main():
         wait(lambda: js('return !window.__mibBeforeLanding && document.body.innerText.includes("backend: ready")'), 'restart in the classic view')
         assert not js('return [...document.querySelectorAll("button")].some(b=>b.textContent.trim()==="Classic view"&&b.offsetParent!==null)'), 'restarted in the workspace'
         stage('Hardware Preflight')
+        # The classic Hardware Preflight is summary-first (#796): the first page shows one verdict and
+        # closed rows, no configuration. The camera sources live on the Hardware setup page (#798),
+        # reached from the Camera row's "Set up camera…" (also Settings → Hardware setup…).
+        wait(lambda: 'Hardware ready' in js('return document.body.innerText') or 'Needs attention' in js('return document.body.innerText') or 'Ready with warnings' in js('return document.body.innerText'), 'summary-first preflight page')
+        assert not js('return !!document.querySelector("[data-testid=classic-preflight] input, [data-testid=classic-preflight] select")'), 'a form field on the first page'
+        click('Set up camera…')
+        wait(lambda: js('return !document.querySelector("[data-testid=hardware-setup]").hidden'), 'Hardware setup page')
+        evidence['summary_first_preflight'] = True
         click('Cameras')
         click('Configure Mock…')
         js('const i=document.querySelector("input[placeholder^=\\"mock frame\\"]");Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value").set.call(i,arguments[0]);i.dispatchEvent(new Event("input",{bubbles:true}));', str(frames))
         click('Apply')
         click('Start Camera')
         wait(lambda: invoke('fetch_preview_buffer')['available'], 'real mock frames')
+        # Back to the first page: the configuration is put away, the verdict stays.
+        click('Back to preflight')
+        wait(lambda: js('return document.querySelector("[data-testid=hardware-setup]").hidden && !!document.querySelector("[data-testid=classic-preflight]")'), 'back to the preflight page')
         stage('Experiment')
         click('Set Background')
         output = root / 'experiment.h5'

@@ -55,7 +55,12 @@ export interface CalibrationCardProps {
   experimentActive: boolean;
   /** This computer's clock, for the records' ages. */
   now: number;
+  /** Inside the preflight's Calibration disclosure row (O1b): the row carries the title and the
+   *  gate's chip, so the content is shown without its own card. */
+  embedded?: boolean;
 }
+
+const CALIBRATION_SUBTITLE = "Pixel → µm from a calibration run of rigid size beads. The records are the backend's; nothing applies on its own, and no method is changed.";
 
 /** Why every Apply is unavailable right now, apart from the record; "" when none. */
 function lockReason(p: CalibrationCardProps): string {
@@ -131,11 +136,8 @@ export function CalibrationCard(p: CalibrationCardProps) {
     { key: "method", header: "Method", cell: (r) => methodText(r.method ?? {}) },
   ];
 
-  return (
-    <Card className="ws-card--wide" title="Calibration" data-testid="workspace-calibration"
-      subtitle="Pixel → µm from a calibration run of rigid size beads. The records are the backend's; nothing applies on its own, and no method is changed."
-      status={gate ? <StateChip tone={gateTone(gate.status)}>{gateText(gate)}</StateChip>
-        : <StateChip tone="unknown">{p.gatesRead ? "Unknown · gate not reported" : "Unknown · gates not read yet"}</StateChip>}>
+  const body = (
+    <>
       <FactList data-testid="calibration-facts" facts={[
         {
           label: <span data-gate-id="calibration.record" title="calibration.record">Calibration gate<span className="ws-gate-id">calibration.record</span></span>,
@@ -250,6 +252,21 @@ export function CalibrationCard(p: CalibrationCardProps) {
           ) : null}
         </section>
       ) : null}
+    </>
+  );
+  if (p.embedded) {
+    return (
+      <div className="ws-cal-embedded" data-testid="workspace-calibration">
+        <p className="ws-note">{CALIBRATION_SUBTITLE}</p>
+        {body}
+      </div>
+    );
+  }
+  return (
+    <Card className="ws-card--wide" title="Calibration" data-testid="workspace-calibration" subtitle={CALIBRATION_SUBTITLE}
+      status={gate ? <StateChip tone={gateTone(gate.status)}>{gateText(gate)}</StateChip>
+        : <StateChip tone="unknown">{p.gatesRead ? "Unknown · gate not reported" : "Unknown · gates not read yet"}</StateChip>}>
+      {body}
     </Card>
   );
 }

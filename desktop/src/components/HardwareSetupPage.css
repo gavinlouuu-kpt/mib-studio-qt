@@ -1,0 +1,194 @@
+/* The classic Hardware setup page (HardwareSetupPage.tsx, #798): the kit's cards inside the classic
+   tab body. Plain inputs / selects / checkboxes and the gated-actions tile are kit gaps (#715),
+   styled here with the kit's tokens only. The forms' own layout classes (.hardware-fields,
+   .hardware-actions) come from HardwareControls.css. */
+.hw-setup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mib-space-4);
+  padding: var(--mib-space-4) var(--mib-space-3);
+  background: var(--mib-color-bg);
+  min-width: 0;
+}
+.hw-setup__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--mib-space-4);
+}
+.hw-setup__title h2 {
+  margin: 0;
+  font-size: var(--mib-font-size-title);
+  font-weight: var(--mib-font-weight-bold);
+  line-height: 22px;
+}
+.hw-setup__sub {
+  margin: 2px 0 0;
+  font-size: var(--mib-font-size-sm);
+  color: var(--mib-color-sub);
+}
+.hw-setup__cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mib-space-4);
+  min-width: 0;
+}
+.hw-setup__pumps {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--mib-space-4);
+}
+@media (max-width: 1100px) {
+  .hw-setup__pumps {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.hw-setup .mib-card,
+.hw-setup .mib-card__body {
+  min-width: 0;
+}
+.hw-setup .hw-status p,
+.hw-setup .hw-note {
+  margin: 0;
+  font-size: var(--mib-font-size-md);
+  color: var(--mib-color-sub);
+  overflow-wrap: anywhere;
+}
+.hw-setup .hw-status p:first-child {
+  color: var(--mib-color-ink);
+}
+.hw-setup .hw-group {
+  margin: var(--mib-space-2) 0 0;
+  font-size: var(--mib-font-size-base);
+  font-weight: var(--mib-font-weight-semibold);
+}
+.hw-setup [role="alert"] {
+  color: var(--mib-color-blocked);
+  font-size: var(--mib-font-size-md);
+}
+.hw-setup [role="status"] {
+  font-size: var(--mib-font-size-md);
+  color: var(--mib-color-sub);
+}
+/* Plain fields (kit gap): the kit's font, line and ink. */
+.hw-setup label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: var(--mib-font-size-sm);
+  color: var(--mib-color-sub);
+}
+.hw-setup label:has(> input[type="checkbox"]) {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--mib-space-2);
+  color: var(--mib-color-ink);
+  font-size: var(--mib-font-size-md);
+}
+.hw-setup input:not([type="checkbox"]):not([type="radio"]),
+.hw-setup select {
+  height: 28px;
+  padding: 0 var(--mib-space-2);
+  border: 1px solid var(--mib-color-line);
+  border-radius: var(--mib-radius-sm);
+  background: var(--mib-color-card);
+  color: var(--mib-color-ink);
+  font-family: var(--mib-font-family);
+  font-size: var(--mib-font-size-md);
+  max-width: 14rem;
+}
+.hw-setup input:disabled,
+.hw-setup select:disabled {
+  color: var(--mib-color-mute);
+  background: var(--mib-color-tile);
+}
+.hw-setup input:focus-visible,
+.hw-setup select:focus-visible {
+  outline: 2px solid var(--mib-color-inspect);
+  outline-offset: 1px;
+}
+/* Plain buttons of the forms: the kit's secondary button. */
+.hw-setup button:not(.mib-button) {
+  height: 28px;
+  padding: 0 var(--mib-space-3);
+  border: 1px solid var(--mib-color-line);
+  border-radius: var(--mib-radius-sm);
+  background: var(--mib-color-card);
+  color: var(--mib-color-ink);
+  font-family: var(--mib-font-family);
+  font-size: var(--mib-font-size-md);
+  font-weight: var(--mib-font-weight-medium);
+  cursor: pointer;
+}
+.hw-setup button:not(.mib-button):disabled {
+  color: var(--mib-color-mute);
+  background: var(--mib-color-tile);
+  cursor: default;
+}
+.hw-setup .hw-destructive > button {
+  color: var(--mib-color-blocked);
+  background: var(--mib-color-blocked-bg);
+  border-color: transparent;
+}
+.hw-setup .hw-destructive > button:disabled {
+  color: var(--mib-color-mute);
+  background: var(--mib-color-tile);
+}
+/* The gated-actions tile (kit gap). */
+.hw-gate {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mib-space-2);
+  padding: var(--mib-space-3);
+  border-radius: var(--mib-radius-md);
+  background: var(--mib-color-tile);
+}
+.hw-gate__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--mib-space-2);
+}
+.hw-gate__why {
+  font-size: var(--mib-font-size-sm);
+  color: var(--mib-color-sub);
+}
+.hw-gate__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--mib-space-2);
+}
+/* Today's panels, placed as is: no second frame inside a card. */
+.hw-setup .hardware-controls {
+  gap: var(--mib-space-3);
+}
+.hw-setup .hardware-controls > h2,
+.hw-setup .stage-controls > h2 {
+  display: none;
+}
+.hw-setup .hardware-controls fieldset {
+  border-color: var(--mib-color-line);
+  padding: var(--mib-space-3);
+}
+.hw-setup .hardware-fields,
+.hw-setup .hardware-actions {
+  margin: var(--mib-space-1) 0;
+}
+.hw-setup .stage-controls .stage-stop {
+  background: var(--mib-color-blocked-bg);
+  border-color: transparent;
+  color: var(--mib-color-blocked);
+}
+.hw-setup .stage-controls .stage-indicators li {
+  border-color: var(--mib-color-line);
+}
+.hw-setup .stage-controls .stage-indicators li[data-active="true"] {
+  background: var(--mib-color-accent-bg);
+}
+.hw-setup .stage-controls .stage-zero-confirm {
+  border-color: var(--mib-color-blocked);
+}
+/* The classic camera sources block inside the Camera card. */
+.hw-setup .subtabs button {
+  height: 28px;
+}

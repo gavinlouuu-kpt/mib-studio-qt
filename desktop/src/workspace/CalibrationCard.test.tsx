@@ -499,9 +499,10 @@ describe("only Apply / Re-apply acts (IPC calls counted)", () => {
     await act(async () => heldGates[0](gates({ ...calGate!, reason: "stale: from before the apply" })));
     await advance(0);
     expect(heldGates).toHaveLength(2); // read once more
-    expect(card().textContent).not.toContain("stale: from before the apply"); // dropped
+    expect(host.querySelector('[data-row="calibration"]')!.textContent).not.toContain("stale: from before the apply"); // dropped, in the row's chip too
     await act(async () => heldGates[1](gates({ id: "calibration.record", status: G.Pass, reason: "", remediation: "" })));
     await advance(0);
-    expect(card().querySelector(".mib-chip")!.textContent).toBe("Pass");
+    // Prepare's Calibration row (O1b) carries the gate's chip: Pass, with the record in effect.
+    expect(host.querySelector('[data-row="calibration"] > summary .mib-chip')!.textContent).toBe("Pass · in effect");
   });
 });

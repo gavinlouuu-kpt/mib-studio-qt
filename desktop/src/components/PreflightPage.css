@@ -1,0 +1,7 @@
+/* The classic Hardware Preflight first page (#796): the kit's summary inside the classic tab body.
+   Kit tokens only; the classic shell around it keeps its own styles. */
+.classic-preflight {
+  padding: var(--mib-space-4) var(--mib-space-3);
+  background: var(--mib-color-bg);
+  min-width: 0;
+}

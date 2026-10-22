@@ -284,8 +284,13 @@ async function navigateWorkspace() {
   await click(host.querySelectorAll(".mib-stages__tab")[0], "Prepare");
   await click(buttonByText("Classic view"), "Classic view");
   await click(buttonByText("Workspace preview"), "workspace toggle");
-  await click(buttonByText("Camera setup"), "Camera setup");
+  await click(buttonByText("Set up camera…"), "Set up camera…");
   expect(host.querySelector("[data-testid=workspace]")).toBeNull();
+  // The classic Hardware setup page (#796's navigation contract), then back to its preflight.
+  expect(host.querySelector("[data-testid=hardware-setup]")!.hasAttribute("hidden")).toBe(false);
+  expect(host.querySelector("[data-testid=hardware-setup]")!.getAttribute("data-setup-section")).toBe("camera");
+  await click(buttonByText("Back to preflight"), "Back to preflight");
+  expect(host.querySelector("[data-testid=hardware-setup]")!.hasAttribute("hidden")).toBe(true);
   await advance(6000);
   return log.splice(0);
 }
@@ -304,12 +309,14 @@ describe.each<Variant>(["desktop", "pz7035"])("workspace navigation never actuat
     await boot(variant);
     const idle = await steadyState();
     expect(idle.length).toBeGreaterThan(0);
-    expect(readinessReads(idle)).toEqual([]); // the classic view never polls readiness
+    // The classic Hardware Preflight (#796) reads the gates without a path, and the records, as Prepare does.
+    expect(readinessReads(idle).length).toBeGreaterThan(0);
+    for (const r of readinessReads(idle)) expect(r.args).toEqual({ outputPath: "" });
 
     const navigation = await navigateWorkspace();
     expect(navigation.filter((e) => ACTUATING.includes(e.cmd))).toEqual([]);
-    // Two reads are added: Prepare's gates and Align's camera read-back (the classic tab's poll).
-    expect([...namesIn(navigation)].filter((n) => !namesIn(idle).has(n)).sort()).toEqual(["calibration_records_list", "fetch_camera_geometry", "fetch_experiment_readiness"]);
+    // One read is added: Align's camera read-back (the classic tab's poll).
+    expect([...namesIn(navigation)].filter((n) => !namesIn(idle).has(n)).sort()).toEqual(["fetch_camera_geometry"]);
     expect(readinessReads(navigation).length).toBeGreaterThan(0);
     for (const r of readinessReads(navigation)) expect(r.args).toEqual({ outputPath: "" });
 
@@ -524,7 +531,7 @@ describe.each<Variant>(["desktop", "pz7035"])("the workspace branch opens in the
     expect(acting(log)).toEqual([]);
   });
 
-  it.each(["Classic view", "Camera setup"])("leaving through %s before the first camera snapshot: the classic startup landing never runs, so nothing acts", async (exit) => {
+  it.each(["Classic view", "Set up camera…"])("leaving through %s before the first camera snapshot: the classic startup landing never runs, so nothing acts", async (exit) => {
     // A failed last run and a camera on the full sensor: the classic landing would select Experiment
     // and switch the desktop camera to the experiment window (the control below shows it does).
     failedRun = true;
@@ -554,7 +561,7 @@ describe.each<Variant>(["desktop", "pz7035"])("the workspace branch opens in the
 
   it("a task jump to the classic view (Prepare's Camera setup) is not a choice: the next start opens the workspace again", async () => {
     await boot(variant);
-    await click(buttonByText("Camera setup"), "Camera setup");
+    await click(buttonByText("Set up camera…"), "Set up camera…");
     expect(workspaceShown()).toBe(false);
     expect(storedLanding()).toBeNull();
     await restart(variant);

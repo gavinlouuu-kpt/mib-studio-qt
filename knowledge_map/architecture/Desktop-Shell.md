@@ -21,8 +21,10 @@ The repo root `src/` is the C++ tree, so the whole Tauri app lives under
   (mirrors the `src-tauri` command DTOs); `App.tsx` + `App.css` are the
   operator shell aligned with the Qt UI on `main` (UI-1, issue #266): a
   File/Settings/Help menu row, a persistent collapsible telemetry sidebar
-  (collapse state in `localStorage`), Connect / Overview / Experiment / Review
-  tabs with Start/Stop Camera in the tab header, nested Preview / Monitoring
+  (collapse state in `localStorage`; its body is `components/TelemetrySidebar.tsx`, one
+  summary per subsystem, #797), Connect / Overview / Experiment / Review
+  tabs with Start/Stop Camera in the tab header (the Connect tab is the summary-first
+  Hardware Preflight page and the Hardware setup page, #796/#798), nested Preview / Monitoring
   and App-config / Camera-script tabs, a Review frame + metrics-table split,
   and a metrics status bar with a toggleable log drawer. The backend
   auto-initializes on boot. Every bridged schema-v3 action stays wired
@@ -58,9 +60,11 @@ The repo root `src/` is the C++ tree, so the whole Tauri app lives under
 - `desktop/src/confirmationSignature.ts` — pure Preflight confirmation
   signature (#713), with `confirmationSignature.test.ts`.
 - `desktop/src/workspace/` — the opt-in four-stage workspace on the `@mib/ui`
-  kit (P1/P2, #713; P3 Align, #716 A3): `Workspace.tsx` (shell, stages), `PrepareView.tsx` (O1),
+  kit (P1/P2, #713; P3 Align, #716 A3): `Workspace.tsx` (shell, stages), `PrepareView.tsx` (O1:
+  the toolbar over the shared `PrepareSummary.tsx`), `PrepareSummary.tsx` (the summary-first
+  preflight O1b, shared with the classic Hardware Preflight page; #796),
   `prepareModel.ts` (pure tones and summaries), `prepareSummaryModel.ts` (pure, summary-first
-  preflight O1b, not mounted yet: what counts as an issue, the headline, the Next · Align and
+  preflight O1b: what counts as an issue, the headline, the Next · Align and
   Start-refusal lines, row words, the Calibration row's auto-open) and `DisclosureRow.tsx` +
   `disclosure.css` (the disclosure row, kit gap #715), `usePrepareReadiness.ts`
   (path-less readiness poll; stopping it drops a read in flight, `usePrepareReadiness.test.tsx`), `AlignView.tsx` (O2), `alignImageModel.ts` (view transform,
@@ -195,7 +199,8 @@ of the quick controls and the sample sheet, until the kit has them).
   classic Monitoring tab's visibility gate), and pins, stops or stops the camera only on a button.
   Its Run summary (O5) and Quick look (O6) sub-views read the run quick look while shown, and a
   decision acts only on its button (nothing applies calibration there). The Review stage says "Not yet in the workspace" and offers "Back to the classic view".
-  Prepare's "Camera / Focus / Pump setup" leave for the classic Connect tab, which only reads.
+  Prepare's "Set up camera… / focus… / pumps…" leave for the classic Hardware setup page (#798) at
+  that section (`App`'s `openSetup`); the classic Hardware Preflight page only reads.
   The classic startup landing is skipped when the workspace is already open.
 - **Prepare (O1)** shows the checklist by subsystem (camera and acquisition, focus, fluidics,
   data destination) and the authoritative backend gates read **without a path**:
@@ -911,6 +916,113 @@ manifests fail-closed (SHA-256 pinning, unit tested). Native open-URL /
 reveal-in-dir actions go through `tauri-plugin-opener`, capability-scoped to
 `https://**` and directory reveals only.
 
+## Classic view summary-first (epic #799, 2026-10-22)
+
+Gavin's redirect of 2026-10-22: **the classic view is the product surface.** Its first page shows
+only the hardware preflight, hardware configuration has its own page, and the left column is a
+real summary. The boards (Penpot sandbox, page "Operation app": "Classic · Hardware Preflight ·
+summary-first", "… redesigned left column", "Classic · Hardware setup") were approved by Gavin
+that day; the words of the issues #796, #797 and #798 are the authority here. Nothing in the
+backend changed, and nothing was deleted: every capability of the old Connect tab is reachable
+(put away, not removed). `develop` is unchanged until Gavin promotes the branch.
+
+- **Hardware Preflight page (#796; `components/PreflightPage.tsx` + css).** The classic stage
+  `tab === "connect"` with `connectView === "preflight"` (default) renders the approved O1b
+  summary (`workspace/PrepareSummary.tsx`, shared with the workspace's Prepare) inside a
+  `mib-root` wrapper: one verdict card (headline `prepareHeadline`: "Hardware ready", "Hardware
+  ready · simulated camera", "Ready with warnings · N", "Needs attention · N"; the detected line;
+  the existing `prepareVerdict` chip, the same words as the "Next:" band and the Plan; the
+  "Next · Align" line; the Preflight confirmation; **Confirm hardware preflight**, the band's
+  action, with the one-line Start-refusal note `startRefusalLine` beside it) and "What was
+  checked": `DisclosureRow`s Camera and acquisition, Focus, Fluidics, Calibration, Method, Data
+  destination, All checks. A row with a counted issue opens by itself and cannot be collapsed
+  (`data-open="issue"`); Calibration auto-expands per `calibrationRowState` and offers
+  `fixAction`'s Re-apply (`CalibrationCard` `embedded`); Next · Align gates are grey with "Next ·
+  Align: not counted in Prepare; Start waits for it"; All checks lists every gate in two columns
+  and holds "How Prepare reads readiness". On the idle mock camera every row is closed. **No
+  configuration on this page**: no form field; each hardware row has one "Set up camera… /
+  focus… / pumps…" that calls `onSetup(section)`. The page's hooks `usePrepareReadiness` and
+  `useCalibration` run only while `ready && workspaceStage === null && !expActive`, so the
+  classic tab never polls beside the workspace (readiness read with no path every 2 s). The old
+  UX-3 checklist panel and its per-check Retry buttons are gone from the page: their data is the
+  rows' Fix lines and the Camera row (Refresh re-reads the checklist devices).
+- **Navigation contract.** `App` owns `connectView: "preflight" | "setup"` and `setupSection:
+  "camera" | "focus" | "fluidics" | null` (plus `setupVisit`, a counter so the same section asked
+  for twice scrolls again); `openSetup(section)` sets them and the Connect tab. Settings gains
+  "Hardware setup…" (`openSetup(null)`); the workspace's Prepare `onOpenSetup(section)` leaves
+  the workspace for the setup page; `CaptureRecovery`'s Configure opens the camera card. "Back to
+  preflight" sets `connectView` back. The setup page's forms stay mounted while hidden (`<div
+  hidden>`), so form state survives navigation.
+- **Hardware setup page (#798; `components/HardwareSetupPage.tsx` + css).** `HardwareSetupPage`
+  is the header ("Hardware setup", the subtitle, **Back to preflight**) and the Mode notice
+  (Operator: "run, purge, jog and move are locked — Connecting devices and reading their status
+  is always allowed. Dangerous actions need Service / Commissioning mode and arming."; Service:
+  armed or not), whose button is the existing Mode switch (`enterMode`), outside the
+  `ViewerGate`. `HardwareSetupCards` is the body and is what `App` passes as the `layout` of
+  the one `HardwareControls` instance (inside the `ViewerGate`): one card per device. Camera
+  sources and startup selection (App's "Available devices" sub-tabs with Refresh / Connect /
+  Configure Mock…, and `StartupDiscoveryControls`), Sample pump and Sheath pump side by side
+  (one `PumpCard` rendered twice from the slot's parts), Focus · autofocus / nanopositioner,
+  Z stage (`StageControls` as is, hidden on the PZ7035), Acquisition pulse generator (RS485)
+  (`PulseGeneratorControls` through its own `layout`). Each card's dangerous actions sit in a
+  **gated tile** (`GatedTile`, kit gap #715): a Locked / Unlocked chip from the actuate gate's
+  reason (`lockChip`: Service / Commissioning mode, not armed, not connected, experiment active,
+  backend not ready), the reason in one line, the gated buttons disabled by their own gate, and
+  the Stops (Stop pump, Stop purge, Disable autofocus, Disable pulse output, Stop stage) always
+  enabled and styled destructive. Every backend command keeps its arming and mode rules
+  (`hardwareControlModel.ts` unchanged). `setupSection` scrolls its card into view
+  (`data-setup-card`). Plain inputs, selects, checkboxes and the forms' buttons are styled
+  locally with `--mib-*` tokens (kit gaps).
+- **`HardwareControls` `layout` (additive).** The panel builds `HardwareParts` (two `PumpParts`:
+  status, setup, connection, rate, `actuateReason`, actions run / purge / stopPump / stopPurge;
+  `AutofocusParts`: status, setup, connection (+ "Read status", a read of the shared poll),
+  actions enable / disable / jogDown / jogUp, config; `startup`; `pulseGenerator(layout?)`;
+  `notices`; `instrumentPumpText`) and renders them through `layout` when given, else through
+  today's fieldsets unchanged. One instance owns the busy state and the command owner;
+  `PulseGeneratorControls` has the same `layout` prop (`PulseGeneratorParts`, + "Read status").
+- **Telemetry sidebar (#797; `components/TelemetrySidebar.tsx` + css, pure
+  `telemetrySidebarModel.ts`).** The aside's body, with a plain props model (no App internals),
+  inside a `mib-root` wrapper (a compact telemetry column is a kit gap #715, styled with
+  `--mib-*` tokens: 12 px sub labels, ink values, toned values only for backend states, zero or
+  inactive values in the mute colour, 13/600 section titles, 19 px row pitch). Top to bottom: a
+  header `StateChip` mirroring the stage tabs ("01 Hardware Preflight · Ready": the classic
+  tab's stage, its `statusLabel` and status tone) and one context line ("Mock camera · idle ·
+  nothing runs"; running: "Mock camera · running · Exp-0142_03 · sample 3 of 7", the run's file
+  name and the sample queue's progress); Camera (Status, Display rate, Data rate); Processing
+  ("Algo / valid / invalid" as one row, px → µm, Background "Not set" / "Set"; on the PZ7035
+  "Runs on: PL (every frame)"); the PZ7035's PL core (unchanged rows); Focus (one section, the
+  old "Autofocus" and "Nanopositioner Autofocus" merged: Controller, Ring width, Voltage, Metric
+  age; one dim line "Focus · not connected" otherwise); Fluidics (Sample pump, Sheath pump
+  "0.040 µL/s · running"; "Fluidics · not connected"); Experiment (Status, Last run when an
+  outcome exists, Elapsed, then Buffered / Saved / Dropped as "n valid · n invalid", Pending save,
+  Failed to save, Flush, dim while inactive). Unavailable values read "—", never "Unavailable".
+  The "Display" section and the "No background set" box are gone. The aside's `aria-label`,
+  `collapsed` class and the collapse toggle are unchanged.
+- **One pump poll (`components/usePumpStatus.ts`).** The 1 s read of `fetch_pump_status` (both
+  slots) and `fetch_autofocus_status` that `HardwareControls` used to own is a module-level poller
+  (`pumpStatusPoller`): the first subscriber starts the interval, the last stops it, every
+  subscriber sees the same snapshot, `refresh()` reads now (after a command). `HardwareControls`
+  and `App` (for the sidebar's Fluidics) both consume it: one interval however many consumers
+  (`TelemetrySidebar.test.tsx` counts it). Reads only.
+- **Native webview gate.** `desktop/scripts/native-workflow.py` asserts the summary-first first
+  page (no form field), presses "Set up camera…" before Cameras / Configure Mock… / Apply, keeps
+  "Start Camera" in the stage header, and returns with "Back to preflight".
+- **Deviations from the boards, with their reasons** (also in the PR): the stage chip says
+  "Running" where the board says "Active" (the same values as the stage tabs win); Background
+  shows "Set" without a generation (App's state has only `background_set`); the pulse generator
+  card keeps frequency / duty and Set frequency / Set duty (the backend's command takes those;
+  "pulse width, period, Apply timing" would need a new command); the startup selection card keeps
+  today's remembered nanopositioner fields (there is no startup source select); the Z stage card
+  places `StageControls` as is (its own Connection / Position / Zero / Move fieldsets and Stop
+  stage), as #798 asks. Kit gaps met and styled locally (follow-ups to #715): disclosure row,
+  plain text input / select / checkbox, gated-actions tile, stage tab with status (the sidebar's
+  header chip), compact telemetry column.
+
+Tests: `PreflightPage.test.tsx`, `HardwareSetupPage.test.tsx`, `TelemetrySidebar.test.tsx`,
+`HardwareControls.test.tsx` (the `layout` prop), `Workspace.test.tsx` (the shared summary),
+`navigation.test.tsx` (Set up camera… → the setup page → Back to preflight; no classic poll
+beside the workspace), `ViewerGate.test.tsx` (every control command stays gated).
+
 ## Remote server (YOFO Studio)
 
 `crates/mib-bridge-server` (`yofo-studio-server`) runs the same command layer
@@ -1366,7 +1478,8 @@ selection, duplicate commands, errors and disabled setup states.
 ## September 23 operator integrations (ABI 15)
 
 `HardwareControls` stays mounted across tabs so pending command ownership and
-hardware form drafts survive navigation. Connect exposes existing numeric-COM
+hardware form drafts survive navigation (since #798 it is mounted, hidden, behind the
+Hardware setup page and places its parts through its `layout` prop). Connect exposes existing numeric-COM
 pump/autofocus APIs; manual actuation requires the shared service-mode arm,
 which clears on one action. Typed endpoints remain follow-up work.
 
@@ -1862,8 +1975,9 @@ Camera editors stage bounded validated content in a randomized `tempfile::NamedT
 ## Z stage panel (#464, slice 5)
 
 `StageControls` (`desktop/src/components/StageControls.tsx`, pure rules in
-`stageControlModel.ts`) sits under the pump and autofocus panel on the
-Connect tab. It uses only the `stage_*` commands and `fetch_stage_status` from
+`stageControlModel.ts`) is the Z stage card of the classic Hardware setup page (#798;
+before that, under the pump and autofocus panel on the Connect tab), placed as is.
+It uses only the `stage_*` commands and `fetch_stage_status` from
 [[Rust-Bridge]] (ABI 30). It is hidden on the
 PZ7035 until that board has a serial path for the stage. The service rules are
 in [[../services/StageService]].

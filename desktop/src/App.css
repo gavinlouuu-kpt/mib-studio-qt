@@ -145,52 +145,6 @@ body {
   background: #d4d4d4;
 }
 
-.side-section {
-  border-bottom: 1px solid var(--border);
-  padding: 6px 10px 8px;
-}
-
-.side-section h4 {
-  margin: 0 0 6px;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.side-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 1px 0;
-}
-
-.side-row .k {
-  color: #333;
-}
-
-.side-row .v {
-  font-weight: 600;
-  text-align: right;
-}
-
-.side-row .v.dim {
-  color: var(--muted);
-  font-weight: 400;
-}
-
-.side-row .v.ok {
-  color: var(--ok);
-}
-
-.bg-preview {
-  height: 70px;
-  border: 1px solid var(--border);
-  background: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--muted);
-}
-
 /* ---- Main tabbed area ---- */
 
 .main {
@@ -1259,8 +1213,6 @@ fieldset.viewer-gate {
 /* PZ7035 camera-mode problems the operator must act on: no run window, or a refused switch (#501) */
 .mode-notice { display: flex; gap: 12px; align-items: center; margin: 6px 0; padding: 6px 10px; border-left: 3px solid var(--warn); color: var(--warn); }
 .mode-notice span { flex: 1 1 auto; }
-
-.side-row .v.warn { color: var(--warn); }
 
 /* PZ7035 frame-ring playback (#649 v1) */
 .ring-playback .ring-controls { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 6px 0; }

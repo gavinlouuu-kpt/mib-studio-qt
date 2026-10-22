@@ -131,3 +131,27 @@ describe('PZ7035 pumps (#501)', () => {
     expect(host.textContent).not.toContain('Pulse');
   });
 });
+describe('layout (the Hardware setup page, #798)', () => {
+  it('hands out every part once from one instance and one poll; the placed buttons act as today', async () => {
+    const seen: string[] = [];
+    await act(async () => root.render(<HardwareControls ready experimentActive={false} append={append} mode="service" armed onDisarm={onDisarm}
+      layout={parts => {
+        seen.push(...parts.pumps.map(p => p.title), parts.autofocus ? 'autofocus' : 'no autofocus', parts.startup ? 'startup' : 'no startup', parts.pulseGenerator ? 'pulse' : 'no pulse');
+        return <div data-testid="placed">{parts.pumps[1].actions.run}{parts.pumps[0].actions.stopPump}{parts.autofocus?.connection}</div>;
+      }} />));
+    expect(seen.slice(0, 5)).toEqual(['Sample pump', 'Sheath pump', 'autofocus', 'startup', 'pulse']);
+    expect(host.querySelector('.hardware-controls')).toBeNull(); // placed, not the panel
+    expect(vi.mocked(bridge.fetchPumpStatus).mock.calls.map(([id]) => id).sort()).toEqual([0, 1]); // one poll, one read on mount
+    expect(button('Read status')).toBeDefined(); // the page's read of the shared poll
+    await act(async () => button('Run configured pump').click());
+    expect(bridge.pumpStart).toHaveBeenCalledWith(1);
+    expect(onDisarm).toHaveBeenCalledOnce();
+    await act(async () => button('Stop pump').click());
+    expect(bridge.pumpStop).toHaveBeenCalledWith(0);
+  });
+  it('without a layout the panel is unchanged: no Read status button', async () => {
+    await render();
+    expect(button('Read status')).toBeUndefined();
+    expect(host.querySelector('.hardware-controls')).not.toBeNull();
+  });
+});
