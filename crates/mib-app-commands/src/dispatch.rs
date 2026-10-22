@@ -142,6 +142,8 @@ pub const COMMANDS: &[&str] = &[
     "monitoring_cell_unpin",
     "monitoring_cell_clear_pins",
     "fetch_monitoring_cell_packet",
+    "workspace_read",
+    "workspace_write",
     "calibration_records_list",
     "calibration_record_get",
     "calibration_apply",
@@ -761,8 +763,15 @@ pub fn dispatch(state: &AppState, host: &dyn Host, name: &str, value: Value) -> 
             crate::monitoring_cell_pin(state, a.expected_start_generation, a.capture_epoch, a.frame_index, a.object_id)
                 .and_then(json)
         }
-        // ABI 42 (#716 A4a): calibration records. A malformed id or factor is an error reply and
-        // nothing reaches the backend.
+        // ABI 45: workspace metadata reads and controller-only writes.
+        "workspace_read" | "workspace_write" => {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct A { request: String }
+            let a: A = args(value)?;
+            if name == "workspace_write" { crate::workspace_write(state, a.request).and_then(json) }
+            else { crate::workspace_read(state, a.request).and_then(json) }
+        }
         "calibration_records_list" => crate::calibration_records_list(state).and_then(json),
         "calibration_record_get" => {
             #[derive(Deserialize)]
@@ -1529,7 +1538,7 @@ mod tests {
         assert!(review_ffi::review_fixture_write_quick_look(&v3, 0) && review_ffi::review_fixture_write_quick_look(&even, 3));
         let state = AppState::new();
         let host = TestHost(data.to_string_lossy().into_owned());
-        assert_eq!(dispatch(&state, &host, "abi_version", Value::Null).unwrap(), Reply::Json(json!(44)));
+        assert_eq!(dispatch(&state, &host, "abi_version", Value::Null).unwrap(), Reply::Json(json!(45)));
         assert_eq!(dispatch(&state, &host, "init", json!({ "dataDir": "" })).unwrap(), Reply::Json(json!(true)));
         let reply = |args: Value| match dispatch(&state, &host, "run_quick_look", args) {
             Ok(Reply::Json(r)) => r,

@@ -635,8 +635,15 @@ fn fetch_monitoring_cell_packet(state: State<AppState>, start_generation: String
     cmds::fetch_monitoring_cell_packet(&state, start_generation, capture_epoch, frame_index, object_id, layer).map(Response::new)
 }
 
-// ABI 42 (#716 A4a): calibration records. The list and get are reads; apply is the one explicit
-// compare-and-set of the pixel-to-micron factor.
+// ABI 45: explicit workspace metadata operations, never hardware apply/start.
+#[tauri::command]
+fn workspace_read(state: State<AppState>, request: String) -> Result<serde_json::Value, String> {
+    cmds::workspace_read(&state, request)
+}
+#[tauri::command]
+fn workspace_write(state: State<AppState>, request: String) -> Result<serde_json::Value, String> {
+    cmds::workspace_write(&state, request)
+}
 #[tauri::command]
 fn calibration_records_list(state: State<AppState>) -> Result<serde_json::Value, String> {
     cmds::calibration_records_list(&state)
@@ -937,6 +944,8 @@ pub fn run() {
             monitoring_cell_unpin,
             monitoring_cell_clear_pins,
             fetch_monitoring_cell_packet,
+            workspace_read,
+            workspace_write,
             calibration_records_list,
             calibration_record_get,
             calibration_apply,

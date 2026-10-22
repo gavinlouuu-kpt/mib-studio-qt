@@ -1867,3 +1867,9 @@ set_property(TEST e2e.recording_403_partial_series_no_frames APPEND PROPERTY ENV
 
 set_property(TEST e2e.recording_403_partial_series_restart APPEND PROPERTY ENVIRONMENT
     "MIB_REPRO_RESTART=1")
+
+# #807: real app metadata host round-trip, fault injection, restart and command replay.
+add_executable(workspace_host_test workspace/workspace_host_test.cpp)
+target_link_libraries(workspace_host_test PRIVATE mib_backend)
+add_test(NAME backend.workspace_host COMMAND workspace_host_test)
+set_tests_properties(backend.workspace_host PROPERTIES LABELS "backend;round-trip;fault-injection;concurrency;workspace" TIMEOUT 30)

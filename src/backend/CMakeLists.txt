@@ -522,6 +522,7 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/services/CrashReporter.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/MinidumpUploader.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/database/SqliteService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/workspace/WorkspaceStore.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/CameraControlService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/CaptureService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/RecorderService.cpp

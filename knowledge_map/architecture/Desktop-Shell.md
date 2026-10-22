@@ -1986,3 +1986,15 @@ copy action only. It does not save or apply; the isolated `ique-demo.html` uses
 labelled fixtures. Live persistence awaits the single #393/#395 workspace authority
 and scientific validation awaits #808. Design proposal:
 `docs/design/ique-workflow/WORKSPACE-CONTRACT.md`.
+
+
+## Saved workspace plan (#807, ABI 45)
+
+Experiment → Plan includes `SavedPlan`: explicit native metadata save/new revision
+and reopen of a sample sheet (annotations and selected operator). It uses the same
+Tauri/WebSocket command layer as the app, never localStorage or demo data. Readback
+shows immutable annotations without replacing the active experiment, applying a
+method or starting acquisition. Unknown saves offer exact-command retry while the
+panel remains mounted; reopening a workspace ID reconciles its stored state after
+navigation/reload. Plan activation, recipe scientific validation and workspace
+listing remain unfinished. See `docs/design/ique-workflow/PRODUCTION-INTEGRATION.md`.

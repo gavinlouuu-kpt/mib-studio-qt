@@ -1147,6 +1147,7 @@ namespace backend::bridge
         // one explicit compare-and-set of the pixel-to-micron factor (app/CalibrationStore.h),
         // refused unless the experiment is idle (it runs inside the coordinator's idle
         // transaction); only the WebSocket server's controlling client may send it.
+        std::string workspaceRequestJson(const std::string& request, bool write);
         std::string calibrationRecordsListJson() const;
         std::string calibrationRecordGetJson(const std::string &recordId) const;
         std::string applyCalibrationJson(const std::string &recordId, double expectedCurrentFactor);

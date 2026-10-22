@@ -1364,6 +1364,7 @@ pub mod ffi {
         /// `calibration_records.list_reply`): the newest version of every record, newest first,
         /// plus the applied / in-effect record, the current factor and identity. A read: it never
         /// applies or changes anything. `{"valid": false}` before init.
+        fn workspace_request(self: Pin<&mut BackendBridge>, request: &str, write: bool) -> String;
         fn calibration_records_list(self: Pin<&mut BackendBridge>) -> String;
         /// One record and every version of it (`calibration_records.get_reply`). A read.
         fn calibration_record_get(self: Pin<&mut BackendBridge>, record_id: &str) -> String;
