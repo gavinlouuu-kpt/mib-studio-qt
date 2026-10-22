@@ -113,3 +113,5 @@ If your PR has code changes but no vault changes, expect reviewers to push
 back.
 
 Central method registry/cache (#398): [[services/ProfileRegistryService]].
+
+Workspace persistence core (#807): [[services/WorkspaceStore]]; injected metadata connection, not a second method/journal authority.

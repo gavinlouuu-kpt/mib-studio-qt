@@ -177,3 +177,12 @@ The [workspace proposal](WORKSPACE-CONTRACT.md) specifies one #393/#395 authorit
 actual store and live provider binding remain open, so I02/I12 are not accepted.
 Annotation PR #811 passed all four CI checks; QC PR #813 has only the gold guard
 triggered on its stacked base, so local checks are reported separately from CI.
+
+## Native persistence core milestone
+
+The isolated [WorkspaceStore qualification](WORKSPACE-EVIDENCE.md) now implements
+real SQLite snapshot CAS/history/restore/idempotency on an injected host connection.
+Round-trip, rollback, restart, concurrent CAS and ASan/UBSan pass. TSan cannot start
+on this host (mapping failure); host binding, export/relink, schema validation and
+full I12 acceptance remain open. The cross-track coordinator owns shared facade
+allocation; no shared host/build/ABI files were edited.

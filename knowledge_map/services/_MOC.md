@@ -69,3 +69,4 @@
 [[../diagnostics/_MOC|Diagnostics MOC]]
 
 - [[ProfileRegistryService]] — central registry/cache foundation (#398).
+- [[WorkspaceStore]] — isolated versioned metadata document CAS/history core (#807); host integration pending.
