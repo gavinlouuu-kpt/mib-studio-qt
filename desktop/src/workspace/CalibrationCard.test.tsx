@@ -111,6 +111,20 @@ const RESTART_GATE: ReadinessGate = { id: "calibration.record", status: G.Fail,
   remediation: "re-apply record cal-a (calibration_apply), or run the calibration method" };
 
 describe("what the card shows", () => {
+  it("trend selection uses record_get and never calibration_apply, then read failure clears the chart", async () => {
+    list = calList([APPLIED, SUPERSEDED]);
+    await render();
+    const point = $("calibration-trends")!.querySelector("circle")!;
+    await act(async () => point.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await advance(0);
+    expect(calls().filter(c => c.cmd === "calibration_record_get")).toHaveLength(1);
+    expect(applies()).toHaveLength(0);
+    list = { valid: false };
+    await advance(PREPARE_READINESS_POLL_MS);
+    expect($("calibration-trends")).toBeNull();
+    expect(applies()).toHaveLength(0);
+  });
+
   it("the gate and its Fix, the record in effect with id, factor, age, method and identity, and the plain list", async () => {
     calGate = { id: "calibration.record", status: G.Pass, reason: "", remediation: "" };
     list = calList([APPLIED, SUPERSEDED], { in_effect_record_id: "cal-a", current_factor: 0.52 });

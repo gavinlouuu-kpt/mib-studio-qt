@@ -128,6 +128,16 @@ implementation; publication here does not mean the peers have accepted them.
 
 ## Blocking dependencies and acceptance status
 
+Continuation after I-A1: I11's recorded-measurement history now consumes the
+existing calibration list/get path, with per-record limits and verdicts, missing
+focus/flow, setup/method-revision filtering and linked record selection. No
+scientific recomputation or actuation. Persistent exclusions/new policies remain
+required. [Native qualification](NATIVE-EVIDENCE.md) now supplies 9 passing
+real-backend checks with synthetic/mock inputs, distinct from hardware evidence.
+
+The owner directed continued execution while actionable work remains. Dependency
+gaps below limit full acceptance, not independent I-owned implementation/testing.
+
 I-A1 is now implemented in the claimed files, with a version-1 synthetic
 annotation fixture, real Plan/Queue mounts and [reproducible demo](DEMO.md).
 Workspace suite: 519/519 tests, 23 files; focused tests: 83/83. TypeScript/Vite

@@ -18,6 +18,17 @@ npm run dev
 Open the development workspace, choose Experiment → Plan, and choose a sample
 queue. This demo needs no camera and must not press Start or apply hardware.
 
+For an isolated **synthetic-only** development demonstration, open
+`http://localhost:1420/ique-demo.html` after `npm run dev`. This uses the real
+annotation and calibration-history components but deliberately sends no IPC.
+Its warning identifies the missing instrument/analysis worker. Try custom-key
+grouping, JSON, metric/record selection and simulated failed-read clearing.
+The entry is not included in either production app build.
+
+The local browser-tool navigation attempt was blocked by policy on 2026-10-22.
+Rendered-browser verification is therefore not claimed. Component interactions
+are covered by the React tests; native-webview acceptance remains separate.
+
 1. Add three sample rows. Set S1/S3 to Vehicle, S2 to Drug. Declare units D1,
    D2, D1 respectively. Set concentrations with explicit units where declared.
 2. In each sample editor add `batch` in Key/values: A, B, A. Under Annotation

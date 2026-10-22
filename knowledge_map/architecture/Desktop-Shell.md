@@ -1,5 +1,24 @@
 # Desktop Shell (React + Tauri v2)
 
+## Recorded calibration trends (#807 I11)
+
+`workspace/CalibrationTrends.tsx` mounts in the existing CalibrationCard and
+uses that card's live `useCalibration` list and selection path, without a new
+transport or controller. `calibrationTrendModel.ts` reads stored metrics,
+limits and verdicts; no frontend estimator or current-threshold re-evaluation.
+One point per latest record version is positioned at derivation time. Values
+without dates remain in the table, and null focus/flow never becomes zero.
+All-record display asserts no compatibility; setup filters include method
+revision, and incomplete identities remain separate. Keyboard/click selection
+calls existing `calibration_record_get`, never Apply. Invalid/cleared list state
+unmounts the chart so stale measurements are not presented as current.
+
+Tests: model edge cases, component interaction/clearing, and CalibrationCard's
+real controller over mocked IPC (read-only command assertion). Native reuse
+qualification is recorded in `docs/design/ique-workflow/NATIVE-EVIDENCE.md`.
+Persistent reversible exclusions and editable versioned trend policies remain
+open I11 requirements; this view does not create a second store.
+
 ## iQue annotation groups (#807 I-A1)
 
 The single and queue Plan views mount `workspace/AnnotationGroups.tsx`, backed
