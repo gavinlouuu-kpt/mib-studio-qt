@@ -9,6 +9,13 @@ const pendingKey = "mib.analysis.pending-command.v1";
 export function AnalysisWorkspace({ path, disabled, graphText, feature, read, write, job, live = false }: {
   path: string; disabled: boolean; graphText: string; feature: string; read: AnalysisCall; write: AnalysisCall; job: AnalysisCall; live?: boolean;
 }) {
+  const [templateId, setTemplateId] = useState("");
+  const [templateRevision, setTemplateRevision] = useState("");
+  const [overrides, setOverrides] = useState("[]");
+  const [comparisonText, setComparisonText] = useState(JSON.stringify({conditions:["before","after"],design:"independent",weighting:"equal-experimental-unit",endpoint:{feature:"area",statistic:"mean",unit:"pixel2"},samples:[],descriptiveOnly:true},null,2));
+  const [comparison, setComparison] = useState<Record<string, any> | null>(null);
+  const [findingId, setFindingId] = useState("");
+  const [findingNote, setFindingNote] = useState("");
   const [kind, setKind] = useState(live && !path ? "live-run" : "stored");
   const [retainedId, setRetainedId] = useState("");
   const [revision, setRevision] = useState("");
@@ -57,6 +64,8 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
     if (token !== generation.current) return;
     if (command.action === "retainSource") {
       setRetainedId(reply.descriptor.id); setKind("retained");
+    } else if (command.action === "saveFinding") {
+      setComparison(reply.document); setMessage(`Immutable finding ${reply.findingId}, revision 1 saved.`);
     } else { setRevision(reply.revision); setMessage(`Backend revision ${reply.revision} saved. Source identity is pinned.`); }
   }
   return <section aria-label="Source-bound analysis workspace">
@@ -112,6 +121,44 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
         if (token === generation.current) setGallery(reply);
       })}>Load pinned gallery</button>
     </fieldset>
+    <details><summary>Apply or resynchronize a pinned template</summary>
+      <p>The destination is the graph editor’s plan ID. An exact upstream revision and explicit interval overrides create a new source-bound backend revision. Resynchronizing never moves a saved revision. Event-specific QC assertions are cleared, not copied between sources.</p>
+      <fieldset disabled={disabled || busy}>
+        <label>Template plan ID<input value={templateId} onChange={e=>setTemplateId(e.target.value)}/></label>
+        <label>Template revision<input value={templateRevision} onChange={e=>setTemplateRevision(e.target.value)}/></label>
+        <label>Interval overrides JSON<textarea value={overrides} onChange={e=>setOverrides(e.target.value)} placeholder='[{"node":"area-gate","minimum":100,"maximum":200}]'/></label>
+        <button disabled={!templateId || !templateRevision} onClick={()=>void run(async token=>{
+          if(window.localStorage.getItem(pendingKey)) throw new Error("Reconcile the pending command first.");
+          const snapshot=checked(await read({action:"snapshot",source:source()})).source;
+          if(token!==generation.current)return;
+          const sourceBinding=Object.fromEntries(["fingerprint","sourceKey","parameters","scope"].map(k=>[k,snapshot[k]]));
+          const command={action:"apply",planId:graph().id,expectedRevision:revision||null,commandId:crypto.randomUUID(),application:{planId:templateId,revision:templateRevision,overrides:JSON.parse(overrides)},source:source(),sourceBinding};
+          window.localStorage.setItem(pendingKey,JSON.stringify(command)); await reconcile(command,token);
+        })}>Apply pinned template to this source</button>
+      </fieldset>
+    </details>
+    <details><summary>Experimental-unit comparisons and findings</summary>
+      <p>Retain each source first. Specify exact plan/revision, retained source, condition and experimental-unit identity for each sample. Cell rows are not replicates. Paired designs require matching unit identities. Results are descriptive only; compatibility remains unknown.</p>
+      <fieldset disabled={disabled || busy}>
+        <label>Comparison specification<textarea aria-label="Comparison specification" rows={12} value={comparisonText} onChange={e=>{setComparisonText(e.target.value);setComparison(null);}}/></label>
+        <button onClick={()=>void run(async token=>{
+          const reply=checked(await read({action:"compare",spec:JSON.parse(comparisonText)}));
+          if(token===generation.current)setComparison(reply);
+        })}>Evaluate pinned comparison</button>
+        <label>Immutable finding ID<input value={findingId} onChange={e=>setFindingId(e.target.value)}/></label>
+        <label>Finding note<textarea value={findingNote} onChange={e=>setFindingNote(e.target.value)}/></label>
+        <button disabled={!findingId} onClick={()=>void run(async token=>{
+          if(window.localStorage.getItem(pendingKey))throw new Error("Reconcile the pending command first.");
+          const command={action:"saveFinding",findingId,commandId:crypto.randomUUID(),spec:JSON.parse(comparisonText),note:findingNote};
+          window.localStorage.setItem(pendingKey,JSON.stringify(command));await reconcile(command,token);
+        })}>Save immutable finding</button>
+        <button disabled={!findingId} onClick={()=>void run(async token=>{
+          const reply=checked(await read({action:"readFinding",findingId,revision:"1"}));
+          if(token===generation.current)setComparison(reply.document);
+        })}>Load saved finding</button>
+      </fieldset>
+      {comparison && <><pre>{JSON.stringify(comparison,null,2)}</pre><button onClick={()=>download("analysis-finding.json",JSON.stringify(comparison,null,2),"application/json")}>Download comparison evidence</button></>}
+    </details>
     <details><summary>Scientific QC assertions</summary>
       <p>Manual assertions are separate from processing validity. Unlabelled events remain unknown. “Good only” preserves unknown membership; these labels are not independent scientific qualification.</p>
       <label><input type="checkbox" checked={qcEnabled} disabled={busy} onChange={e=>setQcEnabled(e.target.checked)}/>Include QC assertions in the next saved revision</label>

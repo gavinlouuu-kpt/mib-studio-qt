@@ -226,6 +226,78 @@ int main() {
                                     false);
         MIB_EXPECT(csvReport.at("csv").get<std::string>().find("\"'=1+1\"") != std::string::npos,
                    "CSV user labels cannot become spreadsheet formulas");
+        const auto originalSource = source;
+        source["fingerprint"] = "sha256:second-source";
+        source["sourceKey"] = "second-source";
+        source["rows"][0]["measurements"]["area"] = 8;
+        json secondBinding;
+        for (const char* k : {"fingerprint", "sourceKey", "parameters", "scope"})
+            secondBinding[k] = source[k];
+        json apply{{"action", "apply"},
+                   {"planId", "applied"},
+                   {"expectedRevision", nullptr},
+                   {"commandId", "apply-one"},
+                   {"application",
+                    {{"planId", "plan"},
+                     {"revision", "1"},
+                     {"overrides", {{{"node", "gate"}, {"minimum", 6}, {"maximum", 9}}}}}},
+                   {"source", save.at("source")},
+                   {"sourceBinding", secondBinding}};
+        const auto applied = call(apply);
+        MIB_EXPECT(applied["status"] == "ok", "apply pinned template with explicit override");
+        const auto secondRetained = call(json{{"action", "retainSource"},
+                                              {"source", save.at("source")},
+                                              {"commandId", "freeze-two"}})
+                                        .at("descriptor");
+        json spec{{"conditions", {"before", "after"}},
+                  {"design", "independent"},
+                  {"weighting", "equal-experimental-unit"},
+                  {"descriptiveOnly", true},
+                  {"endpoint", {{"feature", "area"}, {"statistic", "mean"}, {"unit", "pixel2"}}},
+                  {"samples",
+                   {{{"condition", "before"},
+                     {"experimentalUnit", "unit-a"},
+                     {"planId", "plan"},
+                     {"revision", "1"},
+                     {"source", retainedDescriptor}},
+                    {{"condition", "after"},
+                     {"experimentalUnit", "unit-b"},
+                     {"planId", "applied"},
+                     {"revision", "1"},
+                     {"source", secondRetained}}}}};
+        const auto comparison = call(json{{"action", "compare"}, {"spec", spec}}, false);
+        MIB_EXPECT(comparison["status"] == "ok" &&
+                       comparison["comparison"]["differenceRightMinusLeft"] == 3,
+                   "comparison uses one native endpoint per retained experimental unit");
+        auto duplicate = spec;
+        duplicate["samples"][1]["planId"] = "plan";
+        duplicate["samples"][1]["source"] = retainedDescriptor;
+        MIB_EXPECT(call(json{{"action", "compare"}, {"spec", duplicate}}, false)["status"] ==
+                       "invalid",
+                   "same recording cannot be a second independent replicate");
+        auto paired = spec;
+        paired["design"] = "paired";
+        MIB_EXPECT(call(json{{"action", "compare"}, {"spec", paired}}, false)["status"] ==
+                       "invalid",
+                   "paired design requires explicit matching unit identities");
+        paired["samples"][1]["experimentalUnit"] = "unit-a";
+        MIB_EXPECT(call(json{{"action", "compare"}, {"spec", paired}},
+                        false)["comparison"]["pairedDifferences"]["mean"] == 3,
+                   "paired reduction uses matched unit differences");
+        json finding{{"action", "saveFinding"},
+                     {"findingId", "finding-one"},
+                     {"commandId", "finding-command"},
+                     {"spec", spec},
+                     {"note", "descriptive evidence"}};
+        const auto savedFinding = call(finding);
+        MIB_EXPECT(savedFinding["status"] == "ok", "persist immutable finding");
+        source = originalSource;
+        MIB_EXPECT(call(apply) == applied, "application receipt survives current source change");
+        MIB_EXPECT(call(finding) == savedFinding, "finding receipt replay is stable");
+        apply["commandId"] = "apply-invalid";
+        apply["application"]["overrides"][0]["node"] = "removed";
+        MIB_EXPECT(call(apply)["status"] == "invalid",
+                   "removed override requires explicit migration");
         evaluate["revision"] = nullptr;
         MIB_EXPECT(call(evaluate, false)["status"] == "invalid", "no moving-head evaluation");
         MIB_REQUIRE(db.execute("CREATE TRIGGER fail_receipt BEFORE INSERT ON workspace_commands "
@@ -252,6 +324,12 @@ int main() {
     {
         backend::services::SqliteService db;
         MIB_REQUIRE(db.initialize(path), "reopen metadata authority");
+        const auto finding = json::parse(backend::analysis::analysisRequest(
+            db,
+            json{{"action", "readFinding"}, {"findingId", "finding-one"}, {"revision", "1"}}.dump(),
+            false, resolver));
+        MIB_EXPECT(finding["document"]["comparison"]["differenceRightMinusLeft"] == 3,
+                   "immutable finding survives metadata reopen");
         source["fingerprint"] = "sha256:changed";
         const auto replay =
             json::parse(backend::analysis::analysisRequest(db, save.dump(), true, resolver));

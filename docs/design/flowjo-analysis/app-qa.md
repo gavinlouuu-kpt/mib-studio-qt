@@ -164,3 +164,17 @@ Native host tests cover bin boundaries, outside-range normalization, offset
 invariance, QC unknown/foreign-key handling and manifest attribution round-trip.
 Eight Review bridge tests also pass, including invalid metadata directory handling
 and refusal to silently retarget an initialized metadata authority.
+
+### Template/comparison continuation (2026-10-23)
+
+Production tailnet WebSocket validated two distinct synthetic recordings (14 and
+20 observations), retained snapshots, exact template application with interval
+override, native comparison, duplicate-source refusal and immutable finding replay.
+Finding `finding-1792755676005`, revision `1`, hash
+`sha256:f861750916701b10ad3b69a396f890a36d0ab5344a9ddb41f1a659ce53010401`.
+Means 107.57142857142856 and 1757.821141043886; descriptive difference
+1650.2497124724573 pixel2. This tests transport/identity, not biological inference.
+Native host tests additionally cover paired matching, missing override migration,
+source-change receipt replay and finding database reopen. Production workspace has
+application and comparison/finding controls; browser connector remains unavailable.
+UI build and 10 regression tests pass; no new click-through claim.

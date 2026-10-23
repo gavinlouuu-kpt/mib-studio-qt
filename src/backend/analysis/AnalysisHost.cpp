@@ -1,4 +1,5 @@
 #include "backend/analysis/AnalysisHost.h"
+#include "backend/analysis/AnalysisComparison.h"
 #include "backend/analysis/SourceAnalysis.h"
 #include "backend/database/SqliteService.h"
 #include <set>
@@ -26,6 +27,34 @@ Json unwrap(const Json& value) {
     result["planId"] = value.at("workspace_id").get<std::string>().substr(9);
     result.erase("workspace_id");
     return result;
+}
+Json applicationGraph(const Json& parent, const Json& application, const Json& destination) {
+    fields(application, {"planId", "revision", "overrides"});
+    const auto& overrides = application.at("overrides");
+    if (!overrides.is_array() || overrides.size() > 128)
+        throw std::invalid_argument("Application override budget exceeded");
+    auto graph = parent.at("graph");
+    graph["id"] = destination;
+    std::set<std::string> seen;
+    for (const auto& change : overrides) {
+        fields(change, {"node", "minimum", "maximum"});
+        const auto id = change.at("node").get<std::string>();
+        if (!seen.insert(id).second) throw std::invalid_argument("Duplicate application override");
+        bool found = false;
+        for (auto& node : graph.at("nodes"))
+            if (node.at("id") == id) {
+                if (node.at("kind") != "interval")
+                    throw std::invalid_argument("Override target is not an interval");
+                node["minimum"] = change.at("minimum");
+                node["maximum"] = change.at("maximum");
+                found = true;
+            }
+        if (!found)
+            throw std::invalid_argument(
+                "Upstream population removed; explicit override migration required");
+    }
+    validateAnalysisGraph(graph);
+    return graph;
 }
 } // namespace
 std::string analysisRequest(services::SqliteService& database, const std::string& text, bool write,
@@ -113,6 +142,83 @@ std::string analysisRequest(services::SqliteService& database, const std::string
             return reply(saved.at("document"));
         }
 
+        if (action == "compare") {
+            fields(q, {"action", "spec"});
+            const auto result = compareAnalysis(q.at("spec"), [&](const Json& request) {
+                return Json::parse(
+                    analysisRequest(database, request.dump(), false, source, method));
+            });
+            return Json{
+                {"status", "ok"}, {"comparison", result}, {"contentHash", contentHash(result)}}
+                .dump();
+        }
+        if (action == "saveFinding") {
+            if (!write) throw std::invalid_argument("Saving a finding requires write endpoint");
+            fields(q, {"action", "findingId", "commandId", "spec", "note"});
+            const auto id = q.at("findingId").get<std::string>();
+            const auto note = q.at("note").get<std::string>();
+            if (id.empty() || id.size() > 128 || note.size() > 4096)
+                throw std::invalid_argument("Invalid finding identity/note budget");
+            const auto existing = Json::parse(
+                database.workspaceRequest(Json{{"action", "read"},
+                                               {"workspace_id", "analysis-finding/" + id},
+                                               {"revision", "1"}}
+                                              .dump(),
+                                          false));
+            if (existing.value("status", std::string{}) == "ok") {
+                const auto& document = existing.at("document");
+                if (document.at("type") != "F-analysis-finding/1" ||
+                    contentHash(document.at("comparison")) != document.at("contentHash"))
+                    throw std::invalid_argument("Finding integrity mismatch");
+                if (document.at("request") != q)
+                    throw std::invalid_argument("Finding identity reused with different request");
+                return Json{{"status", "ok"},
+                            {"findingId", id},
+                            {"revision", "1"},
+                            {"document", existing.at("document")}}
+                    .dump();
+            }
+            if (existing.value("status", std::string{}) != "not_found") return existing.dump();
+            const auto result = compareAnalysis(q.at("spec"), [&](const Json& request) {
+                return Json::parse(
+                    analysisRequest(database, request.dump(), false, source, method));
+            });
+            const Json doc{{"schema_version", 1},
+                           {"type", "F-analysis-finding/1"},
+                           {"request", q},
+                           {"comparison", result},
+                           {"contentHash", contentHash(result)}};
+            const auto saved = Json::parse(
+                database.workspaceRequest(Json{{"action", "commit"},
+                                               {"workspace_id", "analysis-finding/" + id},
+                                               {"expected_revision", nullptr},
+                                               {"command_id", q.at("commandId")},
+                                               {"document", doc}}
+                                              .dump(),
+                                          true));
+            if (saved.value("status", std::string{}) != "ok") return saved.dump();
+            return Json{{"status", "ok"}, {"findingId", id}, {"revision", "1"}, {"document", doc}}
+                .dump();
+        }
+        if (action == "readFinding") {
+            fields(q, {"action", "findingId", "revision"});
+            if (q.at("revision") != "1")
+                throw std::invalid_argument("Findings are immutable revision 1 records");
+            const auto id = q.at("findingId").get<std::string>();
+            const auto saved = Json::parse(
+                database.workspaceRequest(Json{{"action", "read"},
+                                               {"workspace_id", "analysis-finding/" + id},
+                                               {"revision", "1"}}
+                                              .dump(),
+                                          false));
+            if (saved.value("status", std::string{}) != "ok") return saved.dump();
+            const auto& doc = saved.at("document");
+            if (doc.at("type") != "F-analysis-finding/1" ||
+                contentHash(doc.at("comparison")) != doc.at("contentHash"))
+                throw std::invalid_argument("Finding integrity mismatch");
+            return Json{{"status", "ok"}, {"findingId", id}, {"revision", "1"}, {"document", doc}}
+                .dump();
+        }
         if (action == "snapshot") {
             fields(q, {"action", "source"});
             return Json{{"status", "ok"}, {"source", source(q.at("source"))}}.dump();
@@ -167,7 +273,7 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                 throw std::invalid_argument("Manifest schema/hash mismatch");
             const auto& doc = manifest.at("document");
             fields(doc, {"schema_version", "type", "graph", "feature", "sourceBinding", "method",
-                         "plot", "qc"});
+                         "plot", "qc", "application"});
             if (doc.at("schema_version") != 1 || doc.at("type") != "F-analysis-strategy/1")
                 throw std::invalid_argument("Unsupported strategy manifest");
             Json save{{"action", "save"},
@@ -178,15 +284,48 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                       {"method", doc.at("method")},
                       {"plot", doc.value("plot", Json(nullptr))},
                       {"qc", doc.value("qc", Json(nullptr))},
+                      {"application", doc.value("application", Json(nullptr))},
                       {"source", q.at("source")},
                       {"expectedRevision", q.at("expectedRevision")},
                       {"commandId", q.at("commandId")}};
             return analysisRequest(database, save.dump(), true, source, method);
         }
+        if (action == "apply") {
+            if (!write) throw std::invalid_argument("Applying a strategy requires write endpoint");
+            fields(q, {"action", "planId", "expectedRevision", "commandId", "application", "source",
+                       "sourceBinding"});
+            const auto& application = q.at("application");
+            fields(application, {"planId", "revision", "overrides"});
+            if (application.at("revision").is_null())
+                throw std::invalid_argument("Application requires pinned upstream revision");
+            const auto parent = unwrap(
+                Json::parse(database.workspaceRequest(Json{{"action", "read"},
+                                                           {"workspace_id", identity(application)},
+                                                           {"revision", application.at("revision")}}
+                                                          .dump(),
+                                                      false)));
+            if (parent.value("status", std::string{}) != "ok") return parent.dump();
+            const auto& doc = parent.at("document");
+            Json save{{"action", "save"},
+                      {"planId", q.at("planId")},
+                      {"expectedRevision", q.at("expectedRevision")},
+                      {"commandId", q.at("commandId")},
+                      {"application", application},
+                      {"graph", applicationGraph(doc, application, q.at("planId"))},
+                      {"feature", doc.at("feature")},
+                      {"method", doc.at("method")},
+                      {"source", q.at("source")},
+                      {"sourceBinding", q.at("sourceBinding")}};
+            if (doc.contains("plot")) save["plot"] = doc.at("plot");
+            if (doc.contains("qc"))
+                save["qc"] =
+                    Json{{"policy", doc.at("qc").at("policy")}, {"decisions", Json::array()}};
+            return analysisRequest(database, save.dump(), true, source, method);
+        }
         if (action == "save") {
             if (!write) throw std::invalid_argument("Save requires the analysis write endpoint");
             fields(q, {"action", "planId", "expectedRevision", "commandId", "graph", "feature",
-                       "source", "sourceBinding", "method", "plot", "qc"});
+                       "source", "sourceBinding", "method", "plot", "qc", "application"});
             validateAnalysisGraph(q.at("graph"));
             if (q.at("graph").at("id") != q.at("planId"))
                 throw std::invalid_argument("Graph ID must match plan ID");
@@ -200,6 +339,23 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                      {"sourceBinding", binding}, {"method", q.value("method", Json(nullptr))}};
             if (q.contains("plot") && !q.at("plot").is_null()) doc["plot"] = q.at("plot");
             if (q.contains("qc") && !q.at("qc").is_null()) doc["qc"] = q.at("qc");
+            if (q.contains("application") && !q.at("application").is_null()) {
+                const auto& app = q.at("application");
+                fields(app, {"planId", "revision", "overrides"});
+                if (app.at("revision").is_null())
+                    throw std::invalid_argument("Pinned application revision required");
+                const auto parent = unwrap(
+                    Json::parse(database.workspaceRequest(Json{{"action", "read"},
+                                                               {"workspace_id", identity(app)},
+                                                               {"revision", app.at("revision")}}
+                                                              .dump(),
+                                                          false)));
+                if (parent.value("status", std::string{}) != "ok") return parent.dump();
+                if (applicationGraph(parent.at("document"), app, q.at("planId")) != q.at("graph"))
+                    throw std::invalid_argument(
+                        "Application graph differs from pinned template plus explicit overrides");
+                doc["application"] = app;
+            }
             const auto receipt = Json::parse(
                 database.workspaceRequest(Json{{"action", "receipt"},
                                                {"workspace_id", identity(q)},

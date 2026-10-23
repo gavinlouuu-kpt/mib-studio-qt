@@ -205,3 +205,40 @@ before they affect evaluation.
 
 Optional plot/QC fields are omitted, not inserted as null, for legacy save
 commands so existing command receipts still replay identically.
+
+## Template applications and experimental-unit findings
+
+Write `apply` accepts `planId`, `expectedRevision`, `commandId`, `source`,
+`sourceBinding`, and `application: {planId, revision, overrides}`. The upstream
+revision is exact; each override is `{node, minimum, maximum}` for an existing
+interval. Missing/changed nodes require explicit migration. The derived graph is
+saved through the same CAS/receipt authority. Reapply with a new upstream revision
+to resynchronize; history never moves. Plot/method references are inherited;
+manual event QC decisions are cleared. Applied-manifest import requires its exact
+upstream strategy to exist first. This is analysis application, not hardware apply.
+
+Read `compare` accepts `spec` with exactly:
+
+```json
+{"conditions":["before","after"],"design":"independent",
+ "weighting":"equal-experimental-unit","descriptiveOnly":true,
+ "endpoint":{"feature":"area","statistic":"mean","unit":"pixel2"},
+ "samples":[
+  {"condition":"before","experimentalUnit":"a","planId":"plan-a","revision":"1","source":{"kind":"retained","id":"snapshot-a"}},
+  {"condition":"after","experimentalUnit":"b","planId":"plan-b","revision":"1","source":{"kind":"retained","id":"snapshot-b"}}]}
+```
+
+Two conditions, 2–32 retained samples; endpoint mean/median/p05/p95. Paired design
+requires matching experimental-unit labels. Independent design refuses shared unit
+labels. Both refuse repeated source fingerprints or source identities: different
+windows of one acquisition do not become independent replicates. Each unit
+contributes one native endpoint with equal weight, never individual cell rows as
+replicates. Any missing endpoint makes its aggregate unavailable. Difference is
+right minus left. Compatibility stays unknown; no p-value, CI, fit or causal claim.
+
+Write `saveFinding` takes `findingId`, `commandId`, `spec`, `note`; creates immutable
+revision `1` in the same metadata authority. Read `readFinding` takes `findingId`
+and exact `revision:"1"`. Replies include typed document, pinned samples, comparison
+and canonical content hash. Same-request replay returns the original; identity
+reuse with different content refuses. I may link this exact finding ID/revision/hash
+without changing method apply authority. Next-run draft creation is not implicit.

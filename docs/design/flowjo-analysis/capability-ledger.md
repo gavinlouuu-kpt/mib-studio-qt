@@ -83,3 +83,11 @@ presentation-only offsets. F02 has source-bound, attributed manual good/bad/unkn
 assertions and a native good-only three-valued filter, propagated into job QC
 fingerprints and portable manifests. Automated QC qualification, arbitrary plot
 families, multi-source overlays and full layout composition remain open.
+
+F04 now includes pinned template applications, interval overrides, explicit resync
+by new revision and removed-node migration refusal. F09 includes equal-unit native
+descriptive independent/paired comparisons over immutable retained sources, with
+source-reuse rejection and explicit missing semantics. F14 includes durable immutable
+findings with exact plan/source references and content hash. Inferential fits,
+scientific compatibility qualification and I next-run linkage remain open. The
+two-recording production backend milestone passes; full F01–F16 acceptance does not.

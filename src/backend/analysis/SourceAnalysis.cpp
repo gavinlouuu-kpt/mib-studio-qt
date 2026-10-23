@@ -238,8 +238,15 @@ Json evaluateSource(const Json& source, const Json& request) {
     }
     const auto qcFingerprint = contentHash(qc);
     const auto fingerprint = source.at("fingerprint").get<std::string>();
-    RevisionKey revision{fingerprint,  fingerprint,   graph.plan.revision, "source-bound",  "none",
-                         units.dump(), qcFingerprint, "source-authority",  "native-graph/1"};
+    RevisionKey revision{fingerprint,
+                         fingerprint,
+                         graph.plan.revision,
+                         contentHash(request.value("application", Json(nullptr))),
+                         "none",
+                         units.dump(),
+                         qcFingerprint,
+                         "source-authority",
+                         "native-graph/1"};
     Membership universe{revision, {}}, eligibility{revision, {}};
     uint64_t qcGood = 0, qcBad = 0, qcUnknown = 0;
     MeasurementColumn column{revision, feature, units.at(feature).get<std::string>(), {}};
