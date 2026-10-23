@@ -72,6 +72,41 @@ int main() {
                        plot["layers"][0]["counts"],
                    "display offset cannot change counts");
     }
+    {
+        auto transformed = save;
+        transformed["transforms"] = {{{"input", "area"},
+                                      {"inputUnit", "pixel2"},
+                                      {"output", "scaled"},
+                                      {"kind", "linear"},
+                                      {"scale", 5},
+                                      {"offset", 0}},
+                                     {{"input", "scaled"},
+                                      {"inputUnit", "dimensionless"},
+                                      {"output", "logged"},
+                                      {"kind", "log10"},
+                                      {"scale", 1},
+                                      {"offset", 0}}};
+        transformed["feature"] = "logged";
+        transformed["graph"]["nodes"][0]["feature"] = "logged";
+        transformed["graph"]["nodes"][0]["minimum"] = 0;
+        transformed["graph"]["nodes"][0]["maximum"] = 0;
+        const auto result = backend::analysis::evaluateSource(source, transformed);
+        MIB_EXPECT(result["selected"] == "1" && result["unknown"] == "1" && result["mean"] == 0,
+                   "ordered transforms feed native inclusive gates and nullable statistics");
+        const auto prepared = backend::analysis::prepareAnalysisSource(source, transformed);
+        MIB_EXPECT(prepared["rows"][0]["measurements"]["area"] == 5 &&
+                       prepared["rows"][0]["measurements"]["logged"] == 0,
+                   "derived parameters never overwrite raw measurements");
+        auto invalidDomain = source;
+        invalidDomain["rows"][0]["measurements"]["area"] = 0;
+        MIB_EXPECT(backend::analysis::evaluateSource(invalidDomain, transformed)["unknown"] == "2",
+                   "log domain failure stays unknown rather than clipped or zero");
+        transformed["transforms"][1]["kind"] = "asinh";
+        MIB_EXPECT(
+            backend::analysis::prepareAnalysisSource(source, transformed)["parameterFingerprint"] !=
+                prepared["parameterFingerprint"],
+            "transform identity pins ordered numerical semantics");
+    }
     json retainedDescriptor;
     auto resolver = [&](const json&) { return source; };
     {
@@ -82,6 +117,40 @@ int main() {
         };
         MIB_EXPECT(call(save, false)["status"] == "invalid", "read endpoint cannot save");
         MIB_EXPECT(call(save)["revision"] == "1", "create strategy");
+        auto transformedPlan = save;
+        transformedPlan["planId"] = "transformed";
+        transformedPlan["graph"]["id"] = "transformed";
+        transformedPlan["commandId"] = "transform-save";
+        transformedPlan["feature"] = "scaled";
+        transformedPlan["transforms"] = {{{"input", "area"},
+                                          {"inputUnit", "pixel2"},
+                                          {"output", "scaled"},
+                                          {"kind", "linear"},
+                                          {"scale", 5},
+                                          {"offset", 0}}};
+        transformedPlan["plot"] = {{"kind", "histogram"},
+                                   {"feature", "scaled"},
+                                   {"minimum", 0},
+                                   {"maximum", 2},
+                                   {"bins", 2},
+                                   {"normalization", "count"},
+                                   {"layers", {{{"population", "gate"}, {"displayOffset", 0}}}}};
+        MIB_EXPECT(call(transformedPlan)["status"] == "ok", "persist ordered preprocessing");
+        json transformedQuery{{"action", "jobInput"},
+                              {"planId", "transformed"},
+                              {"revision", "1"},
+                              {"source", save.at("source")}};
+        const auto jobInput = call(transformedQuery, false);
+        MIB_EXPECT(jobInput["evaluation"]["mean"] == 1 &&
+                       jobInput["source"]["rows"][0]["measurements"]["scaled"] == 1,
+                   "worker receives same transformed values as native reductions");
+        MIB_EXPECT(jobInput["evaluation"]["parameterFingerprint"] ==
+                       jobInput["source"]["parameterFingerprint"],
+                   "worker and native preprocessing identity match");
+        transformedQuery["action"] = "plot";
+        MIB_EXPECT(call(transformedQuery, false)["plot"]["layers"][0]["counts"] ==
+                       json::array({"0", "1"}),
+                   "native plot bins transformed values exactly once");
         auto next = save;
         next["commandId"] = "second";
         next["expectedRevision"] = "1";

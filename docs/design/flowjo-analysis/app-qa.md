@@ -186,3 +186,11 @@ immutable artifact. Run `report-1792755932928-run`, hash
 Native tests additionally verify changed-layout independence and DB reopen. Twelve
 UI regression tests pass, including lost report reply and HTML-title escaping.
 Browser click-through/export rendering is not claimed while connector unavailable.
+
+Ordered-transform tailnet round trip: plan `transform-e2e-1792756204891` revision1
+uses derived `scaled_area = area / 100`. Native selected10, mean1.046 dimensionless;
+10 exact gallery keys; real Cytoflow using the derived x column also selects10 and
+pins the same parameter fingerprint. Job
+`92f82b96a179099b6a01cc93a117ade2b0c95939d8230ea2cd0b908d234c5632`.
+Native tests cover ordered linear/log/asinh provenance, invalid log domains staying
+unknown, raw-column preservation and plot/job agreement. Worker app tests pass.

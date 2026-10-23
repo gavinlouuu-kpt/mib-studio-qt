@@ -10,6 +10,9 @@ const pendingKey = "mib.analysis.pending-command.v1";
 export function AnalysisWorkspace({ path, disabled, graphText, feature, read, write, job, live = false }: {
   path: string; disabled: boolean; graphText: string; feature: string; read: AnalysisCall; write: AnalysisCall; job: AnalysisCall; live?: boolean;
 }) {
+  const [strategyFeature, setStrategyFeature] = useState(feature);
+  useEffect(() => setStrategyFeature(feature), [feature]);
+  const [transformText, setTransformText] = useState("[]");
   const [templateId, setTemplateId] = useState("");
   const [templateRevision, setTemplateRevision] = useState("");
   const [overrides, setOverrides] = useState("[]");
@@ -91,7 +94,7 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
         if (token !== generation.current) return;
         const binding = Object.fromEntries(["fingerprint", "sourceKey", "parameters", "scope"].map(k => [k, snapshot[k]]));
         const command = { action: "save", planId: g.id, expectedRevision: revision || null,
-          commandId: crypto.randomUUID(), graph: g, feature, source: source(), sourceBinding: binding, ...(plotEnabled ? {plot: JSON.parse(plotText)} : {}), ...(qcEnabled ? {qc:{policy:qcPolicy,decisions:JSON.parse(qcText)}} : {}) };
+          commandId: crypto.randomUUID(), graph: g, feature: strategyFeature, transforms: JSON.parse(transformText), source: source(), sourceBinding: binding, ...(plotEnabled ? {plot: JSON.parse(plotText)} : {}), ...(qcEnabled ? {qc:{policy:qcPolicy,decisions:JSON.parse(qcText)}} : {}) };
         // Journal before submission; a storage failure must prevent a write with no recovery handle.
         window.localStorage.setItem(pendingKey, JSON.stringify(command));
         await reconcile(command, token);
@@ -161,6 +164,12 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
       {comparison && <><pre>{JSON.stringify(comparison,null,2)}</pre><button onClick={()=>download("analysis-finding.json",JSON.stringify(comparison,null,2),"application/json")}>Download comparison evidence</button></>}
     </details>
     <AnalysisReport read={read} write={write} disabled={disabled || busy}/>
+    <details><summary>Ordered analysis-parameter transforms</summary>
+      <p>Derived parameters preserve raw measurements. Each stage computes (input − offset) / scale, then optionally asinh or log10. Scale must be positive; log10 of nonpositive values and overflow remain unknown. Outputs are dimensionless. Gate feature names and plot features may reference these outputs. Save a new backend revision to apply.</p>
+      <label>Strategy reduction parameter<input aria-label="Strategy reduction parameter" value={strategyFeature} onChange={e=>setStrategyFeature(e.target.value)}/></label>
+      <label>Transform stages JSON<textarea aria-label="Transform stages JSON" rows={8} value={transformText} onChange={e=>setTransformText(e.target.value)} placeholder='[{"input":"area","inputUnit":"pixel2","output":"scaled_area","kind":"asinh","scale":100,"offset":0}]'/></label>
+      <p>Compensation and Logicle are not implemented here. No fluorescence channel, spillover control or calibration is inferred.</p>
+    </details>
     <details><summary>Scientific QC assertions</summary>
       <p>Manual assertions are separate from processing validity. Unlabelled events remain unknown. “Good only” preserves unknown membership; these labels are not independent scientific qualification.</p>
       <label><input type="checkbox" checked={qcEnabled} disabled={busy} onChange={e=>setQcEnabled(e.target.checked)}/>Include QC assertions in the next saved revision</label>
@@ -181,7 +190,7 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
       {plot && <AnalysisPlot artifact={plot}/>}
     </details>
     <details><summary>Population tables and portable strategy</summary>
-      <p>Tables are computed from finite raw selected values. Quantiles use type 7; SD uses n−1; CV uses absolute mean. Null is unavailable, not zero. Exports pin the source and backend revision; they do not certify scientific compatibility.</p>
+      <p>Tables are computed from finite selected values in the saved parameter domain (raw or explicitly transformed). Quantiles use type 7; SD uses n−1; CV uses absolute mean. Null is unavailable, not zero. Exports pin the source and backend revision; they do not certify scientific compatibility.</p>
       <button disabled={busy || !revision} onClick={() => void run(async token => {
         const reply = checked(await read({action: "report", planId: graph().id, revision, source: source()}));
         if (token === generation.current) setReport(reply);

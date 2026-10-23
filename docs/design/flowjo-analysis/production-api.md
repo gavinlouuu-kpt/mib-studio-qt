@@ -262,3 +262,17 @@ artifact without opening sources or reevaluating newer strategies. Production UI
 renders tables/plots/findings and exports evidence JSON or standalone escaped HTML.
 This is bounded ordered-block composition, not arbitrary drag/drop or background
 multi-report batch scheduling. Files are explicit downloads, not silent overwrites.
+
+## Ordered derived parameters
+
+Optional strategy `transforms` is an ordered array of up to eight stages, each
+`{input,inputUnit,output,kind,scale,offset}`. Kind linear/asinh/log10 first computes
+`(input-offset)/scale`, then the named function (linear is identity). Scale is
+finite and positive, offset finite; input unit must exactly match the raw or prior
+stage unit. Output is a new named dimensionless parameter, never overwrites raw.
+Missing/nonfinite inputs, log domain failure and overflow produce null. No clipping,
+compensation, inferred calibration or Logicle support. Native graphs, reductions,
+plots and job inputs share this same projection. Parameter fingerprints include
+raw units and ordered stages; real worker revisions pin the fingerprint. Comparisons
+refuse different preprocessing identities even when displayed units match.
+Applications inherit exact template transforms; imports/restore preserve them.

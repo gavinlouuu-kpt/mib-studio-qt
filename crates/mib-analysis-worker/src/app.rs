@@ -74,7 +74,7 @@ pub fn request(input: &Submission, resolved: &Value) -> Result<Request, String> 
             plan: json!([input.plan_id, input.revision]).to_string(),
             application: "production-app/1".into(),
             override_revision: "none".into(),
-            parameters: json!({"x":input.x,"y":input.y,"units":parameters}).to_string(),
+            parameters: json!({"x":input.x,"y":input.y,"identity":source.get("parameterFingerprint").cloned().unwrap_or_else(||parameters.clone())}).to_string(),
             qc: resolved["evaluation"]["qcFingerprint"]
                 .as_str()
                 .ok_or("Missing native QC fingerprint")?

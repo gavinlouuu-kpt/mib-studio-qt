@@ -5,7 +5,8 @@
 #include <set>
 namespace backend::analysis {
 using Json = nlohmann::json;
-Json plotSource(const Json& source, const Json& strategy) {
+Json plotSource(const Json& rawSource, const Json& strategy) {
+    const auto source = prepareAnalysisSource(rawSource, strategy);
     const auto& spec = strategy.at("plot");
     if (!spec.is_object() || spec.size() != 7 || spec.at("kind") != "histogram" ||
         !spec.at("bins").is_number_unsigned() || !spec.at("layers").is_array())
@@ -54,7 +55,7 @@ Json plotSource(const Json& source, const Json& strategy) {
         auto query = strategy;
         query["graph"]["output"] = population;
         query["feature"] = feature;
-        const auto evaluation = evaluateSource(source, query);
+        const auto evaluation = evaluateSource(rawSource, query);
         std::vector<uint64_t> counts(bins, 0);
         uint64_t underflow = 0, overflow = 0;
         for (const auto& row : evaluation.at("rows")) {
@@ -101,6 +102,8 @@ Json plotSource(const Json& source, const Json& strategy) {
     }
     return {{"schema", "F-plot/1"},
             {"sourceFingerprint", source.at("fingerprint")},
+            {"parameterFingerprint", source.at("parameterFingerprint")},
+            {"transforms", source.at("transforms")},
             {"spec", spec},
             {"feature", feature},
             {"unit", source.at("parameters").at(feature)},
@@ -108,7 +111,7 @@ Json plotSource(const Json& source, const Json& strategy) {
             {"layers", layers},
             {"populationComplete", source.at("populationComplete")},
             {"semantics",
-             "Raw-value bins [left,right), last bin closed; fraction/density denominator "
+             "Analysis-parameter bins [left,right), last bin closed; fraction/density denominator "
              "is all finite selected measurements including under/overflow. Display "
              "offsets never change counts, gates or statistics."}};
 }

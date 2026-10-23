@@ -97,3 +97,9 @@ retained table/plot/finding references, exact replay/collision handling, checksu
 reopen and standalone HTML/JSON downloads. Arbitrary layout editing and background
 multi-report batch scheduling remain open; bounded report composition is not full
 F10 acceptance. Tailnet real-app build/reopen and native fault/identity tests pass.
+
+F03 now has explicit ordered derived linear/asinh/log10 parameters, unit validation,
+null-domain propagation and parameter fingerprints shared by gates/stats/plots/jobs.
+Compensation controls/estimation and Logicle remain unimplemented; no channel or
+calibration authority is fabricated. Native and real-engine transformed-input parity
+passes through the production tailnet backend.

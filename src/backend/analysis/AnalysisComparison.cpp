@@ -66,6 +66,7 @@ Json compareAnalysis(const Json& spec, const std::function<Json(const Json&)>& e
     std::map<std::string, std::map<std::string, std::optional<double>>> groups;
     std::set<std::string> fingerprints, sourceKeys, independentUnits;
     Json samples = Json::array();
+    Json parameters = nullptr;
     for (const auto& sample : spec.at("samples")) {
         fields(sample, {"condition", "experimentalUnit", "planId", "revision", "source"});
         const auto condition = label(sample.at("condition")),
@@ -90,6 +91,10 @@ Json compareAnalysis(const Json& spec, const std::function<Json(const Json&)>& e
             !sourceKeys.insert(result.at("sourceKey").get<std::string>()).second)
             throw std::invalid_argument(
                 "Repeated source cannot be counted as independent experimental evidence");
+        if (!parameters.is_null() && parameters != result.at("parameterFingerprint"))
+            throw std::invalid_argument(
+                "Comparison parameter preprocessing differs across samples");
+        parameters = result.at("parameterFingerprint");
         const auto& value = result.at(statistic);
         const auto finite = value.is_number() && std::isfinite(value.get<double>());
         groups[condition][experimentalUnit] =
@@ -101,7 +106,8 @@ Json compareAnalysis(const Json& spec, const std::function<Json(const Json&)>& e
                            {"selected", result.at("selected")},
                            {"unknown", result.at("unknown")},
                            {"populationComplete", result.at("populationComplete")},
-                           {"qcFingerprint", result.at("qcFingerprint")}});
+                           {"qcFingerprint", result.at("qcFingerprint")},
+                           {"parameterFingerprint", parameters}});
     }
     if (groups[left].empty() || groups[right].empty())
         throw std::invalid_argument("Both conditions require an experimental unit");
@@ -124,18 +130,18 @@ Json compareAnalysis(const Json& spec, const std::function<Json(const Json&)>& e
         if (!paired.at("mean").is_null()) delta = paired.at("mean").get<double>();
     } else
         delta = difference(rightSummary.at("mean"), leftSummary.at("mean"));
-    return {
-        {"schema", "F-analysis-comparison/1"},
-        {"spec", spec},
-        {"samples", samples},
-        {"groups", {{left, leftSummary}, {right, rightSummary}}},
-        {"pairedDifferences", paired},
-        {"differenceRightMinusLeft", delta ? Json(*delta) : Json(nullptr)},
-        {"unit", unit},
-        {"compatibility", "unknown"},
-        {"interpretation", "descriptive only; no inferred scientific compatibility, p-value, "
-                           "confidence interval or causal effect"},
-        {"weighting", "one endpoint per explicit experimental unit, equal weights; cell rows are "
-                      "not replicates; any missing endpoint makes its aggregate unavailable"}};
+    return {{"schema", "F-analysis-comparison/1"},
+            {"spec", spec},
+            {"samples", samples},
+            {"groups", {{left, leftSummary}, {right, rightSummary}}},
+            {"pairedDifferences", paired},
+            {"differenceRightMinusLeft", delta ? Json(*delta) : Json(nullptr)},
+            {"unit", unit},
+            {"compatibility", "unknown"},
+            {"interpretation", "descriptive only; no inferred scientific compatibility, p-value, "
+                               "confidence interval or causal effect"},
+            {"weighting",
+             "one endpoint per explicit experimental unit, equal weights; cell rows are "
+             "not replicates; any missing endpoint makes its aggregate unavailable"}};
 }
 } // namespace backend::analysis

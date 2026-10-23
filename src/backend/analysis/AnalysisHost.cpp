@@ -282,7 +282,7 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                 throw std::invalid_argument("Manifest schema/hash mismatch");
             const auto& doc = manifest.at("document");
             fields(doc, {"schema_version", "type", "graph", "feature", "sourceBinding", "method",
-                         "plot", "qc", "application"});
+                         "plot", "qc", "application", "transforms"});
             if (doc.at("schema_version") != 1 || doc.at("type") != "F-analysis-strategy/1")
                 throw std::invalid_argument("Unsupported strategy manifest");
             Json save{{"action", "save"},
@@ -294,6 +294,7 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                       {"plot", doc.value("plot", Json(nullptr))},
                       {"qc", doc.value("qc", Json(nullptr))},
                       {"application", doc.value("application", Json(nullptr))},
+                      {"transforms", doc.value("transforms", Json::array())},
                       {"source", q.at("source")},
                       {"expectedRevision", q.at("expectedRevision")},
                       {"commandId", q.at("commandId")}};
@@ -326,6 +327,7 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                       {"source", q.at("source")},
                       {"sourceBinding", q.at("sourceBinding")}};
             if (doc.contains("plot")) save["plot"] = doc.at("plot");
+            if (doc.contains("transforms")) save["transforms"] = doc.at("transforms");
             if (doc.contains("qc"))
                 save["qc"] =
                     Json{{"policy", doc.at("qc").at("policy")}, {"decisions", Json::array()}};
@@ -334,7 +336,8 @@ std::string analysisRequest(services::SqliteService& database, const std::string
         if (action == "save") {
             if (!write) throw std::invalid_argument("Save requires the analysis write endpoint");
             fields(q, {"action", "planId", "expectedRevision", "commandId", "graph", "feature",
-                       "source", "sourceBinding", "method", "plot", "qc", "application"});
+                       "source", "sourceBinding", "method", "plot", "qc", "application",
+                       "transforms"});
             validateAnalysisGraph(q.at("graph"));
             if (q.at("graph").at("id") != q.at("planId"))
                 throw std::invalid_argument("Graph ID must match plan ID");
@@ -347,6 +350,10 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                      {"graph", q.at("graph")},   {"feature", q.at("feature")},
                      {"sourceBinding", binding}, {"method", q.value("method", Json(nullptr))}};
             if (q.contains("plot") && !q.at("plot").is_null()) doc["plot"] = q.at("plot");
+            if (q.contains("transforms") && !q.at("transforms").is_array())
+                throw std::invalid_argument("Transforms must be an ordered array");
+            if (q.contains("transforms") && !q.at("transforms").empty())
+                doc["transforms"] = q.at("transforms");
             if (q.contains("qc") && !q.at("qc").is_null()) doc["qc"] = q.at("qc");
             if (q.contains("application") && !q.at("application").is_null()) {
                 const auto& app = q.at("application");
@@ -363,6 +370,13 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                 if (applicationGraph(parent.at("document"), app, q.at("planId")) != q.at("graph"))
                     throw std::invalid_argument(
                         "Application graph differs from pinned template plus explicit overrides");
+                const auto& templateDoc = parent.at("document");
+                if (doc.at("feature") != templateDoc.at("feature") ||
+                    doc.at("method") != templateDoc.at("method") ||
+                    doc.value("transforms", Json::array()) !=
+                        templateDoc.value("transforms", Json::array()))
+                    throw std::invalid_argument(
+                        "Application changed template parameter or method semantics");
                 doc["application"] = app;
             }
             const auto receipt = Json::parse(
@@ -535,6 +549,8 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                             {"table", table},
                             {"scientificCompatibility", "unknown"},
                             {"qcPolicy", result.at("qcPolicy")},
+                            {"parameterFingerprint", result.at("parameterFingerprint")},
+                            {"transforms", result.at("transforms")},
                             {"populationComplete", current.at("populationComplete")}};
                 return Json{{"status", "ok"},
                             {"report", report},
@@ -577,7 +593,7 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                     .dump();
             }
             Json reply{{"status", "ok"}, {"evaluation", result}};
-            if (action == "jobInput") reply["source"] = current;
+            if (action == "jobInput") reply["source"] = prepareAnalysisSource(current, doc);
             return reply.dump();
         }
         throw std::invalid_argument("Unsupported analysis action");

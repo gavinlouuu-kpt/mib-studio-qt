@@ -36,7 +36,10 @@ Graph parseGraph(const Json& q) {
             if (!v.at("maximum").is_null()) bounds.maximum = v.at("maximum").get<double>();
             validateInterval(bounds);
             const auto feature = v.at("feature").get<std::string>();
-            if (feature != "area" && feature != "deformability" && feature != "youngsModulus")
+            if (feature.empty() || feature.size() > 64 ||
+                feature.find_first_not_of(
+                    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_") !=
+                    std::string::npos)
                 throw std::invalid_argument("Unsupported graph feature");
             g.gates.emplace(node.id, std::make_pair(feature, bounds));
         } else {
@@ -197,7 +200,8 @@ Json adaptEvidenceArchive(const Json& archive) {
             {"imageRetentionGuaranteed", false},
             {"providerPin", "a26d26bac596a229cc2116f8666aa73de45b7ed1"}};
 }
-Json evaluateSource(const Json& source, const Json& request) {
+Json evaluateSource(const Json& rawSource, const Json& request) {
+    const auto source = prepareAnalysisSource(rawSource, request);
     if (source.at("schema") != "F-source/1" || source.at("rows").size() > 10000)
         throw std::invalid_argument("Unsupported analysis source");
     const auto graph = parseGraph(request.at("graph"));
@@ -243,7 +247,7 @@ Json evaluateSource(const Json& source, const Json& request) {
                          graph.plan.revision,
                          contentHash(request.value("application", Json(nullptr))),
                          "none",
-                         units.dump(),
+                         source.at("parameterFingerprint").get<std::string>(),
                          qcFingerprint,
                          "source-authority",
                          "native-graph/1"};
@@ -284,6 +288,8 @@ Json evaluateSource(const Json& source, const Json& request) {
     return {
         {"schema", "F-evaluation/1"},
         {"sourceFingerprint", fingerprint},
+        {"parameterFingerprint", source.at("parameterFingerprint")},
+        {"transforms", source.at("transforms")},
         {"sourceKey", source.at("sourceKey")},
         {"graph", request.at("graph")},
         {"feature", feature},
