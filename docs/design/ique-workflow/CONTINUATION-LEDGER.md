@@ -105,3 +105,15 @@ those cannot be fabricated by I. Acquisition-compatible method validation is dis
 from exact lookup and remains `unknown`; hardware readiness is `not_evaluated`.
 Run observations are inspectable historical records, not a backend restart-resumption
 contract. No queue auto-resume or inferred biological replication is claimed.
+
+### Independent E-supplied fixture acceptance
+
+Consumed a read-only copy of E's `/tmp/e806-production-fixtures/production-run.h5`
+and paired JSON in I's isolated app, using committed `recipe_ws.mjs` with
+`MIB_QA_SOURCE_KIND=run-archive`. HDF SHA256:
+`7cd635abaf289a14ddaab2d0f65a232551b6b93fb4f5fe79488b1b0e125e1bbc`.
+Native result: 8 selected/measured, area mean/median 117 pixel², denominator null,
+`populationComplete=false`. Coverage remains half-open batch sequence [0,23),
+not 23 events. Exact strategy persistence, evaluation, saved finding, export,
+relink and source/method refusal checks passed. E originals were not modified;
+no hardware or complete-population claim follows from these observations.
