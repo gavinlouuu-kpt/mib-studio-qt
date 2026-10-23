@@ -438,6 +438,52 @@ int main() {
         invalidGroup["commandId"] = "invalid-group";
         invalidGroup["library"]["samples"][0]["groups"] = {"not-declared"};
         MIB_EXPECT(call(invalidGroup)["status"] == "invalid", "library refuses undeclared group");
+        auto secondPlot = plottedPlan;
+        secondPlot["planId"] = "plot-second";
+        secondPlot["graph"]["id"] = "plot-second";
+        secondPlot["sourceBinding"] = secondBinding;
+        secondPlot["commandId"] = "plot-second-save";
+        MIB_EXPECT(call(secondPlot)["status"] == "ok", "save second-source native histogram");
+        json overlaySpec{
+            {"title", "Two source overlay"},
+            {"layers",
+             {{{"id", "before"},
+               {"label", "Before"},
+               {"population", "gate"},
+               {"displayOffset", 0},
+               {"reference",
+                {{"planId", "plot-plan"}, {"revision", "1"}, {"source", retainedDescriptor}}}},
+              {{"id", "after"},
+               {"label", "After"},
+               {"population", "gate"},
+               {"displayOffset", 20},
+               {"reference",
+                {{"planId", "plot-second"}, {"revision", "1"}, {"source", secondRetained}}}}}}};
+        json overlaySave{{"action", "overlaySave"},
+                         {"overlayId", "overlay"},
+                         {"expectedRevision", nullptr},
+                         {"commandId", "overlay-save"},
+                         {"spec", overlaySpec}};
+        const auto savedOverlay = call(overlaySave);
+        MIB_EXPECT(savedOverlay["status"] == "ok", "save validated multisource overlay");
+        MIB_EXPECT(call(overlaySave) == savedOverlay, "overlay save receipt replay");
+        const auto overlay =
+            call(json{{"action", "overlayEvaluate"}, {"overlayId", "overlay"}, {"revision", "1"}},
+                 false);
+        MIB_EXPECT(overlay["plot"]["layers"][0]["counts"] == json::array({"0", "1"}) &&
+                       overlay["plot"]["layers"][1]["counts"] == json::array({"0", "1"}) &&
+                       overlay["plot"]["layers"][1]["displayOffset"] == 20,
+                   "multisource overlay preserves native counts and separate display offset");
+        secondPlot["expectedRevision"] = "1";
+        secondPlot["commandId"] = "plot-second-bins";
+        secondPlot["plot"]["maximum"] = 20;
+        MIB_EXPECT(call(secondPlot)["revision"] == "2", "change source plot bins by new revision");
+        auto incompatible = overlaySave;
+        incompatible["expectedRevision"] = "1";
+        incompatible["commandId"] = "overlay-mismatch";
+        incompatible["spec"]["layers"][1]["reference"]["revision"] = "2";
+        MIB_EXPECT(call(incompatible)["status"] == "invalid",
+                   "overlay refuses incompatible bin edges");
         json reportLayout{
             {"title", "Pinned research evidence"},
             {"blocks",
@@ -450,6 +496,11 @@ int main() {
                {"title", "Descriptive comparison"},
                {"kind", "finding"},
                {"reference", {{"findingId", "finding-one"}, {"revision", "1"}}}}}}};
+        reportLayout["blocks"].push_back(
+            {{"id", "overlay"},
+             {"title", "Pinned overlay"},
+             {"kind", "overlay"},
+             {"reference", {{"overlayId", "overlay"}, {"revision", "1"}}}});
         json reportSave{{"action", "reportSave"},
                         {"reportId", "report-one"},
                         {"expectedRevision", nullptr},
@@ -463,7 +514,7 @@ int main() {
                          {"commandId", "report-build"}};
         const auto reportRun = call(buildReport);
         MIB_EXPECT(reportRun["status"] == "ok" &&
-                       reportRun["document"]["artifact"]["blocks"].size() == 2,
+                       reportRun["document"]["artifact"]["blocks"].size() == 3,
                    "publish all pinned report blocks atomically");
         MIB_EXPECT(call(buildReport) == reportRun, "report run exact replay");
         auto collisionRun = buildReport;

@@ -38,6 +38,11 @@ void layout(const Json& value) {
             identifier(ref.at("findingId"));
             if (ref.at("revision") != "1")
                 throw std::invalid_argument("Finding revision must be exact");
+        } else if (kind == "overlay") {
+            fields(ref, {"overlayId", "revision"});
+            identifier(ref.at("overlayId"));
+            if (!ref.at("revision").is_string() || ref.at("revision").get<std::string>().empty())
+                throw std::invalid_argument("Exact overlay revision required");
         } else if (kind == "table" || kind == "plot") {
             fields(ref, {"planId", "revision", "source"});
             if (!ref.at("planId").is_string() || !ref.at("revision").is_string() ||
@@ -119,7 +124,10 @@ Json analysisReportRequest(services::SqliteService& db, const Json& q, bool writ
     for (const auto& block : spec.at("blocks")) {
         auto query = block.at("reference");
         const auto kind = block.at("kind").get<std::string>();
-        query["action"] = kind == "table" ? "report" : kind == "plot" ? "plot" : "readFinding";
+        query["action"] = kind == "table"     ? "report"
+                          : kind == "plot"    ? "plot"
+                          : kind == "overlay" ? "overlayEvaluate"
+                                              : "readFinding";
         auto result = evaluate(query);
         if (result.value("status", std::string{}) != "ok") return result;
         blocks.push_back(Json{{"spec", block}, {"result", result}});

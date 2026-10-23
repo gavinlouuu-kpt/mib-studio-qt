@@ -168,7 +168,7 @@ and refusal to silently retarget an initialized metadata authority.
 ### Template/comparison continuation (2026-10-23)
 
 Production tailnet WebSocket validated two distinct synthetic recordings (14 and
-20 observations), retained snapshots, exact template application with interval
+22 observations; the second has20 processing-valid plus2 processing-invalid), retained snapshots, exact template application with interval
 override, native comparison, duplicate-source refusal and immutable finding replay.
 Finding `finding-1792755676005`, revision `1`, hash
 `sha256:f861750916701b10ad3b69a396f890a36d0ab5344a9ddb41f1a659ce53010401`.
@@ -219,3 +219,12 @@ not only display points. Repeat reads reproduce hash
 Normal native host and all4 ASan/UBSan standalone tests pass. Thirteen UI tests pass,
 including empty/extreme finite scatter coordinate rendering and exact large keys.
 No browser click-through claim.
+
+Multi-source overlay production proof: `overlay-1792758294811` revision1. Native
+counts14 and22 retained separately, fraction normalization sums to1 per layer;
+display offset0.5 does not alter values. Artifact hash
+`sha256:31b357ca7df8325793eaa39946a0ae5f30d7857e9481f7ceb785b3671e03551f`.
+Immutable report run `overlay-report-1792758294811-run` contains the exact overlay
+hash; report hash `sha256:453844183b21a3c7c638d0e8809f0e3bc987422af894f93ef26f8ca523e63e02`.
+Native tests reject mismatched bins and preserve counts despite offsets. All4
+ASan/UBSan standalone tests and13 UI regression tests pass. Browser unavailable.

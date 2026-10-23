@@ -141,3 +141,10 @@ F05 continuation: saved native raw/derived scatter now shares exact source/param
 revision identity and explicit hash-ranked display sampling. Counts/statistics use
 all selected observations, with missing coordinates separately reported. Empty and
 extreme finite presentation tests pass; multi-source overlays remain open.
+
+F11 continuation: native multi-source saved histogram overlays now require exact
+retained references and matching bins/domain/units/normalization, preserve per-layer
+denominators and keep offsets presentation-only. Exact overlays embed in immutable
+report runs. Tailnet14/22-observation proof, mismatch refusal and sanitizer tests pass.
+Scientific compatibility, arbitrary plot/layout families and full graphical editing
+remain separate obligations.

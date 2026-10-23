@@ -1,3 +1,4 @@
+import { AnalysisOverlay } from "./AnalysisOverlay";
 import { AnalysisLibrary } from "./AnalysisLibrary";
 import { AnalysisEmbedding } from "./AnalysisEmbedding";
 import { AnalysisReport } from "./AnalysisReport";
@@ -170,6 +171,7 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
       </fieldset>
       {comparison && <><pre>{JSON.stringify(comparison,null,2)}</pre><button onClick={()=>download("analysis-finding.json",JSON.stringify(comparison,null,2),"application/json")}>Download comparison evidence</button></>}
     </details>
+    <AnalysisOverlay read={read} write={write} disabled={disabled || busy}/>
     <AnalysisLibrary read={read} write={write} disabled={disabled || busy} onPrecision={setDisplayDigits}/>
     <AnalysisReport read={read} write={write} disabled={disabled || busy}/>
     <details><summary>Ordered analysis-parameter transforms</summary>

@@ -23,12 +23,12 @@ export function AnalysisReport({read,write,disabled}:{read:AnalysisCall;write:An
   }
   const download=(name:string,text:string,type:string)=>{const url=URL.createObjectURL(new Blob([text],{type}));const a=window.document.createElement("a");a.href=url;a.download=name;a.click();URL.revokeObjectURL(url);};
   return <details><summary>Saved report layouts and immutable runs</summary>
-    <p>Compose 1–8 table, plot or finding blocks, each with exact references. Tables and plots require retained snapshots. A build freezes every block in one immutable run; later template edits do not change it. Repeated run names cannot overwrite evidence.</p>
+    <p>Compose 1–8 table, plot, overlay or finding blocks, each with exact references. Tables and plots require retained snapshots. A build freezes every block in one immutable run; later template edits do not change it. Repeated run names cannot overwrite evidence.</p>
     <fieldset disabled={disabled||busy}>
       <label>Report ID<input value={id} onChange={e=>{setId(e.target.value);setRevision("");}}/></label>
       <label>Exact layout revision<input value={revision} onChange={e=>setRevision(e.target.value)}/></label>
       <label>Report layout JSON<textarea aria-label="Report layout JSON" rows={12} value={layout} onChange={e=>setLayout(e.target.value)}/></label>
-      <p>Block: <code>{'{"id":"table-1","title":"Population table","kind":"table","reference":{"planId":"plan","revision":"1","source":{"kind":"retained","id":"snapshot"}}}'}</code>. Plot uses the same reference; finding uses <code>{'{"findingId":"finding","revision":"1"}'}</code>.</p>
+      <p>Block: <code>{'{"id":"table-1","title":"Population table","kind":"table","reference":{"planId":"plan","revision":"1","source":{"kind":"retained","id":"snapshot"}}}'}</code>. Plot uses the same reference; overlay uses an exact overlayId/revision; finding uses <code>{'{"findingId":"finding","revision":"1"}'}</code>.</p>
       <button disabled={!id} onClick={()=>void run(()=>mutate({action:"reportSave",reportId:id,expectedRevision:revision||null,commandId:crypto.randomUUID(),layout:JSON.parse(layout)}))}>Save report layout</button>
       <button disabled={!id||!revision} onClick={()=>void run(async()=>{const reply=checked(await read({action:"reportRead",reportId:id,revision}));setLayout(JSON.stringify(reply.document.layout,null,2));})}>Load exact report layout</button>
       <label>Immutable run ID<input value={runId} onChange={e=>setRunId(e.target.value)}/></label>
@@ -46,7 +46,7 @@ export function AnalysisReport({read,write,disabled}:{read:AnalysisCall;write:An
           <h3>{block.spec.title}</h3><p>Exact reference: {JSON.stringify(block.spec.reference)}</p>
           {block.spec.kind==="table" ? <table><thead><tr>{["Population","Selected","Unknown","Mean","Median","Unit"].map(c=><th key={c}>{c}</th>)}</tr></thead>
             <tbody>{block.result.report.table.map((row:Record<string,any>)=><tr key={row.population}>{["population","selected","unknown","mean","median","unit"].map(k=><td key={k}>{row[k]??"—"}</td>)}</tr>)}</tbody></table>
-            :block.spec.kind==="plot" ? <AnalysisPlot artifact={block.result.plot}/> : <pre>{JSON.stringify(block.result.document,null,2)}</pre>}
+            :(block.spec.kind==="plot" || block.spec.kind==="overlay") ? <AnalysisPlot artifact={block.result.plot}/> : <pre>{JSON.stringify(block.result.document,null,2)}</pre>}
         </section>)}
       </article>
       <button onClick={()=>download("analysis-report.json",JSON.stringify(document,null,2),"application/json")}>Download immutable report JSON</button>

@@ -342,3 +342,20 @@ parameter/source fingerprints. Display points rank by SHA256 of canonical JSON
 sample. An event may appear in multiple layers. Sampling never changes native gates,
 statistics or job inputs. Empty scatter is valid and keeps null bounds. Production
 renderer supports raw/derived scatter in both saved plots and immutable reports.
+
+## Multi-source histogram overlays
+
+`overlaySave` (write): `overlayId,expectedRevision,commandId,spec`; spec contains
+`title,layers` (1–8), each `{id,label,population,displayOffset,reference}` with
+reference `{planId,revision,source:{kind:"retained",id}}`. Every saved source plot
+must be a native histogram with exactly matching edges, feature, units, preprocessing
+fingerprint and normalization. Selected layer must exist. Each layer preserves its
+native counts/values and denominator; the overlay's explicit offset replaces only
+the display offset. Same source in distinct layers is allowed, not treated as a
+replicate. Scientific compatibility stays unknown.
+
+`overlayRead` and `overlayEvaluate` (read) take exact `overlayId,revision`.
+Evaluation returns F-overlay/1 with source-set fingerprint, exact source/plot hashes,
+original population references and unchanged native values. Save uses CAS and
+receipt-before-reevaluation replay. Report layouts may include kind `overlay` with
+reference `{overlayId,revision}`; immutable report runs freeze its entire artifact.

@@ -38,6 +38,7 @@ if(MIB_ANALYSIS_HOST_TESTS)
         "${MIB_ROOT}/src/backend/analysis/AnalysisHost.cpp"
         "${MIB_ROOT}/src/backend/analysis/AnalysisComparison.cpp"
         "${MIB_ROOT}/src/backend/analysis/AnalysisReports.cpp"
+        "${MIB_ROOT}/src/backend/analysis/AnalysisOverlay.cpp"
         "${MIB_ROOT}/src/backend/analysis/AnalysisLibrary.cpp"
         "${MIB_ROOT}/src/backend/processing/ProcessingCoreSha256.cpp"
         "${MIB_ROOT}/src/backend/evidence/CommittedEventStore.cpp"

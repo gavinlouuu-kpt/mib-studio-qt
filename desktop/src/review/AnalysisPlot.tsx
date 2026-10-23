@@ -1,6 +1,6 @@
 import { useRef } from "react";
 export interface HistogramArtifact {
-  planId: string; revision: string; feature: string; unit: string; sourceFingerprint: string;
+  planId: string; revision: string; feature: string; unit: string; sourceFingerprint?: string; sourceSetFingerprint?: string;
   edges: number[]; spec: {normalization: string}; semantics: string;
   layers: Array<{population: string;displayOffset: number;values: Array<number|null>;counts: string[];underflow: string;overflow: string;missing: string;unknown: string}>;
 }
@@ -41,7 +41,7 @@ function HistogramPlot({artifact}: {artifact: HistogramArtifact}) {
   return <section aria-label="Saved population overlay">
     <svg ref={svg} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 300" role="img" aria-label={`${artifact.feature} population histogram`} style={{width:"min(100%, 720px)",background:"white",color:"#222"}}>
       <title>Plan {artifact.planId} revision {artifact.revision}</title>
-      <desc>{artifact.semantics} Source {artifact.sourceFingerprint}</desc>
+      <desc>{artifact.semantics} {artifact.sourceSetFingerprint ? `Source set ${artifact.sourceSetFingerprint}` : `Source ${artifact.sourceFingerprint}`}</desc>
       <path d="M60 20V240H660" fill="none" stroke="#555"/>
       <text x="60" y="260" fontSize="12">{artifact.edges[0]}</text><text x="660" y="260" textAnchor="end" fontSize="12">{artifact.edges[artifact.edges.length-1]}</text>
       <text x="360" y="287" textAnchor="middle" fontSize="13">{artifact.feature} ({artifact.unit})</text>
