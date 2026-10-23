@@ -1,6 +1,8 @@
 #include "backend/review/ReviewSession.h"
 #include "backend/analysis/PopulationStatistics.h"
 #include "backend/analysis/PopulationGraph.h"
+#include "backend/analysis/SourceAnalysis.h"
+#include "backend/processing/ProcessingCoreSha256.h"
 #include <atomic>
 
 #include "backend/processing/ProcessingContract.h"
@@ -200,6 +202,8 @@ namespace backend::review
         bool open{false};
         std::string path;
         bool recording{false};
+        std::filesystem::file_time_type openedWriteTime{};
+        std::uintmax_t openedSize{0};
         std::vector<services::ProcessedFrame> validMeta;
         std::vector<services::ProcessedFrame> invalidMeta;
         bool validMetaReadable{false};
@@ -478,6 +482,8 @@ namespace backend::review
         {
             try
             {
+                const auto sizeBefore = std::filesystem::file_size(filePath);
+                const auto timeBefore = std::filesystem::last_write_time(filePath);
                 if (!reader.loadFile(filePath))
                 {
                     if (error) *error = "File not found or not an HDF5 review file: " + filePath;
@@ -487,6 +493,10 @@ namespace backend::review
                 path = filePath;
                 recording = reader.isRecordingFile();
                 readMetadataLocked();
+                openedSize = std::filesystem::file_size(filePath);
+                openedWriteTime = std::filesystem::last_write_time(filePath);
+                if (openedSize != sizeBefore || openedWriteTime != timeBefore)
+                    throw std::runtime_error("Source changed while opening");
                 return true;
             }
             catch (const std::exception &e)
@@ -743,7 +753,7 @@ namespace backend::review
             if (requestJson.size() > 65536) return refuse("Analysis request exceeds 65536 bytes");
             const auto request = Json::parse(requestJson);
             if (!request.is_object() ||
-                (request.size() != 4 + request.count("graph") + request.count("galleryOffset")) ||
+                (request.size() != 4 + request.count("graph") + request.count("galleryOffset") + request.count("snapshot") + request.count("sourceKind") + request.count("galleryKeys") + request.count("expectedFingerprint")) ||
                 !request.contains("feature") || !request.contains("minimum") ||
                 !request.contains("maximum") || !request.contains("expectedPath"))
                 return refuse("Expected feature, minimum, maximum and expectedPath");
@@ -812,10 +822,21 @@ namespace backend::review
             // One lock covers source identity, both sets, reduction and optional
             // image copies through the existing reader. No acquisition calls.
             std::scoped_lock lock(impl_->mutex);
-            if (!impl_->open || impl_->recording)
-                return refuse("Open an experiment file with object metadata");
+            if (!impl_->open) return refuse("Open a recording before analysis");
             if (request.at("expectedPath").get<std::string>() != impl_->path)
                 return refuse("The open source changed; refresh before analyzing");
+            if (request.value("sourceKind", std::string("stored")) == "run-archive") {
+                const auto archive = impl_->reader.readScalarStringAttribute("/monitoring", "run_evidence_json");
+                if (!archive || archive->size() > 4 * 1024 * 1024)
+                    return refuse("Run event archive absent or exceeds 4 MiB budget");
+                auto source = adaptEvidenceArchive(Json::parse(*archive));
+                source["scope"] = "run-archive";
+                source["path"] = impl_->path;
+                return Json{{"ok", true}, {"source", source}}.dump();
+            }
+            if (request.value("sourceKind", std::string("stored")) != "stored")
+                return refuse("Unknown source kind");
+            if (impl_->recording) return refuse("Open an experiment file with object metadata");
             if (!impl_->validMetaReadable || !impl_->invalidMetaReadable)
                 return refuse(
                     "Object metadata is unreadable; incomplete populations are not analyzed");
@@ -828,6 +849,49 @@ namespace backend::review
                 impl_->meta.totalInvalid != impl_->invalidMeta.size())
                 return refuse(
                     "Stored counts and readable rows disagree; source coverage is incomplete");
+            const bool freeze = request.value("snapshot", false);
+            std::string fileHash;
+            if (freeze) {
+                if (impl_->openedSize > 64 * 1024 * 1024)
+                    return refuse("Source-bound analysis supports files up to 64 MiB; no partial fingerprint");
+                if (std::filesystem::file_size(impl_->path) != impl_->openedSize ||
+                    std::filesystem::last_write_time(impl_->path) != impl_->openedWriteTime)
+                    return refuse("Source changed since open; reopen before source-bound analysis");
+                std::string error;
+                fileHash = processing::processingCoreFileSha256(impl_->path, &error);
+                if (fileHash.empty()) return refuse("Source fingerprint failed: " + error);
+                if (std::filesystem::file_size(impl_->path) != impl_->openedSize ||
+                    std::filesystem::last_write_time(impl_->path) != impl_->openedWriteTime)
+                    return refuse("Source changed while fingerprinting");
+            }
+            if (request.contains("galleryKeys")) {
+                if (!freeze || request.at("expectedFingerprint") != "sha256:" + fileHash)
+                    return refuse("Gallery source fingerprint changed");
+                const auto& keys = request.at("galleryKeys");
+                if (!keys.is_array() || keys.size() > 12) return refuse("Gallery requires at most 12 exact keys");
+                Json images = Json::array();
+                for (const auto& value : keys) {
+                    const auto key = value.get<std::string>();
+                    const auto ref = Json::parse(key);
+                    if (!ref.is_array() || ref.size() != 3 || ref.at(0) != "sha256:" + fileHash ||
+                        (ref.at(1) != "valid" && ref.at(1) != "invalid")) return refuse("Foreign gallery event key");
+                    const auto ordinalText = ref.at(2).get<std::string>();
+                    const auto ordinal = std::stoull(ordinalText);
+                    if (std::to_string(ordinal) != ordinalText) return refuse("Invalid gallery ordinal");
+                    const bool valid = ref.at(1) == "valid";
+                    if (ordinal >= impl_->set(valid).size()) return refuse("Gallery ordinal outside source");
+                    Json item{{"key", key}, {"set", ref.at(1)}, {"ordinal", ordinalText}, {"pixels", nullptr}};
+                    cv::Mat image;
+                    if (impl_->composeFrameLocked(valid, ordinal, OverlayMode::None, false, image) && !image.empty()) {
+                        const auto tile = letterbox(image, 64, 1);
+                        item["pixels"] = std::vector<unsigned char>(tile.data, tile.data + tile.total());
+                    }
+                    images.push_back(std::move(item));
+                }
+                return Json{{"ok", true}, {"source", {{"schema", "F-gallery/1"},
+                    {"fingerprint", "sha256:" + fileHash}, {"images", images}}}}.dump();
+            }
+            Json sourceRows = Json::array();
             static std::atomic<std::uint64_t> next{0};
             const auto snapshot = std::string("local-evaluation:") + std::to_string(++next);
             RevisionKey revision{snapshot,
@@ -864,6 +928,20 @@ namespace backend::review
                     const auto set = valid ? "valid" : "invalid";
                     const auto key = snapshot + ":" + set + ":" + ordinal;
                     const auto truth = evaluateInterval(value, interval);
+                    if (freeze) {
+                        Json measures = Json::object();
+                        for (const auto& entry : std::vector<std::pair<std::string, double>>{
+                            {"area", v.area}, {"deformability", v.deformability}, {"youngsModulus", v.youngsModulus}}) {
+                            const bool present = std::find(fields.begin(), fields.end(), entry.first) != fields.end();
+                            measures[entry.first] = present && std::isfinite(entry.second) &&
+                                (entry.first != "youngsModulus" || entry.second > 0)
+                                ? Json(entry.second) : Json(nullptr);
+                        }
+                        const auto exact = Json::array({"sha256:" + fileHash, set, ordinal}).dump();
+                        sourceRows.push_back({{"key", exact}, {"set", set}, {"ordinal", ordinal},
+                            {"measurements", measures}, {"scientificQc", "unknown"},
+                            {"image", {{"available", nullptr}, {"sourceFingerprint", "sha256:" + fileHash}, {"set", set}, {"ordinal", ordinal}}}});
+                    }
                     membership.rows.push_back({key, truth});
                     universe.rows.push_back({key, Truth::True});
                     for (const auto& [id, gate] : gates) {
@@ -884,6 +962,16 @@ namespace backend::review
                                                    : truth == Truth::False ? "excluded"
                                                                            : "unknown"}});
                 }
+            }
+            if (freeze) {
+                Json source{{"schema", "F-source/1"}, {"sourceKey", "sha256:" + fileHash},
+                    {"fingerprint", "sha256:" + fileHash}, {"fingerprintKind", "full-file-sha256"},
+                    {"scope", "stored"}, {"path", impl_->path},
+                    {"parameters", {{"area", "pixel2"}, {"deformability", "dimensionless"}, {"youngsModulus", "kPa"}}},
+                    {"rows", sourceRows}, {"populationComplete", true}, {"finalized", true},
+                    {"provenance", {{"processing", nullptr}, {"calibration", nullptr}, {"mechanics", nullptr},
+                        {"semantics", "stored measurements; no recomputation or compatibility inferred from missing provenance"}}}};
+                return Json{{"ok", true}, {"source", source}}.dump();
             }
             if (request.contains("graph")) {
                 membership = evaluatePlan(plan, universe, universe, predicates).at(output);

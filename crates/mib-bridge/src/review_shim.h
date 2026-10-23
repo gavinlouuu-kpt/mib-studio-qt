@@ -43,6 +43,9 @@ public:
     ReviewInfo fetch_review_info();
     ReviewProbeResult review_probe_runs(rust::Vec<rust::String> paths);
     // Review ABI 6 (#716 A7a): the run quick look's twin (review-contract.json review_run_statistics).
+    rust::String review_analysis_read(rust::Str request);
+    rust::String review_analysis_write(rust::Str request);
+    rust::String review_analysis_request(rust::Str request, bool write);
     rust::String review_analyze_population(rust::Str request_json);
     rust::String review_run_statistics(rust::Str request_json);
     ReviewRows fetch_review_rows(bool valid, std::uint64_t offset, std::uint64_t count);

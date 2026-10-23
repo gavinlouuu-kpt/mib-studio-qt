@@ -355,6 +355,9 @@ async function command(name: string, args?: Record<string, unknown>): Promise<Re
 }
 
 export const reviewBridge = {
+  analysisJob: (request: Record<string, unknown>) => invoke<Record<string, any>>("review_analysis_job", { request }),
+  analysisRead: (request: Record<string, unknown>) => invoke<Record<string, any>>("review_analysis_read", { request }),
+  analysisWrite: (request: Record<string, unknown>) => invoke<Record<string, any>>("review_analysis_write", { request }),
   analyzePopulation: (request: import("./PopulationAnalysis").PopulationRequest) =>
     invoke<PopulationResult>("review_analyze_population", { request }),
   abiVersion: () => invoke<number>("review_abi_version"),

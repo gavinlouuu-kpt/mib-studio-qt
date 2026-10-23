@@ -63,6 +63,7 @@ add_library(mib_processing STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingContract.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ImageFilterPipeline.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ChannelRoiDetect.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/evidence/CommittedEventStore.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/processing/ProcessingService.cpp
     # Science placement is a leaf (no dependencies); it lives with ProcessingService, which
     # consults it, so processing-only binaries link.
@@ -216,6 +217,10 @@ mib_link_hdf5(mib_processing PUBLIC)
 # links it without mib_backend, while mib_backend links it for the
 # BackendFacade's review surface and the Qt tab's parity.
 add_library(mib_review_core STATIC
+    ${PROJECT_SOURCE_DIR}/src/backend/analysis/AnalysisHost.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/database/SqliteService.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/workspace/WorkspaceStore.cpp
+    ${PROJECT_SOURCE_DIR}/src/backend/analysis/SourceAnalysis.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/analysis/PopulationGraph.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/analysis/Population.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/analysis/PopulationStatistics.cpp
@@ -251,6 +256,7 @@ set_target_properties(mib_review_core PROPERTIES
 target_include_directories(mib_review_core PUBLIC ${PROJECT_SOURCE_DIR}/include)
 target_include_directories(mib_review_core PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated/review")
 target_link_libraries(mib_review_core PUBLIC mib_processing)
+mib_link_sqlite(mib_review_core PUBLIC)
 
 if(MIB_BUILD_REVIEW_LINK_PROBE)
     add_executable(mib_review_link_probe ${PROJECT_SOURCE_DIR}/tools/review_link_probe/main.cpp)
@@ -524,7 +530,6 @@ add_library(mib_backend STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/services/Logger.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/CrashReporter.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/MinidumpUploader.cpp
-    ${PROJECT_SOURCE_DIR}/src/backend/database/SqliteService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/CameraControlService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/services/CaptureService.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/recording/RecorderService.cpp

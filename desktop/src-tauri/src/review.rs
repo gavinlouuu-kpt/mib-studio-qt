@@ -404,7 +404,10 @@ pub fn is_initialized(state: State<AppState>) -> Result<bool, String> {
 pub fn init(app: tauri::AppHandle, state: State<AppState>, data_dir: String) -> Result<bool, String> {
     let dir = crate::review_app::resolve_data_dir(&app, data_dir)?;
     let mut guard = state.review.lock().map_err(|e| e.to_string())?;
-    Ok(guard.pin_mut().initialize(&dir))
+    let ok = guard.pin_mut().initialize(&dir);
+    drop(guard);
+    if ok { state.analysis_jobs.lock().map_err(|e| e.to_string())?.initialize(std::path::Path::new(&dir)); }
+    Ok(ok)
 }
 
 /// A file the OS asked us to open after launch began: macOS delivers Finder
@@ -540,6 +543,23 @@ pub fn fetch_review_info(state: State<AppState>) -> Result<ReviewInfo, String> {
 }
 
 /// Bounded read-only native population analysis, scheduled off the UI thread.
+#[tauri::command]
+pub async fn review_analysis_job(state: State<'_, AppState>, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    state.analysis_jobs.lock().map_err(|e| e.to_string())?.command(request, |q| {
+        let mut guard = state.review.lock().map_err(|e| e.to_string())?;
+        serde_json::from_str(&guard.pin_mut().review_analysis_read(&q.to_string())).map_err(|e| e.to_string())
+    })
+}
+#[tauri::command]
+pub async fn review_analysis_read(state: State<'_, AppState>, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    let mut guard = state.review.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().review_analysis_read(&request.to_string())).map_err(|e| e.to_string())
+}
+#[tauri::command]
+pub async fn review_analysis_write(state: State<'_, AppState>, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    let mut guard = state.review.lock().map_err(|e| e.to_string())?;
+    serde_json::from_str(&guard.pin_mut().review_analysis_write(&request.to_string())).map_err(|e| e.to_string())
+}
 #[tauri::command]
 pub async fn review_analyze_population(
     state: State<'_, AppState>, request: serde_json::Value,

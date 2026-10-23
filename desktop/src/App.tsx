@@ -93,7 +93,8 @@ import { runPreviewRgba, type RunPreview } from "./runPreview";
 import { InstrumentLedControls } from "./components/InstrumentLedControls";
 import { ProfilesPanel, useProfiles } from "./profiles";
 import { ConfigDocumentEditor, useConfigDocument } from "./configDocument";
-import { PopulationAnalysis } from "./review/PopulationAnalysis";
+import { AnalysisWorkspace } from "./review/AnalysisWorkspace";
+import { PopulationAnalysis, exampleGraph } from "./review/PopulationAnalysis";
 import { ReanalysisControls, ReanalysisStatus, useReanalysis } from "./reanalysisControls";
 import { SavedReviewImage } from "./components/SavedReviewImage";
 import { ReviewCharts } from "./components/ReviewCharts";
@@ -2175,6 +2176,10 @@ export default function App() {
                 {expTab === "files" && isRemote && <FilesPanel ramWarning={instrument?.storage?.warning || undefined} />}
                 {expTab === "monitoring" && (
                   <>
+                    <details><summary>Live population strategies</summary>
+                      <AnalysisWorkspace path="" disabled={!ready || viewerOnly} graphText={JSON.stringify(exampleGraph)} feature="area"
+                        read={bridge.analysisRead} write={bridge.analysisWrite} job={bridge.analysisJob} live />
+                    </details>
                     <div className="toolbar">
                       <ViewerGate>
                       <button
@@ -2427,7 +2432,7 @@ export default function App() {
                   <RunOutcomeNotice outcome={reviewOutcome} />
                   <ReviewExportOptions model={reviewExport}/>
                   {reviewMeta?.file_open && !reviewMeta.recording_file && <PopulationAnalysis
-                    key={`${reviewMeta.file_path}:${reviewSourceGeneration.current}`} path={reviewMeta.file_path} evaluate={bridge.analyzePopulation}
+                    key={`${reviewMeta.file_path}:${reviewSourceGeneration.current}`} path={reviewMeta.file_path} evaluate={bridge.analyzePopulation} analysisRead={bridge.analysisRead} analysisWrite={bridge.analysisWrite} analysisJob={bridge.analysisJob} live
                     disabled={!ready || expActive || reviewSourceBusy || reviewExport.busy || reanalysis.busy} />}
                   {caps.reanalysis && <ViewerGate><ReanalysisControls model={reanalysis} metadata={reviewMeta} blocked={reviewExport.busy || reviewSourceBusy || !ready}/></ViewerGate>}
                   {reviewTab === "charts" && <ReviewCharts sourcePath={reviewMeta?.file_path ?? ""}/>}

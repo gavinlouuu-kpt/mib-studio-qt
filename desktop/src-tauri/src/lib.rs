@@ -384,6 +384,18 @@ fn fetch_review_metadata(state: State<AppState>) -> Result<cmds::ReviewMetadata,
 }
 
 #[tauri::command]
+async fn analysis_job(state: State<'_, AppState>, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    cmds::analysis_job(&state, request)
+}
+#[tauri::command]
+async fn analysis_read(state: State<'_, AppState>, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    cmds::analysis_read(&state, request)
+}
+#[tauri::command]
+async fn analysis_write(state: State<'_, AppState>, request: serde_json::Value) -> Result<serde_json::Value, String> {
+    cmds::analysis_write(&state, request)
+}
+#[tauri::command]
 async fn analyze_population(state: State<'_, AppState>, request: serde_json::Value) -> Result<serde_json::Value, String> {
     cmds::analyze_population(&state, request)
 }
@@ -896,6 +908,9 @@ pub fn run() {
             fetch_review_metadata,
             fetch_review_metrics_page,
             analyze_population,
+            analysis_read,
+            analysis_write,
+            analysis_job,
             fetch_review_image,
             review_image_bytes,
             review_export_csv,

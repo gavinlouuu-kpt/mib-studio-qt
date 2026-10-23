@@ -1,4 +1,5 @@
 #include "backend/processing/ProcessingService.h"
+#include "backend/evidence/AnalysisMapping.h"
 #include "backend/processing/ChannelRoiDetect.h"
 #include "backend/processing/IExecutionProvider.h"
 #include "backend/app/SciencePlacement.h"
@@ -8,6 +9,7 @@
 #include "backend/processing/ProcessingScience.h"
 #include "backend/processing/ProcessingConfigJson.h"
 #include <nlohmann/json.hpp>
+#include <random>
 #include "backend/recording/Hdf5Service.h"
 #include "backend/diagnostics/CrashStateMirror.h"
 #include "backend/diagnostics/PipelineTimingRecorder.h"
@@ -80,6 +82,8 @@ void applyTrackState(ProcessedFrame& frame, const BatchTrack& track) {
 
 ProcessingService::ProcessingService()
     : processingKernel_(backend::processing::makeBundledProcessingKernel()) {
+    std::random_device random;
+    evidenceOwner_ = "host-evidence-" + std::to_string(random()) + "-" + std::to_string(random());
     if (const char* pin = std::getenv("MIB_STUDIO_PROCESSING_CORE_VERSION")) {
         requiredProcessingCoreVersion_ = pin;
     }
@@ -216,7 +220,20 @@ void ProcessingService::startRealtime(std::shared_ptr<backend::playback::FrameSt
         if (rtRunning_.load()) return;
     }
     rtStore_ = std::move(store);
-    processingSession_.fetch_add(1);
+    const auto evidenceSession = processingSession_.fetch_add(1) + 1;
+    evidenceStoreGeneration_ = rtStore_ ? rtStore_->storeGeneration() : 0;
+    backend::evidence::Provenance evidenceProvenance;
+    evidenceProvenance.sourceKind = "host-camera-processing";
+    evidenceProvenance.eventMode = "object_observation";
+    evidenceProvenance.denominator = "host frames after initial processing cursor; includes "
+                                     "declared losses, excludes initial frame 0";
+    evidenceProvenance.parameters = {{"area", "pixel2"}, {"deformability", "dimensionless"}};
+    evidenceProvenance.processing = "config-" + std::to_string(configVersion_.load());
+    liveEvidence_.begin(
+        {evidenceOwner_ + "-camera-" + std::to_string(evidenceCameraSession_.load()),
+         std::to_string(evidenceSession), std::nullopt, std::to_string(evidenceSession),
+         *evidenceProvenance.processing, rtStore_ ? rtStore_->storeGeneration() : 0},
+        evidenceProvenance, rtLastProcessed_.load() + 1);
     // A (possibly new) store whose frame indices may repeat earlier ones: a new capture for the
     // monitoring rows (#716 A6a), before the loop reads its first frame.
     requestMonitoringCaptureChange("realtime processing started");
@@ -239,6 +256,10 @@ void ProcessingService::startRealtime(std::shared_ptr<backend::playback::FrameSt
 bool ProcessingService::activateProcessingKernel(
     std::shared_ptr<backend::processing::IProcessingKernel> kernel, std::string* error,
     ProcessingCoreActivationPreCommit preCommit) {
+    auto evidenceChange = liveEvidence_.revisionChange(
+        "processing core selection changed; restart realtime processing");
+    auto runEvidenceChange = runLiveEvidence_.revisionChange(
+        "processing core selection changed; restart realtime processing");
     if (!kernel) {
         if (error) *error = "processing kernel is null";
         return false;
@@ -368,6 +389,9 @@ void ProcessingService::stopRealtime() {
     const bool wasRunning = rtRunning_.exchange(false, std::memory_order_acq_rel);
     if (!wasRunning && !realtimeThread_.joinable()) return;
     if (realtimeThread_.joinable()) realtimeThread_.join();
+    // realtimeBatchLoop joins its workers before returning. This is the terminal
+    // publication barrier, not the camera-stop notification (which can precede drain).
+    liveEvidence_.finish(rtStore_ ? rtStore_->committedCount() : 0);
     backend::diagnostics::CrashStateMirror::instance().processing.realtimeRunning.store(false);
     // Nothing is processed any more: the throughput is 0, not the last window's (#763 F17).
     algoFps1s_.store(0.0, std::memory_order_relaxed);
@@ -377,6 +401,126 @@ void ProcessingService::stopRealtime() {
     // Stopping realtime ends the capture (#716 A6a review 3): the live cell store clears its
     // strip and keeps its pins' measurements only; images after the run belong to Review.
     if (wasRunning) requestMonitoringCaptureChange("realtime processing stopped");
+}
+
+bool ProcessingService::drainAndStopRealtime() {
+    const uint64_t end = rtStore_ ? rtStore_->committedCount() : 0;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    bool drained = false;
+    while (rtRunning_.load(std::memory_order_acquire)) {
+        bool pending;
+        {
+            std::scoped_lock lock(batchMutex_);
+            pending =
+                !batchQueue_.empty() || batchFramesInFlight_.load(std::memory_order_acquire) != 0;
+        }
+        drained = (!end || rtLastProcessed_.load(std::memory_order_acquire) >= end - 1) && !pending;
+        if (drained || std::chrono::steady_clock::now() >= deadline) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    stopRealtime();
+    return drained;
+}
+
+std::string ProcessingService::runEvidenceJson() {
+    using nlohmann::json;
+    auto snapshot = runLiveEvidence_.snapshot();
+    if (!snapshot)
+        return json{{"schema", "E-run-events/1"},
+                    {"available", false},
+                    {"reason", runLiveEvidence_.reason()}}
+            .dump();
+    if (!snapshot->finalized)
+        return json{
+            {"schema", "E-run-events/1"}, {"available", false}, {"reason", "run is not finalized"}}
+            .dump();
+    auto lease = runLiveEvidence_.acquireSnapshot(snapshot->identity);
+    if (lease.status != backend::evidence::Status::Ok)
+        return json{
+            {"schema", "E-run-events/1"}, {"available", false}, {"reason", "stale run snapshot"}}
+            .dump();
+    struct Release {
+        backend::evidence::LiveEvidence& owner;
+        uint64_t lease;
+        ~Release() { owner.release(lease); }
+    } release{runLiveEvidence_, lease.lease};
+    json rows = json::array();
+    std::size_t cursor = 0;
+    for (;;) {
+        auto page = runLiveEvidence_.page(snapshot->identity, lease.lease, cursor, 1024);
+        if (page.status != backend::evidence::Status::Ok)
+            return json{{"schema", "E-run-events/1"},
+                        {"available", false},
+                        {"reason", "run snapshot invalidated"}}
+                .dump();
+        for (const auto& row : page.rows)
+            rows.push_back(backend::evidence::analysisRow(snapshot->identity, row));
+        if (page.done) break;
+        cursor = page.next;
+    }
+    json gaps = json::array();
+    for (const auto& gap : snapshot->gaps)
+        gaps.push_back({{"begin", std::to_string(gap.batches.begin)},
+                        {"endExclusive", std::to_string(gap.batches.end)},
+                        {"reason", gap.reason}});
+    const auto& a = snapshot->accounting;
+    return json{{"schema", "E-run-events/1"},
+                {"available", true},
+                {"sourceKey", backend::evidence::analysisSourceKey(snapshot->identity)},
+                {"finalized", snapshot->finalized},
+                {"coverage", backend::evidence::analysisCoverage(*snapshot)},
+                {"admittedFrames", std::to_string(a.admittedFrames)},
+                {"completedFrames", std::to_string(a.completedFrames)},
+                {"errorFrames", std::to_string(a.errorFrames)},
+                {"droppedFrames", std::to_string(a.droppedFrames)},
+                {"parameters",
+                 {{{"id", "area"}, {"unit", "pixel2"}},
+                  {{"id", "deformability"}, {"unit", "dimensionless"}}}},
+                {"rows", rows},
+                {"gaps", gaps},
+                {"durableAcknowledged", false},
+                {"imageRetentionGuaranteed", false}}
+        .dump();
+}
+
+std::string ProcessingService::liveEvidenceJson() {
+    using nlohmann::json;
+    auto snapshot = liveEvidence_.snapshot();
+    if (!snapshot)
+        return json{
+            {"schema", "E-live/1"}, {"available", false}, {"reason", liveEvidence_.reason()}}
+            .dump();
+    const auto& s = *snapshot;
+    const auto& a = s.accounting;
+    json gaps = json::array();
+    for (const auto& gap : s.gaps)
+        gaps.push_back({{"reason", gap.reason},
+                        {"begin", std::to_string(gap.batches.begin)},
+                        {"endExclusive", std::to_string(gap.batches.end)}});
+    return json{
+        {"schema", "E-live/1"},
+        {"available", true},
+        {"source", s.identity.source},
+        {"session", s.identity.session},
+        {"epoch", s.identity.epoch},
+        {"revision", s.identity.revision},
+        {"sourceGeneration", std::to_string(s.identity.generation)},
+        {"denominator", s.provenance.denominator},
+        {"scope", "processing_epoch_not_recording_run"},
+        {"finalized", s.finalized},
+        {"nextBatchExclusive", std::to_string(s.watermark)},
+        {"admittedFrames", std::to_string(a.admittedFrames)},
+        {"completedFrames", std::to_string(a.completedFrames)},
+        {"errorFrames", std::to_string(a.errorFrames)},
+        {"droppedFrames", std::to_string(a.droppedFrames)},
+        {"observedEvents", std::to_string(a.observedEvents)},
+        {"missingEvents", std::to_string(a.missingEvents)},
+        {"eventCountKnown", s.eventCountKnown},
+        {"gaps", gaps},
+        {"durableAcknowledged", false},
+        {"imageRetentionGuaranteed", false},
+        {"reason", "Host processing evidence; not hardware qualification or live/offline parity"}}
+        .dump();
 }
 
 void ProcessingService::setRealtimeEnabled(bool on) {
@@ -457,6 +601,9 @@ bool sameRoi(const ProcessingService::Roi& a, const ProcessingService::Roi& b) {
 } // namespace
 
 void ProcessingService::setRealtimeRoi(const Roi& roi) {
+    auto evidenceChange = liveEvidence_.revisionChange("ROI changed; restart realtime processing");
+    auto runEvidenceChange =
+        runLiveEvidence_.revisionChange("ROI changed; restart realtime processing");
     const auto apply = [&] {
         {
             std::scoped_lock lk(rtMutex_);
@@ -544,6 +691,10 @@ ProcessingService::Roi ProcessingService::getRealtimeRoi() const {
 }
 
 void ProcessingService::setRealtimeBackgroundGray(const cv::Mat& bg) {
+    auto evidenceChange = liveEvidence_.revisionChange(
+        "scientific settings changed; restart realtime processing for a new evidence epoch");
+    auto runEvidenceChange = runLiveEvidence_.revisionChange(
+        "scientific settings changed; restart realtime processing for a new evidence epoch");
     const auto apply = [&] {
         std::shared_ptr<const cv::Mat> stored;
         {
@@ -675,7 +826,28 @@ void ProcessingService::startExperiment() {
     backend::diagnostics::PipelineTimingRecorder::instance().resetLiveLatency();
     // Reset auto-capture counter when experiment starts
     consecutiveEmptyFrames_.store(0, std::memory_order_relaxed);
-    experimentActive_.store(true);
+    {
+        std::unique_lock settle(experimentSettleMutex_);
+        backend::evidence::Provenance provenance;
+        provenance.sourceKind = "host-camera-processing";
+        provenance.eventMode = "object_observation";
+        provenance.denominator =
+            "host frames admitted after run-start committed boundary (initial frame zero excluded)";
+        provenance.parameters = {{"area", "pixel2"}, {"deformability", "dimensionless"}};
+        provenance.processing = "config-" + std::to_string(configVersion_.load());
+        const auto epoch = std::to_string(++evidenceRunSerial_);
+        if (backend::app::hostProcessingAvailable() && rtRunning_.load()) {
+            runLiveEvidence_.begin(
+                {evidenceOwner_, std::to_string(evidenceCameraSession_.load()),
+                 std::to_string(monitoringRunGeneration_.load()), epoch, *provenance.processing,
+                 evidenceStoreGeneration_},
+                provenance, std::max<uint64_t>(1, rtStore_ ? rtStore_->committedCount() : 1));
+        } else {
+            runLiveEvidence_.invalidate(
+                "host camera processing is not active; provider evidence is unsupported");
+        }
+        experimentActive_.store(true);
+    }
     {
         auto& m = backend::diagnostics::CrashStateMirror::instance().processing;
         m.experimentActive.store(true);
@@ -692,7 +864,10 @@ void ProcessingService::startExperiment() {
 
 bool ProcessingService::endExperiment() {
     bool drained = true;
-    experimentActive_.store(false);
+    {
+        std::unique_lock settle(experimentSettleMutex_);
+        experimentActive_.store(false);
+    }
     backend::diagnostics::CrashStateMirror::instance().processing.experimentActive.store(false);
     // Let the realtime thread finish the frame it admitted under the run so
     // the accounting snapshot taken by the caller is complete (bounded).
@@ -740,6 +915,9 @@ bool ProcessingService::endExperiment() {
             }
         }
     }
+    // Admissions are closed and late callbacks cannot append after this seal.
+    // Any work remaining after the bounded drain is an explicit unknown-event loss.
+    runLiveEvidence_.finish(0);
     const BufferedFrameCounts counts = experimentBuffer_.counts();
     SPDLOG_INFO("ProcessingService: experiment ended, valid frames: {}, invalid frames: {}",
                 counts.valid, counts.invalid);
@@ -898,6 +1076,11 @@ void ProcessingService::setMonitoringCaptureAuthority(MonitoringCaptureAuthority
 }
 
 uint64_t ProcessingService::requestMonitoringCaptureChange(const char* reason) {
+    const std::string change(reason);
+    if (change != "realtime processing started" && change != "realtime processing stopped") {
+        liveEvidence_.invalidate("source or ROI changed; restart realtime processing");
+        runLiveEvidence_.invalidate("source or ROI changed during run");
+    }
     std::scoped_lock lk(monitoringCaptureAuthorityMutex_);
     if (monitoringCaptureAuthority_) return monitoringCaptureAuthority_(reason);
     const uint64_t epoch = monitoringCaptureEpoch_.fetch_add(1, std::memory_order_acq_rel) + 1;
@@ -996,6 +1179,10 @@ void ProcessingService::releaseMonitoringShares(std::vector<cv::Mat>& shares) co
 }
 
 void ProcessingService::setProcessingConfig(const ProcessingConfig& config) {
+    auto evidenceChange = liveEvidence_.revisionChange(
+        "scientific settings changed; restart realtime processing for a new evidence epoch");
+    auto runEvidenceChange = runLiveEvidence_.revisionChange(
+        "scientific settings changed; restart realtime processing for a new evidence epoch");
     bool changesBackground;
     {
         std::scoped_lock lk(configMutex_);
@@ -1053,6 +1240,10 @@ ProcessingConfig ProcessingService::getEffectiveProcessingConfig() const {
 }
 
 void ProcessingService::setPixelToMicronFactor(double factor) {
+    auto evidenceChange = liveEvidence_.revisionChange(
+        "scientific settings changed; restart realtime processing for a new evidence epoch");
+    auto runEvidenceChange = runLiveEvidence_.revisionChange(
+        "scientific settings changed; restart realtime processing for a new evidence epoch");
     pixelToMicronFactor_.store(factor, std::memory_order_relaxed);
 }
 
@@ -1061,6 +1252,10 @@ double ProcessingService::getPixelToMicronFactor() const {
 }
 
 bool ProcessingService::loadEModulusLut(const std::string& path) {
+    auto evidenceChange =
+        liveEvidence_.revisionChange("mechanics calibration changed; restart realtime processing");
+    auto runEvidenceChange = runLiveEvidence_.revisionChange(
+        "mechanics calibration changed; restart realtime processing");
     // The hash is of the very bytes the table was built from (EModulusLut reads the file once), so
     // a file replaced after the load cannot be recorded as the table in use (#712).
     std::string bytes, loadedPath;
@@ -1349,8 +1544,18 @@ backend::recording::RecordingAccountingSnapshot ProcessingService::experimentAcc
     return backend::recording::reconcile(s);
 }
 
-void ProcessingService::noteRealtimeAdmitted(uint64_t idx) {
-    if (experimentActive_.load(std::memory_order_relaxed)) experimentAccounting_.admit(idx);
+void ProcessingService::noteRealtimeAdmitted(uint64_t idx, const backend::playback::Frame* frame) {
+    if (frame && (frame->captureSession != evidenceCameraSession_.load(std::memory_order_acquire) ||
+                  frame->storeGeneration != evidenceStoreGeneration_)) {
+        liveEvidence_.invalidate("frame source identity differs from the active capture");
+        runLiveEvidence_.invalidate("frame source identity differs from the active capture");
+    }
+    liveEvidence_.admit(idx);
+    std::shared_lock settle(experimentSettleMutex_);
+    if (experimentActive_.load(std::memory_order_relaxed)) {
+        runLiveEvidence_.admit(idx);
+        experimentAccounting_.admit(idx);
+    }
 }
 
 void ProcessingService::noteRealtimeLost(uint64_t count) {
@@ -1361,6 +1566,8 @@ void ProcessingService::noteRealtimeLost(uint64_t count) {
 
 void ProcessingService::noteRealtimeOutcome(uint64_t idx, backend::recording::FrameOutcome outcome,
                                             const backend::playback::Frame* frame) {
+    liveEvidence_.complete(idx, {}, outcome != backend::recording::FrameOutcome::Empty);
+    runLiveEvidence_.complete(idx, {}, outcome != backend::recording::FrameOutcome::Empty);
     if (outcome == backend::recording::FrameOutcome::ProcessingFailed) {
         processingFailures_.fetch_add(1, std::memory_order_relaxed);
     }
@@ -1442,6 +1649,10 @@ void ProcessingService::setBackgroundPublicationTransaction(
 
 bool ProcessingService::publishCalibratedBackgroundLocked(cv::Mat background,
                                                           std::unique_lock<std::mutex>& lock) {
+    auto evidenceChange =
+        liveEvidence_.revisionChange("background calibration changed; restart realtime processing");
+    auto runEvidenceChange = runLiveEvidence_.revisionChange(
+        "background calibration changed; restart realtime processing");
     const auto generation = bgCalStatus_.operationGeneration;
     bool published = false;
     // Coordinator -> calibration is the lock order used by experiment readiness.
@@ -1671,6 +1882,24 @@ void ProcessingService::bgCalObserve(backend::recording::FrameOutcome outcome,
 }
 
 void ProcessingService::noteRealtimeValidation(uint64_t idx, const std::vector<FilterResult>& validations) {
+    std::vector<backend::evidence::EventRow> evidenceRows;
+    for (const auto& validation : validations) {
+        // A no-object sentinel terminates the frame, not an invented event.
+        if (validation.objectCount == 0 && validation.objectId < 0) continue;
+        backend::evidence::EventRow row;
+        row.set = validation.isValid ? "valid" : "invalid";
+        if (validation.objectId >= 0) row.object = validation.objectId;
+        if (validation.trackId >= 0) row.track = validation.trackId;
+        row.values = {std::isfinite(validation.area) ? std::optional<double>(validation.area)
+                                                     : std::nullopt,
+                      std::isfinite(validation.deformability)
+                          ? std::optional<double>(validation.deformability)
+                          : std::nullopt};
+        row.qc = validation.isValid ? "valid" : "invalid";
+        evidenceRows.push_back(std::move(row));
+    }
+    liveEvidence_.complete(idx, evidenceRows);
+    runLiveEvidence_.complete(idx, std::move(evidenceRows));
     const bool anyValid = std::any_of(validations.begin(), validations.end(),
                                       [](const FilterResult& r) { return r.isValid; });
     const auto outcome = anyValid ? backend::recording::FrameOutcome::Processed
@@ -3341,7 +3570,7 @@ void ProcessingService::realtimeBatchLoop() {
                 // processing-side loss and terminates immediately. Outcomes
                 // for accepted frames are counted when the batch callback
                 // publishes them (same rule as the inline loop).
-                noteRealtimeAdmitted(idx);
+                noteRealtimeAdmitted(idx, &frame);
                 const bool accepted = enqueueRealtimeBatchFrame(frame, idx, entry, monitoringEntryCache.roi);
                 if (accepted) {
                     ++queuedSinceSummary;
@@ -3742,7 +3971,7 @@ void ProcessingService::realtimeInlineLoop() {
                         ? autoCaptureBackground
                         : (hasBackground ? (*bgShared)(cv::Rect(roi.x, roi.y, roi.w, roi.h))
                                          : cv::Mat{});
-                noteRealtimeAdmitted(idx);
+                noteRealtimeAdmitted(idx, &f);
                 if (!isImageEmptyWithActiveKernel(
                         autoCaptureEmptyCheck ? blurredCurr : grayROI, emptyBackground, emptyConfig,
                         Roi{0, 0, roi.w, roi.h}, autoCaptureEmptyCheck, emptyFrame, &emptyError)) {
@@ -3858,7 +4087,6 @@ void ProcessingService::realtimeInlineLoop() {
                     validations.push_back(FilterResult{});
                 }
                 const FilterResult& validation = validations.front();
-                noteRealtimeValidation(idx, validations);
 
                 // Extract contours from validation result and adjust coordinates for full-frame
                 // snapshot Contours from filterProcessedImage are in ROI coordinates, need to
@@ -3888,6 +4116,9 @@ void ProcessingService::realtimeInlineLoop() {
                 publishRealtimeValidationCallbacks(
                     validations, f.timestamp,
                     {true, idx, f.hostTimestampUs, algoStartUsRec, algoEndUsRec});
+
+                // Evidence can allocate/copy bounded metadata: publish only after trigger dispatch.
+                noteRealtimeValidation(idx, validations);
 
                 // Off the trigger-critical path: update the identification
                 // funnel + invalid-reason histogram from this frame's objects.
@@ -4215,7 +4446,7 @@ void ProcessingService::realtimeInlineLoop() {
                 const cv::Mat emptyBackground =
                     autoCaptureEmptyCheck ? autoCaptureBackground
                                           : (hasBackground ? (*bgShared)(cvRoi) : cv::Mat{});
-                noteRealtimeAdmitted(idx);
+                noteRealtimeAdmitted(idx, &f);
                 if (!isImageEmptyWithActiveKernel(
                         autoCaptureEmptyCheck ? blurredCurr : roiCurr, emptyBackground, emptyConfig,
                         Roi{0, 0, roi.w, roi.h}, autoCaptureEmptyCheck, emptyFrame, &emptyError)) {
@@ -4335,7 +4566,6 @@ void ProcessingService::realtimeInlineLoop() {
                     validations.push_back(FilterResult{});
                 }
                 const FilterResult& validation = validations.front();
-                noteRealtimeValidation(idx, validations);
 
                 // Extract contours from validation result for snapshot
                 std::vector<std::vector<cv::Point>> contours =
@@ -4357,6 +4587,9 @@ void ProcessingService::realtimeInlineLoop() {
                 publishRealtimeValidationCallbacks(
                     validations, f.timestamp,
                     {true, idx, f.hostTimestampUs, algoStartUsRec, algoEndUsRec});
+
+                // Evidence can allocate/copy bounded metadata: publish only after trigger dispatch.
+                noteRealtimeValidation(idx, validations);
 
                 // Off the trigger-critical path: update the identification
                 // funnel + invalid-reason histogram from this frame's objects.
@@ -4646,7 +4879,7 @@ void ProcessingService::realtimeInlineLoop() {
                 const cv::Mat emptyBackground =
                     autoCaptureEmptyCheck ? autoCaptureBackground
                                           : (hasBackground ? (*bgShared)(cvRoi) : cv::Mat{});
-                noteRealtimeAdmitted(idx);
+                noteRealtimeAdmitted(idx, &f);
                 if (!isImageEmptyWithActiveKernel(
                         autoCaptureEmptyCheck ? blurredCurr : roiCurr, emptyBackground, emptyConfig,
                         Roi{0, 0, roi.w, roi.h}, autoCaptureEmptyCheck, emptyFrame, &emptyError)) {
@@ -4793,7 +5026,6 @@ void ProcessingService::realtimeInlineLoop() {
                     validations.push_back(FilterResult{});
                 }
                 const FilterResult& validation = validations.front();
-                noteRealtimeValidation(idx, validations);
 
                 // Extract contours from validation result for snapshot
                 // Contours are in ROI-relative coordinates — adjust to full-frame for
@@ -4823,6 +5055,9 @@ void ProcessingService::realtimeInlineLoop() {
                 publishRealtimeValidationCallbacks(
                     validations, f.timestamp,
                     {true, idx, f.hostTimestampUs, algoStartUsRec, algoEndUsRec});
+
+                // Evidence can allocate/copy bounded metadata: publish only after trigger dispatch.
+                noteRealtimeValidation(idx, validations);
 
                 // Off the trigger-critical path: update the identification
                 // funnel + invalid-reason histogram from this frame's objects.

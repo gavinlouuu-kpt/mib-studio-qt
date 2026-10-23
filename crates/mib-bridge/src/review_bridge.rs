@@ -474,6 +474,8 @@ pub mod review_ffi {
         /// are bridge-contract.json `run_quick_look`'s (the same C++ function computes them), for
         /// B2 R2's per-run numbers: each file read under the session's lock, deferred (never an
         /// error) while a review job runs; no cache; nothing written.
+        fn review_analysis_read(self: Pin<&mut ReviewBridge>, request: &str) -> String;
+        fn review_analysis_write(self: Pin<&mut ReviewBridge>, request: &str) -> String;
         fn review_analyze_population(self: Pin<&mut ReviewBridge>, request_json: &str) -> String;
         fn review_run_statistics(self: Pin<&mut ReviewBridge>, request_json: &str) -> String;
         fn fetch_review_rows(

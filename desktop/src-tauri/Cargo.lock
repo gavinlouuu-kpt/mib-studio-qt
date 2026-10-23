@@ -2157,11 +2157,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "mib-analysis-worker"
+version = "0.1.0"
+dependencies = [
+ "cxx",
+ "cxx-build",
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+]
+
+[[package]]
 name = "mib-app-commands"
 version = "0.1.0"
 dependencies = [
  "cxx",
  "hex",
+ "mib-analysis-worker",
  "mib-bridge",
  "serde",
  "serde_json",
@@ -2185,6 +2199,7 @@ version = "0.1.0"
 dependencies = [
  "cxx",
  "hex",
+ "mib-analysis-worker",
  "mib-app-commands",
  "mib-bridge",
  "semver",

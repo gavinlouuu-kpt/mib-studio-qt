@@ -763,6 +763,9 @@ async function pullFrame(command: string, kind: number, args?: Record<string, un
 }
 
 export const bridge = {
+  analysisJob: (request: Record<string, unknown>) => invoke<Record<string, any>>("analysis_job", { request }),
+  analysisRead: (request: Record<string, unknown>) => invoke<Record<string, any>>("analysis_read", { request }),
+  analysisWrite: (request: Record<string, unknown>) => invoke<Record<string, any>>("analysis_write", { request }),
   analyzePopulation: (request: import("./review/PopulationAnalysis").PopulationRequest) =>
     invoke<import("./review/PopulationAnalysis").PopulationResult>("analyze_population", { request }),
   abiVersion: () => invoke<number>("abi_version"),

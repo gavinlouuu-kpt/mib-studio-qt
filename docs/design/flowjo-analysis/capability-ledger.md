@@ -34,3 +34,32 @@ The historical Penpot inventory has 20 boards, 214 interactions and three flows.
 ## Native/worker slice evidence (2026-10-22)
 
 `analysis.population` and `analysis.graph`: normal and ASan/UBSan pass. Python real-engine adapter: 8 tests pass. Rust host/journal: 6 tests pass including the normally ignored real-engine test. Fresh-process module query reproduces `true, unknown, unknown, false` by exact source/set/row keys. Commands, limits and fixture are in [module README](../../../tools/flowjo_acceptance/README.md). Historical bare-engine qualification remains distinct and intentionally red for its two adapter-required cases. Remote [analysis CI](https://github.com/gavinlouuu-kpt/mib-studio-qt/actions/runs/39762481872) passes at `1278cfe5`, including native sanitizers, host/journal checks, clean pinned engine build and real-engine adapter tests. This is not a claim all repository CI is green.
+
+## Production integration delta (2026-10-23)
+
+The [production API](production-api.md) is implemented in the real Studio/Review
+bridges, not a replacement UI. Acceptance remains per-row, not inferred from a
+successful checkpoint:
+
+| Rows | Implemented and verified delta | Still open |
+|---|---|---|
+| F01/F12 | Full-file SHA256 (64 MiB budget), source mismatch refusal, SQLite immutable CAS revisions, receipt replay/restart/rollback, append-only restore, client pending-command journal | Scalable fingerprints, portable manifest/import/relink workflow, groups/metadata/preferences |
+| F04 | Native persisted interval/Boolean DAG, exact revision evaluation, raw nullable reductions | Full interactive gate editing, per-source overrides/resync and QC strategy graph |
+| F05/F06 | Fingerprint-fenced selected gallery with exact event keys, real stored thumbnails, 12/page | Saved PlotSpec; E retained images require exact provider asset locators (currently absent) |
+| F13 | Actual E producer integration, immutable bounded lease snapshots, batch watermark/coverage preservation, live-run/archive parity | Retained live application snapshots across advancing source; hardware EGrabber qualification |
+| F14 | Exact pinned plan lookup/evaluation and method triple lookup; absent compatibility stays unknown; no implicit apply | Full findings/endpoint/next-run evidence linkage and comparison design |
+| F16 | Production app scheduler, native source freeze, real Cytoflow polygon AND graph eligibility, cancel/reap/join, durable query/reconnect/reopen | Windows process supervision and distribution qualification; other engines/operations |
+
+F02/F03/F07/F08/F09/F10/F11/F15 retain their original obligations above. No scientific
+QC, compensation, embedding, report or interchange capability is accepted merely
+because source persistence/jobs now exist.
+
+Observed native tests: producer/archive parity and source fencing; strategy host
+CAS/fault/restart; shared store/host tests; Review source concurrency. Eight Review
+bridge tests pass including saved strategy reopen and gallery key parity. Ten UI
+tests pass including journal failure and lost-reply recovery. Real Cytoflow worker
+six tests and application scheduler two tests pass. Tailnet production WebSocket
+round trip: 10 selected, mean 104.6, 10 matching thumbnail keys and real-engine 10
+selected on the synthetic file. Browser automation is currently unavailable (no
+browsers registered), so the new controls' click-through is not claimed. TSan
+remains host-startup blocked; no sanitizer pass is inferred from normal tests.

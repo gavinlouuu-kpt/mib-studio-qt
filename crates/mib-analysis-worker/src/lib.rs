@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 mod native;
 pub mod store;
+pub mod app;
 
 pub const MAX_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_EVENTS: usize = 10_000;

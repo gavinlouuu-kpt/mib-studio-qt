@@ -123,3 +123,20 @@ The previous QA process was absent on resume; F restarted its owned server on
 the same loopback port without changing any tailnet handler. Current PID is
 recorded in `data/flowjo-app-qa/server.pid`. No live acquisition started. TSan
 remains host-blocked as previously documented; no new TSan pass is claimed.
+
+
+## Backend strategy and job continuation (2026-10-23)
+
+Same tailnet URL and production app. Review → Population analysis → Source-bound
+backend strategies: save a backend revision, load history, evaluate exact revision,
+load pinned gallery. Restore creates a new revision. Cytoflow polygon job: submit,
+refresh/cancel or reconcile after reconnect. Experiment → Monitoring → Live
+population strategies exposes the E adapter without requiring a stored file.
+
+The new slice is verified through actual tailnet WebSocket command dispatch and
+shared Review bridge; browser click-through awaits an available browser connector.
+Synthetic QA: saved exact plan revision selects 10 rows, mean 104.6; pinned gallery
+has the same 10 keys and images; real Cytoflow job returns 10 selected with the same
+full-file fingerprint. No hardware acquisition was started. Runtime configuration
+uses the existing pinned `/tmp/flowjo-808/venv312` development environment; it is not
+an installer/distribution qualification. API and limitations: [production-api](production-api.md).

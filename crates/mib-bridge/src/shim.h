@@ -126,6 +126,9 @@ public:
     BridgeCommandResult stage_apply_profile();
     BridgeStageStatus fetch_stage_status();
     BridgeReviewMetadata fetch_review_metadata();
+    rust::String analysis_read(rust::Str request);
+    rust::String analysis_write(rust::Str request);
+    rust::String fetch_live_evidence();
     rust::String analyze_population(rust::Str request_json);
     BridgeReviewMetricsPage fetch_review_metrics_page(bool valid, std::uint64_t offset,
                                                       std::uint64_t count);

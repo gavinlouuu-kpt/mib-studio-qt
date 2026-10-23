@@ -1050,6 +1050,9 @@ pub mod ffi {
 
         /// Pull one bounded page of frame/object metrics from the loaded file
         /// (schema v9, BE-6). `valid` selects the valid/invalid table.
+        fn analysis_read(self: Pin<&mut BackendBridge>, request: &str) -> String;
+        fn analysis_write(self: Pin<&mut BackendBridge>, request: &str) -> String;
+        fn fetch_live_evidence(self: Pin<&mut BackendBridge>) -> String;
         fn analyze_population(self: Pin<&mut BackendBridge>, request_json: &str) -> String;
         fn fetch_review_metrics_page(
             self: Pin<&mut BackendBridge>,

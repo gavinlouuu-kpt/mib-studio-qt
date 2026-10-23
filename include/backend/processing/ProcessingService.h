@@ -1,6 +1,7 @@
 #pragma once
 
 #include "backend/recording/RecordingAccounting.h"
+#include "backend/evidence/LiveEvidence.h"
 
 #include <algorithm>
 #include <atomic>
@@ -61,9 +62,28 @@ struct ExperimentBatch {
 };
 
 class ProcessingService {
+    backend::evidence::LiveEvidence liveEvidence_;
+    backend::evidence::LiveEvidence runLiveEvidence_;
+    uint64_t evidenceRunSerial_{0};
+    std::atomic<uint64_t> evidenceCameraSession_{0};
+    std::string evidenceOwner_;
+    uint64_t evidenceStoreGeneration_{0};
+
     friend struct ProcessingServiceFlushTestAccess;
 public:
     using Job = std::function<void()>;
+    // Metadata only; no durable/image-retention guarantee is implied.
+    backend::evidence::LiveEvidence& liveEvidence() { return liveEvidence_; }
+    backend::evidence::LiveEvidence& runLiveEvidence() { return runLiveEvidence_; }
+    void setEvidenceCameraSession(uint64_t session) {
+        auto change = liveEvidence_.revisionChange("camera source changed; restart realtime processing");
+        auto runChange = runLiveEvidence_.revisionChange("camera source changed during run");
+        evidenceCameraSession_.store(session, std::memory_order_release);
+    }
+    std::string liveEvidenceJson();
+    std::string runEvidenceJson();
+    bool drainAndStopRealtime();
+
 
     // The pixel-to-micron factor (µm per pixel) a service starts with, and the
     // one YOFO Review's "default settings" process at.
@@ -1023,7 +1043,7 @@ private:
     std::atomic<uint64_t> backgroundGeneration_{0};
     void bgCalObserve(backend::recording::FrameOutcome outcome, const backend::playback::Frame* frame);
     void bgCalFinishLocked(BackgroundCalibrationState state, const std::string& message);
-    void noteRealtimeAdmitted(uint64_t idx);
+    void noteRealtimeAdmitted(uint64_t idx, const backend::playback::Frame* frame = nullptr);
     void noteRealtimeLost(uint64_t count);
     void noteRealtimeValidation(uint64_t idx, const std::vector<FilterResult>& validations);
     

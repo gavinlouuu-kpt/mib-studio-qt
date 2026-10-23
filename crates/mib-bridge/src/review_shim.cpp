@@ -1,3 +1,5 @@
+#include "backend/analysis/AnalysisHost.h"
+#include "backend/database/SqliteService.h"
 // C++ side of the review bridge (ADR 0014). See review_shim.h.
 #include "mib-bridge/src/review_shim.h"
 
@@ -249,6 +251,8 @@ constexpr std::size_t kEventQueueCapacity = 4096;
 
 struct ReviewBridge::Impl {
     br::ReviewSession session;
+    backend::services::SqliteService analysisDatabase;
+    bool analysisDatabaseReady{false};
     // The bundled kernel for regenerate masks (ProcessingService owns no
     // threads until start(), which review never calls).
     backend::services::ProcessingService processing;
@@ -297,7 +301,11 @@ ReviewBridge::~ReviewBridge() {
 }
 
 bool ReviewBridge::initialize(rust::Str data_dir) {
-    (void)data_dir; // file logging arrives with the jobs (PR 1b)
+    if (!impl_->analysisDatabaseReady && !toStd(data_dir).empty()) {
+        std::filesystem::create_directories(toStd(data_dir));
+        impl_->analysisDatabaseReady = impl_->analysisDatabase.initialize((std::filesystem::path(toStd(data_dir)) / "app.sqlite3").string());
+        if (!impl_->analysisDatabaseReady) return false;
+    }
     impl_->initialized = true;
     return true;
 }
@@ -827,7 +835,7 @@ std::unique_ptr<ReviewBridge> new_review_bridge() { return std::make_unique<Revi
 // @emodulus_lut_json, named by emodulus_lut_provenance (snapshot | recorded |
 // host). v6 (#716 A7a): review_run_statistics, the run quick look's twin.
 std::uint32_t review_bridge_abi_version() {
-    return 8;
+    return 9;
 }
 
 namespace {
@@ -1010,3 +1018,32 @@ bool review_fixture_write_population(rust::Str path, std::uint32_t cells, std::u
 }
 
 } // namespace mib_review_bridge
+
+rust::String mib_review_bridge::ReviewBridge::review_analysis_read(rust::Str request) {
+    return review_analysis_request(request, false);
+}
+rust::String mib_review_bridge::ReviewBridge::review_analysis_write(rust::Str request) {
+    return review_analysis_request(request, true);
+}
+rust::String mib_review_bridge::ReviewBridge::review_analysis_request(rust::Str request, bool write) {
+    auto source = [this](const nlohmann::json& descriptor) -> nlohmann::json {
+        const auto kind = descriptor.at("kind").get<std::string>();
+        if (kind == "stored-gallery") {
+            if (descriptor.size() != 4) throw std::invalid_argument("Expected gallery path, fingerprint and keys");
+            const auto response = nlohmann::json::parse(impl_->jobs->analyzePopulation(nlohmann::json{
+                {"expectedPath", descriptor.at("path")}, {"feature", "area"}, {"minimum", nullptr}, {"maximum", nullptr},
+                {"snapshot", true}, {"galleryKeys", descriptor.at("keys")}, {"expectedFingerprint", descriptor.at("fingerprint")}}.dump()));
+            if (!response.value("ok", false)) throw std::invalid_argument(response.value("message", "Gallery refused"));
+            return response.at("source");
+        }
+
+        if ((kind != "stored" && kind != "run-archive") || descriptor.size() != 2)
+            throw std::invalid_argument("Review supports stored or run-archive sources only");
+        const auto result = nlohmann::json::parse(impl_->jobs->analyzePopulation(nlohmann::json{
+            {"expectedPath", descriptor.at("path")}, {"feature", "area"}, {"minimum", nullptr},
+            {"maximum", nullptr}, {"snapshot", true}, {"sourceKind", kind}}.dump()));
+        if (!result.value("ok", false)) throw std::invalid_argument(result.value("message", "Source refused"));
+        return result.at("source");
+    };
+    return rust::String(backend::analysis::analysisRequest(impl_->analysisDatabase, toStd(request), write, source));
+}

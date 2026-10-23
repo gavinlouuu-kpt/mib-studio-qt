@@ -1,4 +1,6 @@
+import { PopulationThumbnail } from "./PopulationThumbnail";
 import { useEffect, useRef, useState } from "react";
+import { AnalysisWorkspace, type AnalysisCall } from "./AnalysisWorkspace";
 import { reviewBridge } from "./reviewBridge";
 
 export interface PopulationGraph {
@@ -12,7 +14,7 @@ export interface PopulationRequest {
   expectedPath: string; feature: string; minimum: number | null; maximum: number | null; graph?: PopulationGraph; galleryOffset?: number;
 }
 const strategyKey = "mib.analysis.graph.recipe.v1";
-const exampleGraph: PopulationGraph = { id: "population-plan", revision: "1", output: "area-gate", nodes: [
+export const exampleGraph: PopulationGraph = { id: "population-plan", revision: "1", output: "area-gate", nodes: [
   { id: "area-gate", parent: "", kind: "interval", feature: "area", minimum: 100, maximum: 110 },
 ] };
 
@@ -27,22 +29,9 @@ export interface PopulationResult {
   galleryOffset?: number | null;
 }
 
-function PopulationThumbnail({ pixels }: { pixels: number[] }) {
-  const canvas = useRef<HTMLCanvasElement>(null);
-  useEffect(() => {
-    if (pixels.length !== 4096) return;
-    const context = canvas.current?.getContext("2d");
-    if (!context) return;
-    const image = context.createImageData(64, 64);
-    pixels.forEach((v, i) => { image.data[4*i] = v; image.data[4*i+1] = v; image.data[4*i+2] = v; image.data[4*i+3] = 255; });
-    context.putImageData(image, 0, 0);
-  }, [pixels]);
-  return <canvas ref={canvas} width={64} height={64} aria-label="Selected observation thumbnail" />;
-}
-
 /** Existing Review product surface; all science is evaluated by the native backend. */
-export function PopulationAnalysis({ path, disabled, evaluate = reviewBridge.analyzePopulation }: {
-  path: string; disabled: boolean; evaluate?: typeof reviewBridge.analyzePopulation;
+export function PopulationAnalysis({ path, disabled, evaluate = reviewBridge.analyzePopulation, analysisRead = reviewBridge.analysisRead, analysisWrite = reviewBridge.analysisWrite, analysisJob = reviewBridge.analysisJob, live = false }: {
+  path: string; disabled: boolean; evaluate?: typeof reviewBridge.analyzePopulation; analysisRead?: AnalysisCall; analysisWrite?: AnalysisCall; analysisJob?: AnalysisCall; live?: boolean;
 }) {
   const [graphEnabled, setGraphEnabled] = useState(false);
   const [graphText, setGraphText] = useState(JSON.stringify(exampleGraph, null, 2));
@@ -102,6 +91,7 @@ export function PopulationAnalysis({ path, disabled, evaluate = reviewBridge.ana
       <p>{saved}</p>
       <p>Browser-local recipe only; not a verified source-bound workspace. Copy the JSON to transfer it. Backend validates all nodes, cycles and budgets before publishing a result.</p>
     </details>
+    <AnalysisWorkspace path={path} disabled={disabled} graphText={graphText} feature={feature} read={analysisRead} write={analysisWrite} job={analysisJob} live={live} />
     {error && <p role="alert">{error}</p>}
     {result && <div role="status">
       <p>{result.selected} selected · {result.excluded} excluded · {result.unknown} unknown / {result.valid} valid + {result.invalid} invalid stored observations.</p>

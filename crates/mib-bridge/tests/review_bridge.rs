@@ -338,8 +338,8 @@ fn run_identity_in_info_and_the_probe() {
         serde_json::from_str(include_str!("../contract/review-contract.json")).unwrap();
     assert_eq!(
         ffi::review_bridge_abi_version(),
-        8,
-        "review ABI 8 (population analysis; 7 reserved for #804); previous ABI 6 (#716 A7a review_run_statistics; 5 is #783's E-LUT provenance; the identity since 2, the E-LUT and profile since 3)"
+        9,
+        "review ABI 9 (source-bound strategies; 8 population analysis; 7 reserved for #804); previous ABI 6 (#716 A7a review_run_statistics; 5 is #783's E-LUT provenance; the identity since 2, the E-LUT and profile since 3)"
     );
     let max_paths = contract["review_probe"]["max_paths"].as_u64().unwrap() as usize;
     assert_eq!(max_paths, 256);
@@ -775,4 +775,53 @@ fn review_population_native_both_set_integration() {
     bridge.pin_mut().review_close();
     assert_eq!(before, std::fs::read(&path).unwrap(), "analysis must never write the source");
     std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+#[serial]
+fn source_bound_strategy_survives_bridge_reopen_and_rejects_source_switch() {
+    use serde_json::{json, Value};
+    let root = std::env::temp_dir().join(format!("f_strategy_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir(&root).unwrap();
+    let path = root.join("source.h5").to_string_lossy().into_owned();
+    assert!(ffi::review_fixture_write_experiment(&path));
+    let mut b = ffi::new_review_bridge();
+    assert!(b.pin_mut().initialize(&root.to_string_lossy()));
+    assert!(b.pin_mut().review_open(&path).ok);
+    let descriptor = json!({"kind":"stored","path":path});
+    let snapshot: Value = serde_json::from_str(&b.pin_mut().review_analysis_read(&json!({"action":"snapshot","source":descriptor}).to_string())).unwrap();
+    assert_eq!(snapshot["status"],"ok", "{snapshot}");
+    assert_eq!(snapshot["source"]["rows"].as_array().unwrap().len(),14);
+    let mut binding = json!({});
+    for k in ["fingerprint","sourceKey","parameters","scope"] { binding[k]=snapshot["source"][k].clone(); }
+    let save = json!({"action":"save","planId":"plan","expectedRevision":null,"commandId":"first","feature":"area","source":descriptor,"sourceBinding":binding,
+        "graph":{"id":"plan","revision":"1","output":"gate","nodes":[{"id":"gate","parent":"","kind":"interval","feature":"area","minimum":100,"maximum":110}]}});
+    let saved: Value = serde_json::from_str(&b.pin_mut().review_analysis_write(&save.to_string())).unwrap();
+    assert_eq!(saved["revision"],"1", "{saved}");
+    drop(b);
+    let mut b = ffi::new_review_bridge();
+    assert!(b.pin_mut().initialize(&root.to_string_lossy()));
+    // Receipt replay does not require reopening the old recording.
+    let replay: Value = serde_json::from_str(&b.pin_mut().review_analysis_write(&save.to_string())).unwrap();
+    assert_eq!(replay,saved);
+    assert!(b.pin_mut().review_open(&path).ok);
+    let evaluation = json!({"action":"evaluate","planId":"plan","revision":"1","source":descriptor});
+    let result: Value = serde_json::from_str(&b.pin_mut().review_analysis_read(&evaluation.to_string())).unwrap();
+    assert_eq!(result["evaluation"]["selected"],"10", "{result}");
+    assert_eq!(result["evaluation"]["mean"],104.6);
+    assert_eq!(result["evaluation"]["sourceFingerprint"],binding["fingerprint"]);
+    let gallery: Value = serde_json::from_str(&b.pin_mut().review_analysis_read(&json!({"action":"gallery","planId":"plan","revision":"1","source":descriptor,"offset":0}).to_string())).unwrap();
+    assert_eq!(gallery["status"],"ok", "{gallery}");
+    assert_eq!(gallery["images"].as_array().unwrap().len(),10);
+    let selected: Vec<_> = result["evaluation"]["rows"].as_array().unwrap().iter().filter(|r| r["membership"]=="selected").map(|r| r["key"].clone()).collect();
+    let image_keys: Vec<_> = gallery["images"].as_array().unwrap().iter().map(|r| r["key"].clone()).collect();
+    assert_eq!(selected,image_keys);
+    assert!(gallery["images"].as_array().unwrap().iter().all(|r| r["pixels"].as_array().unwrap().len()==4096));
+    let other = root.join("other.h5").to_string_lossy().into_owned();
+    assert!(ffi::review_fixture_write_experiment(&other));
+    assert!(b.pin_mut().review_open(&other).ok);
+    let wrong: Value = serde_json::from_str(&b.pin_mut().review_analysis_read(&evaluation.to_string())).unwrap();
+    assert_eq!(wrong["status"],"invalid", "{wrong}");
+    drop(b);
+    std::fs::remove_dir_all(root).unwrap();
 }

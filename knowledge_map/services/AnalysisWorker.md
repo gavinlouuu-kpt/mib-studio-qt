@@ -130,3 +130,13 @@ Studio and Review share the graph JSON editor, browser-local recipe save/restore
 and exact selected gallery. Browser storage errors surface; this is not a
 source-fingerprinted portable workspace, revision history or relink mechanism.
 Worker job scheduling and live-source integration remain unimplemented.
+
+## Production application integration (2026-10-23)
+
+[Production API](../../docs/design/flowjo-analysis/production-api.md) defines ABI47/
+Review9 source-bound strategies, exact I lookup/evaluation, E source fencing and
+pinned galleries. Strategy persistence reuses the metadata SQLite authority;
+Cytoflow immutable job inputs/results use the existing single-owner job journal.
+`mib-analysis-worker::app::Service` is shared by Studio and Review; its scheduler
+owns and joins a bounded process worker, never a recording or acquisition handle.
+Live/archive images remain explicitly unavailable without a provider locator.

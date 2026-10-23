@@ -1379,6 +1379,16 @@ BridgeReviewMetadata BackendBridge::fetch_review_metadata() {
     return out;
 }
 
+rust::String BackendBridge::analysis_read(rust::Str request) {
+    return rust::String(impl_->facade.analysisRequestJson(std::string(request), false));
+}
+rust::String BackendBridge::analysis_write(rust::Str request) {
+    return rust::String(impl_->facade.analysisRequestJson(std::string(request), true));
+}
+rust::String BackendBridge::fetch_live_evidence() {
+    return rust::String(impl_->facade.fetchLiveEvidenceJson());
+}
+
 rust::String BackendBridge::analyze_population(rust::Str request_json) {
     return rust::String(impl_->facade.analyzePopulationJson(std::string(request_json)));
 }
@@ -2716,7 +2726,7 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
 std::uint32_t bridge_abi_version() {
-    return 46;
+    return 47;
 }
 
 } // namespace mib_bridge
