@@ -138,6 +138,7 @@ export interface PlanController {
    *  picked in this page's Plan, never a remembered one by itself), the same format. Ignored while
    *  a queue is in progress. */
   newPlan: () => void;
+  loadSaved?: (plan: PlanDraft) => boolean;
   /** The guided sample queue. */
   queue: QueueController;
   /** The Quick look's reference run: none until the operator chooses one; "New plan" clears it. */
@@ -367,8 +368,19 @@ export function usePlan(runStart: RunStart, options: PlanOptions = {}): PlanCont
     setDraft(next);
   }, []);
 
+  const loadSaved = (saved: PlanDraft): boolean => {
+    if (!controlRef.current || pending.current || startedRef.current || queueInProgress(order(), queueRef.current)) return false;
+    const next = structuredClone(saved);
+    next.experimentId = mintExperimentId();
+    draftRef.current = next;
+    setDraft(next);
+    setResult(null); setReference(null);
+    queueRef.current = newQueue(); setQueue(queueRef.current);
+    return true;
+  };
+
   return {
-    draft, edit, operators, result, started, starting, start, newPlan, reference, setReference,
+    draft, edit, loadSaved, operators, result, started, starting, start, newPlan, reference, setReference,
     queue: { state: queue, pending: queuePending, controlHeld, status, startCurrent, stopCurrent, confirmClosed, skip, end, resume, repeat },
   };
 }

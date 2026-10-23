@@ -69,3 +69,36 @@ There is no connected hardware and no scientific worker in this runtime.
 6. Tauri wiring compiles only as source here; native webview packaging and full
    TSan acceptance remain unverified. Scientific parity/hardware acceptance remain
    separate. No ownership/allocation gate is asserted.
+
+## 2026-10-23 recovery continuation
+
+Implemented on the same I branch:
+
+- Production revision history (bounded first 1000) and expected-head CAS restore;
+  restoration appends rather than overwrites historical records.
+- Explicit saved-sheet load into a new experiment UUID; queue/reference/result
+  reset, with locked/pending/in-progress plan guards. No method apply/start call.
+- Exact pending write bytes persisted before dispatch in per-tab sessionStorage.
+  Reload/remount offers explicit retry; storage write failure sends nothing.
+- Editable pinned recipe association persisted/reopened in the same SQLite
+  document, retaining immutable method/analysis references and parent lineage.
+  Compatibility is explicitly unknown, not inferred from well-formed references.
+
+Validation: 558 workspace tests passed before two further focused regression tests;
+10 focused tests pass including reload replay, CAS restore, recipe round-trip,
+storage failure and actual controller fresh-identity/detached-sheet/viewer guards. TypeScript/Vite production build and docs checks pass. Existing
+native SQLite host/core harnesses rerun successfully for rollback/restart/replay,
+restore and concurrent CAS. Production tailnet HTTP returns 200. A live WSS write
+probe was denied VIEWER_ONLY because another client controls the runtime; control
+was not taken from that client. Rendered browser interaction remains unverified.
+
+The previously stopped owned QA process was relaunched using its existing data
+and production dist, with the same mock/offline disabled services. Existing
+Tailscale handlers were inspected and left unchanged.
+
+Still incomplete: scientific resolver/provider binding (no public exact-plan
+lookup/evaluation adapter exists on this branch), finding/artifact export/relink,
+full workspace lifecycle beyond the saved plan/recipe document, pagination beyond
+1000 history entries, cross-tab/closed-tab pending recovery, TSan qualification.
+This is a recovery checkpoint, not full revamp acceptance. Coordinator was asked
+for current F/E application contracts/commits; no generic shared-file gate asserted.

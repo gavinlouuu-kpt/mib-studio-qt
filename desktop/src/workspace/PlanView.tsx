@@ -86,7 +86,7 @@ export function refreshNotice(r: PlanStartResult | null): NoticeText | null {
 }
 
 export function PlanView(props: PlanViewProps) {
-  return <><SavedPlan draft={props.plan.draft} controlHeld={props.plan.queue.controlHeld} />{props.plan.draft.format === "queue" ? <QueuePlan {...props} /> : <SinglePlan {...props} />}</>;
+  return <><SavedPlan draft={props.plan.draft} controlHeld={props.plan.queue.controlHeld} onLoad={props.plan.loadSaved} />{props.plan.draft.format === "queue" ? <QueuePlan {...props} /> : <SinglePlan {...props} />}</>;
 }
 
 function SinglePlan({ plan, lockedReason, verdict, blockers, cameraMode, onCameraMode, confirmation, onShowLive, calibration, reviewOpen }: PlanViewProps) {

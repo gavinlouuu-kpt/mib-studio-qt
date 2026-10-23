@@ -30,3 +30,13 @@ TSan startup failed with unexpected memory mapping, so sanitizer acceptance is
 open. See `docs/design/ique-workflow/WORKSPACE-EVIDENCE.md`. Export/relink, scientific provider integration and complete workspace loading remain required; this is not full I12 acceptance.
 
 **Up:** [[_MOC]] · [[../architecture/Desktop-Shell]]
+
+## Production recovery controls (2026-10-23)
+
+Experiment / Plan exposes history (first 1000 revisions) and CAS restore as a new
+immutable revision. Explicit Load as new experiment copies the saved sheet into
+usePlan with a fresh UUID and cleared queue/reference/result, refusing locked or
+pending plans. Recipe references persist in the same document; no provider results
+are fabricated. Pending write bytes are stored in sessionStorage before dispatch
+and reconciled only by explicit retry after reload. Closing the tab loses that
+client journal; SQLite snapshots/receipts remain authoritative.
