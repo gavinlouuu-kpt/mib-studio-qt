@@ -187,7 +187,7 @@ int main(int argc, char** argv) {
         backend::services::SqliteService source;
         check(source.initialize(path + ".definitions"));
         auto call = [&](backend::services::SqliteService& db, json q, bool write = true) {
-            return json::parse(db.workspaceRequest(q.dump(), write));
+            return json::parse(db.analysisWorkspaceRequest(q.dump(), write));
         };
         const json strategy = {
             {"schema_version", 1}, {"type", "F-analysis-strategy/1"}, {"graph", {{"id", "p1"}}}};
@@ -221,6 +221,16 @@ int main(int argc, char** argv) {
                              {"manifest", exported["manifest"]}};
         backend::services::SqliteService target;
         check(target.initialize(path + ".transfer"));
+        check(json::parse(target.workspaceRequest(import.dump(), true))["status"] == "invalid");
+        for (const auto& prefix :
+             {"analysis/", "analysis-source/", "analysis-finding/", "analysis-report/"}) {
+            const json spoof = {{"action", "commit"},
+                                {"workspace_id", std::string(prefix) + "spoof"},
+                                {"expected_revision", nullptr},
+                                {"command_id", "spoof"},
+                                {"document", strategy}};
+            check(json::parse(target.workspaceRequest(spoof.dump(), true))["status"] == "invalid");
+        }
         check(target.execute(
             "CREATE TRIGGER fail_dependency BEFORE INSERT ON workspace_revisions WHEN "
             "NEW.workspace_id='analysis/p1' BEGIN SELECT RAISE(ABORT,'dependency failure'); END"));
@@ -229,7 +239,7 @@ int main(int argc, char** argv) {
                    false)["status"] == "not_found");
         check(target.execute("DROP TRIGGER fail_dependency"));
         check(call(target, import)["revision"] == "1");
-        check(call(target, import)["revision"] == "1");
+        check(json::parse(target.workspaceRequest(import.dump(), true))["revision"] == "1");
         check(call(target, {{"action", "read"}, {"workspace_id", "analysis/p1"}, {"revision", "1"}},
                    false)["document"] == strategy);
         backend::services::SqliteService conflict;

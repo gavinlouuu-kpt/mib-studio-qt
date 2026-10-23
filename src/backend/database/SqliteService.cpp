@@ -48,7 +48,13 @@ bool SqliteService::execute(const std::string& sql) {
     std::lock_guard<std::mutex> lock(mutex_);
     return db_ && sqlite3_exec(db_, sql.c_str(), nullptr, nullptr, nullptr) == SQLITE_OK;
 }
-std::string SqliteService::workspaceRequest(const std::string& request, bool write) {
+std::string SqliteService::workspaceRequest(const std::string& text, bool write) {
+    return request(text, write, false);
+}
+std::string SqliteService::analysisWorkspaceRequest(const std::string& text, bool write) {
+    return request(text, write, true);
+}
+std::string SqliteService::request(const std::string& request, bool write, bool analysisAuthority) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!workspace_)
         return R"({"status":"unavailable","message":"Metadata database is not available"})";
@@ -104,6 +110,31 @@ std::string SqliteService::workspaceRequest(const std::string& request, bool wri
             if (!keys.count(it.key()))
                 throw StoreError(StoreErrorCode::Invalid, "Unknown workspace request field");
         const auto id = action == "list" ? std::string{} : q.at("workspace_id").get<std::string>();
+        if (write && !analysisAuthority &&
+            (id.rfind("analysis/", 0) == 0 || id.rfind("analysis-", 0) == 0))
+            throw StoreError(StoreErrorCode::Invalid,
+                             "Analysis namespaces require the native analysis authority");
+        // Public manifests may reference but cannot mint scientific authority records.
+        if (write && !analysisAuthority && action == "import") {
+            const auto& payload = q.at("manifest").at("payload");
+            if (payload.contains("dependencies")) {
+                const auto& deps = payload.at("dependencies");
+                if (!deps.is_array())
+                    throw StoreError(StoreErrorCode::Invalid, "Invalid dependencies");
+                for (const auto& dep : deps) {
+                    const auto existing =
+                        workspace_->read(dep.at("workspace_id").get<std::string>(),
+                                         dep.at("revision").get<std::string>());
+                    if (!existing)
+                        throw StoreError(StoreErrorCode::Invalid,
+                                         "Import exact analysis dependencies through the native "
+                                         "analysis provider first");
+                    if (json::parse(existing->documentJson) != dep.at("document"))
+                        throw StoreError(StoreErrorCode::Conflict,
+                                         "Analysis dependency differs from native provider record");
+                }
+            }
+        }
         const auto optional = [&](const char* key) -> std::optional<std::string> {
             if (!q.contains(key) || q.at(key).is_null()) return std::nullopt;
             return q.at(key).get<std::string>();

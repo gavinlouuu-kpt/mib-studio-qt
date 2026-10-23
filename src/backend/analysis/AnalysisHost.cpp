@@ -59,7 +59,7 @@ std::string analysisRequest(services::SqliteService& database, const std::string
             // Exact lookup never silently falls back to a moving head.
             if (action == "read" && (!q.contains("revision") || q.at("revision").is_null()))
                 throw std::invalid_argument("Exact plan lookup requires revision");
-            return unwrap(Json::parse(database.workspaceRequest(request.dump(), false))).dump();
+            return unwrap(Json::parse(database.analysisWorkspaceRequest(request.dump(), false))).dump();
         }
         if (action == "save") {
             if (!write) throw std::invalid_argument("Save requires the analysis write endpoint");
@@ -77,7 +77,7 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                      {"graph", q.at("graph")},   {"feature", q.at("feature")},
                      {"sourceBinding", binding}, {"method", q.value("method", Json(nullptr))}};
             const auto receipt = Json::parse(
-                database.workspaceRequest(Json{{"action", "receipt"},
+                database.analysisWorkspaceRequest(Json{{"action", "receipt"},
                                                {"workspace_id", identity(q)},
                                                {"expected_revision", q.at("expectedRevision")},
                                                {"command_id", q.at("commandId")},
@@ -97,7 +97,7 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                 const auto resolved = method(doc.at("method"));
                 if (resolved.value("status", std::string{}) != "ok") return resolved.dump();
             }
-            return unwrap(Json::parse(database.workspaceRequest(
+            return unwrap(Json::parse(database.analysisWorkspaceRequest(
                               Json{{"action", "commit"},
                                    {"workspace_id", identity(q)},
                                    {"expected_revision", q.at("expectedRevision")},
@@ -111,13 +111,13 @@ std::string analysisRequest(services::SqliteService& database, const std::string
             if (!write) throw std::invalid_argument("Restore requires the analysis write endpoint");
             fields(q, {"action", "planId", "expectedRevision", "commandId", "targetRevision"});
             const auto old = unwrap(
-                Json::parse(database.workspaceRequest(Json{{"action", "read"},
+                Json::parse(database.analysisWorkspaceRequest(Json{{"action", "read"},
                                                            {"workspace_id", identity(q)},
                                                            {"revision", q.at("targetRevision")}}
                                                           .dump(),
                                                       false)));
             if (old.value("status", std::string{}) != "ok") return old.dump();
-            return unwrap(Json::parse(database.workspaceRequest(
+            return unwrap(Json::parse(database.analysisWorkspaceRequest(
                               Json{{"action", "restore"},
                                    {"workspace_id", identity(q)},
                                    {"expected_revision", q.at("expectedRevision")},
@@ -135,7 +135,7 @@ std::string analysisRequest(services::SqliteService& database, const std::string
             if (q.at("revision").is_null())
                 throw std::invalid_argument("Evaluation requires pinned revision");
             const auto saved =
-                unwrap(Json::parse(database.workspaceRequest(Json{{"action", "read"},
+                unwrap(Json::parse(database.analysisWorkspaceRequest(Json{{"action", "read"},
                                                                   {"workspace_id", identity(q)},
                                                                   {"revision", q.at("revision")}}
                                                                  .dump(),
