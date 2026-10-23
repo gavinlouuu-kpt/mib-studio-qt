@@ -977,6 +977,7 @@ pub fn analysis_write(state: &AppState, request: serde_json::Value) -> Result<se
 }
 pub fn fetch_live_evidence(state: &AppState) -> Result<serde_json::Value, String> {
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
+    if !guard.is_initialized() { return Err("Backend is not initialized".into()); }
     serde_json::from_str(&guard.pin_mut().fetch_live_evidence()).map_err(|e| e.to_string())
 }
 pub fn analyze_population(state: &AppState, request: serde_json::Value) -> Result<serde_json::Value, String> {
