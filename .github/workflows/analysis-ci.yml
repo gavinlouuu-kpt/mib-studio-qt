@@ -55,5 +55,6 @@ jobs:
       - name: Real Cytoflow, native composition and durable round trip
         run: |
           "$RUNNER_TEMP/analysis-env/bin/python" -m unittest discover -s tests/analysis -p test_worker.py -v
-          MIB_CYTOFLOW_PYTHON="$RUNNER_TEMP/analysis-env/bin/python" cargo test --locked \
-            --manifest-path crates/mib-analysis-worker/Cargo.toml real_engine -- --ignored --test-threads=1
+          MIB_CYTOFLOW_PYTHON="$RUNNER_TEMP/analysis-env/bin/python" \
+            MIB_CYTOFLOW_WORKER="$GITHUB_WORKSPACE/workers/cytoflow/worker.py" cargo test --locked \
+            --manifest-path crates/mib-analysis-worker/Cargo.toml --test worker --test app -- --include-ignored --test-threads=1

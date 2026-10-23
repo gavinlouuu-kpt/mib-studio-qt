@@ -276,3 +276,28 @@ plots and job inputs share this same projection. Parameter fingerprints include
 raw units and ordered stages; real worker revisions pin the fingerprint. Comparisons
 refuse different preprocessing identities even when displayed units match.
 Applications inherit exact template transforms; imports/restore preserve them.
+
+## Seeded embedding job artifact
+
+Application job submission optionally includes
+`embedding:{engine:"sklearn-tsne-1.9.1",seed:42,perplexity:5,maxIter:500,maxPoints:1000}`.
+The same existing cancellable/durable job runs Cytoflow polygon AND native graph
+eligibility, then embeds only selected finite x/y events. Two explicit parameters
+(raw or derived); no implicit scaling. F07 is not a claim of high-dimensional
+feature-selection UI or UMAP support. Seed is uint32, iterations 500–2000, maxPoints
+3–1000, perplexity positive and strictly below actual sampled count. Insufficient
+samples refuse; they do not change perplexity silently.
+
+Sampling is explicit: sort eligible exact keys by hexadecimal SHA256 of UTF-8
+`decimalSeed|key`, then key as tie-break; take maxPoints. Rust independently verifies
+sample identity/order, count, eligibility, seed/config and finite coordinates.
+Artifact stores eligible count, exact-key points and full spec in the immutable
+terminal journal. Unselected/unknown events remain in the original membership map.
+Fixed algorithm: sklearn 1.9.1 TSNE, 2D, random initialization, exact method, Euclidean
+metric, early exaggeration12, learning rate200, no-progress300, min-gradient1e-7,
+one job/thread. See [upstream TSNE documentation](https://scikit-learn.org/stable/modules/generated/sklearn.manifold.TSNE.html).
+Repeated same-runtime seeded runs and reordered-input parity are tested; cross-BLAS,
+cross-version and cross-platform bitwise equivalence are not claimed. Coordinates
+are exploratory, not cluster/QC labels or effect evidence. UI displays keyed points
+and downloads the pinned terminal artifact. Lossless JSON float parsing is enabled
+for checksummed job persistence; no decimal round-trip drift is tolerated.

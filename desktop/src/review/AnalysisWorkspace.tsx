@@ -1,3 +1,4 @@
+import { AnalysisEmbedding } from "./AnalysisEmbedding";
 import { AnalysisReport } from "./AnalysisReport";
 import { AnalysisPlot, type PlotArtifact } from "./AnalysisPlot";
 import { PopulationThumbnail } from "./PopulationThumbnail";
@@ -38,6 +39,9 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
   const [history, setHistory] = useState<string[]>([]);
   const [message, setMessage] = useState("");
   const [result, setResult] = useState<Record<string, any> | null>(null);
+  const [jobX, setJobX] = useState("area"), [jobY, setJobY] = useState("deformability");
+  const [embeddingEnabled, setEmbeddingEnabled] = useState(false);
+  const [embeddingText, setEmbeddingText] = useState(JSON.stringify({engine:"sklearn-tsne-1.9.1",seed:42,perplexity:5,maxIter:500,maxPoints:1000},null,2));
   const [vertices, setVertices] = useState("[[0,0],[1000,0],[1000,1],[0,1]]");
   const [jobId, setJobId] = useState("");
   const [jobResult, setJobResult] = useState<Record<string, any> | null>(null);
@@ -245,7 +249,11 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
     {history.length > 0 && <p>Saved revisions: {history.map(r => <button key={r} disabled={busy} onClick={() => { ++generation.current; setRevision(r); setGallery(null); setPlot(null); setReport(null); setResult(null); }}>{r}</button>)}</p>}
     <p role="status">{message}</p>
     <details><summary>Cytoflow polygon job</summary>
-      <p>Area (px²) × deformability, intersected with the pinned graph by native three-valued logic. The host freezes keyed inputs before scheduling; changing the source never retargets a running job. No hardware operation is performed.</p>
+      <p>Explicit x/y parameters, intersected with the pinned graph by native three-valued logic. The host freezes keyed inputs before scheduling; changing the source never retargets a running job. No hardware operation is performed.</p>
+      <label>Job x parameter<input value={jobX} onChange={e=>setJobX(e.target.value)}/></label>
+      <label>Job y parameter<input value={jobY} onChange={e=>setJobY(e.target.value)}/></label>
+      <label><input type="checkbox" checked={embeddingEnabled} onChange={e=>setEmbeddingEnabled(e.target.checked)}/>Also compute seeded t-SNE on selected finite x/y events</label>
+      {embeddingEnabled && <label>Embedding specification<textarea aria-label="Embedding specification" rows={7} value={embeddingText} onChange={e=>setEmbeddingText(e.target.value)}/></label>}
       <label>Polygon vertices<textarea aria-label="Cytoflow vertices" value={vertices} onChange={e => setVertices(e.target.value)} /></label>
       <button disabled={disabled || busy || !revision} onClick={() => void run(async token => {
         const existing = window.localStorage.getItem("mib.analysis.pending-job.v1");
@@ -253,7 +261,7 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
         const snapshot = checked(await read({action: "snapshot", source: source()})).source;
         if (token !== generation.current) return;
         const submission = { commandId: crypto.randomUUID(), planId: graph().id, revision, source: source(),
-          sourceFingerprint: snapshot.fingerprint, x: "area", y: "deformability", vertices: JSON.parse(vertices) };
+          sourceFingerprint: snapshot.fingerprint, x: jobX, y: jobY, vertices: JSON.parse(vertices), ...(embeddingEnabled ? {embedding:JSON.parse(embeddingText)} : {}) };
         window.localStorage.setItem("mib.analysis.pending-job.v1", JSON.stringify(submission));
         const reply = await job({action: "submit", submission});
         setJobId(reply.jobId); setJobResult(reply);
@@ -281,6 +289,8 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
           <p>{jobResult.terminal.result.rows.filter((r: {value: string}) => r.value === "true").length} selected; {jobResult.terminal.result.rows.filter((r: {value: string}) => r.value === "unknown").length} unknown.</p>
           <p>Source: {jobResult.terminal.result.revision.sourceFingerprint}</p>
           <p>Plan: {jobResult.terminal.result.revision.plan}</p>
+          {jobResult.terminal.result.embedding && <AnalysisEmbedding artifact={jobResult.terminal.result.embedding}/>}
+          <button onClick={()=>download("analysis-job-artifact.json",JSON.stringify(jobResult.terminal,null,2),"application/json")}>Download pinned job artifact</button>
         </>}
       </div>}
     </details>

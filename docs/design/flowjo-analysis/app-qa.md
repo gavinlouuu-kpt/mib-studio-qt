@@ -194,3 +194,11 @@ pins the same parameter fingerprint. Job
 `92f82b96a179099b6a01cc93a117ade2b0c95939d8230ea2cd0b908d234c5632`.
 Native tests cover ordered linear/log/asinh provenance, invalid log domains staying
 unknown, raw-column preservation and plot/job agreement. Worker app tests pass.
+
+Seeded embedding production round trip: plan `embedding-e2e-1792756564772`, job
+`99e6deeb569b06b9b8cb2f061143fde616037b00fa85bd85e6f8bb6573b97a5d`.
+10 selected eligible events, explicit maxPoints8 => 8 exact-key finite coordinates,
+seed42/perplexity2/500 iterations, sklearn1.9.1. Same-runtime reordered-input seeded
+repeatability, tampered key/config refusal and fresh-store reopen pass in Rust.
+Seven Rust worker, two scheduler, eight Python adapter and twelve UI tests pass.
+The new plot is built but browser rendering remains unverified.

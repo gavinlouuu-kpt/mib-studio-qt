@@ -103,3 +103,9 @@ null-domain propagation and parameter fingerprints shared by gates/stats/plots/j
 Compensation controls/estimation and Logicle remain unimplemented; no channel or
 calibration authority is fabricated. Native and real-engine transformed-input parity
 passes through the production tailnet backend.
+
+F07 now has a production supervised seeded t-SNE artifact over two explicit raw or
+derived parameters, bounded hash-ranked subsampling, exact event-key mapping,
+config/eligibility validation and durable reopen. Same-runtime repeatability passes.
+High-dimensional selection, UMAP and cross-platform qualification remain open; this
+is not all F07 acceptance. Coordinates are not interpreted as QC or causal evidence.

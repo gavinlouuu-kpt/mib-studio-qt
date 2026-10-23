@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 
 fn request() -> Request {
     Request {
+        embedding: None,
         schema: SCHEMA.into(),
         job: "job-1".into(),
         revision: Revision {
@@ -35,6 +36,7 @@ fn request() -> Request {
 }
 fn result(r: &Request) -> ResultBatch {
     ResultBatch {
+        embedding: None,
         schema: r.schema.clone(),
         job: r.job.clone(),
         revision: r.revision.clone(),
@@ -279,4 +281,81 @@ fn real_engine() {
         Truth::Unknown,
         "missing native E not admitted"
     );
+}
+
+#[test]
+#[ignore = "requires pinned Cytoflow and sklearn runtime"]
+fn seeded_embedding_key_coverage_repeatability_and_reopen() {
+    let python = std::env::var("MIB_CYTOFLOW_PYTHON").unwrap();
+    let worker = Worker {
+        python: python.into(),
+        script: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../workers/cytoflow/worker.py"),
+        timeout: Duration::from_secs(60),
+        memory_limit_bytes: 4 * 1024 * 1024 * 1024,
+    };
+    let mut r = request();
+    r.events = (0..20)
+        .map(|i| Event {
+            key: format!("event-{i}"),
+            x: Some(0.1 + i as f64 * 0.05),
+            y: Some(0.2 + (i % 4) as f64 * 0.1),
+        })
+        .collect();
+    r.scalar_gate = Some(ScalarGate {
+        minimum: Some(1.),
+        maximum: Some(1.),
+        values: r
+            .events
+            .iter()
+            .enumerate()
+            .map(|(i, e)| ScalarValue {
+                key: e.key.clone(),
+                value: if i < 15 {
+                    Some(1.)
+                } else if i == 15 {
+                    None
+                } else {
+                    Some(0.)
+                },
+            })
+            .collect(),
+    });
+    r.embedding = Some(EmbeddingSpec {
+        engine: "sklearn-tsne-1.9.1".into(),
+        seed: 42,
+        perplexity: 2.,
+        max_iter: 500,
+        max_points: 8,
+    });
+    let first = worker.run(&r, || false).unwrap();
+    assert_eq!(first.embedding.as_ref().unwrap().eligible, 15);
+    assert_eq!(first.embedding.as_ref().unwrap().points.len(), 8);
+    let mut reversed = r.clone();
+    reversed.events.reverse();
+    let second = worker.run(&reversed, || false).unwrap();
+    assert_eq!(
+        serde_json::to_value(&first.embedding).unwrap(),
+        serde_json::to_value(&second.embedding).unwrap()
+    );
+    let mut bad = first.clone();
+    bad.embedding.as_mut().unwrap().points[0].key = "event-19".into();
+    assert!(accept(&r, &serde_json::to_vec(&bad).unwrap()).is_err());
+    bad = first.clone();
+    bad.embedding.as_mut().unwrap().spec.seed = 99;
+    assert!(accept(&r, &serde_json::to_vec(&bad).unwrap()).is_err());
+    let dir = tempfile::tempdir().unwrap();
+    let id;
+    {
+        let store = store::JobStore::open(dir.path()).unwrap();
+        id = store.begin(&r).unwrap();
+        store.finish(&id, Ok(first.clone())).unwrap();
+    }
+    let store = store::JobStore::open(dir.path()).unwrap();
+    match store.query(&id).unwrap() {
+        store::State::Terminal(t) => assert_eq!(
+            serde_json::to_value(t.result.unwrap().embedding).unwrap(),
+            serde_json::to_value(first.embedding).unwrap()
+        ),
+        _ => panic!("missing durable embedding"),
+    }
 }

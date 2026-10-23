@@ -23,6 +23,8 @@ pub struct Submission {
     pub x: String,
     pub y: String,
     pub vertices: Vec<[f64; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embedding: Option<crate::EmbeddingSpec>,
 }
 pub fn request(input: &Submission, resolved: &Value) -> Result<Request, String> {
     if resolved["status"] != "ok" {
@@ -83,6 +85,7 @@ pub fn request(input: &Submission, resolved: &Value) -> Result<Request, String> 
             engine: "cytoflow-1.3.2".into(),
         },
         vertices: input.vertices.clone(),
+        embedding: input.embedding.clone(),
         events,
         // Native scalar composition implements graph eligibility AND polygon with three-valued truth.
         scalar_gate: Some(ScalarGate {

@@ -3,6 +3,7 @@ use serde_json::json;
 use std::time::{Duration, Instant};
 fn submission() -> (Submission, serde_json::Value) {
     let s = Submission {
+        embedding: None,
         command_id: "app-job".into(),
         plan_id: "plan".into(),
         revision: "1".into(),

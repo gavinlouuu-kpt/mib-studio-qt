@@ -7,9 +7,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+pub mod app;
 mod native;
 pub mod store;
-pub mod app;
 
 pub const MAX_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_EVENTS: usize = 10_000;
@@ -38,6 +38,30 @@ pub struct Event {
     pub y: Option<f64>,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct EmbeddingSpec {
+    pub engine: String,
+    pub seed: u32,
+    pub perplexity: f64,
+    pub max_iter: u32,
+    pub max_points: usize,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EmbeddingPoint {
+    pub key: String,
+    pub x: f64,
+    pub y: f64,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EmbeddingArtifact {
+    pub spec: EmbeddingSpec,
+    pub eligible: usize,
+    pub points: Vec<EmbeddingPoint>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
@@ -48,6 +72,8 @@ pub struct Request {
     pub events: Vec<Event>,
     #[serde(default)]
     pub scalar_gate: Option<ScalarGate>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embedding: Option<EmbeddingSpec>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -120,6 +146,8 @@ pub struct ResultBatch {
     pub job: String,
     pub revision: Revision,
     pub rows: Vec<Row>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embedding: Option<EmbeddingArtifact>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -167,6 +195,19 @@ impl Request {
         }
         if !(3..=129).contains(&self.vertices.len()) || self.events.len() > MAX_EVENTS {
             return Err(Failure::InvalidInput("batch budget".into()));
+        }
+        if let Some(spec) = &self.embedding {
+            if spec.engine != "sklearn-tsne-1.9.1"
+                || !spec.perplexity.is_finite()
+                || spec.perplexity <= 0.
+                || !(500..=2000).contains(&spec.max_iter)
+                || !(3..=1000).contains(&spec.max_points)
+                || spec.perplexity >= spec.max_points as f64
+            {
+                return Err(Failure::InvalidInput(
+                    "unqualified embedding configuration".into(),
+                ));
+            }
         }
         let number = |v: f64| v.is_finite() && v.abs() <= 1e100;
         let mut keys = HashSet::new();
@@ -277,7 +318,68 @@ fn accept_stage(request: &Request, bytes: &[u8], composed: bool) -> Result<Resul
             value,
         });
     }
+    validate_embedding(request, &result, composed)?;
     Ok(result)
+}
+fn validate_embedding(
+    request: &Request,
+    result: &ResultBatch,
+    composed: bool,
+) -> Result<(), Failure> {
+    use sha2::{Digest, Sha256};
+    match (&request.embedding, &result.embedding) {
+        (None, None) => Ok(()),
+        (Some(spec), Some(artifact)) => {
+            let scalar_values: BTreeMap<_, _> = request
+                .scalar_gate
+                .as_ref()
+                .map(|g| g.values.iter().map(|v| (v.key.as_str(), v.value)).collect())
+                .unwrap_or_default();
+            let mut keys = Vec::new();
+            for row in &result.rows {
+                let eligible = if composed {
+                    row.value
+                } else if let Some(gate) = &request.scalar_gate {
+                    native_and(row.value, scalar(scalar_values[row.key.as_str()], gate)?)?
+                } else {
+                    row.value
+                };
+                if eligible == Truth::True {
+                    keys.push(row.key.clone());
+                }
+            }
+            keys.sort_by_cached_key(|key| {
+                (
+                    format!(
+                        "{:x}",
+                        Sha256::digest(format!("{}|{}", spec.seed, key).as_bytes())
+                    ),
+                    key.clone(),
+                )
+            });
+            if artifact.spec != *spec
+                || artifact.eligible != keys.len()
+                || artifact.points.len() != keys.len().min(spec.max_points)
+                || artifact.points.len() < 3
+                || spec.perplexity >= artifact.points.len() as f64
+                || artifact.points.iter().zip(keys.iter()).any(|(p, k)| {
+                    &p.key != k
+                        || !p.x.is_finite()
+                        || !p.y.is_finite()
+                        || p.x.abs() > 1e100
+                        || p.y.abs() > 1e100
+                })
+            {
+                return Err(Failure::InvalidResult(
+                    "embedding provenance/key coverage mismatch".into(),
+                ));
+            }
+            Ok(())
+        }
+        _ => Err(Failure::InvalidResult(
+            "missing or unsolicited embedding".into(),
+        )),
+    }
 }
 
 pub struct Worker {
@@ -303,6 +405,22 @@ impl Worker {
         let mut projected =
             serde_json::to_value(request).map_err(|e| Failure::InvalidInput(e.to_string()))?;
         projected.as_object_mut().unwrap().remove("scalar_gate");
+        if request.embedding.is_some() {
+            let mut eligible = Vec::new();
+            if let Some(gate) = &request.scalar_gate {
+                for row in &gate.values {
+                    if scalar(row.value, gate)? == Truth::True {
+                        eligible.push(row.key.clone());
+                    }
+                }
+            } else {
+                eligible = request.events.iter().map(|e| e.key.clone()).collect();
+            }
+            projected.as_object_mut().unwrap().insert(
+                "nativeEligible".into(),
+                serde_json::to_value(eligible).unwrap(),
+            );
+        }
         projected
             .as_object_mut()
             .unwrap()

@@ -6,6 +6,7 @@ mechanics interpolation, arbitrary expressions, scripts, pickle or filesystem pa
 Native MIB composes masks and evaluates authoritative scalar values.
 """
 import importlib.metadata
+import hashlib
 import json
 import math
 import os
@@ -85,7 +86,10 @@ def polygon(vertices):
 
 
 def evaluate(request):
-    exact_fields(request, ["schema", "job", "revision", "vertices", "events"])
+    names = ["schema", "job", "revision", "vertices", "events"]
+    if "embedding" in request:
+        names += ["embedding", "nativeEligible"]
+    exact_fields(request, names)
     require(request["schema"] == "mib-cytoflow-polygon/1", "unsupported internal schema")
     job = text(request["job"])
     revision = request["revision"]
@@ -129,8 +133,37 @@ def evaluate(request):
             require(type(selected).__name__ in ("bool", "bool_"), "invalid engine membership")
             output[key] = "true" if selected else "false"
     require(output.keys() == seen, "incomplete worker coverage")
-    return {"schema": request["schema"], "job": job, "revision": revision,
-            "rows": [{"key": event["key"], "value": output[event["key"]]} for event in events]}
+    result = {"schema": request["schema"], "job": job, "revision": revision,
+              "rows": [{"key": event["key"], "value": output[event["key"]]} for event in events]}
+    if "embedding" in request:
+        spec = request["embedding"]
+        exact_fields(spec, ["engine", "seed", "perplexity", "maxIter", "maxPoints"])
+        require(spec["engine"] == "sklearn-tsne-1.9.1" and
+                importlib.metadata.version("scikit-learn") == "1.9.1", "unqualified embedding engine")
+        require(type(spec["seed"]) is int and 0 <= spec["seed"] <= 4294967295 and
+                type(spec["maxIter"]) is int and 500 <= spec["maxIter"] <= 2000 and
+                type(spec["maxPoints"]) is int and 3 <= spec["maxPoints"] <= 1000,
+                "embedding configuration budget")
+        perplexity = number(spec["perplexity"])
+        eligible = request["nativeEligible"]
+        require(isinstance(eligible, list) and len(set(eligible)) == len(eligible) and
+                set(eligible) <= seen, "invalid native eligibility keys")
+        eligible = set(eligible)
+        candidates = [(key, x, y) for key, x, y in valid if key in eligible and output[key] == "true"]
+        candidates.sort(key=lambda row: (hashlib.sha256(f"{spec['seed']}|{row[0]}".encode()).hexdigest(), row[0]))
+        selected = candidates[:spec["maxPoints"]]
+        require(len(selected) >= 3 and 0 < perplexity < len(selected), "too few selected events for embedding perplexity")
+        from sklearn.manifold import TSNE
+        import numpy as np
+        # No implicit scaling: caller explicitly pins raw/derived x and y domains.
+        points = TSNE(n_components=2, perplexity=perplexity, early_exaggeration=12.0,
+                      learning_rate=200.0, max_iter=spec["maxIter"], n_iter_without_progress=300,
+                      min_grad_norm=1e-7, metric="euclidean", init="random", random_state=spec["seed"],
+                      method="exact", n_jobs=1).fit_transform(np.asarray([(x, y) for _, x, y in selected], dtype=np.float64))
+        require(np.isfinite(points).all(), "nonfinite embedding output")
+        result["embedding"] = {"spec": spec, "eligible": len(candidates),
+            "points": [{"key": row[0], "x": float(point[0]), "y": float(point[1])} for row, point in zip(selected, points)]}
+    return result
 
 
 def no_duplicates(pairs):
