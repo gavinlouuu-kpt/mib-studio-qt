@@ -1,6 +1,21 @@
 import { useEffect, useRef, useState } from "react";
 import { reviewBridge } from "./reviewBridge";
 
+export interface PopulationGraph {
+  id: string; revision: string; output: string;
+  nodes: Array<
+    { id: string; parent: string; kind: "interval"; feature: string; minimum: number | null; maximum: number | null } |
+    { id: string; parent: string; kind: "and" | "or" | "not"; operands: string[] }
+  >;
+}
+export interface PopulationRequest {
+  expectedPath: string; feature: string; minimum: number | null; maximum: number | null; graph?: PopulationGraph; galleryOffset?: number;
+}
+const strategyKey = "mib.analysis.graph.recipe.v1";
+const exampleGraph: PopulationGraph = { id: "population-plan", revision: "1", output: "area-gate", nodes: [
+  { id: "area-gate", parent: "", kind: "interval", feature: "area", minimum: 100, maximum: 110 },
+] };
+
 export interface PopulationResult {
   ok: boolean; message?: string; schema: "review-population/1";
   path: string; snapshot: string; feature: string; unit: string;
@@ -8,12 +23,30 @@ export interface PopulationResult {
   unknown: string; measured: string; missing: string;
   minimum: number | null; maximum: number | null; mean: number | null; median: number | null;
   measurementSemantics: string;
+  gallery?: Array<{ key: string; set: string; ordinal: string; pixels: number[] | null }>;
+  galleryOffset?: number | null;
+}
+
+function PopulationThumbnail({ pixels }: { pixels: number[] }) {
+  const canvas = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    if (pixels.length !== 4096) return;
+    const context = canvas.current?.getContext("2d");
+    if (!context) return;
+    const image = context.createImageData(64, 64);
+    pixels.forEach((v, i) => { image.data[4*i] = v; image.data[4*i+1] = v; image.data[4*i+2] = v; image.data[4*i+3] = 255; });
+    context.putImageData(image, 0, 0);
+  }, [pixels]);
+  return <canvas ref={canvas} width={64} height={64} aria-label="Selected observation thumbnail" />;
 }
 
 /** Existing Review product surface; all science is evaluated by the native backend. */
 export function PopulationAnalysis({ path, disabled, evaluate = reviewBridge.analyzePopulation }: {
   path: string; disabled: boolean; evaluate?: typeof reviewBridge.analyzePopulation;
 }) {
+  const [graphEnabled, setGraphEnabled] = useState(false);
+  const [graphText, setGraphText] = useState(JSON.stringify(exampleGraph, null, 2));
+  const [saved, setSaved] = useState("");
   const [feature, setFeature] = useState("area");
   const [minimum, setMinimum] = useState("");
   const [maximum, setMaximum] = useState("");
@@ -24,8 +57,8 @@ export function PopulationAnalysis({ path, disabled, evaluate = reviewBridge.ana
   useEffect(() => {
     ++sequence.current; setResult(null); setError(""); setBusy(false);
     return () => { ++sequence.current; };
-  }, [path, disabled, feature, minimum, maximum]);
-  async function analyze() {
+  }, [path, disabled, feature, minimum, maximum, graphEnabled, graphText]);
+  async function analyze(galleryOffset?: number) {
     const token = ++sequence.current;
     setBusy(true); setError(""); setResult(null);
     try {
@@ -35,7 +68,10 @@ export function PopulationAnalysis({ path, disabled, evaluate = reviewBridge.ana
         if (!Number.isFinite(n)) throw new Error("Enter finite bounds, or leave them blank.");
         return n;
       };
-      const reply = await evaluate({ expectedPath: path, feature, minimum: bound(minimum), maximum: bound(maximum) });
+      const request: PopulationRequest = { expectedPath: path, feature, minimum: bound(minimum), maximum: bound(maximum) };
+      if (galleryOffset !== undefined) request.galleryOffset = galleryOffset;
+      if (graphEnabled) request.graph = JSON.parse(graphText);
+      const reply = await evaluate(request);
       if (token !== sequence.current) return;
       if (!reply.ok) throw new Error(reply.message || "Analysis refused");
       if (reply.schema !== "review-population/1" || reply.path !== path || reply.feature !== feature)
@@ -57,13 +93,35 @@ export function PopulationAnalysis({ path, disabled, evaluate = reviewBridge.ana
       <label>Maximum <input aria-label="Analysis maximum" type="number" step="any" placeholder="Unbounded" value={maximum} onChange={e => setMaximum(e.target.value)} /></label>{" "}
       <button onClick={() => void analyze()}>{busy ? "Analyzing…" : "Analyze population"}</button>
     </fieldset>
+    <details><summary>Population graph recipe</summary>
+      <p>Interval, AND, OR and NOT nodes are evaluated by the native backend. Parent IDs restrict populations. Unknown measurements remain unknown under NOT. The selected measurement above controls the reduction, not graph membership.</p>
+      <label><input type="checkbox" checked={graphEnabled} disabled={busy || disabled} onChange={e => setGraphEnabled(e.target.checked)} />Use graph instead of interval membership</label>
+      <label>Graph JSON<textarea aria-label="Population graph JSON" rows={14} style={{ display: "block", width: "min(100%, 48rem)", fontFamily: "monospace" }} value={graphText} disabled={busy || disabled} onChange={e => { setGraphText(e.target.value); setSaved(""); }} /></label>
+      <button disabled={busy} onClick={() => { try { JSON.parse(graphText); window.localStorage.setItem(strategyKey, graphText); setSaved("Recipe saved in this browser. Source and results are not saved."); } catch (e) { setError(String(e)); } }}>Save recipe</button>
+      <button disabled={busy} onClick={() => { try { const text = window.localStorage.getItem(strategyKey); if (!text) throw new Error("No saved recipe in this browser"); JSON.parse(text); setGraphText(text); setGraphEnabled(true); setSaved("Recipe restored. Analyze to evaluate against the current source."); } catch (e) { setError(String(e)); } }}>Restore recipe</button>
+      <p>{saved}</p>
+      <p>Browser-local recipe only; not a verified source-bound workspace. Copy the JSON to transfer it. Backend validates all nodes, cycles and budgets before publishing a result.</p>
+    </details>
     {error && <p role="alert">{error}</p>}
     {result && <div role="status">
       <p>{result.selected} selected · {result.excluded} excluded · {result.unknown} unknown / {result.valid} valid + {result.invalid} invalid stored observations.</p>
       <table><caption>Selected population · {result.unit}</caption><thead><tr><th>Measured</th><th>Missing</th><th>Minimum</th><th>Maximum</th><th>Mean</th><th>Median</th></tr></thead>
         <tbody><tr><td>{result.measured}</td><td>{result.missing}</td><td>{format(result.minimum)}</td><td>{format(result.maximum)}</td><td>{format(result.mean)}</td><td>{format(result.median)}</td></tr></tbody></table>
       <p>{result.measurementSemantics}</p>
-      <p>Local read-only evaluation. No verified content fingerprint or saved strategy; results are cleared when the source or gate changes.</p>
+      <section aria-label="Gated gallery">
+        <h4>Selected observations</h4>
+        <p>12 per page, in valid-set then invalid-set row order. Images are copied with the evaluated source; unavailable images do not remove observations. Loading a page runs a fresh evaluation.</p>
+        <button disabled={busy || disabled} onClick={() => void analyze(0)}>Load gated gallery</button>
+        {result.galleryOffset != null && <>
+          <button disabled={busy || disabled || result.galleryOffset === 0} onClick={() => void analyze(Math.max(0, result.galleryOffset! - 12))}>Previous selected page</button>
+          <button disabled={busy || disabled || result.galleryOffset + 12 >= Number(result.selected)} onClick={() => void analyze(result.galleryOffset! + 12)}>Next selected page</button>
+          <div style={{ display: "flex", flexWrap: "wrap" }}>{result.gallery?.map(item => <figure key={item.key}>
+            {item.pixels ? <PopulationThumbnail pixels={item.pixels} /> : <span>Image unavailable</span>}
+            <figcaption>{item.set} · row {item.ordinal}</figcaption>
+          </figure>)}</div>
+        </>}
+      </section>
+      <p>Local read-only evaluation. No verified content fingerprint or saved result; results are cleared when the source or gate changes.</p>
     </div>}
   </details>;
 }

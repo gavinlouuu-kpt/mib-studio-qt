@@ -91,3 +91,35 @@ These are production implementation/validation gaps, **not shared-file ownership
 blockers**. Original scope remains [capability ledger](capability-ledger.md),
 [contracts](contracts.md), [source proposal](event-snapshot-contract.md) and
 [execution plan](../../exec-plans/active/2026-10-22-flowjo-realignment.md).
+
+## 2026-10-23 graph/gallery continuation
+
+Expand **Population graph recipe**, enable **Use graph**, and analyze the supplied
+area 100..110 recipe. Edit/add interval and Boolean nodes with explicit parent
+IDs and choose `output`; all evaluation is native. Save/Restore retains the JSON
+recipe in this browser only. It does not bind/relink a source or save results.
+
+After analysis, **Load gated gallery** copies the first 12 selected thumbnails
+with exact set/ordinal labels. Next/previous pages explicitly reevaluate the
+source and gate. Missing images show `Image unavailable`, never disappear from
+population counts. Copying under the source lock prevents cross-generation images.
+
+This supersedes the earlier "DAG editing not connected" and "no gated gallery"
+limitations only for this bounded JSON-graph and stored-thumbnail slice. Full
+visual graph editing, source fingerprints, persistent backend strategies,
+Cytoflow app scheduling and live E adaptation remain open.
+
+Validation for this continuation: all seven Review Rust bridge tests pass,
+including real HDF5 graph/reduction/gallery identity and unchanged source bytes;
+`review.session` (now including gallery reads during source reopen/close) and
+`backend.facade_review_session` pass. Shared UI tests and production frontend
+build pass. Tailnet HTTPS/WebSocket and browser graph evaluation return 10
+selected, mean 104.6, median 104.5 for area 100..110; six valid plus four invalid
+thumbnails are displayed. Recipe save, page reload, restore and reevaluation
+were verified in the browser. Source-picker automation still stalls at its
+native prompt; the synthetic file was loaded through `load_recording`.
+
+The previous QA process was absent on resume; F restarted its owned server on
+the same loopback port without changing any tailnet handler. Current PID is
+recorded in `data/flowjo-app-qa/server.pid`. No live acquisition started. TSan
+remains host-blocked as previously documented; no new TSan pass is claimed.

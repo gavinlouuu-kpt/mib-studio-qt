@@ -713,14 +713,15 @@ int main()
         std::atomic<bool> start{false};
         std::atomic<int> failures{0};
         const auto request = nlohmann::json{{"expectedPath", experiment.string()}, {"feature", "area"},
-            {"minimum", nullptr}, {"maximum", nullptr}}.dump();
+            {"minimum", nullptr}, {"maximum", nullptr}, {"galleryOffset", 0u}}.dump();
         std::thread reader([&] {
             while (!start.load()) std::this_thread::yield();
             for (int i = 0; i < 200; ++i) {
                 const auto result = nlohmann::json::parse(s.analyzePopulation(request));
                 if (result.at("ok").get<bool>() &&
                     (result.at("path") != experiment.string() || result.at("selected") != "14" ||
-                     result.at("valid") != "10" || result.at("invalid") != "4")) ++failures;
+                     result.at("valid") != "10" || result.at("invalid") != "4" ||
+                     result.at("gallery").size() != 12)) ++failures;
             }
         });
         std::thread writer([&] {

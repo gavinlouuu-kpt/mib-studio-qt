@@ -763,7 +763,7 @@ async function pullFrame(command: string, kind: number, args?: Record<string, un
 }
 
 export const bridge = {
-  analyzePopulation: (request: { expectedPath: string; feature: string; minimum: number | null; maximum: number | null }) =>
+  analyzePopulation: (request: import("./review/PopulationAnalysis").PopulationRequest) =>
     invoke<import("./review/PopulationAnalysis").PopulationResult>("analyze_population", { request }),
   abiVersion: () => invoke<number>("abi_version"),
   isInitialized: () => invoke<boolean>("is_initialized"),

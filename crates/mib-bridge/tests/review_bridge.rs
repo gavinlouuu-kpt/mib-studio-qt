@@ -734,6 +734,34 @@ fn review_population_native_both_set_integration() {
     let invalid = bridge.pin_mut().fetch_review_rows(false, 0, 100);
     let mean = valid.rows.iter().chain(invalid.rows.iter()).map(|r| r.area).sum::<f64>() / 14.;
     assert!((result["mean"].as_f64().unwrap() - mean).abs() < 1e-12);
+    let mut graph_request = request.clone();
+    graph_request["graph"] = serde_json::json!({"id":"test", "revision":"1", "output":"outside", "nodes":[
+        {"id":"inside", "parent":"", "kind":"interval", "feature":"area", "minimum":100, "maximum":110},
+        {"id":"outside", "parent":"", "kind":"not", "operands":["inside"]}
+    ]});
+    graph_request["galleryOffset"] = serde_json::json!(0);
+    let graph = call(&mut bridge, &graph_request);
+    assert_eq!(graph["ok"], true, "{graph}");
+    let outside: Vec<_> = valid.rows.iter().chain(invalid.rows.iter()).filter(|r| r.area > 110. || r.area < 100.).collect();
+    assert_eq!(graph["selected"], outside.len().to_string());
+    assert!(graph["mean"].as_f64().unwrap() > 110.);
+    assert_eq!(graph["gallery"].as_array().unwrap().len(), outside.len().min(12));
+    for image in graph["gallery"].as_array().unwrap() {
+        let row = graph["rows"].as_array().unwrap().iter().find(|r| r["key"] == image["key"]).unwrap();
+        assert_eq!(row["membership"], "selected");
+        assert_eq!(row["ordinal"], image["ordinal"]);
+        assert_eq!(row["set"], image["set"]);
+        assert!(image["pixels"].is_null() || image["pixels"].as_array().unwrap().len() == 4096);
+    }
+    graph_request["galleryOffset"] = serde_json::json!(-1);
+    assert_eq!(call(&mut bridge, &graph_request)["ok"], false);
+    graph_request["galleryOffset"] = serde_json::json!(10000);
+    assert!(call(&mut bridge, &graph_request)["gallery"].as_array().unwrap().is_empty());
+    graph_request["graph"]["nodes"][0]["parent"] = serde_json::json!("outside");
+    assert_eq!(call(&mut bridge, &graph_request)["ok"], false, "parent/operand cycle refused");
+    graph_request["graph"]["nodes"][0]["parent"] = serde_json::json!("");
+    graph_request["graph"]["output"] = serde_json::json!("missing");
+    assert_eq!(call(&mut bridge, &graph_request)["ok"], false, "missing output refused");
     request["minimum"] = serde_json::json!(1e90);
     let empty = call(&mut bridge, &request);
     assert_eq!(empty["selected"], "0");

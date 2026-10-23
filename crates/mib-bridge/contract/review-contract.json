@@ -160,6 +160,27 @@
   "review_population": {
     "schema": "review-population/1",
     "max_events": 10000,
-    "semantics": "review_analyze_population(request): expectedPath, feature (area in px² or deformability dimensionless), nullable inclusive minimum/maximum. Atomic both-set stored-metadata snapshot and native interval/reductions, no implicit validity QC. Refuse raw recording, unreadable metadata, count mismatch, job lane busy or budget overflow; no sampling. Local evaluation keys plus set/decimal ordinal; fingerprint null and durable false. Absent fields and nonfinite measurements produce unknown membership; detailed per-event missing reasons are not exposed. No source writes or new readers."
+    "semantics": "review_analyze_population(request): expectedPath, feature (area in px² or deformability dimensionless), nullable inclusive minimum/maximum. Atomic both-set stored-metadata snapshot and native interval/reductions, no implicit validity QC. Refuse raw recording, unreadable metadata, count mismatch, job lane busy or budget overflow; no sampling. Local evaluation keys plus set/decimal ordinal; fingerprint null and durable false. Absent fields and nonfinite measurements produce unknown membership; detailed per-event missing reasons are not exposed. No source writes or new readers.",
+    "optional_graph": {
+      "fields": [
+        "id",
+        "revision",
+        "output",
+        "nodes"
+      ],
+      "node_kinds": [
+        "interval",
+        "and",
+        "or",
+        "not"
+      ],
+      "semantics": "Optional graph replaces the top-level interval membership; top-level feature still selects the reduction. Native PopulationGraph validates parents/operands/cycles, 256 nodes and 1000000 node-events. Interval nodes have id,parent,kind,feature,minimum,maximum; Boolean nodes have id,parent,kind,operands. All inputs use the same atomic both-set snapshot. Recipes are not verified source-bound workspaces."
+    },
+    "optional_gallery": {
+      "request": "galleryOffset: unsigned integer 0..10000, offset among selected observations",
+      "page_size": 12,
+      "tile_size": 64,
+      "semantics": "gallery entries retain exact snapshot key, set and decimal ordinal. pixels is a 4096-element grayscale byte array or null for unavailable image. Images are copied under the same session lock as evaluation. Page requests reevaluate, not a persistent snapshot cursor; no new HDF5 reader. Valid-set then invalid-set row order."
+    }
   }
 }

@@ -112,3 +112,21 @@ One `PopulationAnalysis` React component mounts in Studio App and YOFO Review
 ReviewPanel, via the respective production transports. Native Rust bridge parity
 tests exercise actual HDF5 fixture reads; UI tests mock transport only. App
 exposure does not imply polygon/DAG/workspace/live/report integration.
+
+## Production graph and selected-image page (2026-10-23)
+
+The existing `review-population/1` command now accepts an optional bounded graph:
+interval predicates plus AND/OR/NOT, parent restrictions and an output node.
+It calls the existing native PopulationGraph, not a renderer evaluator.
+The selected top-level feature remains the reduction column. The backend rejects
+cycles, unknown outputs and invalid fields/bounds before publishing results.
+
+Optional `galleryOffset` copies up to 12 selected 64×64 grayscale thumbnails
+under the same session lock as membership. Set-qualified decimal ordinals remain
+attached; unavailable images are null and never remove scientific observations.
+Each page is explicitly a fresh evaluation, not a durable snapshot lease.
+
+Studio and Review share the graph JSON editor, browser-local recipe save/restore
+and exact selected gallery. Browser storage errors surface; this is not a
+source-fingerprinted portable workspace, revision history or relink mechanism.
+Worker job scheduling and live-source integration remain unimplemented.

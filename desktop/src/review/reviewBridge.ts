@@ -355,7 +355,7 @@ async function command(name: string, args?: Record<string, unknown>): Promise<Re
 }
 
 export const reviewBridge = {
-  analyzePopulation: (request: { expectedPath: string; feature: string; minimum: number | null; maximum: number | null }) =>
+  analyzePopulation: (request: import("./PopulationAnalysis").PopulationRequest) =>
     invoke<PopulationResult>("review_analyze_population", { request }),
   abiVersion: () => invoke<number>("review_abi_version"),
   /** Isoelastic reference curves embedded in the app (descending E). */

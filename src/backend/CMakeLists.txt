@@ -216,6 +216,7 @@ mib_link_hdf5(mib_processing PUBLIC)
 # links it without mib_backend, while mib_backend links it for the
 # BackendFacade's review surface and the Qt tab's parity.
 add_library(mib_review_core STATIC
+    ${PROJECT_SOURCE_DIR}/src/backend/analysis/PopulationGraph.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/analysis/Population.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/analysis/PopulationStatistics.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/review/ReviewSession.cpp
