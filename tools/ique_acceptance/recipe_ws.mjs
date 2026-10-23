@@ -48,10 +48,12 @@ try {
   const evaluate={action:'evaluate_recipe',workspace_id,revision:'2',source_id:'run',source_kind:sourceKind,profile_base:profiles};
   const evaluated=ok(await work(evaluate));const value=evaluated.evaluation;
   if(sourceKind==='stored'){assert.equal(value.selected,'10');assert.equal(value.mean,104.6);assert.equal(value.median,104.5);}else{
-   const archived=JSON.parse(await fs.readFile(path.join(path.dirname(file),'production-run.json'),'utf8'));
+   const archived=JSON.parse(await fs.readFile(file.replace(/\.h5$/,'.json'),'utf8'));
    const areas=archived.rows.map(r=>r.values[0].value).sort((a,b)=>a-b);
-   assert.equal(value.selected,String(areas.length));assert.equal(value.mean,areas.reduce((a,b)=>a+b,0)/areas.length);assert.equal(value.denominator,null);assert.equal(value.populationComplete,false);
-  }assert.equal(value.planId,planId);assert.equal(value.revision,'1');assert.equal(evaluated.applied,false);
+   assert.equal(value.selected,String(areas.length));assert.equal(value.mean,areas.reduce((a,b)=>a+b,0)/areas.length);const complete=process.env.MIB_QA_EXPECT_COMPLETE==='1';
+   assert.equal(archived.coverage.eventCountKnown,complete);
+   assert.equal(value.denominator,complete?String(areas.length):null);assert.equal(value.populationComplete,complete);
+  }assert.equal(value.planId,planId);assert.equal(value.revision,'1');assert.equal(evaluated.applied,false);assert.equal(evaluated.compatibility,'unknown');assert.equal(evaluated.hardwareReadiness,'not_evaluated');
   const next={...save,expectedRevision:'1',commandId:crypto.randomUUID(),graph:{...graph,nodes:[{...graph.nodes[0],minimum:1000,maximum:null}]}};
   assert.equal(ok(await analysis(next,true)).revision,'2');assert.deepEqual(await work(evaluate),evaluated);
   assert.equal((await analysis({action:'evaluate',planId,revision:'999',source})).status,'not_found');
