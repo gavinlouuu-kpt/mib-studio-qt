@@ -8,6 +8,7 @@
 #include <thread>
 #include <mutex>
 #include <cstdlib>
+#include <fstream>
 using nlohmann::json;
 void check(bool b) {
     if (!b) throw std::runtime_error("Workspace host assertion failed");
@@ -104,5 +105,82 @@ int main(int argc, char** argv) {
         auto result = json::parse(host.workspaceRequest(restore.dump(), true));
         check(result["revision"] == "4" && result["document"]["notes"] == "first");
         check(json::parse(host.workspaceRequest("{", true))["status"] == "invalid");
+        auto invoke = [&](json q, bool write = true) {
+            return json::parse(host.workspaceRequest(q.dump(), write));
+        };
+        const json exportRequest = {{"action", "export"},
+                                    {"workspace_id", "test"},
+                                    {"revision", "4"},
+                                    {"job_id", "export-one"}};
+        check(invoke(exportRequest, false)["status"] == "invalid");
+        const auto exported = invoke(exportRequest);
+        check(exported["state"] == "complete");
+        check(invoke(exportRequest) == exported);
+        auto collision = exportRequest;
+        collision["revision"] = "1";
+        check(invoke(collision)["status"] == "invalid");
+        const json imported = {{"action", "import"},
+                               {"workspace_id", "imported"},
+                               {"command_id", "import-one"},
+                               {"manifest", exported.at("manifest")}};
+        check(invoke(imported)["revision"] == "1");
+        check(invoke(imported)["revision"] == "1");
+        auto damaged = imported;
+        damaged["workspace_id"] = "damaged";
+        damaged["manifest"]["payload"]["document"]["notes"] = "corrupt";
+        check(invoke(damaged)["status"] == "invalid");
+        auto overwrite = imported;
+        overwrite["command_id"] = "overwrite";
+        check(invoke(overwrite)["status"] == "conflict");
+        check(invoke({{"action", "list"}, {"limit", 1}}, false)["workspaces"].size() == 1);
+        check(
+            invoke({{"action", "list"}, {"limit", 100}, {"after", "imported"}}, false)["workspaces"]
+                .size() == 2);
+        const auto original = path + ".source", moved = path + ".moved", wrong = path + ".wrong";
+        {
+            std::ofstream f(original, std::ios::binary);
+            f << "immutable-source";
+        }
+        {
+            std::ofstream f(wrong, std::ios::binary);
+            f << "different-source";
+        }
+        const json attach = {{"action", "attach_source"}, {"workspace_id", "imported"},
+                             {"expected_revision", "1"},  {"command_id", "attach"},
+                             {"source_id", "run-a"},      {"path", original}};
+        check(invoke(attach)["revision"] == "2");
+        std::filesystem::rename(original, moved);
+        // An acknowledged attach must replay even when its old path no longer exists.
+        check(invoke(attach)["revision"] == "2");
+        auto relink = attach;
+        relink["action"] = "relink";
+        relink["expected_revision"] = "2";
+        relink["command_id"] = "move";
+        relink["path"] = wrong;
+        check(invoke(relink)["status"] == "conflict");
+        relink["path"] = moved;
+        check(invoke(relink)["revision"] == "3");
+        check(invoke(relink)["revision"] == "3");
+        const json verify = {{"action", "verify_source"},
+                             {"workspace_id", "imported"},
+                             {"revision", "3"},
+                             {"source_id", "run-a"}};
+        check(invoke(verify, false)["verified"] == true);
+        {
+            std::ofstream f(moved, std::ios::binary);
+            f << "changed-source";
+        }
+        check(invoke(verify, false)["status"] == "conflict");
+        check(invoke(relink)["revision"] == "3"); // successful receipt remains immutable
+        std::filesystem::remove(moved);
+        std::filesystem::remove(wrong);
+    }
+    {
+        backend::services::SqliteService host;
+        check(host.initialize(path));
+        auto exported = json::parse(host.workspaceRequest(
+            R"({"action":"export_status","workspace_id":"test","job_id":"export-one"})", false));
+        check(exported["state"] == "complete" && exported["revision"] == "4");
+        check(exported["manifest"]["payload"]["document"]["notes"] == "first");
     }
 }

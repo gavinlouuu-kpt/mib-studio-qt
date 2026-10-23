@@ -30,6 +30,18 @@ public:
                                  const std::optional<std::string>& revision = std::nullopt) const;
     std::vector<std::string> history(const std::string& workspaceId, int limit = 100,
                                      const std::optional<std::string>& after = std::nullopt) const;
+    std::vector<Snapshot> list(int limit = 100, const std::string& after = "") const;
+    // Completed export jobs materialize immutable manifest bytes in the metadata DB.
+    std::string exportSnapshot(const std::string& workspaceId, const std::string& revision,
+                               const std::string& jobId);
+    std::string exportStatus(const std::string& workspaceId, const std::string& jobId) const;
+    Snapshot importSnapshot(const std::string& workspaceId, const std::string& commandId,
+                            const std::string& manifest);
+    Snapshot linkSource(const std::string& workspaceId, const std::string& expectedRevision,
+                        const std::string& commandId, const std::string& sourceId,
+                        const std::string& path, bool relink);
+    std::string verifySource(const std::string& workspaceId, const std::string& revision,
+                             const std::string& sourceId) const;
     // null expectedRevision is create-only. Complete logical document is atomically replaced.
     // Successful command replay returns its original revision even if the head advanced.
     Snapshot commit(const std::string& workspaceId,

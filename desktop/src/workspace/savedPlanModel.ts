@@ -18,3 +18,13 @@ export function decodeSavedPlan(value: unknown): PlanDraft {
   if (p.format === "single" && p.rows.length !== 1) throw new Error("Single-sample plan has multiple rows");
   return structuredClone(p) as unknown as PlanDraft;
 }
+
+/** Preserve all workspace-owned payloads, validate fields this client renders. */
+export function decodeWorkspaceDocument(value: unknown): Record<string, unknown> & {schema_version:1;plan:PlanDraft} {
+  const plan=decodeSavedPlan(value);
+  const doc=value as Record<string,unknown>;
+  if (doc.title!==undefined && (typeof doc.title!=="string" || doc.title.length>512)) throw new Error("Invalid workspace title");
+  if (doc.archived!==undefined && typeof doc.archived!=="boolean") throw new Error("Invalid workspace archive state");
+  if (doc.sources!==undefined && (!obj(doc.sources) || !Object.entries(doc.sources).every(([id,v])=>id.length>0 && id.length<=256 && obj(v) && typeof v.path==="string" && typeof v.sha256==="string" && /^[0-9a-f]{64}$/.test(v.sha256) && typeof v.size_bytes==="string" && /^(0|[1-9][0-9]*)$/.test(v.size_bytes)))) throw new Error("Invalid workspace source links");
+  return {...structuredClone(doc),schema_version:1,plan};
+}

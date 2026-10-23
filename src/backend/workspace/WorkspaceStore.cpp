@@ -1,9 +1,12 @@
 #include "backend/workspace/WorkspaceStore.h"
 #include <sqlite3.h>
+#include "backend/processing/ProcessingCoreSha256.h"
 #include <nlohmann/json.hpp>
 #include <charconv>
 #include <cstdint>
 #include <limits>
+#include <filesystem>
+#include <chrono>
 
 namespace backend::workspace {
 namespace {
@@ -106,6 +109,9 @@ void WorkspaceStore::initialize() {
     exec(db_, "CREATE TABLE IF NOT EXISTS workspace_commands(workspace_id TEXT NOT NULL, "
               "command_id TEXT NOT NULL, request_json TEXT NOT NULL, revision INTEGER NOT NULL, "
               "PRIMARY KEY(workspace_id,command_id))");
+    exec(db_, "CREATE TABLE IF NOT EXISTS workspace_exports(workspace_id TEXT NOT NULL, "
+              "job_id TEXT NOT NULL, revision TEXT NOT NULL, result_json TEXT NOT NULL, "
+              "PRIMARY KEY(workspace_id,job_id))");
     tx.commit();
     initialized_ = true;
 }
@@ -141,6 +147,180 @@ std::vector<std::string> WorkspaceStore::history(const std::string& id, int limi
     while (query.step() == SQLITE_ROW)
         result.push_back(query.text(0));
     return result;
+}
+std::vector<Snapshot> WorkspaceStore::list(int limit, const std::string& after) const {
+    requireInitialized();
+    if (limit < 1 || limit > 100)
+        throw StoreError(StoreErrorCode::Invalid, "List limit must be 1..100");
+    if (!after.empty()) identifier(after);
+    Statement q(
+        db_, "SELECT r.workspace_id,r.revision,r.document_json FROM workspace_revisions r "
+             "JOIN (SELECT workspace_id,MAX(revision) revision FROM workspace_revisions "
+             "GROUP BY workspace_id) h ON r.workspace_id=h.workspace_id AND r.revision=h.revision "
+             "WHERE r.workspace_id>? ORDER BY r.workspace_id LIMIT ?");
+    q.bind(1, after);
+    q.bind(2, static_cast<std::int64_t>(limit));
+    std::vector<Snapshot> rows;
+    while (q.step() == SQLITE_ROW)
+        rows.push_back({q.text(0), q.text(1), q.text(2)});
+    return rows;
+}
+namespace {
+std::string digest(const std::string& bytes) {
+    return processing::processingCoreBytesSha256(reinterpret_cast<const uint8_t*>(bytes.data()),
+                                                 bytes.size());
+}
+} // namespace
+std::string WorkspaceStore::exportStatus(const std::string& id, const std::string& job) const {
+    requireInitialized();
+    identifier(id);
+    identifier(job);
+    Statement q(db_, "SELECT result_json FROM workspace_exports WHERE workspace_id=? AND job_id=?");
+    q.bind(1, id);
+    q.bind(2, job);
+    if (q.step() != SQLITE_ROW) throw StoreError(StoreErrorCode::NotFound, "Export job not found");
+    return q.text(0);
+}
+std::string WorkspaceStore::exportSnapshot(const std::string& id, const std::string& revision,
+                                           const std::string& job) {
+    requireInitialized();
+    identifier(id);
+    identifier(job);
+    revisionNumber(revision);
+    Transaction tx(db_);
+    Statement prior(
+        db_,
+        "SELECT revision,result_json FROM workspace_exports WHERE workspace_id=? AND job_id=?");
+    prior.bind(1, id);
+    prior.bind(2, job);
+    if (prior.step() == SQLITE_ROW) {
+        if (prior.text(0) != revision)
+            throw StoreError(StoreErrorCode::Invalid, "Export job identity reused");
+        const auto result = prior.text(1);
+        tx.commit();
+        return result;
+    }
+    const auto saved = read(id, revision);
+    if (!saved) throw StoreError(StoreErrorCode::NotFound, "Export revision not found");
+    nlohmann::json payload = {{"format", "I-workspace/1"},
+                              {"workspace_id", id},
+                              {"revision", revision},
+                              {"document", nlohmann::json::parse(saved->documentJson)}};
+    nlohmann::json manifest = {{"payload", payload}, {"sha256", digest(payload.dump())}};
+    const auto result =
+        nlohmann::json{{"status", "ok"},     {"state", "complete"},  {"job_id", job},
+                       {"workspace_id", id}, {"revision", revision}, {"manifest", manifest}}
+            .dump();
+    Statement insert(
+        db_,
+        "INSERT INTO workspace_exports(workspace_id,job_id,revision,result_json) VALUES(?,?,?,?)");
+    insert.bind(1, id);
+    insert.bind(2, job);
+    insert.bind(3, revision);
+    insert.bind(4, result);
+    insert.step();
+    tx.commit();
+    return result;
+}
+Snapshot WorkspaceStore::importSnapshot(const std::string& id, const std::string& command,
+                                        const std::string& text) {
+    if (text.size() > 1100000)
+        throw StoreError(StoreErrorCode::Invalid, "Import exceeds size limit");
+    const auto manifest = nlohmann::json::parse(text);
+    const auto& payload = manifest.at("payload");
+    if (manifest.size() != 2 || !payload.is_object() || payload.size() != 4 ||
+        payload.at("format") != "I-workspace/1" || manifest.at("sha256") != digest(payload.dump()))
+        throw StoreError(StoreErrorCode::Invalid, "Unsupported or damaged workspace export");
+    identifier(payload.at("workspace_id").get<std::string>());
+    revisionNumber(payload.at("revision").get<std::string>());
+    return write(id, std::nullopt, command, canonicalDocument(payload.at("document").dump()),
+                 "import:" + manifest.at("sha256").get<std::string>());
+}
+namespace {
+nlohmann::json fingerprint(const std::string& input) {
+    namespace fs = std::filesystem;
+    if (input.empty() || input.find('\0') != std::string::npos)
+        throw StoreError(StoreErrorCode::Invalid, "Invalid source path");
+    const auto path = fs::canonical(input);
+    if (!fs::is_regular_file(path))
+        throw StoreError(StoreErrorCode::Invalid, "Source must be a regular file");
+    const auto size = fs::file_size(path);
+    const auto modified = fs::last_write_time(path);
+    if (size > 2ULL * 1024 * 1024 * 1024)
+        throw StoreError(StoreErrorCode::Invalid, "Source verification limit is 2 GiB");
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    std::string why;
+    const auto sha = processing::fileSha256(
+        path, &why, [&] { return std::chrono::steady_clock::now() > deadline; });
+    if (sha.empty()) throw StoreError(StoreErrorCode::Storage, "Source fingerprint failed: " + why);
+    if (fs::canonical(input) != path || fs::file_size(path) != size ||
+        fs::last_write_time(path) != modified)
+        throw StoreError(StoreErrorCode::Conflict, "Source changed during verification");
+    return {{"path", path.string()}, {"sha256", sha}, {"size_bytes", std::to_string(size)}};
+}
+} // namespace
+Snapshot WorkspaceStore::linkSource(const std::string& id, const std::string& expected,
+                                    const std::string& command, const std::string& sourceId,
+                                    const std::string& path, bool relink) {
+    requireInitialized();
+    identifier(id);
+    identifier(command);
+    identifier(sourceId);
+    revisionNumber(expected);
+    const auto operation = nlohmann::json{
+        {"action", relink ? "relink" : "attach_source"},
+        {"source_id", sourceId},
+        {"path", path}}.dump();
+    // Reconcile receipt before touching a path that may since have moved or disappeared.
+    Statement receipt(db_, "SELECT request_json,revision FROM workspace_commands WHERE "
+                           "workspace_id=? AND command_id=?");
+    receipt.bind(1, id);
+    receipt.bind(2, command);
+    if (receipt.step() == SQLITE_ROW) {
+        const auto prior = nlohmann::json::parse(receipt.text(0));
+        if (prior.at("operation") != operation || prior.at("expected") != expected)
+            throw StoreError(StoreErrorCode::Invalid,
+                             "Command identity reused with different content");
+        const auto saved = read(id, receipt.text(1));
+        if (!saved)
+            throw StoreError(StoreErrorCode::Storage, "Source command receipt lost its revision");
+        return *saved;
+    }
+    const auto saved = read(id, expected);
+    if (!saved) throw StoreError(StoreErrorCode::NotFound, "Workspace revision not found");
+    auto document = nlohmann::json::parse(saved->documentJson);
+    if (!document.contains("sources")) document["sources"] = nlohmann::json::object();
+    auto& sources = document.at("sources");
+    if (!sources.is_object())
+        throw StoreError(StoreErrorCode::Invalid, "Invalid source collection");
+    if (relink != sources.contains(sourceId))
+        throw StoreError(StoreErrorCode::Invalid,
+                         relink ? "Source link not found" : "Source identity already exists");
+    const auto checked = fingerprint(path);
+    if (relink && (sources.at(sourceId).at("sha256") != checked.at("sha256") ||
+                   sources.at(sourceId).at("size_bytes") != checked.at("size_bytes")))
+        throw StoreError(StoreErrorCode::Conflict,
+                         "Relink fingerprint mismatch; original link preserved");
+    sources[sourceId] = checked;
+    return write(id, expected, command, canonicalDocument(document.dump()), operation);
+}
+std::string WorkspaceStore::verifySource(const std::string& id, const std::string& revision,
+                                         const std::string& sourceId) const {
+    const auto saved = read(id, revision);
+    if (!saved) throw StoreError(StoreErrorCode::NotFound, "Workspace revision not found");
+    const auto document = nlohmann::json::parse(saved->documentJson);
+    const auto& expected = document.at("sources").at(sourceId);
+    const auto actual = fingerprint(expected.at("path").get<std::string>());
+    const bool matches = actual.at("sha256") == expected.at("sha256") &&
+                         actual.at("size_bytes") == expected.at("size_bytes");
+    return nlohmann::json{
+        {"status", matches ? "ok" : "conflict"},
+        {"workspace_id", id},
+        {"revision", revision},
+        {"source_id", sourceId},
+        {"verified", matches},
+        {"message", matches ? "Source bytes match pinned fingerprint" : "Source bytes changed"}}
+        .dump();
 }
 Snapshot WorkspaceStore::commit(const std::string& id, const std::optional<std::string>& expected,
                                 const std::string& command, const std::string& document) {

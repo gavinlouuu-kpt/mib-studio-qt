@@ -4,6 +4,7 @@
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 #include <set>
+#include <filesystem>
 
 namespace backend::services {
 using nlohmann::json;
@@ -64,7 +65,26 @@ std::string SqliteService::workspaceRequest(const std::string& request, bool wri
             throw StoreError(StoreErrorCode::Invalid, "Expected workspace request object");
         const auto action = q.at("action").get<std::string>();
         std::set<std::string> keys{"action", "workspace_id"};
-        if (action == "read")
+        if (action == "list") {
+            keys.insert("after");
+            keys.insert("limit");
+        } else if (action == "export_status") {
+            keys.insert("job_id");
+        } else if (write && action == "export") {
+            keys.insert("job_id");
+            keys.insert("revision");
+        } else if (write && action == "import") {
+            keys.insert("command_id");
+            keys.insert("manifest");
+        } else if (write && (action == "attach_source" || action == "relink")) {
+            keys.insert("command_id");
+            keys.insert("expected_revision");
+            keys.insert("source_id");
+            keys.insert("path");
+        } else if (action == "verify_source") {
+            keys.insert("revision");
+            keys.insert("source_id");
+        } else if (action == "read")
             keys.insert("revision");
         else if (action == "history") {
             keys.insert("after");
@@ -83,7 +103,7 @@ std::string SqliteService::workspaceRequest(const std::string& request, bool wri
         for (auto it = q.begin(); it != q.end(); ++it)
             if (!keys.count(it.key()))
                 throw StoreError(StoreErrorCode::Invalid, "Unknown workspace request field");
-        const auto id = q.at("workspace_id").get<std::string>();
+        const auto id = action == "list" ? std::string{} : q.at("workspace_id").get<std::string>();
         const auto optional = [&](const char* key) -> std::optional<std::string> {
             if (!q.contains(key) || q.at(key).is_null()) return std::nullopt;
             return q.at(key).get<std::string>();
@@ -94,6 +114,37 @@ std::string SqliteService::workspaceRequest(const std::string& request, bool wri
                         {"revision", s.revision},
                         {"document", json::parse(s.documentJson)}};
         };
+        if (action == "list") {
+            auto rows = json::array();
+            for (const auto& s :
+                 workspace_->list(q.value("limit", 100), q.value("after", std::string{}))) {
+                const auto d = json::parse(s.documentJson);
+                rows.push_back({{"workspace_id", s.workspaceId},
+                                {"revision", s.revision},
+                                {"title", d.value("title", s.workspaceId)},
+                                {"archived", d.value("archived", false)}});
+            }
+            return json{{"status", "ok"}, {"workspaces", rows}}.dump();
+        }
+        if (action == "export")
+            return workspace_->exportSnapshot(id, q.at("revision").get<std::string>(),
+                                              q.at("job_id").get<std::string>());
+        if (action == "export_status")
+            return workspace_->exportStatus(id, q.at("job_id").get<std::string>());
+        if (action == "import")
+            return snapshot(workspace_->importSnapshot(id, q.at("command_id").get<std::string>(),
+                                                       q.at("manifest").dump()))
+                .dump();
+        if (action == "attach_source" || action == "relink")
+            return snapshot(workspace_->linkSource(id, q.at("expected_revision").get<std::string>(),
+                                                   q.at("command_id").get<std::string>(),
+                                                   q.at("source_id").get<std::string>(),
+                                                   q.at("path").get<std::string>(),
+                                                   action == "relink"))
+                .dump();
+        if (action == "verify_source")
+            return workspace_->verifySource(id, q.at("revision").get<std::string>(),
+                                            q.at("source_id").get<std::string>());
         if (action == "read") {
             auto s = workspace_->read(id, optional("revision"));
             return s ? snapshot(*s).dump()
@@ -122,6 +173,8 @@ std::string SqliteService::workspaceRequest(const std::string& request, bool wri
                            : e.code == StoreErrorCode::Invalid  ? "invalid"
                                                                 : "storage";
         return json{{"status", code}, {"message", e.what()}}.dump();
+    } catch (const std::filesystem::filesystem_error&) {
+        return R"({"status":"not_found","message":"Source file unavailable; no workspace change was committed"})";
     } catch (const json::exception&) {
         return R"({"status":"invalid","message":"Malformed workspace request"})";
     } catch (...) {

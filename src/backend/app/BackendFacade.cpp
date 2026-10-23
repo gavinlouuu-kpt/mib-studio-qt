@@ -1548,6 +1548,49 @@ namespace backend::bridge
     std::string BackendFacade::workspaceRequestJson(const std::string& request, bool write)
     {
         if (!initialized_) return R"({"status":"unavailable","message":"Backend not initialized"})";
+        try {
+            const auto action=nlohmann::json::parse(request).value("action",std::string{});
+            if (action=="resolve_recipe") {
+                using J=nlohmann::json;
+                const auto q=J::parse(request);
+                if (q.size()>4 || !q.contains("revision")) return R"({"status":"invalid","message":"Exact workspace revision required"})";
+                const auto saved=J::parse(backend_.sqlite().workspaceRequest(J{{"action","read"},{"workspace_id",q.at("workspace_id")},{"revision",q.at("revision")}}.dump(),false));
+                if (saved.at("status")!="ok") return saved.dump();
+                const auto& recipe=saved.at("document").at("recipe");
+                const auto& method=recipe.at("method");
+                J resolution={{"status","unresolved"},{"reason","Pinned method is not available from the selected provider"}};
+                if (method.at("source")=="registry") {
+                    const auto registry=backend_.profileRegistry().snapshot();
+                    for (const auto& r:registry.revisions)
+                        if (r.methodId==method.at("id") && r.revisionId==method.at("revision"))
+                            resolution={{"status","resolved"},{"provider","registry-cache"},{"id",r.methodId},{"revision",r.revisionId},
+                                        {"content_sha256",r.contentHash},{"state",profiles::toString(r.state)}};
+                } else if (method.at("source")=="local") {
+                    const auto base=q.value("profile_base",std::string{});
+                    const auto catalog=J::parse(app::profileStoreCommand(backend_,base,R"({"operation":"list"})"));
+                    if (catalog.value("ok",false)) {
+                        int matches=0;
+                        for (const auto& p:catalog.at("profiles"))
+                            if (p.at("profile_id")==method.at("id") && p.at("revision")==method.at("revision")) {
+                                ++matches;
+                                resolution={{"status","resolved"},{"provider","local-profile"},{"id",p.at("profile_id")},
+                                            {"revision",p.at("revision")},{"path",p.at("path")}};
+                            }
+                        if (matches>1) resolution={{"status","unresolved"},{"reason","Ambiguous local method identity"}};
+                    } else resolution["reason"]=catalog.value("error",std::string{"Method lookup failed"});
+                }
+                return J{{"status","ok"},{"workspace_id",q.at("workspace_id")},{"revision",q.at("revision")},
+                         {"recipe_id",recipe.at("id")},{"recipe_revision",recipe.at("revision")},{"method",resolution},
+                         {"compatibility","unknown"},{"message","Method resolution does not apply settings or establish scientific compatibility"}}.dump();
+            }
+            if (action=="attach_source" || action=="relink" || action=="verify_source") {
+                std::string result=R"({"status":"unavailable","message":"Source verification requires idle acquisition and recording"})";
+                backend_.experiment().withIdleConfiguration([&] {
+                    if (!backend_.isFrameRecording()) result=backend_.sqlite().workspaceRequest(request,write);
+                });
+                return result;
+            }
+        } catch (...) { /* Strict request errors are returned by the metadata host. */ }
         return backend_.sqlite().workspaceRequest(request, write);
     }
 
