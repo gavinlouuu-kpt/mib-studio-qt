@@ -181,3 +181,9 @@ using the same native interval/AND representation, with explicit edit-base/templ
 checks. Scaled/reverse/cancel/tiny gesture tests pass; real browser gesture
 qualification remains blocked by no registered browser. Polygon/ellipse/quadrant
 families and their full interaction acceptance remain open.
+
+F04 ellipse continuation: native source-bound axis-aligned ellipse predicates and
+production form editing now share tri-state graph/QC semantics, gallery identities
+and job eligibility. Boundary/missing/extreme and zero-radius refusal tests pass.
+Rotated/covariance ellipses, native polygon and quadrant authoring remain separate
+implementation obligations, not claimed by axis-aligned support.

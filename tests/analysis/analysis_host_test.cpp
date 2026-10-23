@@ -41,6 +41,22 @@ int main() {
         MIB_EXPECT(before["selected"] == "1" && after["selected"] == "0",
                    "edited bounds evaluate against their own content revision");
     }
+    {
+        auto ellipseSource = source;
+        ellipseSource["parameters"] = {{"x", "dimensionless"}, {"y", "dimensionless"}};
+        ellipseSource["rows"] = json::array();
+        for (const auto& xy : json::array({json::array({0, 0}), json::array({2, 0}), json::array({0, 1}), json::array({2, 1}), json::array({nullptr, 0}), json::array({1e300, 1e300})}))
+            ellipseSource["rows"].push_back({{"key", std::to_string(ellipseSource["rows"].size())}, {"measurements", {{"x", xy[0]}, {"y", xy[1]}}}});
+        auto ellipseGraph = graph;
+        ellipseGraph["nodes"] = {{{"id", "gate"}, {"parent", ""}, {"kind", "ellipse"}, {"x", "x"}, {"y", "y"}, {"centerX", 0}, {"centerY", 0}, {"radiusX", 2}, {"radiusY", 1}}};
+        const auto result = backend::analysis::evaluateSource(ellipseSource, {{"graph", ellipseGraph}, {"feature", "x"}});
+        MIB_EXPECT(result["selected"] == "3" && result["unknown"] == "1" && result["excluded"] == "2",
+                   "ellipse includes axis boundaries, excludes outside and preserves missing coordinates");
+        ellipseGraph["nodes"][0]["radiusX"] = 0;
+        bool refused = false;
+        try { backend::analysis::validateAnalysisGraph(ellipseGraph); } catch (const std::exception&) { refused = true; }
+        MIB_EXPECT(refused, "zero ellipse radius refused before publication");
+    }
     json binding;
     for (const char* k : {"fingerprint", "sourceKey", "parameters", "scope"})
         binding[k] = source[k];

@@ -15,6 +15,7 @@ struct Graph {
     PopulationPlan plan;
     std::string output;
     std::map<std::string, std::pair<std::string, Interval>> gates;
+    std::map<std::string, Json> ellipses;
 };
 Graph parseGraph(const Json& q) {
     if (!q.is_object() || q.size() != 4 || !q.at("nodes").is_array())
@@ -42,6 +43,20 @@ Graph parseGraph(const Json& q) {
                     std::string::npos)
                 throw std::invalid_argument("Unsupported graph feature");
             g.gates.emplace(node.id, std::make_pair(feature, bounds));
+        } else if (kind == "ellipse") {
+            if (v.size() != 9) throw std::invalid_argument("Invalid ellipse node fields");
+            for (const char* key : {"x", "y"}) {
+                const auto feature = v.at(key).get<std::string>();
+                if (feature.empty() || feature.size() > 64 || feature.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_") != std::string::npos)
+                    throw std::invalid_argument("Unsupported ellipse parameter");
+            }
+            if (v.at("x") == v.at("y")) throw std::invalid_argument("Ellipse requires distinct parameters");
+            for (const char* key : {"centerX", "centerY", "radiusX", "radiusY"})
+                if (!std::isfinite(v.at(key).get<double>())) throw std::invalid_argument("Ellipse geometry must be finite");
+            if (v.at("radiusX").get<double>() <= 0 || v.at("radiusY").get<double>() <= 0)
+                throw std::invalid_argument("Ellipse radii must be positive");
+            node.predicate = node.id;
+            g.ellipses.emplace(node.id, v);
         } else {
             if (v.size() != 4) throw std::invalid_argument("Invalid Boolean node fields");
             if (kind == "and")
@@ -213,6 +228,10 @@ Json evaluateSource(const Json& rawSource, const Json& request) {
     for (const auto& [id, gate] : graph.gates)
         if (!units.contains(gate.first))
             throw std::invalid_argument("Gate feature unavailable in source: " + gate.first);
+    for (const auto& [id, gate] : graph.ellipses)
+        for (const char* axis : {"x", "y"})
+            if (!units.contains(gate.at(axis).get<std::string>()))
+                throw std::invalid_argument("Ellipse parameter unavailable in source");
     const auto qc = request.value("qc", Json{{"policy", "all"}, {"decisions", Json::array()}});
     if (!qc.is_object() || qc.size() != 2 || !qc.at("decisions").is_array() ||
         qc.at("decisions").size() > 10000)
@@ -258,6 +277,8 @@ Json evaluateSource(const Json& rawSource, const Json& request) {
     std::map<std::string, Membership> predicates;
     for (const auto& [id, gate] : graph.gates)
         predicates.emplace(id, Membership{revision, {}});
+    for (const auto& [id, gate] : graph.ellipses)
+        predicates.emplace(id, Membership{revision, {}});
     for (const auto& row : source.at("rows")) {
         const auto key = row.at("key").get<std::string>();
         universe.rows.push_back({key, Truth::True});
@@ -273,6 +294,16 @@ Json evaluateSource(const Json& rawSource, const Json& request) {
         for (const auto& [id, gate] : graph.gates)
             predicates.at(id).rows.push_back(
                 {key, evaluateInterval(measurement(row, gate.first), gate.second)});
+        for (const auto& [id, gate] : graph.ellipses) {
+            const auto x = measurement(row, gate.at("x")), y = measurement(row, gate.at("y"));
+            Truth truth = Truth::Unknown;
+            if (x && y) {
+                const long double dx = (static_cast<long double>(*x) - gate.at("centerX").get<double>()) / gate.at("radiusX").get<double>();
+                const long double dy = (static_cast<long double>(*y) - gate.at("centerY").get<double>()) / gate.at("radiusY").get<double>();
+                truth = std::hypot(dx, dy) <= 1 ? Truth::True : Truth::False;
+            }
+            predicates.at(id).rows.push_back({key, truth});
+        }
     }
     const auto result =
         evaluatePlan(graph.plan, universe, eligibility, predicates).at(graph.output);

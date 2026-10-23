@@ -25,3 +25,8 @@ it("creates a transparent native rectangle composition and rejects collisions or
  expect(()=>addRectangle(next,"rect","area","deformability",[0,1,0,1])).toThrow();
  expect(()=>addRectangle(graph,"rect","area","deformability",[10,0,0,1])).toThrow();
 });
+it("edits ellipse nodes without treating geometry as Boolean operands",()=>{
+ const ellipse:PopulationGraph={id:"p",revision:"1",output:"e",nodes:[{id:"e",parent:"",kind:"ellipse",x:"area",y:"deformability",centerX:100,centerY:0.1,radiusX:5,radiusY:0.05}]};
+ expect(renamePopulation(ellipse,"e","renamed").output).toBe("renamed");
+ expect(renderToStaticMarkup(<PopulationGraphEditor text={JSON.stringify(ellipse)} onChange={()=>{}} disabled={false}/>)).toContain("Ellipse radiusX");
+});

@@ -3,10 +3,10 @@ import type { PopulationGraph } from "./PopulationAnalysis";
 type Node=PopulationGraph["nodes"][number];
 export function renamePopulation(graph:PopulationGraph,id:string,next:string):PopulationGraph{
  if(!next.trim()||graph.nodes.some(n=>n.id===next&&n.id!==id))throw new Error("Population ID must be nonempty and unique.");
- return {...graph,output:graph.output===id?next:graph.output,nodes:graph.nodes.map(n=>({...n,id:n.id===id?next:n.id,parent:n.parent===id?next:n.parent,...(n.kind!=="interval"?{operands:n.operands.map(o=>o===id?next:o)}:{})}))};
+ return {...graph,output:graph.output===id?next:graph.output,nodes:graph.nodes.map(n=>({...n,id:n.id===id?next:n.id,parent:n.parent===id?next:n.parent,...((n.kind==="and"||n.kind==="or"||n.kind==="not")?{operands:n.operands.map(o=>o===id?next:o)}:{})}))};
 }
 export function removePopulation(graph:PopulationGraph,id:string):PopulationGraph{
- if(graph.output===id||graph.nodes.some(n=>n.parent===id||(n.kind!=="interval"&&n.operands.includes(id))))throw new Error("Select another output and remove dependent references before deleting this population.");
+ if(graph.output===id||graph.nodes.some(n=>n.parent===id||((n.kind==="and"||n.kind==="or"||n.kind==="not")&&n.operands.includes(id))))throw new Error("Select another output and remove dependent references before deleting this population.");
  return {...graph,nodes:graph.nodes.filter(n=>n.id!==id)};
 }
 /** A rectangle is an explicit pair of inclusive native interval gates and AND. */
@@ -24,7 +24,7 @@ export function PopulationGraphEditor({text,onChange,disabled}:{text:string;onCh
  const undo=useRef<string[]>([]),redo=useRef<string[]>([]),emitted=useRef(text);
  useEffect(()=>{if(text!==emitted.current){undo.current=[];redo.current=[];emitted.current=text;redraw(n=>n+1);}},[text]);
  let graph:PopulationGraph;
- try{graph=JSON.parse(text);if(typeof graph.id!=="string"||!Array.isArray(graph.nodes)||graph.nodes.some(n=>!n||typeof n.id!=="string"||typeof n.parent!=="string"||(n.kind==="interval"?typeof n.feature!=="string":(!Array.isArray(n.operands)||n.operands.some(o=>typeof o!=="string")))||!["interval","and","or","not"].includes(n.kind)))throw new Error();}
+ try{graph=JSON.parse(text);if(typeof graph.id!=="string"||!Array.isArray(graph.nodes)||graph.nodes.some(n=>!n||typeof n.id!=="string"||typeof n.parent!=="string"||(n.kind==="interval"?typeof n.feature!=="string":n.kind==="ellipse"?(typeof n.x!=="string"||typeof n.y!=="string"||![n.centerX,n.centerY,n.radiusX,n.radiusY].every(v=>typeof v==="number"&&Number.isFinite(v))):(!Array.isArray(n.operands)||n.operands.some(o=>typeof o!=="string")))||!["interval","ellipse","and","or","not"].includes(n.kind)))throw new Error();}
  catch{return <p>Gate editor needs a valid graph document. Correct the advanced JSON below; no draft was discarded.</p>;}
  const publish=(value:string)=>{emitted.current=value;onChange(value);redraw(n=>n+1);};
  const edit=(operation:(g:PopulationGraph)=>PopulationGraph)=>{try{const next=JSON.stringify(operation(graph),null,2);if(next!==text){undo.current=[...undo.current.slice(-19),text];redo.current=[];publish(next);}setError("");}catch(e){setError(String(e));}};
@@ -44,12 +44,15 @@ export function PopulationGraphEditor({text,onChange,disabled}:{text:string;onCh
   </details>
   {graph.nodes.map(node=><fieldset key={node.id}><legend>{node.id}</legend>
    <label>Population ID<input aria-label={`Rename ${node.id}`} defaultValue={node.id} onBlur={e=>edit(g=>renamePopulation(g,node.id,e.target.value))}/></label>
-   <label>Gate type<select value={node.kind} onChange={e=>{const kind=e.target.value as Node["kind"];const next:Node=kind==="interval"?{id:node.id,parent:node.parent,kind,feature:"area",minimum:null,maximum:null}:{id:node.id,parent:node.parent,kind,operands:graph.nodes.filter(n=>n.id!==node.id).slice(0,kind==="not"?1:2).map(n=>n.id)};replace(node.id,next);}}><option value="interval">Inclusive interval</option><option value="and">AND</option><option value="or">OR</option><option value="not">NOT</option></select></label>
+   <label>Gate type<select value={node.kind} onChange={e=>{const kind=e.target.value as Node["kind"];const next:Node=kind==="interval"?{id:node.id,parent:node.parent,kind,feature:"area",minimum:null,maximum:null}:kind==="ellipse"?{id:node.id,parent:node.parent,kind,x:"area",y:"deformability",centerX:100,centerY:0.1,radiusX:10,radiusY:0.1}:{id:node.id,parent:node.parent,kind,operands:graph.nodes.filter(n=>n.id!==node.id).slice(0,kind==="not"?1:2).map(n=>n.id)};replace(node.id,next);}}><option value="interval">Inclusive interval</option><option value="ellipse">Axis-aligned ellipse</option><option value="and">AND</option><option value="or">OR</option><option value="not">NOT</option></select></label>
    <label>Parent population<select value={node.parent} onChange={e=>replace(node.id,{...node,parent:e.target.value})}><option value="">All observations</option>{graph.nodes.filter(n=>n.id!==node.id).map(n=><option key={n.id} value={n.id}>{n.id}</option>)}</select></label>
    {node.kind==="interval"?<>
     <label>Parameter<input key={node.feature} defaultValue={node.feature} onBlur={e=>replace(node.id,{...node,feature:e.target.value})}/></label>
     <label>Minimum (blank unbounded)<input key={`min-${node.minimum}`} defaultValue={node.minimum??""} onBlur={e=>edit(g=>({...g,nodes:g.nodes.map(n=>n.id===node.id?{...node,minimum:bound(e.target.value)}:n)}))}/></label>
     <label>Maximum (blank unbounded)<input key={`max-${node.maximum}`} defaultValue={node.maximum??""} onBlur={e=>edit(g=>({...g,nodes:g.nodes.map(n=>n.id===node.id?{...node,maximum:bound(e.target.value)}:n)}))}/></label>
+   </>:node.kind==="ellipse"?<>
+    {(["x","y"] as const).map(key=><label key={key}>Ellipse {key} parameter<input key={node[key]} defaultValue={node[key]} onBlur={e=>replace(node.id,{...node,[key]:e.target.value})}/></label>)}
+    {(["centerX","centerY","radiusX","radiusY"] as const).map(key=><label key={key}>Ellipse {key}<input key={node[key]} type="number" step="any" defaultValue={node[key]} onBlur={e=>edit(g=>{const value=bound(e.target.value);if(value===null||(key.startsWith("radius")&&value<=0))throw new Error("Ellipse geometry must be finite; radii must be positive.");return {...g,nodes:g.nodes.map(n=>n.id===node.id?{...node,[key]:value}:n)};})}/></label>)}
    </>:<div>Operands {graph.nodes.filter(n=>n.id!==node.id).map(n=><label key={n.id}><input type="checkbox" checked={node.operands.includes(n.id)} onChange={e=>replace(node.id,{...node,operands:node.kind==="not"?(e.target.checked?[n.id]:[]):e.target.checked?[...node.operands,n.id]:node.operands.filter(o=>o!==n.id)})}/>{n.id}</label>)}</div>}
    <button onClick={()=>edit(g=>removePopulation(g,node.id))}>Remove population</button>
   </fieldset>)}

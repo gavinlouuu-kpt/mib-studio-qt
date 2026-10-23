@@ -423,3 +423,15 @@ the artifact's explicit raw/derived bounds; reversed drags are normalized, tiny 
 cancelled gestures produce nothing. The result is the same explicit interval/AND
 composition as the numeric form. It cannot mutate an attached template application
 without explicit draft detachment, and it never saves/evaluates automatically.
+
+### Axis-aligned ellipse population
+
+A native graph predicate may be `{id,parent,kind:"ellipse",x,y,centerX,centerY,
+radiusX,radiusY}`. Parameters must be distinct, named and available in the exact raw
+or derived source domain. Centers/radii are finite, radii strictly positive.
+Membership is inclusive `hypot((x-centerX)/radiusX,(y-centerY)/radiusY)<=1`; either
+missing coordinate yields unknown before parent/QC/Boolean composition. Intermediate
+arithmetic uses long double and hypot to avoid squaring overflow. No rotation,
+covariance fit, unit conversion or compensation is inferred. The production form
+edits all geometry explicitly. Template interval overrides do not mutate ellipses;
+that requires a new upstream revision or explicit detached draft.

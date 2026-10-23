@@ -270,3 +270,9 @@ Scatter drag authoring: component tests verify reversed drags under2× screen sc
 correct X/Y raw bounds, pointer cancellation and tiny-gesture refusal. Native
 rectangle evaluation/image proof remains as above. Browser inventory was checked
 again and returned `[]`; real pointer click-through is explicitly unverified.
+
+Ellipse tailnet proof: plan `ellipse-e2e-1792760361901` revision1, center(105,0.15),
+radii(5,0.05), area/deformability domain. Native selected7, mean105 pixel2;7 exact
+selected-key images; real Cytoflow job
+`79b4da5a33c3210de534f53717365f939599a8f4ffca396e13ef4da0ef1144f0`
+selected the same7 with matching source/parameter identity. Exact save replay passed.
