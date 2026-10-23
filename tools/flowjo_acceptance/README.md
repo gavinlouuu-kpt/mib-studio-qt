@@ -135,3 +135,14 @@ pip's isolated build environment. CI puts `swig.DATA/bin` on PATH and sets
 `SWIG_LIB` to its pinned `share/swig/4.5.1`, then explicitly imports FastLogicle.
 A clean-source isolated wheel build and fresh-wheel native import verified this
 fix locally; installation success alone is not proof the optional extension built.
+
+## Native production-host sanitizer qualification
+
+Enable `-DMIB_ANALYSIS_HOST_TESTS=ON` to compile source transforms, plots, comparisons,
+report/library persistence and namespace fencing without Qt/HDF5. Requires SQLite3,
+nlohmann-json and spdlog development packages. With ASan/UBSan flags, all four
+standalone targets pass locally (2026-10-23), including native analysis.host.
+On the P5 host select `-Dfmt_DIR=/usr/lib/x86_64-linux-gnu/cmake/fmt` to pair the
+system spdlog with system fmt rather than the unrelated /usr/local installation.
+The existing analysis CI now enables this host target and all real worker/scheduler
+tests, including seeded embedding; that updated remote CI has not yet been run.

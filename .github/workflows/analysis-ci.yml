@@ -26,9 +26,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Native host test dependencies
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev nlohmann-json3-dev libspdlog-dev
       - name: Native composition and sanitizers
         run: |
-          cmake -S tools/flowjo_acceptance -B build/analysis -DCMAKE_BUILD_TYPE=Debug \
+          cmake -S tools/flowjo_acceptance -B build/analysis -DCMAKE_BUILD_TYPE=Debug -DMIB_ANALYSIS_HOST_TESTS=ON \
             '-DCMAKE_CXX_FLAGS=-fsanitize=address,undefined -fno-omit-frame-pointer' \
             '-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined'
           cmake --build build/analysis -j2
