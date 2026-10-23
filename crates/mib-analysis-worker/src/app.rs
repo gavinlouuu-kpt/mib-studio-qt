@@ -75,7 +75,10 @@ pub fn request(input: &Submission, resolved: &Value) -> Result<Request, String> 
             application: "production-app/1".into(),
             override_revision: "none".into(),
             parameters: json!({"x":input.x,"y":input.y,"units":parameters}).to_string(),
-            qc: "unknown-not-filtered".into(),
+            qc: resolved["evaluation"]["qcFingerprint"]
+                .as_str()
+                .ok_or("Missing native QC fingerprint")?
+                .into(),
             mechanics: "source-authority".into(),
             engine: "cytoflow-1.3.2".into(),
         },

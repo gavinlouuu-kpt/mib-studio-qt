@@ -1,4 +1,5 @@
 #include "backend/analysis/AnalysisHost.h"
+#include "backend/analysis/SourceAnalysis.h"
 #include "backend/database/SqliteService.h"
 #include "support/assert.h"
 #include "support/tempdir.h"
@@ -40,6 +41,37 @@ int main() {
               {"feature", "area"},
               {"source", {{"kind", "stored"}, {"path", "test"}}},
               {"sourceBinding", binding}};
+    {
+        auto plottedSource = source;
+        plottedSource["rows"] = json::array();
+        for (const auto& value : json::array({0, 1, 2, nullptr, -1, 3})) {
+            const auto key = std::to_string(plottedSource["rows"].size());
+            plottedSource["rows"].push_back({{"key", key}, {"measurements", {{"area", value}}}});
+        }
+        auto g = graph;
+        g["nodes"][0]["minimum"] = nullptr;
+        g["nodes"][0]["maximum"] = nullptr;
+        json spec{{"kind", "histogram"},
+                  {"feature", "area"},
+                  {"minimum", 0},
+                  {"maximum", 2},
+                  {"bins", 2u},
+                  {"normalization", "fraction"},
+                  {"layers", {{{"population", "gate"}, {"displayOffset", 0}}}}};
+        json query{{"graph", g}, {"feature", "area"}, {"plot", spec}};
+        const auto plot = backend::analysis::plotSource(plottedSource, query);
+        MIB_EXPECT(plot["layers"][0]["counts"] == json::array({"1", "2"}),
+                   "left-closed bins and inclusive final boundary");
+        MIB_EXPECT(plot["layers"][0]["values"] == json::array({.2, .4}),
+                   "normalization includes finite under/overflow denominator");
+        MIB_EXPECT(plot["layers"][0]["underflow"] == "1" && plot["layers"][0]["overflow"] == "1" &&
+                       plot["layers"][0]["unknown"] == "1",
+                   "plot names outside range and unknown membership");
+        query["plot"]["layers"][0]["displayOffset"] = 99;
+        MIB_EXPECT(backend::analysis::plotSource(plottedSource, query)["layers"][0]["counts"] ==
+                       plot["layers"][0]["counts"],
+                   "display offset cannot change counts");
+    }
     json retainedDescriptor;
     auto resolver = [&](const json&) { return source; };
     {
@@ -119,6 +151,67 @@ int main() {
         MIB_EXPECT(json::parse(backend::analysis::analysisRequest(imported, import.dump(), true,
                                                                   resolver))["status"] == "invalid",
                    "altered manifest checksum rejected");
+        auto qcPlan = save;
+        qcPlan["planId"] = "qc-plan";
+        qcPlan["graph"]["id"] = "qc-plan";
+        qcPlan["commandId"] = "qc-one";
+        qcPlan["qc"] = {{"policy", "good-only"}, {"decisions", json::array()}};
+        MIB_EXPECT(call(qcPlan)["status"] == "ok", "save explicit unknown QC policy");
+        json qcQuery{{"action", "evaluate"},
+                     {"planId", "qc-plan"},
+                     {"revision", "1"},
+                     {"source", save.at("source")}};
+        const auto unknownQc = call(qcQuery, false);
+        MIB_EXPECT(unknownQc["evaluation"]["selected"] == "0" &&
+                       unknownQc["evaluation"]["unknown"] == "2",
+                   "unlabelled QC never silently admitted as good");
+        qcPlan["expectedRevision"] = "1";
+        qcPlan["commandId"] = "qc-two";
+        qcPlan["qc"]["decisions"].push_back({{"key", "row1"},
+                                             {"status", "good"},
+                                             {"actor", "test operator"},
+                                             {"reason", "manual morphology review"}});
+        MIB_EXPECT(call(qcPlan)["revision"] == "2", "append attributed QC assertion");
+        qcQuery["revision"] = "2";
+        const auto qualified = call(qcQuery, false);
+        MIB_EXPECT(qualified["evaluation"]["selected"] == "1" &&
+                       qualified["evaluation"]["qcCounts"]["unknown"] == "1",
+                   "manual good and unknown remain distinct");
+        const auto qcManifest =
+            call(json{{"action", "manifest"}, {"planId", "qc-plan"}, {"revision", "2"}}, false);
+        json qcImport{{"action", "import"},
+                      {"manifest", qcManifest.at("manifest")},
+                      {"contentHash", qcManifest.at("contentHash")},
+                      {"source", save.at("source")},
+                      {"expectedRevision", nullptr},
+                      {"commandId", "qc-import"}};
+        const auto importedQc = json::parse(
+            backend::analysis::analysisRequest(imported, qcImport.dump(), true, resolver));
+        MIB_EXPECT(importedQc["document"]["qc"] == qcManifest["manifest"]["document"]["qc"],
+                   "portable QC attribution round trip");
+        qcPlan["expectedRevision"] = "2";
+        qcPlan["commandId"] = "qc-foreign";
+        qcPlan["qc"]["decisions"][0]["key"] = "other-source-row";
+        MIB_EXPECT(call(qcPlan)["status"] == "invalid", "QC refuses foreign exact event key");
+        auto plottedPlan = save;
+        plottedPlan["planId"] = "plot-plan";
+        plottedPlan["graph"]["id"] = "plot-plan";
+        plottedPlan["commandId"] = "plot-save";
+        plottedPlan["plot"] = {{"kind", "histogram"},
+                               {"feature", "area"},
+                               {"minimum", 0},
+                               {"maximum", 10},
+                               {"bins", 2},
+                               {"normalization", "count"},
+                               {"layers", {{{"population", "gate"}, {"displayOffset", 0}}}}};
+        MIB_EXPECT(call(plottedPlan)["status"] == "ok", "persist validated PlotSpec with strategy");
+        const auto plotReply = call(json{{"action", "plot"},
+                                         {"planId", "plot-plan"},
+                                         {"revision", "1"},
+                                         {"source", save.at("source")}},
+                                    false);
+        MIB_EXPECT(plotReply["plot"]["layers"][0]["counts"] == json::array({"0", "1"}),
+                   "saved PlotSpec is evaluated through production host");
         auto csvPlan = save;
         csvPlan["planId"] = "csv-plan";
         csvPlan["graph"]["id"] = "csv-plan";

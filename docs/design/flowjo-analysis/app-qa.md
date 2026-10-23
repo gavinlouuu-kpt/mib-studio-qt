@@ -152,3 +152,15 @@ Native table: p05 100.45, p25 102.25, p75 106.75, p95 109.1; sample SD
 3.204163957519444; CV 3.0632542614908647%; mean 104.6, median 104.5.
 Normal and ASan/UBSan native population/graph/statistics tests pass. Full F remains
 open as recorded in the ledger; UI click-through remains connector-blocked.
+
+### Plot/QC production validation
+
+Actual tailnet commands saved an attributed QC strategy (one good, one bad, twelve
+unlabelled/unknown) and a native PlotSpec. Evaluation returned 1 selected, 1 excluded,
+12 unknown. The histogram contained exactly 1 event while its display offset was
+99. A real Cytoflow job preserved 1 selected/12 unknown and the exact native QC
+fingerprint. No processing-validity inference or hardware acquisition was used.
+Native host tests cover bin boundaries, outside-range normalization, offset
+invariance, QC unknown/foreign-key handling and manifest attribution round-trip.
+Eight Review bridge tests also pass, including invalid metadata directory handling
+and refusal to silently retarget an initialized metadata authority.

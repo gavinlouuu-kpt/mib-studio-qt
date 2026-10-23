@@ -172,3 +172,36 @@ receipt path, preserving the plan ID and complete source-bound document. It cann
 silently import against different bytes. A recording copied to another path can
 be opened normally and matched by full-file hash. Content hashes detect accidental
 changes; they are not signatures or authentication. Import never applies methods.
+
+## Saved plots and explicit QC assertions
+
+An optional `plot` on save/import is persisted with the strategy:
+
+```json
+{"kind":"histogram","feature":"area","minimum":0,"maximum":200,"bins":40,"normalization":"count","layers":[{"population":"area-gate","displayOffset":0}]}
+```
+
+Read action `plot` takes exact evaluation fields. Native F-plot/1 supplies edges,
+exact count strings, normalized numeric values, source/plan/revision and a content
+hash. Limits: 1..256 distinct representable bins, 1..8 distinct graph populations,
+finite offsets bounded to ±1,000,000. Bins are [left,right), final bin closed;
+underflow/overflow and missing/unknown counts are explicit. `fraction` divides by
+all finite selected measurements, including outside the display range; `density`
+further divides by bin width. Empty normalized layers are null, not invented zeros.
+Offsets are presentation-only and cannot change counts, gates or reductions.
+The production renderer consumes native values and exports a self-contained SVG.
+
+An optional `qc` on save/import contains `policy` (`all` or `good-only`) and
+`decisions`: `{key,status,actor,reason}`. Status is good/bad/unknown; foreign or
+duplicate event keys, absent author/reason and unbounded strings are refused.
+Unlabelled events remain unknown. `good-only` composes native three-valued QC with
+the graph; `all` does not filter but still reports distinct QC counts. Processing
+valid/invalid status never supplies scientific QC. These are attributed manual
+assertions, **not independently qualified automated QC**. They are immutable in
+each saved revision and survive manifest round-trip. Jobs pin the native QC
+fingerprint and use the QC-aware graph eligibility, preserving unknown values.
+The pinned gallery can stage attributed labels; saving a new revision is required
+before they affect evaluation.
+
+Optional plot/QC fields are omitted, not inserted as null, for legacy save
+commands so existing command receipts still replay identically.

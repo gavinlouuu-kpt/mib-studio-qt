@@ -786,7 +786,10 @@ fn source_bound_strategy_survives_bridge_reopen_and_rejects_source_switch() {
     let path = root.join("source.h5").to_string_lossy().into_owned();
     assert!(ffi::review_fixture_write_experiment(&path));
     let mut b = ffi::new_review_bridge();
+    let bad_data = root.join("not-a-directory"); std::fs::write(&bad_data,b"file").unwrap();
+    assert!(!b.pin_mut().initialize(&bad_data.to_string_lossy()), "metadata failure must not escape the FFI");
     assert!(b.pin_mut().initialize(&root.to_string_lossy()));
+    assert!(!b.pin_mut().initialize(&root.join("another-authority").to_string_lossy()), "cannot silently retarget metadata authority");
     assert!(b.pin_mut().review_open(&path).ok);
     let descriptor = json!({"kind":"stored","path":path});
     let snapshot: Value = serde_json::from_str(&b.pin_mut().review_analysis_read(&json!({"action":"snapshot","source":descriptor}).to_string())).unwrap();

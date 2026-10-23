@@ -1,3 +1,4 @@
+import { AnalysisPlot, type PlotArtifact } from "./AnalysisPlot";
 import { PopulationThumbnail } from "./PopulationThumbnail";
 import { useEffect, useRef, useState } from "react";
 import type { PopulationGraph } from "./PopulationAnalysis";
@@ -11,6 +12,14 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
   const [kind, setKind] = useState(live && !path ? "live-run" : "stored");
   const [retainedId, setRetainedId] = useState("");
   const [revision, setRevision] = useState("");
+  const [qcEnabled, setQcEnabled] = useState(false);
+  const [qcPolicy, setQcPolicy] = useState("good-only");
+  const [qcText, setQcText] = useState("[]");
+  const [qcActor, setQcActor] = useState("");
+  const [qcReason, setQcReason] = useState("");
+  const [plotEnabled, setPlotEnabled] = useState(false);
+  const [plotText, setPlotText] = useState(JSON.stringify({kind:"histogram",feature:"area",minimum:0,maximum:200,bins:40,normalization:"count",layers:[{population:"area-gate",displayOffset:0}]},null,2));
+  const [plot, setPlot] = useState<PlotArtifact | null>(null);
   const [report, setReport] = useState<Record<string, any> | null>(null);
   const [manifestText, setManifestText] = useState("");
   const [gallery, setGallery] = useState<Record<string, any> | null>(null);
@@ -23,7 +32,7 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
   const [jobResult, setJobResult] = useState<Record<string, any> | null>(null);
   const [busy, setBusy] = useState(false);
   const generation = useRef(0);
-  useEffect(() => { ++generation.current; setReport(null); setGallery(null); setResult(null); setRevision(""); setHistory([]); setMessage(""); }, [path, kind, retainedId, graphText, feature]);
+  useEffect(() => { ++generation.current; setPlot(null); setReport(null); setGallery(null); setResult(null); setRevision(""); setHistory([]); setMessage(""); }, [path, kind, retainedId, graphText, feature]);
   const source = () => kind === "retained" ? {kind, id: retainedId} : kind.startsWith("live-") ? { kind } : { kind, path };
   const graph = (): PopulationGraph => JSON.parse(graphText);
   const checked = (reply: Record<string, any>) => {
@@ -64,7 +73,7 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
         const command = {action:"retainSource",source:source(),commandId:crypto.randomUUID()};
         window.localStorage.setItem(pendingKey,JSON.stringify(command)); await reconcile(command,token);
       })}>Retain current snapshot</button>
-      <label>Exact backend revision <input aria-label="Strategy revision" value={revision} onChange={e => { ++generation.current; setRevision(e.target.value); setGallery(null); setReport(null); setResult(null); }} placeholder="Blank creates a new plan" /></label>
+      <label>Exact backend revision <input aria-label="Strategy revision" value={revision} onChange={e => { ++generation.current; setRevision(e.target.value); setGallery(null); setPlot(null); setReport(null); setResult(null); }} placeholder="Blank creates a new plan" /></label>
       <button onClick={() => void run(async token => {
         if (window.localStorage.getItem(pendingKey)) throw new Error("Reconcile the pending command before creating another revision.");
         const g = graph();
@@ -72,7 +81,7 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
         if (token !== generation.current) return;
         const binding = Object.fromEntries(["fingerprint", "sourceKey", "parameters", "scope"].map(k => [k, snapshot[k]]));
         const command = { action: "save", planId: g.id, expectedRevision: revision || null,
-          commandId: crypto.randomUUID(), graph: g, feature, source: source(), sourceBinding: binding };
+          commandId: crypto.randomUUID(), graph: g, feature, source: source(), sourceBinding: binding, ...(plotEnabled ? {plot: JSON.parse(plotText)} : {}), ...(qcEnabled ? {qc:{policy:qcPolicy,decisions:JSON.parse(qcText)}} : {}) };
         // Journal before submission; a storage failure must prevent a write with no recovery handle.
         window.localStorage.setItem(pendingKey, JSON.stringify(command));
         await reconcile(command, token);
@@ -103,6 +112,25 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
         if (token === generation.current) setGallery(reply);
       })}>Load pinned gallery</button>
     </fieldset>
+    <details><summary>Scientific QC assertions</summary>
+      <p>Manual assertions are separate from processing validity. Unlabelled events remain unknown. “Good only” preserves unknown membership; these labels are not independent scientific qualification.</p>
+      <label><input type="checkbox" checked={qcEnabled} disabled={busy} onChange={e=>setQcEnabled(e.target.checked)}/>Include QC assertions in the next saved revision</label>
+      <label>QC policy<select value={qcPolicy} onChange={e=>setQcPolicy(e.target.value)}><option value="good-only">Good only; unknown remains unknown</option><option value="all">Do not filter; retain explicit QC counts</option></select></label>
+      <label>Assertion author<input aria-label="QC assertion author" value={qcActor} onChange={e=>setQcActor(e.target.value)}/></label>
+      <label>Scientific reason<input aria-label="QC assertion reason" value={qcReason} onChange={e=>setQcReason(e.target.value)}/></label>
+      <label>Exact-key QC decisions<textarea aria-label="QC decisions JSON" rows={5} value={qcText} onChange={e=>setQcText(e.target.value)}/></label>
+      <p>Use the pinned gallery buttons to stage assertions with the author/reason above, then save a new backend revision. A changed source cannot inherit foreign event labels.</p>
+    </details>
+    <details><summary>Saved histogram and overlay specification</summary>
+      <p>Up to eight graph populations share fixed raw-value bins. Count, fraction or density normalization is explicit. Display offsets do not alter gates or statistics. Save a new backend revision to persist this specification.</p>
+      <label><input type="checkbox" checked={plotEnabled} onChange={e=>setPlotEnabled(e.target.checked)} disabled={busy}/>Include PlotSpec in the next saved revision</label>
+      <label>PlotSpec JSON<textarea aria-label="Analysis PlotSpec JSON" rows={10} value={plotText} onChange={e=>setPlotText(e.target.value)} /></label>
+      <button disabled={busy || !revision} onClick={()=>void run(async token=>{
+        const reply=checked(await read({action:"plot",planId:graph().id,revision,source:source()}));
+        if(token===generation.current)setPlot(reply.plot);
+      })}>Render saved PlotSpec</button>
+      {plot && <AnalysisPlot artifact={plot}/>}
+    </details>
     <details><summary>Population tables and portable strategy</summary>
       <p>Tables are computed from finite raw selected values. Quantiles use type 7; SD uses n−1; CV uses absolute mean. Null is unavailable, not zero. Exports pin the source and backend revision; they do not certify scientific compatibility.</p>
       <button disabled={busy || !revision} onClick={() => void run(async token => {
@@ -138,6 +166,14 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
       <div style={{display:"flex",flexWrap:"wrap"}}>{gallery.images.map((item: {key: string; pixels: number[] | null; reason?: string}) => <figure key={item.key}>
         {item.pixels ? <PopulationThumbnail pixels={item.pixels} /> : <span>{item.reason || "Image unavailable"}</span>}
         <figcaption style={{maxWidth:200,overflowWrap:"anywhere"}}>{item.key}</figcaption>
+        {["good","bad","unknown"].map(status=><button key={status} disabled={busy || !qcActor.trim() || !qcReason.trim()} onClick={()=>{
+          try {
+            const decisions = JSON.parse(qcText) as Array<{key:string}>;
+            if(!Array.isArray(decisions))throw new Error("QC decisions must be an array");
+            setQcText(JSON.stringify([...decisions.filter(d=>d.key!==item.key),{key:item.key,status,actor:qcActor,reason:qcReason}],null,2));setQcEnabled(true);
+            setMessage("QC assertion staged only. Save a new backend revision to persist it.");
+          } catch(e){setMessage(String(e));}
+        }}>{status}</button>)}
       </figure>)}</div>
       <button disabled={busy || gallery.offset === 0} onClick={() => void run(async token => {
         const reply = checked(await read({action:"gallery",planId:graph().id,revision,source:source(),offset:Math.max(0,gallery.offset-12)}));
@@ -148,7 +184,7 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
         if (token === generation.current) setGallery(reply);
       })}>Next pinned page</button>
     </section>}
-    {history.length > 0 && <p>Saved revisions: {history.map(r => <button key={r} disabled={busy} onClick={() => { ++generation.current; setRevision(r); setGallery(null); setReport(null); setResult(null); }}>{r}</button>)}</p>}
+    {history.length > 0 && <p>Saved revisions: {history.map(r => <button key={r} disabled={busy} onClick={() => { ++generation.current; setRevision(r); setGallery(null); setPlot(null); setReport(null); setResult(null); }}>{r}</button>)}</p>}
     <p role="status">{message}</p>
     <details><summary>Cytoflow polygon job</summary>
       <p>Area (px²) × deformability, intersected with the pinned graph by native three-valued logic. The host freezes keyed inputs before scheduling; changing the source never retargets a running job. No hardware operation is performed.</p>
@@ -193,6 +229,7 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
     {result && <div>
       <p>{result.selected} selected · {result.excluded} excluded · {result.unknown} unknown. Denominator: {result.denominator ?? "unknown (incomplete event coverage)"}.</p>
       <p>Mean: {result.mean ?? "—"} · Median: {result.median ?? "—"} {result.unit}</p>
+      <p>QC: {result.qcPolicy}; good {result.qcCounts?.good}, bad {result.qcCounts?.bad}, unknown {result.qcCounts?.unknown}. {result.qcAuthority}</p>
       <p>Plan {result.planId} / revision {result.revision}</p>
       <code style={{ overflowWrap: "anywhere" }}>{result.sourceFingerprint}</code>
       <p>E event ordinals are not image indices. Live/archive image retention is unavailable until a provider supplies exact retained-asset locators.</p>

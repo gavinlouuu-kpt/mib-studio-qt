@@ -208,10 +208,40 @@ Json evaluateSource(const Json& source, const Json& request) {
     for (const auto& [id, gate] : graph.gates)
         if (!units.contains(gate.first))
             throw std::invalid_argument("Gate feature unavailable in source: " + gate.first);
+    const auto qc = request.value("qc", Json{{"policy", "all"}, {"decisions", Json::array()}});
+    if (!qc.is_object() || qc.size() != 2 || !qc.at("decisions").is_array() ||
+        qc.at("decisions").size() > 10000)
+        throw std::invalid_argument("Expected QC policy and bounded decisions");
+    const auto qcPolicy = qc.at("policy").get<std::string>();
+    if (qcPolicy != "all" && qcPolicy != "good-only")
+        throw std::invalid_argument("Unsupported QC policy");
+    std::map<std::string, Truth> decisions;
+    std::set<std::string> sourceKeys;
+    for (const auto& row : source.at("rows"))
+        sourceKeys.insert(row.at("key").get<std::string>());
+    for (const auto& decision : qc.at("decisions")) {
+        if (!decision.is_object() || decision.size() != 4)
+            throw std::invalid_argument("QC decision requires key, status, reason and actor");
+        const auto key = decision.at("key").get<std::string>();
+        const auto status = decision.at("status").get<std::string>();
+        const auto reason = decision.at("reason").get<std::string>(),
+                   actor = decision.at("actor").get<std::string>();
+        if (!sourceKeys.count(key) || decisions.count(key) || reason.empty() ||
+            reason.size() > 512 || actor.empty() || actor.size() > 128)
+            throw std::invalid_argument(
+                "QC decision has foreign/duplicate key or missing bounded attribution");
+        if (status != "good" && status != "bad" && status != "unknown")
+            throw std::invalid_argument("Unsupported QC status");
+        decisions.emplace(key, status == "good"  ? Truth::True
+                               : status == "bad" ? Truth::False
+                                                 : Truth::Unknown);
+    }
+    const auto qcFingerprint = contentHash(qc);
     const auto fingerprint = source.at("fingerprint").get<std::string>();
-    RevisionKey revision{fingerprint,  fingerprint, graph.plan.revision, "source-bound",  "none",
-                         units.dump(), "none",      "source-authority",  "native-graph/1"};
-    Membership universe{revision, {}};
+    RevisionKey revision{fingerprint,  fingerprint,   graph.plan.revision, "source-bound",  "none",
+                         units.dump(), qcFingerprint, "source-authority",  "native-graph/1"};
+    Membership universe{revision, {}}, eligibility{revision, {}};
+    uint64_t qcGood = 0, qcBad = 0, qcUnknown = 0;
     MeasurementColumn column{revision, feature, units.at(feature).get<std::string>(), {}};
     std::map<std::string, Membership> predicates;
     for (const auto& [id, gate] : graph.gates)
@@ -219,12 +249,21 @@ Json evaluateSource(const Json& source, const Json& request) {
     for (const auto& row : source.at("rows")) {
         const auto key = row.at("key").get<std::string>();
         universe.rows.push_back({key, Truth::True});
+        const auto quality = decisions.count(key) ? decisions.at(key) : Truth::Unknown;
+        if (quality == Truth::True)
+            ++qcGood;
+        else if (quality == Truth::False)
+            ++qcBad;
+        else
+            ++qcUnknown;
+        eligibility.rows.push_back({key, qcPolicy == "all" ? Truth::True : quality});
         column.rows.push_back({key, measurement(row, feature)});
         for (const auto& [id, gate] : graph.gates)
             predicates.at(id).rows.push_back(
                 {key, evaluateInterval(measurement(row, gate.first), gate.second)});
     }
-    const auto result = evaluatePlan(graph.plan, universe, universe, predicates).at(graph.output);
+    const auto result =
+        evaluatePlan(graph.plan, universe, eligibility, predicates).at(graph.output);
     const auto stats = populationStatistics(result, column);
     const auto number = [](std::optional<double> v) -> Json {
         return v ? Json(*v) : Json(nullptr);
@@ -235,39 +274,48 @@ Json evaluateSource(const Json& source, const Json& request) {
                         {"membership", row.value == Truth::True    ? "selected"
                                        : row.value == Truth::False ? "excluded"
                                                                    : "unknown"}});
-    return {{"schema", "F-evaluation/1"},
-            {"sourceFingerprint", fingerprint},
-            {"sourceKey", source.at("sourceKey")},
-            {"graph", request.at("graph")},
-            {"feature", feature},
-            {"unit", column.unit},
-            {"selected", std::to_string(stats.selected)},
-            {"excluded", std::to_string(stats.excluded)},
-            {"unknown", std::to_string(stats.unknownMembership)},
-            {"measured", std::to_string(stats.measured)},
-            {"missing", std::to_string(stats.missing)},
-            {"mean", number(stats.mean)},
-            {"median", number(stats.median)},
-            {"p05", number(stats.p05)},
-            {"p25", number(stats.p25)},
-            {"p75", number(stats.p75)},
-            {"p95", number(stats.p95)},
-            {"sampleStandardDeviation", number(stats.sampleStandardDeviation)},
-            {"cvPercent", number(stats.cvPercent)},
-            {"geometricMean", number(stats.geometricMean)},
-            {"estimators",
-             {{"quantile", "Hyndman-Fan type 7"},
-              {"standardDeviation", "sample; n-1"},
-              {"cvPercent", "100 * sample SD / absolute mean; null for zero mean"},
-              {"geometricMean", "exp(mean(log(x))); null if any measured x <= 0"},
-              {"nonrepresentable", "null"},
-              {"input", "finite raw selected values; not histogram estimates"}}},
-            {"minimum", number(stats.minimum)},
-            {"maximum", number(stats.maximum)},
-            {"rows", rows},
-            {"populationComplete", source.at("populationComplete")},
-            {"denominator", source.at("populationComplete").get<bool>()
-                                ? Json(std::to_string(source.at("rows").size()))
-                                : Json(nullptr)}};
+    return {
+        {"schema", "F-evaluation/1"},
+        {"sourceFingerprint", fingerprint},
+        {"sourceKey", source.at("sourceKey")},
+        {"graph", request.at("graph")},
+        {"feature", feature},
+        {"unit", column.unit},
+        {"selected", std::to_string(stats.selected)},
+        {"excluded", std::to_string(stats.excluded)},
+        {"unknown", std::to_string(stats.unknownMembership)},
+        {"measured", std::to_string(stats.measured)},
+        {"missing", std::to_string(stats.missing)},
+        {"mean", number(stats.mean)},
+        {"median", number(stats.median)},
+        {"p05", number(stats.p05)},
+        {"p25", number(stats.p25)},
+        {"p75", number(stats.p75)},
+        {"p95", number(stats.p95)},
+        {"sampleStandardDeviation", number(stats.sampleStandardDeviation)},
+        {"cvPercent", number(stats.cvPercent)},
+        {"geometricMean", number(stats.geometricMean)},
+        {"estimators",
+         {{"quantile", "Hyndman-Fan type 7"},
+          {"standardDeviation", "sample; n-1"},
+          {"cvPercent", "100 * sample SD / absolute mean; null for zero mean"},
+          {"geometricMean", "exp(mean(log(x))); null if any measured x <= 0"},
+          {"nonrepresentable", "null"},
+          {"input", "finite raw selected values; not histogram estimates"}}},
+        {"minimum", number(stats.minimum)},
+        {"maximum", number(stats.maximum)},
+        {"rows", rows},
+        {"qcPolicy", qcPolicy},
+        {"qcFingerprint", qcFingerprint},
+        {"qcCounts",
+         {{"good", std::to_string(qcGood)},
+          {"bad", std::to_string(qcBad)},
+          {"unknown", std::to_string(qcUnknown)}}},
+        {"qcAuthority",
+         "operator assertions; not inferred from processing validity or independently qualified"},
+        {"populationComplete", source.at("populationComplete")},
+        {"denominator", source.at("populationComplete").get<bool>()
+                            ? Json(std::to_string(source.at("rows").size()))
+                            : Json(nullptr)}};
 }
 } // namespace backend::analysis

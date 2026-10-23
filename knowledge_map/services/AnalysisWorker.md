@@ -147,3 +147,10 @@ checksummed strategy manifests; import reuses save/CAS and verifies current sour
 bytes. Retained normalized source projections use the same metadata owner with a
 900,000-byte cap, allowing explicitly historical evaluation after a live producer
 advances. Retention does not fabricate image assets or scientific compatibility.
+
+`PopulationPlot.cpp` owns bounded raw histogram binning/normalization. Saved plot
+layers refer to native graph populations; renderer offsets never affect science.
+Optional strategy QC stores exact-key attributed manual assertions; good-only
+eligibility remains tri-state and the worker revision pins its native fingerprint.
+No processing-validity-to-scientific-QC conversion is performed. Legacy optional
+fields remain omitted so pre-extension command receipts keep their identity.

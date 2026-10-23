@@ -4464,9 +4464,11 @@ std::string BackendFacade::fetchCaptureLifecycleJson() const {
 } // namespace backend::bridge
 
 std::string backend::bridge::BackendFacade::fetchLiveEvidenceJson() {
+    if (!isInitialized()) return R"({"available":false,"reason":"Backend is not initialized"})";
     return backend_.processing().liveEvidenceJson();
 }
 std::string backend::bridge::BackendFacade::analysisRequestJson(const std::string& request, bool write) {
+    if (!isInitialized()) return R"({"status":"unavailable","message":"Backend is not initialized"})";
     using Json = nlohmann::json;
     auto source = [this](const Json& descriptor) -> Json {
         const auto kind = descriptor.at("kind").get<std::string>();

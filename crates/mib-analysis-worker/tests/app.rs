@@ -16,7 +16,7 @@ fn submission() -> (Submission, serde_json::Value) {
         "rows":[{"key":"a","measurements":{"area":5.,"deformability":0.5}},
         {"key":"b","measurements":{"area":5.,"deformability":0.5}},
         {"key":"c","measurements":{"area":null,"deformability":0.5}}]},
-        "evaluation":{"rows":[{"key":"c","membership":"excluded"},{"key":"a","membership":"selected"},{"key":"b","membership":"unknown"}]}});
+        "evaluation":{"qcFingerprint":"sha256:qc","rows":[{"key":"c","membership":"excluded"},{"key":"a","membership":"selected"},{"key":"b","membership":"unknown"}]}});
     (s, v)
 }
 #[test]

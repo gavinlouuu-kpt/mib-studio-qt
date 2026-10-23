@@ -166,7 +166,8 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                 contentHash(manifest) != q.at("contentHash"))
                 throw std::invalid_argument("Manifest schema/hash mismatch");
             const auto& doc = manifest.at("document");
-            fields(doc, {"schema_version", "type", "graph", "feature", "sourceBinding", "method"});
+            fields(doc, {"schema_version", "type", "graph", "feature", "sourceBinding", "method",
+                         "plot", "qc"});
             if (doc.at("schema_version") != 1 || doc.at("type") != "F-analysis-strategy/1")
                 throw std::invalid_argument("Unsupported strategy manifest");
             Json save{{"action", "save"},
@@ -175,6 +176,8 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                       {"feature", doc.at("feature")},
                       {"sourceBinding", doc.at("sourceBinding")},
                       {"method", doc.at("method")},
+                      {"plot", doc.value("plot", Json(nullptr))},
+                      {"qc", doc.value("qc", Json(nullptr))},
                       {"source", q.at("source")},
                       {"expectedRevision", q.at("expectedRevision")},
                       {"commandId", q.at("commandId")}};
@@ -183,7 +186,7 @@ std::string analysisRequest(services::SqliteService& database, const std::string
         if (action == "save") {
             if (!write) throw std::invalid_argument("Save requires the analysis write endpoint");
             fields(q, {"action", "planId", "expectedRevision", "commandId", "graph", "feature",
-                       "source", "sourceBinding", "method"});
+                       "source", "sourceBinding", "method", "plot", "qc"});
             validateAnalysisGraph(q.at("graph"));
             if (q.at("graph").at("id") != q.at("planId"))
                 throw std::invalid_argument("Graph ID must match plan ID");
@@ -195,6 +198,8 @@ std::string analysisRequest(services::SqliteService& database, const std::string
             Json doc{{"schema_version", 1},      {"type", "F-analysis-strategy/1"},
                      {"graph", q.at("graph")},   {"feature", q.at("feature")},
                      {"sourceBinding", binding}, {"method", q.value("method", Json(nullptr))}};
+            if (q.contains("plot") && !q.at("plot").is_null()) doc["plot"] = q.at("plot");
+            if (q.contains("qc") && !q.at("qc").is_null()) doc["qc"] = q.at("qc");
             const auto receipt = Json::parse(
                 database.workspaceRequest(Json{{"action", "receipt"},
                                                {"workspace_id", identity(q)},
@@ -211,6 +216,7 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                     throw std::invalid_argument("Source binding changed; refresh explicitly");
             // Also validates source parameter availability and graph budgets.
             evaluateSource(current, doc);
+            if (!doc.value("plot", Json(nullptr)).is_null()) plotSource(current, doc);
             if (!doc.at("method").is_null()) {
                 if (!method) throw std::invalid_argument("Method resolver unavailable");
                 const auto resolved = method(doc.at("method"));
@@ -247,7 +253,7 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                 .dump();
         }
         if (action == "evaluate" || action == "jobInput" || action == "gallery" ||
-            action == "report") {
+            action == "report" || action == "plot") {
             fields(q,
                    action == "gallery"
                        ? std::set<std::string>{"action", "planId", "revision", "source", "offset"}
@@ -283,6 +289,17 @@ std::string analysisRequest(services::SqliteService& database, const std::string
             auto result = evaluateSource(current, doc);
             result["planId"] = q.at("planId");
             result["revision"] = saved.at("revision");
+            if (action == "plot") {
+                if (doc.value("plot", Json(nullptr)).is_null())
+                    return Json{{"status", "unavailable"},
+                                {"message", "This revision has no saved PlotSpec"}}
+                        .dump();
+                auto plot = plotSource(current, doc);
+                plot["planId"] = q.at("planId");
+                plot["revision"] = saved.at("revision");
+                return Json{{"status", "ok"}, {"plot", plot}, {"contentHash", contentHash(plot)}}
+                    .dump();
+            }
             if (action == "report") {
                 const auto& nodes = doc.at("graph").at("nodes");
                 if (nodes.size() > 32)
@@ -352,7 +369,7 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                             {"estimators", result.at("estimators")},
                             {"table", table},
                             {"scientificCompatibility", "unknown"},
-                            {"qcPolicy", "unknown-not-filtered"},
+                            {"qcPolicy", result.at("qcPolicy")},
                             {"populationComplete", current.at("populationComplete")}};
                 return Json{{"status", "ok"},
                             {"report", report},

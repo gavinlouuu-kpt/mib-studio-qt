@@ -253,6 +253,7 @@ struct ReviewBridge::Impl {
     br::ReviewSession session;
     backend::services::SqliteService analysisDatabase;
     bool analysisDatabaseReady{false};
+    std::string analysisDataDir;
     // The bundled kernel for regenerate masks (ProcessingService owns no
     // threads until start(), which review never calls).
     backend::services::ProcessingService processing;
@@ -301,11 +302,18 @@ ReviewBridge::~ReviewBridge() {
 }
 
 bool ReviewBridge::initialize(rust::Str data_dir) {
-    if (!impl_->analysisDatabaseReady && !toStd(data_dir).empty()) {
-        std::filesystem::create_directories(toStd(data_dir));
-        impl_->analysisDatabaseReady = impl_->analysisDatabase.initialize((std::filesystem::path(toStd(data_dir)) / "app.sqlite3").string());
-        if (!impl_->analysisDatabaseReady) return false;
-    }
+    try {
+        if (!toStd(data_dir).empty()) {
+            const auto directory = std::filesystem::weakly_canonical(std::filesystem::absolute(toStd(data_dir)));
+            if (impl_->analysisDatabaseReady && impl_->analysisDataDir != directory.string()) return false;
+            if (!impl_->analysisDatabaseReady) {
+                std::filesystem::create_directories(directory);
+                impl_->analysisDatabaseReady = impl_->analysisDatabase.initialize((directory / "app.sqlite3").string());
+                if (!impl_->analysisDatabaseReady) return false;
+                impl_->analysisDataDir = directory.string();
+            }
+        }
+    } catch (...) { return false; }
     impl_->initialized = true;
     return true;
 }

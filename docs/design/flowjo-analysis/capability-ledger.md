@@ -75,3 +75,11 @@ advancement/restart. F10 has deterministic evidence JSON/table export, **not** a
 full report-layout/batch designer. These additions narrow the remaining rows;
 they do not waive original advanced workflow, comparison, transform, embedding,
 interchange or platform qualification requirements.
+
+F05/F11 now include source/revision-bound saved histogram PlotSpec with up to eight
+graph-population layers, native exact bins, explicit count/fraction/density
+normalization, separately reported outside-range/missing/unknown values and
+presentation-only offsets. F02 has source-bound, attributed manual good/bad/unknown
+assertions and a native good-only three-valued filter, propagated into job QC
+fingerprints and portable manifests. Automated QC qualification, arbitrary plot
+families, multi-source overlays and full layout composition remain open.
