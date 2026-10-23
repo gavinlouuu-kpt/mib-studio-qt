@@ -136,3 +136,14 @@ delta removes public visibility from three Tauri command wrappers; adopted
 branch-locally. Thumbnail whitespace cleanup was already present. Existing
 scientific evidence applies to the identical evaluator; this source alignment
 does not upgrade the unverified native Tauri packaging claim.
+
+E `559ba14a` handoff reviewed: pinned lease metadata/run-owner accessors were
+already incorporated through F. Adopted E's pre-initialization live-evidence guard
+and added the same boundary to native analysis requests, returning unavailable
+before any absent backend service can be accessed. Real WebSocket regression
+`scientific_reads_before_init_are_refused` covers evidence plus live-run/live-epoch
+analysis reads. E's additional live-owner parity evidence is supplementary;
+I's own stored/archive acceptance remains separately recorded above.
+I's evidence cxx function returns String, not Result: it therefore returns an
+unavailable JSON body natively, while the Rust command explicitly rejects pre-init
+calls. It does not throw across a non-Result FFI boundary.
