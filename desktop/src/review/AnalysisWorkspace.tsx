@@ -1,3 +1,4 @@
+import {addRectangle} from "./PopulationGraphEditor";
 import {AnalysisCatalog} from "./AnalysisCatalog";
 import { AnalysisOverlay } from "./AnalysisOverlay";
 import { AnalysisLibrary } from "./AnalysisLibrary";
@@ -38,6 +39,7 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
   const [qcText, setQcText] = useState("[]");
   const [qcActor, setQcActor] = useState("");
   const [qcReason, setQcReason] = useState("");
+  const [drawId, setDrawId] = useState("");
   const [tableEnabled, setTableEnabled] = useState(false);
   const [tableText, setTableText] = useState(JSON.stringify({populations:["area-gate"],columns:["population","feature","unit","selected","unknown","mean","median"]},null,2));
   const [plotEnabled, setPlotEnabled] = useState(false);
@@ -230,7 +232,11 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
         const reply=checked(await read({action:"plot",planId:graph().id,revision,source:source()}));
         if(token===generation.current)setPlot(reply.plot);
       })}>Render saved PlotSpec</button>
-      {plot && <AnalysisPlot artifact={plot}/>}
+      <label>Drag-created rectangle ID<input value={drawId} onChange={e=>setDrawId(e.target.value)} disabled={busy}/></label>
+      <p>To draw, load the exact saved graph, detach an application draft if needed, and enter a unique rectangle ID. Dragging only stages a draft; save a new backend revision to evaluate it.</p>
+      {plot && <AnalysisPlot artifact={plot} onRectangle={!busy && !disabled && onLoadGraph && drawId.trim() && revision===editBaseRevision && !application ? draft=>{
+        try{onLoadGraph(addRectangle(graph(),drawId,draft.x,draft.y,draft.bounds));setDrawId("");setMessage("Rectangle staged. Save a backend revision to evaluate all observations.");}catch(e){setMessage(String(e));}
+      }:undefined}/>}
     </details>
     <details><summary>Population tables and portable strategy</summary>
       <label><input type="checkbox" checked={tableEnabled} disabled={busy} onChange={e=>setTableEnabled(e.target.checked)}/>Include reusable table definition in next revision</label>

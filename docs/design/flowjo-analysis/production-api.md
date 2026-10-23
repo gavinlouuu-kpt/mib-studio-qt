@@ -416,3 +416,10 @@ Pages are discovery, not a frozen inventory; opening/evaluating still requires a
 exact revision and source. The internal database catalog path is unavailable through
 the generic workspace endpoint. Libraries have exact-open buttons; strategy/source
 catalogs expose references without silently replacing the current draft or source.
+
+Saved scatter plots can stage a rectangular draft by dragging after loading the
+exact edit revision and entering a unique rectangle ID. Screen coordinates map to
+the artifact's explicit raw/derived bounds; reversed drags are normalized, tiny or
+cancelled gestures produce nothing. The result is the same explicit interval/AND
+composition as the numeric form. It cannot mutate an attached template application
+without explicit draft detachment, and it never saves/evaluates automatically.

@@ -265,3 +265,8 @@ study-1792757005646 revision1 with unchanged hash
 sha256:d01ff89af038a1f9f58d4588f625bf8dbf2f7c9c0e352a202722147a947fe024.
 Native3 host/store suites,4 sanitizer suites, UI20 and production builds pass.
 Original synthetic recording restored after the owned server restart; no acquisition.
+
+Scatter drag authoring: component tests verify reversed drags under2× screen scaling,
+correct X/Y raw bounds, pointer cancellation and tiny-gesture refusal. Native
+rectangle evaluation/image proof remains as above. Browser inventory was checked
+again and returned `[]`; real pointer click-through is explicitly unverified.

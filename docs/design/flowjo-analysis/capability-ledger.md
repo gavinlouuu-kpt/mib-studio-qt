@@ -175,3 +175,9 @@ F01/F12 continuation: bounded native saved-record discovery and exact library re
 are now exposed in the production module. Catalog pages list IDs/revisions only,
 never fabricate source compatibility or silently follow a moving head. Full workspace
 portability and large-source/asynchronous fingerprinting remain open.
+
+F04 graphical continuation: saved scatter supports pointer-drag rectangle drafts
+using the same native interval/AND representation, with explicit edit-base/template
+checks. Scaled/reverse/cancel/tiny gesture tests pass; real browser gesture
+qualification remains blocked by no registered browser. Polygon/ellipse/quadrant
+families and their full interaction acceptance remain open.

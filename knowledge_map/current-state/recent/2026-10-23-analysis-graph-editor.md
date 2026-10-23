@@ -18,3 +18,8 @@ base. A UI regression verifies refusal before any backend write.
 Rectangular draft creation reuses two explicit native inclusive intervals plus AND,
 with collision/bounds refusal. Tailnet rectangle-1792759502927 selects7 and returns7
 exact images, checked against frozen rows. No browser-side membership authority.
+
+Scatter pointer drag now stages the same rectangle draft after exact edit-base
+loading and explicit template detachment. Tests cover scaled reverse coordinates,
+cancellation and tiny gestures. No automatic publication or client membership.
+Browser inventory rechecked: empty; rendered pointer acceptance remains unverified.
