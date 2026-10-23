@@ -115,6 +115,27 @@ std::string SqliteService::request(const std::string& request, bool write, bool 
             if (!keys.count(it.key()))
                 throw StoreError(StoreErrorCode::Invalid, "Unknown workspace request field");
         const auto id = action == "list" ? std::string{} : q.at("workspace_id").get<std::string>();
+        // Public manifests may reference but cannot mint scientific authority records.
+        if (write && !analysisAuthority && action == "import") {
+            const auto& payload = q.at("manifest").at("payload");
+            if (payload.contains("dependencies")) {
+                const auto& deps = payload.at("dependencies");
+                if (!deps.is_array())
+                    throw StoreError(StoreErrorCode::Invalid, "Invalid dependencies");
+                for (const auto& dep : deps) {
+                    const auto existing =
+                        workspace_->read(dep.at("workspace_id").get<std::string>(),
+                                         dep.at("revision").get<std::string>());
+                    if (!existing)
+                        throw StoreError(StoreErrorCode::Invalid,
+                                         "Import exact analysis dependencies through the native "
+                                         "analysis provider first");
+                    if (json::parse(existing->documentJson) != dep.at("document"))
+                        throw StoreError(StoreErrorCode::Conflict,
+                                         "Analysis dependency differs from native provider record");
+                }
+            }
+        }
         const auto optional = [&](const char* key) -> std::optional<std::string> {
             if (!q.contains(key) || q.at(key).is_null()) return std::nullopt;
             return q.at(key).get<std::string>();

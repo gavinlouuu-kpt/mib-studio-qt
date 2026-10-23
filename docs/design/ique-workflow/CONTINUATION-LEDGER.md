@@ -147,3 +147,24 @@ I's own stored/archive acceptance remains separately recorded above.
 I's evidence cxx function returns String, not Result: it therefore returns an
 unavailable JSON body natively, while the Rust command explicitly rejects pre-init
 calls. It does not throw across a non-Result FFI boundary.
+
+## Scientific namespace authority correction
+
+Adopted equivalent F `8a3260e5` guard without replacing I's richer dispatcher:
+public workspace writes reject `analysis/` and `analysis-` namespaces. Only native
+AnalysisHost calls `analysisWorkspaceRequest`; no RPC/JSON capability bypass exists.
+
+Also closed the embedded-manifest path: public workspace import can reference
+only byte-identical analysis dependencies already present through the native
+provider. It cannot insert missing scientific records indirectly. Missing/different
+records refuse before workspace creation; ordinary workspaces and exact receipts
+remain supported. Internal trusted store atomic-transfer tests remain separate.
+This **supersedes** the earlier public fresh-database automatic dependency insertion
+claim. Portable import now requires explicit native-provider provisioning first;
+full F bundle-library integration is not claimed by this pin.
+
+Three native store/host/analysis tests pass. Real fresh-app WebSocket test rejects
+all four reserved strategy/source/finding/report prefixes and manifest dependency
+minting, then creates the exact initial strategy through F's source-validated save,
+imports the workspace and reproduces native evaluation. No existing peer runtime
+or source data was modified. UI import instructions state the prerequisite.

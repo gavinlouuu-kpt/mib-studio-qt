@@ -17,11 +17,20 @@ try {
  assert.equal((await call('load_recording',{filePath:path.resolve(file)})).ok,true);
  if(mode==='import'){
   const e=JSON.parse(await fs.readFile(evidencePath,'utf8'));
-  const imported=ok(await work({action:'import',workspace_id:'fresh-import',command_id:'fresh-command',manifest:e.exported.manifest},true));
+  for(const prefix of ['analysis/','analysis-source/','analysis-finding/','analysis-report/'])assert.equal((await work({action:'commit',workspace_id:prefix+'spoof',expected_revision:null,command_id:'spoof',document:{schema_version:1}},true)).status,'invalid');
+  const importRequest={action:'import',workspace_id:'fresh-import',command_id:'fresh-command',manifest:e.exported.manifest};
+  assert.equal((await work(importRequest,true)).status,'invalid','generic import cannot mint scientific dependencies');
+  assert.equal((await work({action:'read',workspace_id:'fresh-import'})).status,'not_found');
+  for(const dependency of e.exported.manifest.payload.dependencies){
+   assert.equal(dependency.revision,'1','probe recreates only initial strategy through native validation');
+   const d=dependency.document;
+   ok(await analysis({action:'save',planId:dependency.workspace_id.slice('analysis/'.length),expectedRevision:null,commandId:crypto.randomUUID(),graph:d.graph,feature:d.feature,method:d.method,source:{kind:e.evaluate.source_kind,path:path.resolve(file)},sourceBinding:d.sourceBinding},true));
+  }
+  const imported=ok(await work(importRequest,true));
   assert.equal(imported.revision,'1');
   assert.deepEqual(ok(await work({...e.evaluate,workspace_id:'fresh-import',revision:'1'})).evaluation,e.evaluated.evaluation);
   assert.equal((await analysis({action:'read',planId:e.save.planId,revision:'2'})).status,'not_found');
-  console.log('PASS fresh real-app database import resolves only exported exact strategy and reproduces native recipe result');
+  console.log('PASS generic dependency minting refused; native-validated strategy permits fresh database workspace import and exact evaluation');
  }else if(mode==='recover'){
   const e=JSON.parse(await fs.readFile(evidencePath,'utf8'));
   assert.deepEqual(await analysis(e.save,true),e.strategy);
