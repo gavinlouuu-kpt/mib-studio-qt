@@ -38,6 +38,18 @@ pub fn request(input: &Submission, resolved: &Value) -> Result<Request, String> 
     if !parameters.get(&input.x).is_some() || !parameters.get(&input.y).is_some() {
         return Err("Polygon measurement unavailable".into());
     }
+    if let Some(spec) = &input.embedding {
+        if spec.features.len() > 16 {
+            return Err("Embedding feature budget exceeded".into());
+        }
+        if spec
+            .features
+            .iter()
+            .any(|feature| parameters.get(feature).is_none())
+        {
+            return Err("Embedding parameter unavailable".into());
+        }
+    }
     let rows = source["rows"].as_array().ok_or("Missing source rows")?;
     let membership = resolved["evaluation"]["rows"]
         .as_array()
@@ -58,6 +70,16 @@ pub fn request(input: &Submission, resolved: &Value) -> Result<Request, String> 
             _ => return Err("Invalid membership".into()),
         };
         events.push(Event {
+            features: input
+                .embedding
+                .as_ref()
+                .filter(|spec| !spec.features.is_empty())
+                .map(|spec| {
+                    spec.features
+                        .iter()
+                        .map(|feature| row["measurements"][feature].as_f64())
+                        .collect()
+                }),
             key: key.into(),
             x: row["measurements"][&input.x].as_f64(),
             y: row["measurements"][&input.y].as_f64(),

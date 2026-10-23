@@ -45,7 +45,7 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
   const [result, setResult] = useState<Record<string, any> | null>(null);
   const [jobX, setJobX] = useState("area"), [jobY, setJobY] = useState("deformability");
   const [embeddingEnabled, setEmbeddingEnabled] = useState(false);
-  const [embeddingText, setEmbeddingText] = useState(JSON.stringify({engine:"sklearn-tsne-1.9.1",seed:42,perplexity:5,maxIter:500,maxPoints:1000},null,2));
+  const [embeddingText, setEmbeddingText] = useState(JSON.stringify({engine:"sklearn-tsne-1.9.1",features:["area","deformability"],seed:42,perplexity:5,maxIter:500,maxPoints:1000},null,2));
   const [vertices, setVertices] = useState("[[0,0],[1000,0],[1000,1],[0,1]]");
   const [jobId, setJobId] = useState("");
   const [jobResult, setJobResult] = useState<Record<string, any> | null>(null);
@@ -259,7 +259,7 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
       <p>Explicit x/y parameters, intersected with the pinned graph by native three-valued logic. The host freezes keyed inputs before scheduling; changing the source never retargets a running job. No hardware operation is performed.</p>
       <label>Job x parameter<input value={jobX} onChange={e=>setJobX(e.target.value)}/></label>
       <label>Job y parameter<input value={jobY} onChange={e=>setJobY(e.target.value)}/></label>
-      <label><input type="checkbox" checked={embeddingEnabled} onChange={e=>setEmbeddingEnabled(e.target.checked)}/>Also compute seeded t-SNE on selected finite x/y events</label>
+      <label><input type="checkbox" checked={embeddingEnabled} onChange={e=>setEmbeddingEnabled(e.target.checked)}/>Also compute seeded t-SNE on selected events with all requested features finite</label>
       {embeddingEnabled && <label>Embedding specification<textarea aria-label="Embedding specification" rows={7} value={embeddingText} onChange={e=>setEmbeddingText(e.target.value)}/></label>}
       <label>Polygon vertices<textarea aria-label="Cytoflow vertices" value={vertices} onChange={e => setVertices(e.target.value)} /></label>
       <button disabled={disabled || busy || !revision} onClick={() => void run(async token => {

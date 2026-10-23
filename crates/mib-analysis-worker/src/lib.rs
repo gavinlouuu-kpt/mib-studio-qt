@@ -36,12 +36,16 @@ pub struct Event {
     pub key: String,
     pub x: Option<f64>,
     pub y: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub features: Option<Vec<Option<f64>>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct EmbeddingSpec {
     pub engine: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub features: Vec<String>,
     pub seed: u32,
     pub perplexity: f64,
     pub max_iter: u32,
@@ -57,9 +61,15 @@ pub struct EmbeddingPoint {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EmbeddingArtifact {
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub missing_features: usize,
     pub spec: EmbeddingSpec,
     pub eligible: usize,
     pub points: Vec<EmbeddingPoint>,
+}
+
+fn is_zero(value: &usize) -> bool {
+    *value == 0
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -197,7 +207,12 @@ impl Request {
             return Err(Failure::InvalidInput("batch budget".into()));
         }
         if let Some(spec) = &self.embedding {
-            if spec.engine != "sklearn-tsne-1.9.1"
+            let unique: HashSet<_> = spec.features.iter().collect();
+            if (!spec.features.is_empty()
+                && (!(2..=16).contains(&spec.features.len())
+                    || unique.len() != spec.features.len()
+                    || spec.features.iter().any(|f| !text(f, 64))))
+                || spec.engine != "sklearn-tsne-1.9.1"
                 || !spec.perplexity.is_finite()
                 || spec.perplexity <= 0.
                 || !(500..=2000).contains(&spec.max_iter)
@@ -217,6 +232,16 @@ impl Request {
                     || !keys.insert(&e.key)
                     || e.x.is_some_and(|v| !number(v))
                     || e.y.is_some_and(|v| !number(v))
+                    || match (&e.features, &self.embedding) {
+                        (None, None) => false,
+                        (None, Some(spec)) => !spec.features.is_empty(),
+                        (Some(values), Some(spec)) => {
+                            spec.features.is_empty()
+                                || values.len() != spec.features.len()
+                                || values.iter().any(|v| v.is_some_and(|n| !number(n)))
+                        }
+                        _ => true,
+                    }
             })
         {
             return Err(Failure::InvalidInput(
@@ -336,6 +361,12 @@ fn validate_embedding(
                 .map(|g| g.values.iter().map(|v| (v.key.as_str(), v.value)).collect())
                 .unwrap_or_default();
             let mut keys = Vec::new();
+            let mut missing_features = 0;
+            let events: BTreeMap<_, _> = request
+                .events
+                .iter()
+                .map(|event| (event.key.as_str(), event))
+                .collect();
             for row in &result.rows {
                 let eligible = if composed {
                     row.value
@@ -344,8 +375,18 @@ fn validate_embedding(
                 } else {
                     row.value
                 };
-                if eligible == Truth::True {
+                let event = events
+                    .get(row.key.as_str())
+                    .ok_or_else(|| Failure::InvalidResult("foreign embedding event".into()))?;
+                let finite_features = event
+                    .features
+                    .as_ref()
+                    .map(|values| values.iter().all(Option::is_some))
+                    .unwrap_or(true);
+                if eligible == Truth::True && finite_features {
                     keys.push(row.key.clone());
+                } else if eligible == Truth::True {
+                    missing_features += 1;
                 }
             }
             keys.sort_by_cached_key(|key| {
@@ -357,7 +398,8 @@ fn validate_embedding(
                     key.clone(),
                 )
             });
-            if artifact.spec != *spec
+            if artifact.missing_features != missing_features
+                || artifact.spec != *spec
                 || artifact.eligible != keys.len()
                 || artifact.points.len() != keys.len().min(spec.max_points)
                 || artifact.points.len() < 3

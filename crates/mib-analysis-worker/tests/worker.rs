@@ -21,11 +21,13 @@ fn request() -> Request {
         vertices: vec![[0., 0.], [2., 0.], [2., 2.], [0., 2.]],
         events: vec![
             Event {
+                features: None,
                 key: "A/valid/9007199254740993".into(),
                 x: Some(1.),
                 y: Some(1.),
             },
             Event {
+                features: None,
                 key: "B/valid/9007199254740993".into(),
                 x: None,
                 y: Some(1.),
@@ -296,6 +298,11 @@ fn seeded_embedding_key_coverage_repeatability_and_reopen() {
     let mut r = request();
     r.events = (0..20)
         .map(|i| Event {
+            features: Some(vec![
+                Some(i as f64 / 20.),
+                Some((i % 4) as f64),
+                if i == 14 { None } else { Some((i % 3) as f64) },
+            ]),
             key: format!("event-{i}"),
             x: Some(0.1 + i as f64 * 0.05),
             y: Some(0.2 + (i % 4) as f64 * 0.1),
@@ -322,13 +329,15 @@ fn seeded_embedding_key_coverage_repeatability_and_reopen() {
     });
     r.embedding = Some(EmbeddingSpec {
         engine: "sklearn-tsne-1.9.1".into(),
+        features: vec!["a".into(), "b".into(), "c".into()],
         seed: 42,
         perplexity: 2.,
         max_iter: 500,
         max_points: 8,
     });
     let first = worker.run(&r, || false).unwrap();
-    assert_eq!(first.embedding.as_ref().unwrap().eligible, 15);
+    assert_eq!(first.embedding.as_ref().unwrap().eligible, 14);
+    assert_eq!(first.embedding.as_ref().unwrap().missing_features, 1);
     assert_eq!(first.embedding.as_ref().unwrap().points.len(), 8);
     let mut reversed = r.clone();
     reversed.events.reverse();
@@ -342,6 +351,9 @@ fn seeded_embedding_key_coverage_repeatability_and_reopen() {
     assert!(accept(&r, &serde_json::to_vec(&bad).unwrap()).is_err());
     bad = first.clone();
     bad.embedding.as_mut().unwrap().spec.seed = 99;
+    assert!(accept(&r, &serde_json::to_vec(&bad).unwrap()).is_err());
+    bad = first.clone();
+    bad.embedding.as_mut().unwrap().missing_features = 0;
     assert!(accept(&r, &serde_json::to_vec(&bad).unwrap()).is_err());
     let dir = tempfile::tempdir().unwrap();
     let id;

@@ -228,3 +228,12 @@ Immutable report run `overlay-report-1792758294811-run` contains the exact overl
 hash; report hash `sha256:453844183b21a3c7c638d0e8809f0e3bc987422af894f93ef26f8ca523e63e02`.
 Native tests reject mismatched bins and preserve counts despite offsets. All4
 ASan/UBSan standalone tests and13 UI regression tests pass. Browser unavailable.
+
+Multi-feature production embedding: job
+`3c21a32ddfe7b8e5227e06368afc43db57d52da85dd880504c5de52878a27cc6` pins
+area/deformability/derived scaled_area,10 eligible and8 displayed points. Previous
+job `99e6deeb569b06b9b8cb2f061143fde616037b00fa85bd85e6f8bb6573b97a5d`
+reopened successfully after this extension. The real worker regression uses3
+features with one missing selected event and verifies explicit missing count,
+reordered-input repeatability, tamper rejection and journal reopen. Seven worker,
+two scheduler,13 UI tests and clippy pass.

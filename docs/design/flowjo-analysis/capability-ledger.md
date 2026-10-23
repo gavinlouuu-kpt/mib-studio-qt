@@ -148,3 +148,9 @@ denominators and keep offsets presentation-only. Exact overlays embed in immutab
 report runs. Tailnet14/22-observation proof, mismatch refusal and sanitizer tests pass.
 Scientific compatibility, arbitrary plot/layout families and full graphical editing
 remain separate obligations.
+
+F07 further continuation: explicit2–16 raw/derived feature selection is now supported
+and pinned in supervised t-SNE jobs. Missing selected-feature rows are separately
+counted, never imputed or silently removed from the original population. Production
+three-feature proof and legacy artifact reopen pass. Other embedding engines and
+cross-platform qualification remain separate, not a high-dimensional selection gap.

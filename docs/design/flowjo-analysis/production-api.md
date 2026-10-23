@@ -359,3 +359,13 @@ Evaluation returns F-overlay/1 with source-set fingerprint, exact source/plot ha
 original population references and unchanged native values. Save uses CAS and
 receipt-before-reevaluation replay. Report layouts may include kind `overlay` with
 reference `{overlayId,revision}`; immutable report runs freeze its entire artifact.
+
+Embedding feature-selection extension: optional `embedding.features` names2–16
+unique raw/derived parameters. Omitted/empty preserves historical job x/y behavior.
+The native source projection supplies values; clients never submit event matrices.
+The host validates selection before allocating rows, pins feature order in the
+immutable request/spec and independently verifies all finite-feature eligibility.
+Selected events missing any requested feature retain their original population
+membership but are omitted from embedding with explicit `missing_features` count.
+No imputation/implicit scaling. Older two-feature job requests/results reopen
+unchanged; optional fields are omitted from canonical serialization when absent.

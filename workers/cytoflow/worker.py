@@ -100,12 +100,22 @@ def evaluate(request):
     vertices = polygon(request["vertices"])
     events = request["events"]
     require(isinstance(events, list) and len(events) <= MAX_EVENTS, "event budget exceeded")
+    feature_names = request.get("embedding", {}).get("features", [])
+    require(isinstance(feature_names, list) and (not feature_names or 2 <= len(feature_names) <= 16) and
+            len(set(feature_names)) == len(feature_names), "invalid embedding feature selection")
+    for name in feature_names:
+        text(name, 64)
+    feature_values = {}
     seen, valid, unknown = set(), [], set()
     for event in events:
-        exact_fields(event, ["key", "x", "y"])
+        exact_fields(event, ["key", "x", "y"] + (["features"] if feature_names else []))
         key = text(event["key"], 512)
         require(key not in seen, "duplicate event key")
         seen.add(key)
+        if feature_names:
+            values = event["features"]
+            require(isinstance(values, list) and len(values) == len(feature_names), "embedding feature coverage")
+            feature_values[key] = [None if value is None else number(value) for value in values]
         x = None if event["x"] is None else number(event["x"])
         y = None if event["y"] is None else number(event["y"])
         if x is None or y is None:
@@ -137,7 +147,7 @@ def evaluate(request):
               "rows": [{"key": event["key"], "value": output[event["key"]]} for event in events]}
     if "embedding" in request:
         spec = request["embedding"]
-        exact_fields(spec, ["engine", "seed", "perplexity", "maxIter", "maxPoints"])
+        exact_fields(spec, ["engine", "seed", "perplexity", "maxIter", "maxPoints"] + (["features"] if "features" in spec else []))
         require(spec["engine"] == "sklearn-tsne-1.9.1" and
                 importlib.metadata.version("scikit-learn") == "1.9.1", "unqualified embedding engine")
         require(type(spec["seed"]) is int and 0 <= spec["seed"] <= 4294967295 and
@@ -149,20 +159,25 @@ def evaluate(request):
         require(isinstance(eligible, list) and len(set(eligible)) == len(eligible) and
                 set(eligible) <= seen, "invalid native eligibility keys")
         eligible = set(eligible)
-        candidates = [(key, x, y) for key, x, y in valid if key in eligible and output[key] == "true"]
+        selected_members = [(key, x, y) for key, x, y in valid if key in eligible and output[key] == "true"]
+        candidates = [(key, feature_values[key] if feature_names else [x, y]) for key, x, y in selected_members
+                      if not feature_names or all(v is not None for v in feature_values[key])]
         candidates.sort(key=lambda row: (hashlib.sha256(f"{spec['seed']}|{row[0]}".encode()).hexdigest(), row[0]))
         selected = candidates[:spec["maxPoints"]]
         require(len(selected) >= 3 and 0 < perplexity < len(selected), "too few selected events for embedding perplexity")
         from sklearn.manifold import TSNE
         import numpy as np
-        # No implicit scaling: caller explicitly pins raw/derived x and y domains.
+        # No implicit scaling: caller explicitly pins raw/derived feature domains.
         points = TSNE(n_components=2, perplexity=perplexity, early_exaggeration=12.0,
                       learning_rate=200.0, max_iter=spec["maxIter"], n_iter_without_progress=300,
                       min_grad_norm=1e-7, metric="euclidean", init="random", random_state=spec["seed"],
-                      method="exact", n_jobs=1).fit_transform(np.asarray([(x, y) for _, x, y in selected], dtype=np.float64))
+                      method="exact", n_jobs=1).fit_transform(np.asarray([values for _, values in selected], dtype=np.float64))
         require(np.isfinite(points).all(), "nonfinite embedding output")
         result["embedding"] = {"spec": spec, "eligible": len(candidates),
             "points": [{"key": row[0], "x": float(point[0]), "y": float(point[1])} for row, point in zip(selected, points)]}
+        missing_features = len(selected_members) - len(candidates)
+        if missing_features:
+            result["embedding"]["missing_features"] = missing_features
     return result
 
 
