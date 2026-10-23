@@ -405,3 +405,14 @@ empty fabricated row. Omitting table preserves the standard all-population table
 `report` returns explicit ordered `columns`; CSV and immutable report rendering
 follow them. Values remain native reductions over all eligible rows. This is a
 reusable projection, not a client-side formula language or new statistical estimator.
+
+### Saved-record discovery
+
+Read `catalog {kind, after?, limit?}` lists metadata-only head IDs/revisions for
+strategy, library, source, report, finding or overlay. Limit1–100 (default50),
+`after` is the last returned ID. `next:null` ends the page sequence. Literal namespace
+ranges and a keyset cursor avoid wildcard interpretation/duplicate offset pages.
+Pages are discovery, not a frozen inventory; opening/evaluating still requires an
+exact revision and source. The internal database catalog path is unavailable through
+the generic workspace endpoint. Libraries have exact-open buttons; strategy/source
+catalogs expose references without silently replacing the current draft or source.

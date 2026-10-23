@@ -170,3 +170,8 @@ population/column selections through strategy revisions, applications/manifests,
 native CSV and immutable report rendering. Native missing-population/domain-column
 refusals and real tailnet two-row projection pass. Advanced estimators and a graphical
 table designer remain separate; no formula language is inferred.
+
+F01/F12 continuation: bounded native saved-record discovery and exact library reopen
+are now exposed in the production module. Catalog pages list IDs/revisions only,
+never fabricate source compatibility or silently follow a moving head. Full workspace
+portability and large-source/asynchronous fingerprinting remain open.

@@ -30,6 +30,8 @@ public:
                                  const std::optional<std::string>& revision = std::nullopt) const;
     std::vector<std::string> history(const std::string& workspaceId, int limit = 100,
                                      const std::optional<std::string>& after = std::nullopt) const;
+    // Ordered metadata-only heads; caller supplies a literal namespace prefix.
+    std::vector<Snapshot> catalog(const std::string& prefix, int limit, const std::string& after) const;
     // null expectedRevision is create-only. Complete logical document is atomically replaced.
     // Successful command replay returns its original revision even if the head advanced.
     Snapshot commit(const std::string& workspaceId,

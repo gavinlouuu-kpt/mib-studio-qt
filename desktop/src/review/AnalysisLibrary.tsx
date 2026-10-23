@@ -1,3 +1,4 @@
+import {AnalysisCatalog} from "./AnalysisCatalog";
 import { useState } from "react";
 import type { AnalysisCall } from "./AnalysisWorkspace";
 const journal="mib.analysis.pending-library.v1";
@@ -14,6 +15,7 @@ export function AnalysisLibrary({read,write,disabled,onPrecision}:{read:Analysis
  function edit(index:number,patch:Partial<Sample>){setSamples(old=>old.map((s,i)=>i===index?{...s,...patch}:s));}
  return <details><summary>Saved sample library and groups</summary>
   <p>Retain source snapshots in the workspace first. Labels, groups, tags and notes are annotations; they never change recordings or measurement units. Duplicate source fingerprints are refused even when labels differ.</p>
+  <AnalysisCatalog read={read} disabled={disabled||busy} onOpen={async (selected,rev)=>{setBusy(true);try{const reply=checked(await read({action:"libraryRead",libraryId:selected,revision:rev}));setId(selected);load(reply);}finally{setBusy(false);}}}/>
   <fieldset disabled={disabled||busy}>
    <label>Library ID<input value={id} onChange={e=>{setId(e.target.value);setRevision("");setSaved(null);}}/></label>
    <label>Exact library revision<input value={revision} onChange={e=>setRevision(e.target.value)}/></label>

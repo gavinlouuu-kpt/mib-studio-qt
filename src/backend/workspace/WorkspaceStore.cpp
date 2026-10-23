@@ -142,6 +142,25 @@ std::vector<std::string> WorkspaceStore::history(const std::string& id, int limi
         result.push_back(query.text(0));
     return result;
 }
+std::vector<Snapshot> WorkspaceStore::catalog(const std::string& prefix, int limit,
+                                              const std::string& after) const {
+    requireInitialized();
+    identifier(prefix);
+    if (prefix.back() != '/' || limit < 1 || limit > 101 ||
+        (!after.empty() && after.rfind(prefix, 0) != 0))
+        throw StoreError(StoreErrorCode::Invalid, "Invalid catalog namespace, cursor or limit");
+    if (!after.empty()) identifier(after);
+    auto upper = prefix;
+    upper.back() = '0'; // Exclusive binary bound immediately following the literal slash prefix.
+    Statement query(db_, "SELECT workspace_id,MAX(revision) FROM workspace_revisions "
+                         "WHERE workspace_id>=? AND workspace_id<? AND workspace_id>? "
+                         "GROUP BY workspace_id ORDER BY workspace_id LIMIT ?");
+    query.bind(1, prefix); query.bind(2, upper); query.bind(3, after);
+    query.bind(4, static_cast<std::int64_t>(limit));
+    std::vector<Snapshot> result;
+    while (query.step() == SQLITE_ROW) result.push_back({query.text(0), query.text(1), {}});
+    return result;
+}
 Snapshot WorkspaceStore::commit(const std::string& id, const std::optional<std::string>& expected,
                                 const std::string& command, const std::string& document) {
     return write(id, expected, command, canonicalDocument(document), "commit");

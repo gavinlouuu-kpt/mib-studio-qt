@@ -266,6 +266,16 @@ int main() {
         customTable["table"]["populations"] = {"gate"};
         customTable["table"]["columns"] = {"population", "median"};
         MIB_EXPECT(call(customTable)["status"] == "invalid", "table cannot silently omit feature and units");
+        const auto catalog = call(json{{"action", "catalog"}, {"kind", "strategy"}, {"limit", 1}}, false);
+        MIB_EXPECT(catalog["status"] == "ok" && catalog["entries"].size() == 1 && !catalog["next"].is_null(),
+                   "bounded discovery returns exact head revision and continuation");
+        const auto page2 = call(json{{"action", "catalog"}, {"kind", "strategy"}, {"limit", 1}, {"after", catalog["next"]}}, false);
+        MIB_EXPECT(page2["entries"].size() == 1 && page2["entries"][0]["id"] != catalog["entries"][0]["id"],
+                   "catalog keyset cursor does not repeat records");
+        MIB_EXPECT(call(json{{"action", "catalog"}, {"kind", "library"}}, false)["entries"].empty(),
+                   "catalog isolates literal namespaces");
+        MIB_EXPECT(json::parse(db.workspaceRequest(json{{"action", "catalog"}, {"workspace_id", "analysis/"}}.dump(), false))["status"] == "invalid",
+                   "generic endpoint cannot invoke internal discovery authority");
         const auto manifest =
             call(json{{"action", "manifest"}, {"planId", "plan"}, {"revision", "1"}}, false);
         backend::services::SqliteService imported;

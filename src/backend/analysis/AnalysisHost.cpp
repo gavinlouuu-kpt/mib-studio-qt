@@ -94,6 +94,23 @@ std::string analysisRequest(services::SqliteService& database, const std::string
             return true;
         });
         const auto action = q.at("action").get<std::string>();
+        if (action == "catalog") {
+            fields(q, {"action", "kind", "after", "limit"});
+            const std::map<std::string, std::string> prefixes{{"strategy", "analysis/"}, {"library", "analysis-library/"}, {"source", "analysis-source/"}, {"report", "analysis-report/"}, {"finding", "analysis-finding/"}, {"overlay", "analysis-overlay/"}};
+            const auto kind = q.at("kind").get<std::string>();
+            if (!prefixes.count(kind)) throw std::invalid_argument("Unsupported analysis catalog kind");
+            const auto prefix = prefixes.at(kind);
+            const auto after = q.value("after", std::string{});
+            const auto limit = q.value("limit", 50);
+            if (limit < 1 || limit > 100) throw std::invalid_argument("Catalog limit must be 1..100");
+            auto result = Json::parse(database.analysisWorkspaceRequest(Json{{"action", "catalog"}, {"workspace_id", prefix}, {"after", after.empty() ? "" : prefix + after}, {"limit", limit + 1}}.dump(), false));
+            if (result.value("status", std::string{}) != "ok") return result.dump();
+            auto entries = result.at("entries");
+            const bool more = entries.size() > static_cast<std::size_t>(limit);
+            if (more) entries.erase(entries.end() - 1);
+            for (auto& entry : entries) { entry["id"] = entry.at("workspace_id").get<std::string>().substr(prefix.size()); entry.erase("workspace_id"); }
+            return Json{{"status", "ok"}, {"kind", kind}, {"entries", entries}, {"next", more ? entries.back().at("id") : Json(nullptr)}, {"semantics", "Discovery heads only; open an exact revision. Pages are not a frozen inventory."}}.dump();
+        }
         const auto nativeSource = source;
         source = [&](const Json& descriptor) -> Json {
             if (descriptor.value("kind", std::string{}) != "retained")

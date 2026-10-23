@@ -77,7 +77,7 @@ std::string SqliteService::request(const std::string& request, bool write, bool 
         std::set<std::string> keys{"action", "workspace_id"};
         if (action == "read")
             keys.insert("revision");
-        else if (action == "history") {
+        else if (action == "history" || (analysisAuthority && action == "catalog")) {
             keys.insert("after");
             keys.insert("limit");
         } else if ((write && action == "commit") || action == "receipt") {
@@ -115,6 +115,12 @@ std::string SqliteService::request(const std::string& request, bool write, bool 
                 {"status", "ok"},
                 {"revisions", workspace_->history(id, q.value("limit", 100), optional("after"))}}
                 .dump();
+        if (action == "catalog") {
+            json entries = json::array();
+            for (const auto& item : workspace_->catalog(id, q.value("limit", 100), q.value("after", std::string{})))
+                entries.push_back({{"workspace_id", item.workspaceId}, {"revision", item.revision}});
+            return json{{"status", "ok"}, {"entries", entries}}.dump();
+        }
         if (action == "receipt") {
             q.at("expected_revision");
             auto prior =

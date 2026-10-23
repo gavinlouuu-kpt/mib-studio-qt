@@ -258,3 +258,10 @@ columns population/feature/unit/median/selected and population order rectangle t
 rectangle-x in native JSON, CSV and manifest. Both rows select7, median103 pixel2.
 Report hash `sha256:2a8b996815d366f84e22b953d354b093045365fa7f1e7f5bf279c4ab58a4c36c`.
 Native normal and4 sanitizer tests, UI19 regressions and frontend/server builds pass.
+
+Catalog tailnet proof: limit1 strategy pages returned comparison-1792755676005-0
+then comparison-1792755676005-1, both exact revision1. Library discovery reopened
+study-1792757005646 revision1 with unchanged hash
+sha256:d01ff89af038a1f9f58d4588f625bf8dbf2f7c9c0e352a202722147a947fe024.
+Native3 host/store suites,4 sanitizer suites, UI20 and production builds pass.
+Original synthetic recording restored after the owned server restart; no acquisition.

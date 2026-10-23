@@ -1,3 +1,4 @@
+import {AnalysisCatalog} from "./AnalysisCatalog";
 import { AnalysisOverlay } from "./AnalysisOverlay";
 import { AnalysisLibrary } from "./AnalysisLibrary";
 import { AnalysisEmbedding } from "./AnalysisEmbedding";
@@ -96,6 +97,7 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
   }
   return <section aria-label="Source-bound analysis workspace">
     <h4>Source-bound backend strategies</h4>
+    <details><summary>Discover saved strategies and snapshots</summary><AnalysisCatalog read={read} disabled={disabled||busy} kind="strategy"/><AnalysisCatalog read={read} disabled={disabled||busy} kind="source"/></details>
     <p>Strategies are immutable revisions in the application metadata database. Saving does not alter a recording or apply a hardware method. Stored-file fingerprints are limited to 64 MiB; larger files are explicitly refused.</p>
     <fieldset disabled={disabled || busy}>
       <label>Analysis source <select aria-label="Strategy source" value={kind} onChange={e => setKind(e.target.value)}>
