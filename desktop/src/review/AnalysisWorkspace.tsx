@@ -9,7 +9,10 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
   path: string; disabled: boolean; graphText: string; feature: string; read: AnalysisCall; write: AnalysisCall; job: AnalysisCall; live?: boolean;
 }) {
   const [kind, setKind] = useState(live && !path ? "live-run" : "stored");
+  const [retainedId, setRetainedId] = useState("");
   const [revision, setRevision] = useState("");
+  const [report, setReport] = useState<Record<string, any> | null>(null);
+  const [manifestText, setManifestText] = useState("");
   const [gallery, setGallery] = useState<Record<string, any> | null>(null);
   const [restoreRevision, setRestoreRevision] = useState("");
   const [history, setHistory] = useState<string[]>([]);
@@ -20,8 +23,8 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
   const [jobResult, setJobResult] = useState<Record<string, any> | null>(null);
   const [busy, setBusy] = useState(false);
   const generation = useRef(0);
-  useEffect(() => { ++generation.current; setGallery(null); setResult(null); setRevision(""); setHistory([]); setMessage(""); }, [path, kind, graphText, feature]);
-  const source = () => kind.startsWith("live-") ? { kind } : { kind, path };
+  useEffect(() => { ++generation.current; setReport(null); setGallery(null); setResult(null); setRevision(""); setHistory([]); setMessage(""); }, [path, kind, retainedId, graphText, feature]);
+  const source = () => kind === "retained" ? {kind, id: retainedId} : kind.startsWith("live-") ? { kind } : { kind, path };
   const graph = (): PopulationGraph => JSON.parse(graphText);
   const checked = (reply: Record<string, any>) => {
     if (reply.status !== "ok") throw new Error(`${reply.status}: ${reply.message || "Request refused"}`);
@@ -33,22 +36,35 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
     catch (e) { if (token === generation.current) setMessage(String(e)); }
     finally { setBusy(false); }
   }
+  function download(filename: string, text: string, type: string) {
+    const url = URL.createObjectURL(new Blob([text], {type}));
+    const anchor = document.createElement("a"); anchor.href = url; anchor.download = filename;
+    anchor.click(); URL.revokeObjectURL(url);
+  }
   async function reconcile(command: Record<string, unknown>, token: number) {
     const reply = checked(await write(command));
     // Clear only this exact journal entry, never an unrelated pending command.
     if (window.localStorage.getItem(pendingKey) === JSON.stringify(command)) window.localStorage.removeItem(pendingKey);
     if (token !== generation.current) return;
-    setRevision(reply.revision); setMessage(`Backend revision ${reply.revision} saved. Source identity is pinned.`);
+    if (command.action === "retainSource") {
+      setRetainedId(reply.descriptor.id); setKind("retained");
+    } else { setRevision(reply.revision); setMessage(`Backend revision ${reply.revision} saved. Source identity is pinned.`); }
   }
   return <section aria-label="Source-bound analysis workspace">
     <h4>Source-bound backend strategies</h4>
     <p>Strategies are immutable revisions in the application metadata database. Saving does not alter a recording or apply a hardware method. Stored-file fingerprints are limited to 64 MiB; larger files are explicitly refused.</p>
     <fieldset disabled={disabled || busy}>
       <label>Analysis source <select aria-label="Strategy source" value={kind} onChange={e => setKind(e.target.value)}>
-        <option value="stored">Stored observations</option><option value="run-archive">Archived E run events</option>
+        <option value="retained">Retained immutable snapshot</option><option value="stored">Stored observations</option><option value="run-archive">Archived E run events</option>
         {live && <><option value="live-run">Current E run</option><option value="live-epoch">Current E epoch</option></>}
       </select></label>
-      <label>Exact backend revision <input aria-label="Strategy revision" value={revision} onChange={e => { ++generation.current; setRevision(e.target.value); setGallery(null); setResult(null); }} placeholder="Blank creates a new plan" /></label>
+      <label>Retained snapshot ID<input aria-label="Retained snapshot ID" value={retainedId} onChange={e => setRetainedId(e.target.value)} /></label>
+      <button onClick={() => void run(async token => {
+        if (window.localStorage.getItem(pendingKey)) throw new Error("Reconcile the pending command first.");
+        const command = {action:"retainSource",source:source(),commandId:crypto.randomUUID()};
+        window.localStorage.setItem(pendingKey,JSON.stringify(command)); await reconcile(command,token);
+      })}>Retain current snapshot</button>
+      <label>Exact backend revision <input aria-label="Strategy revision" value={revision} onChange={e => { ++generation.current; setRevision(e.target.value); setGallery(null); setReport(null); setResult(null); }} placeholder="Blank creates a new plan" /></label>
       <button onClick={() => void run(async token => {
         if (window.localStorage.getItem(pendingKey)) throw new Error("Reconcile the pending command before creating another revision.");
         const g = graph();
@@ -87,6 +103,36 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
         if (token === generation.current) setGallery(reply);
       })}>Load pinned gallery</button>
     </fieldset>
+    <details><summary>Population tables and portable strategy</summary>
+      <p>Tables are computed from finite raw selected values. Quantiles use type 7; SD uses n−1; CV uses absolute mean. Null is unavailable, not zero. Exports pin the source and backend revision; they do not certify scientific compatibility.</p>
+      <button disabled={busy || !revision} onClick={() => void run(async token => {
+        const reply = checked(await read({action: "report", planId: graph().id, revision, source: source()}));
+        if (token === generation.current) setReport(reply);
+      })}>Build pinned population table</button>
+      {report && <>
+        <table><caption>Backend revision {report.report.revision}</caption><thead><tr><th>Population</th><th>Selected</th><th>Unknown</th><th>Mean</th><th>Median</th><th>P05</th><th>P95</th><th>Sample SD</th><th>CV %</th></tr></thead>
+          <tbody>{report.report.table.map((r: Record<string, any>) => <tr key={r.population}>{["population","selected","unknown","mean","median","p05","p95","sampleStandardDeviation","cvPercent"].map(k=><td key={k}>{r[k] ?? "—"}</td>)}</tr>)}</tbody>
+        </table>
+        <p>Report content hash: {report.contentHash}</p>
+        <button onClick={() => download("population-report.json",JSON.stringify(report,null,2),"application/json")}>Download evidence JSON</button>
+        <button onClick={() => download("population-table.csv",report.csv,"text/csv")}>Download native CSV</button>
+      </>}
+      <button disabled={busy || !revision} onClick={() => void run(async () => {
+        const reply = checked(await read({action: "manifest", planId: graph().id, revision}));
+        const text = JSON.stringify({manifest:reply.manifest,contentHash:reply.contentHash},null,2);
+        setManifestText(text); download("analysis-strategy.json",text,"application/json");
+      })}>Export exact strategy manifest</button>
+      <label>Portable manifest JSON<textarea aria-label="Strategy manifest JSON" rows={5} value={manifestText} onChange={e => setManifestText(e.target.value)} /></label>
+      <button disabled={busy || disabled || !manifestText} onClick={() => void run(async token => {
+        if (window.localStorage.getItem(pendingKey)) throw new Error("Reconcile the pending command first.");
+        const imported = JSON.parse(manifestText);
+        if (imported.manifest.planId !== graph().id) throw new Error("Load the manifest graph into the graph editor first; plan IDs must match.");
+        const command = {action:"import",manifest:imported.manifest,contentHash:imported.contentHash,
+          expectedRevision:revision || null,commandId:crypto.randomUUID(),source:source()};
+        window.localStorage.setItem(pendingKey,JSON.stringify(command)); await reconcile(command,token);
+      })}>Import against verified current source</button>
+      <p>Import checks the complete content hash and source fingerprint. A copied recording can relink by identical bytes; a different recording is refused. The hash detects changes, but is not a signature.</p>
+    </details>
     {gallery && <section aria-label="Pinned strategy gallery">
       <p>{gallery.selected} selected · plan {gallery.planId} revision {gallery.revision}. Source: {gallery.sourceFingerprint}</p>
       <div style={{display:"flex",flexWrap:"wrap"}}>{gallery.images.map((item: {key: string; pixels: number[] | null; reason?: string}) => <figure key={item.key}>
@@ -102,7 +148,7 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
         if (token === generation.current) setGallery(reply);
       })}>Next pinned page</button>
     </section>}
-    {history.length > 0 && <p>Saved revisions: {history.map(r => <button key={r} disabled={busy} onClick={() => { ++generation.current; setRevision(r); setGallery(null); setResult(null); }}>{r}</button>)}</p>}
+    {history.length > 0 && <p>Saved revisions: {history.map(r => <button key={r} disabled={busy} onClick={() => { ++generation.current; setRevision(r); setGallery(null); setReport(null); setResult(null); }}>{r}</button>)}</p>}
     <p role="status">{message}</p>
     <details><summary>Cytoflow polygon job</summary>
       <p>Area (px²) × deformability, intersected with the pinned graph by native three-valued logic. The host freezes keyed inputs before scheduling; changing the source never retargets a running job. No hardware operation is performed.</p>
@@ -125,6 +171,13 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
         setJobId(reply.jobId); setJobResult(reply);
         if (reply.status === "terminal") window.localStorage.removeItem("mib.analysis.pending-job.v1");
       })}>Reconcile job after reconnect</button>
+      <button disabled={busy} onClick={() => void run(async () => {
+        const text = window.localStorage.getItem("mib.analysis.pending-job.v1");
+        if (!text) throw new Error("No pending job submission");
+        const reply = await job({action:"submit",submission:JSON.parse(text)});
+        setJobId(reply.jobId); setJobResult(reply);
+      })}>Retry exact job submission</button>
+      <button disabled={busy} onClick={() => { window.localStorage.removeItem("mib.analysis.pending-job.v1"); setMessage("Local recovery note cleared. Backend job/results were not cancelled or deleted; keep the Job ID to query them."); }}>Clear local job recovery note</button>
       <label>Job ID<input aria-label="Analysis job ID" value={jobId} onChange={e => setJobId(e.target.value)} /></label>
       <button disabled={busy || !jobId} onClick={() => void run(async () => { setJobResult(await job({action: "query", jobId})); })}>Refresh job</button>
       <button disabled={busy || !jobId} onClick={() => void run(async () => { setJobResult(await job({action: "cancel", jobId})); })}>Cancel job</button>

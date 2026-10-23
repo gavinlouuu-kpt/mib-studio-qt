@@ -140,3 +140,15 @@ has the same 10 keys and images; real Cytoflow job returns 10 selected with the 
 full-file fingerprint. No hardware acquisition was started. Runtime configuration
 uses the existing pinned `/tmp/flowjo-808/venv312` development environment; it is not
 an installer/distribution qualification. API and limitations: [production-api](production-api.md).
+
+### Tables/retention/restart validation
+
+The same production server was restarted with its metadata/job journals preserved.
+The previously completed real Cytoflow job reopened as terminal with 10 selected.
+A retained snapshot evaluated with the recording closed; exact manifest import
+appended revision 2 without overwriting revision 1. The revision-1 report was
+identical through the live reader and retained projection (same content hash).
+Native table: p05 100.45, p25 102.25, p75 106.75, p95 109.1; sample SD
+3.204163957519444; CV 3.0632542614908647%; mean 104.6, median 104.5.
+Normal and ASan/UBSan native population/graph/statistics tests pass. Full F remains
+open as recorded in the ledger; UI click-through remains connector-blocked.

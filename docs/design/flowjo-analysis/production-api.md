@@ -133,3 +133,42 @@ A failed terminal publication is reported as durability_failed, not success.
   mock/synthetic QA. TSan cannot start on this host (`unexpected memory mapping`).
 - Full F01–F16 acceptance remains tracked separately; these APIs do not supply
   compensation, embeddings, scientific QC qualification or report composition.
+
+## Retained sources, tables and portable strategies
+
+`analysis_write({action:"retainSource",source,commandId})` freezes the native source once,
+then stores its complete normalized immutable projection in the shared metadata DB
+under `analysis-source/<commandId>`, revision 1, atomically with its full request
+and checksum. Exact command retries return the original snapshot after source
+advancement/restart; changed commands collide. Returns source, contentHash and
+descriptor `{kind:"retained",id:"original-command-id"}`. Use that descriptor in subsequent saves,
+evaluation, gallery, report or jobs; it does not retarget when the live producer
+advances and survives application restart. The projection cap is 900,000 bytes
+(no sampling); this is separate from event count and the SQL 1 MiB document cap.
+The returned fingerprint remains the scientific source fingerprint, not the
+storage-envelope ID. Retention does not create E image assets. Stored gallery
+still checks its recorded pathname against the currently open reader and bytes.
+
+Evaluation additionally returns type-7 p05/p25/p75/p95, sample SD (n−1),
+CV percent (`100*sampleSD/abs(mean)`), and geometric mean
+(`exp(mean(log(x)))`, requiring all measured values positive). Singleton SD/CV,
+zero-mean CV, empty reductions and nonrepresentable results are null. These are
+raw finite-value reductions, never display/histogram estimates.
+
+Read action `report` takes the exact evaluation fields. For up to 32 saved graph
+nodes it produces a reusable population table using the same native evaluator,
+full saved strategy/source binding, explicit estimators/QC/compatibility, and a
+deterministic report contentHash. Returned CSV has explicit headers and empty
+cells for unavailable values; user-authored label cells are quoted and protected
+against spreadsheet formula interpretation. JSON is the complete evidence export;
+CSV is its tabular projection, not a standalone provenance package. This is not a
+full report-layout designer or a multi-run inferential comparison.
+
+Read `manifest` takes planId/revision and returns `{manifest,contentHash}`.
+Manifest schema F-analysis-manifest/1 contains the exact typed document and origin
+revision. Write `import` takes those two members, source, expectedRevision and
+commandId. It checks the content hash and reuses the normal verified save/CAS/
+receipt path, preserving the plan ID and complete source-bound document. It cannot
+silently import against different bytes. A recording copied to another path can
+be opened normally and matched by full-file hash. Content hashes detect accidental
+changes; they are not signatures or authentication. Import never applies methods.

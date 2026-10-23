@@ -670,13 +670,15 @@
   "analysis_workspace": {
     "schema": "F-analysis-strategy/1",
     "transport": "analysis_read / analysis_write (Review: review_analysis_read / review_analysis_write)",
-    "actions": "snapshot, exact read, history, evaluate, method (read); save and restore (write)",
+    "actions": "snapshot, exact read, history, evaluate, gallery, jobInput, report, manifest, method (read); save, restore, import, retainSource (write)",
     "authority": "host app.sqlite3 workspace_revisions and workspace_commands; immutable source-bound CAS, exact retry receipts",
     "source": "stored full-file SHA256 <=64MiB; live-run/live-epoch fenced E leases; run-archive E-run-events/1",
     "limits": {
       "request_bytes": 131072,
       "rows": 10000,
-      "stored_file_bytes": 67108864
+      "stored_file_bytes": 67108864,
+      "retained_source_bytes": 900000,
+      "report_populations": 32
     },
     "method": "exact method_id/revision_id/content_hash lookup only; never apply; unavailable/unknown remain explicit"
   }

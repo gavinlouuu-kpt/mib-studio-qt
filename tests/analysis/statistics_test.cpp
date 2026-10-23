@@ -1,6 +1,7 @@
 #include "backend/analysis/PopulationStatistics.h"
 #include "support/assert.h"
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <stdexcept>
 using namespace backend::analysis;
@@ -34,6 +35,12 @@ int main() {
                "conserved missing/membership accounting");
     MIB_EXPECT(result.mean == 5 && result.median == 5 && result.minimum == 2 && result.maximum == 8,
                "raw keyed reductions exclude nonselected events");
+    MIB_EXPECT(result.p25 == 3.5 && result.p75 == 6.5 && result.p05 == 2.3 && result.p95 == 7.7,
+               "type-7 quantiles from raw values");
+    MIB_EXPECT(std::abs(*result.sampleStandardDeviation - std::sqrt(18.)) < 1e-12 &&
+                   std::abs(*result.cvPercent - 100 * std::sqrt(18.) / 5) < 1e-12,
+               "sample SD and explicit absolute-mean CV");
+    MIB_EXPECT(result.geometricMean == 4, "positive geometric mean");
     std::reverse(column.rows.begin(), column.rows.end());
     MIB_EXPECT(populationStatistics(population, column).mean == 5, "order independent");
     auto bad = column;
@@ -67,6 +74,8 @@ int main() {
                    {"b", std::numeric_limits<double>::max()}};
     result = populationStatistics(population, column);
     MIB_EXPECT(result.mean == 0 && result.median == 0, "opposite extremes");
+    MIB_EXPECT(!result.cvPercent && !result.sampleStandardDeviation && !result.geometricMean,
+               "zero-mean CV, overflowing SD and nonpositive geometric mean are null");
     column.rows = {{"a", std::numeric_limits<double>::infinity()},
                    {"b", std::numeric_limits<double>::quiet_NaN()}};
     result = populationStatistics(population, column);
@@ -80,6 +89,10 @@ int main() {
     population.rows = {{"a", Truth::True}};
     column.rows = {{"a", -3}};
     MIB_EXPECT(populationStatistics(population, column).median == -3, "singleton median");
+    result = populationStatistics(population, column);
+    MIB_EXPECT(!result.sampleStandardDeviation && !result.cvPercent && !result.geometricMean &&
+                   result.p25 == -3,
+               "singleton SD/CV null; negative geometric mean unavailable");
     column.rows.resize(10001);
     MIB_EXPECT(refused([&] { populationStatistics(population, column); }),
                "budget refusal before allocation");

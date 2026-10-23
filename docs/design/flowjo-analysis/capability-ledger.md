@@ -63,3 +63,15 @@ round trip: 10 selected, mean 104.6, 10 matching thumbnail keys and real-engine 
 selected on the synthetic file. Browser automation is currently unavailable (no
 browsers registered), so the new controls' click-through is not claimed. TSan
 remains host-startup blocked; no sanitizer pass is inferred from normal tests.
+
+### Continued independent work
+
+F08 now has explicit native type-7 quantiles, sample SD, absolute-mean CV and
+positive-only geometric mean, plus exact-revision population tables/native CSV.
+F12 now has checksummed portable typed manifest export/import through the same
+source-verified CAS/receipt path. F13 can retain an immutable normalized source
+projection in the metadata DB (900,000-byte cap) and evaluate it after live source
+advancement/restart. F10 has deterministic evidence JSON/table export, **not** a
+full report-layout/batch designer. These additions narrow the remaining rows;
+they do not waive original advanced workflow, comparison, transform, embedding,
+interchange or platform qualification requirements.

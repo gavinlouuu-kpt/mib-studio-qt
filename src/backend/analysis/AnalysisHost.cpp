@@ -37,6 +37,82 @@ std::string analysisRequest(services::SqliteService& database, const std::string
             return true;
         });
         const auto action = q.at("action").get<std::string>();
+        const auto nativeSource = source;
+        source = [&](const Json& descriptor) -> Json {
+            if (descriptor.value("kind", std::string{}) != "retained")
+                return nativeSource(descriptor);
+            fields(descriptor, {"kind", "id"});
+            const auto id = descriptor.at("id").get<std::string>();
+            if (id.empty() || id.size() > 128 ||
+                id.find_first_not_of(
+                    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.") !=
+                    std::string::npos)
+                throw std::invalid_argument("Invalid retained snapshot ID");
+            const auto saved = Json::parse(
+                database.workspaceRequest(Json{{"action", "read"},
+                                               {"workspace_id", "analysis-source/" + id},
+                                               {"revision", "1"}}
+                                              .dump(),
+                                          false));
+            if (saved.value("status", std::string{}) != "ok")
+                throw std::invalid_argument("Retained snapshot unavailable");
+            const auto& doc = saved.at("document");
+            if (doc.at("type") != "F-retained-source/1" ||
+                contentHash(doc.at("source")) != doc.at("contentHash"))
+                throw std::invalid_argument("Retained snapshot integrity mismatch");
+            return doc.at("source");
+        };
+        if (action == "retainSource") {
+            if (!write)
+                throw std::invalid_argument("Retaining a snapshot requires the write endpoint");
+            fields(q, {"action", "source", "commandId"});
+            const auto id = q.at("commandId").get<std::string>();
+            if (id.empty() || id.size() > 128 ||
+                id.find_first_not_of(
+                    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.") !=
+                    std::string::npos)
+                throw std::invalid_argument("Invalid retained snapshot command ID");
+            const auto reply = [&](const Json& doc) {
+                if (doc.at("request") != q || doc.at("type") != "F-retained-source/1" ||
+                    contentHash(doc.at("source")) != doc.at("contentHash"))
+                    throw std::invalid_argument(
+                        "Retained snapshot command collision or integrity mismatch");
+                return Json{{"status", "ok"},
+                            {"source", doc.at("source")},
+                            {"contentHash", doc.at("contentHash")},
+                            {"descriptor", {{"kind", "retained"}, {"id", id}}}}
+                    .dump();
+            };
+            const auto existing = Json::parse(
+                database.workspaceRequest(Json{{"action", "read"},
+                                               {"workspace_id", "analysis-source/" + id},
+                                               {"revision", "1"}}
+                                              .dump(),
+                                          false));
+            if (existing.value("status", std::string{}) == "ok")
+                return reply(existing.at("document"));
+            if (existing.value("status", std::string{}) != "not_found") return existing.dump();
+            const auto frozen = source(q.at("source"));
+            if (frozen.dump().size() > 900000)
+                throw std::invalid_argument(
+                    "Retained snapshot exceeds 900000-byte metadata budget; no sampling performed");
+            const Json doc{{"schema_version", 1},
+                           {"type", "F-retained-source/1"},
+                           {"source", frozen},
+                           {"contentHash", contentHash(frozen)},
+                           {"request", q}};
+            const auto saved = Json::parse(
+                database.workspaceRequest(Json{{"action", "commit"},
+                                               {"workspace_id", "analysis-source/" + id},
+                                               {"expected_revision", nullptr},
+                                               {"command_id", id},
+                                               {"document", doc}}
+                                              .dump(),
+                                          true));
+            if (saved.value("status", std::string{}) != "ok") return saved.dump();
+            return reply(saved.at("document"));
+        }
+
         if (action == "snapshot") {
             fields(q, {"action", "source"});
             return Json{{"status", "ok"}, {"source", source(q.at("source"))}}.dump();
@@ -60,6 +136,49 @@ std::string analysisRequest(services::SqliteService& database, const std::string
             if (action == "read" && (!q.contains("revision") || q.at("revision").is_null()))
                 throw std::invalid_argument("Exact plan lookup requires revision");
             return unwrap(Json::parse(database.workspaceRequest(request.dump(), false))).dump();
+        }
+        if (action == "manifest") {
+            fields(q, {"action", "planId", "revision"});
+            if (q.at("revision").is_null())
+                throw std::invalid_argument("Manifest requires exact revision");
+            const auto saved =
+                unwrap(Json::parse(database.workspaceRequest(Json{{"action", "read"},
+                                                                  {"workspace_id", identity(q)},
+                                                                  {"revision", q.at("revision")}}
+                                                                 .dump(),
+                                                             false)));
+            if (saved.value("status", std::string{}) != "ok") return saved.dump();
+            Json manifest{{"schema", "F-analysis-manifest/1"},
+                          {"planId", q.at("planId")},
+                          {"originRevision", saved.at("revision")},
+                          {"document", saved.at("document")}};
+            return Json{
+                {"status", "ok"}, {"manifest", manifest}, {"contentHash", contentHash(manifest)}}
+                .dump();
+        }
+        if (action == "import") {
+            if (!write) throw std::invalid_argument("Import requires write endpoint");
+            fields(q, {"action", "manifest", "contentHash", "source", "expectedRevision",
+                       "commandId"});
+            const auto& manifest = q.at("manifest");
+            fields(manifest, {"schema", "planId", "originRevision", "document"});
+            if (manifest.at("schema") != "F-analysis-manifest/1" ||
+                contentHash(manifest) != q.at("contentHash"))
+                throw std::invalid_argument("Manifest schema/hash mismatch");
+            const auto& doc = manifest.at("document");
+            fields(doc, {"schema_version", "type", "graph", "feature", "sourceBinding", "method"});
+            if (doc.at("schema_version") != 1 || doc.at("type") != "F-analysis-strategy/1")
+                throw std::invalid_argument("Unsupported strategy manifest");
+            Json save{{"action", "save"},
+                      {"planId", manifest.at("planId")},
+                      {"graph", doc.at("graph")},
+                      {"feature", doc.at("feature")},
+                      {"sourceBinding", doc.at("sourceBinding")},
+                      {"method", doc.at("method")},
+                      {"source", q.at("source")},
+                      {"expectedRevision", q.at("expectedRevision")},
+                      {"commandId", q.at("commandId")}};
+            return analysisRequest(database, save.dump(), true, source, method);
         }
         if (action == "save") {
             if (!write) throw std::invalid_argument("Save requires the analysis write endpoint");
@@ -127,7 +246,8 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                               true)))
                 .dump();
         }
-        if (action == "evaluate" || action == "jobInput" || action == "gallery") {
+        if (action == "evaluate" || action == "jobInput" || action == "gallery" ||
+            action == "report") {
             fields(q,
                    action == "gallery"
                        ? std::set<std::string>{"action", "planId", "revision", "source", "offset"}
@@ -163,6 +283,84 @@ std::string analysisRequest(services::SqliteService& database, const std::string
             auto result = evaluateSource(current, doc);
             result["planId"] = q.at("planId");
             result["revision"] = saved.at("revision");
+            if (action == "report") {
+                const auto& nodes = doc.at("graph").at("nodes");
+                if (nodes.size() > 32)
+                    throw std::invalid_argument("Report supports at most 32 populations");
+                Json table = Json::array();
+                const std::vector<std::string> columns{"population",
+                                                       "feature",
+                                                       "unit",
+                                                       "selected",
+                                                       "excluded",
+                                                       "unknown",
+                                                       "measured",
+                                                       "missing",
+                                                       "minimum",
+                                                       "maximum",
+                                                       "mean",
+                                                       "median",
+                                                       "p05",
+                                                       "p25",
+                                                       "p75",
+                                                       "p95",
+                                                       "sampleStandardDeviation",
+                                                       "cvPercent",
+                                                       "geometricMean",
+                                                       "denominator"};
+                auto csvCell = [](const Json& cell) {
+                    if (cell.is_null()) return std::string{};
+                    if (!cell.is_string()) return cell.dump();
+                    auto raw = cell.get<std::string>();
+                    // Do not turn user-authored labels into spreadsheet formulas.
+                    if (!raw.empty() && (raw[0] == '=' || raw[0] == '+' || raw[0] == '-' ||
+                                         raw[0] == '@' || raw[0] == '\t' || raw[0] == '\r'))
+                        raw.insert(raw.begin(), '\'');
+                    std::string escaped = "\"";
+                    for (const char c : raw) {
+                        if (c == '"') escaped += '"';
+                        escaped += c;
+                    }
+                    return escaped + "\"";
+                };
+                std::string csv;
+                for (std::size_t i = 0; i < columns.size(); ++i) {
+                    if (i) csv += ',';
+                    csv += columns[i];
+                }
+                csv += "\r\n";
+                for (const auto& node : nodes) {
+                    auto request = doc;
+                    request["graph"]["output"] = node.at("id");
+                    auto row = evaluateSource(current, request);
+                    row["population"] = node.at("id");
+                    Json compact = Json::object();
+                    for (std::size_t i = 0; i < columns.size(); ++i) {
+                        const auto& key = columns[i];
+                        compact[key] = row.at(key);
+                        if (i) csv += ',';
+                        csv += csvCell(row.at(key));
+                    }
+                    csv += "\r\n";
+                    table.push_back(std::move(compact));
+                }
+                Json report{{"schema", "F-analysis-report/1"},
+                            {"planId", q.at("planId")},
+                            {"revision", saved.at("revision")},
+                            {"sourceBinding", doc.at("sourceBinding")},
+                            {"strategy", doc},
+                            {"estimators", result.at("estimators")},
+                            {"table", table},
+                            {"scientificCompatibility", "unknown"},
+                            {"qcPolicy", "unknown-not-filtered"},
+                            {"populationComplete", current.at("populationComplete")}};
+                return Json{{"status", "ok"},
+                            {"report", report},
+                            {"contentHash", contentHash(report)},
+                            {"csv", csv},
+                            {"csvNullSemantics", "empty cell means unavailable, never zero"}}
+                    .dump();
+            }
             if (action == "gallery") {
                 if (!q.at("offset").is_number_unsigned() || q.at("offset").get<uint64_t>() > 10000)
                     throw std::invalid_argument("Invalid gallery offset");
@@ -181,7 +379,7 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                 }
                 if (current.at("scope") == "stored") {
                     const auto gallery = source(Json{{"kind", "stored-gallery"},
-                                                     {"path", q.at("source").at("path")},
+                                                     {"path", current.at("path")},
                                                      {"fingerprint", current.at("fingerprint")},
                                                      {"keys", keys}});
                     images = gallery.at("images");

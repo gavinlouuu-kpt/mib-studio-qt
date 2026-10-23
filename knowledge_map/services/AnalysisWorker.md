@@ -140,3 +140,10 @@ Cytoflow immutable job inputs/results use the existing single-owner job journal.
 `mib-analysis-worker::app::Service` is shared by Studio and Review; its scheduler
 owns and joins a bounded process worker, never a recording or acquisition handle.
 Live/archive images remain explicitly unavailable without a provider locator.
+
+Native statistics include documented type-7 quantiles, sample SD, CV and geometric
+mean. AnalysisHost exports deterministic revision-bound population reports/CSV and
+checksummed strategy manifests; import reuses save/CAS and verifies current source
+bytes. Retained normalized source projections use the same metadata owner with a
+900,000-byte cap, allowing explicitly historical evaluation after a live producer
+advances. Retention does not fabricate image assets or scientific compatibility.
