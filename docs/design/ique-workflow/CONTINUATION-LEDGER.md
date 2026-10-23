@@ -129,3 +129,10 @@ Both explicitly assert `compatibility=unknown`, `hardwareReadiness=not_evaluated
 and `applied=false`. Complete event coverage is not calibration/LUT authentication,
 scientific QC acceptance, method compatibility or biological independence.
 No producer mismatch was observed in either supplied fixture.
+
+F handoff pin `d0c6cb510ae23e6ee43f4bfdfa9067a600544fe2` was compared with
+`0f5588df`: production API/native evaluator are unchanged. Its only functional
+delta removes public visibility from three Tauri command wrappers; adopted
+branch-locally. Thumbnail whitespace cleanup was already present. Existing
+scientific evidence applies to the identical evaluator; this source alignment
+does not upgrade the unverified native Tauri packaging claim.

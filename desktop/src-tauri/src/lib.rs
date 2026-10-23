@@ -384,15 +384,15 @@ fn fetch_review_metadata(state: State<AppState>) -> Result<cmds::ReviewMetadata,
 }
 
 #[tauri::command]
-pub async fn analysis_job(state: State<'_, AppState>, request: serde_json::Value) -> Result<serde_json::Value, String> {
+async fn analysis_job(state: State<'_, AppState>, request: serde_json::Value) -> Result<serde_json::Value, String> {
     cmds::analysis_job(&state, request)
 }
 #[tauri::command]
-pub async fn analysis_read(state: State<'_, AppState>, request: serde_json::Value) -> Result<serde_json::Value, String> {
+async fn analysis_read(state: State<'_, AppState>, request: serde_json::Value) -> Result<serde_json::Value, String> {
     cmds::analysis_read(&state, request)
 }
 #[tauri::command]
-pub async fn analysis_write(state: State<'_, AppState>, request: serde_json::Value) -> Result<serde_json::Value, String> {
+async fn analysis_write(state: State<'_, AppState>, request: serde_json::Value) -> Result<serde_json::Value, String> {
     cmds::analysis_write(&state, request)
 }
 #[tauri::command]
