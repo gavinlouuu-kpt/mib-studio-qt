@@ -34,6 +34,7 @@ if(MIB_ANALYSIS_HOST_TESTS)
         "${MIB_ROOT}/src/backend/analysis/SourceAnalysis.cpp"
         "${MIB_ROOT}/src/backend/analysis/ParameterTransforms.cpp"
         "${MIB_ROOT}/src/backend/analysis/PopulationPlot.cpp"
+        "${MIB_ROOT}/src/backend/analysis/PopulationScatter.cpp"
         "${MIB_ROOT}/src/backend/analysis/AnalysisHost.cpp"
         "${MIB_ROOT}/src/backend/analysis/AnalysisComparison.cpp"
         "${MIB_ROOT}/src/backend/analysis/AnalysisReports.cpp"

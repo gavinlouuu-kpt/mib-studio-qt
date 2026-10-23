@@ -6,6 +6,7 @@
 #include "support/watchdog.h"
 #include <nlohmann/json.hpp>
 #include <thread>
+#include <algorithm>
 using nlohmann::json;
 int main() {
     mib::test::Watchdog watchdog(30);
@@ -106,6 +107,29 @@ int main() {
             backend::analysis::prepareAnalysisSource(source, transformed)["parameterFingerprint"] !=
                 prepared["parameterFingerprint"],
             "transform identity pins ordered numerical semantics");
+    }
+    {
+        auto scatterInput = source;
+        scatterInput["parameters"]["deformability"] = "dimensionless";
+        scatterInput["rows"] = json::array();
+        for (int i = 0; i < 20; ++i)
+            scatterInput["rows"].push_back(
+                {{"key", std::to_string(i)},
+                 {"measurements",
+                  {{"area", 5}, {"deformability", i == 19 ? json(nullptr) : json(i / 20.)}}}});
+        auto query = save;
+        query["plot"] = {{"kind", "scatter"},    {"x", "area"},
+                         {"y", "deformability"}, {"seed", 42u},
+                         {"maxPoints", 5u},      {"layers", {{{"population", "gate"}}}}};
+        const auto plot = backend::analysis::plotSource(scatterInput, query);
+        MIB_EXPECT(plot["points"].size() == 5 && plot["eligible"] == "19" &&
+                       plot["layers"][0]["missingCoordinates"] == "1",
+                   "scatter reports explicit display sampling and missing coordinate counts");
+        std::reverse(scatterInput["rows"].begin(), scatterInput["rows"].end());
+        MIB_EXPECT(backend::analysis::plotSource(scatterInput, query)["points"] == plot["points"],
+                   "scatter sample independent of row traversal order");
+        MIB_EXPECT(backend::analysis::evaluateSource(scatterInput, query)["selected"] == "20",
+                   "display sample never replaces scientific population");
     }
     json retainedDescriptor;
     auto resolver = [&](const json&) { return source; };

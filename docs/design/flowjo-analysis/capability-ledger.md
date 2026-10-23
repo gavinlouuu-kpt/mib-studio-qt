@@ -136,3 +136,8 @@ its absent-feature wording. No aggregate F01–F16 acceptance is claimed.
 Library and display defaults are non-scientific metadata only. Browser connector
 currently has no registered browser, so latest controls lack rendered click-through
 acceptance despite builds/backend tests. This is an evidence gap, not a waived task.
+
+F05 continuation: saved native raw/derived scatter now shares exact source/parameter
+revision identity and explicit hash-ranked display sampling. Counts/statistics use
+all selected observations, with missing coordinates separately reported. Empty and
+extreme finite presentation tests pass; multi-source overlays remain open.

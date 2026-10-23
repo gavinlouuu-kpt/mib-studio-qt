@@ -211,3 +211,11 @@ Native library DB reopen and undeclared-group refusal also pass. Relink QA opene
 byte-identical copy under a new path: existing saved plan selects10 and returns10
 matching images. A different copy with altered bytes is refused `source_mismatch`.
 Original synthetic file is unchanged and reopened after QA.
+
+Saved scatter production proof: `scatter-1792757960201` revision1, 14 selected/eligible
+but explicit display budget5. Bounds cover all14 (area100–118, deformability0.1–0.28),
+not only display points. Repeat reads reproduce hash
+`sha256:4c687b2891d39165f2a8b4b631ad7a129c0a3430db839fb194b4087cee7f97f6`.
+Normal native host and all4 ASan/UBSan standalone tests pass. Thirteen UI tests pass,
+including empty/extreme finite scatter coordinate rendering and exact large keys.
+No browser click-through claim.

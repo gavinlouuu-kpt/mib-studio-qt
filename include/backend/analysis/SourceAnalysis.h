@@ -9,5 +9,6 @@ nlohmann::json adaptEvidenceArchive(const nlohmann::json& archive);
 void validateAnalysisGraph(const nlohmann::json& graph);
 nlohmann::json prepareAnalysisSource(const nlohmann::json& source, const nlohmann::json& strategy);
 nlohmann::json evaluateSource(const nlohmann::json& source, const nlohmann::json& request);
+nlohmann::json scatterSource(const nlohmann::json& source, const nlohmann::json& strategy);
 nlohmann::json plotSource(const nlohmann::json& source, const nlohmann::json& strategy);
 } // namespace backend::analysis

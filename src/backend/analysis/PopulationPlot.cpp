@@ -6,6 +6,8 @@
 namespace backend::analysis {
 using Json = nlohmann::json;
 Json plotSource(const Json& rawSource, const Json& strategy) {
+    if (strategy.at("plot").value("kind", std::string{}) == "scatter")
+        return scatterSource(rawSource, strategy);
     const auto source = prepareAnalysisSource(rawSource, strategy);
     const auto& spec = strategy.at("plot");
     if (!spec.is_object() || spec.size() != 7 || spec.at("kind") != "histogram" ||

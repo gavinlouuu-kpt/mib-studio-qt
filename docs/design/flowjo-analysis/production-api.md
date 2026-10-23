@@ -329,3 +329,16 @@ must be preserved when integrating I's generic workspace RPC, otherwise arbitrar
 version1 workspace documents could spoof retained sources or findings. No public
 ABI is added. Native tests attempt generic writes to strategy/source/finding/report
 namespaces and require refusal; typed analysis writes still pass.
+
+## Saved scatter specification
+
+Strategy PlotSpec also accepts
+`{kind:"scatter",x:"area",y:"deformability",seed:42,maxPoints:1000,layers:[{population:"gate"}]}`.
+Up to8 unique populations, uint32 seed, display budget1–1000. Only finite selected
+coordinate pairs are drawable. Native output reports selected/unknown/missing and
+eligible layer-event counts, all-eligible coordinate bounds, exact-key points and
+parameter/source fingerprints. Display points rank by SHA256 of canonical JSON
+`[seed,population,eventKey]`, then population/key. Input order cannot change the
+sample. An event may appear in multiple layers. Sampling never changes native gates,
+statistics or job inputs. Empty scatter is valid and keeps null bounds. Production
+renderer supports raw/derived scatter in both saved plots and immutable reports.

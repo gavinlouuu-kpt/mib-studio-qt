@@ -222,6 +222,7 @@ add_library(mib_review_core STATIC
     ${PROJECT_SOURCE_DIR}/src/backend/workspace/WorkspaceStore.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/analysis/SourceAnalysis.cpp
     analysis/PopulationPlot.cpp
+    analysis/PopulationScatter.cpp
     analysis/ParameterTransforms.cpp
     analysis/AnalysisComparison.cpp
     analysis/AnalysisReports.cpp
