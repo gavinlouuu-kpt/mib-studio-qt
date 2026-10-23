@@ -117,3 +117,15 @@ Native result: 8 selected/measured, area mean/median 117 pixel², denominator nu
 not 23 events. Exact strategy persistence, evaluation, saved finding, export,
 relink and source/method refusal checks passed. E originals were not modified;
 no hardware or complete-population claim follows from these observations.
+
+E's independent clean second-run fixture also passes the same real-app probe.
+HDF SHA256 `dd9e96ed7c59b5de03ce9d7abc7dbfea5790f0af6a2d1e613cb489e4f065eb1c`:
+3 selected/measured, mean 146.66666666666666 pixel², median 206 pixel²,
+denominator `"3"`, `populationComplete=true` for that retained source snapshot.
+The probe now pairs each `.h5` with its own `.json`; use
+`MIB_QA_SOURCE_KIND=run-archive MIB_QA_EXPECT_COMPLETE=1` for the clean fixture.
+The fault fixture was rerun and still returns null denominator/incomplete.
+Both explicitly assert `compatibility=unknown`, `hardwareReadiness=not_evaluated`,
+and `applied=false`. Complete event coverage is not calibration/LUT authentication,
+scientific QC acceptance, method compatibility or biological independence.
+No producer mismatch was observed in either supplied fixture.
