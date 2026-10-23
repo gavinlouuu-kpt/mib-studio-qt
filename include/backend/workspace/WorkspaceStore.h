@@ -32,6 +32,18 @@ public:
                                      const std::optional<std::string>& after = std::nullopt) const;
     // Ordered metadata-only heads; caller supplies a literal namespace prefix.
     std::vector<Snapshot> catalog(const std::string& prefix, int limit, const std::string& after) const;
+    std::vector<Snapshot> list(int limit = 100, const std::string& after = "") const;
+    // Completed export jobs materialize immutable manifest bytes in the metadata DB.
+    std::string exportSnapshot(const std::string& workspaceId, const std::string& revision,
+                               const std::string& jobId);
+    std::string exportStatus(const std::string& workspaceId, const std::string& jobId) const;
+    Snapshot importSnapshot(const std::string& workspaceId, const std::string& commandId,
+                            const std::string& manifest);
+    Snapshot linkSource(const std::string& workspaceId, const std::string& expectedRevision,
+                        const std::string& commandId, const std::string& sourceId,
+                        const std::string& path, bool relink);
+    std::string verifySource(const std::string& workspaceId, const std::string& revision,
+                             const std::string& sourceId) const;
     // null expectedRevision is create-only. Complete logical document is atomically replaced.
     // Successful command replay returns its original revision even if the head advanced.
     Snapshot commit(const std::string& workspaceId,

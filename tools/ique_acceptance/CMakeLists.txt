@@ -15,3 +15,6 @@ add_executable(ique_workspace_host_test ../../tests/workspace/workspace_host_tes
 target_include_directories(ique_workspace_host_test PRIVATE ../../include)
 target_link_libraries(ique_workspace_host_test PRIVATE SQLite::SQLite3 nlohmann_json::nlohmann_json spdlog::spdlog Threads::Threads)
 target_compile_options(ique_workspace_host_test PRIVATE -Wall -Wextra -Werror)
+
+target_sources(ique_workspace_test PRIVATE ../../src/backend/processing/ProcessingCoreSha256.cpp)
+target_sources(ique_workspace_host_test PRIVATE ../../src/backend/processing/ProcessingCoreSha256.cpp)

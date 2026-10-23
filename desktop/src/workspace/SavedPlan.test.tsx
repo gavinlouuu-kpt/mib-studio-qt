@@ -87,3 +87,20 @@ it("does not send a write if reload recovery storage cannot be written", async (
   try { await click("Save new workspace"); expect(call).not.toHaveBeenCalled(); expect(host.textContent).toContain("quota"); }
   finally {stub.mockRestore();}
 });
+it("round-trips complete definitions/findings and archives without replacing the saved sheet", async () => {
+  const document={...ok.document,title:"Study",definitions:{analysis:{id:"a",revision:"2"}},findings:[{id:"f",note:"interpretation"}],journal:[{kind:"observed"}]};
+  render(); call.mockResolvedValueOnce({...ok,document}); await click("Open saved plan");
+  call.mockResolvedValueOnce({...ok,revision:"2",document:{...document,archived:true}}); await click("Archive workspace");
+  const q=JSON.parse((call.mock.calls[1][1] as {request:string}).request);
+  expect(q.document).toEqual({...document,archived:true}); expect(q.expected_revision).toBe("1");
+  expect(button("Unarchive workspace")).toBeDefined();
+});
+it("handles materialized export separately from workspace snapshots and recovers exact job after reload", async () => {
+  render();call.mockResolvedValueOnce(ok);await click("Open saved plan");
+  call.mockRejectedValueOnce(new Error("lost export reply"));await click("Prepare workspace export");
+  const request=call.mock.calls[1];const q=JSON.parse((request[1] as {request:string}).request);
+  act(()=>root.unmount());root=createRoot(host);render();
+  call.mockResolvedValueOnce({status:"ok",state:"complete",workspace_id:q.workspace_id,revision:"1",job_id:q.job_id,manifest:{payload:ok.document,sha256:"proof"}});
+  await click("Retry same save"); expect(call.mock.calls[2]).toEqual(request);
+  expect(host.textContent).toContain("materialized");expect(button("Download workspace manifest")).toBeDefined();
+});

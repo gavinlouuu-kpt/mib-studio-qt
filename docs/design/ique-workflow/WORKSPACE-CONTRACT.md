@@ -59,3 +59,24 @@ copy/lineage and exact compatibility key matching. `RecipePairing.tsx` is isolat
 presentation. Neither claims durable storage, scientific compatibility computation
 or live Apply integration. Existing `registry_plan_apply` / explicit apply remain
 required for eventual operational binding. The fixture demo is not that binding.
+
+## Implemented lifecycle extension (2026-10-23)
+
+The historical isolated/shared-file gates above are superseded on the I branch.
+`workspace_read` accepts `list {after?,limit<=100}`, `export_status {workspace_id,job_id}`,
+`verify_source {workspace_id,revision,source_id}`, plus read/history.
+`workspace_write` additionally accepts:
+
+- `export {workspace_id,revision,job_id}`: durable completed materialization, exactly
+  replayable/queryable across restart. Payload excludes external source bytes.
+- `import {workspace_id,command_id,manifest}`: validates canonical payload SHA256
+  and format, then create-only commit. Existing workspaces cannot be overwritten.
+- `attach_source` / `relink` with workspace_id, expected_revision, command_id,
+  source_id and path: regular-file SHA256/size; relink refuses mismatched bytes.
+
+Manifest: `{payload:{format:"I-workspace/1",workspace_id,revision,document},sha256}`.
+SHA256 covers native canonical JSON payload bytes; it detects corruption, not author
+identity. Imported file paths are untrusted until explicitly reverified. Export job
+completion means bytes retained in the DB, not delivery to an external filesystem.
+Source verification limits: regular files <=2 GiB, hashing deadline 10 seconds.
+This bounded operation runs only inside the facade's idle acquisition/recording guard.
