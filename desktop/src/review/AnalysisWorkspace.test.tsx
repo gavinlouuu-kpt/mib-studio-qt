@@ -54,3 +54,9 @@ it("loads exact saved provenance and preserves it on the next revision",async()=
   expect(read.mock.calls[read.mock.calls.length-1][0]).toEqual({action:"read",planId:"plan",revision:"1"});
   await click("Save backend revision"); expect(write.mock.calls[write.mock.calls.length-1][0]).toMatchObject({expectedRevision:"1",method,application,qc:{policy:"all",decisions:[]}});
 });
+
+it("refuses to overwrite a selected but unloaded revision",async()=>{
+  const input=host.querySelector<HTMLInputElement>('[aria-label="Strategy revision"]')!;
+  await act(async()=>{Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value")!.set!.call(input,"9");input.dispatchEvent(new Event("input",{bubbles:true}));});
+  await click("Save backend revision");expect(write).not.toHaveBeenCalled();expect(host.textContent).toContain("Load the selected saved graph");
+});

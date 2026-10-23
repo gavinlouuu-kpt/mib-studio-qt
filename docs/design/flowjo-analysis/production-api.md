@@ -383,3 +383,11 @@ still require explicit repair after a rename and native validation refuses stale
 `evaluate` now includes `graphFingerprint`, SHA256 of the complete graph document.
 Native graph revision keys use this content identity rather than trusting a reusable
 user-authored draft revision label.
+Selecting an arbitrary revision or restoring/applying a strategy does not imply its
+document has been loaded into the editor. Save refuses until exact loading completes;
+this prevents editor defaults from silently replacing unobserved provenance.
+
+The graph form can add a rectangular population as named `id-x`, `id-y` inclusive
+intervals and an `id` AND population. It sets the new population as output, refuses
+name collisions/reversed bounds, and leaves both components editable. No separate
+browser membership implementation or implicit coordinate transformation is used.

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import {expect,it} from "vitest";
 import {renderToStaticMarkup} from "react-dom/server";
-import {PopulationGraphEditor,renamePopulation,removePopulation} from "./PopulationGraphEditor";
+import {PopulationGraphEditor,addRectangle,renamePopulation,removePopulation} from "./PopulationGraphEditor";
 import type {PopulationGraph} from "./PopulationAnalysis";
 const graph:PopulationGraph={id:"p",revision:"draft",output:"both",nodes:[{id:"a",parent:"",kind:"interval",feature:"area",minimum:null,maximum:null},{id:"aa",parent:"a",kind:"interval",feature:"area",minimum:0,maximum:1},{id:"both",parent:"",kind:"and",operands:["a","aa"]}]};
 it("renames exact dependencies and output without substring rewriting",()=>{
@@ -14,4 +14,14 @@ it("renames exact dependencies and output without substring rewriting",()=>{
 it("malformed advanced JSON fails closed without crashing the form",()=>{
  const bad={...graph,nodes:[{id:"bad",parent:"",kind:"and"}]};
  expect(renderToStaticMarkup(<PopulationGraphEditor text={JSON.stringify(bad)} onChange={()=>{}} disabled={false}/>)).toContain("no draft was discarded");
+});
+
+it("creates a transparent native rectangle composition and rejects collisions or reversed bounds",()=>{
+ const next=addRectangle(graph,"rect","area","deformability",[0,10,null,1]);
+ expect(next.output).toBe("rect");expect(next.nodes.slice(-3)).toEqual([
+ {id:"rect-x",parent:"",kind:"interval",feature:"area",minimum:0,maximum:10},
+ {id:"rect-y",parent:"",kind:"interval",feature:"deformability",minimum:null,maximum:1},
+ {id:"rect",parent:"",kind:"and",operands:["rect-x","rect-y"]}]);
+ expect(()=>addRectangle(next,"rect","area","deformability",[0,1,0,1])).toThrow();
+ expect(()=>addRectangle(graph,"rect","area","deformability",[10,0,0,1])).toThrow();
 });

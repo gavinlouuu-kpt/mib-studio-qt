@@ -28,6 +28,7 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
   const [kind, setKind] = useState(live && !path ? "live-run" : "stored");
   const [retainedId, setRetainedId] = useState("");
   const [revision, setRevision] = useState("");
+  const [editBaseRevision, setEditBaseRevision] = useState("");
   const [method, setMethod] = useState<Record<string, unknown> | null>(null);
   const [application, setApplication] = useState<Record<string, unknown> | null>(null);
   const selection = useRef("");
@@ -60,7 +61,7 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
     if (typeof id !== "string") return;
     const key = JSON.stringify([path, kind, retainedId, id]);
     if (key !== selection.current) {
-      selection.current = key; setRevision(""); setHistory([]); setMethod(null); setApplication(null);
+      selection.current = key; setEditBaseRevision(""); setRevision(""); setHistory([]); setMethod(null); setApplication(null);
     }
   }, [path, kind, retainedId, graphText]);
   const source = () => kind === "retained" ? {kind, id: retainedId} : kind.startsWith("live-") ? { kind } : { kind, path };
@@ -89,7 +90,7 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
       setRetainedId(reply.descriptor.id); setKind("retained");
     } else if (command.action === "saveFinding") {
       setComparison(reply.document); setMessage(`Immutable finding ${reply.findingId}, revision 1 saved.`);
-    } else { setRevision(reply.revision); setMessage(`Backend revision ${reply.revision} saved. Source identity is pinned.`); }
+    } else { setEditBaseRevision(command.action === "save" ? reply.revision : ""); setRevision(reply.revision); setMessage(`Backend revision ${reply.revision} saved. Source identity is pinned.`); }
   }
   return <section aria-label="Source-bound analysis workspace">
     <h4>Source-bound backend strategies</h4>
@@ -108,6 +109,7 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
       <label>Exact backend revision <input aria-label="Strategy revision" value={revision} onChange={e => { ++generation.current; setRevision(e.target.value); setGallery(null); setPlot(null); setReport(null); setResult(null); }} placeholder="Blank creates a new plan" /></label>
       <button onClick={() => void run(async token => {
         if (window.localStorage.getItem(pendingKey)) throw new Error("Reconcile the pending command before creating another revision.");
+        if (revision && editBaseRevision !== revision) throw new Error("Load the selected saved graph before editing its revision.");
         const g = graph();
         const snapshot = checked(await read({ action: "snapshot", source: source() })).source;
         if (token !== generation.current) return;
@@ -118,10 +120,12 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
         window.localStorage.setItem(pendingKey, JSON.stringify(command));
         await reconcile(command, token);
       })}>Save backend revision</button>
+      {revision && editBaseRevision !== revision && <p>Load the selected saved graph before saving edits, so method and template provenance are not replaced by unloaded defaults.</p>}
       <button disabled={!revision || !onLoadGraph} onClick={() => void run(async token => {
         const reply = checked(await read({action:"read",planId:graph().id,revision}));
         if (token !== generation.current) return;
         const doc = reply.document;
+        setEditBaseRevision(revision);
         setStrategyFeature(doc.feature); setTransformText(JSON.stringify(doc.transforms || [],null,2));
         setMethod(doc.method || null); setApplication(doc.application || null);
         setPlotEnabled(Boolean(doc.plot)); if (doc.plot) setPlotText(JSON.stringify(doc.plot,null,2));

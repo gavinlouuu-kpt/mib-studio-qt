@@ -247,3 +247,8 @@ new command with stale expectedRevision1 returns conflict. Focused UI14 tests pa
 including same-plan CAS retention and exact method/application/QC restoration;
 frontend build and native normal plus ASan/UBSan host tests pass. The form editor
 has not received browser click-through qualification; connector remains unavailable.
+
+Rectangle production proof: `rectangle-1792759502927` revision1, area[100,106]
+AND deformability[0.1,0.2], selected7 and7 exact-key gallery images. Native output
+matches an independent check of the frozen source rows. Form/UI regressions cover
+name collisions/reversed bounds and refusal to save an unloaded selected revision.

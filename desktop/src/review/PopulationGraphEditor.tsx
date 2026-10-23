@@ -9,8 +9,17 @@ export function removePopulation(graph:PopulationGraph,id:string):PopulationGrap
  if(graph.output===id||graph.nodes.some(n=>n.parent===id||(n.kind!=="interval"&&n.operands.includes(id))))throw new Error("Select another output and remove dependent references before deleting this population.");
  return {...graph,nodes:graph.nodes.filter(n=>n.id!==id)};
 }
+/** A rectangle is an explicit pair of inclusive native interval gates and AND. */
+export function addRectangle(graph:PopulationGraph,id:string,x:string,y:string,bounds:(number|null)[]):PopulationGraph{
+ const ids=[`${id}-x`,`${id}-y`,id];
+ if(!id.trim()||!x.trim()||!y.trim()||x===y||graph.nodes.length>253||ids.some(key=>graph.nodes.some(n=>n.id===key)))throw new Error("Rectangle needs a unique ID, two distinct parameters and room for three populations.");
+ if(bounds.length!==4||bounds.some(v=>v!==null&&!Number.isFinite(v))||(bounds[0]!==null&&bounds[1]!==null&&bounds[0]>bounds[1])||(bounds[2]!==null&&bounds[3]!==null&&bounds[2]>bounds[3]))throw new Error("Rectangle bounds must be finite, ordered or blank.");
+ return {...graph,output:id,nodes:[...graph.nodes,{id:ids[0],parent:"",kind:"interval",feature:x,minimum:bounds[0],maximum:bounds[1]},{id:ids[1],parent:"",kind:"interval",feature:y,minimum:bounds[2],maximum:bounds[3]},{id,parent:"",kind:"and",operands:ids.slice(0,2)}]};
+}
 /** Draft structure editing only. Native code remains the graph and numerical authority. */
 export function PopulationGraphEditor({text,onChange,disabled}:{text:string;onChange:(text:string)=>void;disabled:boolean}){
+ const [rectangleX,setRectangleX]=useState("area"),[rectangleY,setRectangleY]=useState("deformability");
+ const [rectangleBounds,setRectangleBounds]=useState(["","","",""]);
  const [newId,setNewId]=useState("");const [error,setError]=useState("");const [,redraw]=useState(0);
  const undo=useRef<string[]>([]),redo=useRef<string[]>([]),emitted=useRef(text);
  useEffect(()=>{if(text!==emitted.current){undo.current=[];redo.current=[];emitted.current=text;redraw(n=>n+1);}},[text]);
@@ -26,6 +35,13 @@ export function PopulationGraphEditor({text,onChange,disabled}:{text:string;onCh
   <label>Output population<select aria-label="Graph output" value={graph.output} onChange={e=>edit(g=>({...g,output:e.target.value}))}>{graph.nodes.map(n=><option key={n.id} value={n.id}>{n.id}</option>)}</select></label>
   <label>New population ID<input value={newId} onChange={e=>setNewId(e.target.value)}/></label>
   <button disabled={!newId.trim()||graph.nodes.length>=256} onClick={()=>edit(g=>{if(g.nodes.some(n=>n.id===newId))throw new Error("Population ID already exists.");return {...g,nodes:[...g.nodes,{id:newId,parent:"",kind:"interval",feature:"area",minimum:null,maximum:null}]};})}>Add population</button>
+  <details><summary>Add rectangular population</summary>
+   <p>Uses the new population ID above. Creates two inclusive native interval populations and their AND; blank bounds are unbounded. These named components remain editable and exportable.</p>
+   <label>Rectangle X parameter<input value={rectangleX} onChange={e=>setRectangleX(e.target.value)}/></label>
+   <label>Rectangle Y parameter<input value={rectangleY} onChange={e=>setRectangleY(e.target.value)}/></label>
+   {["X minimum","X maximum","Y minimum","Y maximum"].map((label,index)=><label key={label}>{label}<input value={rectangleBounds[index]} onChange={e=>setRectangleBounds(values=>values.map((v,i)=>i===index?e.target.value:v))}/></label>)}
+   <button disabled={!newId.trim()||graph.nodes.length>253} onClick={()=>edit(g=>addRectangle(g,newId,rectangleX,rectangleY,rectangleBounds.map(bound)))}>Add inclusive rectangle</button>
+  </details>
   {graph.nodes.map(node=><fieldset key={node.id}><legend>{node.id}</legend>
    <label>Population ID<input aria-label={`Rename ${node.id}`} defaultValue={node.id} onBlur={e=>edit(g=>renamePopulation(g,node.id,e.target.value))}/></label>
    <label>Gate type<select value={node.kind} onChange={e=>{const kind=e.target.value as Node["kind"];const next:Node=kind==="interval"?{id:node.id,parent:node.parent,kind,feature:"area",minimum:null,maximum:null}:{id:node.id,parent:node.parent,kind,operands:graph.nodes.filter(n=>n.id!==node.id).slice(0,kind==="not"?1:2).map(n=>n.id)};replace(node.id,next);}}><option value="interval">Inclusive interval</option><option value="and">AND</option><option value="or">OR</option><option value="not">NOT</option></select></label>

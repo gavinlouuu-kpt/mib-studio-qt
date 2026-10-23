@@ -121,9 +121,9 @@ its absent-feature wording. No aggregate F01–F16 acceptance is claimed.
 | F02 | Durable attributed manual tri-state QC, native eligibility/job propagation | Qualified automated scientific QC and biological validation |
 | F03 | Ordered linear/asinh/log10 derived columns, exact units/domain/null semantics, shared worker/native fingerprint | Compensation controls/estimation, Logicle, applicable fluorescence channels |
 | F04 | Persisted interval/Boolean/parent DAG, immutable revisions, source-specific overrides/resync, explicit migration refusal | Full graphical gate editing and remaining gate families |
-| F05/F11 | Saved native histogram/overlay bins, normalization, offsets, immutable report plotting | Other plot families and multi-source overlay composition |
+| F05/F11 | Saved native histogram/scatter, sampled display, multi-source overlays, immutable report plotting | Other plot families and graphical layout controls |
 | F06 | Fingerprint-fenced stored gallery, exact keys, real thumbnails and relink parity | E retained-image locators absent; live image retention cannot be fabricated |
-| F07 | Supervised seeded t-SNE, explicit sampling, exact map, deterministic same-runtime reorder/reopen tests | High-dimensional selection, other embedding engines, cross-platform qualification |
+| F07 | Supervised 2–16-feature seeded t-SNE, explicit sampling, exact map, same-runtime reorder/reopen tests | Other embedding engines, cross-platform qualification |
 | F08 | Native raw/derived quantiles/SD/CV/geometric mean and population tables/CSV | Broader reusable table designer and advanced statistics |
 | F09 | Explicit experimental units, paired/independent descriptive comparisons, duplicate-source rejection | Scientific compatibility qualification, inferential fits/models |
 | F10 | Saved ordered-block layouts and immutable report runs, JSON/standalone HTML | Arbitrary layout designer and cancellable multi-report batch orchestration |
@@ -160,3 +160,7 @@ rename/delete, draft undo/redo and exact saved-graph loading now preserve CAS an
 method/application provenance. Native graph content fingerprints prevent unchanged
 draft labels from aliasing edited bounds. Real revision/replay/conflict proof passes.
 Full graphical gesture editing and remaining gate families are still open.
+
+F04 rectangle creation now reuses explicit native interval/AND populations, with
+real7-selected/7-image proof. Selected/restored revisions require exact loading
+before draft save to protect previously unseen method/application provenance.
