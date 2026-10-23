@@ -91,3 +91,9 @@ source-reuse rejection and explicit missing semantics. F14 includes durable immu
 findings with exact plan/source references and content hash. Inferential fits,
 scientific compatibility qualification and I next-run linkage remain open. The
 two-recording production backend milestone passes; full F01–F16 acceptance does not.
+
+F10 now has revisioned ordered-block layouts and atomic immutable report runs over
+retained table/plot/finding references, exact replay/collision handling, checksum
+reopen and standalone HTML/JSON downloads. Arbitrary layout editing and background
+multi-report batch scheduling remain open; bounded report composition is not full
+F10 acceptance. Tailnet real-app build/reopen and native fault/identity tests pass.

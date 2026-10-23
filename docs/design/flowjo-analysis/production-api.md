@@ -242,3 +242,23 @@ and exact `revision:"1"`. Replies include typed document, pinned samples, compar
 and canonical content hash. Same-request replay returns the original; identity
 reuse with different content refuses. I may link this exact finding ID/revision/hash
 without changing method apply authority. Next-run draft creation is not implicit.
+
+## Saved report layouts and immutable runs
+
+`reportSave` (write): `reportId`, `expectedRevision`, `commandId`, `layout`.
+Layout is `{title,blocks}`; 1–8 unique blocks `{id,title,kind,reference}`. Kind table
+or plot requires `{planId,revision,source:{kind:"retained",id}}`; finding requires
+`{findingId,revision:"1"}`. Only exact revisions, no moving source/head. Report IDs
+are 1–128 ASCII letters/digits/`-_.`. Layout revisions use shared CAS and receipts.
+`reportRead` (read) takes `reportId,revision`.
+
+`reportBuild` (write) takes `reportId,revision,runId,commandId`; evaluates all blocks
+and atomically stores one immutable `F-report-run/1` in the existing DB. A failed
+block publishes nothing. Run IDs cannot overwrite/rebind old runs. Same-request
+retry returns original content. Artifact hash pins every rendered block and layout.
+Maximum document 900,000 bytes; budget failure is explicit, never truncation.
+`reportRunRead` (read) takes `reportId:runId,revision:"1"`; checksum verifies stored
+artifact without opening sources or reevaluating newer strategies. Production UI
+renders tables/plots/findings and exports evidence JSON or standalone escaped HTML.
+This is bounded ordered-block composition, not arbitrary drag/drop or background
+multi-report batch scheduling. Files are explicit downloads, not silent overwrites.

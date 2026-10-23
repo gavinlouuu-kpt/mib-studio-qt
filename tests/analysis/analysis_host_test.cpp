@@ -291,6 +291,48 @@ int main() {
                      {"note", "descriptive evidence"}};
         const auto savedFinding = call(finding);
         MIB_EXPECT(savedFinding["status"] == "ok", "persist immutable finding");
+        json reportLayout{
+            {"title", "Pinned research evidence"},
+            {"blocks",
+             {{{"id", "table"},
+               {"title", "Native table"},
+               {"kind", "table"},
+               {"reference",
+                {{"planId", "plan"}, {"revision", "1"}, {"source", retainedDescriptor}}}},
+              {{"id", "finding"},
+               {"title", "Descriptive comparison"},
+               {"kind", "finding"},
+               {"reference", {{"findingId", "finding-one"}, {"revision", "1"}}}}}}};
+        json reportSave{{"action", "reportSave"},
+                        {"reportId", "report-one"},
+                        {"expectedRevision", nullptr},
+                        {"commandId", "report-save"},
+                        {"layout", reportLayout}};
+        MIB_EXPECT(call(reportSave)["revision"] == "1", "persist reusable exact report layout");
+        json buildReport{{"action", "reportBuild"},
+                         {"reportId", "report-one"},
+                         {"revision", "1"},
+                         {"runId", "run-one"},
+                         {"commandId", "report-build"}};
+        const auto reportRun = call(buildReport);
+        MIB_EXPECT(reportRun["status"] == "ok" &&
+                       reportRun["document"]["artifact"]["blocks"].size() == 2,
+                   "publish all pinned report blocks atomically");
+        MIB_EXPECT(call(buildReport) == reportRun, "report run exact replay");
+        auto collisionRun = buildReport;
+        collisionRun["commandId"] = "other-build";
+        MIB_EXPECT(call(collisionRun)["status"] == "invalid",
+                   "report run ID cannot overwrite prior evidence");
+        reportSave["expectedRevision"] = "1";
+        reportSave["commandId"] = "report-next";
+        reportSave["layout"]["title"] = "New title";
+        MIB_EXPECT(call(reportSave)["revision"] == "2", "append layout revision");
+        MIB_EXPECT(call(buildReport) == reportRun, "saved report run never follows layout head");
+        auto invalidReport = reportSave;
+        invalidReport["commandId"] = "report-invalid";
+        invalidReport["layout"]["blocks"][0]["reference"]["source"] = save.at("source");
+        MIB_EXPECT(call(invalidReport)["status"] == "invalid",
+                   "reports require retained source references");
         source = originalSource;
         MIB_EXPECT(call(apply) == applied, "application receipt survives current source change");
         MIB_EXPECT(call(finding) == savedFinding, "finding receipt replay is stable");
@@ -324,6 +366,12 @@ int main() {
     {
         backend::services::SqliteService db;
         MIB_REQUIRE(db.initialize(path), "reopen metadata authority");
+        const auto reportRun = json::parse(backend::analysis::analysisRequest(
+            db,
+            json{{"action", "reportRunRead"}, {"reportId", "run-one"}, {"revision", "1"}}.dump(),
+            false, resolver));
+        MIB_EXPECT(reportRun["document"]["artifact"]["title"] == "Pinned research evidence",
+                   "immutable report run reopens independent of layout changes");
         const auto finding = json::parse(backend::analysis::analysisRequest(
             db,
             json{{"action", "readFinding"}, {"findingId", "finding-one"}, {"revision", "1"}}.dump(),

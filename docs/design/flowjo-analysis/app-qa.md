@@ -178,3 +178,11 @@ Native host tests additionally cover paired matching, missing override migration
 source-change receipt replay and finding database reopen. Production workspace has
 application and comparison/finding controls; browser connector remains unavailable.
 UI build and 10 regression tests pass; no new click-through claim.
+
+Report continuation: real tailnet app built two blocks (native population table +
+pinned finding), replayed exactly, rejected run-name collision and reopened the
+immutable artifact. Run `report-1792755932928-run`, hash
+`sha256:abd32d22da268f5cfa4b92fbe69590d1fdc9152987cd89229f49401df0b2021d`.
+Native tests additionally verify changed-layout independence and DB reopen. Twelve
+UI regression tests pass, including lost report reply and HTML-title escaping.
+Browser click-through/export rendering is not claimed while connector unavailable.

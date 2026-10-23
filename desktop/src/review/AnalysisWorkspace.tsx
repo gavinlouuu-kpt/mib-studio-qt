@@ -1,3 +1,4 @@
+import { AnalysisReport } from "./AnalysisReport";
 import { AnalysisPlot, type PlotArtifact } from "./AnalysisPlot";
 import { PopulationThumbnail } from "./PopulationThumbnail";
 import { useEffect, useRef, useState } from "react";
@@ -159,6 +160,7 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
       </fieldset>
       {comparison && <><pre>{JSON.stringify(comparison,null,2)}</pre><button onClick={()=>download("analysis-finding.json",JSON.stringify(comparison,null,2),"application/json")}>Download comparison evidence</button></>}
     </details>
+    <AnalysisReport read={read} write={write} disabled={disabled || busy}/>
     <details><summary>Scientific QC assertions</summary>
       <p>Manual assertions are separate from processing validity. Unlabelled events remain unknown. “Good only” preserves unknown membership; these labels are not independent scientific qualification.</p>
       <label><input type="checkbox" checked={qcEnabled} disabled={busy} onChange={e=>setQcEnabled(e.target.checked)}/>Include QC assertions in the next saved revision</label>
