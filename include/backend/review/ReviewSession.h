@@ -99,6 +99,9 @@ namespace backend::review
         // lanes as well (ReviewJobs::runStatistics); the bridges only call that.
         RunStatisticsResult runStatistics(const std::string &path, const std::string &computedAt) const;
 
+        // Bounded atomic both-set native interval analysis of the open file.
+        // Read-only metadata; result identity is ephemeral, not a durable fingerprint.
+        std::string analyzePopulation(const std::string& requestJson) const;
         ReviewMetadata metadata() const;
         bool isRecordingFile() const;
 

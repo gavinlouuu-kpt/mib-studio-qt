@@ -892,3 +892,19 @@ async fn run_quick_look_over_the_websocket() {
     server.state().bridge.lock().unwrap().pin_mut().shutdown();
     let _ = std::fs::remove_dir_all(&data);
 }
+
+#[tokio::test]
+#[serial]
+async fn scientific_reads_before_init_are_refused() {
+    let (_server, addr, data) = start("science_preinit").await;
+    let mut ws = connect(addr).await;
+    let mut events = Vec::new();
+    assert!(call(&mut ws, 1, "fetch_live_evidence", json!({}), &mut events).await.is_err());
+    for (id, kind) in [(2, "live-run"), (3, "live-epoch")] {
+        let reply = call(&mut ws, id, "analysis_read", json!({"request":{"action":"snapshot","source":{"kind":kind}}}), &mut events).await.unwrap();
+        let Reply::Json(value) = reply else { panic!("expected JSON refusal") };
+        assert_eq!(value["status"], "unavailable");
+    }
+    ws.close(None).await.unwrap();
+    let _ = std::fs::remove_dir_all(&data);
+}

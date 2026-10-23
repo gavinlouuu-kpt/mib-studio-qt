@@ -11,6 +11,7 @@ name = "mib_app_commands"
 crate-type = ["rlib"]
 
 [dependencies]
+mib-analysis-worker = { path = "../mib-analysis-worker" }
 mib-bridge = { path = "../mib-bridge" }
 cxx = "1"
 serde = { version = "1", features = ["derive"] }

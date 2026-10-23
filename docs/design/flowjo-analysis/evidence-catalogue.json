@@ -1,0 +1,173 @@
+{
+  "schema": "mib-flowjo-evidence/v1",
+  "backend_base": "0a58e201614bdb1eeb412544be60859f93220de7",
+  "ui_base": "7133749621defac01a80985fe6a3a5fc3f13eae1",
+  "research": [
+    {
+      "id": "R01",
+      "artifact": "flowjo-11.2.0/deliverables/FlowJo-11.2.0-REA-design-handoff.md",
+      "sha256": "6a90f3324e2787d63f7bd4f13973dca7178ae02554e66e1489400077c179202f",
+      "kind": "static-research"
+    },
+    {
+      "id": "R02",
+      "artifact": "flowjo-redo/deliverables/FlowJo-11.2.0-REA-redo.md",
+      "sha256": "364cc9db515f57fa6fa0a963ec3a01f84f46a4831866036002ac662ee90c583f",
+      "kind": "static-research"
+    },
+    {
+      "id": "R03",
+      "artifact": "flowjo-redo/deliverables/FlowJo-11.2.0-REA-HANDOVER.md",
+      "sha256": "c0dbe33c1dd4e4cfcab40e2af8d1664e62962d7900c1165425d4d3a70d107cd3",
+      "kind": "static-research"
+    },
+    {
+      "id": "R04",
+      "artifact": "flowjo-continue/STATUS.md",
+      "sha256": "37bd776cbfbc78e670672c25a387cca0f4f3c962b3a777df1148f80491299116",
+      "kind": "static-research"
+    },
+    {
+      "id": "R05",
+      "artifact": "flowjo-continue/evidence/step3-workflow-traces.md",
+      "sha256": "e3166ff24024477496e5d2d2cd34dab472ecbc62d9c6077ce539e80c0fa0a553",
+      "kind": "static-research"
+    },
+    {
+      "id": "R06",
+      "artifact": "flowjo-continue/evidence/step3-export-traces.md",
+      "sha256": "6abefcfed1ce1aa6551e935646ffc1dc99dcd436c55e2bada4516d45d43b5d87",
+      "kind": "static-research"
+    },
+    {
+      "id": "R07",
+      "artifact": "flowjo-continue/evidence/step5-native-contract.md",
+      "sha256": "c68b1aa77ce8a450efc0d4a566eea8b75b5431a7c1edc1ec6de7c12467ead167",
+      "kind": "static-research"
+    },
+    {
+      "id": "R08",
+      "artifact": "flowjo-windows-10.8.1/evidence/validation-status.json",
+      "sha256": "08ac5f690e03b674a7aaf15ef28761f502e4c14238a2e6bbac7e017bac093be3",
+      "kind": "historical-v10-runtime"
+    },
+    {
+      "id": "R09",
+      "artifact": "flowjo-windows-10.8.1/evidence/validated-workspace.wsp",
+      "sha256": "94063113d44b6f2a56b4050c89c1a7fe08452fe361185865a802b9736314e8b2",
+      "kind": "historical-v10-runtime"
+    },
+    {
+      "id": "R10",
+      "artifact": "flowjo-windows-10.8.1/evidence/histogram-vector-comparison.json",
+      "sha256": "82f96b5b854b861980a6efb82c92bd6b5c17c1de1d5988d24bbc7a80c70c1876",
+      "kind": "historical-v10-runtime"
+    }
+  ],
+  "penpot": {
+    "file_id": "f19036c0-5b90-8025-8008-c33422ff0280",
+    "page_id": "f19036c0-5b90-8025-8008-c33422ff0281",
+    "live_revn": 23,
+    "live_vern": 0,
+    "live_shape_count": 5011,
+    "live_verified": "pages projection only; interactions not reverified",
+    "inventory_sha256": "490bfccfb2d3ad72ca047ed2e417e72518b5b703e479cf35f4a9a4499c57b26f",
+    "historical_interactions": 214,
+    "boards": [
+      {
+        "id": "52d58aed-4c5c-802f-8008-c33b617e7733",
+        "name": "01 \u00b7 Review \u2014 population analysis"
+      },
+      {
+        "id": "52d58aed-4c5c-802f-8008-c33f2967c6f6",
+        "name": "02 \u00b7 Review \u2014 image evidence"
+      },
+      {
+        "id": "52d58aed-4c5c-802f-8008-c33f3cbd6a02",
+        "name": "03 \u00b7 Compare \u2014 recorded + captured sources"
+      },
+      {
+        "id": "52d58aed-4c5c-802f-8008-c33f692b76ec",
+        "name": "04 \u00b7 Finding \u2014 evidence and next question"
+      },
+      {
+        "id": "52d58aed-4c5c-802f-8008-c340469ce0ad",
+        "name": "05 \u00b7 Experiment \u2014 live analysis"
+      },
+      {
+        "id": "52d58aed-4c5c-802f-8008-c340980c6e3c",
+        "name": "06 \u00b7 Experiment \u2014 captured window draft"
+      },
+      {
+        "id": "52d58aed-4c5c-802f-8008-c340ff9d6ef7",
+        "name": "07 \u00b7 Method \u2014 staged handoff"
+      },
+      {
+        "id": "52d58aed-4c5c-802f-8008-c3411d535e34",
+        "name": "08 \u00b7 Experiment \u2014 applied method"
+      },
+      {
+        "id": "52d58aed-4c5c-802f-8008-c3413f1904be",
+        "name": "09 \u00b7 Reports \u2014 captured evidence"
+      },
+      {
+        "id": "52d58aed-4c5c-802f-8008-c3417ab1241c",
+        "name": "10 \u00b7 Compact analysis"
+      },
+      {
+        "id": "52d58aed-4c5c-802f-8008-c341957131e8",
+        "name": "11 \u00b7 Method \u2014 processing context"
+      },
+      {
+        "id": "52d58aed-4c5c-802f-8008-c341d101d315",
+        "name": "12 \u00b7 Experiment \u2014 draw gate"
+      },
+      {
+        "id": "52d58aed-4c5c-802f-8008-c34203edcb44",
+        "name": "13 \u00b7 Comparison sources"
+      },
+      {
+        "id": "52d58aed-4c5c-802f-8008-c34233f0093c",
+        "name": "14 \u00b7 Observation saved"
+      },
+      {
+        "id": "52d58aed-4c5c-802f-8008-c342468fcca0",
+        "name": "15 \u00b7 Resolve unavailable target"
+      },
+      {
+        "id": "52d58aed-4c5c-802f-8008-c342597af770",
+        "name": "16 \u00b7 Sources and populations"
+      },
+      {
+        "id": "52d58aed-4c5c-802f-8008-c34284c54fe1",
+        "name": "17 \u00b7 Experiment \u2014 captured image evidence"
+      },
+      {
+        "id": "52d58aed-4c5c-802f-8008-c342c57bd277",
+        "name": "18 \u00b7 Experiment \u2014 applied-window image evidence"
+      },
+      {
+        "id": "52d58aed-4c5c-802f-8008-c3430c493010",
+        "name": "19 \u00b7 Method \u2014 active r2"
+      },
+      {
+        "id": "52d58aed-4c5c-802f-8008-c3435c21c738",
+        "name": "20 \u00b7 Method \u2014 active r1"
+      }
+    ],
+    "flows": [
+      {
+        "name": "Review \u2192 evidence \u2192 next experiment",
+        "startingBoardId": "52d58aed-4c5c-802f-8008-c33b617e7733"
+      },
+      {
+        "name": "Live observation \u2192 draft \u2192 apply \u2192 save",
+        "startingBoardId": "52d58aed-4c5c-802f-8008-c340469ce0ad"
+      },
+      {
+        "name": "Compact review",
+        "startingBoardId": "52d58aed-4c5c-802f-8008-c3417ab1241c"
+      }
+    ]
+  }
+}

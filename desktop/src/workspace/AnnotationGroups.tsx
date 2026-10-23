@@ -3,12 +3,12 @@ import { Button, Card, ConditionSwatch, DataTable, Notice, type DataTableColumn 
 import { annotationExport, annotationGroups, annotationLayers, type AnnotationGroup } from "./annotationModel";
 import type { PlanDraft } from "./planModel";
 
-export function AnnotationGroups({ draft }: { draft: PlanDraft }) {
+export function AnnotationGroups({ draft, selectedLayer, onSelectLayer }: { draft: PlanDraft; selectedLayer?: string; onSelectLayer?: (layer:string)=>void }) {
   const id = useId();
   const [selected, setSelected] = useState("condition");
   const [showExport, setShowExport] = useState(false);
   const layers = annotationLayers(draft.rows);
-  const layer = layers.find(l => l.id === selected) ?? layers[0];
+  const layer = layers.find(l => l.id === (selectedLayer ?? selected)) ?? layers[0];
   const groups = annotationGroups(draft.rows, layer);
   const output = annotationExport(draft, layer.id);
   const columns: DataTableColumn<AnnotationGroup>[] = [
@@ -24,13 +24,13 @@ export function AnnotationGroups({ draft }: { draft: PlanDraft }) {
       {showExport ? "Hide annotation JSON" : "Show annotation JSON"}
     </Button>}>
     <label htmlFor={id}>Group samples by </label>
-    <select id={id} value={layer.id} onChange={e => setSelected(e.target.value)}>
+    <select id={id} value={layer.id} onChange={e => {setSelected(e.target.value);onSelectLayer?.(e.target.value);}}>
       {layers.map(l => <option key={l.id} value={l.id}>{l.label}</option>)}
     </select>
     <DataTable columns={columns} rows={groups} rowKey={g => g.key} density="compact"
       caption="Grouping does not change run order. Condition colours match the sample sheet." />
     <p className="ws-note">Add custom annotations using the sample editor's Key/values. Repeated unit labels stay the same unit;
-      sample or cell counts do not establish independent replicates. Group selection is not saved across reloads.</p>
+      sample or cell counts do not establish independent replicates. {onSelectLayer ? "Save a workspace revision to retain this group selection." : "Group selection is not saved across reloads."}</p>
     {output.issues.length ? <Notice tone="warn" title="Correct the sample sheet before exporting annotations">
       <ul>{output.issues.map((issue, i) => <li key={i}>{issue}</li>)}</ul>
     </Notice> : null}

@@ -20,6 +20,9 @@
 
 ## Step 3 — Pick the relevant cluster
 
+For the shared scientific analysis module, start with [[services/AnalysisWorker]];
+its internal worker protocol is not a new public Studio/Review ABI.
+
 Jump to the notes that match your task:
 
 | If you're touching... | Start here |
@@ -113,3 +116,5 @@ If your PR has code changes but no vault changes, expect reviewers to push
 back.
 
 Central method registry/cache (#398): [[services/ProfileRegistryService]].
+
+Workspace persistence core (#807): [[services/WorkspaceStore]]; injected metadata connection, not a second method/journal authority.

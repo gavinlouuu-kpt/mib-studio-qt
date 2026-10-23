@@ -1379,6 +1379,20 @@ BridgeReviewMetadata BackendBridge::fetch_review_metadata() {
     return out;
 }
 
+rust::String BackendBridge::analysis_read(rust::Str request) {
+    return rust::String(impl_->facade.analysisRequestJson(std::string(request), false));
+}
+rust::String BackendBridge::analysis_write(rust::Str request) {
+    return rust::String(impl_->facade.analysisRequestJson(std::string(request), true));
+}
+rust::String BackendBridge::fetch_live_evidence() {
+    return rust::String(impl_->facade.fetchLiveEvidenceJson());
+}
+
+rust::String BackendBridge::analyze_population(rust::Str request_json) {
+    return rust::String(impl_->facade.analyzePopulationJson(std::string(request_json)));
+}
+
 BridgeReviewMetricsPage BackendBridge::fetch_review_metrics_page(bool valid,
                                                                  std::uint64_t offset,
                                                                  std::uint64_t count) {
@@ -2390,6 +2404,11 @@ rust::String BackendBridge::monitoring_cell_pin(std::uint64_t expected_start_gen
 }
 
 // ABI 42 (#716 A4a): calibration records. JSON documents (bridge-contract.json calibration_records).
+rust::String BackendBridge::workspace_request(rust::Str request, bool write) {
+    try { return rust::String(impl_->facade.workspaceRequestJson(std::string(request), write)); }
+    catch (...) { return rust::String(R"({"status":"storage","message":"Workspace reply failed; retry the same command"})"); }
+}
+
 rust::String BackendBridge::calibration_records_list() {
     try {
         return rust::String(impl_->facade.calibrationRecordsListJson());
@@ -2711,7 +2730,9 @@ std::unique_ptr<BackendBridge> new_backend_bridge() {
 // contract/bridge-contract.json.
 rust::String profile_fetch_url(rust::Str url) { return rust::String(backend::bridge::BackendFacade::fetchProfileCatalogUrl(std::string(url.data(),url.size()))); }
 
-std::uint32_t bridge_abi_version() { return 44; }
+std::uint32_t bridge_abi_version() {
+    return 47;
+}
 
 } // namespace mib_bridge
 

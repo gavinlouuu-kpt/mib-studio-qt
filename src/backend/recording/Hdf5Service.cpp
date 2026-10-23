@@ -5480,6 +5480,16 @@ namespace backend::services {
     }
     } // namespace
 
+    bool Hdf5Service::writeRunEvidenceJson(const std::string& json) {
+        if (!isFileOpen() || !impl_->writable_ || json.size() > 16 * 1024 * 1024) return false;
+        return writeGroupJsonAttribute(impl_->fileId_, "/monitoring", "run_evidence_json", json);
+    }
+
+    bool Hdf5Service::writeLiveEvidenceJson(const std::string& json) {
+        if (!isFileOpen() || !impl_->writable_ || json.size() > 65536) return false;
+        return writeGroupJsonAttribute(impl_->fileId_, "/monitoring", "live_evidence_json", json);
+    }
+
     bool Hdf5Service::writeKdeLiveJson(const std::string& json)
     {
         if (!isFileOpen() || !impl_->writable_) {

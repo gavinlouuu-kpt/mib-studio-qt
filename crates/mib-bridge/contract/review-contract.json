@@ -1,6 +1,6 @@
 {
   "$comment": "YOFO Review's own contract (ADR 0014, plan 2026-10-01-standalone-review-app): the review bridge (crates/mib-bridge/src/review_bridge.rs, review_shim.cpp) and the YOFO Review shell. Separate from bridge-contract.json, the MIB Studio backend bridge ABI, which it never changes. C++ ties to these values via static_asserts in review_shim.cpp; Rust via tests/review_bridge.rs; TypeScript via the generated desktop/src/review/reviewContract.ts and desktop/src-tauri/src/review_packet_contract.rs (scripts/gen_bridge_contract.py --check fails CI on drift). Additive changes only: append values, never renumber or repurpose.",
-  "review_abi_version": 6,
+  "review_abi_version": 9,
   "run_identity": {
     "source": "run snapshot v3 (#712, /run_provenance @run_snapshot_json) and the planned annotation (/experiment_annotation @annotation_json, @annotation_schema_version); fetch_review_info.identity for the open file, review_probe_runs per file (review ABI 2, #717 B1a; emodulus_lut and profile_id since review ABI 3, #717 B3b; since review ABI 5, #783, emodulus_lut also reads a regenerated file's /experiment_info @emodulus_lut_json, named by emodulus_lut_provenance)",
     "members": "snapshot_version, run_id, experiment_id, run_index, sample_ref, calibration_record_id, operator (id, name), annotation (sample, condition, experimental_unit, concentration {value, unit}, channel, medium, temperature_c, notes, free key/values sorted by key, schema_version), emodulus_lut (loaded, lut_id, revision, source, sha256, catalog_sha256, checksum_status: the snapshot v3 record, else a regenerated file's @emodulus_lut_json; the snapshot record wins, as in recording::readFileEModulusLut), emodulus_lut_provenance (review ABI 5, #783: one of emodulus_lut_provenances; snapshot = the run snapshot v3 record, the run's own; recorded = a regenerated file's record carried over from its source run; host = a regenerated file's record of the host's E-LUT at regeneration, the source recording none; absent exactly when emodulus_lut is), profile_id (the snapshot's profile_id, a non-empty string)",
@@ -156,5 +156,44 @@
       ]
     ],
     "ramp_semantics": "backend/processing/MonitoringDensity.h densityRampColor: linear interpolation over the stops, t in [0,1]; level k of n uses t = k/(n-1) (kdeLevelColor)"
+  },
+  "review_population": {
+    "schema": "review-population/1",
+    "max_events": 10000,
+    "semantics": "review_analyze_population(request): expectedPath, feature (area in px\u00b2 or deformability dimensionless), nullable inclusive minimum/maximum. Atomic both-set stored-metadata snapshot and native interval/reductions, no implicit validity QC. Refuse raw recording, unreadable metadata, count mismatch, job lane busy or budget overflow; no sampling. Local evaluation keys plus set/decimal ordinal; fingerprint null and durable false. Absent fields and nonfinite measurements produce unknown membership; detailed per-event missing reasons are not exposed. No source writes or new readers.",
+    "optional_graph": {
+      "fields": [
+        "id",
+        "revision",
+        "output",
+        "nodes"
+      ],
+      "node_kinds": [
+        "interval",
+        "and",
+        "or",
+        "not"
+      ],
+      "semantics": "Optional graph replaces the top-level interval membership; top-level feature still selects the reduction. Native PopulationGraph validates parents/operands/cycles, 256 nodes and 1000000 node-events. Interval nodes have id,parent,kind,feature,minimum,maximum; Boolean nodes have id,parent,kind,operands. All inputs use the same atomic both-set snapshot. Recipes are not verified source-bound workspaces."
+    },
+    "optional_gallery": {
+      "request": "galleryOffset: unsigned integer 0..10000, offset among selected observations",
+      "page_size": 12,
+      "tile_size": 64,
+      "semantics": "gallery entries retain exact snapshot key, set and decimal ordinal. pixels is a 4096-element grayscale byte array or null for unavailable image. Images are copied under the same session lock as evaluation. Page requests reevaluate, not a persistent snapshot cursor; no new HDF5 reader. Valid-set then invalid-set row order."
+    }
+  },
+  "analysis_workspace": {
+    "schema": "F-analysis-strategy/1",
+    "transport": "analysis_read / analysis_write (Review: review_analysis_read / review_analysis_write)",
+    "actions": "snapshot, exact read, history, evaluate, method (read); save and restore (write)",
+    "authority": "host app.sqlite3 workspace_revisions and workspace_commands; immutable source-bound CAS, exact retry receipts",
+    "source": "stored full-file SHA256 <=64MiB; live-run/live-epoch fenced E leases; run-archive E-run-events/1",
+    "limits": {
+      "request_bytes": 131072,
+      "rows": 10000,
+      "stored_file_bytes": 67108864
+    },
+    "method": "exact method_id/revision_id/content_hash lookup only; never apply; unavailable/unknown remain explicit"
   }
 }

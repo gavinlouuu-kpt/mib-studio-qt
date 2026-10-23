@@ -20,6 +20,7 @@ following `[[WikiLinks]]`. If you are a new agent, start here:
 - [[services/ReviewSession]] — Qt-free review implementation shared by the Qt tab, the Tauri shell and YOFO Review
 
 ### Services (`src/backend/services/`)
+- [[services/AnalysisWorker]] — native population semantics, bounded Cytoflow worker and terminal job recovery
 - [[services/_MOC|Services MOC]]
 - Realtime path: [[services/CaptureService]] → [[services/ProcessingService]]
 - Live Monitoring density (KDE, backend worker): [[services/MonitoringDensityService]]
@@ -103,3 +104,5 @@ verifies wikilink integrity (enforced in CI).
 - `knowledge_map/task/` — dated task records (historical design/debug notes)
 
 - [[services/ProfileRegistryService]] — central registry/cache foundation (#398); desktop integration pending.
+
+Workspace persistence core (#807): [[services/WorkspaceStore]] (isolated; host integration pending).
