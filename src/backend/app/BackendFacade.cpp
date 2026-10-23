@@ -1,3 +1,6 @@
+#include "backend/analysis/AnalysisHost.h"
+#include "backend/analysis/SourceAnalysis.h"
+#include "backend/database/SqliteService.h"
 #include "backend/app/BackendFacade.h"
 #include "backend/database/SqliteService.h"
 #include "backend/app/CalibrationStore.h"
@@ -858,6 +861,7 @@ namespace backend::bridge
                 return {false, BackendCommandType::Camera, message};
             }
             backend_.capture().stop();
+            backend_.processing().drainAndStopRealtime();
             emitEvent(makeCameraStatus(CameraState::Stopped));
             return {true, BackendCommandType::Camera, "Capture stopped"};
         }
@@ -1493,6 +1497,17 @@ namespace backend::bridge
         }
     } // namespace
 
+    std::string BackendFacade::analyzePopulationJson(const std::string& requestJson) {
+        if (!initialized_) return R"({"ok":false,"message":"Backend not initialized"})";
+        std::string result =
+            R"({"ok":false,"message":"Stop acquisition and recording before offline analysis"})";
+        backend_.experiment().withIdleConfiguration([&] {
+            if (backend_.isFrameRecording()) return;
+            result = reviewJobs_->analyzePopulation(requestJson);
+        });
+        return result;
+    }
+
     std::string BackendFacade::runQuickLookJson(const std::string &requestJson)
     {
         if (!initialized_) return review::runQuickLookRefusedJson("Backend not initialized");
@@ -1550,6 +1565,44 @@ namespace backend::bridge
         if (!initialized_) return R"({"status":"unavailable","message":"Backend not initialized"})";
         try {
             const auto action=nlohmann::json::parse(request).value("action",std::string{});
+            if (action=="evaluate_recipe") {
+                using J=nlohmann::json;
+                const auto q=J::parse(request);
+                if (q.size()!=6) return R"({"status":"invalid","message":"Expected exact workspace, source and method-provider fields"})";
+                const auto saved=J::parse(backend_.sqlite().workspaceRequest(J{{"action","read"},{"workspace_id",q.at("workspace_id")},{"revision",q.at("revision")}}.dump(),false));
+                if (saved.at("status")!="ok") return saved.dump();
+                const auto& recipe=saved.at("document").at("recipe");
+                const auto& link=saved.at("document").at("sources").at(q.at("source_id").get<std::string>());
+                const J verify={{"action","verify_source"},{"workspace_id",q.at("workspace_id")},{"revision",q.at("revision")},{"source_id",q.at("source_id")}};
+                const J methodRequest={{"action","resolve_recipe"},{"workspace_id",q.at("workspace_id")},{"revision",q.at("revision")},{"profile_base",q.at("profile_base")}};
+                const auto verified=J::parse(workspaceRequestJson(verify.dump(),false));
+                if (verified.at("status")!="ok") return verified.dump();
+                const auto resolved=J::parse(workspaceRequestJson(methodRequest.dump(),false));
+                if (resolved.at("status")!="ok" || resolved.at("method").at("status")!="resolved")
+                    return J{{"status","unavailable"},{"message","Pinned acquisition method could not be resolved; no recipe evaluation performed"}}.dump();
+                const auto& planRef=recipe.at("analysis_plan");
+                const auto strategy=J::parse(analysisRequestJson(J{{"action","read"},{"planId",planRef.at("id")},{"revision",planRef.at("revision")}}.dump(),false));
+                if (strategy.at("status")!="ok") return strategy.dump();
+                const auto method=strategy.at("document").value("method",J(nullptr));
+                if (!method.is_null() && (method.at("method_id")!=recipe.at("method").at("id") ||
+                    method.at("revision_id")!=recipe.at("method").at("revision") ||
+                    method.at("content_hash")!=resolved.at("method").value("content_sha256",std::string{})))
+                    return R"({"status":"reference_mismatch","message":"Strategy and recipe pin different acquisition methods"})";
+                const auto kind=q.at("source_kind").get<std::string>();
+                if (kind!="stored" && kind!="run-archive") return R"({"status":"invalid","message":"Unsupported workspace source kind"})";
+                const auto evaluated=J::parse(analysisRequestJson(J{{"action","evaluate"},{"planId",planRef.at("id")},{"revision",planRef.at("revision")},
+                    {"source",{{"kind",kind},{"path",link.at("path")}}}}.dump(),false));
+                if (evaluated.at("status")!="ok") return evaluated.dump();
+                const auto reverified=J::parse(workspaceRequestJson(verify.dump(),false));
+                if (reverified.at("status")!="ok") return reverified.dump();
+                const auto remethod=J::parse(workspaceRequestJson(methodRequest.dump(),false));
+                if (remethod!=resolved) return R"({"status":"conflict","message":"Method changed during evaluation"})";
+                if (kind=="stored" && evaluated.at("evaluation").at("sourceFingerprint")!="sha256:"+link.at("sha256").get<std::string>())
+                    return R"({"status":"source_mismatch","message":"Evaluation source differs from pinned file bytes"})";
+                return J{{"status","ok"},{"workspace_id",q.at("workspace_id")},{"revision",q.at("revision")},{"source_id",q.at("source_id")},
+                    {"evaluation",evaluated.at("evaluation")},{"method",resolved.at("method")},{"compatibility","unknown"},
+                    {"hardwareReadiness","not_evaluated"},{"applied",false}}.dump();
+            }
             if (action=="resolve_recipe") {
                 using J=nlohmann::json;
                 const auto q=J::parse(request);
@@ -4497,3 +4550,49 @@ std::string BackendFacade::fetchCaptureLifecycleJson() const {
         .dump();
 }
 } // namespace backend::bridge
+
+std::string backend::bridge::BackendFacade::fetchLiveEvidenceJson() {
+    return backend_.processing().liveEvidenceJson();
+}
+std::string backend::bridge::BackendFacade::analysisRequestJson(const std::string& request, bool write) {
+    using Json = nlohmann::json;
+    auto source = [this](const Json& descriptor) -> Json {
+        const auto kind = descriptor.at("kind").get<std::string>();
+        if (kind == "stored-gallery") {
+            if (descriptor.size() != 4) throw std::invalid_argument("Expected gallery path, fingerprint and keys");
+            const auto response = nlohmann::json::parse(analyzePopulationJson(nlohmann::json{
+                {"expectedPath", descriptor.at("path")}, {"feature", "area"}, {"minimum", nullptr}, {"maximum", nullptr},
+                {"snapshot", true}, {"galleryKeys", descriptor.at("keys")}, {"expectedFingerprint", descriptor.at("fingerprint")}}.dump()));
+            if (!response.value("ok", false)) throw std::invalid_argument(response.value("message", "Gallery refused"));
+            return response.at("source");
+        }
+
+        if (kind == "live-run" || kind == "live-epoch") {
+            if (descriptor.size() != 1) throw std::invalid_argument("Unexpected live source fields");
+            return backend::analysis::freezeEvidence(kind == "live-run" ? backend_.processing().runLiveEvidence() : backend_.processing().liveEvidence(), kind);
+        }
+        if (kind != "stored" && kind != "run-archive") throw std::invalid_argument("Unsupported source kind");
+        if (descriptor.size() != 2) throw std::invalid_argument("Expected source kind and path");
+        const auto response = Json::parse(analyzePopulationJson(Json{{"expectedPath", descriptor.at("path")},
+            {"feature", "area"}, {"minimum", nullptr}, {"maximum", nullptr}, {"snapshot", true}, {"sourceKind", kind}}.dump()));
+        if (!response.value("ok", false)) throw std::invalid_argument(response.value("message", "Source refused"));
+        return response.at("source");
+    };
+    auto method = [this](const Json& ref) -> Json {
+        if (!ref.is_object() || ref.size() != 3) throw std::invalid_argument("Expected method_id, revision_id and content_hash");
+        const auto methodId = ref.at("method_id").get<std::string>();
+        const auto revisionId = ref.at("revision_id").get<std::string>();
+        const auto hash = ref.at("content_hash").get<std::string>();
+        if (methodId.empty() || revisionId.empty() || hash.empty()) throw std::invalid_argument("Method references must be pinned");
+        const auto snapshot = backend_.profileRegistry().snapshot();
+        for (const auto& item : snapshot.revisions) {
+            if (item.revisionId != revisionId) continue;
+            if (item.methodId != methodId || item.contentHash != hash)
+                return Json{{"status", "reference_mismatch"}, {"message", "Pinned method identity/hash mismatch"}};
+            return Json{{"status", "ok"}, {"method", ref}, {"config_sha256", item.configSha256},
+                {"scientificCompatibility", "unknown"}, {"hardwareReadiness", "not_evaluated"}, {"applied", false}};
+        }
+        return Json{{"status", "unavailable"}, {"message", "Exact method revision is not in the verified registry cache"}};
+    };
+    return backend::analysis::analysisRequest(backend_.sqlite(), request, write, source, method);
+}

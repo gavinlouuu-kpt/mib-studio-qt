@@ -1,6 +1,6 @@
 {
   "$comment": "Single source of truth for the bridge command/event contract (BE-1, issue #271, epic #246, ADR 0004). C++ ties to these values via static_asserts in crates/mib-bridge/src/shim.cpp; Rust via crates/mib-bridge/tests/contract.rs; TypeScript via the generated desktop/src/bridgeContract.ts (scripts/gen_bridge_contract.py --check fails CI on drift). All changes must be additive: append values, never renumber or repurpose.",
-  "abi_version": 45,
+  "abi_version": 47,
   "event_kinds": {
     "FrameReady": 0,
     "CameraStatus": 1,
@@ -668,5 +668,22 @@
     "max_document_bytes": 1048576,
     "commands": "workspace_read(request: JSON string): read {workspace_id,revision?} or history {workspace_id,after?,limit?}. workspace_write(request: JSON string): commit {workspace_id,expected_revision: string|null,command_id,document} or restore {workspace_id,expected_revision,command_id,target_revision}. All include action. Write is control-only; read endpoint refuses mutations. Uses app.sqlite3, separate tables from methods and scientific job artifacts. Lifecycle reads: list {after?,limit?}, export_status {workspace_id,job_id}, verify_source {workspace_id,revision,source_id}. Writes: export {workspace_id,revision,job_id}, import {workspace_id,command_id,manifest} (create-only), attach_source/relink {workspace_id,expected_revision,command_id,source_id,path}. Exports are I-workspace/1 canonical JSON payload plus SHA256; materialized jobs persist in app.sqlite3. Relink requires identical full-file SHA256 and size; verification is bounded to regular files <=2 GiB and 10 seconds and requires idle acquisition/recording. resolve_recipe {workspace_id,revision,profile_base?} resolves exact saved method references against local profile revision hashes or verified registry-cache identities; reports compatibility unknown and never applies settings.",
     "reply": "status ok plus workspace_id/revision/document or revisions; otherwise invalid/conflict/not_found/unavailable/storage with message. Revisions are canonical decimal strings. Retrying a write must preserve exact command, CAS and document. No implicit apply, start, scientific validation or operator authentication."
+  },
+  "population_analysis": {
+    "schema": "review-population/1",
+    "semantics": "analyze_population(request): same request/result as review-contract.json review_population; routed through BackendFacade idle configuration transaction and ReviewJobs lane exclusion. No acquisition or raw recording coexistence; #722 unchanged. ABI 45 remains reserved for #803."
+  },
+  "analysis_workspace": {
+    "schema": "F-analysis-strategy/1",
+    "transport": "analysis_read / analysis_write (Review: review_analysis_read / review_analysis_write)",
+    "actions": "snapshot, exact read, history, evaluate, method (read); save and restore (write)",
+    "authority": "host app.sqlite3 workspace_revisions and workspace_commands; immutable source-bound CAS, exact retry receipts",
+    "source": "stored full-file SHA256 <=64MiB; live-run/live-epoch fenced E leases; run-archive E-run-events/1",
+    "limits": {
+      "request_bytes": 131072,
+      "rows": 10000,
+      "stored_file_bytes": 67108864
+    },
+    "method": "exact method_id/revision_id/content_hash lookup only; never apply; unavailable/unknown remain explicit"
   }
 }

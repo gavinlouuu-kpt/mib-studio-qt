@@ -183,4 +183,67 @@ int main(int argc, char** argv) {
         check(exported["state"] == "complete" && exported["revision"] == "4");
         check(exported["manifest"]["payload"]["document"]["notes"] == "first");
     }
+    {
+        backend::services::SqliteService source;
+        check(source.initialize(path + ".definitions"));
+        auto call = [&](backend::services::SqliteService& db, json q, bool write = true) {
+            return json::parse(db.workspaceRequest(q.dump(), write));
+        };
+        const json strategy = {
+            {"schema_version", 1}, {"type", "F-analysis-strategy/1"}, {"graph", {{"id", "p1"}}}};
+        check(call(source, {{"action", "commit"},
+                            {"workspace_id", "analysis/p1"},
+                            {"expected_revision", nullptr},
+                            {"command_id", "plan"},
+                            {"document", strategy}})["status"] == "ok");
+        check(call(source, {{"action", "commit"},
+                            {"workspace_id", "analysis/p1"},
+                            {"expected_revision", "1"},
+                            {"command_id", "plan2"},
+                            {"document", strategy}})["revision"] == "2");
+        const json document = {
+            {"schema_version", 1},
+            {"findings", {{{"recipe", {{"analysis_plan", {{"id", "p1"}, {"revision", "2"}}}}}}}},
+            {"recipe", {{"analysis_plan", {{"id", "p1"}, {"revision", "1"}}}}}};
+        check(call(source, {{"action", "commit"},
+                            {"workspace_id", "dependent"},
+                            {"expected_revision", nullptr},
+                            {"command_id", "workspace"},
+                            {"document", document}})["status"] == "ok");
+        const auto exported = call(source, {{"action", "export"},
+                                            {"workspace_id", "dependent"},
+                                            {"revision", "1"},
+                                            {"job_id", "export"}});
+        check(exported["manifest"]["payload"]["dependencies"].size() == 2);
+        const json import = {{"action", "import"},
+                             {"workspace_id", "imported-dependent"},
+                             {"command_id", "import"},
+                             {"manifest", exported["manifest"]}};
+        backend::services::SqliteService target;
+        check(target.initialize(path + ".transfer"));
+        check(target.execute(
+            "CREATE TRIGGER fail_dependency BEFORE INSERT ON workspace_revisions WHEN "
+            "NEW.workspace_id='analysis/p1' BEGIN SELECT RAISE(ABORT,'dependency failure'); END"));
+        check(call(target, import)["status"] == "storage");
+        check(call(target, {{"action", "read"}, {"workspace_id", "imported-dependent"}},
+                   false)["status"] == "not_found");
+        check(target.execute("DROP TRIGGER fail_dependency"));
+        check(call(target, import)["revision"] == "1");
+        check(call(target, import)["revision"] == "1");
+        check(call(target, {{"action", "read"}, {"workspace_id", "analysis/p1"}, {"revision", "1"}},
+                   false)["document"] == strategy);
+        backend::services::SqliteService conflict;
+        check(conflict.initialize(path + ".conflict"));
+        auto other = strategy;
+        other["graph"]["id"] = "other";
+        check(call(conflict, {{"action", "commit"},
+                              {"workspace_id", "analysis/p1"},
+                              {"expected_revision", nullptr},
+                              {"command_id", "other"},
+                              {"document", other}})["status"] == "ok");
+        check(call(conflict, import)["status"] == "conflict");
+        check(call(conflict, {{"action", "read"}, {"workspace_id", "imported-dependent"}},
+                   false)["status"] == "not_found");
+    }
+    return 0;
 }

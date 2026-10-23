@@ -344,6 +344,9 @@ public:
     //   /analysis   @kde_core_json  — computed from the full recorded run.
     // Writers refuse (false + warn) when no file is open or it was opened
     // read-only; readers return false when the record is absent.
+    // Host evidence summary at recording stop, explicitly not an event-row ACK.
+    bool writeLiveEvidenceJson(const std::string& json);
+    bool writeRunEvidenceJson(const std::string& json);
     bool writeKdeLiveJson(const std::string& json);
     bool readKdeLiveJson(std::string& json) const;
     bool writeKdeAnalysisJson(const std::string& json);

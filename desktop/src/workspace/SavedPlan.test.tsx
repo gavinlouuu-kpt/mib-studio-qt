@@ -104,3 +104,15 @@ it("handles materialized export separately from workspace snapshots and recovers
   await click("Retry same save"); expect(call.mock.calls[2]).toEqual(request);
   expect(host.textContent).toContain("materialized");expect(button("Download workspace manifest")).toBeDefined();
 });
+
+it("records run observations only on explicit save and never restores them into acquisition",async()=>{
+ const observation={queue:{paused:true,rows:{S1:{phase:"unknown"}}},started:null,reference:null};
+ act(()=>root.render(<SavedPlan draft={draft} controlHeld runObservation={observation}/>));
+ expect(call).not.toHaveBeenCalled();
+ call.mockImplementation(async(_cmd,args)=>{const q=JSON.parse((args as {request:string}).request);return {...ok,document:q.document};});
+ await click("Save new workspace");
+ const q=JSON.parse((call.mock.calls[0][1] as {request:string}).request);
+ expect(q.document.run_observation).toMatchObject({...observation,kind:"client-observation/1"});
+ expect(host.textContent).toContain("not current instrument state");
+ expect(call.mock.calls.map(c=>c[0])).toEqual(["workspace_write"]);
+});

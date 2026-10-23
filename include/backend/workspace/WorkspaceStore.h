@@ -44,6 +44,10 @@ public:
                              const std::string& sourceId) const;
     // null expectedRevision is create-only. Complete logical document is atomically replaced.
     // Successful command replay returns its original revision even if the head advanced.
+    std::optional<Snapshot> receipt(const std::string& workspaceId,
+                                    const std::optional<std::string>& expectedRevision,
+                                    const std::string& commandId,
+                                    const std::string& documentJson) const;
     Snapshot commit(const std::string& workspaceId,
                     const std::optional<std::string>& expectedRevision,
                     const std::string& commandId, const std::string& documentJson);
@@ -54,6 +58,8 @@ private:
     sqlite3* db_;
     bool initialized_{false};
     void requireInitialized() const;
+    Snapshot writeInTransaction(const std::string&, const std::optional<std::string>&,
+                                const std::string&, const std::string&, const std::string&);
     Snapshot write(const std::string&, const std::optional<std::string>&, const std::string&,
                    const std::string&, const std::string&);
 };

@@ -1998,3 +1998,11 @@ method or starting acquisition. Unknown saves offer exact-command retry while th
 panel remains mounted; reopening a workspace ID reconciles its stored state after
 navigation/reload. Plan activation, recipe scientific validation and workspace
 listing remain unfinished. See `docs/design/ique-workflow/PRODUCTION-INTEGRATION.md`.
+## Shared stored-population controls (#808)
+
+Studio App.tsx and ReviewPanel mount the same `PopulationAnalysis` component.
+Studio routes through `analyze_population` (app-commands, WebSocket and Tauri)
+and BackendFacade's idle/recording fence; Review uses `review_analyze_population`
+and the review-only bridge. Both end at ReviewJobs/ReviewSession and the same
+native interval/statistics core. Backend 46 / Review 8 are additive, leaving
+reserved 45/7 untouched. See [[../services/AnalysisWorker]].

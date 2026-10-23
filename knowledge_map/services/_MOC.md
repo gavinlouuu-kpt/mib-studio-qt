@@ -4,6 +4,7 @@
 > Composition and wiring happens in [[../architecture/AppBackend]].
 
 ## Realtime acquisition & analysis
+- [[AnalysisWorker]] — isolated Cytoflow process and shared native population core; not on acquisition threads
 - [[CaptureService]] — dedicated thread; `camera->grabFrame()` → FrameStore
 - [[ProcessingService]] — worker pool + realtime loop; OpenCV pipeline
 - [[PlaybackService]] — UI-facing wrapper over FrameStore

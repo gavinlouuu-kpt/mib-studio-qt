@@ -60,8 +60,9 @@ const std::string second = R"({"schema_version":1,"recipe":{"method":"r2","analy
 int main(int argc, char** argv) {
     Watchdog watchdog;
     try {
-        require(argc == 2, "Pass a fresh test database path");
-        const std::string path = argv[1];
+        require(argc <= 2, "Pass at most one fresh test database path");
+        const std::string path = argc == 2 ? argv[1] :
+            (std::filesystem::temp_directory_path() / ("ique-store-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".sqlite")).string();
         require(!std::filesystem::exists(path), "Refusing to overwrite an existing database");
         {
             Connection connection(path);

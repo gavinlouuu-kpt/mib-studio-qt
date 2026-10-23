@@ -89,7 +89,7 @@ std::string SqliteService::workspaceRequest(const std::string& request, bool wri
         else if (action == "history") {
             keys.insert("after");
             keys.insert("limit");
-        } else if (write && action == "commit") {
+        } else if ((write && action == "commit") || action == "receipt") {
             keys.insert("expected_revision");
             keys.insert("command_id");
             keys.insert("document");
@@ -119,10 +119,13 @@ std::string SqliteService::workspaceRequest(const std::string& request, bool wri
             for (const auto& s :
                  workspace_->list(q.value("limit", 100), q.value("after", std::string{}))) {
                 const auto d = json::parse(s.documentJson);
-                rows.push_back({{"workspace_id", s.workspaceId},
-                                {"revision", s.revision},
-                                {"title", d.value("title", s.workspaceId)},
-                                {"archived", d.value("archived", false)}});
+                rows.push_back(
+                    {{"workspace_id", s.workspaceId},
+                     {"revision", s.revision},
+                     {"title", d.value("title", s.workspaceId)},
+                     {"archived", d.value("archived", false)},
+                     {"kind", d.value("type", d.contains("plan") ? std::string{"workspace"}
+                                                                 : std::string{"document"})}});
             }
             return json{{"status", "ok"}, {"workspaces", rows}}.dump();
         }
@@ -155,6 +158,14 @@ std::string SqliteService::workspaceRequest(const std::string& request, bool wri
                 {"status", "ok"},
                 {"revisions", workspace_->history(id, q.value("limit", 100), optional("after"))}}
                 .dump();
+        if (action == "receipt") {
+            q.at("expected_revision");
+            const auto saved =
+                workspace_->receipt(id, optional("expected_revision"),
+                                    q.at("command_id").get<std::string>(), q.at("document").dump());
+            return saved ? snapshot(*saved).dump()
+                         : R"({"status":"not_found","message":"No successful command receipt"})";
+        }
         if (action == "commit") {
             // Missing CAS is a caller bug; explicit null means create-only.
             q.at("expected_revision");

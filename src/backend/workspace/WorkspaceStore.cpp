@@ -5,6 +5,7 @@
 #include <charconv>
 #include <cstdint>
 #include <limits>
+#include <set>
 #include <filesystem>
 #include <chrono>
 
@@ -166,6 +167,23 @@ std::vector<Snapshot> WorkspaceStore::list(int limit, const std::string& after) 
     return rows;
 }
 namespace {
+std::set<std::pair<std::string, std::string>> analysisReferences(const nlohmann::json& doc) {
+    std::set<std::pair<std::string, std::string>> refs;
+    auto recipe = [&](const nlohmann::json& r) {
+        const auto& p = r.at("analysis_plan");
+        const auto id = p.at("id").get<std::string>(), rev = p.at("revision").get<std::string>();
+        identifier("analysis/" + id);
+        identifier(rev);
+        refs.insert({"analysis/" + id, rev});
+    };
+    if (doc.contains("recipe")) recipe(doc.at("recipe"));
+    if (doc.contains("findings") && doc.at("findings").is_array())
+        for (const auto& f : doc.at("findings"))
+            if (f.is_object() && f.contains("recipe")) recipe(f.at("recipe"));
+    if (refs.size() > 64)
+        throw StoreError(StoreErrorCode::Invalid, "Too many pinned analysis dependencies");
+    return refs;
+}
 std::string digest(const std::string& bytes) {
     return processing::processingCoreBytesSha256(reinterpret_cast<const uint8_t*>(bytes.data()),
                                                  bytes.size());
@@ -206,6 +224,27 @@ std::string WorkspaceStore::exportSnapshot(const std::string& id, const std::str
                               {"workspace_id", id},
                               {"revision", revision},
                               {"document", nlohmann::json::parse(saved->documentJson)}};
+    payload["dependencies"] = nlohmann::json::array();
+    payload["unresolved_references"] = nlohmann::json::array();
+    for (const auto& [dependencyId, dependencyRevision] :
+         analysisReferences(payload.at("document"))) {
+        std::optional<Snapshot> pinned;
+        try {
+            pinned = read(dependencyId, dependencyRevision);
+        } catch (const StoreError& e) {
+            if (e.code != StoreErrorCode::Invalid) throw;
+        }
+        if (pinned)
+            payload["dependencies"].push_back(
+                {{"workspace_id", dependencyId},
+                 {"revision", dependencyRevision},
+                 {"document", nlohmann::json::parse(pinned->documentJson)}});
+        else
+            payload["unresolved_references"].push_back(
+                {{"workspace_id", dependencyId}, {"revision", dependencyRevision}});
+    }
+    if (payload.dump().size() > 1024 * 1024)
+        throw StoreError(StoreErrorCode::Invalid, "Export with dependencies exceeds 1 MiB");
     nlohmann::json manifest = {{"payload", payload}, {"sha256", digest(payload.dump())}};
     const auto result =
         nlohmann::json{{"status", "ok"},     {"state", "complete"},  {"job_id", job},
@@ -228,13 +267,57 @@ Snapshot WorkspaceStore::importSnapshot(const std::string& id, const std::string
         throw StoreError(StoreErrorCode::Invalid, "Import exceeds size limit");
     const auto manifest = nlohmann::json::parse(text);
     const auto& payload = manifest.at("payload");
-    if (manifest.size() != 2 || !payload.is_object() || payload.size() != 4 ||
-        payload.at("format") != "I-workspace/1" || manifest.at("sha256") != digest(payload.dump()))
+    if (manifest.size() != 2 || !payload.is_object() ||
+        (payload.size() != 4 && payload.size() != 6) || payload.at("format") != "I-workspace/1" ||
+        manifest.at("sha256") != digest(payload.dump()))
         throw StoreError(StoreErrorCode::Invalid, "Unsupported or damaged workspace export");
     identifier(payload.at("workspace_id").get<std::string>());
     revisionNumber(payload.at("revision").get<std::string>());
-    return write(id, std::nullopt, command, canonicalDocument(payload.at("document").dump()),
-                 "import:" + manifest.at("sha256").get<std::string>());
+    const auto document = canonicalDocument(payload.at("document").dump());
+    const auto refs = analysisReferences(payload.at("document"));
+    Transaction tx(db_);
+    auto result = writeInTransaction(id, std::nullopt, command, document,
+                                     "import:" + manifest.at("sha256").get<std::string>());
+    if (payload.size() == 6) {
+        const auto& dependencies = payload.at("dependencies");
+        if (!dependencies.is_array() || dependencies.size() > 64 ||
+            !payload.at("unresolved_references").is_array())
+            throw StoreError(StoreErrorCode::Invalid, "Invalid export dependency list");
+        std::set<std::pair<std::string, std::string>> seen;
+        std::set<std::string> createdIdentities;
+        for (const auto& dep : dependencies) {
+            if (!dep.is_object() || dep.size() != 3)
+                throw StoreError(StoreErrorCode::Invalid, "Invalid dependency envelope");
+            const auto did = dep.at("workspace_id").get<std::string>(),
+                       rev = dep.at("revision").get<std::string>();
+            if (!refs.count({did, rev}) || !seen.insert({did, rev}).second ||
+                dep.at("document").value("type", std::string{}) != "F-analysis-strategy/1")
+                throw StoreError(StoreErrorCode::Invalid,
+                                 "Unreferenced or invalid analysis dependency");
+            const auto content = canonicalDocument(dep.at("document").dump());
+            const auto existing = read(did, rev);
+            if (existing) {
+                if (existing->documentJson != content)
+                    throw StoreError(StoreErrorCode::Conflict,
+                                     "Pinned analysis dependency differs; import rolled back");
+            } else {
+                if (read(did) && !createdIdentities.count(did))
+                    throw StoreError(StoreErrorCode::Conflict,
+                                     "Analysis identity already exists without this revision; "
+                                     "import rolled back");
+                Statement insert(
+                    db_, "INSERT INTO workspace_revisions(workspace_id,revision,document_json) "
+                         "VALUES(?,?,?)");
+                insert.bind(1, did);
+                insert.bind(2, revisionNumber(rev));
+                insert.bind(3, content);
+                insert.step();
+                createdIdentities.insert(did);
+            }
+        }
+    }
+    tx.commit();
+    return result;
 }
 namespace {
 nlohmann::json fingerprint(const std::string& input) {
@@ -322,6 +405,30 @@ std::string WorkspaceStore::verifySource(const std::string& id, const std::strin
         {"message", matches ? "Source bytes match pinned fingerprint" : "Source bytes changed"}}
         .dump();
 }
+std::optional<Snapshot> WorkspaceStore::receipt(const std::string& id,
+                                                const std::optional<std::string>& expected,
+                                                const std::string& command,
+                                                const std::string& document) const {
+    requireInitialized();
+    identifier(id);
+    identifier(command);
+    if (expected) revisionNumber(*expected);
+    const auto request = nlohmann::json{
+        {"expected", expected ? nlohmann::json(*expected) : nlohmann::json(nullptr)},
+        {"document", canonicalDocument(document)},
+        {"operation",
+         "commit"}}.dump();
+    Statement q(db_, "SELECT request_json,revision FROM workspace_commands WHERE workspace_id=? "
+                     "AND command_id=?");
+    q.bind(1, id);
+    q.bind(2, command);
+    if (q.step() != SQLITE_ROW) return std::nullopt;
+    if (q.text(0) != request)
+        throw StoreError(StoreErrorCode::Invalid, "Command identity reused with different content");
+    const auto saved = read(id, q.text(1));
+    if (!saved) throw StoreError(StoreErrorCode::Storage, "Command references a missing revision");
+    return saved;
+}
 Snapshot WorkspaceStore::commit(const std::string& id, const std::optional<std::string>& expected,
                                 const std::string& command, const std::string& document) {
     return write(id, expected, command, canonicalDocument(document), "commit");
@@ -335,6 +442,15 @@ Snapshot WorkspaceStore::restore(const std::string& id, const std::string& expec
 Snapshot WorkspaceStore::write(const std::string& id, const std::optional<std::string>& expected,
                                const std::string& command, const std::string& document,
                                const std::string& operation) {
+    Transaction tx(db_);
+    auto result = writeInTransaction(id, expected, command, document, operation);
+    tx.commit();
+    return result;
+}
+Snapshot WorkspaceStore::writeInTransaction(const std::string& id,
+                                            const std::optional<std::string>& expected,
+                                            const std::string& command, const std::string& document,
+                                            const std::string& operation) {
     requireInitialized();
     identifier(id);
     identifier(command);
@@ -345,7 +461,6 @@ Snapshot WorkspaceStore::write(const std::string& id, const std::optional<std::s
         {"document", document},
         {"operation",
          operation}}.dump();
-    Transaction tx(db_);
     {
         Statement replay(db_, "SELECT request_json,revision FROM workspace_commands WHERE "
                               "workspace_id=? AND command_id=?");
@@ -358,7 +473,6 @@ Snapshot WorkspaceStore::write(const std::string& id, const std::optional<std::s
             const auto prior = read(id, replay.text(1));
             if (!prior)
                 throw StoreError(StoreErrorCode::Storage, "Command references a missing revision");
-            tx.commit();
             return *prior;
         }
     }
@@ -388,7 +502,6 @@ Snapshot WorkspaceStore::write(const std::string& id, const std::optional<std::s
         log.bind(4, next);
         log.step();
     }
-    tx.commit();
     return Snapshot{id, std::to_string(next), document};
 }
 } // namespace backend::workspace

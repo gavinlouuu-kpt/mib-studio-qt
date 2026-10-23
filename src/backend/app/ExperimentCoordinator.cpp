@@ -2009,6 +2009,14 @@ void ExperimentCoordinator::finalizeLocked(std::unique_lock<std::mutex>& lk, boo
                 SPDLOG_WARN("ExperimentCoordinator: provisional KDE core record could not be stored");
             }
         }
+        if (!hdf5.writeRunEvidenceJson(proc.runEvidenceJson())) {
+            SPDLOG_ERROR("ExperimentCoordinator: run evidence archive could not be stored");
+            ok = false;
+        }
+        if (!hdf5.writeLiveEvidenceJson(proc.liveEvidenceJson())) {
+            SPDLOG_ERROR("ExperimentCoordinator: live evidence summary could not be stored");
+            ok = false;
+        }
         const auto tClose = clock::now();
         hdf5.closeFile();
         SPDLOG_INFO("ExperimentCoordinator: closeFile took {:.3f} ms", sinceMs(tClose));
