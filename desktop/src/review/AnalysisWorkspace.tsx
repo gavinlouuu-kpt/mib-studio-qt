@@ -1,3 +1,4 @@
+import { AnalysisLibrary } from "./AnalysisLibrary";
 import { AnalysisEmbedding } from "./AnalysisEmbedding";
 import { AnalysisReport } from "./AnalysisReport";
 import { AnalysisPlot, type PlotArtifact } from "./AnalysisPlot";
@@ -11,6 +12,8 @@ const pendingKey = "mib.analysis.pending-command.v1";
 export function AnalysisWorkspace({ path, disabled, graphText, feature, read, write, job, live = false }: {
   path: string; disabled: boolean; graphText: string; feature: string; read: AnalysisCall; write: AnalysisCall; job: AnalysisCall; live?: boolean;
 }) {
+  const [displayDigits, setDisplayDigits] = useState(4);
+  const formatStat = (value: number | null) => value == null ? "—" : value.toPrecision(displayDigits);
   const [strategyFeature, setStrategyFeature] = useState(feature);
   useEffect(() => setStrategyFeature(feature), [feature]);
   const [transformText, setTransformText] = useState("[]");
@@ -167,6 +170,7 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
       </fieldset>
       {comparison && <><pre>{JSON.stringify(comparison,null,2)}</pre><button onClick={()=>download("analysis-finding.json",JSON.stringify(comparison,null,2),"application/json")}>Download comparison evidence</button></>}
     </details>
+    <AnalysisLibrary read={read} write={write} disabled={disabled || busy} onPrecision={setDisplayDigits}/>
     <AnalysisReport read={read} write={write} disabled={disabled || busy}/>
     <details><summary>Ordered analysis-parameter transforms</summary>
       <p>Derived parameters preserve raw measurements. Each stage computes (input − offset) / scale, then optionally asinh or log10. Scale must be positive; log10 of nonpositive values and overflow remain unknown. Outputs are dimensionless. Gate feature names and plot features may reference these outputs. Save a new backend revision to apply.</p>
@@ -296,7 +300,8 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
     </details>
     {result && <div>
       <p>{result.selected} selected · {result.excluded} excluded · {result.unknown} unknown. Denominator: {result.denominator ?? "unknown (incomplete event coverage)"}.</p>
-      <p>Mean: {result.mean ?? "—"} · Median: {result.median ?? "—"} {result.unit}</p>
+      <p>Display precision {displayDigits} significant digits; exports retain native values.</p>
+      <p>Mean: {formatStat(result.mean)} · Median: {formatStat(result.median)} {result.unit}</p>
       <p>QC: {result.qcPolicy}; good {result.qcCounts?.good}, bad {result.qcCounts?.bad}, unknown {result.qcCounts?.unknown}. {result.qcAuthority}</p>
       <p>Plan {result.planId} / revision {result.revision}</p>
       <code style={{ overflowWrap: "anywhere" }}>{result.sourceFingerprint}</code>

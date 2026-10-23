@@ -301,3 +301,21 @@ cross-version and cross-platform bitwise equivalence are not claimed. Coordinate
 are exploratory, not cluster/QC labels or effect evidence. UI displays keyed points
 and downloads the pinned terminal artifact. Lossless JSON float parsing is enabled
 for checksummed job persistence; no decimal round-trip drift is tolerated.
+
+## Sample library annotations and display preferences
+
+`librarySave` (write) takes `libraryId,expectedRevision,commandId,library`;
+`libraryRead` (read) takes `libraryId,revision` (exact). Shared SQLite CAS/receipts.
+Library: `{title,groups,preferences,samples}`; at most 128 samples and 64 declared
+unique groups. Sample: `{source:{kind:"retained",id},label,groups,tags,notes,preferences}`.
+Native resolution attaches source fingerprint/key/units/scope; clients cannot write
+those bindings. Duplicate fingerprints, undeclared groups and duplicate tags refuse.
+No recording or scientific unit is edited. Same-fingerprint relink is supported by
+opening a byte-identical source and retaining its new verified locator; replacing
+the sample descriptor appends a library revision, not a new measurement identity.
+
+Display preferences support decimalDigits2–8 and showUnknown boolean. Effective
+precedence is sample > library > application defaults (4,true), with per-field
+origin in the read reply. The UI explicitly applies a sample's display precision
+to workspace reductions; exports retain full native values. Unknown scientific
+counts remain visible. This does not implement arbitrary global user preferences.

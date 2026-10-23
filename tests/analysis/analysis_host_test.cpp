@@ -360,6 +360,47 @@ int main() {
                      {"note", "descriptive evidence"}};
         const auto savedFinding = call(finding);
         MIB_EXPECT(savedFinding["status"] == "ok", "persist immutable finding");
+        json library{{"title", "Two source study"},
+                     {"groups", {"control", "treated"}},
+                     {"preferences", {{"decimalDigits", 3}}},
+                     {"samples",
+                      {{{"source", retainedDescriptor},
+                        {"label", "Before"},
+                        {"groups", {"control"}},
+                        {"tags", {"synthetic"}},
+                        {"notes", "operator annotation"},
+                        {"preferences", {{"decimalDigits", 6}}}},
+                       {{"source", secondRetained},
+                        {"label", "After"},
+                        {"groups", {"treated"}},
+                        {"tags", json::array()},
+                        {"notes", ""},
+                        {"preferences", json::object()}}}}};
+        json librarySave{{"action", "librarySave"},
+                         {"libraryId", "study"},
+                         {"expectedRevision", nullptr},
+                         {"commandId", "library-one"},
+                         {"library", library}};
+        const auto librarySaved = call(librarySave);
+        MIB_EXPECT(librarySaved["status"] == "ok",
+                   "persist verified retained-source annotation library");
+        MIB_EXPECT(call(librarySave) == librarySaved, "library command receipt replays exactly");
+        const auto libraryRead =
+            call(json{{"action", "libraryRead"}, {"libraryId", "study"}, {"revision", "1"}}, false);
+        MIB_EXPECT(libraryRead["display"][0]["preferences"]["values"]["decimalDigits"] == 6 &&
+                       libraryRead["display"][1]["preferences"]["values"]["decimalDigits"] == 3 &&
+                       libraryRead["display"][0]["preferences"]["origin"]["showUnknown"] ==
+                           "application-default",
+                   "display preferences resolve sample over library over explicit defaults");
+        auto duplicateLibrary = librarySave;
+        duplicateLibrary["commandId"] = "duplicate-library";
+        duplicateLibrary["library"]["samples"][1]["source"] = retainedDescriptor;
+        MIB_EXPECT(call(duplicateLibrary)["status"] == "invalid",
+                   "library deduplicates exact source identity not labels");
+        auto invalidGroup = librarySave;
+        invalidGroup["commandId"] = "invalid-group";
+        invalidGroup["library"]["samples"][0]["groups"] = {"not-declared"};
+        MIB_EXPECT(call(invalidGroup)["status"] == "invalid", "library refuses undeclared group");
         json reportLayout{
             {"title", "Pinned research evidence"},
             {"blocks",
@@ -435,6 +476,11 @@ int main() {
     {
         backend::services::SqliteService db;
         MIB_REQUIRE(db.initialize(path), "reopen metadata authority");
+        const auto library = json::parse(backend::analysis::analysisRequest(
+            db, json{{"action", "libraryRead"}, {"libraryId", "study"}, {"revision", "1"}}.dump(),
+            false, resolver));
+        MIB_EXPECT(library["document"]["library"]["samples"][0]["label"] == "Before",
+                   "sample library metadata survives authority reopen");
         const auto reportRun = json::parse(backend::analysis::analysisRequest(
             db,
             json{{"action", "reportRunRead"}, {"reportId", "run-one"}, {"revision", "1"}}.dump(),

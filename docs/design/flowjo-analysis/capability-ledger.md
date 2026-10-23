@@ -109,3 +109,30 @@ derived parameters, bounded hash-ranked subsampling, exact event-key mapping,
 config/eligibility validation and durable reopen. Same-runtime repeatability passes.
 High-dimensional selection, UMAP and cross-platform qualification remain open; this
 is not all F07 acceptance. Coordinates are not interpreted as QC or causal evidence.
+
+### Current remaining scope after continued production integration
+
+The initial audit table above is historical; these remaining obligations supersede
+its absent-feature wording. No aggregate F01–F16 acceptance is claimed.
+
+| Rows | Current implemented evidence | Remaining implementation/qualification |
+|---|---|---|
+| F01 | Verified SHA256 relink (10 gates/images unchanged), retained-source labels/tags/groups library, duplicate detection, unit provenance | Fingerprinting beyond 64MiB; broad library discovery/metadata workflow |
+| F02 | Durable attributed manual tri-state QC, native eligibility/job propagation | Qualified automated scientific QC and biological validation |
+| F03 | Ordered linear/asinh/log10 derived columns, exact units/domain/null semantics, shared worker/native fingerprint | Compensation controls/estimation, Logicle, applicable fluorescence channels |
+| F04 | Persisted interval/Boolean/parent DAG, immutable revisions, source-specific overrides/resync, explicit migration refusal | Full graphical gate editing and remaining gate families |
+| F05/F11 | Saved native histogram/overlay bins, normalization, offsets, immutable report plotting | Other plot families and multi-source overlay composition |
+| F06 | Fingerprint-fenced stored gallery, exact keys, real thumbnails and relink parity | E retained-image locators absent; live image retention cannot be fabricated |
+| F07 | Supervised seeded t-SNE, explicit sampling, exact map, deterministic same-runtime reorder/reopen tests | High-dimensional selection, other embedding engines, cross-platform qualification |
+| F08 | Native raw/derived quantiles/SD/CV/geometric mean and population tables/CSV | Broader reusable table designer and advanced statistics |
+| F09 | Explicit experimental units, paired/independent descriptive comparisons, duplicate-source rejection | Scientific compatibility qualification, inferential fits/models |
+| F10 | Saved ordered-block layouts and immutable report runs, JSON/standalone HTML | Arbitrary layout designer and cancellable multi-report batch orchestration |
+| F12 | Source-bound CAS/restore, checksummed portable strategies, pending receipts, retained sources, library/sample display preference precedence | Full portable workspace lifecycle/global preferences and scalable relink |
+| F13 | Pinned E producer live/archive parity, source fencing, immutable retention, coverage semantics | Actual hardware acquisition-budget qualification, TSan host startup failure |
+| F14 | Exact plan/method APIs, immutable findings and pinned report evidence; API sent to I | Final I-owned next-run linkage/composition and scientific applicability qualification |
+| F15 | Existing native detection FCS export preserved | FCS import, GatingML and qualified per-cell interchange |
+| F16 | Durable real app Cytoflow+t-SNE jobs, cancellation/reap/restart, exact parameter/QC pins | Windows supervision and distribution/license decision |
+
+Library and display defaults are non-scientific metadata only. Browser connector
+currently has no registered browser, so latest controls lack rendered click-through
+acceptance despite builds/backend tests. This is an evidence gap, not a waived task.

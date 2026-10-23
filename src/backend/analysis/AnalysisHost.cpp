@@ -1,6 +1,7 @@
 #include "backend/analysis/AnalysisHost.h"
 #include "backend/analysis/AnalysisComparison.h"
 #include "backend/analysis/AnalysisReports.h"
+#include "backend/analysis/AnalysisLibrary.h"
 #include "backend/analysis/SourceAnalysis.h"
 #include "backend/database/SqliteService.h"
 #include <set>
@@ -92,6 +93,8 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                 throw std::invalid_argument("Retained snapshot integrity mismatch");
             return doc.at("source");
         };
+        if (action == "librarySave" || action == "libraryRead")
+            return analysisLibraryRequest(database, q, write, source).dump();
         if (action == "reportSave" || action == "reportRead" || action == "reportBuild" ||
             action == "reportRunRead")
             return analysisReportRequest(database, q, write,

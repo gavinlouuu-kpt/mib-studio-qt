@@ -225,6 +225,7 @@ add_library(mib_review_core STATIC
     analysis/ParameterTransforms.cpp
     analysis/AnalysisComparison.cpp
     analysis/AnalysisReports.cpp
+    analysis/AnalysisLibrary.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/analysis/PopulationGraph.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/analysis/Population.cpp
     ${PROJECT_SOURCE_DIR}/src/backend/analysis/PopulationStatistics.cpp

@@ -202,3 +202,12 @@ seed42/perplexity2/500 iterations, sklearn1.9.1. Same-runtime reordered-input se
 repeatability, tampered key/config refusal and fresh-store reopen pass in Rust.
 Seven Rust worker, two scheduler, eight Python adapter and twelve UI tests pass.
 The new plot is built but browser rendering remains unverified.
+
+Sample library production proof: `study-1792757005646` revision1, two distinct
+retained sources and declared groups. Exact save replay, duplicate source rejection,
+sample precision6 over library3 over app defaults and open pass over tailnet.
+Hash `sha256:d01ff89af038a1f9f58d4588f625bf8dbf2f7c9c0e352a202722147a947fe024`.
+Native library DB reopen and undeclared-group refusal also pass. Relink QA opened a
+byte-identical copy under a new path: existing saved plan selects10 and returns10
+matching images. A different copy with altered bytes is refused `source_mismatch`.
+Original synthetic file is unchanged and reopened after QA.
