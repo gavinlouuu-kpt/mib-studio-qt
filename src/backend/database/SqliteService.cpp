@@ -47,7 +47,13 @@ bool SqliteService::execute(const std::string& sql) {
     std::lock_guard<std::mutex> lock(mutex_);
     return db_ && sqlite3_exec(db_, sql.c_str(), nullptr, nullptr, nullptr) == SQLITE_OK;
 }
-std::string SqliteService::workspaceRequest(const std::string& request, bool write) {
+std::string SqliteService::workspaceRequest(const std::string& text, bool write) {
+    return request(text, write, false);
+}
+std::string SqliteService::analysisWorkspaceRequest(const std::string& text, bool write) {
+    return request(text, write, true);
+}
+std::string SqliteService::request(const std::string& request, bool write, bool analysisAuthority) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!workspace_)
         return R"({"status":"unavailable","message":"Metadata database is not available"})";
@@ -62,6 +68,11 @@ std::string SqliteService::workspaceRequest(const std::string& request, bool wri
         });
         if (!q.is_object())
             throw StoreError(StoreErrorCode::Invalid, "Expected workspace request object");
+        const auto workspaceId = q.at("workspace_id").get<std::string>();
+        if (write && !analysisAuthority &&
+            (workspaceId.rfind("analysis/", 0) == 0 || workspaceId.rfind("analysis-", 0) == 0))
+            throw StoreError(StoreErrorCode::Invalid,
+                             "Analysis namespaces require the native analysis authority");
         const auto action = q.at("action").get<std::string>();
         std::set<std::string> keys{"action", "workspace_id"};
         if (action == "read")
@@ -106,8 +117,9 @@ std::string SqliteService::workspaceRequest(const std::string& request, bool wri
                 .dump();
         if (action == "receipt") {
             q.at("expected_revision");
-            auto prior = workspace_->receipt(id, optional("expected_revision"),
-                q.at("command_id").get<std::string>(), q.at("document").dump());
+            auto prior =
+                workspace_->receipt(id, optional("expected_revision"),
+                                    q.at("command_id").get<std::string>(), q.at("document").dump());
             return prior ? snapshot(*prior).dump() : R"({"status":"not_found"})";
         }
         if (action == "commit") {

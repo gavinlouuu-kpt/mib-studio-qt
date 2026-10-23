@@ -80,11 +80,11 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                     std::string::npos)
                 throw std::invalid_argument("Invalid retained snapshot ID");
             const auto saved = Json::parse(
-                database.workspaceRequest(Json{{"action", "read"},
-                                               {"workspace_id", "analysis-source/" + id},
-                                               {"revision", "1"}}
-                                              .dump(),
-                                          false));
+                database.analysisWorkspaceRequest(Json{{"action", "read"},
+                                                       {"workspace_id", "analysis-source/" + id},
+                                                       {"revision", "1"}}
+                                                      .dump(),
+                                                  false));
             if (saved.value("status", std::string{}) != "ok")
                 throw std::invalid_argument("Retained snapshot unavailable");
             const auto& doc = saved.at("document");
@@ -125,11 +125,11 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                     .dump();
             };
             const auto existing = Json::parse(
-                database.workspaceRequest(Json{{"action", "read"},
-                                               {"workspace_id", "analysis-source/" + id},
-                                               {"revision", "1"}}
-                                              .dump(),
-                                          false));
+                database.analysisWorkspaceRequest(Json{{"action", "read"},
+                                                       {"workspace_id", "analysis-source/" + id},
+                                                       {"revision", "1"}}
+                                                      .dump(),
+                                                  false));
             if (existing.value("status", std::string{}) == "ok")
                 return reply(existing.at("document"));
             if (existing.value("status", std::string{}) != "not_found") return existing.dump();
@@ -143,13 +143,13 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                            {"contentHash", contentHash(frozen)},
                            {"request", q}};
             const auto saved = Json::parse(
-                database.workspaceRequest(Json{{"action", "commit"},
-                                               {"workspace_id", "analysis-source/" + id},
-                                               {"expected_revision", nullptr},
-                                               {"command_id", id},
-                                               {"document", doc}}
-                                              .dump(),
-                                          true));
+                database.analysisWorkspaceRequest(Json{{"action", "commit"},
+                                                       {"workspace_id", "analysis-source/" + id},
+                                                       {"expected_revision", nullptr},
+                                                       {"command_id", id},
+                                                       {"document", doc}}
+                                                      .dump(),
+                                                  true));
             if (saved.value("status", std::string{}) != "ok") return saved.dump();
             return reply(saved.at("document"));
         }
@@ -172,11 +172,11 @@ std::string analysisRequest(services::SqliteService& database, const std::string
             if (id.empty() || id.size() > 128 || note.size() > 4096)
                 throw std::invalid_argument("Invalid finding identity/note budget");
             const auto existing = Json::parse(
-                database.workspaceRequest(Json{{"action", "read"},
-                                               {"workspace_id", "analysis-finding/" + id},
-                                               {"revision", "1"}}
-                                              .dump(),
-                                          false));
+                database.analysisWorkspaceRequest(Json{{"action", "read"},
+                                                       {"workspace_id", "analysis-finding/" + id},
+                                                       {"revision", "1"}}
+                                                      .dump(),
+                                                  false));
             if (existing.value("status", std::string{}) == "ok") {
                 const auto& document = existing.at("document");
                 if (document.at("type") != "F-analysis-finding/1" ||
@@ -201,13 +201,13 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                            {"comparison", result},
                            {"contentHash", contentHash(result)}};
             const auto saved = Json::parse(
-                database.workspaceRequest(Json{{"action", "commit"},
-                                               {"workspace_id", "analysis-finding/" + id},
-                                               {"expected_revision", nullptr},
-                                               {"command_id", q.at("commandId")},
-                                               {"document", doc}}
-                                              .dump(),
-                                          true));
+                database.analysisWorkspaceRequest(Json{{"action", "commit"},
+                                                       {"workspace_id", "analysis-finding/" + id},
+                                                       {"expected_revision", nullptr},
+                                                       {"command_id", q.at("commandId")},
+                                                       {"document", doc}}
+                                                      .dump(),
+                                                  true));
             if (saved.value("status", std::string{}) != "ok") return saved.dump();
             return Json{{"status", "ok"}, {"findingId", id}, {"revision", "1"}, {"document", doc}}
                 .dump();
@@ -218,11 +218,11 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                 throw std::invalid_argument("Findings are immutable revision 1 records");
             const auto id = q.at("findingId").get<std::string>();
             const auto saved = Json::parse(
-                database.workspaceRequest(Json{{"action", "read"},
-                                               {"workspace_id", "analysis-finding/" + id},
-                                               {"revision", "1"}}
-                                              .dump(),
-                                          false));
+                database.analysisWorkspaceRequest(Json{{"action", "read"},
+                                                       {"workspace_id", "analysis-finding/" + id},
+                                                       {"revision", "1"}}
+                                                      .dump(),
+                                                  false));
             if (saved.value("status", std::string{}) != "ok") return saved.dump();
             const auto& doc = saved.at("document");
             if (doc.at("type") != "F-analysis-finding/1" ||
@@ -253,18 +253,19 @@ std::string analysisRequest(services::SqliteService& database, const std::string
             // Exact lookup never silently falls back to a moving head.
             if (action == "read" && (!q.contains("revision") || q.at("revision").is_null()))
                 throw std::invalid_argument("Exact plan lookup requires revision");
-            return unwrap(Json::parse(database.workspaceRequest(request.dump(), false))).dump();
+            return unwrap(Json::parse(database.analysisWorkspaceRequest(request.dump(), false)))
+                .dump();
         }
         if (action == "manifest") {
             fields(q, {"action", "planId", "revision"});
             if (q.at("revision").is_null())
                 throw std::invalid_argument("Manifest requires exact revision");
-            const auto saved =
-                unwrap(Json::parse(database.workspaceRequest(Json{{"action", "read"},
-                                                                  {"workspace_id", identity(q)},
-                                                                  {"revision", q.at("revision")}}
-                                                                 .dump(),
-                                                             false)));
+            const auto saved = unwrap(
+                Json::parse(database.analysisWorkspaceRequest(Json{{"action", "read"},
+                                                                   {"workspace_id", identity(q)},
+                                                                   {"revision", q.at("revision")}}
+                                                                  .dump(),
+                                                              false)));
             if (saved.value("status", std::string{}) != "ok") return saved.dump();
             Json manifest{{"schema", "F-analysis-manifest/1"},
                           {"planId", q.at("planId")},
@@ -311,12 +312,12 @@ std::string analysisRequest(services::SqliteService& database, const std::string
             fields(application, {"planId", "revision", "overrides"});
             if (application.at("revision").is_null())
                 throw std::invalid_argument("Application requires pinned upstream revision");
-            const auto parent = unwrap(
-                Json::parse(database.workspaceRequest(Json{{"action", "read"},
-                                                           {"workspace_id", identity(application)},
-                                                           {"revision", application.at("revision")}}
-                                                          .dump(),
-                                                      false)));
+            const auto parent = unwrap(Json::parse(
+                database.analysisWorkspaceRequest(Json{{"action", "read"},
+                                                       {"workspace_id", identity(application)},
+                                                       {"revision", application.at("revision")}}
+                                                      .dump(),
+                                                  false)));
             if (parent.value("status", std::string{}) != "ok") return parent.dump();
             const auto& doc = parent.at("document");
             Json save{{"action", "save"},
@@ -363,12 +364,12 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                 fields(app, {"planId", "revision", "overrides"});
                 if (app.at("revision").is_null())
                     throw std::invalid_argument("Pinned application revision required");
-                const auto parent = unwrap(
-                    Json::parse(database.workspaceRequest(Json{{"action", "read"},
-                                                               {"workspace_id", identity(app)},
-                                                               {"revision", app.at("revision")}}
-                                                              .dump(),
-                                                          false)));
+                const auto parent = unwrap(Json::parse(
+                    database.analysisWorkspaceRequest(Json{{"action", "read"},
+                                                           {"workspace_id", identity(app)},
+                                                           {"revision", app.at("revision")}}
+                                                          .dump(),
+                                                      false)));
                 if (parent.value("status", std::string{}) != "ok") return parent.dump();
                 if (applicationGraph(parent.at("document"), app, q.at("planId")) != q.at("graph"))
                     throw std::invalid_argument(
@@ -382,14 +383,14 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                         "Application changed template parameter or method semantics");
                 doc["application"] = app;
             }
-            const auto receipt = Json::parse(
-                database.workspaceRequest(Json{{"action", "receipt"},
-                                               {"workspace_id", identity(q)},
-                                               {"expected_revision", q.at("expectedRevision")},
-                                               {"command_id", q.at("commandId")},
-                                               {"document", doc}}
-                                              .dump(),
-                                          false));
+            const auto receipt = Json::parse(database.analysisWorkspaceRequest(
+                Json{{"action", "receipt"},
+                     {"workspace_id", identity(q)},
+                     {"expected_revision", q.at("expectedRevision")},
+                     {"command_id", q.at("commandId")},
+                     {"document", doc}}
+                    .dump(),
+                false));
             if (receipt.value("status", std::string{}) != "not_found")
                 return unwrap(receipt).dump();
             const auto current = source(q.at("source"));
@@ -404,7 +405,7 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                 const auto resolved = method(doc.at("method"));
                 if (resolved.value("status", std::string{}) != "ok") return resolved.dump();
             }
-            return unwrap(Json::parse(database.workspaceRequest(
+            return unwrap(Json::parse(database.analysisWorkspaceRequest(
                               Json{{"action", "commit"},
                                    {"workspace_id", identity(q)},
                                    {"expected_revision", q.at("expectedRevision")},
@@ -417,14 +418,14 @@ std::string analysisRequest(services::SqliteService& database, const std::string
         if (action == "restore") {
             if (!write) throw std::invalid_argument("Restore requires the analysis write endpoint");
             fields(q, {"action", "planId", "expectedRevision", "commandId", "targetRevision"});
-            const auto old = unwrap(
-                Json::parse(database.workspaceRequest(Json{{"action", "read"},
-                                                           {"workspace_id", identity(q)},
-                                                           {"revision", q.at("targetRevision")}}
-                                                          .dump(),
-                                                      false)));
+            const auto old = unwrap(Json::parse(
+                database.analysisWorkspaceRequest(Json{{"action", "read"},
+                                                       {"workspace_id", identity(q)},
+                                                       {"revision", q.at("targetRevision")}}
+                                                      .dump(),
+                                                  false)));
             if (old.value("status", std::string{}) != "ok") return old.dump();
-            return unwrap(Json::parse(database.workspaceRequest(
+            return unwrap(Json::parse(database.analysisWorkspaceRequest(
                               Json{{"action", "restore"},
                                    {"workspace_id", identity(q)},
                                    {"expected_revision", q.at("expectedRevision")},
@@ -442,12 +443,12 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                        : std::set<std::string>{"action", "planId", "revision", "source"});
             if (q.at("revision").is_null())
                 throw std::invalid_argument("Evaluation requires pinned revision");
-            const auto saved =
-                unwrap(Json::parse(database.workspaceRequest(Json{{"action", "read"},
-                                                                  {"workspace_id", identity(q)},
-                                                                  {"revision", q.at("revision")}}
-                                                                 .dump(),
-                                                             false)));
+            const auto saved = unwrap(
+                Json::parse(database.analysisWorkspaceRequest(Json{{"action", "read"},
+                                                                   {"workspace_id", identity(q)},
+                                                                   {"revision", q.at("revision")}}
+                                                                  .dump(),
+                                                              false)));
             if (saved.value("status", std::string{}) != "ok") return saved.dump();
             const auto& doc = saved.at("document");
             const auto current = source(q.at("source"));

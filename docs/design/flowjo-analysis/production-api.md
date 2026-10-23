@@ -319,3 +319,13 @@ precedence is sample > library > application defaults (4,true), with per-field
 origin in the read reply. The UI explicitly applies a sample's display precision
 to workspace reductions; exports retain full native values. Unknown scientific
 counts remain visible. This does not implement arbitrary global user preferences.
+
+## Shared metadata namespace authority
+
+Generic `SqliteService::workspaceRequest` refuses writes to `analysis/` and
+`analysis-` namespaces. Only native AnalysisHost/Reports/Library call
+`analysisWorkspaceRequest`; no JSON capability flag grants access. This boundary
+must be preserved when integrating I's generic workspace RPC, otherwise arbitrary
+version1 workspace documents could spoof retained sources or findings. No public
+ABI is added. Native tests attempt generic writes to strategy/source/finding/report
+namespaces and require refusal; typed analysis writes still pass.

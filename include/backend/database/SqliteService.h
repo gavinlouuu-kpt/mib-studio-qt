@@ -15,8 +15,11 @@ public:
     bool initialize(const std::string& dbPath);
     bool execute(const std::string& sql);
     std::string workspaceRequest(const std::string& request, bool write);
+    // Native analysis host only; never expose this as a generic workspace RPC.
+    std::string analysisWorkspaceRequest(const std::string& request, bool write);
 
 private:
+    std::string request(const std::string& request, bool write, bool analysisAuthority);
     std::mutex mutex_;
     sqlite3* db_{nullptr};
     std::unique_ptr<workspace::WorkspaceStore> workspace_;

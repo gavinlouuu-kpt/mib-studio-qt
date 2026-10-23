@@ -56,7 +56,7 @@ Json analysisReportRequest(services::SqliteService& db, const Json& q, bool writ
                            const std::function<Json(const Json&)>& evaluate) {
     const auto action = q.at("action").get<std::string>();
     const auto store = [&](const Json& request, bool mutate = false) {
-        return Json::parse(db.workspaceRequest(request.dump(), mutate));
+        return Json::parse(db.analysisWorkspaceRequest(request.dump(), mutate));
     };
     if (action == "reportSave") {
         if (!write) throw std::invalid_argument("Saving report layout requires write endpoint");

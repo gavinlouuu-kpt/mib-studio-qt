@@ -54,7 +54,7 @@ Json analysisLibraryRequest(services::SqliteService& db, const Json& q, bool wri
     const auto action = q.at("action").get<std::string>();
     const auto id = text(q.at("libraryId"), 128);
     const auto store = [&](const Json& request, bool mutate = false) {
-        return Json::parse(db.workspaceRequest(request.dump(), mutate));
+        return Json::parse(db.analysisWorkspaceRequest(request.dump(), mutate));
     };
     if (action == "libraryRead") {
         fields(q, {"action", "libraryId", "revision"});

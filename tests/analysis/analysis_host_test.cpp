@@ -112,6 +112,19 @@ int main() {
     {
         backend::services::SqliteService db;
         MIB_REQUIRE(db.initialize(path), "open metadata authority");
+        for (const char* name : {"analysis/forged", "analysis-source/forged",
+                                 "analysis-finding/forged", "analysis-report-run/forged"}) {
+            const auto forged =
+                json::parse(db.workspaceRequest(json{{"action", "commit"},
+                                                     {"workspace_id", name},
+                                                     {"expected_revision", nullptr},
+                                                     {"command_id", "forged"},
+                                                     {"document", {{"schema_version", 1}}}}
+                                                    .dump(),
+                                                true));
+            MIB_EXPECT(forged["status"] == "invalid",
+                       "generic workspace RPC cannot forge analysis authority records");
+        }
         auto call = [&](const json& q, bool write = true) {
             return json::parse(backend::analysis::analysisRequest(db, q.dump(), write, resolver));
         };
