@@ -44,8 +44,8 @@ export function AnalysisReport({read,write,disabled}:{read:AnalysisCall;write:An
         <p>Artifact hash: {document.contentHash}. Descriptive evidence; compatibility and scientific qualification are not inferred.</p>
         {document.artifact.blocks.map((block:Record<string,any>)=><section key={block.spec.id}>
           <h3>{block.spec.title}</h3><p>Exact reference: {JSON.stringify(block.spec.reference)}</p>
-          {block.spec.kind==="table" ? <table><thead><tr>{["Population","Selected","Unknown","Mean","Median","Unit"].map(c=><th key={c}>{c}</th>)}</tr></thead>
-            <tbody>{block.result.report.table.map((row:Record<string,any>)=><tr key={row.population}>{["population","selected","unknown","mean","median","unit"].map(k=><td key={k}>{row[k]??"—"}</td>)}</tr>)}</tbody></table>
+          {block.spec.kind==="table" ? <table><thead><tr>{(block.result.report.columns || ["population","selected","unknown","mean","median","unit"]).map((c:string)=><th key={c}>{c}</th>)}</tr></thead>
+            <tbody>{block.result.report.table.map((row:Record<string,any>)=><tr key={row.population}>{(block.result.report.columns || ["population","selected","unknown","mean","median","unit"]).map((k:string)=><td key={k}>{row[k]??"—"}</td>)}</tr>)}</tbody></table>
             :(block.spec.kind==="plot" || block.spec.kind==="overlay") ? <AnalysisPlot artifact={block.result.plot}/> : <pre>{JSON.stringify(block.result.document,null,2)}</pre>}
         </section>)}
       </article>

@@ -164,3 +164,9 @@ Full graphical gesture editing and remaining gate families are still open.
 F04 rectangle creation now reuses explicit native interval/AND populations, with
 real7-selected/7-image proof. Selected/restored revisions require exact loading
 before draft save to protect previously unseen method/application provenance.
+
+F08 continuation: reusable source-bound table definitions now persist exact ordered
+population/column selections through strategy revisions, applications/manifests,
+native CSV and immutable report rendering. Native missing-population/domain-column
+refusals and real tailnet two-row projection pass. Advanced estimators and a graphical
+table designer remain separate; no formula language is inferred.

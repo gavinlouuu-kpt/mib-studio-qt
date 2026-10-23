@@ -6,6 +6,7 @@
 #include "backend/analysis/SourceAnalysis.h"
 #include "backend/database/SqliteService.h"
 #include <set>
+#include <algorithm>
 namespace backend::analysis {
 using Json = nlohmann::json;
 namespace {
@@ -14,6 +15,30 @@ void fields(const Json& q, const std::set<std::string>& allowed) {
     for (auto i = q.begin(); i != q.end(); ++i)
         if (!allowed.count(i.key()))
             throw std::invalid_argument("Unknown analysis request field: " + i.key());
+}
+const std::vector<std::string> tableColumns{
+    "population", "feature", "unit", "selected", "excluded", "unknown", "measured",
+    "missing", "minimum", "maximum", "mean", "median", "p05", "p25", "p75", "p95",
+    "sampleStandardDeviation", "cvPercent", "geometricMean", "denominator"};
+void validateTable(const Json& doc) {
+    if (!doc.contains("table")) return;
+    const auto& spec = doc.at("table");
+    fields(spec, {"populations", "columns"});
+    const auto populations = spec.at("populations").get<std::vector<std::string>>();
+    const auto columns = spec.at("columns").get<std::vector<std::string>>();
+    if (populations.empty() || populations.size() > 32 || columns.empty() || columns.size() > tableColumns.size())
+        throw std::invalid_argument("Table selection budget exceeded");
+    std::set<std::string> nodes, seen;
+    for (const auto& node : doc.at("graph").at("nodes")) nodes.insert(node.at("id"));
+    for (const auto& population : populations)
+        if (!nodes.count(population) || !seen.insert(population).second)
+            throw std::invalid_argument("Table population is missing or duplicated");
+    seen.clear();
+    for (const auto& column : columns)
+        if (std::find(tableColumns.begin(), tableColumns.end(), column) == tableColumns.end() || !seen.insert(column).second)
+            throw std::invalid_argument("Table column is unsupported or duplicated");
+    for (const char* required : {"population", "feature", "unit"})
+        if (!seen.count(required)) throw std::invalid_argument("Table requires population, feature and unit columns");
 }
 std::string identity(const Json& q) {
     auto id = q.at("planId").get<std::string>();
@@ -294,7 +319,7 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                 throw std::invalid_argument("Manifest schema/hash mismatch");
             const auto& doc = manifest.at("document");
             fields(doc, {"schema_version", "type", "graph", "feature", "sourceBinding", "method",
-                         "plot", "qc", "application", "transforms"});
+                         "plot", "qc", "application", "transforms", "table"});
             if (doc.at("schema_version") != 1 || doc.at("type") != "F-analysis-strategy/1")
                 throw std::invalid_argument("Unsupported strategy manifest");
             Json save{{"action", "save"},
@@ -304,6 +329,7 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                       {"sourceBinding", doc.at("sourceBinding")},
                       {"method", doc.at("method")},
                       {"plot", doc.value("plot", Json(nullptr))},
+                      {"table", doc.value("table", Json(nullptr))},
                       {"qc", doc.value("qc", Json(nullptr))},
                       {"application", doc.value("application", Json(nullptr))},
                       {"transforms", doc.value("transforms", Json::array())},
@@ -339,6 +365,7 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                       {"source", q.at("source")},
                       {"sourceBinding", q.at("sourceBinding")}};
             if (doc.contains("plot")) save["plot"] = doc.at("plot");
+            if (doc.contains("table")) save["table"] = doc.at("table");
             if (doc.contains("transforms")) save["transforms"] = doc.at("transforms");
             if (doc.contains("qc"))
                 save["qc"] =
@@ -349,7 +376,7 @@ std::string analysisRequest(services::SqliteService& database, const std::string
             if (!write) throw std::invalid_argument("Save requires the analysis write endpoint");
             fields(q, {"action", "planId", "expectedRevision", "commandId", "graph", "feature",
                        "source", "sourceBinding", "method", "plot", "qc", "application",
-                       "transforms"});
+                       "transforms", "table"});
             validateAnalysisGraph(q.at("graph"));
             if (q.at("graph").at("id") != q.at("planId"))
                 throw std::invalid_argument("Graph ID must match plan ID");
@@ -361,6 +388,8 @@ std::string analysisRequest(services::SqliteService& database, const std::string
             Json doc{{"schema_version", 1},      {"type", "F-analysis-strategy/1"},
                      {"graph", q.at("graph")},   {"feature", q.at("feature")},
                      {"sourceBinding", binding}, {"method", q.value("method", Json(nullptr))}};
+            if (q.contains("table") && !q.at("table").is_null()) doc["table"] = q.at("table");
+            validateTable(doc);
             if (q.contains("plot") && !q.at("plot").is_null()) doc["plot"] = q.at("plot");
             if (q.contains("transforms") && !q.at("transforms").is_array())
                 throw std::invalid_argument("Transforms must be an ordered array");
@@ -492,30 +521,13 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                     .dump();
             }
             if (action == "report") {
-                const auto& nodes = doc.at("graph").at("nodes");
-                if (nodes.size() > 32)
-                    throw std::invalid_argument("Report supports at most 32 populations");
+                validateTable(doc);
+                const auto columns = doc.contains("table") ? doc.at("table").at("columns").get<std::vector<std::string>>() : tableColumns;
+                std::vector<std::string> populations;
+                if (doc.contains("table")) populations = doc.at("table").at("populations").get<std::vector<std::string>>();
+                else for (const auto& node : doc.at("graph").at("nodes")) populations.push_back(node.at("id"));
+                if (populations.size() > 32) throw std::invalid_argument("Report supports at most 32 populations");
                 Json table = Json::array();
-                const std::vector<std::string> columns{"population",
-                                                       "feature",
-                                                       "unit",
-                                                       "selected",
-                                                       "excluded",
-                                                       "unknown",
-                                                       "measured",
-                                                       "missing",
-                                                       "minimum",
-                                                       "maximum",
-                                                       "mean",
-                                                       "median",
-                                                       "p05",
-                                                       "p25",
-                                                       "p75",
-                                                       "p95",
-                                                       "sampleStandardDeviation",
-                                                       "cvPercent",
-                                                       "geometricMean",
-                                                       "denominator"};
                 auto csvCell = [](const Json& cell) {
                     if (cell.is_null()) return std::string{};
                     if (!cell.is_string()) return cell.dump();
@@ -537,11 +549,11 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                     csv += columns[i];
                 }
                 csv += "\r\n";
-                for (const auto& node : nodes) {
+                for (const auto& population : populations) {
                     auto request = doc;
-                    request["graph"]["output"] = node.at("id");
+                    request["graph"]["output"] = population;
                     auto row = evaluateSource(current, request);
-                    row["population"] = node.at("id");
+                    row["population"] = population;
                     Json compact = Json::object();
                     for (std::size_t i = 0; i < columns.size(); ++i) {
                         const auto& key = columns[i];
@@ -559,6 +571,7 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                             {"strategy", doc},
                             {"estimators", result.at("estimators")},
                             {"table", table},
+                            {"columns", columns},
                             {"scientificCompatibility", "unknown"},
                             {"qcPolicy", result.at("qcPolicy")},
                             {"parameterFingerprint", result.at("parameterFingerprint")},

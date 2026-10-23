@@ -37,6 +37,8 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
   const [qcText, setQcText] = useState("[]");
   const [qcActor, setQcActor] = useState("");
   const [qcReason, setQcReason] = useState("");
+  const [tableEnabled, setTableEnabled] = useState(false);
+  const [tableText, setTableText] = useState(JSON.stringify({populations:["area-gate"],columns:["population","feature","unit","selected","unknown","mean","median"]},null,2));
   const [plotEnabled, setPlotEnabled] = useState(false);
   const [plotText, setPlotText] = useState(JSON.stringify({kind:"histogram",feature:"area",minimum:0,maximum:200,bins:40,normalization:"count",layers:[{population:"area-gate",displayOffset:0}]},null,2));
   const [plot, setPlot] = useState<PlotArtifact | null>(null);
@@ -115,7 +117,7 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
         if (token !== generation.current) return;
         const binding = Object.fromEntries(["fingerprint", "sourceKey", "parameters", "scope"].map(k => [k, snapshot[k]]));
         const command = { action: "save", planId: g.id, expectedRevision: revision || null,
-          commandId: crypto.randomUUID(), graph: g, method, ...(application ? {application} : {}), feature: strategyFeature, transforms: JSON.parse(transformText), source: source(), sourceBinding: binding, ...(plotEnabled ? {plot: JSON.parse(plotText)} : {}), ...(qcEnabled ? {qc:{policy:qcPolicy,decisions:JSON.parse(qcText)}} : {}) };
+          commandId: crypto.randomUUID(), graph: g, ...(tableEnabled ? {table:JSON.parse(tableText)} : {}), method, ...(application ? {application} : {}), feature: strategyFeature, transforms: JSON.parse(transformText), source: source(), sourceBinding: binding, ...(plotEnabled ? {plot: JSON.parse(plotText)} : {}), ...(qcEnabled ? {qc:{policy:qcPolicy,decisions:JSON.parse(qcText)}} : {}) };
         // Journal before submission; a storage failure must prevent a write with no recovery handle.
         window.localStorage.setItem(pendingKey, JSON.stringify(command));
         await reconcile(command, token);
@@ -128,6 +130,7 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
         setEditBaseRevision(revision);
         setStrategyFeature(doc.feature); setTransformText(JSON.stringify(doc.transforms || [],null,2));
         setMethod(doc.method || null); setApplication(doc.application || null);
+        setTableEnabled(Boolean(doc.table)); if(doc.table) setTableText(JSON.stringify(doc.table,null,2));
         setPlotEnabled(Boolean(doc.plot)); if (doc.plot) setPlotText(JSON.stringify(doc.plot,null,2));
         setQcEnabled(Boolean(doc.qc)); setQcPolicy(doc.qc?.policy || "good-only");
         setQcText(JSON.stringify(doc.qc?.decisions || [],null,2));
@@ -228,14 +231,17 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
       {plot && <AnalysisPlot artifact={plot}/>}
     </details>
     <details><summary>Population tables and portable strategy</summary>
+      <label><input type="checkbox" checked={tableEnabled} disabled={busy} onChange={e=>setTableEnabled(e.target.checked)}/>Include reusable table definition in next revision</label>
+      <p>Select up to 32 exact population IDs and ordered native columns. Population, feature and unit are mandatory. Missing or duplicate names are refused. Without a definition, all populations and standard columns are exported.</p>
+      <label>Table definition JSON<textarea aria-label="Table definition JSON" value={tableText} onChange={e=>setTableText(e.target.value)} rows={8}/></label>
       <p>Tables are computed from finite selected values in the saved parameter domain (raw or explicitly transformed). Quantiles use type 7; SD uses n−1; CV uses absolute mean. Null is unavailable, not zero. Exports pin the source and backend revision; they do not certify scientific compatibility.</p>
       <button disabled={busy || !revision} onClick={() => void run(async token => {
         const reply = checked(await read({action: "report", planId: graph().id, revision, source: source()}));
         if (token === generation.current) setReport(reply);
       })}>Build pinned population table</button>
       {report && <>
-        <table><caption>Backend revision {report.report.revision}</caption><thead><tr><th>Population</th><th>Selected</th><th>Unknown</th><th>Mean</th><th>Median</th><th>P05</th><th>P95</th><th>Sample SD</th><th>CV %</th></tr></thead>
-          <tbody>{report.report.table.map((r: Record<string, any>) => <tr key={r.population}>{["population","selected","unknown","mean","median","p05","p95","sampleStandardDeviation","cvPercent"].map(k=><td key={k}>{r[k] ?? "—"}</td>)}</tr>)}</tbody>
+        <table><caption>Backend revision {report.report.revision}</caption><thead><tr>{(report.report.columns || ["population","selected","unknown","mean","median","p05","p95","sampleStandardDeviation","cvPercent"]).map((k:string)=><th key={k}>{k}</th>)}</tr></thead>
+          <tbody>{report.report.table.map((r: Record<string, any>) => <tr key={r.population}>{(report.report.columns || ["population","selected","unknown","mean","median","p05","p95","sampleStandardDeviation","cvPercent"]).map((k:string)=><td key={k}>{r[k] ?? "—"}</td>)}</tr>)}</tbody>
         </table>
         <p>Report content hash: {report.contentHash}</p>
         <button onClick={() => download("population-report.json",JSON.stringify(report,null,2),"application/json")}>Download evidence JSON</button>

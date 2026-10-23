@@ -27,3 +27,9 @@ it("renders report titles as text, never executable markup",async()=>{
  window.localStorage.setItem(key,JSON.stringify(command));write.mockResolvedValue({status:"ok",document:{request:command,contentHash:"hash",artifact:{title:'<img src=x onerror="alert(1)">',reportId:"report",revision:"1",blocks:[]}}});
  await reconcile();expect(host.querySelector("article img")).toBeNull();expect(host.textContent).toContain("<img src=x");
 });
+it("renders persisted native table columns in order without inventing omitted statistics",async()=>{
+ window.localStorage.setItem(key,JSON.stringify(command));
+ write.mockResolvedValue({status:"ok",document:{request:command,contentHash:"hash",artifact:{title:"Table",reportId:"report",revision:"1",blocks:[{spec:{id:"t",kind:"table",title:"Selected columns",reference:{planId:"p",revision:"1"}},result:{report:{columns:["population","feature","unit","median"],table:[{population:"g",feature:"area",unit:"pixel2",median:5}]}}}]}}});
+ await reconcile();expect(Array.from(host.querySelectorAll("th")).map(e=>e.textContent)).toEqual(["population","feature","unit","median"]);
+ expect(Array.from(host.querySelectorAll("td")).map(e=>e.textContent)).toEqual(["g","area","pixel2","5"]);
+});

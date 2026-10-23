@@ -252,3 +252,9 @@ Rectangle production proof: `rectangle-1792759502927` revision1, area[100,106]
 AND deformability[0.1,0.2], selected7 and7 exact-key gallery images. Native output
 matches an independent check of the frozen source rows. Form/UI regressions cover
 name collisions/reversed bounds and refusal to save an unloaded selected revision.
+
+Reusable table production proof: `custom-table-1792759719340` revision1 preserves
+columns population/feature/unit/median/selected and population order rectangle then
+rectangle-x in native JSON, CSV and manifest. Both rows select7, median103 pixel2.
+Report hash `sha256:2a8b996815d366f84e22b953d354b093045365fa7f1e7f5bf279c4ab58a4c36c`.
+Native normal and4 sanitizer tests, UI19 regressions and frontend/server builds pass.

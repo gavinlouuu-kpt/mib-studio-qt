@@ -247,6 +247,25 @@ int main() {
                    "singleton sample SD stays null in export");
         MIB_EXPECT(report["contentHash"] == call(reportQuery, false)["contentHash"],
                    "deterministic report content identity");
+        auto customTable = save;
+        customTable["planId"] = customTable["graph"]["id"] = "custom-table";
+        customTable["commandId"] = "custom-table-save";
+        customTable["table"] = {{"populations", {"gate"}}, {"columns", {"population", "feature", "unit", "median", "unknown"}}};
+        MIB_EXPECT(call(customTable)["status"] == "ok", "save reusable native table definition");
+        auto customQuery = reportQuery;
+        customQuery["planId"] = "custom-table";
+        const auto customReport = call(customQuery, false);
+        MIB_EXPECT(customReport["report"]["columns"] == customTable["table"]["columns"] && customReport["report"]["table"][0].size() == 5 && customReport["report"]["table"][0]["median"] == 5,
+                   "custom table projects exact native values and ordered columns");
+        MIB_EXPECT(customReport["csv"].get<std::string>().find("population,feature,unit,median,unknown\r\n") == 0,
+                   "CSV follows persisted column order");
+        customTable["commandId"] = "custom-table-invalid";
+        customTable["expectedRevision"] = "1";
+        customTable["table"]["populations"] = {"missing"};
+        MIB_EXPECT(call(customTable)["status"] == "invalid", "table refuses removed population");
+        customTable["table"]["populations"] = {"gate"};
+        customTable["table"]["columns"] = {"population", "median"};
+        MIB_EXPECT(call(customTable)["status"] == "invalid", "table cannot silently omit feature and units");
         const auto manifest =
             call(json{{"action", "manifest"}, {"planId", "plan"}, {"revision", "1"}}, false);
         backend::services::SqliteService imported;

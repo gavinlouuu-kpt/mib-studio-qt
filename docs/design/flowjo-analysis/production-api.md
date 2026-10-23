@@ -391,3 +391,17 @@ The graph form can add a rectangular population as named `id-x`, `id-y` inclusiv
 intervals and an `id` AND population. It sets the new population as output, refuses
 name collisions/reversed bounds, and leaves both components editable. No separate
 browser membership implementation or implicit coordinate transformation is used.
+
+### Reusable population tables
+
+Strategy save/import/application supports optional `table:{populations,columns}`.
+Populations are 1–32 unique exact graph IDs in output order; columns are unique native
+statistic fields in output order. `population`, `feature`, `unit` are mandatory.
+Other supported columns: selected, excluded, unknown, measured, missing, minimum,
+maximum, mean, median, p05, p25, p75, p95, sampleStandardDeviation, cvPercent,
+geometricMean, denominator. Missing population/unknown column is an error, not an
+empty fabricated row. Omitting table preserves the standard all-population table.
+
+`report` returns explicit ordered `columns`; CSV and immutable report rendering
+follow them. Values remain native reductions over all eligible rows. This is a
+reusable projection, not a client-side formula language or new statistical estimator.
