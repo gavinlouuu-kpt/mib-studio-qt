@@ -57,6 +57,30 @@ int main() {
         try { backend::analysis::validateAnalysisGraph(ellipseGraph); } catch (const std::exception&) { refused = true; }
         MIB_EXPECT(refused, "zero ellipse radius refused before publication");
     }
+    {
+        auto quadrants = source;
+        quadrants["parameters"] = {{"x", "dimensionless"}, {"y", "dimensionless"}};
+        quadrants["rows"] = json::array();
+        for (int x = -1; x <= 1; ++x) for (int y = -1; y <= 1; ++y)
+            quadrants["rows"].push_back({{"key", std::to_string(quadrants["rows"].size())}, {"measurements", {{"x", x}, {"y", y}}}});
+        quadrants["rows"].push_back({{"key", "missing"}, {"measurements", {{"x", nullptr}, {"y", 0}}}});
+        auto partition = graph;
+        partition["nodes"] = json::array();
+        const std::vector<std::string> regions{"lower-left", "lower-right", "upper-left", "upper-right"};
+        for (const auto& region : regions)
+            partition["nodes"].push_back({{"id", region}, {"parent", ""}, {"kind", "quadrant"}, {"x", "x"}, {"y", "y"}, {"thresholdX", 0}, {"thresholdY", 0}, {"quadrant", region}});
+        std::map<std::string, int> memberships;
+        std::vector<std::string> counts;
+        for (const auto& region : regions) {
+            partition["output"] = region;
+            const auto evaluated = backend::analysis::evaluateSource(quadrants, {{"graph", partition}, {"feature", "x"}});
+            counts.push_back(evaluated.at("selected"));
+            MIB_EXPECT(evaluated["unknown"] == "1", "each quadrant preserves missing coordinate uncertainty");
+            for (const auto& row : evaluated.at("rows")) if (row.at("membership") == "selected") ++memberships[row.at("key").get<std::string>()];
+        }
+        MIB_EXPECT(counts == std::vector<std::string>({"1", "2", "2", "4"}), "threshold ties belong right and upper");
+        MIB_EXPECT(memberships.size() == 9 && std::all_of(memberships.begin(), memberships.end(), [](const auto& item){return item.second == 1;}), "quadrants partition known events without duplicate threshold ownership");
+    }
     json binding;
     for (const char* k : {"fingerprint", "sourceKey", "parameters", "scope"})
         binding[k] = source[k];

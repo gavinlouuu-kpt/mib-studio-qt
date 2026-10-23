@@ -276,3 +276,13 @@ radii(5,0.05), area/deformability domain. Native selected7, mean105 pixel2;7 exa
 selected-key images; real Cytoflow job
 `79b4da5a33c3210de534f53717365f939599a8f4ffca396e13ef4da0ef1144f0`
 selected the same7 with matching source/parameter identity. Exact save replay passed.
+
+Quadrant tailnet proof: `quadrant-e2e-1792760616090` revision1, cuts area105 /
+deformability0.15. Native table lower-left/lower-right/upper-left/upper-right counts
+5/0/0/9 total14; upper-right has9 exact-key gallery images and real Cytoflow job
+`9838116bbba902762617e325f3a86d68b1d7c1f584b1b4eb943da001d47b5da6`
+selects the same9 with exact source/parameter pins. Save replay passes.
+
+Post-quadrant shared regression: all6 native E/source/metadata/Review integration
+tests and all8 Review bridge tests pass. UI24 pass; all4 native ASan/UBSan suites
+pass. Current app remains mock/offline; these are not hardware or browser acceptance.

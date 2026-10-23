@@ -2,6 +2,28 @@
 
 Status: active; end-to-end integration is owned by F in `feat/808-flowjo-realignment`, including facade, bridges and both product mounts. No main/develop merge.
 
+## Current implementation status (2026-10-23)
+
+The older continuation sections below are historical checkpoints, not current stop
+gates. F owns branch-local integration, with E producer a26d26ba and I metadata
+baseline5e9ec3c5 pinned. Current ABI47 / Review9 preserve earlier reservations.
+
+Implemented and locally validated: E live/archive fences, retained snapshots,
+source-bound immutable strategies and exact method lookup, durable real Cytoflow
+jobs, manual tri-state QC, ordered parameter transforms,2–16-feature t-SNE,
+applications/overrides, native tables/statistics, descriptive comparisons/findings,
+plots/multisource overlays/reports, libraries/discovery and form/scatter graph editing.
+Intervals/rectangles/axis-aligned ellipses/quadrants/Boolean parents share native
+membership, exact gallery identities and worker eligibility. Tailnet app remains
+available; source fixtures and mock camera are explicitly labeled.
+
+Latest evidence and remaining implementation obligations are in the capability
+ledger and app-qa.md. Browser connector inventory is empty, TSan cannot start on
+this host, actual hardware-budget qualification and E image locators remain open.
+These do not block other independent implementation. Full F01–F16 is NOT accepted;
+interchange, native polygon/rotated geometry, broader workspace/batch/statistical
+work and qualification still need completion. No main/develop merge is authorized.
+
 ## Goal
 
 One full F01–F16 scientific analysis module used by Studio and offline Review,

@@ -30,3 +30,8 @@ it("edits ellipse nodes without treating geometry as Boolean operands",()=>{
  expect(renamePopulation(ellipse,"e","renamed").output).toBe("renamed");
  expect(renderToStaticMarkup(<PopulationGraphEditor text={JSON.stringify(ellipse)} onChange={()=>{}} disabled={false}/>)).toContain("Ellipse radiusX");
 });
+it("renders quadrant boundary ownership and preserves typed region on rename",()=>{
+ const quadrant:PopulationGraph={id:"p",revision:"1",output:"q",nodes:[{id:"q",parent:"",kind:"quadrant",x:"area",y:"deformability",thresholdX:100,thresholdY:0.1,quadrant:"upper-right"}]};
+ expect(renamePopulation(quadrant,"q","renamed").nodes[0]).toMatchObject({id:"renamed",quadrant:"upper-right"});
+ expect(renderToStaticMarkup(<PopulationGraphEditor text={JSON.stringify(quadrant)} onChange={()=>{}} disabled={false}/>)).toContain("threshold belong right");
+});

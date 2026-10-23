@@ -117,14 +117,14 @@ its absent-feature wording. No aggregate F01–F16 acceptance is claimed.
 
 | Rows | Current implemented evidence | Remaining implementation/qualification |
 |---|---|---|
-| F01 | Verified SHA256 relink (10 gates/images unchanged), retained-source labels/tags/groups library, duplicate detection, unit provenance | Fingerprinting beyond 64MiB; broad library discovery/metadata workflow |
+| F01 | Verified SHA256 relink (10 gates/images unchanged), retained-source labels/tags/groups library, duplicate detection, unit provenance | Fingerprinting beyond 64MiB; broader metadata workflow |
 | F02 | Durable attributed manual tri-state QC, native eligibility/job propagation | Qualified automated scientific QC and biological validation |
 | F03 | Ordered linear/asinh/log10 derived columns, exact units/domain/null semantics, shared worker/native fingerprint | Compensation controls/estimation, Logicle, applicable fluorescence channels |
-| F04 | Persisted interval/Boolean/parent DAG, immutable revisions, source-specific overrides/resync, explicit migration refusal | Full graphical gate editing and remaining gate families |
+| F04 | Persisted interval/ellipse/quadrant/Boolean DAG, rectangles, forms/scatter gestures, revisions and overrides | Native polygon/rotated/fitted gates and full rendered interaction qualification |
 | F05/F11 | Saved native histogram/scatter, sampled display, multi-source overlays, immutable report plotting | Other plot families and graphical layout controls |
 | F06 | Fingerprint-fenced stored gallery, exact keys, real thumbnails and relink parity | E retained-image locators absent; live image retention cannot be fabricated |
 | F07 | Supervised 2–16-feature seeded t-SNE, explicit sampling, exact map, same-runtime reorder/reopen tests | Other embedding engines, cross-platform qualification |
-| F08 | Native raw/derived quantiles/SD/CV/geometric mean and population tables/CSV | Broader reusable table designer and advanced statistics |
+| F08 | Native raw/derived quantiles/SD/CV/geometric mean and population tables/CSV | Graphical table designer and advanced statistics |
 | F09 | Explicit experimental units, paired/independent descriptive comparisons, duplicate-source rejection | Scientific compatibility qualification, inferential fits/models |
 | F10 | Saved ordered-block layouts and immutable report runs, JSON/standalone HTML | Arbitrary layout designer and cancellable multi-report batch orchestration |
 | F12 | Source-bound CAS/restore, checksummed portable strategies, pending receipts, retained sources, library/sample display preference precedence | Full portable workspace lifecycle/global preferences and scalable relink |
@@ -187,3 +187,9 @@ production form editing now share tri-state graph/QC semantics, gallery identiti
 and job eligibility. Boundary/missing/extreme and zero-radius refusal tests pass.
 Rotated/covariance ellipses, native polygon and quadrant authoring remain separate
 implementation obligations, not claimed by axis-aligned support.
+
+F04 quadrant continuation: native/form quadrant predicates define right/upper tie
+ownership and preserve missing-coordinate unknown. Tests prove all9 known cut-grid
+points belong to exactly one of four populations. Native polygon authoring and
+rotated/fitted geometry remain separate; the existing supervised Cytoflow polygon
+job is not mislabeled a persisted native polygon DAG node.

@@ -435,3 +435,13 @@ arithmetic uses long double and hypot to avoid squaring overflow. No rotation,
 covariance fit, unit conversion or compensation is inferred. The production form
 edits all geometry explicitly. Template interval overrides do not mutate ellipses;
 that requires a new upstream revision or explicit detached draft.
+
+### Quadrant population
+
+Native predicate `{id,parent,kind:"quadrant",x,y,thresholdX,thresholdY,quadrant}`
+uses distinct available parameter names and finite cuts. Region is lower-left,
+lower-right, upper-left or upper-right. X ties belong right (`x>=thresholdX`), Y ties
+belong upper (`y>=thresholdY`); lower/left comparisons are strict. The four predicates
+therefore partition all known coordinate pairs without boundary double-counting.
+Missing either coordinate remains unknown, never assigned to a quadrant. Geometry is
+in the explicit raw/derived domain; thresholds are not automatically fitted.
