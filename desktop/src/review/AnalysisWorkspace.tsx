@@ -10,8 +10,8 @@ import type { PopulationGraph } from "./PopulationAnalysis";
 export type AnalysisCall = (request: Record<string, unknown>) => Promise<Record<string, any>>;
 const pendingKey = "mib.analysis.pending-command.v1";
 /** Backend revisions are authoritative; local storage holds only an unresolved command receipt. */
-export function AnalysisWorkspace({ path, disabled, graphText, feature, read, write, job, live = false }: {
-  path: string; disabled: boolean; graphText: string; feature: string; read: AnalysisCall; write: AnalysisCall; job: AnalysisCall; live?: boolean;
+export function AnalysisWorkspace({ path, disabled, graphText, feature, read, write, job, live = false, onLoadGraph }: {
+  path: string; disabled: boolean; graphText: string; feature: string; read: AnalysisCall; write: AnalysisCall; job: AnalysisCall; live?: boolean; onLoadGraph?: (graph: PopulationGraph) => void;
 }) {
   const [displayDigits, setDisplayDigits] = useState(4);
   const formatStat = (value: number | null) => value == null ? "—" : value.toPrecision(displayDigits);
@@ -28,6 +28,9 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
   const [kind, setKind] = useState(live && !path ? "live-run" : "stored");
   const [retainedId, setRetainedId] = useState("");
   const [revision, setRevision] = useState("");
+  const [method, setMethod] = useState<Record<string, unknown> | null>(null);
+  const [application, setApplication] = useState<Record<string, unknown> | null>(null);
+  const selection = useRef("");
   const [qcEnabled, setQcEnabled] = useState(false);
   const [qcPolicy, setQcPolicy] = useState("good-only");
   const [qcText, setQcText] = useState("[]");
@@ -51,7 +54,15 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
   const [jobResult, setJobResult] = useState<Record<string, any> | null>(null);
   const [busy, setBusy] = useState(false);
   const generation = useRef(0);
-  useEffect(() => { ++generation.current; setPlot(null); setReport(null); setGallery(null); setResult(null); setRevision(""); setHistory([]); setMessage(""); }, [path, kind, retainedId, graphText, feature]);
+  useEffect(() => { ++generation.current; setPlot(null); setReport(null); setGallery(null); setResult(null); setMessage(""); }, [path, kind, retainedId, graphText, feature]);
+  useEffect(() => {
+    let id: unknown; try { id = JSON.parse(graphText).id; } catch { return; }
+    if (typeof id !== "string") return;
+    const key = JSON.stringify([path, kind, retainedId, id]);
+    if (key !== selection.current) {
+      selection.current = key; setRevision(""); setHistory([]); setMethod(null); setApplication(null);
+    }
+  }, [path, kind, retainedId, graphText]);
   const source = () => kind === "retained" ? {kind, id: retainedId} : kind.startsWith("live-") ? { kind } : { kind, path };
   const graph = (): PopulationGraph => JSON.parse(graphText);
   const checked = (reply: Record<string, any>) => {
@@ -102,11 +113,23 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
         if (token !== generation.current) return;
         const binding = Object.fromEntries(["fingerprint", "sourceKey", "parameters", "scope"].map(k => [k, snapshot[k]]));
         const command = { action: "save", planId: g.id, expectedRevision: revision || null,
-          commandId: crypto.randomUUID(), graph: g, feature: strategyFeature, transforms: JSON.parse(transformText), source: source(), sourceBinding: binding, ...(plotEnabled ? {plot: JSON.parse(plotText)} : {}), ...(qcEnabled ? {qc:{policy:qcPolicy,decisions:JSON.parse(qcText)}} : {}) };
+          commandId: crypto.randomUUID(), graph: g, method, ...(application ? {application} : {}), feature: strategyFeature, transforms: JSON.parse(transformText), source: source(), sourceBinding: binding, ...(plotEnabled ? {plot: JSON.parse(plotText)} : {}), ...(qcEnabled ? {qc:{policy:qcPolicy,decisions:JSON.parse(qcText)}} : {}) };
         // Journal before submission; a storage failure must prevent a write with no recovery handle.
         window.localStorage.setItem(pendingKey, JSON.stringify(command));
         await reconcile(command, token);
       })}>Save backend revision</button>
+      <button disabled={!revision || !onLoadGraph} onClick={() => void run(async token => {
+        const reply = checked(await read({action:"read",planId:graph().id,revision}));
+        if (token !== generation.current) return;
+        const doc = reply.document;
+        setStrategyFeature(doc.feature); setTransformText(JSON.stringify(doc.transforms || [],null,2));
+        setMethod(doc.method || null); setApplication(doc.application || null);
+        setPlotEnabled(Boolean(doc.plot)); if (doc.plot) setPlotText(JSON.stringify(doc.plot,null,2));
+        setQcEnabled(Boolean(doc.qc)); setQcPolicy(doc.qc?.policy || "good-only");
+        setQcText(JSON.stringify(doc.qc?.decisions || [],null,2));
+        onLoadGraph?.(doc.graph);
+      })}>Load saved graph into editor</button>
+      {application && <><p>This draft retains its pinned template application. Arbitrary edits require explicitly detaching the draft; saved history is unchanged.</p><button onClick={() => setApplication(null)}>Detach draft from template</button></>}
       <button onClick={() => void run(async token => {
         const pending = window.localStorage.getItem(pendingKey);
         if (!pending) throw new Error("No unresolved command");

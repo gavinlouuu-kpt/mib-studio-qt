@@ -237,3 +237,13 @@ reopened successfully after this extension. The real worker regression uses3
 features with one missing selected event and verifies explicit missing count,
 reordered-input repeatability, tamper rejection and journal reopen. Seven worker,
 two scheduler,13 UI tests and clippy pass.
+
+### Graph editing / revision continuation
+
+Real tailnet backend plan `graph-revision-1792759318653`: revision1 selected14,
+revision2 (same draft label, minimum1000) selected0. Graph fingerprints differ;
+revision1 re-evaluation is unchanged, exact command replay returns revision2, and a
+new command with stale expectedRevision1 returns conflict. Focused UI14 tests pass,
+including same-plan CAS retention and exact method/application/QC restoration;
+frontend build and native normal plus ASan/UBSan host tests pass. The form editor
+has not received browser click-through qualification; connector remains unavailable.

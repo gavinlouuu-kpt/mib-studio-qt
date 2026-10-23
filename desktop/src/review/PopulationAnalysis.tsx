@@ -1,3 +1,4 @@
+import { PopulationGraphEditor } from "./PopulationGraphEditor";
 import { PopulationThumbnail } from "./PopulationThumbnail";
 import { useEffect, useRef, useState } from "react";
 import { AnalysisWorkspace, type AnalysisCall } from "./AnalysisWorkspace";
@@ -85,13 +86,14 @@ export function PopulationAnalysis({ path, disabled, evaluate = reviewBridge.ana
     <details><summary>Population graph recipe</summary>
       <p>Interval, AND, OR and NOT nodes are evaluated by the native backend. Parent IDs restrict populations. Unknown measurements remain unknown under NOT. The selected measurement above controls the reduction, not graph membership.</p>
       <label><input type="checkbox" checked={graphEnabled} disabled={busy || disabled} onChange={e => setGraphEnabled(e.target.checked)} />Use graph instead of interval membership</label>
-      <label>Graph JSON<textarea aria-label="Population graph JSON" rows={14} style={{ display: "block", width: "min(100%, 48rem)", fontFamily: "monospace" }} value={graphText} disabled={busy || disabled} onChange={e => { setGraphText(e.target.value); setSaved(""); }} /></label>
+      <PopulationGraphEditor text={graphText} onChange={value=>{setGraphText(value);setSaved("");}} disabled={busy||disabled}/>
+      <label>Advanced graph JSON<textarea aria-label="Population graph JSON" rows={14} style={{ display: "block", width: "min(100%, 48rem)", fontFamily: "monospace" }} value={graphText} disabled={busy || disabled} onChange={e => { setGraphText(e.target.value); setSaved(""); }} /></label>
       <button disabled={busy} onClick={() => { try { JSON.parse(graphText); window.localStorage.setItem(strategyKey, graphText); setSaved("Recipe saved in this browser. Source and results are not saved."); } catch (e) { setError(String(e)); } }}>Save recipe</button>
       <button disabled={busy} onClick={() => { try { const text = window.localStorage.getItem(strategyKey); if (!text) throw new Error("No saved recipe in this browser"); JSON.parse(text); setGraphText(text); setGraphEnabled(true); setSaved("Recipe restored. Analyze to evaluate against the current source."); } catch (e) { setError(String(e)); } }}>Restore recipe</button>
       <p>{saved}</p>
       <p>Browser-local recipe only; not a verified source-bound workspace. Copy the JSON to transfer it. Backend validates all nodes, cycles and budgets before publishing a result.</p>
     </details>
-    <AnalysisWorkspace path={path} disabled={disabled} graphText={graphText} feature={feature} read={analysisRead} write={analysisWrite} job={analysisJob} live={live} />
+    <AnalysisWorkspace path={path} disabled={disabled} graphText={graphText} feature={feature} read={analysisRead} write={analysisWrite} job={analysisJob} live={live} onLoadGraph={g=>{setGraphText(JSON.stringify(g,null,2));setGraphEnabled(true);}} />
     {error && <p role="alert">{error}</p>}
     {result && <div role="status">
       <p>{result.selected} selected · {result.excluded} excluded · {result.unknown} unknown / {result.valid} valid + {result.invalid} invalid stored observations.</p>

@@ -31,6 +31,16 @@ int main() {
                   {"feature", "area"},
                   {"minimum", 1},
                   {"maximum", 10}}}}};
+    {
+        json request{{"graph", graph}, {"feature", "area"}};
+        const auto before = backend::analysis::evaluateSource(source, request);
+        request["graph"]["nodes"][0]["minimum"] = 6;
+        const auto after = backend::analysis::evaluateSource(source, request);
+        MIB_EXPECT(before["graphFingerprint"] != after["graphFingerprint"],
+                   "graph identity follows content even when draft revision label is unchanged");
+        MIB_EXPECT(before["selected"] == "1" && after["selected"] == "0",
+                   "edited bounds evaluate against their own content revision");
+    }
     json binding;
     for (const char* k : {"fingerprint", "sourceKey", "parameters", "scope"})
         binding[k] = source[k];

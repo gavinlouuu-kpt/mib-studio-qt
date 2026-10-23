@@ -204,7 +204,8 @@ Json evaluateSource(const Json& rawSource, const Json& request) {
     const auto source = prepareAnalysisSource(rawSource, request);
     if (source.at("schema") != "F-source/1" || source.at("rows").size() > 10000)
         throw std::invalid_argument("Unsupported analysis source");
-    const auto graph = parseGraph(request.at("graph"));
+    auto graph = parseGraph(request.at("graph"));
+    graph.plan.revision = contentHash(request.at("graph"));
     const auto feature = request.at("feature").get<std::string>();
     const auto& units = source.at("parameters");
     if (!units.contains(feature))
@@ -292,6 +293,7 @@ Json evaluateSource(const Json& rawSource, const Json& request) {
         {"transforms", source.at("transforms")},
         {"sourceKey", source.at("sourceKey")},
         {"graph", request.at("graph")},
+        {"graphFingerprint", graph.plan.revision},
         {"feature", feature},
         {"unit", column.unit},
         {"selected", std::to_string(stats.selected)},

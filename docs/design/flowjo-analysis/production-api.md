@@ -369,3 +369,17 @@ Selected events missing any requested feature retain their original population
 membership but are omitted from embedding with explicit `missing_features` count.
 No imputation/implicit scaling. Older two-feature job requests/results reopen
 unchanged; optional fields are omitted from canonical serialization when absent.
+
+### Draft graph editing and content identity
+
+The production editor supports interval/Boolean forms, exact-reference renaming,
+reference-safe deletion and bounded draft undo/redo. Native validation remains the
+publication authority. Editing the same plan preserves its CAS revision; changing
+plan/source selection clears it. Loading an exact saved graph restores method,
+transforms, QC, PlotSpec and application lineage. Detaching template lineage is an
+explicit draft action; it never rewrites saved history. Plot population references
+still require explicit repair after a rename and native validation refuses stale ones.
+
+`evaluate` now includes `graphFingerprint`, SHA256 of the complete graph document.
+Native graph revision keys use this content identity rather than trusting a reusable
+user-authored draft revision label.

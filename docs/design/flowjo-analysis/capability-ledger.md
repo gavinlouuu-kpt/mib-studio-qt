@@ -154,3 +154,9 @@ and pinned in supervised t-SNE jobs. Missing selected-feature rows are separatel
 counted, never imputed or silently removed from the original population. Production
 three-feature proof and legacy artifact reopen pass. Other embedding engines and
 cross-platform qualification remain separate, not a high-dimensional selection gap.
+
+F04 continuation: production form-based interval/Boolean editing, reference-safe
+rename/delete, draft undo/redo and exact saved-graph loading now preserve CAS and
+method/application provenance. Native graph content fingerprints prevent unchanged
+draft labels from aliasing edited bounds. Real revision/replay/conflict proof passes.
+Full graphical gesture editing and remaining gate families are still open.
