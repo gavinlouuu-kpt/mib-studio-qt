@@ -66,6 +66,43 @@ PopulationStatistics populationStatistics(const Membership& population,
     }
     const auto normalized = std::clamp(sum / values.size(), -1.0L, 1.0L);
     result.mean = static_cast<double>(normalized * scale);
+    const auto quantile = [&](long double p) {
+        const long double position = (values.size() - 1) * p;
+        const auto lowerIndex = static_cast<std::size_t>(position);
+        const auto upperIndex = std::min(lowerIndex + 1, values.size() - 1);
+        const long double fraction = position - lowerIndex;
+        // Convex interpolation without overflowing an opposite-sign difference.
+        return static_cast<double>((1 - fraction) * static_cast<long double>(values[lowerIndex]) +
+                                   fraction * static_cast<long double>(values[upperIndex]));
+    };
+    result.p05 = quantile(.05L);
+    result.p25 = quantile(.25L);
+    result.p75 = quantile(.75L);
+    result.p95 = quantile(.95L);
+    const auto finite = [](long double v) -> std::optional<double> {
+        const auto value = static_cast<double>(v);
+        return std::isfinite(value) ? std::optional<double>(value) : std::nullopt;
+    };
+    if (values.size() > 1) {
+        long double squares = 0;
+        if (scale != 0)
+            for (const double value : values) {
+                const long double delta = static_cast<long double>(value) / scale - normalized;
+                squares += delta * delta;
+            }
+        const long double sd = std::sqrt(squares / (values.size() - 1));
+        result.sampleStandardDeviation = finite(sd * scale);
+        if (normalized != 0) result.cvPercent = finite(100 * sd / std::abs(normalized));
+    }
+    if (values.front() > 0) {
+        long double logs = 0;
+        for (const double value : values)
+            logs += std::log(static_cast<long double>(value)) / values.size();
+        result.geometricMean =
+            finite(std::clamp(std::exp(logs), static_cast<long double>(values.front()),
+                              static_cast<long double>(values.back())));
+    }
+
     return result;
 }
 } // namespace backend::analysis

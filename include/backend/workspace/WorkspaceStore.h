@@ -48,6 +48,10 @@ public:
                                     const std::optional<std::string>& expectedRevision,
                                     const std::string& commandId,
                                     const std::string& documentJson) const;
+    std::optional<Snapshot> derivedReceipt(const std::string& id, const std::string& command,
+                                           const std::string& request) const;
+    Snapshot derive(const std::string& id, const std::string& command, const std::string& request,
+                    const std::string& document);
     Snapshot commit(const std::string& workspaceId,
                     const std::optional<std::string>& expectedRevision,
                     const std::string& commandId, const std::string& documentJson);

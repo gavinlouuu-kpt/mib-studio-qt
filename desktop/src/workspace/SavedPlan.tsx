@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { Button, Card, Notice } from "@mib/ui";
 import { invoke } from "../transport";
 import { decodeRecipe, type Recipe } from "./recipeModel";
+import { FindingNextRun } from "./FindingNextRun";
 import { RecipeScience } from "./RecipeScience";
 import { RecipePairing } from "./RecipePairing";
 import { AnnotationGroups } from "./AnnotationGroups";
@@ -56,6 +57,10 @@ export function SavedPlan({ draft, controlHeld, onLoad, onOpenSource, runObserva
         return;
       }
       const q = JSON.parse(payload);
+      if(q.action === "resolve_finding" || q.action === "verify_next_run") {
+        if(!r.evidence || typeof r.evidence!=="object") throw new Error("Invalid finding evidence reply");
+        setMessage("Native finding, source, analysis and method references verified at this check. Scientific compatibility remains unknown; nothing applied or started."); return;
+      }
       if(q.action === "resolve_recipe") {
         if(r.workspace_id!==q.workspace_id || r.revision!==q.revision || !r.method || typeof r.method!=="object") throw new Error("Invalid recipe resolution reply");
         setMethodResolution(r.method as {status:string;reason?:string;provider?:string}); setMessage("Method lookup complete; scientific compatibility is separate."); return;
@@ -68,7 +73,7 @@ export function SavedPlan({ draft, controlHeld, onLoad, onOpenSource, runObserva
       }
       if (q.action === "export" || q.action === "export_status") {
         if (r.state!=="complete" || r.workspace_id!==q.workspace_id || r.job_id!==q.job_id || !r.manifest) throw new Error("Invalid export reply");
-        setManifest(r.manifest); setJobId(q.job_id); if(write) clearPending();
+        setManifest(typeof r.manifest_json==="string"?r.manifest_json:r.manifest); setJobId(q.job_id); if(write) clearPending();
         setMessage(`Export ${q.job_id} materialized for immutable revision ${r.revision}. Download separately; source files and method configurations are not embedded. Unresolved analysis references: ${Array.isArray((r.manifest as {payload?:{unresolved_references?:unknown[]}})?.payload?.unresolved_references) ? (r.manifest as {payload:{unresolved_references:unknown[]}}).payload.unresolved_references.length : 0}.`); return;
       }
       if (q.action === "verify_source") {
@@ -80,6 +85,7 @@ export function SavedPlan({ draft, controlHeld, onLoad, onOpenSource, runObserva
         setHistory(q.after ? prev => [...prev,...r.revisions as string[]] : r.revisions as string[]); return;
       }
       if (r.workspace_id !== q.workspace_id || typeof r.revision !== "string" || !/^[1-9][0-9]*$/.test(r.revision)) throw new Error("Invalid workspace identity in reply");
+      if(typeof r.document_json==="string")r.document=JSON.parse(r.document_json);
       const decodedDocument = decodeWorkspaceDocument(r.document);
       const plan = decodedDocument.plan;
       const savedRecipe = (r.document as Record<string, unknown>).recipe;
@@ -127,8 +133,8 @@ export function SavedPlan({ draft, controlHeld, onLoad, onOpenSource, runObserva
       <Button disabled={busy || !!retry || !snapshot || !controlHeld} onClick={()=>void request(true,JSON.stringify({action:"export",workspace_id:id,revision:snapshot!.revision,job_id:mintExperimentId()}))}>Prepare workspace export</Button>
       <label>Export job ID <input aria-label="Export job ID" value={jobId} onChange={e=>setJobId(e.target.value)}/></label>
       <Button disabled={busy || !!retry || !jobId || !id} onClick={()=>void request(false,JSON.stringify({action:"export_status",workspace_id:id,job_id:jobId}))}>Recover export job</Button>
-      {manifest!==null && <Button onClick={()=>{const url=URL.createObjectURL(new Blob([JSON.stringify(manifest,null,2)],{type:"application/json"}));const a=document.createElement("a");a.href=url;a.download=`workspace-${jobId}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}}>Download workspace manifest</Button>}
-      <label>Import manifest <input aria-label="Import manifest" type="file" accept="application/json,.json" disabled={busy || !!retry} onChange={async e=>{setImportManifest(null);const file=e.target.files?.[0];if(!file)return;try{if(file.size>1100000)throw new Error("Import exceeds size limit");const data=JSON.parse(await file.text());decodeSavedPlan(data.payload.document);setImportManifest(data);setMessage("Manifest selected; backend will verify its digest before creating a new workspace.");}catch(error){setMessage(String(error));}}}/></label>
+      {manifest!==null && <Button onClick={()=>{const url=URL.createObjectURL(new Blob([typeof manifest==="string"?manifest:JSON.stringify(manifest,null,2)],{type:"application/json"}));const a=document.createElement("a");a.href=url;a.download=`workspace-${jobId}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}}>Download workspace manifest</Button>}
+      <label>Import manifest <input aria-label="Import manifest" type="file" accept="application/json,.json" disabled={busy || !!retry} onChange={async e=>{setImportManifest(null);const file=e.target.files?.[0];if(!file)return;try{if(file.size>1100000)throw new Error("Import exceeds size limit");const text=await file.text();const data=JSON.parse(text);decodeSavedPlan(data.payload.document);setImportManifest(text);setMessage("Manifest selected; backend will verify its digest before creating a new workspace.");}catch(error){setMessage(String(error));}}}/></label>
       <label>Imported workspace ID <input aria-label="Imported workspace ID" value={importId} disabled={busy || !!retry} onChange={e=>setImportId(e.target.value)}/></label>
       <Button disabled={busy || !!retry || !controlHeld || !importManifest || !importId} onClick={()=>void request(true,JSON.stringify({action:"import",workspace_id:importId,command_id:mintExperimentId(),manifest:importManifest}))}>Import as new workspace</Button>
       <p>Source paths are on the backend host. Verification reads regular files only (up to 2 GiB, 10-second hashing limit), never writes them. Relink requires identical bytes, not just a matching name.</p>
@@ -149,6 +155,7 @@ export function SavedPlan({ draft, controlHeld, onLoad, onOpenSource, runObserva
       <label>Method source <select aria-label="Method source" value={recipe.method.source} disabled={busy || !!retry || !controlHeld} onChange={e => editRecipe({...recipe,method:{...recipe.method,source:e.target.value as "local" | "registry"}})}><option value="local">Local</option><option value="registry">Registry</option></select></label>
       <RecipePairing recipe={snapshot?.document.recipe?.id === recipe.id ? recipe : {...recipe, revision:null}} contextRevision={null} compatibility={null}/></>}
     </details>
+    {snapshot?.document.recipe && <FindingNextRun key={`${snapshot.workspace_id}:${snapshot.revision}`} workspaceId={snapshot.workspace_id} revision={snapshot.revision} profileBase={profileBase} blocked={busy||!!retry} controlHeld={controlHeld} evidence={snapshot.document.next_run_evidence} request={request}/>}
     {snapshot?.document.recipe && <RecipeScience workspaceId={snapshot.workspace_id} revision={snapshot.revision} recipe={snapshot.document.recipe} sources={snapshot.document.sources??{}} profileBase={profileBase} controlHeld={controlHeld} blocked={busy||!!retry} onOpenSource={onOpenSource}
       onSaveFinding={finding=>void request(true,JSON.stringify({action:"commit",workspace_id:id,expected_revision:snapshot.revision,command_id:mintExperimentId(),document:{...snapshot.document,findings:[...(Array.isArray(snapshot.document.findings)?snapshot.document.findings:[]),finding]}}))}/>}
     {Array.isArray(snapshot?.document.findings)&&snapshot.document.findings.length>0&&<details><summary>Saved findings ({snapshot.document.findings.length})</summary><ul>{snapshot.document.findings.map((f,i)=><li key={i}>{typeof f==="object"&&f!==null?String((f as Record<string,unknown>).interpretation??(f as Record<string,unknown>).id??"Finding"):"Unsupported finding"}<details><summary>Immutable finding evidence</summary><pre>{JSON.stringify(f,null,2)}</pre></details></li>)}</ul></details>}

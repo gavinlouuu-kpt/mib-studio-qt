@@ -116,3 +116,23 @@ it("records run observations only on explicit save and never restores them into 
  expect(host.textContent).toContain("not current instrument state");
  expect(call.mock.calls.map(c=>c[0])).toEqual(["workspace_write"]);
 });
+it("journals the complete next-run request across reload and never auto-applies", async () => {
+  const recipe={schema_version:1,id:"recipe-a",revision:"1",title:"Pair",question:"",method:{source:"local",id:"method-a",revision:"hash-a"},analysis_plan:{id:"analysis-a",revision:"1"},lineage:{recipe:null,finding:null}};
+  render(); call.mockResolvedValueOnce({...ok,document:{...ok.document,recipe}});
+  await click("Open saved plan");
+  const input=(label:string,value:string)=>act(()=>{
+    const node=host.querySelector(`input[aria-label="${label}"]`)!;
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value")!.set!.call(node,value);
+    node.dispatchEvent(new Event("input",{bubbles:true}));
+  });
+  input("Finding ID","finding-one");input("Finding content hash","sha256:"+"a".repeat(64));
+  call.mockRejectedValueOnce(new Error("lost draft reply"));
+  await click("Validate and create next-run draft");
+  const sent=call.mock.calls[1]; const q=JSON.parse((sent[1] as {request:string}).request);
+  expect(q).toMatchObject({action:"draft_from_finding",source_workspace_id:ok.workspace_id,source_revision:"1",finding:{findingId:"finding-one",revision:"1"},sample_index:0});
+  expect(q.workspace_id).not.toBe(ok.workspace_id);expect(q.experiment_id).not.toBe(draft.experimentId);
+  act(()=>root.unmount());root=createRoot(host);render();expect(call).toHaveBeenCalledTimes(2);
+  call.mockResolvedValue({status:"ok",workspace_id:q.workspace_id,revision:"1",document:{schema_version:1,plan:{...draft,experimentId:q.experiment_id},recipe:{...recipe,id:q.recipe_id}}});
+  await click("Retry same save");expect(call.mock.calls[2]).toEqual(sent);
+  expect(call.mock.calls.every(([name])=>name==="workspace_read"||name==="workspace_write")).toBe(true);
+});

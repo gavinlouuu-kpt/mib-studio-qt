@@ -180,6 +180,27 @@ std::set<std::pair<std::string, std::string>> analysisReferences(const nlohmann:
     if (doc.contains("findings") && doc.at("findings").is_array())
         for (const auto& f : doc.at("findings"))
             if (f.is_object() && f.contains("recipe")) recipe(f.at("recipe"));
+    if (doc.contains("next_run_evidence")) {
+        const auto& f = doc.at("next_run_evidence").at("finding");
+        refs.insert({"analysis-finding/" + f.at("findingId").get<std::string>(),
+                     f.at("revision").get<std::string>()});
+    }
+    if (doc.value("type", std::string{}) == "F-analysis-finding/1") {
+        for (const auto& sample : doc.at("request").at("spec").at("samples")) {
+            refs.insert({"analysis/" + sample.at("planId").get<std::string>(),
+                         sample.at("revision").get<std::string>()});
+            if (sample.at("source").at("kind") != "retained")
+                throw StoreError(StoreErrorCode::Invalid,
+                                 "Finding requires retained native sources");
+            refs.insert(
+                {"analysis-source/" + sample.at("source").at("id").get<std::string>(), "1"});
+        }
+    }
+    if (doc.value("type", std::string{}) == "F-analysis-strategy/1" && doc.contains("application")) {
+        const auto& a = doc.at("application");
+        refs.insert(
+            {"analysis/" + a.at("planId").get<std::string>(), a.at("revision").get<std::string>()});
+    }
     if (refs.size() > 64)
         throw StoreError(StoreErrorCode::Invalid, "Too many pinned analysis dependencies");
     return refs;
@@ -226,30 +247,42 @@ std::string WorkspaceStore::exportSnapshot(const std::string& id, const std::str
                               {"document", nlohmann::json::parse(saved->documentJson)}};
     payload["dependencies"] = nlohmann::json::array();
     payload["unresolved_references"] = nlohmann::json::array();
-    for (const auto& [dependencyId, dependencyRevision] :
-         analysisReferences(payload.at("document"))) {
+    auto pendingRefs = analysisReferences(payload.at("document"));
+    std::set<std::pair<std::string, std::string>> visited;
+    while (!pendingRefs.empty()) {
+        const auto [dependencyId, dependencyRevision] = *pendingRefs.begin();
+        pendingRefs.erase(pendingRefs.begin());
+        if (!visited.insert({dependencyId, dependencyRevision}).second) continue;
+        if (visited.size() > 64) throw StoreError(StoreErrorCode::Invalid, "Too many dependencies");
         std::optional<Snapshot> pinned;
         try {
             pinned = read(dependencyId, dependencyRevision);
         } catch (const StoreError& e) {
             if (e.code != StoreErrorCode::Invalid) throw;
         }
-        if (pinned)
+        if (pinned) {
+            const auto nested = analysisReferences(nlohmann::json::parse(pinned->documentJson));
+            pendingRefs.insert(nested.begin(), nested.end());
             payload["dependencies"].push_back(
                 {{"workspace_id", dependencyId},
                  {"revision", dependencyRevision},
                  {"document", nlohmann::json::parse(pinned->documentJson)}});
-        else
+        } else
             payload["unresolved_references"].push_back(
                 {{"workspace_id", dependencyId}, {"revision", dependencyRevision}});
     }
     if (payload.dump().size() > 1024 * 1024)
         throw StoreError(StoreErrorCode::Invalid, "Export with dependencies exceeds 1 MiB");
     nlohmann::json manifest = {{"payload", payload}, {"sha256", digest(payload.dump())}};
-    const auto result =
-        nlohmann::json{{"status", "ok"},     {"state", "complete"},  {"job_id", job},
-                       {"workspace_id", id}, {"revision", revision}, {"manifest", manifest}}
-            .dump();
+    const auto result = nlohmann::json{
+        {"status", "ok"},
+        {"state", "complete"},
+        {"job_id", job},
+        {"workspace_id", id},
+        {"revision", revision},
+        {"manifest", manifest},
+        {"manifest_json",
+         manifest.dump()}}.dump();
     Statement insert(
         db_,
         "INSERT INTO workspace_exports(workspace_id,job_id,revision,result_json) VALUES(?,?,?,?)");
@@ -274,7 +307,72 @@ Snapshot WorkspaceStore::importSnapshot(const std::string& id, const std::string
     identifier(payload.at("workspace_id").get<std::string>());
     revisionNumber(payload.at("revision").get<std::string>());
     const auto document = canonicalDocument(payload.at("document").dump());
-    const auto refs = analysisReferences(payload.at("document"));
+    auto refs = analysisReferences(payload.at("document"));
+    if (payload.contains("dependencies")) {
+        // Compute transitive closure only from reachable documents, never unrelated entries.
+        for (std::size_t pass = 0; pass < 64; ++pass) {
+            const auto previous = refs.size();
+            for (const auto& dep : payload.at("dependencies")) {
+                if (refs.count({dep.at("workspace_id").get<std::string>(),
+                                dep.at("revision").get<std::string>()})) {
+                    const auto nested = analysisReferences(dep.at("document"));
+                    refs.insert(nested.begin(), nested.end());
+                }
+            }
+            if (refs.size() > 64)
+                throw StoreError(StoreErrorCode::Invalid, "Too many dependencies");
+            if (refs.size() == previous) break;
+        }
+    }
+    if (payload.at("document").contains("next_run_evidence")) {
+        // A portable next-run draft cannot silently discard its scientific authority.
+        std::set<std::pair<std::string, std::string>> checked;
+        auto pending = refs;
+        while (!pending.empty()) {
+            const auto key = *pending.begin();
+            pending.erase(pending.begin());
+            if (!checked.insert(key).second) continue;
+            if (checked.size() > 64)
+                throw StoreError(StoreErrorCode::Invalid, "Too many dependencies");
+            const auto native = read(key.first, key.second);
+            if (!native)
+                throw StoreError(StoreErrorCode::Invalid, "Next-run native dependency unavailable");
+            const auto nested = analysisReferences(nlohmann::json::parse(native->documentJson));
+            pending.insert(nested.begin(), nested.end());
+        }
+        refs.insert(checked.begin(), checked.end());
+        const auto& evidence = payload.at("document").at("next_run_evidence");
+        const auto& findingRef = evidence.at("finding");
+        const auto finding = nlohmann::json::parse(
+            read("analysis-finding/" + findingRef.at("findingId").get<std::string>(),
+                 findingRef.at("revision").get<std::string>())
+                ->documentJson);
+        const auto& planRef = evidence.at("analysisPlan");
+        const auto strategy = read("analysis/" + planRef.at("id").get<std::string>(),
+                                   planRef.at("revision").get<std::string>());
+        const auto& recipe = payload.at("document").at("recipe");
+        if (evidence.at("schema") != "I-next-run-evidence/1" || evidence.at("applied") != false ||
+            evidence.at("compatibility") != "unknown" ||
+            evidence.at("hardwareReadiness") != "not_evaluated" ||
+            recipe.at("method").at("id") != evidence.at("method").at("id") ||
+            recipe.at("method").at("revision") != evidence.at("method").at("revision") ||
+            planRef.at("id") != evidence.at("sample").at("reference").at("planId") ||
+            planRef.at("revision") != evidence.at("sample").at("reference").at("revision"))
+            throw StoreError(StoreErrorCode::Invalid, "Next-run recipe/provenance mismatch");
+        if (!strategy || evidence.at("findingDocumentHash") != "sha256:" + digest(finding.dump()) ||
+            findingRef.at("contentHash") != finding.at("contentHash") ||
+            finding.at("contentHash") != "sha256:" + digest(finding.at("comparison").dump()) ||
+            evidence.at("sample") != finding.at("comparison")
+                                         .at("samples")
+                                         .at(evidence.at("sampleIndex").get<std::size_t>()) ||
+            planRef.at("documentHash") !=
+                "sha256:" + digest(nlohmann::json::parse(strategy->documentJson).dump()) ||
+            payload.at("document").at("recipe").at("analysis_plan").at("id") != planRef.at("id") ||
+            payload.at("document").at("recipe").at("analysis_plan").at("revision") !=
+                planRef.at("revision"))
+            throw StoreError(StoreErrorCode::Invalid,
+                             "Next-run evidence differs from native authority");
+    }
     Transaction tx(db_);
     auto result = writeInTransaction(id, std::nullopt, command, document,
                                      "import:" + manifest.at("sha256").get<std::string>());
@@ -291,7 +389,12 @@ Snapshot WorkspaceStore::importSnapshot(const std::string& id, const std::string
             const auto did = dep.at("workspace_id").get<std::string>(),
                        rev = dep.at("revision").get<std::string>();
             if (!refs.count({did, rev}) || !seen.insert({did, rev}).second ||
-                dep.at("document").value("type", std::string{}) != "F-analysis-strategy/1")
+                !((did.rfind("analysis/", 0) == 0 &&
+                   dep.at("document").value("type", std::string{}) == "F-analysis-strategy/1") ||
+                  (did.rfind("analysis-finding/", 0) == 0 && rev == "1" &&
+                   dep.at("document").value("type", std::string{}) == "F-analysis-finding/1") ||
+                  (did.rfind("analysis-source/", 0) == 0 && rev == "1" &&
+                   dep.at("document").value("type", std::string{}) == "F-retained-source/1")))
                 throw StoreError(StoreErrorCode::Invalid,
                                  "Unreferenced or invalid analysis dependency");
             const auto content = canonicalDocument(dep.at("document").dump());
@@ -428,6 +531,40 @@ std::optional<Snapshot> WorkspaceStore::receipt(const std::string& id,
     const auto saved = read(id, q.text(1));
     if (!saved) throw StoreError(StoreErrorCode::Storage, "Command references a missing revision");
     return saved;
+}
+std::optional<Snapshot> WorkspaceStore::derivedReceipt(const std::string& id,
+                                                       const std::string& command,
+                                                       const std::string& request) const {
+    requireInitialized();
+    identifier(id);
+    identifier(command);
+    const auto operation = "derive:" + nlohmann::json::parse(request).dump();
+    Statement q(db_, "SELECT request_json,revision FROM workspace_commands WHERE workspace_id=? "
+                     "AND command_id=?");
+    q.bind(1, id);
+    q.bind(2, command);
+    if (q.step() != SQLITE_ROW) return std::nullopt;
+    if (nlohmann::json::parse(q.text(0)).at("operation") != operation)
+        throw StoreError(StoreErrorCode::Invalid, "Derived command identity collision");
+    const auto saved = read(id, q.text(1));
+    if (!saved) throw StoreError(StoreErrorCode::Storage, "Derived receipt missing snapshot");
+    return saved;
+}
+Snapshot WorkspaceStore::derive(const std::string& id, const std::string& command,
+                                const std::string& request, const std::string& document) {
+    Transaction tx(db_);
+    if (auto previous = derivedReceipt(id, command, request)) {
+        tx.commit();
+        return *previous;
+    }
+    const auto origin = nlohmann::json::parse(request);
+    const auto source = read(origin.at("source_workspace_id").get<std::string>());
+    if (!source || source->revision != origin.at("source_revision").get<std::string>())
+        throw StoreError(StoreErrorCode::Conflict, "Source workspace changed during planning");
+    auto result = writeInTransaction(id, std::nullopt, command, canonicalDocument(document),
+                                     "derive:" + origin.dump());
+    tx.commit();
+    return result;
 }
 Snapshot WorkspaceStore::commit(const std::string& id, const std::optional<std::string>& expected,
                                 const std::string& command, const std::string& document) {

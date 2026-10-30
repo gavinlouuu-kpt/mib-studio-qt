@@ -1835,7 +1835,7 @@ pub fn workspace_write(state: &AppState, request: String) -> Result<serde_json::
     workspace_request(state, request, true)
 }
 fn workspace_request(state: &AppState, request: String, write: bool) -> Result<serde_json::Value, String> {
-    if request.len() > 1_100_000 { return Err("Workspace request too large".into()); }
+    if request.len() > 2_200_000 { return Err("Workspace request too large".into()); }
     let mut guard = state.bridge.lock().map_err(|e| e.to_string())?;
     serde_json::from_str(&guard.pin_mut().workspace_request(&request, write)).map_err(|e| e.to_string())
 }
@@ -2026,6 +2026,14 @@ mod tests {
     use mib_bridge::ffi::{self, BridgeEventKind};
     use serial_test::serial;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn scientific_numbers_preserve_native_double_bits() {
+        // Regression: default serde parser rounded these retained measurements by one ULP.
+        let value: serde_json::Value = serde_json::from_str(r#"[0.12000000000000001,0.24000000000000002]"#).unwrap();
+        assert_eq!(value[0].as_f64().unwrap().to_bits(), 0.12000000000000001_f64.to_bits());
+        assert_eq!(value[1].as_f64().unwrap().to_bits(), 0.24000000000000002_f64.to_bits());
+    }
 
     #[test]
     fn event_kind_names_are_stable() {

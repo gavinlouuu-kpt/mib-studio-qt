@@ -1,3 +1,4 @@
+#include "backend/workspace/NextRunPlanning.h"
 #include "backend/analysis/AnalysisHost.h"
 #include "backend/analysis/SourceAnalysis.h"
 #include "backend/database/SqliteService.h"
@@ -1565,6 +1566,10 @@ namespace backend::bridge
         if (!initialized_) return R"({"status":"unavailable","message":"Backend not initialized"})";
         try {
             const auto action=nlohmann::json::parse(request).value("action",std::string{});
+            if(action=="resolve_finding" || action=="draft_from_finding"||action=="verify_next_run")
+                return workspace::nextRunPlanning(backend_.sqlite(),request,write,
+                    [&](const nlohmann::json& q){return nlohmann::json::parse(analysisRequestJson(q.dump(),false));},
+                    [&](const nlohmann::json& q){return nlohmann::json::parse(workspaceRequestJson(q.dump(),false));});
             if (action=="evaluate_recipe") {
                 using J=nlohmann::json;
                 const auto q=J::parse(request);
@@ -1627,7 +1632,7 @@ namespace backend::bridge
                             if (p.at("profile_id")==method.at("id") && p.at("revision")==method.at("revision")) {
                                 ++matches;
                                 resolution={{"status","resolved"},{"provider","local-profile"},{"id",p.at("profile_id")},
-                                            {"revision",p.at("revision")},{"path",p.at("path")}};
+                                            {"revision",p.at("revision")},{"content_sha256",p.at("revision")},{"path",p.at("path")}};
                             }
                         if (matches>1) resolution={{"status","unresolved"},{"reason","Ambiguous local method identity"}};
                     } else resolution["reason"]=catalog.value("error",std::string{"Method lookup failed"});

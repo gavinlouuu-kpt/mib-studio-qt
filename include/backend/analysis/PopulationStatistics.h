@@ -19,10 +19,15 @@ struct PopulationStatistics {
     std::uint64_t selected{0}, excluded{0}, unknownMembership{0};
     std::uint64_t measured{0}, missing{0}; // among selected events only
     std::optional<double> minimum, maximum, mean, median;
+    std::optional<double> p05, p25, p75, p95;
+    std::optional<double> sampleStandardDeviation, cvPercent, geometricMean;
 };
 // Exact finite raw values, not histogram estimates. Full keyed column coverage
 // required, including excluded rows. Null/nonfinite values count as missing.
 // Empty measured populations return null reductions. Maximum 10,000 rows.
+// Quantiles use Hyndman-Fan type 7; sample SD divides by n-1 (null n<2).
+// CV is 100*sampleSD/abs(mean), null at zero mean/nonrepresentable result.
+// Geometric mean requires every measured value >0; missing remains counted.
 // Does not assert completeness of a source snapshot or infer unobserved events.
 PopulationStatistics populationStatistics(const Membership& population,
                                           const MeasurementColumn& column);
