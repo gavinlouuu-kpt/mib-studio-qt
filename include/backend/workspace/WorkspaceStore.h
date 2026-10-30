@@ -1,0 +1,70 @@
+#pragma once
+
+#include <optional>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+struct sqlite3;
+namespace backend::workspace {
+enum class StoreErrorCode { Invalid, Conflict, NotFound, Storage };
+class StoreError : public std::runtime_error {
+public:
+    StoreError(StoreErrorCode code, const std::string& message)
+        : std::runtime_error(message), code(code) {}
+    StoreErrorCode code;
+};
+struct Snapshot {
+    std::string workspaceId;
+    std::string revision; // Canonical decimal string, never a JSON floating-point number.
+    std::string documentJson;
+};
+// Connection and operator authorization belong to the metadata DB host (#393/#395).
+// Caller serializes access; never use on acquisition threads or inside another transaction.
+// Does not open files, own a DB, configure pragmas, apply hardware, or evaluate science.
+class WorkspaceStore {
+public:
+    explicit WorkspaceStore(sqlite3* connection);
+    void initialize();
+    std::optional<Snapshot> read(const std::string& workspaceId,
+                                 const std::optional<std::string>& revision = std::nullopt) const;
+    std::vector<std::string> history(const std::string& workspaceId, int limit = 100,
+                                     const std::optional<std::string>& after = std::nullopt) const;
+    std::vector<Snapshot> list(int limit = 100, const std::string& after = "") const;
+    // Completed export jobs materialize immutable manifest bytes in the metadata DB.
+    std::string exportSnapshot(const std::string& workspaceId, const std::string& revision,
+                               const std::string& jobId);
+    std::string exportStatus(const std::string& workspaceId, const std::string& jobId) const;
+    Snapshot importSnapshot(const std::string& workspaceId, const std::string& commandId,
+                            const std::string& manifest);
+    Snapshot linkSource(const std::string& workspaceId, const std::string& expectedRevision,
+                        const std::string& commandId, const std::string& sourceId,
+                        const std::string& path, bool relink);
+    std::string verifySource(const std::string& workspaceId, const std::string& revision,
+                             const std::string& sourceId) const;
+    // null expectedRevision is create-only. Complete logical document is atomically replaced.
+    // Successful command replay returns its original revision even if the head advanced.
+    std::optional<Snapshot> receipt(const std::string& workspaceId,
+                                    const std::optional<std::string>& expectedRevision,
+                                    const std::string& commandId,
+                                    const std::string& documentJson) const;
+    std::optional<Snapshot> derivedReceipt(const std::string& id, const std::string& command,
+                                           const std::string& request) const;
+    Snapshot derive(const std::string& id, const std::string& command, const std::string& request,
+                    const std::string& document);
+    Snapshot commit(const std::string& workspaceId,
+                    const std::optional<std::string>& expectedRevision,
+                    const std::string& commandId, const std::string& documentJson);
+    Snapshot restore(const std::string& workspaceId, const std::string& expectedRevision,
+                     const std::string& commandId, const std::string& targetRevision);
+
+private:
+    sqlite3* db_;
+    bool initialized_{false};
+    void requireInitialized() const;
+    Snapshot writeInTransaction(const std::string&, const std::optional<std::string>&,
+                                const std::string&, const std::string&, const std::string&);
+    Snapshot write(const std::string&, const std::optional<std::string>&, const std::string&,
+                   const std::string&, const std::string&);
+};
+} // namespace backend::workspace

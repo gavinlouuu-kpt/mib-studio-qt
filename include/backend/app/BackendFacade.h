@@ -1147,6 +1147,7 @@ namespace backend::bridge
         // one explicit compare-and-set of the pixel-to-micron factor (app/CalibrationStore.h),
         // refused unless the experiment is idle (it runs inside the coordinator's idle
         // transaction); only the WebSocket server's controlling client may send it.
+        std::string workspaceRequestJson(const std::string& request, bool write);
         std::string calibrationRecordsListJson() const;
         std::string calibrationRecordGetJson(const std::string &recordId) const;
         std::string applyCalibrationJson(const std::string &recordId, double expectedCurrentFactor);
@@ -1158,6 +1159,9 @@ namespace backend::bridge
         // coordinator) or, on a miss, computed only inside the coordinator's idle transaction with
         // no raw recording, the review lanes free and under the review session's mutex (#722);
         // otherwise it is `deferred` ("computed when the instrument is idle"), never an error.
+        std::string analyzePopulationJson(const std::string& requestJson);
+        std::string analysisRequestJson(const std::string& requestJson, bool write);
+        std::string fetchLiveEvidenceJson();
         std::string runQuickLookJson(const std::string &requestJson);
         // Asynchronous device discovery (issue #419, ABI 14): start a job on
         // the backend service, poll its bounded snapshot, cancel it. Camera

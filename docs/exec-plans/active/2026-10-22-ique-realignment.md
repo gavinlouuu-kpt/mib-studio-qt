@@ -51,3 +51,22 @@ effects. Published minimum I-workspace/1 contract to F #808; exact storage owner
 awaits agreement. This consumes #393/#395 rather than inventing a parallel store.
 #811's four CI checks passed; #813 carries the recorded QC slice. Full capability
 acceptance remains open. UI browser inspection remains blocked by tool policy.
+
+## Native persistence core continuation
+
+Cross-track coordinator confirmed I retains shared metadata persistence; F retains
+scientific payloads. Isolated injected-SQLite WorkspaceStore now passes actual
+round-trip/fault/restart/concurrent-CAS checks and ASan/UBSan. No host-owned DB
+opening or shared facade edits. TSan failed before running with host memory mapping
+errors; sanitizer acceptance remains open. See WORKSPACE-EVIDENCE for exact handoff.
+
+
+## Own-branch production integration continuation
+
+Coordinator lifted shared-file allocation gates for this dev branch. Existing
+annotation/QC/recipe/store slices are already ancestors of
+`feat/807-ique-workspace-core`; no main/develop merge was needed. The production
+metadata host, facade, cxx, shared commands, Tauri and WebSocket routes now connect
+the Plan's Save/Open panel to app.sqlite3. This is actual persistence, not the
+fixture entry. Remaining work is tracked by concrete capability gaps, not shared
+filename ownership. See [production integration evidence](../../design/ique-workflow/PRODUCTION-INTEGRATION.md).

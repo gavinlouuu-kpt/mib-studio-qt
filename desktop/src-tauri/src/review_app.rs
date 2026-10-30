@@ -13,6 +13,7 @@ use tauri::Manager;
 use crate::{isoelastic, platform, review, review_update};
 
 pub struct AppState {
+    pub analysis_jobs: Mutex<mib_analysis_worker::app::Service>,
     pub review: Mutex<cxx::UniquePtr<review_ffi::ReviewBridge>>,
 }
 
@@ -35,7 +36,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .manage(AppState { review: Mutex::new(review_ffi::new_review_bridge()) })
+        .manage(AppState { analysis_jobs: Mutex::new(Default::default()), review: Mutex::new(review_ffi::new_review_bridge()) })
         .invoke_handler(tauri::generate_handler![
             review::abi_version,
             review::is_initialized,
@@ -56,6 +57,10 @@ pub fn run() {
             review::fetch_review_info,
             review::review_probe_runs,
             review::review_run_statistics,
+            review::review_analyze_population,
+            review::review_analysis_read,
+            review::review_analysis_write,
+            review::review_analysis_job,
             review::fetch_review_track_rows,
             review::review_reprocess_record,
             review::fetch_review_rows,

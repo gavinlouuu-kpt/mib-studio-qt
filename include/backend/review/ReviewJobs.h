@@ -332,6 +332,7 @@ namespace backend::review
         // read, so no job claims a lane meanwhile, and while either lane is
         // claimed the file is Deferred (kRunStatisticsDeferredMessage), never
         // an error and nothing is read. Synchronous; never writes.
+        std::string analyzePopulation(const std::string& requestJson);
         RunStatisticsResult runStatistics(const std::string &path, const std::string &computedAt);
         // #717 B3b: one record reprocessed with the processing kernel, next
         // to its stored values (ReprocessResult). Never writes. The inputs

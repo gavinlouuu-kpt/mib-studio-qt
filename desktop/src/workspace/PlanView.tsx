@@ -24,6 +24,7 @@ import {
 } from "./planModel";
 import { FormatCard, NOT_DECLARED, OperatorFields, CameraModeNotice, SampleEditor, StartBlockText, calibrationFacts, declaredCalibration, startBlocks, type PlanCalibration } from "./planParts";
 import { QueuePlan } from "./QueuePlan";
+import { SavedPlan } from "./SavedPlan";
 import { AnnotationGroups } from "./AnnotationGroups";
 import { startConfirmation, type ConfirmationState, type Verdict } from "./prepareModel";
 import type { PlanController, PlanStartResult } from "./usePlan";
@@ -53,6 +54,7 @@ export interface PlanViewProps {
    *  unavailable meanwhile (#716 A7b). Another client's open file is not known here: the backend's
    *  refusal says so at Start. */
   reviewOpen?: string;
+  onOpenSource?: (path:string)=>Promise<void>;
 }
 
 export { startBlocks, type StartBlock } from "./planParts";
@@ -85,7 +87,7 @@ export function refreshNotice(r: PlanStartResult | null): NoticeText | null {
 }
 
 export function PlanView(props: PlanViewProps) {
-  return props.plan.draft.format === "queue" ? <QueuePlan {...props} /> : <SinglePlan {...props} />;
+  return <><SavedPlan runObservation={{queue:props.plan.queue.state,started:props.plan.started,reference:props.plan.reference}} draft={props.plan.draft} controlHeld={props.plan.queue.controlHeld} onLoad={props.plan.loadSaved} onOpenSource={props.onOpenSource} />{props.plan.draft.format === "queue" ? <QueuePlan {...props} /> : <SinglePlan {...props} />}</>;
 }
 
 function SinglePlan({ plan, lockedReason, verdict, blockers, cameraMode, onCameraMode, confirmation, onShowLive, calibration, reviewOpen }: PlanViewProps) {

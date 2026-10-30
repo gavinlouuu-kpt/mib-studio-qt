@@ -163,6 +163,7 @@ struct SessionTable {
 
 /// Commands that change the instrument's state; viewers may not send them.
 const CONTROL_COMMANDS: &[&str] = &[
+    "analysis_write", "analysis_job",
     "configure_mock", "start_capture", "stop_capture", "set_camera_overview", "save_camera_roi",
     "select_hardware_camera", "select_mindvision_camera", "apply_camera_script", "soft_trigger_camera",
     "reset_hardware_camera", "start_recording", "stop_recording", "seek_latest", "seek_index", "load_recording",
@@ -193,6 +194,7 @@ const CONTROL_COMMANDS: &[&str] = &[
     "monitoring_cell_pin", "monitoring_cell_unpin", "monitoring_cell_clear_pins",
     // Calibration apply (#716 A4a, ABI 42): it sets the instrument's pixel-to-micron factor, so
     // only the controlling client may send it. Listing and reading records stay open to viewers.
+    "workspace_write",
     "calibration_apply",
 ];
 
@@ -696,6 +698,8 @@ mod stage_control_tests {
     // control; the list and get are reads every client may use.
     #[test]
     fn calibration_apply_is_control_only_but_reads_are_not() {
+        assert!(CONTROL_COMMANDS.contains(&"workspace_write"));
+        assert!(!CONTROL_COMMANDS.contains(&"workspace_read"));
         assert!(CONTROL_COMMANDS.contains(&"calibration_apply"), "calibration_apply must be a CONTROL command");
         for cmd in ["calibration_records_list", "calibration_record_get"] {
             assert!(!CONTROL_COMMANDS.contains(&cmd), "{cmd} is a read: viewers may use it");

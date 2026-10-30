@@ -1050,6 +1050,10 @@ pub mod ffi {
 
         /// Pull one bounded page of frame/object metrics from the loaded file
         /// (schema v9, BE-6). `valid` selects the valid/invalid table.
+        fn analysis_read(self: Pin<&mut BackendBridge>, request: &str) -> String;
+        fn analysis_write(self: Pin<&mut BackendBridge>, request: &str) -> String;
+        fn fetch_live_evidence(self: Pin<&mut BackendBridge>) -> String;
+        fn analyze_population(self: Pin<&mut BackendBridge>, request_json: &str) -> String;
         fn fetch_review_metrics_page(
             self: Pin<&mut BackendBridge>,
             valid: bool,
@@ -1364,6 +1368,7 @@ pub mod ffi {
         /// `calibration_records.list_reply`): the newest version of every record, newest first,
         /// plus the applied / in-effect record, the current factor and identity. A read: it never
         /// applies or changes anything. `{"valid": false}` before init.
+        fn workspace_request(self: Pin<&mut BackendBridge>, request: &str, write: bool) -> String;
         fn calibration_records_list(self: Pin<&mut BackendBridge>) -> String;
         /// One record and every version of it (`calibration_records.get_reply`). A read.
         fn calibration_record_get(self: Pin<&mut BackendBridge>, record_id: &str) -> String;
