@@ -60,13 +60,13 @@ Existing tests are evidence anchors, not claims that they ran in this audit.
 | I03 | RG Protocol/worklist; C Preflight; O1/O3 | `prepareModel.ts`, `usePrepareReadiness.ts`, `planParts.tsx`; #727/#548; `prepareModel.test.ts` | Extend #807; readiness authority #806 | Readiness exists. Time/storage/volume forecasts, provenance/freshness and complete worklist not accepted. |
 | I04 | RG Run; C Run; O3/O4 | `queueModel.ts`, `usePlan.ts`, `QueuePlan.tsx`, `experimentStart.ts`; #739/#744/#750; queue model/view tests | Reuse/extend #807; #741 closed | Manual one-file-per-sample queue and explicitly saved historical run observations exist. Automatic restart resumption is not supported; live fault qualification outstanding. |
 | I05 | RG Run + linked selection; C Run; O4 | `LiveView.tsx`, `useLiveCells.ts`, `liveImages.ts`; #749; `LiveView.test.tsx`, `liveModel.test.ts` | Reuse/extend #807, image authority #806 | Strip/pins/lifecycle exist; full revision-qualified live answers, reconnect and hardware proof outstanding. Develop #793 must be incorporated before qualification. |
-| I06 | RG analysis propagation; C Review; O5/O6/R2 | `QuickLookView.tsx`, `useQuickLook.ts`, `runQuickLook.ts`, backend `RunStatistics.cpp`; `run_quick_look_test.cpp`, `review_run_statistics_test.cpp`, `summaryViews.test.tsx` | Extend #807; science #808/#523 | Existing results are closed-run descriptive answers, not population/live analysis. Keep their backend authority; add linked next-action persistence. |
-| I07 | RG Metrics; V metric builder; C Review; R4 | `review/metricsColumns.ts`, `components/ResultMetricCells.tsx`; #523 FJ08 | Restore/missing #807 UX; #808 evaluator | No population × parameter × statistic builder, typed expression validator/evaluator or revision-bound result API. |
+| I06 | RG analysis propagation; C Review; O5/O6/R2 | `QuickLookView.tsx`, `useQuickLook.ts`, `runQuickLook.ts`, backend `RunStatistics.cpp`; `run_quick_look_test.cpp`, `review_run_statistics_test.cpp`, `summaryViews.test.tsx` | Extend #807; science #808/#523 | Existing results are closed-run descriptive answers, not population/live analysis. Keep their backend authority. Native immutable F finding → next-run planning linkage is implemented at `90dd17cc`; live population integration remains separate. |
+| I07 | RG Metrics; V metric builder; C Review; R4 | `review/metricsColumns.ts`, `components/ResultMetricCells.tsx`; #523 FJ08 | Restore/missing #807 UX; #808 evaluator | Pinned F native reductions and report/table backend are now present through the bounded finding provider; the complete I metric-builder UI and typed-expression workflow remain implementation work. |
 | I08 | RG Profile Map; V criteria; F criteria/R4 | Analysis criteria UI and common evaluator absent; existing acquisition target is NOT a substitute | Restore #807 UX; #808/#523 FJ04 evaluation | Polygon AND E AND ranges, declared missing policy, linked selected values and exact hit denominator all required. Never deploy sort gates. |
-| I09 | RG Panorama; V multi-plate; C Compare; F Compare/R5 | Single-file review and batch exports; no refreshable ComparisonSpec authority | Restore #807/#314 UX; #808 science | Compatible-run picker with reasons, refresh, small multiples/heatmaps and scale choice absent. |
+| I09 | RG Panorama; V multi-plate; C Compare; F Compare/R5 | Single-file review and batch exports; no refreshable ComparisonSpec authority | Restore #807/#314 UX; #808 science | Pinned F native comparison/finding authority is integrated and used by next-run planning; compatible-run picker, refresh, small multiples/heatmaps and scale choice remain implementation work. |
 | I10 | RG curve fitting; V dose response; C Compare/R5 | No qualified fit result API; #523 FJ09 | Missing #807 presentation; #808 fit authority | Unit/pairing/weighting/model and suspect-fit reasons required; no frontend fit or invented curve. |
 | I11 | RG QC history; C Preflight; O1 | `CalibrationCard.tsx`, `calibrationRecords.ts`, backend `CalibrationRecord.cpp`; #716 A4; calibration model/view and backend tests | Extend/restore #807 history UX; backend owner #716/#806 | Recorded history/setup-filter/selection implemented in #813; existing explicit CAS apply reused. Versioned trend thresholds/reversible exclusions missing; focus remains not-recorded when absent. |
-| I12 | RG experiment export/templates; C Review; O6/R6 | `usePlan.ts` deliberately holds plan/reference in memory; #393/#395 store not implemented here | Missing #807 continuity; shared persistence #393/#395 and #808 | Native SQLite lifecycle, production save/reopen/CAS restore, full-document preservation, findings/run observations, atomic definition export/import, source relink and pending-write reload recovery implemented; see CONTINUATION-LEDGER.md. Rendered browser/Tauri qualification remains open. No replacement localStorage authority. |
+| I12 | RG experiment export/templates; C Review; O6/R6 | `usePlan.ts` deliberately holds plan/reference in memory; #393/#395 store not implemented here | Missing #807 continuity; shared persistence #393/#395 and #808 | Native SQLite lifecycle, production save/reopen/CAS restore, full-document preservation, findings/run observations, native-dependency-validated export/import, source relink and pending-write reload recovery implemented; see CONTINUATION-LEDGER.md. Rendered browser/Tauri qualification remains open. No replacement localStorage authority. |
 | I13 | C Segment | ADR 0015 Amendment 1 | Explicitly deferred #314 | Requires real mid-run use case and additive writer contract; never infer boundaries from event rate. |
 
 ## Scope reconciliation
@@ -196,3 +196,16 @@ Round-trip, rollback, restart, concurrent CAS and ASan/UBSan pass. TSan cannot s
 on this host (mapping failure); host binding, export/relink, schema validation and
 full I12 acceptance remain open. The cross-track coordinator owns shared facade
 allocation; no shared host/build/ABI files were edited.
+
+
+## Current continuation checkpoint (2026-10-30)
+
+`90dd17cc` closes native-validated immutable finding → next-run draft linkage with
+production UI, source-head CAS, receipt/reload/restart recovery and lossless numeric
+manifest transfer. See CONTINUATION-LEDGER.md for exact tests and limitations. Earlier
+missing basic-provider/shared-ownership blockers are superseded: the provider is
+integrated and branch-local shared files are owned here. Remaining I03 forecasts,
+I05 full live continuity, I07–I10 presentation/advanced science and I11 trend/exclusion
+work are implementation obligations, not a generic peer handoff blocker. E now
+reports Windows hardware access; physical full-pipeline qualification is still a
+separate task, not disproved by this Linux mock runtime.
