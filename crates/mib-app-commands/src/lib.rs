@@ -2009,6 +2009,17 @@ pub fn fetch_processing_stats(state: &AppState) -> Result<ProcessingStats, Strin
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn scientific_numbers_preserve_native_double_bits() {
+        let raw = "[0.12000000000000001,0.24000000000000002,5.0]";
+        let value: serde_json::Value = serde_json::from_str(raw).unwrap();
+        for (i, expected) in [0.12000000000000001_f64,0.24000000000000002_f64,5.0].iter().enumerate() {
+            assert_eq!(value[i].as_f64().unwrap().to_bits(), expected.to_bits());
+        }
+        let again: serde_json::Value = serde_json::from_str(&value.to_string()).unwrap();
+        assert_eq!(again, value);
+    }
+
     use super::kind_name;
     use mib_bridge::ffi::{self, BridgeEventKind};
     use serial_test::serial;

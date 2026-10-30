@@ -261,7 +261,8 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
       </>}
       <button disabled={busy || !revision} onClick={() => void run(async () => {
         const reply = checked(await read({action: "manifest", planId: graph().id, revision}));
-        const text = JSON.stringify({manifest:reply.manifest,contentHash:reply.contentHash},null,2);
+        if (typeof reply.manifest_json !== "string") throw new Error("Backend does not provide lossless manifest export.");
+        const text = JSON.stringify({manifest_json:reply.manifest_json,contentHash:reply.contentHash},null,2);
         setManifestText(text); download("analysis-strategy.json",text,"application/json");
       })}>Export exact strategy manifest</button>
       <button disabled={busy||!revision} onClick={()=>void run(async token=>{
@@ -275,14 +276,16 @@ export function AnalysisWorkspace({ path, disabled, graphText, feature, read, wr
       <p>List 1–16 exact planId/revision pairs. Export fails as a whole if any pin is unavailable. Source and method dependencies remain references requiring native verification, not embedded authority.</p>
       <button disabled={busy} onClick={()=>void run(async token=>{
         const reply=checked(await read({action:"manifestBatch",plans:JSON.parse(batchPins)}));
-        if(token===generation.current)download("analysis-strategy-batch.json",JSON.stringify(reply,null,2),"application/json");
+        if(typeof reply.artifact_json !== "string")throw new Error("Backend does not provide lossless batch export.");
+        if(token===generation.current)download("analysis-strategy-batch.json",JSON.stringify({artifact_json:reply.artifact_json,contentHash:reply.contentHash},null,2),"application/json");
       })}>Export pinned strategy batch</button>
       <label>Portable manifest JSON<textarea aria-label="Strategy manifest JSON" rows={5} value={manifestText} onChange={e => setManifestText(e.target.value)} /></label>
       <button disabled={busy || disabled || !manifestText} onClick={() => void run(async token => {
         if (window.localStorage.getItem(pendingKey)) throw new Error("Reconcile the pending command first.");
         const imported = JSON.parse(manifestText);
-        if (imported.manifest.planId !== graph().id) throw new Error("Load the manifest graph into the graph editor first; plan IDs must match.");
-        const command = {action:"import",manifest:imported.manifest,contentHash:imported.contentHash,
+        const manifest = imported.manifest_json ? JSON.parse(imported.manifest_json) : imported.manifest;
+        if (manifest.planId !== graph().id) throw new Error("Load the manifest graph into the graph editor first; plan IDs must match.");
+        const command = {action:"import",...(typeof imported.manifest_json === "string" ? {manifest_json:imported.manifest_json} : {manifest:imported.manifest}),contentHash:imported.contentHash,
           expectedRevision:revision || null,commandId:crypto.randomUUID(),source:source()};
         window.localStorage.setItem(pendingKey,JSON.stringify(command)); await reconcile(command,token);
       })}>Import against verified current source</button>

@@ -561,3 +561,17 @@ Compatibility: `F-source/1` keeps its historical scalar fingerprint canonicaliza
 (including the old image-reason token in hash input only). Returned explanations
 now direct callers to fresh gallery lookup. Enabling pixels does not invalidate
 existing scientific strategy bindings; gallery file/lease fencing is independent.
+
+### Lossless manifest transport (2026-10-30)
+
+Following I `90dd17cc`, shared Rust commands enable serde_json `float_roundtrip`
+to preserve native double bits (including 0.12000000000000001). Native manifest
+replies add `manifest_json`; batch replies add `artifact_json`. These are opaque
+native JSON strings, not objects to parse/reserialize for export. The UI exports
+`{manifest_json,contentHash}` and journals that exact string on import. Native
+`import` accepts exactly one of `manifest_json` or legacy `manifest`, then verifies
+the same checksum/source/CAS rules. Legacy objects still work when unchanged, but
+JS normalization of 5.0 to5 can legitimately fail their checksum. No checksum
+is recomputed or weakened to conceal a transport mutation. Batch references remain
+references-only, not imported scientific authority. The scalar/manifest hash format
+is unchanged. Reproduce via `tools/flowjo_acceptance/manifest-transport-parity.mjs`.

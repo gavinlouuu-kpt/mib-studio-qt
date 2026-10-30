@@ -326,3 +326,13 @@ the original synthetic recording; no acquisition was started. Browser navigation
 policy still blocks rendered click-through; DOM and native WSS evidence are separate.
 
 Final compatibility-preserving build also verifies fault plan `evidence-images-1793365464978` revision1 (8 image + 8 mask keys). Native11/11, Review8/8, UI30/30 and ASan/UBSan4/4 pass; TSan and rendered browser qualification remain open.
+
+## Lossless manifest transport — 2026-10-30
+
+Real tailnet WSS plan `lossless-1793365714883`: native5.0 manifest exported;
+JS-normalized object import correctly refused; opaque `manifest_json` imports as
+revision2 retaining5.0. Original checksum
+`sha256:6d3d46935792b78959757fd387b74dae06d894da17a0c0b093d607aedbb045d6`.
+Native host regression, Rust float-bit regression, UI10/10 and production build
+pass. Reproduce with `tools/flowjo_acceptance/manifest-transport-parity.mjs`.
+This does not change the hash format or provision I dependencies implicitly.

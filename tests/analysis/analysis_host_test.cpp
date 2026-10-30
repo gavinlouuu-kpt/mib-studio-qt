@@ -471,6 +471,25 @@ int main() {
         MIB_EXPECT(importedReply["revision"] == "1" &&
                        importedReply["document"] == manifest["manifest"]["document"],
                    "portable manifest restores typed source-bound strategy in a new authority");
+        MIB_EXPECT(manifest.at("manifest_json") == manifest.at("manifest").dump(),
+                   "manifest exports native JSON text without numeric transport normalization");
+        auto opaqueManifest = manifest.at("manifest");
+        opaqueManifest["document"]["graph"]["nodes"][0]["minimum"] = 5.0;
+        auto opaqueImport = import;
+        opaqueImport.erase("manifest");
+        opaqueImport["manifest_json"] = opaqueManifest.dump();
+        opaqueImport["contentHash"] = backend::analysis::contentHash(opaqueManifest);
+        opaqueImport["expectedRevision"] = "1";
+        opaqueImport["commandId"] = "opaque-import";
+        const auto opaqueReply = json::parse(
+            backend::analysis::analysisRequest(imported, opaqueImport.dump(), true, resolver));
+        MIB_EXPECT(opaqueReply["revision"] == "2" &&
+                       opaqueReply["document"]["graph"]["nodes"][0]["minimum"].is_number_float(),
+                   "opaque manifest preserves integral-valued double across native import");
+        opaqueImport["manifest"] = opaqueManifest;
+        MIB_EXPECT(json::parse(backend::analysis::analysisRequest(
+                       imported, opaqueImport.dump(), true, resolver))["status"] == "invalid",
+                   "ambiguous object and opaque manifests refused");
         import["manifest"]["document"]["feature"] = "deformability";
         MIB_EXPECT(json::parse(backend::analysis::analysisRequest(imported, import.dump(), true,
                                                                   resolver))["status"] == "invalid",

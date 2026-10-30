@@ -88,3 +88,12 @@ it("requests exact run-archive masks and displays unavailable provider evidence"
  expect(host.textContent).toContain("evicted");expect(host.textContent).toContain("lease expired");
  expect(host.textContent).toContain("Mask display copy");
 });
+
+it("keeps native manifest numeric spelling opaque through journal and import",async()=>{
+ const manifest_json='{"planId":"plan","document":{"graph":{"minimum":5.0},"value":0.12000000000000001}}';
+ const input=host.querySelector<HTMLTextAreaElement>('[aria-label="Strategy manifest JSON"]')!;
+ await act(async()=>{Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,"value")!.set!.call(input,JSON.stringify({manifest_json,contentHash:"exact"}));input.dispatchEvent(new Event("input",{bubbles:true}));});
+ await click("Import against verified current source");
+ expect(write).toHaveBeenCalledWith(expect.objectContaining({action:"import",manifest_json,contentHash:"exact"}));
+ expect(write.mock.calls[0][0]).not.toHaveProperty("manifest");
+});

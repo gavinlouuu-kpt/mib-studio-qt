@@ -378,8 +378,10 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                           {"strategies", manifests},
                           {"dependencyPolicy", "references-only; source and method dependencies "
                                                "require native verification on import"}};
-            return Json{
-                {"status", "ok"}, {"artifact", artifact}, {"contentHash", contentHash(artifact)}}
+            return Json{{"status", "ok"},
+                        {"artifact", artifact},
+                        {"artifact_json", artifact.dump()},
+                        {"contentHash", contentHash(artifact)}}
                 .dump();
         }
         if (action == "manifest") {
@@ -397,15 +399,21 @@ std::string analysisRequest(services::SqliteService& database, const std::string
                           {"planId", q.at("planId")},
                           {"originRevision", saved.at("revision")},
                           {"document", saved.at("document")}};
-            return Json{
-                {"status", "ok"}, {"manifest", manifest}, {"contentHash", contentHash(manifest)}}
+            return Json{{"status", "ok"},
+                        {"manifest", manifest},
+                        {"manifest_json", manifest.dump()},
+                        {"contentHash", contentHash(manifest)}}
                 .dump();
         }
         if (action == "import") {
             if (!write) throw std::invalid_argument("Import requires write endpoint");
-            fields(q, {"action", "manifest", "contentHash", "source", "expectedRevision",
-                       "commandId"});
-            const auto& manifest = q.at("manifest");
+            fields(q, {"action", "manifest", "manifest_json", "contentHash", "source",
+                       "expectedRevision", "commandId"});
+            if (q.contains("manifest") == q.contains("manifest_json"))
+                throw std::invalid_argument("Provide exactly one manifest or opaque manifest_json");
+            const auto manifest = q.contains("manifest_json")
+                                      ? Json::parse(q.at("manifest_json").get<std::string>())
+                                      : q.at("manifest");
             fields(manifest, {"schema", "planId", "originRevision", "document"});
             if (manifest.at("schema") != "F-analysis-manifest/1" ||
                 contentHash(manifest) != q.at("contentHash"))
